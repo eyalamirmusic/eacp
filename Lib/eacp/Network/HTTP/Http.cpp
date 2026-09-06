@@ -1,6 +1,7 @@
 #include "Http.h"
 #include "HttpProtocol.h"
 #include <algorithm>
+#include <cctype>
 
 #include <filesystem>
 #include <fstream>
@@ -93,15 +94,23 @@ void appendFormFields(std::stringstream& body,
     }
 }
 
+std::string fileFieldContent(const FileField& file)
+{
+    if (file.inMemory)
+        return file.content;
+
+    auto stream = std::ifstream(file.filePath, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream),
+                       std::istreambuf_iterator<char>());
+}
+
 void appendFileFields(std::stringstream& body,
                       const std::string& boundary,
                       const Vector<FileField>& files)
 {
     for (const auto& file: files)
     {
-        auto stream = std::ifstream(file.filePath, std::ios::binary);
-        auto content = std::string(std::istreambuf_iterator<char>(stream),
-                                   std::istreambuf_iterator<char>());
+        auto content = fileFieldContent(file);
 
         body << "--" << boundary << "\r\n";
         body << "Content-Disposition: form-data; name=\"" << file.fieldName
@@ -148,12 +157,42 @@ Request& Request::addFormField(const std::string& name, const std::string& value
     return *this;
 }
 
+FileField FileField::fromBytes(const std::string& fieldName,
+                               const std::string& fileName,
+                               std::string bytes,
+                               const std::string& contentType)
+{
+    auto field = FileField();
+    field.fieldName = fieldName;
+    field.fileName = fileName;
+    field.contentType = contentType;
+    field.content = std::move(bytes);
+    field.inMemory = true;
+    return field;
+}
+
 Request& Request::addFileField(const std::string& fieldName,
                                const std::string& filePath,
                                const std::string& contentType)
 {
-    auto fileName = Files::filenameFromPath(filePath);
-    fileFields.add({fieldName, filePath, contentType, fileName});
+    auto field = FileField();
+    field.fieldName = fieldName;
+    field.filePath = filePath;
+    field.contentType = contentType;
+    field.fileName = Files::filenameFromPath(filePath);
+
+    fileFields.add(std::move(field));
+    type = "POST";
+    return *this;
+}
+
+Request& Request::addFileBytes(const std::string& fieldName,
+                               const std::string& fileName,
+                               std::string bytes,
+                               const std::string& contentType)
+{
+    fileFields.add(
+        FileField::fromBytes(fieldName, fileName, std::move(bytes), contentType));
     type = "POST";
     return *this;
 }
@@ -492,6 +531,39 @@ void appendDecodedPercentEscape(std::string& out,
     i += 2;
 }
 } // namespace
+
+namespace
+{
+bool isUnreservedUrlChar(unsigned char c)
+{
+    return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.' || c == '~';
+}
+
+void appendPercentEscape(std::string& out, unsigned char c)
+{
+    constexpr auto digits = std::string_view("0123456789ABCDEF");
+
+    out.push_back('%');
+    out.push_back(digits[c >> 4]);
+    out.push_back(digits[c & 0x0F]);
+}
+} // namespace
+
+std::string urlEncode(const std::string& text)
+{
+    auto result = std::string();
+    result.reserve(text.size());
+
+    for (auto c: text)
+    {
+        if (isUnreservedUrlChar((unsigned char) c))
+            result.push_back(c);
+        else
+            appendPercentEscape(result, (unsigned char) c);
+    }
+
+    return result;
+}
 
 std::string urlDecode(const std::string& encoded)
 {

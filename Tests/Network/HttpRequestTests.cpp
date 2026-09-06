@@ -122,6 +122,48 @@ auto tAddFileFieldChains = test("HttpRequest/addFileFieldReturnsSelf") = []
     check(req.fileFields.size() == 2);
 };
 
+auto tAddFileBytesCarriesContent =
+    test("HttpRequest/addFileBytesCarriesContentInMemory") = []
+{
+    auto req = Request("https://example.com");
+    req.addFileBytes("files[0]", "chart.png", "rendered bytes", "image/png");
+
+    check(req.fileFields.size() == 1);
+    check(req.fileFields[0].fieldName == "files[0]");
+    check(req.fileFields[0].fileName == "chart.png");
+    check(req.fileFields[0].contentType == "image/png");
+    check(req.fileFields[0].content == "rendered bytes");
+    check(req.fileFields[0].inMemory);
+    check(req.fileFields[0].filePath.empty());
+    check(req.type == "POST");
+};
+
+auto tAddFileBytesDefaultContentType =
+    test("HttpRequest/addFileBytesDefaultsToOctetStream") = []
+{
+    auto req = Request("https://example.com");
+    req.addFileBytes("a", "blob.bin", std::string("\0\1\2", 3));
+    check(req.fileFields[0].contentType == "application/octet-stream");
+};
+
+auto tAddFileBytesChains = test("HttpRequest/addFileBytesReturnsSelf") = []
+{
+    auto req = Request("https://example.com");
+    auto& ret =
+        req.addFileBytes("a", "a.bin", "one").addFileBytes("b", "b.bin", "two");
+    check(&ret == &req);
+    check(req.fileFields.size() == 2);
+};
+
+auto tFileFieldFromPathIsNotInMemory =
+    test("HttpRequest/addFileFieldStaysOnDisk") = []
+{
+    auto req = Request("https://example.com");
+    req.addFileField("upload", "/tmp/data.bin");
+    check(!req.fileFields[0].inMemory);
+    check(req.fileFields[0].content.empty());
+};
+
 auto tHeadersAreUserOwned = test("HttpRequest/headersAreCallerControlled") = []
 {
     auto req = Request("https://example.com");
@@ -146,6 +188,37 @@ auto tDefaultParamsEmpty = test("HttpRequest/paramsDefaultEmpty") = []
     check(req.params.empty());
     check(req.remoteAddr.empty());
     check(req.remotePort == -1);
+};
+
+auto tUrlEncodeLeavesUnreserved = test("HttpUrlEncode/leavesUnreservedIntact") = []
+{
+    check(eacp::HTTP::urlEncode("") == "");
+    check(eacp::HTTP::urlEncode("abcXYZ019-_.~") == "abcXYZ019-_.~");
+};
+
+auto tUrlEncodeEscapesReserved = test("HttpUrlEncode/escapesReservedCharacters") = []
+{
+    check(eacp::HTTP::urlEncode("hello world") == "hello%20world");
+    check(eacp::HTTP::urlEncode("a+b") == "a%2Bb");
+    check(eacp::HTTP::urlEncode("a/b?c=d&e") == "a%2Fb%3Fc%3Dd%26e");
+    check(eacp::HTTP::urlEncode("100%") == "100%25");
+};
+
+// Uppercase hex, per RFC 3986 §2.1, and one escape per byte of UTF-8 rather
+// than one per codepoint.
+auto tUrlEncodeUsesUpperHex = test("HttpUrlEncode/usesUppercaseHexPerByte") = []
+{
+    check(eacp::HTTP::urlEncode("\xab") == "%AB");
+    check(eacp::HTTP::urlEncode("caf\xC3\xA9") == "caf%C3%A9");
+};
+
+// A space becomes %20, not '+', so an encoded value is as valid in a route
+// segment as it is in a query - the two places a bot spends its encoding.
+auto tUrlEncodeRoundTrips = test("HttpUrlEncode/roundTripsThroughUrlDecode") = []
+{
+    auto raw = std::string("channels/12 34/messages?q=a+b&r=/x#frag");
+    check(eacp::HTTP::urlEncode(raw).find('+') == std::string::npos);
+    check(eacp::HTTP::urlDecode(eacp::HTTP::urlEncode(raw)) == raw);
 };
 
 auto tUrlDecodePlain = test("HttpUrlDecode/passesThroughPlainText") = []

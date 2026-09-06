@@ -4,6 +4,7 @@ set(core_test_sources
         AppTests.cpp
         AsyncCoroutineTests.cpp
         AsyncTests.cpp
+        Base64Tests.cpp
         # Touches the real system clipboard, and restores whatever was there.
         ClipboardTests.cpp
         DynamicLibraryTests.cpp
@@ -16,7 +17,8 @@ set(core_test_sources
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp
         RangeTests.cpp
-        StringsTests.cpp)
+        StringsTests.cpp
+        TimerTests.cpp)
 
 # Cross-platform proof for captureOutput=false: redirect the test's own
 # stdout to a file and assert a non-capturing child writes through to it,

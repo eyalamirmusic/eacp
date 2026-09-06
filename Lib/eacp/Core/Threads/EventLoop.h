@@ -17,6 +17,16 @@ EventLoop& getEventLoop();
 void runEventLoop(const Callback& func = [] {});
 bool runEventLoopFor(Time::MS timeout, const Callback& func = [] {});
 void callAsync(const Callback& func);
+
+// callAsync, delayed: runs func on the message thread once, after `delay`.
+// A non-positive delay is just callAsync. There is no cancelling it - hold a
+// Timer, whose destructor stops it, when the callback must be revocable.
+//
+// Every pending callback shares one scheduler thread, so a rate limiter
+// holding a deadline per bucket costs one thread rather than one per bucket
+// (which is what Threads::delay, a detached sleeper per call, would cost).
+void callAfter(Time::MS delay, Callback func);
+
 void stopEventLoop();
 
 // Marks the calling thread as this eacp copy's main/UI thread and brings up
