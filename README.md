@@ -4,7 +4,9 @@ A cross-platform C++20 framework that abstracts native OS primitives behind a
 single, modern API. eacp lets you write desktop and mobile applications once
 and have them target the platform's first-class primitives directly. The heavy
 lifting stays with the OS: there is no bundled renderer, no bundled widget
-toolkit and no VM.
+toolkit and no VM. That reaches the GPU too: a shader is a C++ struct, emitted
+as Metal and HLSL from one source, and the pipeline around it is one API over
+both backends.
 
 ## What it abstracts
 
@@ -157,6 +159,102 @@ auto res = req.perform();
 More examples live under [`Apps/`](Apps), grouped by the module they exercise:
 `Console`, `Network`, `Graphics`, `GPU`, `UI`, `SVG`, `WebView`, `Camera`,
 `Video`, `Plugins` and `Mixed`.
+
+## Shaders in C++
+
+There is no shader string anywhere in an eacp app. A shader is a struct that
+derives from `ShaderProgram`; `define()` records a graph of typed value handles,
+and the emitters turn that one graph into Metal Shading Language for macOS and
+iOS and into HLSL for Direct3D 12 on Windows. Vertex inputs are pulled straight
+out of the CPU vertex struct, so that struct _is_ the vertex layout; uniforms
+and textures are typed members assigned by name, and `Maths::Vec2` crosses to
+the GPU packed exactly as the `float2` it registers as.
+
+```cpp
+#include <eacp/GPU/GPU.h>
+
+using namespace eacp;
+using namespace GPU;
+
+struct Vertex
+{
+    Maths::Vec2 position;
+    Maths::Vec2 uv;
+};
+
+struct Waves final : ShaderProgram
+{
+    Waves() { compile(); }
+
+    void define() override
+    {
+        auto position = vertexInput(&Vertex::position);
+        auto uv = varying(vertexInput(&Vertex::uv));
+
+        auto ripple = 0.5f + 0.5f * sin(uv.x() * 8.f + time);
+
+        setPosition(float4(position, 0.f, 1.f));
+        auto texel = sample(image, uv);
+        setFragment(texel * float4(ripple, uv.y(), 1.f, 1.f));
+    }
+
+    Uniform<Float> time;
+    Uniform<Texture2D> image;
+
+    EACP_SHADER(time, image)
+};
+```
+
+The view that draws it is as portable as the shader. `setVertices` uploads the
+typed vertex array, `prepare` takes a `RenderPipelineDescriptor` — sample
+count, depth test and write, blend equation, cull mode, winding — and builds
+the pipeline state from it, and `pass.draw(shader)` binds the pipeline, the
+vertices, the uniform block and every assigned texture:
+
+```cpp
+struct WavesView final : GPUView
+{
+    WavesView()
+        : image(loadTexture())
+    {
+        shader.setVertices(quad);
+        shader.prepare({.sampleCount = sampleCount(),
+                        .blendMode = BlendMode::AlphaBlend});
+        shader.image = image;
+        setContinuous(true);
+    }
+
+    void update(Threads::FrameTime time) override
+    {
+        elapsed += static_cast<float>(time.delta);
+    }
+
+    void render(Frame& frame) override
+    {
+        shader.time = elapsed;
+
+        auto pass = frame.beginPass({});
+        pass.draw(shader);
+    }
+
+    Texture image;
+    Waves shader;
+    float elapsed = 0.f;
+};
+```
+
+Render targets, depth and multisampling, and compute passes all sit on the same
+`Frame`, ordered for you, with no fences to write.
+
+The EDSL covers the `Float`, `Int`, `UInt` and `Bool` families and the
+matrices, every swizzle, the intrinsic set spelled the way MSL and HLSL spell
+it, `var` / `select` / `ifThen` / `loop`, 2D, cube and depth textures, storage
+buffers readable from either stage, instancing, and compute — `ComputeProgram`
+is the same struct shape, with atomics, threadgroup memory, barriers and a
+dispatch the GPU sized. What the two backends cannot pack the same way — a
+`Bool` or a `Float3x3` uniform — is a `static_assert` rather than a footnote.
+[`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) is the full account, and
+`Apps/GPU` has a worked example of every piece.
 
 ## Building
 
