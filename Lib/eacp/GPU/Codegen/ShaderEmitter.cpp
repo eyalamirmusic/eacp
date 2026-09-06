@@ -81,6 +81,9 @@ std::string callName(Backend backend, const std::string& name)
 
         if (name == "as_type<uint>")
             return "asuint";
+
+        if (name == "as_type<float>")
+            return "asfloat";
     }
 
     return name;
@@ -94,6 +97,10 @@ std::string callName(Backend backend, const std::string& name)
 // a bitcast and a vector conversion on MSL, and two f16tof32 calls against a
 // shift on HLSL, and no renaming reconciles those. A helper does, and it keeps
 // the graph backend-agnostic - one call node with one argument, both sides.
+//
+// Each definition stands alone and calls no other helper, because what is
+// emitted is decided per helper by whether the graph names it: one that leaned
+// on another would compile only when the graph happened to call both.
 struct ShaderHelper
 {
     const char* name;
@@ -101,7 +108,78 @@ struct ShaderHelper
     const char* directX;
 };
 
-const auto shaderHelpers = Array<ShaderHelper, 1> {
+// The error function, as Abramowitz & Stegun 7.1.26.
+//
+// Neither language has one. HLSL under FXC never did, and MSL - despite being
+// the side that usually has the richer math library - rejects a call to erf as
+// an undeclared identifier, so this is the definition on both backends rather
+// than the Windows half of a pair.
+//
+// That is why one string serves both: what the approximation is written out of
+// - abs, exp, a divide, a Horner chain and a scalar conditional - is spelled
+// identically in MSL and HLSL, so there is nothing here for a per-backend form
+// to differ about. The vector widths are overloads rather than a genType
+// because HLSL resolves a user function by overload and has no template before
+// shader model 6; MSL is C++ and accepts the overloads unchanged.
+//
+// Measured against std::erf over the whole real line: worst absolute error
+// under 6e-7 for both, and 1.7e-7 for what Metal's own arithmetic makes of it.
+// Tests/GPU/IntrinsicTests pins both. The approximation itself is good to
+// 1.5e-7 and the rest is what evaluating it in float32 costs - which lands
+// under the resolution a float has near one either way, so the shader is a
+// float32 error function and not a rounded copy of the CPU's.
+constexpr auto erfHelper =
+    "float eacpErf(float x)\n"
+    "{\n"
+    "    float a = abs(x);\n"
+    "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
+    "    float e = 1.0 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
+    "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
+    "    return x < 0.0 ? -e : e;\n"
+    "}\n\n"
+    "float2 eacpErf(float2 x)\n"
+    "{\n"
+    "    return float2(eacpErf(x.x), eacpErf(x.y));\n"
+    "}\n\n"
+    "float3 eacpErf(float3 x)\n"
+    "{\n"
+    "    return float3(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z));\n"
+    "}\n\n"
+    "float4 eacpErf(float4 x)\n"
+    "{\n"
+    "    return float4(eacpErf(x.x), eacpErf(x.y), eacpErf(x.z), eacpErf(x.w));\n"
+    "}\n\n";
+
+// Its complement, as poly(t) * exp(-x*x) rather than as 1 - eacpErf(x): erf has
+// saturated at 1.0f by x = 4 while erfc there is still 1.5e-8, so the
+// subtraction would return zero for the whole tail - which is the half of erfc
+// that anything asks for it by name. What the direct form cannot fix is the
+// approximation's own relative error out there, around 1% by x = 3, so this
+// answers "how much probability is left" and not "to how many digits".
+constexpr auto erfcHelper =
+    "float eacpErfc(float x)\n"
+    "{\n"
+    "    float a = abs(x);\n"
+    "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
+    "    float e = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
+    "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
+    "    return x < 0.0 ? 2.0 - e : e;\n"
+    "}\n\n"
+    "float2 eacpErfc(float2 x)\n"
+    "{\n"
+    "    return float2(eacpErfc(x.x), eacpErfc(x.y));\n"
+    "}\n\n"
+    "float3 eacpErfc(float3 x)\n"
+    "{\n"
+    "    return float3(eacpErfc(x.x), eacpErfc(x.y), eacpErfc(x.z));\n"
+    "}\n\n"
+    "float4 eacpErfc(float4 x)\n"
+    "{\n"
+    "    return float4(eacpErfc(x.x), eacpErfc(x.y), eacpErfc(x.z), "
+    "eacpErfc(x.w));\n"
+    "}\n\n";
+
+const auto shaderHelpers = Array<ShaderHelper, 5> {
     ShaderHelper {"eacpUnpackHalf2",
                   "inline float2 eacpUnpackHalf2(uint bits)\n"
                   "{\n"
@@ -110,6 +188,40 @@ const auto shaderHelpers = Array<ShaderHelper, 1> {
                   "float2 eacpUnpackHalf2(uint bits)\n"
                   "{\n"
                   "    return float2(f16tof32(bits), f16tof32(bits >> 16));\n"
+                  "}\n\n"},
+    ShaderHelper {"eacpErf", erfHelper, erfHelper},
+    ShaderHelper {"eacpErfc", erfcHelper, erfcHelper},
+    // One half chosen by a parity rather than both unpacked and one dropped:
+    // shifting the wanted half down is a single instruction in both languages,
+    // and neither has to look at the other one. as_type<half2> and f16tof32
+    // both read the low sixteen bits, so the shift is all that differs between
+    // the two halves.
+    ShaderHelper {"eacpReadHalf",
+                  "inline float eacpReadHalf(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return float(as_type<half2>(bits >> (16u * parity)).x);\n"
+                  "}\n\n",
+                  "float eacpReadHalf(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return f16tof32(bits >> (16u * parity));\n"
+                  "}\n\n"},
+
+    // The narrowing. No mask on the low half: f32tof16 is specified to set the
+    // upper sixteen bits of its result to zero, and the D3D11.1 spec says so
+    // again as a clarification that it holds on all hardware supporting the
+    // instruction.
+    //
+    // The two are not bit-identical for a value fp16 cannot hold - see
+    // packHalf2 for which way each rounds - and no spelling here can fix that,
+    // the rounding being the instruction's rather than the expression's.
+    ShaderHelper {"eacpPackHalf2",
+                  "inline uint eacpPackHalf2(float2 values)\n"
+                  "{\n"
+                  "    return as_type<uint>(half2(values));\n"
+                  "}\n\n",
+                  "uint eacpPackHalf2(float2 values)\n"
+                  "{\n"
+                  "    return f32tof16(values.x) | (f32tof16(values.y) << 16u);\n"
                   "}\n\n"}};
 
 // Only the helpers a graph actually calls, so a shader that unpacks nothing
@@ -604,6 +716,58 @@ void collectWrites(const ShaderGraph& graph, int block, Vector<char>& written)
         collectWrites(graph, graph.statement(index), written);
 }
 
+// Its storage-buffer sibling: which buffer slots running a statement can leave
+// holding something else. What it feeds is the rule variables and shared memory
+// already get - a name computed from an element is given up the moment that
+// buffer may have moved on - and it is what makes an output a kernel reads back
+// answer with what the kernel stored rather than with what was there before.
+void collectBufferWrites(const ShaderGraph& graph, int block, Vector<char>& written);
+
+void collectBufferWrites(const ShaderGraph& graph,
+                         const Statement& statement,
+                         Vector<char>& written)
+{
+    switch (statement.kind)
+    {
+        case StatementKind::Store:
+            written[statement.slot] = 1;
+            return;
+
+        // The one statement whose buffer is not in `slot`: that field names the
+        // variable the value from before the add lands in.
+        case StatementKind::AtomicAdd:
+            written[statement.bufferSlot] = 1;
+            return;
+
+        case StatementKind::If:
+            collectBufferWrites(graph, statement.body, written);
+
+            if (statement.elseBody >= 0)
+                collectBufferWrites(graph, statement.elseBody, written);
+
+            return;
+
+        case StatementKind::Loop:
+            collectBufferWrites(graph, statement.body, written);
+            return;
+
+        case StatementKind::Declare:
+        case StatementKind::Assign:
+        case StatementKind::Break:
+        case StatementKind::Continue:
+        case StatementKind::TextureStore:
+        case StatementKind::SharedStore:
+        case StatementKind::Barrier:
+            return;
+    }
+}
+
+void collectBufferWrites(const ShaderGraph& graph, int block, Vector<char>& written)
+{
+    for (auto index: graph.block(block).statements)
+        collectBufferWrites(graph, graph.statement(index), written);
+}
+
 // A visited set a walk can have a fresh one of without paying for one. Marking
 // is a stamp rather than a flag, so starting over is a counter increment
 // instead of clearing a buffer the size of the graph.
@@ -638,11 +802,12 @@ struct VisitSet
 };
 
 // Whether the value under node no longer stands for itself after a statement:
-// it read a variable that statement wrote, or it read threadgroup memory and
-// the statement may have moved what that holds.
+// it read a variable that statement wrote, an element of a storage buffer the
+// statement stored to, or threadgroup memory the statement may have moved.
 bool readsStale(const ShaderGraph& graph,
                 int node,
                 const Vector<char>& written,
+                const Vector<char>& buffersWritten,
                 bool sharedMoved,
                 VisitSet& seen)
 {
@@ -657,8 +822,14 @@ bool readsStale(const ShaderGraph& graph,
     if (sharedMoved && expr.kind == ExprKind::SharedRead)
         return true;
 
+    // Whichever way the buffer was declared: an output a kernel reads back and
+    // an atomic counter it loads are both elements a store can have changed.
+    if ((expr.kind == ExprKind::BufferRead || expr.kind == ExprKind::AtomicLoad)
+        && buffersWritten[expr.index] != 0)
+        return true;
+
     for (auto argument: expr.args)
-        if (readsStale(graph, argument, written, sharedMoved, seen))
+        if (readsStale(graph, argument, written, buffersWritten, sharedMoved, seen))
             return true;
 
     return false;
@@ -1019,12 +1190,15 @@ private:
         written.assign(graph().variables().size(), 0);
         collectWrites(graph(), statement, written);
 
-        // A statement that leaves no variable holding something else and
-        // moves no shared memory cannot have staled a name, and most do not:
-        // a break, a continue, and an if whose bodies only compute. Asking
-        // each open name about an empty set is the same walk for a
+        buffersWritten.assign(graph().storageBuffers().size(), 0);
+        collectBufferWrites(graph(), statement, buffersWritten);
+
+        // A statement that leaves no variable and no buffer holding something
+        // else and moves no shared memory cannot have staled a name, and most
+        // do not: a break, a continue, and an if whose bodies only compute.
+        // Asking each open name about an empty set is the same walk for a
         // guaranteed no.
-        if (!written.contains(1) && !sharedMoved)
+        if (!written.contains(1) && !buffersWritten.contains(1) && !sharedMoved)
             return;
 
         auto kept = Vector<int> {};
@@ -1033,7 +1207,8 @@ private:
         {
             visited.restart();
 
-            if (readsStale(graph(), node, written, sharedMoved, visited))
+            if (readsStale(
+                    graph(), node, written, buffersWritten, sharedMoved, visited))
                 locals[node] = -1;
             else
                 kept.add(node);
@@ -1052,6 +1227,7 @@ private:
     // one buffer instead of one per name per statement.
     VisitSet visited;
     Vector<char> written;
+    Vector<char> buffersWritten;
 };
 
 // Whether the expression tree under node reads a uniform. A Varying read is the

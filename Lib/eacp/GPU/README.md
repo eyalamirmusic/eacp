@@ -198,10 +198,15 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   second. A literal is anchored on the graph whichever argument is a handle
   brought, so which positions accept one is not a question the EDSL has an
   opinion about
+- The transcendentals a network's activations are written out of: `sinh`,
+  `cosh`, `tanh` and `log10`, which both languages have natively, and `erf` /
+  `erfc`, which neither has at all — those two are emitted as a polynomial held
+  to under 6e-7 absolute, so a shader can spell the exact GELU rather than the
+  tanh approximation of it
 - Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
   A `var` takes any handle and any matrix
-- Compute-only: `atomicAdd`, `sharedArray<T, N>`, `barrier`,
-  `threadIndexInGroup` — see the compute section
+- Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId` — see the
+  compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates
@@ -554,16 +559,16 @@ and could not be told apart from this one; nothing has needed it.
 
 ### Threadgroup memory
 
-`sharedArray<T, N>()` is memory one dispatch group has in common: every thread
-in the group reads and writes it, no thread outside sees it, and it is gone when
-the group is. `threadIndexInGroup()` is what indexes it, and `barrier()` is what
-makes one thread's writes visible to the rest:
+`shared<T>(count)` is memory one dispatch group has in common: every thread in
+the group reads and writes it, no thread outside sees it, and it is gone when
+the group is. `localId()` is what indexes it, and `barrier()` is what makes one
+thread's writes visible to the rest:
 
 ```cpp
 void define() override
 {
-    auto lane = threadIndexInGroup();
-    auto scratch = sharedArray<Float, 64>();
+    auto lane = localId();
+    auto scratch = shared<Float>(64);
 
     write(scratch, lane, input[threadId()]);
     barrier();
@@ -607,6 +612,32 @@ write(next, index, float4(newPosition, newVelocity));
 Underneath it is still N scalar accesses over a run of floats, deliberately: a
 retyped `float4` binding would buy one wide store and cost the CPU-side element
 size that makes those same bytes bindable as a per-instance vertex stream.
+
+Every read takes an unsigned literal as well as a computed index — `input[0]`,
+`input.read4(0u)` — so the one element a whole dispatch broadcasts from needs no
+`var()` to carry its index, the same courtesy `AtomicBuffer::load` extends to a
+shared counter.
+
+**An output is readable too.** `output[i]` and its `read2`/`read3`/`read4` are
+the subscript the store already is: both backends declare an output writable
+(`device float*` on Metal, `RWStructuredBuffer<float>` on HLSL), so nothing new
+is bound and nothing new is declared. A softmax is the case that asks for it —
+normalising wants the exponentials the kernel just wrote, not `exp()` evaluated a
+second time:
+
+```cpp
+write(output, i, exp(input[i] - peak));
+write(output, i, output[i] / total);
+```
+
+What that promises is read-after-write **within one thread**, in the order the
+statements were written. Another thread's store is visible only once the dispatch
+has ended, exactly as it is for the count `AtomicBuffer::load` hands back.
+
+A resource member holds a pointer, so it takes a named buffer or texture and
+refuses a temporary outright: `kernel.input = device.makeBuffer(...)` would point
+into something destroyed at the semicolon, and it is a compile error rather than
+a wrong picture.
 
 A command buffer has one open encoder at a time, so let a pass end before
 beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
@@ -697,6 +728,51 @@ Reach for this when the thing being read is not an image and does not line up on
 record per instance — a lookup table, a record picked by an id the shader
 computed. When it *is* one record per instance, `instanceInput` is still the
 idiomatic path.
+
+### fp16 weights, kept packed
+
+There is no `Half` value type and there is not going to be one: the Windows
+backend compiles HLSL through FXC at `cs_5_0`, where `half` is a synonym for
+`float` and there is no 16-bit arithmetic at all, so the same declaration would
+mean two different things on the two backends. What *is* portable, and what a
+model's weights actually want, is fp16 **storage** with fp32 arithmetic — half
+the buffer, half the bandwidth, and every value widened before it is used:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    write(output, i, weights.readHalf(i) * input[i]);   // fp16 in, fp32 maths
+}
+```
+
+A storage buffer is a run of floats on both backends, so a packed word arrives
+as a float whose value is meaningless and whose bits are the payload. These are
+the way in and out of that:
+
+| call | what it gives |
+| --- | --- |
+| `input.readHalf(i)` | element `i` of a buffer of halves, widened to a `Float`. `i` counts halves, so an N-weight buffer is walked `0..N-1` |
+| `input.readHalf2(i)` | both halves of word `i` as a `Float2`, `.x` the low bits |
+| `unpackHalf2(bits)` | the same, from a `UInt` already in hand |
+| `packHalf2(pair)` | two floats narrowed and packed into a `UInt` |
+| `writeHalf2(out, i, pair)` | that word stored at `i` — `readHalf2` reads it back |
+| `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways |
+
+`readHalf` emits a two-argument helper — the word and which half of it — rather
+than unpacking both and selecting: MSL and HLSL each reach the wanted half with
+a single shift. `unpackHalf2` and `packHalf2` are helpers for the reason
+`callName` cannot serve them, MSL bitcasting a `half2` where HLSL calls
+`f16tof32`/`f32tof16` against a shift. Only the helpers a graph calls are
+emitted into it.
+
+Widening is exact on both backends, subnormals and infinities included, and so
+is a round trip through `packHalf2` of anything fp16 can hold. **Narrowing a
+value it cannot hold is the one place they differ**, alongside `round()`: Metal
+converts per IEEE — nearest-even, and a finite magnitude past 65504 becomes an
+infinity — while D3D specifies round-to-zero and saturates that magnitude to the
+largest finite half instead. Round before narrowing if the answer has to be the
+same on both.
 
 ## Mipmaps
 

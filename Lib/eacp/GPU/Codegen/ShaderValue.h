@@ -518,6 +518,29 @@ struct ThreadPosition
 
 namespace detail
 {
+// One element of a storage buffer, whichever way the kernel declared it. Both
+// backends subscript the binding they were given, so a read is the same node
+// and the same emitted text for an input and for an output.
+inline Float readBufferElement(ShaderGraph* graph, int slot, const UInt& index)
+{
+    auto result = Float {};
+    result.graph = graph;
+    result.node = graph->addBufferRead(slot, index.node);
+    return result;
+}
+
+// A literal element index, anchored on the buffer's own graph - the same
+// courtesy AtomicBuffer::load extends to its counter, and worth as much here: a
+// buffer holding one number, a scale or a total another kernel arrived at, is
+// addressed at element zero and nowhere else.
+inline UInt bufferIndex(ShaderGraph* graph, unsigned index)
+{
+    auto result = UInt {};
+    result.graph = graph;
+    result.node = graph->addUIntConstant(index);
+    return result;
+}
+
 // count consecutive elements starting at index * count, assembled into a
 // vector. A buffer stays a run of floats on both backends - this is arithmetic
 // over the binding that already works, not a retyped one - so what it costs is
@@ -560,10 +583,15 @@ struct InputBuffer
 {
     Float operator[](const UInt& index) const
     {
-        auto result = Float {};
-        result.graph = graph;
-        result.node = graph->addBufferRead(slot, index.node);
-        return result;
+        return detail::readBufferElement(graph, slot, index);
+    }
+
+    // A literal index, which is what a broadcast reads: the one element every
+    // thread of a dispatch wants has no index to compute, and manufacturing one
+    // through a var() would name a mutable local for a constant.
+    Float operator[](unsigned index) const
+    {
+        return (*this)[detail::bufferIndex(graph, index)];
     }
 
     // The vector reads, for a buffer whose elements are records rather than
@@ -592,12 +620,95 @@ struct InputBuffer
             graph, slot, index, ValueType::Float4, 4);
     }
 
+    Float2 read2(unsigned index) const
+    {
+        return read2(detail::bufferIndex(graph, index));
+    }
+
+    Float3 read3(unsigned index) const
+    {
+        return read3(detail::bufferIndex(graph, index));
+    }
+
+    Float4 read4(unsigned index) const
+    {
+        return read4(detail::bufferIndex(graph, index));
+    }
+
+    // The fp16 reads, for a buffer whose elements are halves: readHalf counts
+    // in halves, readHalf2 in the words that hold two of them. Declared here
+    // and defined further down, since they are spelled in terms of asUInt and
+    // unpackHalf2, neither of which exists yet at this point in the header.
+    Float readHalf(const UInt& index) const;
+    Float readHalf(unsigned index) const;
+    Float2 readHalf2(const UInt& index) const;
+    Float2 readHalf2(unsigned index) const;
+
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
 
 struct OutputBuffer
 {
+    // What the element holds: what this thread stored into it earlier in the
+    // kernel, or what the buffer was bound holding where it stored nothing.
+    // Both backends declare an output writable - `device float*` on Metal, an
+    // RWStructuredBuffer on HLSL - so reading one is the same subscript the
+    // store is, and a kernel that needs its own result back reads it instead of
+    // computing it a second time. A softmax is the case that asks: normalising
+    // wants the exponentials it just wrote, not exp() evaluated twice.
+    //
+    // Read-after-write *within one thread* is the whole of what this promises,
+    // and it is what the emitter's statement order gives. Another thread's
+    // store is visible only once the dispatch has ended, exactly as
+    // AtomicBuffer::load says of the count it hands back.
+    Float operator[](const UInt& index) const
+    {
+        return detail::readBufferElement(graph, slot, index);
+    }
+
+    Float operator[](unsigned index) const
+    {
+        return (*this)[detail::bufferIndex(graph, index)];
+    }
+
+    // The record reads, pairing with the Float2/Float3/Float4 overloads of
+    // ShaderBuilder::write on the same terms InputBuffer's do: the index counts
+    // records, so a kernel reading back what it wrote spells the same index it
+    // wrote at.
+    Float2 read2(const UInt& index) const
+    {
+        return detail::readBufferVector<Float2>(
+            graph, slot, index, ValueType::Float2, 2);
+    }
+
+    Float3 read3(const UInt& index) const
+    {
+        return detail::readBufferVector<Float3>(
+            graph, slot, index, ValueType::Float3, 3);
+    }
+
+    Float4 read4(const UInt& index) const
+    {
+        return detail::readBufferVector<Float4>(
+            graph, slot, index, ValueType::Float4, 4);
+    }
+
+    Float2 read2(unsigned index) const
+    {
+        return read2(detail::bufferIndex(graph, index));
+    }
+
+    Float3 read3(unsigned index) const
+    {
+        return read3(detail::bufferIndex(graph, index));
+    }
+
+    Float4 read4(unsigned index) const
+    {
+        return read4(detail::bufferIndex(graph, index));
+    }
+
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
@@ -1102,6 +1213,28 @@ ShaderBase<T> tan(const T& value)
     return detail::componentCall(value, "tan");
 }
 
+// The hyperbolics, which both languages spell exactly as C does. tanh is the
+// one a network reaches for - it is the saturating activation itself, and half
+// of GELU's tanh approximation - and the other two come with it because a
+// language that has one has all three.
+template <ShaderValueLike T>
+ShaderBase<T> sinh(const T& value)
+{
+    return detail::componentCall(value, "sinh");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> cosh(const T& value)
+{
+    return detail::componentCall(value, "cosh");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> tanh(const T& value)
+{
+    return detail::componentCall(value, "tanh");
+}
+
 template <ShaderValueLike T>
 ShaderBase<T> asin(const T& value)
 {
@@ -1157,6 +1290,45 @@ template <ShaderValueLike T>
 ShaderBase<T> log2(const T& value)
 {
     return detail::componentCall(value, "log2");
+}
+
+// Native in both languages, which is worth spelling out because the obvious
+// workaround is not equivalent: log(x) * 0.4342944819 changes the base with an
+// extra rounding on a value that has already lost the accuracy a logarithm of
+// a very small number needs. A mel front-end takes log10 of magnitudes down
+// around 1e-10, so that is not a hypothetical.
+template <ShaderValueLike T>
+ShaderBase<T> log10(const T& value)
+{
+    return detail::componentCall(value, "log10");
+}
+
+// The error function and its complement. GELU is erf, exactly - the tanh form
+// every framework offers beside it is an approximation of this one - so a
+// transformer's activation is a single call rather than a hand-rolled
+// polynomial in each kernel that wants it.
+//
+// Emitted through a helper rather than as a bare call, and for a harder reason
+// than unpackHalf2's: neither shading language has an error function at all, so
+// what the helper hides is a polynomial approximation rather than a different
+// spelling. See ShaderEmitter's shaderHelpers for it and for the accuracy it
+// holds to - it is a float32 approximation, not the libm-grade function the
+// same name has on the CPU.
+//
+// erfc is its own helper rather than 1 - erf(x). The two differ by nothing in
+// exact arithmetic and by everything in float32: erf saturates at 1 well before
+// erfc reaches zero, so the subtraction gives up every digit of the tail, which
+// is the half of erfc that anything asks for it by name.
+template <ShaderValueLike T>
+ShaderBase<T> erf(const T& value)
+{
+    return detail::componentCall(value, "eacpErf");
+}
+
+template <ShaderValueLike T>
+ShaderBase<T> erfc(const T& value)
+{
+    return detail::componentCall(value, "eacpErfc");
 }
 
 template <ShaderValueLike T>
@@ -2245,6 +2417,18 @@ inline UInt asUInt(const Float& value)
     return detail::intrinsic<UInt>("as_type<uint>", value);
 }
 
+// And the way back, which is what lets a kernel *write* something packed: a
+// store takes a Float, so two halves reach an output buffer as
+// write(output, i, asFloat(packHalf2(pair))).
+//
+// Recorded through detail::call rather than detail::intrinsic for the reason
+// unpackHalf2 gives: the argument is a UInt, which is deliberately outside the
+// float vocabulary intrinsic() takes.
+inline Float asFloat(const UInt& value)
+{
+    return detail::call<Float>(value, ValueType::Float, "as_type<float>");
+}
+
 // The two half-precision floats packed into one 32-bit word, widened: .x is
 // the low sixteen bits, .y the high.
 //
@@ -2275,6 +2459,72 @@ inline Float2 unpackHalf2(const UInt& bits)
         ValueType::Float2, "eacpUnpackHalf2", std::move(arguments));
 
     return result;
+}
+
+// The inverse: two floats narrowed to fp16 and packed into one word, .x in the
+// low sixteen bits. What a kernel producing fp16 output writes, and the other
+// half of a weight cache that stays packed on the GPU.
+//
+// A value fp16 holds exactly - anything that came from unpackHalf2, and so
+// every round trip through a packed buffer - comes back bit-for-bit on both
+// backends. A value it does not hold is where they part, and this is one of
+// the two places in the EDSL that are not bit-identical across them (round()
+// is the other):
+//
+//   Metal converts per IEEE - round to nearest even, and a finite magnitude
+//   past 65504 becomes an infinity.
+//   D3D specifies round-to-zero for a narrowing float conversion, and takes
+//   such a magnitude to the largest finite half instead, explicitly not to an
+//   infinity (D3D11.3 functional spec 3.2.2; f32tof16 follows those rules).
+//
+// So the two can differ by one ulp on an ordinary weight, and disagree
+// outright about what a too-large one becomes. Neither is wrong and nothing
+// here can reconcile them - the rounding belongs to the instruction. A kernel
+// that needs a pinned answer rounds before it narrows.
+//
+// A helper for the same reason unpackHalf2 is one: MSL converts to a half2 and
+// bitcasts the pair, HLSL narrows each component and shifts one into place.
+inline UInt packHalf2(const Float2& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackHalf2");
+}
+
+// One fp16 element of a buffer whose elements are halves rather than floats,
+// widened to a Float. The index counts halves, so a buffer of N weights is
+// walked 0..N-1 exactly as a float one is and nothing at the call site spells
+// the packing: the word is index / 2 and which half of it is index % 2.
+//
+// The choice between the two halves is made inside a helper taking the word
+// and that parity, rather than by unpacking both and selecting. Both are
+// correct; the helper is one call node instead of six, and it is the shape the
+// languages already have - MSL and HLSL each reach the wanted half with a
+// single shift, where a select computes both and throws one away.
+inline Float InputBuffer::readHalf(const UInt& index) const
+{
+    return detail::call2<Float>(
+        asUInt((*this)[index / 2u]), index % 2u, ValueType::Float, "eacpReadHalf");
+}
+
+// The literal form, folded here rather than emitted as `6u / 2u`.
+inline Float InputBuffer::readHalf(unsigned index) const
+{
+    return detail::call2<Float>(asUInt((*this)[index / 2u]),
+                                detail::bufferIndex(graph, index % 2u),
+                                ValueType::Float,
+                                "eacpReadHalf");
+}
+
+// Both halves of one word, which is what a kernel walking a weight matrix two
+// at a time wants. The index counts words here rather than halves - it is the
+// same index the matching writeHalf2 stores at.
+inline Float2 InputBuffer::readHalf2(const UInt& index) const
+{
+    return unpackHalf2(asUInt((*this)[index]));
+}
+
+inline Float2 InputBuffer::readHalf2(unsigned index) const
+{
+    return readHalf2(detail::bufferIndex(graph, index));
 }
 
 template <ShaderScalarLike T>
