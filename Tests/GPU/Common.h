@@ -10,10 +10,11 @@
 // The hand-written shader twins, one per dialect, picked by the platform whose
 // compiler is about to see it.
 //
-// The GLSL twin is the one no device here can run - there is no Vulkan backend
-// yet - so it is compiled through eacp-spirv on the way past instead. That is
-// what keeps it honest: a twin that has drifted from the MSL and HLSL beside it
-// fails on macOS and Windows CI rather than on the day the backend lands.
+// The GLSL twin is also compiled through eacp-spirv on the way past wherever
+// that is built, which is every Linux lane and not only the one with a Vulkan
+// device. That is what keeps it honest: a twin that has drifted from the MSL
+// and HLSL beside it fails at compile time on a plain Linux build rather than
+// as a wrong pixel on the graphics lane.
 inline eacp::GPU::ShaderSource
     nativeDialect(std::string msl, std::string hlsl, std::string glsl)
 {

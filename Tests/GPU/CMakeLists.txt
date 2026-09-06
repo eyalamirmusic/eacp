@@ -13,9 +13,10 @@ nano_add_executable(GPUCodegenTests
         TARGETS eacp-gpu-codegen)
 
 # With the SPIR-V compiler around, every emitted GLSL source is also compiled by
-# glslang, so a dialect regression fails on macOS and Windows CI rather than
-# waiting for a Vulkan device. Without it the checks compile to nothing and the
-# string assertions stand alone.
+# glslang, so a dialect regression fails on every Linux lane - the two with no
+# Vulkan device included - and on any other platform that opts into
+# EACP_BUILD_SPIRV. Without it the checks compile to nothing and the string
+# assertions stand alone, which is the default on macOS and Windows.
 function(eacp_enable_glsl_compile_checks target)
     if (TARGET eacp-spirv)
         target_link_libraries(${target} PRIVATE eacp-spirv)

@@ -24,10 +24,11 @@
 // Every GLSL string a test emits is also handed to glslang, so the dialect has
 // to be a program and not just the right sequence of characters. String
 // assertions pin what the emitter says; this pins that a compiler accepts it,
-// on macOS and Windows as much as on the platform that will run it.
+// on a Linux lane with no Vulkan device as much as on the one that will run it.
 //
-// eacp-spirv is optional (EACP_BUILD_SPIRV), so without it these compile away
-// and the suite still builds and passes on its string assertions alone.
+// eacp-spirv is Linux-only by default (EACP_BUILD_SPIRV), so on macOS and
+// Windows these compile away and the suite still builds and passes on its
+// string assertions alone; opting in there turns them back on.
 
 #ifdef EACP_HAS_SPIRV
 inline void expectStageCompiles(eacp::GPU::Spirv::Stage stage,

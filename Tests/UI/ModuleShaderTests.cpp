@@ -8,8 +8,9 @@
 #include <utility>
 
 // Every shader the modules above the GPU layer build, emitted as GLSL and
-// handed to glslang -- on whichever platform this suite runs, and not only on
-// the one whose backend is Vulkan.
+// handed to glslang -- wherever eacp-spirv is built, which is every Linux lane
+// and any other platform that opts into EACP_BUILD_SPIRV, not only the one
+// whose backend is Vulkan.
 //
 // The gap this closes: GPUCodegenTests compiles the GLSL of its *own* test
 // shaders, so an emitter arm no test shader happened to reach was checked by

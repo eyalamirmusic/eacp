@@ -131,13 +131,18 @@ Two pieces of the gated modules are portable and so sit outside all six: they
 are built and tested on every platform, Linux included, because neither touches
 a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
-`GPUCodegenTests`. `eacp-spirv` wraps glslang as a GLSL-to-SPIR-V compiler
-(`SpirvTests`), so the GLSL dialect is compiled for real on every CI lane
-before a Vulkan device exists: every GLSL source `GPUCodegenTests` emits, and
-every hand-written GLSL twin in `GPUTests`, is compiled by glslang as part of
-the test. `-DEACP_BUILD_SPIRV=OFF` skips it and the checks with it. And
-`eacp-webview-bridge` is the page bridge over a `ScriptHost` rather than over a
-web view, checked by `ScriptHostTests`.
+`GPUCodegenTests`. And `eacp-webview-bridge` is the page bridge over a
+`ScriptHost` rather than over a web view, checked by `ScriptHostTests`.
+
+A third, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
+(`SpirvTests`) and is built on Linux only by default: the Vulkan backend is the
+one that ships it, and the two Linux lanes without a Vulkan device build it
+too, so the GLSL dialect is compiled for real there before any device is
+involved — every GLSL source `GPUCodegenTests` emits, every hand-written GLSL
+twin in `GPUTests` and every module shader `UITests` reaches is compiled by
+glslang as part of the test. macOS and Windows skip the fetch; passing
+`-DEACP_BUILD_SPIRV=ON` there builds it and turns those checks on, and `OFF`
+on Linux with `EACP_LINUX_GRAPHICS` off skips it and the checks with it.
 
 `-DEACP_LINUX_GRAPHICS=ON` is the switch the Linux graphics backend is being
 built behind, stage by stage; it is off by default while the 2D tier of

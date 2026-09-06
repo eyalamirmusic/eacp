@@ -21,7 +21,8 @@ nano_add_executable(UITests
         TARGETS eacp-ui eacp-sprites)
 
 # ModuleShaderTests emits every shader this tier builds as GLSL and compiles
-# it with glslang, so a dialect regression in one of them fails here rather
-# than on the one lane with a Vulkan device. The helper is defined in
-# Tests/GPU, which Tests/CMakeLists.txt adds before this directory.
+# it with glslang wherever eacp-spirv is built, so a dialect regression in one
+# of them fails at compile time rather than as a wrong pixel on the one lane
+# with a Vulkan device. The helper is defined in Tests/GPU, which
+# Tests/CMakeLists.txt adds before this directory.
 eacp_enable_glsl_compile_checks(UITests)
