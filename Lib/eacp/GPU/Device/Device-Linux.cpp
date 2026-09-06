@@ -118,13 +118,18 @@ void* Device::nativeTextureCache() const
     return nullptr;
 }
 
-void* Device::nativeSampler(TextureSampling) const
+// One VkSampler per sampling configuration, made once with the device and
+// shared by every texture bound that way - which is what a sampler is. A GLSL
+// texture binding is a combined image sampler, so this travels with the image
+// in the descriptor write rather than being bound on its own; the bind sites
+// take it straight off VulkanShared and this exists for the callers outside the
+// backend that ask a Device for one.
+void* Device::nativeSampler(TextureSampling sampling) const
 {
-    // Nothing to hand back until there is a Texture to sample. A GLSL texture
-    // binding is a combined image sampler, so the VkSampler travels with the
-    // image in the descriptor write rather than being bound on its own - which
-    // is where the four sampling configurations will be built (stage 3).
-    return nullptr;
+    if (!isValid())
+        return nullptr;
+
+    return getVulkanShared().getSampler(sampling);
 }
 
 void Device::trackSubmittedWork(void*)

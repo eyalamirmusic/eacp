@@ -86,13 +86,16 @@ a title, a frame and a content view but put nothing on a screen, and honest
 stubs for the display, image codecs, menus, keyboard state and the tray. There
 is no 2D drawing context and no `Font` there yet — `Path` exists, but only as
 recorded geometry — so `Context`, `TextInput` and the retained layer classes
-are simply absent rather than stubbed. And the compute half of a Vulkan backend
-under it: `Device`, `Buffer`, `ShaderLibrary`, `ComputePipeline`,
-`ComputePass`, `CommandBuffer` and `GpuTimestamps` are real, while `Texture`,
-`RenderPipeline`, `RenderPass`, `Frame` and `GPUView` are placeholders that
-report themselves invalid rather than pretending. It is off by default; what it
-is for is the staged rollout, and it links and passes its tests on a machine
-with no display server at all.
+are simply absent rather than stubbed. And a Vulkan backend under it that
+draws off-screen: `Device`, `Buffer`, `ShaderLibrary`, `ComputePipeline`,
+`ComputePass`, `CommandBuffer`, `GpuTimestamps`, `Texture`, `RenderPipeline`,
+`RenderPass` and the off-screen `Frame` are real, and `GPUView` renders into an
+off-screen target and reads it back, which is the path every pixel test rides.
+Only the surface is missing: the swapchain half of `GPUView` and the drawable
+`Frame` constructor report themselves invalid rather than pretending, until the
+Wayland window lands. It is off by default; what it is for is the staged
+rollout, and it links and passes its tests — all of `Tests/GPU` on Mesa's
+lavapipe — on a machine with no display server at all.
 
 The top-level `CMakeLists.txt` decides this once, in five capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.

@@ -1,5 +1,7 @@
 #include "CoverageProbe.h"
 
+#include <eacp/Core/Utils/Environment.h>
+
 #include <NanoTest/NanoTest.h>
 
 #include <cmath>
@@ -429,4 +431,47 @@ auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
                       + std::to_string(counted));
         }
     }
+};
+
+// The mirror of Tests/GPU/DevicePresenceTests, and the answer to the same
+// failure mode one level down.
+//
+// Every comparison above reads its coverage through probe::rasterize, which
+// hands back an empty vector when the mask texture is invalid - and an empty
+// vector makes each of them skip and report a pass. That guard is right: a
+// backend without textures should not fail a rasterization test for not having
+// any. But it means the whole directory can go green having rasterized nothing,
+// which is exactly what the Linux lane did while Texture was a placeholder.
+//
+// So under EACP_REQUIRE_GPU=1 - the same switch that says a device is expected -
+// a mask is expected too. It is checked at the source, on the texture
+// PathRasterizer::dispatch writes, rather than on any one comparison's result.
+auto tCoverageIsPresentWhenRequired =
+    test("PathRasterizer/coverageIsPresentWhenRequired") = []
+{
+    if (getEnvValue("EACP_REQUIRE_GPU") != "1" || !GPU::Device::shared().isValid())
+        return;
+
+    auto path = Path {};
+    path.addEllipse({0.f, 0.f, 64.f, 64.f});
+
+    auto rasterizer = PathRasterizer {};
+    rasterizer.setScale(1.f);
+    rasterizer.setPath(path, FillRule::NonZero);
+
+    check(!rasterizer.isEmpty());
+
+    auto commands = GPU::Device::shared().makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        rasterizer.dispatch(pass);
+    }
+
+    commands.commit();
+
+    check(rasterizer.getCoverage().isValid(),
+          "EACP_REQUIRE_GPU=1 but the rasterizer has no coverage texture - "
+          "every comparison in this directory would have skipped and reported "
+          "a pass");
 };

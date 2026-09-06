@@ -43,11 +43,13 @@ struct Buffer::Native
 {
     Native(Device& device,
            const void* data,
-           std::size_t bytes,
+           int byteCount,
            BufferUsage usage,
            BufferStorage storage)
         : context(getVulkanContext(device))
     {
+        const auto bytes = (std::size_t) (byteCount > 0 ? byteCount : 0);
+
         bufferData.size = bytes;
 
         if (!context.isValid() || bytes == 0)
@@ -165,12 +167,17 @@ struct Buffer::Native
     // what keeps it correct: the copy lands in order, before the dispatch that
     // wanted the bytes, so two flushes of the same program in one frame each
     // read what they were given.
+    //
+    // The exception is a render pass instance, where a copy is illegal rather
+    // than merely out of order and getRecordingForCopy hands back nothing - so
+    // the branch below takes a recording of its own, exactly as it does outside
+    // a frame.
     bool stage(const void* data, std::size_t bytes, std::size_t destination = 0)
     {
         if (bufferData.buffer == VK_NULL_HANDLE)
             return false;
 
-        auto* commands = context.getOpenRecording();
+        auto* commands = context.getRecordingForCopy();
         const auto ownsRecording = commands == nullptr;
 
         if (ownsRecording)
@@ -229,7 +236,7 @@ struct Buffer::Native
 
 Buffer::Buffer(Device& device,
                const void* data,
-               std::size_t bytes,
+               int bytes,
                BufferUsage usage,
                BufferStorage storage)
     : impl(device, data, bytes, usage, storage)
@@ -240,9 +247,9 @@ Buffer::Buffer(Device& device,
         device.noteBufferCreated();
 }
 
-std::size_t Buffer::size() const
+int Buffer::size() const
 {
-    return impl->bufferData.size;
+    return (int) impl->bufferData.size;
 }
 
 bool Buffer::isValid() const
@@ -250,10 +257,14 @@ bool Buffer::isValid() const
     return impl->bufferData.buffer != VK_NULL_HANDLE;
 }
 
-void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
+void Buffer::read(void* dst, int byteCount, int byteOffset) const
 {
-    if (impl->bufferData.buffer == VK_NULL_HANDLE || offset >= impl->bufferData.size)
+    if (impl->bufferData.buffer == VK_NULL_HANDLE || byteCount <= 0 || byteOffset < 0
+        || (std::size_t) byteOffset >= impl->bufferData.size)
         return;
+
+    const auto offset = (std::size_t) byteOffset;
+    const auto bytes = (std::size_t) byteCount;
 
     const auto available = impl->bufferData.size - offset;
     const auto count = bytes < available ? bytes : available;
@@ -315,14 +326,18 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
     std::memcpy(dst, mapped, count);
 }
 
-void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
+void Buffer::update(const void* data, int byteCount, int byteOffset)
 {
-    if (impl->bufferData.buffer == VK_NULL_HANDLE || data == nullptr || bytes == 0
-        || offset >= impl->bufferData.size)
+    if (impl->bufferData.buffer == VK_NULL_HANDLE || data == nullptr
+        || byteCount <= 0 || byteOffset < 0
+        || (std::size_t) byteOffset >= impl->bufferData.size)
         return;
 
     if (!impl->context.isValid())
         return;
+
+    const auto offset = (std::size_t) byteOffset;
+    const auto bytes = (std::size_t) byteCount;
 
     const auto available = impl->bufferData.size - offset;
     const auto count = bytes < available ? bytes : available;

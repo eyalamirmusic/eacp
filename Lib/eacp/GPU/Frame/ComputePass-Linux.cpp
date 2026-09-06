@@ -27,6 +27,13 @@
 //
 // A memory barrier after every dispatch orders chained kernels, exactly as the
 // D3D12 backend's UAV barrier does.
+//
+// A texture bind is the one place the *shader* has a say in what the descriptor
+// is. The binding map gives a slot one number whether the kernel samples it or
+// writes it, and Vulkan gives one binding one descriptor type, so which of the
+// two a slot takes is read out of the module and carried on the pipeline - see
+// VulkanTextureBindings. Every bind also moves the image, which is the other
+// half a buffer does not have.
 
 namespace eacp::GPU
 {
@@ -54,7 +61,7 @@ struct ComputePass::Native
         if (set == VK_NULL_HANDLE)
             return false;
 
-        VkWriteDescriptorSet writes[maxBufferSlots + 1] = {};
+        VkWriteDescriptorSet writes[maxBufferSlots + maxTextureSlots + 1] = {};
         auto writeCount = std::uint32_t {0};
 
         for (auto slot = 0; slot < maxBufferSlots; ++slot)
@@ -70,6 +77,36 @@ struct ComputePass::Native
             write.descriptorCount = 1;
             write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             write.pBufferInfo = &buffers[slot];
+        }
+
+        // A texture is written at the type the *kernel* declared the slot with,
+        // which is what the layout gave the binding and the only type a write
+        // to it may name. A bind the kernel did not ask for - a slot it never
+        // declared, or an input where it declared an output - has no binding to
+        // land on and is dropped, which is what the other two backends do with
+        // a slot past their own ceiling.
+        for (auto slot = 0; slot < maxTextureSlots; ++slot)
+        {
+            if (!pipeline->textures.has(slot))
+                continue;
+
+            const auto type = pipeline->textures.typeAt(slot);
+            const auto bound =
+                type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ? sampledTextures
+                : type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE        ? storageTextures
+                                                                  : 0u;
+
+            if ((bound & (1u << slot)) == 0)
+                continue;
+
+            auto& write = writes[writeCount++];
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = set;
+            write.dstBinding =
+                static_cast<std::uint32_t>(vulkanComputeTextureBinding(slot));
+            write.descriptorCount = 1;
+            write.descriptorType = type;
+            write.pImageInfo = &textures[slot];
         }
 
         VkDescriptorBufferInfo uniformInfo = {};
@@ -119,6 +156,15 @@ struct ComputePass::Native
 
     VkDescriptorBufferInfo buffers[maxBufferSlots] = {};
     std::uint32_t boundBuffers = 0;
+
+    // The image, view and layout each texture slot was bound with, and which of
+    // the two ways it was bound. Two masks rather than one because a slot bound
+    // the way the kernel did not declare it has to be dropped rather than
+    // written at the wrong descriptor type, and the mask is what says which way
+    // it was.
+    VkDescriptorImageInfo textures[maxTextureSlots] = {};
+    std::uint32_t sampledTextures = 0;
+    std::uint32_t storageTextures = 0;
 
     ConstantRange uniforms;
 };
@@ -184,22 +230,70 @@ void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
     impl->boundBuffers |= 1u << slot;
 }
 
-// Both texture binds are no-ops until stage 3. A Texture on Linux is a
-// placeholder with nothing behind it, so there is no image and no view to write
-// into a descriptor - and a kernel that declares one is already refused a
-// pipeline (ComputePipeline-Linux.cpp), so nothing reaches a dispatch expecting
-// a texture it did not get.
-void ComputePass::setInputTexture(const Texture&, int, TextureSampling) {}
-
-void ComputePass::setOutputTexture(const Texture&, int) {}
-
-void ComputePass::setBytes(const void* data, std::size_t bytes, int slot)
+// A combined image sampler: GLSL has no separate sampler declaration, so the
+// sampler the *shader* asked for travels with the image in the one descriptor
+// rather than being bound on its own. See TextureSampling, which is why the
+// sampling is an argument here rather than a property of the texture.
+//
+// The image is moved to where it can be sampled, which for an ordinary texture
+// is SHADER_READ_ONLY_OPTIMAL and for a computeWrite one is the GENERAL it
+// already rests in - a sampler reads GENERAL, so a texture a kernel wrote and
+// the next kernel reads needs no layout change at all, only the memory barrier
+// the dispatch before it already recorded.
+void ComputePass::setInputTexture(const Texture& texture,
+                                  int slot,
+                                  TextureSampling sampling)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || !data->isValid())
+        return;
+
+    const auto sampler = getVulkanShared().getSampler(sampling);
+
+    if (sampler == VK_NULL_HANDLE)
+        return;
+
+    const auto& target = data->restingUse();
+    transitionTextureForUse(impl->commandBuffer(), *data, target);
+
+    impl->textures[slot] = {sampler, data->sampledView, target.layout};
+    impl->sampledTextures |= 1u << slot;
+    impl->storageTextures &= ~(1u << slot);
+}
+
+// A storage image in GENERAL, and no sampler: there is nothing to sample it
+// with and nothing to read, imageStore being the only thing a kernel does with
+// one. A texture that was not created computeWrite has no view to bind through
+// and is dropped, which is what ComputePass::setOutputTexture documents.
+void ComputePass::setOutputTexture(const Texture& texture, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || !data->isValid() || !data->isComputeWritable())
+        return;
+
+    transitionTextureForUse(impl->commandBuffer(), *data, imageStorage);
+
+    impl->textures[slot] = {VK_NULL_HANDLE, data->storageView, imageStorage.layout};
+    impl->storageTextures |= 1u << slot;
+    impl->sampledTextures &= ~(1u << slot);
+}
+
+void ComputePass::setBytes(const void* data, int bytes, int slot)
+{
+    if (!impl->encoder || bytes <= 0 || slot < 0 || slot >= maxUniformSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
-    impl->uniforms = commands.context->uploadConstants(commands, data, bytes);
+    impl->uniforms =
+        commands.context->uploadConstants(commands, data, (std::size_t) bytes);
 }
 
 void ComputePass::dispatch(int count)

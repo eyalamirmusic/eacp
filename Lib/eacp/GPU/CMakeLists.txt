@@ -103,10 +103,11 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 else ()
-    # The Vulkan backend. Compute, buffers, command buffers and timestamps are
-    # real; Texture, RenderPipeline, RenderPass, Frame and GPUView are honest
-    # placeholders that report themselves invalid until the render half lands
-    # (stage 3 of plan.md). Each of those files says so at the top.
+    # The Vulkan backend, compute and render halves both. What is left for
+    # stage 4 of plan.md is the surface: GPUView has its off-screen snapshot and
+    # no swapchain, so paint() and renderNow() do nothing, and Frame's drawable
+    # constructor is still a placeholder where its off-screen one is real. Both
+    # files say so at the top.
     if (NOT TARGET eacp-spirv)
         message(FATAL_ERROR
                 "EACP_LINUX_GRAPHICS needs the SPIR-V compiler: the Vulkan "

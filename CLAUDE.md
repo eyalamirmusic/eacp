@@ -116,15 +116,17 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   the portable view tree with `View-Linux.cpp` under it, windows with no surface
   (`Window-Linux.cpp`), a timer-paced `DisplayLink`, and stubs for the display,
   image codecs, menus, tray, keyboard state and system appearance — plus the
-  compute half of the Vulkan backend under it (`GPU/Vulkan/`): `Device`,
-  `Buffer`, `ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer`
-  and `GpuTimestamps` are real, and `Texture`, `RenderPipeline`, `RenderPass`,
-  `Frame` and `GPUView` are placeholders that report themselves invalid until
-  the render half lands. No 2D `Context`, so `Font`, `TextMetrics`,
-  `TextInput`, `EmbeddedView` and the retained layer classes are left out of the
-  Linux source list rather than stubbed; `Path` is there as recorded geometry
-  only (`Primitives/Path-Linux.h`). `GraphicsTests` runs 118 cases there,
-  `GPUTests` 21 and `GPUWidgetsTests` 53.
+  Vulkan backend under it (`GPU/Vulkan/`), which draws off-screen: `Device`,
+  `Buffer`, `ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer`,
+  `GpuTimestamps`, `Texture`, `RenderPipeline`, `RenderPass` and the off-screen
+  `Frame` are real, and `GPUView::renderNativeContent` renders into an
+  off-screen target and reads it back. Only the surface is missing: the
+  swapchain half of `GPUView` and the drawable `Frame` constructor report
+  themselves invalid until the Wayland window lands (stage 4). No 2D `Context`,
+  so `Font`, `TextMetrics`, `TextInput`, `EmbeddedView` and the retained layer
+  classes are left out of the Linux source list rather than stubbed; `Path` is
+  there as recorded geometry only (`Primitives/Path-Linux.h`). Every GPU test
+  but the Metal-only `TextureInteropTests.mm` runs there on lavapipe.
 
 ```bash
 docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \

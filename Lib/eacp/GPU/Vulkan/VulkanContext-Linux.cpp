@@ -237,18 +237,172 @@ bool familyWritesTimestamps(VkPhysicalDevice candidate, std::uint32_t family)
 
     return families[static_cast<int>(family)].timestampValidBits > 0;
 }
+
+void addLayoutBinding(Vector<VkDescriptorSetLayoutBinding>& bindings,
+                      int binding,
+                      VkDescriptorType type,
+                      VkShaderStageFlags stages)
+{
+    VkDescriptorSetLayoutBinding entry = {};
+    entry.binding = static_cast<std::uint32_t>(binding);
+    entry.descriptorType = type;
+    entry.descriptorCount = 1;
+    entry.stageFlags = stages;
+
+    bindings.add(entry);
+}
+
+// The two vkCreate calls both layouts end in, and the one flag they both carry.
+//
+// Partially bound, so a shader that binds three of the eight buffer slots leaves
+// the other five unwritten instead of needing a dummy descriptor each - which is
+// what the D3D12 backend has to do for Tier 1 hardware (bindComputeRootState)
+// and what this feature exists to avoid.
+bool makePipelineLayouts(VkDevice device,
+                         const Vector<VkDescriptorSetLayoutBinding>& bindings,
+                         PipelineLayouts& layouts)
+{
+    auto flags = Vector<VkDescriptorBindingFlags> {};
+    flags.resize(bindings.size(), VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags = {};
+    bindingFlags.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    bindingFlags.bindingCount = static_cast<std::uint32_t>(flags.size());
+    bindingFlags.pBindingFlags = flags.data();
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.pNext = &bindingFlags;
+    layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &layouts.setLayout)
+        != VK_SUCCESS)
+        return false;
+
+    VkPipelineLayoutCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineInfo.setLayoutCount = 1;
+    pipelineInfo.pSetLayouts = &layouts.setLayout;
+
+    if (vkCreatePipelineLayout(
+            device, &pipelineInfo, nullptr, &layouts.pipelineLayout)
+        == VK_SUCCESS)
+        return true;
+
+    vkDestroyDescriptorSetLayout(device, layouts.setLayout, nullptr);
+    layouts.setLayout = VK_NULL_HANDLE;
+
+    return false;
+}
+
+// One of the four sampling configurations as a VkSampler, decoded from the
+// index rather than from a TextureSampling so the loop that builds them is the
+// one place that has to agree with samplingIndex's packing.
+//
+// Mip filtering follows the same filter, which is what both other backends do:
+// a Linear slot samples between levels as well as within one, and a Nearest
+// slot - pixel art, a mask, an index texture - gets neither. maxLod is
+// unbounded so a texture's whole chain is reachable; one with a single level
+// clamps to it on its own.
+VkSampler makeSampler(VkDevice device, int index)
+{
+    const auto linear = (index & 2) != 0;
+    const auto repeat = (index & 1) != 0;
+
+    const auto filter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    const auto address = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT
+                                : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+    VkSamplerCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = filter;
+    info.minFilter = filter;
+    info.mipmapMode =
+        linear ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    info.addressModeU = address;
+    info.addressModeV = address;
+    info.addressModeW = address;
+    info.maxLod = VK_LOD_CLAMP_NONE;
+    info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+
+    auto sampler = VkSampler {VK_NULL_HANDLE};
+
+    if (vkCreateSampler(device, &info, nullptr, &sampler) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+
+    return sampler;
+}
 } // namespace
 
 // ------------------------------------------------------------- SPIR-V reading
 
-bool spirvBindsTextureRange(const Vector<std::uint32_t>& words)
+VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
+                                           int firstBinding)
 {
+    auto bindings = VulkanTextureBindings {};
+
+    // Magic number, version, generator, id bound, schema. The bound is one past
+    // the largest <id> the module uses, which is what the tables below are
+    // sized by - SPIR-V ids are dense and start at 1, so an array indexed by id
+    // is the cheapest map there is.
     constexpr auto headerWords = 5;
+
+    if (words.size() <= headerWords)
+        return bindings;
+
+    constexpr auto opTypeImage = std::uint32_t {25};
+    constexpr auto opTypeSampledImage = std::uint32_t {27};
+    constexpr auto opTypePointer = std::uint32_t {32};
+    constexpr auto opVariable = std::uint32_t {59};
     constexpr auto opDecorate = std::uint32_t {71};
     constexpr auto decorationBinding = std::uint32_t {33};
 
-    constexpr auto firstTextureBinding = ComputePass::textureRegisterBase;
-    constexpr auto lastTextureBinding = firstTextureBinding + maxTextureSlots;
+    // OpTypeImage's Sampled operand: 1 is an image that will be read through a
+    // sampler, 2 one a shader reads or writes with the image instructions. The
+    // emitter produces exactly two shapes - a `sampler2D`, which is an
+    // OpTypeSampledImage over a Sampled=1 image, and a `writeonly image2D`,
+    // which is a bare Sampled=2 image - so this is the operand that separates a
+    // COMBINED_IMAGE_SAMPLER from a STORAGE_IMAGE.
+    constexpr auto sampledThroughASampler = std::uint32_t {1};
+
+    const auto bound = static_cast<int>(words[3]);
+
+    if (bound <= 0)
+        return bindings;
+
+    // What each id turned out to be. Three parallel tables rather than a struct
+    // per id, because two of them are only ever read for a handful of ids and
+    // the third for one.
+    enum class IdKind
+    {
+        unknown,
+        sampledImage, // OpTypeSampledImage: a combined image sampler
+        storageImage, // OpTypeImage with Sampled = 2
+        readImage // OpTypeImage with Sampled = 1, unpaired
+    };
+
+    auto kinds = Vector<IdKind> {};
+    kinds.resize(bound, IdKind::unknown);
+
+    // For an OpTypePointer, the id of what it points at; 0 for everything else.
+    auto pointee = Vector<std::uint32_t> {};
+    pointee.resize(bound, 0u);
+
+    // Result id and result *type* id of every module-scope OpVariable that
+    // carries a Binding decoration in range, paired with the slot it names.
+    // Collected rather than resolved inline because a valid module puts its
+    // annotations ahead of its types, so the pointer a variable's type names is
+    // not known yet when the decoration is read.
+    auto variableType = Vector<std::uint32_t> {};
+    variableType.resize(bound, 0u);
+
+    auto slotOfId = Vector<int> {};
+    slotOfId.resize(bound, -1);
+
+    const auto inRange = [&](std::uint32_t id)
+    { return id < (std::uint32_t) bound; };
 
     auto index = headerWords;
 
@@ -260,27 +414,79 @@ bool spirvBindsTextureRange(const Vector<std::uint32_t>& words)
 
         // A zero-length instruction cannot be stepped over, and a length past
         // the end means the module is not what it says it is. Either way there
-        // is nothing further to read, and answering "no textures" leaves the
-        // failure to the driver, which has a better message for it.
+        // is nothing further to read, and answering with what was found so far
+        // leaves the failure to the driver, which has a better message for it.
         if (wordCount <= 0 || index + wordCount > words.size())
-            return false;
+            break;
 
-        // OpDecorate <target> Binding <value>: four words, and the only place a
-        // binding number is written. Member decorations are a different opcode,
-        // so nothing inside a block is mistaken for one.
         if (opcode == opDecorate && wordCount >= 4
-            && words[index + 2] == decorationBinding)
+            && words[index + 2] == decorationBinding && inRange(words[index + 1]))
         {
-            const auto binding = static_cast<int>(words[index + 3]);
+            const auto slot = static_cast<int>(words[index + 3]) - firstBinding;
 
-            if (binding >= firstTextureBinding && binding < lastTextureBinding)
-                return true;
+            if (slot >= 0 && slot < maxTextureSlots)
+                slotOfId[static_cast<int>(words[index + 1])] = slot;
+        }
+        else if (opcode == opTypeImage && wordCount >= 9
+                 && inRange(words[index + 1]))
+        {
+            kinds[static_cast<int>(words[index + 1])] =
+                words[index + 7] == sampledThroughASampler ? IdKind::readImage
+                                                           : IdKind::storageImage;
+        }
+        else if (opcode == opTypeSampledImage && wordCount >= 3
+                 && inRange(words[index + 1]))
+        {
+            kinds[static_cast<int>(words[index + 1])] = IdKind::sampledImage;
+        }
+        else if (opcode == opTypePointer && wordCount >= 4
+                 && inRange(words[index + 1]))
+        {
+            pointee[static_cast<int>(words[index + 1])] = words[index + 3];
+        }
+        else if (opcode == opVariable && wordCount >= 4 && inRange(words[index + 2]))
+        {
+            variableType[static_cast<int>(words[index + 2])] = words[index + 1];
         }
 
         index += wordCount;
     }
 
-    return false;
+    for (auto id = 0; id < bound; ++id)
+    {
+        const auto slot = slotOfId[id];
+
+        if (slot < 0 || variableType[id] == 0u || !inRange(variableType[id]))
+            continue;
+
+        const auto pointed = pointee[static_cast<int>(variableType[id])];
+
+        if (!inRange(pointed))
+            continue;
+
+        // A binding in the texture range that points at neither kind of image -
+        // which nothing the emitter writes does - is left undeclared rather
+        // than guessed at, so the layout describes only what was recognised.
+        switch (kinds[static_cast<int>(pointed)])
+        {
+            case IdKind::sampledImage:
+                bindings.add(slot, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                break;
+
+            case IdKind::storageImage:
+                bindings.add(slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+                break;
+
+            case IdKind::readImage:
+                bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+                break;
+
+            case IdKind::unknown:
+                break;
+        }
+    }
+
+    return bindings;
 }
 
 // ---------------------------------------------------------------- the shared
@@ -297,11 +503,18 @@ VulkanShared::~VulkanShared()
 
     if (device != VK_NULL_HANDLE)
     {
-        if (computeLayouts.pipelineLayout != VK_NULL_HANDLE)
-            vkDestroyPipelineLayout(device, computeLayouts.pipelineLayout, nullptr);
+        for (auto& sampler: samplers)
+            if (sampler != VK_NULL_HANDLE)
+                vkDestroySampler(device, sampler, nullptr);
 
-        if (computeLayouts.setLayout != VK_NULL_HANDLE)
-            vkDestroyDescriptorSetLayout(device, computeLayouts.setLayout, nullptr);
+        for (const auto& layouts: {computeLayouts, renderLayouts})
+        {
+            if (layouts.pipelineLayout != VK_NULL_HANDLE)
+                vkDestroyPipelineLayout(device, layouts.pipelineLayout, nullptr);
+
+            if (layouts.setLayout != VK_NULL_HANDLE)
+                vkDestroyDescriptorSetLayout(device, layouts.setLayout, nullptr);
+        }
 
         vkDestroyDevice(device, nullptr);
     }
@@ -330,9 +543,23 @@ void VulkanShared::createAll()
     createDebugMessenger();
 
     if (!selectPhysicalDevice() || !createDevice() || !createAllocator()
-        || !createComputeLayouts())
+        || !createComputeLayouts() || !createRenderLayouts())
     {
         return;
+    }
+
+    // One sampler per configuration, made here rather than per texture: a
+    // sampling configuration belongs to the shader that declared it, and a
+    // combined image sampler descriptor pairs whichever of these the shader
+    // asked for with the image being bound. Logged rather than fatal - a driver
+    // that cannot make four samplers has larger problems, and the bind sites
+    // already drop a texture whose sampler is null.
+    for (auto index = 0; index < samplingConfigurations; ++index)
+    {
+        samplers[index] = makeSampler(device, index);
+
+        if (samplers[index] == VK_NULL_HANDLE)
+            LOG("Vulkan: sampler ", index, " could not be created");
     }
 
     // The 90 ms glslang spends building its built-in symbol tables, paid here
@@ -562,7 +789,8 @@ bool VulkanShared::createAllocator()
     return vmaCreateAllocator(&info, &allocator) == VK_SUCCESS;
 }
 
-bool VulkanShared::createComputeLayouts()
+PipelineLayouts makeComputeLayouts(VkDevice device,
+                                   const VulkanTextureBindings& textures)
 {
     // The set a kernel binds, laid out exactly as Codegen/ShaderBindings.h
     // prints it: storage buffers from binding 0, textures from
@@ -572,69 +800,89 @@ bool VulkanShared::createComputeLayouts()
     // dispatches share one constant page and differ only in the offset handed
     // to vkCmdBindDescriptorSets.
     //
-    // The texture range is declared as combined image samplers and is not
-    // written by anything yet: a Texture on Linux is a stage-3 placeholder, so
-    // there is nothing to put in one. It is reserved rather than left out
-    // because the binding numbers above it depend on its width, and because a
-    // module that declares something there is refused a pipeline (see
-    // spirvBindsTextureRange) rather than silently mismatched.
+    // Only the texture slots the module actually declares get a binding, and
+    // each gets the type it was declared with - a sampler2D is a
+    // COMBINED_IMAGE_SAMPLER and a writeonly image2D a STORAGE_IMAGE, and one
+    // binding cannot be both. That is why the texture half of this is per
+    // pipeline where the rest is shared; see VulkanTextureBindings. A slot the
+    // kernel never named has no binding here, and a bind to it is dropped by
+    // the pass rather than written into a descriptor the shader cannot read.
+    auto layouts = PipelineLayouts {};
+
     auto bindings = Vector<VkDescriptorSetLayoutBinding> {};
-    auto flags = Vector<VkDescriptorBindingFlags> {};
 
     const auto addBinding = [&](int binding, VkDescriptorType type)
-    {
-        VkDescriptorSetLayoutBinding entry = {};
-        entry.binding = static_cast<std::uint32_t>(binding);
-        entry.descriptorType = type;
-        entry.descriptorCount = 1;
-        entry.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-        bindings.add(entry);
-
-        // Partially bound, so a kernel that binds three of the eight buffer
-        // slots leaves the other five unwritten instead of needing a dummy
-        // descriptor each - which is what the D3D12 backend has to do for Tier
-        // 1 hardware (bindComputeRootState) and what this feature exists to
-        // avoid.
-        flags.add(VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
-    };
+    { addLayoutBinding(bindings, binding, type, VK_SHADER_STAGE_COMPUTE_BIT); };
 
     for (auto slot = 0; slot < maxBufferSlots; ++slot)
         addBinding(vulkanComputeBufferBinding(slot),
                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
-        addBinding(vulkanComputeTextureBinding(slot),
-                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        if (textures.has(slot))
+            addBinding(vulkanComputeTextureBinding(slot), textures.typeAt(slot));
 
     addBinding(vulkanComputeUniformBinding,
                VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
 
-    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags = {};
-    bindingFlags.sType =
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    bindingFlags.bindingCount = static_cast<std::uint32_t>(flags.size());
-    bindingFlags.pBindingFlags = flags.data();
+    if (!makePipelineLayouts(device, bindings, layouts))
+        return {};
 
-    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.pNext = &bindingFlags;
-    layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
-    layoutInfo.pBindings = bindings.data();
+    return layouts;
+}
 
-    if (vkCreateDescriptorSetLayout(
-            device, &layoutInfo, nullptr, &computeLayouts.setLayout)
-        != VK_SUCCESS)
-        return false;
+bool VulkanShared::createRenderLayouts()
+{
+    // The set a graphics pipeline binds, laid out exactly as
+    // Codegen/ShaderBindings.h prints it for a render shader: the uniform block
+    // at vulkanUniformBinding, the maxTextureSlots textures above it, the
+    // storage buffers from RenderPass::bufferBase. The compute set is the same
+    // three kinds at different numbers, which is the whole reason there are two.
+    //
+    // Every binding is visible to both stages, because one GLSL global is one
+    // binding whichever stage reads it: the emitter writes the uniform block,
+    // the samplers and the buffer blocks outside the EACP_VERTEX / EACP_FRAGMENT
+    // guards, so the vertex and fragment modules of one program declare the same
+    // numbers and a set written once serves both.
+    //
+    // The samplers are not immutable. A combined image sampler with
+    // pImmutableSamplers set would pin the filtering into the *layout*, and the
+    // sampling a slot wants is a property of the texture bound into it - so it
+    // would need a layout, and therefore a pipeline layout, per sampling
+    // combination a shader happens to declare. The sampler travels with the
+    // image in the descriptor write instead.
+    auto bindings = Vector<VkDescriptorSetLayoutBinding> {};
 
-    VkPipelineLayoutCreateInfo pipelineInfo = {};
-    pipelineInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineInfo.setLayoutCount = 1;
-    pipelineInfo.pSetLayouts = &computeLayouts.setLayout;
+    const auto addBinding = [&](int binding, VkDescriptorType type)
+    {
+        addLayoutBinding(bindings,
+                         binding,
+                         type,
+                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    };
 
-    return vkCreatePipelineLayout(
-               device, &pipelineInfo, nullptr, &computeLayouts.pipelineLayout)
-           == VK_SUCCESS;
+    addBinding(vulkanUniformBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
+
+    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+        addBinding(vulkanTextureBinding(slot),
+                   VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+    for (auto slot = 0; slot < maxBufferSlots; ++slot)
+        addBinding(vulkanBufferBinding(slot), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    return makePipelineLayouts(device, bindings, renderLayouts);
+}
+
+bool VulkanShared::createComputeLayouts()
+{
+    // The layout every kernel that declares no texture binds through, which is
+    // most of them - built once here rather than per pipeline. A kernel that
+    // does declare one needs a layout of its own, the descriptor type of a
+    // texture binding being a property of the module rather than of the binding
+    // map; see ComputePipeline-Linux.cpp.
+    computeLayouts = makeComputeLayouts(device, {});
+
+    return computeLayouts.isValid();
 }
 
 VulkanShared& getVulkanShared()
@@ -1451,10 +1699,16 @@ VkDescriptorSet VulkanContext::allocateDescriptorSet(CommandContext& commands,
         ++commands.descriptorCursor;
     }
 
+    // Both image types at the full texture width, because which of the two a
+    // slot takes is decided per shader (VulkanTextureBindings) and a pool is
+    // shared by every set a recording allocates. The overcount is descriptor
+    // headroom in a pool that is reset with the recording, not memory.
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxBufferSlots)},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, vulkanSetsPerDescriptorPool}};
 

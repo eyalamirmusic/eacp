@@ -29,85 +29,67 @@ if (NOT EACP_HAS_GPU)
     return ()
 endif ()
 
-# Everything here runs on every backend, which on Linux means the compute and
-# buffer half of the Vulkan backend and nothing else - no Texture, no
-# RenderPipeline, no Frame. A file joins this list when every case in it either
-# needs none of those or self-skips on the object it needs; the rest are in the
-# APPLE OR WIN32 list below, each with the reason it is there.
+# Everything here runs on every backend. That now includes the drawing half:
+# the snapshot path each of these rides - a GPUView rendered through an
+# off-screen Frame and read back with View::renderToImage - is Metal textures on
+# Apple, D3D12 off-screen render targets on Windows and a Vulkan render target
+# on Linux, and every case self-skips without a device.
+#
+# The drawing files are here rather than behind a platform test because a
+# scissor, a viewport, a blend mode or a cull mode has no CPU-side observable:
+# the only way to check one is to draw through it and compare the pixels that
+# come back, which is why so much of this directory needs a real frame.
+#
+# Only TextureInteropTests.mm is platform-gated, below, and it is gated on the
+# API it wraps rather than on a backend's maturity.
 set(gpu_test_sources
         AtomicTests.cpp
+        BackingScaleTests.cpp
+        BaseVertexTests.cpp
+        BlendStateTests.cpp
         BufferRangeTests.cpp
+        CompressedTextureTests.cpp
+        CoordinateSpaceTests.cpp
+        CubeTextureTests.cpp
+        CullModeTests.cpp
+        DepthActionTests.cpp
+        DepthTextureTests.cpp
         DevicePresenceTests.cpp
+        ExternalGeometryTests.cpp
+        FrameComputeTests.cpp
+        FrameTimingTests.cpp
+        GPUSmokeTests.cpp
+        GPUSnapshotTests.cpp
         IndirectDispatchTests.cpp
+        MipmapTests.cpp
+        MultiDeviceTests.cpp
+        MultisampledTargetTests.cpp
         PackedHalfTests.cpp
+        PipelineStateTests.cpp
+        RenderTargetDepthTests.cpp
+        RenderTargetTests.cpp
+        ScissorTests.cpp
+        ShaderBlendTests.cpp
+        ShaderCompileTests.cpp
         SharedMemoryTests.cpp
+        SpriteBatchTests.cpp
+        StencilTests.cpp
         StorePlacementTests.cpp
+        StreamedRangeDrawTests.cpp
         StreamingBufferTests.cpp
+        SuppliedMipChainTests.cpp
+        TextureCreationTests.cpp
+        TextureReadTests.cpp
+        TextureRegionTests.cpp
+        TextureSamplingTests.cpp
+        TextureUpdateTests.cpp
+        VertexFormatTests.cpp
+        ViewportTests.cpp
         TestMain.cpp)
 
 # The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
 if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm)
-endif ()
-
-# GPU snapshot read-back (View::renderToImage over a GPUView): Metal off-screen
-# textures on Apple, D3D12 off-screen render targets on Windows. The scissor
-# tests ride the same off-screen path — a scissor rect has no CPU-side
-# observable, so the only way to check one is to draw through it and read the
-# pixels back.
-if (APPLE OR WIN32)
-    # Four of these are here because of the Linux render half rather than
-    # because of a snapshot, and each names what has to arrive before it moves
-    # back to the list above:
-    #
-    #   GPUSmokeTests      builds a RenderPipeline and a Texture and asserts
-    #                      both are valid - needs Texture and RenderPipeline.
-    #   ShaderCompileTests every case compiles a generated source into a
-    #                      RenderPipeline - needs RenderPipeline.
-    #   TextureUpdateTests re-uploads into a Texture and asserts it stays valid
-    #                      and sized - needs Texture.
-    #   MultiDeviceTests   asserts two Devices have two queues. Vulkan hands
-    #                      queues out of a family with a driver-decided count,
-    #                      and lavapipe offers one, so two Devices there share
-    #                      the VkQueue and the pointers are equal. Everything
-    #                      else the file pins - independent pools, a Device on a
-    #                      worker thread, the shared Device staying with the
-    #                      main one - already holds on Vulkan; only that one
-    #                      assertion cannot, and only on a single-queue device.
-    list(APPEND gpu_test_sources
-            GPUSmokeTests.cpp
-            ShaderCompileTests.cpp
-            TextureUpdateTests.cpp
-            MultiDeviceTests.cpp
-            GPUSnapshotTests.cpp
-            ScissorTests.cpp
-            BaseVertexTests.cpp
-            VertexFormatTests.cpp
-            BackingScaleTests.cpp
-            TextureRegionTests.cpp
-            TextureSamplingTests.cpp
-            ShaderBlendTests.cpp
-            BlendStateTests.cpp
-            CullModeTests.cpp
-            CoordinateSpaceTests.cpp
-            SpriteBatchTests.cpp
-            RenderTargetTests.cpp
-            RenderTargetDepthTests.cpp
-            MultisampledTargetTests.cpp
-            DepthActionTests.cpp
-            DepthTextureTests.cpp
-            FrameComputeTests.cpp
-            FrameTimingTests.cpp
-            PipelineStateTests.cpp
-            StencilTests.cpp
-            ViewportTests.cpp
-            MipmapTests.cpp
-            SuppliedMipChainTests.cpp
-            CompressedTextureTests.cpp
-            TextureReadTests.cpp
-            CubeTextureTests.cpp
-            ExternalGeometryTests.cpp
-            StreamedRangeDrawTests.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
