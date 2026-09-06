@@ -15,8 +15,10 @@ target_sources(eacp-core PRIVATE
         Plugins/DynamicLibrary.cpp
         Process/Process.cpp
         Threads/Async.cpp
+        Threads/CallAfter.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
+        Utils/Base64.cpp
         Utils/Environment.cpp
         Utils/File.cpp
         Utils/FilePath.cpp

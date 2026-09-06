@@ -1,5 +1,7 @@
 #include "Protocol.h"
 
+#include <eacp/Core/Utils/Base64.h>
+
 #include <array>
 #include <random>
 
@@ -9,9 +11,6 @@ namespace
 {
 constexpr auto webSocketHandshakeGuid =
     std::string_view("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-
-constexpr auto webSocketBase64Alphabet = std::string_view(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/");
 
 std::uint32_t webSocketRotateLeft(std::uint32_t value, int bits)
 {
@@ -126,33 +125,6 @@ std::string webSocketSha1(std::string_view input)
     return digest;
 }
 
-std::string webSocketBase64(std::string_view bytes)
-{
-    auto encoded = std::string();
-    encoded.reserve(((bytes.size() + 2) / 3) * 4);
-
-    for (auto i = std::size_t {0}; i < bytes.size(); i += 3)
-    {
-        auto remaining = bytes.size() - i;
-        auto group = (std::uint32_t) webSocketByteAt(bytes, i) << 16;
-
-        if (remaining > 1)
-            group |= (std::uint32_t) webSocketByteAt(bytes, i + 1) << 8;
-
-        if (remaining > 2)
-            group |= (std::uint32_t) webSocketByteAt(bytes, i + 2);
-
-        encoded.push_back(webSocketBase64Alphabet[(group >> 18) & 0x3F]);
-        encoded.push_back(webSocketBase64Alphabet[(group >> 12) & 0x3F]);
-        encoded.push_back(
-            remaining > 1 ? webSocketBase64Alphabet[(group >> 6) & 0x3F] : '=');
-        encoded.push_back(remaining > 2 ? webSocketBase64Alphabet[group & 0x3F]
-                                        : '=');
-    }
-
-    return encoded;
-}
-
 std::array<std::uint8_t, 4> webSocketRandomMask()
 {
     static thread_local auto engine = std::mt19937(std::random_device {}());
@@ -229,7 +201,7 @@ void webSocketAppendLength(std::string& out, std::size_t size, std::uint8_t mask
 std::string acceptKeyFor(std::string_view clientKey)
 {
     auto salted = std::string(clientKey) + std::string(webSocketHandshakeGuid);
-    return webSocketBase64(webSocketSha1(salted));
+    return Base64::encode(webSocketSha1(salted));
 }
 
 std::string encode(const Frame& frame, bool masked)

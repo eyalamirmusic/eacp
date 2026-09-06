@@ -12,12 +12,12 @@ namespace eacp::Threads
 
 struct Timer::Native
 {
-    Native(const Callback& cbToUse, int intervalHz)
+    Native(const Callback& cbToUse, double intervalSec)
         : cb(cbToUse)
-        , period(std::chrono::duration<double>(1.0 / intervalHz))
+        , period(std::chrono::duration<double>(intervalSec))
     {
         assertMainThread();
-        assert(intervalHz > 0 && "Timer interval must be positive");
+        assert(intervalSec > 0 && "Timer interval must be positive");
 
         running = true;
         worker = std::thread([this] { tick(); });
@@ -56,9 +56,15 @@ struct Timer::Native
     std::thread worker;
 };
 
+Timer::Timer(const Callback& cbToUse, Time::MS interval)
+    : callback(cbToUse)
+    , impl(cbToUse, (double) interval.count / 1000.0)
+{
+}
+
 Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
-    , impl(cbToUse, intervalHz)
+    , impl(cbToUse, 1.0 / (double) intervalHz)
 {
 }
 

@@ -7,11 +7,11 @@ namespace eacp::Threads
 
 struct Timer::Native
 {
-    Native(const Callback& cbToUse, int intervalHz)
+    Native(const Callback& cbToUse, double intervalSec)
         : cb(cbToUse)
     {
         assertMainThread();
-        double intervalSec = 1.0 / (double) intervalHz;
+        assert(intervalSec > 0 && "Timer interval must be positive");
 
         auto timerBlock = ^(NSTimer* _Nonnull) {
           cb();
@@ -35,9 +35,15 @@ struct Timer::Native
     ObjC::Ptr<NSTimer> nsTimer;
 };
 
+Timer::Timer(const Callback& cbToUse, Time::MS interval)
+    : callback(cbToUse)
+    , impl(cbToUse, (double) interval.count / 1000.0)
+{
+}
+
 Timer::Timer(const Callback& cbToUse, int intervalHz)
     : callback(cbToUse)
-    , impl(cbToUse, intervalHz)
+    , impl(cbToUse, 1.0 / (double) intervalHz)
 {
 }
 
