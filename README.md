@@ -114,8 +114,7 @@ struct App
 
 int main()
 {
-    eacp::Apps::run<App>();
-    return 0;
+    return eacp::Apps::run<App>();
 }
 ```
 
@@ -141,8 +140,7 @@ struct MyApp
 
 int main()
 {
-    eacp::Apps::run<MyApp>();
-    return 0;
+    return eacp::Apps::run<MyApp>();
 }
 ```
 
