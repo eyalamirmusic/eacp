@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <optional>
 #include <string>
-#include <vector>
 
 // A variable font, and what one is to the text tier.
 //
@@ -422,7 +421,7 @@ struct VariableFontView final : GPU::GPUView
     float specimenColumn = margin + labelColumnWidth;
     float staticColumn = 0.f;
 
-    std::vector<Note> notes;
+    Vector<Note> notes;
     int liveWeight = 400;
 };
 

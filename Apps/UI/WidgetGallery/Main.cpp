@@ -1,6 +1,5 @@
 #include <eacp/UI/UI.h>
 
-#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -49,8 +48,9 @@ std::string percentText(float value)
 
 std::string hertzText(float hertz)
 {
-    auto buffer = std::array<char, 32> {};
-    std::snprintf(buffer.data(), buffer.size(), "%.2f Hz", (double) hertz);
+    auto buffer = Array<char, 32> {};
+    std::snprintf(
+        buffer.data(), (std::size_t) buffer.size(), "%.2f Hz", (double) hertz);
 
     return buffer.data();
 }

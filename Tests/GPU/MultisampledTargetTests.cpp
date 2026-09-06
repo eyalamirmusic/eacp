@@ -214,7 +214,7 @@ using Readback = Array<unsigned char, pixelBytes>;
 
 const unsigned char* pixelAt(const Readback& pixels, int x, int y)
 {
-    return pixels.data() + ((std::size_t) y * targetSize + (std::size_t) x) * 4;
+    return pixels.data() + (y * targetSize + x) * 4;
 }
 
 // One triangle into a target of the given sample count, read back inside the

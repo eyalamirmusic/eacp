@@ -146,11 +146,11 @@ struct DepthTargetView final : GPUView
             auto into = frame.beginPass(target, {{0.f, 0.f, 0.f, 1.f}});
 
             quads.depth = nearDepth;
-            quads.color = std::array {1.f, 0.f, 0.f};
+            quads.color = Array {1.f, 0.f, 0.f};
             into.draw(quads);
 
             quads.depth = farDepth;
-            quads.color = std::array {0.f, 1.f, 0.f};
+            quads.color = Array {0.f, 1.f, 0.f};
             into.draw(quads);
         }
 

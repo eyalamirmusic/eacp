@@ -15,47 +15,46 @@
 namespace eacp::simd
 {
 
-void add(const float* a, const float* b, float* out, std::size_t count)
+void add(const float* a, const float* b, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] + b[i];
 }
 
-void subtract(const float* a, const float* b, float* out, std::size_t count)
+void subtract(const float* a, const float* b, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] - b[i];
 }
 
-void multiply(const float* a, const float* b, float* out, std::size_t count)
+void multiply(const float* a, const float* b, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] * b[i];
 }
 
-void multiplyByScalar(const float* a, float scalar, float* out, std::size_t count)
+void multiplyByScalar(const float* a, float scalar, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] * scalar;
 }
 
 void multiplyAdd(
-    const float* a, const float* b, const float* c, float* out, std::size_t count)
+    const float* a, const float* b, const float* c, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] * b[i] + c[i];
 }
 
-void multiplyAdd(
-    const float* a, float b, const float* c, float* out, std::size_t count)
+void multiplyAdd(const float* a, float b, const float* c, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] * b + c[i];
 }
 
-void lerp(const float* a, const float* b, float t, float* out, std::size_t count)
+void lerp(const float* a, const float* b, float t, float* out, int count)
 {
-    for (std::size_t i = 0; i < count; ++i)
+    for (int i = 0; i < count; ++i)
         out[i] = a[i] + t * (b[i] - a[i]);
 }
 
@@ -64,14 +63,14 @@ void lerp(const float* a, const float* b, float t, float* out, std::size_t count
 // onto vector lanes without fast-math, while keeping the accumulation order
 // (and therefore the result) identical on every build.
 
-double sumOfSquares(const float* a, std::size_t count)
+double sumOfSquares(const float* a, int count)
 {
     auto acc0 = 0.0;
     auto acc1 = 0.0;
     auto acc2 = 0.0;
     auto acc3 = 0.0;
 
-    auto i = std::size_t {0};
+    auto i = 0;
     for (; i + 4 <= count; i += 4)
     {
         acc0 += (double) a[i + 0] * (double) a[i + 0];
@@ -86,14 +85,14 @@ double sumOfSquares(const float* a, std::size_t count)
     return (acc0 + acc1) + (acc2 + acc3);
 }
 
-float peakAbs(const float* a, std::size_t count)
+float peakAbs(const float* a, int count)
 {
     auto max0 = 0.f;
     auto max1 = 0.f;
     auto max2 = 0.f;
     auto max3 = 0.f;
 
-    auto i = std::size_t {0};
+    auto i = 0;
     for (; i + 4 <= count; i += 4)
     {
         max0 = std::max(max0, std::abs(a[i + 0]));

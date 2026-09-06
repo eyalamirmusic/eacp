@@ -88,10 +88,12 @@ void Channel::send(std::string_view bytes)
     if (!isOpen())
         throw Error("send() on a closed channel");
 
-    auto sent = std::size_t {0};
-    while (sent < bytes.size())
-        sent += detail::channelSend(
-            impl->channel, bytes.data() + sent, bytes.size() - sent);
+    auto total = (int) bytes.size();
+    auto sent = 0;
+
+    while (sent < total)
+        sent +=
+            detail::channelSend(impl->channel, bytes.data() + sent, total - sent);
 }
 
 std::string Channel::receiveUntil(char delimiter)
@@ -109,12 +111,13 @@ std::string Channel::receiveUntil(char delimiter)
         }
 
         char chunk[4096];
-        auto received = detail::channelReceive(impl->channel, chunk, sizeof(chunk));
+        auto received =
+            detail::channelReceive(impl->channel, chunk, (int) sizeof(chunk));
 
         if (received == 0)
             throw Error("peer closed the channel before the delimiter arrived");
 
-        impl->buffered.append(chunk, received);
+        impl->buffered.append(chunk, (std::size_t) received);
     }
 }
 
@@ -128,23 +131,23 @@ std::string Channel::receiveLine()
     return line;
 }
 
-std::string Channel::receive(std::size_t maxBytes)
+std::string Channel::receive(int maxBytes)
 {
-    auto chunk = std::string(maxBytes, '\0');
-    chunk.resize(receive(chunk.data(), maxBytes));
+    auto chunk = std::string((std::size_t) maxBytes, '\0');
+    chunk.resize((std::size_t) receive(chunk.data(), maxBytes));
     return chunk;
 }
 
-std::size_t Channel::receive(char* buffer, std::size_t maxBytes)
+int Channel::receive(char* buffer, int maxBytes)
 {
     if (!isOpen())
         throw Error("receive() on a closed channel");
 
     if (!impl->buffered.empty())
     {
-        auto take = std::min(maxBytes, impl->buffered.size());
-        std::memcpy(buffer, impl->buffered.data(), take);
-        impl->buffered.erase(0, take);
+        auto take = std::min(maxBytes, (int) impl->buffered.size());
+        std::memcpy(buffer, impl->buffered.data(), (std::size_t) take);
+        impl->buffered.erase(0, (std::size_t) take);
         return take;
     }
 

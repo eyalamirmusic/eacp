@@ -15,7 +15,6 @@
 #include <cstdint>
 #include <map>
 #include <string>
-#include <vector>
 
 // DirectWrite rasterizer and shaper, the Windows counterpart to
 // GlyphRasterizer-Apple.mm.
@@ -97,7 +96,7 @@ constexpr float obliqueSlant = -14.f;
 // GlyphRasterizer-Apple.mm's axisSettingsFor.
 struct AxisRequest
 {
-    std::vector<DWRITE_FONT_AXIS_VALUE> values;
+    Vector<DWRITE_FONT_AXIS_VALUE> values;
     int supplied = DWRITE_FONT_SIMULATIONS_NONE;
 };
 
@@ -115,8 +114,8 @@ AxisRequest axisRequestFor(IDWriteFontResource* resource,
     if (count == 0)
         return request;
 
-    auto defaults = std::vector<DWRITE_FONT_AXIS_VALUE>(count);
-    auto ranges = std::vector<DWRITE_FONT_AXIS_RANGE>(count);
+    auto defaults = Vector<DWRITE_FONT_AXIS_VALUE>((int) count);
+    auto ranges = Vector<DWRITE_FONT_AXIS_RANGE>((int) count);
 
     if (FAILED(resource->GetDefaultFontAxisValues(defaults.data(), count))
         || FAILED(resource->GetFontAxisRanges(ranges.data(), count)))
@@ -164,9 +163,9 @@ AxisRequest axisRequestFor(IDWriteFontResource* resource,
 // The axis values a face was built at. A layout names a family and a weight,
 // which finds a face and not a point on an axis, so a variable face has to be
 // shaped at the same values the glyphs are rasterized from.
-std::vector<DWRITE_FONT_AXIS_VALUE> axisValuesOf(IDWriteFontFace* face)
+Vector<DWRITE_FONT_AXIS_VALUE> axisValuesOf(IDWriteFontFace* face)
 {
-    auto values = std::vector<DWRITE_FONT_AXIS_VALUE> {};
+    auto values = Vector<DWRITE_FONT_AXIS_VALUE> {};
     auto varying = ComPtr<IDWriteFontFace5>();
 
     if (face == nullptr
@@ -188,7 +187,7 @@ std::vector<DWRITE_FONT_AXIS_VALUE> axisValuesOf(IDWriteFontFace* face)
 struct Utf16Text
 {
     std::wstring units;
-    std::vector<int> byteOf;
+    Vector<int> byteOf;
 };
 
 Utf16Text toUtf16(std::string_view text)
@@ -197,9 +196,9 @@ Utf16Text toUtf16(std::string_view text)
     result.units.reserve(text.size());
     result.byteOf.reserve(text.size() + 1);
 
-    auto index = std::size_t {0};
+    auto index = 0;
 
-    while (index < text.size())
+    while (index < (int) text.size())
     {
         const auto start = index;
         const auto codepoint = decodeUtf8(text, index);
@@ -207,19 +206,19 @@ Utf16Text toUtf16(std::string_view text)
         if (codepoint <= 0xFFFF)
         {
             result.units.push_back(static_cast<wchar_t>(codepoint));
-            result.byteOf.push_back(static_cast<int>(start));
+            result.byteOf.add(start);
         }
         else
         {
             const auto value = codepoint - 0x10000;
             result.units.push_back(static_cast<wchar_t>(0xD800 + (value >> 10)));
             result.units.push_back(static_cast<wchar_t>(0xDC00 + (value & 0x3FF)));
-            result.byteOf.push_back(static_cast<int>(start));
-            result.byteOf.push_back(static_cast<int>(start));
+            result.byteOf.add(start);
+            result.byteOf.add(start);
         }
     }
 
-    result.byteOf.push_back(static_cast<int>(text.size()));
+    result.byteOf.add((int) text.size());
 
     return result;
 }
@@ -231,13 +230,13 @@ struct CollectedRun
     ComPtr<IDWriteFontFace> face;
     float emSize = 0.f;
     float baselineX = 0.f;
-    std::vector<UINT16> glyphs;
-    std::vector<float> advances;
-    std::vector<DWRITE_GLYPH_OFFSET> offsets;
+    Vector<UINT16> glyphs;
+    Vector<float> advances;
+    Vector<DWRITE_GLYPH_OFFSET> offsets;
 
     // The first text position (in UTF-16 units of the whole string) each
     // glyph came from, inverted from the run's cluster map.
-    std::vector<UINT32> firstPosition;
+    Vector<UINT32> firstPosition;
 };
 
 // Whether two faces are the same font: the same files at the same index with
@@ -256,13 +255,13 @@ bool sameFontFace(IDWriteFontFace* a, IDWriteFontFace* b)
 
     const auto filesOf = [](IDWriteFontFace* face)
     {
-        auto keys = std::vector<std::string> {};
+        auto keys = Vector<std::string> {};
         auto count = UINT32 {};
 
         if (FAILED(face->GetFiles(&count, nullptr)) || count == 0)
             return keys;
 
-        auto raw = std::vector<IDWriteFontFile*>(count);
+        auto raw = Vector<IDWriteFontFile*>((int) count);
 
         if (FAILED(face->GetFiles(&count, raw.data())))
             return keys;
@@ -293,7 +292,7 @@ bool sameFontFace(IDWriteFontFace* a, IDWriteFontFace* b)
 class RunCollector final : public IDWriteTextRenderer
 {
 public:
-    std::vector<CollectedRun> runs;
+    Vector<CollectedRun> runs;
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,
                                              void** object) noexcept override
@@ -360,9 +359,9 @@ public:
             run.offsets.assign(glyphRun->glyphOffsets,
                                glyphRun->glyphOffsets + glyphRun->glyphCount);
         else
-            run.offsets.assign(glyphRun->glyphCount, DWRITE_GLYPH_OFFSET {});
+            run.offsets.assign((int) glyphRun->glyphCount, DWRITE_GLYPH_OFFSET {});
 
-        run.firstPosition.assign(glyphRun->glyphCount, UINT32_MAX);
+        run.firstPosition.assign((int) glyphRun->glyphCount, UINT32_MAX);
 
         if (description != nullptr && description->clusterMap != nullptr)
             for (auto position = UINT32 {}; position < description->stringLength;
@@ -388,7 +387,7 @@ public:
             last = position;
         }
 
-        runs.push_back(std::move(run));
+        runs.add(std::move(run));
 
         return S_OK;
     }
@@ -594,14 +593,14 @@ struct GlyphRasterizer::Native
         if (FAILED(face->GetFiles(&fileCount, nullptr)) || fileCount == 0)
             return face;
 
-        auto raw = std::vector<IDWriteFontFile*>(fileCount);
+        auto raw = Vector<IDWriteFontFile*>((int) fileCount);
 
         if (FAILED(face->GetFiles(&fileCount, raw.data())))
             return face;
 
         // GetFiles hands back references the caller owns; adopt them so they are
         // released however this returns.
-        auto owned = std::vector<ComPtr<IDWriteFontFile>>(fileCount);
+        auto owned = Vector<ComPtr<IDWriteFontFile>>((int) fileCount);
 
         for (auto index = UINT32 {}; index < fileCount; ++index)
             owned[index].Attach(raw[index]);
@@ -702,16 +701,16 @@ struct GlyphRasterizer::Native
         if (face == nullptr || sameFontFace(face, requested))
             return 0;
 
-        for (auto index = std::size_t {0}; index < fallbacks.size(); ++index)
+        for (auto index = 0; index < fallbacks.size(); ++index)
             if (sameFontFace(fallbacks[index].face.Get(), face))
-                return static_cast<int>(index) + 1;
+                return index + 1;
 
         if (fallbacks.size() >= 255)
             return 0;
 
         fallbacks.push_back({face, emSize});
 
-        return static_cast<int>(fallbacks.size());
+        return fallbacks.size();
     }
 
     struct FaceAt
@@ -725,9 +724,9 @@ struct GlyphRasterizer::Native
         if (key.font == 0)
             return {faceFor(variant), request.pixelSize()};
 
-        const auto index = static_cast<std::size_t>(key.font) - 1;
+        const auto index = key.font - 1;
 
-        if (index >= fallbacks.size())
+        if (index < 0 || index >= fallbacks.size())
             return {};
 
         return {fallbacks[index].face.Get(), fallbacks[index].emSize};
@@ -786,11 +785,10 @@ struct GlyphRasterizer::Native
                 fontIndexOf(run.face.Get(), run.emSize, requested);
             auto pen = run.baselineX;
 
-            for (auto index = std::size_t {0}; index < run.glyphs.size(); ++index)
+            for (auto index = 0; index < run.glyphs.size(); ++index)
             {
-                const auto unit =
-                    std::min(static_cast<std::size_t>(run.firstPosition[index]),
-                             utf16.byteOf.size() - 1);
+                const auto unit = std::min((int) run.firstPosition[index],
+                                           utf16.byteOf.size() - 1);
 
                 result.glyphs.add({{run.glyphs[index], fontIndex},
                                    pen + run.offsets[index].advanceOffset,
@@ -892,7 +890,7 @@ struct GlyphRasterizer::Native
 
         // One byte of coverage per pixel is already the mask format, so the
         // texture is filled straight into the bitmap with nothing in between.
-        bitmap.pixels.resize(static_cast<std::size_t>(bitmap.width) * bitmap.height);
+        bitmap.pixels.resize(bitmap.width * bitmap.height);
 
         if (FAILED(analysis->CreateAlphaTexture(
                 textureType,
@@ -949,10 +947,9 @@ struct GlyphRasterizer::Native
         return true;
     }
 
-    std::vector<ColorLayer>
-        collectLayers(IDWriteColorGlyphRunEnumerator* layers) const
+    Vector<ColorLayer> collectLayers(IDWriteColorGlyphRunEnumerator* layers) const
     {
-        auto collected = std::vector<ColorLayer> {};
+        auto collected = Vector<ColorLayer> {};
         auto hasMore = BOOL {};
 
         while (SUCCEEDED(layers->MoveNext(&hasMore)) && hasMore)
@@ -975,13 +972,13 @@ struct GlyphRasterizer::Native
                               : layer->runColor;
 
             if (entry.analysis && measure(entry.analysis.Get(), entry.bounds))
-                collected.push_back(std::move(entry));
+                collected.add(std::move(entry));
         }
 
         return collected;
     }
 
-    static void compositeLayers(const std::vector<ColorLayer>& layers,
+    static void compositeLayers(const Vector<ColorLayer>& layers,
                                 GlyphBitmap& bitmap)
     {
         auto bounds = layers.front().bounds;
@@ -996,19 +993,18 @@ struct GlyphRasterizer::Native
 
         takeBounds(bounds, bitmap);
 
-        const auto pixelCount =
-            static_cast<std::size_t>(bitmap.width) * bitmap.height;
+        const auto pixelCount = bitmap.width * bitmap.height;
 
         // Composited premultiplied, where 'over' is a plain lerp, then converted
         // to the straight alpha the atlas stores. Layers arrive bottom first.
-        auto accumulated = std::vector<float>(pixelCount * 4, 0.f);
+        auto accumulated = Vector<float>(pixelCount * 4);
 
         for (const auto& layer: layers)
             blendLayer(layer, bounds, bitmap.width, accumulated);
 
         bitmap.pixels.resize(pixelCount * 4);
 
-        for (auto index = std::size_t {}; index < pixelCount; ++index)
+        for (auto index = 0; index < pixelCount; ++index)
         {
             const auto alpha = accumulated[index * 4 + 3];
 
@@ -1024,13 +1020,12 @@ struct GlyphRasterizer::Native
     static void blendLayer(const ColorLayer& layer,
                            const RECT& bounds,
                            int width,
-                           std::vector<float>& target)
+                           Vector<float>& target)
     {
         const auto layerWidth = layer.bounds.right - layer.bounds.left;
         const auto layerHeight = layer.bounds.bottom - layer.bounds.top;
-        const auto span = static_cast<std::size_t>(layerWidth) * layerHeight;
 
-        auto texture = std::vector<std::uint8_t>(span);
+        auto texture = Vector<std::uint8_t>(layerWidth * layerHeight);
 
         if (FAILED(layer.analysis->CreateAlphaTexture(
                 textureType,
@@ -1043,7 +1038,7 @@ struct GlyphRasterizer::Native
         {
             for (auto x = 0; x < layerWidth; ++x)
             {
-                const auto source = static_cast<std::size_t>(y) * layerWidth + x;
+                const auto source = y * layerWidth + x;
                 const auto coverage = texture[source] / 255.f;
 
                 if (coverage <= 0.f)
@@ -1052,7 +1047,7 @@ struct GlyphRasterizer::Native
                 const auto alpha = coverage * layer.color.a;
                 const auto row = y + layer.bounds.top - bounds.top;
                 const auto column = x + layer.bounds.left - bounds.left;
-                const auto at = (static_cast<std::size_t>(row) * width + column) * 4;
+                const auto at = (row * width + column) * 4;
 
                 const float channels[3] = {
                     layer.color.r, layer.color.g, layer.color.b};
@@ -1070,7 +1065,7 @@ struct GlyphRasterizer::Native
     ComPtr<IDWriteFontCollection> collection;
     std::wstring family;
     mutable std::map<int, ComPtr<IDWriteFontFace>> variants;
-    mutable std::vector<FallbackFace> fallbacks;
+    mutable Vector<FallbackFace> fallbacks;
     bool valid = false;
 };
 
@@ -1119,7 +1114,7 @@ GlyphBitmap GlyphRasterizer::rasterize(char32_t codepoint, FontStyle style) cons
     char encoded[4] = {};
     const auto length = encodeUtf8(codepoint, encoded);
     const auto variant = variantOf(style);
-    const auto run = impl->shape({encoded, length}, variant);
+    const auto run = impl->shape({encoded, (std::size_t) length}, variant);
 
     if (run.glyphs.empty())
         return {};
@@ -1132,8 +1127,11 @@ const FontRequest& GlyphRasterizer::request() const
     return impl->request;
 }
 
-std::optional<RegisteredFont> registerMemoryFont(const void* data, std::size_t size)
+std::optional<RegisteredFont> registerMemoryFont(const void* data, int size)
 {
+    if (data == nullptr || size <= 0)
+        return std::nullopt;
+
     // Registration lives in eacp-graphics so its text sites (Font,
     // TextMetrics) see the face too — the same process-wide visibility
     // CTFontManagerRegisterGraphicsFont gives the Apple side.

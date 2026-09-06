@@ -45,15 +45,15 @@ struct StubSource final : GlyphSource
         ++shapeCalls;
 
         auto run = ShapedRun {};
-        auto index = std::size_t {0};
+        auto index = 0;
 
-        while (index < text.size())
+        while (index < (int) text.size())
         {
             const auto start = index;
             const auto codepoint = decodeUtf8(text, index);
             const auto font = codepoint >= 0x4E00 && codepoint < 0xA000 ? 1 : 0;
 
-            run.glyphs.add({{codepoint, font}, run.advance, 0.f, (int) start});
+            run.glyphs.add({{codepoint, font}, run.advance, 0.f, start});
             run.advance += 10.f;
         }
 
@@ -89,8 +89,7 @@ struct StubSource final : GlyphSource
             codepoint >= 0x1F600 ? GlyphFormat::Color : GlyphFormat::Mask;
         bitmap.width = glyphWidth;
         bitmap.height = glyphHeight;
-        bitmap.pixels.assign((std::size_t) glyphWidth * glyphHeight
-                                 * bytesPerPixel(bitmap.format),
+        bitmap.pixels.assign(glyphWidth * glyphHeight * bytesPerPixel(bitmap.format),
                              fillByte);
 
         return bitmap;

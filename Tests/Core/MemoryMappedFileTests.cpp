@@ -31,11 +31,11 @@ void write(const std::filesystem::path& path, std::string_view contents)
 
 // Distinct in every byte, so a window that lands one page early or late is a
 // failed comparison rather than a run of identical filler that matches anyway.
-std::string countingPattern(std::size_t size)
+std::string countingPattern(int size)
 {
-    auto contents = std::string(size, '\0');
+    auto contents = std::string((std::size_t) size, '\0');
 
-    for (auto i = std::size_t {0}; i < size; ++i)
+    for (auto i = 0; i < size; ++i)
         contents[i] = static_cast<char>(i % 251);
 
     return contents;
@@ -170,7 +170,7 @@ auto tMapsAnUnalignedWindow = test("MemoryMappedFile/mapsAnUnalignedWindow") = [
     const auto contents = countingPattern(256 * 1024);
     write(path, contents);
 
-    const auto offset = std::size_t {65536 + 1234};
+    const auto offset = 65536 + 1234;
     const auto length = std::size_t {5000};
 
     const auto file = MemoryMappedFile {FilePath {path}, offset, length};
@@ -315,6 +315,37 @@ auto tMappingDoesNotAllocateTheFile =
     // cache, not the heap.
     check(std::accumulate(file.bytes().begin(), file.bytes().end(), std::size_t {0})
           == size * std::size_t {'x'});
+
+    std::filesystem::remove_all(dir);
+};
+
+// The case the size_t surface exists for: a file past what an int counts.
+// Only ever extended, never written, so the filesystem keeps it sparse.
+auto tMapsAFileLargerThanAnInt =
+    test("MemoryMappedFile/mapsAFileLargerThanAnInt") = []
+{
+    const auto dir = scratchDirectory("large");
+    const auto path = dir / "large.bin";
+    const auto size = (std::size_t {1} << 31) + 4096;
+
+    write(path, "");
+    std::filesystem::resize_file(path, size);
+
+    const auto file = MemoryMappedFile {FilePath {path}};
+
+    check(file.isValid());
+    check(file.size() == size);
+    check(file.bytes().getSize() == size);
+    check(file.bytes().getSizeInBytes() == size);
+    check(file.bytes()[size - 1] == 0);
+    check(file.text().size() == size);
+
+    const auto tail = MemoryMappedFile {FilePath {path}, size - 4, 4};
+
+    check(tail.isValid());
+    check(tail.size() == 4);
+    check(tail.bytes().size() == 4);
+    check(tail.bytes().data() != nullptr);
 
     std::filesystem::remove_all(dir);
 };

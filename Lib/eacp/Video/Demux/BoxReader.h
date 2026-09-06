@@ -1,8 +1,9 @@
 #pragma once
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <cstddef>
 #include <cstdint>
-#include <span>
 
 // Bounds-checked traversal of ISOBMFF box structures. A named namespace
 // rather than an anonymous one: this header is included from files that CI
@@ -25,16 +26,16 @@ consteval std::uint32_t fourcc(const char (&tag)[5])
 class BoxReader
 {
 public:
-    explicit BoxReader(std::span<const std::uint8_t> bytesToRead)
+    explicit BoxReader(Span<const std::uint8_t> bytesToRead)
         : bytes(bytesToRead)
     {
     }
 
     bool ok() const { return !failed; }
     std::size_t position() const { return offset; }
-    std::size_t remaining() const { return bytes.size() - offset; }
+    std::size_t remaining() const { return bytes.getSize() - offset; }
 
-    std::span<const std::uint8_t> readBytes(std::size_t count)
+    Span<const std::uint8_t> readBytes(std::size_t count)
     {
         if (count > remaining())
         {
@@ -66,7 +67,7 @@ public:
     std::int32_t readS32() { return static_cast<std::int32_t>(readU32()); }
 
 private:
-    std::uint64_t readBigEndian(std::size_t count)
+    std::uint64_t readBigEndian(int count)
     {
         auto data = readBytes(count);
         auto value = std::uint64_t {0};
@@ -77,7 +78,7 @@ private:
         return value;
     }
 
-    std::span<const std::uint8_t> bytes;
+    Span<const std::uint8_t> bytes;
     std::size_t offset = 0;
     bool failed = false;
 };
@@ -86,7 +87,7 @@ private:
 struct Box
 {
     std::uint32_t type = 0;
-    std::span<const std::uint8_t> payload;
+    Span<const std::uint8_t> payload;
 };
 
 // Reads the box starting at the reader's position. size == 0 extends to the
@@ -128,8 +129,7 @@ inline bool nextBox(BoxReader& reader, Box& out)
 
 // The first direct child of `parent` with the given type; false when absent
 // or when the parent's box structure is malformed before it is reached.
-inline bool
-    findChild(std::span<const std::uint8_t> parent, std::uint32_t type, Box& out)
+inline bool findChild(Span<const std::uint8_t> parent, std::uint32_t type, Box& out)
 {
     auto reader = BoxReader {parent};
     auto box = Box {};

@@ -1,6 +1,6 @@
 #include "Base64.h"
+#include "Containers.h"
 
-#include <array>
 #include <cstdint>
 
 namespace eacp::Base64
@@ -12,27 +12,27 @@ constexpr auto alphabet = std::string_view(
 
 constexpr int invalid = -1;
 
-constexpr std::array<int, 256> makeReverseAlphabet()
+constexpr Array<int, 256> makeReverseAlphabet()
 {
-    auto table = std::array<int, 256>();
+    auto table = Array<int, 256>();
 
     for (auto& entry: table)
         entry = invalid;
 
     for (auto i = 0; i < (int) alphabet.size(); ++i)
-        table[(unsigned char) alphabet[(std::size_t) i]] = i;
+        table[(unsigned char) alphabet[i]] = i;
 
     return table;
 }
 
 constexpr auto reverseAlphabet = makeReverseAlphabet();
 
-std::uint32_t byteAt(std::string_view bytes, std::size_t index)
+std::uint32_t byteAt(std::string_view bytes, int index)
 {
     return (std::uint8_t) bytes[index];
 }
 
-std::uint32_t groupAt(std::string_view bytes, std::size_t index, std::size_t left)
+std::uint32_t groupAt(std::string_view bytes, int index, int left)
 {
     auto group = byteAt(bytes, index) << 16;
 
@@ -45,12 +45,12 @@ std::uint32_t groupAt(std::string_view bytes, std::size_t index, std::size_t lef
     return group;
 }
 
-int sextetAt(std::string_view text, std::size_t index)
+int sextetAt(std::string_view text, int index)
 {
     return reverseAlphabet[(unsigned char) text[index]];
 }
 
-std::size_t paddingLength(std::string_view text)
+int paddingLength(std::string_view text)
 {
     if (text.size() < 4 || text[text.size() - 1] != '=')
         return 0;
@@ -58,11 +58,11 @@ std::size_t paddingLength(std::string_view text)
     return text[text.size() - 2] == '=' ? 2 : 1;
 }
 
-bool appendDecodedQuad(std::string& out, std::string_view quad, std::size_t padding)
+bool appendDecodedQuad(std::string& out, std::string_view quad, int padding)
 {
     auto group = std::uint32_t {0};
 
-    for (auto i = std::size_t {0}; i < 4 - padding; ++i)
+    for (auto i = 0; i < 4 - padding; ++i)
     {
         auto sextet = sextetAt(quad, i);
 
@@ -72,7 +72,7 @@ bool appendDecodedQuad(std::string& out, std::string_view quad, std::size_t padd
         group |= (std::uint32_t) sextet << (18 - 6 * i);
     }
 
-    for (auto i = std::size_t {0}; i < 3 - padding; ++i)
+    for (auto i = 0; i < 3 - padding; ++i)
         out.push_back((char) ((group >> (16 - 8 * i)) & 0xFF));
 
     return true;
@@ -81,12 +81,14 @@ bool appendDecodedQuad(std::string& out, std::string_view quad, std::size_t padd
 
 std::string encode(std::string_view bytes)
 {
-    auto encoded = std::string();
-    encoded.reserve(((bytes.size() + 2) / 3) * 4);
+    const auto size = (int) bytes.size();
 
-    for (auto i = std::size_t {0}; i < bytes.size(); i += 3)
+    auto encoded = std::string();
+    encoded.reserve((std::size_t) (((size + 2) / 3) * 4));
+
+    for (auto i = 0; i < size; i += 3)
     {
-        auto left = bytes.size() - i;
+        auto left = size - i;
         auto group = groupAt(bytes, i, left);
 
         encoded.push_back(alphabet[(group >> 18) & 0x3F]);
@@ -100,17 +102,19 @@ std::string encode(std::string_view bytes)
 
 std::optional<std::string> decode(std::string_view text)
 {
-    if (text.size() % 4 != 0)
+    const auto size = (int) text.size();
+
+    if (size % 4 != 0)
         return std::nullopt;
 
     auto padding = paddingLength(text);
 
     auto decoded = std::string();
-    decoded.reserve(text.size() / 4 * 3);
+    decoded.reserve((std::size_t) (size / 4 * 3));
 
-    for (auto i = std::size_t {0}; i < text.size(); i += 4)
+    for (auto i = 0; i < size; i += 4)
     {
-        auto isLastQuad = i + 4 == text.size();
+        auto isLastQuad = i + 4 == size;
 
         if (!appendDecodedQuad(decoded, text.substr(i, 4), isLastQuad ? padding : 0))
             return std::nullopt;

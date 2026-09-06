@@ -131,7 +131,7 @@ Vector<std::uint32_t> redOverGreen(int levels)
         mipChainBytes(TextureFormat::RGBA8Unorm, textureSize, textureSize, levels);
 
     auto pixels = Vector<std::uint32_t> {};
-    pixels.resize((int) (bytes / sizeof(std::uint32_t)));
+    pixels.resize(bytes / (int) sizeof(std::uint32_t));
 
     auto index = 0;
 
@@ -185,10 +185,10 @@ auto tChainBytes = test("SuppliedMipChain/theLayoutIsTheSumOfItsLevels") = []
     check(built.isValid());
     check(built.levelCount() == 7);
 
-    auto total = std::size_t {0};
+    auto total = 0;
 
     for (auto level = 0; level < built.levelCount(); ++level)
-        total += (std::size_t) built.levels[level].size();
+        total += built.levels[level].size();
 
     check(total == mipChainBytes(TextureFormat::RGBA8Unorm, 64, 64, 7));
 };
@@ -274,9 +274,8 @@ auto tUpdateReplacesTheWholeChain =
     // Green at the top and red all the way down: the mirror of what it holds.
     auto inverted = Vector<std::uint32_t> {};
     inverted.resize(
-        (int) (mipChainBytes(
-                   TextureFormat::RGBA8Unorm, textureSize, textureSize, levels)
-               / sizeof(std::uint32_t)));
+        mipChainBytes(TextureFormat::RGBA8Unorm, textureSize, textureSize, levels)
+        / (int) sizeof(std::uint32_t));
 
     auto index = 0;
 
@@ -325,9 +324,8 @@ auto tStrideIsRefused = test("SuppliedMipChain/aStrideIsRefused") = []
     // ever regressed - which would crash instead of failing the check below.
     auto flat = Vector<std::uint32_t> {};
     flat.resize(
-        (int) (mipChainBytes(
-                   TextureFormat::RGBA8Unorm, textureSize, textureSize, levels)
-               / sizeof(std::uint32_t)));
+        mipChainBytes(TextureFormat::RGBA8Unorm, textureSize, textureSize, levels)
+        / (int) sizeof(std::uint32_t));
 
     for (auto i = 0; i < flat.size(); ++i)
         flat[i] = green;

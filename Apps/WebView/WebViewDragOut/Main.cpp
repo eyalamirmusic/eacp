@@ -4,10 +4,8 @@
 #include <WebResources.h>
 #include <algorithm>
 
-#include <array>
 #include <cstdlib>
 #include <fstream>
-#include <vector>
 
 using namespace eacp;
 using namespace Graphics;
@@ -21,7 +19,7 @@ constexpr auto category = "DragOutApp";
 // the provider for it below (see diskFileProvider / dragOutOptions).
 constexpr auto audioScheme = "audiofile";
 
-constexpr std::array audioExtensions = {
+constexpr Array audioExtensions = {
     ".wav", ".mp3", ".aif", ".aiff", ".flac", ".m4a", ".aac", ".ogg"};
 
 std::string lowerExtension(const std::filesystem::path& path)
@@ -93,15 +91,15 @@ WebView::DraggableFileList buildFileList()
 
     // Then real audio files from ~/Downloads.
     auto ec = std::error_code {};
-    auto downloads = std::vector<std::string> {};
+    auto downloads = Vector<std::string> {};
 
     for (const auto& entry: std::filesystem::directory_iterator(downloadsDir(), ec))
     {
         if (entry.is_regular_file(ec) && isAudioFile(entry.path()))
-            downloads.push_back(entry.path().string());
+            downloads.add(entry.path().string());
     }
 
-    std::sort(downloads.begin(), downloads.end());
+    downloads.sort();
 
     for (const auto& path: downloads)
         list.files.push_back(

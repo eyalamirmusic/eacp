@@ -66,11 +66,11 @@ class Buffer
 public:
     Buffer(Device& device,
            const void* data,
-           std::size_t bytes,
+           int bytes,
            BufferUsage usage = BufferUsage::Vertex,
            BufferStorage storage = BufferStorage::Device);
 
-    std::size_t size() const;
+    int size() const;
     bool isValid() const;
 
     // Copies bytes back from the buffer into dst, starting at offset bytes
@@ -89,7 +89,7 @@ public:
     // update rather than the last committed one. It is a debugging and test
     // affordance rather than a frame-loop one - the memory is write-combined
     // on D3D12, and reading it is far slower than writing it.
-    void read(void* dst, std::size_t bytes, std::size_t offset = 0) const;
+    void read(void* dst, int bytes, int offset = 0) const;
 
     // Overwrites part of the buffer's contents from the CPU, starting at
     // offset bytes into the buffer — the per-frame path for dynamic
@@ -105,7 +105,7 @@ public:
     // be reading this instant, with no copy in the command stream to order it
     // behind. StreamingBuffers is what makes that safe, by never handing out
     // bytes from an arena a frame still in flight was drawn from.
-    void update(const void* data, std::size_t bytes, std::size_t offset = 0);
+    void update(const void* data, int bytes, int offset = 0);
 
     // Opaque native handle for cross-translation-unit use by other GPU types.
     void* nativeBuffer() const;
@@ -138,15 +138,12 @@ private:
 struct BufferRange
 {
     const Buffer* buffer = nullptr;
-    std::size_t offset = 0;
-    std::size_t bytes = 0;
+    int offset = 0;
+    int bytes = 0;
 
     // The whole of a buffer, for the calls that take a range when what a
     // caller has is a buffer it means to bind from the start.
-    static BufferRange of(const Buffer& whole)
-    {
-        return {&whole, 0, whole.size()};
-    }
+    static BufferRange of(const Buffer& whole) { return {&whole, 0, whole.size()}; }
 
     // False for a default-constructed range and for one over a buffer that
     // never got storage, which is the same test a bind makes before encoding.

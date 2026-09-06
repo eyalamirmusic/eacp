@@ -24,7 +24,7 @@ namespace eacp::WebSocket
 namespace
 {
 
-constexpr auto webSocketMaxCloseReasonLength = std::size_t {123};
+constexpr auto webSocketMaxCloseReasonLength = 123;
 
 // A close frame Network.framework has no receive pending for is not held
 // back: it ends the connection as ENOTCONN instead, and its code and reason
@@ -50,10 +50,10 @@ int webSocketEchoableCode(int code)
 // the code has taken two.
 std::string webSocketTrimReason(const std::string& reason)
 {
-    if (reason.size() <= webSocketMaxCloseReasonLength)
+    if ((int) reason.size() <= webSocketMaxCloseReasonLength)
         return reason;
 
-    return reason.substr(0, webSocketMaxCloseReasonLength);
+    return reason.substr(0, (std::size_t) webSocketMaxCloseReasonLength);
 }
 
 bool webSocketIsSecureUrl(const std::string& url)
@@ -155,7 +155,8 @@ nw_parameters_t webSocketParametersFor(const std::string& url,
     auto webSocket = nw_ws_create_options(nw_ws_version_13);
 
     nw_ws_options_set_auto_reply_ping(webSocket, true);
-    nw_ws_options_set_maximum_message_size(webSocket, options.maxMessageSize);
+    nw_ws_options_set_maximum_message_size(webSocket,
+                                           (size_t) options.maxMessageSize);
 
     for (const auto& [name, value]: options.headers)
         nw_ws_options_add_additional_header(webSocket, name.c_str(), value.c_str());

@@ -40,7 +40,7 @@ public:
     static Device& shared();
 
     Buffer makeBuffer(const void* data,
-                      std::size_t bytes,
+                      int bytes,
                       BufferUsage usage = BufferUsage::Vertex,
                       BufferStorage storage = BufferStorage::Device)
     {
@@ -50,11 +50,11 @@ public:
     template <typename T, std::size_t N>
     Buffer makeBuffer(const T (&array)[N], BufferUsage usage = BufferUsage::Vertex)
     {
-        return makeBuffer(array, sizeof(array), usage);
+        return makeBuffer(array, (int) sizeof(array), usage);
     }
 
     // An uninitialised buffer of the given size, e.g. a compute output target.
-    Buffer makeBuffer(std::size_t bytes, BufferUsage usage = BufferUsage::Storage)
+    Buffer makeBuffer(int bytes, BufferUsage usage = BufferUsage::Storage)
     {
         return {*this, nullptr, bytes, usage};
     }

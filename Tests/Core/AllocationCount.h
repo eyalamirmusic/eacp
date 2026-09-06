@@ -23,8 +23,8 @@ struct AllocationCount
         countingAllocations.store(false, std::memory_order_relaxed);
     }
 
-    std::size_t bytes() const
+    int bytes() const
     {
-        return allocatedBytes.load(std::memory_order_relaxed);
+        return (int) allocatedBytes.load(std::memory_order_relaxed);
     }
 };

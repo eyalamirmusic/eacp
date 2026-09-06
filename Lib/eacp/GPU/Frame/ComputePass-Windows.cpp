@@ -116,13 +116,14 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), data->uav.gpu);
 }
 
-void ComputePass::setBytes(const void* data, std::size_t bytes, int slot)
+void ComputePass::setBytes(const void* data, int bytes, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
-    auto address = commands.context->uploadConstants(commands, data, bytes);
+    auto address =
+        commands.context->uploadConstants(commands, data, (std::size_t) bytes);
 
     if (address != 0)
         commands.list->SetComputeRootConstantBufferView(computeCBVParam(slot),

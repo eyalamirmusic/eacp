@@ -300,7 +300,7 @@ struct SubItem
 
 struct SubItemState
 {
-    std::vector<SubItem> items;
+    EA::Vector<SubItem> items;
 
     MIRO_REFLECT(items)
 };

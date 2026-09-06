@@ -132,7 +132,7 @@ Buffer makeCandidates(int howMany)
 
     return Buffer {Device::shared(),
                    values.data(),
-                   sizeof(float) * (std::size_t) capacity,
+                   (int) sizeof(float) * capacity,
                    BufferUsage::Storage};
 }
 
@@ -157,7 +157,7 @@ Vector<float> runPipeline(const Buffer& candidates, Consumer& consume)
 
     auto output = Buffer {Device::shared(),
                           blank.data(),
-                          sizeof(float) * (std::size_t) capacity,
+                          (int) sizeof(float) * capacity,
                           BufferUsage::Storage};
 
     auto counter = CountKernel {};
@@ -195,7 +195,7 @@ Vector<float> runPipeline(const Buffer& candidates, Consumer& consume)
 
     auto values = Vector<float> {};
     values.resize(capacity);
-    output.read(values.data(), sizeof(float) * (std::size_t) capacity);
+    output.read(values.data(), (int) sizeof(float) * capacity);
     return values;
 }
 
@@ -268,7 +268,7 @@ auto tGuardedConsumerStopsAtTheCount =
 
     auto output = Buffer {Device::shared(),
                           blank.data(),
-                          sizeof(float) * (std::size_t) capacity,
+                          (int) sizeof(float) * capacity,
                           BufferUsage::Storage};
 
     auto candidates = makeCandidates(marked);
@@ -308,7 +308,7 @@ auto tGuardedConsumerStopsAtTheCount =
 
     auto values = Vector<float> {};
     values.resize(capacity);
-    output.read(values.data(), sizeof(float) * (std::size_t) capacity);
+    output.read(values.data(), (int) sizeof(float) * capacity);
 
     check(countWritten(values) == marked);
 };

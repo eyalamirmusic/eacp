@@ -72,7 +72,7 @@ std::optional<PackedRect> ShelfPacker::add(int width, int height)
     nextShelfY += neededHeight;
     usedArea += static_cast<long long>(neededWidth) * neededHeight;
 
-    shelves.push_back(shelf);
+    shelves.add(shelf);
     return placed;
 }
 

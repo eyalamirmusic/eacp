@@ -67,11 +67,13 @@ struct Buffer::Native
 {
     Native(Device& device,
            const void* data,
-           std::size_t bytes,
+           int byteCount,
            BufferUsage usage,
            BufferStorage storage)
         : context(getD3D12Context(device))
     {
+        const auto bytes = (std::size_t) (byteCount > 0 ? byteCount : 0);
+
         bufferData.size = bytes;
 
         if (!context.isValid() || bytes == 0)
@@ -263,7 +265,7 @@ struct Buffer::Native
 
 Buffer::Buffer(Device& device,
                const void* data,
-               std::size_t bytes,
+               int bytes,
                BufferUsage usage,
                BufferStorage storage)
     : impl(device, data, bytes, usage, storage)
@@ -274,9 +276,9 @@ Buffer::Buffer(Device& device,
         device.noteBufferCreated();
 }
 
-std::size_t Buffer::size() const
+int Buffer::size() const
 {
-    return impl->bufferData.size;
+    return (int) impl->bufferData.size;
 }
 
 bool Buffer::isValid() const
@@ -284,14 +286,18 @@ bool Buffer::isValid() const
     return impl->bufferData.resource != nullptr;
 }
 
-void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
+void Buffer::read(void* dst, int byteCount, int byteOffset) const
 {
     auto* source = impl->bufferData.resource.get();
 
-    if (source == nullptr || offset >= impl->bufferData.size)
+    if (source == nullptr || byteCount <= 0 || byteOffset < 0
+        || (std::size_t) byteOffset >= impl->bufferData.size)
         return;
 
-    auto available = impl->bufferData.size - offset;
+    const auto offset = (std::size_t) byteOffset;
+    const auto bytes = (std::size_t) byteCount;
+
+    auto available = (std::size_t) impl->bufferData.size - offset;
     auto count = bytes < available ? bytes : available;
 
     // Host storage reads straight back out of the mapping, as Metal's shared
@@ -342,10 +348,10 @@ void Buffer::read(void* dst, std::size_t bytes, std::size_t offset) const
     }
 }
 
-void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
+void Buffer::update(const void* data, int byteCount, int byteOffset)
 {
-    if (impl->bufferData.resource == nullptr || data == nullptr || bytes == 0
-        || offset >= impl->bufferData.size)
+    if (impl->bufferData.resource == nullptr || data == nullptr || byteCount <= 0
+        || byteOffset < 0 || (std::size_t) byteOffset >= impl->bufferData.size)
         return;
 
     auto& context = impl->context;
@@ -353,7 +359,10 @@ void Buffer::update(const void* data, std::size_t bytes, std::size_t offset)
     if (!context.isValid())
         return;
 
-    auto available = impl->bufferData.size - offset;
+    const auto offset = (std::size_t) byteOffset;
+    const auto bytes = (std::size_t) byteCount;
+
+    auto available = (std::size_t) impl->bufferData.size - offset;
     auto count = bytes < available ? bytes : available;
 
     // The whole of a streamed write. No recording is touched, so nothing

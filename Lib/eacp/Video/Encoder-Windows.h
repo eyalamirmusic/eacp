@@ -8,7 +8,6 @@
 #include <mfreadwrite.h>
 #include <wrl/client.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -46,7 +45,7 @@ struct WindowsEncoder final : Encoder
     void appendBGRA(const std::uint8_t* rows,
                     int sourceWidth,
                     int sourceHeight,
-                    std::size_t stride,
+                    int stride,
                     double ptsSeconds);
 
     bool configureStreams(const EncoderSpec& spec);

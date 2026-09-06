@@ -167,28 +167,28 @@ void socketClose(NativeSocket socket) noexcept
         ::closesocket((SOCKET) socket);
 }
 
-std::size_t socketSend(NativeSocket socket, const char* data, std::size_t length)
+int socketSend(NativeSocket socket, const char* data, int length)
 {
-    auto sent = ::send((SOCKET) socket, data, (int) length, 0);
+    auto sent = ::send((SOCKET) socket, data, length, 0);
     if (sent == SOCKET_ERROR)
     {
         if (timedOut())
             throw TimeoutError("send timed out");
         throwLastError("send");
     }
-    return (std::size_t) sent;
+    return (int) sent;
 }
 
-std::size_t socketReceive(NativeSocket socket, char* buffer, std::size_t length)
+int socketReceive(NativeSocket socket, char* buffer, int length)
 {
-    auto received = ::recv((SOCKET) socket, buffer, (int) length, 0);
+    auto received = ::recv((SOCKET) socket, buffer, length, 0);
     if (received == SOCKET_ERROR)
     {
         if (timedOut())
             throw TimeoutError("receive timed out");
         throwLastError("receive");
     }
-    return (std::size_t) received;
+    return (int) received;
 }
 
 NativeSocket

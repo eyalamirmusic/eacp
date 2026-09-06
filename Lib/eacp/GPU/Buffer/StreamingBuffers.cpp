@@ -26,11 +26,11 @@ namespace
 // from one small allocation walks up through several doublings - each of which
 // is a GPU allocation - before it gets there. Three pools of this is the whole
 // cost of a stream that is barely used, which is why it is not larger.
-constexpr auto minimumArenaBytes = std::size_t {64 * 1024};
+constexpr auto minimumArenaBytes = 64 * 1024;
 
 // The cursor only ever advances by whole alignment units, so every slice
 // starts where the next bind may begin.
-std::size_t alignedUp(std::size_t bytes)
+int alignedUp(int bytes)
 {
     constexpr auto mask = StreamingBuffers::alignment - 1;
 
@@ -40,7 +40,7 @@ std::size_t alignedUp(std::size_t bytes)
 // Doubling rather than fitting each new high-water mark: what a batching
 // renderer writes swings by a lot between frames, and resizing to every peak
 // would allocate on most of them.
-std::size_t grownCapacity(std::size_t needed, std::size_t current)
+int grownCapacity(int needed, int current)
 {
     auto capacity = std::max(current, minimumArenaBytes);
 
@@ -100,7 +100,7 @@ void StreamingBuffers::beginFrame(Pool& pool, std::uint64_t frame)
 
 // The arena the next `bytes` go into: the current one when they fit after the
 // cursor, otherwise a new one appended beside it.
-Buffer& StreamingBuffers::arenaFor(Pool& pool, std::size_t bytes)
+Buffer& StreamingBuffers::arenaFor(Pool& pool, int bytes)
 {
     if (!pool.arenas.empty())
     {
@@ -117,8 +117,7 @@ Buffer& StreamingBuffers::arenaFor(Pool& pool, std::size_t bytes)
     // the arena it outgrew, so that a frame which keeps growing walks up in a
     // handful of steps rather than one per write - and so that the fold at the
     // pool's next reset can usually keep this arena as the one that stays.
-    const auto current =
-        pool.arenas.empty() ? std::size_t {0} : pool.arenas.back()->size();
+    const auto current = pool.arenas.empty() ? 0 : pool.arenas.back()->size();
 
     pool.used = 0;
 
@@ -129,7 +128,7 @@ Buffer& StreamingBuffers::arenaFor(Pool& pool, std::size_t bytes)
                                  BufferStorage::Streaming);
 }
 
-BufferRange StreamingBuffers::write(const void* data, std::size_t bytes)
+BufferRange StreamingBuffers::write(const void* data, int bytes)
 {
     const auto frame = Device::shared().frameIndex();
     auto& pool = pools[(int) (frame % (std::uint64_t) framesInFlight)];
@@ -140,7 +139,7 @@ BufferRange StreamingBuffers::write(const void* data, std::size_t bytes)
     // Nothing to copy takes no room, but still names a real buffer: a caller
     // that binds whatever it last wrote - a program whose instance count went
     // to zero this frame - binds the arena at the cursor rather than nothing.
-    if (data == nullptr || bytes == 0)
+    if (data == nullptr || bytes <= 0)
     {
         auto& arena = arenaFor(pool, 0);
 
@@ -171,9 +170,9 @@ int StreamingBuffers::bufferCount() const
     return total;
 }
 
-std::size_t StreamingBuffers::bytesReserved() const
+int StreamingBuffers::bytesReserved() const
 {
-    auto total = std::size_t {0};
+    auto total = 0;
 
     for (const auto& pool: pools)
         for (const auto& arena: pool.arenas)

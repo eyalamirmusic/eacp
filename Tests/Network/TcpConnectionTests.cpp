@@ -1,8 +1,8 @@
 #include "Common.h"
 #include <thread>
-#include <vector>
 
 using namespace nano;
+using eacp::Vector;
 using eacp::TCP::Connection;
 using eacp::TCP::Error;
 using eacp::TCP::Listener;
@@ -304,10 +304,10 @@ auto tManyConnections = test("Tcp/listenerServesManyConnections") = []
             }
         });
 
-    auto connections = std::vector<Connection> {};
+    auto connections = Vector<Connection> {};
     for (auto i = 0; i < clients; ++i)
     {
-        connections.push_back(dial(listener));
+        connections.add(dial(listener));
         connections.back().send("c" + std::to_string(i) + "\n");
     }
 

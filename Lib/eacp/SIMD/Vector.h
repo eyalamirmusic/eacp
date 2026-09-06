@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstddef>
-
 // eacp-simd: the register-level float vector.
 //
 // This is the OTHER half of the module, and it is worth being explicit about
@@ -32,19 +30,20 @@
 // does, rather than paying an indirect call per vector.
 
 #if defined(__AVX512F__)
-    #include <immintrin.h>
-    #define EACP_SIMD_VECTOR_AVX512 1
+#include <immintrin.h>
+#define EACP_SIMD_VECTOR_AVX512 1
 #elif defined(__AVX2__)
-    #include <immintrin.h>
-    #define EACP_SIMD_VECTOR_AVX2 1
-#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-    #include <emmintrin.h>
-    #define EACP_SIMD_VECTOR_SSE2 1
+#include <immintrin.h>
+#define EACP_SIMD_VECTOR_AVX2 1
+#elif defined(__SSE2__) || defined(_M_X64)                                          \
+    || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define EACP_SIMD_VECTOR_SSE2 1
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    #include <arm_neon.h>
-    #define EACP_SIMD_VECTOR_NEON 1
+#include <arm_neon.h>
+#define EACP_SIMD_VECTOR_NEON 1
 #else
-    #define EACP_SIMD_VECTOR_SCALAR 1
+#define EACP_SIMD_VECTOR_SCALAR 1
 #endif
 
 namespace eacp::simd
@@ -74,10 +73,10 @@ targets an unaligned load of an aligned address costs nothing.
 struct F32
 {
 #if defined(EACP_SIMD_VECTOR_AVX512)
-    static constexpr std::size_t lanes = 16;
+    static constexpr int lanes = 16;
     using Native = __m512;
 
-    static constexpr std::size_t registers = 32;
+    static constexpr int registers = 32;
 
     static F32 zero() { return {_mm512_setzero_ps()}; }
     static F32 broadcast(float x) { return {_mm512_set1_ps(x)}; }
@@ -98,10 +97,10 @@ struct F32
     float reduceAdd() const { return _mm512_reduce_add_ps(v); }
 
 #elif defined(EACP_SIMD_VECTOR_AVX2)
-    static constexpr std::size_t lanes = 8;
+    static constexpr int lanes = 8;
     using Native = __m256;
 
-    static constexpr std::size_t registers = 16;
+    static constexpr int registers = 16;
 
     static F32 zero() { return {_mm256_setzero_ps()}; }
     static F32 broadcast(float x) { return {_mm256_set1_ps(x)}; }
@@ -118,13 +117,13 @@ struct F32
 
     F32 fma(F32 a, F32 b) const
     {
-    #if defined(__FMA__) || defined(_MSC_VER)
+#if defined(__FMA__) || defined(_MSC_VER)
         return {_mm256_fmadd_ps(a.v, b.v, v)};
-    #else
+#else
         // -mavx2 without -mfma: the compiler still contracts this where the
         // consumer allows it, which is the point of the header being inline.
         return {_mm256_add_ps(v, _mm256_mul_ps(a.v, b.v))};
-    #endif
+#endif
     }
 
     float reduceAdd() const
@@ -138,10 +137,10 @@ struct F32
     }
 
 #elif defined(EACP_SIMD_VECTOR_SSE2)
-    static constexpr std::size_t lanes = 4;
+    static constexpr int lanes = 4;
     using Native = __m128;
 
-    static constexpr std::size_t registers = 16;
+    static constexpr int registers = 16;
 
     static F32 zero() { return {_mm_setzero_ps()}; }
     static F32 broadcast(float x) { return {_mm_set1_ps(x)}; }
@@ -166,10 +165,10 @@ struct F32
     }
 
 #elif defined(EACP_SIMD_VECTOR_NEON)
-    static constexpr std::size_t lanes = 4;
+    static constexpr int lanes = 4;
     using Native = float32x4_t;
 
-    static constexpr std::size_t registers = 32;
+    static constexpr int registers = 32;
 
     static F32 zero() { return {vdupq_n_f32(0.f)}; }
     static F32 broadcast(float x) { return {vdupq_n_f32(x)}; }
@@ -192,8 +191,8 @@ struct F32
     // No SIMD for this target. Present so a kernel written against this header
     // still COMPILES and still gives the right answer everywhere; it is not
     // expected to be fast, and no shipping target reaches it.
-    static constexpr std::size_t lanes = 4;
-    static constexpr std::size_t registers = 16;
+    static constexpr int lanes = 4;
+    static constexpr int registers = 16;
     using Native = float[lanes];
 
     static F32 zero() { return broadcast(0.f); }
@@ -201,7 +200,7 @@ struct F32
     static F32 broadcast(float x)
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = x;
         return result;
     }
@@ -209,7 +208,7 @@ struct F32
     static F32 load(const float* p)
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = p[i];
         return result;
     }
@@ -218,14 +217,14 @@ struct F32
 
     static void store(float* p, F32 a)
     {
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             p[i] = a.v[i];
     }
 
     F32 operator+(F32 o) const
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = v[i] + o.v[i];
         return result;
     }
@@ -233,7 +232,7 @@ struct F32
     F32 operator-(F32 o) const
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = v[i] - o.v[i];
         return result;
     }
@@ -241,7 +240,7 @@ struct F32
     F32 operator*(F32 o) const
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = v[i] * o.v[i];
         return result;
     }
@@ -249,7 +248,7 @@ struct F32
     static F32 min(F32 a, F32 b)
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = a.v[i] < b.v[i] ? a.v[i] : b.v[i];
         return result;
     }
@@ -257,7 +256,7 @@ struct F32
     static F32 max(F32 a, F32 b)
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = a.v[i] > b.v[i] ? a.v[i] : b.v[i];
         return result;
     }
@@ -265,7 +264,7 @@ struct F32
     F32 fma(F32 a, F32 b) const
     {
         F32 result {};
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             result.v[i] = v[i] + a.v[i] * b.v[i];
         return result;
     }
@@ -273,7 +272,7 @@ struct F32
     float reduceAdd() const
     {
         auto sum = 0.f;
-        for (std::size_t i = 0; i < lanes; ++i)
+        for (int i = 0; i < lanes; ++i)
             sum += v[i];
         return sum;
     }
@@ -287,14 +286,14 @@ struct F32
 
 // How many floats one F32 holds, for the loop bounds and the tile constants
 // that have to agree with it.
-inline constexpr std::size_t floatLanes = F32::lanes;
+inline constexpr int floatLanes = F32::lanes;
 
 // How many vector registers the target architecture has. A microkernel sizes
 // its register tile from this: the whole point of holding accumulators across a
 // reduction is lost the moment there are more of them than the register file
 // holds, and a tile that spills is slower than the smaller tile that does not.
 // 32 on NEON and AVX-512, 16 on SSE2 and AVX2.
-inline constexpr std::size_t vectorRegisters = F32::registers;
+inline constexpr int vectorRegisters = F32::registers;
 
 /*
 A partial load / store, for the ragged tail of a channel axis that is not a
@@ -306,19 +305,19 @@ per ISA, and this runs at most once per row of a tensor whose channel counts
 of eight anyway. It exists for correctness on the shapes that are not, not for
 speed on the ones that are.
 */
-inline F32 loadPartial(const float* p, std::size_t count)
+inline F32 loadPartial(const float* p, int count)
 {
     alignas(64) float staging[F32::lanes] {};
-    for (std::size_t i = 0; i < count && i < F32::lanes; ++i)
+    for (int i = 0; i < count && i < F32::lanes; ++i)
         staging[i] = p[i];
     return F32::load(staging);
 }
 
-inline void storePartial(float* p, F32 a, std::size_t count)
+inline void storePartial(float* p, F32 a, int count)
 {
     alignas(64) float staging[F32::lanes];
     F32::store(staging, a);
-    for (std::size_t i = 0; i < count && i < F32::lanes; ++i)
+    for (int i = 0; i < count && i < F32::lanes; ++i)
         p[i] = staging[i];
 }
 

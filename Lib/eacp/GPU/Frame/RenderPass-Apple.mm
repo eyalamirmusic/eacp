@@ -321,25 +321,25 @@ void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
                                  atIndex:(NSUInteger) (bufferBase + slot)];
 }
 
-void RenderPass::setVertexBytes(const void* data, std::size_t bytes, int slot)
+void RenderPass::setVertexBytes(const void* data, int bytes, int slot)
 {
     // Uniforms live at buffer(uniformBase + slot) so multi-slot vertex
     // layouts (e.g. instancing with slots 0..N) never collide with the
     // uniform bind. Matches ComputePass::uniformBase.
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setVertexBytes:data
-                               length:bytes
+                               length:(NSUInteger) bytes
                               atIndex:(NSUInteger) (uniformBase + slot)];
 }
 
-void RenderPass::setFragmentBytes(const void* data, std::size_t bytes, int slot)
+void RenderPass::setFragmentBytes(const void* data, int bytes, int slot)
 {
     // Same uniformBase mapping as the vertex stage, so one slot rule covers
     // both; the generated fragment functions declare the block at
     // buffer(uniformBase).
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setFragmentBytes:data
-                                 length:bytes
+                                 length:(NSUInteger) bytes
                                 atIndex:(NSUInteger) (uniformBase + slot)];
 }
 
@@ -395,8 +395,8 @@ void RenderPass::drawIndexed(const BufferRange& indices,
 
     auto indexType = format == IndexFormat::UInt16 ? MTLIndexTypeUInt16
                                                    : MTLIndexTypeUInt32;
-    auto indexSize = format == IndexFormat::UInt16 ? sizeof(std::uint16_t)
-                                                   : sizeof(std::uint32_t);
+    auto indexSize = format == IndexFormat::UInt16 ? (int) sizeof(std::uint16_t)
+                                                   : (int) sizeof(std::uint32_t);
 
     // The eight-argument selector rather than the five-argument one because
     // only this form carries a base vertex; instanceCount:1 makes it the same
@@ -407,8 +407,7 @@ void RenderPass::drawIndexed(const BufferRange& indices,
                                indexType:indexType
                              indexBuffer:metalBuffer
                        indexBufferOffset:(NSUInteger) (indices.offset
-                                                       + (std::size_t) firstIndex
-                                                             * indexSize)
+                                                       + firstIndex * indexSize)
                            instanceCount:1
                               baseVertex:(NSInteger) baseVertex
                             baseInstance:0];
@@ -449,16 +448,15 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
 
     auto indexType = format == IndexFormat::UInt16 ? MTLIndexTypeUInt16
                                                    : MTLIndexTypeUInt32;
-    auto indexSize = format == IndexFormat::UInt16 ? sizeof(std::uint16_t)
-                                                   : sizeof(std::uint32_t);
+    auto indexSize = format == IndexFormat::UInt16 ? (int) sizeof(std::uint16_t)
+                                                   : (int) sizeof(std::uint32_t);
 
     [activeEncoder drawIndexedPrimitives:impl->primitiveType
                               indexCount:(NSUInteger) indexCount
                                indexType:indexType
                              indexBuffer:metalBuffer
                        indexBufferOffset:(NSUInteger) (indices.offset
-                                                       + (std::size_t) firstIndex
-                                                             * indexSize)
+                                                       + firstIndex * indexSize)
                            instanceCount:(NSUInteger) instanceCount
                               baseVertex:(NSInteger) baseVertex
                             baseInstance:(NSUInteger) firstInstance];

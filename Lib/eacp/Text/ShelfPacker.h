@@ -1,7 +1,8 @@
 #pragma once
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <optional>
-#include <vector>
 
 namespace eacp::Text
 {
@@ -73,6 +74,6 @@ private:
     int nextShelfY = 0;
     long long usedArea = 0;
 
-    std::vector<Shelf> shelves;
+    Vector<Shelf> shelves;
 };
 } // namespace eacp::Text

@@ -100,40 +100,48 @@ ColorResult parseColor(const std::string& value)
 
 namespace
 {
-void skipWhitespace(const std::string& value, size_t& pos)
+// -1 when there is none, so a failed search reads as an index rather than npos.
+int indexOfFrom(const std::string& value, char c, int pos)
 {
-    while (pos < value.size()
-           && std::isspace(static_cast<unsigned char>(value[pos])))
+    auto found = value.find(c, (size_t) pos);
+
+    return found == std::string::npos ? -1 : (int) found;
+}
+
+void skipWhitespace(const std::string& value, int& pos)
+{
+    while (pos < (int) value.size()
+           && std::isspace(static_cast<unsigned char>(value[(size_t) pos])))
     {
         ++pos;
     }
 }
 
-bool advanceToArgumentList(const std::string& value, size_t& pos)
+bool advanceToArgumentList(const std::string& value, int& pos)
 {
-    auto open = value.find('(', pos);
-    if (open == std::string::npos)
+    auto open = indexOfFrom(value, '(', pos);
+    if (open < 0)
         return false;
     pos = open + 1;
     return true;
 }
 
-void advancePastClosingParen(const std::string& value, size_t& pos)
+void advancePastClosingParen(const std::string& value, int& pos)
 {
-    pos = value.find(')', pos);
-    if (pos != std::string::npos)
-        ++pos;
+    auto close = indexOfFrom(value, ')', pos);
+
+    pos = close < 0 ? (int) value.size() : close + 1;
 }
 
-std::string_view readFunctionName(const std::string& value, size_t& pos)
+std::string_view readFunctionName(const std::string& value, int& pos)
 {
     auto start = pos;
 
-    while (pos < value.size()
-           && std::isalpha(static_cast<unsigned char>(value[pos])))
+    while (pos < (int) value.size()
+           && std::isalpha(static_cast<unsigned char>(value[(size_t) pos])))
         ++pos;
 
-    return std::string_view {value}.substr(start, pos - start);
+    return std::string_view {value}.substr((size_t) start, (size_t) (pos - start));
 }
 
 // Hands each function of a transform list, in the order written, to `consume` as
@@ -141,12 +149,12 @@ std::string_view readFunctionName(const std::string& value, size_t& pos)
 template <typename Consumer>
 void forEachTransformFunction(const std::string& value, Consumer&& consume)
 {
-    auto pos = size_t {0};
+    auto pos = 0;
 
-    while (pos < value.size())
+    while (pos < (int) value.size())
     {
         skipWhitespace(value, pos);
-        if (pos >= value.size())
+        if (pos >= (int) value.size())
             break;
 
         auto name = readFunctionName(value, pos);
@@ -317,20 +325,20 @@ bool readAlignKeyword(const std::string& token, PreserveAspectRatio& result)
 template <typename Consumer>
 void forEachToken(const std::string& value, Consumer&& consume)
 {
-    auto pos = size_t {0};
+    auto pos = 0;
 
-    while (pos < value.size())
+    while (pos < (int) value.size())
     {
         skipWhitespace(value, pos);
 
         auto start = pos;
 
-        while (pos < value.size()
-               && !std::isspace(static_cast<unsigned char>(value[pos])))
+        while (pos < (int) value.size()
+               && !std::isspace(static_cast<unsigned char>(value[(size_t) pos])))
             ++pos;
 
         if (pos > start)
-            consume(value.substr(start, pos - start));
+            consume(value.substr((size_t) start, (size_t) (pos - start)));
     }
 }
 
@@ -464,24 +472,22 @@ std::unordered_map<std::string, std::string>
     parseStyleDeclarations(const std::string& value)
 {
     auto declarations = std::unordered_map<std::string, std::string> {};
-    auto pos = size_t {0};
+    auto pos = 0;
 
-    while (pos < value.size())
+    while (pos < (int) value.size())
     {
-        auto end = value.find(';', pos);
+        auto semicolon = indexOfFrom(value, ';', pos);
+        auto end = semicolon < 0 ? (int) value.size() : semicolon;
+        auto colon = indexOfFrom(value, ':', pos);
 
-        if (end == std::string::npos)
-            end = value.size();
-
-        auto colon = value.find(':', pos);
-
-        if (colon != std::string::npos && colon < end)
+        if (colon >= 0 && colon < end)
         {
-            auto property = Strings::trim(value.substr(pos, colon - pos));
+            auto property =
+                Strings::trim(value.substr((size_t) pos, (size_t) (colon - pos)));
 
             if (!property.empty())
-                declarations[property] =
-                    Strings::trim(value.substr(colon + 1, end - colon - 1));
+                declarations[property] = Strings::trim(
+                    value.substr((size_t) colon + 1, (size_t) (end - colon - 1)));
         }
 
         pos = end + 1;

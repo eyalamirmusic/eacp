@@ -48,7 +48,7 @@ struct Avx2
         }
 
         __m256i v;
-        static constexpr std::size_t lanes = 8;
+        static constexpr int lanes = 8;
     };
 };
 

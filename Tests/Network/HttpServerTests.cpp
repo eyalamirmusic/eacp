@@ -2,11 +2,11 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>
-#include <vector>
 #include <algorithm>
 #include <mutex>
 
 using namespace nano;
+using eacp::Vector;
 using eacp::HTTP::Request;
 using eacp::HTTP::Response;
 using eacp::HTTP::Server;
@@ -53,27 +53,27 @@ void performExchange(Server& server, const Request& clientRequest, Exchange& out
 
 struct ParallelExchange
 {
-    std::vector<Response> responses;
+    Vector<Response> responses;
     bool completed = false;
 };
 
 void performParallelExchange(Server& server,
-                             const std::vector<Request>& requests,
+                             const Vector<Request>& requests,
                              ParallelExchange& out,
                              eacp::Time::MS timeout = eacp::Time::MS {10000})
 {
     auto n = requests.size();
     out.responses.assign(n, Response());
 
-    auto remaining = std::make_shared<std::atomic<int>>((int) n);
-    auto workers = std::vector<std::thread>();
+    auto remaining = std::make_shared<std::atomic<int>>(n);
+    auto workers = Vector<std::thread>();
     workers.reserve(n);
 
     auto stopped = eacp::Threads::runEventLoopFor(
         timeout,
         [&]
         {
-            for (auto i = size_t {0}; i < n; ++i)
+            for (auto i = 0; i < n; ++i)
             {
                 workers.emplace_back(
                     [&, i]
@@ -422,7 +422,7 @@ auto tEventLoopModeSerializesHandlers =
     check(ok);
     port = server.boundPort();
 
-    auto requests = std::vector<Request>();
+    auto requests = Vector<Request>();
     for (auto i = 0; i < 4; ++i)
         requests.emplace_back(baseUrl(port) + "/p");
 
@@ -473,7 +473,7 @@ auto tThreadPoolModeRunsHandlersInParallel =
     check(ok);
     port = server.boundPort();
 
-    auto requests = std::vector<Request>();
+    auto requests = Vector<Request>();
     for (auto i = 0; i < 4; ++i)
         requests.emplace_back(baseUrl(port) + "/q");
 
@@ -500,7 +500,7 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
     auto port = 0;
 
     auto remotePortsMutex = std::mutex();
-    auto remotePorts = std::vector<int>();
+    auto remotePorts = Vector<int>();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -517,7 +517,7 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
     check(ok);
     port = server.boundPort();
 
-    auto requests = std::vector<Request>();
+    auto requests = Vector<Request>();
     for (auto i = 0; i < 6; ++i)
         requests.emplace_back(baseUrl(port) + "/multi");
 
@@ -534,7 +534,7 @@ auto tThreadPoolModeAssignsDistinctRemotePorts =
     for (auto p: remotePorts)
         check(p > 0 && p != port);
     auto sorted = remotePorts;
-    std::sort(sorted.begin(), sorted.end());
+    sorted.sort();
     check(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
 };
 
@@ -799,7 +799,7 @@ auto tRouterMethodAndPathAreBothMatched =
     check(server.listen(0));
     port = server.boundPort();
 
-    auto requests = std::vector<Request>();
+    auto requests = Vector<Request>();
     requests.emplace_back(baseUrl(port) + "/x");
     requests.emplace_back(Request::post(baseUrl(port) + "/x", ""));
 
@@ -810,10 +810,10 @@ auto tRouterMethodAndPathAreBothMatched =
     check(getCalls.load() == 1);
     check(postCalls.load() == 1);
 
-    auto bodies = std::vector<std::string>();
+    auto bodies = Vector<std::string>();
     for (auto& r: out.responses)
         bodies.push_back(r.content);
-    std::sort(bodies.begin(), bodies.end());
+    bodies.sort();
     check(bodies[0] == "g");
     check(bodies[1] == "p");
 };

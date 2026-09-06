@@ -1,7 +1,6 @@
 #include "Strings.h"
 
 #include <cctype>
-#include <cstddef>
 
 namespace eacp::Strings
 {
@@ -78,12 +77,12 @@ std::wstring widen(std::string_view utf8)
     auto out = std::wstring {};
     out.reserve(utf8.size());
 
-    const auto size = utf8.size();
-    for (auto i = std::size_t {0}; i < size;)
+    const auto size = (int) utf8.size();
+    for (auto i = 0; i < size;)
     {
         const auto lead = static_cast<unsigned char>(utf8[i]);
 
-        auto length = std::size_t {0};
+        auto length = 0;
         auto codepoint = char32_t {};
 
         if (lead < 0x80)
@@ -114,7 +113,7 @@ std::wstring widen(std::string_view utf8)
         }
 
         auto valid = i + length <= size;
-        for (auto j = std::size_t {1}; valid && j < length; ++j)
+        for (auto j = 1; valid && j < length; ++j)
         {
             const auto byte = static_cast<unsigned char>(utf8[i + j]);
             if ((byte & 0xC0) != 0x80)
@@ -152,7 +151,9 @@ std::string narrow(std::wstring_view wide)
     auto out = std::string {};
     out.reserve(wide.size());
 
-    for (auto i = std::size_t {0}; i < wide.size(); ++i)
+    const auto size = (int) wide.size();
+
+    for (auto i = 0; i < size; ++i)
     {
         auto codepoint = static_cast<char32_t>(
             static_cast<std::make_unsigned_t<wchar_t>>(wide[i]));
@@ -164,11 +165,10 @@ std::string narrow(std::wstring_view wide)
             if (isLeadSurrogate(codepoint))
             {
                 const auto next =
-                    i + 1 < wide.size()
-                        ? static_cast<char32_t>(
-                              static_cast<std::make_unsigned_t<wchar_t>>(
-                                  wide[i + 1]))
-                        : char32_t {0};
+                    i + 1 < size ? static_cast<char32_t>(
+                                       static_cast<std::make_unsigned_t<wchar_t>>(
+                                           wide[i + 1]))
+                                 : char32_t {0};
 
                 if (isTrailSurrogate(next))
                 {

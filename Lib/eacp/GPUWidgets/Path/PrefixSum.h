@@ -176,7 +176,7 @@ private:
     // buffers and is therefore not a thing to move around.
     static constexpr int maxLevels = 4;
 
-    std::array<Level, maxLevels> levels;
+    Array<Level, maxLevels> levels;
     int levelCount = 0;
     int dispatches = 0;
 };

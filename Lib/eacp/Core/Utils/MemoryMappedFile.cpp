@@ -2,7 +2,6 @@
 #include "MemoryMappedFilePlatform.h"
 
 #include <algorithm>
-#include <limits>
 
 namespace eacp
 {
@@ -37,14 +36,9 @@ Mapping mapOpenFile(const Detail::MappingFile& file,
     if (wanted == 0)
         return mapping;
 
-    auto alignedOffset = offset - (offset % Detail::mappingGranularity());
+    auto alignedOffset =
+        offset - (offset % (std::uint64_t) Detail::mappingGranularity());
     auto delta = static_cast<std::size_t>(offset - alignedOffset);
-
-    // A window can outrun the address space on a 32-bit build, where the
-    // mapping would fail anyway. Checked before the cast rather than after,
-    // which would wrap instead of failing.
-    if (wanted > std::numeric_limits<std::size_t>::max() - delta)
-        return {};
 
     mapping.region = Detail::mapRegion(
         file, alignedOffset, delta + static_cast<std::size_t>(wanted));
@@ -104,7 +98,7 @@ bool MemoryMappedFile::isValid() const
     return impl->mapping.valid;
 }
 
-std::span<const std::uint8_t> MemoryMappedFile::bytes() const
+Span<const std::uint8_t> MemoryMappedFile::bytes() const
 {
     return {impl->mapping.start, impl->mapping.length};
 }
@@ -116,7 +110,7 @@ std::string_view MemoryMappedFile::text() const
     if (view.empty())
         return {};
 
-    return {reinterpret_cast<const char*>(view.data()), view.size()};
+    return {reinterpret_cast<const char*>(view.data()), view.getSize()};
 }
 
 std::size_t MemoryMappedFile::size() const

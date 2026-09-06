@@ -43,7 +43,7 @@ struct Scalar
         }
 
         std::uint32_t v;
-        static constexpr std::size_t lanes = 1;
+        static constexpr int lanes = 1;
     };
 
     // The four channels of one RGBA pixel held as floats.

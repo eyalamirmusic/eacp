@@ -23,7 +23,7 @@ struct NumberReader
     bool readFlag();
 
     std::string_view src;
-    std::size_t pos = 0;
+    int pos = 0;
 };
 
 } // namespace eacp::SVG

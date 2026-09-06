@@ -654,8 +654,7 @@ void schemeHandlerPumpTask(id self,
 
       auto got = context->resource.read(
           context->offset,
-          eacp::Graphics::ByteSpan {context->buffer.data(),
-                                    static_cast<std::size_t>(want)});
+          eacp::Graphics::ByteSpan {context->buffer.data(), (int) want});
 
       dispatch_async(dispatch_get_main_queue(), ^{
         if (! live->load())

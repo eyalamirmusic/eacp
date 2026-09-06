@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <vector>
 
 // Texture::update(region, ...) — filling one texture a tile at a time, which is
 // how a glyph atlas is built: glyphs are rasterized as they are first needed and
@@ -40,9 +39,9 @@ std::uint32_t packRGBA(int r, int g, int b)
 
 // Stands in for a rasterized glyph: a bordered block whose hue depends on the
 // slot, so each upload is individually recognisable once it lands.
-std::vector<std::uint32_t> makeTile(int index)
+Vector<std::uint32_t> makeTile(int index)
 {
-    auto pixels = std::vector<std::uint32_t>((std::size_t) (tileSize * tileSize));
+    auto pixels = Vector<std::uint32_t>(tileSize * tileSize);
 
     const auto r = 60 + (index * 37) % 190;
     const auto g = 60 + (index * 71) % 190;
@@ -55,7 +54,7 @@ std::vector<std::uint32_t> makeTile(int index)
             const auto edge =
                 x == 0 || y == 0 || x == tileSize - 1 || y == tileSize - 1;
 
-            pixels[(std::size_t) (y * tileSize + x)] =
+            pixels[y * tileSize + x] =
                 edge ? packRGBA(20, 22, 28) : packRGBA(r, g, b);
         }
     }
@@ -65,8 +64,8 @@ std::vector<std::uint32_t> makeTile(int index)
 
 GPU::Texture makeEmptyAtlas()
 {
-    const auto pixels = std::vector<std::uint32_t>(
-        (std::size_t) (atlasSize * atlasSize), packRGBA(24, 26, 32));
+    auto pixels = Vector<std::uint32_t> {};
+    pixels.resize(atlasSize * atlasSize, packRGBA(24, 26, 32));
 
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = atlasSize;

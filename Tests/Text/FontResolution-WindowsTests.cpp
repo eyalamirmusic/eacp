@@ -6,7 +6,6 @@
 
 #include <fstream>
 #include <iterator>
-#include <vector>
 
 // The shared font registry (Graphics/Primitives/FontRegistry-Windows.cpp) —
 // the Windows stand-in for CoreText's process-wide font registry.
@@ -26,12 +25,15 @@ using namespace eacp::Graphics;
 
 namespace
 {
-std::vector<unsigned char> readFile(const wchar_t* path)
+EA::Vector<unsigned char> readFile(const wchar_t* path)
 {
     auto stream = std::ifstream(path, std::ios::binary);
+    auto bytes = EA::Vector<unsigned char> {};
 
-    return {std::istreambuf_iterator<char> {stream},
-            std::istreambuf_iterator<char> {}};
+    bytes.assign(std::istreambuf_iterator<char> {stream},
+                 std::istreambuf_iterator<char> {});
+
+    return bytes;
 }
 } // namespace
 

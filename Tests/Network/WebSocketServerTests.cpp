@@ -7,9 +7,9 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 using namespace nano;
+using eacp::Vector;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::Deadline;
 using eacp::Time::MS;
@@ -132,11 +132,11 @@ struct WebSocketServerRecord
     bool reentered = false;
     bool inServerCall = false;
     bool duringAServerCall = false;
-    std::vector<ClientId> connected;
+    Vector<ClientId> connected;
     std::map<ClientId, Handshake> handshakes;
-    std::vector<std::pair<ClientId, Message>> messages;
-    std::vector<std::pair<ClientId, CloseStatus>> closes;
-    std::vector<std::string> order;
+    Vector<std::pair<ClientId, Message>> messages;
+    Vector<std::pair<ClientId, CloseStatus>> closes;
+    Vector<std::string> order;
 };
 
 // What a WebSocket::Connection said, kept apart from the server's own record
@@ -172,7 +172,7 @@ struct WebSocketServerClientRecord
     int errors = 0;
     std::string protocol;
     CloseStatus close;
-    std::vector<Message> messages;
+    Vector<Message> messages;
 };
 
 std::string webSocketServerUrl(const Server& server, const std::string& path = {})
@@ -268,7 +268,7 @@ public:
 
             if (decoded.has_value())
             {
-                buffer.erase(0, decoded->consumed);
+                buffer.erase(0, (std::size_t) decoded->consumed);
                 return decoded->frame;
             }
 
@@ -1000,9 +1000,7 @@ auto tServerEchoesForTheClient =
     auto inOrder = true;
 
     for (auto i = 0; i < burst; ++i)
-        inOrder =
-            inOrder
-            && client.messages[(std::size_t) i + 2].data == "m" + std::to_string(i);
+        inOrder = inOrder && client.messages[i + 2].data == "m" + std::to_string(i);
 
     check(inOrder);
     check(client.errors == 0);

@@ -2,8 +2,9 @@
 
 #include "Common.h"
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <cstdint>
-#include <vector>
 
 namespace eacp::Text
 {
@@ -38,7 +39,7 @@ constexpr int bytesPerPixel(GlyphFormat format)
 // reach.
 struct GlyphBitmap
 {
-    std::vector<std::uint8_t> pixels;
+    Vector<std::uint8_t> pixels;
 
     int width = 0;
     int height = 0;
@@ -61,9 +62,6 @@ struct GlyphBitmap
 
     bool isEmpty() const { return width <= 0 || height <= 0; }
 
-    std::size_t bytesPerRow() const
-    {
-        return static_cast<std::size_t>(width) * bytesPerPixel(format);
-    }
+    int bytesPerRow() const { return width * bytesPerPixel(format); }
 };
 } // namespace eacp::Text
