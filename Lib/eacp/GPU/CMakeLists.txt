@@ -1,32 +1,62 @@
-add_library(eacp-gpu STATIC)
+add_subdirectory(Spirv)
 
-target_link_libraries(eacp-gpu PUBLIC eacp-graphics)
+# The shader codegen layer is pure portable C++ (string generation only): a
+# graph built from the EDSL and walked into MSL or HLSL text, with no device, no
+# window and no Graphics library under it. It is its own target so it builds on
+# every platform, Linux included, and so the emitter can be unit-tested there
+# long before a backend exists. eacp-gpu links it publicly, so a consumer of the
+# GPU module sees no difference.
+add_library(eacp-gpu-codegen STATIC)
+
+target_link_libraries(eacp-gpu-codegen PUBLIC eacp-core)
 
 # The EACP_SHADER reflection macro engine uses __VA_OPT__, which MSVC only
 # supports under its conforming preprocessor. The macro lives in a public header,
 # so the flag is PUBLIC to reach consumers. Mirrors Miro's MIRO_REFLECT setup.
-target_compile_options(eacp-gpu PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
+target_compile_options(eacp-gpu-codegen PUBLIC
+        $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
 
-# The shader codegen layer is pure portable C++ (string generation only), so it
-# builds on every platform and is not gated behind the APPLE/WIN32 branches. Only
-# the native backend selection (ShaderBuilder-*) lives in the platform branches.
+target_sources(eacp-gpu-codegen PRIVATE
+        Codegen/PackedVertex.cpp
+        Codegen/ShaderBuilder.cpp
+        Codegen/ShaderEmitter.cpp
+        Codegen/ShaderGraph.cpp)
+
+# Which dialect build() calls the native one. Pure selection - each file is a
+# one-line call into an emitter that is compiled everywhere - so it lives with
+# the codegen layer rather than with the backend it names.
+if (APPLE)
+    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Apple.cpp)
+elseif (WIN32)
+    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Windows.cpp)
+else ()
+    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Linux.cpp)
+endif ()
+
+set_default_target_setting(eacp-gpu-codegen)
+eacp_enable_unity_build(eacp-gpu-codegen)
+add_ide_sources(eacp-gpu-codegen)
+
+if (NOT EACP_HAS_GPU)
+    return ()
+endif ()
+
+add_library(eacp-gpu STATIC)
+
+target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
+
 target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
         Device/Device.cpp
         Frame/RenderPass.cpp
         Timing/FrameTimer.cpp
-        Texture/MipChain.cpp
-        Codegen/PackedVertex.cpp
-        Codegen/ShaderGraph.cpp
-        Codegen/ShaderEmitter.cpp
-        Codegen/ShaderBuilder.cpp)
+        Texture/MipChain.cpp)
 
 if (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only
     # GPUView's backing-scale lookup is platform-specific.
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Apple.mm
-            Codegen/ShaderBuilder-Apple.cpp
             CommandBuffer/CommandBuffer-Apple.mm
             Device/Device-Apple.mm
             Frame/ComputePass-Apple.mm
@@ -54,7 +84,6 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Windows.cpp
-            Codegen/ShaderBuilder-Windows.cpp
             CommandBuffer/CommandBuffer-Windows.cpp
             Device/Device-Windows.cpp
             Frame/ComputePass-Windows.cpp

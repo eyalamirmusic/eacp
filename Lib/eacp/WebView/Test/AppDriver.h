@@ -4,6 +4,8 @@
 
 #include "DomNode.h"
 
+#include <eacp/Graphics/Graphics.h>
+
 namespace eacp::Graphics
 {
 class WebView;

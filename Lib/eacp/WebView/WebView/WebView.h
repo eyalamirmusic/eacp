@@ -4,6 +4,8 @@
 
 #include "ScriptHost.h"
 
+#include <eacp/Graphics/Graphics.h>
+
 namespace eacp::Graphics
 {
 // Owning byte buffer and non-owning views used across the resource API.

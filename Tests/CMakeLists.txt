@@ -10,20 +10,33 @@ if (APPLE)
 endif ()
 
 add_subdirectory(Network)
+add_subdirectory(Spirv)
 
-if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
+if (EACP_HAS_DRAW)
     add_subdirectory(Graphics)
 endif ()
 
-if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND NOT IOS)
+# Always added, because the shader codegen tests are pure string generation and
+# run anywhere. The directory builds those first and returns before the device
+# suites unless EACP_HAS_GPU. iOS is excluded whole: it runs no test binaries.
+if (NOT IOS)
     add_subdirectory(GPU)
-    add_subdirectory(Text)
+endif ()
+
+if (EACP_HAS_GPU AND NOT IOS)
     add_subdirectory(GPUWidgets)
+endif ()
+
+if (EACP_HAS_TEXT AND NOT IOS)
+    add_subdirectory(Text)
     add_subdirectory(UI)
 
     # The parse layer and the geometry it builds. Above UI in the list because
     # SVGComponent is a UI::Component, and none of these needs a window.
     add_subdirectory(SVG)
+endif ()
+
+if (EACP_HAS_CAPTURE AND NOT IOS)
     add_subdirectory(Camera)
 
     # The video playback stack above the Decoder interface — frame queueing,
@@ -35,15 +48,11 @@ endif ()
 # Codegen tests exercise eacp's WebView events/hooks format registrations,
 # so they only run on the platforms where the WebView library (and its
 # eacp-webview-codegen object lib) are built.
-if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
+if (EACP_HAS_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
-# Pure-logic WebView tests (Range header resolution), plus the bridge over a
-# ScriptHost that is no WebView -- which is why the gate stops at the graphics
-# one: eacp-webview-bridge builds without EACP_BUILD_WEBVIEW, and the module
-# skips the suites that need a real WebView when it is off.
-if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
-    add_subdirectory(WebView)
-endif ()
-
+# Always added: the bridge over a ScriptHost that is no WebView needs no native
+# web runtime and no graphics, so ScriptHostTests builds and runs everywhere.
+# The directory returns after it unless EACP_HAS_WEBVIEW.
+add_subdirectory(WebView)

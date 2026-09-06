@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include <eacp/Graphics/Graphics.h>
+
 namespace eacp::GPU
 {
 class Frame;

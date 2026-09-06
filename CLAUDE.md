@@ -11,16 +11,33 @@ the current conversation.
 
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
 
-Platform coverage splits on whether a module draws. `Core`, `Network` and `SIMD`
-build everywhere, Linux included; the graphics stack (`Graphics`, `GPU`, `Text`,
-`Sprites`, `UI`, `SVG`, `WebView`, `Camera`, `Video`) is gated behind
-`(APPLE OR WIN32) AND EACP_BUILD_GRAPHICS` in `Lib/eacp/CMakeLists.txt`, with
-`Video`/`VideoView` additionally off on iOS. See the table in `README.md`. CI
+Platform coverage splits on whether a module draws, decided once in the
+top-level `CMakeLists.txt` by five capability variables that `Lib`, `Apps` and
+`Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
+(`Graphics` and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`, `GPUWidgets`,
+`Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG` and the examples
+that draw text), `EACP_HAS_CAPTURE` (`Camera`, `CameraView`, `Video`,
+`VideoView`, the last two additionally off on iOS) and `EACP_HAS_WEBVIEW` (the
+native `WebView`). The first three are nested — `TEXT` implies `GPU` implies
+`DRAW` — because Linux reaches them one plan stage at a time; Apple and Windows
+have all three, so their target sets are what `EACP_HAS_DRAW` alone used to
+decide. `Core`,
+`Network` and `SIMD` build everywhere, Linux included, and so do two device-free
+pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL and the
+MSL/HLSL/GLSL emitters (`GPUCodegenTests`), and `eacp-webview-bridge`, the page
+bridge over a `ScriptHost` (`ScriptHostTests`). `eacp-spirv` (`GPU/Spirv/`)
+wraps glslang as a portable GLSL-to-SPIR-V compiler so the GLSL dialect can be
+compiled on every platform (`SpirvTests`); only the Vulkan backend and the tests
+link it, never a shipping macOS/Windows binary. Where it is built, every GLSL
+source the codegen tests emit — and every hand-written GLSL twin in `GPUTests` —
+is compiled by glslang inside the suite, so an emitter regression fails on macOS
+and Windows CI rather than waiting for a Vulkan device. See the table in `README.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC and Clang), and builds iOS for the simulator.
 
-Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`
-and `ResEmbed` — plus libcurl on Linux, which backs the HTTP client there.
+Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
+`ResEmbed` and, behind `EACP_BUILD_SPIRV`, `glslang` — plus libcurl on Linux,
+which backs the HTTP client there.
 
 ## Build Commands
 
@@ -83,6 +100,26 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_PCH=ON
 ```
 
+- `EACP_BUILD_SPIRV` (default `ON`): builds `eacp-spirv`, fetching glslang via
+  CPM (a shallow ~75 MB checkout, about 5 s of build on a laptop, a minute on
+  a 4-core CI runner). Off skips the fetch and the target; consumers test
+  `if (TARGET eacp-spirv)`.
+
+- `EACP_LINUX_GRAPHICS` (default `OFF`): turns `EACP_HAS_DRAW` on for Linux, and
+  only that — `EACP_HAS_GPU` and `EACP_HAS_TEXT` stay off there until the Vulkan
+  and FreeType backends land. What it builds today is a headless
+  `eacp-graphics`: the portable view tree with `View-Linux.cpp` under it, windows
+  with no surface (`Window-Linux.cpp`), a timer-paced `DisplayLink`, and stubs
+  for the display, image codecs, menus, tray and system appearance. No 2D
+  `Context`, so `Font`, `Path`, `TextMetrics`, `TextInput`, `EmbeddedView` and
+  the retained layer classes are left out of the Linux source list rather than
+  stubbed. `GraphicsTests` runs 104 cases there.
+
+```bash
+docker run --rm -e EACP_HEADLESS=1 -v "$PWD":/workspace eacp-ci-linux \
+      ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
+```
+
 - `EACP_WEBVIEW_DEV` (default `OFF`): skips the Vite production build and
   resource embedding for webview apps. The UI is served from the Vite dev
   server instead (`npm run dev` in the app's `web/` dir); the runtime already
@@ -140,6 +177,10 @@ matching `APPLE`/`IOS`/`WIN32` branch.
   `Threads::delay` is built on it (`Threads/CallAfter.cpp`)
 - `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
+- `addLoopSource(fd, events, cb)` / `removeLoopSource(fd)`
+  (`Threads/EventLoop-Linux.h`, Linux only): a pollable descriptor joining the
+  loop's own `poll()` set, so a Wayland or xcb connection can be pumped by
+  eacp's loop without `eacp-core` linking the library that owns it
 
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)

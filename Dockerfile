@@ -56,7 +56,7 @@ RUN printf '%s\n' \
     '#!/usr/bin/env bash' \
     'set -euo pipefail' \
     'cd /workspace' \
-    'cmake -G Ninja -B build-ci-linux -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ "$@"' \
+    'cmake -G Ninja -B build-ci-linux -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_SCAN_FOR_MODULES=OFF -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ "$@"' \
     'cmake --build build-ci-linux' \
     'ctest --test-dir build-ci-linux --output-on-failure' \
     > /usr/local/bin/ci-build \

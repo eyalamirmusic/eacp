@@ -5,14 +5,23 @@ target_sources(eacp-graphics PRIVATE
         Image/Image.cpp
         Image/ImageOps.cpp
         Layers/Layer.cpp
-        Layers/LayerViews.cpp
-        Layers/ShapeLayer.cpp
-        Layers/TextLayer.cpp
         Menu/Menu.cpp
         Menu/MenuCommands.cpp
         Primitives/Primitives.cpp
-        View/View.cpp
-        Widgets/TextInput.cpp)
+        View/View.cpp)
+
+# Portable C++ that nonetheless stands on the 2D drawing stack: the retained
+# shape/text layers, the views that wrap one, and the text field drawn out of
+# them. Linux has no Context, no Font and no Path yet (plan stage 6 decides
+# whether it ever gets a 2D backend or draws this tier through the GPU coverage
+# rasterizer instead), so these are left out there rather than stubbed.
+if (APPLE OR WIN32)
+    target_sources(eacp-graphics PRIVATE
+            Layers/LayerViews.cpp
+            Layers/ShapeLayer.cpp
+            Layers/TextLayer.cpp
+            Widgets/TextInput.cpp)
+endif ()
 
 # The image hot loops (resizeBilinear / warpAffineInverse / mirroredCrop) now all
 # live in eacp-simd, which is always built -O3 -- so ImageOps.cpp holds only thin
@@ -106,12 +115,33 @@ elseif (WIN32)
             shell32
             windowscodecs)
 elseif (UNIX)
+    # Headless: a view tree, windows with no surface, and honest stubs for
+    # everything that needs a compositor, a codec or a desktop environment.
+    # There is no 2D context here, so nothing that draws is in the list —
+    # Font, Path, TextMetrics, GraphicUtils, ImageConversion, EmbeddedView and
+    # GraphicsContextImpl have no Linux half and no caller that needs one.
     target_sources(eacp-graphics PRIVATE
-            HotKey/GlobalHotKey-Linux.cpp)
+            Helpers/DisplayLink-Linux.cpp
+            Helpers/SystemAppearance-Linux.cpp
+            HotKey/GlobalHotKey-Linux.cpp
+            Image/Image-Linux.cpp
+            Layers/Layer-Linux.cpp
+            Menu/Menu-Linux.cpp
+            Tray/TrayIcon-Linux.cpp
+            View/View-Linux.cpp
+            Window/Display-Linux.cpp
+            Window/Window-Linux.cpp)
 endif ()
 
 set_default_target_setting(eacp-graphics)
 eacp_enable_unity_build(eacp-graphics)
 add_ide_sources(eacp-graphics)
 
-add_subdirectory(IconTool)
+# Build-time host tool, and the one thing in this directory that is not
+# portable-by-construction: it decodes a PNG/JPEG through Image, which is
+# implemented per platform. Kept out of the Linux branch until there is a codec
+# behind it - eacp_set_app_icon(... IMAGE ...) is the only caller, and it is
+# only reachable from an app that draws.
+if (APPLE OR WIN32)
+    add_subdirectory(IconTool)
+endif ()

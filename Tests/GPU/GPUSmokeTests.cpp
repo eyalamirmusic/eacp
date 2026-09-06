@@ -8,7 +8,8 @@ namespace
 {
 // Minimal shader whose vertex input matches the single Float4 attribute below,
 // so pipeline creation exercises the full vertex-descriptor path. Provided in
-// the backend the platform compiles (MSL on Metal, HLSL on D3D12).
+// the backend the platform compiles (MSL on Metal, HLSL on D3D12, GLSL on
+// Vulkan).
 const char* hlslSmokeShader = R"(
 struct VertexIn { float4 position : TEXCOORD0; };
 struct VertexOut { float4 position : SV_Position; };
@@ -27,12 +28,30 @@ vertex float4 vertexMain(VertexIn in [[stage_in]]) { return in.position; }
 fragment float4 fragmentMain() { return float4(1.0, 1.0, 1.0, 1.0); }
 )";
 
-// Both branches name both strings, so neither is an unused-variable warning on
-// the platform whose backend isn't selected.
+const char* glslSmokeShader = R"(#version 450
+
+#ifdef EACP_VERTEX
+layout(location = 0) in vec4 attr0;
+
+void main()
+{
+    gl_Position = attr0;
+}
+#endif
+
+#ifdef EACP_FRAGMENT
+layout(location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+}
+#endif
+)";
+
 ShaderSource smokeShaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslSmokeShader)
-                                 : ShaderSource::msl(mslSmokeShader);
+    return nativeShaderSource(mslSmokeShader, hlslSmokeShader, glslSmokeShader);
 }
 
 // A compute kernel writing output[i] = input[i] * scale, exercising a storage
@@ -66,11 +85,53 @@ kernel void computeMain(device const float* input [[buffer(0)]],
 }
 )";
 
+// A kernel's GLSL bindings are the Metal buffer indices verbatim: the storage
+// buffers from zero and the uniform block above every slot. `input` and
+// `output` are reserved words here, so the two runs are named rather than
+// spelled the way the other two dialects spell them.
+const char* glslComputeShader = R"(#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std140, set = 0, binding = 16) uniform Params
+{
+    float scale;
+    uint count;
+} params;
+
+layout(std430, set = 0, binding = 0) readonly buffer Source
+{
+    float sourceValues[];
+};
+
+layout(std430, set = 0, binding = 1) buffer Target
+{
+    float targetValues[];
+};
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+
+    if (gid >= params.count)
+        return;
+
+    targetValues[gid] = sourceValues[gid] * params.scale;
+}
+)";
+
+// Every number in the three sources above is one of these, so moving a base
+// fails here rather than in a descriptor set that silently binds nothing.
+static_assert(vulkanComputeUniformBinding == 16);
+static_assert(vulkanComputeBufferBinding(0) == 0);
+static_assert(vulkanComputeBufferBinding(1) == 1);
+static_assert(ComputePass::threadGroupWidth == 64);
+
 ShaderSource computeShaderSource()
 {
-    auto source = Platform::isWindows() ? ShaderSource::hlsl(hlslComputeShader)
-                                        : ShaderSource::msl(mslComputeShader);
-    return source.withCompute("computeMain");
+    return nativeComputeShaderSource(
+               mslComputeShader, hlslComputeShader, glslComputeShader)
+        .withCompute("computeMain");
 }
 
 struct ComputeParams

@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include "../Process/Process.h"
+
 namespace eacp::Apps
 {
 // No Dock/activation-policy concept here.
@@ -25,11 +27,17 @@ bool isDistributionSigned()
     return false;
 }
 
-// TODO: wire to xdg-open via fork/exec (avoid system() — shell metachars
-// in URLs are a hazard).
-void openExternalURL(const std::string&)
+// posix_spawnp with the URL as an argument, never system(): a shell would read
+// the metacharacters a URL is allowed to contain as its own. Detached, so the
+// handler outlives both this call and the Process that started it.
+void openExternalURL(const std::string& url)
 {
-    assert(false && "openExternalURL not implemented on Linux");
+    auto options = Processes::ProcessOptions {};
+    options.executable = "xdg-open";
+    options.arguments.add(url);
+    options.detached = true;
+
+    auto opener = Processes::Process {std::move(options)};
 }
 
 // TODO: wire to a portal (xdg-desktop-portal FileChooser) or GTK dialog.

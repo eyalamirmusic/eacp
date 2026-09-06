@@ -19,9 +19,29 @@ const Vertex triangleVertices[] = {
     {{0.8f, -0.8f}, {0.2f, 0.2f, 1.0f}},
 };
 
+const char* triangleShaderFile()
+{
+    if constexpr (Platform::isWindows())
+        return "Triangle.hlsl";
+    else if constexpr (Platform::isLinux())
+        return "Triangle.glsl";
+    else
+        return "Triangle.metal";
+}
+
+ShaderSource shaderSourceFrom(std::string text)
+{
+    if constexpr (Platform::isWindows())
+        return ShaderSource::hlsl(std::move(text));
+    else if constexpr (Platform::isLinux())
+        return ShaderSource::glsl(std::move(text));
+    else
+        return ShaderSource::msl(std::move(text));
+}
+
 ShaderSource loadTriangleShader()
 {
-    auto fileName = Platform::isWindows() ? "Triangle.hlsl" : "Triangle.metal";
+    auto fileName = triangleShaderFile();
 
     auto shader = ResEmbed::get(fileName, "TriangleShaders");
 
@@ -29,10 +49,9 @@ ShaderSource loadTriangleShader()
         throw std::runtime_error(std::string("Triangle: embedded ") + fileName
                                  + " not found");
 
-    auto source = Platform::isWindows() ? ShaderSource::hlsl(shader.toString())
-                                        : ShaderSource::msl(shader.toString());
-
-    return source.withVertex("vertexMain").withFragment("fragmentMain");
+    return shaderSourceFrom(shader.toString())
+        .withVertex("vertexMain")
+        .withFragment("fragmentMain");
 }
 } // namespace
 

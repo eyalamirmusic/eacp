@@ -64,12 +64,14 @@ add_subdirectory(StreamingStress)
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 
-# Text drawn from eacp-text's glyph atlas, placed by per-glyph bearings.
-add_subdirectory(GlyphAtlas)
-
-# One embedded variable face drawn at nine weights beside a family cut into
-# faces: registerMemoryFont, and a weight asked of an axis rather than matched.
-add_subdirectory(VariableFont)
+# The two that link eacp-text rather than only the GPU module: text drawn from
+# the glyph atlas with per-glyph bearings, and one embedded variable face at
+# nine weights beside a family cut into faces - registerMemoryFont, and a weight
+# asked of an axis rather than matched.
+if (EACP_HAS_TEXT)
+    add_subdirectory(GlyphAtlas)
+    add_subdirectory(VariableFont)
+endif ()
 
 # Links eacp-video (macOS-only: AVFoundation + ScreenCaptureKit).
 if (APPLE AND NOT IOS)

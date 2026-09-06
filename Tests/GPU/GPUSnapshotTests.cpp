@@ -73,6 +73,27 @@ VertexOut vertexMain(VertexIn input)
 float4 fragmentMain(VertexOut input) : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
 )";
 
+const char* glslFillShader = R"(#version 450
+
+#ifdef EACP_VERTEX
+layout(location = 0) in vec2 attr0;
+
+void main()
+{
+    gl_Position = vec4(attr0, 0.0, 1.0);
+}
+#endif
+
+#ifdef EACP_FRAGMENT
+layout(location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = vec4(0.0, 1.0, 0.0, 1.0);
+}
+#endif
+)";
+
 // A premultiplied translucent red (rgb already scaled by alpha 0.5): the shape a
 // normally alpha-blended fragment leaves in the target. Written verbatim under
 // the default (no-blend) pipeline, so the read-back must un-premultiply it back
@@ -105,18 +126,35 @@ VertexOut vertexMain(VertexIn input)
 float4 fragmentMain(VertexOut input) : SV_Target { return float4(0.25, 0.0, 0.0, 0.5); }
 )";
 
-// Both branches name every string, so none is an unused-variable warning on the
-// platform whose backend isn't selected.
+const char* glslPremulShader = R"(#version 450
+
+#ifdef EACP_VERTEX
+layout(location = 0) in vec2 attr0;
+
+void main()
+{
+    gl_Position = vec4(attr0, 0.0, 1.0);
+}
+#endif
+
+#ifdef EACP_FRAGMENT
+layout(location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = vec4(0.25, 0.0, 0.0, 0.5);
+}
+#endif
+)";
+
 ShaderSource fillShaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslFillShader)
-                                 : ShaderSource::msl(mslFillShader);
+    return nativeShaderSource(mslFillShader, hlslFillShader, glslFillShader);
 }
 
 ShaderSource premulShaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslPremulShader)
-                                 : ShaderSource::msl(mslPremulShader);
+    return nativeShaderSource(mslPremulShader, hlslPremulShader, glslPremulShader);
 }
 
 // Draws a single oversized triangle covering the whole viewport with the given

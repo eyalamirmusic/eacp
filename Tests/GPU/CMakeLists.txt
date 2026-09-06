@@ -1,3 +1,34 @@
+# The device-free half: the shader EDSL walked into MSL and HLSL text, checked
+# as strings. It links eacp-gpu-codegen and nothing else, so it builds and runs
+# on every platform — including one with no GPU, no display and no graphics
+# library, which is the whole point of the target existing.
+#
+# nano_add_executable's default main() is deliberate: these need no event loop,
+# and NanoTest runs the binary with --list-tests at build time, so it has to
+# start on a bare CI container.
+nano_add_executable(GPUCodegenTests
+        SOURCES
+            AtomicCodegenTests.cpp
+            ShaderCodegenTests.cpp
+        TARGETS eacp-gpu-codegen)
+
+# With the SPIR-V compiler around, every emitted GLSL source is also compiled by
+# glslang, so a dialect regression fails on macOS and Windows CI rather than
+# waiting for a Vulkan device. Without it the checks compile to nothing and the
+# string assertions stand alone.
+function(eacp_enable_glsl_compile_checks target)
+    if (TARGET eacp-spirv)
+        target_link_libraries(${target} PRIVATE eacp-spirv)
+        target_compile_definitions(${target} PRIVATE EACP_HAS_SPIRV=1)
+    endif ()
+endfunction()
+
+eacp_enable_glsl_compile_checks(GPUCodegenTests)
+
+if (NOT EACP_HAS_GPU)
+    return ()
+endif ()
+
 set(gpu_test_sources
         AtomicTests.cpp
         BufferRangeTests.cpp
@@ -5,7 +36,7 @@ set(gpu_test_sources
         IndirectDispatchTests.cpp
         MultiDeviceTests.cpp
         PackedHalfTests.cpp
-        ShaderCodegenTests.cpp
+        ShaderCompileTests.cpp
         SharedMemoryTests.cpp
         StorePlacementTests.cpp
         StreamingBufferTests.cpp
@@ -64,6 +95,8 @@ nano_add_executable(GPUTests
         SOURCES
             ${gpu_test_sources}
         TARGETS eacp-sprites eacp-gpu)
+
+eacp_enable_glsl_compile_checks(GPUTests)
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")

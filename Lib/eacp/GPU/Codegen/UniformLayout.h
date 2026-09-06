@@ -101,4 +101,16 @@ inline int hlslPackedOffset(int cursor, ValueType type)
     auto crossesRegister = cursor / 16 != (cursor + size - 1) / 16;
     return crossesRegister ? alignUp(cursor, 16) : cursor;
 }
+
+// The GLSL sibling of the above. std140 aligns a member the way MSL does - a
+// vec2 to 8, a vec3/vec4/matrix to 16 - so uniformAlignment answers for both
+// and every type the EDSL lets across the boundary lands where the CPU wrote
+// it. The one disagreement is the *size* of a vec3: std140 gives it 12 bytes
+// where MSL gives it a full 16, so a scalar following one packs four bytes low
+// and needs the same explicit pad the HLSL arm inserts. Nothing else does - a
+// vector after a scalar, which HLSL pads, std140 aligns natively.
+inline int std140PackedOffset(int cursor, ValueType type)
+{
+    return alignUp(cursor, uniformAlignment(type));
+}
 } // namespace eacp::GPU
