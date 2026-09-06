@@ -2,6 +2,7 @@ set(gpu_test_sources
         AtomicTests.cpp
         BufferAccessTests.cpp
         BufferRangeTests.cpp
+        ComputeBufferRangeTests.cpp
         GPUSmokeTests.cpp
         IndirectDispatchTests.cpp
         IntrinsicTests.cpp

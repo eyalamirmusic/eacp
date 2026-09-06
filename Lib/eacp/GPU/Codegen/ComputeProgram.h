@@ -7,7 +7,9 @@
 
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
-// assigned the GPU::Buffer to bind, with slots taken from declaration order.
+// assigned the GPU::Buffer to bind - or a BufferRange, to bind a slice of one
+// with the kernel's element zero at the offset - with slots taken from
+// declaration order.
 // define() writes the kernel body: read inputs at threadId() (or, over a grid,
 // at threadPosition()), write the result with write(). The generated kernel
 // guards against the rounded-up dispatch with implicit extents, supplied
@@ -32,7 +34,7 @@
 //
 //   ScaleKernel kernel;
 //   kernel.input = inputBuffer;     // GPU::Buffer, Storage usage
-//   kernel.output = outputBuffer;
+//   kernel.output = outputBuffer;   // or BufferRange {&cache, row * bytes, bytes}
 //   kernel.scale = 3.0f;
 //   kernel.prepare();               // builds library + compute pipeline
 //   ...
@@ -59,18 +61,18 @@ public:
 
     void onInputBuffer(const char*,
                        InputBuffer& handle,
-                       const Buffer* buffer) override
+                       const BufferRange& range) override
     {
-        if (buffer != nullptr)
-            pass.setInputBuffer(*buffer, handle.slot);
+        if (range.isValid())
+            pass.setInputBuffer(range, handle.slot);
     }
 
     void onOutputBuffer(const char*,
                         OutputBuffer& handle,
-                        const Buffer* buffer) override
+                        const BufferRange& range) override
     {
-        if (buffer != nullptr)
-            pass.setOutputBuffer(*buffer, handle.slot);
+        if (range.isValid())
+            pass.setOutputBuffer(range, handle.slot);
     }
 
     // An atomic buffer binds exactly as an output does - a Metal device buffer,
@@ -78,10 +80,10 @@ public:
     // through and not how the pass hands it over.
     void onAtomicBuffer(const char*,
                         AtomicBuffer& handle,
-                        const Buffer* buffer) override
+                        const BufferRange& range) override
     {
-        if (buffer != nullptr)
-            pass.setOutputBuffer(*buffer, handle.slot);
+        if (range.isValid())
+            pass.setOutputBuffer(range, handle.slot);
     }
 
     void onTexture(const char*,
