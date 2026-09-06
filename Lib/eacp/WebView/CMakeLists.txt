@@ -2,12 +2,6 @@ include(FetchContent)
 
 find_package(ResEmbed REQUIRED)
 find_package(Miro REQUIRED)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewGenerate.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewVite.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewBackend.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewReact.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewApp.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewTest.cmake)
 
 # The page bridge, over a ScriptHost rather than over a WebView: the shim, the
 # wire format, the Miro command table and the EACP_STATE binders. It touches no
@@ -17,11 +11,12 @@ include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewTest.cmake)
 #     target_link_libraries(myHost PUBLIC eacp-webview-bridge)
 #
 # eacp-webview links it publicly below, so a consumer of the platform web view
-# sees no difference.
+# sees no difference. It is also why the target is built on every platform,
+# Linux included: nothing it links draws.
 add_library(eacp-webview-bridge STATIC)
 
 target_link_libraries(eacp-webview-bridge PUBLIC
-        eacp-graphics eacp-network-rpc ResEmbed Miro)
+        eacp-core eacp-network-rpc ResEmbed Miro)
 
 target_sources(eacp-webview-bridge PRIVATE
         WebView/Bridge.cpp
@@ -41,9 +36,16 @@ set_default_target_setting(eacp-webview-bridge)
 eacp_enable_unity_build(eacp-webview-bridge)
 add_ide_sources(eacp-webview-bridge)
 
-if (NOT EACP_BUILD_WEBVIEW)
+if (NOT EACP_HAS_WEBVIEW)
     return ()
 endif ()
+
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewGenerate.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewVite.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewBackend.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewReact.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewApp.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/EacpWebViewTest.cmake)
 
 add_library(eacp-webview STATIC)
 

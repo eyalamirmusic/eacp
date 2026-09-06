@@ -2,22 +2,31 @@ add_subdirectory(Core)
 add_subdirectory(SIMD)
 add_subdirectory(Network)
 
-if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
-    add_subdirectory(Graphics)
+# Always added: the directory builds the shader codegen library
+# (eacp-gpu-codegen), which is pure string generation and needs no GPU. It
+# returns before eacp-gpu unless EACP_HAS_DRAW.
+add_subdirectory(GPU)
 
-    # Always added: the directory builds the page bridge (eacp-webview-bridge),
-    # which speaks to a ScriptHost and needs no native web runtime.
-    # EACP_BUILD_WEBVIEW gates only the WKWebView / WebView2 half inside it.
-    add_subdirectory(WebView)
-    # The whole GPU stack (Metal) now builds on macOS, iOS and Windows. Sprites,
-    # GPUWidgets and CameraView are portable C++ on top of it.
-    add_subdirectory(Camera)
-    add_subdirectory(GPU)
+# Always added: the directory builds the page bridge (eacp-webview-bridge),
+# which speaks to a ScriptHost and needs no native web runtime. It returns
+# before eacp-webview unless EACP_HAS_WEBVIEW.
+add_subdirectory(WebView)
+
+if (EACP_HAS_DRAW)
+    add_subdirectory(Graphics)
+endif ()
+
+if (EACP_HAS_GPU)
+    # Portable C++ on top of eacp-gpu, which the GPU directory above built.
     add_subdirectory(GPUWidgets)
 
+    # Batched textured quads, also on eacp-gpu alone - no glyphs involved.
+    add_subdirectory(Sprites)
+endif ()
+
+if (EACP_HAS_TEXT)
     # Glyph rasterization + atlas caching, on top of the GPU module.
     add_subdirectory(Text)
-    add_subdirectory(Sprites)
 
     # Lightweight component tier: a whole widget tree in one GPUView, drawn
     # through the sprite and glyph batchers.
@@ -26,7 +35,10 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS)
     # After UI, because a document now builds into either tier: native shape
     # layers, or a component tree drawn through the coverage rasterizer.
     add_subdirectory(SVG)
+endif ()
 
+if (EACP_HAS_CAPTURE)
+    add_subdirectory(Camera)
     add_subdirectory(CameraView)
 
     # View->video recorder, and video decode/playback. The Snapshot tier is

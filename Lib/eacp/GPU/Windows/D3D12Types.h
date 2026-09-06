@@ -2,6 +2,7 @@
 
 #include "D3D12Context.h"
 
+#include "../Codegen/ShaderBindings.h"
 #include "../Codegen/ShaderTypes.h"
 #include "../Frame/ComputePass.h"
 #include "../Frame/RenderPass.h"
@@ -27,12 +28,8 @@ namespace eacp::GPU
 constexpr int maxUniformSlots = 2;
 constexpr int maxBufferSlots = ComputePass::maxBufferSlots;
 
-// Eight, and the number is a shader model limit rather than a hardware one: the
-// slots are single-descriptor tables, which cost one root DWORD each, so this
-// is nearly free. It was four until a port needed five in one program - Doom 3
-// lights a surface from a bump map, a falloff, a light projection, a diffuse
-// map and a specular map, none of which fold into another.
-constexpr int maxTextureSlots = 8;
+// maxTextureSlots is in Codegen/ShaderBindings.h: the shader emitter needs the
+// same ceiling, and it has no business including a D3D12 header to read it.
 
 // Render root signature parameter layout: root CBVs per stage, then one
 // single-descriptor table per texture slot (SRV, then sampler — tables cannot

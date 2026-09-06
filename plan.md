@@ -2,9 +2,66 @@
 
 Written 2026-09-05 against `b0de675`, from five read-only investigations of the
 tree (GPU backend contract, shader codegen, Graphics layer and event loop,
-dependent modules/tests/CI, external Vulkan-on-Linux research). No code has been
-written yet. Line counts are estimates from reading the Metal and D3D12 backends,
-not commitments.
+dependent modules/tests/CI, external Vulkan-on-Linux research). Line counts
+are estimates from reading the Metal and D3D12 backends, not commitments.
+
+## 0. Progress
+
+**Stage 0 — landed 2026-09-05** (verified: macOS 1494 tests, Linux GCC 557
+tests, plain and `EACP_CI_BUILD` unity, plus Linux Clang).
+
+- `emitGlsl` GLSL 450 dialect in the one walker; `ShaderSource::glsl`,
+  `ShaderBackend::Vulkan`; `Codegen/ShaderBindings.h` holds `maxTextureSlots`
+  and the Vulkan binding map. Stage-macro contract: one source starting
+  `#version 450`, vertex-only code under `#ifdef EACP_VERTEX`, fragment-only
+  under `#ifdef EACP_FRAGMENT`, compute a single `main`.
+- `eacp-spirv` (`GPU/Spirv/`, glslang 16.5.0 via CPM behind
+  `EACP_BUILD_SPIRV`): `Spirv::compileGlsl(Stage, source)`; only tests and,
+  later, the Vulkan backend link it. `GPUCodegenTests` and the hand-written
+  twins in `GPUTests` compile every emitted GLSL shader with it on every lane.
+- `eacp-gpu-codegen` carved out of `eacp-gpu`; `GPU/Common.h` narrowed to
+  `Primitives.h`; `ShaderBuilder-Linux.cpp` emits GLSL; `GPUCodegenTests`
+  (66) and `ScriptHostTests` run on Linux. Gate is now `EACP_HAS_DRAW` /
+  `EACP_HAS_CAPTURE` / `EACP_HAS_WEBVIEW` plus `EACP_LINUX_GRAPHICS` (OFF).
+- `eacp-webview-bridge` no longer links `eacp-graphics`. Linux
+  `openExternalURL` runs `xdg-open` detached; DejaVu font defaults.
+
+**Stage 1 — landed 2026-09-05** (verified: Linux with `EACP_LINUX_GRAPHICS=ON`
+665 tests under GCC, Clang and `EACP_CI_BUILD` unity; option off 561; macOS
+unchanged at 1494).
+
+- `eacp-graphics` builds and links on Linux headless: `View-Linux.cpp`
+  (`Native` = bounds + focus; `getHandle()`/`getNativeLayer()` return the
+  `Native*` for a later `GPUView`; `renderToImage` → `renderNativeContent`),
+  headless `Window-Linux.cpp`, timer `DisplayLink-Linux.cpp`, stubs for
+  Display/Image/Menu/TrayIcon/SystemAppearance/Layer. No 2D `Context`, `Path`,
+  `Font`, layers or `TextInput` on Linux, so no app links there yet.
+- `Threads::addLoopSource(fd, events, cb)` / `removeLoopSource(fd)` in
+  `Core/Threads/EventLoop-Linux.h`, polled alongside the waker; four tests.
+- Gate refined: `EACP_HAS_GPU` (GPU runtime, GPUWidgets, Sprites; Linux joins
+  at stage 2) and `EACP_HAS_TEXT` (Text, UI, SVG and their apps; stage 5).
+- `GraphicsTests` runs 104 cases on Linux; `ImageTests`, `RenderToImageTests`
+  and `RoundedRectTests` are left out (codec, paint context, `Path`).
+- HiDPI seam for stage 4: `Graphics::notifyBackingScaleChanged(View&)` in
+  `View/View-Linux.h`; nothing calls it yet.
+
+Follow-ups found on the way, not yet done:
+
+- Emitter gap in all three dialects: a fragment stage reading a vertex input
+  with no varying between them emits a name the stage does not have
+  (`GPU/codegenOperatorSugar`, first graph of
+  `GPU/codegenHlslCbufferPaddingFloat2` are excluded from the compile check).
+  Fix by auto-promoting such reads to a varying.
+- std140 rounds a block to 16 bytes where the CPU pads to the widest member;
+  the Vulkan `UNIFORM_BUFFER_DYNAMIC` range must be sized with that in mind.
+- Written textures are declared `writeonly image2D` with no format qualifier,
+  so the Vulkan device must enable `shaderStorageImageWriteWithoutFormat`.
+- The `maxTextureSlots` move out of `D3D12Types.h` is unverified on a Windows
+  compiler until CI runs.
+- A geometry-only `Primitives/Path-Linux.cpp` (~80 lines) would bring
+  `RoundedRectTests` and the `Apps/Plugins` examples to Linux.
+- Stage 2 flips `EACP_HAS_GPU` to include Linux; the Docker image and the CI
+  lane then need `mesa-vulkan-drivers` (lavapipe) and `EACP_HEADLESS=1`.
 
 ## 1. Headline findings
 

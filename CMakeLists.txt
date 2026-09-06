@@ -36,6 +36,14 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
+# Partly implemented. What it turns on today is a headless eacp-graphics: views,
+# windows with no surface, and the portable model around them. The Vulkan and
+# Wayland halves arrive over the later stages of the plan, so EACP_HAS_GPU and
+# EACP_HAS_TEXT below stay off on Linux whatever this says.
+option(EACP_LINUX_GRAPHICS
+        "Build the Linux graphics backend (headless Graphics so far)"
+        OFF)
+
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL
             "Compile eacp libraries as CMake unity builds" FORCE)
@@ -51,6 +59,58 @@ endif ()
 if (NOT EACP_BUILD_GRAPHICS)
     set(EACP_BUILD_WEBVIEW OFF CACHE BOOL
             "Build the WebView module" FORCE)
+endif ()
+
+# What this host can do, decided once and read by Lib, Apps and Tests instead of
+# each of them restating the platform predicate. set() does not evaluate boolean
+# expressions, hence the if()/set() shape.
+#
+#   EACP_HAS_DRAW    a windowing system to put views in: Graphics.
+#   EACP_HAS_GPU     a GPU backend under eacp-gpu, and so also GPUWidgets and
+#                    Sprites, which are portable C++ over nothing else.
+#   EACP_HAS_TEXT    a glyph rasterizer, and so also UI and SVG, which draw
+#                    their text through it.
+#   EACP_HAS_CAPTURE cameras and screen/video capture, which no Linux backend
+#                    exists for even once drawing does: Camera, CameraView,
+#                    Video, VideoView.
+#   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2). The page
+#                    bridge is portable and deliberately outside this.
+#
+# The three drawing variables are nested rather than one predicate because Linux
+# reaches them one at a time: headless Graphics first, then Vulkan, then
+# FreeType/HarfBuzz. Apple and Windows have all three, so their target sets are
+# whatever EACP_HAS_DRAW was already.
+#
+# Everything device-free stays out of them: the shader codegen library and the
+# WebView page bridge build on every platform.
+set(EACP_HAS_DRAW OFF)
+
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR (LINUX AND EACP_LINUX_GRAPHICS)))
+    set(EACP_HAS_DRAW ON)
+endif ()
+
+set(EACP_HAS_GPU OFF)
+
+if (EACP_HAS_DRAW AND (APPLE OR WIN32))
+    set(EACP_HAS_GPU ON)
+endif ()
+
+set(EACP_HAS_TEXT OFF)
+
+if (EACP_HAS_GPU AND (APPLE OR WIN32))
+    set(EACP_HAS_TEXT ON)
+endif ()
+
+set(EACP_HAS_CAPTURE OFF)
+
+if (EACP_HAS_DRAW AND (APPLE OR WIN32))
+    set(EACP_HAS_CAPTURE ON)
+endif ()
+
+set(EACP_HAS_WEBVIEW OFF)
+
+if (EACP_HAS_DRAW AND EACP_BUILD_WEBVIEW AND (APPLE OR WIN32))
+    set(EACP_HAS_WEBVIEW ON)
 endif ()
 
 include(TargetSetup)

@@ -10,8 +10,9 @@ namespace eacp::GPU
 namespace detail
 {
 // Emits the native shader source for the platform's backend (MSL on Apple, HLSL
-// on Windows). Defined per-platform in ShaderBuilder-macOS.cpp / -Windows.cpp,
-// mirroring the rest of the GPU module, so build() needs no preprocessor branch.
+// on Windows, GLSL everywhere else). Defined per-platform in
+// ShaderBuilder-Apple.cpp / -Windows.cpp / -Linux.cpp, mirroring the rest of the
+// GPU module, so build() needs no preprocessor branch.
 ShaderSource nativeShaderSource(const ShaderGraph& graph);
 } // namespace detail
 

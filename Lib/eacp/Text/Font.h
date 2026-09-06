@@ -64,14 +64,20 @@ constexpr int weightClass(int weight)
     return (clamped + 50) / 100 * 100;
 }
 
-// The platform's stock fixed-pitch face. No family name ships on both systems,
-// so asking for a literal one gets you a substitute on the other platform —
+// The platform's stock fixed-pitch face. No family name ships on all three
+// systems, so asking for a literal one gets you a substitute on the others —
 // a proportional substitute, which quietly loses the property most callers of a
-// monospace family wanted in the first place.
+// monospace family wanted in the first place. DejaVu Sans Mono is the Linux
+// one every desktop distribution ships (fonts-dejavu-core on Debian/Ubuntu);
+// where it is absent every font test self-skips rather than fails, so a bare
+// container reports green either way.
 constexpr const char* defaultMonospaceFamily()
 {
     if constexpr (Platform::isWindows())
         return "Consolas";
+
+    if constexpr (Platform::isLinux())
+        return "DejaVu Sans Mono";
 
     return "Menlo";
 }

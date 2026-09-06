@@ -58,10 +58,30 @@ VertexOut vertexMain(VertexIn input)
 float4 fragmentMain(VertexOut input) : SV_Target { return float4(0.0, 1.0, 0.0, 1.0); }
 )";
 
+const char* glslShader = R"(#version 450
+
+#ifdef EACP_VERTEX
+layout(location = 0) in vec2 attr0;
+
+void main()
+{
+    gl_Position = vec4(attr0, 0.0, 1.0);
+}
+#endif
+
+#ifdef EACP_FRAGMENT
+layout(location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = vec4(0.0, 1.0, 0.0, 1.0);
+}
+#endif
+)";
+
 ShaderSource shaderSource()
 {
-    return Platform::isWindows() ? ShaderSource::hlsl(hlslShader)
-                                 : ShaderSource::msl(mslShader);
+    return nativeShaderSource(mslShader, hlslShader, glslShader);
 }
 
 // Fills the viewport with green over a red clear, through whatever scissor the

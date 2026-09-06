@@ -22,18 +22,28 @@ set(graphics_test_sources
         CursorTests.cpp
         DisplayTests.cpp
         ImageOpsTests.cpp
-        ImageTests.cpp
         KeyCodeTests.cpp
         MenuCommandsTests.cpp
         MenuTests.cpp
         RectTests.cpp
-        RenderToImageTests.cpp
-        RoundedRectTests.cpp
         ScrollWheelTests.cpp
         TestMain.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)
+
+# The three that need something the Linux build deliberately does not have.
+# ImageTests round-trips PNG and JPEG through the platform codec, which is
+# ImageIO or WIC and has no Linux counterpart. RenderToImageTests reads back
+# pixels a 2D Context painted, and RoundedRectTests builds a Path. Listed
+# rather than left to self-skip: a suite that skips every case reports as a
+# pass, which is exactly the silent green the plan warns about.
+if (APPLE OR WIN32)
+    list(APPEND graphics_test_sources
+            ImageTests.cpp
+            RenderToImageTests.cpp
+            RoundedRectTests.cpp)
+endif ()
 
 # The macOS-only halves of the cursor, menu and scroll-wheel suites. Each
 # portable half covers the model; the .mm file next to it checks the backing

@@ -1,4 +1,4 @@
-#include "EventLoop.h"
+#include "EventLoop-Linux.h"
 #include "ThreadUtils-Linux.h"
 #include "../Utils/Singleton.h"
 
@@ -56,12 +56,22 @@ struct PipeWaker
     int writeFd = -1;
 };
 
+struct LoopSource
+{
+    int fd = -1;
+    short events = 0;
+    Callback callback;
+};
+
 struct LoopState
 {
     PipeWaker waker;
     std::mutex mutex;
     Vector<Callback> queue;
     std::atomic<bool> running {false};
+
+    std::mutex sourceMutex;
+    Vector<LoopSource> sources;
 };
 
 static LoopState& getLoop()
@@ -81,6 +91,53 @@ void drainPending(LoopState& loop)
     for (auto& cb: pending)
         cb();
 }
+
+// The waker first, then every registered source. Rebuilt before each wait
+// rather than cached, because a source callback is allowed to add or remove
+// sources — including its own — while the set is being dispatched.
+Vector<pollfd> buildPollSet(LoopState& loop)
+{
+    auto fds = Vector<pollfd> {};
+    fds.add(pollfd {loop.waker.readFd, POLLIN, 0});
+
+    auto lock = std::lock_guard(loop.sourceMutex);
+
+    for (const auto& source: loop.sources)
+        fds.add(pollfd {source.fd, source.events, 0});
+
+    return fds;
+}
+
+// Runs the callback of every source poll() reported on, looking each one up by
+// descriptor so a source removed by an earlier callback in the same round is
+// simply not found. The callback is copied out before the lock is released, so
+// a source that removes itself is still alive for the duration of the call.
+void dispatchReadySources(LoopState& loop, const Vector<pollfd>& fds)
+{
+    for (auto i = 1; i < fds.size(); ++i)
+    {
+        if (fds[i].revents == 0)
+            continue;
+
+        auto callback = Callback {};
+
+        {
+            auto lock = std::lock_guard(loop.sourceMutex);
+
+            for (const auto& source: loop.sources)
+                if (source.fd == fds[i].fd)
+                    callback = source.callback;
+        }
+
+        if (callback)
+            callback();
+    }
+}
+
+int waitForLoopActivity(Vector<pollfd>& fds, int timeoutMs)
+{
+    return ::poll(fds.data(), (nfds_t) fds.size(), timeoutMs);
+}
 } // namespace
 
 void EventLoop::run()
@@ -92,8 +149,8 @@ void EventLoop::run()
 
     while (loop.running)
     {
-        auto pfd = pollfd {loop.waker.readFd, POLLIN, 0};
-        auto r = ::poll(&pfd, 1, -1);
+        auto fds = buildPollSet(loop);
+        auto r = waitForLoopActivity(fds, -1);
 
         if (r < 0)
         {
@@ -103,6 +160,7 @@ void EventLoop::run()
         }
 
         loop.waker.drain();
+        dispatchReadySources(loop, fds);
         drainPending(loop);
     }
 }
@@ -127,8 +185,8 @@ bool EventLoop::runFor(Time::MS timeout)
 
         auto remaining = deadline.remaining().count;
 
-        auto pfd = pollfd {loop.waker.readFd, POLLIN, 0};
-        auto r = ::poll(&pfd, 1, (int) remaining);
+        auto fds = buildPollSet(loop);
+        auto r = waitForLoopActivity(fds, (int) remaining);
 
         if (r < 0)
         {
@@ -143,6 +201,7 @@ bool EventLoop::runFor(Time::MS timeout)
         }
 
         loop.waker.drain();
+        dispatchReadySources(loop, fds);
         drainPending(loop);
     }
 
@@ -163,6 +222,38 @@ void EventLoop::call(Callback func)
         auto lock = std::lock_guard(loop.mutex);
         loop.queue.add(std::move(func));
     }
+    loop.waker.wake();
+}
+
+void addLoopSource(int fd, short events, Callback callback)
+{
+    auto& loop = getLoop();
+
+    {
+        auto lock = std::lock_guard(loop.sourceMutex);
+
+        loop.sources.removeIndexesMatching([fd](const LoopSource& source)
+                                           { return source.fd == fd; });
+
+        loop.sources.add(LoopSource {fd, events, std::move(callback)});
+    }
+
+    // The pump may already be blocked in poll() over a set this descriptor is
+    // not in yet, so nothing else would make it rebuild.
+    loop.waker.wake();
+}
+
+void removeLoopSource(int fd)
+{
+    auto& loop = getLoop();
+
+    {
+        auto lock = std::lock_guard(loop.sourceMutex);
+
+        loop.sources.removeIndexesMatching([fd](const LoopSource& source)
+                                           { return source.fd == fd; });
+    }
+
     loop.waker.wake();
 }
 
