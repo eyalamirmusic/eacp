@@ -489,6 +489,36 @@ auto tServerClose = test("WebSocket/aServerCloseArrivesWithItsCodeAndReason") = 
     check(connection->state() == State::closed);
 };
 
+// A peer that says its last word and closes in the same breath puts both on
+// the wire before the client has taken either, and neither may be lost.
+auto tMessageThenClose =
+    test("WebSocket/aLastMessageAndACloseTogetherBothArrive") = []
+{
+    if (webSocketSkipped())
+        return;
+
+    auto options = WebSocketTestServerOptions();
+    options.greeting = "last";
+    options.closeAfterHandshake = true;
+    options.closeCode = 1001;
+    options.closeReason = "going away";
+
+    auto server = WebSocketTestServer(options);
+    auto record = WebSocketRecord();
+
+    auto connection = webSocketConnect(server.url(), record);
+
+    check(webSocketPumpUntil([&] { return record.closes > 0; }));
+    webSocketPumpFor(MS {200});
+
+    check(record.messages.size() == 1);
+    check(record.messages[0].data == "last");
+    check(record.errors == 0);
+    check(record.close.code == 1001);
+    check(record.close.reason == "going away");
+    check(connection->state() == State::closed);
+};
+
 auto tConnectionRefused = test("WebSocket/aRefusedConnectionErrorsThenCloses") = []
 {
     if (webSocketSkipped())
