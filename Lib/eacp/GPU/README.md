@@ -911,13 +911,17 @@ The D3D12 backend is less exercised than the Metal one. Notes worth having:
 
 ## Linux
 
-The Vulkan backend is half built. What is there is compute: `Device`, `Buffer`,
-`ShaderLibrary`, `ComputePipeline`, `ComputePass`, `CommandBuffer` and
-`GpuTimestamps` are real, and everything that draws — `Texture`,
-`RenderPipeline`, `RenderPass`, `Frame`, `GPUView` — is a placeholder that
-reports itself invalid. That is deliberate: a `Texture` that answered
-`isValid()` with nothing behind it would turn every gap into a wrong picture or
-a hung device instead of a "no" the caller can act on. It is behind
+The Vulkan backend draws, off-screen. `Device`, `Buffer`, `ShaderLibrary`,
+`ComputePipeline`, `ComputePass`, `CommandBuffer`, `GpuTimestamps`, `Texture`,
+`RenderPipeline`, `RenderPass` and the off-screen `Frame` are real, and
+`GPUView::renderNativeContent` renders into an off-screen target and reads it
+back — the path every pixel-comparison test rides — so all of `Tests/GPU` (bar
+the Metal-only `TextureInteropTests.mm`) and `Tests/GPUWidgets` run on lavapipe.
+What is not there is a surface: the swapchain half of `GPUView` and the drawable
+`Frame` constructor report themselves invalid until the Wayland window lands
+(stage 4 of `plan.md`). That is deliberate: a `Frame` that answered `isValid()`
+with nothing behind it would turn the gap into a wrong picture or a hung device
+instead of a "no" the caller can act on. It is behind
 `-DEACP_LINUX_GRAPHICS=ON` and off by default.
 
 Notes worth having:
@@ -954,14 +958,51 @@ Notes worth having:
   would otherwise need. It is what makes the per-recording use tracking in
   `transitionForUse` correct, and it is the analogue of D3D12 buffers decaying
   to `COMMON` after every `ExecuteCommandLists`.
-- **A compute texture slot has one binding number and two possible descriptor
-  types.** The binding map (`Codegen/ShaderBindings.h`) gives slot *i* binding
-  `textureRegisterBase + i` whether the kernel samples it or writes it, matching
-  the Metal indices; Vulkan gives a binding exactly one type. Until there is a
-  `Texture` to bind, the shared layout reserves the range as combined image
-  samplers and a module that declares anything in it is refused a pipeline —
-  `ComputePipeline::isValid()` false, and a log line saying why — rather than
-  dispatched against a descriptor nothing wrote.
+- **A pass is one `vkCmdBeginRendering`; there is no `VkRenderPass`.**
+  `DepthAction` is the attachment's load and store ops — `Clear` is
+  `CLEAR`/`DONT_CARE`, `Keep` is `CLEAR`/`STORE`, `Resume` is `LOAD`/`STORE`,
+  never Vulkan's own suspend/resume. A multisampled target draws into its
+  companion image and resolves through the attachment's resolve fields at the
+  end of every pass, so the texture always holds the resolved picture; a
+  sampleable depth on such a target resolves with `SAMPLE_ZERO`, which is what
+  Metal does and why the shader fallback D3D12 needed does not exist here.
+- **Barriers are hoisted to pass boundaries**, because Vulkan forbids one inside
+  a rendering instance. Between passes every colour image rests in a layout a
+  pass can sample (`SHADER_READ_ONLY_OPTIMAL`; `GENERAL` for a `computeWrite`
+  texture, since a sampler reads that too; the multisample companion stays
+  `COLOR_ATTACHMENT_OPTIMAL`), an upload leaves the image there the moment the
+  copy is recorded, and a pass moves its attachments in at begin and back out at
+  end. One global barrier before `vkCmdBeginRendering` orders every earlier copy
+  and dispatch on the recording against the draws, and after that no bind
+  records anything. An upload made while a pass is open takes a recording of
+  its own, submitted ahead of the frame — the thing `Texture-Windows.cpp` does
+  for textures and Metal forbids outright.
+- **One descriptor set per draw, elided when nothing changed.** The render set
+  is shared by every pipeline (`descriptorBindingPartiallyBound`, so only the
+  slots actually bound are written); the uniform block is one
+  `UNIFORM_BUFFER_DYNAMIC` at binding 0 with the block's offset in the constant
+  ring as the dynamic offset. The emitter writes exactly one block for both
+  stages, so `setVertexBytes` and `setFragmentBytes` write the same descriptor
+  and the last one wins — safe because `RenderPass::setUniforms` hands both the
+  same bytes, and documented at that call site. Samplers travel with the image
+  in the descriptor write (`VulkanShared::getSampler`) rather than being
+  immutable in the layout, which would have needed a layout per shader.
+- **A texture slot has one binding number and two possible descriptor types.**
+  The binding map (`Codegen/ShaderBindings.h`) gives a slot one binding whether
+  a kernel samples it or writes it, matching the Metal indices; Vulkan gives a
+  binding one type. So a compute pipeline reflects its SPIR-V
+  (`spirvTextureBindings`) and builds a descriptor-set layout of its own naming
+  each declared slot as the `COMBINED_IMAGE_SAMPLER` or `STORAGE_IMAGE` the
+  module declared; a kernel that binds no texture shares the one layout in
+  `VulkanShared`. A render shader only ever samples, so its set needs no such
+  split.
+- **NDC y is the one axis Vulkan differs on**, and the fix is a negative
+  viewport height — applied at pass begin, in `setViewport` and in
+  `clearViewport`, and nowhere else — so `Winding::CounterClockwise` maps
+  straight to `VK_FRONT_FACE_COUNTER_CLOCKWISE`, cull mode and front face are
+  baked into the pipeline, and `CullModeTests`, `ViewportTests` and
+  `CoordinateSpaceTests` pass unchanged. See `plan.md` §3.5 for why the two
+  other fixes are wrong.
 
 ### Running it
 

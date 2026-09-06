@@ -51,12 +51,24 @@ struct ShaderLibrary::Native
 
         if (source.isCompute())
         {
-            compileStage(Spirv::Stage::Compute, source.source, program.compute);
+            compileStage(Spirv::Stage::Compute,
+                         source.source,
+                         program.compute,
+                         vulkanComputeTextureBinding(0));
             return;
         }
 
-        compileStage(Spirv::Stage::Vertex, source.source, program.vertex);
-        compileStage(Spirv::Stage::Fragment, source.source, program.fragment);
+        // Both stages reflect against the render binding map and the results
+        // are merged: the vertex stage declares no texture and the fragment
+        // stage declares them all, and the pipeline binds one set for both.
+        compileStage(Spirv::Stage::Vertex,
+                     source.source,
+                     program.vertex,
+                     vulkanTextureBinding(0));
+        compileStage(Spirv::Stage::Fragment,
+                     source.source,
+                     program.fragment,
+                     vulkanTextureBinding(0));
     }
 
     // Deferred rather than destroyed, on the same terms as a buffer: a pipeline
@@ -81,7 +93,8 @@ struct ShaderLibrary::Native
 
     void compileStage(Spirv::Stage stage,
                       const std::string& source,
-                      VkShaderModule& module)
+                      VkShaderModule& module,
+                      int textureBindingBase)
     {
         const auto result = Spirv::compileGlsl(stage, source);
 
@@ -95,8 +108,13 @@ struct ShaderLibrary::Native
 
         module = makeShaderModule(context->getDevice(), result.words);
 
-        if (module != VK_NULL_HANDLE && spirvBindsTextureRange(result.words))
-            program.usesTextures = true;
+        // The module is reflected rather than the graph that produced it: the
+        // pipeline layout has to describe the SPIR-V the driver is given, and a
+        // texture binding's descriptor type is a property of that SPIR-V. See
+        // VulkanTextureBindings.
+        if (module != VK_NULL_HANDLE)
+            program.textures.merge(
+                spirvTextureBindings(result.words, textureBindingBase));
     }
 
     VulkanContext* context = nullptr;

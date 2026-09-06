@@ -175,17 +175,18 @@ auto tTimingsNameAnEarlierFrame = test("FrameTiming/timingsNameAnEarlierFrame") 
     const auto& timings = renderAndCollect(view);
 
     // Whether anything comes back at all on a device with no counters is the
-    // one place the two backends genuinely differ: Metal measures the frame
-    // from the command buffer, so it reports one either way, while D3D12
-    // measures it with the same queries as the passes and has nothing without
+    // one place the backends genuinely differ: Metal measures the frame from
+    // the command buffer, so it reports one either way, while D3D12 and Vulkan
+    // measure it with the same queries as the passes and have nothing without
     // them.
     //
-    // Worth stating rather than skipping on both, because the Metal half is
+    // Worth stating rather than skipping everywhere, because the Metal half is
     // what caught the bug this case exists for - a slot that could never
     // complete was left pending forever, and four of those stopped the timer
     // for good on exactly the machines that cannot sample counters.
-    if (Platform::isWindows() && !Device::shared().supportsPassTimings())
-        return;
+    if constexpr (!Platform::isApple())
+        if (!Device::shared().supportsPassTimings())
+            return;
 
     check(timings.frameIndex > 0);
     check(timings.frameIndex < Device::shared().frameIndex());

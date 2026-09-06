@@ -99,30 +99,93 @@ tree's 1581 plus the device-presence case and four codegen cases).
   `clampedCornerRadius`). `RoundedRectTests` now runs everywhere and
   `PathTests-Linux` pins the record; `GraphicsTests` is 118 cases on Linux.
 
+**Stage 3 — landed 2026-09-06** (verified after the develop merge: Linux with
+`EACP_LINUX_GRAPHICS=ON` 993 tests under GCC, `GPUTests` 251 and
+`GPUWidgetsTests` 57 with zero validation messages under
+`EACP_VK_VALIDATION=1`; option off 567; macOS 1506 with `GPUTests` 252 and
+`GPUWidgetsTests` 57. The `EACP_CI_BUILD` unity+PCH build was checked just
+before the merge, at 991, and not again after it.)
+
+- The render half of the Vulkan backend, off-screen. `Texture-Linux.cpp`:
+  `VkImage` + view through VMA, cube as a six-layer image, CPU mip chains and
+  supplied chains, BC1/2/3/7 uploads, region update and read through the
+  context's arena and readback pool, the multisampled companion, the depth
+  companion (`D32_SFLOAT` / `D32_SFLOAT_S8_UINT`) with a depth-only read view
+  and a resolved-depth image for a sampleable depth on a multisampled target,
+  and lifetime layout tracking (`VulkanTextureData`, `ImageUse`,
+  `recordImageBarrier`). `RenderPipeline-Linux.cpp`: a dynamic-rendering
+  `VkGraphicsPipeline` with cull mode and front face baked in, `VIEWPORT`,
+  `SCISSOR` and `STENCIL_REFERENCE` dynamic. `Frame-Linux.cpp` and
+  `RenderPass-Linux.cpp`: `vkCmdBeginRendering` per pass with `DepthAction` as
+  load/store ops, resolve through the attachment's resolve fields (`AVERAGE`
+  for colour, `SAMPLE_ZERO` for depth), the negative viewport height of §3.5,
+  scissor clamped with outward rounding, one descriptor set per draw elided
+  when nothing changed, `flush()` as submit-and-reopen, an off-screen destructor
+  that waits. `GPUView-Linux.cpp`: `renderNativeContent` through a real
+  render-target `Texture` and `Texture::read`, premultiplied BGRA to straight
+  RGBA as on Windows. The drawable `Frame` constructor and the swapchain half of
+  `GPUView` stay placeholders for stage 4.
+- The four `VkSampler`s in `VulkanShared` (`getSampler`, `Device::nativeSampler`)
+  and the render descriptor-set layout (`getRenderLayouts`: one dynamic uniform
+  block, eight combined image samplers, eight storage buffers, every binding
+  visible to both stages, all partially bound). The stage-2 compute-texture
+  follow-up is resolved by per-module SPIR-V reflection
+  (`spirvTextureBindings`): a kernel that declares a texture builds its own
+  descriptor-set layout naming each slot as the type the module declared.
+- Barrier design: resting layouts between passes (colour images sampleable,
+  `GENERAL` for `computeWrite`, the multisample companion in
+  `COLOR_ATTACHMENT_OPTIMAL`), attachments moved in at pass begin and out at
+  pass end, one hoisted global barrier before every `vkCmdBeginRendering`, and
+  no barrier in any bind. An upload made while a pass is open takes a recording
+  of its own (`VulkanContext::getRecordingForCopy`), which fixed 46 validation
+  errors found on the way.
+- Tests: the `APPLE OR WIN32` list in `Tests/GPU/CMakeLists.txt` is gone; every
+  file but `TextureInteropTests.mm` is portable. `MultiDeviceTests` guards only
+  the queue-distinctness assertion on Linux, `FrameTimingTests` treats a
+  backend without pass timings as Windows is treated. `TextureCreationTests.cpp`
+  is new and portable; `PathRasterizerTests` gains the mirror assertion that
+  `PathRasterizer::getCoverage().isValid()` under `EACP_REQUIRE_GPU=1`, so the
+  coverage comparisons in `GPUWidgetsTests` can no longer report green while
+  skipping. `ShaderPipelineTests::fillShaderCodegen` has a GLSL arm.
+- `origin/develop` (273cd99, the EA-container and int-sized-interface move) was
+  merged beneath this stage on the same day and the Linux backend ported to
+  the new signatures.
+
 Follow-ups found on the way, not yet done:
 
 - The `maxTextureSlots` move out of `D3D12Types.h` is unverified on a Windows
-  compiler until CI runs.
-- `GPUWidgets/fillShaderCodegen` checks the generated source against the MSL and
-  HLSL spellings (`struct Uniforms`, `return uniforms.u1;`). It is now built
-  only on Apple/Windows; a GLSL arm belongs beside the emitter's own tests.
-- Stage 3 must decide a compute texture binding's descriptor type per module -
-  the binding map gives a slot one number whether it is sampled or written, and
-  Vulkan gives a binding one type. Until then `ComputePipeline` refuses a kernel
-  that declares a texture, which is why `Apps/GPU/PathBench` reports submission
-  time rather than rasterization time on Linux.
-- The render descriptor-set layout, the four `VkSampler`s and
-  `Device::nativeSampler` are all still unwritten: a GLSL texture binding is a
-  combined image sampler, so the sampler travels with the image in the
-  descriptor write rather than being bound on its own.
-- `GpuTimestamps-Linux.cpp` is real but unexercised: `FrameTimer::beginRecording`
-  and `endFrame` are driven by `Frame`, which is a placeholder.
-- The 53 `GPUWidgetsTests` cases on Linux are vacuous for rasterization: the
-  coverage comparisons self-skip on the mask `Texture`, which is a placeholder,
-  and `DevicePresenceTests` proves a device, not a texture. Stage 3 should add
-  the mirror assertion under `EACP_REQUIRE_GPU=1` - that
-  `PathRasterizer::getCoverage().isValid()` - so a `Texture` path that stays
-  invalid cannot report green.
+  compiler until CI runs, and so is everything in the develop merge that touched
+  `*-Windows.cpp`.
+- `VkPipeline` hash-caching on everything that is not dynamic state (§3.1's
+  design rule) is not implemented; every `RenderPipeline` is one
+  `vkCreateGraphicsPipelines`, and there is no `VkPipelineCache`.
+- A `Texture` created without pixels and never written rests at
+  `VK_IMAGE_LAYOUT_UNDEFINED`, and a bind of it names its resting layout. Nothing
+  in the suite does this; the honest fix is an initial transition at creation in
+  `Texture-Linux.cpp`.
+- A device whose depth-resolve modes lack `SAMPLE_ZERO` gets a multisampled,
+  sampleable-depth target with no resolve recorded — the read is undefined
+  rather than the target refused at creation. No such device has been seen.
+- `RenderPipeline::nativeDepthState()` is non-null only for `depth`, as on
+  D3D12; Metal answers for `depth || stencil`. A pass should read
+  `VulkanRenderPipeline::depth`/`stencil` instead.
+- `wrapPixelBuffer` is invalid on Linux, as on Windows, there being no capture
+  backend to produce one.
+- Stage 4 needs from `Frame`: the drawable constructor calling
+  `Device::beginFrame()` and `beginTiming()`, a `VulkanTextureData` describing
+  the acquired swapchain image, acquire/present semaphores on
+  `VulkanContext::submit` (it takes none today), a present instead of
+  `waitIdle` in `~Frame`, and `PRESENT_SRC_KHR` rather than the resting layout
+  as the one line in `RenderPass::end` that assumes the target is sampleable
+  afterwards. `Graphics::notifyBackingScaleChanged` is still called by nothing.
+- GCC warns `-Wclass-memaccess` four times at `Codegen/ShaderProgram.h:260`,
+  a `memcpy` into an `EA::Array` that develop's `std::array` conversion
+  introduced; only the Linux graphics lane compiles that TU, clang and MSVC are
+  silent, and the `static_assert` above it pins the layout. Benign, and new.
+- A negative `bytesPerRow` is expressible on `Texture::update`/`read` since the
+  int-sized interfaces landed, and all three backends test `!= 0` before
+  casting to an unsigned pitch. Worth one guard across all three.
+- D6 is still open: `EACP_LINUX_GRAPHICS` stays `OFF` by default until decided.
 
 ## 1. Headline findings
 

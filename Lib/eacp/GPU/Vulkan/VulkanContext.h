@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../Texture/Texture.h"
+
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
 
@@ -101,6 +103,27 @@ inline constexpr auto bufferShaderWrite =
                VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
 inline constexpr auto bufferIndirectRead = BufferUse {
     VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT};
+
+// The three a draw makes, and the ones that are never *recorded* - see
+// noteBufferUse in VulkanTypes.h. A render pass cannot issue a barrier at all,
+// so what orders these against the upload or the dispatch that filled the
+// buffer is the one global barrier RenderPass's frame records before
+// vkCmdBeginRendering; these exist so the tracking still knows what the buffer
+// was last read as, and the next kernel to write it barriers from the right
+// stage.
+inline constexpr auto bufferVertexRead = BufferUse {
+    VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT};
+inline constexpr auto bufferIndexRead =
+    BufferUse {VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT, VK_ACCESS_2_INDEX_READ_BIT};
+
+// A storage buffer bound to a render stage. One use for both stages rather than
+// two, because the same buffer is routinely bound to each and asking for them
+// separately would flip the tracked value back and forth between two readings
+// of "a shader is reading it" - the same argument storageBufferAddress makes on
+// D3D12.
+inline constexpr auto bufferGraphicsRead = BufferUse {
+    VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+    VK_ACCESS_2_SHADER_STORAGE_READ_BIT};
 
 // One recording in flight: a command pool and its buffer, plus the transient
 // storage - upload chunks, descriptor sets, pooled staging slots - that the
@@ -242,9 +265,32 @@ public:
     // set and the source the emitter wrote cannot drift apart.
     const PipelineLayouts& getComputeLayouts() const { return computeLayouts; }
 
+    // The same for a graphics pipeline: one set holding the uniform block, the
+    // texture range and the storage-buffer range, every binding visible to both
+    // stages. Separate from the compute set because the two binding maps differ
+    // (Codegen/ShaderBindings.h), not because the kinds do.
+    const PipelineLayouts& getRenderLayouts() const { return renderLayouts; }
+
     // Serialises vkQueueSubmit. One queue is shared by every Device (see the
     // note at the top), and a VkQueue is externally synchronized.
     std::mutex& getQueueMutex() { return queueMutex; }
+
+    // The VkSampler for one of the samplingConfigurations, created once here
+    // rather than per texture: a sampling configuration is a shader's
+    // declaration and two textures sampled the same way share one, which is
+    // what TextureSampling says a sampler is.
+    //
+    // Shared rather than per Device for the reason the VkDevice is - a sampler
+    // is an immutable object of the device, and a second set would be four more
+    // driver objects saying the same thing. Null before the device came up,
+    // which every bind through one already tests for.
+    VkSampler getSampler(const TextureSampling& sampling) const
+    {
+        if (device == VK_NULL_HANDLE)
+            return VK_NULL_HANDLE;
+
+        return samplers[samplingIndex(sampling)];
+    }
 
 private:
     void createAll();
@@ -253,6 +299,7 @@ private:
     bool createDevice();
     bool createAllocator();
     bool createComputeLayouts();
+    bool createRenderLayouts();
     void createDebugMessenger();
 
     VkInstance instance = VK_NULL_HANDLE;
@@ -270,8 +317,13 @@ private:
     bool timestampsSupported = false;
 
     PipelineLayouts computeLayouts;
+    PipelineLayouts renderLayouts;
 
     std::mutex queueMutex;
+
+    // One per samplingIndex, in that order. Immutable once created and free
+    // threaded by contract, like everything else in this half.
+    VkSampler samplers[samplingConfigurations] = {};
 };
 
 VulkanShared& getVulkanShared();
@@ -313,6 +365,31 @@ public:
     // way before the recording submits - see Buffer::read.
     void setOpenRecording(CommandContext* commands) { openRecording = commands; }
     CommandContext* getOpenRecording() const { return openRecording; }
+
+    // The recording an *upload* may be added to, which is the open one except
+    // while a render pass instance is running on it. A copy inside
+    // vkCmdBeginRendering is not slow, it is illegal - and so is the barrier
+    // that has to precede it - so an upload that lands there takes a recording
+    // of its own instead, and is submitted ahead of the frame rather than
+    // inside it.
+    //
+    // Which is a real difference, and the honest one of the two available: the
+    // alternative is to end the pass, copy, and begin it again behind the
+    // caller's back, and a pass silently restarted is a resolve, a load and a
+    // set of attachment states the caller never asked for. Metal forbids the
+    // whole shape (a blit encoder cannot open while a render encoder is live)
+    // and the D3D12 backend already uploads textures on a list of their own
+    // (Texture-Windows.cpp), so this is where the three land closest together.
+    CommandContext* getRecordingForCopy() const
+    {
+        return renderPassOpen ? nullptr : openRecording;
+    }
+
+    // Told by Frame around vkCmdBeginRendering and by RenderPass::end around
+    // vkCmdEndRendering. One flag rather than a count: a command buffer takes
+    // one encoder at a time, which is what Frame::beginPass and Frame::flush
+    // already require of their callers.
+    void setRenderPassOpen(bool open) { renderPassOpen = open; }
 
     // Ends and submits the command buffer, signalling the next value on this
     // context's timeline, and recycles the recording. Returns the value that
@@ -503,6 +580,7 @@ private:
     OwnedVector<CommandContext> pool;
     Vector<CommandContext*> available;
     CommandContext* openRecording = nullptr;
+    bool renderPassOpen = false;
 
     Vector<ConstantPage> constantPages;
     Vector<PooledBuffer> staging;
