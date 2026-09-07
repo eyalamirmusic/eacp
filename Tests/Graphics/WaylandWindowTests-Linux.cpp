@@ -1,11 +1,13 @@
 #include "Common.h"
 
+#include <eacp/Core/App/Clipboard.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Graphics/View/View-Linux.h>
 
 #include <wayland-client.h>
 
+#include "viewporter-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 
 #include <algorithm>
@@ -72,6 +74,57 @@ struct CompositorWindow
     std::optional<Window> window;
 };
 
+// wl_data_device.set_selection needs the serial of a keyboard event on one of
+// our own surfaces, so a clipboard case needs a focused window. A compositor
+// with no seat - a headless Weston is one - never gives it, and those cases
+// skip rather than fail.
+struct FocusedWindow
+{
+    FocusedWindow()
+    {
+        auto options = WindowOptions {};
+        options.width = 400;
+        options.height = 200;
+        options.title = "eacp clipboard tests";
+        options.isPrimary = false;
+
+        window.emplace(options);
+
+        // Before the content view, which is what maps the window: the focus
+        // that follows the map must not arrive before there is a handler.
+        window->events.onActivationChanged = [this](bool isKey)
+        { focused = focused || isKey; };
+
+        window->setContentView(content);
+
+        Threads::runEventLoopUntil([this] { return focused; }, waylandTestTimeout);
+    }
+
+    bool hasFocus() const { return focused; }
+
+    View content;
+    bool focused = false;
+    std::optional<Window> window;
+};
+
+// The machine's clipboard is shared with everything else running on it, so
+// whatever was there goes back afterwards.
+struct ClipboardGuard
+{
+    ClipboardGuard()
+        : previous(Clipboard::getText())
+    {
+    }
+
+    ~ClipboardGuard()
+    {
+        if (!previous.empty())
+            Clipboard::copyText(previous);
+    }
+
+    std::string previous;
+};
+
 struct PresentingView : View
 {
     PresentingView()
@@ -120,6 +173,39 @@ wl_shm* waylandTestShm(wl_display* display)
             if (std::strcmp(interface, wl_shm_interface.name) == 0)
                 *static_cast<wl_shm**>(data) = static_cast<wl_shm*>(
                     wl_registry_bind(registry, name, &wl_shm_interface, 1));
+        },
+        .global_remove = [](void*, wl_registry*, uint32_t) {},
+    };
+
+    auto* registry = wl_display_get_registry(display);
+    wl_registry_add_listener(registry, &listener, &cached);
+    wl_display_roundtrip(display);
+    wl_registry_destroy(registry);
+
+    return cached;
+}
+
+// A second viewport for a surface that has one is a protocol error, and a
+// protocol error is how a compositor going away looks from the client side:
+// the connection dies under the loop rather than at a call the backend made.
+wp_viewporter* waylandTestViewporter(wl_display* display)
+{
+    static wp_viewporter* cached = nullptr;
+
+    if (cached != nullptr || display == nullptr)
+        return cached;
+
+    static const wl_registry_listener listener {
+        .global =
+            [](void* data,
+               wl_registry* registry,
+               uint32_t name,
+               const char* interface,
+               uint32_t)
+        {
+            if (std::strcmp(interface, wp_viewporter_interface.name) == 0)
+                *static_cast<wp_viewporter**>(data) = static_cast<wp_viewporter*>(
+                    wl_registry_bind(registry, name, &wp_viewporter_interface, 1));
         },
         .global_remove = [](void*, wl_registry*, uint32_t) {},
     };
@@ -578,6 +664,123 @@ auto tFrameCallbackArrivesAfterACommit =
 
     check(presenter.frames == 1);
     check(!presenter.record.frameCallbackPending);
+};
+
+auto tClipboardTextRoundTrips =
+    test("Wayland/clipboardTextRoundTripsThroughTheCompositor") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = FocusedWindow {};
+
+    if (!host.hasFocus())
+        return;
+
+    const auto guard = ClipboardGuard {};
+
+    check(Clipboard::copyText("eacp wayland clipboard"));
+    check(Clipboard::hasText());
+
+    // A paste of our own selection: the send event that fills the pipe is
+    // dispatched from inside the read, or this would time out empty.
+    check(Clipboard::getText() == "eacp wayland clipboard");
+
+    const auto unicode = std::string {"héllo → 世界"};
+
+    check(Clipboard::copyText(unicode));
+    check(Clipboard::getText() == unicode);
+
+    // Reading must not consume the selection.
+    check(Clipboard::getText() == unicode);
+};
+
+// Bigger than a pipe buffer, so the write blocks and the read comes back in
+// pieces: the case where a single write-and-close would truncate.
+auto tClipboardLargeTextSurvives =
+    test("Wayland/clipboardLargeTextIsNotTruncated") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = FocusedWindow {};
+
+    if (!host.hasFocus())
+        return;
+
+    const auto guard = ClipboardGuard {};
+
+    auto text = std::string {};
+
+    while (text.size() < 512u * 1024u)
+        text += "a line of clipboard text that is not especially short\n";
+
+    check(Clipboard::copyText(text));
+    check(Clipboard::getText().size() == text.size());
+};
+
+// text/uri-list is not text: a Paste menu driven by hasText must stay disabled
+// when the clipboard holds files.
+auto tClipboardFilesAreNotText = test("Wayland/clipboardFilesOfferNoText") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = FocusedWindow {};
+
+    if (!host.hasFocus())
+        return;
+
+    const auto guard = ClipboardGuard {};
+
+    check(Clipboard::copyFiles({"/tmp/eacp clipboard.txt"}));
+    check(!Clipboard::hasText());
+    check(Clipboard::getText().empty());
+};
+
+// Last in the file on purpose: the connection it kills is the process's only
+// one, so every case after it in a direct run would find itself headless.
+// ctest gives each case a process of its own, which is where this is honest.
+auto tLosingTheConnectionUnmapsEverything =
+    test("Wayland/zLosingTheConnectionTearsTheWindowsDown") = []
+{
+    if (!waylandCompositorReachable())
+        return;
+
+    auto host = CompositorWindow {640, 400};
+    auto presenter = PresentingView {};
+
+    presenter.setBounds({0.f, 0.f, 320.f, 240.f});
+    host.content.addSubview(presenter);
+
+    Threads::runEventLoopUntil([&] { return presenter.available > 0; },
+                               waylandTestTimeout);
+    check(presenter.available == 1);
+
+    auto* viewporter = waylandTestViewporter(presenter.record.display);
+
+    check(viewporter != nullptr, "the compositor advertised no wp_viewporter");
+
+    wp_viewporter_get_viewport(viewporter, presenter.record.surface);
+    wl_display_flush(presenter.record.display);
+
+    Threads::runEventLoopUntil([&] { return presenter.lost > 0; },
+                               waylandTestTimeout);
+
+    check(presenter.lost == 1, "onLost never fired when the connection died");
+    check(!presenter.hasSurface());
+    check(presenter.record.display == nullptr);
+    check(!host.window->isVisible(), "the window still reported itself mapped");
+
+    // The process carries on, and what it makes now is what a headless build
+    // makes: a window with no surface behind it.
+    auto options = WindowOptions {};
+    options.isPrimary = false;
+
+    auto afterwards = Window {options};
+
+    check(afterwards.getHandle() == nullptr,
+          "a window built after the loss still reached the compositor");
 };
 
 namespace

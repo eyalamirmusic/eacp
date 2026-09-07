@@ -1090,6 +1090,21 @@ Notes worth having:
   module declared; a kernel that binds no texture shares the one layout in
   `VulkanShared`. A render shader only ever samples, so its set needs no such
   split.
+- **Pipelines are built through one `VkPipelineCache`** held by `VulkanShared`
+  and persisted to `$XDG_CACHE_HOME/eacp/pipelines-<pipelineCacheUUID>.bin`
+  (`$HOME/.cache/eacp/` when unset): loaded at device creation when its header
+  names this device, written back through a temp file and rename at teardown,
+  and silently skipped on any failure. There is no hash cache above it, because
+  a `RenderPipeline` or `ComputePipeline` is one object and one create call
+  and nothing in the backend makes an equal one twice. Mesa's lavapipe stores
+  nothing in its cache, so on the software lane the file is a 32-byte header.
+- **A texture created without pixels is transitioned at creation** into the
+  resting layout its use tracking claims, through the same recording an upload
+  takes, so a bind before the first write never names a layout the image is
+  not in. And a multisampled, sampleable-depth target is refused at creation
+  on a device whose depth-resolve modes lack `SAMPLE_ZERO`
+  (`VulkanShared::resolvesDepthBySampleZero`) rather than built with an
+  undefined read; no such device has been seen.
 - **NDC y is the one axis Vulkan differs on**, and the fix is a negative
   viewport height — applied at pass begin, in `setViewport` and in
   `clearViewport`, and nowhere else — so `Winding::CounterClockwise` maps
@@ -1144,10 +1159,11 @@ did before there was a swapchain.
   last frame — so a hidden or occluded window, which gets no callbacks, renders
   nothing, and the main thread never blocks inside `vkAcquireNextImageKHR`. The
   acquire is given a 100 ms timeout rather than `UINT64_MAX` for the same
-  reason. `setMaxFps` uses the divider `DisplayLink::setMaxFps` documents, plus a
-  timer at the cap's own rate: a skipped tick presents nothing, so no commit is
-  made and no further callback would arrive, and the timer is what carries the
-  loop across the skip.
+  reason. `setMaxFps` uses the divider `DisplayLink::setMaxFps` documents: a
+  tick that arrives too early presents nothing and asks for the next callback
+  again, and `ViewSurface::requestFrameCallback` commits the subsurface on its
+  own when no present will, so the loop carries across the skip with no timer
+  beside it.
 - **Present modes**: `MAILBOX` where the surface offers it, so a renderer faster
   than the display drops frames instead of blocking; `FIFO` otherwise, which the
   spec guarantees. Format `B8G8R8A8_UNORM` + `SRGB_NONLINEAR` where offered

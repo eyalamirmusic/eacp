@@ -62,6 +62,7 @@ struct Window::Native : WaylandWindowSurface
             background = Color {0.f, 0.f, 0.f, 0.f};
 
         onKeyboardFocus = [this](bool focused) { keyboardFocusChanged(focused); };
+        onConnectionLost = [this] { connectionLost(); };
 
         createSurface();
     }
@@ -389,6 +390,44 @@ struct Window::Native : WaylandWindowSurface
     }
 
     void keyboardFocusChanged(bool focused) { setActive(focused); }
+
+    // The compositor went away. Everything made from the connection is
+    // dropped, including the view surfaces, whose onLost has to fire while
+    // their wl_surface is still a live object; what is left is the window a
+    // headless build has.
+    void connectionLost()
+    {
+        auto wasMapped = mapped;
+        mapped = false;
+
+        if (contentView != nullptr)
+            waylandWindowSurfaceStateChanged(*contentView);
+
+        destroyFrame();
+        setActive(false);
+        buffer.destroy();
+
+        if (fractionalScale != nullptr)
+        {
+            wp_fractional_scale_v1_destroy(fractionalScale);
+            fractionalScale = nullptr;
+        }
+
+        if (viewport != nullptr)
+        {
+            wp_viewport_destroy(viewport);
+            viewport = nullptr;
+        }
+
+        if (surface != nullptr)
+        {
+            wl_surface_destroy(surface);
+            surface = nullptr;
+        }
+
+        if (wasMapped)
+            waylandNotifyHostVisibility(contentView, false);
+    }
 
     void closeRequested()
     {

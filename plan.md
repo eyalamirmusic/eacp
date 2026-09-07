@@ -156,28 +156,13 @@ Follow-ups found on the way, not yet done:
 - The `maxTextureSlots` move out of `D3D12Types.h` is unverified on a Windows
   compiler until CI runs, and so is everything in the develop merge that touched
   `*-Windows.cpp`.
-- `VkPipeline` hash-caching on everything that is not dynamic state (§3.1's
-  design rule) is not implemented; every `RenderPipeline` is one
-  `vkCreateGraphicsPipelines`, and there is no `VkPipelineCache`.
-- A `Texture` created without pixels and never written rests at
-  `VK_IMAGE_LAYOUT_UNDEFINED`, and a bind of it names its resting layout. Nothing
-  in the suite does this; the honest fix is an initial transition at creation in
-  `Texture-Linux.cpp`.
-- A device whose depth-resolve modes lack `SAMPLE_ZERO` gets a multisampled,
-  sampleable-depth target with no resolve recorded — the read is undefined
-  rather than the target refused at creation. No such device has been seen.
 - `RenderPipeline::nativeDepthState()` is non-null only for `depth`, as on
-  D3D12; Metal answers for `depth || stencil`. A pass should read
-  `VulkanRenderPipeline::depth`/`stencil` instead.
+  D3D12; Metal answers for `depth || stencil`. Its only caller is
+  `RenderPass-Apple.mm`, so nothing reads the wrong answer on Linux or
+  Windows; the header's "null when the pipeline tests neither" is what those
+  two contradict for a stencil-only pipeline.
 - `wrapPixelBuffer` is invalid on Linux, as on Windows, there being no capture
   backend to produce one.
-- GCC warns `-Wclass-memaccess` four times at `Codegen/ShaderProgram.h:260`,
-  a `memcpy` into an `EA::Array` that develop's `std::array` conversion
-  introduced; only the Linux graphics lane compiles that TU, clang and MSVC are
-  silent, and the `static_assert` above it pins the layout. Benign, and new.
-- A negative `bytesPerRow` is expressible on `Texture::update`/`read` since the
-  int-sized interfaces landed, and all three backends test `!= 0` before
-  casting to an unsigned pitch. Worth one guard across all three.
 - D6 is still open: `EACP_LINUX_GRAPHICS` stays `OFF` by default until decided.
 
 **Stage 4 — landed 2026-09-06** (verified: Linux with `EACP_LINUX_GRAPHICS=ON`
@@ -257,16 +242,9 @@ Follow-ups found on the way, not yet done:
   the routing are unit-tested, the translation between them is not.
 - Device loss is terminal: `VK_ERROR_DEVICE_LOST` tears the swapchain down and
   stops; there is no `VkDevice` rebuild and `onDeviceRestored` never fires.
-- `setMaxFps` in continuous mode needs a cap timer beside the frame callbacks,
-  because a skipped tick presents nothing and so earns no next callback; the
-  cleaner shape is a `requestFrameCallback()` that commits on its own when
-  nothing else will.
 - A surface offering neither `B8G8R8A8_UNORM` nor `SRGB_NONLINEAR` gets its
   first format while `RenderPipelineDescriptor::colorFormat` defaults to
   `BGRA8Unorm`; no such surface has been seen.
-- A compositor disconnect mid-session does not fire `onLost`; the connection is
-  never closed, so the only teardown paths today are window and view
-  destruction, which do.
 - Not expressible on Wayland and documented rather than faked: window
   position (`getPosition`/`setPosition` keep the app's value), `toFront`
   (maps, cannot raise), per-window icon, `showInactive`, `alwaysOnTop`,
@@ -380,24 +358,175 @@ Follow-ups found on the way, not yet done:
 - No bidi: a mixed-direction line is shaped run by run in logical order, each
   run in its script's own direction, with no reordering between them. The fix
   is a paragraph-level pass above the rasterizer, not inside it.
-- Emoji presentation is a range test (U+1F000–U+1FAFF, or a following
-  U+FE0F), not the Unicode property; `hb_buffer_set_language` is "en" for
-  every run, as the Windows backend's `en-us` is.
+- A VS16 sequence is still itemized into two runs: the base codepoint gets
+  the colour font and the lone U+FE0F falls out to its own item and its own
+  fallback lookup. Harmless for the glyph that matters, untidy.
 - No stock Linux family has an `opsz` axis, so the optical-size pin is
   unexercised there; COLRv1 fonts went through `FT_LOAD_COLOR` untested (CBDT
   and COLRv0 were). `lightText` has no FreeType counterpart.
 - The `Apps/GPU` example shaders are built on Linux but their GLSL is compiled
-  by no test; `ModuleShaderTests` covers the library modules only.
-- `Timer/destructionStopsTicking` (`Tests/Core/TimerTests.cpp`) is flaky on
-  Linux: it failed once in the final headless run and again on the third of
-  ten repeats in an otherwise idle container. A 10 ms timer is destroyed after
-  its first tick and 100 ms of silence asserted, so a tick already queued on
-  the loop when the timer dies trips it. Pre-existing (ac3c818), not touched
-  here.
-- The `Graphics.h` umbrella still includes the `EACP_HAS_CONTEXT` headers on
-  Linux; they compile, and a caller reaching a definition gets a link error
-  rather than a configure-time one.
-- Stage 6 still stands as written below; D6 remains the user's.
+  by no test; `ModuleShaderTests` covers the library modules only. Assessed
+  under stage 6 below.
+
+**Stage 6 — the follow-ups and the first of the "later" items, landed
+2026-09-07** (verified: Linux with `EACP_LINUX_GRAPHICS=ON` 1437 tests under
+GCC, headless and again against a real GNOME/Mutter session with
+`EACP_REQUIRE_DISPLAY=1`, `EACP_REQUIRE_GPU=1` and `EACP_REQUIRE_FONTS=1`;
+option off 572; `GPUTests` 292, `WaylandWindowTests` 13, `TextTests` 103. No
+validation layer is installed on that machine and no macOS or Windows compiler
+was reached, so the three-line `Texture-Apple.mm`/`Texture-Windows.cpp` guards
+below wait on CI.)
+
+- Written as three parallel slices, one per module group, each verified in
+  its own build directory and then as one tree.
+- Vulkan. `VulkanShared` owns one `VkPipelineCache`, passed to every graphics
+  and compute pipeline create, loaded at device creation from
+  `$XDG_CACHE_HOME/eacp/pipelines-<pipelineCacheUUID>.bin` (else
+  `$HOME/.cache/eacp/`) when the `VkPipelineCacheHeaderVersionOne` names this
+  device, written back through a temp file and rename at teardown, every
+  failure silent. The §3.1 hash cache above it was looked at and deliberately
+  not built: a `RenderPipeline`/`ComputePipeline` is one object and one create
+  call and nothing in the backend makes an equal one twice, so a hash cache
+  would only dedupe pipelines a caller built twice and would need lifetime
+  rules to be safe. `Texture-Linux.cpp` transitions a pixel-less texture into
+  its resting layout at creation (`settleAtRestingLayout`, through the copy
+  recording uploads use) and refuses a multisampled sampleable-depth target on
+  a device without `SAMPLE_ZERO` depth resolve, the query moved out of
+  `Frame-Linux.cpp`'s function-local static into
+  `VulkanShared::resolvesDepthBySampleZero()`. A negative `bytesPerRow` is
+  refused at all four entry points of all three `Texture` backends. The
+  `-Wclass-memaccess` warning had already gone in bc2ec73. Tests:
+  `TextureCreation/anUnwrittenTextureCanBeRead`,
+  `TextureCreation/aNegativeStrideIsRefused`.
+- Wayland. The clipboard is a `wl_data_device` on the seat
+  (`Window/WaylandClipboard-Linux.{h,cpp}`), reached from `Core` through a
+  backend hook — `Clipboard::Backend`, four `std::function`s with no-op
+  defaults, `setBackend`/`clearBackend` in `Core/App/Clipboard-Linux.h`, the
+  `addLoopSource` precedent — that `WaylandDisplay` installs when the
+  connection and seat come up. `copyText` offers `text/plain;charset=utf-8`,
+  `text/plain` and `UTF8_STRING`; `copyFiles` a percent-encoded `text/uri-list`;
+  `set_selection` takes the last keyboard enter/key serial and returns false
+  with no focus; `getText`/`hasText` read the selection offer's mime list, and
+  `getText` receives into a pipe while polling the pipe and the display fd
+  together under a 2 s bound so a self-paste — our own `send` running while
+  we block — works. Two things found on the way: libdecor's GTK plugin makes
+  a `wl_data_device` of its own on the connection and Mutter answers only one
+  per client, so ours is created before `libdecor_new` and the code says why;
+  and `send` writes on a detached thread holding a `shared_ptr` to the
+  payload, because a self-paste has both pipe ends on the message thread and a
+  payload past the 64 KB pipe buffer deadlocked. A dead connection
+  (`dispatch`/`read_events`/`flush`/`roundtrip` failing) runs
+  `WaylandDisplay::connectionLost()`: every global dropped, the loop source
+  closed, clipboard and input torn down, each window unmapped and its
+  surfaces destroyed through the new `WaylandWindowSurface::onConnectionLost`
+  so the view-surface `onLost` fires on the existing sync path, and the
+  process stays alive headless. `ViewSurface::requestFrameCallback()` now
+  commits the subsurface itself once it has content (before the first buffer
+  the request still rides the mapping commit, which Mutter requires), and
+  `GPUView-Linux.cpp` dropped its cap timer: an early tick re-requests the
+  callback and presents nothing. Tests in `WaylandWindowTests-Linux.cpp`:
+  three clipboard round trips (text and unicode, 512 KB untruncated,
+  `copyFiles` offers no text), each skipping when focus never arrives since
+  Weston headless has no seat, and `zLosingTheConnectionTearsTheWindowsDown`,
+  which provokes a fatal protocol error (a second `wp_viewport` on one
+  surface) and checks `onLost`, the unmapped window and a surfaceless window
+  after it — last in the file because it kills the process's connection.
+  `Present/maxFpsPacesContinuousMode` measured 15 frames in 1.5 s at
+  `setMaxFps(10)`.
+- Text and Core. `Timer-Linux.cpp` posts each tick through a `shared_ptr`
+  state whose `alive` flag the destructor clears on the main thread, so a tick
+  already queued when the timer dies is a no-op: 39 failures in 200 loaded
+  runs of `Timer/destructionStopsTicking` before, 0 after. `Timer.mm` fires
+  straight from the run loop and `Timer-Windows.cpp` dispatches through a live
+  table keyed by id, so neither has the hazard (Windows has a narrower one: a
+  `UINT_PTR` reused for a timer created in the same pump turn). Emoji
+  presentation is the Unicode 16.0 `Emoji_Presentation` property
+  (`Text/UnicodeEmoji.h`, 80 ranges from `emoji-data.txt`, binary search, VS16
+  forcing emoji and VS15 now forcing text) instead of the U+1F000–U+1FAFF
+  guess; `hb_buffer_set_language` takes `hb_language_get_default()` once.
+  `EACP_HAS_CONTEXT` is a PUBLIC compile definition on `eacp-graphics` and the
+  `Graphics.h` umbrella gates `TextMetrics`, `EmbeddedView`, `TextInput` and
+  `LayerViews` on it — which caught `SVG/SVG.h` including `SVGParser.h` and so
+  `SVGBuilder.h` unconditionally, compiling on Linux only because the umbrella
+  leaked `LayerViews.h`; gated the same way now. Tests:
+  `Text/emojiPresentationProperty`, `Text/variationSelectorsOverridePresentation`
+  (portable, table logic) and `Text/emojiPresentationChoosesTheFace` (Linux,
+  the rasterizer's `GlyphFormat` per codepoint, self-skipping as the other font
+  tests do). `TextTests` 100 → 103.
+
+Assessed and recorded rather than built:
+
+- IME through `zwp_text_input_v3`. Text reaches a view today only as
+  `KeyEvent::characters` from `View::keyDown`, and no platform has a
+  pre-edit path — there is no `NSTextInputClient` on macOS and no `WM_IME_*`
+  on Windows — so this is inventing the contract, not wiring a Linux half of
+  one. The minimum honest shape is two virtuals on `View` beside `keyDown`:
+  `textComposed(const CompositionEvent&)` with the pre-edit string and its
+  cursor/highlight span, and `textInserted(std::string_view)` for a commit,
+  with the rule that keys feeding a live composition must not also arrive as
+  `keyDown` characters or every keystroke inserts twice (Mutter sends
+  `preedit_string`/`commit_string` for ordinary typing once text-input is
+  enabled, so that suppression is mandatory). The Wayland half is small and
+  sits where the seat lives: `zwp_text_input_manager_v3` is another optional
+  global (Mutter offers it, Weston headless does not), the per-seat
+  `zwp_text_input_v3` is owned by `WaylandInput` and enabled as keyboard focus
+  moves onto a view that wants text, which needs a `View::acceptsTextInput()`
+  or a real focus owner (the Linux `View::focus()` is a stub). The protocol
+  batches `preedit_string`, `commit_string` and `delete_surrounding_text`
+  until `done`, whose serial is echoed in the next `commit`, and the client
+  must send `set_cursor_rectangle` in surface coordinates so the candidate
+  window lands under the caret — the one piece the View API cannot supply at
+  all today. `delete_surrounding_text` needs a view that exposes and mutates
+  surrounding text, which none does; a first cut ignores it and says so. With
+  no seat on CI, coverage would be the same self-skipping shape as the
+  clipboard cases.
+- Compile-checking the `Apps/GPU` example shaders. Each example is one
+  `Main.cpp` with its shader at file scope beside the `Vertex` its
+  `vertexInput` binds; `compile()` is the device-free EDSL walk,
+  `ShaderProgram::graph()` exists and `expectGlslCompiles(graph)` takes it, so
+  the only obstacle is that the definitions live in an executable's TU. The
+  mechanical fix is a `Shaders.h` beside each `Main.cpp` holding the program
+  types and the structs they read (Instancing's three panel programs share
+  `SpinProgram::emitBody` and move together; Teapot's mesh data stays), an
+  `Apps/GPU/ExampleShaders.h` umbrella, and a `Tests/UI/ExampleShaderTests.cpp`
+  constructing each program with a `seen` count, one
+  `target_include_directories` on the test. The payoff is largest for the
+  seven `EACP_HAS_CONTEXT`-gated examples, whose shaders Linux never builds
+  today but whose headers have no Context dependency — and which is where the
+  emitter arms the module shaders miss live (matrix builders, cube sampling,
+  instance-rate inputs, the `Compute`/`ComputeParticles`/`ComputeImage`/
+  `PathBench` kernels). The alternative, an `--emit-glsl` flag on every
+  example piped through glslang from ctest, moves no source but needs each
+  app to start headlessly and still cannot reach the apps Linux does not
+  build.
+
+Follow-ups found on the way, not yet done:
+
+- The initial transition costs an acquire and submit per pixel-less texture
+  created outside an open recording; a glyph-atlas-style burst pays it per
+  texture. It could be deferred to the first real recording.
+- lavapipe stores nothing in its pipeline cache, so the disk cache is a
+  functional no-op on every CI lane and a warm hit is exercised nowhere; the
+  depth-resolve refusal is likewise unreachable on any device seen. Both are
+  verified only as round trips.
+- The negative-pitch rule is stated once per backend because there is no
+  portable `Texture.cpp`; a thin portable layer over the pimpl calls would
+  state it once.
+- `EACP_HAS_CONTEXT` is silently 0 in a TU that includes `Graphics.h`
+  without linking `eacp-graphics`. Nothing in the tree is in that position
+  and the failure would be a missing type, not a miscompile; a
+  `#ifndef`/`#error` guard is a one-line change for someone who can run the
+  Apple and Windows lanes.
+- A clipboard paste blocks the message thread for up to 2 s, and a copy
+  before the first focused window returns false. A disconnect caused by the
+  compositor dying, rather than by a protocol error, is untested — Mutter is
+  the session — though the client sees the two identically.
+- `Wayland/frameCallbackArrivesAfterACommit` failed once in a full run under
+  heavy build load and passed on every retry; its path is unchanged here.
+- Still standing from the stage-6 list: portal file dialogs (there is no
+  file-dialog API in eacp to implement against yet), IME as assessed above,
+  the xcb fallback, a Cairo/Pango `Context`, `VK_EXT_descriptor_heap`, and
+  bidi. D6 remains the user's.
 
 ## 1. Headline findings
 

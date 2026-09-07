@@ -7,36 +7,6 @@ namespace eacp::GPU
 {
 namespace
 {
-// The spec requires both masks to contain sample zero, so this only guards
-// against a driver that lacks what a sampleable multisampled depth needs.
-bool vulkanResolvesDepthBySampleZero()
-{
-    static const auto supported = []
-    {
-        auto physical = getVulkanShared().getPhysicalDevice();
-
-        if (physical == VK_NULL_HANDLE)
-            return false;
-
-        VkPhysicalDeviceDepthStencilResolveProperties resolve = {};
-        resolve.sType =
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
-
-        VkPhysicalDeviceProperties2 properties = {};
-        properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-        properties.pNext = &resolve;
-
-        vkGetPhysicalDeviceProperties2(physical, &properties);
-
-        const auto sampleZero = VkResolveModeFlags {VK_RESOLVE_MODE_SAMPLE_ZERO_BIT};
-
-        return (resolve.supportedDepthResolveModes & sampleZero) != 0
-               && (resolve.supportedStencilResolveModes & sampleZero) != 0;
-    }();
-
-    return supported;
-}
-
 VkAttachmentLoadOp vulkanDepthLoadOp(DepthAction action)
 {
     return action == DepthAction::Resume ? VK_ATTACHMENT_LOAD_OP_LOAD
@@ -181,8 +151,9 @@ struct Frame::Native
 
         // Where independentResolveNone is false both planes must resolve
         // identically, so the stencil attachment shares this mode and view.
-        if (data.resolvedDepthAttachmentView != VK_NULL_HANDLE
-            && vulkanResolvesDepthBySampleZero())
+        // Texture refuses such a target where the device cannot resolve it, so
+        // a resolve view here always has a mode to be resolved with.
+        if (data.resolvedDepthAttachmentView != VK_NULL_HANDLE)
         {
             depthAttachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
             depthAttachment.resolveImageView = data.resolvedDepthAttachmentView;

@@ -287,7 +287,10 @@ struct Texture::Native
             return;
         }
 
-        if (pixels != nullptr && !upload(pixels, 0))
+        const auto ready =
+            pixels != nullptr ? upload(pixels, 0) : settleAtRestingLayout();
+
+        if (!ready)
         {
             release();
             return;
@@ -333,6 +336,15 @@ struct Texture::Native
                     descriptor.sampleCount,
                     " samples, so the target is invalid rather than drawn at "
                     "a count its pipelines do not carry");
+                return false;
+            }
+
+            if (descriptor.sampleableDepth
+                && !getVulkanShared().resolvesDepthBySampleZero())
+            {
+                LOG("Vulkan: the device resolves no depth by sample zero, so a "
+                    "multisampled sampleable-depth target is invalid rather "
+                    "than sampled from a resolve that never ran");
                 return false;
             }
 
@@ -692,6 +704,18 @@ struct Texture::Native
             });
     }
 
+    // UNDEFINED is not a layout anything may be bound at, and an image no
+    // upload wrote is still in it, so it is moved to its resting layout here.
+    bool settleAtRestingLayout()
+    {
+        return onARecording(
+            [&](CommandContext& commands)
+            {
+                transitionTextureForUse(commands.buffer, data, data.restingUse());
+                return true;
+            });
+    }
+
     void update(const void* pixels, int bytesPerRow)
     {
         if (!data.isValid() || pixels == nullptr)
@@ -853,6 +877,9 @@ Texture::Texture(Device& device, void* nativePixelBuffer)
 
 void Texture::update(const void* pixels, int bytesPerRow)
 {
+    if (bytesPerRow < 0)
+        return;
+
     impl->update(pixels, bytesPerRow);
 }
 
@@ -860,6 +887,9 @@ void Texture::update(const Graphics::Rect& region,
                      const void* pixels,
                      int bytesPerRow)
 {
+    if (bytesPerRow < 0)
+        return;
+
     impl->updateRegion(static_cast<int>(std::lround(region.x)),
                        static_cast<int>(std::lround(region.y)),
                        static_cast<int>(std::lround(region.w)),
@@ -870,11 +900,17 @@ void Texture::update(const Graphics::Rect& region,
 
 void Texture::read(void* dst, int bytesPerRow) const
 {
+    if (bytesPerRow < 0)
+        return;
+
     impl->readRegion(0, 0, impl->data.width, impl->data.height, dst, bytesPerRow);
 }
 
 void Texture::read(const Graphics::Rect& region, void* dst, int bytesPerRow) const
 {
+    if (bytesPerRow < 0)
+        return;
+
     impl->readRegion(static_cast<int>(std::lround(region.x)),
                      static_cast<int>(std::lround(region.y)),
                      static_cast<int>(std::lround(region.w)),

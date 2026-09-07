@@ -234,10 +234,13 @@ struct WaylandSeatDispatch
         self(data).keymapArrived(format, fd, size);
     }
 
-    static void keyboardEnter(
-        void* data, wl_keyboard*, uint32_t, wl_surface* surface, wl_array* keys)
+    static void keyboardEnter(void* data,
+                              wl_keyboard*,
+                              uint32_t serial,
+                              wl_surface* surface,
+                              wl_array* keys)
     {
-        self(data).keyboardEntered(surface, keys);
+        self(data).keyboardEntered(serial, surface, keys);
     }
 
     static void keyboardLeave(void* data, wl_keyboard*, uint32_t, wl_surface*)
@@ -247,12 +250,13 @@ struct WaylandSeatDispatch
 
     static void keyboardKey(void* data,
                             wl_keyboard*,
-                            uint32_t,
+                            uint32_t serial,
                             uint32_t time,
                             uint32_t key,
                             uint32_t state)
     {
-        self(data).keyChanged(time, key, state == WL_KEYBOARD_KEY_STATE_PRESSED);
+        self(data).keyChanged(
+            serial, time, key, state == WL_KEYBOARD_KEY_STATE_PRESSED);
     }
 
     static void keyboardModifiers(void* data,
@@ -864,10 +868,13 @@ void WaylandInput::keymapArrived(uint32_t format, int32_t fd, uint32_t size)
     xkbPlainState = xkb_state_new(keymap);
 }
 
-void WaylandInput::keyboardEntered(wl_surface* surface, wl_array* keys)
+void WaylandInput::keyboardEntered(uint32_t serial,
+                                   wl_surface* surface,
+                                   wl_array* keys)
 {
     auto target = display.findSurface(surface);
 
+    keyboardSerial = serial;
     pressedCodes.clear();
 
     if (keys != nullptr)
@@ -893,6 +900,13 @@ void WaylandInput::keyboardLeft()
     setKeyboardFocus(nullptr);
 }
 
+// The compositor rejects a selection taken with no focus, so the answer with
+// none is zero rather than a serial that has gone stale.
+uint32_t WaylandInput::getSelectionSerial() const
+{
+    return keyboardWindow != nullptr ? keyboardSerial : 0;
+}
+
 void WaylandInput::setKeyboardFocus(WaylandWindowSurface* window)
 {
     if (keyboardWindow == window)
@@ -914,8 +928,12 @@ void WaylandInput::setKeyboardFocus(WaylandWindowSurface* window)
     }
 }
 
-void WaylandInput::keyChanged(uint32_t time, uint32_t code, bool pressed)
+void WaylandInput::keyChanged(uint32_t serial,
+                              uint32_t time,
+                              uint32_t code,
+                              bool pressed)
 {
+    keyboardSerial = serial;
     keyTime = time;
 
     if (pressed)

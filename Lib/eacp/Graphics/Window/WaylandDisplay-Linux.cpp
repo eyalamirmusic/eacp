@@ -1,5 +1,6 @@
 #include "WaylandDisplay-Linux.h"
 
+#include "WaylandClipboard-Linux.h"
 #include "WaylandInput-Linux.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
@@ -7,6 +8,7 @@
 #include <eacp/Core/Utils/Environment.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
@@ -27,6 +29,7 @@ constexpr uint32_t waylandSeatVersion = 8;
 constexpr uint32_t waylandOutputVersion = 4;
 constexpr uint32_t waylandXdgShellVersion = 5;
 constexpr uint32_t waylandXdgOutputVersion = 3;
+constexpr uint32_t waylandDataDeviceVersion = 3;
 
 // wl_output.mode reports millihertz, and zero for an unknown rate.
 constexpr int waylandDefaultRefreshMilliHz = 60'000;
@@ -158,6 +161,15 @@ struct WaylandRegistryDispatch
                 &zwp_relative_pointer_manager_v1_interface,
                 version,
                 1);
+        }
+        else if (named(wl_data_device_manager_interface))
+        {
+            display.dataDevices = waylandBind<wl_data_device_manager>(
+                registry,
+                name,
+                &wl_data_device_manager_interface,
+                version,
+                waylandDataDeviceVersion);
         }
         else if (named(zxdg_output_manager_v1_interface))
         {
@@ -427,6 +439,7 @@ WaylandDisplay::~WaylandDisplay()
 {
     closeLoopSource();
 
+    clipboard.reset();
     input.reset();
 
     if (decorations != nullptr)
@@ -462,6 +475,11 @@ void WaylandDisplay::bindGlobals()
 
         wl_display_roundtrip(display);
     }
+
+    // Before libdecor, whose GTK plugin makes a wl_data_device of its own on
+    // this connection: a compositor answers one per client, and the one it
+    // picks is not ours if GTK got there first.
+    clipboard = std::make_unique<WaylandClipboard>(*this);
 
     // Last: libdecor wants a connection whose first round trips are done.
     decorations = libdecor_new(display, &WaylandDecorationDispatch::interface);
@@ -511,39 +529,115 @@ void WaylandDisplay::closeLoopSource()
 // reader queued, the flush sends requests still in libwayland's buffer.
 void WaylandDisplay::prepareForPoll()
 {
-    wl_display_dispatch_pending(display);
-    wl_display_flush(display);
+    if (!isConnected())
+        return;
+
+    if (wl_display_dispatch_pending(display) < 0)
+    {
+        connectionLost();
+        return;
+    }
+
+    flush();
 }
 
 // prepare_read fails while the default queue has events: drain and retry.
 void WaylandDisplay::readAndDispatch()
 {
-    while (wl_display_prepare_read(display) != 0)
-        if (wl_display_dispatch_pending(display) < 0)
-            return;
-
-    if (wl_display_read_events(display) < 0)
+    if (!isConnected())
         return;
 
-    wl_display_dispatch_pending(display);
+    while (wl_display_prepare_read(display) != 0)
+    {
+        if (wl_display_dispatch_pending(display) < 0)
+        {
+            connectionLost();
+            return;
+        }
+    }
+
+    // A compositor that went away reads as end of file here.
+    if (wl_display_read_events(display) < 0
+        || wl_display_dispatch_pending(display) < 0)
+    {
+        connectionLost();
+        return;
+    }
 
     // Redundant while libdecor's plugin shares this connection.
     if (decorations != nullptr)
         libdecor_dispatch(decorations, 0);
 
-    wl_display_flush(display);
+    flush();
 }
 
+// Everything the compositor owned is dropped, and the process goes on with the
+// windows it has left surfaceless - the state a build with no compositor is in
+// from the start. There is no reconnect: object ids and buffers died with the
+// connection, so the only honest answer is the headless one.
+void WaylandDisplay::connectionLost()
+{
+    if (!isConnected())
+        return;
+
+    LOG("Wayland: the connection to the compositor was lost. Windows are now "
+        "surfaceless, as they are under EACP_HEADLESS.");
+
+    // First, so nothing below builds a surface on a dead connection.
+    compositor = nullptr;
+    subcompositor = nullptr;
+    shm = nullptr;
+    seat = nullptr;
+    xdgShell = nullptr;
+    viewporter = nullptr;
+    fractionalScales = nullptr;
+    pointerConstraints = nullptr;
+    relativePointers = nullptr;
+    xdgOutputManager = nullptr;
+    dataDevices = nullptr;
+
+    closeLoopSource();
+
+    clipboard.reset();
+    input.reset();
+
+    // Snapshotted: every one of these drops the surfaces it registered.
+    auto windows = Vector<WaylandWindowSurface*> {};
+
+    for (const auto& target: surfaces)
+        if (target.window != nullptr && !windows.contains(target.window))
+            windows.add(target.window);
+
+    for (auto* window: windows)
+        window->onConnectionLost();
+
+    surfaces.clear();
+
+    if (decorations != nullptr)
+    {
+        libdecor_unref(decorations);
+        decorations = nullptr;
+    }
+}
+
+// EAGAIN is a full buffer, not a dead connection: the loop's next poll sends
+// the rest.
 void WaylandDisplay::flush()
 {
-    if (display != nullptr)
-        wl_display_flush(display);
+    if (!isConnected())
+        return;
+
+    if (wl_display_flush(display) < 0 && errno != EAGAIN)
+        connectionLost();
 }
 
 void WaylandDisplay::roundtrip()
 {
-    if (display != nullptr)
-        wl_display_roundtrip(display);
+    if (!isConnected())
+        return;
+
+    if (wl_display_roundtrip(display) < 0)
+        connectionLost();
 }
 
 const WaylandOutputInfo* WaylandDisplay::getPrimaryOutput() const

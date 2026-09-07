@@ -141,7 +141,12 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   (`View-Linux.cpp` implementing the `ViewSurface` contract in
   `View-Linux.h`), seat input translated through xkbcommon into the portable
   hit-tester with pointer-constraints for mouse lock
-  (`Window/WaylandInput-Linux.cpp`), the evdev-to-`KeyCode` table
+  (`Window/WaylandInput-Linux.cpp`), the clipboard as a `wl_data_device` on
+  the seat (`Window/WaylandClipboard-Linux.cpp`, installed into `Core`'s
+  `Clipboard` through the backend hook in `Core/App/Clipboard-Linux.h` so
+  `eacp-core` links no Wayland; a copy needs keyboard focus on one of our
+  windows), a compositor disconnect that fires `onLost` on every view surface
+  and leaves the process headless, the evdev-to-`KeyCode` table
   (`Graphics/Keyboard-Linux.h`), `Display` from the first output, a
   `DisplayLink` paced at the output's refresh rate, and stubs for image codecs,
   menus, tray and system appearance — plus the Vulkan backend under it
@@ -149,9 +154,12 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   drawable `Frame` presents a swapchain image, and `GPUView-Linux.cpp` owns the
   swapchain over the view's subsurface (`VK_KHR_wayland_surface`; mailbox or
   FIFO; frames in flight on the context timeline; rebuilt on resize and
-  `OUT_OF_DATE`; continuous mode paced by `wl_surface.frame` callbacks), with
-  the off-screen `renderNativeContent` path unchanged beside it. The GPU module
-  knows Wayland as two opaque pointers and neither links nor includes it.
+  `OUT_OF_DATE`; continuous mode paced by `wl_surface.frame` callbacks, with
+  `setMaxFps` skipping early ticks rather than running a timer), every
+  pipeline built through one `VkPipelineCache` persisted under
+  `$XDG_CACHE_HOME/eacp/`, with the off-screen `renderNativeContent` path
+  unchanged beside it. The GPU module knows Wayland as two opaque pointers and
+  neither links nor includes it.
   Under `EACP_HEADLESS=1` or with no `WAYLAND_DISPLAY` to reach, a window is
   built with no surface, exactly the headless backend this grew out of. Device
   loss is terminal (no `VkDevice` rebuild; `onDeviceRestored` never fires).
@@ -175,7 +183,9 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   image codecs are left out of the Linux source list rather than stubbed, and
   with them `SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/Plugins`,
   `Apps/SVG`, `Apps/UI/SVGDocument` and the `Apps/GPU` examples that paint a 2D
-  overlay. `Path` is there as recorded geometry only
+  overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
+  `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
+  where it is 0. `Path` is there as recorded geometry only
   (`Primitives/Path-Linux.h`). Every GPU test but the Metal-only
   `TextureInteropTests.mm` runs there on lavapipe.
 

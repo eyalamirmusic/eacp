@@ -562,7 +562,8 @@ public:
     // tightly packed - and **bytesPerRow must be 0**. Both layouts are tightly
     // packed by definition, so a stride there is a number that can only be
     // wrong; a nonzero one is a no-op rather than an upload at a pitch nothing
-    // means.
+    // means. A negative one is a no-op everywhere, on this call and the three
+    // below: a stride is a byte count, and rows cannot be walked backwards.
     void update(const void* pixels, int bytesPerRow = 0);
 
     // Re-uploads one sub-rectangle, leaving the rest of the texture untouched.

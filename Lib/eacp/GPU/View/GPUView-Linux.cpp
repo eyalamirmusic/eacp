@@ -5,17 +5,14 @@
 #include "../Texture/Texture.h"
 #include "../Vulkan/VulkanTypes.h"
 
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Graphics/Helpers/DisplayLink.h>
 #include <eacp/Graphics/View/View-Linux.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <memory>
-#include <optional>
 
 namespace eacp::GPU
 {
@@ -57,9 +54,6 @@ struct GPUView::Native
 
     ~Native()
     {
-        // A cap-timer tick already queued must not call into freed storage.
-        *alive = false;
-
         // The record outlives this: onLost fires from ~View, after the Pimpl
         // has gone, so the hooks must stop pointing here first.
         record.onAvailable = [] {};
@@ -135,31 +129,13 @@ struct GPUView::Native
             });
 
         pacingStarted = false;
-        startCapTimer();
         continuousTick(true);
     }
 
     void stopContinuous()
     {
-        capTimer.reset();
         stampedTick = [] {};
         pacingStarted = false;
-    }
-
-    // A skipped tick presents nothing, so no frame callback follows it and the
-    // loop would stop at the first one; this timer is the other source of ticks.
-    void startCapTimer()
-    {
-        capTimer.reset();
-
-        if (continuous && maxFps > 0)
-            capTimer.emplace(
-                [this, guard = alive]
-                {
-                    if (*guard)
-                        continuousTick(false);
-                },
-                maxFps);
     }
 
     // The half-tick grace keeps 60 on a 120 Hz compositor from missing the
@@ -205,8 +181,13 @@ struct GPUView::Native
         if (swapchain == VK_NULL_HANDLE)
             return;
 
+        // A tick that presents nothing earns no frame callback of its own, so
+        // the request is made here; requestFrameCallback commits for it.
         if (!force && !tickIsDue())
+        {
+            record.requestFrameCallback();
             return;
+        }
 
         stampedTick();
     }
@@ -712,7 +693,7 @@ struct GPUView::Native
         drawable.acquired = acquireSemaphores[currentSlot];
         drawable.renderFinished = renderFinished[static_cast<int>(imageIndex)];
 
-        // The request rides on the next commit, and the present is the commit.
+        // The first one rides on this present; after that it commits itself.
         record.requestFrameCallback();
 
         {
@@ -793,13 +774,9 @@ struct GPUView::Native
 
     Callback stampedTick = [] {};
 
-    std::optional<Threads::Timer> capTimer;
     std::chrono::steady_clock::time_point lastTick;
     double accumulated = 0.0;
     bool pacingStarted = false;
-
-    std::shared_ptr<std::atomic<bool>> alive =
-        std::make_shared<std::atomic<bool>>(true);
 };
 
 GPUView::GPUView()
@@ -872,7 +849,10 @@ bool GPUView::isContinuous() const
 void GPUView::setMaxFps(int fps)
 {
     impl->maxFps = fps;
-    impl->startCapTimer();
+
+    // The pacing restarts at the new rate rather than carrying the old one's
+    // accumulated remainder into it.
+    impl->pacingStarted = false;
 }
 
 int GPUView::maxFps() const
