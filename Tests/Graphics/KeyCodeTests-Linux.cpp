@@ -6,19 +6,8 @@
 
 #include <set>
 
-// The Linux half of the KeyCode table: framework key codes against the kernel's
-// evdev numbering, which is what wl_keyboard.key carries.
-//
-// KeyCodeTests.cpp next door checks the framework side - that no two names
-// share a value. This checks the mapping, which is the part that can be wrong
-// while the header is right: a transposed evdev number gives a key that works
-// perfectly and reports itself as a different one, and the symptom is a
-// shortcut firing on the wrong key on Linux only.
-//
-// Worth a suite of its own because there is no other coverage of it. The seat
-// this table serves does not exist on a headless compositor, so
-// WaylandWindowTests cannot press a key; everything below runs anywhere,
-// including with no display at all.
+// KeyCodeTests.cpp checks the framework side; this checks the evdev mapping,
+// and needs no compositor to do it.
 
 using namespace nano;
 using namespace eacp::Graphics;
@@ -31,8 +20,7 @@ struct LinuxNamedKey
     std::uint16_t code;
 };
 
-// Every constant Keyboard.h defines except Unknown, which is the answer for a
-// key that is NOT in the table.
+// Every constant Keyboard.h defines except Unknown.
 const LinuxNamedKey linuxAllKeys[] = {
     {"A", KeyCode::A},
     {"S", KeyCode::S},
@@ -136,8 +124,6 @@ const LinuxNamedKey linuxAllKeys[] = {
 };
 } // namespace
 
-// Coverage. A KeyCode with no evdev key behind it is one an app can name in a
-// shortcut and never see fire, which is worse than not having the constant.
 auto tEveryKeyCodeHasAnEvdevKey =
     test("KeyCodeLinux/everyKeyCodeMapsToAnEvdevKey") = []
 {
@@ -147,9 +133,6 @@ auto tEveryKeyCodeHasAnEvdevKey =
     check(waylandEvdevFromKeyCode(KeyCode::Unknown) == 0);
 };
 
-// The round trip, which is what actually catches a transposed number: a
-// duplicate evdev value maps two names onto one key, and the second one comes
-// back as the first.
 auto tRoundTripIsExact =
     test("KeyCodeLinux/evdevRoundTripsBackToTheSameKeyCode") = []
 {
@@ -170,9 +153,6 @@ auto tEvdevCodesAreUnique = test("KeyCodeLinux/noTwoKeysShareAnEvdevCode") = []
     check(seen.size() == std::size(linuxAllKeys));
 };
 
-// A key outside the table is Unknown rather than something plausible. Media
-// keys are the common case: a keyboard sends them constantly and nothing in
-// the framework names them.
 auto tUnmappedKeysAreUnknown = test("KeyCodeLinux/aKeyOutsideTheTableIsUnknown") = []
 {
     check(waylandKeyCodeFromEvdev(KEY_PLAYPAUSE) == KeyCode::Unknown);
@@ -181,14 +161,8 @@ auto tUnmappedKeysAreUnknown = test("KeyCodeLinux/aKeyOutsideTheTableIsUnknown")
     check(waylandKeyCodeFromEvdev(0xFFFF) == KeyCode::Unknown);
 };
 
-// The spot checks worth writing out, because these are the entries most likely
-// to be got wrong and least likely to be noticed.
-//
-// Delete is backspace and ForwardDelete is the other one - the framework names
-// keys for what they do and evdev names them the other way round, so the two
-// are crossed exactly here and nowhere else. The letters are the alphabet in
-// none of the three orderings involved (QWERTY, alphabetical, macOS virtual
-// key), so a table copied from the wrong column shows up here first.
+// Delete is backspace and ForwardDelete is the other one: the framework names
+// keys for what they do and evdev names them the other way round.
 auto tCrossedNamesAreRight =
     test("KeyCodeLinux/theNamesThatCrossAreMappedRight") = []
 {
@@ -209,10 +183,6 @@ auto tCrossedNamesAreRight =
     check(waylandEvdevFromKeyCode(KeyCode::RightBracket) == KEY_RIGHTBRACE);
 };
 
-// With no seat there is no keyboard state, and every query says so rather than
-// inventing one. This is the state a headless compositor - and any machine with
-// no compositor at all - leaves the process in, so it is also what the whole
-// rest of the suite runs against.
 auto tPolledStateIsEmptyWithoutASeat =
     test("KeyCodeLinux/polledStateIsEmptyWithoutASeat") = []
 {

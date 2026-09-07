@@ -1,10 +1,7 @@
 #include "TrayIcon.h"
 
-// A status icon is a desktop-environment feature rather than a window-system
-// one, and the protocol for it (StatusNotifierItem over D-Bus) is the same one
-// a menu bar would need. Neither exists here yet, so a TrayIcon is constructed
-// and every operation is a no-op, exactly as on iOS — which is the behaviour
-// TrayIcon.h already documents for headless.
+// A status icon needs StatusNotifierItem over D-Bus, which is not built here,
+// so every operation is a no-op as it is on iOS.
 
 namespace eacp::Graphics
 {

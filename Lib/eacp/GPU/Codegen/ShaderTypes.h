@@ -183,11 +183,6 @@ inline const char* typeName(ValueType type)
     return "float";
 }
 
-// The third dialect's vocabulary. GLSL is the one of the three that does not
-// spell a vector as its element followed by a width: a float4 is a vec4, an
-// int2 an ivec2 and a float4x4 a mat4. Everything above stays in the canonical
-// (MSL) spelling - it is what the graph records and what the other two emit
-// verbatim - and this is the single table that re-spells it.
 inline const char* glslTypeName(ValueType type)
 {
     switch (type)
@@ -229,10 +224,7 @@ inline const char* glslTypeName(ValueType type)
     return "float";
 }
 
-// The GLSL spelling of a canonical type name, or nullptr where the name names
-// no type at all. A constructor-style cast is recorded as a call under the
-// target's own canonical name (see detail::convertTo), so this is what tells
-// one apart from an ordinary builtin when the GLSL arm re-spells a call.
+// A constructor-style cast is a call under the target's canonical type name.
 inline const char* glslTypeNameFor(std::string_view canonicalName)
 {
     for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)

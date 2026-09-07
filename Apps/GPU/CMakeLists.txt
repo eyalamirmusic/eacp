@@ -42,14 +42,9 @@ add_subdirectory(StreamingStress)
 # Incremental sub-region texture uploads, the glyph-atlas pattern.
 add_subdirectory(TextureAtlas)
 
-# The next seven paint an overlay with the 2D Graphics::Context - a caption, a
-# legend, a Path drawn by the platform's own rasterizer beside the GPU's - so
-# each needs the native 2D tier rather than only a window and a glyph
-# rasterizer, which is why none of them is in the Linux build. The GPU half of
-# each would build; the labels are what would not.
+# These paint an overlay with the 2D Graphics::Context, so each needs the
+# native 2D tier rather than only a window and a glyph rasterizer.
 if (EACP_HAS_CONTEXT)
-    # Blend modes side by side, and instanced quads beside them - each panel
-    # captioned with what it should look like.
     add_subdirectory(Blending)
     add_subdirectory(Instancing)
 
@@ -67,23 +62,22 @@ if (EACP_HAS_CONTEXT)
     # for. R32Float beside it.
     add_subdirectory(DepthSampling)
 
-    # The same shapes filled three ways side by side (that kernel, ear clipping
-    # under 4x MSAA, and the platform's own rasterizer), and strokes as fills
-    # beside the platform's own stroker. Both compare the GPU rasterizer against
-    # Graphics::Context::fillPath and strokePath, so the comparison is exactly
-    # the half that needs the 2D stack.
+    # The same shapes filled three ways side by side - that kernel, ear
+    # clipping under 4x MSAA, and the platform's own rasterizer.
     add_subdirectory(PathQuality)
+
+    # Strokes as fills: overlapping quads, joins and caps unioned by the
+    # non-zero rule, next to the platform's own stroker.
     add_subdirectory(PathStroke)
 endif ()
 
-# The two that link eacp-text rather than only the GPU module, and draw every
-# pixel they draw through it: text out of the glyph atlas with per-glyph
-# bearings, and one embedded variable face at nine weights beside a family cut
-# into faces - registerMemoryFont, and a weight asked of an axis rather than
-# matched. No Graphics::Context anywhere in either, so a glyph rasterizer is
-# the whole of what they add over a window.
 if (EACP_HAS_TEXT)
+    # Text drawn from eacp-text's glyph atlas, placed by per-glyph bearings.
     add_subdirectory(GlyphAtlas)
+
+    # One embedded variable face drawn at nine weights beside a family cut into
+    # faces: registerMemoryFont, and a weight asked of an axis rather than
+    # matched.
     add_subdirectory(VariableFont)
 endif ()
 

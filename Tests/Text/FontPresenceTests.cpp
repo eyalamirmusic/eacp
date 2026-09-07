@@ -10,22 +10,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::Text;
 
-// The one test in this directory that does not self-skip, and the answer to
-// the failure mode every other one has: a font test whose family did not
-// resolve returns immediately and ctest scores it as a pass, so a CI lane
-// whose font packages were never installed reports a full green Text suite
-// that shaped nothing at all. The same shape as
-// Tests/GPU/DevicePresenceTests.cpp, for the same reason.
-//
-// EACP_REQUIRE_FONTS=1 says the platform's stock faces are expected here. A
-// lane that sets it and finds them missing fails, with what did resolve
-// printed either way. Nothing sets it by default, so a bare container with no
-// fonts still gets a green run.
-
 namespace
 {
-// The proportional face the platform ships, beside the fixed-pitch one
-// defaultMonospaceFamily() already names.
 constexpr const char* stockProportionalFamily()
 {
     if constexpr (Platform::isWindows())
@@ -46,9 +32,7 @@ FontRequest presenceRequest(const char* family)
     return request;
 }
 
-// What the platform resolved a family to, or nothing when it resolved to no
-// face at all. A substitute counts as resolved and is reported as itself, so
-// the check below can say the family was substituted rather than absent.
+// Empty when nothing resolved; a substitute counts as resolved, and is named.
 std::string resolvedFamilyOf(const char* family)
 {
     const auto rasterizer = GlyphRasterizer {presenceRequest(family)};
@@ -81,14 +65,11 @@ auto tFontsArePresentWhenRequired = test("Text/fontsArePresentWhenRequired") = [
     const auto rasterizer =
         GlyphRasterizer {presenceRequest(defaultMonospaceFamily())};
 
-    // Han and a grinning face: the two the fallback chain has to reach for,
-    // since no fixed-pitch Latin family carries either. Spelled as escapes
-    // because the build does not force a UTF-8 source encoding.
+    // Han and a grinning face, neither of which a fixed-pitch Latin family
+    // carries. Escaped because the build does not force a UTF-8 source encoding.
     const auto han = rasterizer.rasterize(U'\u6f22', FontStyle::Regular);
     const auto emoji = rasterizer.rasterize(U'\U0001F600', FontStyle::Regular);
 
-    // Printed before the checks, so a failing lane says what it found as well
-    // as that it was not what it wanted.
     LOG("Text monospace family: ",
         defaultMonospaceFamily(),
         " -> ",

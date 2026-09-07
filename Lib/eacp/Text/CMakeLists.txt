@@ -20,8 +20,7 @@ elseif (UNIX)
 
     target_sources(eacp-text PRIVATE GlyphRasterizer-Linux.cpp)
 
-    # PRIVATE, so no FreeType, HarfBuzz or fontconfig header reaches a
-    # consumer of eacp-text: the whole platform surface is this one file.
+    # PRIVATE, so no FreeType, HarfBuzz or fontconfig header reaches a consumer.
     target_link_libraries(eacp-text PRIVATE eacp-linux-text)
 endif ()
 

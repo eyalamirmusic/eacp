@@ -48,7 +48,6 @@ public:
               const ClipMask& clip,
               const CoverageAtlas& atlas);
 
-    // The shader this renderer builds -- see ShapeBatch::forEachShaderGraph.
     static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
 
 private:

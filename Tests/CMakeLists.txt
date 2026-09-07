@@ -16,9 +16,8 @@ if (EACP_HAS_DRAW)
     add_subdirectory(Graphics)
 endif ()
 
-# Always added, because the shader codegen tests are pure string generation and
-# run anywhere. The directory builds those first and returns before the device
-# suites unless EACP_HAS_GPU. iOS is excluded whole: it runs no test binaries.
+# Always added: the shader codegen tests are pure string generation, and the
+# directory returns before the device suites unless EACP_HAS_GPU.
 if (NOT IOS)
     add_subdirectory(GPU)
 endif ()
@@ -32,11 +31,7 @@ if (EACP_HAS_TEXT AND NOT IOS)
     add_subdirectory(UI)
 
     # The parse layer and the geometry it builds. Above UI in the list because
-    # SVGComponent is a UI::Component, and none of these needs a window. Every
-    # case is on the portable half - parseXML, the geometry, the component tier
-    # - and none of them calls SVG::parse, so the suite needs no more than
-    # EACP_HAS_TEXT even though the module's native builder needs
-    # EACP_HAS_CONTEXT.
+    # SVGComponent is a UI::Component, and none of these needs a window.
     add_subdirectory(SVG)
 endif ()
 
@@ -56,7 +51,6 @@ if (EACP_HAS_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
-# Always added: the bridge over a ScriptHost that is no WebView needs no native
-# web runtime and no graphics, so ScriptHostTests builds and runs everywhere.
-# The directory returns after it unless EACP_HAS_WEBVIEW.
+# Always added: ScriptHostTests needs no web runtime and no graphics. The
+# directory returns after it unless EACP_HAS_WEBVIEW.
 add_subdirectory(WebView)

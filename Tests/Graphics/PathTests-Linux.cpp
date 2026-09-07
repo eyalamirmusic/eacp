@@ -4,14 +4,7 @@
 
 #include <cmath>
 
-// A Linux Path is the only one whose contents can be read back: Apple and
-// Windows hand their points to CGPath and ID2D1PathGeometry, which do not give
-// them out again, so those two are only ever checked by rendering. Here the
-// record is the whole implementation, and the tessellator that will consume it
-// is not written yet — so these pin the transcript itself. A curve emitted with
-// its control points the wrong way round draws a shape that is still closed,
-// still inside its rect and still plausible, which is exactly the kind of bug
-// that survives until someone looks at a screenshot.
+// A Linux Path is pinned by its transcript; the others only by rendering.
 
 using namespace nano;
 using eacp::Vector;
@@ -41,7 +34,6 @@ bool isWithin(const Point& point, const Rect& rect)
            && point.y >= rect.top() - 0.001f && point.y <= rect.bottom() + 0.001f;
 }
 
-// Where the pen lands after a command: the last point the verb uses.
 Point endPointOf(const PathCommand& command)
 {
     return command.points[command.pointCount() - 1];
@@ -117,9 +109,8 @@ auto tPathRectIsFourCorners = test("Path/addRectWalksTheFourCorners") = []
     check(isAt(commands[3].points[0], 10.f, 60.f));
 };
 
-// Four corners, each an edge then a cubic, then the closing edge back to the
-// start. The last cubic's endpoint has to be the moveTo's point or the close
-// draws a chord across the corner.
+// The last cubic's endpoint has to be the moveTo's point, or the close draws a
+// chord across the corner.
 auto tPathRoundedRectShape = test("Path/addRoundedRectIsEdgesAndCorners") = []
 {
     auto path = Path();
@@ -145,9 +136,7 @@ auto tPathRoundedRectShape = test("Path/addRoundedRectIsEdgesAndCorners") = []
     check(isAt(endPointOf(commands[8]), 10.f, 0.f));
 };
 
-// The radius has to be fitted before the corners are laid out, or the top edge
-// runs backwards: at r = 30 on a 4pt-tall rect the "top right" corner starts
-// left of where the "top left" one ended.
+// Unfitted, the top edge runs backwards on a rect shorter than two radii.
 auto tPathRoundedRectClampsRadius = test("Path/addRoundedRectClampsTheRadius") = []
 {
     auto bar = Rect {24.f, 80.f, 472.f, 4.f};
@@ -165,8 +154,7 @@ auto tPathRoundedRectClampsRadius = test("Path/addRoundedRectClampsTheRadius") =
             check(isWithin(command.points[i], bar));
 };
 
-// A degenerate rect keeps its corners at zero rather than producing a radius it
-// cannot fit; the shape collapses to a line, which is what every backend draws.
+// A degenerate rect keeps its corners at zero and collapses to a line.
 auto tPathRoundedRectOfAnEmptyRect = test("Path/addRoundedRectOfAnEmptyRect") = []
 {
     auto path = Path();
@@ -229,7 +217,6 @@ auto tPathClearEmptiesTheRecord = test("Path/clearEmptiesTheRecord") = []
     path.clear();
     check(getPathGeometry(path).commands.empty());
 
-    // Still usable afterwards, and still the same record.
     path.moveTo({1.f, 1.f});
     check(getPathGeometry(path).commands.size() == 1);
     check(path.getHandle() == &getPathGeometry(path));

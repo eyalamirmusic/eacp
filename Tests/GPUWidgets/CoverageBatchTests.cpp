@@ -218,10 +218,7 @@ Difference compare(const Vector<float>& batched,
 // rasterization.
 void checkEachMatchesAlone(Vector<Entry>& entries, const GPU::Texture& target)
 {
-    // Nothing was rasterized into a texture that does not exist, and holding a
-    // read-back of nothing against a solo rasterization of nothing checks
-    // nothing. Self-skips on the object the comparison needs, exactly as the
-    // probe does - see CoverageProbe.h.
+    // A read-back of nothing against a rasterization of nothing checks nothing.
     if (!target.isValid())
         return;
 

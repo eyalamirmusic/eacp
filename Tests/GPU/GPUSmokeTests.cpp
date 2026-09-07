@@ -85,10 +85,7 @@ kernel void computeMain(device const float* input [[buffer(0)]],
 }
 )";
 
-// A kernel's GLSL bindings are the Metal buffer indices verbatim: the storage
-// buffers from zero and the uniform block above every slot. `input` and
-// `output` are reserved words here, so the two runs are named rather than
-// spelled the way the other two dialects spell them.
+// `input` and `output` are reserved words in GLSL, so the runs are renamed.
 const char* glslComputeShader = R"(#version 450
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -120,8 +117,7 @@ void main()
 }
 )";
 
-// Every number in the three sources above is one of these, so moving a base
-// fails here rather than in a descriptor set that silently binds nothing.
+// Every binding number in the sources above is one of these.
 static_assert(vulkanComputeUniformBinding == 16);
 static_assert(vulkanComputeBufferBinding(0) == 0);
 static_assert(vulkanComputeBufferBinding(1) == 1);

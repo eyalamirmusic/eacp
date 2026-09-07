@@ -1,11 +1,7 @@
 #pragma once
 
-// Deliberately not the Graphics.h umbrella. The page bridge — the shim, the
-// wire format, the Miro command table and the EACP_STATE binders — runs over
-// a ScriptHost and links no graphics library at all. (The
-// eacp::Graphics::Detail the state macros call into is a namespace, not a
-// dependency: EventRegistry.h declares it.) WebView/WebView.h, the native
-// view, includes the umbrella itself.
+// Core rather than the Graphics.h umbrella: the page bridge runs over a
+// ScriptHost and links no graphics library. WebView.h includes the umbrella.
 #include <eacp/Core/Core.h>
 #include <Miro/Bridge.h>
 #include <Miro/Reflect.h>

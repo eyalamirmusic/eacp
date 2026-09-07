@@ -26,7 +26,6 @@ using FontStyle = eacp::Text::FontStyle;
 // The platform's stock UI face, the proportional sibling of
 // Text::defaultMonospaceFamily. Same reasoning: no family name ships on all
 // three systems, and asking for a literal one gets a substitute on the others.
-// DejaVu Sans is the Linux one every desktop distribution ships.
 constexpr const char* defaultUIFontFamily()
 {
     if constexpr (Platform::isWindows())

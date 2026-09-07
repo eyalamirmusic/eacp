@@ -433,19 +433,8 @@ auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
     }
 };
 
-// The mirror of Tests/GPU/DevicePresenceTests, and the answer to the same
-// failure mode one level down.
-//
-// Every comparison above reads its coverage through probe::rasterize, which
-// hands back an empty vector when the mask texture is invalid - and an empty
-// vector makes each of them skip and report a pass. That guard is right: a
-// backend without textures should not fail a rasterization test for not having
-// any. But it means the whole directory can go green having rasterized nothing,
-// which is exactly what the Linux lane did while Texture was a placeholder.
-//
-// So under EACP_REQUIRE_GPU=1 - the same switch that says a device is expected -
-// a mask is expected too. It is checked at the source, on the texture
-// PathRasterizer::dispatch writes, rather than on any one comparison's result.
+// Every comparison above self-skips on an invalid mask texture, so the whole
+// directory can go green having rasterized nothing; EACP_REQUIRE_GPU=1 fails.
 auto tCoverageIsPresentWhenRequired =
     test("PathRasterizer/coverageIsPresentWhenRequired") = []
 {

@@ -5,34 +5,12 @@
 
 #include <cstring>
 
-// Linux/Vulkan backend. A BufferStorage::Device buffer is device-local memory
-// filled by a staged copy: a memcpy into the recording's upload arena and a
-// vkCmdCopyBuffer onto whatever recording is already open, so a batching
-// renderer that builds a buffer per flush pays one submission for the frame
-// rather than one per buffer. read() copies into a pooled readback buffer and
-// waits on the context's timeline, which preserves the contract that a read
-// after commit() sees the kernel's output.
-//
-// A BufferStorage::Streaming buffer is the other shape entirely: host-visible
-// coherent memory, mapped once and kept mapped, bound as vertex, index or
-// storage data in place. Every write is a memcpy through that mapping and puts
-// nothing on a command buffer - no staging chunk, no copy, no barrier either
-// side of it. Correctness comes from the caller instead: see BufferStorage in
-// Buffer.h, and StreamingBuffers, which is the caller that has it.
-
 namespace eacp::GPU
 {
 namespace
 {
-// Every usage bit at once, which is a deliberate difference from the two other
-// backends rather than laziness. Vulkan needs a buffer's uses declared when it
-// is created and refuses one that is bound any other way; eacp's BufferUsage is
-// advisory on Metal and picks resource flags on D3D12, so nothing above this
-// layer promises that a Vertex buffer is never read by a kernel or that a
-// Storage buffer never feeds drawIndexed - and StreamingBuffers hands out
-// ranges of one arena for whichever of those the caller wants. Declaring the
-// union costs nothing on any driver: usage bits pick a memory type and a
-// layout, and every one of these lands on the same buffer memory.
+// Vulkan refuses a buffer bound any way it was not created for, and nothing
+// above this layer promises a Vertex buffer is never read by a kernel.
 constexpr VkBufferUsageFlags vulkanBufferUsage =
     VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
     | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
@@ -55,11 +33,7 @@ struct Buffer::Native
         if (!context.isValid() || bytes == 0)
             return;
 
-        // A Storage buffer keeps device storage whatever was asked for, which
-        // is the contract BufferStorage states. Vulkan would allow a
-        // host-visible storage buffer where D3D12 cannot, but a kernel writing
-        // across the bus is the trade this option exists to avoid, not one to
-        // make silently.
+        // A Storage buffer keeps device storage whatever was asked for.
         if (storage == BufferStorage::Streaming && usage != BufferUsage::Storage)
             if (mapStreamingStorage(data, bytes))
                 return;
@@ -67,16 +41,12 @@ struct Buffer::Native
         if (!makeDeviceBuffer(bytes))
             return;
 
-        // A buffer whose initial data never reached it is not a buffer, and
-        // isValid() is how the caller finds out rather than drawing from
-        // whatever the heap happened to hold.
+        // Initial data that never arrived leaves the buffer invalid.
         if (data != nullptr && !stage(data, bytes))
             release();
     }
 
-    // Handed to the context rather than destroyed here. A buffer is routinely
-    // replaced mid-frame - every ShaderProgram setInstances/setVertices makes a
-    // new one - and the command buffer still recording names the old handle.
+    // Deferred, a recording still naming the old handle.
     ~Native() { release(); }
 
     void release()
@@ -96,10 +66,7 @@ struct Buffer::Native
         info.usage = vulkanBufferUsage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        // No host-access flag, which is what tells VMA to put this in device
-        // memory. Sub-allocated out of a larger block rather than given a
-        // VkDeviceMemory of its own, which is the whole reason the allocator is
-        // here - maxMemoryAllocationCount is commonly 4096.
+        // No host-access flag, which is what puts this in device memory.
         VmaAllocationCreateInfo allocationInfo = {};
         allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
 
@@ -112,9 +79,7 @@ struct Buffer::Native
                == VK_SUCCESS;
     }
 
-    // One host-visible coherent buffer, mapped for good. False when either step
-    // fails, which leaves the caller to fall through to the device path rather
-    // than hand back a buffer that never got storage.
+    // False leaves the caller to fall through to the device path.
     bool mapStreamingStorage(const void* data, std::size_t bytes)
     {
         VkBufferCreateInfo info = {};
@@ -156,22 +121,8 @@ struct Buffer::Native
         return true;
     }
 
-    // The copy that fills the buffer from CPU bytes, and the whole of what makes
-    // a buffer cheap enough to create per draw. Two things, of the same order of
-    // cost: the staging bytes are bump-allocated from the recording's upload
-    // arena instead of a buffer made for this one copy, and the copy goes onto
-    // whatever recording is already open instead of one acquired and submitted
-    // for it alone.
-    //
-    // Recording onto the open command buffer rather than ahead of it is also
-    // what keeps it correct: the copy lands in order, before the dispatch that
-    // wanted the bytes, so two flushes of the same program in one frame each
-    // read what they were given.
-    //
-    // The exception is a render pass instance, where a copy is illegal rather
-    // than merely out of order and getRecordingForCopy hands back nothing - so
-    // the branch below takes a recording of its own, exactly as it does outside
-    // a frame.
+    // Recorded onto whatever recording is open, so the copy lands ahead of the
+    // dispatch that wanted the bytes. A render pass gets a recording of its own.
     bool stage(const void* data, std::size_t bytes, std::size_t destination = 0)
     {
         if (bufferData.buffer == VK_NULL_HANDLE)
@@ -224,13 +175,10 @@ struct Buffer::Native
         return true;
     }
 
-    // The Device's context, held for the buffer's lifetime: read(), update() and
-    // the deferred release all belong to the timeline this memory was allocated
-    // against, and a buffer never moves between Devices.
+    // A buffer never moves between Devices.
     VulkanContext& context;
 
-    // Mutable because the use tracking advances inside the const read(): the
-    // copy into the readback buffer is a use like any other.
+    // Mutable because the use tracking advances inside the const read().
     mutable VulkanBufferData bufferData;
 };
 
@@ -241,8 +189,7 @@ Buffer::Buffer(Device& device,
                BufferStorage storage)
     : impl(device, data, bytes, usage, storage)
 {
-    // Only the ones that got storage, so the count means GPU allocations rather
-    // than calls - a zero-byte or device-less Buffer allocated nothing.
+    // Only the ones that got storage, so the count means allocations.
     if (isValid())
         device.noteBufferCreated();
 }
@@ -269,9 +216,7 @@ void Buffer::read(void* dst, int byteCount, int byteOffset) const
     const auto available = impl->bufferData.size - offset;
     const auto count = bytes < available ? bytes : available;
 
-    // Host storage reads straight back out of the mapping, as Metal's shared
-    // buffers always have. Nothing on the GPU writes those bytes, so there is
-    // no work to wait for and no readback copy to make.
+    // Nothing on the GPU writes host storage, so there is nothing to wait for.
     if (impl->bufferData.mapped != nullptr)
     {
         std::memcpy(dst, impl->bufferData.mapped + offset, count);
@@ -284,9 +229,6 @@ void Buffer::read(void* dst, int byteCount, int byteOffset) const
     if (commands == nullptr)
         return;
 
-    // Out of the pool, for the reason the upload side takes one: a read repeats
-    // every run at the same size. The pool owns it, and it stays valid until
-    // the value this submission signals has passed.
     std::byte* mapped = nullptr;
     auto staging = context.acquireReadbackBuffer(*commands, count, mapped);
 
@@ -296,13 +238,8 @@ void Buffer::read(void* dst, int byteCount, int byteOffset) const
         return;
     }
 
-    // This recording lives beside whatever recording is open, and the buffer's
-    // use tracking is per recording: stamping this one on the buffer would make
-    // the open recording's next use of it look like a first use, free of the
-    // barrier it may still owe against a write it recorded earlier. So the
-    // tracking goes back the way it was once the copy is submitted. This
-    // recording ends with the global barrier like every other, which is what
-    // makes the copy visible to whatever follows it.
+    // Use tracking is per recording, and this one lives beside whatever is open:
+    // stamping it would cost that one a barrier it may still owe.
     const auto trackedRecording = impl->bufferData.recordingId;
     const auto trackedUse = impl->bufferData.use;
 
@@ -314,15 +251,11 @@ void Buffer::read(void* dst, int byteCount, int byteOffset) const
 
     vkCmdCopyBuffer(commands->buffer, impl->bufferData.buffer, staging, 1, &region);
 
-    // The copy was enqueued on the same queue as the writes, so waiting for
-    // this submission also waits for them.
     context.waitFor(context.submit(commands));
 
     impl->bufferData.recordingId = trackedRecording;
     impl->bufferData.use = trackedUse;
 
-    // Coherent memory, so what the GPU wrote is what the CPU reads with no
-    // invalidate in between - see VulkanContext::makeHostBuffer.
     std::memcpy(dst, mapped, count);
 }
 
@@ -342,11 +275,8 @@ void Buffer::update(const void* data, int byteCount, int byteOffset)
     const auto available = impl->bufferData.size - offset;
     const auto count = bytes < available ? bytes : available;
 
-    // The whole of a streamed write. No recording is touched, so nothing orders
-    // it against the dispatches already recorded and nothing needs to: what
-    // makes it safe is that the caller does not write bytes an in-flight frame
-    // is still reading, which is the contract BufferStorage::Streaming states
-    // and StreamingBuffers keeps.
+    // Unordered against everything already recorded: not writing bytes an
+    // in-flight frame reads is the caller's contract under Streaming.
     if (impl->bufferData.mapped != nullptr)
     {
         std::memcpy(impl->bufferData.mapped + offset, data, count);
@@ -361,9 +291,7 @@ void* Buffer::nativeBuffer() const
     return &impl->bufferData;
 }
 
-// Both directions are the same handle here, as on D3D12: a GLSL storage buffer
-// is one std430 block whether the kernel reads it or writes it, and the
-// descriptor type does not change with the direction.
+// One std430 block whichever way the kernel uses it.
 void* Buffer::nativeReadView() const
 {
     return &impl->bufferData;

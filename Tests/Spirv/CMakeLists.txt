@@ -1,6 +1,5 @@
-# eacp-spirv is absent when EACP_BUILD_SPIRV is off - its default everywhere
-# but Linux - and on a tree that never entered Lib/eacp/GPU at all, so the
-# guard is the target rather than the option.
+# The target rather than the option: a tree that skipped Lib/eacp/GPU never
+# saw the option either.
 if (NOT TARGET eacp-spirv)
     return ()
 endif ()

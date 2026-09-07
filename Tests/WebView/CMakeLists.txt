@@ -1,8 +1,7 @@
 # The bridge over a ScriptHost that is not a WebView. Its own executable,
 # linking eacp-webview-bridge and nothing else, because that is the claim
 # being tested: the bridge, the shim and the state binders stand up with no
-# native web runtime under them — and on a platform that has none, which is
-# why this is built and run everywhere, Linux included.
+# native web runtime under them, so it builds and runs everywhere.
 nano_add_executable(ScriptHostTests
         SOURCES ScriptHostTests.cpp
         TARGETS eacp-webview-bridge)

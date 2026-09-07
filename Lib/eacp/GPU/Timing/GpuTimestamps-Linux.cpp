@@ -3,22 +3,6 @@
 #include "../Device/Device.h"
 #include "../Vulkan/VulkanTypes.h"
 
-// Linux/Vulkan backend. Each slot owns one timestamp query pool. Unlike D3D12
-// there is no readback buffer and no resolve step: vkGetQueryPoolResults copies
-// straight to the CPU once the queries have been written, so what the command
-// buffer records is only the reset and the timestamps themselves.
-//
-// Query layout per slot: two per timed pass from index 0, then the frame's own
-// pair at the top. The frame pair is separate for the reason it is on D3D12 -
-// there is no equivalent of MTLCommandBuffer's GPUStartTime, so the
-// whole-frame number is two more timestamps on the same command buffer, taken
-// before anything is recorded and after everything is.
-//
-// The pool must be reset on a command buffer before anything writes to it (the
-// host-side vkResetQueryPool is a 1.2 feature that is not part of the floor
-// here), and beginRecording is the one place that is guaranteed to run once per
-// slot with a command buffer in hand.
-
 namespace eacp::GPU
 {
 namespace
@@ -37,9 +21,7 @@ struct GpuTimestamps::Native
         bool submitted = false;
     };
 
-    // Deferred for the same reason as the other two backends': this is built by
-    // Device, which is not yet itself when that runs - hence the Device
-    // arriving with the first slot rather than at construction.
+    // Deferred: this is built by Device, which is not yet itself when that runs.
     void ensureCreated(GPU::Device& owner)
     {
         if (tried)
@@ -81,7 +63,7 @@ struct GpuTimestamps::Native
 
     VkDevice device = VK_NULL_HANDLE;
 
-    // Nanoseconds per tick, straight off the device limits.
+    // Nanoseconds per tick.
     float period = 0.f;
 
     bool supported = false;
@@ -118,9 +100,8 @@ void GpuTimestamps::beginRecording(int slot, void* nativeCommandBuffer)
 
     auto& entry = impl->slots[slot];
 
-    // The whole pool, because a query that is written without having been reset
-    // is undefined and one that is reset without being written reads back as
-    // unavailable - and resolveSlot reads them all.
+    // Recorded rather than host-side, vkResetQueryPool being outside the floor.
+    // The whole pool, because resolveSlot reads it all.
     vkCmdResetQueryPool(commandBuffer,
                         entry.pool,
                         0,
@@ -140,10 +121,6 @@ void* GpuTimestamps::nativeSamples(int slot) const
     return impl->slots[slot].pool;
 }
 
-// Like D3D12 and unlike Metal, there is nothing to report without the queries:
-// the frame is measured with the same timestamps a pass is, so a device that
-// cannot take them has no frame total either. Saying so is what keeps the
-// timer's slots from filling up with frames that can never be answered.
 bool GpuTimestamps::endSlot(int slot, int, void* nativeCommandBuffer)
 {
     if (!impl->supported)
@@ -186,18 +163,8 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
     if (!impl->supported || entry.pool == VK_NULL_HANDLE)
         return 0.0;
 
-    // Each query comes back as a {value, availability} pair. The pool has room
-    // for maxTimedPasses, but a frame writes only the passes it had, and a query
-    // the frame never wrote is "unavailable" rather than zero: read without the
-    // availability bit, one such query fails the whole call with NOT_READY and
-    // leaves every value undefined. With it, the call still answers NOT_READY
-    // but writes every availability flag and every value that is there, and an
-    // unwritten query reads as the zero toMilliseconds already treats as "no
-    // number".
-    //
-    // No WAIT bit: the caller has already established that the submission
-    // completed, and asking the driver to block here would turn a poll into a
-    // stall on a frame the profiler was only reading.
+    // Without the availability bit, one query the frame never wrote fails the
+    // whole call. No WAIT bit: the submission is known to have completed.
     struct QueryResult
     {
         std::uint64_t value = 0;
@@ -227,8 +194,7 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
 
     const auto toMilliseconds = [this](std::uint64_t start, std::uint64_t end)
     {
-        // A query the GPU never wrote reads as zero, and a disjoint one can
-        // read backwards. Both mean "no number" rather than a duration.
+        // An unwritten query reads as zero, a disjoint one backwards.
         if (end <= start)
             return 0.0;
 
@@ -242,13 +208,8 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
     const auto frameStart = tick(vulkanFrameStartQuery);
     const auto frameEnd = tick(vulkanFrameEndQuery);
 
-    // Where a device that only claimed to support timestamps is found out.
-    // These two are absolute tick counts taken outside any pass, and the slot is
-    // only read once its submission has completed - so both reading zero cannot
-    // mean a quick frame, only that the writes never landed. Retiring support
-    // here rather than reporting zeroes is what keeps the rest honest: endSlot
-    // then stops marking slots pending, and supportsPassTimings() tells a
-    // profiler the truth before it draws an empty graph.
+    // Absolute ticks, read once the submission completed, so both being zero
+    // cannot mean a quick frame - only that the device never wrote them.
     if (frameStart == 0 && frameEnd == 0)
         impl->supported = false;
 

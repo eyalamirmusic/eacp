@@ -11,26 +11,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-// The Wayland backend against a real compositor.
-//
-// Everything else in this directory runs headless on purpose - GraphicsTests
-// forces Apps::getAppEnvironment().headless before nano::run - because the
-// model under test is portable and a window on screen adds nothing to it. This
-// binary is the opposite case: the only thing it checks is what the compositor
-// does, so it has a main of its own that leaves headless alone and every case
-// self-skips when there is no compositor to talk to.
-//
-// EACP_REQUIRE_DISPLAY=1 turns that skip into a failure, the way
-// EACP_REQUIRE_GPU=1 does for the Vulkan suite, so a CI lane that meant to run
-// under Weston and did not cannot report a green run of nothing.
-//
-// What is NOT covered here, and cannot be: input. A headless Weston advertises
-// no wl_seat at all - no pointer, no keyboard, not even empty ones - so nothing
-// in WaylandInput-Linux.cpp is reachable from this process. The parts of that
-// file that can be tested without a seat are tested without Wayland:
-// KeyCodeTests-Linux.cpp covers the evdev table, and the routing it performs is
-// View.cpp's own hit-tester, which ScrollWheelTests and ViewWindowTests cover
-// from the portable side.
+// The Wayland backend against a real compositor: not headless, and every case
+// self-skips without one, unless EACP_REQUIRE_DISPLAY=1. Input is not covered.
 
 using namespace nano;
 using namespace eacp;
@@ -40,19 +22,11 @@ namespace
 {
 constexpr auto waylandTestTimeout = Time::MS {5000};
 
-// Weston's headless backend is started at this size by the with-weston wrapper
-// in the Dockerfile, and it is also the size Display.h falls back to when there
-// is no compositor at all - so the display case below checks the reported
-// numbers against the output rather than against a constant, and only asserts
-// the shape.
+// The size Scripts/with-weston starts Weston's headless backend at.
 constexpr float waylandTestOutputWidth = 1280.f;
 constexpr float waylandTestOutputHeight = 800.f;
 
-// Whether a window can actually be put on screen, decided once by trying.
-// Cheaper answers - WAYLAND_DISPLAY being set, the socket existing - are
-// necessary and not sufficient: the compositor may refuse the connection, and
-// the backend degrades to headless silently when it does, which is exactly the
-// state that must not read as a pass.
+// Decided by trying: the backend degrades to headless silently.
 bool waylandCompositorReachable()
 {
     static const auto reachable = []
@@ -72,11 +46,7 @@ bool waylandCompositorReachable()
     return reachable;
 }
 
-// A window with a content view, mapped and configured, or nothing at all.
-//
-// The view is declared first so it outlives the window: ~Window tears the
-// subsurfaces down through the content view, and one case here destroys the
-// window on purpose while the view watches.
+// The view is declared first so it outlives the window.
 struct CompositorWindow
 {
     explicit CompositorWindow(int width = 640, int height = 400)
@@ -86,8 +56,7 @@ struct CompositorWindow
         options.height = height;
         options.title = "eacp Wayland tests";
 
-        // Not the primary window: a close here must not take the test runner
-        // down with it.
+        // A close here must not take the test runner down with it.
         options.isPrimary = false;
 
         window.emplace(options);
@@ -103,9 +72,6 @@ struct CompositorWindow
     std::optional<Window> window;
 };
 
-// A view that presents its own pixels, which is what a GPUView is and the only
-// kind of view Linux gives a surface to. The counters are what the ViewSurface
-// contract promises, counted.
 struct PresentingView : View
 {
     PresentingView()
@@ -119,8 +85,7 @@ struct PresentingView : View
 
     ~PresentingView() override
     {
-        // ~View fires onLost while this object's own members are already gone,
-        // so the hooks are dropped on the way past.
+        // ~View fires onLost when this object's own members are already gone.
         record.onAvailable = [] {};
         record.onLost = [] {};
         record.onResized = [] {};
@@ -136,10 +101,7 @@ struct PresentingView : View
     int frames = 0;
 };
 
-// The test's own wl_shm, bound off a registry of its own on the connection the
-// backend already owns. Needed for exactly one case: a frame callback only
-// arrives after the surface it was requested on is committed with a buffer, and
-// the buffer is the presenter's job - which here is us.
+// A frame callback only arrives once the surface is committed with a buffer.
 wl_shm* waylandTestShm(wl_display* display)
 {
     static wl_shm* cached = nullptr;
@@ -224,10 +186,7 @@ struct TestShmBuffer
 };
 } // namespace
 
-// The one case that does not self-skip, and the answer to the failure mode
-// every other one has: a case whose compositor is missing returns immediately
-// and ctest scores it as a pass, so a lane whose Weston never came up reports a
-// full green suite that opened no windows at all.
+// The one case that does not self-skip.
 auto tCompositorIsPresentWhenRequired =
     test("Wayland/aCompositorIsPresentWhenRequired") = []
 {
@@ -253,8 +212,7 @@ auto tWindowComesUpAtItsSize = test("Wayland/windowComesUpAtItsConfiguredSize") 
 
     check(host.isUp());
 
-    // A floating toplevel is configured with no size by every compositor that
-    // has no opinion, which means the client's own size stands.
+    // A compositor with no opinion lets the client's own size stand.
     const auto bounds = host.content.getBounds();
 
     check(bounds.w == 640.f);
@@ -270,9 +228,6 @@ auto tWindowHandleIsTheSurface = test("Wayland/windowHandleIsTheSurface") = []
 
     check(host.window->getHandle() != nullptr);
 
-    // The content view's own identity, which is a different thing and must not
-    // be the same pointer - a caller told they were the same would hand a
-    // View::Native to vkCreateWaylandSurfaceKHR.
     check(host.window->getContentViewHandle() != host.window->getHandle());
 };
 
@@ -295,9 +250,7 @@ auto tViewSurfaceBecomesAvailable = test("Wayland/viewSurfaceBecomesAvailable") 
     check(presenter.record.display != nullptr);
     check(presenter.record.surface != nullptr);
 
-    // The scale the compositor asked for, and the pixel size that follows from
-    // it. Not asserted as 1: a compositor is entitled to say otherwise, and the
-    // contract is that the two agree, not that either is a particular number.
+    // The contract is that scale and pixel size agree, not their values.
     check(presenter.record.scale > 0.f);
     check(presenter.record.pixelWidth
           == (int) std::lround(320.f * presenter.record.scale));
@@ -330,13 +283,10 @@ auto tMovingTheViewResizesItsSurface =
     check(presenter.record.pixelWidth == (int) std::lround(160.f * scale));
     check(presenter.record.pixelHeight == (int) std::lround(120.f * scale));
 
-    // The surface itself survives a resize: the swapchain is rebuilt against
-    // it, not replaced with it.
     check(presenter.lost == 0);
     check(presenter.available == 1);
 
-    // A move with no size change is not a resize, whatever it does to the
-    // subsurface's position.
+    // A move with no size change is not a resize.
     const auto resizesAfterMove = presenter.resized;
     presenter.setBounds({80.f, 90.f, 160.f, 120.f});
     check(presenter.resized == resizesAfterMove);
@@ -372,8 +322,7 @@ auto tHidingTheViewTakesItsSurfaceAway =
     check(presenter.available == 2);
     check(presenter.hasSurface());
 
-    // Hiding the CONTAINER is the same news, since effective visibility is the
-    // whole ancestor chain.
+    // Effective visibility is the whole ancestor chain.
     host.content.setVisible(false);
 
     check(presenter.lost == 2);
@@ -396,9 +345,7 @@ auto tDestroyingTheWindowTakesTheSurfaceAway =
                                waylandTestTimeout);
     check(presenter.available == 1);
 
-    // onLost has to reach the presenter while the wl_surface is still alive: a
-    // swapchain outliving the surface it was made from is a use-after-free
-    // inside the driver, and this is the ordering that prevents it.
+    // onLost must reach the presenter while the wl_surface is still alive.
     host.window.reset();
 
     check(presenter.lost == 1);
@@ -418,8 +365,7 @@ auto tPrimaryDisplayReportsTheOutput =
     check(display.frame.h == waylandTestOutputHeight);
     check(display.backingScale >= 1.f);
 
-    // Wayland publishes no work area - a panel is an ordinary client - so the
-    // whole display is what an app is told it may use.
+    // Wayland publishes no work area, so it is the whole display.
     check(display.workArea.w == display.frame.w);
     check(display.workArea.h == display.frame.h);
 };
@@ -447,10 +393,8 @@ auto tFrameCallbackArrivesAfterACommit =
     check(buffer.create(
         shm, presenter.record.pixelWidth, presenter.record.pixelHeight));
 
-    // The request first, the commit second: wl_surface.frame is queued on the
-    // surface and carried by its NEXT commit, which on a real presenter is the
-    // swapchain's present. Standing in for that here is the whole point of the
-    // case - nothing in the backend commits this surface.
+    // The request first, the commit second: wl_surface.frame rides on the next
+    // commit, which for this surface only a presenter ever makes.
     presenter.record.requestFrameCallback();
     check(presenter.record.frameCallbackPending);
 
@@ -482,10 +426,7 @@ void runWaylandTests()
 }
 } // namespace
 
-// Deliberately unlike Tests/Graphics/TestMain.cpp, which forces headless: this
-// binary is the one place that wants a real window. Apps::run is still what
-// wraps it, because a window needs the environment initLoopThread() sets up and
-// because runEventLoopUntil only works inside a bootstrapped loop.
+// Apps::run wraps it: runEventLoopUntil needs a bootstrapped loop.
 int main(int argc, char* argv[])
 {
     waylandTestArgCount = argc;

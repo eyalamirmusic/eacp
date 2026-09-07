@@ -57,12 +57,8 @@ struct ShaderSource
         return result;
     }
 
-    // GLSL 450 for Vulkan, and the one backend whose vertex and fragment stages
-    // share a single string: the compiler defines EACP_VERTEX or EACP_FRAGMENT
-    // and each stage's declarations and its main() sit behind the matching
-    // #ifdef. So the entry point is always main and vertexEntry/fragmentEntry/
-    // computeEntry are ignored here - they stay for API symmetry, and because
-    // isCompute() is still read off computeEntry.
+    // Both stages share one string behind #ifdef EACP_VERTEX / EACP_FRAGMENT, so
+    // the entry is always main; only computeEntry is still read, by isCompute().
     static ShaderSource glsl(std::string sourceToUse)
     {
         auto result = ShaderSource {};

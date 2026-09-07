@@ -244,10 +244,7 @@ auto tFillLayout = test("GPUWidgets/fillShaderLayout") = []
     check(layout.stride == (int) (sizeof(float) * 2));
 };
 
-// The two shader cases that were here - the generated source read as a string,
-// and the render pipelines built from it - are in ShaderPipelineTests.cpp, which
-// is built only where a render pipeline can be. What is left in this file is
-// portable and runs on every backend.
+// The shader cases that were here are in ShaderPipelineTests.cpp.
 
 // The rect a turned rect is inside, which is what a scissor, a texture size or
 // a damaged area is asked for -- a rotated rectangle not being one.

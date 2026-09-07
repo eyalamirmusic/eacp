@@ -13,11 +13,8 @@ class ShaderGraph;
 std::string emitMetal(const ShaderGraph& graph);
 std::string emitHlsl(const ShaderGraph& graph);
 
-// GLSL 450 for Vulkan. One string carries both render stages: the declarations
-// and the main() of each sit behind #ifdef EACP_VERTEX / #ifdef EACP_FRAGMENT,
-// which the compiler defines for the stage it is building, and everything both
-// stages share - the uniform block, the samplers, the storage buffers, the
-// helper functions - sits outside them. A kernel has one unguarded main().
+// GLSL 450 for Vulkan. Both render stages share one string, each behind
+// #ifdef EACP_VERTEX / EACP_FRAGMENT; a kernel has one unguarded main().
 std::string emitGlsl(const ShaderGraph& graph);
 
 // Whether a stage's expressions read a uniform at all - the same answer the

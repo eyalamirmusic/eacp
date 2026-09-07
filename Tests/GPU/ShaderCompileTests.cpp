@@ -1,13 +1,7 @@
 #include "Common.h"
 
-// The half of the shader-codegen suite that needs a real GPU: every generated
-// source here is handed to the platform shader compiler and built into a
-// pipeline, which is the only check that answers whether the language actually
-// has the builtin the emitter named. Each one self-skips without a device, the
-// way GPUSmokeTests does.
-//
-// Split out of ShaderCodegenTests.cpp so that file stays device-free and can be
-// built into GPUCodegenTests, which links eacp-gpu-codegen alone.
+// Every source here is built into a real pipeline, the only check that the
+// language has the builtin the emitter named.
 
 using namespace nano;
 using namespace eacp;
@@ -15,8 +9,6 @@ using namespace eacp::GPU;
 
 namespace
 {
-// The triangle shader, authored in pure C++ via the EDSL. Mirrors the
-// TriangleGen demo so the tests cover the exact path an app takes.
 GeneratedShader makeTriangleShader()
 {
     auto builder = ShaderBuilder {};
@@ -31,8 +23,6 @@ GeneratedShader makeTriangleShader()
     return builder.build();
 }
 
-// Rotates the vertex position by a per-frame uniform angle, computed in-shader
-// with sin/cos. Mirrors the RotatingTriangle demo.
 GeneratedShader makeRotatingShader()
 {
     auto builder = ShaderBuilder {};
@@ -54,7 +44,6 @@ GeneratedShader makeRotatingShader()
     return builder.build();
 }
 
-// Samples a texture at the interpolated vertex UV. Mirrors the Texture demo.
 GeneratedShader makeTexturedShader()
 {
     auto builder = ShaderBuilder {};
@@ -70,7 +59,6 @@ GeneratedShader makeTexturedShader()
     return builder.build();
 }
 
-// Vertex + per-instance structs for the ShaderProgram instancing test below.
 struct ProgVertex
 {
     float position[2];
@@ -88,10 +76,6 @@ struct ProgInstanceColor
     float color[3];
 };
 
-// A struct-authored shader that pulls geometry per-vertex (slot 0) and a
-// transform + colour per-instance (slots 1 and 2), mirroring what the
-// Instancing demo does. Exercises ShaderProgram::instanceInput and the
-// multi-slot vertex layout it assembles.
 struct InstancedProgram final : ShaderProgram
 {
     Uniform<Float> time;
@@ -115,11 +99,7 @@ struct InstancedProgram final : ShaderProgram
     }
 };
 
-// A uniform block whose members stop 4 bytes short of its 8-byte alignment -
-// the shape that bound short on Metal before the upload walk padded the total.
-// (Found by the PureDOOM port: its world shader packed 36 bytes against the
-// 40-byte struct the emitter declared, and the validation layer - on by
-// default under Xcode - aborted the first draw.)
+// The shape that bound short on Metal until the upload walk padded the total.
 struct OffBoundaryProgram final : ShaderProgram
 {
     Uniform<Float2> scale;
@@ -145,23 +125,13 @@ bool contains(const std::string& haystack, const std::string& needle)
     return haystack.find(needle) != std::string::npos;
 }
 
-// Derives the MSL uniform-block declaration string from the runtime constant
-// that the emitter uses (RenderPass::uniformBase / ComputePass::uniformBase).
-// Bumping the constant flows into both the emitter's output and the tests'
 } // namespace
 
-// ShaderProgram::instanceInput assembles a multi-slot vertex layout from the
-// real CPU struct offsets: slot 0 per-vertex, the instanceInput slots
-// per-instance, each with the source struct's size as its stride. The layout
-// half is pure logic; the pipeline build + instance-count wiring self-skips
-// without a GPU device (matches the compile tests here).
 auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = []
 {
     auto program = InstancedProgram {};
     const auto& layout = program.vertexLayout();
 
-    // Three bound slots: one per-vertex, two per-instance, strides taken from
-    // the CPU structs (not a byte-size sum), so padded structs stay correct.
     check(program.isInstanced());
     check(layout.buffers.size() == 3);
     check(layout.buffers[0].stride == (int) sizeof(ProgVertex));
@@ -171,7 +141,6 @@ auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = 
     check(layout.buffers[2].stride == (int) sizeof(ProgInstanceColor));
     check(layout.buffers[2].stepRate == StepRate::PerInstance);
 
-    // Every attribute routes to its slot at its real member offset.
     const auto& attrs = layout.attributes;
     check(attrs.size() == 5);
     check(attrs[0].bufferIndex == 0 && attrs[0].offset == 0);
@@ -212,10 +181,7 @@ auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = 
     check(program.pipeline().isValid());
 };
 
-// The packed block ends where MSL says the struct does. Two Float2s and a
-// Float stop at 20 bytes; sizeof(Uniforms) pads to the widest member's 8-byte
-// alignment, and Metal validates the bound length against that - binding the
-// unpadded 20 aborts the first draw. Pure logic, no GPU device required.
+// Metal validates the bound length against the padded struct size.
 auto tShaderProgramPadsUniformBlock = test("GPU/shaderProgramPadsUniformBlock") = []
 {
     auto program = OffBoundaryProgram {};
@@ -223,9 +189,6 @@ auto tShaderProgramPadsUniformBlock = test("GPU/shaderProgramPadsUniformBlock") 
     check(program.uniformByteSize() == 24);
 };
 
-// Feeds the generated source through the real platform shader compiler and
-// builds a pipeline from the generated layout. Self-skips on hosts without a GPU
-// device (matches GPUSmokeTests).
 auto tCodegenCompiles = test("GPU/codegenCompiles") = []
 {
     auto& device = Device::shared();
@@ -246,10 +209,7 @@ auto tCodegenCompiles = test("GPU/codegenCompiles") = []
     check(pipeline.isValid());
 };
 
-// A scalar handle broadcasts across a vector for all four operators, on either
-// side, the way MSL and HLSL broadcast a scalar themselves. Only * and / had it
-// before, so `uv + time` - one of the most ordinary lines a shader can hold -
-// did not compile while `uv * time` did.
+// Only * and / broadcast a scalar before, so `uv + time` did not compile.
 auto tCodegenScalarBroadcast = test("GPU/codegenScalarHandleBroadcast") = []
 {
     auto builder = ShaderBuilder {};
@@ -279,10 +239,7 @@ auto tCodegenScalarBroadcast = test("GPU/codegenScalarHandleBroadcast") = []
     check(library.isValid());
 };
 
-// Vector constructors take any mix of handles and literals whose components
-// total the width - including the previously missing float4(vec3, scalar
-// handle) shape - and compile through the real shader compiler. Self-skips
-// the compile half without a GPU device.
+// Including the float4(vec3, scalar handle) shape that used to be missing.
 auto tCodegenMixedConstructors = test("GPU/codegenMixedConstructors") = []
 {
     auto builder = ShaderBuilder {};
@@ -318,12 +275,7 @@ auto tCodegenMixedConstructors = test("GPU/codegenMixedConstructors") = []
     check(pipeline.isValid());
 };
 
-// transpose() and determinant() through the real platform shader compiler,
-// which is the only thing that answers the question the string check above
-// cannot: whether the language actually has the builtin the emitter named. GLSL
-// has all three of transpose, determinant and inverse; MSL and HLSL have the
-// first two and neither has the third, which is why only two are here.
-// Self-skips without a GPU device.
+// MSL and HLSL have no inverse, which is why only two builtins are here.
 auto tCodegenMatrixTransposeCompiles =
     test("GPU/codegenMatrixTransposeCompiles") = []
 {
@@ -365,9 +317,6 @@ auto tCodegenMatrixTransposeCompiles =
     check(device.makeRenderPipeline(descriptor).isValid());
 };
 
-// The two above through the real platform shader compiler, which is the only
-// thing that answers whether the languages take a literal where the emitter put
-// one and a vector on the left of a product. Self-skips without a GPU device.
 auto tCodegenLiteralArgumentsCompile =
     test("GPU/codegenLiteralArgumentsCompile") = []
 {
@@ -408,11 +357,6 @@ auto tCodegenLiteralArgumentsCompile =
     check(device.makeRenderPipeline(descriptor).isValid());
 };
 
-// Control flow through the real platform shader compiler, shaped like what
-// asks for it: a sphere raymarch with a mutable distance, a data-dependent
-// break and a select on the result. Emitted text says the statements are there;
-// only the compiler says the language will take them. Self-skips without a GPU
-// device.
 auto tCodegenControlFlowCompiles = test("GPU/codegenControlFlowCompiles") = []
 {
     auto& device = Device::shared();
@@ -472,9 +416,6 @@ auto tCodegenControlFlowCompiles = test("GPU/codegenControlFlowCompiles") = []
     check(pipeline.isValid());
 };
 
-// Runs the whole vocabulary through the real platform shader compiler, so
-// every intrinsic spelling and broadcast form is validated against the actual
-// language. Self-skips without a GPU device.
 auto tCodegenIntrinsicsCompile = test("GPU/codegenIntrinsicsCompile") = []
 {
     auto& device = Device::shared();
@@ -518,10 +459,6 @@ auto tCodegenIntrinsicsCompile = test("GPU/codegenIntrinsicsCompile") = []
     check(pipeline.isValid());
 };
 
-// The same for the transcendental, geometric, derivative and swizzle
-// vocabulary. Names alone prove nothing here: an intrinsic this backend spells
-// differently, or a swizzle it will not take, only shows up when the platform
-// compiler reads the source. Self-skips without a GPU device.
 auto tCodegenTranscendentalsCompile = test("GPU/codegenTranscendentalsCompile") = []
 {
     auto& device = Device::shared();
@@ -566,9 +503,6 @@ auto tCodegenTranscendentalsCompile = test("GPU/codegenTranscendentalsCompile") 
     check(pipeline.isValid());
 };
 
-// Compiles a fragment-uniform shader through the real platform shader compiler
-// and builds a pipeline, exercising the uniform-bearing fragment signature.
-// Self-skips without a GPU device.
 auto tCodegenFragmentUniformCompiles =
     test("GPU/codegenFragmentUniformCompiles") = []
 {
@@ -598,9 +532,6 @@ auto tCodegenFragmentUniformCompiles =
     check(pipeline.isValid());
 };
 
-// Compiles the sampling shader through the real platform shader compiler and
-// builds a pipeline from its layout, exercising the texture-bearing fragment
-// signature. Self-skips without a GPU device.
 auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
 {
     auto& device = Device::shared();
@@ -621,9 +552,6 @@ auto tCodegenTextureCompiles = test("GPU/codegenTextureCompiles") = []
     check(pipeline.isValid());
 };
 
-// Both reach the real shader compiler: an unsampled level and a texel read are
-// each one method call the backend either has or does not. Self-skips without a
-// GPU device.
 auto tCodegenSampleLevelAndFetchCompile =
     test("GPU/codegenSampleLevelAndFetchCompile") = []
 {
@@ -648,9 +576,6 @@ auto tCodegenSampleLevelAndFetchCompile =
     check(library.isValid());
 };
 
-// Feeds a render shader that subscripts a storage buffer through the real
-// platform shader compiler, which is what says the registers and buffer indices
-// the emitter picked are ones the backend accepts. Self-skips without a GPU.
 auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
 {
     auto& device = Device::shared();
@@ -673,9 +598,6 @@ auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
     check(library.isValid());
 };
 
-// Feeds an EDSL compute kernel (including the toFloat(threadId) cast) through
-// the real platform shader compiler and builds a compute pipeline. Self-skips
-// without a GPU device.
 auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
 {
     auto& device = Device::shared();
@@ -701,11 +623,6 @@ auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
     check(pipeline.isValid());
 };
 
-// Integers and an array through the real platform shader compiler, shaped like
-// what asks for them: a palette picked by an index the shader truncates out of
-// a coordinate and masks into range. The emitted text says the vocabulary is
-// there; only the compiler says the language will take it. Self-skips without a
-// GPU device.
 auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
 {
     auto& device = Device::shared();
@@ -726,8 +643,6 @@ auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
                                  float3(builder.constant(0.2f), 0.8f, 0.6f),
                                  float3(builder.constant(1.0f), 0.9f, 0.7f));
 
-    // A signed index that a negative coordinate really does make negative, held
-    // in range two different ways: the mask, and the clamp.
     auto raw = toInt(carried.x() * 4.0f);
     auto masked = raw & 3;
     auto clamped = min(max(raw, 0), 3);
@@ -757,11 +672,6 @@ auto tCodegenIntegersCompile = test("GPU/codegenIntegersCompile") = []
     check(pipeline.isValid());
 };
 
-// The vector halves of both families through the real platform shader compiler,
-// shaped like what asks for them: a grid cell counted in integers and a box test
-// that compares two coordinates componentwise. The emitted text says the
-// vocabulary is there; only the compiler says the language will take it.
-// Self-skips without a GPU device.
 auto tCodegenVectorTypesCompile = test("GPU/codegenVectorTypesCompile") = []
 {
     auto& device = Device::shared();
@@ -805,8 +715,6 @@ auto tCodegenVectorTypesCompile = test("GPU/codegenVectorTypesCompile") = []
     check(pipeline.isValid());
 };
 
-// Compiles the rotating shader (with its uniform block) through the real
-// platform shader compiler. Self-skips without a GPU device.
 auto tCodegenUniformCompiles = test("GPU/codegenUniformCompiles") = []
 {
     auto& device = Device::shared();

@@ -10,11 +10,8 @@ target_sources(eacp-graphics PRIVATE
         Primitives/Primitives.cpp
         View/View.cpp)
 
-# Portable C++ that nonetheless stands on the 2D drawing stack: the retained
-# shape/text layers, the views that wrap one, and the text field drawn out of
-# them. This is the tier EACP_HAS_CONTEXT names. Linux has no Context and no
-# Font - it has a Path, but only as geometry, and it draws its text through the
-# GPU tier instead - so these are left out there rather than stubbed.
+# Portable C++ that nonetheless stands on the 2D drawing stack, which is the
+# tier EACP_HAS_CONTEXT names. Left out where there is none, not stubbed.
 if (EACP_HAS_CONTEXT)
     target_sources(eacp-graphics PRIVATE
             Layers/LayerViews.cpp
@@ -115,19 +112,8 @@ elseif (WIN32)
             shell32
             windowscodecs)
 elseif (UNIX)
-    # Wayland, plus honest stubs for everything that needs a codec or a desktop
-    # environment. There is no 2D context here, so nothing that rasterizes is in
-    # the list — Font, TextMetrics, GraphicUtils, ImageConversion, EmbeddedView
-    # and GraphicsContextImpl have no Linux half and no caller that needs one.
-    #
-    # Path is the exception, because a path is geometry rather than pixels:
-    # Path-Linux.cpp records the commands and hands the record out through
-    # getHandle(), which is all a tessellator or a later 2D backend needs.
-    #
-    # Everything still degrades to the headless backend this grew out of: under
-    # EACP_HEADLESS, and on a machine whose environment names no compositor,
-    # waylandDisplay() is null, a Window is built with no surface, and every
-    # query answers exactly as it did before any of this existed.
+    # Wayland, plus stubs for what needs a codec or a desktop environment.
+    # Path is the exception, recording geometry rather than pixels.
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
@@ -144,10 +130,8 @@ elseif (UNIX)
             Window/WaylandInput-Linux.cpp
             Window/Window-Linux.cpp)
 
-    # PRIVATE, which is the whole point of the seam: eacp-wayland carries the
-    # generated protocol code and the four system libraries, and nothing above
-    # eacp-graphics ever sees a Wayland header. The GPU module reaches the
-    # surface through the two forward-declared pointers in View/View-Linux.h.
+    # PRIVATE: nothing above eacp-graphics ever sees a Wayland header. The GPU
+    # module reaches the surface through the pointers in View/View-Linux.h.
     include(FindWayland)
     target_link_libraries(eacp-graphics PRIVATE eacp-wayland)
 endif ()
@@ -156,12 +140,8 @@ set_default_target_setting(eacp-graphics)
 eacp_enable_unity_build(eacp-graphics)
 add_ide_sources(eacp-graphics)
 
-# Build-time host tool, and the one thing in this directory that is not
-# portable-by-construction: it decodes a PNG/JPEG through Image, which is
-# implemented per platform - hence EACP_HAS_CONTEXT, which is the variable the
-# codecs live under. Kept out of the Linux branch until there is a codec behind
-# it - eacp_set_app_icon(... IMAGE ...) is the only caller, and it is only
-# reachable from an app that draws.
+# A build-time host tool that decodes a PNG/JPEG through Image, so it needs the
+# platform codecs EACP_HAS_CONTEXT names.
 if (EACP_HAS_CONTEXT)
     add_subdirectory(IconTool)
 endif ()

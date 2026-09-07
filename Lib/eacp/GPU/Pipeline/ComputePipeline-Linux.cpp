@@ -4,18 +4,6 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Vulkan/VulkanTypes.h"
 
-// Linux/Vulkan backend. Bakes the library's compute module and a descriptor-set
-// layout into a VkPipeline; nativeState() hands the pipeline, both layouts and
-// what the kernel declared in the texture range to the pass, which binds them
-// together.
-//
-// The layout is shared where it can be and built here where it cannot. A kernel
-// that declares no texture wants exactly the layout every other such kernel
-// wants, and VulkanShared holds one; a kernel that declares one needs its own,
-// because the binding map gives a texture slot one number whether the kernel
-// samples it or writes it while Vulkan gives one binding one descriptor type.
-// See VulkanTextureBindings.
-
 namespace eacp::GPU
 {
 struct ComputePipeline::Native
@@ -61,9 +49,6 @@ struct ComputePipeline::Native
         }
     }
 
-    // The shared layout when the kernel binds no texture, and one of this
-    // pipeline's own when it does. False leaves the pipeline invalid, which is
-    // what a caller can act on.
     bool chooseLayouts()
     {
         if (!state.textures.any())
@@ -90,10 +75,7 @@ struct ComputePipeline::Native
         return true;
     }
 
-    // Deferred for the reason a buffer is: a layout or a pipeline destroyed
-    // while a recording that bound it is still open or in flight is a
-    // use-after-free the validation layer raises on, and a renderer constructed
-    // inside render() does exactly that.
+    // Deferred: a recording still in flight may have bound this layout.
     void releaseLayouts()
     {
         if (!ownsLayouts)
@@ -129,8 +111,6 @@ struct ComputePipeline::Native
 
     VulkanContext* context = nullptr;
 
-    // Whether the layouts in `state` were made for this pipeline and have to go
-    // back with it, or are the shared ones every texture-free kernel binds.
     bool ownsLayouts = false;
 
     VulkanComputePipeline state;

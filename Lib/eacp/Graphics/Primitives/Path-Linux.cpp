@@ -1,20 +1,7 @@
 #include "Path-Linux.h"
 
-// The Linux Path: geometry, and nothing else.
-//
-// The Apple and Windows files hand their points straight to a CGPath or an
-// ID2D1PathGeometry, both of which are a renderer's idea of a path. Linux has
-// no 2D context to hand them to — plan stage 6 decides whether it ever grows
-// one or draws this tier through the GPU coverage rasterizer instead — so here
-// the record *is* the implementation. That is already enough for everything
-// that measures or tessellates rather than rasterizes, which is what
-// getHandle() exists for.
-//
-// The record is a faithful transcript: a lineTo with no moveTo before it is
-// stored as written rather than being given an implied start point, because
-// the two shipping backends disagree about what that start point is (Direct2D
-// opens a figure at the last point, Core Graphics treats it as undefined) and
-// guessing here would bake one of them in.
+// A faithful transcript: a lineTo with no moveTo before it is stored as
+// written, the shipping backends disagreeing about the implied start point.
 
 namespace eacp::Graphics
 {

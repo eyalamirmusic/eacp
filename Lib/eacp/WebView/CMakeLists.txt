@@ -11,8 +11,8 @@ find_package(Miro REQUIRED)
 #     target_link_libraries(myHost PUBLIC eacp-webview-bridge)
 #
 # eacp-webview links it publicly below, so a consumer of the platform web view
-# sees no difference. It is also why the target is built on every platform,
-# Linux included: nothing it links draws.
+# sees no difference, and why it builds on every platform: nothing it links
+# draws.
 add_library(eacp-webview-bridge STATIC)
 
 target_link_libraries(eacp-webview-bridge PUBLIC

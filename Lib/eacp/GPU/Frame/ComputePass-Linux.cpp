@@ -6,35 +6,6 @@
 
 #include <memory>
 
-// Linux/Vulkan backend. Records onto the command buffer's recording via the
-// VulkanComputeEncoder.
-//
-// Where D3D12 binds a buffer as a root descriptor by GPU address and needs no
-// heap at all, Vulkan has one binding model for everything: a descriptor set,
-// allocated out of the recording's pool, written with whatever the pass was
-// given and bound before the dispatch. So the binds are collected rather than
-// recorded - a bind is a descriptor write, and a write after the set is bound
-// is a write the dispatch may or may not see - and the set is built at the
-// dispatch, when the pipeline (and therefore the layout it must match) is
-// finally known.
-//
-// A set per dispatch rather than one reused: the pool is reset when the
-// recording is, so a set costs a pool allocation and nothing else, and a
-// recording that outgrows a pool gets another. The uniform block is the one
-// binding that does not need a new descriptor - it is a UNIFORM_BUFFER_DYNAMIC,
-// so a recording's dispatches share one constant page and differ in the offset
-// handed to vkCmdBindDescriptorSets.
-//
-// A memory barrier after every dispatch orders chained kernels, exactly as the
-// D3D12 backend's UAV barrier does.
-//
-// A texture bind is the one place the *shader* has a say in what the descriptor
-// is. The binding map gives a slot one number whether the kernel samples it or
-// writes it, and Vulkan gives one binding one descriptor type, so which of the
-// two a slot takes is read out of the module and carried on the pipeline - see
-// VulkanTextureBindings. Every bind also moves the image, which is the other
-// half a buffer does not have.
-
 namespace eacp::GPU
 {
 struct ComputePass::Native
@@ -48,9 +19,8 @@ struct ComputePass::Native
 
     VkCommandBuffer commandBuffer() const { return encoder->commands->buffer; }
 
-    // Everything bound since the last dispatch, written into a fresh set and
-    // bound. False when the set could not be had, which stops the dispatch
-    // rather than running it against whatever was bound before.
+    // Writes have to land before the set is bound, so binds are collected and
+    // written here, at the dispatch, where the pipeline's layout is known.
     bool bindDescriptors()
     {
         auto& commands = *encoder->commands;
@@ -79,12 +49,8 @@ struct ComputePass::Native
             write.pBufferInfo = &buffers[slot];
         }
 
-        // A texture is written at the type the *kernel* declared the slot with,
-        // which is what the layout gave the binding and the only type a write
-        // to it may name. A bind the kernel did not ask for - a slot it never
-        // declared, or an input where it declared an output - has no binding to
-        // land on and is dropped, which is what the other two backends do with
-        // a slot past their own ceiling.
+        // The type the kernel declared is the only type a write to that binding
+        // may name, so a bind made the other way is dropped.
         for (auto slot = 0; slot < maxTextureSlots; ++slot)
         {
             if (!pipeline->textures.has(slot))
@@ -113,9 +79,7 @@ struct ComputePass::Native
 
         if (uniforms.isValid())
         {
-            // Offset zero and the dynamic offset carrying the whole of it: the
-            // page is one buffer for the recording, and where in it this block
-            // sits is exactly what a dynamic offset is for.
+            // Offset zero; the dynamic offset below carries the block's place.
             uniformInfo.buffer = uniforms.buffer;
             uniformInfo.offset = 0;
             uniformInfo.range = uniforms.range;
@@ -134,9 +98,8 @@ struct ComputePass::Native
             vkUpdateDescriptorSets(
                 commands.context->getDevice(), writeCount, writes, 0, nullptr);
 
-        // One dynamic offset always, whether or not a uniform block was bound:
-        // the layout declares one dynamic descriptor, and the count has to
-        // match it. Zero is a legal offset into a page nothing reads.
+        // The layout always declares one dynamic descriptor, so one offset has
+        // to be passed even with no uniform block bound.
         const auto dynamicOffset = static_cast<std::uint32_t>(uniforms.offset);
 
         vkCmdBindDescriptorSets(commands.buffer,
@@ -157,11 +120,6 @@ struct ComputePass::Native
     VkDescriptorBufferInfo buffers[maxBufferSlots] = {};
     std::uint32_t boundBuffers = 0;
 
-    // The image, view and layout each texture slot was bound with, and which of
-    // the two ways it was bound. Two masks rather than one because a slot bound
-    // the way the kernel did not declare it has to be dropped rather than
-    // written at the wrong descriptor type, and the mask is what says which way
-    // it was.
     VkDescriptorImageInfo textures[maxTextureSlots] = {};
     std::uint32_t sampledTextures = 0;
     std::uint32_t storageTextures = 0;
@@ -194,10 +152,6 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
         impl->commandBuffer(), VK_PIPELINE_BIND_POINT_COMPUTE, state->pipeline);
 }
 
-// Both directions are one STORAGE_BUFFER descriptor over the whole buffer - a
-// GLSL std430 block is the same declaration either way, so unlike D3D12 there
-// is no read view and no write view to pick between. What differs is the
-// barrier, which is the whole of why these are two functions.
 void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
@@ -230,16 +184,6 @@ void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
     impl->boundBuffers |= 1u << slot;
 }
 
-// A combined image sampler: GLSL has no separate sampler declaration, so the
-// sampler the *shader* asked for travels with the image in the one descriptor
-// rather than being bound on its own. See TextureSampling, which is why the
-// sampling is an argument here rather than a property of the texture.
-//
-// The image is moved to where it can be sampled, which for an ordinary texture
-// is SHADER_READ_ONLY_OPTIMAL and for a computeWrite one is the GENERAL it
-// already rests in - a sampler reads GENERAL, so a texture a kernel wrote and
-// the next kernel reads needs no layout change at all, only the memory barrier
-// the dispatch before it already recorded.
 void ComputePass::setInputTexture(const Texture& texture,
                                   int slot,
                                   TextureSampling sampling)
@@ -265,10 +209,6 @@ void ComputePass::setInputTexture(const Texture& texture,
     impl->storageTextures &= ~(1u << slot);
 }
 
-// A storage image in GENERAL, and no sampler: there is nothing to sample it
-// with and nothing to read, imageStore being the only thing a kernel does with
-// one. A texture that was not created computeWrite has no view to bind through
-// and is dropped, which is what ComputePass::setOutputTexture documents.
 void ComputePass::setOutputTexture(const Texture& texture, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
@@ -329,14 +269,6 @@ void ComputePass::dispatch(int width, int height)
     barrierAfterDispatch(commandBuffer);
 }
 
-// The grid comes out of the buffer; the threadgroup size is baked into the
-// shader's local_size and is not part of the arguments, which is why
-// VkDispatchIndirectCommand holds only the three counts - the same three
-// DispatchArguments holds, at the same size and in the same order.
-//
-// The buffer needs a barrier of its own here. An earlier kernel wrote it as a
-// storage buffer, and reading it as indirect arguments is a different access at
-// a different stage - the one transition Metal has no equivalent of.
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
     if (!impl->canRecord() || offsetInBytes < 0)

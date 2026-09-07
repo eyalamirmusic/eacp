@@ -96,7 +96,6 @@ public:
               const Rect& uv,
               const Color& tint);
 
-    // The shader this batch builds -- see ShapeBatch::forEachShaderGraph.
     static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
 
 private:

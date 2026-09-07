@@ -55,8 +55,7 @@ if (APPLE AND NOT IOS)
     list(APPEND core_test_sources AppTerminationTests.cpp)
 endif ()
 
-# Threads::addLoopSource lives in EventLoop-Linux.h and nowhere else: macOS and
-# Windows have run loops that take native sources of their own.
+# Threads::addLoopSource lives in EventLoop-Linux.h and nowhere else.
 if (LINUX)
     list(APPEND core_test_sources EventLoopSourceTests-Linux.cpp)
 endif ()
