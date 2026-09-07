@@ -16,7 +16,11 @@ namespace
 // A self-pipe standing in for a display connection.
 struct SourcePipe
 {
-    SourcePipe() { ::pipe(fds); }
+    SourcePipe()
+    {
+        auto created = ::pipe(fds);
+        (void) created;
+    }
 
     ~SourcePipe()
     {

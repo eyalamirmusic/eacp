@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <functional>
 
 #include "../Buffer/StreamingBuffers.h"
@@ -258,7 +259,7 @@ struct Uniform : T
     {
         static_assert(sizeof(V) == sizeof(Cpu),
                       "uniform sub-type size does not match its shader value type");
-        std::memcpy(&value, &subValue, sizeof(Cpu));
+        value = std::bit_cast<Cpu>(subValue);
         return *this;
     }
 
