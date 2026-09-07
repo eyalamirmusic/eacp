@@ -8,6 +8,23 @@ function(set_default_warnings_level target)
     endif ()
 endfunction()
 
+# For a vendored dependency, whose warnings are not ours to fix and whose noise is
+# how eacp's own warnings get missed. The flag is appended after the dependency
+# set its own, so it wins. Targets with no compile line of their own are skipped.
+function(silence_target_warnings target)
+    get_target_property(type ${target} TYPE)
+
+    if (type STREQUAL "INTERFACE_LIBRARY" OR type STREQUAL "UTILITY")
+        return()
+    endif ()
+
+    if (MSVC)
+        target_compile_options(${target} PRIVATE /w)
+    elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(${target} PRIVATE -w)
+    endif ()
+endfunction()
+
 function(set_default_target_setting target)
     set_default_warnings_level(${target})
     set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)

@@ -1,17 +1,20 @@
 include(CPM)
 
-# glslang stamps its own FOLDER; put its targets with the other CPM deps.
-function(eacp_set_glslang_ide_folder dir)
+# glslang stamps its own FOLDER and turns on its own -Wall: put its targets with
+# the other CPM deps, and silence them, so a build log carries eacp's warnings
+# alone. The walk recurses because glslang spreads its targets over subdirectories.
+function(eacp_adopt_glslang_targets dir)
     get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
 
     foreach (target IN LISTS targets)
         set_target_properties(${target} PROPERTIES FOLDER "${CMAKE_FOLDER}")
+        silence_target_warnings(${target})
     endforeach ()
 
     get_property(subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
 
     foreach (subdir IN LISTS subdirs)
-        eacp_set_glslang_ide_folder("${subdir}")
+        eacp_adopt_glslang_targets("${subdir}")
     endforeach ()
 endfunction()
 
@@ -40,7 +43,7 @@ function(eacp_add_glslang)
             GIT_SHALLOW YES
             SYSTEM YES)
 
-    eacp_set_glslang_ide_folder("${glslang_SOURCE_DIR}")
+    eacp_adopt_glslang_targets("${glslang_SOURCE_DIR}")
 endfunction()
 
 if (NOT TARGET eacp-glslang)
