@@ -4,6 +4,7 @@
 #include <chrono>
 
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -12,8 +13,18 @@ namespace eacp::Threads
 
 struct Timer::Native
 {
+    // Ticks are posted from the worker to the loop, so one can already be
+    // queued when the timer dies. The main thread clears `alive` in the
+    // destructor and the queued tick, which runs on the main thread after it,
+    // finds it cleared.
+    struct State
+    {
+        Callback cb;
+        bool alive = true;
+    };
+
     Native(const Callback& cbToUse, double intervalSec)
-        : cb(cbToUse)
+        : state(std::make_shared<State>(cbToUse, true))
         , period(std::chrono::duration<double>(intervalSec))
     {
         assertMainThread();
@@ -26,6 +37,7 @@ struct Timer::Native
     ~Native()
     {
         assertMainThread();
+        state->alive = false;
         {
             auto lock = std::lock_guard(mutex);
             running = false;
@@ -44,11 +56,16 @@ struct Timer::Native
             if (!running)
                 return;
             lock.unlock();
-            callAsync(cb);
+            callAsync(
+                [held = state]
+                {
+                    if (held->alive)
+                        held->cb();
+                });
         }
     }
 
-    Callback cb;
+    std::shared_ptr<State> state;
     std::chrono::duration<double> period;
     bool running = false;
     std::mutex mutex;

@@ -26,6 +26,13 @@ endif ()
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
 target_link_libraries(eacp-graphics PUBLIC eacp-core eacp-simd)
 
+# PUBLIC so the capability is a compile-time fact for every consumer, not just
+# a CMake variable: Graphics.h leaves the 2D-tier headers out where there is no
+# 2D tier, and a caller that reaches for one gets a compile error rather than a
+# link error.
+target_compile_definitions(eacp-graphics PUBLIC
+        EACP_HAS_CONTEXT=$<BOOL:${EACP_HAS_CONTEXT}>)
+
 if (APPLE)
     target_sources(eacp-graphics PRIVATE
             Graphics/GraphicsContextImpl.mm
@@ -126,6 +133,7 @@ elseif (UNIX)
             Tray/TrayIcon-Linux.cpp
             View/View-Linux.cpp
             Window/Display-Linux.cpp
+            Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp
             Window/WaylandInput-Linux.cpp
             Window/Window-Linux.cpp)

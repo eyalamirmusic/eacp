@@ -162,6 +162,39 @@ auto tContinuousKeepsGoing = test("Present/continuousModeKeepsPresenting") = []
     check(view.renders == after, "frames kept coming after setContinuous(false)");
 };
 
+// The cap divides the compositor's frame callbacks, and a tick that skips has
+// to ask for the next callback itself: nothing else commits for it, and the
+// loop would stop at the first skip.
+auto tMaxFpsPacesContinuousMode = test("Present/maxFpsPacesContinuousMode") = []
+{
+    if (noDeviceOrDisplay())
+        return;
+
+    auto view = CountingView {};
+    auto window = Graphics::Window {windowSized(320, 240)};
+    showWith(window, view);
+
+    view.setMaxFps(10);
+    view.setContinuous(true);
+
+    check(pumpUntil(presentTimeout, [&] { return view.renders > 0; }),
+          "a capped continuous view never presented");
+
+    const auto before = view.renders;
+
+    pumpUntil(Time::MS {1500}, [] { return false; });
+
+    const auto drawn = view.renders - before;
+
+    view.setContinuous(false);
+
+    // Fifteen is the figure; the bounds are wide enough for a compositor that
+    // pauses and a machine that is busy, and narrow enough that an uncapped
+    // 60 Hz (ninety) or a loop that stopped (zero) fails.
+    check(drawn >= 6, "a 10 fps view presented fewer than 6 frames in 1.5s");
+    check(drawn <= 30, "a 10 fps view presented more than 30 frames in 1.5s");
+};
+
 auto tOnDemandFrames = test("Present/renderNowAndRepaintEachPresentOneFrame") = []
 {
     if (noDeviceOrDisplay())

@@ -1,4 +1,5 @@
 #include "GlyphRasterizer.h"
+#include "UnicodeEmoji.h"
 #include "Utf8.h"
 
 #include <eacp/Core/Utils/Strings.h>
@@ -596,12 +597,6 @@ bool linuxIsRealScript(hb_script_t script)
            && script != HB_SCRIPT_UNKNOWN && script != HB_SCRIPT_INVALID;
 }
 
-// Not the full Unicode property: the plane-1 default-emoji range plus VS16.
-bool linuxWantsColorFont(char32_t codepoint, char32_t next)
-{
-    return next == 0xFE0F || (codepoint >= 0x1F000 && codepoint <= 0x1FAFF);
-}
-
 struct LinuxTextPoint
 {
     char32_t value = 0;
@@ -641,6 +636,15 @@ void linuxResolveScripts(Vector<LinuxTextPoint>& points)
         else
             points[index].script = following;
     }
+}
+
+// The process locale, asked once: HarfBuzz caches nothing per buffer, and a
+// language tag changes which locale-sensitive features a shaper applies.
+hb_language_t linuxDefaultLanguage()
+{
+    static const auto language = hb_language_get_default();
+
+    return language;
 }
 
 hb_direction_t linuxDirectionOf(hb_script_t script)
@@ -908,7 +912,7 @@ struct GlyphRasterizer::Native
         if (base == nullptr)
             return 0;
 
-        const auto wantsColor = linuxWantsColorFont(codepoint, next);
+        const auto wantsColor = wantsEmojiPresentation(codepoint, next);
         const auto baseHas =
             FT_Get_Char_Index(base->face.get(), (FT_ULong) codepoint) != 0;
 
@@ -1033,7 +1037,7 @@ struct GlyphRasterizer::Native
 
         hb_buffer_set_script(buffer.get(), item.script);
         hb_buffer_set_direction(buffer.get(), linuxDirectionOf(item.script));
-        hb_buffer_set_language(buffer.get(), hb_language_from_string("en", -1));
+        hb_buffer_set_language(buffer.get(), linuxDefaultLanguage());
 
         hb_shape(sized->font.get(), buffer.get(), nullptr, 0);
 

@@ -37,6 +37,10 @@ public:
 
     WaylandWindowSurface* getKeyboardFocus() const { return keyboardWindow; }
 
+    // The serial wl_data_device.set_selection wants: the last keyboard event
+    // on a surface of ours, and zero while something else has the focus.
+    uint32_t getSelectionSerial() const;
+
     // Null and {} until a pointer has entered something.
     WaylandWindowSurface* getPointerWindow() const { return pointerWindow; }
     Point getPointerPosition() const { return pointerPosition; }
@@ -75,9 +79,9 @@ private:
     void endPointerFrame();
 
     void keymapArrived(uint32_t format, int32_t fd, uint32_t size);
-    void keyboardEntered(wl_surface* surface, wl_array* keys);
+    void keyboardEntered(uint32_t serial, wl_surface* surface, wl_array* keys);
     void keyboardLeft();
-    void keyChanged(uint32_t time, uint32_t code, bool pressed);
+    void keyChanged(uint32_t serial, uint32_t time, uint32_t code, bool pressed);
     void modifiersChanged(uint32_t depressed,
                           uint32_t latched,
                           uint32_t locked,
@@ -150,6 +154,7 @@ private:
 
     WaylandWindowSurface* keyboardWindow = nullptr;
     uint32_t keyTime = 0;
+    uint32_t keyboardSerial = 0;
 
     xkb_context* xkbContext = nullptr;
     xkb_keymap* keymap = nullptr;

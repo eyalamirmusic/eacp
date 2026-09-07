@@ -28,6 +28,10 @@ struct WaylandViewRecord
     wp_viewport* viewport = nullptr;
     wl_callback* frameCallback = nullptr;
 
+    // A frame callback only ever arrives after a commit that carried a buffer,
+    // so this is how the surface says it has content to re-commit.
+    bool presented = false;
+
     bool repaintPending = false;
 };
 
@@ -105,6 +109,8 @@ void waylandFrameDone(void* data, wl_callback* callback, uint32_t)
     }
 
     state.record.frameCallbackPending = false;
+    state.presented = true;
+
     state.record.onFrameDone();
 }
 
@@ -214,6 +220,7 @@ void waylandDestroyViewSurface(WaylandViewRecord& state)
 
     // A callback that will never arrive must not hold the presenter forever.
     state.record.frameCallbackPending = false;
+    state.presented = false;
 
     if (state.frameCallback != nullptr)
     {
@@ -478,12 +485,24 @@ ViewSurface& requestViewSurface(View& view)
                 || pending->record.frameCallbackPending)
                 return;
 
-            // Carried by the surface's next commit; nothing here commits.
             pending->frameCallback = wl_surface_frame(pending->surface);
             wl_callback_add_listener(
                 pending->frameCallback, &waylandFrameListener, pending.get());
 
             pending->record.frameCallbackPending = true;
+
+            // The request rides on a commit, and the caller may have nothing
+            // to present: an empty commit re-sends the buffer that is already
+            // there, which is what keeps a paced loop ticking. Before the
+            // first buffer there is nothing to re-send and no compositor would
+            // answer, so that one waits for the commit that maps the surface.
+            if (!pending->presented)
+                return;
+
+            wl_surface_commit(pending->surface);
+
+            if (auto* connection = waylandDisplay())
+                connection->flush();
         };
 
         found = records.emplace(&view, std::move(state)).first;

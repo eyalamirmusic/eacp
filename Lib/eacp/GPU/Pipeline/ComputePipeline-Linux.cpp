@@ -37,7 +37,7 @@ struct ComputePipeline::Native
         info.layout = state.layout;
 
         if (vkCreateComputePipelines(context->getDevice(),
-                                     VK_NULL_HANDLE,
+                                     getVulkanShared().getPipelineCache(),
                                      1,
                                      &info,
                                      nullptr,

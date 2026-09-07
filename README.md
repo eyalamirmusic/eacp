@@ -86,10 +86,14 @@ decorated by libdecor, the view tree, hit-testing and input routing are the
 portable ones with the seat's pointer and keyboard translated into them through
 xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its bounds and
 scaled by the compositor's fractional scale, `Display` reports the first output,
-mouse lock goes through pointer-constraints, and the display's connection is
-pumped by eacp's own event loop. What a window cannot do there is what the
-protocol has no words for — a position, a raise, an icon — and the file says so
-where it matters. A Vulkan backend under it: everything from `Device` to
+mouse lock goes through pointer-constraints, the clipboard is a
+`wl_data_device` on the seat (text and `text/uri-list`, installed into
+`Core`'s `Clipboard` through a backend hook so `eacp-core` still links no
+Wayland), a compositor that goes away mid-session tears every window down
+through the same `onLost` path a hidden view takes and leaves the process
+running headless, and the display's connection is pumped by eacp's own event
+loop. What a window cannot do there is what the protocol has no words for — a
+position, a raise, an icon — and the file says so where it matters. A Vulkan backend under it: everything from `Device` to
 `RenderPass` is real, the drawable `Frame` renders into a swapchain image and
 presents it, and `GPUView` owns that swapchain — mailbox or FIFO, frames in
 flight, rebuilt on resize and `OUT_OF_DATE`, with continuous rendering paced by
@@ -126,6 +130,10 @@ hang off `EACP_HAS_DRAW` and are Apple/Windows-only:
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
+
+`EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
+`Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
+caller reaching one fails to compile rather than to link.
 
 Two pieces of the gated modules are portable and so sit outside all six: they
 are built and tested on every platform, Linux included, because neither touches

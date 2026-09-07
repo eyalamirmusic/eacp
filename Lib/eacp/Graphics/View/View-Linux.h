@@ -37,8 +37,11 @@ struct ViewSurface
     std::function<void()> onRepaint = [] {};
     std::function<void()> onFrameDone = [] {};
 
-    // The request rides on the surface's next commit, so call it before
-    // presenting; a second call while one is pending does nothing.
+    // Asks the compositor for the next frame. Once the surface has content it
+    // commits for itself, so a tick that presents nothing still earns the
+    // callback that paces the one after it; before the first buffer there is
+    // nothing to commit and the request rides on the commit that maps the
+    // surface. A second call while one is pending does nothing.
     std::function<void()> requestFrameCallback = [] {};
 
     bool frameCallbackPending = false;

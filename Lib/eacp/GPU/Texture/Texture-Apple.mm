@@ -723,6 +723,9 @@ Texture::Texture(Device& device, void* nativePixelBuffer)
 
 void Texture::update(const void* pixels, int bytesPerRow)
 {
+    if (bytesPerRow < 0)
+        return;
+
     impl->update(pixels, bytesPerRow);
 }
 
@@ -730,6 +733,9 @@ void Texture::update(const Graphics::Rect& region,
                      const void* pixels,
                      int bytesPerRow)
 {
+    if (bytesPerRow < 0)
+        return;
+
     // Texels are whole; round rather than truncate so a rect built from
     // accumulated float arithmetic lands on the texel it is nearest to.
     impl->updateRegion((int) std::lround(region.x),
@@ -742,11 +748,17 @@ void Texture::update(const Graphics::Rect& region,
 
 void Texture::read(void* dst, int bytesPerRow) const
 {
+    if (bytesPerRow < 0)
+        return;
+
     impl->readRegion(0, 0, impl->width, impl->height, dst, bytesPerRow);
 }
 
 void Texture::read(const Graphics::Rect& region, void* dst, int bytesPerRow) const
 {
+    if (bytesPerRow < 0)
+        return;
+
     // Rounded rather than truncated, as update()'s region is: a rect built from
     // accumulated float arithmetic lands on the texel it is nearest to.
     impl->readRegion((int) std::lround(region.x),

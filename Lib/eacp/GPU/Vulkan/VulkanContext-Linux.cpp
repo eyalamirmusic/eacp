@@ -12,8 +12,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <thread>
+
+#include <unistd.h>
 
 namespace eacp::GPU
 {
@@ -61,6 +65,157 @@ std::uint64_t currentThreadId()
 {
     return static_cast<std::uint64_t>(
         std::hash<std::thread::id> {}(std::this_thread::get_id()));
+}
+
+// $XDG_CACHE_HOME/eacp, and $HOME/.cache/eacp where the first is unset. Empty
+// when neither is, which turns the pipeline cache off rather than guessing.
+std::string vulkanCacheDirectory()
+{
+    const auto xdg = getEnvValue("XDG_CACHE_HOME");
+
+    if (!xdg.empty())
+        return xdg + "/eacp";
+
+    const auto home = getEnvValue("HOME");
+
+    if (home.empty())
+        return {};
+
+    return home + "/.cache/eacp";
+}
+
+std::string toHex(const std::uint8_t* bytes, int count)
+{
+    constexpr auto digits = "0123456789abcdef";
+
+    auto text = std::string {};
+
+    for (auto i = 0; i < count; ++i)
+    {
+        text += digits[bytes[i] >> 4];
+        text += digits[bytes[i] & 0xf];
+    }
+
+    return text;
+}
+
+// Keyed by the driver's own cache UUID, so a driver update writes a new file
+// rather than fighting over one.
+std::string vulkanPipelineCachePath(const VkPhysicalDeviceProperties& forProperties)
+{
+    const auto directory = vulkanCacheDirectory();
+
+    if (directory.empty())
+        return {};
+
+    return directory + "/pipelines-"
+           + toHex(forProperties.pipelineCacheUUID, VK_UUID_SIZE) + ".bin";
+}
+
+Vector<std::byte> readFileBytes(const std::string& path)
+{
+    auto blob = Vector<std::byte> {};
+
+    if (path.empty())
+        return blob;
+
+    auto in = std::ifstream {path, std::ios::binary | std::ios::ate};
+
+    if (!in.is_open())
+        return blob;
+
+    const auto size = static_cast<long long>(in.tellg());
+
+    if (size <= 0)
+        return blob;
+
+    blob.resize(static_cast<int>(size));
+    in.seekg(0);
+    in.read(reinterpret_cast<char*>(blob.data()),
+            static_cast<std::streamsize>(size));
+
+    if (!in.good())
+        blob.clear();
+
+    return blob;
+}
+
+// Written beside the target and renamed onto it, so a reader never sees half a
+// cache - and named for this process, so two of them do not share the temporary.
+void writeFileAtomically(const std::string& path, const Vector<std::byte>& blob)
+{
+    if (path.empty() || blob.empty())
+        return;
+
+    auto error = std::error_code {};
+    std::filesystem::create_directories(std::filesystem::path {path}.parent_path(),
+                                        error);
+
+    const auto temporary = path + "." + std::to_string(getpid()) + ".tmp";
+
+    {
+        auto out = std::ofstream {temporary, std::ios::binary | std::ios::trunc};
+
+        if (!out.is_open())
+            return;
+
+        out.write(reinterpret_cast<const char*>(blob.data()),
+                  static_cast<std::streamsize>(blob.size()));
+        out.close();
+
+        if (!out.good())
+        {
+            std::filesystem::remove(temporary, error);
+            return;
+        }
+    }
+
+    std::filesystem::rename(temporary, path, error);
+
+    if (error)
+        std::filesystem::remove(temporary, error);
+}
+
+// A cache written by another device, or by a driver that has since been
+// updated, is data this one cannot read: the header carries what it was for.
+bool pipelineCacheHeaderMatches(const Vector<std::byte>& blob,
+                                const VkPhysicalDeviceProperties& forProperties)
+{
+    VkPipelineCacheHeaderVersionOne header = {};
+
+    if (blob.size() < static_cast<int>(sizeof(header)))
+        return false;
+
+    std::memcpy(&header, blob.data(), sizeof(header));
+
+    return header.headerSize == sizeof(header)
+           && header.headerVersion == VK_PIPELINE_CACHE_HEADER_VERSION_ONE
+           && header.vendorID == forProperties.vendorID
+           && header.deviceID == forProperties.deviceID
+           && std::memcmp(header.pipelineCacheUUID,
+                          forProperties.pipelineCacheUUID,
+                          VK_UUID_SIZE)
+                  == 0;
+}
+
+// The spec requires sample zero in both masks; this only catches a driver that
+// offers no depth resolve at all.
+bool queryDepthResolvesBySampleZero(VkPhysicalDevice physical)
+{
+    VkPhysicalDeviceDepthStencilResolveProperties resolve = {};
+    resolve.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+
+    VkPhysicalDeviceProperties2 all = {};
+    all.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    all.pNext = &resolve;
+
+    vkGetPhysicalDeviceProperties2(physical, &all);
+
+    const auto sampleZero = VkResolveModeFlags {VK_RESOLVE_MODE_SAMPLE_ZERO_BIT};
+
+    return (resolve.supportedDepthResolveModes & sampleZero) != 0
+           && (resolve.supportedStencilResolveModes & sampleZero) != 0;
 }
 
 int deviceRank(VkPhysicalDeviceType type)
@@ -457,6 +612,11 @@ VulkanShared::~VulkanShared()
 
     if (device != VK_NULL_HANDLE)
     {
+        savePipelineCache();
+
+        if (pipelineCache != VK_NULL_HANDLE)
+            vkDestroyPipelineCache(device, pipelineCache, nullptr);
+
         for (auto& sampler: samplers)
             if (sampler != VK_NULL_HANDLE)
                 vkDestroySampler(device, sampler, nullptr);
@@ -498,6 +658,8 @@ void VulkanShared::createAll()
     {
         return;
     }
+
+    createPipelineCache();
 
     for (auto index = 0; index < samplingConfigurations; ++index)
     {
@@ -662,6 +824,8 @@ bool VulkanShared::selectPhysicalDevice()
     timestampsSupported = properties.limits.timestampComputeAndGraphics == VK_TRUE
                           && familyWritesTimestamps(physicalDevice, queueFamily);
 
+    depthResolvesBySampleZero = queryDepthResolvesBySampleZero(physicalDevice);
+
     return true;
 }
 
@@ -803,6 +967,44 @@ bool VulkanShared::createComputeLayouts()
     computeLayouts = makeComputeLayouts(device, {});
 
     return computeLayouts.isValid();
+}
+
+void VulkanShared::createPipelineCache()
+{
+    const auto blob = readFileBytes(vulkanPipelineCachePath(properties));
+
+    VkPipelineCacheCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+
+    if (pipelineCacheHeaderMatches(blob, properties))
+    {
+        info.initialDataSize = static_cast<std::size_t>(blob.size());
+        info.pInitialData = blob.data();
+    }
+
+    if (vkCreatePipelineCache(device, &info, nullptr, &pipelineCache) != VK_SUCCESS)
+        pipelineCache = VK_NULL_HANDLE;
+}
+
+void VulkanShared::savePipelineCache() const
+{
+    if (pipelineCache == VK_NULL_HANDLE)
+        return;
+
+    auto bytes = std::size_t {0};
+
+    if (vkGetPipelineCacheData(device, pipelineCache, &bytes, nullptr) != VK_SUCCESS
+        || bytes == 0)
+        return;
+
+    auto blob = Vector<std::byte> {};
+    blob.resize(static_cast<int>(bytes));
+
+    if (vkGetPipelineCacheData(device, pipelineCache, &bytes, blob.data())
+        != VK_SUCCESS)
+        return;
+
+    writeFileAtomically(vulkanPipelineCachePath(properties), blob);
 }
 
 VulkanShared& getVulkanShared()

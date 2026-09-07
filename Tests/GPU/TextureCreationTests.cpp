@@ -118,3 +118,81 @@ auto tASizeOfNothingIsRefused = test("TextureCreation/aSizeOfNothingIsRefused") 
     check(refused(0, 0));
     check(refused(-4, 4));
 };
+
+// A texture created with no pixels is never written before it is read, which on
+// a backend that tracks image layouts means it is read out of the layout it was
+// created in. The contents are undefined; that the read runs at all, and that
+// the texture still takes an upload afterwards, is what is pinned.
+auto tAnUnwrittenTextureCanBeRead =
+    test("TextureCreation/anUnwrittenTextureCanBeRead") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto size = 4;
+
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = size;
+    descriptor.height = size;
+
+    auto texture = device.makeTexture(descriptor);
+
+    check(texture.isValid());
+
+    auto read = Array<unsigned char, size * size * 4> {};
+    texture.read(read.data());
+
+    auto pixels = Array<unsigned char, size * size * 4> {};
+
+    for (auto i = 0; i < pixels.size(); ++i)
+        pixels[i] = (unsigned char) (i * 3 + 1);
+
+    texture.update(pixels.data());
+    texture.read(read.data());
+
+    check(read == pixels);
+};
+
+// A stride is a byte count, so a negative one is a call that cannot be honoured
+// rather than one to reinterpret as an enormous unsigned pitch.
+auto tANegativeStrideIsRefused =
+    test("TextureCreation/aNegativeStrideIsRefused") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto size = 4;
+
+    auto pixels = Array<unsigned char, size * size * 4> {};
+    pixels.fill(0x7f);
+
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = size;
+    descriptor.height = size;
+
+    auto texture = device.makeTexture(descriptor, pixels.data());
+
+    check(texture.isValid());
+
+    auto other = Array<unsigned char, size * size * 4> {};
+    other.fill(0x11);
+
+    texture.update(other.data(), -(size * 4));
+    texture.update({0.f, 0.f, 2.f, 2.f}, other.data(), -(size * 4));
+
+    auto read = Array<unsigned char, size * size * 4> {};
+    read.fill(0xab);
+
+    texture.read(read.data(), -(size * 4));
+
+    // Neither the texture nor the destination was touched.
+    check(read[0] == 0xab);
+
+    texture.read(read.data());
+
+    check(read == pixels);
+};

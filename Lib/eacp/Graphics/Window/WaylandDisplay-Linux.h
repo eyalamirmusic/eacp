@@ -22,6 +22,7 @@
 namespace eacp::Graphics
 {
 class View;
+class WaylandClipboard;
 class WaylandInput;
 
 // Nothing here is trustworthy until `configured`.
@@ -64,6 +65,10 @@ struct WaylandWindowSurface
     bool mouseLockIntent = false;
 
     std::function<void(bool)> onKeyboardFocus = [](bool) {};
+
+    // The compositor went away mid-session: drop the surface and everything
+    // made from it, and report the window hidden.
+    Callback onConnectionLost = [] {};
 };
 
 struct WaylandSurfaceTarget
@@ -119,6 +124,7 @@ public:
     wl_shm* getShm() const { return shm; }
     wp_viewporter* getViewporter() const { return viewporter; }
     wl_seat* getSeat() const { return seat; }
+    wl_data_device_manager* getDataDeviceManager() const { return dataDevices; }
     libdecor* getDecorations() const { return decorations; }
 
     wp_fractional_scale_manager_v1* getFractionalScales() const
@@ -137,6 +143,10 @@ public:
     }
 
     WaylandInput* getInput() const { return input.get(); }
+
+    // False once the compositor has gone: every global is dropped then, so
+    // windows made afterwards come up surfaceless, exactly as headless ones do.
+    bool isConnected() const { return compositor != nullptr; }
 
     // Null when the compositor advertised no output.
     const WaylandOutputInfo* getPrimaryOutput() const;
@@ -157,6 +167,9 @@ private:
     void prepareForPoll();
     void readAndDispatch();
 
+    // Fired once, when a dispatch or a flush says the compositor has gone.
+    void connectionLost();
+
     friend struct WaylandRegistryDispatch;
 
     wl_display* display = nullptr;
@@ -171,6 +184,7 @@ private:
     zwp_pointer_constraints_v1* pointerConstraints = nullptr;
     zwp_relative_pointer_manager_v1* relativePointers = nullptr;
     zxdg_output_manager_v1* xdgOutputManager = nullptr;
+    wl_data_device_manager* dataDevices = nullptr;
     libdecor* decorations = nullptr;
 
     // By pointer: each one is a live wl_output listener's payload.
@@ -179,6 +193,7 @@ private:
     Vector<WaylandSurfaceTarget> surfaces;
 
     std::unique_ptr<WaylandInput> input;
+    std::unique_ptr<WaylandClipboard> clipboard;
 
     int loopFd = -1;
     int decorationsLoopFd = -1;

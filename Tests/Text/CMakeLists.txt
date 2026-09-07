@@ -15,6 +15,7 @@ nano_add_executable(TextTests
             MemoryFontTests.cpp
             VariableFontTests.cpp
             FontPresenceTests.cpp
+            EmojiPresentationTests.cpp
             TestMain.cpp
         TARGETS eacp-text)
 
@@ -25,4 +26,10 @@ target_link_libraries(TextTests PRIVATE eacp-sprites)
 # Windows construction — CoreText gives the Apple side both for free.
 if (WIN32)
     target_sources(TextTests PRIVATE FontResolution-WindowsTests.cpp)
+endif ()
+
+# Which face the property makes the rasterizer choose is the Linux backend's
+# own rule; the platform text engines decide it for themselves.
+if (LINUX)
+    target_sources(TextTests PRIVATE EmojiPresentation-LinuxTests.cpp)
 endif ()

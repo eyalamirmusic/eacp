@@ -499,7 +499,7 @@ struct RenderPipeline::Native
         info.layout = layouts.pipelineLayout;
 
         if (vkCreateGraphicsPipelines(context->getDevice(),
-                                      VK_NULL_HANDLE,
+                                      getVulkanShared().getPipelineCache(),
                                       1,
                                       &info,
                                       nullptr,

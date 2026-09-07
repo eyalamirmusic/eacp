@@ -174,6 +174,14 @@ public:
 
     bool supportsTimestamps() const { return timestampsSupported; }
 
+    // Whether a multisampled depth image can be resolved for sampling. The spec
+    // requires sample zero in both masks, so this only fails on a driver that
+    // does not offer the resolve at all.
+    bool resolvesDepthBySampleZero() const { return depthResolvesBySampleZero; }
+
+    // Handed to every pipeline creation, and null when the driver refused one.
+    VkPipelineCache getPipelineCache() const { return pipelineCache; }
+
     // Whether the surface and swapchain extensions came up. Says nothing about a
     // particular surface, which vkGetPhysicalDeviceSurfaceSupportKHR answers.
     bool supportsPresentation() const { return presentationSupported; }
@@ -207,6 +215,11 @@ private:
     bool createRenderLayouts();
     void createDebugMessenger();
 
+    // Both silent: a cache that could not be read, written or created only
+    // costs the compile it would have saved.
+    void createPipelineCache();
+    void savePipelineCache() const;
+
     VkInstance instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
@@ -220,6 +233,9 @@ private:
     std::string adapterName = "no Vulkan device";
     DriverQuirks quirks;
     bool timestampsSupported = false;
+    bool depthResolvesBySampleZero = false;
+
+    VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 
     bool surfaceExtensionsEnabled = false;
     bool presentationSupported = false;
