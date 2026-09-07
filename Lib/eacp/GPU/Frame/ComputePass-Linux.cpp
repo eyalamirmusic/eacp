@@ -152,35 +152,71 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
         impl->commandBuffer(), VK_PIPELINE_BIND_POINT_COMPUTE, state->pipeline);
 }
 
+namespace
+{
+// Vulkan makes the offset alignment a device limit (16 on lavapipe); an offset
+// off that grid binds nothing, like one past the end.
+VkDescriptorBufferInfo storageBufferInfo(const VulkanBufferData* data,
+                                         const BufferRange& range)
+{
+    if (data == nullptr || data->buffer == VK_NULL_HANDLE || range.offset < 0
+        || static_cast<std::size_t>(range.offset) >= data->size)
+        return {};
+
+    const auto offset = static_cast<VkDeviceSize>(range.offset);
+    const auto alignment =
+        getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
+
+    if (alignment != 0 && offset % alignment != 0)
+        return {};
+
+    return {data->buffer, offset, VK_WHOLE_SIZE};
+}
+} // namespace
+
 void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+    setInputBuffer(BufferRange::of(buffer), slot);
+}
+
+void ComputePass::setInputBuffer(const BufferRange& range, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots
+        || range.buffer == nullptr)
         return;
 
-    auto* data = static_cast<VulkanBufferData*>(buffer.nativeBuffer());
+    auto* data = static_cast<VulkanBufferData*>(range.buffer->nativeBuffer());
+    const auto info = storageBufferInfo(data, range);
 
-    if (data == nullptr || data->buffer == VK_NULL_HANDLE)
+    if (info.buffer == VK_NULL_HANDLE)
         return;
 
     transitionForUse(*impl->encoder->commands, *data, bufferShaderRead);
 
-    impl->buffers[slot] = {data->buffer, 0, VK_WHOLE_SIZE};
+    impl->buffers[slot] = info;
     impl->boundBuffers |= 1u << slot;
 }
 
 void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+    setOutputBuffer(BufferRange::of(buffer), slot);
+}
+
+void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots
+        || range.buffer == nullptr)
         return;
 
-    auto* data = static_cast<VulkanBufferData*>(buffer.nativeBuffer());
+    auto* data = static_cast<VulkanBufferData*>(range.buffer->nativeBuffer());
+    const auto info = storageBufferInfo(data, range);
 
-    if (data == nullptr || data->buffer == VK_NULL_HANDLE)
+    if (info.buffer == VK_NULL_HANDLE)
         return;
 
     transitionForUse(*impl->encoder->commands, *data, bufferShaderWrite);
 
-    impl->buffers[slot] = {data->buffer, 0, VK_WHOLE_SIZE};
+    impl->buffers[slot] = info;
     impl->boundBuffers |= 1u << slot;
 }
 
