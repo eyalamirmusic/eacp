@@ -772,9 +772,7 @@ private:
     int blockAlignment = 1;
 };
 
-// How a module hands over shaders it builds behind a .cpp: the program itself
-// is a nested type nothing outside can name, so what crosses the header is the
-// graph. See ShaderProgram::graph() for what a caller wants one for.
+// How a module hands over a shader whose program type is nested in a .cpp.
 using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;
 
 // Base for struct-authored shaders. Derive, declare uniform members, list them
@@ -795,10 +793,7 @@ public:
     const ShaderSource& source() const { return generated.source; }
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
 
-    // The shader as the EDSL recorded it, which source() is only this
-    // platform's spelling of. It is what lets a test emit a module's shader in
-    // GLSL on a host that compiles MSL or HLSL, so a dialect regression fails
-    // there rather than waiting for the one lane with a Vulkan device.
+    // The shader as the EDSL recorded it; source() is one platform's spelling.
     const ShaderGraph& graph() const { return builder.graph(); }
 
     // Uploads the typed vertex data and owns the resulting buffer. The element

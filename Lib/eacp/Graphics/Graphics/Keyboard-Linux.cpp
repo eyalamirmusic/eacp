@@ -6,24 +6,8 @@
 
 #include <linux/input-event-codes.h>
 
-// The Linux key table, and the polled state behind Keyboard.h.
-//
-// Two things are different here from both other backends, and they are the same
-// difference twice: Wayland tells a client about the keyboard only while one of
-// its surfaces has focus, and there is no way to ask outside that. There is no
-// GetAsyncKeyState and no CGEventSourceKeyState - a client that is not focused
-// is not told what is being typed, on purpose.
-//
-// So the "global" half of Keyboard is answered from the same place as the
-// window-scoped half: the seat's own state, which exists only while some window
-// of this application has focus. On a machine with no seat at all - a headless
-// compositor advertises none - every query below reads as nothing pressed,
-// which is what an app polling in its update loop can carry on against.
-//
-// The table itself is evdev keycodes, which is what wl_keyboard.key carries and
-// what xkb calls a keycode once 8 has been added. Positional, like the macOS
-// virtual key codes the framework's KeyCode values are, so a shortcut bound to
-// a physical key means the same thing on both.
+// Wayland tells a client about the keyboard only while it has focus, so the
+// global queries read as nothing pressed while unfocused or with no seat.
 
 namespace eacp::Graphics
 {
@@ -35,10 +19,6 @@ struct WaylandKeyMapping
     uint32_t evdev;
 };
 
-// The single source of truth between framework KeyCodes and the kernel's key
-// numbering; both lookup directions derive from it, and
-// Tests/Graphics/KeyCodeTests-Linux.cpp checks that every constant in
-// Keyboard.h appears exactly once.
 constexpr WaylandKeyMapping waylandKeyMappings[] = {
     {KeyCode::A, KEY_A},
     {KeyCode::S, KEY_S},
@@ -82,9 +62,7 @@ constexpr WaylandKeyMapping waylandKeyMappings[] = {
     {KeyCode::Return, KEY_ENTER},
     {KeyCode::Tab, KEY_TAB},
 
-    // KeyCode::Delete is backspace and ForwardDelete is the other one; the
-    // names in Keyboard.h follow what the key does rather than what a platform
-    // calls it, and evdev's names go the other way.
+    // KeyCode::Delete is backspace; evdev's names go the other way.
     {KeyCode::Delete, KEY_BACKSPACE},
     {KeyCode::ForwardDelete, KEY_DELETE},
 
@@ -108,9 +86,7 @@ constexpr WaylandKeyMapping waylandKeyMappings[] = {
     {KeyCode::F11, KEY_F11},
     {KeyCode::F12, KEY_F12},
 
-    // Punctuation, named for the unshifted key on a US layout - the same
-    // convention the macOS virtual key codes and the Windows OEM_* codes
-    // follow, so a positional shortcut survives the crossing.
+    // Punctuation, named for the unshifted key on a US layout.
     {KeyCode::Minus, KEY_MINUS},
     {KeyCode::Equals, KEY_EQUAL},
     {KeyCode::LeftBracket, KEY_LEFTBRACE},
@@ -147,9 +123,7 @@ constexpr WaylandKeyMapping waylandKeyMappings[] = {
     {KeyCode::KeypadDivide, KEY_KPSLASH},
     {KeyCode::KeypadEquals, KEY_KPEQUAL},
 
-    // Clear is the Apple keypad's top-left key, which on a PC keyboard is the
-    // one in the same place: Num Lock. Nothing else on the keypad is unclaimed,
-    // and leaving it unmapped would make the constant permanently unreachable.
+    // Clear is the Apple keypad's top-left key; Num Lock is in that place.
     {KeyCode::KeypadClear, KEY_NUMLOCK},
 };
 
@@ -160,9 +134,6 @@ WaylandInput* waylandSeatInput()
     return connection != nullptr ? connection->getInput() : nullptr;
 }
 
-// Only while some window of this application has keyboard focus. Wayland tells
-// a client nothing about the keyboard otherwise, and inventing an answer would
-// be worse than saying so.
 bool waylandKeyboardIsFocused()
 {
     auto* input = waylandSeatInput();
@@ -277,8 +248,6 @@ Vector<Key> Keyboard::getPressedKeys()
     {
         auto keyCode = waylandKeyCodeFromEvdev(evdev);
 
-        // A key with no framework name - a media key, a layout's extra - is not
-        // reportable through Key, whose whole content is a KeyCode.
         if (keyCode == KeyCode::Unknown)
             continue;
 
@@ -296,9 +265,7 @@ std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
     if (input == nullptr || evdev == 0)
         return "";
 
-    // Not gated on focus, unlike the state queries above: this asks what the
-    // layout would type, not what is being typed, and the keymap outlives the
-    // focus that delivered it.
+    // Not gated on focus: the keymap outlives the focus that delivered it.
     return input->characterForCode(evdev);
 }
 

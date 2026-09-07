@@ -12,10 +12,7 @@ namespace
 {
 constexpr auto spirvMagic = uint32_t {0x07230203};
 
-// The shape the shader EDSL emits: one string, first line `#version 450`,
-// shared declarations outside the stage macros and the per-stage attributes,
-// varyings and main() inside them. The uniform block is the binding-map
-// reference too -- std140 at set 0 binding 0, samplers from binding 8.
+// The binding map the EDSL emits: std140 at set 0 binding 0, samplers from 8.
 std::string texturedQuadSource()
 {
     return R"(#version 450
@@ -185,8 +182,7 @@ auto tMissingStageBlockFails = test("Spirv/missingStageBlockFails") = []
     check(result.words.empty());
     check(!result.log.empty());
 
-    // The same source is a valid fragment shader, so only the macro can be the
-    // difference.
+    // The same source is a valid fragment shader, so only the macro differs.
     check(compileGlsl(Stage::Fragment, fragmentOnlySource()).succeeded());
 };
 

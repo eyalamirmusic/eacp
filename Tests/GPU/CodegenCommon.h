@@ -1,9 +1,6 @@
 #pragma once
 
-// What the device-free suites need and nothing more: the EDSL, the two
-// emitters, and the pass headers the binding constants live in. No Device, no
-// GPUView, no window — which is what lets GPUCodegenTests link
-// eacp-gpu-codegen alone and run on a host with no GPU and no display.
+// Device-free, so GPUCodegenTests links eacp-gpu-codegen alone.
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/GPU/Codegen/ShaderBindings.h>
 #include <eacp/GPU/Codegen/ShaderBuilder.h>
@@ -21,14 +18,7 @@
 #include <source_location>
 #include <string>
 
-// Every GLSL string a test emits is also handed to glslang, so the dialect has
-// to be a program and not just the right sequence of characters. String
-// assertions pin what the emitter says; this pins that a compiler accepts it,
-// on a Linux lane with no Vulkan device as much as on the one that will run it.
-//
-// eacp-spirv is Linux-only by default (EACP_BUILD_SPIRV), so on macOS and
-// Windows these compile away and the suite still builds and passes on its
-// string assertions alone; opting in there turns them back on.
+// Where eacp-spirv is built (Linux by default) the emitted GLSL is compiled.
 
 #ifdef EACP_HAS_SPIRV
 inline void expectStageCompiles(eacp::GPU::Spirv::Stage stage,
@@ -40,8 +30,6 @@ inline void expectStageCompiles(eacp::GPU::Spirv::Stage stage,
 }
 #endif
 
-// A render source compiles as both stages out of the one string; a kernel has
-// the single unguarded main().
 inline void expectGlslCompiles(
     const std::string& glsl,
     bool isCompute = false,

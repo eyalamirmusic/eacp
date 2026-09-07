@@ -5,17 +5,6 @@
 #include <poll.h>
 #include <unistd.h>
 
-// Threads::addLoopSource — a descriptor joining the poll set the message loop
-// already waits on.
-//
-// This is what lets a Wayland or xcb connection be pumped by eacp's own loop
-// rather than by a toolkit's, so it is worth pinning the three properties the
-// windowing code will rely on: the pump wakes for the fd (not only for its own
-// waker), the loop thread is where the callback lands, and removing the source
-// really unhooks it. The nesting case is the fourth: a source callback that
-// pumps the loop again (a modal drag loop, a resize) must still work, which is
-// the whole reason eacp does not hand its loop to SDL or GTK.
-
 using namespace nano;
 using eacp::Threads::addLoopSource;
 using eacp::Threads::isMainThread;
@@ -24,8 +13,7 @@ using eacp::Threads::runEventLoopUntil;
 
 namespace
 {
-// A self-pipe standing in for a display connection: a readable fd somebody
-// else writes to.
+// A self-pipe standing in for a display connection.
 struct SourcePipe
 {
     SourcePipe() { ::pipe(fds); }
@@ -109,8 +97,6 @@ auto tRemovedSourceStopsFiring =
 
     removeLoopSource(pipe.readFd());
 
-    // The same poke that fired the callback a moment ago, with nothing left
-    // watching the descriptor.
     pipe.poke();
     runEventLoopUntil([&] { return calls > 1; }, eacp::Time::MS {100});
 
@@ -147,14 +133,7 @@ auto tSourceCallbackCanPumpTheLoop =
     check(nestedRan);
 };
 
-// The prepare callback, which is the half of a source that runs before the
-// pump sleeps rather than after it wakes.
-//
-// A Wayland connection needs it because its outgoing requests sit in
-// libwayland's own buffer until something flushes them, so a loop that blocks
-// in poll() without flushing is waiting for a reply to a request the
-// compositor never saw. The property that pins it is exactly that ordering:
-// nothing else here writes to the pipe, so the pump waking at all proves the
+// Nothing else here writes to the pipe, so the pump waking at all proves the
 // prepare ran on the near side of poll().
 auto tPrepareRunsBeforeThePollThatWakes =
     test("EventLoopSource/prepareRunsBeforeThePollThatWakes") = []
@@ -173,8 +152,7 @@ auto tPrepareRunsBeforeThePollThatWakes =
         },
         [&]
         {
-            // Once only: a prepare poking on every turn would spin the loop
-            // and prove nothing about ordering.
+            // Once only: poking every turn would prove nothing about ordering.
             if (prepares++ == 0)
                 pipe.poke();
         });
@@ -188,8 +166,6 @@ auto tPrepareRunsBeforeThePollThatWakes =
     check(prepares > 0);
 };
 
-// Re-registering the same descriptor replaces what was there, so a caller
-// swapping its handler does not end up with the old one still installed.
 auto tReAddingReplacesTheCallback =
     test("EventLoopSource/reAddingReplacesTheCallback") = []
 {

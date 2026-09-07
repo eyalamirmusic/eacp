@@ -1,11 +1,7 @@
 add_subdirectory(Spirv)
 
-# The shader codegen layer is pure portable C++ (string generation only): a
-# graph built from the EDSL and walked into MSL or HLSL text, with no device, no
-# window and no Graphics library under it. It is its own target so it builds on
-# every platform, Linux included, and so the emitter can be unit-tested there
-# long before a backend exists. eacp-gpu links it publicly, so a consumer of the
-# GPU module sees no difference.
+# The shader codegen layer is pure portable C++ (string generation only), so it
+# is its own target and builds on every platform. eacp-gpu links it publicly.
 add_library(eacp-gpu-codegen STATIC)
 
 target_link_libraries(eacp-gpu-codegen PUBLIC eacp-core)
@@ -22,9 +18,7 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderGraph.cpp)
 
-# Which dialect build() calls the native one. Pure selection - each file is a
-# one-line call into an emitter that is compiled everywhere - so it lives with
-# the codegen layer rather than with the backend it names.
+# Which dialect build() calls the native one: selection only, no backend.
 if (APPLE)
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Apple.cpp)
 elseif (WIN32)
@@ -103,14 +97,8 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 else ()
-    # The Vulkan backend: compute, render, and the surface. GPUView-Linux.cpp
-    # makes a VkSurfaceKHR over the wl_display and wl_surface the window backend
-    # reports through Graphics/View/View-Linux.h, and presents through a
-    # swapchain; Frame's drawable constructor submits with the acquire and
-    # render-finished semaphores and presents where its off-screen one waits.
-    # Nothing here links or includes libwayland - the two pointers are opaque,
-    # and VK_USE_PLATFORM_WAYLAND_KHR in CMake/FindVulkanBackend.cmake is the
-    # whole of what makes them usable.
+    # The Vulkan backend. Nothing here links or includes libwayland: the
+    # wl_display and wl_surface it presents to are opaque pointers.
     if (NOT TARGET eacp-spirv)
         message(FATAL_ERROR
                 "EACP_LINUX_GRAPHICS needs the SPIR-V compiler: the Vulkan "
@@ -136,9 +124,7 @@ else ()
             View/GPUView-Linux.cpp
             Vulkan/VulkanContext-Linux.cpp)
 
-    # Both PRIVATE. Vulkan stops at this library - nothing above eacp-gpu names
-    # a VkDevice - and glslang reaches only the backend, so an app that links
-    # eacp-gpu gets the shader compiler's code and none of its headers.
+    # Both PRIVATE: neither Vulkan nor glslang reaches past this library.
     target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)
 endif ()
 

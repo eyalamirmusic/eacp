@@ -17,31 +17,19 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-// wl_seat, turned into MouseEvents and KeyEvents.
-//
-// Nothing in here runs on a headless Weston, which advertises no seat at all -
-// no pointer, no keyboard, not even an empty one - so the compositor test next
-// door cannot exercise a line of it. What is testable without a seat is
-// testable without Wayland: the evdev-to-KeyCode table has a suite of its own
-// (Tests/Graphics/KeyCodeTests-Linux.cpp), and the routing this file performs
-// is the portable hit-tester in View.cpp, which ScrollWheelTests and
-// ViewWindowTests already cover from the other side. The part with no coverage
-// is the translation between them, and it is written to be as thin as the
-// Windows original for exactly that reason.
+// wl_seat, turned into MouseEvents and KeyEvents. A headless Weston advertises
+// no seat, so none of this runs under the compositor tests.
 
 namespace eacp::Graphics
 {
 namespace
 {
-// Two presses of the same button inside this, and close enough together on
-// screen, are one gesture. No Wayland event carries a click count - the
-// compositor reports presses and nothing more - so this is the framework's own
-// figure, and 400ms is what X11, GTK and Qt all default to.
+// No Wayland event carries a click count, so this is the framework's own
+// figure: 400ms is what X11, GTK and Qt all default to.
 constexpr uint32_t waylandDoubleClickIntervalMs = 400;
 constexpr float waylandDoubleClickSlopPoints = 5.f;
 
-// wl_cursor themes are sized in pixels and there is no protocol event for the
-// size, only the XCURSOR_SIZE convention every toolkit reads.
+// No protocol event carries a cursor size; XCURSOR_SIZE is the convention.
 constexpr int waylandDefaultCursorSize = 24;
 
 float waylandFixedToFloat(wl_fixed_t value)
@@ -51,8 +39,7 @@ float waylandFixedToFloat(wl_fixed_t value)
 
 double waylandTimestamp(uint32_t milliseconds)
 {
-    // Seconds since an arbitrary origin, which is what NSEvent.timestamp is
-    // too. Only differences are meaningful in either.
+    // Seconds since an arbitrary origin; only differences are meaningful.
     return (double) milliseconds / 1000.0;
 }
 
@@ -71,10 +58,7 @@ MouseButton waylandButtonFromEvdev(uint32_t code)
     }
 }
 
-// The XCursor names for the six shapes MouseCursor names, most-specific first:
-// a theme that lacks the modern name usually has the legacy one, and one that
-// has neither falls back to the arrow rather than leaving whatever the last
-// window set.
+// Most likely name first; a theme with none of them falls back to the arrow.
 std::span<const char* const> waylandCursorNames(MouseCursor cursor)
 {
     static const char* const arrow[] = {"left_ptr", "default", "arrow"};
@@ -129,11 +113,8 @@ bool waylandProxySupports(void* proxy, int since)
 }
 } // namespace
 
-// The repeat a compositor asks for in wl_keyboard.repeat_info: a delay before
-// the first repeat, then a rate. Threads::Timer has one fixed interval, so the
-// delay is a callAfter and the rate is a Timer built when it fires; the
-// generation counter is what stops a stale callAfter from starting a repeat for
-// a key that has since come up.
+// repeat_info is a delay then a rate; Timer has one interval, so the delay is
+// a callAfter. `generation` stops a stale one starting a repeat.
 struct WaylandInput::Repeat
 {
     uint32_t code = 0;
@@ -141,8 +122,6 @@ struct WaylandInput::Repeat
     std::unique_ptr<Threads::Timer> timer;
 };
 
-// Every C callback the seat needs, in one struct so the unity build sees one
-// file-scope name instead of two dozen.
 struct WaylandSeatDispatch
 {
     static WaylandInput& self(void* data)
@@ -404,11 +383,7 @@ void WaylandInput::bindPointer()
                                  display.getShm());
     }
 
-    // Created here rather than at lock time, and kept for as long as the
-    // pointer exists: relative motion is the unaccelerated figure
-    // MouseEvent::rawDelta promises, and a camera wants it whether or not the
-    // pointer happens to be locked. Windows gets the same thing from Raw Input,
-    // which it also registers once and leaves registered.
+    // Kept while the pointer exists, not only while locked: rawDelta needs it.
     if (auto* manager = display.getRelativePointers())
     {
         relativePointer =
@@ -469,8 +444,6 @@ void WaylandInput::releaseKeyboard()
     }
 }
 
-// --- pointer -----------------------------------------------------------------
-
 void WaylandInput::pointerEntered(uint32_t serial,
                                   wl_surface* surface,
                                   wl_fixed_t x,
@@ -482,18 +455,15 @@ void WaylandInput::pointerEntered(uint32_t serial,
     pointerSurface = surface;
     pointerWindow = target.window;
 
-    // A pointer entering one of a presenting view's subsurfaces reports
-    // coordinates in that subsurface's own space, so the view's origin inside
-    // the window is added back on. Everything downstream then works in window
-    // content points, exactly as the Windows client area does.
+    // An event on a view's subsurface is in that subsurface's own space, so
+    // the view's origin is added back on to reach window content points.
     auto local = Point {waylandFixedToFloat(x), waylandFixedToFloat(y)};
     auto origin =
         target.view != nullptr ? waylandViewOriginInWindow(*target.view) : Point {};
 
     pointerPosition = {local.x + origin.x, local.y + origin.y};
 
-    // The same window it was just told it was leaving: one gesture crossing
-    // from the toplevel onto a subsurface, not an exit.
+    // Crossing from the toplevel onto one of its subsurfaces is not an exit.
     if (leavingWindow == pointerWindow)
         leavingWindow = nullptr;
 
@@ -512,9 +482,8 @@ void WaylandInput::pointerLeft(wl_surface* surface)
     if (surface != nullptr && surface != pointerSurface)
         return;
 
-    // Held rather than dispatched, because the very next event may be an enter
-    // on another surface of the same window - which is what crossing onto a
-    // GPUView's subsurface looks like on the wire. Resolved at the frame.
+    // Held rather than dispatched: the next event may be an enter on another
+    // surface of the same window. Resolved at the frame.
     leavingWindow = pointerWindow;
     pointerSurface = nullptr;
     pointerWindow = nullptr;
@@ -542,10 +511,7 @@ void WaylandInput::pointerMoved(uint32_t time, wl_fixed_t x, wl_fixed_t y)
         endPointerFrame();
 }
 
-// The locked case. A locked pointer sends no motion at all - it does not move -
-// so relative motion is the only movement there is, and the position stays put
-// while the deltas keep coming. Unlocked, the accelerated figure is redundant
-// with the motion event and only the unaccelerated one is kept.
+// A locked pointer sends no motion events; relative motion is all there is.
 void WaylandInput::pointerMovedRelative(Point delta, Point unaccelerated)
 {
     rawDelta = unaccelerated;
@@ -613,10 +579,7 @@ void WaylandInput::pointerButtonChanged(uint32_t serial,
 
 void WaylandInput::pointerAxis(uint32_t time, uint32_t axis, float value)
 {
-    // Wayland measures the axis in the direction the content scrolls away:
-    // positive is a scroll downwards. MouseEvent::delta is the other way round
-    // - positive y moves the content down, toward the start of the document -
-    // so the sign is flipped once, here.
+    // Wayland's axis is positive downwards; MouseEvent::delta is not.
     if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
         wheelDelta.y -= value;
     else
@@ -626,9 +589,7 @@ void WaylandInput::pointerAxis(uint32_t time, uint32_t axis, float value)
     wheelTime = time;
 }
 
-// axis_discrete and axis_value120 both describe the same motion the axis event
-// already reported, in notches rather than in surface units. The notch figure
-// wins for a wheel, because MouseEvent promises lines for a non-precise device.
+// The notch figure wins for a wheel: MouseEvent promises lines there.
 void WaylandInput::pointerAxisNotches(uint32_t axis, float notches)
 {
     if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
@@ -653,9 +614,7 @@ void WaylandInput::pointerAxisStopped()
     wheelPending = true;
 }
 
-// One wl_pointer.frame's worth of everything, dispatched in the order a view
-// expects to see it: the exit first, then the move the enter or motion
-// implied, then the wheel.
+// In the order a view expects: the exit, then the move, then the wheel.
 void WaylandInput::endPointerFrame()
 {
     if (leavingWindow != nullptr)
@@ -684,10 +643,8 @@ void WaylandInput::endPointerFrame()
         event.clickCount = clickCount;
         event.timestamp = waylandTimestamp(pointerTime);
 
-        // A move with a button held is a drag. dispatchMouseEvent only forwards
-        // Dragged and Up to the view that captured the mouse down; a plain
-        // Moved is re-hit-tested, so without this a title-bar grab is lost the
-        // moment the cursor moves - the same trap the Windows file documents.
+        // Only Dragged and Up go to the view that captured the mouse down; a
+        // plain Moved is re-hit-tested, and would lose a grab in progress.
         event.type = buttonHeld ? MouseEventType::Dragged : MouseEventType::Moved;
 
         dispatchMouse(event);
@@ -722,8 +679,7 @@ void WaylandInput::dispatchWheel()
         event.preciseScrolling = wheelPrecise;
         event.timestamp = waylandTimestamp(wheelTime);
 
-        // Lines for a notched wheel, points for a trackpad - the two units
-        // MouseEvent::preciseScrolling exists to tell apart.
+        // Lines for a notched wheel, points for a trackpad.
         event.delta = (!wheelPrecise && hasWheelNotches) ? wheelNotches : wheelDelta;
 
         if (wheelIsGesture)
@@ -747,17 +703,11 @@ void WaylandInput::dispatchMouse(MouseEvent event)
     if (pointerWindow == nullptr || pointerWindow->contentView == nullptr)
         return;
 
-    // Where the drag began, in the same window content points as everything
-    // else. Wayland surfaces have no screen position, so unlike Windows there
-    // is nothing to convert through - a window moving under a stationary
-    // pointer changes neither figure.
     event.downPos =
         event.type == MouseEventType::Wheel ? event.pos : pointerDownPosition;
 
     pointerWindow->contentView->dispatchMouseEvent(event);
 }
-
-// --- cursor ------------------------------------------------------------------
 
 void WaylandInput::refreshCursor()
 {
@@ -822,8 +772,6 @@ void WaylandInput::applyCursor()
     wl_surface_commit(cursorSurface);
 }
 
-// --- mouse lock ---------------------------------------------------------------
-
 void WaylandInput::updateMouseLock(WaylandWindowSurface& window)
 {
     auto wanted = window.mouseLockIntent && keyboardWindow == &window;
@@ -834,9 +782,7 @@ void WaylandInput::updateMouseLock(WaylandWindowSurface& window)
         disengageMouseLock();
 }
 
-// The lock expresses intent (Window::setMouseLocked), so a compositor with
-// neither extension is not an error: rawDelta still arrives from the relative
-// pointer if that one is there, and the cursor simply stays visible and free.
+// A compositor without pointer-constraints is not an error.
 void WaylandInput::engageMouseLock(WaylandWindowSurface& window)
 {
     if (lockedPointer != nullptr || pointer == nullptr || window.surface == nullptr)
@@ -876,8 +822,6 @@ void WaylandInput::disengageMouseLock()
         applyCursor();
     }
 }
-
-// --- keyboard -----------------------------------------------------------------
 
 void WaylandInput::keymapArrived(uint32_t format, int32_t fd, uint32_t size)
 {
@@ -942,9 +886,8 @@ void WaylandInput::keyboardLeft()
 {
     stopRepeat();
 
-    // The matching key-ups go to whoever took focus, so a tracked state kept
-    // across the change would report keys stuck down forever - the same reason
-    // the Windows backend resets on WM_KILLFOCUS.
+    // The matching key-ups go to whoever took focus, so a state kept across
+    // the change would report keys stuck down forever.
     pressedCodes.clear();
 
     setKeyboardFocus(nullptr);
@@ -1002,9 +945,7 @@ void WaylandInput::modifiersChanged(uint32_t depressed,
     if (xkbState != nullptr)
         xkb_state_update_mask(xkbState, depressed, latched, locked, 0, 0, group);
 
-    // The bare state follows the layout group and nothing else, so
-    // charactersIgnoringModifiers is what the key types on this layout with
-    // neither shift nor a dead key applied.
+    // The plain state follows the layout group and nothing else.
     if (xkbPlainState != nullptr)
         xkb_state_update_mask(xkbPlainState, 0, 0, 0, 0, 0, group);
 }
@@ -1065,13 +1006,10 @@ void WaylandInput::startRepeat(uint32_t code)
 
 void WaylandInput::stopRepeat()
 {
-    // Bumped rather than only cleared, so a callAfter already scheduled for the
-    // key that has just come up finds a generation it does not recognise.
+    // Bumped, so a stale callAfter finds a generation it does not recognise.
     ++repeatGeneration;
     repeatState.reset();
 }
-
-// --- polled state --------------------------------------------------------------
 
 bool WaylandInput::isKeyPressed(uint32_t evdevCode) const
 {
@@ -1094,9 +1032,7 @@ ModifierKeys WaylandInput::getModifiers() const
                > 0;
     };
 
-    // The Super/Logo key stands in for Command, as it does everywhere a
-    // platform has no Command of its own - the Windows backend maps it to the
-    // Windows key for the same reason.
+    // Super/Logo stands in for Command, as the Windows key does on Windows.
     return {active(XKB_MOD_NAME_SHIFT),
             active(XKB_MOD_NAME_CTRL),
             active(XKB_MOD_NAME_ALT),

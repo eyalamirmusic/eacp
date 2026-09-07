@@ -93,11 +93,8 @@ void drainPending(LoopState& loop)
         cb();
 }
 
-// Runs every source's prepare callback, before the poll set is built rather
-// than after, so a prepare that registers or drops a source is reflected in
-// the very wait it precedes. Copied out from under the lock for the same
-// reason dispatchReadySources does it: a prepare may touch the source list,
-// including its own entry.
+// Callbacks are copied out from under the lock throughout: one is allowed to
+// add or remove sources, including its own entry.
 void runSourcePrepares(LoopState& loop)
 {
     auto prepares = Vector<Callback> {};
@@ -114,9 +111,6 @@ void runSourcePrepares(LoopState& loop)
         prepare();
 }
 
-// The waker first, then every registered source. Rebuilt before each wait
-// rather than cached, because a source callback is allowed to add or remove
-// sources — including its own — while the set is being dispatched.
 Vector<pollfd> buildPollSet(LoopState& loop)
 {
     auto fds = Vector<pollfd> {};
@@ -130,10 +124,7 @@ Vector<pollfd> buildPollSet(LoopState& loop)
     return fds;
 }
 
-// Runs the callback of every source poll() reported on, looking each one up by
-// descriptor so a source removed by an earlier callback in the same round is
-// simply not found. The callback is copied out before the lock is released, so
-// a source that removes itself is still alive for the duration of the call.
+// By descriptor, so a source removed earlier in the round is not found.
 void dispatchReadySources(LoopState& loop, const Vector<pollfd>& fds)
 {
     for (auto i = 1; i < fds.size(); ++i)
@@ -265,8 +256,7 @@ void addLoopSource(int fd, short events, Callback callback, Callback prepare)
             LoopSource {fd, events, std::move(callback), std::move(prepare)});
     }
 
-    // The pump may already be blocked in poll() over a set this descriptor is
-    // not in yet, so nothing else would make it rebuild.
+    // The pump may be blocked in poll() over a set without this descriptor.
     loop.waker.wake();
 }
 

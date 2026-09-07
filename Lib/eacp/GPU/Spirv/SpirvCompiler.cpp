@@ -12,8 +12,8 @@ namespace
 {
 constexpr auto glslVersion = 450;
 
-// glslang's "input semantics version", not a GLSL version: 100 is what every
-// Vulkan client uses and the only value the GLSL front end recognises.
+// glslang's "input semantics version", not a GLSL version: 100 is the only
+// value its GLSL front end recognises.
 constexpr auto inputSemanticsVersion = 100;
 
 EShLanguage toLanguage(Stage stage)
@@ -31,9 +31,7 @@ EShLanguage toLanguage(Stage stage)
     return EShLangVertex;
 }
 
-// A preamble is a separate string glslang processes before the source without
-// letting it invalidate the source's `#version` line, so the stage macro can be
-// injected without editing the text or shifting the reported line numbers.
+// A preamble is processed before the source without shifting its line numbers.
 const char* stagePreamble(Stage stage)
 {
     switch (stage)
@@ -65,9 +63,8 @@ void appendTo(std::string& log, const char* text)
         log += '\n';
 }
 
-// Once per process and never finalized: FinalizeProcess frees the built-in
-// symbol tables every later compile would rebuild, and any thread still inside
-// glslang when it runs is reading freed memory.
+// Never finalized: FinalizeProcess frees the symbol tables under any thread
+// still inside glslang.
 void initializeGlslang()
 {
     static auto once = std::once_flag {};

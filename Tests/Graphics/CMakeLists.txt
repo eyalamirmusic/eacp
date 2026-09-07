@@ -17,10 +17,6 @@
 # the Win32 calls it supports cannot be tested from a Mac, but they are a thin
 # shell around this, and the ordering agreement between the two walks is where
 # the real risk is.
-#
-# The rounded-rect radius contract (RoundedRectTests): a corner bigger than the
-# rect it rounds is out of contract for every path builder, so the radius is
-# fitted before it leaves eacp.
 set(graphics_test_sources
         ColorTests.cpp
         CursorTests.cpp
@@ -37,34 +33,16 @@ set(graphics_test_sources
         ViewWindowTests.cpp
         WindowTests.cpp)
 
-# The two that need something the Linux build deliberately does not have, which
-# is exactly what EACP_HAS_CONTEXT names. ImageTests round-trips PNG and JPEG
-# through the platform codec, which is ImageIO or WIC and has no Linux
-# counterpart; RenderToImageTests reads back pixels a 2D Context painted.
-# Listed rather than left to self-skip: a suite that skips every case reports as
-# a pass, which is exactly the silent green the plan warns about.
-#
-# RoundedRectTests used to be here too. It only needs clampedCornerRadius and a
-# Path to build the shape into, and Path-Linux.cpp gives it both, so it runs
-# everywhere now.
+# The two that need a platform image codec or a 2D Context. Listed rather than
+# left to self-skip: a suite that skips every case still reports as a pass.
 if (EACP_HAS_CONTEXT)
     list(APPEND graphics_test_sources
             ImageTests.cpp
             RenderToImageTests.cpp)
 endif ()
 
-# What a Path holds on Linux, which is the only place it is a record of
-# commands rather than a CGPath or an ID2D1PathGeometry. The portable half is
-# RoundedRectTests above; this pins the points the builders actually emit,
-# because getHandle() is a promise to a tessellator that has not been written
-# yet and nothing else would notice a curve going the wrong way round.
-#
-# KeyCodeTests-Linux is beside it for the same reason, over the other Linux
-# table with no portable half: the framework's KeyCodes against the kernel's
-# evdev numbering. It earns a file of its own because the seat that feeds that
-# table does not exist on a headless compositor, so WaylandWindowTests below
-# cannot reach a line of the input translation - and a transposed evdev number
-# gives a key that works perfectly while reporting itself as a different one.
+# The two Linux tables with no portable half: the commands a Path records, and
+# the framework's KeyCodes against the kernel's evdev numbering.
 if (LINUX)
     list(APPEND graphics_test_sources
             KeyCodeTests-Linux.cpp
@@ -110,17 +88,8 @@ if (APPLE AND NOT IOS)
     target_link_libraries(GraphicsTests PRIVATE "-framework AppKit")
 endif ()
 
-# A binary of its own, because it is the one that must NOT be headless.
-# GraphicsTests forces Apps::getAppEnvironment().headless before nano::run, and
-# rightly: the model it covers is portable and a window on screen adds nothing
-# to it. This one covers only what a compositor does, so it carries a main that
-# leaves headless alone, every case self-skips when no compositor answers, and
-# EACP_REQUIRE_DISPLAY=1 turns that skip into a failure.
-#
-# It links eacp-wayland directly, which nothing above eacp-graphics otherwise
-# does: one case stands in for the swapchain by attaching a wl_shm buffer to a
-# view's subsurface and committing it, which is the only way to make a frame
-# callback arrive.
+# A binary of its own because this one must NOT be headless, unlike
+# GraphicsTests. It attaches a wl_shm buffer to a subsurface, hence eacp-wayland.
 if (LINUX)
     nano_add_executable(WaylandWindowTests
             NO_MAIN

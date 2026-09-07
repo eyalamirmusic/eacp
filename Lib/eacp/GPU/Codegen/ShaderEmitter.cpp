@@ -9,12 +9,8 @@
 #include <cassert>
 #include <cstdio>
 
-// The single source-of-truth walker. The three dialects differ in the binding
-// syntax and the stage scaffolding captured by the helpers below; most of the
-// expression printer is shared, because MSL and HLSL spell vector constructors,
-// swizzles, operators and the float2/3/4 type names identically and GLSL differs
-// from them in a countable list - its type vocabulary, the componentwise
-// comparisons, the sample calls and the modulus - each of which has one arm here.
+// The single source-of-truth walker. MSL and HLSL spell most of an expression
+// identically; GLSL differs in a countable list, each with one arm here.
 
 namespace eacp::GPU
 {
@@ -27,8 +23,6 @@ enum class Backend
     Vulkan
 };
 
-// The dialect's spelling of a value type. MSL and HLSL share one vocabulary,
-// which is the canonical one the graph records; GLSL has its own.
 const char* typeName(Backend backend, ValueType type)
 {
     return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
@@ -48,21 +42,13 @@ std::string floatLiteral(float value)
     return text;
 }
 
-// Whether a varying of this type crosses the interface as-is rather than
-// interpolated. There is nothing to interpolate between two integers, and none
-// of the three dialects picks for you: GLSL rejects a non-flat integer stage
-// input outright, HLSL wants nointerpolation and MSL wants [[flat]]. A float
-// varying takes none of the three and prints exactly as it always has.
+// GLSL rejects a non-flat integer stage input outright, HLSL wants
+// nointerpolation and MSL [[flat]]; a float varying takes none of the three.
 bool isFlatVarying(ValueType type)
 {
     return isSignedInteger(type) || type == ValueType::UInt;
 }
 
-// The three semantics below belong to the two dialects that pass a stage's I/O
-// through a struct. GLSL declares each attribute and each varying as its own
-// global behind a layout(location = N) qualifier, and writes the position to
-// gl_Position, so there is no suffix to hang on a member - see locationLayout
-// and the stage scaffolding in emit().
 std::string attributeSemantic(Backend backend, int index)
 {
     if (backend == Backend::Vulkan)
@@ -74,9 +60,8 @@ std::string attributeSemantic(Backend backend, int index)
     return " : TEXCOORD" + std::to_string(index);
 }
 
-// Metal is the one of the three that hangs the flat qualifier off the member
-// rather than putting it in front of the type, so it rides here beside the
-// semantic; the other two go through flatQualifier below.
+// Metal hangs the flat qualifier off the member rather than putting it in front
+// of the type, so it rides here beside the semantic.
 std::string varyingSemantic(Backend backend, int index, ValueType type)
 {
     if (backend == Backend::Metal)
@@ -99,7 +84,6 @@ std::string positionSemantic(Backend backend)
     return " : SV_Position";
 }
 
-// The other two dialects' spelling of the same thing, in front of the type.
 std::string flatQualifier(Backend backend, ValueType type)
 {
     if (backend == Backend::Metal || !isFlatVarying(type))
@@ -108,21 +92,15 @@ std::string flatQualifier(Backend backend, ValueType type)
     return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
 }
 
-// The one qualifier every GLSL stage input and output carries. Attribute i and
-// varying i take location i, which is what the Vulkan vertex-input state and
-// the vertex/fragment interface match on.
+// Attribute i and varying i take location i, which is what the Vulkan
+// vertex-input state and the vertex/fragment interface match on.
 std::string locationLayout(int index)
 {
     return "layout(location = " + std::to_string(index) + ") ";
 }
 
-// How a stage names one piece of the I/O it is given. MSL and HLSL pass a
-// struct, so both are members of the parameter every stage calls `input`; GLSL
-// has no struct - `input` and `output` are reserved words there and could not
-// have named one anyway - and reads each out of a global. The globals are
-// spelled attrN and varyN rather than aN and vN: those two are already taken
-// there by a constant array and by a mutable local, which on the other two are
-// told apart by the `input.` in front.
+// GLSL reads a stage's I/O out of globals, spelled attrN and varyN because aN
+// and vN are taken there by a constant array and a mutable local.
 std::string attributeName(Backend backend, int slot)
 {
     if (backend == Backend::Vulkan)
@@ -139,8 +117,7 @@ std::string varyingName(Backend backend, int index)
     return "input.v" + std::to_string(index);
 }
 
-// Call nodes carry the canonical (MSL) builtin name; the few each other dialect
-// spells differently are translated here.
+// Call nodes carry the canonical (MSL) builtin name; renamed here per dialect.
 std::string callName(Backend backend, const std::string& name)
 {
     if (backend == Backend::DirectX)
@@ -166,9 +143,8 @@ std::string callName(Backend backend, const std::string& name)
 
     if (backend == Backend::Vulkan)
     {
-        // A constructor-style cast is recorded as a call under the target's own
-        // canonical type name (detail::convertTo), so float2(v) arrives here as
-        // a call and leaves as vec2(v).
+        // A constructor-style cast is recorded as a call under the target's
+        // canonical type name, so float2(v) leaves as vec2(v).
         if (const auto* spelling = glslTypeNameFor(name))
             return spelling;
 
@@ -190,8 +166,7 @@ std::string callName(Backend backend, const std::string& name)
         if (name == "as_type<float>")
             return "uintBitsToFloat";
 
-        // GLSL has log and log2 and no log10; the helper table carries the
-        // definition, under the name the graph records.
+        // GLSL has no log10; the helper table carries the definition.
         if (name == "log10")
             return "eacpLog10";
     }
@@ -199,22 +174,8 @@ std::string callName(Backend backend, const std::string& name)
     return name;
 }
 
-// The genType builtins: the ones GLSL declares over float/vec2/vec3/vec4 and
-// overloads per width. A scalar written beside a vector is accepted there only
-// in a few trailing positions - min(vec2, float) compiles, min(float, vec2) does
-// not, and pow takes no mixed form at all - while MSL converts the scalar and
-// HLSL promotes it wherever it stands. The EDSL sides with those two:
-// ShapedBeside takes a Float or a literal in every argument position of exactly
-// these eight. So this arm broadcasts rather than refuses, writing every scalar
-// argument of a mixed call through the call's own vector constructor, which is
-// one rule for every position instead of a table of the positions GLSL allows.
-//
-// Only float shapes ever reach a mixed call: ShaderScalarLike is Float alone,
-// and the integer min/max overloads take two operands of one type. So
-// max(int, vec2) - which GLSL rejects for the other reason, genIType and genType
-// being separate families with no promotion between them - is already a C++
-// compile error in the EDSL, and there is nothing here to convert between
-// families.
+// The builtins GLSL overloads per width: it takes a scalar beside a vector only
+// in a few trailing positions, where MSL converts and HLSL promotes it.
 bool isGenTypeCall(const std::string& name)
 {
     return name == "min" || name == "max" || name == "clamp" || name == "mix"
@@ -222,11 +183,8 @@ bool isGenTypeCall(const std::string& name)
            || name == "atan2";
 }
 
-// GLSL reserves the relational and equality operators for scalars: `a < b` on
-// two vectors is a compile error there, not the componentwise mask MSL and HLSL
-// give back. The mask is a function instead, and this is its name - asked only
-// where the comparison's result is a boolean *vector*, since a scalar
-// comparison spells the same way in all three.
+// GLSL reserves the relational and equality operators for scalars, so a
+// componentwise mask is a function there. Asked only for a boolean vector.
 const char* glslComparison(const std::string& op)
 {
     if (op == "<")
@@ -264,13 +222,9 @@ const char* glslComparison(const std::string& op)
 // on another would compile only when the graph happened to call both.
 struct ShaderHelper
 {
-    // The call the graph records, which is what the usage scan matches and,
-    // for a helper the other two dialects have natively, the builtin's name.
     const char* name;
 
-    // A null body means the dialect has the function natively and nothing is
-    // emitted for it there - the call goes out as the builtin, renamed by
-    // callName where the spelling differs.
+    // Null where the dialect has the function natively and emits nothing for it.
     const char* metal;
     const char* directX;
     const char* glsl;
@@ -347,10 +301,6 @@ constexpr auto erfcHelper =
     "eacpErfc(x.w));\n"
     "}\n\n";
 
-// The same polynomial in GLSL's vocabulary. Only the type names differ - vec2
-// for float2 and so on - and the scalar conditional, abs, exp and the Horner
-// chain spell identically, so this is the MSL/HLSL text with the widths
-// renamed and nothing else.
 constexpr auto erfHelperGlsl =
     "float eacpErf(float x)\n"
     "{\n"
@@ -396,9 +346,7 @@ constexpr auto erfcHelperGlsl =
     "eacpErfc(x.w));\n"
     "}\n\n";
 
-// log10 for the one dialect without it: log2 scaled by log10(2), which is
-// exact to float precision and is what a driver's own log10 lowers to. An
-// overload per width for the same reason erf has them.
+// log2 scaled by log10(2), which is what a driver's own log10 lowers to.
 constexpr auto log10HelperGlsl = "float eacpLog10(float x)\n"
                                  "{\n"
                                  "    return log2(x) * 0.30102999566;\n"
@@ -433,10 +381,8 @@ const auto shaderHelpers = Array<ShaderHelper, 6> {
     ShaderHelper {"eacpErf", erfHelper, erfHelper, erfHelperGlsl},
     ShaderHelper {"eacpErfc", erfcHelper, erfcHelper, erfcHelperGlsl},
     // One half chosen by a parity rather than both unpacked and one dropped:
-    // shifting the wanted half down is a single instruction in every language,
-    // and none has to look at the other one. as_type<half2>, f16tof32 and
-    // unpackHalf2x16 all read the low sixteen bits, so the shift is all that
-    // differs between the two halves.
+    // shifting the wanted half down is a single instruction in every language.
+    // as_type<half2>, f16tof32 and unpackHalf2x16 all read the low sixteen bits.
     ShaderHelper {"eacpReadHalf",
                   "inline float eacpReadHalf(uint bits, uint parity)\n"
                   "{\n"
@@ -456,10 +402,7 @@ const auto shaderHelpers = Array<ShaderHelper, 6> {
     // again as a clarification that it holds on all hardware supporting the
     // instruction.
     //
-    // The three are not bit-identical for a value fp16 cannot hold - see
-    // packHalf2 for which way each rounds; GLSL's packHalf2x16 leaves the
-    // rounding to the implementation - and no spelling here can fix that, the
-    // rounding being the instruction's rather than the expression's.
+    // Not bit-identical across the three for a value fp16 cannot hold.
     ShaderHelper {"eacpPackHalf2",
                   "inline uint eacpPackHalf2(float2 values)\n"
                   "{\n"
@@ -474,10 +417,6 @@ const auto shaderHelpers = Array<ShaderHelper, 6> {
                   "    return packHalf2x16(values);\n"
                   "}\n\n"},
 
-    // Native in MSL and HLSL and absent from GLSL, which has log and log2 and
-    // nothing in base ten. Keyed by the call the graph records, so the scan
-    // below finds it; on the two dialects with no body it is emitted as the
-    // builtin, and on GLSL callName renames the call to the helper.
     ShaderHelper {"log10", nullptr, nullptr, log10HelperGlsl}};
 
 const char* helperDefinition(const ShaderHelper& helper, Backend backend)
@@ -536,10 +475,8 @@ std::string hlslSamplerName(const TextureSampling& sampling)
 // what children and outputs go through, so shared subtrees collapse to a name.
 struct ExprPrinter
 {
-    // Which varying carries vertex attribute `slot` into this stage, -1 when
-    // the stage reads the attribute itself. Empty outside the fragment stage,
-    // where an attribute is exactly what it says it is - see
-    // PromotedAttributes.
+    // -1 when the stage reads the attribute itself; empty outside the fragment
+    // stage.
     int carryingVarying(int slot) const
     {
         return slot < attributeVaryings.size() ? attributeVaryings[slot] : -1;
@@ -553,10 +490,7 @@ struct ExprPrinter
         return print(node);
     }
 
-    // The type a mixed genType call broadcasts its scalar arguments through -
-    // see isGenTypeCall. Float, whose width is one, whenever nothing is to be
-    // broadcast: another dialect, another builtin, or arguments that already
-    // agree.
+    // Float, whose width is one, when nothing is to be broadcast.
     ValueType broadcastType(const Expr& call) const
     {
         if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
@@ -575,8 +509,6 @@ struct ExprPrinter
         return widest;
     }
 
-    // One argument of such a call, written through that constructor when it is
-    // the scalar of the pair.
     std::string widened(int node, ValueType wide) const
     {
         auto argument = ref(node);
@@ -593,11 +525,8 @@ struct ExprPrinter
 
         switch (expr.kind)
         {
-            // A stage's I/O, spelled by the two helpers above. The one thing
-            // the printer decides here is which of them an attribute read
-            // becomes: only the vertex stage is handed the attributes, so a
-            // fragment-stage read of one is a read of the varying carrying it
-            // across.
+            // Only the vertex stage is handed the attributes, so a
+            // fragment-stage read of one reads the varying carrying it across.
             case ExprKind::Input:
             {
                 auto carrier = carryingVarying(expr.index);
@@ -643,11 +572,8 @@ struct ExprPrinter
 
                 text += ")";
 
-                // float2x2/float3x3/float4x4(c0..) pass the columns. MSL and
-                // GLSL both fill a matrix from columns, but HLSL fills it from
-                // rows, so the same call yields the transpose there;
-                // transpose() restores the column-major value, so the mul()
-                // paths stay identical across all three.
+                // MSL and GLSL fill a matrix from columns, HLSL from rows, so
+                // transpose() is what restores the column-major value there.
                 if (backend == Backend::DirectX && isMatrix(expr.type))
                     return "transpose(" + text + ")";
 
@@ -674,9 +600,8 @@ struct ExprPrinter
             }
 
             case ExprKind::Unary:
-                // GLSL gives ! to a scalar bool only; the componentwise negation
-                // of a mask is not(), which is the same thing the comparisons
-                // below run into.
+                // GLSL gives ! to a scalar bool only; the componentwise
+                // negation of a mask is not().
                 if (backend == Backend::Vulkan && expr.op == '!'
                     && componentCount(expr.type) > 1)
                     return "not(" + ref(expr.args[0]) + ")";
@@ -695,18 +620,8 @@ struct ExprPrinter
                 auto left = ref(expr.args[0]);
                 auto right = ref(expr.args[1]);
 
-                // % on a negative operand is undefined in GLSL, where MSL and
-                // HLSL both truncate towards zero. Integer division is defined
-                // there and does truncate, so the truncating remainder is
-                // written out - one expression, the same value all three
-                // dialects then hold. An unsigned modulus keeps the operator:
-                // there is no negative operand for it to be undefined on.
-                //
-                // The dividend is printed twice, which is what naming it would
-                // have avoided - the local planner counts uses before anything
-                // is printed, so there is no name to reach for here. It is the
-                // same duplication any inlined single-use subtree already gets,
-                // and glslang folds it back into one value.
+                // GLSL leaves % undefined on a negative operand, so the
+                // truncating remainder is written out of the division.
                 if (backend == Backend::Vulkan && op == "%"
                     && isSignedInteger(expr.type))
                     return "(" + left + " - ((" + left + " / " + right + ") * "
@@ -717,9 +632,7 @@ struct ExprPrinter
 
             case ExprKind::Compare:
             {
-                // A comparison whose result is a mask rather than a condition is
-                // the operator in two of the three dialects and a function in
-                // GLSL, which reserves the operator for scalars.
+                // A mask is the operator in two dialects, a function in GLSL.
                 if (backend == Backend::Vulkan && componentCount(expr.type) > 1)
                     if (const auto* name = glslComparison(expr.text))
                         return std::string(name) + "(" + ref(expr.args[0]) + ", "
@@ -740,11 +653,8 @@ struct ExprPrinter
 
             case ExprKind::Mul:
             {
-                // A matrix product, in the order it was written. MSL and GLSL
-                // spell it with the * operator; HLSL multiplies a matrix by
-                // anything with mul(). All three read a vector on the left of
-                // one as a row and one on the right as a column, so the order is
-                // the whole of what tells the three products apart.
+                // MSL and GLSL spell a matrix product with *; HLSL uses mul().
+                // All three read a vector on the left of one as a row.
                 auto left = ref(expr.args[0]);
                 auto right = ref(expr.args[1]);
 
@@ -775,14 +685,8 @@ struct ExprPrinter
                         : hlslSamplerName(graph.textureSampling(expr.index));
                 auto uv = ref(expr.args[0]);
 
-                // GLSL binds a combined image sampler, so the texture is the
-                // whole of what a sample names, and the call is a free function
-                // rather than a method. It is also the one dialect where a
-                // depth slot changes the *call*: a sampler2D over a depth image
-                // hands back a four-vector whose first channel is the value, so
-                // the .r is what makes it the one float the node's type says it
-                // is - the invariant the comment above metalTextureType states
-                // for the other two.
+                // GLSL's sampler2D over a depth image hands back four
+                // channels, so the .r is the one float the node's type says.
                 if (backend == Backend::Vulkan)
                 {
                     auto call = expr.args.size() < 2
@@ -1265,15 +1169,11 @@ struct StageEmitter
     }
 
     // The constant arrays a stage subscripts, declared at the top of its
-    // function. What it needs is to run before any name has been handed out,
-    // which is why it is the first thing a stage emits. That is also why an
-    // element may read a uniform or a varying but not a mutable local: no local
-    // has been declared yet at that point.
+    // function, before any name has been handed out - so an element may read a
+    // uniform or a varying but not a mutable local.
     //
-    // And it is why the GLSL form drops the const: an element read from a
-    // uniform is not a constant expression, which is the only thing GLSL lets
-    // one initialise a const with. The array is a plain local there instead -
-    // nothing assigns to it, so it holds the same values either way.
+    // The GLSL form drops the const: an element read from a uniform is not a
+    // constant expression, which is all GLSL lets one initialise a const with.
     //
     // Emitted in slot order, so an array whose elements read another one finds
     // it already there.
@@ -1446,8 +1346,7 @@ struct StageEmitter
                     break;
                 }
 
-                // GLSL's atomicAdd returns the old value, like MSL's, so the
-                // statement shape prints as it stands.
+                // GLSL's atomicAdd returns the old value, like MSL's.
                 if (printer.backend == Backend::Vulkan)
                 {
                     source += indent + "uint " + name + " = atomicAdd(" + element
@@ -1476,9 +1375,8 @@ struct StageEmitter
             // anything computed from shared memory - are given up by the
             // dropStale below, the same pass an assignment retires its
             // variable's readers through.
-            // GLSL is the one dialect that says it in two calls rather than
-            // one: the memory barrier publishes what was written to the tile,
-            // the execution barrier is where the group meets.
+            // GLSL says it in two calls: the memory barrier publishes what
+            // was written, the execution barrier is where the group meets.
             case StatementKind::Barrier:
                 if (printer.backend == Backend::Vulkan)
                 {
@@ -1494,9 +1392,8 @@ struct StageEmitter
                            : "GroupMemoryBarrierWithGroupSync();\n");
                 break;
 
-            // Where all three spell a write differently: MSL takes the colour
-            // first and the coordinate second, HLSL subscripts the texture like
-            // an array, and GLSL calls imageStore with a *signed* coordinate.
+            // GLSL's imageStore takes a *signed* coordinate; MSL takes the
+            // colour first, HLSL subscripts the texture like an array.
             case StatementKind::TextureStore:
             {
                 source = define({statement.index, statement.indexY, statement.value},
@@ -1758,10 +1655,8 @@ Vector<int> fragmentStageRoots(const ShaderGraph& graph)
     return roots;
 }
 
-// The Input nodes a run of fragment-stage expressions reaches, marked by node
-// id. A Varying is the stage boundary exactly as it is for the uniform walk
-// above; an array element is followed because the array is declared inside the
-// stage that subscripts it, so what an element reads the stage reads.
+// A Varying is the stage boundary; an array element is followed, the array
+// being declared inside the stage that subscripts it.
 void collectAttributeReads(const ShaderGraph& graph,
                            int node,
                            Vector<char>& reached,
@@ -1786,9 +1681,7 @@ void collectAttributeReads(const ShaderGraph& graph,
         collectAttributeReads(graph, argument, reached, seen);
 }
 
-// Which declared varying already carries the value of `source`, -1 when none
-// does. A shader that wrote the varying itself gets that one rather than a
-// second copy of the same attribute beside it.
+// -1 when no declared varying carries `source`.
 int varyingCarrying(const ShaderGraph& graph, int source)
 {
     for (auto i = 0; i < graph.varyings().size(); ++i)
@@ -1798,19 +1691,8 @@ int varyingCarrying(const ShaderGraph& graph, int source)
     return -1;
 }
 
-// The vertex attributes the fragment stage reads. Only the vertex stage is
-// given them: MSL and HLSL hand the fragment stage a VertexOut, which has no
-// attribute members at all, and the GLSL fragment block declares nothing the
-// vertex block did not write. So an attribute read there names an identifier
-// the stage does not have, in all three dialects, and every such read is
-// promoted here - the vertex stage writes the attribute into a varying, the
-// fragment stage reads it back, which is what the shader would have said had it
-// declared the varying itself.
-//
-// varyingOf is what the fragment printer looks a read up in. carried is the
-// attribute each *implicit* varying takes, appended after the graph's own so no
-// declared location moves. A shader that promotes nothing leaves both empty and
-// every dialect prints exactly what it printed before.
+// A fragment-stage read of a vertex attribute names an identifier no dialect
+// gives that stage, so each is promoted to a varying after the declared ones.
 struct PromotedAttributes
 {
     Vector<int> varyingOf; // attribute slot -> varying index, -1 = not read
@@ -1830,8 +1712,7 @@ PromotedAttributes promotedAttributes(const ShaderGraph& graph)
     for (auto root: fragmentStageRoots(graph))
         collectAttributeReads(graph, root, reached, seen);
 
-    // Ascending node order, so the implicit varyings come out in the order the
-    // attributes were declared however the fragment expression reached them.
+    // Ascending node order, so the implicit varyings follow declaration order.
     for (auto node = 0; node < graph.nodeCount(); ++node)
     {
         if (reached[node] == 0)
@@ -1852,10 +1733,6 @@ PromotedAttributes promotedAttributes(const ShaderGraph& graph)
     return promoted;
 }
 
-// The vertex-to-fragment interface as both stages declare it: the varyings the
-// graph holds, then one per promoted attribute. A declared varying is written
-// from its source expression; a promoted one straight from the attribute, which
-// is the whole of what promotion is.
 struct StageVarying
 {
     ValueType type = ValueType::Float;
@@ -1928,17 +1805,14 @@ std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
     return source;
 }
 
-// The Uniforms struct shared by both stages (the HLSL cbuffer wrapping it, the
-// GLSL interface block being it). The CPU block is packed with MSL struct
-// alignment (UniformLayout.h); HLSL cbuffer packing only forbids straddling a
-// 16-byte register, so a vector after a scalar would land lower than the CPU
-// wrote it, and std140 gives a vec3 twelve bytes rather than sixteen, so a
-// scalar after one would. Explicit pad scalars are emitted wherever a rule set
-// disagrees with the CPU's.
+// The Uniforms struct shared by both stages (and the HLSL cbuffer wrapping it).
+// The CPU block is packed with MSL struct alignment (UniformLayout.h); HLSL
+// cbuffer packing only forbids straddling a 16-byte register, so a vector after
+// a scalar would land lower than the CPU wrote it - explicit pad scalars are
+// emitted wherever the two rule sets disagree.
 //
-// binding is the GLSL descriptor binding the block takes and is read by that
-// arm alone: zero for a render shader, ComputePass::uniformBase for a kernel,
-// which is the Metal index for the same block.
+// std140 disagrees the other way: a vec3 is twelve bytes there, so a scalar
+// after one needs a pad too.
 std::string uniformBlock(Backend backend,
                          const Vector<ValueType>& types,
                          const Vector<std::string>& names,
@@ -1979,8 +1853,7 @@ std::string uniformBlock(Backend backend,
             "    " + std::string(typeName(backend, type)) + " " + names[i] + ";\n";
     }
 
-    // The block's instance name is what keeps the expression printer dialect
-    // agnostic: uniforms.uN reads the same in all three.
+    // The instance name is what keeps uniforms.uN the one spelling in all three.
     source += glsl ? "} uniforms;\n\n" : "};\n\n";
 
     if (backend == Backend::DirectX)
@@ -2024,10 +1897,7 @@ const char* hlslBufferType(BufferAccess access)
     return "StructuredBuffer<float>";
 }
 
-// GLSL puts the access on the block and the element type inside it, so the two
-// halves are answered separately. A storage block is read-write by default,
-// which is what an atomic or a written one wants; a read one says so, matching
-// the SRV the other backends give it.
+// A GLSL storage block is read-write by default; a read one says so.
 const char* glslBufferQualifier(BufferAccess access)
 {
     return access == BufferAccess::Read ? "readonly " : "";
@@ -2038,10 +1908,8 @@ const char* glslBufferElement(BufferAccess access)
     return access == BufferAccess::Atomic ? "uint" : "float";
 }
 
-// One storage block per slot, its instance name left off so the run of elements
-// is a global named buffer<slot> - which is what makes buffer0[i] print
-// byte-identically to the other two dialects. The block itself still needs a
-// name, and it is the only thing in the declaration that has no counterpart.
+// The instance name is left off so the run of elements is a global named
+// buffer<slot>, which prints byte-identically to the other two dialects.
 std::string glslBufferBlock(BufferAccess access, int slot, int binding)
 {
     auto index = std::to_string(slot);
@@ -2052,22 +1920,10 @@ std::string glslBufferBlock(BufferAccess access, int slot, int binding)
 }
 
 // What a sampled texture slot is declared as, which is the whole of what a cube
-// changes in the generated source. Every place a sampled texture is declared - a
-// Metal fragment parameter, a Metal kernel parameter, an HLSL render global, an
-// HLSL kernel global, a GLSL binding - goes through these, so no two of them can
-// end up disagreeing about which slots are cubes.
+// changes: every declaration goes through these, so no two can disagree.
 //
-// The sample expression is *almost* not one of them. `.sample(s, uv)` on Metal
-// and `.Sample(s, uv)` on HLSL read all three kinds, the coordinate's own width
-// choosing between the first two, so on those two ExprKind::Sample never asks
-// what shape the texture is: what a depth slot changes there is not the call but
-// the type of what it returns - one float rather than four - and that is carried
-// on the node ShaderGraph::addDepthSample built.
-//
-// GLSL is where that stops holding. A sampler2D over a depth image hands back
-// four channels whatever the image is, so the call has to take the first one -
-// `texture(t, uv).r` - and ExprKind::Sample does ask there. That is the one
-// place the shape of a slot is read outside these helpers.
+// GLSL is the exception: its sampler2D over a depth image returns four
+// channels, so ExprKind::Sample takes the .r there.
 const char* metalTextureType(TextureKind kind)
 {
     switch (kind)
@@ -2098,21 +1954,15 @@ const char* hlslTextureType(TextureKind kind)
     }
 }
 
-// A combined image sampler, which is what makes GLSL the one dialect with no
-// separate sampler declaration at all: the pipeline layout gives every texture
-// binding an immutable sampler built from the slot's TextureSampling, so the
-// sampling configuration never reaches the source. A depth slot is a plain
-// sampler2D here rather than a type of its own - it is the sample that takes
-// the one channel out of it, not the declaration.
+// A combined image sampler: the pipeline layout supplies an immutable sampler
+// per binding, so the sampling configuration never reaches the source.
 const char* glslTextureType(TextureKind kind)
 {
     return kind == TextureKind::Cube ? "samplerCube" : "sampler2D";
 }
 
-// The written half. imageStore is the only thing a kernel does with one, so the
-// image needs no format layout qualifier - which is what keeps it agnostic of
-// the format the texture was actually created in, the way MSL's access::write
-// and HLSL's RWTexture2D<float4> are.
+// imageStore is all a kernel does with one, so the image needs no format layout
+// qualifier - which keeps it agnostic of the format it was created in.
 std::string glslWritableTexture(int slot, int binding)
 {
     return "layout(set = 0, binding = " + std::to_string(binding)
@@ -2160,16 +2010,15 @@ std::string hlslSamplerDeclarations(const ShaderGraph& graph)
 
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL and GLSL globals, and the work-item id arrives as a
-// builtin parameter on Metal, as SV_DispatchThreadID on D3D and as
-// gl_GlobalInvocationID on Vulkan. The block always ends with the implicit grid
-// extents the bounds guard reads - one count for a 1D kernel, a width and a
-// height for a 2D one - and the kernel opens with the guard the rounded-up
-// dispatch needs; ComputeProgram appends the matching CPU values.
+// parameters but HLSL globals, and the work-item id arrives as a builtin
+// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
+// with the implicit grid extents the bounds guard reads - one count for a 1D
+// kernel, a width and a height for a 2D one - and the kernel opens with the
+// guard the rounded-up dispatch needs; ComputeProgram appends the matching CPU
+// values.
 //
-// A kernel needs no stage macro: there is one entry point, so the GLSL source
-// is a single unguarded main() rather than the two #ifdef blocks a render
-// shader carries.
+// GLSL takes the HLSL shape, with gl_GlobalInvocationID for the id and no stage
+// macro: a kernel has one entry point, so its main() is unguarded.
 std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
@@ -2274,9 +2123,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     }
     else if (backend == Backend::Vulkan)
     {
-        // One descriptor set carries the lot, at the Metal indices: buffers from
-        // zero, textures above every buffer slot, the uniform block above both.
-        // See ShaderBindings.h.
+        // One descriptor set carries the lot, at the Metal indices.
         for (auto i = 0; i < buffers.size(); ++i)
             source += glslBufferBlock(buffers[i], i, vulkanComputeBufferBinding(i));
 
@@ -2295,7 +2142,6 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.textureCount() > 0)
             source += "\n";
 
-        // Threadgroup arrays are globals here, as on HLSL.
         for (auto i = 0; i < graph.sharedArrays().size(); ++i)
         {
             const auto& shared = graph.sharedArrays()[i];
@@ -2318,8 +2164,6 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         source += "void main()\n{\n";
 
-        // The three ids are read out of their builtins into the same names the
-        // other two dialects give them, so the body below is one text.
         source += is2D ? "    uvec2 gid = gl_GlobalInvocationID.xy;\n"
                        : "    uint gid = gl_GlobalInvocationID.x;\n";
 
@@ -2448,9 +2292,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     auto source = std::string {};
     auto glsl = backend == Backend::Vulkan;
 
-    // What the two stages pass between them, which is not quite what the graph
-    // recorded: an attribute the fragment stage read gets a varying whether the
-    // shader asked for one or not. See PromotedAttributes.
     auto promoted = promotedAttributes(graph);
     auto varyings = stageVaryings(graph, promoted);
 
@@ -2462,9 +2303,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     source += helperDefinitions(graph, backend);
 
-    // The two dialects that hand a stage its I/O as a struct declare the pair
-    // here. GLSL declares each attribute and each varying on its own, inside the
-    // stage that has it, which is what the #ifdef blocks below are for.
     if (!glsl)
     {
         source += "struct VertexIn\n{\n";
@@ -2488,10 +2326,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
     auto hasUniforms = !graph.uniforms().empty();
 
-    // One uniform block aggregates every uniform<>() call. All three dialects
-    // expose it as "uniforms.uN" (HLSL wraps the struct in a cbuffer, GLSL gives
-    // the interface block that instance name) so the expression printer stays
-    // dialect-agnostic.
     if (hasUniforms)
     {
         auto names = Vector<std::string> {};
@@ -2502,11 +2336,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         source += uniformBlock(backend, graph.uniforms(), names);
     }
 
-    // Textures and storage buffers are globals on both of the dialects that have
-    // them; on Metal they are fragment function parameters added to the
-    // signature below. GLSL's are combined image samplers - the sampler an
-    // immutable one in the pipeline layout, built from the slot's
-    // TextureSampling - so unlike HLSL it declares nothing beside them.
     if (glsl)
     {
         for (auto i = 0; i < graph.textureCount(); ++i)
@@ -2516,8 +2345,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         if (graph.textureCount() > 0)
             source += "\n";
 
-        // Read-only whatever the slot recorded, as on the other two: a render
-        // stage has no writable buffer, writing being the compute path's job.
+        // Read-only whatever the slot recorded: a render stage never writes.
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
             source += glslBufferBlock(BufferAccess::Read, i, vulkanBufferBinding(i));
 
@@ -2577,11 +2405,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     }
     else if (glsl)
     {
-        // Everything stage-specific sits behind the macro the compiler defines
-        // for the stage it is building: the attributes, the varyings this stage
-        // writes, and main() itself. Attribute i takes location i and varying i
-        // takes location i, which is the same number the fragment block below
-        // declares its matching input at.
         source += "#ifdef EACP_VERTEX\n";
 
         for (auto i = 0; i < graph.inputs().size(); ++i)
@@ -2609,8 +2432,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     source += vertexStage.declareArrays(vertexRoots, "    ");
     source += vertexStage.defineFor(vertexRoots, "    ");
 
-    // What the vertex stage writes into a varying: the expression the shader
-    // gave it, or - for a promoted one - the attribute itself.
     auto varyingValue = [&](const StageVarying& varying)
     {
         if (varying.sourceNode >= 0)
@@ -2619,11 +2440,8 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         return attributeName(backend, varying.attribute);
     };
 
-    // GLSL writes the clip position to gl_Position and each varying to the
-    // global it declared; `output` is a reserved word there and there is no
-    // struct to fill anyway. Clip y is left exactly as the graph computed it:
-    // Vulkan's flipped NDC is a negative viewport height in RenderPass, not a
-    // negation here, which would reverse the winding along with it.
+    // Clip y is left as the graph computed it: Vulkan's flipped NDC is a negative
+    // viewport height in RenderPass, not a negation here, which flips winding.
     if (glsl)
     {
         source +=
@@ -2681,9 +2499,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     }
     else if (glsl)
     {
-        // The fragment half of the same contract: the varyings come back in at
-        // the locations the vertex block wrote them, and the colour is a
-        // declared output rather than the function's return.
         source += "#ifdef EACP_FRAGMENT\n";
 
         for (auto i = 0; i < varyings.size(); ++i)

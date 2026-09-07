@@ -14,41 +14,21 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-// The connection: opened once, pumped by eacp's own loop, and shared by every
-// window in the process.
-//
-// Two decisions are worth stating outright, because both are the opposite of
-// what a toolkit would do.
-//
-// The loop is ours. SDL, GLFW and GTK all want to own the pump, and eacp's
-// runEventLoopFor nesting - a modal drag, a resize, runEventLoopUntil in a test
-// - does not survive being handed to one. So the display's descriptor joins the
-// poll set the message loop already waits on (Threads::addLoopSource) and
-// nothing else changes: a Wayland event is dispatched from the same turn of the
-// same loop as a callAsync.
-//
-// And the read is the multi-threaded one, not wl_display_dispatch. Mesa's
-// Vulkan WSI dispatches this same wl_display on an event queue of its own from
-// inside vkAcquireNextImageKHR and vkQueuePresentKHR, so there are two readers
-// of one connection and the prepare_read / read_events protocol is the only
-// thing that makes that safe. wl_display_dispatch would race with the driver
-// for the socket and lose events into the wrong queue.
+// Reads through prepare_read / read_events, not wl_display_dispatch: Mesa's
+// Vulkan WSI is a second reader of this same wl_display.
 
 namespace eacp::Graphics
 {
 namespace
 {
-// The compositor interface versions the backend knows how to talk. Bound at
-// min(this, what the compositor offered), so a newer compositor is used at the
-// version this code was written against and an older one still binds.
+// Bound at min(this, what the compositor offered).
 constexpr uint32_t waylandCompositorVersion = 6;
 constexpr uint32_t waylandSeatVersion = 8;
 constexpr uint32_t waylandOutputVersion = 4;
 constexpr uint32_t waylandXdgShellVersion = 5;
 constexpr uint32_t waylandXdgOutputVersion = 3;
 
-// wl_output.mode reports millihertz, and a compositor that does not know its
-// own refresh rate reports zero.
+// wl_output.mode reports millihertz, and zero for an unknown rate.
 constexpr int waylandDefaultRefreshMilliHz = 60'000;
 
 template <typename T>
@@ -71,8 +51,7 @@ uint32_t waylandPremultipliedPixel(Color colour)
         return (uint32_t) scaled;
     };
 
-    // WL_SHM_FORMAT_ARGB8888 is premultiplied and little-endian, so the word is
-    // 0xAARRGGBB whichever way the struct is written.
+    // WL_SHM_FORMAT_ARGB8888 is premultiplied little-endian: 0xAARRGGBB.
     return (channel(colour.a) << 24) | (channel(colour.r * colour.a) << 16)
            | (channel(colour.g * colour.a) << 8) | channel(colour.b * colour.a);
 }
@@ -94,8 +73,6 @@ Point WaylandOutputInfo::logicalSize() const
     return {modeSize.x / divisor, modeSize.y / divisor};
 }
 
-// Every C callback the registry and the outputs need, in one struct so the
-// unity build sees one file-scope name rather than a dozen.
 struct WaylandRegistryDispatch
 {
     static WaylandDisplay& self(void* data)
@@ -204,8 +181,7 @@ struct WaylandRegistryDispatch
         }
     }
 
-    // wl_output.release exists from version 3; before that the proxy is simply
-    // destroyed and the server-side object is reaped when the client goes.
+    // wl_output.release exists only from version 3.
     static void releaseOutput(WaylandOutputInfo& info)
     {
         if (info.xdgOutput != nullptr)
@@ -220,10 +196,6 @@ struct WaylandRegistryDispatch
             wl_output_destroy(info.output);
     }
 
-    // A global going away is ordinary: a monitor unplugged, a seat removed.
-    // Only the outputs are tracked by name, the rest being either bound for
-    // the life of the process or, in the seat's case, dropped by the input
-    // code itself.
     static void globalRemove(void* data, wl_registry*, uint32_t name)
     {
         auto& display = self(data);
@@ -338,10 +310,7 @@ const xdg_wm_base_listener WaylandRegistryDispatch::shellListener {
     .ping = WaylandRegistryDispatch::ping,
 };
 
-// libdecor reports plugin failures through this. There is nothing to do about
-// one - a missing decoration plugin leaves the built-in fallback, which draws
-// no titlebar but still speaks xdg-shell - so it is logged and the window goes
-// up undecorated rather than not at all.
+// A plugin failure leaves libdecor's fallback: the window goes up undecorated.
 struct WaylandDecorationDispatch
 {
     static void error(libdecor*, enum libdecor_error, const char* message)
@@ -352,9 +321,7 @@ struct WaylandDecorationDispatch
     static libdecor_interface interface;
 };
 
-// Built by a lambda rather than by a designated initializer because the struct
-// carries ten reserved slots libdecor has never used; zeroing them and setting
-// the one real member says so without naming any of them.
+// Zero-initialised: the struct carries reserved slots libdecor never uses.
 libdecor_interface WaylandDecorationDispatch::interface = []
 {
     auto table = libdecor_interface {};
@@ -397,9 +364,6 @@ bool WaylandShmBuffer::create(wl_shm* shm, int w, int h, Color colour)
     const auto stride = w * 4;
     byteSize = (size_t) stride * (size_t) h;
 
-    // memfd rather than a file in XDG_RUNTIME_DIR: no path to collide on, no
-    // unlink to forget, and the seal-capable descriptor is what a compositor
-    // wants from an untrusted client anyway.
     auto fd = ::memfd_create("eacp-wayland", MFD_CLOEXEC | MFD_ALLOW_SEALING);
 
     if (fd < 0)
@@ -481,14 +445,10 @@ void WaylandDisplay::bindGlobals()
     wl_registry_add_listener(
         registry, &WaylandRegistryDispatch::registryListener, this);
 
-    // Two round trips, as every Wayland client does: the first delivers the
-    // registry's announcements, the second the events the objects bound during
-    // it have already sent (an output's geometry, a seat's capabilities).
+    // The second delivers what the objects bound during the first have sent.
     wl_display_roundtrip(display);
     wl_display_roundtrip(display);
 
-    // xdg_output is bound after the outputs, so it is a third pass rather than
-    // part of the loop above.
     if (xdgOutputManager != nullptr)
     {
         for (auto& info: outputs)
@@ -503,8 +463,7 @@ void WaylandDisplay::bindGlobals()
         wl_display_roundtrip(display);
     }
 
-    // Last, because libdecor binds globals of its own off the same registry and
-    // wants a connection whose first round trips are already done.
+    // Last: libdecor wants a connection whose first round trips are done.
     decorations = libdecor_new(display, &WaylandDecorationDispatch::interface);
 
     if (decorations == nullptr)
@@ -519,10 +478,8 @@ void WaylandDisplay::openLoopSource()
     Threads::addLoopSource(
         loopFd, POLLIN, [this] { readAndDispatch(); }, [this] { prepareForPoll(); });
 
-    // A libdecor plugin may hold a connection of its own (the GTK plugin does),
-    // and its descriptor then needs polling too. The built-in fallback shares
-    // ours, in which case registering it would replace the source above rather
-    // than add to it - hence the comparison.
+    // A libdecor plugin may hold a connection of its own; the built-in
+    // fallback shares ours, and re-registering that fd replaces the source.
     auto decorationsFd = decorations != nullptr ? libdecor_get_fd(decorations) : -1;
 
     if (decorationsFd >= 0 && decorationsFd != loopFd)
@@ -550,25 +507,15 @@ void WaylandDisplay::closeLoopSource()
     }
 }
 
-// Runs immediately before the pump blocks in poll(), which is the only place
-// either of these lines is any use.
-//
-// The dispatch is for events that are already in memory: another reader - the
-// Vulkan WSI - takes them off the socket and queues them, so the descriptor
-// falls silent while the default queue is full, and poll() would sleep through
-// a configure that had already arrived. The flush is the outbound half: a
-// request made from a callback this turn is still in libwayland's buffer, and
-// a loop that sleeps without sending it waits for a reply to something the
-// compositor never saw.
+// Only any use immediately before poll(): the dispatch drains what another
+// reader queued, the flush sends requests still in libwayland's buffer.
 void WaylandDisplay::prepareForPoll()
 {
     wl_display_dispatch_pending(display);
     wl_display_flush(display);
 }
 
-// The reader half of the multi-threaded protocol. prepare_read fails while the
-// default queue still has events in it, which is the signal to drain them and
-// try again rather than an error - hence the loop.
+// prepare_read fails while the default queue has events: drain and retry.
 void WaylandDisplay::readAndDispatch()
 {
     while (wl_display_prepare_read(display) != 0)
@@ -580,9 +527,7 @@ void WaylandDisplay::readAndDispatch()
 
     wl_display_dispatch_pending(display);
 
-    // libdecor's own pump, non-blocking. Redundant while its plugin shares this
-    // connection (its listeners are on the default queue, so the dispatch above
-    // already ran them) and necessary when it does not.
+    // Redundant while libdecor's plugin shares this connection.
     if (decorations != nullptr)
         libdecor_dispatch(decorations, 0);
 
@@ -603,9 +548,7 @@ void WaylandDisplay::roundtrip()
 
 const WaylandOutputInfo* WaylandDisplay::getPrimaryOutput() const
 {
-    // The first the compositor announced. Wayland has no notion of a primary
-    // output at all - there is no "the one with the menu bar" - so first is as
-    // principled an answer as exists, and it is the one every client uses.
+    // The first the compositor announced: Wayland names no primary output.
     for (const auto& info: outputs)
         if (info->configured)
             return info.get();
@@ -633,9 +576,7 @@ void WaylandDisplay::registerSurface(const WaylandSurfaceTarget& target)
 
 void WaylandDisplay::unregisterSurface(wl_surface* surface)
 {
-    // The input code first: a pointer or keyboard focus still naming this
-    // surface has to be dropped before the entry that would let an event find
-    // its way to a destroyed view.
+    // Focus must be dropped before the entry that would route to a dead view.
     if (input != nullptr)
         input->surfaceDestroyed(surface);
 
@@ -652,19 +593,12 @@ WaylandSurfaceTarget WaylandDisplay::findSurface(wl_surface* surface) const
     return {};
 }
 
-// Deliberately leaked. A connection is a process-wide resource with an
-// event-loop source hooked into another singleton, and running its destructor
-// during static teardown would deregister from a loop that may already be
-// gone; the kernel closes the socket at exit either way. Same reasoning as
-// Singleton::getImmortal, spelled out here because the null case makes a
-// template awkward.
+// Deliberately leaked, as Singleton::getImmortal is: the destructor would
+// deregister from an event loop that may already be gone at static teardown.
 WaylandDisplay* waylandDisplay()
 {
     static auto* instance = []() -> WaylandDisplay*
     {
-        // Headless is the contract Window.h documents and the mode
-        // GraphicsTests runs in: windows are built, nothing is shown, and
-        // nothing here is even attempted.
         if (Apps::getAppEnvironment().headless)
             return nullptr;
 

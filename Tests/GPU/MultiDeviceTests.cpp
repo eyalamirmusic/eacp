@@ -80,14 +80,8 @@ bool scaleRunsOn(Device& device, float scale)
 // queue. Where it is not, every submission in the process is strictly FIFO
 // behind every other, whatever thread made it.
 //
-// **Except where the driver will not give one out.** A Metal or D3D12 queue is
-// created on demand, so a Device makes its own; a VkQueue is handed out of a
-// family whose count the driver decides, and Mesa's lavapipe - the Linux CI
-// device - offers exactly one. Two Devices there necessarily share it and the
-// pointers are equal. Everything else this file pins holds on that backend too,
-// and the cases below are what say so: the pools, the constant rings and the
-// timelines are still per Device, which is what keeps one Device's uniforms out
-// of another's dispatch.
+// Except on a driver that hands out one queue - Mesa's lavapipe, the Linux CI
+// device - where two Devices share it and the queue pointers are equal.
 auto tDevicesHaveTheirOwnQueue = test("GPU/devicesHaveTheirOwnQueue") = []
 {
     if (!Device::shared().isValid())

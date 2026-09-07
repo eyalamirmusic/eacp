@@ -36,13 +36,6 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
-# What it turns on is a Wayland eacp-graphics - windows, subsurfaces, seat
-# input, outputs - the Vulkan backend under it, compute and render alike, with
-# a swapchain behind every GPUView, and the FreeType/HarfBuzz/fontconfig glyph
-# rasterizer that makes eacp-text real there. What it does not turn on is
-# EACP_HAS_CONTEXT below: there is no 2D drawing backend on Linux, so the
-# native Context, Font and retained layers stay absent and the modules that
-# stand on them stay out of the build.
 option(EACP_LINUX_GRAPHICS
         "Build the Linux graphics backend (Wayland, Vulkan, FreeType text)"
         OFF)
@@ -64,42 +57,14 @@ if (NOT EACP_BUILD_GRAPHICS)
             "Build the WebView module" FORCE)
 endif ()
 
-# What this host can do, decided once and read by Lib, Apps and Tests instead of
-# each of them restating the platform predicate. set() does not evaluate boolean
-# expressions, hence the if()/set() shape.
+# What this host can do, decided once and read by Lib, Apps and Tests.
 #
 #   EACP_HAS_DRAW    a windowing system to put views in: Graphics.
-#   EACP_HAS_GPU     a GPU backend under eacp-gpu, and so also GPUWidgets and
-#                    Sprites, which are portable C++ over nothing else.
-#   EACP_HAS_TEXT    a glyph rasterizer, and so also UI and the portable half
-#                    of SVG, which draw their text through it.
-#   EACP_HAS_CONTEXT the platform's own 2D drawing tier: Graphics::Context and
-#                    the Font, TextMetrics, TextInput and EmbeddedView above
-#                    it, the retained ShapeLayer/TextLayer and the views that
-#                    wrap one, and the image codecs. Everything that
-#                    rasterizes through the system rather than through the GPU
-#                    module.
-#   EACP_HAS_CAPTURE cameras and screen/video capture, which no Linux backend
-#                    exists for even once drawing does: Camera, CameraView,
-#                    Video, VideoView.
-#   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2). The page
-#                    bridge is portable and deliberately outside this.
-#
-# The three drawing variables are nested - DRAW, then GPU, then TEXT - rather
-# than one predicate because Linux reaches them one stage at a time: headless
-# Graphics first, then Vulkan, then FreeType/HarfBuzz. Linux is now at the
-# third, so all three follow EACP_LINUX_GRAPHICS.
-#
-# The other three hang off EACP_HAS_DRAW and are Apple/Windows only, for three
-# different reasons. There is no Linux 2D backend and the plan does not promise
-# one (Cairo/Pango is an "if ever wanted"), so EACP_HAS_CONTEXT is what the
-# modules standing on Graphics::Context read instead of EACP_HAS_TEXT: on Linux
-# a component tree draws its text through the GPU tier, and only the native
-# tier below it is missing. Capture has no backend written, and a native web
-# runtime has none to wrap.
-#
-# Everything device-free stays out of all six: the shader codegen library and
-# the WebView page bridge build on every platform.
+#   EACP_HAS_GPU     a GPU backend: GPU, GPUWidgets, Sprites.
+#   EACP_HAS_TEXT    a glyph rasterizer: Text, UI, the portable half of SVG.
+#   EACP_HAS_CONTEXT the platform's own 2D tier: Context, Font, the codecs.
+#   EACP_HAS_CAPTURE Camera, CameraView, Video, VideoView.
+#   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 set(EACP_HAS_DRAW OFF)
 
 if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR (LINUX AND EACP_LINUX_GRAPHICS)))

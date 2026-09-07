@@ -191,15 +191,8 @@ public:
                   const Rect& maskUV,
                   const GradientFill& gradient = {});
 
-    // The shader this batch builds, handed to `visit` as a graph so a test can
-    // emit it in a dialect this platform does not itself compile -- which is
-    // what makes a GLSL regression in it fail on the macOS and Windows lanes
-    // rather than wait for the one with a Vulkan device. Every renderer whose
-    // program is a nested type has one of these; Tests/UI/ModuleShaderTests.cpp
-    // is what reads them.
-    //
-    // Static and device-free, unlike the batch itself: a program's constructor
-    // records its graph and touches no Device.
+    // The shader this batch builds, handed over as a graph so a test can emit
+    // it in a dialect this platform does not itself compile.
     static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
 
 private:

@@ -1,24 +1,7 @@
 include(FindPkgConfig)
 
-# The Wayland half of the Linux graphics backend: the client library, the
-# cursor theme loader, xkbcommon and libdecor, plus the protocol XML that
-# wayland-scanner turns into C.
-#
-# Unlike FindVulkanBackend.cmake next door, none of this is fetched. Vulkan is
-# a driver interface a machine may simply not have, so its headers travel with
-# the source and the loader is opened by name at runtime; Wayland is the
-# desktop's own IPC library and every distribution ships it, so it is found the
-# way libcurl is found in Network/CMakeLists.txt - by pkg-config, against
-# whatever the machine has.
-#
-# There is deliberately no CPM fallback. A vendored libwayland would talk a
-# protocol version the local compositor does not, and libdecor exists precisely
-# to match the desktop it is running on (GNOME refuses server-side decorations,
-# so the titlebar is drawn by a plugin the distribution chose).
-#
-# Included only from the UNIX branch of Lib/eacp/Graphics/CMakeLists.txt, which
-# is reached only when EACP_LINUX_GRAPHICS is on, so a macOS or Windows
-# configure never runs any of it.
+# The Wayland half of the Linux graphics backend: the client library, the cursor
+# loader, xkbcommon and libdecor, plus the protocol XML wayland-scanner reads.
 
 if (NOT TARGET eacp-wayland)
     pkg_check_modules(EACP_WAYLAND IMPORTED_TARGET
@@ -27,9 +10,6 @@ if (NOT TARGET eacp-wayland)
             xkbcommon
             libdecor-0)
 
-    # Checked by hand rather than with REQUIRED so the message can name the
-    # packages: pkg_check_modules(REQUIRED) aborts with "None of the required
-    # 'wayland-client' were found", which is true and useless.
     if (NOT EACP_WAYLAND_FOUND)
         message(FATAL_ERROR
                 "EACP_LINUX_GRAPHICS is ON but the Wayland client libraries "
@@ -38,9 +18,7 @@ if (NOT TARGET eacp-wayland)
                 "libwayland-bin libxkbcommon-dev libdecor-0-dev pkg-config")
     endif ()
 
-    # wayland-scanner is a build tool rather than a library: the .pc file names
-    # the binary and the protocol package names the directory its XML lives in,
-    # so neither is guessed from a path.
+    # The tool and the XML directory come from the .pc files, never from a path.
     pkg_check_modules(EACP_WAYLAND_SCANNER_PC REQUIRED wayland-scanner)
     pkg_check_modules(EACP_WAYLAND_PROTOCOLS_PC REQUIRED wayland-protocols)
 
@@ -58,11 +36,8 @@ if (NOT TARGET eacp-wayland)
             "${CMAKE_BINARY_DIR}/generated/eacp-wayland")
     file(MAKE_DIRECTORY "${eacp_wayland_generated_dir}")
 
-    # Every extension the backend speaks, as a path under the protocol data
-    # directory. wayland-scanner emits one header of request stubs and one
-    # translation unit of interface tables per file; `private-code` keeps those
-    # tables static, so two libraries in the same process each carrying a copy
-    # do not collide at link time.
+    # private-code so the generated interface tables stay static and two
+    # libraries carrying a copy cannot collide at link time.
     set(eacp_wayland_protocols
             stable/xdg-shell/xdg-shell.xml
             stable/viewporter/viewporter.xml
@@ -104,10 +79,6 @@ if (NOT TARGET eacp-wayland)
         list(APPEND eacp_wayland_generated_sources "${code}" "${header}")
     endforeach ()
 
-    # One target for consumers to link, the same shape as eacp-vulkan: a static
-    # library of generated C, so machine-written code stays out of
-    # eacp-graphics' unity build, and the usage requirements (the generated
-    # headers, the four system libraries) travel with it.
     add_library(eacp-wayland STATIC ${eacp_wayland_generated_sources})
 
     target_include_directories(eacp-wayland SYSTEM PUBLIC

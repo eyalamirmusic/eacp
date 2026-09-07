@@ -27,9 +27,8 @@ bool isDistributionSigned()
     return false;
 }
 
-// posix_spawnp with the URL as an argument, never system(): a shell would read
-// the metacharacters a URL is allowed to contain as its own. Detached, so the
-// handler outlives both this call and the Process that started it.
+// Spawned with the URL as an argument, never system(): a shell would read the
+// metacharacters a URL may contain as its own.
 void openExternalURL(const std::string& url)
 {
     auto options = Processes::ProcessOptions {};

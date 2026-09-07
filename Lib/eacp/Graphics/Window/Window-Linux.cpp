@@ -7,47 +7,13 @@
 #include <algorithm>
 #include <cmath>
 
-// The Linux Window: one wl_surface, one libdecor frame, and the same headless
-// mode every other backend has.
-//
-// The shape is the Windows one, and deliberately so. There is one surface per
-// Window and none per View, the view tree is composited by the window rather
-// than by the OS, and all input is routed by the portable hit-tester - which is
-// what lets a presenting view's wl_subsurface be an addition to View-Linux.cpp
-// rather than a second window implementation.
-//
-// Two things Wayland does not have, and this file does not pretend to:
-//
-// A window has no position. There are no global coordinates in the protocol at
-// all - a client is never told where its surface is, and cannot ask to be put
-// anywhere - so getPosition/setPosition keep the value the app last supplied
-// and onMoved reports the app's own moves, which is what the headless backend
-// did and all the contract in Window.h can honestly mean here.
-//
-// And a window cannot raise itself. toFront on Wayland is a mapped surface and
-// nothing more; raising is the compositor's decision, made from a user gesture
-// it holds an activation token for. So toFront shows the window and stops.
-//
-// Under Apps::getAppEnvironment().headless, and on any machine where the
-// connection failed, none of this happens: the window is built, answers its
-// geometry honestly, and never becomes visible. That is the mode GraphicsTests
-// runs in, and it is the behaviour this file replaced.
-
 namespace eacp::Graphics
 {
 namespace
 {
-// What the compositor is told this application is, for the task-switcher entry
-// and the icon. Wayland has no per-window icon: the app id names a .desktop
-// file and the desktop reads the icon out of that, so
-// WindowOptions::applicationIcon has nothing to act on here.
+// Names a .desktop file; the protocol has no per-window icon.
 constexpr const char* waylandDefaultAppId = "eacp";
 
-// Nothing paints behind a Linux window's content - there is no 2D context to
-// paint with - so the toplevel's buffer is one solid colour, and this is that
-// colour when WindowOptions names none. Opaque, because a fully transparent
-// buffer under an opaque region is undefined, and black rather than white
-// because that is the flash Window.h names as the one worth avoiding.
 constexpr Color waylandDefaultWindowBackground = Color::gray(0.f);
 
 void waylandNotifyHostVisibility(View* view, bool visible)
@@ -95,9 +61,6 @@ struct Window::Native : WaylandWindowSurface
         if (transparent)
             background = Color {0.f, 0.f, 0.f, 0.f};
 
-        // Keyboard focus is what the input code calls activation, and what
-        // WindowEvents::onActivationChanged reports. It arrives from the seat
-        // rather than from the frame, hence the hook rather than a call.
         onKeyboardFocus = [this](bool focused) { keyboardFocusChanged(focused); };
 
         createSurface();
@@ -105,9 +68,6 @@ struct Window::Native : WaylandWindowSurface
 
     ~Native()
     {
-        // Before anything else: a presenting view's swapchain has to be gone
-        // before the wl_surface it was made from, and onLost is what tells the
-        // GPU side to destroy it.
         if (contentView != nullptr)
             waylandUnbindWindowFromContentView(*contentView);
 
@@ -134,8 +94,6 @@ struct Window::Native : WaylandWindowSurface
             wl_surface_destroy(surface);
     }
 
-    // --- setup ----------------------------------------------------------------
-
     void createSurface()
     {
         auto* connection = waylandDisplay();
@@ -154,10 +112,6 @@ struct Window::Native : WaylandWindowSurface
         if (auto* viewporter = connection->getViewporter())
             viewport = wp_viewporter_get_viewport(viewporter, surface);
 
-        // The compositor's own answer to "how many pixels per point", where it
-        // has one. Everything else - preferred_buffer_scale below, the output's
-        // integer scale - is a coarser fallback for a compositor without this
-        // extension, which today includes a headless Weston.
         if (auto* scales = connection->getFractionalScales())
         {
             fractionalScale =
@@ -193,10 +147,8 @@ struct Window::Native : WaylandWindowSurface
             libdecor_frame_set_min_content_size(
                 frame, std::max(minWidth, 1), std::max(minHeight, 1));
 
-        // A window that cannot be resized says so through its capabilities,
-        // which is both what draws the decorations without a maximise button
-        // and what refuses an interactive resize. The size is pinned as well,
-        // because a compositor may configure a size no client asked for.
+        // Pinned as well as unset: a compositor may configure a size no client
+        // asked for.
         if (!resizable)
         {
             libdecor_frame_unset_capabilities(
@@ -230,12 +182,6 @@ struct Window::Native : WaylandWindowSurface
         frame = nullptr;
     }
 
-    // --- configure -------------------------------------------------------------
-
-    // The compositor has proposed a size. Everything WindowOptions has to say
-    // about the shapes this window may take is applied here, because a
-    // configure is the only moment Wayland offers to say it: there is no
-    // WM_SIZING to clamp and no NSWindow attribute to set.
     void configure(libdecor_configuration* configuration)
     {
         auto width = std::max((int) std::lround(contentSize.x), 1);
@@ -285,10 +231,7 @@ struct Window::Native : WaylandWindowSurface
 
         if (aspectRatio)
         {
-            // Width drives, height follows. Which side gives way is decided by
-            // the resize edge on Windows and by AppKit on macOS; libdecor's
-            // configuration carries no edge, so there is one rule, and it is
-            // the one a horizontal drag reads best against.
+            // Width drives: libdecor's configuration carries no resize edge.
             const auto ratio = aspectRatio->x / aspectRatio->y;
             height = (int) std::lround((float) width / ratio);
         }
@@ -311,10 +254,6 @@ struct Window::Native : WaylandWindowSurface
             onResize((int) contentSize.x, (int) contentSize.y);
     }
 
-    // Puts the window's background on screen and, with it, whatever
-    // wl_subsurface positions were queued since the last commit: a subsurface's
-    // placement is applied by its PARENT's commit, so this is also how a moved
-    // view lands.
     void present()
     {
         auto* connection = waylandDisplay();
@@ -327,9 +266,8 @@ struct Window::Native : WaylandWindowSurface
 
         if (viewport != nullptr)
         {
-            // One pixel, stretched. A solid colour needs no more than that, and
-            // it makes a resize cost one viewport request rather than a new
-            // shared-memory buffer per frame of the drag.
+            // One pixel, stretched: a resize costs a viewport request, not a
+            // new shm buffer per frame of the drag.
             if (buffer.get() == nullptr)
                 buffer.create(connection->getShm(), 1, 1, background);
 
@@ -352,9 +290,6 @@ struct Window::Native : WaylandWindowSurface
         connection->flush();
     }
 
-    // Telling the compositor which part of the surface it need not blend saves
-    // it the whole window's worth of alpha work, and is skipped exactly when
-    // the window has asked to be see-through.
     void applyOpaqueRegion(int width, int height)
     {
         auto* connection = waylandDisplay();
@@ -374,8 +309,6 @@ struct Window::Native : WaylandWindowSurface
         wl_region_destroy(region);
     }
 
-    // --- state ------------------------------------------------------------------
-
     void setContentView(View* view)
     {
         contentView = view;
@@ -387,9 +320,6 @@ struct Window::Native : WaylandWindowSurface
 
         waylandBindWindowToContentView(*contentView, *this);
 
-        // Shown on adoption, exactly as on Windows and for the same reason:
-        // portable app code constructs a window, gives it a view and expects to
-        // see it. There is nothing to show when no compositor was reached.
         if (surface != nullptr)
             setVisible(true);
     }
@@ -409,17 +339,13 @@ struct Window::Native : WaylandWindowSurface
             unmap();
     }
 
-    // Hiding is an unmap: a Wayland surface with no buffer attached is not on
-    // screen, and its xdg_toplevel goes with it. The frame is torn down with it
-    // and rebuilt on the way back, because an xdg_surface's initial configure
-    // sequence happens once and a remap needs a fresh one.
+    // The frame is torn down and rebuilt on the way back: an xdg_surface's
+    // initial configure sequence happens only once.
     void unmap()
     {
         auto wasMapped = mapped;
         mapped = false;
 
-        // Before the surface goes: every presenting view under this window
-        // loses its subsurface, and hears about it first.
         if (contentView != nullptr)
             waylandWindowSurfaceStateChanged(*contentView);
 
@@ -445,10 +371,8 @@ struct Window::Native : WaylandWindowSurface
             libdecor_frame_set_title(frame, title.c_str());
     }
 
-    // A window has a frame whether or not it is on screen (Window.h), and on
-    // Wayland that frame has no place: what setPosition and initialPosition put
-    // in is what getPosition hands back, and a move is reported as a move
-    // however it was made. Nothing asks the compositor, because nothing can.
+    // Wayland has no global coordinates: the value put in is the one handed
+    // back, and nothing asks the compositor.
     void setPosition(Point newPosition)
     {
         position = newPosition;
@@ -468,8 +392,6 @@ struct Window::Native : WaylandWindowSurface
 
     void closeRequested()
     {
-        // See WindowOptions::hidesOnClose: hide instead of destroy, and say so,
-        // because onQuit is exactly what hidesOnClose suppresses.
         if (hidesOnClose)
         {
             unmap();
@@ -490,10 +412,7 @@ struct Window::Native : WaylandWindowSurface
         if (contentView == nullptr)
             return;
 
-        // The news has to travel on its own here. A fractional-scale change
-        // carries no size with it, so nothing else would tell a glyph atlas
-        // rasterized at the old scale that it is now wrong - which is the one
-        // Windows behaviour §6 of the plan says not to copy.
+        // A scale change carries no size with it, so nothing else reports it.
         notifyBackingScaleChanged(*contentView);
         waylandWindowSurfaceStateChanged(*contentView);
     }
@@ -517,17 +436,13 @@ struct Window::Native : WaylandWindowSurface
         return connection->getInput()->getKeyboardFocus() == this;
     }
 
-    // --- listeners ---------------------------------------------------------------
-
     static Native& self(void* data) { return *static_cast<Native*>(data); }
 
-    // Non-const because libdecor_decorate keeps the pointer it is handed and
-    // its signature says nothing about not writing through it.
+    // Non-const because libdecor_decorate keeps the pointer it is handed.
     static libdecor_frame_interface& frameListener()
     {
-        // Built by a lambda rather than by a designated initializer: the struct
-        // carries ten reserved slots libdecor has never used, and zeroing them
-        // says so without naming any of them.
+        // Zero-initialised: the struct carries reserved slots libdecor never
+        // uses.
         static auto table = []
         {
             auto built = libdecor_frame_interface {};
@@ -540,9 +455,8 @@ struct Window::Native : WaylandWindowSurface
             built.close = [](libdecor_frame*, void* data)
             { self(data).closeRequested(); };
 
-            // The decorations are drawn on synchronous subsurfaces of ours, so
-            // they only reach the screen when the parent commits. This is
-            // libdecor asking for that commit.
+            // The decorations are on synchronous subsurfaces of ours, and
+            // reach the screen only when this surface commits.
             built.commit = [](libdecor_frame*, void* data) { self(data).present(); };
 
             built.dismiss_popup = [](libdecor_frame*, const char*, void*) {};
@@ -573,8 +487,6 @@ struct Window::Native : WaylandWindowSurface
             .enter =
                 [](void* data, wl_surface*, wl_output*)
             {
-                // Which output the surface is on matters only for the scale,
-                // and only while there is no fractional-scale object to ask.
                 auto& window = self(data);
 
                 if (window.fractionalScale == nullptr)
@@ -585,8 +497,6 @@ struct Window::Native : WaylandWindowSurface
             .preferred_buffer_scale =
                 [](void* data, wl_surface*, int32_t factor)
             {
-                // The pre-fractional answer, and the one a compositor at
-                // wl_compositor version 6 gives: whole pixels per point.
                 if (self(data).fractionalScale == nullptr)
                     self(data).scaleChanged((float) std::max(factor, 1));
             },
@@ -635,18 +545,12 @@ void Window::setTitle(const std::string& title)
     impl->setTitle(title);
 }
 
-// The wl_surface, which is what a VkSurfaceKHR is made from and what a foreign
-// host would parent into. Null under headless and wherever no compositor was
-// reached, as the whole backend is.
+// The wl_surface. Null under headless and wherever no compositor was reached.
 void* Window::getHandle()
 {
     return impl->surface;
 }
 
-// The content view's own native identity rather than a second surface. There is
-// no view-level surface on Linux except the one a presenting view asks for
-// through requestViewSurface, and handing the toplevel back twice would tell a
-// caller these were different things.
 void* Window::getContentViewHandle()
 {
     return impl->contentView != nullptr ? impl->contentView->getHandle() : nullptr;
@@ -658,9 +562,7 @@ void Window::setContentView(View& view)
     impl->setContentView(&view);
 }
 
-// Nothing to order in front of. A Wayland client cannot raise itself - that is
-// the compositor's decision, made from a gesture it holds an activation token
-// for - so this shows the window and stops there.
+// A Wayland client cannot raise itself, so this only shows the window.
 void Window::toFront()
 {
     impl->setVisible(true);
@@ -713,10 +615,7 @@ bool Window::isMouseLocked() const
     return impl->mouseLockIntent;
 }
 
-// The native unit, which on Linux is the evdev keycode - see Keyboard-Linux.h.
-// Answered only while the compositor has given this window keyboard focus, so a
-// background window reports nothing pressed however the keyboard is being used
-// elsewhere.
+// The native unit here is the evdev keycode.
 bool Window::isKeyPressed(uint16_t nativeKeyCode) const
 {
     auto* connection = waylandDisplay();

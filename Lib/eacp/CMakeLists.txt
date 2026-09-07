@@ -2,14 +2,12 @@ add_subdirectory(Core)
 add_subdirectory(SIMD)
 add_subdirectory(Network)
 
-# Always added: the directory builds the shader codegen library
-# (eacp-gpu-codegen), which is pure string generation and needs no GPU. It
-# returns before eacp-gpu unless EACP_HAS_DRAW.
+# Always added: it builds the shader codegen library (eacp-gpu-codegen), which
+# is pure string generation, and returns before eacp-gpu when there is no GPU.
 add_subdirectory(GPU)
 
-# Always added: the directory builds the page bridge (eacp-webview-bridge),
-# which speaks to a ScriptHost and needs no native web runtime. It returns
-# before eacp-webview unless EACP_HAS_WEBVIEW.
+# Always added: it builds the page bridge (eacp-webview-bridge), which speaks to
+# a ScriptHost, and returns before eacp-webview when there is no web runtime.
 add_subdirectory(WebView)
 
 if (EACP_HAS_DRAW)
@@ -33,9 +31,7 @@ if (EACP_HAS_TEXT)
     add_subdirectory(UI)
 
     # After UI, because a document now builds into either tier: native shape
-    # layers, or a component tree drawn through the coverage rasterizer. Only
-    # the first of those needs EACP_HAS_CONTEXT, so the module is here with the
-    # rest of the text tier and its native builder alone is gated inside.
+    # layers, or a component tree drawn through the coverage rasterizer.
     add_subdirectory(SVG)
 endif ()
 

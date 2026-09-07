@@ -4,26 +4,6 @@
 #include "../Shader/ShaderLibrary.h"
 #include "../Vulkan/VulkanTypes.h"
 
-// Linux/Vulkan backend. Everything the descriptor names bakes into one
-// VkPipeline against the shared render pipeline layout; only the topology, the
-// per-slot strides and the three attachment facts stay outside it, read by the
-// render pass at draw time.
-//
-// Dynamic rendering throughout: there is no VkRenderPass and no VkFramebuffer
-// anywhere in this backend. A graphics pipeline still has to be told the
-// attachment formats it will be used with, and VkPipelineRenderingCreateInfo in
-// the pNext chain is where they go - the exact information
-// D3D12_GRAPHICS_PIPELINE_STATE_DESC carries in RTVFormats and DSVFormat.
-// VulkanShared asks for the dynamicRendering feature by name at device
-// creation, so a device that reaches here has it.
-//
-// Three states are dynamic and nothing else is: viewport and scissor, which the
-// pass sets per pass and per draw (and which carry the negative-height y flip
-// this backend's coordinate convention rests on), and the stencil reference,
-// which is RenderPass::setStencilReference. Cull mode and front face are baked,
-// which is where this backend follows D3D12 rather than Metal - see
-// makeRasterizationState.
-
 namespace eacp::GPU
 {
 namespace
@@ -47,10 +27,7 @@ VkPrimitiveTopology toVkTopology(PrimitiveTopology topology)
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
 
-// UNORM and SNORM rather than UINT and SINT, for the reason the D3D12 file
-// gives: the shader reads these as 0..1 and -1..1, and the integer variants
-// would deliver raw 0..255 and disagree with the other backends rather than
-// fail to build.
+// UNORM/SNORM, not UINT/SINT: the shader reads these as 0..1 and -1..1.
 VkFormat toVkVertexFormat(VertexFormat format)
 {
     switch (format)
@@ -78,8 +55,6 @@ VkFormat toVkVertexFormat(VertexFormat format)
     return VK_FORMAT_R32G32B32_SFLOAT;
 }
 
-// Multi-buffer layouts carry per-slot metadata; a legacy single-buffer layout
-// (buffers empty) is always PerVertex at slot 0.
 StepRate stepRateForSlot(const VertexLayout& layout, int slot)
 {
     if (slot >= 0 && slot < layout.buffers.size())
@@ -88,9 +63,7 @@ StepRate stepRateForSlot(const VertexLayout& layout, int slot)
     return StepRate::PerVertex;
 }
 
-// Attribute i takes location i, which is the location the GLSL emitter prints
-// for `attr<i>` - the mirror of Metal's [[attribute(n)]] and of the D3D12
-// backend's TEXCOORD<n>.
+// Attribute i takes location i, which is what the GLSL emitter prints.
 Vector<VkVertexInputAttributeDescription> makeAttributes(const VertexLayout& layout)
 {
     auto attributes = Vector<VkVertexInputAttributeDescription> {};
@@ -111,10 +84,6 @@ Vector<VkVertexInputAttributeDescription> makeAttributes(const VertexLayout& lay
     return attributes;
 }
 
-// The per-slot stride table the pipeline is built with and the pass reads back
-// through VulkanRenderPipeline::strideForSlot. Taken from layout.buffers when
-// present; a single-slot table from layout.stride otherwise, so single-buffer
-// callers see no behavioural change.
 Vector<std::uint32_t> makeStrideTable(const VertexLayout& layout)
 {
     auto strides = Vector<std::uint32_t> {};
@@ -132,11 +101,8 @@ Vector<std::uint32_t> makeStrideTable(const VertexLayout& layout)
     return strides;
 }
 
-// One binding per slot an attribute actually names, which is the set Vulkan
-// asks for exactly: every attribute must describe a listed binding, and a
-// listed binding a vertex shader reads must have a buffer bound at the draw. A
-// slot with a stride and no attribute is neither, so it is left out - unlike
-// D3D12, where the stride table alone decides and an unused slot costs nothing.
+// Only the slots an attribute names: every attribute must describe a listed
+// binding, and every listed binding must have a buffer bound at the draw.
 Vector<VkVertexInputBindingDescription>
     makeBindings(const VertexLayout& layout, const VulkanRenderPipeline& state)
 {
@@ -186,18 +152,8 @@ VkCullModeFlags toVkCullMode(CullMode mode)
     return VK_CULL_MODE_NONE;
 }
 
-// Winding maps straight across, with no inversion, and that is a consequence of
-// the viewport rather than a coincidence.
-//
-// Vulkan is the one API of the three whose NDC has y pointing down, and this
-// backend answers that with a negative viewport height in
-// RenderPass::setViewport (plan.md §3.5) rather than by negating y in the
-// shader or the projection. A negative height flips the sign of the signed area
-// the rasterizer computes in framebuffer coordinates, which puts the
-// clip-space-y-up convention CullMode documents back where Metal and D3D12 have
-// it - so CounterClockwise is VK_FRONT_FACE_COUNTER_CLOCKWISE, exactly as it is
-// MTLWindingCounterClockwise and FrontCounterClockwise = TRUE. CullModeTests is
-// the arbiter, as it was when the D3D12 backend got this wrong by reasoning.
+// No inversion: the negative viewport height RenderPass::setViewport sets has
+// already flipped the winding.
 VkFrontFace toVkFrontFace(Winding winding)
 {
     return winding == Winding::CounterClockwise ? VK_FRONT_FACE_COUNTER_CLOCKWISE
@@ -229,12 +185,6 @@ VkCompareOp toVkCompareOp(CompareFunction compare)
     return VK_COMPARE_OP_LESS_OR_EQUAL;
 }
 
-// Vulkan spells both pairs out - INCREMENT_AND_CLAMP against
-// INCREMENT_AND_WRAP - so there is nothing to get backwards here, which is the
-// opposite of the trap D3D12 sets (its INCR wraps and its INCR_SAT clamps, the
-// reverse of how the names read; see RenderPipeline-Windows.cpp). Mapped from
-// the eacp enum's meaning either way, which is what makes both files checkable
-// against the header rather than against each other.
 VkStencilOp toVkStencilOp(StencilOp op)
 {
     switch (op)
@@ -260,9 +210,6 @@ VkStencilOp toVkStencilOp(StencilOp op)
     return VK_STENCIL_OP_KEEP;
 }
 
-// One read/write mask pair applied to both faces, which is what the header
-// offers and what D3D12 can express. The reference is dynamic state and is left
-// zero here; the pass sets it.
 VkStencilOpState toVkStencilFace(const StencilFace& face,
                                  const RenderPipelineDescriptor& from)
 {
@@ -344,13 +291,6 @@ VkColorComponentFlags toVkWriteMask(const ColorWriteMask& mask)
     return value;
 }
 
-// One path for the named modes and for a written-out equation, because
-// blendStateFor turns the first into the second.
-//
-// No alpha-slot substitution, unlike the D3D12 file: Vulkan takes the four
-// *_COLOR factors in srcAlphaBlendFactor and dstAlphaBlendFactor and computes
-// what the name means, the way Metal does, so a BlendState reaches this backend
-// as written.
 VkPipelineColorBlendAttachmentState
     makeBlendAttachment(const RenderPipelineDescriptor& from)
 {
@@ -373,18 +313,6 @@ VkPipelineColorBlendAttachmentState
     return attachment;
 }
 
-// Culling is baked into the pipeline here, as it is on D3D12 and unlike Metal,
-// where it is encoder state the render pass sets from the pipeline it is
-// binding.
-//
-// Vulkan can do it either way - VK_DYNAMIC_STATE_CULL_MODE and
-// VK_DYNAMIC_STATE_FRONT_FACE are core 1.3 - and baking is the simpler of the
-// two because nothing ever overrides them: RenderPass has no setCullMode and no
-// setFrontFace, the descriptor is the only place either value comes from, and a
-// pipeline is the only thing that carries one. Two vkCmdSet calls per
-// setPipeline would compute the same rasterizer state from the same fields one
-// bind later. If a per-pass override is ever added, this is the line that
-// changes, along with the dynamic-state list below.
 VkPipelineRasterizationStateCreateInfo
     makeRasterizationState(const RenderPipelineDescriptor& from)
 {
@@ -443,10 +371,6 @@ struct RenderPipeline::Native
 
         context = &getVulkanContext(device);
 
-        // Refused rather than silently dropped to one sample, which is what a
-        // pipeline built against a count the device cannot render would be. A
-        // texture asked for the same count answers the same way, so a caller
-        // that checked the device gets a consistent story from both.
         if (!device.supportsSampleCount(state.sampleCount))
         {
             LOG("Vulkan: no render pipeline at ",
@@ -470,9 +394,7 @@ struct RenderPipeline::Native
         build(*program, layouts, descriptor);
     }
 
-    // Deferred for the reason the compute pipeline is: a command buffer that
-    // bound this pipeline may still be open or in flight, and a renderer
-    // constructed inside render() is destroyed exactly there.
+    // Deferred: a command buffer that bound this pipeline may still be in flight.
     ~Native()
     {
         if (context == nullptr || state.pipeline == VK_NULL_HANDLE)
@@ -517,9 +439,6 @@ struct RenderPipeline::Native
             VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
         inputAssembly.topology = state.topology;
 
-        // Both are dynamic, so the counts are all this carries and the pointers
-        // stay null - the pass sets the real rectangles, which is where the
-        // negative viewport height lives.
         VkPipelineViewportStateCreateInfo viewport = {};
         viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewport.viewportCount = 1;
@@ -550,21 +469,8 @@ struct RenderPipeline::Native
             sizeof(dynamicStates) / sizeof(dynamicStates[0]));
         dynamic.pDynamicStates = dynamicStates;
 
-        // What a VkRenderPass would otherwise have said, and the reason there
-        // is none. Both formats come from depthAttachmentFormat so that the
-        // pipeline, the image the pass renders into, its view and the barrier
-        // that transitions it all name one value - four places that a draw is
-        // rejected for disagreeing on.
-        //
-        // The depth format is set whenever *either* plane is asked for, which is
-        // what both other backends do (RenderPipeline-Apple.mm's `depth ||
-        // stencil`, and the D3D12 DSVFormat line) and is not the same as
-        // `descriptor.depth`. The two planes are one attachment: a pipeline that
-        // paints a stencil mask with the depth test off still draws into a
-        // depth-stencil image, and under dynamic rendering the format it
-        // declares has to match the depth attachment the pass bound or the draw
-        // is refused. Whether the *test* runs is depthTestEnable's business, set
-        // from descriptor.depth alone in makeDepthStencilState.
+        // The two planes are one attachment, so the depth format is declared
+        // whenever either is asked for; it has to match what the pass binds.
         const auto hasDepthAttachment = descriptor.depth || descriptor.stencil;
 
         VkPipelineRenderingCreateInfo rendering = {};
@@ -631,9 +537,6 @@ PrimitiveTopology RenderPipeline::topology() const
     return impl->topology;
 }
 
-// Both are inside the VkPipeline here, as they are inside the PSO on D3D12.
-// Reported anyway so the class reads the same on every backend, and so a caller
-// can ask a pipeline what it does.
 CullMode RenderPipeline::cullMode() const
 {
     return impl->cullMode;
@@ -651,10 +554,6 @@ void* RenderPipeline::nativeState() const
 
 void* RenderPipeline::nativeDepthState() const
 {
-    // Depth state is baked into the pipeline here, so this answers what D3D12
-    // answers: the same object, or null when the pipeline has no depth
-    // attachment. The separate handle exists for Metal, which binds a
-    // MTLDepthStencilState of its own.
     return impl->state.depth ? const_cast<VulkanRenderPipeline*>(&impl->state)
                              : nullptr;
 }
