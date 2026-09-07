@@ -6,8 +6,12 @@
 
 #include <wayland-client.h>
 
+#include "xdg-output-unstable-v1-client-protocol.h"
+
+#include <algorithm>
 #include <cstring>
 #include <optional>
+#include <string>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -21,10 +25,6 @@ using namespace eacp::Graphics;
 namespace
 {
 constexpr auto waylandTestTimeout = Time::MS {5000};
-
-// The size Scripts/with-weston starts Weston's headless backend at.
-constexpr float waylandTestOutputWidth = 1280.f;
-constexpr float waylandTestOutputHeight = 800.f;
 
 // Decided by trying: the backend degrades to headless silently.
 bool waylandCompositorReachable()
@@ -130,6 +130,153 @@ wl_shm* waylandTestShm(wl_display* display)
     wl_registry_destroy(registry);
 
     return cached;
+}
+
+// The compositor's own account of its first output, read over a connection of
+// this test's own so nothing here comes from the backend under test.
+struct WaylandTestOutput
+{
+    Point logicalSize() const
+    {
+        if (hasXdgSize)
+            return xdgSize;
+
+        const auto divisor = scale > 0 ? (float) scale : 1.f;
+
+        return {modeSize.x / divisor, modeSize.y / divisor};
+    }
+
+    Point modeSize;
+    Point xdgSize;
+    int scale = 1;
+    bool hasXdgSize = false;
+    bool found = false;
+};
+
+const wl_output_listener waylandTestOutputListener {
+    .geometry = [](void*,
+                   wl_output*,
+                   int32_t,
+                   int32_t,
+                   int32_t,
+                   int32_t,
+                   int32_t,
+                   const char*,
+                   const char*,
+                   int32_t) {},
+    .mode =
+        [](void* data,
+           wl_output*,
+           uint32_t flags,
+           int32_t width,
+           int32_t height,
+           int32_t)
+    {
+        if ((flags & WL_OUTPUT_MODE_CURRENT) != 0)
+            static_cast<WaylandTestOutput*>(data)->modeSize =
+                Point {(float) width, (float) height};
+    },
+    .done = [](void*, wl_output*) {},
+    .scale = [](void* data, wl_output*, int32_t factor)
+    { static_cast<WaylandTestOutput*>(data)->scale = factor; },
+};
+
+const zxdg_output_v1_listener waylandTestXdgOutputListener {
+    .logical_position = [](void*, zxdg_output_v1*, int32_t, int32_t) {},
+    .logical_size =
+        [](void* data, zxdg_output_v1*, int32_t width, int32_t height)
+    {
+        auto& info = *static_cast<WaylandTestOutput*>(data);
+
+        info.xdgSize = Point {(float) width, (float) height};
+        info.hasXdgSize = true;
+    },
+    .done = [](void*, zxdg_output_v1*) {},
+};
+
+struct WaylandTestOutputProbe
+{
+    WaylandTestOutput info;
+    wl_output* output = nullptr;
+    zxdg_output_manager_v1* xdgOutputs = nullptr;
+};
+
+const wl_registry_listener waylandTestOutputRegistryListener {
+    .global =
+        [](void* data,
+           wl_registry* registry,
+           uint32_t name,
+           const char* interface,
+           uint32_t offered)
+    {
+        auto& probe = *static_cast<WaylandTestOutputProbe*>(data);
+
+        // Version 2 is all this needs, and the versions after it add events
+        // this listener deliberately does not carry.
+        if (std::strcmp(interface, wl_output_interface.name) == 0
+            && probe.output == nullptr)
+        {
+            probe.output = static_cast<wl_output*>(wl_registry_bind(
+                registry, name, &wl_output_interface, std::min(offered, 2u)));
+
+            wl_output_add_listener(
+                probe.output, &waylandTestOutputListener, &probe.info);
+        }
+        else if (std::strcmp(interface, zxdg_output_manager_v1_interface.name) == 0)
+        {
+            probe.xdgOutputs = static_cast<zxdg_output_manager_v1*>(wl_registry_bind(
+                registry, name, &zxdg_output_manager_v1_interface, 1));
+        }
+    },
+    .global_remove = [](void*, wl_registry*, uint32_t) {},
+};
+
+WaylandTestOutput waylandReadFirstOutput()
+{
+    auto probe = WaylandTestOutputProbe {};
+    auto* display = wl_display_connect(nullptr);
+
+    if (display == nullptr)
+        return probe.info;
+
+    auto* registry = wl_display_get_registry(display);
+    wl_registry_add_listener(registry, &waylandTestOutputRegistryListener, &probe);
+    wl_display_roundtrip(display);
+
+    if (probe.output != nullptr)
+    {
+        probe.info.found = true;
+
+        // The logical size the compositor publishes, which is what a fractional
+        // scale shows up in; without the protocol it is the mode over the scale.
+        if (probe.xdgOutputs != nullptr)
+        {
+            auto* xdgOutput = zxdg_output_manager_v1_get_xdg_output(probe.xdgOutputs,
+                                                                    probe.output);
+
+            zxdg_output_v1_add_listener(
+                xdgOutput, &waylandTestXdgOutputListener, &probe.info);
+        }
+
+        wl_display_roundtrip(display);
+    }
+
+    wl_display_disconnect(display);
+
+    return probe.info;
+}
+
+// Set by Scripts/with-weston, and by nothing a real desktop session runs.
+std::optional<Point> waylandWestonOutputSize()
+{
+    const auto value = getEnvValue("EACP_WESTON_OUTPUT");
+    const auto separator = value.find('x');
+
+    if (separator == std::string::npos)
+        return {};
+
+    return Point {std::stof(value.substr(0, separator)),
+                  std::stof(value.substr(separator + 1))};
 }
 
 struct TestShmBuffer
@@ -360,14 +507,33 @@ auto tPrimaryDisplayReportsTheOutput =
         return;
 
     const auto display = primaryDisplay();
+    const auto output = waylandReadFirstOutput();
 
-    check(display.frame.w == waylandTestOutputWidth);
-    check(display.frame.h == waylandTestOutputHeight);
+    check(output.found, "the compositor advertised no wl_output");
+
+    // Against what the compositor says, not against a size a machine happens
+    // to have: this runs on a real desktop as well as under Weston.
+    const auto size = output.logicalSize();
+
+    check(size.x > 0.f);
+    check(size.y > 0.f);
+
+    check(display.frame.w == size.x);
+    check(display.frame.h == size.y);
+
+    check(display.backingScale == (float) output.scale);
     check(display.backingScale >= 1.f);
 
     // Wayland publishes no work area, so it is the whole display.
     check(display.workArea.w == display.frame.w);
     check(display.workArea.h == display.frame.h);
+
+    // Only Scripts/with-weston knows the output size in advance.
+    if (const auto expected = waylandWestonOutputSize())
+    {
+        check(display.frame.w == expected->x);
+        check(display.frame.h == expected->y);
+    }
 };
 
 auto tFrameCallbackArrivesAfterACommit =

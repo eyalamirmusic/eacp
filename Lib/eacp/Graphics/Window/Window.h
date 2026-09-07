@@ -31,7 +31,7 @@ using WillResizeCallback = std::function<void(int& width, int& height)>;
 struct WindowEvents
 {
     // Fires when the window gains (true) or loses (false) key focus.
-    std::function<void(bool isKey)> onActivationChanged;
+    std::function<void(bool isKey)> onActivationChanged = [](bool) {};
 
     // Fires when the user closes a WindowOptions::hidesOnClose window: by
     // then it has ordered out, its state is intact, and the app is still

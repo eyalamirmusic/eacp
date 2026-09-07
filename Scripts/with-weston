@@ -19,8 +19,16 @@ export WAYLAND_DISPLAY=eacp-weston-0
 
 log="${EACP_WESTON_LOG:-/tmp/weston.log}"
 
+output_width=1280
+output_height=800
+
+# How a test tells it is looking at this output rather than at whatever a real
+# desktop happens to be: Wayland/primaryDisplayReportsTheCompositorsOutput
+# asserts the exact size only when this says what it should be.
+export EACP_WESTON_OUTPUT="${output_width}x${output_height}"
+
 weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 \
-    --width=1280 --height=800 --log="$log" &
+    --width="$output_width" --height="$output_height" --log="$log" &
 pid=$!
 trap 'kill $pid 2>/dev/null || true' EXIT
 
