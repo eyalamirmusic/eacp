@@ -289,6 +289,7 @@ private:
         curl_easy_setopt(handle, CURLOPT_ERRORBUFFER, errorBuffer);
         curl_easy_setopt(handle, CURLOPT_HEADERFUNCTION, webSocketHeaderCallback);
         curl_easy_setopt(handle, CURLOPT_HEADERDATA, &chosenProtocol);
+        disableCurlAutoPong();
 
         if (options.connectTimeout.count > 0)
         {
@@ -307,6 +308,18 @@ private:
 
         if (requestHeaders.list != nullptr)
             curl_easy_setopt(handle, CURLOPT_HTTPHEADER, requestHeaders.list);
+    }
+
+    // libcurl answers a ping itself and hides the frame from the caller, but
+    // it only queues that pong: nothing writes it to the socket until the
+    // application's next curl_ws_send, so an otherwise idle connection never
+    // answers at all. Taking the reply back means the ping reaches handlePing,
+    // which sends the pong when it arrives.
+    void disableCurlAutoPong()
+    {
+#ifdef CURLWS_NOAUTOPONG
+        curl_easy_setopt(handle, CURLOPT_WS_OPTIONS, (long) CURLWS_NOAUTOPONG);
+#endif
     }
 
     void run()
