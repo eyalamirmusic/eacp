@@ -2,12 +2,12 @@
 
 #include "../Common.h"
 
+#include "../Buffer/Buffer.h"
 #include "../Texture/Texture.h"
 
 namespace eacp::GPU
 {
 class ComputePipeline;
-class Buffer;
 
 // What an indirect dispatch reads out of a buffer: three threadgroup counts.
 // Both backends take exactly this, in this order and at this size - Metal's
@@ -50,6 +50,12 @@ public:
     // read-write output (Metal device buffer / D3D unordered-access view).
     void setInputBuffer(const Buffer& buffer, int slot);
     void setOutputBuffer(const Buffer& buffer, int slot);
+
+    // The same, bound from range.offset bytes in. The offset must be a multiple
+    // of four; range.bytes is not enforced. An invalid range, or one starting at
+    // or past the buffer's end, binds nothing.
+    void setInputBuffer(const BufferRange& range, int slot);
+    void setOutputBuffer(const BufferRange& range, int slot);
 
     // The texture siblings, on a slot space of their own: a texture the kernel
     // samples or fetches, and one it writes. sampling is the configuration the

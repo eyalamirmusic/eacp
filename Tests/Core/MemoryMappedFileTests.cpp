@@ -6,6 +6,8 @@
 #include <fstream>
 #include <new>
 #include <numeric>
+#include <optional>
+#include <type_traits>
 
 using namespace nano;
 using eacp::FilePath;
@@ -283,6 +285,39 @@ auto tOutlivesTheOpenFile = test("MemoryMappedFile/outlivesTheOpenFile") = []
 
     check(moved.isValid());
     check(moved.text() == contents);
+
+    std::filesystem::remove_all(dir);
+};
+
+// std::optional::emplace needs only the move constructor; assigning into a
+// live optional needs the move assignment as well.
+auto tIsMoveAssignable = test("MemoryMappedFile/isMoveAssignable") = []
+{
+    static_assert(std::is_move_assignable_v<MemoryMappedFile>);
+    static_assert(!std::is_copy_assignable_v<MemoryMappedFile>);
+
+    const auto dir = scratchDirectory("assign");
+    const auto first = dir / "first.txt";
+    const auto second = dir / "second.txt";
+
+    write(first, "first file");
+    write(second, "second file");
+
+    auto held = std::optional<MemoryMappedFile> {};
+    held = MemoryMappedFile {FilePath {first}};
+
+    check(held.has_value());
+    check(held->text() == "first file");
+
+    held = MemoryMappedFile {FilePath {second}};
+
+    check(held->isValid());
+    check(held->text() == "second file");
+
+    auto plain = MemoryMappedFile {FilePath {first}};
+    plain = MemoryMappedFile {FilePath {second}};
+
+    check(plain.text() == "second file");
 
     std::filesystem::remove_all(dir);
 };

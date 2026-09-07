@@ -350,20 +350,27 @@ struct Uniform<TextureDepth2D> : TextureDepth2D
 
 // Storage-buffer members of a compute program, following the texture pattern:
 // the slot-indexed handle define() reads or writes, and the slot the assigned
-// GPU::Buffer is bound at when dispatched. The program stores a pointer, so
-// the buffer must outlive the dispatch.
+// GPU::Buffer is bound at when dispatched. A Buffer binds whole, a BufferRange
+// from its offset (see ComputePass::setInputBuffer). The member holds a
+// BufferRange, so the buffer must outlive the dispatch.
 template <>
 struct Uniform<InputBuffer> : InputBuffer
 {
     Uniform& operator=(const Buffer& newBuffer)
     {
-        value = &newBuffer;
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
         return *this;
     }
 
     Uniform& operator=(Buffer&&) = delete;
 
-    const Buffer* value = nullptr;
+    BufferRange value {};
 };
 
 template <>
@@ -371,13 +378,19 @@ struct Uniform<OutputBuffer> : OutputBuffer
 {
     Uniform& operator=(const Buffer& newBuffer)
     {
-        value = &newBuffer;
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
         return *this;
     }
 
     Uniform& operator=(Buffer&&) = delete;
 
-    const Buffer* value = nullptr;
+    BufferRange value {};
 };
 
 // The atomic sibling, bound the same way an output is. The buffer's contents
@@ -389,13 +402,19 @@ struct Uniform<AtomicBuffer> : AtomicBuffer
 {
     Uniform& operator=(const Buffer& newBuffer)
     {
-        value = &newBuffer;
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
         return *this;
     }
 
     Uniform& operator=(Buffer&&) = delete;
 
-    const Buffer* value = nullptr;
+    BufferRange value {};
 };
 
 // A kernel's output image, following the Uniform<Texture2D> pattern: the
@@ -548,9 +567,9 @@ protected:
         onDepthTexture(const char*, TextureDepth2D&, const Texture*, TextureSampling)
     {
     }
-    virtual void onInputBuffer(const char*, InputBuffer&, const Buffer*) {}
-    virtual void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) {}
-    virtual void onAtomicBuffer(const char*, AtomicBuffer&, const Buffer*) {}
+    virtual void onInputBuffer(const char*, InputBuffer&, const BufferRange&) {}
+    virtual void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) {}
+    virtual void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) {}
     virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*)
     {
     }
@@ -598,17 +617,21 @@ public:
         handle = builder.depthTexture(sampling);
     }
 
-    void onInputBuffer(const char*, InputBuffer& handle, const Buffer*) override
+    void onInputBuffer(const char*, InputBuffer& handle, const BufferRange&) override
     {
         handle = builder.inputBuffer();
     }
 
-    void onOutputBuffer(const char*, OutputBuffer& handle, const Buffer*) override
+    void onOutputBuffer(const char*,
+                        OutputBuffer& handle,
+                        const BufferRange&) override
     {
         handle = builder.outputBuffer();
     }
 
-    void onAtomicBuffer(const char*, AtomicBuffer& handle, const Buffer*) override
+    void onAtomicBuffer(const char*,
+                        AtomicBuffer& handle,
+                        const BufferRange&) override
     {
         handle = builder.atomicBuffer();
     }
@@ -697,23 +720,27 @@ public:
 
     void onInputBuffer(const char*,
                        InputBuffer& handle,
-                       const Buffer* buffer) override
+                       const BufferRange& range) override
     {
-        if (buffer == nullptr)
+        if (!range.isValid())
             return;
 
-        pass.setVertexStorageBuffer(*buffer, handle.slot);
-        pass.setFragmentStorageBuffer(*buffer, handle.slot);
+        assert(range.offset == 0
+               && "eacp: a render program's Uniform<InputBuffer> binds the "
+                  "whole buffer - RenderPass has no ranged storage bind");
+
+        pass.setVertexStorageBuffer(*range.buffer, handle.slot);
+        pass.setFragmentStorageBuffer(*range.buffer, handle.slot);
     }
 
-    void onOutputBuffer(const char*, OutputBuffer&, const Buffer*) override
+    void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) override
     {
         assert(false
                && "eacp: a render program cannot write a buffer - "
                   "Uniform<OutputBuffer> belongs to a ComputeProgram");
     }
 
-    void onAtomicBuffer(const char*, AtomicBuffer&, const Buffer*) override
+    void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) override
     {
         assert(false
                && "eacp: a render program cannot write a buffer - "

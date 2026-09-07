@@ -46,37 +46,62 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
         impl->encoder->commands->list->SetPipelineState(state);
 }
 
+namespace
+{
+D3D12_GPU_VIRTUAL_ADDRESS rootDescriptorAddress(D3D12BufferData* data,
+                                                const BufferRange& range)
+{
+    if (data == nullptr || data->resource == nullptr || range.offset < 0
+        || (UINT64) range.offset >= data->size)
+        return 0;
+
+    return data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
+}
+} // namespace
+
 void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+    setInputBuffer(BufferRange::of(buffer), slot);
+}
+
+void ComputePass::setInputBuffer(const BufferRange& range, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots
+        || range.buffer == nullptr)
         return;
 
-    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
+    auto address = rootDescriptorAddress(data, range);
 
-    if (data == nullptr || data->resource == nullptr)
+    if (address == 0)
         return;
 
     auto& commands = *impl->encoder->commands;
     transitionForUse(
         commands, *data, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    commands.list->SetComputeRootShaderResourceView(
-        computeSRVParam(slot), data->resource->GetGPUVirtualAddress());
+    commands.list->SetComputeRootShaderResourceView(computeSRVParam(slot), address);
 }
 
 void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
+    setOutputBuffer(BufferRange::of(buffer), slot);
+}
+
+void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots
+        || range.buffer == nullptr)
         return;
 
-    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
+    auto address = rootDescriptorAddress(data, range);
 
-    if (data == nullptr || data->resource == nullptr)
+    if (address == 0)
         return;
 
     auto& commands = *impl->encoder->commands;
     transitionForUse(commands, *data, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    commands.list->SetComputeRootUnorderedAccessView(
-        computeUAVParam(slot), data->resource->GetGPUVirtualAddress());
+    commands.list->SetComputeRootUnorderedAccessView(computeUAVParam(slot), address);
 }
 
 void ComputePass::setInputTexture(const Texture& texture, int slot, TextureSampling)
