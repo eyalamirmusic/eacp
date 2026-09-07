@@ -31,6 +31,7 @@ set(gpu_test_sources
         BufferAccessTests.cpp
         BufferRangeTests.cpp
         CompressedTextureTests.cpp
+        ComputeBufferRangeTests.cpp
         CoordinateSpaceTests.cpp
         CubeTextureTests.cpp
         CullModeTests.cpp

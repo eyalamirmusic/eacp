@@ -48,7 +48,8 @@ public:
     // platforms reject a zero-length mapping, so that case is answered here
     // rather than turned into a failure every caller has to special-case.
     // A file is the one thing a view is routinely too large to count in an
-    // int, so the size is the full size_t, as is bytes().getSize().
+    // int, so the size is the full size_t, as is bytes().getSize() - count it
+    // with that rather than with size(), which asserts the count fits an int.
     Span<const std::uint8_t> bytes() const;
     std::string_view text() const;
 

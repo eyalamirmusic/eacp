@@ -43,18 +43,37 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
 
 void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+    setInputBuffer(BufferRange::of(buffer), slot);
+}
 
-    if (activeEncoder != nil && metalBuffer != nil)
-        [activeEncoder setBuffer:metalBuffer offset:0 atIndex:(NSUInteger) slot];
+void ComputePass::setInputBuffer(const BufferRange& range, int slot)
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || !range.isValid() || range.offset < 0
+        || range.offset >= range.buffer->size())
+        return;
+
+    auto metalBuffer = (__bridge id<MTLBuffer>) range.buffer->nativeBuffer();
+
+    if (metalBuffer == nil)
+        return;
+
+    [activeEncoder setBuffer:metalBuffer
+                      offset:(NSUInteger) range.offset
+                     atIndex:(NSUInteger) slot];
 }
 
 void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
 {
+    setOutputBuffer(BufferRange::of(buffer), slot);
+}
+
+void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
+{
     // Metal binds a device buffer the same way whether the kernel reads or
     // writes it; the read/write distinction only matters to D3D's view types.
-    setInputBuffer(buffer, slot);
+    setInputBuffer(range, slot);
 }
 
 void ComputePass::setInputTexture(const Texture& texture,

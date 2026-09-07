@@ -483,6 +483,24 @@ own: the bytes a kernel wrote as a flat float array are read by the vertex stage
 at the per-instance stride `instanceInput()` declared. One buffer, two views of
 it, no copy.
 
+### Part of a buffer
+
+A storage-buffer member takes a `BufferRange` as readily as a whole `Buffer`,
+and so do `ComputePass::setInputBuffer` and `setOutputBuffer`. The kernel's
+element zero is the element at the offset, so one allocation can be written a
+row at a time:
+
+```cpp
+kernel.keys = BufferRange {&cache, rowBytes * step, rowBytes};
+pass.dispatch(kernel, rowElements);     // writes cache[step], leaves the rest
+```
+
+The offset must be a multiple of 4 bytes. `range.bytes` is not enforced: what
+stops a kernel short is the count passed to `dispatch`. A range that names no
+buffer, or starts at or past its buffer's end, binds nothing. The render side
+takes whole buffers only, and a `Uniform<InputBuffer>` on a `ShaderProgram`
+asserts in Debug if handed an offset.
+
 ### Atomics
 
 `Uniform<AtomicBuffer>` is a storage buffer of **unsigned integers** every
@@ -766,6 +784,9 @@ the way in and out of that:
 | `packHalf2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeHalf2(out, i, pair)` | that word stored at `i` — `readHalf2` reads it back |
 | `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways |
+
+Size the buffer in whole words: `readHalf` fetches the word at `i / 2`, so an
+odd count of halves reads past its last byte on the final element.
 
 `readHalf` emits a two-argument helper — the word and which half of it — rather
 than unpacking both and selecting: MSL and HLSL each reach the wanted half with
