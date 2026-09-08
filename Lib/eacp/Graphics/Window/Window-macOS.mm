@@ -43,29 +43,28 @@ void repositionTrafficLights(NSWindow* window, NSPoint inset)
     }
 }
 
-// respondsToSelector: rather than @available alone, for the reason spelled out
-// over setWebViewInspectable in WebView.mm: clang folds an @available whose
-// floor the deployment target already clears, and a consumer that sets no
-// target inherits the build SDK's. Without the second guard this sends macOS
-// 14's activate to an NSApplication on macOS 11 that has only the older call.
-void requestCooperativeActivation()
+// Ask the system to bring this app to the foreground.
+//
+// Activation is COOPERATIVE since macOS 14: activateIgnoringOtherApps: is
+// documented as deprecated and demoted to a plain -activate, which the system
+// declines while the user is working in another app — exactly the
+// launched-from-a-terminal / IDE case. Measured on macOS 26, the demotion is
+// not what happens: -activate never lands for a terminal-launched app, still
+// inactive twelve seconds later, while activateIgnoringOtherApps: lands in
+// about 20 ms every time. So the deprecated call is the request, and
+// reopenSelfViaLaunchServices below is the escalation for the day the
+// documented behaviour becomes the real one.
+void requestActivation()
 {
-    if (@available(macOS 14.0, *))
-    {
-        if ([NSApp respondsToSelector:@selector(activate)])
-        {
-            [NSApp activate];
-            return;
-        }
-    }
-
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
 }
 
 // Ask LaunchServices to "open" this app. An open of an already-running app is
 // a user-level activation the system honours even while another app is
-// receiving input — unlike the cooperative requests below, which measurably
-// stay denied for our apps once refused at launch. Bundled apps only:
+// receiving input — unlike the cooperative request above. Bundled apps only:
 // "opening" a bare dev executable would misfire.
 void reopenSelfViaLaunchServices()
 {
@@ -80,41 +79,50 @@ void reopenSelfViaLaunchServices()
                                       completionHandler:nil];
 }
 
-// Bring the app to the foreground. Activation is COOPERATIVE since macOS 14:
-// activateIgnoringOtherApps: is deprecated and demoted to a plain -activate,
-// which the system declines while the user is actively working in another
-// app — exactly the launched-from-a-terminal / IDE case. The cooperative
-// request wins instantly when the user is idle, so try it first; if it is
-// still being denied a second in, escalate to the LaunchServices re-open,
-// which restores the pre-macOS-14 launch-to-front behaviour. One shared
-// poller — toFront() is called once per window at startup, and overlapping
-// retry chains would just spam the denial.
+constexpr auto activationPollSeconds = 0.25;
+constexpr auto activationAttempts = 8;
+
+// Bring the app to the foreground.
+//
+// The request above is what normally lands, so the poller is for the case
+// where it is refused, and the LaunchServices re-open goes first among the
+// retries because it is the one that has never been refused — a quarter second
+// rather than the second and a quarter it used to take to reach it.
+//
+// Stops the moment the app is active. Staying on to watch for a grant being
+// taken back would mean taking the screen off a user who deliberately switched
+// away just after launch, which is worse than the launch that failed to come
+// forward; measured, the request above is not revoked, and only the refused
+// cooperative one ever was. One shared poller — toFront() is called once per
+// window at startup, and overlapping retry chains would just spam the request.
 void ensureAppBecomesActive()
 {
     static auto polling = false;
     if (polling || NSApp.active)
         return;
 
-    requestCooperativeActivation();
+    requestActivation();
     polling = true;
 
     __block auto attempt = 0;
-    [NSTimer scheduledTimerWithTimeInterval:0.25
+    [NSTimer scheduledTimerWithTimeInterval:activationPollSeconds
                                     repeats:YES
                                       block:^(NSTimer* timer)
                                       {
                                           ++attempt;
-                                          if (NSApp.active || attempt > 12)
+
+                                          if (NSApp.active
+                                              || attempt > activationAttempts)
                                           {
                                               polling = false;
                                               [timer invalidate];
                                               return;
                                           }
 
-                                          if (attempt == 4)
+                                          if (attempt % 2 == 1)
                                               reopenSelfViaLaunchServices();
                                           else
-                                              requestCooperativeActivation();
+                                              requestActivation();
                                       }];
 }
 } // namespace
