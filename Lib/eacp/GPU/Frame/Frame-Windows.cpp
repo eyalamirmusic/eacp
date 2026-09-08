@@ -480,10 +480,10 @@ RenderPass Frame::beginPass(const Texture& target,
 // A buffer this pass writes as a UAV and a later pass binds as vertex data is
 // transitioned by RenderPass::setVertexBuffer: same recording, so the per-
 // recording state tracking sees the UAV state and emits the barrier.
-ComputePass Frame::beginCompute(std::string_view label)
+ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
 {
     if (impl->commands == nullptr)
-        return ComputePass(nullptr);
+        return ComputePass(nullptr, order);
 
     bindComputeRootState(impl->context(), impl->commands->list.get());
 
@@ -506,7 +506,7 @@ ComputePass Frame::beginCompute(std::string_view label)
         }
     }
 
-    return ComputePass(encoder);
+    return ComputePass(encoder, order);
 }
 
 bool Frame::isValid() const

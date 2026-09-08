@@ -62,24 +62,27 @@ struct CommandBuffer::Native
         encoder.endQuery = pass * 2 + 1;
     }
 
+    bool canSubmit() const { return commands != nullptr && !committed; }
+
     // Everything a submission needs recorded on it, in the order it needs it.
-    std::uint64_t endAndSubmit()
+    // The timeline value is kept, which is what scopes wait() and isComplete()
+    // to this submission rather than to the newest one on the queue.
+    void endAndSubmit()
     {
         committed = true;
         close();
 
         timer.endRecording(commands->buffer);
 
-        const auto completionValue = context.submit(commands);
+        completionValue = context.submit(commands);
         timer.noteSubmitted(completionValue);
-
-        return completionValue;
     }
 
     Device* device = nullptr;
     VulkanContext& context;
     CommandContext* commands = nullptr;
     CommandTimer timer;
+    std::uint64_t completionValue = 0;
     bool committed = false;
 };
 
@@ -88,15 +91,15 @@ CommandBuffer::CommandBuffer(Device& device)
 {
 }
 
-ComputePass CommandBuffer::beginCompute(std::string_view label)
+ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
 {
     if (impl->commands == nullptr || impl->committed)
-        return ComputePass(nullptr);
+        return ComputePass(nullptr, order);
 
     auto* encoder = new VulkanComputeEncoder {impl->commands};
     impl->timePass(*encoder, label);
 
-    return ComputePass(encoder);
+    return ComputePass(encoder, order);
 }
 
 void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
@@ -136,29 +139,60 @@ void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
                     word | (word << 8) | (word << 16) | (word << 24));
 }
 
+void CommandBuffer::submit()
+{
+    if (impl->canSubmit())
+        impl->endAndSubmit();
+}
+
 void CommandBuffer::commit()
 {
-    if (impl->commands == nullptr || impl->committed)
-        return;
-
-    // Waits, as Metal's commit does; commitAsync() is how a caller opts out.
-    impl->context.waitFor(impl->endAndSubmit());
+    // Waits, as Metal's commit does; submit() and commitAsync() are how a
+    // caller opts out.
+    submit();
+    wait();
 }
 
 Threads::Async<void> CommandBuffer::commitAsync()
 {
     auto promise = Threads::AsyncPromise<void> {};
 
-    if (impl->commands == nullptr || impl->committed)
+    if (!impl->canSubmit())
     {
         promise.resolve();
         return promise.get();
     }
 
-    impl->context.notifyWhenCompleted(impl->endAndSubmit(),
+    // The callback holds the promise's own shared state and nothing of this
+    // object, so a CommandBuffer destroyed while the poll is outstanding
+    // leaves nothing dangling.
+    impl->endAndSubmit();
+
+    impl->context.notifyWhenCompleted(impl->completionValue,
                                       [promise] { promise.resolve(); });
 
     return promise.get();
+}
+
+void CommandBuffer::wait()
+{
+    if (impl->committed)
+        impl->context.waitFor(impl->completionValue);
+}
+
+bool CommandBuffer::isComplete() const
+{
+    return impl->committed && impl->context.hasCompleted(impl->completionValue);
+}
+
+// The wait is scoped to this submission; the copy after it is not, the queue
+// being in order, so a readback recorded now still runs behind whatever was
+// submitted in between - the same deal the D3D12 backend gets, and for the
+// same reason.
+void CommandBuffer::read(const Buffer& buffer, void* dst, int bytes, int offset)
+{
+    wait();
+    buffer.read(dst, bytes, offset);
 }
 
 const FrameTimings& CommandBuffer::timings()

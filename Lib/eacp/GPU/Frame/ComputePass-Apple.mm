@@ -12,18 +12,20 @@ namespace eacp::GPU
 {
 struct ComputePass::Native
 {
-    explicit Native(void* encoderHandle)
+    Native(void* encoderHandle, DispatchOrder dispatchOrder)
+        : order(dispatchOrder)
     {
         if (encoderHandle != nullptr)
             encoder.reset((__bridge NSObject<MTLComputeCommandEncoder>*) encoderHandle);
     }
 
     ObjC::Ptr<NSObject<MTLComputeCommandEncoder>> encoder;
+    DispatchOrder order = DispatchOrder::Serial;
     bool ended = false;
 };
 
-ComputePass::ComputePass(void* encoder)
-    : impl(encoder)
+ComputePass::ComputePass(void* encoder, DispatchOrder order)
+    : impl(encoder, order)
 {
 }
 
@@ -34,6 +36,8 @@ ComputePass::~ComputePass()
 
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
+    boundGroup = pipeline.threadGroupShape();
+
     auto activeEncoder = impl->encoder.get();
     auto state = (__bridge id<MTLComputePipelineState>) pipeline.nativeState();
 
@@ -125,11 +129,15 @@ void ComputePass::dispatch(int count)
     if (activeEncoder == nil || count <= 0)
         return;
 
-    auto width = (NSUInteger) threadGroupWidth;
+    auto group = groupFor1D();
+    auto width = (NSUInteger) group.x;
     auto groups = ((NSUInteger) count + width - 1) / width;
 
-    [activeEncoder dispatchThreadgroups:MTLSizeMake(groups, 1, 1)
-                  threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+    [activeEncoder
+         dispatchThreadgroups:MTLSizeMake(groups, 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(width,
+                                          (NSUInteger) group.y,
+                                          (NSUInteger) group.z)];
 }
 
 void ComputePass::dispatch(int width, int height)
@@ -139,12 +147,15 @@ void ComputePass::dispatch(int width, int height)
     if (activeEncoder == nil || width <= 0 || height <= 0)
         return;
 
-    auto size = (NSUInteger) threadGroupSize2D;
-    auto groupsX = ((NSUInteger) width + size - 1) / size;
-    auto groupsY = ((NSUInteger) height + size - 1) / size;
+    auto group = groupFor2D();
+    auto sizeX = (NSUInteger) group.x;
+    auto sizeY = (NSUInteger) group.y;
+    auto groupsX = ((NSUInteger) width + sizeX - 1) / sizeX;
+    auto groupsY = ((NSUInteger) height + sizeY - 1) / sizeY;
 
-    [activeEncoder dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, 1)
-                  threadsPerThreadgroup:MTLSizeMake(size, size, 1)];
+    [activeEncoder
+         dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, 1)
+        threadsPerThreadgroup:MTLSizeMake(sizeX, sizeY, (NSUInteger) group.z)];
 }
 
 void ComputePass::dispatch(int width, int height, int depth)
@@ -154,13 +165,16 @@ void ComputePass::dispatch(int width, int height, int depth)
     if (activeEncoder == nil || width <= 0 || height <= 0 || depth <= 0)
         return;
 
-    auto size = (NSUInteger) threadGroupSize3D;
-    auto groupsX = ((NSUInteger) width + size - 1) / size;
-    auto groupsY = ((NSUInteger) height + size - 1) / size;
-    auto groupsZ = ((NSUInteger) depth + size - 1) / size;
+    auto group = groupFor3D();
+    auto sizeX = (NSUInteger) group.x;
+    auto sizeY = (NSUInteger) group.y;
+    auto sizeZ = (NSUInteger) group.z;
+    auto groupsX = ((NSUInteger) width + sizeX - 1) / sizeX;
+    auto groupsY = ((NSUInteger) height + sizeY - 1) / sizeY;
+    auto groupsZ = ((NSUInteger) depth + sizeZ - 1) / sizeZ;
 
     [activeEncoder dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, groupsZ)
-                  threadsPerThreadgroup:MTLSizeMake(size, size, size)];
+                  threadsPerThreadgroup:MTLSizeMake(sizeX, sizeY, sizeZ)];
 }
 
 // The threadgroup size still comes from here - only the *count* is in the
@@ -175,13 +189,29 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
         || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
         return;
 
-    auto width = (NSUInteger) threadGroupWidth;
+    auto group = groupFor1D();
 
     [activeEncoder dispatchThreadgroupsWithIndirectBuffer:metalBuffer
                                     indirectBufferOffset:(NSUInteger) offsetInBytes
-                                   threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+                                   threadsPerThreadgroup:MTLSizeMake(
+                                                             (NSUInteger) group.x,
+                                                             (NSUInteger) group.y,
+                                                             (NSUInteger) group.z)];
 }
 
+void ComputePass::barrier()
+{
+    if (impl->order != DispatchOrder::Concurrent)
+        return;
+
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder memoryBarrierWithScope:MTLBarrierScopeBuffers
+                                              | MTLBarrierScopeTextures];
+}
+
+// The encoder's own end orders everything it recorded against whatever the
+// command buffer does next, concurrent dispatch included, so there is no closing
+// barrier to record here.
 void ComputePass::end()
 {
     if (impl->ended)

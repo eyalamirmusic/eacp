@@ -219,8 +219,8 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   a float, an index, an integer vector, a mask — and takes a literal on either
   side of a scalar one; the condition is a scalar `Bool` in all of them, which
   is the conditional operator both languages already print
-- Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId` — see the
-  compute section
+- Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId`, and the
+  group-wide `groupSum` / `groupMax` / `groupMin` — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates
@@ -438,9 +438,9 @@ A kernel is a `ComputeProgram`: storage buffers and uniforms as members, the
 body in `define()`, dispatched over one index per element. Two places take one.
 
 The grid comes from what the body asks for. `threadId()` gives a single index
-and is dispatched with `dispatch(count)`; `threadPosition()` gives an `x` and a
-`y` and is dispatched with `dispatch(width, height)`, in 8×8 groups;
-`threadPosition3()` adds a `z` and is dispatched with
+and is dispatched with `dispatch(count)`, in groups of 64; `threadPosition()`
+gives an `x` and a `y` and is dispatched with `dispatch(width, height)`, in 8×8
+groups; `threadPosition3()` adds a `z` and is dispatched with
 `dispatch(width, height, depth)`, in 4×4×4 groups — what anything natively
 indexed by three numbers wants, an attention score by (key, query, head) among
 them, rather than a third axis folded into a row on the host. A kernel takes one
@@ -465,6 +465,50 @@ void define() override
 pass.dispatch(kernel, width, height);
 ```
 
+### The group a kernel is dispatched in
+
+Those three shapes are the defaults, not the only ones. A kernel that wants a
+different group says so before `compile()`, by handing a `ThreadGroupShape` to
+the base constructor, and everything downstream follows it: the emitted
+`[numthreads(...)]` and `layout(local_size_...)`, and the threadgroup the pass
+dispatches in.
+
+```cpp
+struct RowSum final : ComputeProgram
+{
+    RowSum() : ComputeProgram({256}) { compile(); }
+
+    void define() override
+    {
+        auto lane = localId();                     // now runs to 256
+        auto scratch = shared<Float>(groupShape().x);
+        ...
+    }
+};
+```
+
+`{256}` is a 1D group of 256; `{16, 16}` is the 2D group a tiled product wants;
+a third number is the depth. `ComputeProgram()` — the constructor everything
+here used until now — keeps the stock shape, so a kernel that says nothing is
+dispatched exactly as before, and `ComputePass::threadGroupWidth`,
+`threadGroupSize2D` and `threadGroupSize3D` still spell what "nothing" means.
+
+`groupShape()` is the shape this kernel really has, and is what a shared tile
+and a lane's stride are sized against. Read it inside `define()` **after** the
+body has asked for its thread index: a kernel that named no shape resolves one
+from its rank, and the rank is what `threadId()` or `threadPosition()` fixes.
+
+Wider is not automatically faster. A group-per-row sum over 1500 floats runs
+1.7× *slower* at 256 lanes than at 64 when there are 1500 rows to sum, because
+64 lanes already saturate memory bandwidth and the extra lanes only add barriers
+— and 1.4× faster at 32 rows, where there is not enough work to fill the machine
+and a wider group is what hides the latency. It is a knob to measure, not one to
+turn up.
+
+The group is also a device limit: Metal reports `maxTotalThreadsPerThreadgroup`
+per pipeline, and a kernel asking for more than that is reported at `prepare()`
+rather than dispatching nothing.
+
 `Device::makeCommandBuffer()` is the off-screen path — compute with no frame
 around it. `commit()` submits and waits; `commitAsync()` submits and returns a
 `Threads::Async<void>` that resolves once the GPU is done:
@@ -484,6 +528,75 @@ commands.commitAsync().then([&] { /* output is ready */ });
 Nothing about correctness changes between the two. `Buffer::read()` orders
 behind the submission itself, so a read before the `Async` resolves is still
 right — it just waits by hand for what the overlap was there to avoid.
+
+### Waiting for one command buffer
+
+What `Buffer::read()` waits for is the *newest* submission, and so for every
+earlier one too. That is the right default — the buffer has no way to know
+which submission wrote the bytes being asked for — and it is exactly wrong for
+a loop that keeps more than one command buffer in flight: step k's result
+cannot be read while step k+1 is running, because the read waits for both.
+
+`wait()` is the scoped version. It blocks until *this* command buffer's work
+has finished and for nothing submitted after it, returns at once when the work
+has already landed, and does nothing at all on a buffer that was never
+committed. `isComplete()` asks the same question without blocking.
+`CommandBuffer::read()` is `Buffer::read()` scoped the same way: that wait, and
+then the copy.
+
+```cpp
+commands.submit();                        // no wait, nothing to resolve
+commands.wait();                          // this buffer only
+commands.read(output, values.data(), bytes);
+```
+
+`submit()` is the third way to hand work over, beside `commit()` and
+`commitAsync()`. The `Async` the latter returns settles on the message thread,
+so a loop that blocks in `wait()` and never gives that thread a turn would
+never see it resolve; `submit()` is that submission with the completion half
+left to `wait()`. All three are the same submission, and a second one on the
+same command buffer does nothing whichever was used.
+
+Which is what a pipelined loop of small steps is built out of — record and
+submit step k+1 while step k is still running on the GPU, then wait for step k
+and read it:
+
+```cpp
+// Two in the air at a time: one running, one being recorded. A CommandBuffer
+// is neither copyable nor movable, so the ring holds them in place.
+std::optional<CommandBuffer> inFlight[2];
+
+for (auto step = 0; step < stepCount; ++step)
+{
+    auto& commands = inFlight[step % 2].emplace(device);
+
+    {
+        kernel.step = (unsigned) step;
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, count);
+    }
+
+    commands.submit();
+
+    // One behind: the CPU has recorded and submitted step k+1 before it asks
+    // the GPU for step k, so the two overlap instead of taking turns.
+    if (step > 0)
+        inFlight[(step - 1) % 2]->read(state, &results[step - 1], sizeof(float));
+}
+```
+
+Command buffers on one queue run in the order they were submitted, so step k+1
+reads what step k wrote without anything being said about it — the dependency
+is the queue's, not the caller's. A command buffer whose work is still running
+may be destroyed; what may not happen is reading its output without a `wait()`
+or a `read()` of its own first.
+
+The scoped read is a memcpy after the wait on Metal, where a storage buffer is
+CPU-visible. On D3D12 and Vulkan the copy out of a device-heap buffer is itself
+a submission, which the in-order queue puts behind whatever was submitted in
+between, so the wait is scoped there and the copy is not. It is still the right
+call — it is the only shape a readback has on those backends — but a loop that
+reads every step will overlap less there than it does here.
 
 `Frame::beginCompute()` is the other one: a compute pass on the frame's own
 command buffer, ordered with its render passes the way two render passes are.
@@ -508,6 +621,50 @@ void render(Frame& frame) override
 own: the bytes a kernel wrote as a flat float array are read by the vertex stage
 at the per-instance stride `instanceInput()` declared. One buffer, two views of
 it, no copy.
+
+**Within one pass, the dispatches are ordered.** Every dispatch sees the writes
+of every dispatch recorded before it in the same pass, on all three backends, so
+a chain of stages is a chain of `dispatch` calls and does not need a pass each.
+Between passes the ordering is the queue's, which is the same promise a second
+time.
+
+### Dispatches that overlap
+
+That ordering is not free: a dispatch waits for the one before it to drain even
+when the two share nothing, and for a stage whose grid is a few hundred threads
+the wait is most of what the stage costs. A chain of sixty small kernels pays it
+sixty times.
+
+`DispatchOrder::Concurrent` lifts it, and `ComputePass::barrier()` puts it back
+exactly where one stage does read what another wrote:
+
+```cpp
+auto pass = commands.beginCompute("attention", DispatchOrder::Concurrent);
+
+for (auto head = 0; head < heads; ++head)
+{
+    scores.output = BufferRange {&allScores, head * stride, stride};
+    pass.dispatch(scores, keys);       // the heads share nothing
+}
+
+pass.barrier();                        // every score is written before...
+pass.dispatch(combine, width);         // ...anything reads one
+```
+
+Everything recorded before a `barrier()` completes — its buffer and texture
+writes visible — before anything recorded after it begins. A `barrier()` after
+every dispatch is the serial pass again and measurably slower than one, so this
+is worth reaching for where there is real independence and not otherwise.
+
+The end of the pass is a barrier of its own: what the next pass, a `fill` or a
+`Buffer::read` sees from a serial pass, it sees from a concurrent one.
+`barrier()` in a serial pass is a no-op, so a chain can be written once and
+switched between the two by its argument alone. `Frame::beginCompute` takes the
+same second argument and means the same thing by it, and an unlabelled pass
+spells the label it is not giving: `beginCompute({}, DispatchOrder::Concurrent)`.
+
+This is not the `barrier()` a kernel body calls. That one is inside a single
+dispatch, across the threads of one group — see **Threadgroup memory** below.
 
 ### In place
 
@@ -541,7 +698,8 @@ use of it is the value from before the store.
 
 A pass given a label is timed by the hardware, on a command buffer exactly as on
 a frame. The numbers come off the buffer itself once the GPU has finished it —
-after `commit()`, or after the `Async` from `commitAsync()` has resolved:
+after `commit()` or `wait()`, or after the `Async` from `commitAsync()` has
+resolved:
 
 ```cpp
 {
@@ -560,6 +718,14 @@ timed and does not appear, and a command buffer with no labelled pass at all
 builds no timestamp resources; `supportsPassTimings()` says whether this device
 can break a buffer down by pass, as `Device::supportsPassTimings()` does for a
 frame.
+
+A frame or a command buffer times its first `GpuTimestamps::maxTimedPasses`
+labelled passes, which is 128 — enough to give every kernel of a net a label of
+its own. Past that a pass runs exactly as it would have and is simply not
+timed, so the tail is missing from the breakdown rather than the buffer being
+wrong. The ceiling is a fixed pool of two timestamps per pass, so it costs a
+slot 2 KB of samples on Metal and a 258-entry query heap with its readback
+buffer on D3D12 and Vulkan — paid only once a labelled pass has asked for it.
 
 ### Zeroing a buffer
 
@@ -714,10 +880,12 @@ costs no readback — the number never reaches the CPU:
 ```
 
 `DispatchArguments` is the three **threadgroup** counts both backends read, at
-the same size and in the same order. A kernel that counted 1000 items writes
-`(1000 + threadGroupWidth - 1) / threadGroupWidth`, not 1000. Writing them means
-writing integers, so the buffer is a `Uniform<AtomicBuffer>` and
-`write(arguments, 0u, groups)` is the store.
+the same size and in the same order. A kernel that counted 1000 items divides by
+the group width the *consuming* kernel was compiled for — its
+`groupShape().x`, 64 unless it asked for another — and writes
+`(1000 + width - 1) / width`, not 1000. Writing them means writing integers, so
+the buffer is a `Uniform<AtomicBuffer>` and `write(arguments, 0u, groups)` is
+the store.
 
 The last argument is what the generated bounds guard compares against, and it
 cannot be the real count — nothing on the CPU knows it. Pass the **capacity**.
@@ -731,9 +899,9 @@ The offset the arguments are read at — the last parameter, for a buffer holdin
 several grids — must be a multiple of four and leave a whole `DispatchArguments`
 behind it. One that does not dispatches nothing.
 
-Each stage is its own pass. Threads of one dispatch are ordered against each
-other by nothing but the end of that dispatch, so a kernel reading what the
-previous one counted has to be in a later pass.
+Threads of one dispatch are ordered against each other by nothing but the end of
+that dispatch, so a kernel reading what the previous one counted has to be a
+later dispatch — a later pass, as above, or a later dispatch in the same one.
 
 1D only. A 2D or 3D indirect dispatch would take its extents beside an offset
 and could not be told apart from this one; nothing has needed it.
@@ -749,15 +917,18 @@ thread's writes visible to the rest:
 void define() override
 {
     auto lane = localId();
-    auto scratch = shared<Float>(64);
+    auto scratch = shared<Float>(groupShape().x);
 
     write(scratch, lane, input[threadId()]);
     barrier();
 
-    // every thread now holds what all 64 of them fetched
+    // every thread now holds what the whole group fetched
     write(output, threadId(), scratch[lane ^ 1u]);
 }
 ```
+
+`groupShape()` is what to size the tile against rather than a literal, since it
+follows the shape the kernel asked for — 64 for one that asked for nothing.
 
 Nothing initialises it — what it holds before the group writes it is undefined,
 which is why every use starts by filling it and waiting. Reading is a subscript;
@@ -769,12 +940,14 @@ inside an `ifThen` that some threads take and others do not is undefined in both
 languages, and undefined here means a hang rather than a wrong answer. Diverging
 *after* a barrier is ordinary control flow; diverging *around* one is not.
 
-That rule reaches the dispatch too: the emitted bounds guard returns early, so a
-kernel with a barrier may only be dispatched over a whole number of groups —
-`ComputeProgram` asserts rather than leaving it to the caller to remember. Round
-the count up to a multiple of `ComputePass::threadGroupWidth` (or of
-`threadGroupSize2D` / `threadGroupSize3D` in every axis) and guard the writes
-instead.
+That rule reaches the dispatch too: a kernel that barriers gets **no** early
+bounds guard, since a barrier below a return some threads took is exactly the
+divergence the rule forbids. Every thread of every group therefore runs the
+whole body, and the dispatch rounds the grid up to whole groups — so the tail of
+the last group runs on indices past the data, and the kernel has to hold its own
+stores, typically with `ifThen(id < gridCount(), ...)`. Size the grid in
+multiples of `groupShape()` where the tail would otherwise compute nonsense, and
+guard the writes either way.
 
 The declaration is the one place the two backends are not the same shape twice:
 MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` is a
@@ -830,9 +1003,10 @@ into something destroyed at the semicolon, and it is a compile error rather than
 a wrong picture.
 
 A command buffer has one open encoder at a time, so let a pass end before
-beginning the one that reads what it wrote. `Apps/GPU/ComputeParticles` is the
-worked example, and `Apps/GPU/AsyncCompute` times the two commits against each
-other.
+beginning the next one — which is a rule about encoders and not about
+visibility, since a dispatch already sees what an earlier dispatch in the same
+pass wrote. `Apps/GPU/ComputeParticles` is the worked example, and
+`Apps/GPU/AsyncCompute` times the two commits against each other.
 
 A `write()` happens **where it is written**: one inside an `ifThen` runs only
 when the condition holds, and one inside a `loop` runs every iteration. That is
@@ -840,6 +1014,50 @@ worth stating because it was not always true — stores used to be collected and
 emitted after the body, so a guarded write ran unconditionally and a looped one
 ran once afterwards on the counter's final value. Both compiled and neither
 complained; `Tests/GPU/StorePlacementTests.cpp` is what now says otherwise.
+
+### Reducing over the group
+
+`groupSum`, `groupMax` and `groupMin` are the fold a shared tile was being
+hand-written for. Every thread of the group contributes a value, and every
+thread gets the reduction over the whole group back — not a partial, and not
+only the leader:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    auto x = input[i];
+
+    auto mean = groupSum(x) / width;
+    auto centred = x - mean;
+    auto variance = groupSum(centred * centred) / width;
+
+    write(output, i, centred * rsqrt(variance + 1.0e-5f));
+}
+```
+
+They take a `Float` or a `UInt`, they may be called as many times as a kernel
+needs, and the result is an ordinary value: divide it, feed it to the next one,
+carry it into a loop or a store.
+
+**Like a barrier, a reduction must be reached by every thread in the group or
+by none** — it *is* a barrier, several of them on some backends, so one inside
+an `ifThen` that only some threads take hangs rather than answering wrongly.
+And for the same reason a kernel that reduces loses its early-return bounds
+guard, exactly as one that barriers does: dispatch it over a whole number of
+groups and guard the stores against `gridCount()` yourself.
+
+A 1D, a 2D and a 3D kernel all reduce over the *whole* group — 64 threads, an
+8×8 tile and a 4×4×4 block are one group each and fold to one number — rather
+than over a row or a plane of it.
+
+What each backend emits is the fastest form it has. Metal reduces within each
+SIMD group with `simd_sum`/`simd_max`/`simd_min` and combines those few
+partials through a scratch array; HLSL under FXC has no wave intrinsic at
+`cs_5_0` and GLSL is held to what a driver compiles with no subgroup extension,
+so both walk a `groupshared` tree with a barrier per halving step. The scratch
+is the emitter's own, declared once per kernel and only where a reduction asked
+for it.
 
 ### Textures a kernel writes
 

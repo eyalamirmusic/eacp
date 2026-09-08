@@ -13,22 +13,52 @@
 // of the heaps beginCompute bound. Uniforms upload into a transient buffer
 // bound as a root CBV. A UAV barrier after every dispatch orders chained
 // kernels, and covers a texture written by one and read by the next exactly as
-// it covers a buffer.
+// it covers a buffer. A concurrent pass drops that per-dispatch barrier -
+// dispatches on a list overlap unless something says otherwise - and records
+// one where barrier() asks and one more as the pass ends.
 
 namespace eacp::GPU
 {
+namespace
+{
+// Orders a dispatch's UAV writes against any later read or write of the same
+// resources in this recording (chained kernels, readback copies).
+void barrierAfterDispatch(ID3D12GraphicsCommandList* list)
+{
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    list->ResourceBarrier(1, &barrier);
+}
+} // namespace
+
 struct ComputePass::Native
 {
-    explicit Native(void* encoderHandle)
+    Native(void* encoderHandle, DispatchOrder dispatchOrder)
         : encoder(static_cast<D3D12ComputeEncoder*>(encoderHandle))
+        , order(dispatchOrder)
     {
     }
 
+    bool isConcurrent() const { return order == DispatchOrder::Concurrent; }
+
+    void orderAfterDispatch(ID3D12GraphicsCommandList* list) const
+    {
+        if (!isConcurrent())
+            barrierAfterDispatch(list);
+    }
+
+    void recordBarrier() const
+    {
+        if (encoder != nullptr && encoder->commands != nullptr)
+            barrierAfterDispatch(encoder->commands->list.get());
+    }
+
     std::unique_ptr<D3D12ComputeEncoder> encoder;
+    DispatchOrder order = DispatchOrder::Serial;
 };
 
-ComputePass::ComputePass(void* encoder)
-    : impl(encoder)
+ComputePass::ComputePass(void* encoder, DispatchOrder order)
+    : impl(encoder, order)
 {
 }
 
@@ -39,6 +69,8 @@ ComputePass::~ComputePass()
 
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
+    boundGroup = pipeline.threadGroupShape();
+
     if (!impl->encoder)
         return;
 
@@ -155,29 +187,17 @@ void ComputePass::setBytes(const void* data, int bytes, int slot)
                                                         address);
 }
 
-namespace
-{
-// Orders a dispatch's UAV writes against any later read or write of the same
-// resources in this recording (chained kernels, readback copies).
-void barrierAfterDispatch(ID3D12GraphicsCommandList* list)
-{
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    list->ResourceBarrier(1, &barrier);
-}
-} // namespace
-
 void ComputePass::dispatch(int count)
 {
     if (!impl->encoder || count <= 0)
         return;
 
-    auto groups =
-        (static_cast<UINT>(count) + threadGroupWidth - 1) / threadGroupWidth;
+    auto width = static_cast<UINT>(groupFor1D().x);
+    auto groups = (static_cast<UINT>(count) + width - 1) / width;
 
     auto* list = impl->encoder->commands->list.get();
     list->Dispatch(groups, 1, 1);
-    barrierAfterDispatch(list);
+    impl->orderAfterDispatch(list);
 }
 
 void ComputePass::dispatch(int width, int height)
@@ -185,13 +205,15 @@ void ComputePass::dispatch(int width, int height)
     if (!impl->encoder || width <= 0 || height <= 0)
         return;
 
-    auto size = static_cast<UINT>(threadGroupSize2D);
-    auto groupsX = (static_cast<UINT>(width) + size - 1) / size;
-    auto groupsY = (static_cast<UINT>(height) + size - 1) / size;
+    auto group = groupFor2D();
+    auto sizeX = static_cast<UINT>(group.x);
+    auto sizeY = static_cast<UINT>(group.y);
+    auto groupsX = (static_cast<UINT>(width) + sizeX - 1) / sizeX;
+    auto groupsY = (static_cast<UINT>(height) + sizeY - 1) / sizeY;
 
     auto* list = impl->encoder->commands->list.get();
     list->Dispatch(groupsX, groupsY, 1);
-    barrierAfterDispatch(list);
+    impl->orderAfterDispatch(list);
 }
 
 void ComputePass::dispatch(int width, int height, int depth)
@@ -199,14 +221,17 @@ void ComputePass::dispatch(int width, int height, int depth)
     if (!impl->encoder || width <= 0 || height <= 0 || depth <= 0)
         return;
 
-    auto size = static_cast<UINT>(threadGroupSize3D);
-    auto groupsX = (static_cast<UINT>(width) + size - 1) / size;
-    auto groupsY = (static_cast<UINT>(height) + size - 1) / size;
-    auto groupsZ = (static_cast<UINT>(depth) + size - 1) / size;
+    auto group = groupFor3D();
+    auto sizeX = static_cast<UINT>(group.x);
+    auto sizeY = static_cast<UINT>(group.y);
+    auto sizeZ = static_cast<UINT>(group.z);
+    auto groupsX = (static_cast<UINT>(width) + sizeX - 1) / sizeX;
+    auto groupsY = (static_cast<UINT>(height) + sizeY - 1) / sizeY;
+    auto groupsZ = (static_cast<UINT>(depth) + sizeZ - 1) / sizeZ;
 
     auto* list = impl->encoder->commands->list.get();
     list->Dispatch(groupsX, groupsY, groupsZ);
-    barrierAfterDispatch(list);
+    impl->orderAfterDispatch(list);
 }
 
 // The grid comes out of the buffer; the threadgroup size is baked into the
@@ -217,7 +242,9 @@ void ComputePass::dispatch(int width, int height, int depth)
 // The buffer needs a state of its own here. An earlier kernel wrote it as a
 // UAV, and a resource is only legal to read as indirect arguments from
 // INDIRECT_ARGUMENT - a transition Metal has no equivalent of and the reason
-// this is not simply the same three lines twice.
+// this is not simply the same three lines twice. That transition is only a
+// transition, so in a concurrent pass the writer's UAV work is ordered against
+// it by hand first.
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
     if (!impl->encoder || offsetInBytes < 0
@@ -235,22 +262,40 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
     if (signature == nullptr)
         return;
 
+    auto* list = commands.list.get();
+
+    if (impl->isConcurrent())
+        impl->recordBarrier();
+
     transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
 
-    auto* list = commands.list.get();
     list->ExecuteIndirect(signature,
                           1,
                           data->resource.get(),
                           static_cast<UINT64>(offsetInBytes),
                           nullptr,
                           0);
-    barrierAfterDispatch(list);
+    impl->orderAfterDispatch(list);
 }
 
+void ComputePass::barrier()
+{
+    if (impl->isConcurrent())
+        impl->recordBarrier();
+}
+
+// A concurrent pass owes the rest of the recording what the per-dispatch
+// barriers owed it in a serial one, so the last dispatches are ordered here
+// against whatever the next pass or a readback copy does.
 void ComputePass::end()
 {
     if (impl->encoder)
+    {
+        if (impl->isConcurrent())
+            impl->recordBarrier();
+
         endTimedPass(*impl->encoder);
+    }
 
     impl->encoder.reset();
 }

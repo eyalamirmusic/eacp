@@ -1974,6 +1974,56 @@ auto tCodegenCompute2D = test("GPU/codegenCompute2D") = []
     expectGlslCompiles(builder.graph());
 };
 
+// A kernel may name the group it is dispatched in, and the entry point is
+// emitted for that group rather than for the stock one. MSL declares no group
+// at all - there the number reaches the pipeline through the dispatch - so the
+// shape rides on the generated ShaderSource for every backend alike.
+auto tCodegenThreadGroupShape = test("GPU/codegenThreadGroupShape") = []
+{
+    auto wide = ShaderBuilder {};
+    wide.setThreadGroupShape({256});
+
+    auto wideOutput = wide.outputBuffer();
+    auto gid = wide.threadId();
+    wide.write(wideOutput, gid, toFloat(gid));
+
+    check(contains(emitHlsl(wide.graph()), "[numthreads(256, 1, 1)]"));
+    check(contains(
+        emitGlsl(wide.graph()),
+        "layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;"));
+    check(!contains(emitMetal(wide.graph()), "numthreads"));
+    check(wide.build().source.threadGroup.x == 256);
+
+    auto tiled = ShaderBuilder {};
+    tiled.setThreadGroupShape({16, 16});
+
+    auto tiledOutput = tiled.outputBuffer();
+    auto p = tiled.threadPosition();
+    tiled.write(tiledOutput, p.y * 64u + p.x, toFloat(p.x));
+
+    check(contains(emitHlsl(tiled.graph()), "[numthreads(16, 16, 1)]"));
+    check(contains(
+        emitGlsl(tiled.graph()),
+        "layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;"));
+    check(tiled.build().source.threadGroup.y == 16);
+
+    // And a kernel that named nothing still gets the stock shape for its rank.
+    auto stock = ShaderBuilder {};
+
+    auto stockOutput = stock.outputBuffer();
+    auto q = stock.threadPosition();
+    stock.write(stockOutput, q.y * 64u + q.x, toFloat(q.x));
+
+    check(contains(emitHlsl(stock.graph()), "[numthreads(8, 8, 1)]"));
+    check(contains(
+        emitGlsl(stock.graph()),
+        "layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;"));
+
+    expectGlslCompiles(wide.graph());
+    expectGlslCompiles(tiled.graph());
+    expectGlslCompiles(stock.graph());
+};
+
 // A kernel that reads one texture and writes another. Read and written
 // textures take slots from one counter, because Metal binds both to one texture
 // index space; on D3D they land in the t and u spaces they share with the

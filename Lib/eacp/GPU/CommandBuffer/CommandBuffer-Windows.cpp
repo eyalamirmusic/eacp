@@ -63,10 +63,27 @@ struct CommandBuffer::Native
             context.setOpenRecording(nullptr);
     }
 
+    bool canSubmit() const { return commands != nullptr && !committed; }
+
+    // Everything a submission needs recorded on it, in the order it needs it.
+    // The fence value is kept, which is what scopes wait() and isComplete() to
+    // this submission rather than to the newest one on the queue.
+    void endAndSubmit()
+    {
+        committed = true;
+        close();
+
+        timer.endRecording(commands->list.get());
+
+        completionValue = context.submit(commands);
+        timer.noteSubmitted(completionValue);
+    }
+
     Device* device = nullptr;
     D3D12Context& context;
     CommandContext* commands = nullptr;
     CommandTimer timer;
+    std::uint64_t completionValue = 0;
     bool committed = false;
 };
 
@@ -75,10 +92,10 @@ CommandBuffer::CommandBuffer(Device& device)
 {
 }
 
-ComputePass CommandBuffer::beginCompute(std::string_view label)
+ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
 {
     if (impl->commands == nullptr || impl->committed)
-        return ComputePass(nullptr);
+        return ComputePass(nullptr, order);
 
     auto* list = impl->commands->list.get();
 
@@ -103,7 +120,7 @@ ComputePass CommandBuffer::beginCompute(std::string_view label)
         }
     }
 
-    return ComputePass(encoder);
+    return ComputePass(encoder, order);
 }
 
 void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
@@ -150,56 +167,67 @@ void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
     }
 }
 
+void CommandBuffer::submit()
+{
+    if (impl->canSubmit())
+        impl->endAndSubmit();
+}
+
 void CommandBuffer::commit()
 {
-    if (impl->commands == nullptr || impl->committed)
-        return;
-
-    impl->committed = true;
-    impl->close();
-
     // Waits, because Metal's commit does ([buffer waitUntilCompleted]) and one
     // contract has to hold on both backends. Without it they disagree on what a
     // returned commit() means: code that commits and then reads its results
     // through anything but Buffer::read - which waits on its own fence - would
     // race here and not there, and a benchmark timing commit() would measure
     // the CPU-side record on this backend and the finished work on that one.
-    // commitAsync() is how a caller opts out of the wait.
-    auto& context = impl->context;
-
-    impl->timer.endRecording(impl->commands->list.get());
-
-    const auto fenceValue = context.submit(impl->commands);
-    impl->timer.noteSubmitted(fenceValue);
-
-    context.waitFor(fenceValue);
+    // submit() and commitAsync() are how a caller opts out of the wait.
+    submit();
+    wait();
 }
 
 Threads::Async<void> CommandBuffer::commitAsync()
 {
     auto promise = Threads::AsyncPromise<void> {};
 
-    if (impl->commands == nullptr || impl->committed)
+    if (!impl->canSubmit())
     {
         promise.resolve();
         return promise.get();
     }
 
-    impl->committed = true;
-    impl->close();
+    // The context's submit already returns without waiting here - what the
+    // fence adds is the moment to say so. The callback holds the promise's own
+    // shared state and nothing of this object, so a CommandBuffer destroyed
+    // while the poll is outstanding leaves nothing dangling.
+    impl->endAndSubmit();
 
-    // submit() already returns without waiting here - what the fence adds is
-    // the moment to say so.
-    auto& context = impl->context;
-
-    impl->timer.endRecording(impl->commands->list.get());
-
-    const auto fenceValue = context.submit(impl->commands);
-    impl->timer.noteSubmitted(fenceValue);
-
-    context.notifyWhenCompleted(fenceValue, [promise] { promise.resolve(); });
+    impl->context.notifyWhenCompleted(impl->completionValue,
+                                      [promise] { promise.resolve(); });
 
     return promise.get();
+}
+
+void CommandBuffer::wait()
+{
+    if (impl->committed)
+        impl->context.waitFor(impl->completionValue);
+}
+
+bool CommandBuffer::isComplete() const
+{
+    return impl->committed && impl->context.hasCompleted(impl->completionValue);
+}
+
+// The wait is scoped to this submission; the copy after it is not, the queue
+// being in order, so a readback recorded now still runs behind whatever was
+// submitted in between. That costs a pipelined loop here what it saves on
+// Metal, and is the price of a default-heap buffer having no CPU mapping to
+// memcpy out of.
+void CommandBuffer::read(const Buffer& buffer, void* dst, int bytes, int offset)
+{
+    wait();
+    buffer.read(dst, bytes, offset);
 }
 
 const FrameTimings& CommandBuffer::timings()

@@ -8,6 +8,8 @@
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
+#include <cstring>
+
 namespace eacp::GPU
 {
 struct CommandBuffer::Native
@@ -34,6 +36,13 @@ struct CommandBuffer::Native
         return buffer;
     }
 
+    // The buffer whose completion wait() and isComplete() ask about, the Ptr
+    // above outliving the commit that handed it to the queue.
+    id<MTLCommandBuffer> submitted() const
+    {
+        return committed ? (id<MTLCommandBuffer>) commandBuffer.get() : nil;
+    }
+
     ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
     Device* device = nullptr;
     CommandTimer timer;
@@ -45,14 +54,17 @@ CommandBuffer::CommandBuffer(Device& device)
 {
 }
 
-ComputePass CommandBuffer::beginCompute(std::string_view label)
+ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
 {
     auto buffer = (id<MTLCommandBuffer>) impl->commandBuffer.get();
 
     if (buffer == nil)
-        return ComputePass(nullptr);
+        return ComputePass(nullptr, order);
 
     auto passDescriptor = [MTLComputePassDescriptor computePassDescriptor];
+
+    if (order == DispatchOrder::Concurrent)
+        passDescriptor.dispatchType = MTLDispatchTypeConcurrent;
 
     const auto pass =
         impl->timer.beginPass(label, *impl->device, (__bridge void*) buffer);
@@ -71,7 +83,8 @@ ComputePass CommandBuffer::beginCompute(std::string_view label)
     }
 
     return ComputePass((__bridge void*)
-        [buffer computeCommandEncoderWithDescriptor:passDescriptor]);
+                           [buffer computeCommandEncoderWithDescriptor:passDescriptor],
+                       order);
 }
 
 void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
@@ -99,7 +112,7 @@ void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
     [blit endEncoding];
 }
 
-void CommandBuffer::commit()
+void CommandBuffer::submit()
 {
     if (auto buffer = impl->takeForCommit())
     {
@@ -107,8 +120,52 @@ void CommandBuffer::commit()
         impl->timer.endRecording((__bridge void*) buffer);
 
         [buffer commit];
-        [buffer waitUntilCompleted];
     }
+}
+
+void CommandBuffer::commit()
+{
+    submit();
+    wait();
+}
+
+void CommandBuffer::wait()
+{
+    // waitUntilCompleted on a buffer that already finished returns at once, so
+    // a wait after the work has landed costs nothing.
+    if (auto buffer = impl->submitted())
+        [buffer waitUntilCompleted];
+}
+
+bool CommandBuffer::isComplete() const
+{
+    auto buffer = impl->submitted();
+
+    if (buffer == nil)
+        return false;
+
+    const auto status = buffer.status;
+
+    return status == MTLCommandBufferStatusCompleted
+           || status == MTLCommandBufferStatusError;
+}
+
+void CommandBuffer::read(const Buffer& buffer, void* dst, int bytes, int offset)
+{
+    wait();
+
+    if (dst == nullptr || bytes <= 0 || offset < 0 || offset >= buffer.size())
+        return;
+
+    auto target = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+
+    if (target == nil)
+        return;
+
+    const auto available = buffer.size() - offset;
+    const auto count = bytes < available ? bytes : available;
+
+    std::memcpy(dst, (const char*) [target contents] + offset, (std::size_t) count);
 }
 
 Threads::Async<void> CommandBuffer::commitAsync()

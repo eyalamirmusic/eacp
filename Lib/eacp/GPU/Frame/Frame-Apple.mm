@@ -370,14 +370,17 @@ RenderPass Frame::beginPass(const Texture& target,
 // A compute pass samples at the encoder's own boundaries rather than at a
 // vertex and a fragment stage, which is the same pair of numbers by another
 // name: when the work started and when it finished.
-ComputePass Frame::beginCompute(std::string_view label)
+ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
 {
     auto buffer = impl->commandBuffer.get();
 
     if (buffer == nil)
-        return ComputePass(nullptr);
+        return ComputePass(nullptr, order);
 
     auto passDescriptor = [MTLComputePassDescriptor computePassDescriptor];
+
+    if (order == DispatchOrder::Concurrent)
+        passDescriptor.dispatchType = MTLDispatchTypeConcurrent;
 
     if (impl->device != nullptr)
     {
@@ -399,7 +402,8 @@ ComputePass Frame::beginCompute(std::string_view label)
     }
 
     return ComputePass((__bridge void*) [(id<MTLCommandBuffer>) buffer
-        computeCommandEncoderWithDescriptor:passDescriptor]);
+                           computeCommandEncoderWithDescriptor:passDescriptor],
+                       order);
 }
 
 bool Frame::isValid() const

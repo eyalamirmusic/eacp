@@ -126,7 +126,8 @@ GeneratedShader ShaderBuilder::build() const
 
     if (graphData.isCompute())
     {
-        source.withCompute("computeMain");
+        source.withCompute("computeMain")
+            .withThreadGroup(graphData.threadGroupShape());
         result.source = std::move(source);
         result.dispatchRank = graphData.dispatchRank();
         return result;
