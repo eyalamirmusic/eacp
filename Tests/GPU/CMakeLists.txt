@@ -49,6 +49,7 @@ set(gpu_test_sources
         HoistingTests.cpp
         IndirectDispatchTests.cpp
         InPlaceComputeTests.cpp
+        InPlaceRecordTests.cpp
         IntrinsicTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp
@@ -75,7 +76,11 @@ set(gpu_test_sources
         TextureRegionTests.cpp
         TextureSamplingTests.cpp
         TextureUpdateTests.cpp
+        ThreadIndexVectorTests.cpp
         UIntBufferTests.cpp
+        UIntBufferVectorTests.cpp
+        UIntScalarTests.cpp
+        UIntVectorTests.cpp
         VertexFormatTests.cpp
         ViewportTests.cpp
         TestMain.cpp)

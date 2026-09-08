@@ -46,7 +46,8 @@ enum class ExprKind
     // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
-    // a 2D or 3D one prints gid.x, gid.y or gid.z.
+    // a 2D or 3D one prints gid.x, gid.y or gid.z - or the whole gid again at
+    // allComponents, where the node is the position as one vector.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
     AtomicLoad, // one element of an atomic buffer; index = buffer slot,
     // args = {index}. An expression on both backends, unlike the add - MSL
@@ -128,6 +129,10 @@ enum class DispatchRank
     ThreeD
 };
 
+// The component a ThreadId, LocalId or GroupId node carries when it is the
+// whole position rather than one lane of it.
+inline constexpr int allComponents = -1;
+
 // What a statement does. Statements are what the expression store on its own
 // cannot say: that one value is computed before another, that a value changes,
 // and that a run of them repeats or is skipped. Both shading languages spell
@@ -174,6 +179,10 @@ struct Statement
     int indexY = -1; // TextureStore: y
     int bufferSlot = -1; // AtomicAdd: the buffer, its slot field being taken by
     // the variable the old value lands in
+    int record = -1; // Store: the record this element is a component of, -1
+    // where the store is a write of its own
+    int recordComponentsLeft = 0; // Store: how many components of that record
+    // follow this one
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -375,10 +384,23 @@ public:
     int addThreadId();
     int addThreadPosition(int component);
     int addThreadPosition3(int component);
+
+    // The same work item as one vector node rather than a component of one,
+    // typed UInt2 or UInt3. Fixes the rank as the component forms do.
+    int addThreadId2();
+    int addThreadId3();
     int addStorageBuffer(BufferAccess access,
                          ValueType elementType = ValueType::Float);
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
+
+    // The N element stores one record write lays down, told apart from N
+    // writes of their own: a record is one write above, so every component of
+    // it takes the value the record had before the first of them ran.
+    void addRecordStore(int slot,
+                        const Vector<int>& indices,
+                        const Vector<int>& components,
+                        int record);
 
     // The atomic pair. addAtomicAdd returns the *variable* slot holding the
     // element's value from before the add, which addVarRead then reads - it is a
@@ -398,6 +420,13 @@ public:
     int addGroupId();
     int addGroupPosition(int component);
     int addGroupPosition3(int component);
+
+    // Their whole-vector forms, on the terms addThreadId2/addThreadId3 set.
+    int addLocalId2();
+    int addLocalId3();
+    int addGroupId2();
+    int addGroupId3();
+
     int addGridExtent(DispatchRank forRank, int component);
     int addSharedArray(ValueType elementType, int elements);
     int addSharedRead(int slot, int index);

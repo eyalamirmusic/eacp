@@ -46,7 +46,7 @@ std::string floatLiteral(float value)
 // nointerpolation and MSL [[flat]]; a float varying takes none of the three.
 bool isFlatVarying(ValueType type)
 {
-    return isSignedInteger(type) || type == ValueType::UInt;
+    return isSignedInteger(type) || isUnsignedInteger(type);
 }
 
 std::string attributeSemantic(Backend backend, int index)
@@ -134,10 +134,11 @@ std::string callName(Backend backend, const std::string& name)
         if (name == "dfdy")
             return "ddy";
 
-        if (name == "as_type<uint>")
+        // One HLSL name per direction, whatever the width MSL named.
+        if (name.starts_with("as_type<uint"))
             return "asuint";
 
-        if (name == "as_type<float>")
+        if (name.starts_with("as_type<float"))
             return "asfloat";
     }
 
@@ -160,10 +161,12 @@ std::string callName(Backend backend, const std::string& name)
         if (name == "dfdy")
             return "dFdy";
 
-        if (name == "as_type<uint>")
+        // Both are genType in GLSL, so one name per direction covers every
+        // width MSL named.
+        if (name.starts_with("as_type<uint"))
             return "floatBitsToUint";
 
-        if (name == "as_type<float>")
+        if (name.starts_with("as_type<float"))
             return "uintBitsToFloat";
 
         // GLSL has no log10; the helper table carries the definition.
@@ -486,6 +489,16 @@ const char* componentSuffix(int component)
     return component == 1 ? ".y" : ".z";
 }
 
+// A thread index under the name both kernel scaffoldings bind it to: the whole
+// value where the node took the position as one, one lane otherwise.
+std::string indexReference(const char* name, DispatchRank rank, int component)
+{
+    if (rank == DispatchRank::OneD || component == allComponents)
+        return name;
+
+    return name + std::string(componentSuffix(component));
+}
+
 const char* gridExtentName(int component)
 {
     if (component == 0)
@@ -620,8 +633,12 @@ struct ExprPrinter
                 // The uint, int and bool spellings are shared by MSL and HLSL,
                 // like floatN. A signed literal needs no suffix at all: an
                 // integer literal is already an int in both languages.
+                //
+                // Expr::index is the int the three of them share, so a uint
+                // above INT_MAX is held there as a negative and has to be read
+                // back as what it was: 4294967295u, never -1u.
                 if (expr.type == ValueType::UInt)
-                    return std::to_string(expr.index) + "u";
+                    return std::to_string((unsigned) expr.index) + "u";
 
                 if (expr.type == ValueType::Int)
                     return std::to_string(expr.index);
@@ -690,7 +707,13 @@ struct ExprPrinter
                 // The operator is a char unless it did not fit in one, which is
                 // only the two shifts.
                 auto op = expr.text.empty() ? std::string(1, expr.op) : expr.text;
-                auto left = ref(expr.args[0]);
+                auto isShift = op == "<<" || op == ">>";
+
+                // GLSL refuses a scalar on the left of a shift whose right
+                // operand is a vector; MSL and HLSL broadcast it themselves.
+                auto left = backend == Backend::Vulkan && isShift
+                                ? widened(expr.args[0], expr.type)
+                                : ref(expr.args[0]);
                 auto right = ref(expr.args[1]);
 
                 // GLSL leaves % undefined on a negative operand, so the
@@ -821,11 +844,8 @@ struct ExprPrinter
                 // Both kernel scaffoldings declare the work-item id as gid: a
                 // uint over the flat count in a 1D kernel, a uint2 or uint3
                 // over the grid otherwise, where the node carries which
-                // component it asked for.
-                if (graph.dispatchRank() == DispatchRank::OneD)
-                    return "gid";
-
-                return std::string("gid") + componentSuffix(expr.index);
+                // component it asked for - or the whole of it.
+                return indexReference("gid", graph.dispatchRank(), expr.index);
 
             case ExprKind::BufferRead:
                 return "buffer" + std::to_string(expr.index) + "["
@@ -855,16 +875,10 @@ struct ExprPrinter
             // backends' entry points bind them to these names, a scalar in a
             // 1D kernel and a vector of the rank's width otherwise.
             case ExprKind::LocalId:
-                if (graph.dispatchRank() == DispatchRank::OneD)
-                    return "lid";
-
-                return std::string("lid") + componentSuffix(expr.index);
+                return indexReference("lid", graph.dispatchRank(), expr.index);
 
             case ExprKind::GroupId:
-                if (graph.dispatchRank() == DispatchRank::OneD)
-                    return "tgid";
-
-                return std::string("tgid") + componentSuffix(expr.index);
+                return indexReference("tgid", graph.dispatchRank(), expr.index);
 
             // The implicit bound the dispatch appended to the uniform block,
             // under the names the block declares it with.
@@ -890,6 +904,8 @@ struct ExprPrinter
 
 // Operation nodes are worth naming when evaluated more than once; leaf reads
 // and swizzles stay inline - naming them saves nothing and hurts readability.
+// The one thing named whatever its kind is a record write's value, which its
+// element stores all have to be handed rather than evaluate one at a time.
 bool wantsLocal(ExprKind kind)
 {
     switch (kind)
@@ -1243,6 +1259,10 @@ void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
 // so binding it to a local ahead of the loop would test a value that never
 // changes again; the names the body can invalidate are given up there too,
 // since the header is re-evaluated after the body has run.
+//
+// A record write is what the rules answer to rather than bound by: its N
+// element stores are one write, so its value takes a name whatever its use
+// count and keeps it until the last of them has run.
 struct StageEmitter
 {
     StageEmitter(const ShaderGraph& graphToUse,
@@ -1403,6 +1423,7 @@ struct StageEmitter
             {
                 source =
                     define({statement.index, statement.value}, indent, uses, open);
+                source += holdTheRecord(statement, indent, open);
 
                 auto element = "buffer" + std::to_string(statement.slot) + "["
                                + printer.ref(statement.index) + "]";
@@ -1569,18 +1590,41 @@ private:
         auto source = std::string {};
 
         for (auto node: order)
-        {
-            locals[node] = localCount++;
-            open.add(node);
-
-            source +=
-                indent
-                + std::string(typeName(printer.backend, graph().expr(node).type))
-                + " t" + std::to_string(locals[node]) + " = " + printer.print(node)
-                + ";\n";
-        }
+            source += bind(node, indent, open);
 
         return source;
+    }
+
+    std::string bind(int node, const std::string& indent, Vector<int>& open)
+    {
+        locals[node] = localCount++;
+        open.add(node);
+
+        return indent
+               + std::string(typeName(printer.backend, graph().expr(node).type))
+               + " t" + std::to_string(locals[node]) + " = " + printer.print(node)
+               + ";\n";
+    }
+
+    std::string holdTheRecord(const Statement& statement,
+                              const std::string& indent,
+                              Vector<int>& open)
+    {
+        if (statement.recordComponentsLeft <= 0 || locals[statement.record] >= 0
+            || !readsSlot(statement.record, statement.slot))
+            return {};
+
+        return bind(statement.record, indent, open);
+    }
+
+    bool readsSlot(int node, int slot)
+    {
+        written.assign(graph().variables().size(), 0);
+        buffersWritten.assign(graph().storageBuffers().size(), 0);
+        buffersWritten[slot] = 1;
+        visited.restart();
+
+        return readsStale(graph(), node, written, buffersWritten, false, visited);
     }
 
     void retire(Vector<int>& open)
@@ -1612,13 +1656,16 @@ private:
         if (!written.contains(1) && !buffersWritten.contains(1) && !sharedMoved)
             return;
 
+        auto heldRecord = statement.recordComponentsLeft > 0 ? statement.record : -1;
+
         auto kept = Vector<int> {};
 
         for (auto node: open)
         {
             visited.restart();
 
-            if (readsStale(
+            if (node != heldRecord
+                && readsStale(
                     graph(), node, written, buffersWritten, sharedMoved, visited))
                 locals[node] = -1;
             else
