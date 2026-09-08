@@ -132,14 +132,18 @@ elseif (UNIX)
             Primitives/Path-Linux.cpp
             Tray/TrayIcon-Linux.cpp
             View/View-Linux.cpp
+            View/WaylandViewSurface-Linux.cpp
             Window/Display-Linux.cpp
+            Window/LinuxInput-Linux.cpp
+            Window/LinuxWindowSystem-Linux.cpp
             Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp
             Window/WaylandInput-Linux.cpp
             Window/Window-Linux.cpp)
 
     # PRIVATE: nothing above eacp-graphics ever sees a Wayland header. The GPU
-    # module reaches the surface through the pointers in View/View-Linux.h.
+    # module reaches the surface through the NativeSurfaceHandle in
+    # View/View-Linux.h.
     include(FindWayland)
     target_link_libraries(eacp-graphics PRIVATE eacp-wayland)
 endif ()

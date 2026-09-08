@@ -128,9 +128,9 @@ auto tEveryKeyCodeHasAnEvdevKey =
     test("KeyCodeLinux/everyKeyCodeMapsToAnEvdevKey") = []
 {
     for (const auto& key: linuxAllKeys)
-        check(waylandEvdevFromKeyCode(key.code) != 0);
+        check(linuxEvdevFromKeyCode(key.code) != 0);
 
-    check(waylandEvdevFromKeyCode(KeyCode::Unknown) == 0);
+    check(linuxEvdevFromKeyCode(KeyCode::Unknown) == 0);
 };
 
 auto tRoundTripIsExact =
@@ -138,8 +138,8 @@ auto tRoundTripIsExact =
 {
     for (const auto& key: linuxAllKeys)
     {
-        const auto evdev = waylandEvdevFromKeyCode(key.code);
-        check(waylandKeyCodeFromEvdev(evdev) == key.code);
+        const auto evdev = linuxEvdevFromKeyCode(key.code);
+        check(linuxKeyCodeFromEvdev(evdev) == key.code);
     }
 };
 
@@ -148,17 +148,17 @@ auto tEvdevCodesAreUnique = test("KeyCodeLinux/noTwoKeysShareAnEvdevCode") = []
     auto seen = std::set<std::uint32_t> {};
 
     for (const auto& key: linuxAllKeys)
-        check(seen.insert(waylandEvdevFromKeyCode(key.code)).second);
+        check(seen.insert(linuxEvdevFromKeyCode(key.code)).second);
 
     check(seen.size() == std::size(linuxAllKeys));
 };
 
 auto tUnmappedKeysAreUnknown = test("KeyCodeLinux/aKeyOutsideTheTableIsUnknown") = []
 {
-    check(waylandKeyCodeFromEvdev(KEY_PLAYPAUSE) == KeyCode::Unknown);
-    check(waylandKeyCodeFromEvdev(KEY_VOLUMEUP) == KeyCode::Unknown);
-    check(waylandKeyCodeFromEvdev(0) == KeyCode::Unknown);
-    check(waylandKeyCodeFromEvdev(0xFFFF) == KeyCode::Unknown);
+    check(linuxKeyCodeFromEvdev(KEY_PLAYPAUSE) == KeyCode::Unknown);
+    check(linuxKeyCodeFromEvdev(KEY_VOLUMEUP) == KeyCode::Unknown);
+    check(linuxKeyCodeFromEvdev(0) == KeyCode::Unknown);
+    check(linuxKeyCodeFromEvdev(0xFFFF) == KeyCode::Unknown);
 };
 
 // Delete is backspace and ForwardDelete is the other one: the framework names
@@ -166,21 +166,21 @@ auto tUnmappedKeysAreUnknown = test("KeyCodeLinux/aKeyOutsideTheTableIsUnknown")
 auto tCrossedNamesAreRight =
     test("KeyCodeLinux/theNamesThatCrossAreMappedRight") = []
 {
-    check(waylandEvdevFromKeyCode(KeyCode::Delete) == KEY_BACKSPACE);
-    check(waylandEvdevFromKeyCode(KeyCode::ForwardDelete) == KEY_DELETE);
+    check(linuxEvdevFromKeyCode(KeyCode::Delete) == KEY_BACKSPACE);
+    check(linuxEvdevFromKeyCode(KeyCode::ForwardDelete) == KEY_DELETE);
 
-    check(waylandEvdevFromKeyCode(KeyCode::A) == KEY_A);
-    check(waylandEvdevFromKeyCode(KeyCode::Z) == KEY_Z);
-    check(waylandEvdevFromKeyCode(KeyCode::Num0) == KEY_0);
-    check(waylandEvdevFromKeyCode(KeyCode::Num1) == KEY_1);
-    check(waylandEvdevFromKeyCode(KeyCode::Return) == KEY_ENTER);
-    check(waylandEvdevFromKeyCode(KeyCode::KeypadEnter) == KEY_KPENTER);
-    check(waylandEvdevFromKeyCode(KeyCode::Escape) == KEY_ESC);
-    check(waylandEvdevFromKeyCode(KeyCode::Quote) == KEY_APOSTROPHE);
-    check(waylandEvdevFromKeyCode(KeyCode::Period) == KEY_DOT);
-    check(waylandEvdevFromKeyCode(KeyCode::Equals) == KEY_EQUAL);
-    check(waylandEvdevFromKeyCode(KeyCode::LeftBracket) == KEY_LEFTBRACE);
-    check(waylandEvdevFromKeyCode(KeyCode::RightBracket) == KEY_RIGHTBRACE);
+    check(linuxEvdevFromKeyCode(KeyCode::A) == KEY_A);
+    check(linuxEvdevFromKeyCode(KeyCode::Z) == KEY_Z);
+    check(linuxEvdevFromKeyCode(KeyCode::Num0) == KEY_0);
+    check(linuxEvdevFromKeyCode(KeyCode::Num1) == KEY_1);
+    check(linuxEvdevFromKeyCode(KeyCode::Return) == KEY_ENTER);
+    check(linuxEvdevFromKeyCode(KeyCode::KeypadEnter) == KEY_KPENTER);
+    check(linuxEvdevFromKeyCode(KeyCode::Escape) == KEY_ESC);
+    check(linuxEvdevFromKeyCode(KeyCode::Quote) == KEY_APOSTROPHE);
+    check(linuxEvdevFromKeyCode(KeyCode::Period) == KEY_DOT);
+    check(linuxEvdevFromKeyCode(KeyCode::Equals) == KEY_EQUAL);
+    check(linuxEvdevFromKeyCode(KeyCode::LeftBracket) == KEY_LEFTBRACE);
+    check(linuxEvdevFromKeyCode(KeyCode::RightBracket) == KEY_RIGHTBRACE);
 };
 
 auto tPolledStateIsEmptyWithoutASeat =

@@ -145,7 +145,17 @@ struct PresentingView : View
         record.onFrameDone = [] {};
     }
 
-    bool hasSurface() const { return record.surface != nullptr; }
+    bool hasSurface() const { return record.handle.isValid(); }
+
+    wl_display* getDisplay() const
+    {
+        return static_cast<wl_display*>(record.handle.connection);
+    }
+
+    wl_surface* getSurface() const
+    {
+        return static_cast<wl_surface*>(record.handle.surface);
+    }
 
     ViewSurface& record;
     int available = 0;
@@ -480,8 +490,9 @@ auto tViewSurfaceBecomesAvailable = test("Wayland/viewSurfaceBecomesAvailable") 
 
     check(presenter.available == 1);
     check(presenter.lost == 0);
-    check(presenter.record.display != nullptr);
-    check(presenter.record.surface != nullptr);
+    check(presenter.record.handle.kind == NativeSurfaceHandle::Kind::Wayland);
+    check(presenter.getDisplay() != nullptr);
+    check(presenter.getSurface() != nullptr);
 
     // The contract is that scale and pixel size agree, not their values.
     check(presenter.record.scale > 0.f);
@@ -545,7 +556,7 @@ auto tHidingTheViewTakesItsSurfaceAway =
 
     check(presenter.lost == 1);
     check(!presenter.hasSurface());
-    check(presenter.record.display == nullptr);
+    check(presenter.getDisplay() == nullptr);
     check(presenter.record.pixelWidth == 0);
     check(presenter.record.pixelHeight == 0);
     check(!presenter.record.frameCallbackPending);
@@ -583,7 +594,7 @@ auto tDestroyingTheWindowTakesTheSurfaceAway =
 
     check(presenter.lost == 1);
     check(!presenter.hasSurface());
-    check(presenter.record.surface == nullptr);
+    check(presenter.getSurface() == nullptr);
 };
 
 auto tPrimaryDisplayReportsTheOutput =
@@ -638,7 +649,7 @@ auto tFrameCallbackArrivesAfterACommit =
                                waylandTestTimeout);
     check(presenter.available == 1);
 
-    auto* shm = waylandTestShm(presenter.record.display);
+    auto* shm = waylandTestShm(presenter.getDisplay());
     check(shm != nullptr);
 
     auto buffer = TestShmBuffer {};
@@ -650,14 +661,14 @@ auto tFrameCallbackArrivesAfterACommit =
     presenter.record.requestFrameCallback();
     check(presenter.record.frameCallbackPending);
 
-    wl_surface_attach(presenter.record.surface, buffer.buffer, 0, 0);
-    wl_surface_damage_buffer(presenter.record.surface,
+    wl_surface_attach(presenter.getSurface(), buffer.buffer, 0, 0);
+    wl_surface_damage_buffer(presenter.getSurface(),
                              0,
                              0,
                              presenter.record.pixelWidth,
                              presenter.record.pixelHeight);
-    wl_surface_commit(presenter.record.surface);
-    wl_display_flush(presenter.record.display);
+    wl_surface_commit(presenter.getSurface());
+    wl_display_flush(presenter.getDisplay());
 
     Threads::runEventLoopUntil([&] { return presenter.frames > 0; },
                                waylandTestTimeout);
@@ -757,19 +768,19 @@ auto tLosingTheConnectionUnmapsEverything =
                                waylandTestTimeout);
     check(presenter.available == 1);
 
-    auto* viewporter = waylandTestViewporter(presenter.record.display);
+    auto* viewporter = waylandTestViewporter(presenter.getDisplay());
 
     check(viewporter != nullptr, "the compositor advertised no wp_viewporter");
 
-    wp_viewporter_get_viewport(viewporter, presenter.record.surface);
-    wl_display_flush(presenter.record.display);
+    wp_viewporter_get_viewport(viewporter, presenter.getSurface());
+    wl_display_flush(presenter.getDisplay());
 
     Threads::runEventLoopUntil([&] { return presenter.lost > 0; },
                                waylandTestTimeout);
 
     check(presenter.lost == 1, "onLost never fired when the connection died");
     check(!presenter.hasSurface());
-    check(presenter.record.display == nullptr);
+    check(presenter.getDisplay() == nullptr);
     check(!host.window->isVisible(), "the window still reported itself mapped");
 
     // The process carries on, and what it makes now is what a headless build

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../Primitives/Primitives.h"
-#include "../View/View-Linux.h"
+#include "LinuxWindowSurface-Linux.h"
 
 #include <wayland-client.h>
 
@@ -46,29 +46,19 @@ struct WaylandOutputInfo
     bool configured = false;
 };
 
-// What the input and view-surface code need of a Window; Window::Native
-// derives from it.
-struct WaylandWindowSurface
+// A Window on this connection: the neutral half plus the wl_surface every
+// piece of Wayland glue starts from.
+struct WaylandWindowSurface : LinuxWindowSurface
 {
+    WaylandWindowSurface();
+
     // Null while the window is headless or the connection failed.
-    wl_surface* surface = nullptr;
+    wl_surface* getSurface() const
+    {
+        return static_cast<wl_surface*>(nativeSurface.surface);
+    }
 
-    View* contentView = nullptr;
-
-    // In points, and so are pointer positions on `surface`.
-    Point contentSize;
-
-    float scale = linuxDefaultBackingScale;
-    bool mapped = false;
-
-    // Intent only; a real pointer lock also needs keyboard focus.
-    bool mouseLockIntent = false;
-
-    std::function<void(bool)> onKeyboardFocus = [](bool) {};
-
-    // The compositor went away mid-session: drop the surface and everything
-    // made from it, and report the window hidden.
-    Callback onConnectionLost = [] {};
+    void setSurface(wl_surface* surface);
 };
 
 struct WaylandSurfaceTarget
@@ -199,6 +189,11 @@ private:
     int decorationsLoopFd = -1;
 };
 
-// Null when headless or no compositor could be reached.
+// Whether the environment names a compositor to connect to. Asked before any
+// connection is opened, so it is the environment and nothing more.
+bool waylandCompositorIsReachable();
+
+// Null when Wayland is not this copy's window system, or no compositor could
+// be reached.
 WaylandDisplay* waylandDisplay();
 } // namespace eacp::Graphics

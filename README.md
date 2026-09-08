@@ -97,7 +97,12 @@ Wayland), a compositor that goes away mid-session tears every window down
 through the same `onLost` path a hidden view takes and leaves the process
 running headless, and the display's connection is pumped by eacp's own event
 loop. What a window cannot do there is what the protocol has no words for — a
-position, a raise, an icon — and the file says so where it matters. A Vulkan backend under it: everything from `Device` to
+position, a raise, an icon — and the file says so where it matters. The
+Wayland code sits behind a window-system seam (`LinuxWindowSystem`,
+`LinuxWindowSurface`, `ViewSurfaceBackend`, `LinuxInput`) so an X11 backend
+can join it, which is what audio-plugin hosting on Linux needs, and the event
+loop is one `epoll` descriptor with a pump (`getEventLoopFd`,
+`pumpEventLoop`) that a plugin host's own loop can drive. A Vulkan backend under it: everything from `Device` to
 `RenderPass` is real, the drawable `Frame` renders into a swapchain image and
 presents it, and `GPUView` owns that swapchain — mailbox or FIFO, frames in
 flight, rebuilt on resize and `OUT_OF_DATE`, with continuous rendering paced by

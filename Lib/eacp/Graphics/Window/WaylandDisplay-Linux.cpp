@@ -1,9 +1,10 @@
 #include "WaylandDisplay-Linux.h"
 
+#include "LinuxWindowSystem-Linux.h"
 #include "WaylandClipboard-Linux.h"
 #include "WaylandInput-Linux.h"
+#include "../View/WaylandViewSurface-Linux.h"
 
-#include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Threads/EventLoop-Linux.h>
 #include <eacp/Core/Utils/Environment.h>
 
@@ -58,13 +59,32 @@ uint32_t waylandPremultipliedPixel(Color colour)
     return (channel(colour.a) << 24) | (channel(colour.r * colour.a) << 16)
            | (channel(colour.g * colour.a) << 8) | channel(colour.b * colour.a);
 }
+} // namespace
 
-bool waylandEnvironmentNamesACompositor()
+bool waylandCompositorIsReachable()
 {
     return !getEnvValue("WAYLAND_DISPLAY").empty()
            || !getEnvValue("WAYLAND_SOCKET").empty();
 }
-} // namespace
+
+WaylandWindowSurface::WaylandWindowSurface()
+{
+    viewSurfaces = makeWaylandViewSurfaceBackend(*this);
+}
+
+void WaylandWindowSurface::setSurface(wl_surface* surface)
+{
+    auto* connection = waylandDisplay();
+
+    if (surface == nullptr || connection == nullptr)
+    {
+        nativeSurface = {};
+        return;
+    }
+
+    nativeSurface = {
+        NativeSurfaceHandle::Kind::Wayland, connection->getDisplay(), surface, 0};
+}
 
 Point WaylandOutputInfo::logicalSize() const
 {
@@ -693,10 +713,7 @@ WaylandDisplay* waylandDisplay()
 {
     static auto* instance = []() -> WaylandDisplay*
     {
-        if (Apps::getAppEnvironment().headless)
-            return nullptr;
-
-        if (!waylandEnvironmentNamesACompositor())
+        if (linuxPreferredWindowSystem() != LinuxWindowSystem::Wayland)
             return nullptr;
 
         auto* opened = new WaylandDisplay();

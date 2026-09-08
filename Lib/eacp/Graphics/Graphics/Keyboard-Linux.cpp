@@ -142,7 +142,7 @@ bool waylandKeyboardIsFocused()
 }
 } // namespace
 
-uint16_t waylandKeyCodeFromEvdev(uint32_t evdevCode)
+uint16_t linuxKeyCodeFromEvdev(uint32_t evdevCode)
 {
     for (const auto& mapping: waylandKeyMappings)
         if (mapping.evdev == evdevCode)
@@ -151,7 +151,7 @@ uint16_t waylandKeyCodeFromEvdev(uint32_t evdevCode)
     return KeyCode::Unknown;
 }
 
-uint32_t waylandEvdevFromKeyCode(uint16_t keyCode)
+uint32_t linuxEvdevFromKeyCode(uint16_t keyCode)
 {
     for (const auto& mapping: waylandKeyMappings)
         if (mapping.keyCode == keyCode)
@@ -162,7 +162,7 @@ uint32_t waylandEvdevFromKeyCode(uint16_t keyCode)
 
 bool Keyboard::isKeyPressed(const Window& window, uint16_t keyCode)
 {
-    auto evdev = waylandEvdevFromKeyCode(keyCode);
+    auto evdev = linuxEvdevFromKeyCode(keyCode);
 
     if (evdev == 0)
         return false;
@@ -198,7 +198,7 @@ ModifierKeys Keyboard::getModifiers(const Window& window)
 bool Keyboard::isKeyPressed(uint16_t keyCode)
 {
     auto* input = waylandSeatInput();
-    auto evdev = waylandEvdevFromKeyCode(keyCode);
+    auto evdev = linuxEvdevFromKeyCode(keyCode);
 
     if (input == nullptr || evdev == 0 || !waylandKeyboardIsFocused())
         return false;
@@ -246,7 +246,7 @@ Vector<Key> Keyboard::getPressedKeys()
 
     for (auto evdev: input->getPressedCodes())
     {
-        auto keyCode = waylandKeyCodeFromEvdev(evdev);
+        auto keyCode = linuxKeyCodeFromEvdev(evdev);
 
         if (keyCode == KeyCode::Unknown)
             continue;
@@ -260,7 +260,7 @@ Vector<Key> Keyboard::getPressedKeys()
 std::string Keyboard::keyCodeToCharacter(uint16_t keyCode)
 {
     auto* input = waylandSeatInput();
-    auto evdev = waylandEvdevFromKeyCode(keyCode);
+    auto evdev = linuxEvdevFromKeyCode(keyCode);
 
     if (input == nullptr || evdev == 0)
         return "";
