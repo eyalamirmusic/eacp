@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LinuxInput-Linux.h"
+#include "LinuxSeat-Linux.h"
 #include "WaylandDisplay-Linux.h"
 
 #include <memory>
@@ -14,11 +15,11 @@ struct wl_cursor_theme;
 
 namespace eacp::Graphics
 {
-class WaylandInput
+class WaylandInput final : public LinuxSeat
 {
 public:
     explicit WaylandInput(WaylandDisplay& displayToUse);
-    ~WaylandInput();
+    ~WaylandInput() override;
 
     WaylandInput(const WaylandInput&) = delete;
     WaylandInput& operator=(const WaylandInput&) = delete;
@@ -26,25 +27,31 @@ public:
     void setSeat(wl_seat* seatToUse);
     void releaseSeat();
 
-    // Polled keyboard state, in the native (evdev) unit.
-    bool isKeyPressed(uint32_t evdevCode) const;
-    Vector<uint32_t> getPressedCodes() const;
-    ModifierKeys getModifiers() const;
+    bool isKeyPressed(uint32_t evdevCode) const override;
+    Vector<uint32_t> getPressedCodes() const override;
+    ModifierKeys getModifiers() const override;
+    std::string characterForCode(uint32_t evdevCode) const override;
 
-    // What the key would type on the current layout with no modifiers applied.
-    std::string characterForCode(uint32_t evdevCode) const;
-
-    WaylandWindowSurface* getKeyboardFocus() const { return keyboardWindow; }
+    WaylandWindowSurface* getKeyboardFocus() const override
+    {
+        return keyboardWindow;
+    }
 
     // The serial wl_data_device.set_selection wants: the last keyboard event
     // on a surface of ours, and zero while something else has the focus.
     uint32_t getSelectionSerial() const;
 
-    // Null and {} until a pointer has entered something.
-    WaylandWindowSurface* getPointerWindow() const { return pointerWindow; }
-    Point getPointerPosition() const { return pointerState.getPosition(); }
+    WaylandWindowSurface* getPointerWindow() const override
+    {
+        return pointerWindow;
+    }
 
-    void refreshCursor();
+    Point getPointerPosition() const override
+    {
+        return pointerState.getPosition();
+    }
+
+    void refreshCursor() override;
 
     // Locks the pointer only while the window also has keyboard focus.
     void updateMouseLock(WaylandWindowSurface& window);

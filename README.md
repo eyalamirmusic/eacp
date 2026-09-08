@@ -65,7 +65,7 @@ and threading core, processes, plugins, files, the HTTP client and server, IPC
 and RPC, the SIMD kernels — builds on Linux too, which is what makes eacp usable
 for a headless service as well as for a GUI. The graphics stack builds on all
 four platforms, because it wraps each one's own compositor instead of shipping
-one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland and Vulkan.
+one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 
 | Module | macOS | Windows | iOS | Linux |
 | --- | :---: | :---: | :---: | :---: |
@@ -84,34 +84,45 @@ one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland and Vulkan.
 two paragraphs down.
 
 Linux graphics is on wherever the graphics modules are built, exactly as the
-other three platforms are, and it is three things. A Wayland
-`eacp-graphics`: a `Window` is a `wl_surface` with an xdg-shell toplevel
-decorated by libdecor, the view tree, hit-testing and input routing are the
-portable ones with the seat's pointer and keyboard translated into them through
-xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its bounds and
-scaled by the compositor's fractional scale, `Display` reports the first output,
-mouse lock goes through pointer-constraints, the clipboard is a
+other three platforms are, and it is three things. An `eacp-graphics` with two
+window systems in it: on Wayland a `Window` is a `wl_surface` with an xdg-shell
+toplevel decorated by libdecor, the view tree, hit-testing and input routing are
+the portable ones with the seat's pointer and keyboard translated into them
+through xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its
+bounds and scaled by the compositor's fractional scale, `Display` reports the
+first output, mouse lock goes through pointer-constraints, the clipboard is a
 `wl_data_device` on the seat (text and `text/uri-list`, installed into
 `Core`'s `Clipboard` through a backend hook so `eacp-core` still links no
 Wayland), a compositor that goes away mid-session tears every window down
 through the same `onLost` path a hidden view takes and leaves the process
 running headless, and the display's connection is pumped by eacp's own event
 loop. What a window cannot do there is what the protocol has no words for — a
-position, a raise, an icon — and the file says so where it matters. The
-Wayland code sits behind a window-system seam (`LinuxWindowSystem`,
-`LinuxWindowSurface`, `ViewSurfaceBackend`, `LinuxInput`) so an X11 backend
-can join it, which is what audio-plugin hosting on Linux needs, and the event
-loop is one `epoll` descriptor with a pump (`getEventLoopFd`,
-`pumpEventLoop`) that a plugin host's own loop can drive. A Vulkan backend under it: everything from `Device` to
-`RenderPass` is real, the drawable `Frame` renders into a swapchain image and
-presents it, and `GPUView` owns that swapchain — mailbox or FIFO, frames in
-flight, rebuilt on resize and `OUT_OF_DATE`, with continuous rendering paced by
-the compositor's frame callbacks rather than a clock — beside the off-screen
-render-and-read-back path every pixel test rides. And a text stack beside them:
-`eacp-text`'s glyph rasterizer on FreeType, HarfBuzz and fontconfig, so
-`Sprites`, `UI` and the portable half of `SVG` build and run too — a whole
-widget tree, its text, its images and its SVG documents drawn inside one
-`GPUView` through the coverage rasterizer and the glyph atlas.
+position, a raise, an icon — and the file says so where it matters. On X11 a
+`Window` is an xcb toplevel — no Xlib anywhere — carrying the ICCCM and EWMH
+properties a window manager reads, with an `xcb_create_window` child per
+presenting view, the keymap taken from the server through `xkbcommon-x11` so
+layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
+grab and a warp to the centre, and frames paced by a timer at the RandR mode's
+rate because X11 has no frame callback; a position is a real one there, and the
+clipboard is not there yet. Both backends sit behind one window-system seam
+(`LinuxWindowSystem`, `LinuxWindowNative`, `LinuxWindowSurface`,
+`ViewSurfaceBackend`, `LinuxInput`, `LinuxSeat`) and both are compiled into
+every copy, so which one a window gets is a runtime decision:
+`EACP_WINDOW_SYSTEM=wayland|x11` overrides, and otherwise a plugin copy takes
+X11 while a standalone app takes Wayland when a compositor answers and X11 when
+none does. That, together with an event loop that is one `epoll` descriptor
+with a pump (`getEventLoopFd`, `pumpEventLoop`) a plugin host's own loop can
+drive, is what audio-plugin hosting on Linux needs. A Vulkan backend under it:
+everything from `Device` to `RenderPass` is real, the drawable `Frame` renders
+into a swapchain image and presents it, and `GPUView` owns that swapchain —
+mailbox or FIFO, frames in flight, rebuilt on resize and `OUT_OF_DATE`, with
+continuous rendering paced by the compositor's frame callbacks on Wayland and
+by that same timer on X11 rather than by a clock of the renderer's own — beside
+the off-screen render-and-read-back path every pixel test rides. And a text
+stack beside them: `eacp-text`'s glyph rasterizer on FreeType, HarfBuzz and
+fontconfig, so `Sprites`, `UI` and the portable half of `SVG` build and run
+too — a whole widget tree, its text, its images and its SVG documents drawn
+inside one `GPUView` through the coverage rasterizer and the glyph atlas.
 
 What Linux still does not have is the platform's own 2D tier. There is no
 `Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
@@ -120,10 +131,12 @@ them, `TextInput`, `EmbeddedView`, the image codecs (an `Image` is a pixel
 container there, and loading a file yields an invalid one), menus and the tray
 are absent or honest stubs. `SVG`'s native-layer builder and the `SVG::parse`
 in front of it go with them; the same document parses and draws through
-`SVGComponent`. Under `EACP_HEADLESS=1`, or with no compositor to reach, every
-window is built and never shown and every GPU test still runs on Mesa's
-lavapipe with no display server at all; the window and present tests run for
-real under a headless Weston.
+`SVGComponent`. Under `EACP_HEADLESS=1`, or with neither display server to
+reach, every window is built and never shown and every GPU test still runs on
+Mesa's lavapipe with no display server at all; the window and present tests run
+for real under a headless Weston, and again under an Xvfb for X11, which is
+where input is exercised — Weston's headless backend has no seat and Xvfb has
+one.
 
 The top-level `CMakeLists.txt` decides this once, in six capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
@@ -166,8 +179,9 @@ without it stops at configure time and says so.
 
 `-DEACP_BUILD_GRAPHICS=OFF` builds the portable half on any platform, Linux
 included — it is the only switch that turns the graphics modules off. CI
-builds headless and then runs the suite inside a headless Weston session, and
-the `Dockerfile` reproduces both:
+builds headless, runs the suite inside a headless Weston session and then runs
+the window and present suites again inside an Xvfb, and the `Dockerfile`
+reproduces all three:
 
 ```bash
 docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
@@ -176,7 +190,12 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
-    with-weston ctest --test-dir build-ci-linux --output-on-failure
+    with-weston ctest --test-dir build-ci-linux --output-on-failure -E '^X11/'
+
+docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
+    -v "$PWD":/workspace eacp-ci-linux \
+    with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
+    -R '^(X11|Present)/'
 ```
 
 The Vulkan half needs no new build dependency: the headers, `volk` and the
@@ -184,22 +203,27 @@ allocator are fetched by CPM, and the loader is opened by name at runtime, so
 all a machine needs to run it is a driver — `mesa-vulkan-drivers` is enough, and
 its software rasterizer is what CI uses. `EACP_VK_SOFTWARE=1` asks for that
 device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
-silently skips into a suite that fails. The Wayland and text halves are found
-the way libcurl is, by pkg-config against the machine's own libraries:
+silently skips into a suite that fails. The Wayland, X11 and text halves are
+found the way libcurl is, by pkg-config against the machine's own libraries:
 `libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
-libdecor-0-dev libfreetype-dev libharfbuzz-dev libfontconfig-dev pkg-config` on
-Debian/Ubuntu, `weston` to run the window tests without a desktop
-(`Scripts/with-weston`, which is also `with-weston` in the image), and fonts for
-the text tests to resolve — `fonts-dejavu-core fonts-dejavu-extra
+libdecor-0-dev libxcb1-dev libxcb-xkb1-dev libxkbcommon-x11-dev
+libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev
+libfreetype-dev libharfbuzz-dev libfontconfig-dev pkg-config` on Debian/Ubuntu,
+`weston` and `xvfb` to run the window tests without a desktop
+(`Scripts/with-weston` and `Scripts/with-xvfb`, which are also `with-weston` and
+`with-xvfb` in the image) with `libxcb-xtest0-dev` for the X11 suite's own
+synthetic input, and fonts for the text tests to resolve —
+`fonts-dejavu-core fonts-dejavu-extra
 fonts-droid-fallback fonts-noto-color-emoji`. `EACP_REQUIRE_DISPLAY=1` does for
-the compositor what `EACP_REQUIRE_GPU=1` does for the device, and
+the display server what `EACP_REQUIRE_GPU=1` does for the device, and
 `EACP_REQUIRE_FONTS=1` does it for the fonts, which is the third way a suite can
 report green by skipping everything.
 
 CI builds every configuration in that matrix and runs the test suite on macOS
 (universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
 and a Clang lane that runs the graphics backend on lavapipe under a headless
-Weston — all three build it, one has a device and a compositor to run it on);
+Weston and then under an Xvfb — all three build it, one has a device, a
+compositor and an X server to run it on);
 iOS is built for the simulator. macOS is the most exercised of them, and Android is not supported.
 
 The HTTP client is one API over three backends — NSURLSession on Apple

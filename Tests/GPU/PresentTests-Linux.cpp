@@ -5,9 +5,12 @@
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Time.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
 
-// Without a compositor these skip, which ctest scores as a pass, so
+// Without a display server these skip, which ctest scores as a pass, so
 // EACP_REQUIRE_DISPLAY=1 turns the skip into a failure.
 
 using namespace nano;
@@ -16,13 +19,38 @@ using namespace eacp::GPU;
 
 namespace
 {
-// Not a connection attempt - making one is the window backend's job.
+bool waylandIsNamed()
+{
+    return !getEnvValue("WAYLAND_DISPLAY").empty()
+           || !getEnvValue("WAYLAND_SOCKET").empty();
+}
+
+bool x11IsNamed()
+{
+    return !getEnvValue("DISPLAY").empty();
+}
+
+// Not a connection attempt - making one is the window backend's job. The rule
+// mirrors linuxChooseWindowSystem: eacp-gpu links no window system, so the
+// test reads the same environment the backend does rather than asking it.
 bool displayIsReachable()
 {
     if (Apps::getAppEnvironment().headless)
         return false;
 
-    return !getEnvValue("WAYLAND_DISPLAY").empty();
+    auto requested = getEnvValue("EACP_WINDOW_SYSTEM");
+    std::transform(requested.begin(),
+                   requested.end(),
+                   requested.begin(),
+                   [](unsigned char c) { return (char) std::tolower(c); });
+
+    if (requested == "x11")
+        return x11IsNamed();
+
+    if (requested == "wayland")
+        return waylandIsNamed();
+
+    return waylandIsNamed() || x11IsNamed();
 }
 
 bool noDisplay()
@@ -31,7 +59,7 @@ bool noDisplay()
         return false;
 
     check(getEnvValue("EACP_REQUIRE_DISPLAY") != "1",
-          "EACP_REQUIRE_DISPLAY=1 but no Wayland compositor was reachable - "
+          "EACP_REQUIRE_DISPLAY=1 but no display server was reachable - "
           "every case in this file would otherwise have skipped and reported "
           "a pass");
 

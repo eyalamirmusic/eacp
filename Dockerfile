@@ -30,8 +30,10 @@ ARG CMAKE_VERSION=3.31.6
 # The Wayland half of the graphics backend needs libwayland-client, the
 # protocol XML and wayland-scanner, xkbcommon and libdecor to build, and
 # Weston's headless backend gives the tests a compositor to open windows on
-# (see with-weston below). The text half needs FreeType, HarfBuzz and
-# fontconfig to build, and font files to mean anything once built: every font
+# (see with-weston below). The X11 half needs the xcb libraries and Xvfb,
+# which is the X server with-xvfb starts. The text half needs FreeType,
+# HarfBuzz and fontconfig to build, and font files to mean anything once
+# built: every font
 # test asks fontconfig for a family by name and self-skips when nothing
 # resolves, so an image with no fonts runs the whole Text suite as a silent
 # green. DejaVu is the stock family the defaults name (the -extra package
@@ -61,7 +63,15 @@ RUN apt-get update \
         libvulkan1 \
         libwayland-bin \
         libwayland-dev \
+        libxcb-cursor-dev \
+        libxcb-icccm4-dev \
+        libxcb-randr0-dev \
+        libxcb-xfixes0-dev \
+        libxcb-xkb1-dev \
+        libxcb-xtest0-dev \
+        libxcb1-dev \
         libxkbcommon-dev \
+        libxkbcommon-x11-dev \
         mesa-vulkan-drivers \
         ninja-build \
         pkg-config \
@@ -70,6 +80,7 @@ RUN apt-get update \
         vulkan-validationlayers \
         wayland-protocols \
         weston \
+        xvfb \
     && rm -rf /var/lib/apt/lists/* \
     && ARCH="$(uname -m)" \
     && curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" \
@@ -99,13 +110,27 @@ RUN printf '%s\n' \
 # CI Vulkan lane runs, copied out of the tree so it is on PATH here:
 #
 #   docker run --rm -v "$PWD":/workspace eacp-ci-linux \
-#       with-weston ctest --test-dir build-ci-linux --output-on-failure
+#       with-weston ctest --test-dir build-ci-linux --output-on-failure -E '^X11/'
+#
+# The X11 suite is filtered out: it prefers X11 by its own default and there is
+# no X server in a Weston session, so under EACP_REQUIRE_DISPLAY=1 its
+# X11/aServerIsPresentWhenRequired would fail rather than self-skip. The two
+# steps together are what build.yml runs.
 #
 # EACP_HEADLESS is deliberately not set by the script: a test binary that
 # wants to open windows runs with it unset (or 0), and EACP_REQUIRE_DISPLAY=1
 # makes such a test fail rather than self-skip when no compositor is found.
 # EACP_REQUIRE_FONTS=1 does the same for the font packages installed above.
 COPY Scripts/with-weston /usr/local/bin/with-weston
+
+# The X11 twin of it, over Xvfb: the same windows with EACP_WINDOW_SYSTEM=x11
+# and no window manager at all. Only the suites that open windows run again -
+# everything else already ran under Weston.
+#
+#   docker run --rm -v "$PWD":/workspace eacp-ci-linux \
+#       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
+#       -R '^(X11|Present)/'
+COPY Scripts/with-xvfb /usr/local/bin/with-xvfb
 
 WORKDIR /workspace
 

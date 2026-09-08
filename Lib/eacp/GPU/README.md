@@ -1184,10 +1184,10 @@ constructors are real. `GPUView::renderNativeContent` renders into an off-screen
 target and reads it back — the path every pixel-comparison test rides — so all
 of `Tests/GPU` (bar the Metal-only `TextureInteropTests.mm`) and
 `Tests/GPUWidgets` run on lavapipe with no display at all; and a `GPUView` in a
-`Graphics::Window` presents through a `VK_KHR_swapchain` over a Wayland surface.
-It is built on every Linux build, exactly as the Metal and D3D12 backends
-are on theirs; `-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it
-out.
+`Graphics::Window` presents through a `VK_KHR_swapchain` over whichever window
+system that window came up on, Wayland or X11. It is built on every Linux
+build, exactly as the Metal and D3D12 backends are on theirs;
+`-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it out.
 
 Notes worth having:
 
@@ -1313,15 +1313,22 @@ Notes worth having:
 `NativeSurfaceHandle` the window backend reports on it — a kind tag, a
 connection, a `wl_surface*` or an X11 window id. That record — the handle, a
 pixel size, a scale and five hooks — is the whole of what `eacp-gpu` knows
-about the window system: `createSurface()` branches on the kind and
-everything below it is shared. It neither links nor includes libwayland, and
-`VK_USE_PLATFORM_WAYLAND_KHR` (`CMake/FindVulkanBackend.cmake`, `PUBLIC` so
-`volk.c` sees it too) is what makes `vkCreateWaylandSurfaceKHR` reachable.
-`VK_KHR_surface` + `VK_KHR_wayland_surface` on the instance and
-`VK_KHR_swapchain` on the device are enabled only where they are offered, and
-`VulkanShared::supportsPresentation()` says whether they were — a headless ICD,
-or a loader with no WSI, leaves a `GPUView` rendering off-screen exactly as it
-did before there was a swapchain.
+about the window system: `createSurface()` switches on the kind between
+`vkCreateWaylandSurfaceKHR` and `vkCreateXcbSurfaceKHR`, and everything below
+it is shared. It neither links nor includes libwayland or xcb beyond what
+`vulkan_wayland.h` and `vulkan_xcb.h` pull in, and `VK_USE_PLATFORM_WAYLAND_KHR`
+with `VK_USE_PLATFORM_XCB_KHR` (`CMake/FindVulkanBackend.cmake`, `PUBLIC` so
+`volk.c` sees them too) is what makes the two creators reachable.
+`VK_KHR_surface` with `VK_KHR_wayland_surface` and `VK_KHR_xcb_surface` on the
+instance and `VK_KHR_swapchain` on the device are enabled only where they are
+offered — the two window systems independently, since a driver may carry either,
+which is why each creator is null-checked before it is called: volk leaves the
+pointer null for an extension that was not enabled.
+`VulkanShared::supportsPresentation()` says whether any of it was — a headless
+ICD, or a loader with no WSI, leaves a `GPUView` rendering off-screen exactly as
+it did before there was a swapchain. lavapipe presents to an Xvfb over
+`VK_KHR_xcb_surface` with no help, which is how the `Present` cases run on the
+CI lane's second test step.
 
 - **A swapchain image is a `VulkanTextureData` with one flag set.**
   `presentable` makes `restingUse()` answer `PRESENT_SRC_KHR`, so the image
@@ -1347,12 +1354,15 @@ did before there was a swapchain.
   handed out again until the value its last frame submitted has passed. Nothing
   waits per frame beyond that, and `vkDeviceWaitIdle` happens only on a
   swapchain rebuild and on teardown.
-- **Frames are paced by the compositor, not by a clock.** There is no
-  `DisplayLink` here. Continuous mode renders, asks for a `wl_surface.frame`
-  callback (before the present, which is the commit that carries the request),
-  and renders again when `ViewSurface::onFrameDone` says the compositor took the
-  last frame — so a hidden or occluded window, which gets no callbacks, renders
-  nothing, and the main thread never blocks inside `vkAcquireNextImageKHR`. The
+- **Frames are paced by the window system, not by a clock.** There is no
+  `DisplayLink` here. Continuous mode renders, asks for a frame callback
+  (before the present, which is the commit that carries the request on
+  Wayland), and renders again when `ViewSurface::onFrameDone` says the last
+  frame was taken — so a hidden or occluded window, which gets no callbacks,
+  renders nothing, and the main thread never blocks inside
+  `vkAcquireNextImageKHR`. On Wayland that callback is `wl_surface.frame`; X11
+  has no equivalent, so the backend answers from a timer at the RandR mode's
+  rate and this loop does not know the difference. The
   acquire is given a 100 ms timeout rather than `UINT64_MAX` for the same
   reason. `setMaxFps` uses the divider `DisplayLink::setMaxFps` documents: a
   tick that arrives too early presents nothing and asks for the next callback
@@ -1367,15 +1377,17 @@ did before there was a swapchain.
   `OPAQUE` else the first offered; `minImageCount + 1` images clamped to
   `maxImageCount`; `preTransform` taken as the surface's own. Wayland reports
   `currentExtent` as `0xFFFFFFFF` — there is no server-side surface size — so the
-  extent comes from the record's `pixelWidth`/`pixelHeight`.
+  extent comes from the record's `pixelWidth`/`pixelHeight`; X11 reports the
+  child window's real size and that is taken as it stands.
 - **Rebuilds** are marked and done at the next frame, so a live resize that
   reports twenty sizes builds one swapchain: `onResized`, and `OUT_OF_DATE` or
   `SUBOPTIMAL` from either the acquire or the present. A `SUBOPTIMAL` acquire is
   drawn and presented first — it handed over an image and signalled the
   semaphore, and dropping it would leave that semaphore signalled. `onLost`
   destroys the swapchain, the semaphores, the companions and the `VkSurfaceKHR`
-  synchronously, before the `wl_surface` goes: a swapchain outliving its surface
-  is a use-after-free inside the driver, not an error code.
+  synchronously, before the `wl_surface` or the child window goes: a swapchain
+  outliving its surface is a use-after-free inside the driver, not an error
+  code.
 - **`VK_ERROR_DEVICE_LOST` stops the view and does not restart it.** It is
   logged once, the swapchain and surface are torn down, and `onDeviceRestored`
   never fires — rebuilding the `VkDevice` would mean rebuilding every `Buffer`,
@@ -1398,7 +1410,7 @@ EACP_REQUIRE_GPU=1 EACP_VK_SOFTWARE=1 ctest --test-dir build
 | `EACP_VK_SOFTWARE=1` | Prefers a `PHYSICAL_DEVICE_TYPE_CPU` device — Mesa's lavapipe. The mirror of `EACP_D3D12_WARP`, and for the same reason: a conformant reference implementation is how you tell your bug from the driver's. It inverts the preference order rather than filtering, so a machine whose only device is a real GPU still gets one. |
 | `EACP_REQUIRE_GPU=1` | Makes `GPUTests` fail when no device came up. Every other GPU test self-skips without one and ctest scores that as a pass, so a lane whose driver was never installed reports a full green suite that ran nothing; `DevicePresenceTests` is the one case that does not skip, and it prints the device's name either way. |
 | `EACP_VK_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs warnings and errors through `LOG`. Off by default — the layer costs several times the driver's own time per call. |
-| `EACP_REQUIRE_DISPLAY=1` | The swapchain's sibling of `EACP_REQUIRE_GPU`. `Tests/GPU/PresentTests-Linux.cpp` needs a compositor, and every case in it self-skips without one — which ctest scores as a pass. This makes those cases fail instead, so a lane whose Weston session did not come up says so. Set it wherever the suite is run under a compositor; leave it unset everywhere else. |
+| `EACP_REQUIRE_DISPLAY=1` | The swapchain's sibling of `EACP_REQUIRE_GPU`. `Tests/GPU/PresentTests-Linux.cpp` needs a display server — a compositor, or an X server where `EACP_WINDOW_SYSTEM=x11` — and every case in it self-skips without one, which ctest scores as a pass. This makes those cases fail instead, so a lane whose Weston or Xvfb session did not come up says so. Set it wherever the suite is run under a display server; leave it unset everywhere else. |
 | `EACP_HEADLESS=1` | Not Vulkan's, but it belongs here: it is what tells the window backend to build no surface, and therefore what the present tests read to decide there is nothing to present to. |
 
 CI runs the suite on lavapipe with `EACP_VK_SOFTWARE`, `EACP_REQUIRE_GPU` and
@@ -1407,12 +1419,19 @@ named per architecture (`lvp_icd.x86_64.json` on an x86-64 runner,
 `lvp_icd.json` in an arm64 container), so nothing sets `VK_DRIVER_FILES` — the
 loader finds it from the ICD directory.
 
-The present tests need a compositor, which the CI container gets from Weston's
-headless backend — `with-weston <command>` in the `Dockerfile` runs a command
-inside one:
+The present tests need a display server, and they run against both: Weston's
+headless backend for Wayland and an Xvfb for X11 — `with-weston <command>` and
+`with-xvfb <command>` in the `Dockerfile` run a command inside one each, the
+second exporting `EACP_WINDOW_SYSTEM=x11` so the same cases come up on the
+other backend:
 
 ```bash
 docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
     -e EACP_REQUIRE_DISPLAY=1 -v "$PWD":/workspace eacp-ci-linux \
-    with-weston ctest --test-dir build-ci-linux --output-on-failure
+    with-weston ctest --test-dir build-ci-linux --output-on-failure -E '^X11/'
+
+docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
+    -e EACP_REQUIRE_DISPLAY=1 -v "$PWD":/workspace eacp-ci-linux \
+    with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
+    -R '^(X11|Present)/'
 ```

@@ -86,19 +86,23 @@ jobs:
           sudo apt-get install -y ninja-build libcurl4-openssl-dev clang \
             libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev \
             libdecor-0-dev pkg-config \
+            libxcb1-dev libxcb-xkb1-dev libxkbcommon-x11-dev \
+            libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev \
+            libxcb-icccm4-dev libxcb-xtest0-dev \
             libfreetype-dev libharfbuzz-dev libfontconfig-dev \
             fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji \
             fonts-droid-fallback
 
       # What the one lane that runs the backend needs on top, and none of it is
       # a build dependency: nothing links the loader or Mesa's software
-      # rasterizer - volk opens libvulkan.so.1 by name at runtime - and Weston
-      # is the compositor the tests open their windows on.
-      - name: Install the Vulkan runtime and a compositor
+      # rasterizer - volk opens libvulkan.so.1 by name at runtime - Weston is
+      # the compositor the Wayland tests open their windows on, and Xvfb the X
+      # server the X11 ones do.
+      - name: Install the Vulkan runtime, a compositor and an X server
         if: matrix.vulkan
         run: >
           sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
-          weston
+          weston xvfb
 
       # Before the build, not before the test. NanoTest discovers cases by
       # running every test binary with --list-tests at build time, so a lane
@@ -146,13 +150,29 @@ jobs:
       # run for real, and EACP_REQUIRE_DISPLAY turns their self-skip into a
       # failure so a lane whose compositor never came up cannot report green.
       # The build above still ran headless, which is what NanoTest's build-time
-      # test discovery wants.
+      # test discovery wants. The X11 suite is left out here: it prefers X11 by
+      # its own default, and there is no X server in this session.
       - name: Test under Weston
         if: matrix.vulkan
         env:
           EACP_HEADLESS: '0'
           EACP_REQUIRE_DISPLAY: '1'
-        run: Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
+        run: >
+          Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
+          -E '^X11/'
+
+      # The same windows on the other window system: an Xvfb with no window
+      # manager, which is the harshest X11 target there is, and the swapchain
+      # presenting over VK_KHR_xcb_surface. Only the suites that open windows
+      # run again; everything else already ran above.
+      - name: Test under Xvfb
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+        run: >
+          Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
+          -R '^(X11|Present)/'
 
   build-ios:
     name: iOS Simulator

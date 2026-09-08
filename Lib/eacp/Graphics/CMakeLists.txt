@@ -119,8 +119,9 @@ elseif (WIN32)
             shell32
             windowscodecs)
 elseif (UNIX)
-    # Wayland, plus stubs for what needs a codec or a desktop environment.
-    # Path is the exception, recording geometry rather than pixels.
+    # Wayland and X11 side by side, plus stubs for what needs a codec or a
+    # desktop environment. Path is the exception, recording geometry rather
+    # than pixels.
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Linux.cpp
             Helpers/DisplayLink-Linux.cpp
@@ -133,19 +134,27 @@ elseif (UNIX)
             Tray/TrayIcon-Linux.cpp
             View/View-Linux.cpp
             View/WaylandViewSurface-Linux.cpp
+            View/X11ViewSurface-Linux.cpp
             Window/Display-Linux.cpp
+            Window/HeadlessWindow-Linux.cpp
             Window/LinuxInput-Linux.cpp
+            Window/LinuxWindowNative-Linux.cpp
             Window/LinuxWindowSystem-Linux.cpp
             Window/WaylandClipboard-Linux.cpp
             Window/WaylandDisplay-Linux.cpp
             Window/WaylandInput-Linux.cpp
-            Window/Window-Linux.cpp)
+            Window/WaylandWindow-Linux.cpp
+            Window/Window-Linux.cpp
+            Window/X11Connection-Linux.cpp
+            Window/X11Input-Linux.cpp
+            Window/X11Window-Linux.cpp)
 
-    # PRIVATE: nothing above eacp-graphics ever sees a Wayland header. The GPU
-    # module reaches the surface through the NativeSurfaceHandle in
-    # View/View-Linux.h.
+    # PRIVATE: nothing above eacp-graphics ever sees a Wayland or an xcb
+    # header. The GPU module reaches the surface through the
+    # NativeSurfaceHandle in View/View-Linux.h.
     include(FindWayland)
-    target_link_libraries(eacp-graphics PRIVATE eacp-wayland)
+    include(FindX11Backend)
+    target_link_libraries(eacp-graphics PRIVATE eacp-wayland eacp-x11)
 endif ()
 
 set_default_target_setting(eacp-graphics)

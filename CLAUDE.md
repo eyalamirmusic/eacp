@@ -41,23 +41,26 @@ Linux CI lane, the two with no Vulkan device included, rather than only as a
 wrong pixel on the lane that has a device. See the table in `README.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC, Clang, and a Clang lane that runs the Vulkan backend on Mesa's lavapipe,
-with the tests inside a headless Weston session so windows and swapchains are
-real; all three Linux lanes build the whole graphics stack and install the
+with the tests inside a headless Weston session and then the window and present
+ones again inside an Xvfb, so windows and swapchains are real on both window
+systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
-third has a driver and a compositor to run the GPU and window tests on), and
-builds iOS for the simulator.
+third has a driver, a compositor and an X server to run the GPU and window
+tests on), and builds iOS for the simulator.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed` and, behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
 one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
-which backs the HTTP client there, and — on Linux, where they are not
-optional — two pkg-config groups: the Wayland client library,
+which backs the HTTP client there, and — on Linux, where none of them are
+optional — three pkg-config groups: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
-`eacp-wayland` target holding the generated protocol code), and FreeType,
-HarfBuzz and fontconfig for the glyph rasterizer (`CMake/FindLinuxText.cmake`,
-one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
+`eacp-wayland` target holding the generated protocol code), xcb with
+`xcb-xkb`, `xkbcommon-x11`, `xcb-randr`, `xcb-xfixes`, `xcb-cursor` and
+`xcb-icccm` for the X11 backend (`CMake/FindX11Backend.cmake`, one `eacp-x11`
+target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
+glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
@@ -163,25 +166,33 @@ configure against a non-existent path and fail later with errors like
 
 ## The Linux Backend
 
-Linux draws through Wayland, Vulkan and FreeType, and it is on wherever the
-graphics modules are — `EACP_HAS_DRAW`, `EACP_HAS_GPU` and `EACP_HAS_TEXT` are
-true there exactly as they are on Apple and Windows. `EACP_HAS_CONTEXT` is not:
-there is no 2D backend.
+Linux draws through Wayland or X11, Vulkan and FreeType, and it is on wherever
+the graphics modules are — `EACP_HAS_DRAW`, `EACP_HAS_GPU` and `EACP_HAS_TEXT`
+are true there exactly as they are on Apple and Windows. `EACP_HAS_CONTEXT` is
+not: there is no 2D backend.
 
-`eacp-graphics` is split along a window-system seam so a second backend
-(X11, being added per `plan.md`) can sit beside Wayland. The neutral half:
-`Window/LinuxWindowSystem-Linux.{h,cpp}` decides the preferred backend once
-per copy (`EACP_WINDOW_SYSTEM=wayland|x11` overrides; else a plugin copy —
-`Platform::isDLL()` — takes X11, a standalone app takes Wayland when a
-compositor answers and X11 otherwise; `EACP_HEADLESS=1` gives none) and
-answers the process-wide questions with no window to hang off — the primary
-output's frame, scale and refresh for `Display-Linux.cpp` and
-`DisplayLink-Linux.cpp`, the pointer's window, and clipboard installation for
-the preferred backend alone. `Window/LinuxWindowSurface-Linux.h` is what every
-backend's `Window::Native` derives from (content view, size, scale, mapped,
-focus and connection-lost callbacks, a `NativeSurfaceHandle`, and the
-window's `ViewSurfaceBackend`). `View-Linux.cpp` keeps the per-view records,
-the sync on bounds/visibility/add/remove, deferred repaint and
+`eacp-graphics` is split along a window-system seam, and both backends are
+compiled into every copy: which one a window gets is a runtime decision, not a
+build one. The neutral half: `Window/LinuxWindowSystem-Linux.{h,cpp}` decides
+the preferred backend once per copy (`EACP_WINDOW_SYSTEM=wayland|x11`
+overrides; else a plugin copy — `Platform::isDLL()` — takes X11, a standalone
+app takes Wayland when a compositor answers and X11 otherwise;
+`EACP_HEADLESS=1` gives none) and answers the process-wide questions with no
+window to hang off — the primary output's frame, scale and refresh for
+`Display-Linux.cpp` and `DisplayLink-Linux.cpp`, the seat behind `linuxSeat()`,
+and clipboard installation for the preferred backend alone. `Window-Linux.cpp`
+is option handling plus a `makeWindowNative()` switch on that preference between
+`WaylandWindowNative`, `X11WindowNative` and an explicit headless native
+(`Window/HeadlessWindow-Linux.cpp`, which is also what a preferred backend that
+cannot connect falls back to); each implements `LinuxWindowNative` and holds a
+`LinuxWindowState` beside it (`Window/LinuxWindowNative-Linux.{h,cpp}`: the
+option-derived state and the behaviour no window system decides — constraints,
+`resizeTo`, activation, `closeRequested`). A native is that interface *and* its
+window system's `LinuxWindowSurface` (`Window/LinuxWindowSurface-Linux.h`:
+content view, size, scale, mapped, focus and connection-lost callbacks, a
+`NativeSurfaceHandle`, and the window's `ViewSurfaceBackend`), which is why the
+interface does not derive from the surface. `View-Linux.cpp` keeps the per-view
+records, the sync on bounds/visibility/add/remove, deferred repaint and
 origin-in-window, and asks the window's `ViewSurfaceBackend`
 (`View/ViewSurfaceBackend-Linux.h`) for a `ViewSurfaceNative` child that
 knows only how to apply geometry and request a frame; `ViewSurface` in
@@ -190,19 +201,23 @@ connection, surface, window id) instead of Wayland pointers.
 `Window/LinuxInput-Linux.{h,cpp}` holds the input state machines that are not
 protocol — xkbcommon keymap/state and the UTF-8 for a key, key repeat, click
 counting and double-click slop, held button and drag origin, wheel
-accumulation, cursor shape — and `Graphics/Keyboard-Linux.h` the
+accumulation, cursor shape — `Window/LinuxSeat-Linux.h` the seat interface both
+`WaylandInput` and `X11Input` implement (polled key state, modifiers, keyboard
+focus, the pointer's window and position, cursor refresh), so
+`Graphics/Keyboard-Linux.cpp` and the pointer questions a view asks go through
+`linuxSeat()` and include no Wayland header, and `Graphics/Keyboard-Linux.h` the
 evdev-to-`KeyCode` table (`linuxKeyCodeFromEvdev`; X11 keycodes are evdev + 8,
 so one table serves both backends).
 
-The Wayland half under it is one process-wide connection
+The Wayland half is one process-wide connection
 (`Window/WaylandDisplay-Linux.cpp`: registry, outputs, libdecor context, the
 surface-to-window map, and the loop source that pumps it through
-`Threads::addLoopSource` with a pre-poll flush), a `Window::Native` that is a
+`Threads::addLoopSource` with a pre-poll flush), a native that is a
 `wl_surface` under a libdecor frame with a viewport-stretched shm buffer behind
-the content (`Window-Linux.cpp`), a `wl_subsurface` per presenting view
-(`View/WaylandViewSurface-Linux.cpp`, the Wayland `ViewSurfaceBackend`), seat
-protocol glue feeding the shared state machines with pointer-constraints for
-mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
+the content (`Window/WaylandWindow-Linux.cpp`), a `wl_subsurface` per presenting
+view (`View/WaylandViewSurface-Linux.cpp`, the Wayland `ViewSurfaceBackend`),
+seat protocol glue feeding the shared state machines with pointer-constraints
+for mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
 `wl_data_device` on the seat (`Window/WaylandClipboard-Linux.cpp`, installed
 into `Core`'s `Clipboard` through the backend hook in
 `Core/App/Clipboard-Linux.h` so `eacp-core` links no Wayland; a copy needs
@@ -210,18 +225,62 @@ keyboard focus on one of our windows), a compositor disconnect that fires
 `onLost` on every view surface and leaves the process headless, and stubs for
 image codecs, menus, tray and system appearance.
 
-Under it is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
+The X11 half is its twin, on xcb with no Xlib symbol anywhere (`plan.md` D2).
+`Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
+and deliberately *not* gated on the preference — stage 3's `EmbeddedView` is
+X11 whichever backend a toplevel prefers: the atoms interned in one batch, XKB
+through `xkbcommon-x11`, RandR for the primary output (the root size and no
+refresh where there is no mode, as on Xvfb), XFixes, an `xcb-cursor` context,
+the id-to-target map that routes an event to its toplevel and, where the id is
+a view's child window, to the view beside it, and the loop source whose
+`prepare` drains `xcb_poll_for_queued_event` — the events Mesa's WSI pulled off
+the socket it shares with us — before flushing. `xcb_connection_has_error`
+after either step is connection loss, and fires `onConnectionLost` on every
+window once. `Window/X11Window-Linux.cpp` is the toplevel:
+`WM_PROTOCOLS`/`WM_DELETE_WINDOW`, `_NET_WM_NAME` with `WM_NAME` under it, a
+`WM_CLASS` of `eacp`, `_NET_WM_PID`, `WM_NORMAL_HINTS` (minimum size, a fixed
+size when not resizable, aspect), `_MOTIF_WM_HINTS` for borderless, a
+`_NET_WM_STATE` toggle for maximise and `WM_CHANGE_STATE` for iconify, `mapped`
+taken from the `MapNotify` rather than from the request, `ConfigureNotify` into
+a resize and a real `onMoved` through `xcb_translate_coordinates` — positions
+are real here, unlike Wayland — and `FocusIn`/`FocusOut` into activation. The
+scale is 1 in this stage; `Xft.dpi` is stage 5.
+`View/X11ViewSurface-Linux.cpp` makes a presenting view an `xcb_create_window`
+child of the toplevel selecting `EXPOSURE` only, so pointer and key events
+propagate up to the toplevel already in its coordinates, and paces frames from
+a process-wide `X11FramePacer` — a `Threads::Timer` at the RandR mode's rate,
+60 Hz where there is none, dropped again on a tick that leaves nothing armed —
+firing `onFrameDone` where Wayland has `wl_surface.frame`: a pacer, not a
+compositor signal (`plan.md` D7). `Window/X11Input-Linux.cpp` feeds the core
+pointer and key events into the shared state machines, with the keymap taken
+from the server (`xkb_x11_keymap_new_from_device`) and kept current through the
+XKB state, map and new-keyboard events, so layouts and dead keys behave as they
+do on Wayland. Repeat is the server's own — detectable auto-repeat is asked for
+and a press of an already-pressed key is marked `isRepeat`, so `KeyRepeat` is
+not used here — wheel buttons 4–7 are notches, the cursor is
+`xcb_cursor_load_cursor` over the shared `linuxCursorNames` applied to the
+toplevel, mouse lock is `xcb_grab_pointer` plus `xcb_xfixes_hide_cursor` plus a
+warp to the centre with the deltas read back from the warp, held only while the
+window has keyboard focus, and a `ButtonPress` in an unfocused mapped window
+takes focus with `xcb_set_input_focus`. No XI2 and no clipboard yet: both are
+stage 5, as `EmbeddedView` is stage 3.
+
+Under both is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
-`GPUView-Linux.cpp` owns the swapchain over the view's subsurface
-(`VK_KHR_wayland_surface`; mailbox or FIFO; frames in flight on the context
-timeline; rebuilt on resize and `OUT_OF_DATE`; continuous mode paced by
-`wl_surface.frame` callbacks, with `setMaxFps` skipping early ticks rather than
-running a timer), every pipeline built through one `VkPipelineCache` persisted
-under `$XDG_CACHE_HOME/eacp/`, with the off-screen `renderNativeContent` path
+`GPUView-Linux.cpp` owns the swapchain over the view's subsurface or child
+window (`eacp-vulkan` defines `VK_USE_PLATFORM_WAYLAND_KHR` and
+`VK_USE_PLATFORM_XCB_KHR`, and the instance enables `VK_KHR_wayland_surface`
+and `VK_KHR_xcb_surface` each when the driver offers it, so one binary presents
+to either; mailbox or FIFO; frames in flight on the context timeline; rebuilt
+on resize and `OUT_OF_DATE`; continuous mode paced by whatever answered
+`requestFrameCallback` — the compositor on Wayland, the pacer on X11 — with
+`setMaxFps` skipping early ticks rather than running a timer), every pipeline
+built through one `VkPipelineCache` persisted under `$XDG_CACHE_HOME/eacp/`,
+with the off-screen `renderNativeContent` path
 unchanged beside it. The GPU module knows the window system only as the
 `NativeSurfaceHandle` it branches on in `createSurface()` and neither links
-nor includes it. Under `EACP_HEADLESS=1`, with no `WAYLAND_DISPLAY` to reach,
-or when the preferred backend is one that is not implemented yet, a window is
+nor includes it. Under `EACP_HEADLESS=1`, with neither `WAYLAND_DISPLAY` nor
+`DISPLAY` to reach, or when the preferred backend cannot connect, a window is
 built with no surface, exactly the headless backend this grew out of. Device loss is terminal (no `VkDevice`
 rebuild; `onDeviceRestored` never fires).
 
@@ -258,8 +317,8 @@ where it is 0. `Path` is there as recorded geometry only
 `TextureInteropTests.mm` runs there on lavapipe.
 
 `-DEACP_BUILD_GRAPHICS=OFF` is the only way to build Linux without any of this;
-there is no Linux-specific switch. The `Dockerfile` reproduces both halves of
-the CI Linux lanes:
+there is no Linux-specific switch. The `Dockerfile` reproduces all three steps
+of the CI Linux lanes:
 
 ```bash
 docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
@@ -268,19 +327,47 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
-      with-weston ctest --test-dir build-ci-linux --output-on-failure
+      with-weston ctest --test-dir build-ci-linux --output-on-failure -E '^X11/'
+
+docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
+      -v "$PWD":/workspace eacp-ci-linux \
+      with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
+      -R '^(X11|Present)/'
 ```
 
 `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
 `EACP_D3D12_WARP`; `EACP_REQUIRE_GPU=1` makes `GPUTests` fail rather than
 self-skip when no device came up; `EACP_VK_VALIDATION=1` turns on
 `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs. The
-second command is how the window and present tests (`WaylandWindowTests`,
-`GPUTests`' `Present` cases) run for real: `Scripts/with-weston` (also
-`with-weston` in the image) wraps a command in a headless Weston session,
-and `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
-without a compositor, as `EACP_REQUIRE_FONTS=1` does for the font tests.
-Weston's headless backend has no seat, so input is never exercised there.
+second and third commands are how the window and present tests run for real,
+one window system each: `Scripts/with-weston` (also `with-weston` in the image)
+wraps a command in a headless Weston session, which is where
+`WaylandWindowTests` and `GPUTests`' `Present` cases run, and
+`Scripts/with-xvfb` (`with-xvfb`) wraps one in an Xvfb with no window manager
+at all — the harshest thing a toplevel meets — exporting
+`EACP_WINDOW_SYSTEM=x11` and `EACP_XVFB_OUTPUT`, which is where
+`X11WindowTests` (27 cases, its own `main` defaulting the same override so the
+binary run by hand on a desktop still tests X11) and the same `Present` cases
+run over `VK_KHR_xcb_surface`. Only the two window suites are filtered in and
+out; everything else already ran under Weston. `EACP_REQUIRE_DISPLAY=1` makes
+those tests fail rather than self-skip without a display server, as
+`EACP_REQUIRE_FONTS=1` does for the font tests. Weston's headless backend has
+no seat, so Xvfb is the first place input is exercised on any lane: 13 of the
+X11 cases drive the server's own pointer and keyboard through XTest, and under
+XWayland — where the compositor owns the seat, so neither XTest nor a warp
+reaches anything — they self-skip again. A display has one pointer, one
+keyboard, one focus and one clipboard, and with no window manager under Xvfb
+every window a case opens lands on top of the last one and exposes it into a
+repaint, so `Tests/Graphics/CMakeLists.txt` and `Tests/GPU/CMakeLists.txt` read
+the case names back out of the sources (which are `CMAKE_CONFIGURE_DEPENDS`, so
+a renamed case is not silently left unlocked) and give them a `RESOURCE_LOCK`:
+`eacp-linux-display` over every `X11/` and `Present/` case, and
+`eacp-system-clipboard` over the clipboard ones. Each serialises its own set
+under `ctest -j` while the rest of the suite runs beside them.
+`DisplayLinkTests` is a third Linux-only binary and a headless one: it plays
+host to the loop, so `DisplayLink/ticksOnlyWhenPumped` needs a plain `main`
+outside `Apps::run`, which `pumpEventLoop`'s refusal to re-enter would
+otherwise make a no-op.
 See `Lib/eacp/GPU/README.md`.
 
 ## Architecture
@@ -385,8 +472,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
-FreeType, HarfBuzz and fontconfig, plus the Vulkan loader, opened with `dlopen`
-rather than linked.
+xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor and
+xcb-icccm, FreeType, HarfBuzz and fontconfig, plus the Vulkan loader, opened
+with `dlopen` rather than linked.
 
 ## Code Style
 

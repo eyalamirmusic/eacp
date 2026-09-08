@@ -764,16 +764,25 @@ void WaylandInput::setKeyboardFocus(WaylandWindowSurface* window)
     auto* previous = keyboardWindow;
     keyboardWindow = window;
 
+    // The lock goes before the callback rather than after it: letting go of
+    // one asks nothing of the window, and onKeyboardFocus reaches the app's
+    // onActivationChanged, which is allowed to destroy the Window it names.
     if (previous != nullptr)
     {
+        if (lockedWindow == previous)
+            disengageMouseLock();
+
         previous->onKeyboardFocus(false);
-        updateMouseLock(*previous);
     }
 
-    if (keyboardWindow != nullptr)
+    // Re-read after every callback for the same reason: a window destroyed
+    // from inside one takes itself out of here through windowDestroyed.
+    if (auto* gained = keyboardWindow; gained != nullptr && gained == window)
     {
-        keyboardWindow->onKeyboardFocus(true);
-        updateMouseLock(*keyboardWindow);
+        gained->onKeyboardFocus(true);
+
+        if (keyboardWindow == gained)
+            updateMouseLock(*gained);
     }
 }
 
