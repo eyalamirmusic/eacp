@@ -516,14 +516,24 @@ struct ThreadPosition
     UInt y;
 };
 
+// The same for a kernel over a volume. A type of its own rather than a third
+// component on the one above, so a 2D kernel carries no z it cannot dispatch.
+struct ThreadPosition3
+{
+    UInt x;
+    UInt y;
+    UInt z;
+};
+
 namespace detail
 {
 // One element of a storage buffer, whichever way the kernel declared it. Both
 // backends subscript the binding they were given, so a read is the same node
 // and the same emitted text for an input and for an output.
-inline Float readBufferElement(ShaderGraph* graph, int slot, const UInt& index)
+template <typename T>
+T readBufferElement(ShaderGraph* graph, int slot, const UInt& index)
 {
-    auto result = Float {};
+    auto result = T {};
     result.graph = graph;
     result.node = graph->addBufferRead(slot, index.node);
     return result;
@@ -580,11 +590,15 @@ T readBufferVector(
 // ShaderBuilder::write. Bind the matching GPU::Buffer, or a BufferRange over
 // part of one, at the same slot (ComputePass::setInputBuffer /
 // setOutputBuffer). Index zero is the buffer's first element, or the range's.
+//
+// One GPU::Buffer must not be bound to an input slot and an output slot of the
+// same kernel. A kernel that computes in place declares one OutputBuffer and
+// reads it.
 struct InputBuffer
 {
     Float operator[](const UInt& index) const
     {
-        return detail::readBufferElement(graph, slot, index);
+        return detail::readBufferElement<Float>(graph, slot, index);
     }
 
     // A literal index, which is what a broadcast reads: the one element every
@@ -664,9 +678,12 @@ struct OutputBuffer
     // and it is what the emitter's statement order gives. Another thread's
     // store is visible only once the dispatch has ended, exactly as
     // AtomicBuffer::load says of the count it hands back.
+    //
+    // It is also how a kernel computes in place: write(output, i, f(output[i]))
+    // over the buffer it was handed, one binding and no second allocation.
     Float operator[](const UInt& index) const
     {
-        return detail::readBufferElement(graph, slot, index);
+        return detail::readBufferElement<Float>(graph, slot, index);
     }
 
     Float operator[](unsigned index) const
@@ -715,15 +732,59 @@ struct OutputBuffer
     int slot = -1;
 };
 
+// The integer siblings of the pair above: the same slots, the same binds, and
+// elements a kernel reads and writes as UInt rather than as Float. What they
+// are for is data that is not a number to compute with - the token ids a
+// gather looks rows up by, the index an argmax arrived at, a count - which a
+// float buffer can only carry as bits to cast, and only while it stays under
+// 2^24.
+struct UIntInputBuffer
+{
+    UInt operator[](const UInt& index) const
+    {
+        return detail::readBufferElement<UInt>(graph, slot, index);
+    }
+
+    UInt operator[](unsigned index) const
+    {
+        return (*this)[detail::bufferIndex(graph, index)];
+    }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+struct UIntOutputBuffer
+{
+    // What the element holds: what this thread stored into it earlier in the
+    // kernel, or what the buffer was bound holding where it stored nothing -
+    // read-after-write within one thread, on the terms OutputBuffer sets.
+    UInt operator[](const UInt& index) const
+    {
+        return detail::readBufferElement<UInt>(graph, slot, index);
+    }
+
+    UInt operator[](unsigned index) const
+    {
+        return (*this)[detail::bufferIndex(graph, index)];
+    }
+
+    // A literal anchored on this buffer's own graph, as AtomicBuffer's is: an
+    // id a kernel writes outright rather than computes.
+    UInt literal(unsigned value) const { return detail::bufferIndex(graph, value); }
+
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // A storage buffer of unsigned integers every thread in the dispatch may
 // read-modify-write at once, which is what makes one kernel able to hand out
 // slots of a shared array to threads that know nothing about each other.
 //
 // The elements are integers and not floats, and that is not a detail: the same
 // GPU::Buffer bound to an InputBuffer in a later kernel reads those bits as
-// floats and yields nonsense. Either read it back through load(), or have the
-// kernel that finishes with it write the values out somewhere a float buffer
-// can be read from.
+// floats and yields nonsense. Bind it to a UIntInputBuffer instead, or read it
+// back through load().
 //
 // The add itself is ShaderBuilder::atomicAdd rather than a method here, because
 // it is a statement: see StatementKind::AtomicAdd for why the two backends
@@ -939,6 +1000,11 @@ concept ShaderValueLike = requires(const T& value) { detail::baseOf(value); };
 template <typename T>
 using ShaderBase = decltype(detail::baseOf(std::declval<const T&>()));
 
+// Every family outside the float vocabulary: the unsigned index, the signed
+// integers and the booleans.
+template <typename T>
+concept NonFloatHandle = ShaderHandleLike<T> && !ShaderValueLike<T>;
+
 // T stands in for exactly the given base handle: ShaderShape<Float3> accepts a
 // Float3 or a Uniform<Float3>.
 template <typename T, typename Base>
@@ -1025,6 +1091,11 @@ inline ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal)
 inline ValueHandle intConstantOn(const ValueHandle& value, int literal)
 {
     return {value.graph, value.graph->addIntConstant(literal)};
+}
+
+inline ValueHandle boolConstantOn(const ValueHandle& value, bool literal)
+{
+    return {value.graph, value.graph->addBoolConstant(literal)};
 }
 
 template <typename T>
@@ -1922,6 +1993,78 @@ inline Float select(const Bool& condition, float whenTrue, float whenFalse)
     return detail::selectOp<Float>(condition,
                                    detail::constantOn(condition, whenTrue),
                                    detail::constantOn(condition, whenFalse));
+}
+
+// The same, over the families the float overload above does not reach: an index
+// or a mask picked without a branch. The condition is a scalar Bool in all of
+// them.
+template <NonFloatHandle T, SameShaderHandle<T> U>
+ShaderHandle<T> select(const Bool& condition, const T& whenTrue, const U& whenFalse)
+{
+    return detail::selectOp<ShaderHandle<T>>(condition, whenTrue, whenFalse);
+}
+
+template <SameShaderHandle<UInt> T>
+UInt select(const Bool& condition, const T& whenTrue, unsigned whenFalse)
+{
+    return detail::selectOp<UInt>(
+        condition, whenTrue, detail::uintConstantOn(condition, whenFalse));
+}
+
+template <SameShaderHandle<UInt> T>
+UInt select(const Bool& condition, unsigned whenTrue, const T& whenFalse)
+{
+    return detail::selectOp<UInt>(
+        condition, detail::uintConstantOn(condition, whenTrue), whenFalse);
+}
+
+inline UInt select(const Bool& condition, unsigned whenTrue, unsigned whenFalse)
+{
+    return detail::selectOp<UInt>(condition,
+                                  detail::uintConstantOn(condition, whenTrue),
+                                  detail::uintConstantOn(condition, whenFalse));
+}
+
+template <SameShaderHandle<Int> T>
+Int select(const Bool& condition, const T& whenTrue, int whenFalse)
+{
+    return detail::selectOp<Int>(
+        condition, whenTrue, detail::intConstantOn(condition, whenFalse));
+}
+
+template <SameShaderHandle<Int> T>
+Int select(const Bool& condition, int whenTrue, const T& whenFalse)
+{
+    return detail::selectOp<Int>(
+        condition, detail::intConstantOn(condition, whenTrue), whenFalse);
+}
+
+inline Int select(const Bool& condition, int whenTrue, int whenFalse)
+{
+    return detail::selectOp<Int>(condition,
+                                 detail::intConstantOn(condition, whenTrue),
+                                 detail::intConstantOn(condition, whenFalse));
+}
+
+template <SameShaderHandle<Bool> T>
+Bool select(const Bool& condition, const T& whenTrue, bool whenFalse)
+{
+    return detail::selectOp<Bool>(
+        condition, whenTrue, detail::boolConstantOn(condition, whenFalse));
+}
+
+template <SameShaderHandle<Bool> T>
+Bool select(const Bool& condition, bool whenTrue, const T& whenFalse)
+{
+    return detail::selectOp<Bool>(
+        condition, detail::boolConstantOn(condition, whenTrue), whenFalse);
+}
+
+inline Bool select(const Bool& condition, bool whenTrue, bool whenFalse)
+{
+    return detail::selectOp<Bool>(condition,
+                                  detail::boolConstantOn(condition, whenTrue),
+                                  detail::boolConstantOn(condition, whenFalse));
 }
 
 // A mutable shader local: the one handle in the EDSL that names a place rather

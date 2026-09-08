@@ -394,6 +394,49 @@ struct Uniform<OutputBuffer> : OutputBuffer
     BufferRange value {};
 };
 
+// The integer siblings, bound through the same two calls. What the buffer
+// holds is uint32s rather than floats, so that is what the bytes given to it
+// want to be.
+template <>
+struct Uniform<UIntInputBuffer> : UIntInputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
+template <>
+struct Uniform<UIntOutputBuffer> : UIntOutputBuffer
+{
+    Uniform& operator=(const Buffer& newBuffer)
+    {
+        value = BufferRange::of(newBuffer);
+        return *this;
+    }
+
+    Uniform& operator=(const BufferRange& newRange)
+    {
+        value = newRange;
+        return *this;
+    }
+
+    Uniform& operator=(Buffer&&) = delete;
+
+    BufferRange value {};
+};
+
 // The atomic sibling, bound the same way an output is. The buffer's contents
 // are unsigned integers rather than floats, so the bytes handed to it want to
 // start as such - a buffer of zeroed uint32s, not of zeroed floats, though the
@@ -539,6 +582,16 @@ public:
         onOutputBuffer(name, member, member.value);
     }
 
+    void operator()(const char* name, Uniform<UIntInputBuffer>& member)
+    {
+        onUIntInputBuffer(name, member, member.value);
+    }
+
+    void operator()(const char* name, Uniform<UIntOutputBuffer>& member)
+    {
+        onUIntOutputBuffer(name, member, member.value);
+    }
+
     void operator()(const char* name, Uniform<AtomicBuffer>& member)
     {
         onAtomicBuffer(name, member, member.value);
@@ -570,6 +623,13 @@ protected:
     }
     virtual void onInputBuffer(const char*, InputBuffer&, const BufferRange&) {}
     virtual void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) {}
+    virtual void onUIntInputBuffer(const char*, UIntInputBuffer&, const BufferRange&)
+    {
+    }
+    virtual void
+        onUIntOutputBuffer(const char*, UIntOutputBuffer&, const BufferRange&)
+    {
+    }
     virtual void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) {}
     virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*)
     {
@@ -628,6 +688,20 @@ public:
                         const BufferRange&) override
     {
         handle = builder.outputBuffer();
+    }
+
+    void onUIntInputBuffer(const char*,
+                           UIntInputBuffer& handle,
+                           const BufferRange&) override
+    {
+        handle = builder.uintInputBuffer();
+    }
+
+    void onUIntOutputBuffer(const char*,
+                            UIntOutputBuffer& handle,
+                            const BufferRange&) override
+    {
+        handle = builder.uintOutputBuffer();
     }
 
     void onAtomicBuffer(const char*,
@@ -726,8 +800,21 @@ public:
         if (!range.isValid())
             return;
 
+        pass.setVertexStorageBuffer(range, handle.slot);
+        pass.setFragmentStorageBuffer(range, handle.slot);
+    }
+
+    // The integer input reads exactly as the float one does: one storage
+    // binding, and only the element type the generated stage declares differs.
+    void onUIntInputBuffer(const char*,
+                           UIntInputBuffer& handle,
+                           const BufferRange& range) override
+    {
+        if (!range.isValid())
+            return;
+
         assert(range.offset == 0
-               && "eacp: a render program's Uniform<InputBuffer> binds the "
+               && "eacp: a render program's Uniform<UIntInputBuffer> binds the "
                   "whole buffer - RenderPass has no ranged storage bind");
 
         pass.setVertexStorageBuffer(*range.buffer, handle.slot);
@@ -739,6 +826,15 @@ public:
         assert(false
                && "eacp: a render program cannot write a buffer - "
                   "Uniform<OutputBuffer> belongs to a ComputeProgram");
+    }
+
+    void onUIntOutputBuffer(const char*,
+                            UIntOutputBuffer&,
+                            const BufferRange&) override
+    {
+        assert(false
+               && "eacp: a render program cannot write a buffer - "
+                  "Uniform<UIntOutputBuffer> belongs to a ComputeProgram");
     }
 
     void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) override
@@ -819,6 +915,11 @@ public:
     ShaderProgram& operator=(const ShaderProgram&) = delete;
 
     const ShaderSource& source() const { return generated.source; }
+
+    // The graph the body was recorded into, so either backend's text can be
+    // emitted from the program that ships rather than from a copy of its body.
+    const ShaderGraph& graph() const { return builder.graph(); }
+
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
 
     // The shader as the EDSL recorded it; source() is one platform's spelling.

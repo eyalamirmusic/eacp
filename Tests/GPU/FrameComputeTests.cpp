@@ -377,6 +377,62 @@ struct GridKernel final : ComputeProgram
 // what would otherwise write past the end of a row.
 constexpr auto gridWidth = 5;
 constexpr auto gridHeight = 3;
+
+// The 3D sibling of GridKernel, taking its strides from the extents the
+// dispatch supplied rather than from uniforms of its own.
+struct FrameVolumeKernel final : ComputeProgram
+{
+    FrameVolumeKernel() { compile(); }
+
+    void define() override
+    {
+        auto p = threadPosition3();
+        auto index = (p.z * gridHeight() + p.y) * gridWidth() + p.x;
+
+        write(output,
+              index,
+              toFloat(p.x) + toFloat(p.y) * 10.f + toFloat(p.z) * 100.f);
+    }
+
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(output)
+};
+
+constexpr auto volumeWidth = 3;
+constexpr auto volumeHeight = 5;
+constexpr auto volumeDepth = 5;
+constexpr auto volumeCells = volumeWidth * volumeHeight * volumeDepth;
+
+// A volume filled on the frame's own command buffer, with a render pass after
+// it so the frame is an ordinary one.
+struct ComputeVolumeView final : GPUView
+{
+    ComputeVolumeView()
+        : volume(Device::shared(),
+                 nullptr,
+                 sizeof(float) * volumeCells,
+                 BufferUsage::Storage)
+    {
+        setSampleCount(1);
+
+        kernel.output = volume;
+        kernel.prepare();
+    }
+
+    void render(Frame& frame) override
+    {
+        {
+            auto compute = frame.beginCompute();
+            compute.dispatch(kernel, volumeWidth, volumeHeight, volumeDepth);
+        }
+
+        frame.beginPass({{0.f, 0.f, 0.f, 1.f}});
+    }
+
+    Buffer volume;
+    FrameVolumeKernel kernel;
+};
 } // namespace
 
 // A kernel's output drawn by the next pass on the same frame. The pixel is the
@@ -654,6 +710,28 @@ auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid")
     for (auto y = 0; y < gridHeight; ++y)
         for (auto x = 0; x < gridWidth; ++x)
             check(result[y * gridWidth + x] == (float) x + (float) y * 100.f);
+};
+
+// The same, a rank up and on the frame rather than off-screen: a 3D dispatch
+// records onto Frame::beginCompute exactly as the other two do.
+auto tVolumeDispatchOnTheFrame = test("FrameCompute/volumeDispatchOnTheFrame") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto view = ComputeVolumeView {};
+    auto image = readBack(view);
+
+    check(image.isValid());
+
+    float result[volumeCells] = {};
+    view.volume.read(result, sizeof(result));
+
+    for (auto z = 0; z < volumeDepth; ++z)
+        for (auto y = 0; y < volumeHeight; ++y)
+            for (auto x = 0; x < volumeWidth; ++x)
+                check(result[(z * volumeHeight + y) * volumeWidth + x]
+                      == (float) x + (float) y * 10.f + (float) z * 100.f);
 };
 
 // The read that does not wait. commitAsync returns before the GPU has run, so a

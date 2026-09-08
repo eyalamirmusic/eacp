@@ -1,23 +1,47 @@
 #include "Files.h"
+#include "FilesPlatform.h"
+
+#include "../ObjC/CFRef.h"
+
 #include <CoreFoundation/CoreFoundation.h>
 
-namespace eacp::Files
+namespace eacp
 {
-std::string getBundleResourcePath(const std::string& filename)
+namespace
 {
-    auto ref = CFBundleGetMainBundle();
-    auto name = CFStringCreateWithCString(
-        nullptr, filename.c_str(), kCFStringEncodingUTF8);
-    auto url = CFBundleCopyResourceURL(ref, name, nullptr, nullptr);
-    CFRelease(name);
-
-    if (url == nullptr)
+FilePath toFilePath(const CFRef<CFURLRef>& url)
+{
+    if (!url)
         return {};
 
-    char path[1024];
-    CFURLGetFileSystemRepresentation(
-        url, true, reinterpret_cast<UInt8*>(path), sizeof(path));
-    CFRelease(url);
-    return path;
+    char path[1024] {};
+
+    if (!CFURLGetFileSystemRepresentation(
+            url, true, reinterpret_cast<UInt8*>(path), sizeof(path)))
+        return {};
+
+    return FilePath {path};
 }
-} // namespace eacp::Files
+} // namespace
+
+namespace Files
+{
+FilePath resourcesDirectory()
+{
+    return toFilePath(CFBundleCopyResourcesDirectoryURL(CFBundleGetMainBundle()));
+}
+} // namespace Files
+
+namespace Detail
+{
+std::string bundleResourcePath(const std::string& filename)
+{
+    auto name = CFRef<CFStringRef> {CFStringCreateWithCString(
+        nullptr, filename.c_str(), kCFStringEncodingUTF8)};
+
+    return toFilePath(CFBundleCopyResourceURL(
+                          CFBundleGetMainBundle(), name, nullptr, nullptr))
+        .str();
+}
+} // namespace Detail
+} // namespace eacp

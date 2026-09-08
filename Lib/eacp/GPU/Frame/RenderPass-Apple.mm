@@ -62,6 +62,20 @@ MTLWinding toMetalWinding(Winding winding)
 
     return MTLWindingCounterClockwise;
 }
+
+bool isBindableRange(const BufferRange& range)
+{
+    return range.isValid() && range.offset >= 0
+           && range.offset < range.buffer->size();
+}
+
+id<MTLBuffer> metalBufferOf(const BufferRange& range)
+{
+    if (!isBindableRange(range))
+        return nil;
+
+    return (__bridge id<MTLBuffer>) range.buffer->nativeBuffer();
+}
 } // namespace
 
 struct RenderPass::Native
@@ -232,9 +246,7 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
 void RenderPass::setVertexBuffer(const BufferRange& range, int index)
 {
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = range.buffer != nullptr
-                           ? (__bridge id<MTLBuffer>) range.buffer->nativeBuffer()
-                           : nil;
+    auto metalBuffer = metalBufferOf(range);
 
     // The offset is the range's whole contribution: Metal reads vertex zero
     // at buffer + offset, which is exactly what a slice of an arena is.
@@ -301,23 +313,33 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 {
+    setVertexStorageBuffer(BufferRange::of(buffer), slot);
+}
+
+void RenderPass::setVertexStorageBuffer(const BufferRange& range, int slot)
+{
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+    auto metalBuffer = metalBufferOf(range);
 
     if (activeEncoder != nil && metalBuffer != nil)
         [activeEncoder setVertexBuffer:metalBuffer
-                                offset:0
+                                offset:(NSUInteger) range.offset
                                atIndex:(NSUInteger) (bufferBase + slot)];
 }
 
 void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
 {
+    setFragmentStorageBuffer(BufferRange::of(buffer), slot);
+}
+
+void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
+{
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = (__bridge id<MTLBuffer>) buffer.nativeBuffer();
+    auto metalBuffer = metalBufferOf(range);
 
     if (activeEncoder != nil && metalBuffer != nil)
         [activeEncoder setFragmentBuffer:metalBuffer
-                                  offset:0
+                                  offset:(NSUInteger) range.offset
                                  atIndex:(NSUInteger) (bufferBase + slot)];
 }
 
@@ -386,9 +408,7 @@ void RenderPass::drawIndexed(const BufferRange& indices,
                              int baseVertex)
 {
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = indices.buffer != nullptr
-                           ? (__bridge id<MTLBuffer>) indices.buffer->nativeBuffer()
-                           : nil;
+    auto metalBuffer = metalBufferOf(indices);
 
     if (! impl->pipelineBound || activeEncoder == nil || metalBuffer == nil)
         return;
@@ -439,9 +459,7 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                                       int baseVertex)
 {
     auto activeEncoder = impl->encoder.get();
-    auto metalBuffer = indices.buffer != nullptr
-                           ? (__bridge id<MTLBuffer>) indices.buffer->nativeBuffer()
-                           : nil;
+    auto metalBuffer = metalBufferOf(indices);
 
     if (! impl->pipelineBound || activeEncoder == nil || metalBuffer == nil)
         return;
