@@ -209,6 +209,44 @@ int countWritten(const Vector<float>& values)
 
     return written;
 }
+
+// One indirect dispatch at a given offset, over a grid the CPU wrote: what is
+// measured here is where the arguments were read from, not where they came
+// from. The first uint is padding, so offset 4 is the smallest offset a whole
+// DispatchArguments still fits at, and it asks for exactly one group.
+Vector<float> dispatchAtOffset(int offsetInBytes)
+{
+    std::uint32_t initial[] = {0u, 1u, 1u, 1u};
+
+    auto arguments =
+        Buffer {Device::shared(), initial, sizeof(initial), BufferUsage::Storage};
+
+    auto blank = Vector<float> {};
+    blank.assign(capacity, untouched);
+
+    auto output = Buffer {Device::shared(),
+                          blank.data(),
+                          (int) sizeof(float) * capacity,
+                          BufferUsage::Storage};
+
+    auto consume = ConsumeKernel {};
+    consume.output = output;
+    consume.prepare();
+
+    auto commands = Device::shared().makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatchIndirect(consume, arguments, capacity, offsetInBytes);
+    }
+
+    commands.commit();
+
+    auto values = Vector<float> {};
+    values.resize(capacity);
+    output.read(values.data(), (int) sizeof(float) * capacity);
+    return values;
+}
 } // namespace
 
 // How many threads ran, read off what they wrote. The counting kernel found 137
@@ -250,6 +288,22 @@ auto tIndirectZeroGridRunsNothing =
     auto values = runPipeline(makeCandidates(0), consume);
 
     check(countWritten(values) == 0);
+};
+
+// The offset has to leave a whole DispatchArguments in the buffer. One that
+// does not - negative, past the last byte, or with only part of the three
+// counts behind it - records nothing, so the output keeps its sentinel; the
+// arguments here are 16 bytes, so 4 is the last offset that fits.
+auto tIndirectOffsetMustFitTheArguments =
+    test("IndirectDispatch/theOffsetMustLeaveRoomForTheArguments") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    check(countWritten(dispatchAtOffset(4)) == ComputePass::threadGroupWidth);
+
+    for (auto offset: {-4, 8, 16, 64})
+        check(countWritten(dispatchAtOffset(offset)) == 0);
 };
 
 // And the pattern a real stage uses: the grid is rounded up to whole groups, so

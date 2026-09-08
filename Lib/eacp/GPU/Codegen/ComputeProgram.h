@@ -11,10 +11,10 @@
 // with the kernel's element zero at the offset - with slots taken from
 // declaration order.
 // define() writes the kernel body: read inputs at threadId() (or, over a grid,
-// at threadPosition()), write the result with write(). The generated kernel
-// guards against the rounded-up dispatch with implicit extents, supplied
-// automatically at dispatch - one count for a 1D kernel, a width and a height
-// for a 2D one.
+// at threadPosition(), or over a volume at threadPosition3()), write the result
+// with write(). The generated kernel guards against the rounded-up dispatch
+// with implicit extents, supplied automatically at dispatch - one count for a
+// 1D kernel, a width and a height for a 2D one, a depth as well for a 3D one.
 //
 //   struct ScaleKernel final : ComputeProgram
 //   {
@@ -70,6 +70,25 @@ public:
     void onOutputBuffer(const char*,
                         OutputBuffer& handle,
                         const BufferRange& range) override
+    {
+        if (range.isValid())
+            pass.setOutputBuffer(range, handle.slot);
+    }
+
+    // The integer buffers bind through the same two calls the float ones do:
+    // what the elements are is settled by the kernel's declaration, not by how
+    // the pass hands the buffer over.
+    void onUIntInputBuffer(const char*,
+                           UIntInputBuffer& handle,
+                           const BufferRange& range) override
+    {
+        if (range.isValid())
+            pass.setInputBuffer(range, handle.slot);
+    }
+
+    void onUIntOutputBuffer(const char*,
+                            UIntOutputBuffer& handle,
+                            const BufferRange& range) override
     {
         if (range.isValid())
             pass.setOutputBuffer(range, handle.slot);
@@ -136,6 +155,10 @@ public:
 
     const ShaderSource& source() const { return generated.source; }
 
+    // The graph the body was recorded into, so either backend's text can be
+    // emitted from the kernel that ships rather than from a copy of its body.
+    const ShaderGraph& graph() const { return builder.graph(); }
+
     // Builds the shader library and compute pipeline from the generated kernel,
     // on the Device whose passes will dispatch it. A pipeline belongs to the
     // device that compiled it, so a kernel a worker Device dispatches is
@@ -156,8 +179,8 @@ public:
     const void* packedUniforms(int count)
     {
         assert(dispatchRank() == DispatchRank::OneD
-               && "eacp: a kernel written against threadPosition() is "
-                  "dispatched with dispatch(width, height)");
+               && "eacp: only a kernel written against threadId() is dispatched "
+                  "with dispatch(count)");
 
         const std::uint32_t extents[] = {(std::uint32_t) count};
         return packWithExtents(extents, 1);
@@ -168,12 +191,24 @@ public:
     const void* packedUniforms(int width, int height)
     {
         assert(dispatchRank() == DispatchRank::TwoD
-               && "eacp: a kernel written against threadId() is dispatched "
-                  "with dispatch(count)");
+               && "eacp: only a kernel written against threadPosition() is "
+                  "dispatched with dispatch(width, height)");
 
         const std::uint32_t extents[] = {(std::uint32_t) width,
                                          (std::uint32_t) height};
         return packWithExtents(extents, 2);
+    }
+
+    // And the 3D one, whose guard reads three.
+    const void* packedUniforms(int width, int height, int depth)
+    {
+        assert(dispatchRank() == DispatchRank::ThreeD
+               && "eacp: only a kernel written against threadPosition3() is "
+                  "dispatched with dispatch(width, height, depth)");
+
+        const std::uint32_t extents[] = {
+            (std::uint32_t) width, (std::uint32_t) height, (std::uint32_t) depth};
+        return packWithExtents(extents, 3);
     }
 
     // The grid shape this kernel's body asked for, which decides which dispatch
@@ -182,10 +217,11 @@ public:
 
     // The fixed group shape every dispatch uses, restated here because it is
     // part of a shared-memory kernel's arithmetic: localId() runs to
-    // groupWidth in a 1D kernel (groupSize2D per axis in a 2D one), and a
-    // shared tile is sized in these units.
+    // groupWidth in a 1D kernel (groupSize2D or groupSize3D per axis in a 2D
+    // or 3D one), and a shared tile is sized in these units.
     static constexpr int groupWidth = ComputePass::threadGroupWidth;
     static constexpr int groupSize2D = ComputePass::threadGroupSize2D;
+    static constexpr int groupSize3D = ComputePass::threadGroupSize3D;
 
     int uniformByteSize() const { return uniformBytes.size(); }
 
@@ -211,6 +247,7 @@ protected:
 
     UInt threadId() { return builder.threadId(); }
     ThreadPosition threadPosition() { return builder.threadPosition(); }
+    ThreadPosition3 threadPosition3() { return builder.threadPosition3(); }
     Float constant(float value) { return builder.constant(value); }
 
     // The threadgroup vocabulary, forwarded on the terms the ids above set:
@@ -220,11 +257,14 @@ protected:
     // uses, so shared tiles are sized against the constants below.
     UInt localId() { return builder.localId(); }
     ThreadPosition localPosition() { return builder.localPosition(); }
+    ThreadPosition3 localPosition3() { return builder.localPosition3(); }
     UInt groupId() { return builder.groupId(); }
     ThreadPosition groupPosition() { return builder.groupPosition(); }
+    ThreadPosition3 groupPosition3() { return builder.groupPosition3(); }
     UInt gridCount() { return builder.gridCount(); }
     UInt gridWidth() { return builder.gridWidth(); }
     UInt gridHeight() { return builder.gridHeight(); }
+    UInt gridDepth() { return builder.gridDepth(); }
     void barrier() { builder.barrier(); }
 
     template <typename T>
@@ -332,6 +372,28 @@ protected:
     void write(const Shared<T>& array, const UInt& index, const T& value)
     {
         builder.write(array, index, value);
+    }
+
+    // One element of an integer output: the id or the count a kernel arrived
+    // at, kept as an integer for the kernel after it to index with.
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const UIntOutputBuffer& buffer, const UInt& index, unsigned value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const UIntOutputBuffer& buffer, unsigned index, const UInt& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value)
+    {
+        builder.write(buffer, index, value);
     }
 
     // An atomic buffer's element, set rather than added to - what a kernel

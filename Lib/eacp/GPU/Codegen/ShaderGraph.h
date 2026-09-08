@@ -46,7 +46,7 @@ enum class ExprKind
     // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
     // index is the component: a 1D kernel has only 0 and prints the whole gid,
-    // a 2D one prints gid.x or gid.y.
+    // a 2D or 3D one prints gid.x, gid.y or gid.z.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
     AtomicLoad, // one element of an atomic buffer; index = buffer slot,
     // args = {index}. An expression on both backends, unlike the add - MSL
@@ -56,7 +56,7 @@ enum class ExprKind
     LocalId, // position within the threadgroup; index = component, like ThreadId
     GroupId, // the threadgroup's own index in the grid; index = component
     GridExtent, // the implicit bounds uniform the generated guard reads: count
-    // for a 1D kernel, width/height by component for a 2D one. Exposed so a
+    // for a 1D kernel, width/height/depth by component otherwise. Exposed so a
     // kernel that barriers - and therefore has no early-return guard - can
     // bound its stores against the very same value the dispatch supplied.
     SharedRead // threadgroup-array element read; index = slot, args = {index}
@@ -64,14 +64,13 @@ enum class ExprKind
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
 // const / D3D SRV), a writable output (Metal device / D3D UAV), or an atomic
-// one - unsigned integer elements every thread may read-modify-write at once.
+// one - elements every thread may read-modify-write at once.
 //
-// Atomic is a separate access rather than a flag on Write because it changes
-// the element type: MSL needs device atomic_uint* and HLSL an
-// RWStructuredBuffer<uint>, neither of which is the run of floats the other two
-// are. The bits in one are integers, so a buffer written atomically by one
-// kernel and read as floats by the next reads garbage; load it atomically, or
-// have the kernel that fills it convert.
+// What the elements are is the separate question addStorageBuffer's element
+// type answers, on the terms TextureAccess and TextureKind divide a texture's:
+// a Read or a Write slot holds floats or unsigned integers, and an Atomic one
+// is unsigned integers wrapped in the type an interlocked operation acts
+// through.
 enum class BufferAccess
 {
     Read,
@@ -118,14 +117,15 @@ enum class TextureKind
 
 // The shape of the grid a kernel is dispatched over, decided by which thread
 // index its body asked for: threadId() gives one index over a flat count,
-// threadPosition() gives a pair over a width and a height. The emitter takes
-// the entry signature and the bounds guard from this, and the dispatch takes
-// the grid from the matching ComputePass::dispatch overload - which is why a
-// kernel cannot ask for both.
+// threadPosition() a pair over a width and a height, threadPosition3() a triple
+// over a volume. The emitter takes the entry signature and the bounds guard
+// from this, and the dispatch takes the grid from the matching
+// ComputePass::dispatch overload - which is why a kernel asks for one of them.
 enum class DispatchRank
 {
     OneD,
-    TwoD
+    TwoD,
+    ThreeD
 };
 
 // What a statement does. Statements are what the expression store on its own
@@ -363,15 +363,20 @@ public:
     int addArray(ValueType elementType, Vector<int> elements);
     int addArrayRead(int slot, int index);
 
-    // Compute kernel pieces: the 1D work-item id, one component of the 2D one,
-    // a storage-buffer slot (float elements; inputs and outputs share one slot
-    // space, so every buffer gets a distinct index), an element read, and an
-    // element write. The first thread index a kernel asks for fixes its
-    // dispatch rank, and asking for the other one afterwards is a contradiction
-    // the emitted kernel could not express.
+    // Compute kernel pieces: the 1D work-item id, one component of the 2D or 3D
+    // one, a storage-buffer slot (inputs and outputs share one slot space, so
+    // every buffer gets a distinct index), an element read, and an element
+    // write. The first thread index a kernel asks for fixes its dispatch rank,
+    // and asking for another one afterwards is a contradiction the emitted
+    // kernel could not express.
+    //
+    // The element type is Float or UInt, and it is what a read of the slot
+    // yields.
     int addThreadId();
     int addThreadPosition(int component);
-    int addStorageBuffer(BufferAccess access);
+    int addThreadPosition3(int component);
+    int addStorageBuffer(BufferAccess access,
+                         ValueType elementType = ValueType::Float);
     int addBufferRead(int slot, int index);
     void addStore(int slot, int index, int value);
 
@@ -389,8 +394,10 @@ public:
     // ids do, so a kernel cannot mix a flat local id with a grid dispatch.
     int addLocalId();
     int addLocalPosition(int component);
+    int addLocalPosition3(int component);
     int addGroupId();
     int addGroupPosition(int component);
+    int addGroupPosition3(int component);
     int addGridExtent(DispatchRank forRank, int component);
     int addSharedArray(ValueType elementType, int elements);
     int addSharedRead(int slot, int index);
@@ -447,6 +454,14 @@ public:
     float discardThreshold() const { return discardValue; }
 
     const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
+
+    // What storage buffer `slot` holds, as its kernel declared it.
+    ValueType storageElementType(int slot) const
+    {
+        return slot >= 0 && slot < storageElements.size() ? storageElements[slot]
+                                                          : ValueType::Float;
+    }
+
     const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
     const Vector<Store>& stores() const { return storeList; }
     const Vector<TextureStore>& textureStores() const { return textureStoreList; }
@@ -516,6 +531,7 @@ private:
     Vector<VaryingSlot> varyingSlots;
     Vector<ValueType> uniformTypes;
     Vector<BufferAccess> storageSlots;
+    Vector<ValueType> storageElements; // parallel to storageSlots
     Vector<Store> storeList;
     Vector<TextureStore> textureStoreList;
     Vector<TextureSampling> textureSamplings;

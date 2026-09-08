@@ -116,7 +116,7 @@ struct ShaderHelper
 // than the Windows half of a pair.
 //
 // That is why one string serves both: what the approximation is written out of
-// - abs, exp, a divide, a Horner chain and a scalar conditional - is spelled
+// - abs, exp, a divide, a Horner chain and the scalar conditionals - is spelled
 // identically in MSL and HLSL, so there is nothing here for a per-backend form
 // to differ about. The vector widths are overloads rather than a genType
 // because HLSL resolves a user function by overload and has no template before
@@ -128,6 +128,10 @@ struct ShaderHelper
 // 1.5e-7 and the rest is what evaluating it in float32 costs - which lands
 // under the resolution a float has near one either way, so the shader is a
 // float32 error function and not a rounded copy of the CPU's.
+//
+// The polynomial is not odd, and both signs of zero take its positive branch,
+// so the origin returns the argument: erf(0) is exactly zero with the sign it
+// was handed, and erf(-x) is bitwise the negation of erf(x).
 constexpr auto erfHelper =
     "float eacpErf(float x)\n"
     "{\n"
@@ -135,7 +139,7 @@ constexpr auto erfHelper =
     "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
     "    float e = 1.0 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
     "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return x < 0.0 ? -e : e;\n"
+    "    return a == 0.0 ? x : (x < 0.0 ? -e : e);\n"
     "}\n\n"
     "float2 eacpErf(float2 x)\n"
     "{\n"
@@ -156,6 +160,9 @@ constexpr auto erfHelper =
 // that anything asks for it by name. What the direct form cannot fix is the
 // approximation's own relative error out there, around 1% by x = 3, so this
 // answers "how much probability is left" and not "to how many digits".
+//
+// The origin is answered outright for the same reason: erfc(0) is exactly 1,
+// whichever sign of zero it was handed, so erf(x) + erfc(x) is exactly 1 there.
 constexpr auto erfcHelper =
     "float eacpErfc(float x)\n"
     "{\n"
@@ -163,7 +170,7 @@ constexpr auto erfcHelper =
     "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
     "    float e = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
     "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return x < 0.0 ? 2.0 - e : e;\n"
+    "    return a == 0.0 ? 1.0 : (x < 0.0 ? 2.0 - e : e);\n"
     "}\n\n"
     "float2 eacpErfc(float2 x)\n"
     "{\n"
@@ -254,6 +261,50 @@ std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
 std::string hlslSamplerName(const TextureSampling& sampling)
 {
     return "samplerConfig" + std::to_string(samplingIndex(sampling));
+}
+
+// The component a 2D or 3D kernel's thread index node asked for, and the
+// uniform its matching grid extent is declared under.
+const char* componentSuffix(int component)
+{
+    if (component == 0)
+        return ".x";
+
+    return component == 1 ? ".y" : ".z";
+}
+
+const char* gridExtentName(int component)
+{
+    if (component == 0)
+        return "width";
+
+    return component == 1 ? "height" : "depth";
+}
+
+int gridExtentCount(DispatchRank rank)
+{
+    if (rank == DispatchRank::OneD)
+        return 1;
+
+    return rank == DispatchRank::TwoD ? 2 : 3;
+}
+
+// The type the entry point declares its indices as, and the swizzle HLSL takes
+// them out of its three-component semantics with.
+const char* indexTypeName(DispatchRank rank)
+{
+    if (rank == DispatchRank::OneD)
+        return "uint";
+
+    return rank == DispatchRank::TwoD ? "uint2" : "uint3";
+}
+
+const char* indexSwizzle(DispatchRank rank)
+{
+    if (rank == DispatchRank::OneD)
+        return ".x";
+
+    return rank == DispatchRank::TwoD ? ".xy" : ".xyz";
 }
 
 // Prints one stage's expressions. Nodes the stage plan named as locals print
@@ -450,13 +501,13 @@ struct ExprPrinter
 
             case ExprKind::ThreadId:
                 // Both kernel scaffoldings declare the work-item id as gid: a
-                // uint over the flat count in a 1D kernel, a uint2 over the
-                // grid in a 2D one, where the node carries which component it
-                // asked for.
+                // uint over the flat count in a 1D kernel, a uint2 or uint3
+                // over the grid otherwise, where the node carries which
+                // component it asked for.
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "gid";
 
-                return expr.index == 0 ? "gid.x" : "gid.y";
+                return std::string("gid") + componentSuffix(expr.index);
 
             case ExprKind::BufferRead:
                 return "buffer" + std::to_string(expr.index) + "["
@@ -484,18 +535,18 @@ struct ExprPrinter
 
             // The threadgroup indices ride the same scaffolding as gid: both
             // backends' entry points bind them to these names, a scalar in a
-            // 1D kernel and a pair in a 2D one.
+            // 1D kernel and a vector of the rank's width otherwise.
             case ExprKind::LocalId:
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "lid";
 
-                return expr.index == 0 ? "lid.x" : "lid.y";
+                return std::string("lid") + componentSuffix(expr.index);
 
             case ExprKind::GroupId:
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "tgid";
 
-                return expr.index == 0 ? "tgid.x" : "tgid.y";
+                return std::string("tgid") + componentSuffix(expr.index);
 
             // The implicit bound the dispatch appended to the uniform block,
             // under the names the block declares it with.
@@ -503,7 +554,7 @@ struct ExprPrinter
                 if (graph.dispatchRank() == DispatchRank::OneD)
                     return "uniforms.count";
 
-                return expr.index == 0 ? "uniforms.width" : "uniforms.height";
+                return std::string("uniforms.") + gridExtentName(expr.index);
 
             case ExprKind::SharedRead:
                 return "s" + std::to_string(expr.index) + "[" + ref(expr.args[0])
@@ -835,6 +886,28 @@ bool readsStale(const ShaderGraph& graph,
     return false;
 }
 
+// Every expression the statements of a block reach, its nested bodies included.
+// A loop's condition is left out: the header takes no name of its own.
+void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
+{
+    for (auto index: graph.block(block).statements)
+    {
+        const auto& statement = graph.statement(index);
+
+        if (statement.kind != StatementKind::Loop)
+            roots.add(statement.value);
+
+        roots.add(statement.index);
+        roots.add(statement.indexY);
+
+        if (statement.body >= 0)
+            collectUseRoots(graph, statement.body, roots);
+
+        if (statement.elseBody >= 0)
+            collectUseRoots(graph, statement.elseBody, roots);
+    }
+}
+
 // Emits one stage: its statements, then the expressions its outputs are.
 //
 // Any operation evaluated more than once becomes a tN local, so a shared
@@ -844,11 +917,12 @@ bool readsStale(const ShaderGraph& graph,
 //
 // A name is given up the moment a statement writes a variable the value behind
 // it read - which is what stops `d` computed before an `if` from standing for
-// the same thing after a body that moved what it was computed from.
+// the same thing after a body that moved what it was computed from. A name
+// neither body moves stays usable inside them both.
 //
 // A loop condition takes no name at all. It is printed into the while header,
 // so binding it to a local ahead of the loop would test a value that never
-// changes again; every name open in the enclosing block is given up there too,
+// changes again; the names the body can invalidate are given up there too,
 // since the header is re-evaluated after the body has run.
 struct StageEmitter
 {
@@ -942,19 +1016,11 @@ struct StageEmitter
 
         if (statement.kind == StatementKind::Loop)
         {
-            retire(open);
+            dropStale(statement, open);
 
             return indent + "while (" + printer.ref(statement.value) + ")\n" + indent
                    + "{\n" + emitBlock(statement.body, inner) + indent + "}\n";
         }
-
-        // An if is emitted only after the names its bodies invalidate are given
-        // up, so nothing inside stands for a value one of them has moved on
-        // from. An assignment needs no such pass first: its right-hand side is
-        // what the variable held before it, which is exactly what the open
-        // names still stand for.
-        if (statement.kind == StatementKind::If)
-            dropStale(statement, open);
 
         auto source = std::string {};
 
@@ -976,12 +1042,20 @@ struct StageEmitter
                 break;
             }
 
+            // The condition is evaluated before either body runs, so it is
+            // printed while every name still stands; the ones a body moves on
+            // from are given up between it and them. An assignment needs no
+            // such pass first: its right-hand side is what the variable held
+            // before it, which is what the open names still stand for.
             case StatementKind::If:
             {
                 source = define({statement.value}, indent, uses, open);
-                source += indent + "if (" + printer.ref(statement.value) + ")\n"
-                          + indent + "{\n" + emitBlock(statement.body, inner)
-                          + indent + "}\n";
+
+                auto condition = printer.ref(statement.value);
+                dropStale(statement, open);
+
+                source += indent + "if (" + condition + ")\n" + indent + "{\n"
+                          + emitBlock(statement.body, inner) + indent + "}\n";
 
                 if (statement.elseBody >= 0)
                     source += indent + "else\n" + indent + "{\n"
@@ -1122,25 +1196,13 @@ private:
         return uses;
     }
 
-    // How often the statements of one block reach each node - the block's own
-    // statements only, since a nested body counts its own when it is emitted.
-    // A loop's condition is left out deliberately: see the note above.
+    // How often the statements of one block reach each node, its nested bodies
+    // counted in: a name is handed out only where the statement being emitted
+    // evaluates the node anyway, so a body's use of one costs that body nothing.
     Vector<int> blockUses(int block) const
     {
         auto roots = Vector<int> {};
-
-        for (auto index: graph().block(block).statements)
-        {
-            const auto& statement = graph().statement(index);
-
-            if (statement.kind != StatementKind::Loop)
-            {
-                roots.add(statement.value);
-                roots.add(statement.index);
-                roots.add(statement.indexY);
-            }
-        }
-
+        collectUseRoots(graph(), block, roots);
         return countUsesOver(roots);
     }
 
@@ -1328,6 +1390,45 @@ Vector<int> fragmentStageRoots(const ShaderGraph& graph)
     return roots;
 }
 
+// How a buffer slot spells itself: the access decides the qualifier, the
+// element type what is qualified. An atomic slot answers to neither - its
+// elements are the type each language requires an interlocked operation to act
+// through.
+const char* metalBufferType(BufferAccess access, ValueType elementType)
+{
+    auto integers = elementType == ValueType::UInt;
+
+    switch (access)
+    {
+        case BufferAccess::Read:
+            return integers ? "device const uint*" : "device const float*";
+        case BufferAccess::Write:
+            return integers ? "device uint*" : "device float*";
+        case BufferAccess::Atomic:
+            return "device atomic_uint*";
+    }
+
+    return "device const float*";
+}
+
+const char* hlslBufferType(BufferAccess access, ValueType elementType)
+{
+    auto integers = elementType == ValueType::UInt;
+
+    switch (access)
+    {
+        case BufferAccess::Read:
+            return integers ? "StructuredBuffer<uint>" : "StructuredBuffer<float>";
+        case BufferAccess::Write:
+            return integers ? "RWStructuredBuffer<uint>"
+                            : "RWStructuredBuffer<float>";
+        case BufferAccess::Atomic:
+            return "RWStructuredBuffer<uint>";
+    }
+
+    return "StructuredBuffer<float>";
+}
+
 // Which storage-buffer slots a run of expressions subscripts. A render stage
 // declares only the buffers it reads - unlike a kernel, where every slot is a
 // parameter of the one entry point - so the vertex and fragment functions each
@@ -1372,9 +1473,11 @@ std::string bufferParameters(const ShaderGraph& graph, const Vector<int>& roots)
 
     for (auto i = 0; i < used.size(); ++i)
         if (used[i] != 0)
-            source += ",\n    device const float* buffer" + std::to_string(i)
-                      + " [[buffer(" + std::to_string(RenderPass::bufferBase + i)
-                      + ")]]";
+            source += ",\n    "
+                      + std::string(metalBufferType(BufferAccess::Read,
+                                                    graph.storageElementType(i)))
+                      + " buffer" + std::to_string(i) + " [[buffer("
+                      + std::to_string(RenderPass::bufferBase + i) + ")]]";
 
     return source;
 }
@@ -1419,40 +1522,6 @@ std::string uniformBlock(Backend backend,
                   "    Uniforms uniforms;\n};\n\n";
 
     return source;
-}
-
-// How each access spells the buffer it declares. An atomic one is the only kind
-// whose *elements* differ - unsigned integers, wrapped in the type the language
-// requires an interlocked operation to act through - so it cannot be a
-// qualifier on the float declaration the other two share.
-const char* metalBufferType(BufferAccess access)
-{
-    switch (access)
-    {
-        case BufferAccess::Read:
-            return "device const float*";
-        case BufferAccess::Write:
-            return "device float*";
-        case BufferAccess::Atomic:
-            return "device atomic_uint*";
-    }
-
-    return "device const float*";
-}
-
-const char* hlslBufferType(BufferAccess access)
-{
-    switch (access)
-    {
-        case BufferAccess::Read:
-            return "StructuredBuffer<float>";
-        case BufferAccess::Write:
-            return "RWStructuredBuffer<float>";
-        case BufferAccess::Atomic:
-            return "RWStructuredBuffer<uint>";
-    }
-
-    return "StructuredBuffer<float>";
 }
 
 // What a sampled texture slot is declared as, which is the whole of what a cube
@@ -1530,18 +1599,35 @@ std::string hlslSamplerDeclarations(const ShaderGraph& graph)
     return source;
 }
 
+// The early return the rounded-up dispatch needs, over as many extents as the
+// rank has.
+std::string boundsGuard(DispatchRank rank)
+{
+    if (rank == DispatchRank::OneD)
+        return "    if (gid >= uniforms.count)\n        return;\n";
+
+    auto condition = std::string {};
+
+    for (auto i = 0; i < gridExtentCount(rank); ++i)
+        condition += (i == 0 ? "" : " || ")
+                     + ("gid" + std::string(componentSuffix(i))) + " >= uniforms."
+                     + gridExtentName(i);
+
+    return "    if (" + condition + ")\n        return;\n";
+}
+
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
 // parameters but HLSL globals, and the work-item id arrives as a builtin
 // parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
 // with the implicit grid extents the bounds guard reads - one count for a 1D
-// kernel, a width and a height for a 2D one - and the kernel opens with the
-// guard the rounded-up dispatch needs; ComputeProgram appends the matching CPU
-// values.
+// kernel, a width and a height for a 2D one, a depth as well for a 3D one - and
+// the kernel opens with the guard the rounded-up dispatch needs; ComputeProgram
+// appends the matching CPU values.
 std::string emitCompute(const ShaderGraph& graph, Backend backend)
 {
     auto source = std::string {};
-    auto is2D = graph.dispatchRank() == DispatchRank::TwoD;
+    auto rank = graph.dispatchRank();
 
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
@@ -1554,17 +1640,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     for (auto i = 0; i < uniformTypes.size(); ++i)
         uniformNames.add("u" + std::to_string(i));
 
-    if (is2D)
-    {
-        uniformTypes.add(ValueType::UInt);
-        uniformNames.add("width");
-        uniformTypes.add(ValueType::UInt);
-        uniformNames.add("height");
-    }
-    else
+    if (rank == DispatchRank::OneD)
     {
         uniformTypes.add(ValueType::UInt);
         uniformNames.add("count");
+    }
+    else
+    {
+        for (auto i = 0; i < gridExtentCount(rank); ++i)
+        {
+            uniformTypes.add(ValueType::UInt);
+            uniformNames.add(gridExtentName(i));
+        }
     }
 
     source += uniformBlock(backend, uniformTypes, uniformNames);
@@ -1582,9 +1669,10 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         for (auto i = 0; i < buffers.size(); ++i)
         {
-            source += std::string(metalBufferType(buffers[i])) + " buffer"
-                      + std::to_string(i) + " [[buffer(" + std::to_string(i)
-                      + ")]],\n    ";
+            source +=
+                std::string(metalBufferType(buffers[i], graph.storageElementType(i)))
+                + " buffer" + std::to_string(i) + " [[buffer(" + std::to_string(i)
+                + ")]],\n    ";
         }
 
         // Textures are kernel parameters like the buffers, on an index space of
@@ -1609,10 +1697,10 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         source += "constant Uniforms& uniforms [[buffer("
                   + std::to_string(ComputePass::uniformBase) + ")]],\n    ";
-        source += std::string(is2D ? "uint2" : "uint")
-                  + " gid [[thread_position_in_grid]]";
+        source +=
+            std::string(indexTypeName(rank)) + " gid [[thread_position_in_grid]]";
 
-        auto indexType = std::string(is2D ? "uint2" : "uint");
+        auto indexType = std::string(indexTypeName(rank));
 
         if (graph.usesLocalId())
             source +=
@@ -1644,7 +1732,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
             auto slot = std::to_string(i);
             auto readOnly = buffers[i] == BufferAccess::Read;
 
-            source += hlslBufferType(buffers[i]);
+            source += hlslBufferType(buffers[i], graph.storageElementType(i));
             source += " buffer";
             source += slot;
             source += readOnly ? " : register(t" : " : register(u";
@@ -1692,12 +1780,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.sharedArrays().size() > 0)
             source += "\n";
 
-        auto groupWidth =
-            is2D ? ComputePass::threadGroupSize2D : ComputePass::threadGroupWidth;
-        auto groupHeight = is2D ? ComputePass::threadGroupSize2D : 1;
+        auto groupWidth = ComputePass::threadGroupWidth;
+        auto groupHeight = 1;
+        auto groupDepth = 1;
+
+        if (rank == DispatchRank::TwoD)
+            groupWidth = groupHeight = ComputePass::threadGroupSize2D;
+        else if (rank == DispatchRank::ThreeD)
+            groupWidth = groupHeight = groupDepth = ComputePass::threadGroupSize3D;
 
         source += "[numthreads(" + std::to_string(groupWidth) + ", "
-                  + std::to_string(groupHeight) + ", 1)]\n";
+                  + std::to_string(groupHeight) + ", " + std::to_string(groupDepth)
+                  + ")]\n";
         source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
 
         if (graph.usesLocalId())
@@ -1707,27 +1801,26 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
             source += ", uint3 groupIndex : SV_GroupID";
 
         source += ")\n{\n";
-        source +=
-            is2D ? "    uint2 gid = threadId.xy;\n" : "    uint gid = threadId.x;\n";
+
+        auto indexType = std::string(indexTypeName(rank));
+        auto swizzle = std::string(indexSwizzle(rank));
+
+        source += "    " + indexType + " gid = threadId" + swizzle + ";\n";
 
         if (graph.usesLocalId())
-            source += is2D ? "    uint2 lid = localThread.xy;\n"
-                           : "    uint lid = localThread.x;\n";
+            source += "    " + indexType + " lid = localThread" + swizzle + ";\n";
 
         if (graph.usesGroupId())
-            source += is2D ? "    uint2 tgid = groupIndex.xy;\n"
-                           : "    uint tgid = groupIndex.x;\n";
+            source += "    " + indexType + " tgid = groupIndex" + swizzle + ";\n";
     }
 
     // The early-return bounds guard the rounded-up dispatch needs - except in
     // a kernel that barriers, where a return some threads take ahead of a
     // barrier the rest sit at is undefined on both backends. There every
     // thread runs the whole body, and the kernel bounds its own stores
-    // against gridCount()/gridWidth()/gridHeight() instead.
+    // against gridCount()/gridWidth()/gridHeight()/gridDepth() instead.
     if (!graph.usesBarrier())
-        source += is2D ? "    if (gid.x >= uniforms.width || gid.y >= "
-                         "uniforms.height)\n        return;\n"
-                       : "    if (gid >= uniforms.count)\n        return;\n";
+        source += boundsGuard(rank);
 
     // Stores ride the statement stream like everything else, so the body is
     // one block walk: a write records where it was made, inside whatever
@@ -1811,8 +1904,9 @@ std::string emit(const ShaderGraph& graph, Backend backend)
         // a kernel's textures sit above its buffers. See
         // RenderPass::bufferRegisterBase.
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += "StructuredBuffer<float> buffer" + std::to_string(i)
-                      + " : register(t"
+            source += std::string(hlslBufferType(BufferAccess::Read,
+                                                 graph.storageElementType(i)))
+                      + " buffer" + std::to_string(i) + " : register(t"
                       + std::to_string(RenderPass::bufferRegisterBase + i) + ");\n";
 
         if (graph.storageBuffers().size() > 0)

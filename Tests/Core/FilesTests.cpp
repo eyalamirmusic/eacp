@@ -1,5 +1,6 @@
 #include "AllocationCount.h"
 #include "Common.h"
+#include <eacp/Core/Utils/StdPath.h>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -250,4 +251,44 @@ auto tReadsEmbeddedNulBytes = test("Files/readsEmbeddedNulBytes") = []
 
     check(read(path) == contents);
     check(read(path).size() == 17);
+};
+
+// --- resources beside the executable ----------------------------------------
+
+namespace
+{
+const auto markerName = std::string {EACP_TEST_RESOURCE_MARKER};
+const auto markerContents = std::string {"eacp-core-tests-resource-marker"};
+} // namespace
+
+auto tResourcesDirectoryIsADirectory =
+    test("Files/resourcesDirectoryIsADirectory") = []
+{
+    const auto dir = eacp::Files::resourcesDirectory();
+
+    check(!dir.empty());
+    check(std::filesystem::is_directory(eacp::toStdPath(dir)));
+};
+
+auto tFindsAResourceBesideTheExecutable =
+    test("Files/findsAResourceBesideTheExecutable") = []
+{
+    const auto path = eacp::Files::getBundleResourcePath(markerName);
+
+    check(!path.empty());
+    check(eacp::Files::readFile(FilePath {path}) == markerContents);
+};
+
+auto tMissingResourceIsEmpty = test("Files/missingResourceIsEmpty") = []
+{ check(eacp::Files::getBundleResourcePath("no-such-resource.txt").empty()); };
+
+auto tResourcesDirectoryHoldsTheResource =
+    test("Files/resourcesDirectoryHoldsTheResource") = []
+{
+    const auto joined = eacp::Files::resourcesDirectory() / markerName;
+    const auto found = FilePath {eacp::Files::getBundleResourcePath(markerName)};
+
+    check(eacp::Files::readFile(joined) == markerContents);
+    check(std::filesystem::equivalent(eacp::toStdPath(joined),
+                                      eacp::toStdPath(found)));
 };

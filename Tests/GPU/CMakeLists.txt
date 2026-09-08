@@ -1,19 +1,27 @@
 set(gpu_test_sources
         AtomicTests.cpp
         BufferAccessTests.cpp
+        BufferFillTests.cpp
         BufferRangeTests.cpp
+        CommandBufferTimingTests.cpp
         ComputeBufferRangeTests.cpp
+        Dispatch3DTests.cpp
         GPUSmokeTests.cpp
+        HoistingTests.cpp
         IndirectDispatchTests.cpp
+        InPlaceComputeTests.cpp
         IntrinsicTests.cpp
         MultiDeviceTests.cpp
         PackedHalfTests.cpp
+        ProgramGraphTests.cpp
+        SelectTests.cpp
         ShaderCodegenTests.cpp
         SharedMemoryTests.cpp
         StorePlacementTests.cpp
         StreamingBufferTests.cpp
         TestMain.cpp
-        TextureUpdateTests.cpp)
+        TextureUpdateTests.cpp
+        UIntBufferTests.cpp)
 
 # The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
 if (APPLE)
@@ -55,6 +63,7 @@ if (APPLE OR WIN32)
             TextureReadTests.cpp
             CubeTextureTests.cpp
             ExternalGeometryTests.cpp
+            RenderBufferRangeTests.cpp
             StreamedRangeDrawTests.cpp)
 endif ()
 

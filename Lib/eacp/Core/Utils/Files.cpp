@@ -1,4 +1,5 @@
 #include "Files.h"
+#include "FilesPlatform.h"
 #include "StdPath.h"
 
 #include <atomic>
@@ -145,6 +146,25 @@ void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes)
 
     if (ec)
         throw abandon("cannot replace");
+}
+
+std::string getBundleResourcePath(const std::string& filename)
+{
+    if (auto fromBundle = Detail::bundleResourcePath(filename); !fromBundle.empty())
+        return fromBundle;
+
+    const auto directory = resourcesDirectory();
+
+    if (directory.empty())
+        return {};
+
+    const auto beside = directory / filename;
+    auto ec = std::error_code {};
+
+    if (std::filesystem::exists(toStdPath(beside), ec))
+        return beside.str();
+
+    return {};
 }
 
 std::string filenameFromPath(const std::string& path)

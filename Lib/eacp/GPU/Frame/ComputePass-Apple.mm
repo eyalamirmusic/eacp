@@ -147,6 +147,22 @@ void ComputePass::dispatch(int width, int height)
                   threadsPerThreadgroup:MTLSizeMake(size, size, 1)];
 }
 
+void ComputePass::dispatch(int width, int height, int depth)
+{
+    auto activeEncoder = impl->encoder.get();
+
+    if (activeEncoder == nil || width <= 0 || height <= 0 || depth <= 0)
+        return;
+
+    auto size = (NSUInteger) threadGroupSize3D;
+    auto groupsX = ((NSUInteger) width + size - 1) / size;
+    auto groupsY = ((NSUInteger) height + size - 1) / size;
+    auto groupsZ = ((NSUInteger) depth + size - 1) / size;
+
+    [activeEncoder dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, groupsZ)
+                  threadsPerThreadgroup:MTLSizeMake(size, size, size)];
+}
+
 // The threadgroup size still comes from here - only the *count* is in the
 // buffer. Metal reads three uint32s at the offset, which is what
 // DispatchArguments is, so no conversion happens on the way.
@@ -155,7 +171,8 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) arguments.nativeBuffer();
 
-    if (activeEncoder == nil || metalBuffer == nil || offsetInBytes < 0)
+    if (activeEncoder == nil || metalBuffer == nil || offsetInBytes < 0
+        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
         return;
 
     auto width = (NSUInteger) threadGroupWidth;

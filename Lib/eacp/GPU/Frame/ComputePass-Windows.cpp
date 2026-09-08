@@ -194,6 +194,21 @@ void ComputePass::dispatch(int width, int height)
     barrierAfterDispatch(list);
 }
 
+void ComputePass::dispatch(int width, int height, int depth)
+{
+    if (!impl->encoder || width <= 0 || height <= 0 || depth <= 0)
+        return;
+
+    auto size = static_cast<UINT>(threadGroupSize3D);
+    auto groupsX = (static_cast<UINT>(width) + size - 1) / size;
+    auto groupsY = (static_cast<UINT>(height) + size - 1) / size;
+    auto groupsZ = (static_cast<UINT>(depth) + size - 1) / size;
+
+    auto* list = impl->encoder->commands->list.get();
+    list->Dispatch(groupsX, groupsY, groupsZ);
+    barrierAfterDispatch(list);
+}
+
 // The grid comes out of the buffer; the threadgroup size is baked into the
 // shader's [numthreads] and is not part of the arguments, which is why
 // D3D12_DISPATCH_ARGUMENTS holds only the three counts - the same three
@@ -205,7 +220,8 @@ void ComputePass::dispatch(int width, int height)
 // this is not simply the same three lines twice.
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
-    if (!impl->encoder || offsetInBytes < 0)
+    if (!impl->encoder || offsetInBytes < 0
+        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
         return;
 
     auto* data = static_cast<D3D12BufferData*>(arguments.nativeBuffer());
