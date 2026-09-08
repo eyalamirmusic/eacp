@@ -5,6 +5,7 @@
 #include "ShaderTypes.h"
 
 #include "../Pipeline/VertexLayout.h"
+#include "../Shader/ShaderSource.h"
 
 #include <cstdint>
 #include <map>
@@ -116,6 +117,15 @@ enum class TextureKind
     Depth2D
 };
 
+// Which fold a group-wide reduction performs over the value every thread of
+// the group contributed.
+enum class GroupReduction
+{
+    Sum,
+    Max,
+    Min
+};
+
 // The shape of the grid a kernel is dispatched over, decided by which thread
 // index its body asked for: threadId() gives one index over a flat count,
 // threadPosition() a pair over a width and a height, threadPosition3() a triple
@@ -151,6 +161,12 @@ enum class StatementKind
     SharedStore, // shared[index] = value; slot = the threadgroup-array slot
     Barrier, // threadgroup barrier: every thread in the group arrives before
     // any proceeds, and threadgroup memory written before it is visible after
+    GroupReduce, // vN = the fold of `value` over the whole threadgroup,
+    // declaring vN. slot = the variable the result lands in, reduction = which
+    // fold. A statement for the reason the atomic add is one and then some: it
+    // is several statements on every backend - a barrier among them - so it has
+    // to land where it was written, and every thread of the group has to reach
+    // it or none.
     AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
     // variable the value *before* the add lands in, bufferSlot / index = which
     // element, value = what is added.
@@ -183,6 +199,7 @@ struct Statement
     // where the store is a write of its own
     int recordComponentsLeft = 0; // Store: how many components of that record
     // follow this one
+    GroupReduction reduction = GroupReduction::Sum; // GroupReduce: which fold
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -433,6 +450,13 @@ public:
     void addSharedStore(int slot, int index, int value);
     void addBarrier();
 
+    // A group-wide fold. Returns the *variable* slot every thread's result
+    // lands in, which addVarRead then reads - a statement like the atomic add,
+    // and one that barriers, so it counts as a barrier for the bounds guard.
+    int addGroupReduction(GroupReduction operation,
+                          ValueType elementType,
+                          int value);
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -496,6 +520,11 @@ public:
     const Vector<TextureStore>& textureStores() const { return textureStoreList; }
     const Vector<SharedArray>& sharedArrays() const { return sharedArrayList; }
 
+    // The element types the kernel's group reductions fold, one entry each, so
+    // the emitter declares the scratch a reduction needs and no more.
+    const Vector<ValueType>& groupReductionTypes() const { return reductionTypes; }
+    bool usesGroupReduction() const { return !reductionTypes.empty(); }
+
     // Which threadgroup pieces the kernel asked for, driving what the emitters
     // add to the entry signature - and, for the barrier, what they take away:
     // a kernel that barriers gets no early-return bounds guard, because a
@@ -518,6 +547,11 @@ public:
     }
 
     DispatchRank dispatchRank() const { return rank; }
+
+    // The group the kernel is dispatched in: what the author asked for, or the
+    // stock shape for the rank recorded so far when they asked for nothing.
+    void setThreadGroupShape(ThreadGroupShape shape) { groupShape = shape; }
+    ThreadGroupShape threadGroupShape() const;
 
     // The body every recorded statement ends up in, directly or inside a nested
     // block. It runs before the fragment (or the kernel's stores) is evaluated,
@@ -568,6 +602,7 @@ private:
     Vector<TextureKind> textureKinds; // parallel to textureSamplings
     Vector<ArrayConstant> arrayConstants;
     Vector<SharedArray> sharedArrayList;
+    Vector<ValueType> reductionTypes;
     bool localIdUsed = false;
     bool groupIdUsed = false;
     bool barrierUsed = false;
@@ -582,6 +617,7 @@ private:
     Vector<Block> blocks; // blocks[rootBlock] is the shader's body
     Vector<int> openBlocks; // innermost last; blocks[back()] takes new statements
     DispatchRank rank = DispatchRank::OneD;
+    ThreadGroupShape groupShape;
     bool rankFixed = false;
     int positionNode = -1;
     int fragmentNode = -1;

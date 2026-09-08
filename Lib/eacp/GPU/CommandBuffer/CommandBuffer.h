@@ -29,7 +29,11 @@ public:
 
     // A label times the pass on the GPU and names it in timings() below. An
     // unlabelled pass is not timed and costs nothing.
-    ComputePass beginCompute(std::string_view label = {});
+    //
+    // DispatchOrder::Concurrent lets the pass's dispatches overlap, and leaves
+    // the ordering between dependent ones to ComputePass::barrier().
+    ComputePass beginCompute(std::string_view label = {},
+                             DispatchOrder order = DispatchOrder::Serial);
 
     // Fills every byte of the range with value on the GPU, in order with the
     // passes either side of it. The offset and the length must be multiples of
@@ -45,6 +49,27 @@ public:
     // Submits the recorded work and waits for completion.
     void commit();
 
+    // Submits the recorded work and returns without waiting, with nothing to
+    // settle afterwards: wait() below is the whole completion half, so a loop
+    // that never gives the message thread a turn can use this where the Async
+    // from commitAsync() would never resolve.
+    void submit();
+
+    // Blocks until this command buffer's own work has finished, and not for
+    // anything submitted after it. Returns at once when it already has, and
+    // does nothing at all on a buffer that was never committed.
+    void wait();
+
+    // Whether this command buffer's work has finished, without blocking. False
+    // until it has been committed.
+    bool isComplete() const;
+
+    // Copies bytes back out of a buffer these passes wrote, into dst, starting
+    // at offset bytes into the buffer - Buffer::read's scoped sibling, waiting
+    // for this command buffer alone rather than for the newest submission. The
+    // copy is clamped to the buffer's end; an offset past it reads nothing.
+    void read(const Buffer& buffer, void* dst, int bytes, int offset = 0);
+
     // Submits the recorded work and returns without waiting. The returned Async
     // resolves on the main thread once the GPU has finished, at which point
     // every Storage buffer the passes wrote is safe to read().
@@ -55,7 +80,8 @@ public:
     // resolves is still right, it just waits for the same work by hand and
     // gives the overlap back.
     //
-    // Committing twice does nothing the second time, whichever pair is used.
+    // Committing twice does nothing the second time, whichever of the three is
+    // used.
     Threads::Async<void> commitAsync();
 
     // What the GPU spent on this buffer's labelled passes, and on the buffer end

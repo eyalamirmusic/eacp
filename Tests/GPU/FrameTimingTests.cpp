@@ -134,8 +134,9 @@ auto tOnlyLabelledPassesTakeSlots =
 };
 
 // The cap is a fixed pool, so a frame past it has to lose the extra passes
-// rather than write off the end of the sample buffer. Sixteen back out of
-// twenty is the documented behaviour; a crash or twenty is not.
+// rather than write off the end of the sample buffer. maxTimedPasses back out
+// of four more than that is the documented behaviour; a crash or all of them
+// is not.
 auto tPassesPastTheCapAreDropped =
     test("FrameTiming/passesPastTheCapAreDropped") = []
 {
@@ -155,7 +156,7 @@ auto tPassesPastTheCapAreDropped =
     check(timings.passes.size() == GpuTimestamps::maxTimedPasses);
 
     // The ones that survived are the first ones, in order - the cap drops the
-    // tail rather than an arbitrary sixteen.
+    // tail rather than an arbitrary handful.
     check(timings.passes[0].label == "pass0");
     check(timings.passes[GpuTimestamps::maxTimedPasses - 1].label
           == "pass" + std::to_string(GpuTimestamps::maxTimedPasses - 1));

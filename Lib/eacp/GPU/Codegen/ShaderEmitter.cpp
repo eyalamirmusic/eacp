@@ -541,18 +541,86 @@ const char* indexSwizzle(DispatchRank rank)
     return rank == DispatchRank::TwoD ? ".xy" : ".xyz";
 }
 
-// The threadgroup shape a rank is dispatched in, which the entry point declares
-// and a shared tile is sized against.
-int threadGroupExtent(DispatchRank rank, int axis)
+// How many threads one group holds, whatever its rank - what a group reduction
+// folds over and what its scratch is sized for.
+int threadsPerGroup(const ShaderGraph& graph)
 {
-    if (axis >= gridExtentCount(rank))
-        return 1;
+    return graph.threadGroupShape().threadCount();
+}
 
-    if (rank == DispatchRank::OneD)
-        return ComputePass::threadGroupWidth;
+// The first halving step of a tree over that many threads: the largest power of
+// two below the count, so a count that is not one still folds its tail in first.
+int reductionStride(int threads)
+{
+    auto stride = 1;
 
-    return rank == DispatchRank::TwoD ? ComputePass::threadGroupSize2D
-                                      : ComputePass::threadGroupSize3D;
+    while (stride * 2 < threads)
+        stride *= 2;
+
+    return stride;
+}
+
+// The scratch a reduction stages its partials in, one array per element type
+// folded. Named rather than slotted because it is the emitter's own and not
+// something the kernel declared.
+const char* groupScratchName(ValueType elementType)
+{
+    return elementType == ValueType::UInt ? "groupScratchU" : "groupScratch";
+}
+
+// The MSL SIMD-group reduction each fold starts from.
+const char* metalSimdReduction(GroupReduction operation)
+{
+    switch (operation)
+    {
+        case GroupReduction::Sum:
+            return "simd_sum";
+        case GroupReduction::Max:
+            return "simd_max";
+        case GroupReduction::Min:
+            return "simd_min";
+    }
+
+    return "simd_sum";
+}
+
+// Two partials combined, spelled identically in all three dialects.
+std::string foldedPair(GroupReduction operation,
+                       const std::string& left,
+                       const std::string& right)
+{
+    switch (operation)
+    {
+        case GroupReduction::Sum:
+            return left + " + " + right;
+        case GroupReduction::Max:
+            return "max(" + left + ", " + right + ")";
+        case GroupReduction::Min:
+            return "min(" + left + ", " + right + ")";
+    }
+
+    return left + " + " + right;
+}
+
+// The barrier itself, shared by the barrier statement and by the reductions
+// that bracket their scratch with one.
+std::string barrierStatement(Backend backend, const std::string& indent)
+{
+    if (backend == Backend::Vulkan)
+        return indent + "memoryBarrierShared();\n" + indent + "barrier();\n";
+
+    return indent
+           + std::string(backend == Backend::Metal
+                             ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+                             : "GroupMemoryBarrierWithGroupSync();\n");
+}
+
+// The flat position of a thread within its group, which the tree indexes its
+// scratch by. Both dialects that take the tree have a builtin for it, so
+// neither derives one from the three-component local id.
+const char* groupLaneName(Backend backend)
+{
+    return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
 }
 
 // Prints one stage's expressions. Nodes the stage plan named as locals print
@@ -1024,6 +1092,7 @@ void collectWrites(const ShaderGraph& graph,
         case StatementKind::Declare:
         case StatementKind::Assign:
         case StatementKind::AtomicAdd:
+        case StatementKind::GroupReduce:
             written[statement.slot] = 1;
             return;
 
@@ -1062,6 +1131,7 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
     {
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
+        case StatementKind::GroupReduce:
             return true;
 
         case StatementKind::If:
@@ -1144,6 +1214,7 @@ void collectBufferWrites(const ShaderGraph& graph,
         case StatementKind::TextureStore:
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
+        case StatementKind::GroupReduce:
             return;
     }
 }
@@ -1495,18 +1566,15 @@ struct StageEmitter
             // GLSL says it in two calls: the memory barrier publishes what
             // was written, the execution barrier is where the group meets.
             case StatementKind::Barrier:
-                if (printer.backend == Backend::Vulkan)
-                {
-                    source = indent + "memoryBarrierShared();\n" + indent
-                             + "barrier();\n";
-                    break;
-                }
+                source = barrierStatement(printer.backend, indent);
+                break;
 
-                source =
-                    indent
-                    + (printer.backend == Backend::Metal
-                           ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
-                           : "GroupMemoryBarrierWithGroupSync();\n");
+            // Several statements on every backend, laid down where the
+            // reduction was written so the barriers inside it keep their place
+            // among the stores around them.
+            case StatementKind::GroupReduce:
+                source = define({statement.value}, indent, uses, open);
+                source += groupReduction(statement, indent);
                 break;
 
             // GLSL's imageStore takes a *signed* coordinate; MSL takes the
@@ -1549,6 +1617,63 @@ struct StageEmitter
     }
 
 private:
+    // MSL folds within each SIMD group first and combines the few partials
+    // through the scratch; HLSL under FXC has no wave intrinsic and GLSL is
+    // held to what lavapipe compiles with no extension, so both take the
+    // scratch tree. Either way the result lands in the reduction's variable on
+    // every thread, and a trailing barrier leaves the scratch free for the
+    // next one.
+    std::string groupReduction(const Statement& statement, const std::string& indent)
+    {
+        auto elementType = graph().variables()[statement.slot];
+        auto type = std::string(typeName(printer.backend, elementType));
+        auto name = "v" + std::to_string(statement.slot);
+        auto scratch = std::string(groupScratchName(elementType));
+        auto step = "gr" + std::to_string(statement.slot);
+        auto contributed = printer.ref(statement.value);
+        auto barrier = barrierStatement(printer.backend, indent);
+
+        if (printer.backend == Backend::Metal)
+        {
+            auto source = indent + type + " " + name + " = "
+                          + metalSimdReduction(statement.reduction) + "("
+                          + contributed + ");\n";
+
+            source += indent + "if (simdLane == 0u)\n" + indent + "    " + scratch
+                      + "[simdIndex] = " + name + ";\n";
+            source += barrier;
+            source += indent + name + " = " + scratch + "[0];\n";
+            source += indent + "for (uint " + step + " = 1u; " + step
+                      + " < simdCount; ++" + step + ")\n";
+            source +=
+                indent + "    " + name + " = "
+                + foldedPair(statement.reduction, name, scratch + "[" + step + "]")
+                + ";\n";
+
+            return source + barrier;
+        }
+
+        auto lane = std::string(groupLaneName(printer.backend));
+        auto threads = threadsPerGroup(graph());
+        auto element = scratch + "[" + lane + "]";
+        auto partner = scratch + "[" + lane + " + " + step + "]";
+
+        auto source = indent + element + " = " + contributed + ";\n";
+        source += barrier;
+        source += indent + "for (uint " + step + " = "
+                  + std::to_string(reductionStride(threads)) + "u; " + step
+                  + " > 0u; " + step + " >>= 1u)\n" + indent + "{\n";
+        source += indent + "    if (" + lane + " < " + step + " && " + lane + " + "
+                  + step + " < " + std::to_string(threads) + "u)\n";
+        source += indent + "        " + element + " = "
+                  + foldedPair(statement.reduction, element, partner) + ";\n";
+        source += barrierStatement(printer.backend, indent + "    ");
+        source += indent + "}\n";
+        source += indent + type + " " + name + " = " + scratch + "[0];\n";
+
+        return source + barrier;
+    }
+
     Vector<int> countUsesOver(const Vector<int>& roots) const
     {
         auto count = graph().nodeCount();
@@ -2274,6 +2399,14 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
             source +=
                 ",\n    " + indexType + " tgid [[threadgroup_position_in_grid]]";
 
+        // What a group reduction folds through: the SIMD-group intrinsics run
+        // per SIMD group, so combining their partials takes the lane, the SIMD
+        // group's index and how many of them the threadgroup was given.
+        if (graph.usesGroupReduction())
+            source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
+                      "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
+                      "uint simdCount [[simdgroups_per_threadgroup]]";
+
         source += ")\n{\n";
 
         // Threadgroup arrays are body-scope declarations on Metal, ahead of
@@ -2287,6 +2420,12 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + std::to_string(i) + "[" + std::to_string(shared.elements)
                       + "];\n";
         }
+
+        for (auto elementType: graph.groupReductionTypes())
+            source += "    threadgroup "
+                      + std::string(typeName(backend, elementType)) + " "
+                      + groupScratchName(elementType) + "["
+                      + std::to_string(threadsPerGroup(graph)) + "];\n";
     }
     else if (backend == Backend::Vulkan)
     {
@@ -2321,13 +2460,19 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + std::to_string(shared.elements) + "];\n";
         }
 
-        if (graph.sharedArrays().size() > 0)
+        for (auto elementType: graph.groupReductionTypes())
+            source += "shared " + std::string(typeName(backend, elementType)) + " "
+                      + groupScratchName(elementType) + "["
+                      + std::to_string(threadsPerGroup(graph)) + "];\n";
+
+        if (graph.sharedArrays().size() > 0 || graph.usesGroupReduction())
             source += "\n";
 
-        source += "layout(local_size_x = "
-                  + std::to_string(threadGroupExtent(rank, 0)) + ", local_size_y = "
-                  + std::to_string(threadGroupExtent(rank, 1)) + ", local_size_z = "
-                  + std::to_string(threadGroupExtent(rank, 2)) + ") in;\n\n";
+        const auto group = graph.threadGroupShape();
+
+        source += "layout(local_size_x = " + std::to_string(group.x)
+                  + ", local_size_y = " + std::to_string(group.y)
+                  + ", local_size_z = " + std::to_string(group.z) + ") in;\n\n";
 
         source += "void main()\n{\n";
 
@@ -2401,12 +2546,19 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + std::to_string(shared.elements) + "];\n";
         }
 
-        if (graph.sharedArrays().size() > 0)
+        for (auto elementType: graph.groupReductionTypes())
+            source += "groupshared " + std::string(typeName(elementType)) + " "
+                      + groupScratchName(elementType) + "["
+                      + std::to_string(threadsPerGroup(graph)) + "];\n";
+
+        if (graph.sharedArrays().size() > 0 || graph.usesGroupReduction())
             source += "\n";
 
-        source += "[numthreads(" + std::to_string(threadGroupExtent(rank, 0)) + ", "
-                  + std::to_string(threadGroupExtent(rank, 1)) + ", "
-                  + std::to_string(threadGroupExtent(rank, 2)) + ")]\n";
+        const auto group = graph.threadGroupShape();
+
+        source += "[numthreads(" + std::to_string(group.x) + ", "
+                  + std::to_string(group.y) + ", " + std::to_string(group.z)
+                  + ")]\n";
         source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
 
         if (graph.usesLocalId())
@@ -2414,6 +2566,11 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         if (graph.usesGroupId())
             source += ", uint3 groupIndex : SV_GroupID";
+
+        // The flattened local index the scratch tree walks, which cs_5_0 hands
+        // over as a semantic of its own rather than leaving it to be derived.
+        if (graph.usesGroupReduction())
+            source += ", uint groupLane : SV_GroupIndex";
 
         source += ")\n{\n";
 

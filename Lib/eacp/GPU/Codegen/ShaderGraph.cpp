@@ -1,5 +1,7 @@
 #include "ShaderGraph.h"
 
+#include "../Frame/ComputePass.h"
+
 #include <bit>
 
 namespace eacp::GPU
@@ -580,6 +582,43 @@ void ShaderGraph::addBarrier()
 {
     barrierUsed = true;
     addStatement(Statement {StatementKind::Barrier});
+}
+
+int ShaderGraph::addGroupReduction(GroupReduction operation,
+                                   ValueType elementType,
+                                   int value)
+{
+    barrierUsed = true;
+
+    if (!reductionTypes.contains(elementType))
+        reductionTypes.add(elementType);
+
+    auto slot = variableTypes.size();
+    variableTypes.add(elementType);
+
+    auto fold = Statement {StatementKind::GroupReduce};
+    fold.slot = slot;
+    fold.value = value;
+    fold.reduction = operation;
+    addStatement(fold);
+
+    return slot;
+}
+
+ThreadGroupShape ShaderGraph::threadGroupShape() const
+{
+    if (groupShape.isSet())
+        return groupShape;
+
+    if (rank == DispatchRank::OneD)
+        return {ComputePass::threadGroupWidth, 1, 1};
+
+    if (rank == DispatchRank::TwoD)
+        return {ComputePass::threadGroupSize2D, ComputePass::threadGroupSize2D, 1};
+
+    return {ComputePass::threadGroupSize3D,
+            ComputePass::threadGroupSize3D,
+            ComputePass::threadGroupSize3D};
 }
 
 int ShaderGraph::addStorageBuffer(BufferAccess access, ValueType elementType)

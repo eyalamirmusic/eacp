@@ -306,10 +306,21 @@ public:
         return value;
     }
 
+    // The threadgroup the kernel is dispatched in. Left unset, the stock shape
+    // for the kernel's rank is used.
+    void setThreadGroupShape(ThreadGroupShape shape)
+    {
+        graphData.setThreadGroupShape(shape);
+    }
+
+    ThreadGroupShape threadGroupShape() const
+    {
+        return graphData.threadGroupShape();
+    }
+
     // A threadgroup-shared array of count elements, its size a compile-time
-    // constant in the emitted kernel. Size it against the fixed group shape
-    // the dispatch uses (ComputePass::threadGroupWidth wide in 1D,
-    // threadGroupSize2D squared in 2D, threadGroupSize3D cubed in 3D).
+    // constant in the emitted kernel. Size it against threadGroupShape(), which
+    // is what the group the dispatch runs really is.
     template <typename T>
     Shared<T> shared(int count)
     {
@@ -323,6 +334,17 @@ public:
     // so every thread runs the whole body and the kernel bounds its own
     // stores instead, typically with ifThen(id < gridCount(), ...).
     void barrier() { graphData.addBarrier(); }
+
+    // The whole group's fold of what every thread contributed, handed back to
+    // every thread. It barriers, so - like barrier() itself - every thread of
+    // the group has to reach it or none of them.
+    Float groupSum(const Float& value) { return fold(GroupReduction::Sum, value); }
+    Float groupMax(const Float& value) { return fold(GroupReduction::Max, value); }
+    Float groupMin(const Float& value) { return fold(GroupReduction::Min, value); }
+
+    UInt groupSum(const UInt& value) { return fold(GroupReduction::Sum, value); }
+    UInt groupMax(const UInt& value) { return fold(GroupReduction::Max, value); }
+    UInt groupMin(const UInt& value) { return fold(GroupReduction::Min, value); }
 
     InputBuffer inputBuffer()
     {
@@ -755,6 +777,15 @@ private:
         value.graph = &graphData;
         value.node = node;
         return value;
+    }
+
+    template <typename T>
+    T fold(GroupReduction operation, const T& value)
+    {
+        auto result = graphData.addGroupReduction(
+            operation, ValueTypeOf<T>::value, value.node);
+
+        return indexValue<T>(graphData.addVarRead(result));
     }
 
     ShaderGraph graphData;
