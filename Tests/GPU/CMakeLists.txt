@@ -77,9 +77,11 @@ if (APPLE)
 endif ()
 
 # The one file that needs a display: a GPUView presenting through a Vulkan
-# swapchain onto a Wayland surface. Self-skips without a compositor.
+# swapchain onto a Wayland surface. Self-skips without a compositor. Beside it,
+# the deferred initial image transition, which is a Vulkan-only shape and is
+# pinned by counting the backend's submissions.
 if (LINUX)
-    list(APPEND gpu_test_sources PresentTests-Linux.cpp)
+    list(APPEND gpu_test_sources PresentTests-Linux.cpp TextureSettleTests-Linux.cpp)
 endif ()
 
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
@@ -93,6 +95,12 @@ nano_add_executable(GPUTests
         TARGETS eacp-sprites eacp-gpu)
 
 eacp_enable_glsl_compile_checks(GPUTests)
+
+# TextureSettleTests reads VulkanContext::submissionCount, so this one test
+# target sees the backend eacp-gpu otherwise keeps to itself.
+if (LINUX)
+    target_link_libraries(GPUTests PRIVATE eacp-vulkan)
+endif ()
 
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")

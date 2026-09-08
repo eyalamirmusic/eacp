@@ -512,6 +512,8 @@ struct Texture::Native
 
     void release()
     {
+        context.cancelImageSettle(data);
+
         retireImage(context,
                     data.image,
                     data.allocation,
@@ -705,9 +707,18 @@ struct Texture::Native
     }
 
     // UNDEFINED is not a layout anything may be bound at, and an image no
-    // upload wrote is still in it, so it is moved to its resting layout here.
+    // upload wrote is still in it, so it has to be moved to its resting layout.
+    // With no recording open the context queues the barrier instead, and a
+    // burst of pixel-less textures then costs one submission rather than one
+    // each; with one open it joins that recording as an upload would.
     bool settleAtRestingLayout()
     {
+        if (context.getOpenRecording() == nullptr)
+        {
+            context.deferImageSettle(data);
+            return true;
+        }
+
         return onARecording(
             [&](CommandContext& commands)
             {

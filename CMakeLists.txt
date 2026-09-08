@@ -36,10 +36,6 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 
-option(EACP_LINUX_GRAPHICS
-        "Build the Linux graphics backend (Wayland, Vulkan, FreeType text)"
-        OFF)
-
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL
             "Compile eacp libraries as CMake unity builds" FORCE)
@@ -67,19 +63,19 @@ endif ()
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 set(EACP_HAS_DRAW OFF)
 
-if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR (LINUX AND EACP_LINUX_GRAPHICS)))
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX))
     set(EACP_HAS_DRAW ON)
 endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR (LINUX AND EACP_LINUX_GRAPHICS)))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX))
     set(EACP_HAS_GPU ON)
 endif ()
 
 set(EACP_HAS_TEXT OFF)
 
-if (EACP_HAS_GPU AND (APPLE OR WIN32 OR (LINUX AND EACP_LINUX_GRAPHICS)))
+if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX))
     set(EACP_HAS_TEXT ON)
 endif ()
 

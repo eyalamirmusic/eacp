@@ -1016,7 +1016,9 @@ target and reads it back — the path every pixel-comparison test rides — so a
 of `Tests/GPU` (bar the Metal-only `TextureInteropTests.mm`) and
 `Tests/GPUWidgets` run on lavapipe with no display at all; and a `GPUView` in a
 `Graphics::Window` presents through a `VK_KHR_swapchain` over a Wayland surface.
-It is behind `-DEACP_LINUX_GRAPHICS=ON` and off by default.
+It is built on every Linux build, exactly as the Metal and D3D12 backends
+are on theirs; `-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it
+out.
 
 Notes worth having:
 
@@ -1194,7 +1196,7 @@ did before there was a swapchain.
 ### Running it
 
 ```bash
-cmake -G Ninja -B build -DEACP_LINUX_GRAPHICS=ON
+cmake -G Ninja -B build
 EACP_REQUIRE_GPU=1 EACP_VK_SOFTWARE=1 ctest --test-dir build
 ```
 

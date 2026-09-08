@@ -1,4 +1,5 @@
 #include "GlyphRasterizer.h"
+#include "Bidi.h"
 #include "UnicodeEmoji.h"
 #include "Utf8.h"
 
@@ -606,6 +607,30 @@ struct LinuxTextPoint
     int font = 0;
 };
 
+// A variation selector or a combining mark belongs to the codepoint before
+// it: it is shaped in that codepoint's font or it is shaped in the wrong one,
+// and a U+FE0F that itemized on its own cost a fallback lookup for a glyph
+// nothing was ever going to draw.
+bool linuxIsVariationSelector(char32_t value)
+{
+    return (value >= 0xFE00 && value <= 0xFE0F)
+           || (value >= 0xE0100 && value <= 0xE01EF);
+}
+
+bool linuxIsMark(hb_unicode_funcs_t* unicode, char32_t value)
+{
+    switch (hb_unicode_general_category(unicode, (hb_codepoint_t) value))
+    {
+        case HB_UNICODE_GENERAL_CATEGORY_NON_SPACING_MARK:
+        case HB_UNICODE_GENERAL_CATEGORY_SPACING_MARK:
+        case HB_UNICODE_GENERAL_CATEGORY_ENCLOSING_MARK:
+            return true;
+
+        default:
+            return false;
+    }
+}
+
 struct LinuxTextItem
 {
     int begin = 0;
@@ -645,13 +670,6 @@ hb_language_t linuxDefaultLanguage()
     static const auto language = hb_language_get_default();
 
     return language;
-}
-
-hb_direction_t linuxDirectionOf(hb_script_t script)
-{
-    const auto direction = hb_script_get_horizontal_direction(script);
-
-    return direction == HB_DIRECTION_INVALID ? HB_DIRECTION_LTR : direction;
 }
 } // namespace LinuxText
 
@@ -842,6 +860,11 @@ struct GlyphRasterizer::Native
                / 64.f;
     }
 
+    // The paragraph is reordered first, then each of its runs itemized: the
+    // portable UAX #9 pass stands in for what CTLine and IDWriteTextLayout do
+    // inside themselves, so shape() means the same thing on all three
+    // platforms. Within a right-to-left run the items themselves run
+    // right to left, which is why they are walked backwards.
     ShapedRun shape(std::string_view text, const FontVariant& variant) const
     {
         const auto lock = std::lock_guard {fontSystem().mutex};
@@ -853,22 +876,33 @@ struct GlyphRasterizer::Native
 
         auto pen = 0.f;
 
-        for (const auto& item: itemize(text, variant))
-            shapeItem(text, item, variant, pen, result);
+        for (const auto& run: bidiRuns(text))
+        {
+            const auto items = itemize(text, run, variant);
+
+            if (run.isRightToLeft())
+                for (auto at = items.size() - 1; at >= 0; --at)
+                    shapeItem(text, items[at], run, variant, pen, result);
+            else
+                for (const auto& item: items)
+                    shapeItem(text, item, run, variant, pen, result);
+        }
 
         result.advance = pen;
 
         return result;
     }
 
-    // No bidi: runs stay in logical order, each shaped in its own direction.
+    // One bidi run into items: by script, then by the font that draws the
+    // codepoint, one HarfBuzz run per change of either.
     Vector<LinuxTextItem> itemize(std::string_view text,
+                                  const BidiRun& run,
                                   const FontVariant& variant) const
     {
         auto points = Vector<LinuxTextPoint> {};
-        auto index = 0;
+        auto index = run.begin;
 
-        while (index < (int) text.size())
+        while (index < run.end)
         {
             const auto begin = index;
             const auto value = decodeUtf8(text, index);
@@ -883,11 +917,19 @@ struct GlyphRasterizer::Native
 
         linuxResolveScripts(points);
 
+        // The codepoint after the run decides emoji presentation for the last
+        // one in it, so a variation selector across a run boundary still counts.
+        auto after = index;
+        const auto following =
+            after < (int) text.size() ? decodeUtf8(text, after) : char32_t {};
+
         for (auto at = 0; at < points.size(); ++at)
-            points[at].font =
-                fontFor(points[at].value,
-                        at + 1 < points.size() ? points[at + 1].value : char32_t {},
-                        variant);
+        {
+            const auto next =
+                at + 1 < points.size() ? points[at + 1].value : following;
+
+            points[at].font = fontForPoint(points, at, unicode, next, variant);
+        }
 
         auto items = Vector<LinuxTextItem> {};
 
@@ -903,6 +945,34 @@ struct GlyphRasterizer::Native
         }
 
         return items;
+    }
+
+    int fontForPoint(const Vector<LinuxTextPoint>& points,
+                     int at,
+                     hb_unicode_funcs_t* unicode,
+                     char32_t next,
+                     const FontVariant& variant) const
+    {
+        const auto value = points[at].value;
+
+        if (at > 0
+            && (linuxIsVariationSelector(value) || linuxIsMark(unicode, value)))
+        {
+            const auto base = points[at - 1].font;
+
+            if (linuxIsVariationSelector(value) || faceHasChar(base, value, variant))
+                return base;
+        }
+
+        return fontFor(value, next, variant);
+    }
+
+    bool faceHasChar(int font, char32_t codepoint, const FontVariant& variant) const
+    {
+        const auto* sized = fontAt(font, variant);
+
+        return sized != nullptr
+               && FT_Get_Char_Index(sized->face.get(), (FT_ULong) codepoint) != 0;
     }
 
     int fontFor(char32_t codepoint, char32_t next, const FontVariant& variant) const
@@ -1011,6 +1081,7 @@ struct GlyphRasterizer::Native
 
     void shapeItem(std::string_view text,
                    const LinuxTextItem& item,
+                   const BidiRun& run,
                    const FontVariant& variant,
                    float& pen,
                    ShapedRun& result) const
@@ -1036,7 +1107,13 @@ struct GlyphRasterizer::Native
                            item.end - item.begin);
 
         hb_buffer_set_script(buffer.get(), item.script);
-        hb_buffer_set_direction(buffer.get(), linuxDirectionOf(item.script));
+
+        // The resolved embedding level, not the script: an Arabic digit run
+        // inside Arabic text is left-to-right, and Latin inside Hebrew is too.
+        // HarfBuzz mirrors a right-to-left buffer itself, which is why L4 is
+        // not applied to the codepoints handed to it here.
+        hb_buffer_set_direction(
+            buffer.get(), run.isRightToLeft() ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
         hb_buffer_set_language(buffer.get(), linuxDefaultLanguage());
 
         hb_shape(sized->font.get(), buffer.get(), nullptr, 0);

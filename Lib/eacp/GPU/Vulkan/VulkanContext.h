@@ -22,6 +22,7 @@ namespace eacp::GPU
 {
 class Device;
 class VulkanContext;
+struct VulkanTextureData;
 
 // A range of a recording's upload arena, valid until that recording completes.
 struct UploadRange
@@ -119,6 +120,10 @@ struct CommandContext
 
     // A buffer first touched under a new id needs no barrier.
     std::uint64_t recordingId = 0;
+
+    // The images whose deferred initial transition this recording carries, so
+    // that discarding it owes them again.
+    Vector<VulkanTextureData*> settledImages;
 };
 
 // What the driver cannot be asked to do. Empty today.
@@ -284,6 +289,14 @@ public:
 
     void setRenderPassOpen(bool open) { renderPassOpen = open; }
 
+    // An image no upload wrote is in UNDEFINED, which nothing may be bound at,
+    // so it needs one barrier into its resting layout. Recording it here rather
+    // than at creation costs a burst of such textures one submission instead of
+    // one each: acquire() drains the queue onto the front of the next recording,
+    // which is before anything that recording could bind or copy them.
+    void deferImageSettle(VulkanTextureData& data);
+    void cancelImageSettle(VulkanTextureData& data);
+
     // Returns the timeline value the submission signals, zero if nothing was
     // submitted. Same thread rule as acquire().
     std::uint64_t submit(CommandContext* commands, const SubmitSync& sync = {});
@@ -291,6 +304,10 @@ public:
     void discard(CommandContext* commands);
 
     std::uint64_t lastSubmitted() const { return lastSubmittedValue; }
+
+    // For the tests: how many recordings this context has submitted.
+    std::uint64_t submissionCount() const { return submissions; }
+
     bool hasCompleted(std::uint64_t value) const;
     void waitFor(std::uint64_t value);
     void waitIdle();
@@ -373,6 +390,9 @@ private:
 
     void assertOwningThread() const;
 
+    void recordDeferredSettles(CommandContext& commands);
+    void requeueDeferredSettles(CommandContext& commands);
+
     CommandContext::UploadChunk* uploadRoomFor(CommandContext& commands,
                                                std::size_t bytes);
 
@@ -410,12 +430,17 @@ private:
     VkSemaphore timeline = VK_NULL_HANDLE;
     std::uint64_t nextValue = 1;
     std::uint64_t lastSubmittedValue = 0;
+    std::uint64_t submissions = 0;
     std::uint64_t recordingCounter = 0;
 
     OwnedVector<CommandContext> pool;
     Vector<CommandContext*> available;
     CommandContext* openRecording = nullptr;
     bool renderPassOpen = false;
+
+    // Only ever non-empty while no recording is open, so nothing can bind an
+    // image that is still waiting here.
+    Vector<VulkanTextureData*> pendingSettles;
 
     Vector<ConstantPage> constantPages;
     Vector<PooledBuffer> staging;

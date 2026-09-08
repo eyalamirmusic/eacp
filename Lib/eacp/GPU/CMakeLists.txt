@@ -101,7 +101,7 @@ else ()
     # wl_display and wl_surface it presents to are opaque pointers.
     if (NOT TARGET eacp-spirv)
         message(FATAL_ERROR
-                "EACP_LINUX_GRAPHICS needs the SPIR-V compiler: the Vulkan "
+                "A Linux build needs the SPIR-V compiler: the Vulkan "
                 "backend has no shader compiler in the OS and builds every "
                 "pipeline from GLSL through glslang. Configure with "
                 "-DEACP_BUILD_SPIRV=ON.")

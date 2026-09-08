@@ -21,14 +21,14 @@ jobs:
           - name: Linux Clang
             os: ubuntu-latest
             cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
-          # The Linux graphics backend: Wayland windows and the Vulkan
-          # backend, built against the Wayland development packages and run
-          # on Mesa's lavapipe under a headless Weston session. The two lanes
-          # above keep proving that the option off still builds.
-          - name: Linux Clang Graphics
+          # Every Linux lane builds the Wayland/Vulkan/FreeType backend; this
+          # is the one that also runs it, on Mesa's lavapipe inside a headless
+          # Weston session. The two lanes above have no ICD and no compositor,
+          # so their GPU and window tests self-skip.
+          - name: Linux Clang Vulkan
             os: ubuntu-latest
             vulkan: true
-            cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DEACP_LINUX_GRAPHICS=ON'
+            cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
           - name: Windows MSVC
             os: windows-latest
             msvc-arch: x64
@@ -49,50 +49,56 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
 
-    # Only the graphics lane sets these; every other entry has no `vulkan` key,
-    # so the expression yields an empty string, which reads as unset everywhere
-    # these are checked. EACP_HEADLESS keeps windows off a runner with no
-    # session, EACP_REQUIRE_GPU makes DevicePresenceTests fail rather than let
-    # the whole GPU suite self-skip into a silent green, and EACP_VK_SOFTWARE
-    # picks the CPU device, which on a runner is the only one there is.
+    # An expression that yields an empty string reads as unset everywhere these
+    # are checked, so each of these is on exactly for the lanes named in it.
+    # Every Linux lane: EACP_HEADLESS keeps windows off a runner with no
+    # session, and EACP_REQUIRE_FONTS makes the font tests fail rather than
+    # self-skip - they need a rasterizer and font files, not a device, so every
+    # lane can carry them. Only the lane with a device: EACP_REQUIRE_GPU makes
+    # DevicePresenceTests fail rather than let the whole GPU suite self-skip
+    # into a silent green, and EACP_VK_SOFTWARE picks the CPU device, which on
+    # a runner is the only one there is.
     env:
-      EACP_HEADLESS: ${{ matrix.vulkan && '1' || '' }}
+      EACP_HEADLESS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
+      EACP_REQUIRE_FONTS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_GPU: ${{ matrix.vulkan && '1' || '' }}
       EACP_VK_SOFTWARE: ${{ matrix.vulkan && '1' || '' }}
 
     steps:
       - uses: actions/checkout@v6
 
+      # Everything a Linux build links or generates code with, on every Linux
+      # lane: libwayland-client, xkbcommon and libdecor are linked and
+      # wayland-scanner generates the protocol bindings at build time, and
+      # FreeType, HarfBuzz and fontconfig are linked by the glyph rasterizer.
+      # The font packages beside them are not optional either: every font test
+      # asks fontconfig for a family by name and self-skips when it cannot
+      # resolve one, so a runner with no fonts installed runs the whole Text
+      # suite as a silent green. DejaVu is the stock family the defaults name
+      # (fonts-dejavu-extra carries the ExtraLight and Condensed faces the
+      # weight and width matching needs), Droid Sans Fallback is the CJK
+      # fallback a missing glyph lands on, and Noto Color Emoji is the one
+      # colour font in the set.
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libcurl4-openssl-dev clang
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev clang \
+            libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev \
+            libdecor-0-dev pkg-config \
+            libfreetype-dev libharfbuzz-dev libfontconfig-dev \
+            fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji \
+            fonts-droid-fallback
 
-      # The loader and Mesa's software rasterizer - nothing links either: volk
-      # opens libvulkan.so.1 by name at runtime, so those are runtime
-      # dependencies of the lane rather than build dependencies of the project.
-      # The Wayland half is different: libwayland-client, xkbcommon and libdecor
-      # are linked, wayland-scanner generates the protocol bindings at build
-      # time, and Weston is the compositor the tests open their windows on.
-      # FreeType, HarfBuzz and fontconfig are linked the same way, by the glyph
-      # rasterizer - and the font packages beside them are not optional: every
-      # font test asks fontconfig for a family by name and self-skips when it
-      # cannot resolve one, so a runner with no fonts installed runs the whole
-      # Text suite as a silent green. DejaVu is the stock family the defaults
-      # name (fonts-dejavu-extra carries the ExtraLight and Condensed faces the
-      # weight and width matching needs), Droid Sans Fallback is the CJK
-      # fallback a missing glyph lands on, and Noto Color Emoji is the one
-      # colour font in the set.
-      - name: Install the Linux graphics dependencies
+      # What the one lane that runs the backend needs on top, and none of it is
+      # a build dependency: nothing links the loader or Mesa's software
+      # rasterizer - volk opens libvulkan.so.1 by name at runtime - and Weston
+      # is the compositor the tests open their windows on.
+      - name: Install the Vulkan runtime and a compositor
         if: matrix.vulkan
         run: >
           sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
-          libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
-          libdecor-0-dev pkg-config weston
-          libfreetype-dev libharfbuzz-dev libfontconfig-dev
-          fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji
-          fonts-droid-fallback
+          weston
 
       # Before the build, not before the test. NanoTest discovers cases by
       # running every test binary with --list-tests at build time, so a lane
@@ -111,7 +117,7 @@ jobs:
       # asserting on a face name will report as a mismatch, and an empty list
       # is what it will report as a skip.
       - name: Show the fonts
-        if: matrix.vulkan
+        if: runner.os == 'Linux'
         run: |
           fc-match monospace
           fc-match sans-serif
@@ -140,17 +146,12 @@ jobs:
       # run for real, and EACP_REQUIRE_DISPLAY turns their self-skip into a
       # failure so a lane whose compositor never came up cannot report green.
       # The build above still ran headless, which is what NanoTest's build-time
-      # test discovery wants. EACP_REQUIRE_FONTS is the same trade over the
-      # text stack: FontPresenceTests fails rather than skips unless the stock
-      # families resolve to themselves, a CJK glyph finds a fallback face and
-      # an emoji comes back as a colour glyph - which is the whole of what the
-      # font packages above are installed for.
+      # test discovery wants.
       - name: Test under Weston
         if: matrix.vulkan
         env:
           EACP_HEADLESS: '0'
           EACP_REQUIRE_DISPLAY: '1'
-          EACP_REQUIRE_FONTS: '1'
         run: Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
 
   build-ios:

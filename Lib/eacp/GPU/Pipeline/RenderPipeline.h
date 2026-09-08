@@ -477,8 +477,12 @@ public:
     Winding frontFace() const;
 
     // Opaque native handles for cross-translation-unit use by the render pass.
-    // nativeDepthState() is the combined depth-stencil state on both backends,
-    // and null when the pipeline tests neither.
+    // nativeDepthState() is the combined depth-stencil state: non-null wherever
+    // the pipeline was given a depth or a stencil plane - a stencil-only
+    // pipeline has one, the depth test being Always with no write - and null
+    // only when it has neither. Metal's render pass is its one reader; on the
+    // other backends the state is inside the object nativeState() returns and
+    // the handle exists to keep the three answering the same question.
     void* nativeState() const;
     void* nativeDepthState() const;
 

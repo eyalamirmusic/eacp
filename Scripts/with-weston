@@ -10,7 +10,7 @@
 # EACP_HEADLESS is deliberately not set here: a test binary that wants to open
 # windows runs with it unset (or 0), and EACP_REQUIRE_DISPLAY=1 makes such a
 # test fail rather than self-skip when no compositor is found. The same script
-# is what the CI graphics lane and the Docker image (`with-weston`) run.
+# is what the CI Vulkan lane and the Docker image (`with-weston`) run.
 set -euo pipefail
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/eacp-xdg-runtime}"

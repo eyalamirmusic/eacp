@@ -1,9 +1,12 @@
-# Glyph rasterization and atlas caching. The atlas, packer and upload path are
-# portable C++ over eacp-gpu; only the rasterizer is per-platform (CoreText on
-# Apple, DirectWrite on Windows, FreeType + HarfBuzz + fontconfig on Linux),
-# which is what lets the rest be tested against a stub glyph source instead of
-# against installed fonts.
+# Glyph rasterization and atlas caching. The atlas, packer, upload path and the
+# UAX #9 bidi pass are portable C++ over eacp-gpu; only the rasterizer is
+# per-platform (CoreText on Apple, DirectWrite on Windows, FreeType + HarfBuzz
+# + fontconfig on Linux), which is what lets the rest be tested against a stub
+# glyph source instead of against installed fonts. Bidi.cpp builds everywhere
+# and is called only by the Linux rasterizer: the other two text engines
+# reorder inside themselves.
 add_library(eacp-text STATIC
+        Bidi.cpp
         GlyphAtlas.cpp
         GlyphRenderer.cpp
         ShelfPacker.cpp

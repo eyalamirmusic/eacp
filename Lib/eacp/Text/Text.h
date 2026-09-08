@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Bidi.h"
 #include "Font.h"
 #include "GlyphAtlas.h"
 #include "GlyphBitmap.h"
