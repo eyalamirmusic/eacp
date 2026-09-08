@@ -2,6 +2,8 @@
 
 #include "WaylandDisplay-Linux.h"
 #include "WaylandInput-Linux.h"
+#include "X11Connection-Linux.h"
+#include "X11Input-Linux.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -48,22 +50,7 @@ LinuxWindowSystem linuxChooseWindowSystem()
                                           : LinuxWindowSystem::X11;
 }
 
-WaylandInput* linuxSeatInput()
-{
-    if (auto* connection = waylandDisplay())
-        return connection->getInput();
-
-    return nullptr;
-}
-} // namespace
-
-LinuxWindowSystem linuxPreferredWindowSystem()
-{
-    static const auto preferred = linuxChooseWindowSystem();
-    return preferred;
-}
-
-std::optional<LinuxOutput> linuxPrimaryOutput()
+std::optional<LinuxOutput> waylandPrimaryOutput()
 {
     auto* connection = waylandDisplay();
 
@@ -86,26 +73,88 @@ std::optional<LinuxOutput> linuxPrimaryOutput()
                         output->refreshMilliHz};
 }
 
+// One scale, because X11 has one: a per-window one arrives with Xft.dpi in
+// stage 5.
+std::optional<LinuxOutput> x11PrimaryOutput()
+{
+    auto* connection = x11Connection();
+
+    if (connection == nullptr)
+        return {};
+
+    auto output = connection->getPrimaryOutput();
+
+    if (!output || output->frame.w <= 0.f || output->frame.h <= 0.f)
+        return {};
+
+    return LinuxOutput {output->frame, 1.f, output->refreshMilliHz};
+}
+} // namespace
+
+LinuxWindowSystem linuxPreferredWindowSystem()
+{
+    static const auto preferred = linuxChooseWindowSystem();
+    return preferred;
+}
+
+std::optional<LinuxOutput> linuxPrimaryOutput()
+{
+    switch (linuxPreferredWindowSystem())
+    {
+        case LinuxWindowSystem::Wayland:
+            return waylandPrimaryOutput();
+
+        case LinuxWindowSystem::X11:
+            return x11PrimaryOutput();
+
+        case LinuxWindowSystem::None:
+            break;
+    }
+
+    return {};
+}
+
+LinuxSeat* linuxSeat()
+{
+    switch (linuxPreferredWindowSystem())
+    {
+        case LinuxWindowSystem::Wayland:
+            if (auto* connection = waylandDisplay())
+                return connection->getInput();
+            break;
+
+        case LinuxWindowSystem::X11:
+            if (auto* connection = x11Connection())
+                return connection->getInput();
+            break;
+
+        case LinuxWindowSystem::None:
+            break;
+    }
+
+    return nullptr;
+}
+
 LinuxWindowSurface* linuxPointerWindow()
 {
-    if (auto* input = linuxSeatInput())
-        return input->getPointerWindow();
+    if (auto* seat = linuxSeat())
+        return seat->getPointerWindow();
 
     return nullptr;
 }
 
 Point linuxPointerPosition()
 {
-    if (auto* input = linuxSeatInput())
-        return input->getPointerPosition();
+    if (auto* seat = linuxSeat())
+        return seat->getPointerPosition();
 
     return {};
 }
 
 void linuxRefreshCursor()
 {
-    if (auto* input = linuxSeatInput())
-        input->refreshCursor();
+    if (auto* seat = linuxSeat())
+        seat->refreshCursor();
 }
 
 void linuxInstallClipboard(LinuxWindowSystem system, Clipboard::Backend backend)

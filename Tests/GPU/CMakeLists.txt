@@ -119,3 +119,33 @@ endif ()
 if (APPLE)
     target_link_libraries(GPUTests PRIVATE "-framework CoreVideo")
 endif ()
+
+# The present cases open a window each, and on the X11 lane they share the
+# display with X11WindowTests: no window manager there means the windows
+# overlap at the same place, and the one underneath is sent an Expose that its
+# presenting view answers with a repaint - a frame the case never asked for.
+# They take the same lock the X11 cases do, which serialises every
+# window-opening case on the lane against every other. The names come out of
+# the source, which is a configure dependency so that a new or renamed case is
+# picked up rather than left unlocked.
+if (LINUX AND NOT CMAKE_CROSSCOMPILING)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/PresentTests-Linux.cpp")
+
+    file(STRINGS PresentTests-Linux.cpp present_test_lines
+            REGEX "\"Present/[^\"]+\"")
+
+    set(present_lock_file "${CMAKE_CURRENT_BINARY_DIR}/PresentSerialisation.cmake")
+    file(WRITE "${present_lock_file}" "")
+
+    foreach (line IN LISTS present_test_lines)
+        string(REGEX MATCH "Present/[^\"]+" present_test "${line}")
+
+        file(APPEND "${present_lock_file}"
+                "set_tests_properties(\"${present_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK eacp-linux-display)\n")
+    endforeach ()
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${present_lock_file}")
+endif ()

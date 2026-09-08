@@ -1,5 +1,11 @@
 include(CPM)
 
+# find_package rather than include(FindPkgConfig): this file is itself
+# reached through find_package(VulkanBackend), and a bare include leaves
+# PkgConfig's find_package_handle_standard_args reporting against the wrong
+# package name.
+find_package(PkgConfig REQUIRED)
+
 # Nothing links libvulkan: volkInitialize() dlopens it at runtime. Vulkan-Headers
 # and volk must share one SDK tag - volk's table is generated per header revision.
 
@@ -61,14 +67,25 @@ if (NOT TARGET eacp-vulkan)
             "${volk_SOURCE_DIR}"
             "${VulkanMemoryAllocator_SOURCE_DIR}/include")
 
-    # PUBLIC: volk.c must see VK_USE_PLATFORM_WAYLAND_KHR too, or
-    # vkCreateWaylandSurfaceKHR is missing from the dispatch table.
+    # PUBLIC: volk.c must see the platform defines too, or
+    # vkCreateWaylandSurfaceKHR and vkCreateXcbSurfaceKHR are missing from the
+    # dispatch table.
     target_compile_definitions(eacp-vulkan PUBLIC
             VK_NO_PROTOTYPES
             VK_USE_PLATFORM_WAYLAND_KHR
+            VK_USE_PLATFORM_XCB_KHR
             VMA_STATIC_VULKAN_FUNCTIONS=0
             VMA_DYNAMIC_VULKAN_FUNCTIONS=1
             VMA_VULKAN_VERSION=1003000)
+
+    # vulkan_xcb.h includes <xcb/xcb.h>, so every consumer of the headers needs
+    # to be able to find it. The headers only: nothing here links xcb.
+    pkg_check_modules(EACP_VULKAN_XCB xcb)
+
+    if (EACP_VULKAN_XCB_FOUND)
+        target_include_directories(eacp-vulkan SYSTEM PUBLIC
+                ${EACP_VULKAN_XCB_INCLUDE_DIRS})
+    endif ()
 
     # The loader is opened by name at runtime; only the opener is linked.
     target_link_libraries(eacp-vulkan PUBLIC ${CMAKE_DL_LIBS})

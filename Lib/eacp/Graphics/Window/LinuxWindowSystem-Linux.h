@@ -7,12 +7,13 @@
 #include <optional>
 
 // Which window system this copy of eacp talks to, and the process-wide
-// questions that have no window to hang off. X11 is not implemented yet: a
-// copy that prefers it gets surfaceless windows, exactly as one with no
-// compositor to reach does.
+// questions that have no window to hang off. A copy whose preferred backend
+// has no connection to reach gets surfaceless windows, exactly as a headless
+// one does.
 
 namespace eacp::Graphics
 {
+class LinuxSeat;
 struct LinuxWindowSurface;
 
 enum class LinuxWindowSystem
@@ -40,6 +41,12 @@ struct LinuxOutput
 };
 
 std::optional<LinuxOutput> linuxPrimaryOutput();
+
+// The preferred backend's seat, and null when it has no connection. Gated on
+// the preference, not merely on the connection: on a session where both
+// display variables are set, asking Wayland would open a second connection for
+// a question the X11 seat is the one answering.
+LinuxSeat* linuxSeat();
 
 // The seat, as much of it as a View needs. Null and {} until the pointer has
 // entered a window of ours.

@@ -110,6 +110,9 @@ add_dependencies(CoreTests DynamicLibraryTestPlugin)
 # rather than an error, so only the cross-compiling case, which registers a
 # single target-level test instead, needs a guard.
 if (NOT CMAKE_CROSSCOMPILING)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/ClipboardTests.cpp")
+
     file(STRINGS ClipboardTests.cpp clipboard_test_lines
             REGEX "\"Clipboard/[^\"]+\"")
 
