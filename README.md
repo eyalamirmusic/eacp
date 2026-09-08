@@ -63,24 +63,28 @@ them, so apps inherit the look, feel, and performance of the host OS:
 The dividing line is drawing. Everything that never touches a screen — the app
 and threading core, processes, plugins, files, the HTTP client and server, IPC
 and RPC, the SIMD kernels — builds on Linux too, which is what makes eacp usable
-for a headless service as well as for a GUI. The graphics stack is macOS,
-Windows and iOS, because it wraps each platform's own compositor instead of
-shipping one.
+for a headless service as well as for a GUI. The graphics stack builds on all
+four platforms, because it wraps each one's own compositor instead of shipping
+one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland and Vulkan.
 
 | Module | macOS | Windows | iOS | Linux |
 | --- | :---: | :---: | :---: | :---: |
 | `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
 | `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
-| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | 🚧 |
-| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | 🚧 |
-| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | 🚧 |
-| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | 🚧 |
+| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
+| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
+| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
+| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † |
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
 | `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
 | `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
 
-🚧 on Linux is `-DEACP_LINUX_GRAPHICS=ON`, which builds three things. A Wayland
+† Linux has no platform 2D tier and no menus; what that costs is spelled out
+two paragraphs down.
+
+Linux graphics is on wherever the graphics modules are built, exactly as the
+other three platforms are, and it is three things. A Wayland
 `eacp-graphics`: a `Window` is a `wl_surface` with an xdg-shell toplevel
 decorated by libdecor, the view tree, hit-testing and input routing are the
 portable ones with the seat's pointer and keyboard translated into them through
@@ -118,15 +122,16 @@ real under a headless Weston.
 
 The top-level `CMakeLists.txt` decides this once, in six capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
-The three drawing ones are nested rather than a single predicate because Linux
-arrives at them one stage at a time, and it is now at the third; the other three
-hang off `EACP_HAS_DRAW` and are Apple/Windows-only:
+The three drawing ones are on together on every platform that draws — they
+stay three nested variables because each gates a different set of modules, and
+a new port reaches them one at a time; the other three hang off
+`EACP_HAS_DRAW` and are Apple/Windows-only:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `Graphics`, and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux with `EACP_LINUX_GRAPHICS` | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
+| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics`, and `Tests/Graphics` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
@@ -149,20 +154,20 @@ too, so the GLSL dialect is compiled for real there before any device is
 involved — every GLSL source `GPUCodegenTests` emits, every hand-written GLSL
 twin in `GPUTests` and every module shader `UITests` reaches is compiled by
 glslang as part of the test. macOS and Windows skip the fetch; passing
-`-DEACP_BUILD_SPIRV=ON` there builds it and turns those checks on, and `OFF`
-on Linux with `EACP_LINUX_GRAPHICS` off skips it and the checks with it.
+`-DEACP_BUILD_SPIRV=ON` there builds it and turns those checks on. Passing
+`OFF` on Linux is only meaningful together with `-DEACP_BUILD_GRAPHICS=OFF`:
+the Vulkan backend has no shader compiler in the OS, so a Linux graphics build
+without it stops at configure time and says so.
 
-`-DEACP_LINUX_GRAPHICS=ON` is the switch the Linux graphics backend is being
-built behind, stage by stage; it is off by default while the 2D tier of
-`EACP_HAS_CONTEXT` is still an open question rather than a written backend. Pass
-`-DEACP_BUILD_GRAPHICS=OFF` to build the portable half on any platform. CI
+`-DEACP_BUILD_GRAPHICS=OFF` builds the portable half on any platform, Linux
+included — it is the only switch that turns the graphics modules off. CI
 builds headless and then runs the suite inside a headless Weston session, and
 the `Dockerfile` reproduces both:
 
 ```bash
 docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
     -v "$PWD":/workspace eacp-ci-linux \
-    ci-build -DEACP_LINUX_GRAPHICS=ON -DEACP_UNITY_BUILD=OFF
+    ci-build -DEACP_UNITY_BUILD=OFF
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
@@ -188,8 +193,9 @@ report green by skipping everything.
 
 CI builds every configuration in that matrix and runs the test suite on macOS
 (universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
-and a Clang lane with the graphics backend on lavapipe under a headless
-Weston); iOS is built for the simulator. macOS is the most exercised of them, and Android is not supported.
+and a Clang lane that runs the graphics backend on lavapipe under a headless
+Weston — all three build it, one has a device and a compositor to run it on);
+iOS is built for the simulator. macOS is the most exercised of them, and Android is not supported.
 
 The HTTP client is one API over three backends — NSURLSession on Apple
 platforms, WinHTTP on Windows, libcurl on Linux — so a Linux build needs

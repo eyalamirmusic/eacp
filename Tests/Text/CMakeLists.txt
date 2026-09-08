@@ -16,6 +16,7 @@ nano_add_executable(TextTests
             VariableFontTests.cpp
             FontPresenceTests.cpp
             EmojiPresentationTests.cpp
+            BidiTests.cpp
             TestMain.cpp
         TARGETS eacp-text)
 
@@ -28,8 +29,11 @@ if (WIN32)
     target_sources(TextTests PRIVATE FontResolution-WindowsTests.cpp)
 endif ()
 
-# Which face the property makes the rasterizer choose is the Linux backend's
-# own rule; the platform text engines decide it for themselves.
+# Which face the emoji property makes the rasterizer choose, and the visual
+# order the bidi pass shapes a mixed-direction line in, are the Linux backend's
+# own rules; CoreText and DirectWrite decide both for themselves.
 if (LINUX)
-    target_sources(TextTests PRIVATE EmojiPresentation-LinuxTests.cpp)
+    target_sources(TextTests PRIVATE
+            EmojiPresentation-LinuxTests.cpp
+            Bidi-LinuxTests.cpp)
 endif ()

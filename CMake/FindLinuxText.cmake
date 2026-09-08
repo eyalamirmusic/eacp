@@ -11,8 +11,8 @@ if (NOT TARGET eacp-linux-text)
 
     if (NOT EACP_LINUX_TEXT_FOUND)
         message(FATAL_ERROR
-                "EACP_LINUX_GRAPHICS is ON but the text stack was not found. "
-                "On Debian/Ubuntu:\n"
+                "A Linux build needs the FreeType/HarfBuzz/fontconfig text "
+                "stack, and it was not found. On Debian/Ubuntu:\n"
                 "  sudo apt-get install libfreetype-dev libharfbuzz-dev "
                 "libfontconfig-dev pkg-config\n"
                 "and a font or two to draw with:\n"

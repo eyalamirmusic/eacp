@@ -96,7 +96,7 @@ RUN printf '%s\n' \
 # Runs a command inside a headless Weston session, so a test that needs a
 # compositor - a Window with a real surface, a GPUView presenting through a
 # swapchain - runs on a machine with no display at all. The same script the
-# CI graphics lane runs, copied out of the tree so it is on PATH here:
+# CI Vulkan lane runs, copied out of the tree so it is on PATH here:
 #
 #   docker run --rm -v "$PWD":/workspace eacp-ci-linux \
 #       with-weston ctest --test-dir build-ci-linux --output-on-failure

@@ -12,8 +12,8 @@ if (NOT TARGET eacp-wayland)
 
     if (NOT EACP_WAYLAND_FOUND)
         message(FATAL_ERROR
-                "EACP_LINUX_GRAPHICS is ON but the Wayland client libraries "
-                "were not found. On Debian/Ubuntu:\n"
+                "A Linux build needs the Wayland client libraries, and "
+                "they were not found. On Debian/Ubuntu:\n"
                 "  sudo apt-get install libwayland-dev wayland-protocols "
                 "libwayland-bin libxkbcommon-dev libdecor-0-dev pkg-config")
     endif ()

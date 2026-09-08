@@ -554,7 +554,8 @@ void* RenderPipeline::nativeState() const
 
 void* RenderPipeline::nativeDepthState() const
 {
-    return impl->state.depth ? const_cast<VulkanRenderPipeline*>(&impl->state)
-                             : nullptr;
+    const auto tests = impl->state.depth || impl->state.stencil;
+
+    return tests ? const_cast<VulkanRenderPipeline*>(&impl->state) : nullptr;
 }
 } // namespace eacp::GPU

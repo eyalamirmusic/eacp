@@ -1188,7 +1188,46 @@ CommandContext* VulkanContext::acquire()
     commands->context = this;
     commands->completionValue = 0;
     commands->recordingId = ++recordingCounter;
+
+    recordDeferredSettles(*commands);
     return commands;
+}
+
+void VulkanContext::deferImageSettle(VulkanTextureData& data)
+{
+    pendingSettles.add(&data);
+}
+
+void VulkanContext::cancelImageSettle(VulkanTextureData& data)
+{
+    pendingSettles.removeAllMatches(&data);
+
+    for (auto& recording: pool)
+        recording->settledImages.removeAllMatches(&data);
+}
+
+void VulkanContext::recordDeferredSettles(CommandContext& commands)
+{
+    for (auto* data: pendingSettles)
+    {
+        transitionTextureForUse(commands.buffer, *data, data->restingUse());
+        commands.settledImages.add(data);
+    }
+
+    pendingSettles.clear();
+}
+
+// A recording that never runs leaves its images in UNDEFINED, so the tracking
+// the barrier advanced goes back and the transition is owed again.
+void VulkanContext::requeueDeferredSettles(CommandContext& commands)
+{
+    for (auto* data: commands.settledImages)
+    {
+        data->use = {};
+        pendingSettles.add(data);
+    }
+
+    commands.settledImages.clear();
 }
 
 std::uint64_t VulkanContext::submit(CommandContext* commands, const SubmitSync& sync)
@@ -1221,6 +1260,7 @@ std::uint64_t VulkanContext::submit(CommandContext* commands, const SubmitSync& 
         reportFailedRecording();
         returnStaging(*commands, 0);
         returnConstantPages(*commands, 0);
+        requeueDeferredSettles(*commands);
         available.push_back(commands);
         return 0;
     }
@@ -1274,11 +1314,14 @@ std::uint64_t VulkanContext::submit(CommandContext* commands, const SubmitSync& 
         {
             returnStaging(*commands, 0);
             returnConstantPages(*commands, 0);
+            requeueDeferredSettles(*commands);
             available.push_back(commands);
             return 0;
         }
     }
 
+    commands->settledImages.clear();
+    ++submissions;
     commands->completionValue = value;
     lastSubmittedValue = value;
     returnStaging(*commands, value);
@@ -1308,6 +1351,7 @@ void VulkanContext::discard(CommandContext* commands)
     vkEndCommandBuffer(commands->buffer);
     returnStaging(*commands, 0);
     returnConstantPages(*commands, 0);
+    requeueDeferredSettles(*commands);
     commands->completionValue = 0;
     available.push_back(commands);
 }

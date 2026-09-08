@@ -75,6 +75,26 @@ GlyphBitmap firstGlyphOf(const GlyphRasterizer& rasterizer,
 
     return rasterizer.rasterize(run.glyphs[0].key, {}, {});
 }
+
+int fontsUsedBy(const GlyphRasterizer& rasterizer,
+                std::initializer_list<char32_t> codepoints)
+{
+    const auto run = rasterizer.shape(utf8Of(codepoints), {});
+    auto fonts = Vector<int> {};
+
+    for (const auto& glyph: run.glyphs)
+    {
+        auto seen = false;
+
+        for (const auto font: fonts)
+            seen = seen || font == glyph.key.font;
+
+        if (!seen)
+            fonts.add(glyph.key.font);
+    }
+
+    return fonts.size();
+}
 } // namespace
 
 auto tPresentationChoosesTheFace = test("Text/emojiPresentationChoosesTheFace") = []
@@ -97,4 +117,27 @@ auto tPresentationChoosesTheFace = test("Text/emojiPresentationChoosesTheFace") 
 
     check(heart.valid && heart.format == GlyphFormat::Mask);
     check(copyright.valid && copyright.format == GlyphFormat::Mask);
+};
+
+auto tVariationSelectorStaysWithItsBase =
+    test("Text/variationSelectorStaysWithItsBase") = []
+{
+    const auto rasterizer = GlyphRasterizer {presentationRequest()};
+
+    if (!has(rasterizer))
+        return;
+
+    // A variation selector is a mark on the codepoint before it, so it
+    // itemizes into that codepoint's item and that codepoint's font rather
+    // than falling out to a fallback lookup of its own - which used to cost
+    // a second run and a second face for a glyph nothing draws.
+    check(fontsUsedBy(rasterizer, {heavyBlackHeart, emojiVariationSelector}) == 1);
+    check(fontsUsedBy(rasterizer, {copyrightSign, emojiVariationSelector}) == 1);
+    check(fontsUsedBy(rasterizer, {grinningFace, emojiVariationSelector}) == 1);
+
+    // And the face it settled on is still the one the property asked for.
+    const auto heart =
+        firstGlyphOf(rasterizer, {heavyBlackHeart, emojiVariationSelector});
+
+    check(heart.valid && heart.format == GlyphFormat::Color);
 };
