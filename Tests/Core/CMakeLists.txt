@@ -68,6 +68,18 @@ if (APPLE AND NOT IOS)
     add_dependencies(CoreTests AppTerminationHarness)
 endif ()
 
+# A resource shipped beside the executable, which is what
+# Files::resourcesDirectory() has to find on every platform.
+set(resource_marker_name ResourceMarker.txt)
+
+add_custom_command(TARGET CoreTests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_LIST_DIR}/${resource_marker_name}"
+        "$<TARGET_FILE_DIR:CoreTests>/${resource_marker_name}")
+
+target_compile_definitions(CoreTests PRIVATE
+        EACP_TEST_RESOURCE_MARKER="${resource_marker_name}")
+
 # The fixture plugin's static initializer counts genuine loads in the
 # process environment, so the tests can observe real unmaps.
 eacp_add_plugin(DynamicLibraryTestPlugin DynamicLibraryTestPlugin.cpp)

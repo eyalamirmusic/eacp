@@ -29,6 +29,12 @@ void writeFile(const FilePath& path, Span<const std::uint8_t> bytes);
 // Throws std::runtime_error, like writeFile, if the write or the rename fails.
 void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes);
 
+// Where the running binary's shipped resources live: Contents/Resources for a
+// bundle, the executable's own directory otherwise. Empty if unresolvable.
+FilePath resourcesDirectory();
+
+// The full path of a named resource, or empty when there is no such file.
 std::string getBundleResourcePath(const std::string& filename);
+
 std::string filenameFromPath(const std::string& path);
 } // namespace eacp::Files

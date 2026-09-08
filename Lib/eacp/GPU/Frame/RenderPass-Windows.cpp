@@ -167,7 +167,7 @@ void RenderPass::setVertexBuffer(const Buffer& buffer, int index)
 
 void RenderPass::setVertexBuffer(const BufferRange& range, int index)
 {
-    if (!impl->encoder || range.buffer == nullptr)
+    if (!impl->encoder || range.buffer == nullptr || range.offset < 0)
         return;
 
     auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
@@ -247,12 +247,18 @@ namespace
 // The address a stage's root SRV binds to, with the buffer moved into the state
 // a shader read needs. A kernel that wrote this buffer left it in
 // UNORDERED_ACCESS; the barrier here is what orders the draw behind that write.
+// Zero when there is nothing to bind - no buffer, no resource, or an offset
+// outside it - and the shader's element zero is the element at the offset.
 D3D12_GPU_VIRTUAL_ADDRESS storageBufferAddress(CommandContext& commands,
-                                               const Buffer& buffer)
+                                               const BufferRange& range)
 {
-    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+    if (range.buffer == nullptr || range.offset < 0)
+        return 0;
 
-    if (data == nullptr || data->resource == nullptr)
+    auto* data = static_cast<D3D12BufferData*>(range.buffer->nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr
+        || (UINT64) range.offset >= data->size)
         return 0;
 
     // The union of the two read states rather than one: the same buffer may be
@@ -263,30 +269,40 @@ D3D12_GPU_VIRTUAL_ADDRESS storageBufferAddress(CommandContext& commands,
                      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
                          | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    return data->resource->GetGPUVirtualAddress();
+    return data->resource->GetGPUVirtualAddress() + (UINT64) range.offset;
 }
 } // namespace
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
+{
+    setVertexStorageBuffer(BufferRange::of(buffer), slot);
+}
+
+void RenderPass::setVertexStorageBuffer(const BufferRange& range, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
 
-    if (auto address = storageBufferAddress(commands, buffer))
+    if (auto address = storageBufferAddress(commands, range))
         commands.list->SetGraphicsRootShaderResourceView(renderVertexSRVParam(slot),
                                                          address);
 }
 
 void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
 {
+    setFragmentStorageBuffer(BufferRange::of(buffer), slot);
+}
+
+void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
+{
     if (!impl->encoder || slot < 0 || slot >= maxBufferSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
 
-    if (auto address = storageBufferAddress(commands, buffer))
+    if (auto address = storageBufferAddress(commands, range))
         commands.list->SetGraphicsRootShaderResourceView(renderPixelSRVParam(slot),
                                                          address);
 }
@@ -354,7 +370,7 @@ bool bindIndexRange(CommandContext& commands,
                     const BufferRange& indices,
                     IndexFormat format)
 {
-    if (indices.buffer == nullptr)
+    if (indices.buffer == nullptr || indices.offset < 0)
         return false;
 
     auto* data = static_cast<D3D12BufferData*>(indices.buffer->nativeBuffer());

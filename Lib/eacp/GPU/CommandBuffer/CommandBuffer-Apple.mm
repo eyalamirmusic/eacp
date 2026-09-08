@@ -3,6 +3,7 @@
 #include "CommandBuffer.h"
 
 #include "../Device/Device.h"
+#include "../Timing/CommandTimer.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
@@ -35,6 +36,7 @@ struct CommandBuffer::Native
 
     ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
     Device* device = nullptr;
+    CommandTimer timer;
     bool committed = false;
 };
 
@@ -43,18 +45,67 @@ CommandBuffer::CommandBuffer(Device& device)
 {
 }
 
-ComputePass CommandBuffer::beginCompute()
+ComputePass CommandBuffer::beginCompute(std::string_view label)
 {
-    if (auto buffer = impl->commandBuffer.get())
-        return ComputePass((__bridge void*) [buffer computeCommandEncoder]);
+    auto buffer = (id<MTLCommandBuffer>) impl->commandBuffer.get();
 
-    return ComputePass(nullptr);
+    if (buffer == nil)
+        return ComputePass(nullptr);
+
+    auto passDescriptor = [MTLComputePassDescriptor computePassDescriptor];
+
+    const auto pass =
+        impl->timer.beginPass(label, *impl->device, (__bridge void*) buffer);
+
+    if (pass >= 0)
+    {
+        if (auto samples =
+                (__bridge id<MTLCounterSampleBuffer>) impl->timer.nativeSamples())
+        {
+            auto attachment = passDescriptor.sampleBufferAttachments[0];
+
+            attachment.sampleBuffer = samples;
+            attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
+            attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
+        }
+    }
+
+    return ComputePass((__bridge void*)
+        [buffer computeCommandEncoderWithDescriptor:passDescriptor]);
+}
+
+void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
+{
+    auto buffer = (id<MTLCommandBuffer>) impl->commandBuffer.get();
+
+    if (buffer == nil || !range.isValid() || range.bytes <= 0 || range.offset < 0
+        || range.offset >= range.buffer->size())
+        return;
+
+    auto target = (__bridge id<MTLBuffer>) range.buffer->nativeBuffer();
+
+    if (target == nil)
+        return;
+
+    const auto available = range.buffer->size() - range.offset;
+    const auto length = range.bytes < available ? range.bytes : available;
+
+    auto blit = [buffer blitCommandEncoder];
+
+    [blit fillBuffer:target
+               range:NSMakeRange((NSUInteger) range.offset, (NSUInteger) length)
+               value:value];
+
+    [blit endEncoding];
 }
 
 void CommandBuffer::commit()
 {
     if (auto buffer = impl->takeForCommit())
     {
+        // Before the commit: a committed buffer may finish at any moment.
+        impl->timer.endRecording((__bridge void*) buffer);
+
         [buffer commit];
         [buffer waitUntilCompleted];
     }
@@ -71,6 +122,8 @@ Threads::Async<void> CommandBuffer::commitAsync()
         return promise.get();
     }
 
+    impl->timer.endRecording((__bridge void*) buffer);
+
     // The completion handler runs on a Metal-owned thread, and an Async settles
     // on the main thread only — callAsync is the hop between the two.
     [buffer addCompletedHandler:^(id<MTLCommandBuffer>) {
@@ -80,6 +133,16 @@ Threads::Async<void> CommandBuffer::commitAsync()
     [buffer commit];
 
     return promise.get();
+}
+
+const FrameTimings& CommandBuffer::timings()
+{
+    return impl->timer.timings(*impl->device);
+}
+
+bool CommandBuffer::supportsPassTimings() const
+{
+    return impl->timer.isSupported();
 }
 
 bool CommandBuffer::isValid() const

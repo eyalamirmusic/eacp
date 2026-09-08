@@ -465,8 +465,9 @@ struct D3D12ComputeEncoder
 {
     CommandContext* commands = nullptr;
 
-    // See D3D12Encoder. A compute pass on a Frame can be timed the same way; one
-    // on a CommandBuffer cannot, there being no frame to attribute it to.
+    // See D3D12Encoder. A compute pass is timed the same way wherever it was
+    // begun - on a Frame, against its frame timer, or on a CommandBuffer,
+    // against its own.
     ID3D12QueryHeap* queryHeap = nullptr;
     int endQuery = -1;
 };
