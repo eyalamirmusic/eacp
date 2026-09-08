@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <initializer_list>
 
 // The transcendentals a neural net's activation functions are written out of:
@@ -44,7 +46,7 @@ float polynomialErfc(float x)
                     + t * (1.421413741f + t * (-1.453152027f + t * 1.061405429f))))
         * std::exp(-a * a);
 
-    return x < 0.0f ? 2.0f - e : e;
+    return a == 0.0f ? 1.0f : (x < 0.0f ? 2.0f - e : e);
 }
 
 float polynomialErf(float x)
@@ -61,8 +63,17 @@ float polynomialErf(float x)
                                         + t * (-1.453152027f + t * 1.061405429f))))
                    * std::exp(-a * a);
 
-    return x < 0.0f ? -e : e;
+    return a == 0.0f ? x : (x < 0.0f ? -e : e);
 }
+
+std::uint32_t bits(float value)
+{
+    auto pattern = std::uint32_t {};
+    std::memcpy(&pattern, &value, sizeof(pattern));
+    return pattern;
+}
+
+constexpr auto signBit = std::uint32_t {0x80000000};
 
 // -6..6 at a step fine enough to land on the peak of the error curve, plus the
 // magnitudes where the two tails saturate.
@@ -476,6 +487,16 @@ auto tPolynomialAccuracy =
     check(worstErf < 1.0e-6);
     check(worstErfc < 1.0e-6);
 
+    check(bits(polynomialErf(0.0f)) == bits(0.0f));
+    check(bits(polynomialErf(-0.0f)) == bits(-0.0f));
+
+    check(polynomialErfc(0.0f) == 1.0f);
+    check(polynomialErfc(-0.0f) == 1.0f);
+    check(polynomialErf(0.0f) + polynomialErfc(0.0f) == 1.0f);
+
+    for (auto x: erfSweep())
+        check(bits(polynomialErf(-x)) == (bits(polynomialErf(x)) ^ signBit));
+
     // The two tails, where erfc has to saturate rather than drift: a large
     // negative argument is 2 exactly, a large positive one underflows to zero,
     // and both are what a shader summing them relies on.
@@ -483,5 +504,101 @@ auto tPolynomialAccuracy =
     check(polynomialErfc(30.0f) == 0.0f);
     check(polynomialErf(-30.0f) == -1.0f);
     check(polynomialErf(30.0f) == 1.0f);
-    check(std::fabs(polynomialErf(0.0f)) < 1.0e-7f);
+};
+
+// erf is odd and exactly zero at the origin. The polynomial behind it is
+// neither: 1 - poly(0) * exp(0) leaves about 1e-9 there, and both signs of zero
+// took the branch for a positive argument, so erf(-x) was not the negation of
+// erf(x) across it.
+auto tErrorFunctionIsOddAboutZero =
+    test("Intrinsics/errorFunctionIsOddAboutZero") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = Vector<float> {};
+
+    for (auto x: {0.0f, 1.0e-20f, 1.0f, 3.0f})
+    {
+        values.add(x);
+        values.add(-x);
+    }
+
+    auto count = values.size();
+
+    auto input = device.makeBuffer(
+        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
+    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
+
+    auto kernel = ErrorFunctionKernel {};
+    kernel.input = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    auto result = runKernel(kernel, output, count, 2);
+
+    check(bits(result[0]) == bits(0.0f));
+    check(bits(result[2]) == bits(-0.0f));
+
+    for (auto i = 0; i < count; i += 2)
+        check(bits(result[(i + 1) * 2]) == (bits(result[i * 2]) ^ signBit));
+};
+
+// The complement has the same defect at the origin, and it is the one that
+// makes erf(x) + erfc(x) exactly 1 there rather than one ulp under it.
+auto tComplementIsExactlyOneAtZero =
+    test("Intrinsics/complementIsExactlyOneAtZero") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = Vector<float> {};
+
+    values.add(0.0f);
+    values.add(-0.0f);
+
+    auto count = values.size();
+
+    auto input = device.makeBuffer(
+        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
+    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
+
+    auto kernel = ErrorFunctionKernel {};
+    kernel.input = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    auto result = runKernel(kernel, output, count, 2);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        check(result[i * 2 + 1] == 1.0f);
+        check(result[i * 2] + result[i * 2 + 1] == 1.0f);
+    }
+};
+
+// What carries both signs of zero through is returning the argument itself, and
+// what pins the complement is the one it complements, so both backends have to
+// say so.
+auto tErrorFunctionHelpersPinTheOrigin =
+    test("Intrinsics/errorFunctionHelpersPinTheOrigin") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+    auto x = input[i];
+
+    builder.write(output, i, erf(x) + erfc(x));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(contains(source, "return a == 0.0 ? x : (x < 0.0 ? -e : e);"));
+        check(contains(source, "return a == 0.0 ? 1.0 : (x < 0.0 ? 2.0 - e : e);"));
+    }
 };

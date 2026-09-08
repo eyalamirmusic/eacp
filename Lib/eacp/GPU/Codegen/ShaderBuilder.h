@@ -151,7 +151,7 @@ public:
     // The 2D work item, for a kernel over a grid rather than a flat count -
     // which is what anything image-shaped is. Asking for this is what makes the
     // kernel a 2D one, and it is dispatched with ComputePass::dispatch(width,
-    // height) accordingly; a kernel takes this or threadId(), never both.
+    // height) accordingly; a kernel takes one work item, never two.
     ThreadPosition threadPosition()
     {
         auto position = ThreadPosition {};
@@ -164,12 +164,29 @@ public:
         return position;
     }
 
+    // The 3D work item, for a kernel over a volume. Asking for this fixes the
+    // rank at 3D, and it is dispatched with ComputePass::dispatch(width,
+    // height, depth).
+    ThreadPosition3 threadPosition3()
+    {
+        auto position = ThreadPosition3 {};
+
+        position.x.graph = &graphData;
+        position.x.node = graphData.addThreadPosition3(0);
+        position.y.graph = &graphData;
+        position.y.node = graphData.addThreadPosition3(1);
+        position.z.graph = &graphData;
+        position.z.node = graphData.addThreadPosition3(2);
+
+        return position;
+    }
+
     // Where a thread sits inside its threadgroup, and which group it belongs
     // to - the pair every shared-memory algorithm indexes with: the local id
     // subscripts the shared tile, the group id decides which slice of the
-    // problem the group owns. 1D forms beside threadId(), 2D siblings beside
-    // threadPosition(); asking for one fixes the dispatch rank exactly as the
-    // global ids do.
+    // problem the group owns. 1D forms beside threadId(), 2D and 3D siblings
+    // beside threadPosition() and threadPosition3(); asking for one fixes the
+    // dispatch rank exactly as the global ids do.
     UInt localId()
     {
         auto value = UInt {};
@@ -190,6 +207,20 @@ public:
         return position;
     }
 
+    ThreadPosition3 localPosition3()
+    {
+        auto position = ThreadPosition3 {};
+
+        position.x.graph = &graphData;
+        position.x.node = graphData.addLocalPosition3(0);
+        position.y.graph = &graphData;
+        position.y.node = graphData.addLocalPosition3(1);
+        position.z.graph = &graphData;
+        position.z.node = graphData.addLocalPosition3(2);
+
+        return position;
+    }
+
     UInt groupId()
     {
         auto value = UInt {};
@@ -206,6 +237,20 @@ public:
         position.x.node = graphData.addGroupPosition(0);
         position.y.graph = &graphData;
         position.y.node = graphData.addGroupPosition(1);
+
+        return position;
+    }
+
+    ThreadPosition3 groupPosition3()
+    {
+        auto position = ThreadPosition3 {};
+
+        position.x.graph = &graphData;
+        position.x.node = graphData.addGroupPosition3(0);
+        position.y.graph = &graphData;
+        position.y.node = graphData.addGroupPosition3(1);
+        position.z.graph = &graphData;
+        position.z.node = graphData.addGroupPosition3(2);
 
         return position;
     }
@@ -237,10 +282,20 @@ public:
         return value;
     }
 
+    // The third extent, which only a 3D kernel has. gridWidth() and
+    // gridHeight() serve a 3D kernel as they do a 2D one.
+    UInt gridDepth()
+    {
+        auto value = UInt {};
+        value.graph = &graphData;
+        value.node = graphData.addGridExtent(DispatchRank::ThreeD, 2);
+        return value;
+    }
+
     // A threadgroup-shared array of count elements, its size a compile-time
     // constant in the emitted kernel. Size it against the fixed group shape
     // the dispatch uses (ComputePass::threadGroupWidth wide in 1D,
-    // threadGroupSize2D squared in 2D).
+    // threadGroupSize2D squared in 2D, threadGroupSize3D cubed in 3D).
     template <typename T>
     Shared<T> shared(int count)
     {
@@ -265,12 +320,28 @@ public:
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Write)};
     }
 
+    // The integer pair, taking slots from the same counter and binding through
+    // the same two calls: what changes is that a read yields a UInt and a write
+    // takes one.
+    UIntInputBuffer uintInputBuffer()
+    {
+        return {&graphData,
+                graphData.addStorageBuffer(BufferAccess::Read, ValueType::UInt)};
+    }
+
+    UIntOutputBuffer uintOutputBuffer()
+    {
+        return {&graphData,
+                graphData.addStorageBuffer(BufferAccess::Write, ValueType::UInt)};
+    }
+
     // A buffer of unsigned integers threads share. It takes a slot from the same
-    // counter the other two do, and binds exactly as an output does - what
-    // differs is the element type, and that only the emitted declaration knows.
+    // counter the others do, and binds exactly as an output does - what differs
+    // is the element type, and that only the emitted declaration knows.
     AtomicBuffer atomicBuffer()
     {
-        return {&graphData, graphData.addStorageBuffer(BufferAccess::Atomic)};
+        return {&graphData,
+                graphData.addStorageBuffer(BufferAccess::Atomic, ValueType::UInt)};
     }
 
     // Adds to one element and yields what it held *before* - so every thread
@@ -368,6 +439,28 @@ public:
                     const Float2& value)
     {
         write(buffer, index, asFloat(packHalf2(value)));
+    }
+
+    // One element of an integer output, index or value spelled as a literal
+    // where it is one.
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value)
+    {
+        graphData.addStore(buffer.slot, index.node, value.node);
+    }
+
+    void write(const UIntOutputBuffer& buffer, const UInt& index, unsigned value)
+    {
+        write(buffer, index, buffer.literal(value));
+    }
+
+    void write(const UIntOutputBuffer& buffer, unsigned index, const UInt& value)
+    {
+        write(buffer, buffer.literal(index), value);
+    }
+
+    void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value)
+    {
+        write(buffer, buffer.literal(index), buffer.literal(value));
     }
 
     // One element of an atomic buffer, set outright rather than added to. It

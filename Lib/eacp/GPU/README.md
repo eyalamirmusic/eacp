@@ -188,8 +188,9 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   `all()`, compared with each other, and crossed into a number with `toInt` /
   `toFloat`. Comparing two vectors is the operator itself, componentwise,
   because that is what both shading languages give a pair of vectors
-- `UInt` for the compute thread id, a buffer index, and the slot an atomic add
-  reserved — compared against each other and against unsigned literals
+- `UInt` for the compute thread id, a buffer index, an element of an integer
+  buffer, and the slot an atomic add reserved — compared against each other and
+  against unsigned literals
 - Every swizzle of up to four components, on all three families, as one node
 - The intrinsic set, spelled the way the languages underneath spell it —
   `rsqrt`, `atan2`, `mix` — rather than the way GLSL does, and taking a float
@@ -202,9 +203,14 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   `cosh`, `tanh` and `log10`, which both languages have natively, and `erf` /
   `erfc`, which neither has at all — those two are emitted as a polynomial held
   to under 6e-7 absolute, so a shader can spell the exact GELU rather than the
-  tanh approximation of it
+  tanh approximation of it. The origin is exact, which the polynomial on its own
+  is not: `erf` is odd across it bit for bit and zero at it, `erfc` is one
+  there, and the two sum to one
 - Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
-  A `var` takes any handle and any matrix
+  A `var` takes any handle and any matrix. `select` runs across every family —
+  a float, an index, an integer vector, a mask — and takes a literal on either
+  side of a scalar one; the condition is a scalar `Bool` in all of them, which
+  is the conditional operator both languages already print
 - Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId` — see the
   compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
@@ -424,10 +430,14 @@ body in `define()`, dispatched over one index per element. Two places take one.
 
 The grid comes from what the body asks for. `threadId()` gives a single index
 and is dispatched with `dispatch(count)`; `threadPosition()` gives an `x` and a
-`y` and is dispatched with `dispatch(width, height)`, in 8×8 groups. A kernel
-takes one or the other — the generated entry point has one shape — and the two
-extents are bounds-checked for you, so a grid that is not a multiple of the
-group is safe to dispatch.
+`y` and is dispatched with `dispatch(width, height)`, in 8×8 groups;
+`threadPosition3()` adds a `z` and is dispatched with
+`dispatch(width, height, depth)`, in 4×4×4 groups — what anything natively
+indexed by three numbers wants, an attention score by (key, query, head) among
+them, rather than a third axis folded into a row on the host. A kernel takes one
+of the three — the generated entry point has one shape — and every extent is
+bounds-checked for you, so a grid that is not a multiple of the group is safe to
+dispatch.
 
 ```cpp
 void define() override
@@ -483,6 +493,73 @@ own: the bytes a kernel wrote as a flat float array are read by the vertex stage
 at the per-instance stride `instanceInput()` declared. One buffer, two views of
 it, no copy.
 
+### In place
+
+An elementwise stage rewrites the buffer it was handed rather than filling a
+second one. The buffer is bound once, to an output slot, and the kernel reads
+the element it is about to store to:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    auto x = output[i];
+
+    write(output, i, 0.5f * x * (1.0f + erf(x * 0.70710678f)));
+}
+```
+
+Within one thread, statements run in the order they were written, so the read
+observes what the element held. Another thread's store is visible only once the
+dispatch has ended, so this is for a 1:1 stage and not for one that reads its
+neighbours.
+
+Binding one `GPU::Buffer` to an input slot **and** an output slot of the same
+kernel is the form that does not port: D3D12 needs the resource in a different
+state for each of those two bindings, and the second bind transitions it out
+from under the first. It would not read as an in-place kernel anyway — a value
+read through one slot keeps its name across a store to another, so the second
+use of it is the value from before the store.
+
+### Timing a pass
+
+A pass given a label is timed by the hardware, on a command buffer exactly as on
+a frame. The numbers come off the buffer itself once the GPU has finished it —
+after `commit()`, or after the `Async` from `commitAsync()` has resolved:
+
+```cpp
+{
+    auto pass = commands.beginCompute("attention");
+    pass.dispatch(attention, count);
+}
+
+commands.commit();
+
+for (const auto& pass: commands.timings().passes)
+    log(pass.label, pass.milliseconds);
+```
+
+`timings().milliseconds` is the buffer end to end. An unlabelled pass is not
+timed and does not appear, and a command buffer with no labelled pass at all
+builds no timestamp resources; `supportsPassTimings()` says whether this device
+can break a buffer down by pass, as `Device::supportsPassTimings()` does for a
+frame.
+
+### Zeroing a buffer
+
+`fill` writes a byte over a whole buffer or over a range of one, on the GPU:
+
+```cpp
+commands.fill(cache);                                        // zeroed
+commands.fill(BufferRange {&cache, rowBytes * step, rowBytes}, 0xff);
+```
+
+It is recorded on the command buffer like a pass, and ordered like one: a kernel
+dispatched after the fill reads what the fill wrote, and a fill after a kernel
+overwrites what the kernel wrote. The offset and the length must be multiples of
+4, and no pass may be open. Nothing reaches the host, which is the point — a
+cache re-zeroed between passes used to be an upload of zeros per pass.
+
 ### Part of a buffer
 
 A storage-buffer member takes a `BufferRange` as readily as a whole `Buffer`,
@@ -497,9 +574,50 @@ pass.dispatch(kernel, rowElements);     // writes cache[step], leaves the rest
 
 The offset must be a multiple of 4 bytes. `range.bytes` is not enforced: what
 stops a kernel short is the count passed to `dispatch`. A range that names no
-buffer, or starts at or past its buffer's end, binds nothing. The render side
-takes whole buffers only, and a `Uniform<InputBuffer>` on a `ShaderProgram`
-asserts in Debug if handed an offset.
+buffer, or starts at or past its buffer's end, binds nothing.
+
+The render side takes a range wherever the compute side does and under the same
+rule: `RenderPass::setVertexBuffer` and `drawIndexed` over the geometry,
+`setVertexStorageBuffer` and `setFragmentStorageBuffer` over the buffer a stage
+subscripts — which is what a `Uniform<InputBuffer>` on a `ShaderProgram` binds
+through. A draw handed an unbindable index range draws nothing.
+
+### Buffers of integers
+
+`Uniform<UIntInputBuffer>` and `Uniform<UIntOutputBuffer>` are the pair above
+with `uint` elements: the subscript yields a `UInt` and `write` takes one.
+Everything else is the same — the same slot counter, the same
+`setInputBuffer`/`setOutputBuffer`, whole buffers or ranges alike — and both
+backends declare them beside the float pair, `device const uint*` /
+`device uint*` on Metal and `StructuredBuffer<uint>` /
+`RWStructuredBuffer<uint>` on HLSL.
+
+What they are for is data that is not a number to compute with: the token ids a
+gather looks rows up by, the index an argmax arrived at, a count. A float
+buffer carries those only as bits to cast, and only while they stay under 2^24.
+
+```cpp
+struct Gather final : ComputeProgram
+{
+    void define() override
+    {
+        auto i = threadId();
+        write(rows, i, table[ids[i / width] * width + i % width]);
+    }
+
+    Uniform<UIntInputBuffer> ids;
+    Uniform<InputBuffer> table;
+    Uniform<OutputBuffer> rows;
+    Uniform<UInt> width;
+    EACP_SHADER(ids, table, rows, width)
+};
+```
+
+One kernel's `UIntOutputBuffer` is the next one's `UIntInputBuffer` on the same
+`GPU::Buffer`, so a decoder's ids go from the step that picked them to the step
+that looks them up without reaching the CPU. A render stage reads one too, on
+the terms below. There is no signed sibling: `Int` indexes constant arrays, and
+a storage buffer of them has not been wanted.
 
 ### Atomics
 
@@ -536,9 +654,9 @@ nothing is said about how other memory either side of it is ordered. That is all
 a counter needs; a kernel needing the second thing needs a barrier.
 
 **The elements are integers.** The same `GPU::Buffer` bound to an `InputBuffer`
-in a later kernel reads those bits as floats and yields nonsense. Read it back
-with `counts.load(index)`, or have the kernel that finishes with it write the
-values somewhere a float buffer can be read from. It binds like an output
+in a later kernel reads those bits as floats and yields nonsense. Bind it to a
+`UIntInputBuffer` instead — which is how a later kernel reads what the counting
+one left — or read it back with `counts.load(index)`. It binds like an output
 otherwise, and takes a slot from the same counter.
 
 ### A dispatch the GPU sized
@@ -576,11 +694,15 @@ keeps threads inside the allocation, the kernel's own keeps them inside the
 data. The grid is rounded up to whole groups either way, so the tail of the last
 group runs and has to be harmless.
 
+The offset the arguments are read at — the last parameter, for a buffer holding
+several grids — must be a multiple of four and leave a whole `DispatchArguments`
+behind it. One that does not dispatches nothing.
+
 Each stage is its own pass. Threads of one dispatch are ordered against each
 other by nothing but the end of that dispatch, so a kernel reading what the
 previous one counted has to be in a later pass.
 
-1D only. A 2D indirect dispatch would take a width and a height beside an offset
+1D only. A 2D or 3D indirect dispatch would take its extents beside an offset
 and could not be told apart from this one; nothing has needed it.
 
 ### Threadgroup memory
@@ -618,7 +740,8 @@ That rule reaches the dispatch too: the emitted bounds guard returns early, so a
 kernel with a barrier may only be dispatched over a whole number of groups —
 `ComputeProgram` asserts rather than leaving it to the caller to remember. Round
 the count up to a multiple of `ComputePass::threadGroupWidth` (or of
-`threadGroupSize2D` in both axes) and guard the writes instead.
+`threadGroupSize2D` / `threadGroupSize3D` in every axis) and guard the writes
+instead.
 
 The declaration is the one place the two backends are not the same shape twice:
 MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` is a
@@ -721,7 +844,7 @@ a 512×512 texture every frame and the next pass samples it full-screen.
 The third way a kernel's output reaches a draw. `setInstanceBuffer` hands the
 vertex stage one record per instance and a written texture hands the fragment
 stage an image; a `Uniform<InputBuffer>` on a `ShaderProgram` hands either stage
-the *whole* buffer, to subscript at an index it worked out:
+the buffer *itself*, to subscript at an index it worked out:
 
 ```cpp
 struct DrawFromPalette final : ShaderProgram
@@ -746,9 +869,14 @@ pass.draw(draw);                    // binds it to both stages
 
 The same `InputBuffer` a kernel declares, and the same `read2`/`read3`/`read4`
 record reads — what differs is only that no store makes the graph a kernel, so
-it emits a vertex/fragment pair. Read-only here: writing stays the compute path's
-job. Each stage declares only the buffers its own expressions read, and the
-program binds to both, so a buffer works wherever `define()` reaches for it.
+it emits a vertex/fragment pair. A `Uniform<UIntInputBuffer>` reads here on the
+same terms. Read-only either way: writing stays the compute path's job. Each
+stage declares only the buffers its own expressions read, and the program binds
+to both, so a buffer works wherever `define()` reaches for it.
+
+A `BufferRange` binds here as it does on a kernel: `draw.palette = BufferRange
+{&computed, rowBytes * row, rowBytes}` makes the shader's element zero the
+element at the offset, under the rules in *Part of a buffer*.
 
 Reach for this when the thing being read is not an image and does not line up one
 record per instance — a lookup table, a record picked by an id the shader
@@ -772,9 +900,9 @@ void define() override
 }
 ```
 
-A storage buffer is a run of floats on both backends, so a packed word arrives
-as a float whose value is meaningless and whose bits are the payload. These are
-the way in and out of that:
+A float storage buffer is a run of floats on both backends, so a packed word
+arrives as a float whose value is meaningless and whose bits are the payload.
+These are the way in and out of that:
 
 | call | what it gives |
 | --- | --- |

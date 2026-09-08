@@ -181,7 +181,7 @@ public:
 
     // Binds a Storage buffer for indexed reads in a shader stage - the thing a
     // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
-    // one element per vertex or per instance; this binds the whole buffer so the
+    // one element per vertex or per instance; this binds the buffer so the
     // shader can subscript it at an index it computed, which is what reading a
     // record a kernel produced by an id the shader worked out needs.
     //
@@ -191,6 +191,13 @@ public:
     // render stage has no UAV here, so writing stays the compute path's job.
     void setVertexStorageBuffer(const Buffer& buffer, int slot = 0);
     void setFragmentStorageBuffer(const Buffer& buffer, int slot = 0);
+
+    // The same over part of a buffer: element zero of the shader's buffer is the
+    // element at range.offset. The offset must be a multiple of four; range.bytes
+    // is not enforced. An invalid range, or one starting at or past the buffer's
+    // end, binds nothing.
+    void setVertexStorageBuffer(const BufferRange& range, int slot = 0);
+    void setFragmentStorageBuffer(const BufferRange& range, int slot = 0);
 
     // Uploads small per-draw constant data to the vertex stage without a buffer
     // object (Metal setVertexBytes; a transient constant buffer on D3D12). slot

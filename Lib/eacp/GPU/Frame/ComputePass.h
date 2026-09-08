@@ -87,12 +87,21 @@ public:
     // authored against threadPosition() needs.
     void dispatch(int width, int height);
 
+    // The 3D sibling, over a width × height × depth volume in groups of
+    // threadGroupSize3D cubed. What a kernel authored against threadPosition3()
+    // needs.
+    void dispatch(int width, int height, int depth);
+
     // Runs the kernel over a grid the **GPU** decided: the threadgroup counts
     // come from DispatchArguments living in a buffer an earlier kernel on this
     // command buffer wrote, and the CPU never learns the number. That is the
     // whole point - a stage whose size depends on what the stage before it found
     // would otherwise need a readback, and a readback is a round trip through
     // the host between two passes that were going to be adjacent.
+    //
+    // offsetInBytes must be a multiple of four and leave a whole
+    // DispatchArguments in the buffer; an offset that does not dispatches
+    // nothing.
     void dispatchIndirect(const Buffer& arguments, int offsetInBytes = 0);
 
     // Binds and dispatches a prepared ComputeProgram in one call: its pipeline,
@@ -125,6 +134,18 @@ public:
         dispatch(width, height);
     }
 
+    // And the 3D one, over three extents.
+    template <typename Program>
+    void dispatch(Program& program, int width, int height, int depth)
+    {
+        setPipeline(program.pipeline());
+        program.bindResources(*this);
+
+        const auto* uniforms = program.packedUniforms(width, height, depth);
+        setBytes(uniforms, program.uniformByteSize());
+        dispatch(width, height, depth);
+    }
+
     // The indirect form of the program dispatch: same binding, and a grid that
     // is not known here.
     //
@@ -137,7 +158,7 @@ public:
     // this one keeps threads inside the allocation, the kernel's own keeps them
     // inside the data.
     //
-    // 1D only. A 2D indirect dispatch would take a width and a height beside an
+    // 1D only. A 2D or 3D indirect dispatch would take its extents beside an
     // offset and could not be told apart from this one, and nothing has needed
     // it; bind by hand and use the raw form above if it ever does.
     template <typename Program>
@@ -168,6 +189,10 @@ public:
     // 1D path already budgets for - and square, so a group covers a tile rather
     // than a strip, which is what a kernel reading its neighbours wants.
     static constexpr int threadGroupSize2D = 8;
+
+    // The 3D dispatch's group is this cubed, which is those 64 threads again,
+    // as a block rather than a tile.
+    static constexpr int threadGroupSize3D = 4;
 
     // How many storage buffers one kernel may bind. The D3D root signature
     // declares a root SRV and a root UAV per slot below this and nothing above

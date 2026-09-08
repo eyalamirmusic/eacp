@@ -29,7 +29,9 @@ set(gpu_test_sources
         BaseVertexTests.cpp
         BlendStateTests.cpp
         BufferAccessTests.cpp
+        BufferFillTests.cpp
         BufferRangeTests.cpp
+        CommandBufferTimingTests.cpp
         CompressedTextureTests.cpp
         ComputeBufferRangeTests.cpp
         CoordinateSpaceTests.cpp
@@ -38,21 +40,27 @@ set(gpu_test_sources
         DepthActionTests.cpp
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
+        Dispatch3DTests.cpp
         ExternalGeometryTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp
         GPUSmokeTests.cpp
         GPUSnapshotTests.cpp
+        HoistingTests.cpp
         IndirectDispatchTests.cpp
+        InPlaceComputeTests.cpp
         IntrinsicTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp
         MultisampledTargetTests.cpp
         PackedHalfTests.cpp
         PipelineStateTests.cpp
+        ProgramGraphTests.cpp
+        RenderBufferRangeTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
         ScissorTests.cpp
+        SelectTests.cpp
         ShaderBlendTests.cpp
         ShaderCompileTests.cpp
         SharedMemoryTests.cpp
@@ -67,6 +75,7 @@ set(gpu_test_sources
         TextureRegionTests.cpp
         TextureSamplingTests.cpp
         TextureUpdateTests.cpp
+        UIntBufferTests.cpp
         VertexFormatTests.cpp
         ViewportTests.cpp
         TestMain.cpp)

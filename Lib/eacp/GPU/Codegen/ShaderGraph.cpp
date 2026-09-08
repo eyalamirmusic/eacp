@@ -431,9 +431,9 @@ int ShaderGraph::addArrayRead(int slot, int index)
 int ShaderGraph::addIndexNode(ExprKind kind, DispatchRank forRank, int component)
 {
     assert((!rankFixed || rank == forRank)
-           && "eacp: a kernel takes either the 1D indices (threadId, localId, "
-              "groupId, gridCount) or the 2D ones, never both - the dispatch "
-              "has one grid shape");
+           && "eacp: a kernel takes the 1D indices (threadId, localId, groupId, "
+              "gridCount), the 2D ones or the 3D ones, never two sets - the "
+              "dispatch has one grid shape");
 
     rank = forRank;
     rankFixed = true;
@@ -455,6 +455,11 @@ int ShaderGraph::addThreadPosition(int component)
     return addIndexNode(ExprKind::ThreadId, DispatchRank::TwoD, component);
 }
 
+int ShaderGraph::addThreadPosition3(int component)
+{
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::ThreeD, component);
+}
+
 int ShaderGraph::addLocalId()
 {
     localIdUsed = true;
@@ -465,6 +470,12 @@ int ShaderGraph::addLocalPosition(int component)
 {
     localIdUsed = true;
     return addIndexNode(ExprKind::LocalId, DispatchRank::TwoD, component);
+}
+
+int ShaderGraph::addLocalPosition3(int component)
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::ThreeD, component);
 }
 
 int ShaderGraph::addGroupId()
@@ -479,9 +490,21 @@ int ShaderGraph::addGroupPosition(int component)
     return addIndexNode(ExprKind::GroupId, DispatchRank::TwoD, component);
 }
 
+int ShaderGraph::addGroupPosition3(int component)
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::ThreeD, component);
+}
+
 int ShaderGraph::addGridExtent(DispatchRank forRank, int component)
 {
-    return addIndexNode(ExprKind::GridExtent, forRank, component);
+    // The width and the height are the same two uniforms whether the kernel is
+    // 2D or 3D, so asking for one leaves a rank already fixed at ThreeD alone.
+    auto wanted = forRank == DispatchRank::TwoD && rank == DispatchRank::ThreeD
+                      ? rank
+                      : forRank;
+
+    return addIndexNode(ExprKind::GridExtent, wanted, component);
 }
 
 int ShaderGraph::addSharedArray(ValueType elementType, int elements)
@@ -515,9 +538,10 @@ void ShaderGraph::addBarrier()
     addStatement(Statement {StatementKind::Barrier});
 }
 
-int ShaderGraph::addStorageBuffer(BufferAccess access)
+int ShaderGraph::addStorageBuffer(BufferAccess access, ValueType elementType)
 {
     storageSlots.add(access);
+    storageElements.add(elementType);
     return storageSlots.size() - 1;
 }
 
@@ -525,7 +549,7 @@ int ShaderGraph::addBufferRead(int slot, int index)
 {
     auto node = Expr {};
     node.kind = ExprKind::BufferRead;
-    node.type = ValueType::Float;
+    node.type = storageElementType(slot);
     node.index = slot;
     node.args.add(index);
     return add(std::move(node));
