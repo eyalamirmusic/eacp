@@ -101,7 +101,6 @@ elseif (UNIX AND NOT APPLE)
             Plugins/ModuleInfo-Posix.cpp
             Process/Process-Posix.cpp
             Threads/EventLoop-Linux.cpp
-            Threads/EventLoop-Default.cpp
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
             Utils/Environment-Posix.cpp

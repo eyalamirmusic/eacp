@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <mutex>
 #include <poll.h>
+#include <sys/epoll.h>
 #include <unistd.h>
 
 namespace eacp::Threads
@@ -64,12 +65,68 @@ struct LoopSource
     Callback prepare;
 };
 
+namespace
+{
+constexpr auto maxReadySourcesPerPump = 32;
+
+uint32_t epollEventsFromPollEvents(short events)
+{
+    auto result = uint32_t {};
+
+    if ((events & POLLIN) != 0)
+        result |= EPOLLIN;
+    if ((events & POLLOUT) != 0)
+        result |= EPOLLOUT;
+    if ((events & POLLPRI) != 0)
+        result |= EPOLLPRI;
+
+    return result;
+}
+
+void watchLoopFd(int epollFd, int fd, short events)
+{
+    auto event = epoll_event {};
+    event.events = epollEventsFromPollEvents(events);
+    event.data.fd = fd;
+
+    if (::epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, &event) != 0)
+        ::epoll_ctl(epollFd, EPOLL_CTL_ADD, fd, &event);
+}
+
+void unwatchLoopFd(int epollFd, int fd)
+{
+    ::epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, nullptr);
+}
+} // namespace
+
+// One epoll instance holds the waker and every source, so a host watches a
+// single descriptor for this copy while sources come and go behind it.
 struct LoopState
 {
+    LoopState()
+        : epollFd(::epoll_create1(EPOLL_CLOEXEC))
+    {
+        watchLoopFd(epollFd, waker.readFd, POLLIN);
+    }
+
+    ~LoopState()
+    {
+        if (epollFd >= 0)
+            ::close(epollFd);
+    }
+
+    LoopState(const LoopState&) = delete;
+    LoopState& operator=(const LoopState&) = delete;
+
     PipeWaker waker;
+    int epollFd = -1;
+
     std::mutex mutex;
     Vector<Callback> queue;
+
     std::atomic<bool> running {false};
+    std::atomic<bool> hosted {false};
+    std::atomic<int> pumpDepth {0};
 
     std::mutex sourceMutex;
     Vector<LoopSource> sources;
@@ -82,6 +139,29 @@ static LoopState& getLoop()
 
 namespace
 {
+struct PumpScope
+{
+    explicit PumpScope(LoopState& loopToUse)
+        : loop(loopToUse)
+    {
+        ++loop.pumpDepth;
+    }
+
+    ~PumpScope() { --loop.pumpDepth; }
+
+    PumpScope(const PumpScope&) = delete;
+    PumpScope& operator=(const PumpScope&) = delete;
+
+    LoopState& loop;
+};
+
+enum class WaitResult
+{
+    Ready,
+    TimedOut,
+    Failed
+};
+
 void drainPending(LoopState& loop)
 {
     auto pending = Vector<Callback>();
@@ -111,25 +191,17 @@ void runSourcePrepares(LoopState& loop)
         prepare();
 }
 
-Vector<pollfd> buildPollSet(LoopState& loop)
-{
-    auto fds = Vector<pollfd> {};
-    fds.add(pollfd {loop.waker.readFd, POLLIN, 0});
-
-    auto lock = std::lock_guard(loop.sourceMutex);
-
-    for (const auto& source: loop.sources)
-        fds.add(pollfd {source.fd, source.events, 0});
-
-    return fds;
-}
-
 // By descriptor, so a source removed earlier in the round is not found.
-void dispatchReadySources(LoopState& loop, const Vector<pollfd>& fds)
+void dispatchReadySources(LoopState& loop)
 {
-    for (auto i = 1; i < fds.size(); ++i)
+    auto ready = Array<epoll_event, maxReadySourcesPerPump> {};
+    auto count = ::epoll_wait(loop.epollFd, ready.data(), ready.size(), 0);
+
+    for (auto i = 0; i < count; ++i)
     {
-        if (fds[i].revents == 0)
+        auto fd = ready[i].data.fd;
+
+        if (fd == loop.waker.readFd)
             continue;
 
         auto callback = Callback {};
@@ -138,7 +210,7 @@ void dispatchReadySources(LoopState& loop, const Vector<pollfd>& fds)
             auto lock = std::lock_guard(loop.sourceMutex);
 
             for (const auto& source: loop.sources)
-                if (source.fd == fds[i].fd)
+                if (source.fd == fd)
                     callback = source.callback;
         }
 
@@ -147,11 +219,47 @@ void dispatchReadySources(LoopState& loop, const Vector<pollfd>& fds)
     }
 }
 
-int waitForLoopActivity(Vector<pollfd>& fds, int timeoutMs)
+// The prepares end the round rather than start it, so they are equally the
+// prepares of the wait a standalone loop is about to enter and the flush a
+// hosted copy needs before returning to a host that will not wait for us.
+void pumpLoopOnce(LoopState& loop)
 {
-    return ::poll(fds.data(), (nfds_t) fds.size(), timeoutMs);
+    loop.waker.drain();
+    dispatchReadySources(loop);
+    drainPending(loop);
+    runSourcePrepares(loop);
+}
+
+WaitResult waitForLoopActivity(const LoopState& loop, int timeoutMs)
+{
+    auto fds = pollfd {loop.epollFd, POLLIN, 0};
+    auto r = ::poll(&fds, 1, timeoutMs);
+
+    if (r > 0)
+        return WaitResult::Ready;
+
+    if (r == 0)
+        return WaitResult::TimedOut;
+
+    return errno == EINTR ? WaitResult::Ready : WaitResult::Failed;
 }
 } // namespace
+
+int getEventLoopFd()
+{
+    return getLoop().epollFd;
+}
+
+void pumpEventLoop()
+{
+    auto& loop = getLoop();
+
+    if (loop.pumpDepth.load() > 0)
+        return;
+
+    auto scope = PumpScope {loop};
+    pumpLoopOnce(loop);
+}
 
 void EventLoop::run()
 {
@@ -160,23 +268,17 @@ void EventLoop::run()
     auto& loop = getLoop();
     loop.running = true;
 
+    auto scope = PumpScope {loop};
+
     while (loop.running)
     {
-        runSourcePrepares(loop);
+        pumpLoopOnce(loop);
 
-        auto fds = buildPollSet(loop);
-        auto r = waitForLoopActivity(fds, -1);
-
-        if (r < 0)
-        {
-            if (errno == EINTR)
-                continue;
+        if (!loop.running)
             break;
-        }
 
-        loop.waker.drain();
-        dispatchReadySources(loop, fds);
-        drainPending(loop);
+        if (waitForLoopActivity(loop, -1) == WaitResult::Failed)
+            break;
     }
 }
 
@@ -187,42 +289,29 @@ bool EventLoop::runFor(Time::MS timeout)
     auto& loop = getLoop();
     loop.running = true;
 
+    auto scope = PumpScope {loop};
     auto deadline = Time::Deadline {timeout};
-    auto timedOut = false;
 
     while (loop.running)
     {
+        pumpLoopOnce(loop);
+
+        if (!loop.running)
+            break;
+
         if (deadline.expired())
-        {
-            timedOut = true;
+            return false;
+
+        auto wait = waitForLoopActivity(loop, (int) deadline.remaining().count);
+
+        if (wait == WaitResult::TimedOut)
+            return false;
+
+        if (wait == WaitResult::Failed)
             break;
-        }
-
-        auto remaining = deadline.remaining().count;
-
-        runSourcePrepares(loop);
-
-        auto fds = buildPollSet(loop);
-        auto r = waitForLoopActivity(fds, (int) remaining);
-
-        if (r < 0)
-        {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (r == 0)
-        {
-            timedOut = true;
-            break;
-        }
-
-        loop.waker.drain();
-        dispatchReadySources(loop, fds);
-        drainPending(loop);
     }
 
-    return !timedOut;
+    return true;
 }
 
 void EventLoop::quit()
@@ -230,6 +319,11 @@ void EventLoop::quit()
     auto& loop = getLoop();
     loop.running = false;
     loop.waker.wake();
+}
+
+void stopEventLoop()
+{
+    getEventLoop().quit();
 }
 
 void EventLoop::call(Callback func)
@@ -254,9 +348,10 @@ void addLoopSource(int fd, short events, Callback callback, Callback prepare)
 
         loop.sources.add(
             LoopSource {fd, events, std::move(callback), std::move(prepare)});
+
+        watchLoopFd(loop.epollFd, fd, events);
     }
 
-    // The pump may be blocked in poll() over a set without this descriptor.
     loop.waker.wake();
 }
 
@@ -272,6 +367,8 @@ void removeLoopSource(int fd)
     {
         auto lock = std::lock_guard(loop.sourceMutex);
 
+        unwatchLoopFd(loop.epollFd, fd);
+
         loop.sources.removeIndexesMatching([fd](const LoopSource& source)
                                            { return source.fd == fd; });
     }
@@ -286,7 +383,17 @@ void scheduleStartup(const Callback& func)
 
 bool isEventLoopRunning()
 {
-    return getLoop().running.load();
+    auto& loop = getLoop();
+    return loop.running.load() || loop.hosted.load();
+}
+
+void attachCurrentThreadAsMain()
+{
+    initMainThread();
+
+    auto& loop = getLoop();
+    loop.hosted = true;
+    loop.waker.wake();
 }
 
 // The Linux loop is per-copy (no process-global pump to reach into yet);

@@ -1,15 +1,14 @@
 #pragma once
 
+#include "LinuxInput-Linux.h"
 #include "WaylandDisplay-Linux.h"
-
-#include "../View/View.h"
-
-#include <xkbcommon/xkbcommon.h>
 
 #include <memory>
 
-// wl_seat, translated into the events View.h already knows about. Every entry
-// point tolerates there being no seat: a headless Weston advertises none.
+// wl_seat, translated into the events View.h already knows about. The protocol
+// only: what the seat's events mean is in LinuxInput-Linux.h, and shared with
+// every other Linux backend. Every entry point tolerates there being no seat:
+// a headless Weston advertises none.
 
 struct wl_cursor_theme;
 
@@ -43,7 +42,7 @@ public:
 
     // Null and {} until a pointer has entered something.
     WaylandWindowSurface* getPointerWindow() const { return pointerWindow; }
-    Point getPointerPosition() const { return pointerPosition; }
+    Point getPointerPosition() const { return pointerState.getPosition(); }
 
     void refreshCursor();
 
@@ -54,8 +53,6 @@ public:
     void surfaceDestroyed(wl_surface* surface);
 
 private:
-    struct Repeat;
-
     void bindPointer();
     void bindKeyboard();
     void releasePointer();
@@ -97,8 +94,6 @@ private:
 
     void setKeyboardFocus(WaylandWindowSurface* window);
     void deliverKey(uint32_t evdevCode, bool down, bool repeat);
-    void startRepeat(uint32_t evdevCode);
-    void stopRepeat();
 
     friend struct WaylandSeatDispatch;
 
@@ -110,14 +105,12 @@ private:
 
     wl_cursor_theme* cursorTheme = nullptr;
     wl_surface* cursorSurface = nullptr;
-    MouseCursor cursorShape = MouseCursor::Default;
-    bool cursorHidden = false;
+    CursorTracker cursor;
 
-    // pointerPosition is already in pointerWindow's content points.
+    // The tracker's position is already in pointerWindow's content points.
     wl_surface* pointerSurface = nullptr;
     WaylandWindowSurface* pointerWindow = nullptr;
-    Point pointerPosition;
-    Point pointerDownPosition;
+    PointerTracker pointerState;
     uint32_t pointerEnterSerial = 0;
     uint32_t lastPointerSerial = 0;
     uint32_t pointerTime = 0;
@@ -130,22 +123,8 @@ private:
     Point rawDelta;
     bool hasRawDelta = false;
 
-    bool buttonHeld = false;
-    MouseButton heldButton = MouseButton::Left;
-
-    int clickCount = 0;
-    uint32_t lastClickTime = 0;
-    MouseButton lastClickButton = MouseButton::Left;
-    Point lastClickPosition;
-
     // One wl_pointer.frame's worth, dispatched when the frame closes.
-    Point wheelDelta;
-    Point wheelNotches;
-    bool hasWheelNotches = false;
-    bool wheelPending = false;
-    bool wheelPrecise = false;
-    bool wheelIsGesture = false;
-    bool wheelStopped = false;
+    WheelTracker wheel;
     uint32_t wheelTime = 0;
 
     zwp_locked_pointer_v1* lockedPointer = nullptr;
@@ -156,18 +135,7 @@ private:
     uint32_t keyTime = 0;
     uint32_t keyboardSerial = 0;
 
-    xkb_context* xkbContext = nullptr;
-    xkb_keymap* keymap = nullptr;
-
-    // The plain state never gets the compositor's modifiers.
-    xkb_state* xkbState = nullptr;
-    xkb_state* xkbPlainState = nullptr;
-
-    Vector<uint32_t> pressedCodes;
-
-    int repeatRateHz = 0;
-    Time::MS repeatDelay {0};
-    uint64_t repeatGeneration = 0;
-    std::unique_ptr<Repeat> repeatState;
+    XkbKeyboardState keyboardState;
+    KeyRepeat repeat;
 };
 } // namespace eacp::Graphics

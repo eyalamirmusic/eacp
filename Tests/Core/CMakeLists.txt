@@ -55,9 +55,12 @@ if (APPLE AND NOT IOS)
     list(APPEND core_test_sources AppTerminationTests.cpp)
 endif ()
 
-# Threads::addLoopSource lives in EventLoop-Linux.h and nowhere else.
+# Threads::addLoopSource and the hosted pump live in EventLoop-Linux.h and
+# nowhere else.
 if (LINUX)
-    list(APPEND core_test_sources EventLoopSourceTests-Linux.cpp)
+    list(APPEND core_test_sources
+            EventLoopSourceTests-Linux.cpp
+            HostedLoopTests-Linux.cpp)
 endif ()
 
 nano_add_executable(CoreTests

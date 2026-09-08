@@ -230,7 +230,7 @@ WaylandClipboard::WaylandClipboard(WaylandDisplay& displayToUse)
     backend.getText = [this] { return getText(); };
     backend.hasText = [this] { return hasText(); };
 
-    Clipboard::setBackend(std::move(backend));
+    linuxInstallClipboard(LinuxWindowSystem::Wayland, std::move(backend));
 
     // Eagerly, before anything else on this connection asks for one.
     ensureDevice();
@@ -238,7 +238,7 @@ WaylandClipboard::WaylandClipboard(WaylandDisplay& displayToUse)
 
 WaylandClipboard::~WaylandClipboard()
 {
-    Clipboard::clearBackend();
+    linuxClearClipboard(LinuxWindowSystem::Wayland);
 
     destroySource();
     destroyOffers();

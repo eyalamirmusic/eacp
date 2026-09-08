@@ -34,9 +34,11 @@ void stopEventLoop();
 // statically linked into a dlopen-hosted plugin: the host owns the loop, so
 // call this once on the host's UI thread (creating a Window or EmbeddedView
 // does it implicitly) and the host's own pump then drives this copy's async
-// callbacks and timers. Idempotent. A no-op where the main run loop is a
-// process singleton (macOS/Linux) — there callAsync already reaches the
-// host's loop without any setup.
+// callbacks and timers. Idempotent. A no-op on macOS, where the main run loop
+// is a process singleton and callAsync already reaches the host's loop without
+// any setup; on Linux the loop is per-copy, so this is what makes callAsync
+// reach a pump — the host drives it through getEventLoopFd()/pumpEventLoop()
+// (EventLoop-Linux.h).
 void attachCurrentThreadAsMain();
 
 // Stops the process's root run loop, provided an eacp copy is running it —

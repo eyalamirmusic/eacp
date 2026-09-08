@@ -1,19 +1,14 @@
 #include "WaylandInput-Linux.h"
 
 #include "../Graphics/Keyboard-Linux.h"
-#include "../View/WaylandViewSurface-Linux.h"
+#include "LinuxWindowSurface-Linux.h"
 
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Environment.h>
 
 #include <wayland-cursor.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdlib>
-#include <cstring>
-#include <linux/input-event-codes.h>
-#include <span>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -24,84 +19,12 @@ namespace eacp::Graphics
 {
 namespace
 {
-// No Wayland event carries a click count, so this is the framework's own
-// figure: 400ms is what X11, GTK and Qt all default to.
-constexpr uint32_t waylandDoubleClickIntervalMs = 400;
-constexpr float waylandDoubleClickSlopPoints = 5.f;
-
 // No protocol event carries a cursor size; XCURSOR_SIZE is the convention.
 constexpr int waylandDefaultCursorSize = 24;
 
 float waylandFixedToFloat(wl_fixed_t value)
 {
     return (float) wl_fixed_to_double(value);
-}
-
-double waylandTimestamp(uint32_t milliseconds)
-{
-    // Seconds since an arbitrary origin; only differences are meaningful.
-    return (double) milliseconds / 1000.0;
-}
-
-MouseButton waylandButtonFromEvdev(uint32_t code)
-{
-    switch (code)
-    {
-        case BTN_LEFT:
-            return MouseButton::Left;
-        case BTN_RIGHT:
-            return MouseButton::Right;
-        case BTN_MIDDLE:
-            return MouseButton::Middle;
-        default:
-            return MouseButton::Other;
-    }
-}
-
-// Most likely name first; a theme with none of them falls back to the arrow.
-std::span<const char* const> waylandCursorNames(MouseCursor cursor)
-{
-    static const char* const arrow[] = {"left_ptr", "default", "arrow"};
-    static const char* const iBeam[] = {"xterm", "text", "ibeam"};
-    static const char* const hand[] = {"hand2", "pointer", "hand1"};
-    static const char* const leftRight[] = {
-        "sb_h_double_arrow", "ew-resize", "col-resize"};
-    static const char* const upDown[] = {
-        "sb_v_double_arrow", "ns-resize", "row-resize"};
-    static const char* const crosshair[] = {"crosshair", "cross"};
-
-    switch (cursor)
-    {
-        case MouseCursor::IBeam:
-            return iBeam;
-        case MouseCursor::PointingHand:
-            return hand;
-        case MouseCursor::ResizeLeftRight:
-            return leftRight;
-        case MouseCursor::ResizeUpDown:
-            return upDown;
-        case MouseCursor::Crosshair:
-            return crosshair;
-        case MouseCursor::Default:
-        default:
-            return arrow;
-    }
-}
-
-std::string waylandUtf8ForKey(xkb_state* state, uint32_t xkbCode)
-{
-    if (state == nullptr)
-        return {};
-
-    auto size = xkb_state_key_get_utf8(state, xkbCode, nullptr, 0);
-
-    if (size <= 0)
-        return {};
-
-    auto text = std::string((size_t) size, '\0');
-    xkb_state_key_get_utf8(state, xkbCode, text.data(), (size_t) size + 1);
-
-    return text;
 }
 
 bool waylandProxySupports(void* proxy, int since)
@@ -112,15 +35,6 @@ bool waylandProxySupports(void* proxy, int since)
     return (int) wl_proxy_get_version(static_cast<wl_proxy*>(proxy)) >= since;
 }
 } // namespace
-
-// repeat_info is a delay then a rate; Timer has one interval, so the delay is
-// a callAfter. `generation` stops a stale one starting a repeat.
-struct WaylandInput::Repeat
-{
-    uint32_t code = 0;
-    uint64_t generation = 0;
-    std::unique_ptr<Threads::Timer> timer;
-};
 
 struct WaylandSeatDispatch
 {
@@ -317,26 +231,14 @@ const zwp_relative_pointer_v1_listener WaylandSeatDispatch::relativePointerListe
 WaylandInput::WaylandInput(WaylandDisplay& displayToUse)
     : display(displayToUse)
 {
-    xkbContext = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    repeat.onRepeat = [this](uint32_t code) { deliverKey(code, true, true); };
 }
 
 WaylandInput::~WaylandInput()
 {
-    stopRepeat();
+    repeat.stop();
     disengageMouseLock();
     releaseSeat();
-
-    if (xkbPlainState != nullptr)
-        xkb_state_unref(xkbPlainState);
-
-    if (xkbState != nullptr)
-        xkb_state_unref(xkbState);
-
-    if (keymap != nullptr)
-        xkb_keymap_unref(keymap);
-
-    if (xkbContext != nullptr)
-        xkb_context_unref(xkbContext);
 
     if (cursorSurface != nullptr)
         wl_surface_destroy(cursorSurface);
@@ -433,9 +335,9 @@ void WaylandInput::bindKeyboard()
 
 void WaylandInput::releaseKeyboard()
 {
-    stopRepeat();
+    repeat.stop();
     setKeyboardFocus(nullptr);
-    pressedCodes.clear();
+    keyboardState.clearPressed();
 
     if (keyboard != nullptr)
     {
@@ -463,15 +365,15 @@ void WaylandInput::pointerEntered(uint32_t serial,
     // the view's origin is added back on to reach window content points.
     auto local = Point {waylandFixedToFloat(x), waylandFixedToFloat(y)};
     auto origin =
-        target.view != nullptr ? waylandViewOriginInWindow(*target.view) : Point {};
+        target.view != nullptr ? linuxViewOriginInWindow(*target.view) : Point {};
 
-    pointerPosition = {local.x + origin.x, local.y + origin.y};
+    pointerState.setPosition({local.x + origin.x, local.y + origin.y});
 
     // Crossing from the toplevel onto one of its subsurfaces is not an exit.
     if (leavingWindow == pointerWindow)
         leavingWindow = nullptr;
 
-    cursorHidden = false;
+    cursor.setHidden(false);
     applyCursor();
 
     pendingMove = true;
@@ -501,13 +403,15 @@ void WaylandInput::pointerMoved(uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
     auto target = display.findSurface(pointerSurface);
     auto origin =
-        target.view != nullptr ? waylandViewOriginInWindow(*target.view) : Point {};
+        target.view != nullptr ? linuxViewOriginInWindow(*target.view) : Point {};
 
     auto moved =
         Point {waylandFixedToFloat(x) + origin.x, waylandFixedToFloat(y) + origin.y};
 
-    pendingMoveDelta = {moved.x - pointerPosition.x, moved.y - pointerPosition.y};
-    pointerPosition = moved;
+    auto previous = pointerState.getPosition();
+
+    pendingMoveDelta = {moved.x - previous.x, moved.y - previous.y};
+    pointerState.setPosition(moved);
     pendingMove = true;
     pointerTime = time;
 
@@ -542,40 +446,23 @@ void WaylandInput::pointerButtonChanged(uint32_t serial,
     if (pointerWindow == nullptr || pointerWindow->contentView == nullptr)
         return;
 
-    auto button = waylandButtonFromEvdev(code);
-
     auto event = MouseEvent {};
-    event.pos = pointerPosition;
-    event.button = button;
+    event.pos = pointerState.getPosition();
+    event.button = linuxButtonFromEvdev(code);
     event.modifiers = getModifiers();
-    event.timestamp = waylandTimestamp(time);
+    event.timestamp = linuxTimestamp(time);
 
     if (pressed)
     {
-        auto near = std::abs(pointerPosition.x - lastClickPosition.x)
-                        <= waylandDoubleClickSlopPoints
-                    && std::abs(pointerPosition.y - lastClickPosition.y)
-                           <= waylandDoubleClickSlopPoints;
-        auto soon = time - lastClickTime <= waylandDoubleClickIntervalMs;
-
-        clickCount =
-            (near && soon && button == lastClickButton) ? clickCount + 1 : 1;
-        lastClickTime = time;
-        lastClickButton = button;
-        lastClickPosition = pointerPosition;
-
-        buttonHeld = true;
-        heldButton = button;
-        pointerDownPosition = pointerPosition;
-
         event.type = MouseEventType::Down;
-        event.clickCount = clickCount;
+        event.clickCount = pointerState.pressed(event.button, time);
     }
     else
     {
-        buttonHeld = false;
+        pointerState.released();
+
         event.type = MouseEventType::Up;
-        event.clickCount = clickCount;
+        event.clickCount = pointerState.getClickCount();
     }
 
     dispatchMouse(event);
@@ -585,11 +472,10 @@ void WaylandInput::pointerAxis(uint32_t time, uint32_t axis, float value)
 {
     // Wayland's axis is positive downwards; MouseEvent::delta is not.
     if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
-        wheelDelta.y -= value;
+        wheel.addDelta({0.f, -value});
     else
-        wheelDelta.x -= value;
+        wheel.addDelta({-value, 0.f});
 
-    wheelPending = true;
     wheelTime = time;
 }
 
@@ -597,25 +483,21 @@ void WaylandInput::pointerAxis(uint32_t time, uint32_t axis, float value)
 void WaylandInput::pointerAxisNotches(uint32_t axis, float notches)
 {
     if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
-        wheelNotches.y -= notches;
+        wheel.addNotches({0.f, -notches});
     else
-        wheelNotches.x -= notches;
-
-    hasWheelNotches = true;
-    wheelPending = true;
+        wheel.addNotches({-notches, 0.f});
 }
 
 void WaylandInput::pointerAxisSource(uint32_t source)
 {
-    wheelPrecise = source == WL_POINTER_AXIS_SOURCE_FINGER
-                   || source == WL_POINTER_AXIS_SOURCE_CONTINUOUS;
-    wheelIsGesture = source == WL_POINTER_AXIS_SOURCE_FINGER;
+    wheel.setSource(source == WL_POINTER_AXIS_SOURCE_FINGER
+                        || source == WL_POINTER_AXIS_SOURCE_CONTINUOUS,
+                    source == WL_POINTER_AXIS_SOURCE_FINGER);
 }
 
 void WaylandInput::pointerAxisStopped()
 {
-    wheelStopped = true;
-    wheelPending = true;
+    wheel.setStopped();
 }
 
 // In the order a view expects: the exit, then the move, then the wheel.
@@ -627,7 +509,7 @@ void WaylandInput::endPointerFrame()
         {
             auto event = MouseEvent {};
             event.type = MouseEventType::Exited;
-            event.pos = pointerPosition;
+            event.pos = pointerState.getPosition();
             event.modifiers = getModifiers();
 
             leavingWindow->contentView->dispatchMouseEvent(event);
@@ -639,17 +521,18 @@ void WaylandInput::endPointerFrame()
     if (pendingMove && pointerWindow != nullptr)
     {
         auto event = MouseEvent {};
-        event.pos = pointerPosition;
+        event.pos = pointerState.getPosition();
         event.delta = pendingMoveDelta;
         event.rawDelta = hasRawDelta ? rawDelta : pendingMoveDelta;
-        event.button = heldButton;
+        event.button = pointerState.getHeldButton();
         event.modifiers = getModifiers();
-        event.clickCount = clickCount;
-        event.timestamp = waylandTimestamp(pointerTime);
+        event.clickCount = pointerState.getClickCount();
+        event.timestamp = linuxTimestamp(pointerTime);
 
         // Only Dragged and Up go to the view that captured the mouse down; a
         // plain Moved is re-hit-tested, and would lose a grab in progress.
-        event.type = buttonHeld ? MouseEventType::Dragged : MouseEventType::Moved;
+        event.type = pointerState.isButtonHeld() ? MouseEventType::Dragged
+                                                 : MouseEventType::Moved;
 
         dispatchMouse(event);
         refreshCursor();
@@ -665,41 +548,31 @@ void WaylandInput::endPointerFrame()
 
 void WaylandInput::dispatchWheel()
 {
-    if (!wheelPending)
-    {
-        wheelStopped = false;
+    if (!wheel.isPending())
         return;
-    }
 
-    wheelPending = false;
+    auto event = MouseEvent {};
+    event.type = MouseEventType::Wheel;
+    event.pos = pointerState.getPosition();
+    event.downPos = event.pos;
+    event.modifiers = getModifiers();
+    event.preciseScrolling = wheel.isPrecise();
+    event.timestamp = linuxTimestamp(wheelTime);
+    event.delta = wheel.getDelta();
 
-    if (pointerWindow != nullptr && pointerWindow->contentView != nullptr)
-    {
-        auto event = MouseEvent {};
-        event.type = MouseEventType::Wheel;
-        event.pos = pointerPosition;
-        event.downPos = pointerPosition;
-        event.modifiers = getModifiers();
-        event.preciseScrolling = wheelPrecise;
-        event.timestamp = waylandTimestamp(wheelTime);
+    if (wheel.isGesture())
+        event.scrollPhase =
+            wheel.hasStopped() ? ScrollPhase::Ended : ScrollPhase::Changed;
 
-        // Lines for a notched wheel, points for a trackpad.
-        event.delta = (!wheelPrecise && hasWheelNotches) ? wheelNotches : wheelDelta;
+    wheel.endFrame();
 
-        if (wheelIsGesture)
-            event.scrollPhase =
-                wheelStopped ? ScrollPhase::Ended : ScrollPhase::Changed;
+    if (pointerWindow == nullptr || pointerWindow->contentView == nullptr)
+        return;
 
-        auto empty = event.delta.x == 0.f && event.delta.y == 0.f;
+    auto empty = event.delta.x == 0.f && event.delta.y == 0.f;
 
-        if (!empty || event.scrollPhase == ScrollPhase::Ended)
-            pointerWindow->contentView->dispatchMouseEvent(event);
-    }
-
-    wheelDelta = {};
-    wheelNotches = {};
-    hasWheelNotches = false;
-    wheelStopped = false;
+    if (!empty || event.scrollPhase == ScrollPhase::Ended)
+        pointerWindow->contentView->dispatchMouseEvent(event);
 }
 
 void WaylandInput::dispatchMouse(MouseEvent event)
@@ -707,8 +580,9 @@ void WaylandInput::dispatchMouse(MouseEvent event)
     if (pointerWindow == nullptr || pointerWindow->contentView == nullptr)
         return;
 
-    event.downPos =
-        event.type == MouseEventType::Wheel ? event.pos : pointerDownPosition;
+    event.downPos = event.type == MouseEventType::Wheel
+                        ? event.pos
+                        : pointerState.getDownPosition();
 
     pointerWindow->contentView->dispatchMouseEvent(event);
 }
@@ -719,16 +593,12 @@ void WaylandInput::refreshCursor()
         return;
 
     auto* contentView = pointerWindow->contentView;
-    auto* hit = contentView->hitTest(pointerPosition);
+    auto* hit = contentView->hitTest(pointerState.getPosition());
     auto shape =
         hit != nullptr ? hit->getMouseCursor() : contentView->getMouseCursor();
 
-    if (shape == cursorShape && !cursorHidden)
-        return;
-
-    cursorShape = shape;
-    cursorHidden = false;
-    applyCursor();
+    if (cursor.setShape(shape))
+        applyCursor();
 }
 
 void WaylandInput::applyCursor()
@@ -736,7 +606,7 @@ void WaylandInput::applyCursor()
     if (pointer == nullptr)
         return;
 
-    if (cursorHidden)
+    if (cursor.isHidden())
     {
         wl_pointer_set_cursor(pointer, pointerEnterSerial, nullptr, 0, 0);
         return;
@@ -745,20 +615,20 @@ void WaylandInput::applyCursor()
     if (cursorTheme == nullptr || cursorSurface == nullptr)
         return;
 
-    wl_cursor* cursor = nullptr;
+    wl_cursor* shape = nullptr;
 
-    for (const auto* name: waylandCursorNames(cursorShape))
+    for (const auto* name: linuxCursorNames(cursor.getShape()))
     {
-        cursor = wl_cursor_theme_get_cursor(cursorTheme, name);
+        shape = wl_cursor_theme_get_cursor(cursorTheme, name);
 
-        if (cursor != nullptr)
+        if (shape != nullptr)
             break;
     }
 
-    if (cursor == nullptr || cursor->image_count == 0)
+    if (shape == nullptr || shape->image_count == 0)
         return;
 
-    auto* image = cursor->images[0];
+    auto* image = shape->images[0];
     auto* buffer = wl_cursor_image_get_buffer(image);
 
     if (buffer == nullptr)
@@ -789,7 +659,8 @@ void WaylandInput::updateMouseLock(WaylandWindowSurface& window)
 // A compositor without pointer-constraints is not an error.
 void WaylandInput::engageMouseLock(WaylandWindowSurface& window)
 {
-    if (lockedPointer != nullptr || pointer == nullptr || window.surface == nullptr)
+    if (lockedPointer != nullptr || pointer == nullptr
+        || window.getSurface() == nullptr)
         return;
 
     auto* constraints = display.getPointerConstraints();
@@ -799,14 +670,14 @@ void WaylandInput::engageMouseLock(WaylandWindowSurface& window)
 
     lockedPointer = zwp_pointer_constraints_v1_lock_pointer(
         constraints,
-        window.surface,
+        window.getSurface(),
         pointer,
         nullptr,
         ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
 
     lockedWindow = &window;
 
-    cursorHidden = true;
+    cursor.setHidden(true);
     applyCursor();
 }
 
@@ -820,16 +691,13 @@ void WaylandInput::disengageMouseLock()
 
     lockedWindow = nullptr;
 
-    if (cursorHidden)
-    {
-        cursorHidden = false;
+    if (cursor.setHidden(false))
         applyCursor();
-    }
 }
 
 void WaylandInput::keymapArrived(uint32_t format, int32_t fd, uint32_t size)
 {
-    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 || xkbContext == nullptr)
+    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1)
     {
         ::close(fd);
         return;
@@ -843,29 +711,10 @@ void WaylandInput::keymapArrived(uint32_t format, int32_t fd, uint32_t size)
         return;
     }
 
-    auto* newKeymap = xkb_keymap_new_from_string(xkbContext,
-                                                 static_cast<const char*>(text),
-                                                 XKB_KEYMAP_FORMAT_TEXT_V1,
-                                                 XKB_KEYMAP_COMPILE_NO_FLAGS);
+    keyboardState.setKeymapFromText(static_cast<const char*>(text));
 
     ::munmap(text, size);
     ::close(fd);
-
-    if (newKeymap == nullptr)
-        return;
-
-    if (xkbPlainState != nullptr)
-        xkb_state_unref(xkbPlainState);
-
-    if (xkbState != nullptr)
-        xkb_state_unref(xkbState);
-
-    if (keymap != nullptr)
-        xkb_keymap_unref(keymap);
-
-    keymap = newKeymap;
-    xkbState = xkb_state_new(keymap);
-    xkbPlainState = xkb_state_new(keymap);
 }
 
 void WaylandInput::keyboardEntered(uint32_t serial,
@@ -875,7 +724,7 @@ void WaylandInput::keyboardEntered(uint32_t serial,
     auto target = display.findSurface(surface);
 
     keyboardSerial = serial;
-    pressedCodes.clear();
+    keyboardState.clearPressed();
 
     if (keys != nullptr)
     {
@@ -883,7 +732,7 @@ void WaylandInput::keyboardEntered(uint32_t serial,
         auto count = keys->size / sizeof(uint32_t);
 
         for (size_t i = 0; i < count; ++i)
-            pressedCodes.add(codes[i]);
+            keyboardState.setPressed(codes[i], true);
     }
 
     setKeyboardFocus(target.window);
@@ -891,11 +740,11 @@ void WaylandInput::keyboardEntered(uint32_t serial,
 
 void WaylandInput::keyboardLeft()
 {
-    stopRepeat();
+    repeat.stop();
 
     // The matching key-ups go to whoever took focus, so a state kept across
     // the change would report keys stuck down forever.
-    pressedCodes.clear();
+    keyboardState.clearPressed();
 
     setKeyboardFocus(nullptr);
 }
@@ -936,23 +785,14 @@ void WaylandInput::keyChanged(uint32_t serial,
     keyboardSerial = serial;
     keyTime = time;
 
-    if (pressed)
-    {
-        if (!pressedCodes.contains(code))
-            pressedCodes.add(code);
-    }
-    else
-    {
-        pressedCodes.removeAllMatches(code);
-    }
+    keyboardState.setPressed(code, pressed);
 
     deliverKey(code, pressed, false);
 
-    if (pressed && keymap != nullptr
-        && xkb_keymap_key_repeats(keymap, code + 8) != 0)
-        startRepeat(code);
-    else if (!pressed && repeatState != nullptr && repeatState->code == code)
-        stopRepeat();
+    if (pressed && keyboardState.keyRepeats(code))
+        repeat.start(code);
+    else if (!pressed)
+        repeat.stopFor(code);
 }
 
 void WaylandInput::modifiersChanged(uint32_t depressed,
@@ -960,36 +800,27 @@ void WaylandInput::modifiersChanged(uint32_t depressed,
                                     uint32_t locked,
                                     uint32_t group)
 {
-    if (xkbState != nullptr)
-        xkb_state_update_mask(xkbState, depressed, latched, locked, 0, 0, group);
-
-    // The plain state follows the layout group and nothing else.
-    if (xkbPlainState != nullptr)
-        xkb_state_update_mask(xkbPlainState, 0, 0, 0, 0, 0, group);
+    keyboardState.setModifiers(depressed, latched, locked, group);
 }
 
 void WaylandInput::repeatInfoChanged(int32_t rate, int32_t delay)
 {
-    repeatRateHz = rate;
-    repeatDelay = Time::MS {(int64_t) std::max(delay, 0)};
-
-    if (rate <= 0)
-        stopRepeat();
+    repeat.setRate(rate, Time::MS {(int64_t) std::max(delay, 0)});
 }
 
-void WaylandInput::deliverKey(uint32_t code, bool down, bool repeat)
+void WaylandInput::deliverKey(uint32_t code, bool down, bool isRepeat)
 {
     if (keyboardWindow == nullptr || keyboardWindow->contentView == nullptr)
         return;
 
     auto event = KeyEvent {};
-    event.keyCode = waylandKeyCodeFromEvdev(code);
+    event.keyCode = linuxKeyCodeFromEvdev(code);
     event.type = down ? KeyEventType::Down : KeyEventType::Up;
     event.modifiers = getModifiers();
-    event.isRepeat = repeat;
-    event.timestamp = waylandTimestamp(keyTime);
-    event.characters = waylandUtf8ForKey(xkbState, code + 8);
-    event.charactersIgnoringModifiers = waylandUtf8ForKey(xkbPlainState, code + 8);
+    event.isRepeat = isRepeat;
+    event.timestamp = linuxTimestamp(keyTime);
+    event.characters = keyboardState.textForKey(code);
+    event.charactersIgnoringModifiers = keyboardState.plainTextForKey(code);
 
     if (down)
         keyboardWindow->contentView->keyDown(event);
@@ -997,69 +828,24 @@ void WaylandInput::deliverKey(uint32_t code, bool down, bool repeat)
         keyboardWindow->contentView->keyUp(event);
 }
 
-void WaylandInput::startRepeat(uint32_t code)
-{
-    stopRepeat();
-
-    if (repeatRateHz <= 0)
-        return;
-
-    repeatState = std::make_unique<Repeat>();
-    repeatState->code = code;
-    repeatState->generation = ++repeatGeneration;
-
-    auto generation = repeatState->generation;
-
-    Threads::callAfter(
-        repeatDelay,
-        [this, generation, code]
-        {
-            if (repeatState == nullptr || repeatState->generation != generation)
-                return;
-
-            repeatState->timer = std::make_unique<Threads::Timer>(
-                [this, code] { deliverKey(code, true, true); }, repeatRateHz);
-        });
-}
-
-void WaylandInput::stopRepeat()
-{
-    // Bumped, so a stale callAfter finds a generation it does not recognise.
-    ++repeatGeneration;
-    repeatState.reset();
-}
-
 bool WaylandInput::isKeyPressed(uint32_t evdevCode) const
 {
-    return pressedCodes.contains(evdevCode);
+    return keyboardState.isPressed(evdevCode);
 }
 
 Vector<uint32_t> WaylandInput::getPressedCodes() const
 {
-    return pressedCodes;
+    return keyboardState.getPressedCodes();
 }
 
 ModifierKeys WaylandInput::getModifiers() const
 {
-    if (xkbState == nullptr)
-        return {};
-
-    auto active = [this](const char* name)
-    {
-        return xkb_state_mod_name_is_active(xkbState, name, XKB_STATE_MODS_EFFECTIVE)
-               > 0;
-    };
-
-    // Super/Logo stands in for Command, as the Windows key does on Windows.
-    return {active(XKB_MOD_NAME_SHIFT),
-            active(XKB_MOD_NAME_CTRL),
-            active(XKB_MOD_NAME_ALT),
-            active(XKB_MOD_NAME_LOGO)};
+    return keyboardState.getModifiers();
 }
 
 std::string WaylandInput::characterForCode(uint32_t evdevCode) const
 {
-    return waylandUtf8ForKey(xkbPlainState, evdevCode + 8);
+    return keyboardState.plainTextForKey(evdevCode);
 }
 
 void WaylandInput::windowDestroyed(WaylandWindowSurface& window)
@@ -1069,8 +855,8 @@ void WaylandInput::windowDestroyed(WaylandWindowSurface& window)
 
     if (keyboardWindow == &window)
     {
-        stopRepeat();
-        pressedCodes.clear();
+        repeat.stop();
+        keyboardState.clearPressed();
         keyboardWindow = nullptr;
     }
 

@@ -89,8 +89,8 @@ struct GPUView::Native
             render();
     }
 
-    // Fires before the wl_surface is torn down: a swapchain that outlives it is
-    // a use-after-free inside the driver.
+    // Fires before the native surface is torn down: a swapchain that outlives
+    // it is a use-after-free inside the driver.
     void surfaceLost()
     {
         destroySwapchain();
@@ -113,7 +113,7 @@ struct GPUView::Native
 
     float surfaceScale() const
     {
-        if (record.surface != nullptr && record.scale > 0.f)
+        if (record.handle.isValid() && record.scale > 0.f)
             return record.scale;
 
         return Graphics::linuxDefaultBackingScale;
@@ -205,13 +205,14 @@ struct GPUView::Native
         if (vkSurface != VK_NULL_HANDLE)
             return true;
 
-        if (record.display == nullptr || record.surface == nullptr)
+        // One branch per window system, and nothing below this cares which.
+        if (record.handle.kind != Graphics::NativeSurfaceHandle::Kind::Wayland)
             return false;
 
         VkWaylandSurfaceCreateInfoKHR info = {};
         info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-        info.display = record.display;
-        info.surface = record.surface;
+        info.display = static_cast<wl_display*>(record.handle.connection);
+        info.surface = static_cast<wl_surface*>(record.handle.surface);
 
         if (vkCreateWaylandSurfaceKHR(
                 shared.getInstance(), &info, nullptr, &vkSurface)
@@ -299,7 +300,7 @@ struct GPUView::Native
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    // Wayland answers 0xFFFFFFFF, meaning "you decide": a wl_surface has no
+    // Wayland answers 0xFFFFFFFF, meaning "you decide": its surfaces have no
     // server-side size, so the extent comes from the record.
     VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities) const
     {
@@ -614,7 +615,7 @@ struct GPUView::Native
 
     bool readyToRender()
     {
-        if (deviceLost || record.surface == nullptr)
+        if (deviceLost || !record.handle.isValid())
             return false;
 
         if (!Device::shared().isValid())

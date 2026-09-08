@@ -168,23 +168,47 @@ graphics modules are — `EACP_HAS_DRAW`, `EACP_HAS_GPU` and `EACP_HAS_TEXT` are
 true there exactly as they are on Apple and Windows. `EACP_HAS_CONTEXT` is not:
 there is no 2D backend.
 
-`eacp-graphics` is one process-wide Wayland connection
+`eacp-graphics` is split along a window-system seam so a second backend
+(X11, being added per `plan.md`) can sit beside Wayland. The neutral half:
+`Window/LinuxWindowSystem-Linux.{h,cpp}` decides the preferred backend once
+per copy (`EACP_WINDOW_SYSTEM=wayland|x11` overrides; else a plugin copy —
+`Platform::isDLL()` — takes X11, a standalone app takes Wayland when a
+compositor answers and X11 otherwise; `EACP_HEADLESS=1` gives none) and
+answers the process-wide questions with no window to hang off — the primary
+output's frame, scale and refresh for `Display-Linux.cpp` and
+`DisplayLink-Linux.cpp`, the pointer's window, and clipboard installation for
+the preferred backend alone. `Window/LinuxWindowSurface-Linux.h` is what every
+backend's `Window::Native` derives from (content view, size, scale, mapped,
+focus and connection-lost callbacks, a `NativeSurfaceHandle`, and the
+window's `ViewSurfaceBackend`). `View-Linux.cpp` keeps the per-view records,
+the sync on bounds/visibility/add/remove, deferred repaint and
+origin-in-window, and asks the window's `ViewSurfaceBackend`
+(`View/ViewSurfaceBackend-Linux.h`) for a `ViewSurfaceNative` child that
+knows only how to apply geometry and request a frame; `ViewSurface` in
+`View-Linux.h` carries a tagged `NativeSurfaceHandle` (`Kind::None|Wayland|X11`,
+connection, surface, window id) instead of Wayland pointers.
+`Window/LinuxInput-Linux.{h,cpp}` holds the input state machines that are not
+protocol — xkbcommon keymap/state and the UTF-8 for a key, key repeat, click
+counting and double-click slop, held button and drag origin, wheel
+accumulation, cursor shape — and `Graphics/Keyboard-Linux.h` the
+evdev-to-`KeyCode` table (`linuxKeyCodeFromEvdev`; X11 keycodes are evdev + 8,
+so one table serves both backends).
+
+The Wayland half under it is one process-wide connection
 (`Window/WaylandDisplay-Linux.cpp`: registry, outputs, libdecor context, the
 surface-to-window map, and the loop source that pumps it through
-`Threads::addLoopSource` with a pre-poll flush), a `Window` that is a
+`Threads::addLoopSource` with a pre-poll flush), a `Window::Native` that is a
 `wl_surface` under a libdecor frame with a viewport-stretched shm buffer behind
-the content (`Window-Linux.cpp`), the portable view tree with a `wl_subsurface`
-for every view that asks for one (`View-Linux.cpp` implementing the
-`ViewSurface` contract in `View-Linux.h`), seat input translated through
-xkbcommon into the portable hit-tester with pointer-constraints for mouse lock
-(`Window/WaylandInput-Linux.cpp`), the clipboard as a `wl_data_device` on the
-seat (`Window/WaylandClipboard-Linux.cpp`, installed into `Core`'s `Clipboard`
-through the backend hook in `Core/App/Clipboard-Linux.h` so `eacp-core` links
-no Wayland; a copy needs keyboard focus on one of our windows), a compositor
-disconnect that fires `onLost` on every view surface and leaves the process
-headless, the evdev-to-`KeyCode` table (`Graphics/Keyboard-Linux.h`), `Display`
-from the first output, a `DisplayLink` paced at the output's refresh rate, and
-stubs for image codecs, menus, tray and system appearance.
+the content (`Window-Linux.cpp`), a `wl_subsurface` per presenting view
+(`View/WaylandViewSurface-Linux.cpp`, the Wayland `ViewSurfaceBackend`), seat
+protocol glue feeding the shared state machines with pointer-constraints for
+mouse lock (`Window/WaylandInput-Linux.cpp`), the clipboard as a
+`wl_data_device` on the seat (`Window/WaylandClipboard-Linux.cpp`, installed
+into `Core`'s `Clipboard` through the backend hook in
+`Core/App/Clipboard-Linux.h` so `eacp-core` links no Wayland; a copy needs
+keyboard focus on one of our windows), a compositor disconnect that fires
+`onLost` on every view surface and leaves the process headless, and stubs for
+image codecs, menus, tray and system appearance.
 
 Under it is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
@@ -194,10 +218,11 @@ timeline; rebuilt on resize and `OUT_OF_DATE`; continuous mode paced by
 `wl_surface.frame` callbacks, with `setMaxFps` skipping early ticks rather than
 running a timer), every pipeline built through one `VkPipelineCache` persisted
 under `$XDG_CACHE_HOME/eacp/`, with the off-screen `renderNativeContent` path
-unchanged beside it. The GPU module knows Wayland as two opaque pointers and
-neither links nor includes it. Under `EACP_HEADLESS=1` or with no
-`WAYLAND_DISPLAY` to reach, a window is built with no surface, exactly the
-headless backend this grew out of. Device loss is terminal (no `VkDevice`
+unchanged beside it. The GPU module knows the window system only as the
+`NativeSurfaceHandle` it branches on in `createSurface()` and neither links
+nor includes it. Under `EACP_HEADLESS=1`, with no `WAYLAND_DISPLAY` to reach,
+or when the preferred backend is one that is not implemented yet, a window is
+built with no surface, exactly the headless backend this grew out of. Device loss is terminal (no `VkDevice`
 rebuild; `onDeviceRestored` never fires).
 
 The text half is `Text/GlyphRasterizer-Linux.cpp` on FreeType, HarfBuzz and
@@ -292,7 +317,20 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   eacp's loop without `eacp-core` linking the library that owns it; the
   four-argument overload adds a `prepare` callback run before every `poll()`,
   which is where the Wayland connection flushes its requests and dispatches
-  events another reader left queued
+  events another reader left queued. The loop is one `epoll` instance holding
+  the waker and every source, so the whole copy is a single descriptor
+- `getEventLoopFd()` / `pumpEventLoop()` (`Threads/EventLoop-Linux.h`, Linux
+  only): the hosted loop. A plugin host that owns the process's loop watches
+  the one fd (VST3 `IRunLoop`, CLAP posix-fd) or calls the pump from a timer
+  or idle callback (CLAP timer-support, LV2 `idle`); one pump runs every
+  ready source, every pending `callAsync`/`callAfter`/`Timer`/`DisplayLink`/
+  `Async` delivery and then every `prepare`, never blocks, and is a no-op when
+  re-entered. `run()`/`runFor()` are the same pump behind a `poll()` on the
+  fd, so the standalone loop exercises the hosted one on every tick.
+  `attachCurrentThreadAsMain` is real on Linux (not the `EventLoop-Default`
+  no-op): it makes `isEventLoopRunning` true so deferred work is kept for a
+  pump rather than dropped. No plugin SDK enters eacp; the VST3/CLAP/LV2
+  wrapper lives in the plugin project (`plan.md` D1, D9)
 
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)

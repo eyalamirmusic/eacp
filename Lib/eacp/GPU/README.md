@@ -1310,9 +1310,11 @@ Notes worth having:
 
 `GPUView` asks `Graphics::requestViewSurface` for a `ViewSurface`
 (`Graphics/View/View-Linux.h`) and creates a `VkSurfaceKHR` over the
-`wl_display` and `wl_surface` the window backend reports on it. That record —
-two opaque pointers, a pixel size, a scale and five hooks — is the whole of what
-`eacp-gpu` knows about Wayland: it neither links nor includes libwayland, and
+`NativeSurfaceHandle` the window backend reports on it — a kind tag, a
+connection, a `wl_surface*` or an X11 window id. That record — the handle, a
+pixel size, a scale and five hooks — is the whole of what `eacp-gpu` knows
+about the window system: `createSurface()` branches on the kind and
+everything below it is shared. It neither links nor includes libwayland, and
 `VK_USE_PLATFORM_WAYLAND_KHR` (`CMake/FindVulkanBackend.cmake`, `PUBLIC` so
 `volk.c` sees it too) is what makes `vkCreateWaylandSurfaceKHR` reachable.
 `VK_KHR_surface` + `VK_KHR_wayland_surface` on the instance and

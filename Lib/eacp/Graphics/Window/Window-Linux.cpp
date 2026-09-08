@@ -1,6 +1,6 @@
 #include "Window.h"
 
-#include "../View/WaylandViewSurface-Linux.h"
+#include "LinuxWindowSurface-Linux.h"
 #include "WaylandDisplay-Linux.h"
 #include "WaylandInput-Linux.h"
 
@@ -33,6 +33,8 @@ bool waylandFlagSet(const WindowOptions& options, WindowFlags flag)
 }
 } // namespace
 
+// The Wayland native. Which one a Window gets is
+// linuxPreferredWindowSystem()'s answer, and an X11 one arrives beside this.
 struct Window::Native : WaylandWindowSurface
 {
     Native(const WindowOptions& optionsToUse, WindowEvents& eventsToUse)
@@ -70,7 +72,7 @@ struct Window::Native : WaylandWindowSurface
     ~Native()
     {
         if (contentView != nullptr)
-            waylandUnbindWindowFromContentView(*contentView);
+            linuxUnbindWindowFromContentView(*contentView);
 
         destroyFrame();
 
@@ -79,8 +81,8 @@ struct Window::Native : WaylandWindowSurface
             if (auto* seatInput = connection->getInput())
                 seatInput->windowDestroyed(*this);
 
-            if (surface != nullptr)
-                connection->unregisterSurface(surface);
+            if (getSurface() != nullptr)
+                connection->unregisterSurface(getSurface());
         }
 
         buffer.destroy();
@@ -91,8 +93,8 @@ struct Window::Native : WaylandWindowSurface
         if (viewport != nullptr)
             wp_viewport_destroy(viewport);
 
-        if (surface != nullptr)
-            wl_surface_destroy(surface);
+        if (getSurface() != nullptr)
+            wl_surface_destroy(getSurface());
     }
 
     void createSurface()
@@ -102,7 +104,9 @@ struct Window::Native : WaylandWindowSurface
         if (connection == nullptr || connection->getCompositor() == nullptr)
             return;
 
-        surface = wl_compositor_create_surface(connection->getCompositor());
+        setSurface(wl_compositor_create_surface(connection->getCompositor()));
+
+        auto* surface = getSurface();
 
         if (surface == nullptr)
             return;
@@ -128,7 +132,7 @@ struct Window::Native : WaylandWindowSurface
     {
         auto* connection = waylandDisplay();
 
-        if (frame != nullptr || surface == nullptr || connection == nullptr)
+        if (frame != nullptr || getSurface() == nullptr || connection == nullptr)
             return;
 
         auto* decorations = connection->getDecorations();
@@ -136,7 +140,7 @@ struct Window::Native : WaylandWindowSurface
         if (decorations == nullptr)
             return;
 
-        frame = libdecor_decorate(decorations, surface, &frameListener(), this);
+        frame = libdecor_decorate(decorations, getSurface(), &frameListener(), this);
 
         if (frame == nullptr)
             return;
@@ -222,7 +226,7 @@ struct Window::Native : WaylandWindowSurface
         }
 
         if (contentView != nullptr)
-            waylandWindowSurfaceStateChanged(*contentView);
+            linuxWindowSurfaceStateChanged(*contentView);
     }
 
     void applyConstraints(int& width, int& height) const
@@ -258,6 +262,7 @@ struct Window::Native : WaylandWindowSurface
     void present()
     {
         auto* connection = waylandDisplay();
+        auto* surface = getSurface();
 
         if (surface == nullptr || connection == nullptr)
             return;
@@ -300,13 +305,13 @@ struct Window::Native : WaylandWindowSurface
 
         if (transparent)
         {
-            wl_surface_set_opaque_region(surface, nullptr);
+            wl_surface_set_opaque_region(getSurface(), nullptr);
             return;
         }
 
         auto* region = wl_compositor_create_region(connection->getCompositor());
         wl_region_add(region, 0, 0, width, height);
-        wl_surface_set_opaque_region(surface, region);
+        wl_surface_set_opaque_region(getSurface(), region);
         wl_region_destroy(region);
     }
 
@@ -319,15 +324,15 @@ struct Window::Native : WaylandWindowSurface
 
         contentView->setBounds({0.f, 0.f, contentSize.x, contentSize.y});
 
-        waylandBindWindowToContentView(*contentView, *this);
+        linuxBindWindowToContentView(*contentView, *this);
 
-        if (surface != nullptr)
+        if (getSurface() != nullptr)
             setVisible(true);
     }
 
     void setVisible(bool shouldBeVisible)
     {
-        if (surface == nullptr)
+        if (getSurface() == nullptr)
             return;
 
         if (shouldBeVisible)
@@ -348,13 +353,13 @@ struct Window::Native : WaylandWindowSurface
         mapped = false;
 
         if (contentView != nullptr)
-            waylandWindowSurfaceStateChanged(*contentView);
+            linuxWindowSurfaceStateChanged(*contentView);
 
         destroyFrame();
         setActive(false);
 
-        wl_surface_attach(surface, nullptr, 0, 0);
-        wl_surface_commit(surface);
+        wl_surface_attach(getSurface(), nullptr, 0, 0);
+        wl_surface_commit(getSurface());
         buffer.destroy();
 
         if (auto* connection = waylandDisplay())
@@ -401,7 +406,7 @@ struct Window::Native : WaylandWindowSurface
         mapped = false;
 
         if (contentView != nullptr)
-            waylandWindowSurfaceStateChanged(*contentView);
+            linuxWindowSurfaceStateChanged(*contentView);
 
         destroyFrame();
         setActive(false);
@@ -419,10 +424,10 @@ struct Window::Native : WaylandWindowSurface
             viewport = nullptr;
         }
 
-        if (surface != nullptr)
+        if (getSurface() != nullptr)
         {
-            wl_surface_destroy(surface);
-            surface = nullptr;
+            wl_surface_destroy(getSurface());
+            setSurface(nullptr);
         }
 
         if (wasMapped)
@@ -453,7 +458,7 @@ struct Window::Native : WaylandWindowSurface
 
         // A scale change carries no size with it, so nothing else reports it.
         notifyBackingScaleChanged(*contentView);
-        waylandWindowSurfaceStateChanged(*contentView);
+        linuxWindowSurfaceStateChanged(*contentView);
     }
 
     void setMouseLocked(bool locked)
@@ -587,7 +592,7 @@ void Window::setTitle(const std::string& title)
 // The wl_surface. Null under headless and wherever no compositor was reached.
 void* Window::getHandle()
 {
-    return impl->surface;
+    return impl->getSurface();
 }
 
 void* Window::getContentViewHandle()

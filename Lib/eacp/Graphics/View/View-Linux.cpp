@@ -1,16 +1,13 @@
 #include "View-Linux.h"
 
 #include "View.h"
-#include "WaylandViewSurface-Linux.h"
 #include "../Image/Image.h"
-#include "../Window/WaylandDisplay-Linux.h"
-#include "../Window/WaylandInput-Linux.h"
+#include "../Window/LinuxWindowSurface-Linux.h"
+#include "../Window/LinuxWindowSystem-Linux.h"
 
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
-#include <algorithm>
-#include <cmath>
 #include <memory>
 #include <unordered_map>
 
@@ -18,55 +15,50 @@ namespace eacp::Graphics
 {
 namespace
 {
-struct WaylandViewRecord
+struct LinuxViewRecord
 {
     ViewSurface record;
 
     View* view = nullptr;
-    wl_surface* surface = nullptr;
-    wl_subsurface* subsurface = nullptr;
-    wp_viewport* viewport = nullptr;
-    wl_callback* frameCallback = nullptr;
 
-    // A frame callback only ever arrives after a commit that carried a buffer,
-    // so this is how the surface says it has content to re-commit.
-    bool presented = false;
+    // The window system's child surface; null while the view has none.
+    std::unique_ptr<ViewSurfaceNative> native;
 
     bool repaintPending = false;
 };
 
 // Shared so a deferred repaint can hold a weak reference to it.
-using WaylandViewRecordPtr = std::shared_ptr<WaylandViewRecord>;
+using LinuxViewRecordPtr = std::shared_ptr<LinuxViewRecord>;
 
-std::unordered_map<View*, WaylandViewRecordPtr>& waylandViewRecords()
+std::unordered_map<View*, LinuxViewRecordPtr>& linuxViewRecords()
 {
-    static auto records = std::unordered_map<View*, WaylandViewRecordPtr> {};
+    static auto records = std::unordered_map<View*, LinuxViewRecordPtr> {};
     return records;
 }
 
-std::unordered_map<View*, WaylandWindowSurface*>& waylandContentViewWindows()
+std::unordered_map<View*, LinuxWindowSurface*>& linuxContentViewWindows()
 {
-    static auto windows = std::unordered_map<View*, WaylandWindowSurface*> {};
+    static auto windows = std::unordered_map<View*, LinuxWindowSurface*> {};
     return windows;
 }
 
-WaylandViewRecord* waylandFindViewRecord(View& view)
+LinuxViewRecord* linuxFindViewRecord(View& view)
 {
-    auto& records = waylandViewRecords();
+    auto& records = linuxViewRecords();
     auto found = records.find(&view);
 
     return found == records.end() ? nullptr : found->second.get();
 }
 
-WaylandViewRecordPtr waylandFindViewRecordPtr(View& view)
+LinuxViewRecordPtr linuxFindViewRecordPtr(View& view)
 {
-    auto& records = waylandViewRecords();
+    auto& records = linuxViewRecords();
     auto found = records.find(&view);
 
-    return found == records.end() ? WaylandViewRecordPtr {} : found->second;
+    return found == records.end() ? LinuxViewRecordPtr {} : found->second;
 }
 
-View& waylandRootOf(View& view)
+View& linuxRootOf(View& view)
 {
     auto* root = &view;
 
@@ -76,15 +68,15 @@ View& waylandRootOf(View& view)
     return *root;
 }
 
-WaylandWindowSurface* waylandWindowForView(View& view)
+LinuxWindowSurface* linuxWindowForView(View& view)
 {
-    auto& windows = waylandContentViewWindows();
-    auto found = windows.find(&waylandRootOf(view));
+    auto& windows = linuxContentViewWindows();
+    auto found = windows.find(&linuxRootOf(view));
 
     return found == windows.end() ? nullptr : found->second;
 }
 
-bool waylandEffectivelyVisible(View& view)
+bool linuxEffectivelyVisible(View& view)
 {
     for (auto* node = &view; node != nullptr; node = node->getParent())
         if (!node->isVisible())
@@ -93,205 +85,83 @@ bool waylandEffectivelyVisible(View& view)
     return true;
 }
 
-int waylandRoundToPixels(float points, float scale)
+void linuxCreateViewSurface(LinuxViewRecord& state,
+                            View& view,
+                            LinuxWindowSurface& window)
 {
-    return std::max((int) std::lround(points * scale), 1);
-}
+    state.native = window.viewSurfaces->createSurface(view, state.record);
 
-void waylandFrameDone(void* data, wl_callback* callback, uint32_t)
-{
-    auto& state = *static_cast<WaylandViewRecord*>(data);
-
-    if (state.frameCallback == callback)
-    {
-        wl_callback_destroy(state.frameCallback);
-        state.frameCallback = nullptr;
-    }
-
-    state.record.frameCallbackPending = false;
-    state.presented = true;
-
-    state.record.onFrameDone();
-}
-
-const wl_callback_listener waylandFrameListener {
-    .done = waylandFrameDone,
-};
-
-// wp_viewporter is the only way to express a fractional scale; without it the
-// buffer scale is a whole number. True when the pixel size or scale changed.
-bool waylandApplyViewGeometry(WaylandViewRecord& state,
-                              View& view,
-                              WaylandWindowSurface& window)
-{
-    auto bounds = view.getBounds();
-    auto origin = waylandViewOriginInWindow(view);
-
-    wl_subsurface_set_position(state.subsurface,
-                               (int32_t) std::lround(origin.x),
-                               (int32_t) std::lround(origin.y));
-
-    auto scale = window.scale;
-    auto pixelWidth = 0;
-    auto pixelHeight = 0;
-
-    if (state.viewport != nullptr)
-    {
-        pixelWidth = waylandRoundToPixels(bounds.w, scale);
-        pixelHeight = waylandRoundToPixels(bounds.h, scale);
-
-        wp_viewport_set_destination(state.viewport,
-                                    std::max((int32_t) std::lround(bounds.w), 1),
-                                    std::max((int32_t) std::lround(bounds.h), 1));
-    }
-    else
-    {
-        auto wholeScale = std::max((int) std::lround(scale), 1);
-
-        wl_surface_set_buffer_scale(state.surface, wholeScale);
-
-        pixelWidth = std::max((int) std::lround(bounds.w), 1) * wholeScale;
-        pixelHeight = std::max((int) std::lround(bounds.h), 1) * wholeScale;
-        scale = (float) wholeScale;
-    }
-
-    auto changed = pixelWidth != state.record.pixelWidth
-                   || pixelHeight != state.record.pixelHeight
-                   || scale != state.record.scale;
-
-    state.record.pixelWidth = pixelWidth;
-    state.record.pixelHeight = pixelHeight;
-    state.record.scale = scale;
-
-    // A subsurface's position is applied by its parent's commit, not its own.
-    wl_surface_commit(window.surface);
-
-    return changed;
-}
-
-void waylandCreateViewSurface(WaylandViewRecord& state,
-                              View& view,
-                              WaylandWindowSurface& window)
-{
-    auto* connection = waylandDisplay();
-
-    if (connection == nullptr || connection->getCompositor() == nullptr
-        || connection->getSubcompositor() == nullptr)
+    if (state.native == nullptr)
         return;
 
-    state.surface = wl_compositor_create_surface(connection->getCompositor());
-
-    if (state.surface == nullptr)
-        return;
-
-    state.subsurface = wl_subcompositor_get_subsurface(
-        connection->getSubcompositor(), state.surface, window.surface);
-
-    // Desync, so the presenter's commits do not wait for the window's.
-    wl_subsurface_set_desync(state.subsurface);
-
-    if (auto* viewporter = connection->getViewporter())
-        state.viewport = wp_viewporter_get_viewport(viewporter, state.surface);
-
-    connection->registerSurface({state.surface, &window, &view});
-
-    waylandApplyViewGeometry(state, view, window);
-
-    state.record.display = connection->getDisplay();
-    state.record.surface = state.surface;
     state.record.frameCallbackPending = false;
-
     state.record.onAvailable();
 }
 
-void waylandDestroyViewSurface(WaylandViewRecord& state)
+void linuxDestroyViewSurface(LinuxViewRecord& state)
 {
-    if (state.surface == nullptr)
+    if (state.native == nullptr)
         return;
 
     // First, while everything is still alive: a swapchain outliving the
-    // wl_surface it was made from is a use-after-free inside the driver.
+    // surface it was made from is a use-after-free inside the driver.
     state.record.onLost();
 
-    state.record.display = nullptr;
-    state.record.surface = nullptr;
+    state.native.reset();
+
+    state.record.handle = {};
     state.record.pixelWidth = 0;
     state.record.pixelHeight = 0;
 
     // A callback that will never arrive must not hold the presenter forever.
     state.record.frameCallbackPending = false;
-    state.presented = false;
-
-    if (state.frameCallback != nullptr)
-    {
-        wl_callback_destroy(state.frameCallback);
-        state.frameCallback = nullptr;
-    }
-
-    if (auto* connection = waylandDisplay())
-        connection->unregisterSurface(state.surface);
-
-    if (state.viewport != nullptr)
-    {
-        wp_viewport_destroy(state.viewport);
-        state.viewport = nullptr;
-    }
-
-    if (state.subsurface != nullptr)
-    {
-        wl_subsurface_destroy(state.subsurface);
-        state.subsurface = nullptr;
-    }
-
-    wl_surface_destroy(state.surface);
-    state.surface = nullptr;
 }
 
-void waylandSyncOneViewSurface(View& view)
+void linuxSyncOneViewSurface(View& view)
 {
-    auto* state = waylandFindViewRecord(view);
+    auto* state = linuxFindViewRecord(view);
 
     if (state == nullptr)
         return;
 
-    auto* window = waylandWindowForView(view);
+    auto* window = linuxWindowForView(view);
     auto bounds = view.getBounds();
 
-    auto wanted = window != nullptr && window->mapped && window->surface != nullptr
-                  && waylandEffectivelyVisible(view) && bounds.w > 0.f
-                  && bounds.h > 0.f;
+    auto wanted = window != nullptr && window->mapped
+                  && window->nativeSurface.isValid() && linuxEffectivelyVisible(view)
+                  && bounds.w > 0.f && bounds.h > 0.f;
 
     if (!wanted)
     {
-        waylandDestroyViewSurface(*state);
+        linuxDestroyViewSurface(*state);
         return;
     }
 
-    if (state->surface == nullptr)
+    if (state->native == nullptr)
     {
-        waylandCreateViewSurface(*state, view, *window);
+        linuxCreateViewSurface(*state, view, *window);
         return;
     }
 
-    if (waylandApplyViewGeometry(*state, view, *window))
+    if (state->native->applyGeometry())
         state->record.onResized();
 }
 
-void waylandSyncViewSurfaces(View& view)
+void linuxSyncViewSurfaces(View& view)
 {
-    waylandSyncOneViewSurface(view);
+    linuxSyncOneViewSurface(view);
 
     for (auto* child: view.getSubviews())
-        waylandSyncViewSurfaces(*child);
+        linuxSyncViewSurfaces(*child);
 }
 
-void waylandReleaseViewSurfaceTree(View& view)
+void linuxReleaseViewSurfaceTree(View& view)
 {
-    if (auto* state = waylandFindViewRecord(view))
-        waylandDestroyViewSurface(*state);
+    if (auto* state = linuxFindViewRecord(view))
+        linuxDestroyViewSurface(*state);
 
     for (auto* child: view.getSubviews())
-        waylandReleaseViewSurfaceTree(*child);
+        linuxReleaseViewSurfaceTree(*child);
 }
 } // namespace
 
@@ -325,13 +195,13 @@ View::View()
 
 View::~View()
 {
-    if (auto* state = waylandFindViewRecord(*this))
-        waylandDestroyViewSurface(*state);
+    if (auto* state = linuxFindViewRecord(*this))
+        linuxDestroyViewSurface(*state);
 
-    waylandViewRecords().erase(this);
+    linuxViewRecords().erase(this);
 
     // A content view dying first would leave the window holding a pointer.
-    auto& windows = waylandContentViewWindows();
+    auto& windows = linuxContentViewWindows();
     auto owner = windows.find(this);
 
     if (owner != windows.end())
@@ -346,7 +216,7 @@ View::~View()
     removeFromParent();
 }
 
-// Not a wl_surface: a presenting view's comes from requestViewSurface.
+// Not a native surface: a presenting view's comes from requestViewSurface.
 void* View::getHandle()
 {
     return impl.get();
@@ -359,7 +229,7 @@ void* View::getNativeLayer()
 
 void View::repaint()
 {
-    auto state = waylandFindViewRecordPtr(*this);
+    auto state = linuxFindViewRecordPtr(*this);
 
     if (state == nullptr || state->repaintPending)
         return;
@@ -367,7 +237,7 @@ void View::repaint()
     state->repaintPending = true;
 
     Threads::callAsync(
-        [weak = std::weak_ptr<WaylandViewRecord>(state)]
+        [weak = std::weak_ptr<LinuxViewRecord>(state)]
         {
             auto pending = weak.lock();
 
@@ -376,7 +246,7 @@ void View::repaint()
 
             pending->repaintPending = false;
 
-            if (pending->record.surface != nullptr)
+            if (pending->native != nullptr)
                 pending->record.onRepaint();
         });
 }
@@ -394,7 +264,7 @@ void View::setVisible(bool shouldBeVisible)
     visible = shouldBeVisible;
     notifyVisibilityChanged(shouldBeVisible);
 
-    waylandSyncViewSurfaces(*this);
+    linuxSyncViewSurfaces(*this);
 }
 
 Rect View::getBounds() const
@@ -406,20 +276,15 @@ void View::setBounds(const Rect& bounds)
 {
     impl->setBounds(bounds);
 
-    // Every descendant: a subsurface's position is the sum of its parent chain.
-    waylandSyncViewSurfaces(*this);
+    // Every descendant: a child surface's position is the sum of its parent
+    // chain.
+    linuxSyncViewSurfaces(*this);
 }
 
 // The origin when the pointer is elsewhere, or when there is no seat at all.
 Point View::getMousePosition() const
 {
-    auto* connection = waylandDisplay();
-
-    if (connection == nullptr || connection->getInput() == nullptr)
-        return {};
-
-    auto* input = connection->getInput();
-    auto* window = input->getPointerWindow();
+    auto* window = linuxPointerWindow();
 
     const View* root = this;
 
@@ -429,8 +294,8 @@ Point View::getMousePosition() const
     if (window == nullptr || window->contentView != root)
         return {};
 
-    auto origin = waylandViewOriginInWindow(*this);
-    auto position = input->getPointerPosition();
+    auto origin = linuxViewOriginInWindow(*this);
+    auto position = linuxPointerPosition();
 
     return {position.x - origin.x, position.y - origin.y};
 }
@@ -440,9 +305,7 @@ void View::setMouseCursor(MouseCursor cursor)
 {
     currentCursor = cursor;
 
-    if (auto* connection = waylandDisplay())
-        if (auto* input = connection->getInput())
-            input->refreshCursor();
+    linuxRefreshCursor();
 }
 
 void View::focus()
@@ -465,44 +328,27 @@ void notifyBackingScaleChanged(View& view)
 
 ViewSurface& requestViewSurface(View& view)
 {
-    auto& records = waylandViewRecords();
+    auto& records = linuxViewRecords();
     auto found = records.find(&view);
 
     if (found == records.end())
     {
-        auto state = std::make_shared<WaylandViewRecord>();
+        auto state = std::make_shared<LinuxViewRecord>();
         state->view = &view;
 
         // Weak, so a hook outliving the view finds nothing, not a dangling
         // record.
-        auto weak = std::weak_ptr<WaylandViewRecord>(state);
+        auto weak = std::weak_ptr<LinuxViewRecord>(state);
 
         state->record.requestFrameCallback = [weak]
         {
             auto pending = weak.lock();
 
-            if (pending == nullptr || pending->surface == nullptr
+            if (pending == nullptr || pending->native == nullptr
                 || pending->record.frameCallbackPending)
                 return;
 
-            pending->frameCallback = wl_surface_frame(pending->surface);
-            wl_callback_add_listener(
-                pending->frameCallback, &waylandFrameListener, pending.get());
-
-            pending->record.frameCallbackPending = true;
-
-            // The request rides on a commit, and the caller may have nothing
-            // to present: an empty commit re-sends the buffer that is already
-            // there, which is what keeps a paced loop ticking. Before the
-            // first buffer there is nothing to re-send and no compositor would
-            // answer, so that one waits for the commit that maps the surface.
-            if (!pending->presented)
-                return;
-
-            wl_surface_commit(pending->surface);
-
-            if (auto* connection = waylandDisplay())
-                connection->flush();
+            pending->native->requestFrame();
         };
 
         found = records.emplace(&view, std::move(state)).first;
@@ -510,34 +356,34 @@ ViewSurface& requestViewSurface(View& view)
         // Deferred a turn: the caller is still inside this call and has not set
         // its hooks yet, so onAvailable would otherwise fire before it exists.
         Threads::callAsync(
-            [weak = std::weak_ptr<WaylandViewRecord>(found->second)]
+            [weak = std::weak_ptr<LinuxViewRecord>(found->second)]
             {
                 if (auto pending = weak.lock())
-                    waylandSyncOneViewSurface(*pending->view);
+                    linuxSyncOneViewSurface(*pending->view);
             });
     }
 
     return found->second->record;
 }
 
-void waylandBindWindowToContentView(View& contentView, WaylandWindowSurface& window)
+void linuxBindWindowToContentView(View& contentView, LinuxWindowSurface& window)
 {
-    waylandContentViewWindows()[&contentView] = &window;
-    waylandSyncViewSurfaces(contentView);
+    linuxContentViewWindows()[&contentView] = &window;
+    linuxSyncViewSurfaces(contentView);
 }
 
-void waylandUnbindWindowFromContentView(View& contentView)
+void linuxUnbindWindowFromContentView(View& contentView)
 {
-    waylandReleaseViewSurfaceTree(contentView);
-    waylandContentViewWindows().erase(&contentView);
+    linuxReleaseViewSurfaceTree(contentView);
+    linuxContentViewWindows().erase(&contentView);
 }
 
-void waylandWindowSurfaceStateChanged(View& contentView)
+void linuxWindowSurfaceStateChanged(View& contentView)
 {
-    waylandSyncViewSurfaces(contentView);
+    linuxSyncViewSurfaces(contentView);
 }
 
-Point waylandViewOriginInWindow(const View& view)
+Point linuxViewOriginInWindow(const View& view)
 {
     auto origin = Point {};
 
@@ -574,12 +420,12 @@ Threads::Async<Image> View::renderToImageAsync(float scale)
 
 void View::viewAdded(View& view)
 {
-    waylandSyncViewSurfaces(view);
+    linuxSyncViewSurfaces(view);
 }
 
 void View::viewRemoved(View& view)
 {
-    waylandReleaseViewSurfaceTree(view);
+    linuxReleaseViewSurfaceTree(view);
 }
 
 } // namespace eacp::Graphics
