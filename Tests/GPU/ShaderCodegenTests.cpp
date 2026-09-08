@@ -3053,3 +3053,36 @@ auto tCodegenGlslScalarBesideVector = test("GPU/codegenGlslScalarBesideVector") 
     expectGlslCompiles(builder.graph());
     expectGlslCompiles(scalarOnly.graph());
 };
+
+// GLSL refuses a scalar on the left of a shift whose right operand is a vector,
+// where MSL and HLSL broadcast it themselves, so the emitter writes the
+// constructor in.
+auto tCodegenGlslScalarLeftShift = test("GPU/codegenGlslScalarLeftShift") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto position = builder.vertexInput<Float2>();
+    auto carried = builder.varying(position);
+
+    builder.position(float4(position, 0.0f, 1.0f));
+
+    auto cell = toInt(carried * 16.0f);
+    auto spread = 1 << cell;
+    auto folded = 255 >> cell;
+
+    builder.fragment(
+        float4(toFloat(spread.x() + folded.y()) * 0.001f, 0.0f, 0.0f, 1.0f));
+
+    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    {
+        check(contains(source, "(1 << t0)"));
+        check(contains(source, "(255 >> t0)"));
+    }
+
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl, "(ivec2(1) << t0)"));
+    check(contains(glsl, "(ivec2(255) >> t0)"));
+    check(!contains(glsl, "(1 << t0)"));
+
+    expectGlslCompiles(builder.graph());
+};

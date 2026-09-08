@@ -6,6 +6,16 @@ namespace eacp::GPU
 {
 namespace
 {
+// What a thread index node holds: one lane of the position, or the whole of it
+// in the width its rank dispatches over.
+ValueType indexNodeType(DispatchRank forRank, int component)
+{
+    if (component != allComponents)
+        return ValueType::UInt;
+
+    return forRank == DispatchRank::TwoD ? ValueType::UInt2 : ValueType::UInt3;
+}
+
 // Whether a node evaluates to something other than a function of its arguments:
 // a mutable local, or a resource the kernel may have written since. Two such
 // nodes spelled identically are not the same value, so neither they nor
@@ -440,7 +450,7 @@ int ShaderGraph::addIndexNode(ExprKind kind, DispatchRank forRank, int component
 
     auto node = Expr {};
     node.kind = kind;
-    node.type = ValueType::UInt;
+    node.type = indexNodeType(forRank, component);
     node.index = component;
     return add(std::move(node));
 }
@@ -458,6 +468,16 @@ int ShaderGraph::addThreadPosition(int component)
 int ShaderGraph::addThreadPosition3(int component)
 {
     return addIndexNode(ExprKind::ThreadId, DispatchRank::ThreeD, component);
+}
+
+int ShaderGraph::addThreadId2()
+{
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::TwoD, allComponents);
+}
+
+int ShaderGraph::addThreadId3()
+{
+    return addIndexNode(ExprKind::ThreadId, DispatchRank::ThreeD, allComponents);
 }
 
 int ShaderGraph::addLocalId()
@@ -494,6 +514,30 @@ int ShaderGraph::addGroupPosition3(int component)
 {
     groupIdUsed = true;
     return addIndexNode(ExprKind::GroupId, DispatchRank::ThreeD, component);
+}
+
+int ShaderGraph::addLocalId2()
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::TwoD, allComponents);
+}
+
+int ShaderGraph::addLocalId3()
+{
+    localIdUsed = true;
+    return addIndexNode(ExprKind::LocalId, DispatchRank::ThreeD, allComponents);
+}
+
+int ShaderGraph::addGroupId2()
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::TwoD, allComponents);
+}
+
+int ShaderGraph::addGroupId3()
+{
+    groupIdUsed = true;
+    return addIndexNode(ExprKind::GroupId, DispatchRank::ThreeD, allComponents);
 }
 
 int ShaderGraph::addGridExtent(DispatchRank forRank, int component)
@@ -564,6 +608,25 @@ void ShaderGraph::addStore(int slot, int index, int value)
     statement.index = index;
     statement.value = value;
     addStatement(statement);
+}
+
+void ShaderGraph::addRecordStore(int slot,
+                                 const Vector<int>& indices,
+                                 const Vector<int>& components,
+                                 int record)
+{
+    for (auto component = 0; component < components.size(); ++component)
+    {
+        storeList.add({slot, indices[component], components[component]});
+
+        auto statement = Statement {StatementKind::Store};
+        statement.slot = slot;
+        statement.index = indices[component];
+        statement.value = components[component];
+        statement.record = record;
+        statement.recordComponentsLeft = components.size() - 1 - component;
+        addStatement(statement);
+    }
 }
 
 int ShaderGraph::addAtomicAdd(int bufferSlot, int index, int value)

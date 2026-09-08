@@ -181,6 +181,13 @@ public:
         return position;
     }
 
+    // The same work item as one value rather than a struct of components: a
+    // UInt2 over a grid, a UInt3 over a volume. Asking for one fixes the rank
+    // as threadPosition() and threadPosition3() do, so either spelling of a
+    // rank sits beside the other in one kernel.
+    UInt2 threadId2() { return indexValue<UInt2>(graphData.addThreadId2()); }
+    UInt3 threadId3() { return indexValue<UInt3>(graphData.addThreadId3()); }
+
     // Where a thread sits inside its threadgroup, and which group it belongs
     // to - the pair every shared-memory algorithm indexes with: the local id
     // subscripts the shared tile, the group id decides which slice of the
@@ -254,6 +261,13 @@ public:
 
         return position;
     }
+
+    // Their whole-vector forms, beside threadId2() and threadId3(): a group
+    // origin and a lane offset that add and swizzle as one value.
+    UInt2 localId2() { return indexValue<UInt2>(graphData.addLocalId2()); }
+    UInt3 localId3() { return indexValue<UInt3>(graphData.addLocalId3()); }
+    UInt2 groupId2() { return indexValue<UInt2>(graphData.addGroupId2()); }
+    UInt3 groupId3() { return indexValue<UInt3>(graphData.addGroupId3()); }
 
     // The implicit grid bound the dispatch supplied, readable in the body: the
     // very value the generated guard tests. A kernel that barriers has no such
@@ -406,25 +420,29 @@ public:
     void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
     {
         auto base = index * 2u;
-        graphData.addStore(buffer.slot, base.node, value.x().node);
-        graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
+        graphData.addRecordStore(buffer.slot,
+                                 {base.node, (base + 1u).node},
+                                 {value.x().node, value.y().node},
+                                 value.node);
     }
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float3& value)
     {
         auto base = index * 3u;
-        graphData.addStore(buffer.slot, base.node, value.x().node);
-        graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
-        graphData.addStore(buffer.slot, (base + 2u).node, value.z().node);
+        graphData.addRecordStore(buffer.slot,
+                                 {base.node, (base + 1u).node, (base + 2u).node},
+                                 {value.x().node, value.y().node, value.z().node},
+                                 value.node);
     }
 
     void write(const OutputBuffer& buffer, const UInt& index, const Float4& value)
     {
         auto base = index * 4u;
-        graphData.addStore(buffer.slot, base.node, value.x().node);
-        graphData.addStore(buffer.slot, (base + 1u).node, value.y().node);
-        graphData.addStore(buffer.slot, (base + 2u).node, value.z().node);
-        graphData.addStore(buffer.slot, (base + 3u).node, value.w().node);
+        graphData.addRecordStore(
+            buffer.slot,
+            {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
+            {value.x().node, value.y().node, value.z().node, value.w().node},
+            value.node);
     }
 
     // Two values narrowed to fp16 and stored in the single float slot that
@@ -461,6 +479,37 @@ public:
     void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value)
     {
         write(buffer, buffer.literal(index), buffer.literal(value));
+    }
+
+    // The record writes, laying N integers down at index * N - the layout
+    // UIntInputBuffer::read2/3/4 reads back. The index is in records rather
+    // than in elements, on the terms the float ones set.
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
+    {
+        auto base = index * 2u;
+        graphData.addRecordStore(buffer.slot,
+                                 {base.node, (base + 1u).node},
+                                 {value.x().node, value.y().node},
+                                 value.node);
+    }
+
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
+    {
+        auto base = index * 3u;
+        graphData.addRecordStore(buffer.slot,
+                                 {base.node, (base + 1u).node, (base + 2u).node},
+                                 {value.x().node, value.y().node, value.z().node},
+                                 value.node);
+    }
+
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
+    {
+        auto base = index * 4u;
+        graphData.addRecordStore(
+            buffer.slot,
+            {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
+            {value.x().node, value.y().node, value.z().node, value.w().node},
+            value.node);
     }
 
     // One element of an atomic buffer, set outright rather than added to. It
@@ -561,6 +610,16 @@ public:
         auto result = Int {};
         result.graph = &graphData;
         result.node = graphData.addIntConstant(value);
+        return result;
+    }
+
+    // And its unsigned one, for the index or the mask a kernel starts from -
+    // and for the handle a wholly literal uint2/3/4 needs to anchor its graph.
+    UInt unsignedInteger(unsigned value)
+    {
+        auto result = UInt {};
+        result.graph = &graphData;
+        result.node = graphData.addUIntConstant(value);
         return result;
     }
 
@@ -689,6 +748,15 @@ public:
     const ShaderGraph& graph() const { return graphData; }
 
 private:
+    template <typename T>
+    T indexValue(int node)
+    {
+        auto value = T {};
+        value.graph = &graphData;
+        value.node = node;
+        return value;
+    }
+
     ShaderGraph graphData;
 };
 } // namespace eacp::GPU

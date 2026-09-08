@@ -112,6 +112,24 @@ struct CpuValueOf<Int>
 // as the packed data they are. There is deliberately no CpuValueOf for a Bool
 // or a boolean vector: ShaderBuilder refuses those as uniforms.
 template <>
+struct CpuValueOf<UInt2>
+{
+    using type = Array<std::uint32_t, 2>;
+};
+
+template <>
+struct CpuValueOf<UInt3>
+{
+    using type = Array<std::uint32_t, 3>;
+};
+
+template <>
+struct CpuValueOf<UInt4>
+{
+    using type = Array<std::uint32_t, 4>;
+};
+
+template <>
 struct CpuValueOf<Int2>
 {
     using type = Array<std::int32_t, 2>;
@@ -495,6 +513,9 @@ constexpr VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3x3:
         case ValueType::Float4x4:
         case ValueType::UInt:
+        case ValueType::UInt2:
+        case ValueType::UInt3:
+        case ValueType::UInt4:
         case ValueType::Int:
         case ValueType::Int2:
         case ValueType::Int3:
@@ -1252,6 +1273,7 @@ protected:
     Float constant(float value) { return builder.constant(value); }
     Bool boolean(bool value) { return builder.boolean(value); }
     Int integer(int value) { return builder.integer(value); }
+    UInt unsignedInteger(unsigned value) { return builder.unsignedInteger(value); }
 
     template <ShaderValueLike T, SameShaderShape<T>... Rest>
     ConstantArray<ShaderBase<T>, 1 + (int) sizeof...(Rest)>
