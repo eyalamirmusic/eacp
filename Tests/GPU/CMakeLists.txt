@@ -10,6 +10,7 @@ set(gpu_test_sources
         HoistingTests.cpp
         IndirectDispatchTests.cpp
         InPlaceComputeTests.cpp
+        InPlaceRecordTests.cpp
         IntrinsicTests.cpp
         MultiDeviceTests.cpp
         PackedHalfTests.cpp
@@ -21,7 +22,11 @@ set(gpu_test_sources
         StreamingBufferTests.cpp
         TestMain.cpp
         TextureUpdateTests.cpp
-        UIntBufferTests.cpp)
+        ThreadIndexVectorTests.cpp
+        UIntBufferTests.cpp
+        UIntBufferVectorTests.cpp
+        UIntScalarTests.cpp
+        UIntVectorTests.cpp)
 
 # The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
 if (APPLE)

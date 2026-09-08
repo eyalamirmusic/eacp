@@ -17,6 +17,10 @@ struct Float;
 struct Float2;
 struct Float3;
 struct Float4;
+struct UInt;
+struct UInt2;
+struct UInt3;
+struct UInt4;
 struct Int;
 struct Int2;
 struct Int3;
@@ -120,8 +124,8 @@ constexpr bool spellableAt(int width, const char* components)
 
 // One vector family: the four widths a swizzle can land in and the graph types
 // that go with them. Naming the family is what lets one set of accessors serve
-// all three - a swizzle of a Float2 is a Float, of an Int2 an Int, of a Bool4 a
-// Bool - rather than three copies of the same 340 declarations differing only
+// all four - a swizzle of a Float2 is a Float, of an Int2 an Int, of a Bool4 a
+// Bool - rather than four copies of the same 340 declarations differing only
 // in what they return.
 template <typename One,
           typename Two,
@@ -152,6 +156,15 @@ using Floats = Family<Float,
                       ValueType::Float2,
                       ValueType::Float3,
                       ValueType::Float4>;
+
+using UInts = Family<UInt,
+                     UInt2,
+                     UInt3,
+                     UInt4,
+                     ValueType::UInt,
+                     ValueType::UInt2,
+                     ValueType::UInt3,
+                     ValueType::UInt4>;
 
 using Ints = Family<Int,
                     Int2,
@@ -215,18 +228,19 @@ struct Float : detail::ValueHandle
 {
 };
 
-// The compute thread id and any index computed from it (+ - * / %, min/max,
-// uint uniforms and integer literals). Deliberately outside the float operator
-// vocabulary; it indexes storage buffers and crosses into float arithmetic via
-// toFloat().
+// The compute thread id and any index computed from it (+ - * / %, the bitwise
+// set, the two shifts, ~, min/max, uint uniforms and unsigned literals).
+// Deliberately outside the float operator vocabulary; it indexes storage
+// buffers and crosses into float arithmetic via toFloat().
 struct UInt : detail::ValueHandle
 {
 };
 
-// The signed integer: what subscripts an array, and what the operators no float
-// has are defined on - the remainder, the bitwise set and the two shifts. Like
-// UInt it stays outside the float operator vocabulary and crosses into it
-// explicitly, with toInt() and toFloat().
+// The signed integer: what subscripts an array. It carries the operators no
+// float has - the remainder, the bitwise set and the two shifts - as UInt does,
+// and adds the unary minus UInt has no use for. Like UInt it stays outside the
+// float operator vocabulary and crosses into it explicitly, with toInt() and
+// toFloat().
 //
 // Signed rather than unsigned because that is what an index computed from a
 // coordinate needs: int(uv.x * 4.0) is negative left of the origin, and a
@@ -253,6 +267,22 @@ struct Float3 : detail::Swizzles<detail::Floats, 3>
 };
 
 struct Float4 : detail::Swizzles<detail::Floats, 4>
+{
+};
+
+// The unsigned integer vectors: the pair of indices a kernel addresses a buffer
+// with, the lanes of a hash, a thread position held as one value. They carry the
+// whole integer operator set componentwise - arithmetic wrapping at 2^32, as the
+// scalar's does - and cross into the other families explicitly.
+struct UInt2 : detail::Swizzles<detail::UInts, 2>
+{
+};
+
+struct UInt3 : detail::Swizzles<detail::UInts, 3>
+{
+};
+
+struct UInt4 : detail::Swizzles<detail::UInts, 4>
 {
 };
 
@@ -750,6 +780,44 @@ struct UIntInputBuffer
         return (*this)[detail::bufferIndex(graph, index)];
     }
 
+    // The record reads, for a buffer whose elements are records of integers
+    // rather than single ones: read4(i) is elements 4i..4i+3 as a UInt4. The
+    // index is in records, not in elements - read4(i) and the matching
+    // write(output, i, UInt4) address the same record - so a kernel never
+    // spells the stride itself.
+    UInt2 read2(const UInt& index) const
+    {
+        return detail::readBufferVector<UInt2>(
+            graph, slot, index, ValueType::UInt2, 2);
+    }
+
+    UInt3 read3(const UInt& index) const
+    {
+        return detail::readBufferVector<UInt3>(
+            graph, slot, index, ValueType::UInt3, 3);
+    }
+
+    UInt4 read4(const UInt& index) const
+    {
+        return detail::readBufferVector<UInt4>(
+            graph, slot, index, ValueType::UInt4, 4);
+    }
+
+    UInt2 read2(unsigned index) const
+    {
+        return read2(detail::bufferIndex(graph, index));
+    }
+
+    UInt3 read3(unsigned index) const
+    {
+        return read3(detail::bufferIndex(graph, index));
+    }
+
+    UInt4 read4(unsigned index) const
+    {
+        return read4(detail::bufferIndex(graph, index));
+    }
+
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
@@ -767,6 +835,43 @@ struct UIntOutputBuffer
     UInt operator[](unsigned index) const
     {
         return (*this)[detail::bufferIndex(graph, index)];
+    }
+
+    // The record reads, pairing with the UInt2/UInt3/UInt4 overloads of
+    // ShaderBuilder::write on the terms UIntInputBuffer's do: the index counts
+    // records, so a kernel reading back what it wrote spells the same index it
+    // wrote at.
+    UInt2 read2(const UInt& index) const
+    {
+        return detail::readBufferVector<UInt2>(
+            graph, slot, index, ValueType::UInt2, 2);
+    }
+
+    UInt3 read3(const UInt& index) const
+    {
+        return detail::readBufferVector<UInt3>(
+            graph, slot, index, ValueType::UInt3, 3);
+    }
+
+    UInt4 read4(const UInt& index) const
+    {
+        return detail::readBufferVector<UInt4>(
+            graph, slot, index, ValueType::UInt4, 4);
+    }
+
+    UInt2 read2(unsigned index) const
+    {
+        return read2(detail::bufferIndex(graph, index));
+    }
+
+    UInt3 read3(unsigned index) const
+    {
+        return read3(detail::bufferIndex(graph, index));
+    }
+
+    UInt4 read4(unsigned index) const
+    {
+        return read4(detail::bufferIndex(graph, index));
     }
 
     // A literal anchored on this buffer's own graph, as AtomicBuffer's is: an
@@ -873,6 +978,24 @@ struct ValueTypeOf<UInt>
 };
 
 template <>
+struct ValueTypeOf<UInt2>
+{
+    static constexpr ValueType value = ValueType::UInt2;
+};
+
+template <>
+struct ValueTypeOf<UInt3>
+{
+    static constexpr ValueType value = ValueType::UInt3;
+};
+
+template <>
+struct ValueTypeOf<UInt4>
+{
+    static constexpr ValueType value = ValueType::UInt4;
+};
+
+template <>
 struct ValueTypeOf<Int>
 {
     static constexpr ValueType value = ValueType::Int;
@@ -936,14 +1059,17 @@ Float4 baseOf(const Float4&);
 
 // The same mapping over every family, for the places that genuinely take any of
 // them: a vector constructor's arguments, and the width its components add up
-// to. Split from baseOf so that widening the one does not widen the other.
-// UInt rides along as a family of one, which is what lets the counter a kernel
-// walks a buffer with be a Var<UInt> on the same terms as any other local.
+// to. Split from baseOf so that widening the one does not widen the other. It is
+// also what lets the counter a kernel walks a buffer with be a Var<UInt> on the
+// same terms as any other local.
 Float handleOf(const Float&);
 Float2 handleOf(const Float2&);
 Float3 handleOf(const Float3&);
 Float4 handleOf(const Float4&);
 UInt handleOf(const UInt&);
+UInt2 handleOf(const UInt2&);
+UInt3 handleOf(const UInt3&);
+UInt4 handleOf(const UInt4&);
 Int handleOf(const Int&);
 Int2 handleOf(const Int2&);
 Int3 handleOf(const Int3&);
@@ -963,6 +1089,10 @@ template <typename T>
 concept ShaderHandleLike = requires(const T& value) { detail::handleOf(value); };
 
 template <typename T>
+concept UIntValueLike =
+    ShaderHandleLike<T> && isUnsignedInteger(ValueTypeOf<ShaderHandle<T>>::value);
+
+template <typename T>
 concept IntValueLike =
     ShaderHandleLike<T> && isSignedInteger(ValueTypeOf<ShaderHandle<T>>::value);
 
@@ -973,12 +1103,20 @@ concept BoolValueLike =
 // An integer or boolean *vector* specifically - what a componentwise operator
 // takes and what any()/all() collapses.
 template <typename T>
+concept UIntVectorLike =
+    UIntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value != ValueType::UInt;
+
+template <typename T>
 concept IntVectorLike =
     IntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value != ValueType::Int;
 
 template <typename T>
 concept BoolVectorLike =
     BoolValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value != ValueType::Bool;
+
+template <typename T>
+concept UIntScalarLike =
+    UIntValueLike<T> && ValueTypeOf<ShaderHandle<T>>::value == ValueType::UInt;
 
 template <typename T>
 concept IntScalarLike =
@@ -1862,7 +2000,7 @@ EACP_COMPARISON(operator!=, "!=")
         return detail::compareWide<Mask>(spelling, lhs, rhs);                       \
     }
 
-#define EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Vector, Mask)                 \
+#define EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, Vector, Mask)              \
     template <SameShaderHandle<Vector> L, SameShaderHandle<L> R>                    \
     Mask name(const L& lhs, const R& rhs)                                           \
     {                                                                               \
@@ -1873,9 +2011,12 @@ EACP_COMPARISON(operator!=, "!=")
     EACP_VECTOR_COMPARISON_AT(name, spelling, Float2, Bool2)                        \
     EACP_VECTOR_COMPARISON_AT(name, spelling, Float3, Bool3)                        \
     EACP_VECTOR_COMPARISON_AT(name, spelling, Float4, Bool4)                        \
-    EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Int2, Bool2)                      \
-    EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Int3, Bool3)                      \
-    EACP_INT_VECTOR_COMPARISON_AT(name, spelling, Int4, Bool4)
+    EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, UInt2, Bool2)                  \
+    EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, UInt3, Bool3)                  \
+    EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, UInt4, Bool4)                  \
+    EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, Int2, Bool2)                   \
+    EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, Int3, Bool3)                   \
+    EACP_HANDLE_VECTOR_COMPARISON_AT(name, spelling, Int4, Bool4)
 
 EACP_VECTOR_COMPARISON(operator<, "<")
 EACP_VECTOR_COMPARISON(operator<=, "<=")
@@ -1886,7 +2027,7 @@ EACP_VECTOR_COMPARISON(operator!=, "!=")
 
 #undef EACP_VECTOR_COMPARISON
 #undef EACP_VECTOR_COMPARISON_AT
-#undef EACP_INT_VECTOR_COMPARISON_AT
+#undef EACP_HANDLE_VECTOR_COMPARISON_AT
 
 // The logical connectives. Overloading && and || gives up C++'s short-circuit -
 // both operands are recorded either way - but the emitted operator is the
@@ -2178,85 +2319,124 @@ struct Var
     int slot = -1;
 };
 
-// Index arithmetic on uint values: against another uint (a Uniform<UInt>
-// binds here too) or an integer literal, which records a uint constant node.
-// Deliberately separate from the float operator vocabulary - there are no
-// implicit conversions between the two; cross over with toFloat(). Subtraction
-// wraps below zero like the languages it emits into, so guard a backwards
-// step with max(), or wrap deliberately with %.
-inline UInt operator+(const UInt& lhs, const UInt& rhs)
+// Index arithmetic on uint values, and the operators only an integer has: the
+// remainder, the bitwise set and the two shifts. Against another uint (a
+// Uniform<UInt> binds here too) or an unsigned literal, which records a uint
+// constant node. Deliberately separate from the float operator vocabulary -
+// there are no implicit conversions between the two; cross over with toFloat().
+// Subtraction wraps below zero like the languages it emits into, so guard a
+// backwards step with max(), or wrap deliberately with %.
+#define EACP_UINT_OPERATOR(name, spelling)                                          \
+    inline UInt name(const UInt& lhs, const UInt& rhs)                              \
+    {                                                                               \
+        return detail::binaryOp<UInt>(spelling, lhs, rhs);                          \
+    }                                                                               \
+                                                                                    \
+    inline UInt name(const UInt& lhs, unsigned rhs)                                 \
+    {                                                                               \
+        return detail::binaryOp<UInt>(                                              \
+            spelling, lhs, detail::uintConstantOn(lhs, rhs));                       \
+    }                                                                               \
+                                                                                    \
+    inline UInt name(unsigned lhs, const UInt& rhs)                                 \
+    {                                                                               \
+        return detail::binaryOp<UInt>(                                              \
+            spelling, detail::uintConstantOn(rhs, lhs), rhs);                       \
+    }
+
+EACP_UINT_OPERATOR(operator+, '+')
+EACP_UINT_OPERATOR(operator-, '-')
+EACP_UINT_OPERATOR(operator*, '*')
+EACP_UINT_OPERATOR(operator/, '/')
+EACP_UINT_OPERATOR(operator%, '%')
+EACP_UINT_OPERATOR(operator&, '&')
+EACP_UINT_OPERATOR(operator|, '|')
+EACP_UINT_OPERATOR(operator^, '^')
+EACP_UINT_OPERATOR(operator<<, "<<")
+EACP_UINT_OPERATOR(operator>>, ">>")
+
+#undef EACP_UINT_OPERATOR
+
+// The bitwise complement; there is no unary minus, an unsigned value having no
+// negation to take.
+inline UInt operator~(const UInt& value)
 {
-    return detail::binaryOp<UInt>('+', lhs, rhs);
+    return detail::unaryOp<UInt>('~', value);
 }
 
-inline UInt operator+(const UInt& lhs, unsigned rhs)
+// The same componentwise on the unsigned vectors, together with the operators
+// only an integer has - the bitwise set and the two shifts. Against another
+// vector of the same width, against a scalar UInt or an unsigned literal
+// broadcast across it, both ways round, which is what the two shading languages
+// already do with a vector and a scalar.
+#define EACP_UINT_VECTOR_OPERATOR(name, spelling)                                   \
+    template <UIntVectorLike L, SameShaderHandle<L> R>                              \
+    ShaderHandle<L> name(const L& lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<L>>(spelling, lhs, rhs);               \
+    }                                                                               \
+                                                                                    \
+    template <UIntVectorLike L, UIntScalarLike R>                                   \
+    ShaderHandle<L> name(const L& lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<L>>(spelling, lhs, rhs);               \
+    }                                                                               \
+                                                                                    \
+    template <UIntScalarLike L, UIntVectorLike R>                                   \
+    ShaderHandle<R> name(const L& lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<R>>(spelling, lhs, rhs);               \
+    }                                                                               \
+                                                                                    \
+    template <UIntVectorLike L>                                                     \
+    ShaderHandle<L> name(const L& lhs, unsigned rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<L>>(                                   \
+            spelling, lhs, detail::uintConstantOn(lhs, rhs));                       \
+    }                                                                               \
+                                                                                    \
+    template <UIntVectorLike R>                                                     \
+    ShaderHandle<R> name(unsigned lhs, const R& rhs)                                \
+    {                                                                               \
+        return detail::binaryOp<ShaderHandle<R>>(                                   \
+            spelling, detail::uintConstantOn(rhs, lhs), rhs);                       \
+    }
+
+EACP_UINT_VECTOR_OPERATOR(operator+, '+')
+EACP_UINT_VECTOR_OPERATOR(operator-, '-')
+EACP_UINT_VECTOR_OPERATOR(operator*, '*')
+EACP_UINT_VECTOR_OPERATOR(operator/, '/')
+EACP_UINT_VECTOR_OPERATOR(operator%, '%')
+EACP_UINT_VECTOR_OPERATOR(operator&, '&')
+EACP_UINT_VECTOR_OPERATOR(operator|, '|')
+EACP_UINT_VECTOR_OPERATOR(operator^, '^')
+EACP_UINT_VECTOR_OPERATOR(operator<<, "<<")
+EACP_UINT_VECTOR_OPERATOR(operator>>, ">>")
+
+#undef EACP_UINT_VECTOR_OPERATOR
+
+// The bitwise complement; there is no unary minus, an unsigned value having no
+// negation to take.
+template <UIntVectorLike T>
+ShaderHandle<T> operator~(const T& value)
 {
-    return detail::binaryOp<UInt>('+', lhs, detail::uintConstantOn(lhs, rhs));
+    return detail::unaryOp<ShaderHandle<T>>('~', value);
 }
 
-inline UInt operator+(unsigned lhs, const UInt& rhs)
+// min/max componentwise, which is what holds a pair of indices inside a grid.
+// There is no abs: an unsigned value is already its own magnitude.
+template <UIntVectorLike L, SameShaderHandle<L> R>
+ShaderHandle<L> min(const L& a, const R& b)
 {
-    return detail::binaryOp<UInt>('+', detail::uintConstantOn(rhs, lhs), rhs);
+    return detail::call2<ShaderHandle<L>>(
+        a, b, ValueTypeOf<ShaderHandle<L>>::value, "min");
 }
 
-inline UInt operator-(const UInt& lhs, const UInt& rhs)
+template <UIntVectorLike L, SameShaderHandle<L> R>
+ShaderHandle<L> max(const L& a, const R& b)
 {
-    return detail::binaryOp<UInt>('-', lhs, rhs);
-}
-
-inline UInt operator-(const UInt& lhs, unsigned rhs)
-{
-    return detail::binaryOp<UInt>('-', lhs, detail::uintConstantOn(lhs, rhs));
-}
-
-inline UInt operator-(unsigned lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('-', detail::uintConstantOn(rhs, lhs), rhs);
-}
-
-inline UInt operator*(const UInt& lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('*', lhs, rhs);
-}
-
-inline UInt operator*(const UInt& lhs, unsigned rhs)
-{
-    return detail::binaryOp<UInt>('*', lhs, detail::uintConstantOn(lhs, rhs));
-}
-
-inline UInt operator*(unsigned lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('*', detail::uintConstantOn(rhs, lhs), rhs);
-}
-
-inline UInt operator/(const UInt& lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('/', lhs, rhs);
-}
-
-inline UInt operator/(const UInt& lhs, unsigned rhs)
-{
-    return detail::binaryOp<UInt>('/', lhs, detail::uintConstantOn(lhs, rhs));
-}
-
-inline UInt operator/(unsigned lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('/', detail::uintConstantOn(rhs, lhs), rhs);
-}
-
-inline UInt operator%(const UInt& lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('%', lhs, rhs);
-}
-
-inline UInt operator%(const UInt& lhs, unsigned rhs)
-{
-    return detail::binaryOp<UInt>('%', lhs, detail::uintConstantOn(lhs, rhs));
-}
-
-inline UInt operator%(unsigned lhs, const UInt& rhs)
-{
-    return detail::binaryOp<UInt>('%', detail::uintConstantOn(rhs, lhs), rhs);
+    return detail::call2<ShaderHandle<L>>(
+        a, b, ValueTypeOf<ShaderHandle<L>>::value, "max");
 }
 
 // Signed integer arithmetic, and the operators only an integer has: the
@@ -2717,6 +2897,55 @@ Float4 toFloat(const T& value)
     return detail::convertTo<Float4>(value);
 }
 
+// The unsigned vectors' crossings, a whole width at a time: out of the float and
+// the signed vocabularies, back into either, and the pair of bitcasts that
+// reinterpret rather than convert. Every component behaves exactly as the scalar
+// form does, truncation towards zero included.
+#define EACP_UINT_VECTOR_CONVERSIONS(Width)                                         \
+    template <ShaderShape<Float##Width> T>                                          \
+    UInt##Width toUInt(const T& value)                                              \
+    {                                                                               \
+        return detail::convertTo<UInt##Width>(value);                               \
+    }                                                                               \
+                                                                                    \
+    template <SameShaderHandle<Int##Width> T>                                       \
+    UInt##Width toUInt(const T& value)                                              \
+    {                                                                               \
+        return detail::convertTo<UInt##Width>(value);                               \
+    }                                                                               \
+                                                                                    \
+    template <SameShaderHandle<UInt##Width> T>                                      \
+    Int##Width toInt(const T& value)                                                \
+    {                                                                               \
+        return detail::convertTo<Int##Width>(value);                                \
+    }                                                                               \
+                                                                                    \
+    template <SameShaderHandle<UInt##Width> T>                                      \
+    Float##Width toFloat(const T& value)                                            \
+    {                                                                               \
+        return detail::convertTo<Float##Width>(value);                              \
+    }                                                                               \
+                                                                                    \
+    template <ShaderShape<Float##Width> T>                                          \
+    UInt##Width asUInt(const T& value)                                              \
+    {                                                                               \
+        return detail::call<UInt##Width>(                                           \
+            value, ValueType::UInt##Width, "as_type<uint" #Width ">");              \
+    }                                                                               \
+                                                                                    \
+    template <SameShaderHandle<UInt##Width> T>                                      \
+    Float##Width asFloat(const T& value)                                            \
+    {                                                                               \
+        return detail::call<Float##Width>(                                          \
+            value, ValueType::Float##Width, "as_type<float" #Width ">");            \
+    }
+
+EACP_UINT_VECTOR_CONVERSIONS(2)
+EACP_UINT_VECTOR_CONVERSIONS(3)
+EACP_UINT_VECTOR_CONVERSIONS(4)
+
+#undef EACP_UINT_VECTOR_CONVERSIONS
+
 // A constant array the shader subscripts: a palette, a set of offsets, any small
 // lookup table a shader would otherwise spell out as a chain of selects. Like
 // Texture2D it is slot-identified rather than an expression node - it is a
@@ -3080,11 +3309,11 @@ Float4 float4(const Args&... args)
 
 namespace detail
 {
-// The same machinery for the integer and boolean families. It is separate from
-// the float one because a literal has to become a constant of the right kind -
-// int2(cell.x, 1) records an integer 1, not a float one - and because the
-// concepts are what keep the three families from mixing: an Int in a float2()
-// is a type error in GLSL, and stays one here.
+// The same machinery for the two integer families and the boolean one. It is
+// separate from the float one because a literal has to become a constant of the
+// right kind - int2(cell.x, 1) records an integer 1, not a float one - and
+// because the concepts are what keep the families from mixing: an Int in a
+// float2() is a type error in GLSL, and stays one here.
 template <typename T>
 constexpr int handleComponentsOf()
 {
@@ -3108,35 +3337,28 @@ ShaderGraph* handleGraphOf(const First& first, const Rest&... rest)
         return first.graph;
 }
 
-template <typename T>
-int intNodeOf(ShaderGraph& graph, const T& value)
+// A component: a handle's node, or a literal recorded as a constant of the
+// family being built.
+template <ValueType Literals, typename T>
+int componentNodeOf(ShaderGraph& graph, const T& value)
 {
-    if constexpr (std::is_arithmetic_v<T>)
+    if constexpr (!std::is_arithmetic_v<T>)
+        return ShaderHandle<T>(value).node;
+    else if constexpr (Literals == ValueType::UInt)
+        return graph.addUIntConstant((unsigned) value);
+    else if constexpr (Literals == ValueType::Int)
         return graph.addIntConstant((int) value);
     else
-        return ShaderHandle<T>(value).node;
-}
-
-template <typename T>
-int boolNodeOf(ShaderGraph& graph, const T& value)
-{
-    if constexpr (std::is_arithmetic_v<T>)
         return graph.addBoolConstant(value != 0);
-    else
-        return ShaderHandle<T>(value).node;
 }
 
-template <typename Result, bool Integer, typename... Args>
+template <typename Result, ValueType Literals, typename... Args>
 Result buildFrom(const Args&... args)
 {
     auto& graph = *handleGraphOf(args...);
 
     auto nodes = Vector<int> {};
-
-    if constexpr (Integer)
-        (nodes.add(intNodeOf(graph, args)), ...);
-    else
-        (nodes.add(boolNodeOf(graph, args)), ...);
+    (nodes.add(componentNodeOf<Literals>(graph, args)), ...);
 
     auto result = Result {};
     result.graph = &graph;
@@ -3150,6 +3372,12 @@ Result buildFrom(const Args&... args)
 // supply the graph a wholly literal vector lacks - the same rule the float
 // constructors carry, for the same reason.
 template <int Width, typename... Args>
+concept UIntComponentsFor =
+    ((UIntValueLike<Args> || std::is_integral_v<Args>) && ...)
+    && (detail::handleComponentsOf<Args>() + ... + 0) == Width
+    && (UIntValueLike<Args> || ...);
+
+template <int Width, typename... Args>
 concept IntComponentsFor = ((IntValueLike<Args> || std::is_integral_v<Args>) && ...)
                            && (detail::handleComponentsOf<Args>() + ... + 0) == Width
                            && (IntValueLike<Args> || ...);
@@ -3161,44 +3389,65 @@ concept BoolComponentsFor =
     && (BoolValueLike<Args> || ...);
 
 template <typename... Args>
+    requires UIntComponentsFor<2, Args...>
+UInt2 uint2(const Args&... args)
+{
+    return detail::buildFrom<UInt2, ValueType::UInt>(args...);
+}
+
+template <typename... Args>
+    requires UIntComponentsFor<3, Args...>
+UInt3 uint3(const Args&... args)
+{
+    return detail::buildFrom<UInt3, ValueType::UInt>(args...);
+}
+
+template <typename... Args>
+    requires UIntComponentsFor<4, Args...>
+UInt4 uint4(const Args&... args)
+{
+    return detail::buildFrom<UInt4, ValueType::UInt>(args...);
+}
+
+template <typename... Args>
     requires IntComponentsFor<2, Args...>
 Int2 int2(const Args&... args)
 {
-    return detail::buildFrom<Int2, true>(args...);
+    return detail::buildFrom<Int2, ValueType::Int>(args...);
 }
 
 template <typename... Args>
     requires IntComponentsFor<3, Args...>
 Int3 int3(const Args&... args)
 {
-    return detail::buildFrom<Int3, true>(args...);
+    return detail::buildFrom<Int3, ValueType::Int>(args...);
 }
 
 template <typename... Args>
     requires IntComponentsFor<4, Args...>
 Int4 int4(const Args&... args)
 {
-    return detail::buildFrom<Int4, true>(args...);
+    return detail::buildFrom<Int4, ValueType::Int>(args...);
 }
 
 template <typename... Args>
     requires BoolComponentsFor<2, Args...>
 Bool2 bool2(const Args&... args)
 {
-    return detail::buildFrom<Bool2, false>(args...);
+    return detail::buildFrom<Bool2, ValueType::Bool>(args...);
 }
 
 template <typename... Args>
     requires BoolComponentsFor<3, Args...>
 Bool3 bool3(const Args&... args)
 {
-    return detail::buildFrom<Bool3, false>(args...);
+    return detail::buildFrom<Bool3, ValueType::Bool>(args...);
 }
 
 template <typename... Args>
     requires BoolComponentsFor<4, Args...>
 Bool4 bool4(const Args&... args)
 {
-    return detail::buildFrom<Bool4, false>(args...);
+    return detail::buildFrom<Bool4, ValueType::Bool>(args...);
 }
 } // namespace eacp::GPU

@@ -190,8 +190,16 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   because that is what both shading languages give a pair of vectors
 - `UInt` for the compute thread id, a buffer index, an element of an integer
   buffer, and the slot an atomic add reserved — compared against each other and
-  against unsigned literals
-- Every swizzle of up to four components, on all three families, as one node
+  against unsigned literals, and carrying the whole integer operator set the
+  signed scalar does: `%`, the bitwise set, the shifts and `~`, each against
+  another `UInt` or an unsigned literal on either side. `unsignedInteger(n)` is
+  the literal itself as a handle, the unsigned sibling of `constant`, `boolean`
+  and `integer`
+- `UInt2/3/4` — the unsigned vectors, carrying that same set componentwise
+  wherever the signed ones carry theirs, arithmetic wrapping at 2^32 rather than
+  overflowing a sign, plus the crossings `toUInt` / `toInt` / `toFloat` and the
+  bitcasts `asUInt` / `asFloat`
+- Every swizzle of up to four components, on all four families, as one node
 - The intrinsic set, spelled the way the languages underneath spell it —
   `rsqrt`, `atan2`, `mix` — rather than the way GLSL does, and taking a float
   literal in any argument position: `smoothstep(0.0, w, d)` mixes a literal edge
@@ -431,6 +439,13 @@ of the three — the generated entry point has one shape — and every extent is
 bounds-checked for you, so a grid that is not a multiple of the group is safe to
 dispatch.
 
+`threadId2()` and `threadId3()` are those same two positions as one value — a
+`UInt2` and a `UInt3` that swizzle, compare and compute like any other vector
+handle — with `localId2()`/`localId3()` and `groupId2()`/`groupId3()` beside
+`localId()` and `groupId()` on the same terms. Either spelling of a rank fixes
+it, so `threadId2()` and `threadPosition()` sit in one kernel and a 2D index
+next to a 3D one still does not.
+
 ```cpp
 void define() override
 {
@@ -587,6 +602,10 @@ backends declare them beside the float pair, `device const uint*` /
 What they are for is data that is not a number to compute with: the token ids a
 gather looks rows up by, the index an argmax arrived at, a count. A float
 buffer carries those only as bits to cast, and only while they stay under 2^24.
+
+They read and write records the way the float pair does: `read2`/`read3`/`read4`
+yield a `UInt2`/`UInt3`/`UInt4`, `write` takes one, and the index counts records
+on both sides.
 
 ```cpp
 struct Gather final : ComputeProgram
@@ -752,7 +771,15 @@ write(next, index, float4(newPosition, newVelocity));
 
 Underneath it is still N scalar accesses over a run of floats, deliberately: a
 retyped `float4` binding would buy one wide store and cost the CPU-side element
-size that makes those same bytes bindable as a per-instance vertex stream.
+size that makes those same bytes bindable as a per-instance vertex stream. It is
+one write above them all the same — every component is stored the value the
+record held before the first of them ran — so a record read out of an output and
+rearranged back into it swaps its components rather than broadcasting one:
+
+```cpp
+auto pair = output.read2(i);
+write(output, i, float2(pair.y(), pair.x()));
+```
 
 Every read takes an unsigned literal as well as a computed index — `input[0]`,
 `input.read4(0u)` — so the one element a whole dispatch broadcasts from needs no
