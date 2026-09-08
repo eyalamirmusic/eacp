@@ -110,6 +110,14 @@ bool Device::supportsBlockCompression() const
     return isValid();
 }
 
+// Nothing to ask the device either. A D3D12 shader-resource or unordered-access
+// view over a raw buffer starts at an element index, and the element is four
+// bytes, so the grid is four on every adapter. Vulkan is where this varies.
+int Device::storageBufferOffsetAlignment() const
+{
+    return 4;
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;

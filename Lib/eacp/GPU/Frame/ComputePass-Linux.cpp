@@ -152,28 +152,6 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
         impl->commandBuffer(), VK_PIPELINE_BIND_POINT_COMPUTE, state->pipeline);
 }
 
-namespace
-{
-// Vulkan makes the offset alignment a device limit (16 on lavapipe); an offset
-// off that grid binds nothing, like one past the end.
-VkDescriptorBufferInfo storageBufferInfo(const VulkanBufferData* data,
-                                         const BufferRange& range)
-{
-    if (data == nullptr || data->buffer == VK_NULL_HANDLE || range.offset < 0
-        || static_cast<std::size_t>(range.offset) >= data->size)
-        return {};
-
-    const auto offset = static_cast<VkDeviceSize>(range.offset);
-    const auto alignment =
-        getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
-
-    if (alignment != 0 && offset % alignment != 0)
-        return {};
-
-    return {data->buffer, offset, VK_WHOLE_SIZE};
-}
-} // namespace
-
 void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 {
     setInputBuffer(BufferRange::of(buffer), slot);
@@ -186,7 +164,7 @@ void ComputePass::setInputBuffer(const BufferRange& range, int slot)
         return;
 
     auto* data = static_cast<VulkanBufferData*>(range.buffer->nativeBuffer());
-    const auto info = storageBufferInfo(data, range);
+    const auto info = vulkanStorageBufferInfo(data, range);
 
     if (info.buffer == VK_NULL_HANDLE)
         return;
@@ -209,7 +187,7 @@ void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
         return;
 
     auto* data = static_cast<VulkanBufferData*>(range.buffer->nativeBuffer());
-    const auto info = storageBufferInfo(data, range);
+    const auto info = vulkanStorageBufferInfo(data, range);
 
     if (info.buffer == VK_NULL_HANDLE)
         return;
@@ -305,9 +283,28 @@ void ComputePass::dispatch(int width, int height)
     barrierAfterDispatch(commandBuffer);
 }
 
+void ComputePass::dispatch(int width, int height, int depth)
+{
+    if (!impl->canRecord() || width <= 0 || height <= 0 || depth <= 0)
+        return;
+
+    if (!impl->bindDescriptors())
+        return;
+
+    const auto size = static_cast<std::uint32_t>(threadGroupSize3D);
+    const auto groupsX = (static_cast<std::uint32_t>(width) + size - 1) / size;
+    const auto groupsY = (static_cast<std::uint32_t>(height) + size - 1) / size;
+    const auto groupsZ = (static_cast<std::uint32_t>(depth) + size - 1) / size;
+
+    auto commandBuffer = impl->commandBuffer();
+    vkCmdDispatch(commandBuffer, groupsX, groupsY, groupsZ);
+    barrierAfterDispatch(commandBuffer);
+}
+
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
-    if (!impl->canRecord() || offsetInBytes < 0)
+    if (!impl->canRecord() || offsetInBytes < 0 || offsetInBytes % 4 != 0
+        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
         return;
 
     auto* data = static_cast<VulkanBufferData*>(arguments.nativeBuffer());

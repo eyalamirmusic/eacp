@@ -62,3 +62,19 @@ auto tBufferRangedTransfers = test("GPU/bufferRangedTransfers") = []
     check(untouched[0] == -1.0f);
     check(untouched[1] == -1.0f);
 };
+
+// The grid a ranged storage bind's offset has to sit on is a device property
+// rather than a constant - four on Metal and D3D12, the descriptor's own limit
+// on Vulkan. Whatever it answers is a positive multiple of four, so the
+// word-aligned offsets the rest of the API takes are always a superset of it,
+// and a device that never came up answers four rather than nothing.
+auto tStorageOffsetAlignmentIsAWordMultiple =
+    test("GPU/storageOffsetAlignmentIsAWordMultiple") = []
+{
+    const auto alignment = Device::shared().storageBufferOffsetAlignment();
+
+    LOG("storage buffer offset alignment: ", alignment);
+
+    check(alignment > 0);
+    check(alignment % (int) sizeof(std::uint32_t) == 0);
+};

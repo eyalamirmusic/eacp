@@ -165,6 +165,18 @@ auto tCodegenCompute3D = test("GPU/codegenCompute3D") = []
                    "gid.z >= uniforms.depth)"));
     check(contains(hlsl, "((gid.z * 16u) + gid.y)"));
     check(contains(hlsl, "= float(gid.z);"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl,
+                   "layout(local_size_x = 4, local_size_y = 4, local_size_z = 4)"));
+    check(contains(glsl, "uvec3 gid = gl_GlobalInvocationID.xyz;"));
+    check(contains(glsl,
+                   "if (gid.x >= uniforms.width || gid.y >= uniforms.height || "
+                   "gid.z >= uniforms.depth)"));
+    check(contains(glsl, "((gid.z * 16u) + gid.y)"));
+    check(contains(glsl, "= float(gid.z);"));
+
+    expectGlslCompiles(builder.graph());
 };
 
 // The threadgroup vocabulary of a 3D kernel, in the entry signature of both
@@ -192,6 +204,13 @@ auto tCodegenCompute3DGroupIds = test("GPU/codegenCompute3DGroupIds") = []
     check(contains(hlsl, "uint3 groupIndex : SV_GroupID"));
     check(contains(hlsl, "uint3 lid = localThread.xyz;"));
     check(contains(hlsl, "uint3 tgid = groupIndex.xyz;"));
+
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl, "uvec3 lid = gl_LocalInvocationID.xyz;"));
+    check(contains(glsl, "uvec3 tgid = gl_WorkGroupID.xyz;"));
+    check(contains(glsl, "uniforms.depth"));
+
+    expectGlslCompiles(builder.graph());
 };
 
 // Every cell of a volume runs exactly once and nothing outside it writes at

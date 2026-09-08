@@ -53,11 +53,15 @@ auto tUIntSelectEmitsAUIntConditional = test("Select/aUIntSelectIsNamedAsAUInt")
 
     builder.write(output, picked, toFloat(picked));
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(contains(source, "uint t0 = ((gid > 4u) ? gid : 7u);"));
         check(contains(source, "buffer0[t0] = float(t0);"));
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 auto tIntVectorSelectEmitsAnIntVectorConditional =
@@ -79,6 +83,13 @@ auto tIntVectorSelectEmitsAnIntVectorConditional =
         check(contains(source, "int2 t1 = ((gid > 0u) ? int2(1, 2) : int2(3, 4));"));
         check(contains(source, "float2 t2 = float2((t1 + t1));"));
     }
+
+    // The same conditional, in the vector spellings GLSL has of both types.
+    auto glsl = emitGlsl(builder.graph());
+    check(contains(glsl, "ivec2 t1 = ((gid > 0u) ? ivec2(1, 2) : ivec2(3, 4));"));
+    check(contains(glsl, "vec2 t2 = vec2((t1 + t1));"));
+
+    expectGlslCompiles(builder.graph());
 };
 
 auto tBoolSelectIsNamedAsABool = test("Select/aBoolSelectIsNamedAsABool") = []
@@ -93,12 +104,16 @@ auto tBoolSelectIsNamedAsABool = test("Select/aBoolSelectIsNamedAsABool") = []
 
     builder.write(output, i, toFloat(picked) + toFloat(picked));
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(contains(source,
                        "bool t0 = ((gid > 0u) ? (buffer0[gid] > 1.0) : false);"));
         check(contains(source, "buffer1[gid] = (float(t0) + float(t0));"));
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 auto tUIntSelectRunsExactly = test("Select/picksTheUnsignedValueAsked") = []

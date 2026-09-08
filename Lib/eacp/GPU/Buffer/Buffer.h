@@ -135,6 +135,12 @@ private:
 // and says how long the range stays valid - a streamed one until its pool
 // comes round again, a range over an app's own buffer as long as the app
 // keeps the buffer.
+//
+// A vertex or index range starts anywhere a word does. A storage-buffer bind is
+// the one that asks for more: its offset must be a multiple of
+// Device::storageBufferOffsetAlignment(), four on Metal and D3D12 and the
+// device's own limit on Vulkan, so a range meant for a kernel's slot is rounded
+// to that rather than to the element size.
 struct BufferRange
 {
     const Buffer* buffer = nullptr;

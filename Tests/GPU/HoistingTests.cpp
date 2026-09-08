@@ -389,12 +389,17 @@ auto tArgMaxLoadsTheElementOnce = test("Hoisting/aBranchKeepsTheLoadItWasGiven")
     auto builder = ShaderBuilder {};
     recordArgMax(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
-        check(occurrences(source, "buffer0[") == 2);
+        // The subscripts, not the GLSL declaration of the run itself.
+        check(occurrences(source, "= buffer0[") == 2);
         check(contains(source, "if ((t1 > v1))"));
         check(contains(source, "v1 = t1;"));
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 // The reciprocal is divided once, before the loop that applies it.
@@ -403,11 +408,15 @@ auto tNormaliseDividesOnce = test("Hoisting/aLoopInvariantSurvivesTheHeader") = 
     auto builder = ShaderBuilder {};
     recordNormalise(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(occurrences(source, "(1.0 / v0)") == 1);
         check(source.find("(1.0 / v0)") < source.rfind("while ("));
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 // A variable the body raises: the product is recomputed inside the loop.
@@ -416,8 +425,12 @@ auto tRaisedScaleIsRecomputed = test("Hoisting/aVariableTheBodyWritesRetires") =
     auto builder = ShaderBuilder {};
     recordRaisedScale(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
         check(occurrences(source, "(buffer0[gid] * v0)") == 2);
+
+    expectGlslCompiles(builder.graph());
 };
 
 // A buffer element the body stores into: the read is taken again inside.
@@ -426,8 +439,12 @@ auto tReadBackIsRecomputed = test("Hoisting/aStoredSlotRetiresItsRead") = []
     auto builder = ShaderBuilder {};
     recordReadBack(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
         check(occurrences(source, "(buffer0[gid] * 2.0)") == 2);
+
+    expectGlslCompiles(builder.graph());
 };
 
 // Threadgroup memory behind a barrier: the tile is read again inside the loop.
@@ -436,8 +453,12 @@ auto tSharedTileIsRecomputed = test("Hoisting/aBarrierRetiresASharedRead") = []
     auto builder = ShaderBuilder {};
     recordSharedTile(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
         check(occurrences(source, "(s0[0u] * 2.0)") == 2);
+
+    expectGlslCompiles(builder.graph());
 };
 
 // The header binds nothing of its own, and reads a standing name where the
@@ -447,11 +468,15 @@ auto tFixedBoundIsNamedOnce = test("Hoisting/aFixedBoundReachesTheHeader") = []
     auto builder = ShaderBuilder {};
     recordFixedBound(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(contains(source, "uint t0 = (v0 + 8u);"));
         check(contains(source, "while ((v1 < t0))"));
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 // ...and prints the bound in full where the body raises it, so the header is
@@ -461,11 +486,15 @@ auto tRaisedBoundIsRetested = test("Hoisting/aRaisedBoundIsRetested") = []
     auto builder = ShaderBuilder {};
     recordRaisedBound(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(contains(source, "while ((v1 < (v0 + 8u)))"));
         check(!contains(source, "while ((v1 < t"));
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 // A name the condition bound is not reused by a body that moved what it read.
@@ -475,11 +504,15 @@ auto tBranchBodyRecomputesWhatItMoved =
     auto builder = ShaderBuilder {};
     recordRaisedInBranch(builder);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(occurrences(source, "(buffer0[gid] * v0)") == 2);
         check(source.find("buffer1[gid] = t0;") == std::string::npos);
     }
+
+    expectGlslCompiles(builder.graph());
 };
 
 // The scan itself, against the same argmax written in C++.
