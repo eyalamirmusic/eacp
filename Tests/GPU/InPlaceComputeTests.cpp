@@ -107,12 +107,16 @@ auto tTheReadPrecedesTheStore = test("InPlace/theReadIsEmittedBeforeTheStore") =
 {
     auto kernel = InPlaceGeluKernel {};
 
-    for (const auto& source: {emitMetal(kernel.graph()), emitHlsl(kernel.graph())})
+    for (const auto& source: {emitMetal(kernel.graph()),
+                              emitHlsl(kernel.graph()),
+                              emitGlsl(kernel.graph())})
     {
         check(contains(source, "float t0 = buffer0[gid];"));
         check(source.find("float t0 = buffer0[gid];")
               < source.find("buffer0[gid] = "));
     }
+
+    expectGlslCompiles(kernel.graph());
 };
 
 // The other half of the contract, and why one buffer on two slots would not do
@@ -132,10 +136,14 @@ auto tAReadKeepsItsNameAcrossAnotherSlotsStore =
     builder.write(output, i, seen + 1.0f);
     builder.write(output, i, seen + 2.0f);
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(occurrences(source, "buffer0[gid]") == 1);
         check(contains(source, "buffer1[gid] = (t0 + 1.0);"));
         check(contains(source, "buffer1[gid] = (t0 + 2.0);"));
     }
+
+    expectGlslCompiles(builder.graph());
 };

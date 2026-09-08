@@ -572,15 +572,28 @@ kernel.keys = BufferRange {&cache, rowBytes * step, rowBytes};
 pass.dispatch(kernel, rowElements);     // writes cache[step], leaves the rest
 ```
 
-The offset must be a multiple of 4 bytes. `range.bytes` is not enforced: what
-stops a kernel short is the count passed to `dispatch`. A range that names no
-buffer, or starts at or past its buffer's end, binds nothing.
+The offset must be a multiple of `Device::storageBufferOffsetAlignment()` — four
+on Metal and D3D12, which take any word-aligned offset, and the device's own
+limit on Vulkan, where the offset goes into a descriptor (16 on Mesa's lavapipe,
+up to 256 by the spec). So a row a kernel is bound over is rounded to that
+rather than to the element size:
 
-The render side takes a range wherever the compute side does and under the same
-rule: `RenderPass::setVertexBuffer` and `drawIndexed` over the geometry,
-`setVertexStorageBuffer` and `setFragmentStorageBuffer` over the buffer a stage
-subscripts — which is what a `Uniform<InputBuffer>` on a `ShaderProgram` binds
-through. A draw handed an unbindable index range draws nothing.
+```cpp
+const auto stride = Device::shared().storageBufferOffsetAlignment();
+kernel.keys = BufferRange {&cache, row * stride, stride};
+```
+
+`range.bytes` is not enforced: what stops a kernel short is the count passed to
+`dispatch`. A range that names no buffer, starts off that grid, or starts at or
+past its buffer's end, binds nothing.
+
+The render side takes a range wherever the compute side does:
+`RenderPass::setVertexBuffer` and `drawIndexed` over the geometry, which want
+only a word-aligned offset, and `setVertexStorageBuffer` and
+`setFragmentStorageBuffer` over the buffer a stage subscripts, which want the
+device's alignment like a kernel's slot — the latter being what a
+`Uniform<InputBuffer>` on a `ShaderProgram` binds through. A draw handed an
+unbindable index range draws nothing.
 
 ### Buffers of integers
 
@@ -1182,6 +1195,28 @@ Notes worth having:
   would otherwise need. It is what makes the per-recording use tracking in
   `transitionForUse` correct, and it is the analogue of D3D12 buffers decaying
   to `COMMON` after every `ExecuteCommandLists`.
+- **A storage buffer's offset is the device's**, which is why the rule is
+  `Device::storageBufferOffsetAlignment()` rather than a constant four. Vulkan
+  writes the offset into a descriptor, and a descriptor may name no offset off
+  `minStorageBufferOffsetAlignment` — 16 on lavapipe, and up to 256 by the spec,
+  against the four Metal and D3D12 each take. A range off the device's grid
+  binds nothing here, exactly as one past the buffer's end does, on a kernel's
+  slots and on `setVertexStorageBuffer`/`setFragmentStorageBuffer` alike, so a
+  caller that sub-allocates by row asks the device for the step — which is what
+  the ranged cases in `Tests/GPU/UIntBufferTests.cpp` and
+  `ComputeBufferRangeTests.cpp` do.
+- **`CommandBuffer::fill` is `vkCmdFillBuffer`**, whose word is the byte
+  repeated four times, so the offset and the length are on the same four-byte
+  grid the API documents and the length is clamped to the buffer's end. Nothing
+  orders it by hand: the fill is a transfer write like any other, so the same
+  `transitionForUse` tracking that orders a dispatch against an upload orders it
+  against the passes either side.
+- **An off-screen command buffer is timed by the query pool a frame is.**
+  `CommandTimer` drives the same `GpuTimestamps` — one slot rather than four,
+  the pass's pair written at `TOP_OF_PIPE` and `BOTTOM_OF_PIPE` around the
+  encoder as `Frame::timePass` writes them, and the pool reset and the buffer's
+  own two queries recorded by the first labelled pass. A command buffer that
+  labelled nothing creates no pool.
 - **A pass is one `vkCmdBeginRendering`; there is no `VkRenderPass`.**
   `DepthAction` is the attachment's load and store ops — `Clear` is
   `CLEAR`/`DONT_CARE`, `Keep` is `CLEAR`/`STORE`, `Resume` is `LOAD`/`STORE`,

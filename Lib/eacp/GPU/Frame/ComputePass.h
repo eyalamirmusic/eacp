@@ -52,8 +52,10 @@ public:
     void setOutputBuffer(const Buffer& buffer, int slot);
 
     // The same, bound from range.offset bytes in. The offset must be a multiple
-    // of four; range.bytes is not enforced. An invalid range, or one starting at
-    // or past the buffer's end, binds nothing.
+    // of Device::storageBufferOffsetAlignment() - four on Metal and D3D12, the
+    // device's own limit on Vulkan - and an offset off that grid binds nothing,
+    // as one at or past the buffer's end does. range.bytes is not enforced. An
+    // invalid range binds nothing either.
     void setInputBuffer(const BufferRange& range, int slot);
     void setOutputBuffer(const BufferRange& range, int slot);
 

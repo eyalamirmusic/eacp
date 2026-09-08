@@ -315,7 +315,7 @@ constexpr auto erfHelperGlsl =
     "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
     "    float e = 1.0 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
     "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return x < 0.0 ? -e : e;\n"
+    "    return a == 0.0 ? x : (x < 0.0 ? -e : e);\n"
     "}\n\n"
     "vec2 eacpErf(vec2 x)\n"
     "{\n"
@@ -337,7 +337,7 @@ constexpr auto erfcHelperGlsl =
     "    float t = 1.0 / (1.0 + 0.3275911 * a);\n"
     "    float e = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741\n"
     "              + t * (-1.453152027 + t * 1.061405429)))) * exp(-a * a);\n"
-    "    return x < 0.0 ? 2.0 - e : e;\n"
+    "    return a == 0.0 ? 1.0 : (x < 0.0 ? 2.0 - e : e);\n"
     "}\n\n"
     "vec2 eacpErfc(vec2 x)\n"
     "{\n"
@@ -502,8 +502,8 @@ int gridExtentCount(DispatchRank rank)
     return rank == DispatchRank::TwoD ? 2 : 3;
 }
 
-// The type the entry point declares its indices as, and the swizzle HLSL takes
-// them out of its three-component semantics with.
+// The type the entry point declares its indices as, and the swizzle HLSL and
+// GLSL take them out of their three-component builtins with.
 const char* indexTypeName(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
@@ -512,12 +512,34 @@ const char* indexTypeName(DispatchRank rank)
     return rank == DispatchRank::TwoD ? "uint2" : "uint3";
 }
 
+const char* glslIndexTypeName(DispatchRank rank)
+{
+    if (rank == DispatchRank::OneD)
+        return "uint";
+
+    return rank == DispatchRank::TwoD ? "uvec2" : "uvec3";
+}
+
 const char* indexSwizzle(DispatchRank rank)
 {
     if (rank == DispatchRank::OneD)
         return ".x";
 
     return rank == DispatchRank::TwoD ? ".xy" : ".xyz";
+}
+
+// The threadgroup shape a rank is dispatched in, which the entry point declares
+// and a shared tile is sized against.
+int threadGroupExtent(DispatchRank rank, int axis)
+{
+    if (axis >= gridExtentCount(rank))
+        return 1;
+
+    if (rank == DispatchRank::OneD)
+        return ComputePass::threadGroupWidth;
+
+    return rank == DispatchRank::TwoD ? ComputePass::threadGroupSize2D
+                                      : ComputePass::threadGroupSize3D;
 }
 
 // Prints one stage's expressions. Nodes the stage plan named as locals print
@@ -1972,20 +1994,30 @@ const char* glslBufferQualifier(BufferAccess access)
     return access == BufferAccess::Read ? "readonly " : "";
 }
 
-const char* glslBufferElement(BufferAccess access)
+// The element type on the same terms metalBufferType and hlslBufferType take
+// it: an atomic slot is unsigned integers whatever it was declared with, since
+// atomicAdd acts through nothing else.
+const char* glslBufferElement(BufferAccess access, ValueType elementType)
 {
-    return access == BufferAccess::Atomic ? "uint" : "float";
+    if (access == BufferAccess::Atomic || elementType == ValueType::UInt)
+        return "uint";
+
+    return "float";
 }
 
 // The instance name is left off so the run of elements is a global named
 // buffer<slot>, which prints byte-identically to the other two dialects.
-std::string glslBufferBlock(BufferAccess access, int slot, int binding)
+std::string glslBufferBlock(BufferAccess access,
+                            ValueType elementType,
+                            int slot,
+                            int binding)
 {
     auto index = std::to_string(slot);
 
     return "layout(std430, set = 0, binding = " + std::to_string(binding) + ") "
            + glslBufferQualifier(access) + "buffer Buffer" + index + "\n{\n    "
-           + glslBufferElement(access) + " buffer" + index + "[];\n};\n";
+           + glslBufferElement(access, elementType) + " buffer" + index
+           + "[];\n};\n";
 }
 
 // What a sampled texture slot is declared as, which is the whole of what a cube
@@ -2213,7 +2245,10 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     {
         // One descriptor set carries the lot, at the Metal indices.
         for (auto i = 0; i < buffers.size(); ++i)
-            source += glslBufferBlock(buffers[i], i, vulkanComputeBufferBinding(i));
+            source += glslBufferBlock(buffers[i],
+                                      graph.storageElementType(i),
+                                      i,
+                                      vulkanComputeBufferBinding(i));
 
         if (buffers.size() > 0)
             source += "\n";
@@ -2242,26 +2277,28 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.sharedArrays().size() > 0)
             source += "\n";
 
-        auto groupWidth =
-            is2D ? ComputePass::threadGroupSize2D : ComputePass::threadGroupWidth;
-        auto groupHeight = is2D ? ComputePass::threadGroupSize2D : 1;
-
-        source += "layout(local_size_x = " + std::to_string(groupWidth)
-                  + ", local_size_y = " + std::to_string(groupHeight)
-                  + ", local_size_z = 1) in;\n\n";
+        source += "layout(local_size_x = "
+                  + std::to_string(threadGroupExtent(rank, 0)) + ", local_size_y = "
+                  + std::to_string(threadGroupExtent(rank, 1)) + ", local_size_z = "
+                  + std::to_string(threadGroupExtent(rank, 2)) + ") in;\n\n";
 
         source += "void main()\n{\n";
 
-        source += is2D ? "    uvec2 gid = gl_GlobalInvocationID.xy;\n"
-                       : "    uint gid = gl_GlobalInvocationID.x;\n";
+        // The three builtins are uvec3 whatever the rank, so each index is the
+        // swizzle of its own, exactly as the HLSL semantics are below.
+        auto indexType = std::string(glslIndexTypeName(rank));
+        auto swizzle = std::string(indexSwizzle(rank));
+
+        source +=
+            "    " + indexType + " gid = gl_GlobalInvocationID" + swizzle + ";\n";
 
         if (graph.usesLocalId())
-            source += is2D ? "    uvec2 lid = gl_LocalInvocationID.xy;\n"
-                           : "    uint lid = gl_LocalInvocationID.x;\n";
+            source +=
+                "    " + indexType + " lid = gl_LocalInvocationID" + swizzle + ";\n";
 
         if (graph.usesGroupId())
-            source += is2D ? "    uvec2 tgid = gl_WorkGroupID.xy;\n"
-                           : "    uint tgid = gl_WorkGroupID.x;\n";
+            source +=
+                "    " + indexType + " tgid = gl_WorkGroupID" + swizzle + ";\n";
     }
     else
     {
@@ -2320,18 +2357,9 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.sharedArrays().size() > 0)
             source += "\n";
 
-        auto groupWidth = ComputePass::threadGroupWidth;
-        auto groupHeight = 1;
-        auto groupDepth = 1;
-
-        if (rank == DispatchRank::TwoD)
-            groupWidth = groupHeight = ComputePass::threadGroupSize2D;
-        else if (rank == DispatchRank::ThreeD)
-            groupWidth = groupHeight = groupDepth = ComputePass::threadGroupSize3D;
-
-        source += "[numthreads(" + std::to_string(groupWidth) + ", "
-                  + std::to_string(groupHeight) + ", " + std::to_string(groupDepth)
-                  + ")]\n";
+        source += "[numthreads(" + std::to_string(threadGroupExtent(rank, 0)) + ", "
+                  + std::to_string(threadGroupExtent(rank, 1)) + ", "
+                  + std::to_string(threadGroupExtent(rank, 2)) + ")]\n";
         source += "void computeMain(uint3 threadId : SV_DispatchThreadID";
 
         if (graph.usesLocalId())
@@ -2440,7 +2468,10 @@ std::string emit(const ShaderGraph& graph, Backend backend)
 
         // Read-only whatever the slot recorded: a render stage never writes.
         for (auto i = 0; i < graph.storageBuffers().size(); ++i)
-            source += glslBufferBlock(BufferAccess::Read, i, vulkanBufferBinding(i));
+            source += glslBufferBlock(BufferAccess::Read,
+                                      graph.storageElementType(i),
+                                      i,
+                                      vulkanBufferBinding(i));
 
         if (graph.storageBuffers().size() > 0)
             source += "\n";

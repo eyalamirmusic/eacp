@@ -106,6 +106,14 @@ BufferRange elements(const Buffer& buffer, int first, int count)
 {
     return {&buffer, first * floatBytes, count * floatBytes};
 }
+
+// The grid a ranged storage bind's offset has to sit on, counted in elements of
+// the given size: one on Metal and D3D12, four on Mesa's lavapipe. Every offset
+// below is a multiple of it, so each one is non-zero and bindable everywhere.
+int rowElements(int elementBytes)
+{
+    return Device::shared().storageBufferOffsetAlignment() / elementBytes;
+}
 } // namespace
 
 // An input bound at an offset: a copy from halfway into a ramp comes back as
@@ -117,9 +125,10 @@ auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
     if (!device.isValid())
         return;
 
-    constexpr auto count = 8;
+    const auto count = 8;
+    const auto first = rowElements(floatBytes);
 
-    auto input = makeRamp(2 * count);
+    auto input = makeRamp(first + count);
     auto output = makeFilled(count, -1.0f);
 
     auto kernel = CopyKernel {};
@@ -130,7 +139,7 @@ auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
     {
         auto pass = commands.beginCompute();
         pass.setPipeline(kernel.pipeline());
-        pass.setInputBuffer(elements(input, count, count), kernel.input.slot);
+        pass.setInputBuffer(elements(input, first, count), kernel.input.slot);
         pass.setOutputBuffer(output, kernel.output.slot);
         dispatchBoundByHand(pass, kernel, count);
     }
@@ -140,7 +149,7 @@ auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
     auto values = readFloats(output, count);
 
     for (auto i = 0; i < count; ++i)
-        check(values[i] == (float) (count + i));
+        check(values[i] == (float) (first + i));
 };
 
 // An output bound at an offset: the pre-filled elements before it stay as they
@@ -152,9 +161,9 @@ auto tOutputBoundAtOffset = test("GPU/computeOutputBoundAtOffset") = []
     if (!device.isValid())
         return;
 
-    constexpr auto count = 4;
-    constexpr auto capacity = 16;
-    constexpr auto row = 4;
+    const auto count = 4;
+    const auto row = rowElements(floatBytes);
+    const auto capacity = row + 2 * count;
 
     auto input = makeRamp(count);
     auto output = makeFilled(capacity, -1.0f);
@@ -191,10 +200,10 @@ auto tProgramMembersTakeRanges = test("GPU/computeProgramMembersTakeRanges") = [
     if (!device.isValid())
         return;
 
-    constexpr auto count = 4;
-    constexpr auto capacity = 16;
-    constexpr auto sourceRow = 8;
-    constexpr auto destRow = 4;
+    const auto count = 4;
+    const auto destRow = rowElements(floatBytes);
+    const auto sourceRow = 2 * destRow;
+    const auto capacity = sourceRow + 2 * count;
 
     auto input = makeRamp(capacity);
     auto output = makeFilled(capacity, -1.0f);
@@ -266,9 +275,9 @@ auto tAtomicBoundAtOffset = test("GPU/computeAtomicBoundAtOffset") = []
     if (!device.isValid())
         return;
 
-    constexpr auto capacity = 8;
-    constexpr auto first = 4;
-    constexpr auto count = 3;
+    const auto count = 3;
+    const auto first = 2 * rowElements(uintBytes);
+    const auto capacity = first + count + 1;
 
     auto counters = makeZeroedCounters(capacity);
 

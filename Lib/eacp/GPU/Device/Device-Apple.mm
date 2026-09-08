@@ -154,6 +154,15 @@ bool Device::supportsBlockCompression() const
     return false;
 }
 
+// Nothing to ask the device. Metal aligns a setBuffer offset to four bytes on
+// every GPU eacp runs on, so the grid is the API's own and a range on it binds
+// here whatever the hardware. Vulkan is where this varies, which is why it is a
+// Device call rather than a constant.
+int Device::storageBufferOffsetAlignment() const
+{
+    return 4;
+}
+
 void* Device::nativeContext() const
 {
     // Nothing to hand out: the queue, the texture cache and the samplers are

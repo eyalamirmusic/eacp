@@ -512,6 +512,28 @@ inline void recordPassEndTimestamp(CommandContext* commands,
                          static_cast<std::uint32_t>(endQuery));
 }
 
+// A storage-buffer bind, whole or ranged: the shader's element zero is the
+// element at the offset. The alignment the descriptor demands is a device limit
+// (16 on lavapipe) rather than the four bytes Metal and D3D12 take, which is
+// what Device::storageBufferOffsetAlignment reports; an offset off that grid
+// binds nothing, as one at or past the end does.
+inline VkDescriptorBufferInfo vulkanStorageBufferInfo(const VulkanBufferData* data,
+                                                      const BufferRange& range)
+{
+    if (data == nullptr || data->buffer == VK_NULL_HANDLE || range.offset < 0
+        || static_cast<std::size_t>(range.offset) >= data->size)
+        return {};
+
+    const auto offset = static_cast<VkDeviceSize>(range.offset);
+    const auto alignment =
+        getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
+
+    if (alignment != 0 && offset % alignment != 0)
+        return {};
+
+    return {data->buffer, offset, VK_WHOLE_SIZE};
+}
+
 inline void endTimedPass(const VulkanComputeEncoder& encoder)
 {
     recordPassEndTimestamp(encoder.commands, encoder.queryPool, encoder.endQuery);

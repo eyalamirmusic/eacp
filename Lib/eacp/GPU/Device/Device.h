@@ -132,6 +132,22 @@ public:
     // finding out afterwards.
     bool supportsBlockCompression() const;
 
+    // The grid a ranged storage-buffer bind's offset has to sit on, in bytes -
+    // ComputePass::setInputBuffer/setOutputBuffer over a BufferRange, and
+    // RenderPass::setVertexStorageBuffer/setFragmentStorageBuffer over one. An
+    // offset off it binds nothing, exactly as one past the buffer's end does.
+    //
+    // Four on Metal and D3D12, which take any word-aligned offset. Vulkan
+    // writes the offset into a descriptor and the descriptor's alignment is a
+    // device limit - 16 on Mesa's lavapipe, up to 256 by the spec - so a range
+    // that a Mac takes is not automatically one this device takes, and code
+    // that sub-allocates a buffer by row has to round the row to this rather
+    // than to the element size. An invalid Device answers four.
+    //
+    // Only the storage binds: fill, dispatchIndirect and the vertex and index
+    // ranges are four-byte everywhere, this backend included.
+    int storageBufferOffsetAlignment() const;
+
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;

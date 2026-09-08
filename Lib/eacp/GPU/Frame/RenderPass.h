@@ -193,9 +193,11 @@ public:
     void setFragmentStorageBuffer(const Buffer& buffer, int slot = 0);
 
     // The same over part of a buffer: element zero of the shader's buffer is the
-    // element at range.offset. The offset must be a multiple of four; range.bytes
-    // is not enforced. An invalid range, or one starting at or past the buffer's
-    // end, binds nothing.
+    // element at range.offset. The offset must be a multiple of
+    // Device::storageBufferOffsetAlignment() - four on Metal and D3D12, the
+    // device's own limit on Vulkan - and an offset off that grid binds nothing,
+    // as one at or past the buffer's end does. range.bytes is not enforced. An
+    // invalid range binds nothing either.
     void setVertexStorageBuffer(const BufferRange& range, int slot = 0);
     void setFragmentStorageBuffer(const BufferRange& range, int slot = 0);
 

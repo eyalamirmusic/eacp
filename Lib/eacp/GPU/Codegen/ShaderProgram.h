@@ -916,10 +916,6 @@ public:
 
     const ShaderSource& source() const { return generated.source; }
 
-    // The graph the body was recorded into, so either backend's text can be
-    // emitted from the program that ships rather than from a copy of its body.
-    const ShaderGraph& graph() const { return builder.graph(); }
-
     const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
 
     // The shader as the EDSL recorded it; source() is one platform's spelling.

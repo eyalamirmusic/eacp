@@ -596,9 +596,13 @@ auto tErrorFunctionHelpersPinTheOrigin =
 
     builder.write(output, i, erf(x) + erfc(x));
 
-    for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
     {
         check(contains(source, "return a == 0.0 ? x : (x < 0.0 ? -e : e);"));
         check(contains(source, "return a == 0.0 ? 1.0 : (x < 0.0 ? 2.0 - e : e);"));
     }
+
+    expectGlslCompiles(builder.graph());
 };

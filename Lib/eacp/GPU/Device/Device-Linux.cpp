@@ -69,6 +69,19 @@ bool Device::supportsBlockCompression() const
            && getVulkanShared().getFeatures().textureCompressionBC == VK_TRUE;
 }
 
+// The one range rule that is a device property rather than a constant: a
+// descriptor may name no offset off minStorageBufferOffsetAlignment.
+int Device::storageBufferOffsetAlignment() const
+{
+    if (!isValid())
+        return 4;
+
+    const auto alignment =
+        getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
+
+    return alignment > 0 ? (int) alignment : 4;
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;

@@ -427,6 +427,10 @@ auto tAtomicStorageReadsBackAsUInts =
 
 // A uint buffer bound part-way in: element zero of the kernel's buffer is the
 // element at the range's offset, on the input side and on the output side.
+//
+// Both offsets are whole multiples of the device's storage-buffer alignment,
+// which is the grid a bind takes - one uint on Metal and D3D12, four of them on
+// lavapipe - so each offset is non-zero and bindable on every backend.
 auto tUIntRangesBindAtTheirOffset =
     test("UIntBuffer/aRangeStartsAtItsOwnOffset") = []
 {
@@ -435,10 +439,10 @@ auto tUIntRangesBindAtTheirOffset =
     if (!device.isValid())
         return;
 
-    constexpr auto capacity = 8;
-    constexpr auto first = 4;
-    constexpr auto row = 2;
-    constexpr auto count = 3;
+    const auto row = device.storageBufferOffsetAlignment() / uintBytes;
+    const auto first = 2 * row;
+    const auto count = 3;
+    const auto capacity = first + count;
 
     auto source = Vector<std::uint32_t> {};
 
@@ -488,11 +492,13 @@ auto tAStoreStalesAUIntRead = test("UIntBuffer/aStoreStalesAnEarlierRead") = []
 
     const auto& graph = builder.graph();
 
-    for (const auto& source: {emitMetal(graph), emitHlsl(graph)})
+    for (const auto& source: {emitMetal(graph), emitHlsl(graph), emitGlsl(graph)})
     {
         check(occurrences(source, "uint t0 = buffer0[") == 1);
         check(occurrences(source, "uint t1 = buffer0[") == 1);
     }
+
+    expectGlslCompiles(graph);
 };
 
 // The re-read run through Metal: four doublings of one is sixteen, one doubling
@@ -547,6 +553,7 @@ auto tUIntBuffersDeclareTheirElementType =
     const auto& graph = builder.graph();
     auto metal = emitMetal(graph);
     auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
 
     check(contains(metal, "device const float* buffer0"));
     check(contains(metal, "device const uint* buffer1"));
@@ -559,6 +566,15 @@ auto tUIntBuffersDeclareTheirElementType =
     check(contains(hlsl, "RWStructuredBuffer<uint> buffer3 : register(u3)"));
 
     check(!contains(hlsl, "ByteAddressBuffer"));
+
+    // The element type is inside the block, and readonly is the access - a
+    // GLSL block says both in one declaration.
+    check(contains(glsl, "readonly buffer Buffer0\n{\n    float buffer0[];"));
+    check(contains(glsl, "readonly buffer Buffer1\n{\n    uint buffer1[];"));
+    check(contains(glsl, ") buffer Buffer2\n{\n    float buffer2[];"));
+    check(contains(glsl, ") buffer Buffer3\n{\n    uint buffer3[];"));
+
+    expectGlslCompiles(graph);
 };
 
 // A render stage reads one as readily as a kernel does: the same storage bind,
@@ -579,4 +595,9 @@ auto tARenderStageReadsUIntElements =
 
     check(contains(emitMetal(graph), "device const uint* buffer0"));
     check(contains(emitHlsl(graph), "StructuredBuffer<uint> buffer0 : register(t"));
+    check(contains(emitGlsl(graph),
+                   "readonly buffer Buffer0\n{\n    uint "
+                   "buffer0[];"));
+
+    expectGlslCompiles(graph);
 };

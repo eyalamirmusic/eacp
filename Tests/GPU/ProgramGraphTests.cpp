@@ -69,8 +69,10 @@ auto tComputeProgramExposesItsGraph =
 
     auto metal = emitMetal(kernel.graph());
     auto hlsl = emitHlsl(kernel.graph());
+    auto glsl = emitGlsl(kernel.graph());
 
-    check(metal == kernel.source().source || hlsl == kernel.source().source);
+    check(metal == kernel.source().source || hlsl == kernel.source().source
+          || glsl == kernel.source().source);
 
     check(contains(metal, "device const float* buffer0"));
     check(contains(metal, "device float* buffer1"));
@@ -79,6 +81,12 @@ auto tComputeProgramExposesItsGraph =
     check(contains(hlsl, "StructuredBuffer<float> buffer0 : register(t0)"));
     check(contains(hlsl, "RWStructuredBuffer<float> buffer1 : register(u1)"));
     check(contains(hlsl, "buffer1[gid] = (buffer0[gid] * uniforms.u0);"));
+
+    check(contains(glsl, "readonly buffer Buffer0\n{\n    float buffer0[];"));
+    check(contains(glsl, ") buffer Buffer1\n{\n    float buffer1[];"));
+    check(contains(glsl, "buffer1[gid] = (buffer0[gid] * uniforms.u0);"));
+
+    expectGlslCompiles(kernel.graph());
 };
 
 auto tShaderProgramExposesItsGraph =
@@ -88,8 +96,10 @@ auto tShaderProgramExposesItsGraph =
 
     auto metal = emitMetal(program.graph());
     auto hlsl = emitHlsl(program.graph());
+    auto glsl = emitGlsl(program.graph());
 
-    check(metal == program.source().source || hlsl == program.source().source);
+    check(metal == program.source().source || hlsl == program.source().source
+          || glsl == program.source().source);
 
     check(contains(metal, "vertex VertexOut vertexMain("));
     check(contains(metal, "fragment float4 fragmentMain("));
@@ -97,4 +107,10 @@ auto tShaderProgramExposesItsGraph =
     check(contains(hlsl, "VertexOut vertexMain("));
     check(contains(hlsl, "float4 fragmentMain("));
     check(contains(hlsl, "cbuffer UniformsCB : register(b0)"));
+
+    check(contains(glsl, "#ifdef EACP_VERTEX"));
+    check(contains(glsl, "#ifdef EACP_FRAGMENT"));
+    check(contains(glsl, "uniform Uniforms"));
+
+    expectGlslCompiles(program.graph());
 };

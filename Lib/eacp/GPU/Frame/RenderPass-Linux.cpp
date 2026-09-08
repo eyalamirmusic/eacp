@@ -136,19 +136,21 @@ struct RenderPass::Native
         return true;
     }
 
-    void bindStorageBuffer(const Buffer& buffer, int slot)
+    void bindStorageBuffer(const BufferRange& range, int slot)
     {
-        if (encoder == nullptr || slot < 0 || slot >= maxBufferSlots)
+        if (encoder == nullptr || slot < 0 || slot >= maxBufferSlots
+            || range.buffer == nullptr)
             return;
 
-        auto* data = static_cast<VulkanBufferData*>(buffer.nativeBuffer());
+        auto* data = static_cast<VulkanBufferData*>(range.buffer->nativeBuffer());
+        const auto info = vulkanStorageBufferInfo(data, range);
 
-        if (data == nullptr || data->buffer == VK_NULL_HANDLE)
+        if (info.buffer == VK_NULL_HANDLE)
             return;
 
         noteBufferUse(*encoder->commands, *data, bufferGraphicsRead);
 
-        buffers[slot] = {data->buffer, 0, VK_WHOLE_SIZE};
+        buffers[slot] = info;
         boundBuffers |= 1u << slot;
         descriptorsDirty = true;
     }
@@ -377,12 +379,22 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)
 {
-    impl->bindStorageBuffer(buffer, slot);
+    impl->bindStorageBuffer(BufferRange::of(buffer), slot);
+}
+
+void RenderPass::setVertexStorageBuffer(const BufferRange& range, int slot)
+{
+    impl->bindStorageBuffer(range, slot);
 }
 
 void RenderPass::setFragmentStorageBuffer(const Buffer& buffer, int slot)
 {
-    impl->bindStorageBuffer(buffer, slot);
+    impl->bindStorageBuffer(BufferRange::of(buffer), slot);
+}
+
+void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
+{
+    impl->bindStorageBuffer(range, slot);
 }
 
 void RenderPass::setVertexBytes(const void* data, int bytes, int slot)
