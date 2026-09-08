@@ -23,8 +23,9 @@ namespace eacp::GPU
 // crosses the boundary and these two stay shader-local values. The boolean
 // vectors appear here for the same reason and are refused for the same one the
 // scalar Bool is: the two languages disagree on what a bool occupies. The
-// integer vectors are not in that position - both pack an int2 exactly where
-// they pack a float2 - so those cross like the scalar Int does.
+// integer vectors, signed and unsigned alike, are not in that position - both
+// pack an int2 or a uint2 exactly where they pack a float2 - so those cross like
+// their scalars do.
 inline int uniformAlignment(ValueType type)
 {
     switch (type)
@@ -35,12 +36,15 @@ inline int uniformAlignment(ValueType type)
         case ValueType::Bool:
             return 4;
         case ValueType::Float2:
+        case ValueType::UInt2:
         case ValueType::Int2:
         case ValueType::Bool2:
         case ValueType::Float2x2:
             return 8;
         case ValueType::Float3:
         case ValueType::Float4:
+        case ValueType::UInt3:
+        case ValueType::UInt4:
         case ValueType::Int3:
         case ValueType::Int4:
         case ValueType::Bool3:
@@ -55,8 +59,8 @@ inline int uniformAlignment(ValueType type)
 
 inline int uniformSlotStride(ValueType type)
 {
-    if (type == ValueType::Float3 || type == ValueType::Int3
-        || type == ValueType::Bool3)
+    if (type == ValueType::Float3 || type == ValueType::UInt3
+        || type == ValueType::Int3 || type == ValueType::Bool3)
         return 16;
 
     // A float3x3 is three float3 columns, and a column occupies a full 16 bytes

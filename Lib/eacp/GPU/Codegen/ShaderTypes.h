@@ -19,11 +19,12 @@ namespace eacp::GPU
 // what a comparison yields and what a branch or a select tests; like UInt it
 // never crosses from the CPU.
 //
-// Int and Bool have vectors of their own because a comparison of two vectors is
-// componentwise in both languages - it yields a bool of the same width, which
-// any() or all() then collapses - and because a shader working on a grid counts
-// its cell as a pair of integers. An integer vector crosses from the CPU like
-// the scalar does; a boolean one does not, like the scalar does not.
+// UInt, Int and Bool have vectors of their own because a comparison of two
+// vectors is componentwise in both languages - it yields a bool of the same
+// width, which any() or all() then collapses - and because a shader working on a
+// grid counts its cell as a pair of integers. An integer vector, signed or
+// unsigned, crosses from the CPU like its scalar does; a boolean one does not,
+// like the scalar does not.
 enum class ValueType
 {
     Float,
@@ -34,6 +35,9 @@ enum class ValueType
     Float3x3,
     Float4x4,
     UInt,
+    UInt2,
+    UInt3,
+    UInt4,
     Int,
     Int2,
     Int3,
@@ -79,14 +83,17 @@ constexpr int componentCount(ValueType type)
         case ValueType::Bool:
             return 1;
         case ValueType::Float2:
+        case ValueType::UInt2:
         case ValueType::Int2:
         case ValueType::Bool2:
             return 2;
         case ValueType::Float3:
+        case ValueType::UInt3:
         case ValueType::Int3:
         case ValueType::Bool3:
             return 3;
         case ValueType::Float4:
+        case ValueType::UInt4:
         case ValueType::Int4:
         case ValueType::Bool4:
             return 4;
@@ -101,10 +108,17 @@ constexpr int componentCount(ValueType type)
     return 1;
 }
 
-// Whether a type belongs to the signed-integer family or the boolean one - the
-// two vocabularies that sit outside float arithmetic and are crossed into
-// explicitly. Asked by the uniform block, which takes the first and refuses the
-// second, and by the comparison operators, which pick a mask by width.
+// Which of the three vocabularies outside float arithmetic a type belongs to -
+// the unsigned integers, the signed ones, the booleans - each crossed into
+// explicitly. Asked by the uniform block, which takes the two integer families
+// and refuses the boolean one, and by the operator sets, which are defined per
+// family.
+constexpr bool isUnsignedInteger(ValueType type)
+{
+    return type == ValueType::UInt || type == ValueType::UInt2
+           || type == ValueType::UInt3 || type == ValueType::UInt4;
+}
+
 constexpr bool isSignedInteger(ValueType type)
 {
     return type == ValueType::Int || type == ValueType::Int2
@@ -160,6 +174,12 @@ inline const char* typeName(ValueType type)
             return "float4x4";
         case ValueType::UInt:
             return "uint";
+        case ValueType::UInt2:
+            return "uint2";
+        case ValueType::UInt3:
+            return "uint3";
+        case ValueType::UInt4:
+            return "uint4";
         case ValueType::Int:
             return "int";
         case ValueType::Int2:

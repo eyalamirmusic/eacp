@@ -22,6 +22,9 @@ VertexFormat toVertexFormat(ValueType type)
         case ValueType::Float3x3:
         case ValueType::Float4x4:
         case ValueType::UInt:
+        case ValueType::UInt2:
+        case ValueType::UInt3:
+        case ValueType::UInt4:
         case ValueType::Int:
         case ValueType::Int2:
         case ValueType::Int3:

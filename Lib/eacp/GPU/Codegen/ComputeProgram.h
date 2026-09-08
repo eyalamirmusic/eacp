@@ -248,7 +248,13 @@ protected:
     UInt threadId() { return builder.threadId(); }
     ThreadPosition threadPosition() { return builder.threadPosition(); }
     ThreadPosition3 threadPosition3() { return builder.threadPosition3(); }
+
+    // The same work item as one value: a UInt2 over a grid, a UInt3 over a
+    // volume, fixing the rank exactly as the two above do.
+    UInt2 threadId2() { return builder.threadId2(); }
+    UInt3 threadId3() { return builder.threadId3(); }
     Float constant(float value) { return builder.constant(value); }
+    UInt unsignedInteger(unsigned value) { return builder.unsignedInteger(value); }
 
     // The threadgroup vocabulary, forwarded on the terms the ids above set:
     // where a thread sits in its group, which group it is in, the implicit
@@ -261,6 +267,13 @@ protected:
     UInt groupId() { return builder.groupId(); }
     ThreadPosition groupPosition() { return builder.groupPosition(); }
     ThreadPosition3 groupPosition3() { return builder.groupPosition3(); }
+
+    // Their whole-vector forms, beside threadId2() and threadId3().
+    UInt2 localId2() { return builder.localId2(); }
+    UInt3 localId3() { return builder.localId3(); }
+    UInt2 groupId2() { return builder.groupId2(); }
+    UInt3 groupId3() { return builder.groupId3(); }
+
     UInt gridCount() { return builder.gridCount(); }
     UInt gridWidth() { return builder.gridWidth(); }
     UInt gridHeight() { return builder.gridHeight(); }
@@ -392,6 +405,22 @@ protected:
     }
 
     void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    // The record writes, for a buffer whose elements are records of N integers.
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
+    {
+        builder.write(buffer, index, value);
+    }
+
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
     {
         builder.write(buffer, index, value);
     }
