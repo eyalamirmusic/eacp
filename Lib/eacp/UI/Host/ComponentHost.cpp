@@ -153,14 +153,22 @@ void ComponentHost::setFontFamily(const std::string& family)
     setFont(updated);
 }
 
+// The tree is laid out BEFORE the base class hears of the resize, because
+// GPUView::resized draws a frame there and then - inside the resize's own
+// transaction, which on macOS is the frame that lands with the new size. Laid
+// out after it, that frame is the old layout in the new drawable, and the
+// correct one that follows presents into a transaction that has already
+// committed, so the window keeps the stale frame until something else
+// invalidates it: at the end of a drag, that is what the user is left with.
 void ComponentHost::resized()
 {
-    GPUView::resized();
-
     auto bounds = getLocalBounds();
 
     if (bounds.w <= 0.f || bounds.h <= 0.f)
+    {
+        GPUView::resized();
         return;
+    }
 
     // A resize only moves the logical space the shaders map from, so the
     // renderer is told rather than rebuilt -- its pipelines are unaffected.
@@ -189,7 +197,7 @@ void ComponentHost::resized()
     if (root != nullptr)
         root->setBounds(bounds);
 
-    repaint();
+    GPUView::resized();
 }
 
 void ComponentHost::markTreeDirty(Component& component)

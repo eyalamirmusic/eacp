@@ -76,23 +76,32 @@ Rect AspectRatioLock::lockedArea(const Rect& bounds) const
     if (area.isEmpty())
         return area.withSize(std::max(area.w, 0.f), std::max(area.h, 0.f));
 
-    if (!isLocking())
+    if (!isLocking() || allows({bounds.w, bounds.h}))
         return area;
 
     auto proportion = ratio.x / ratio.y;
     auto width = area.w;
-    auto height = width / proportion;
+    auto height = std::round(width / proportion);
 
     if (height > area.h)
     {
         height = area.h;
-        width = height * proportion;
+        width = std::round(height * proportion);
     }
 
-    return {area.x + (area.w - width) / 2.f,
-            area.y + (area.h - height) / 2.f,
+    return {area.x + std::floor((area.w - width) / 2.f),
+            area.y + std::floor((area.h - height) / 2.f),
             width,
             height};
+}
+
+bool AspectRatioLock::allows(Point size) const
+{
+    auto matches = [size](Point allowed)
+    { return allowed.x == size.x && allowed.y == size.y; };
+
+    return matches((*this)({size, ResizeAxis::Width}))
+           || matches((*this)({size, ResizeAxis::Height}));
 }
 
 } // namespace eacp::Graphics

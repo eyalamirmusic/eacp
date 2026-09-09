@@ -172,8 +172,30 @@ auto tLockedAreaIsTheBoundsLessTheBorder =
         same(lock.lockedArea({0.f, 0.f, 1160.f, 600.f}), {0.f, 60.f, 960.f, 540.f}));
 };
 
+// The reported bug: 1311 x 670 under a 56-point header beside a 220-point
+// inspector leaves 1091 x 614, which the lock allowed (1091 / (16/9) is
+// 613.69, rounded to the point). Re-deriving the ratio from it gave the
+// canvas a height of 613.69 on a fractional y, which the scissor clip then
+// cut. A size the lock allowed is used as it is.
+auto tLockedAreaIsWholePointsForAnAllowedSize =
+    test("SizeConstraint/lockedAreaIsWholePointsForAnAllowedSize") = []
+{
+    auto lock = AspectRatioLock {sixteenNine, Insets {.top = 56.f, .right = 220.f}};
+
+    check(lock.allows({1311.f, 670.f}));
+    check(same(lock.lockedArea({0.f, 0.f, 1311.f, 670.f}),
+               {0.f, 56.f, 1091.f, 614.f}));
+
+    // And one it arrived at from a height drag.
+    auto fromHeight = lock({{0.f, 56.f + 601.f}, ResizeAxis::Height});
+    check(lock.allows(fromHeight));
+    check(same(lock.lockedArea({0.f, 0.f, fromHeight.x, fromHeight.y}),
+               {0.f, 56.f, fromHeight.x - 220.f, 601.f}));
+};
+
 // For one it did not - fullscreen on a display of another shape, say - the
-// content is letterboxed inside what the border leaves, centred.
+// content is letterboxed inside what the border leaves, centred, and still
+// on whole points.
 auto tLockedAreaLetterboxesAForeignSize =
     test("SizeConstraint/lockedAreaLetterboxesAForeignSize") = []
 {

@@ -82,7 +82,16 @@ struct AspectRatioLock
     // allowed - the largest rect of the ratio that fits inside that, centred.
     // So the layout is right even for a size the window took behind the
     // lock's back.
+    //
+    // Whole points either way. The lock rounds to the point, so a size it
+    // allowed is up to half a point off the exact ratio, and re-deriving the
+    // ratio from it would put the content on a fractional pixel - a scissor
+    // clip cuts the edge of what is painted there.
     Rect lockedArea(const Rect& bounds) const;
+
+    // Whether `size` (content, border included) is one the lock hands back
+    // unchanged from either axis - a size the window can actually hold.
+    bool allows(Point size) const;
 
     bool isLocking() const;
 
