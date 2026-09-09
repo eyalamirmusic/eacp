@@ -84,6 +84,19 @@ Rect Rect::inset(float horizontal, float vertical) const
     return {x + horizontal, y + vertical, w - horizontal * 2, h - vertical * 2};
 }
 
+Rect Rect::inset(const Insets& insets) const
+{
+    return {x + insets.left,
+            y + insets.top,
+            w - insets.left - insets.right,
+            h - insets.top - insets.bottom};
+}
+
+Point Insets::size() const
+{
+    return {left + right, top + bottom};
+}
+
 Rect Rect::withX(float newX) const
 {
     return {newX, y, w, h};

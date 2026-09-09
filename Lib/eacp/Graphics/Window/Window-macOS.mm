@@ -175,7 +175,11 @@ struct WindowDelegateState
 {
     Callback cb = [] {};
     ResizeCallback onResize;
-    WillResizeCallback onWillResize;
+    SizeConstraint sizeConstraint;
+
+    // The content size when the current live resize began; see
+    // windowWillResize.
+    std::optional<Point> liveResizeStart;
     bool hidesOnClose = false;
     WindowEvents* events = nullptr;
     // Internal key-focus listener (mouse lock suspend/resume), invoked
@@ -214,20 +218,84 @@ BOOL windowShouldClose(id self, SEL, NSWindow* sender)
     return NO;
 }
 
+Point currentContentSize(NSWindow* window)
+{
+    auto content = [window contentRectForFrameRect:[window frame]].size;
+    return {(float) content.width, (float) content.height};
+}
+
+Point contentSizeForFrameSize(NSWindow* window, NSSize frameSize)
+{
+    auto frame = NSMakeRect(0, 0, frameSize.width, frameSize.height);
+    auto content = [window contentRectForFrameRect:frame].size;
+    return {(float) content.width, (float) content.height};
+}
+
+NSSize frameSizeForContentSize(NSWindow* window, Point content)
+{
+    auto contentRect = NSMakeRect(0, 0, content.x, content.y);
+    return [window frameRectForContentRect:contentRect].size;
+}
+
+// A user drag. AppKit says what size, not which edge, so the edge is read off
+// which dimension moved - measured from where the drag STARTED, not from the
+// size the window holds now. AppKit proposes each size from the start frame
+// plus the cursor's travel, so against the start an edge drag moves one
+// dimension for the whole drag. Against the current size it does not: the
+// constraint moves the other dimension, the next proposal then differs in
+// both, the axis flips, the constraint moves it back, and the window
+// flickers between the two shapes on every mouse move.
 NSSize windowWillResize(id self, SEL, NSWindow* sender, NSSize frameSize)
 {
     auto* state = getDelegateState(self);
+    auto proposed = contentSizeForFrameSize(sender, frameSize);
 
-    if (!state->onWillResize)
-        return frameSize;
+    if (!state->liveResizeStart)
+        state->liveResizeStart = currentContentSize(sender);
 
-    auto proposedFrame = NSMakeRect(0, 0, frameSize.width, frameSize.height);
-    auto proposedContent = [sender contentRectForFrameRect:proposedFrame];
-    auto width = (int) proposedContent.size.width;
-    auto height = (int) proposedContent.size.height;
-    state->onWillResize(width, height);
-    proposedContent.size = NSMakeSize(width, height);
-    return [sender frameRectForContentRect:proposedContent].size;
+    auto axis = resizeAxisBetween(*state->liveResizeStart, proposed);
+    auto allowed = state->sizeConstraint({proposed, axis});
+    return frameSizeForContentSize(sender, allowed);
+}
+
+void windowWillStartLiveResize(id self, SEL, NSNotification* notification)
+{
+    auto* window = (NSWindow*) notification.object;
+    getDelegateState(self)->liveResizeStart = currentContentSize(window);
+}
+
+void windowDidEndLiveResize(id self, SEL, NSNotification*)
+{
+    getDelegateState(self)->liveResizeStart.reset();
+}
+
+// The green button's zoom. Never passes through windowWillResize, so it is
+// the one drag-free shape the constraint would otherwise miss: the largest
+// allowed size that fits the screen's default frame, kept to its top-left.
+NSRect windowWillUseStandardFrame(id self, SEL, NSWindow* sender, NSRect defaultFrame)
+{
+    auto* state = getDelegateState(self);
+    auto available = contentSizeForFrameSize(sender, defaultFrame.size);
+    auto allowed = fitWithin(state->sizeConstraint, available);
+    auto size = frameSizeForContentSize(sender, allowed);
+
+    return NSMakeRect(defaultFrame.origin.x,
+                      NSMaxY(defaultFrame) - size.height,
+                      size.width,
+                      size.height);
+}
+
+// Fullscreen hands the window the display; a content size smaller than that
+// is centred on black, which is the letterbox a constrained window wants.
+NSSize windowWillUseFullScreenContentSize(id self,
+                                          SEL,
+                                          NSWindow*,
+                                          NSSize proposedSize)
+{
+    auto* state = getDelegateState(self);
+    auto available = Point {(float) proposedSize.width, (float) proposedSize.height};
+    auto allowed = fitWithin(state->sizeConstraint, available);
+    return NSMakeSize(allowed.x, allowed.y);
 }
 
 void windowDidResize(id self, SEL, NSNotification* notification)
@@ -296,6 +364,14 @@ Class getWindowDelegateClass()
         builder->addMethod(@selector(windowShouldClose:), windowShouldClose);
         builder->addMethod(@selector(windowWillResize:toSize:),
                            windowWillResize);
+        builder->addMethod(@selector(windowWillStartLiveResize:),
+                           windowWillStartLiveResize);
+        builder->addMethod(@selector(windowDidEndLiveResize:),
+                           windowDidEndLiveResize);
+        builder->addMethod(@selector(windowWillUseStandardFrame:defaultFrame:),
+                           windowWillUseStandardFrame);
+        builder->addMethod(@selector(window:willUseFullScreenContentSize:),
+                           windowWillUseFullScreenContentSize);
         builder->addMethod(@selector(windowDidResize:), windowDidResize);
         builder->addMethod(@selector(windowDidMove:), windowDidMove);
         builder->addMethod(@selector(windowDidBecomeKey:), windowDidBecomeKey);
@@ -318,7 +394,7 @@ NSObject* createWindowDelegate(const WindowOptions& options)
     state->cb = options.effectiveOnQuit();
     state->hidesOnClose = options.hidesOnClose;
     state->onResize = options.onResize;
-    state->onWillResize = options.onWillResize;
+    state->sizeConstraint = options.effectiveSizeConstraint();
     state->keepTrafficLightsPositioned =
         options.trafficLightPosition.has_value();
 
@@ -379,7 +455,8 @@ struct Window::Native
         : opts(options)
     {
         auto style = getStyle(options);
-        auto contentRect = NSMakeRect(0, 0, options.width, options.height);
+        auto initialSize = options.effectiveInitialSize();
+        auto contentRect = NSMakeRect(0, 0, initialSize.x, initialSize.y);
 
         // NSWindowStyleMaskBorderless is 0 — "borderless" is the absence of
         // the Titled bit, so that's what selects the keyable subclass.
@@ -448,16 +525,6 @@ struct Window::Native
         if (options.minWidth > 0 || options.minHeight > 0)
             [getWindow() setContentMinSize:NSMakeSize(options.minWidth,
                                                       options.minHeight)];
-
-        // AppKit enforces this itself on every resize path there is - the edge
-        // drag, the corner drag, zoom and the green button - so there is no
-        // callback to write, and no moment where the window holds a shape the
-        // constraint forbids. Fullscreen is the exception, and the exception
-        // is what applyCollectionBehavior takes away.
-        if (options.hasAspectRatio())
-            [getWindow()
-                setContentAspectRatio:NSMakeSize(options.aspectRatio->x,
-                                                 options.aspectRatio->y)];
 
         if (options.alwaysOnTop)
             [getWindow() setLevel:NSFloatingWindowLevel];
@@ -529,19 +596,17 @@ struct Window::Native
         if (NSContainsRect(visible, frame))
             return;
 
-        auto width = std::min(frame.size.width, visible.size.width);
-        auto height = std::min(frame.size.height, visible.size.height);
-
-        if (options.hasAspectRatio() && frame.size.width > 0.0
-            && frame.size.height > 0.0)
-        {
-            // Trimming the sides independently would hand a ratio-locked
-            // window the one shape it exists to refuse.
-            auto factor = std::min(width / frame.size.width,
-                                   height / frame.size.height);
-            width = frame.size.width * factor;
-            height = frame.size.height * factor;
-        }
+        // Trimming the sides independently would hand a constrained window a
+        // shape it exists to refuse, so the trimmed size goes back through
+        // the constraint.
+        auto available = contentSizeForFrameSize(
+            window,
+            NSMakeSize(std::min(frame.size.width, visible.size.width),
+                       std::min(frame.size.height, visible.size.height)));
+        auto size = frameSizeForContentSize(
+            window, fitWithin(options.effectiveSizeConstraint(), available));
+        auto width = size.width;
+        auto height = size.height;
 
         frame = NSMakeRect(NSMinX(visible) + (visible.size.width - width) / 2.0,
                            NSMinY(visible) + (visible.size.height - height) / 2.0,

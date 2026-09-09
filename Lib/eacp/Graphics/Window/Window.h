@@ -3,6 +3,7 @@
 #include "../Image/Image.h"
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
+#include "SizeConstraint.h"
 
 namespace eacp::Graphics
 {
@@ -74,6 +75,11 @@ struct WindowOptions
         return isPrimary ? Callback {[] { Apps::quit(); }} : Callback {[] {}};
     }
 
+    bool effectiveAllowsFullScreen() const
+    {
+        return allowsFullScreen.value_or(!hasAspectRatio());
+    }
+
     // Whether aspectRatio carries a ratio worth enforcing - both sides have to
     // be positive for it to describe a shape at all.
     bool hasAspectRatio() const
@@ -81,9 +87,33 @@ struct WindowOptions
         return aspectRatio && aspectRatio->x > 0.f && aspectRatio->y > 0.f;
     }
 
-    bool effectiveAllowsFullScreen() const
+    // The one rule the platforms enforce: onWillResize, then sizeConstraint,
+    // then aspectRatio - the lock last, so the shape the window ends up with
+    // is the locked one however the callbacks moved the size around.
+    SizeConstraint effectiveSizeConstraint() const
     {
-        return allowsFullScreen.value_or(!hasAspectRatio());
+        auto willResize = onWillResize;
+        auto custom = sizeConstraint;
+        auto lock = AspectRatioLock {aspectRatio.value_or(Point {})};
+
+        return [willResize, custom, lock](const ResizeRequest& request)
+        {
+            auto width = (int) request.size.x;
+            auto height = (int) request.size.y;
+            willResize(width, height);
+
+            auto size = custom({{(float) width, (float) height}, request.axis});
+            return lock({size, request.axis});
+        };
+    }
+
+    // The content size the window opens at: width/height put through the
+    // rule, so a window is never made in a shape it would refuse to be
+    // dragged into. Width wins where the two disagree.
+    Point effectiveInitialSize() const
+    {
+        return effectiveSizeConstraint()(
+            {{(float) width, (float) height}, ResizeAxis::Both});
     }
 
     // When the user closes the window. If left empty, falls back to
@@ -103,12 +133,36 @@ struct WindowOptions
 
     // Called after the window has been resized. Sizes are in points and refer
     // to the content view, not the outer frame.
+    //
+    // For reacting to a size, not for choosing one: a resize made from here
+    // fires here again. The shape a window may take is sizeConstraint's.
     ResizeCallback onResize {};
 
-    // Called while the user is dragging the resize corner. Receives the
-    // proposed content-view size in points; may be mutated to clamp or
-    // snap to constraints.
-    WillResizeCallback onWillResize {};
+    // Called with the proposed content size, in points, before a resize is
+    // applied; may be mutated to clamp it. The older, edge-blind form of
+    // sizeConstraint, kept for the callers that have it: it runs first, and
+    // what it leaves goes through sizeConstraint and aspectRatio.
+    WillResizeCallback onWillResize = [](int&, int&) {};
+
+    // The shapes the window may take, as a rule from the size about to be
+    // applied to the one that will be (see SizeConstraint.h). Asked before
+    // every size the window can take - the initial one, an edge or corner
+    // drag, a maximise or zoom, fullscreen, a display too small for the
+    // window - so there is no moment where the window holds a shape the rule
+    // forbids, and no callback for the app to write. The default accepts
+    // every size.
+    //
+    // AspectRatioLock is the rule an app most often wants: a ratio-locked
+    // canvas, optionally under a toolbar or beside a panel that keeps its own
+    // size. `sizeConstraint = AspectRatioLock {{16, 9}, {.top = 56}}` locks
+    // the content below a 56-point header to 16:9; for the whole content,
+    // aspectRatio below is the shorthand.
+    //
+    // Fullscreen and maximise give a constrained window the largest size the
+    // rule allows on that display, centred: macOS and the Wayland compositor
+    // letterbox the rest in black, Windows leaves it to the desktop.
+    SizeConstraint sizeConstraint = [](const ResizeRequest& request)
+    { return request.size; };
 
     int width = 640;
     int height = 400;
@@ -154,37 +208,31 @@ struct WindowOptions
     int minWidth = 0;
     int minHeight = 0;
 
-    // Locks the content's proportions: the user can resize the window, but only
-    // into shapes of this width-to-height ratio. Only the ratio is read, so
-    // {16, 9} and {1920, 1080} mean the same thing.
-    //
-    // What it is for is content that fills its window and has a shape of its
-    // own — a game's pixel grid, a video, a fixed-aspect canvas. Such a view
-    // otherwise has to letterbox itself against every window the user drags out,
-    // and letterboxing is drawing the bars *and* mapping input past them. A
-    // window that cannot take the wrong shape removes the problem rather than
-    // handling it.
-    //
-    // Give the window an initial width/height already in this ratio: the
-    // constraint governs resizing, and neither platform retro-fits it to a size
-    // that was already asked for. Unset lets the window take any shape.
+    // Locks the whole content's proportions: the user can resize the window,
+    // but only into shapes of this width-to-height ratio. Only the ratio is
+    // read, so {16, 9} and {1920, 1080} mean the same thing, and a ratio with
+    // a non-positive side locks nothing. The same as
+    // `sizeConstraint = AspectRatioLock {ratio}`, for the case with no fixed
+    // border; the two compose (see effectiveSizeConstraint) so either can be
+    // set alone.
     std::optional<Point> aspectRatio;
 
     // Whether the user can send the window fullscreen - the green button, the
     // Window menu's Enter Full Screen, ctrl-cmd-F. Mirrors Electron's
     // fullscreenable.
     //
-    // Unset allows it, EXCEPT when aspectRatio is set, because fullscreen is
-    // the one resize a locked ratio cannot survive: macOS hands the window the
-    // whole display and the shape it gets is the display's. A window that locks
-    // its proportions is saying it has no letterbox path, so by default the
-    // escape hatch goes with them. Set it to true to keep both.
+    // Unset allows it, EXCEPT when aspectRatio is set: a window that locks
+    // its whole content is saying it has no letterbox path, so by default
+    // the escape hatch goes with it, and the green button zooms instead -
+    // which does respect the lock - so the window keeps a maximise gesture.
+    // Set it to true to keep both; fullscreen then gives the window the
+    // largest allowed size and centres it on black. A sizeConstraint alone
+    // makes no such statement - a bordered lock has its own layout, and
+    // lockedArea letterboxes - so it leaves fullscreen on.
     //
-    // Denied, the green button zooms instead - which does respect aspectRatio -
-    // so the window keeps a maximise gesture. macOS only: Windows has no
-    // OS-level fullscreen mode for a window (an app that wants one builds it
-    // from a borderless monitor-sized window), and its maximise path honours
-    // aspectRatio on its own. No-op on iOS.
+    // macOS only: Windows has no OS-level fullscreen mode for a window (an
+    // app that wants one builds it from a borderless monitor-sized window),
+    // and its maximise path honours the constraint on its own. No-op on iOS.
     std::optional<bool> allowsFullScreen;
 
     // Keeps the window above normal windows (macOS NSFloatingWindowLevel,

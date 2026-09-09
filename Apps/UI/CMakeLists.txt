@@ -24,6 +24,11 @@ add_subdirectory(Shadows)
 # quad is drawn rather than where the content was.
 add_subdirectory(Transforms)
 
+# A 16:9 canvas under a header and beside an inspector that keep their own
+# size: WindowOptions::sizeConstraint with an AspectRatioLock, the one object
+# the window enforces and the layout reads, so nothing answers a resize.
+add_subdirectory(AspectLock)
+
 # The stock widgets under one tab bar: every callback of every control written
 # into a log beside them, so a gesture is one start and one end around the
 # values it produced -- and a list of ten thousand rows that is one component,

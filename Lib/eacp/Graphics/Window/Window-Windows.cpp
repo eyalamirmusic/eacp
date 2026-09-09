@@ -57,6 +57,25 @@ NonClientInsets nonClientInsets(HWND hwnd, bool frameEaten = false)
     return {rect.right - rect.left, rect.bottom - rect.top};
 }
 
+// Puts a frame's client size through the window's constraint: the largest
+// allowed size no bigger than what the frame holds, anchored at its top-left.
+// What every path that sizes a window without dragging it - creation,
+// containment, a DPI change - runs after trimming the frame to a display, so
+// the trim cannot hand a constrained window a shape it refuses.
+void fitFrameSizeToConstraint(RECT& frame,
+                              NonClientInsets insets,
+                              float scale,
+                              const SizeConstraint& constraint)
+{
+    auto available =
+        Point {static_cast<float>(frame.right - frame.left - insets.width) / scale,
+               static_cast<float>(frame.bottom - frame.top - insets.height) / scale};
+    auto allowed = fitWithin(constraint, available);
+
+    frame.right = frame.left + std::lround(allowed.x * scale) + insets.width;
+    frame.bottom = frame.top + std::lround(allowed.y * scale) + insets.height;
+}
+
 // WM_NCHITTEST's screen coordinates. The halves are signed: a window on a
 // monitor left of or above the primary one is hit-tested at negative
 // coordinates, which an unsigned LOWORD reads as somewhere near 65535.
@@ -110,12 +129,10 @@ struct Window::Native
     Native(const WindowOptions& options, WindowEvents& eventsToUse)
         : quitCallback(options.effectiveOnQuit())
         , onResize(options.onResize)
-        , onWillResize(options.onWillResize)
+        , sizeConstraint(options.effectiveSizeConstraint())
         , events(&eventsToUse)
         , minWidth(options.minWidth)
         , minHeight(options.minHeight)
-        , aspectRatio(options.hasAspectRatio() ? options.aspectRatio
-                                               : std::optional<Point> {})
         , hidesOnClose(options.hidesOnClose)
     {
         // Process-wide DPI awareness (per-monitor v2) is established by
@@ -212,8 +229,9 @@ struct Window::Native
 
         auto dpi = GetDpiForSystem();
         auto dpiScale = static_cast<float>(dpi) / 96.f;
-        auto physicalWidth = static_cast<int>(options.width * dpiScale);
-        auto physicalHeight = static_cast<int>(options.height * dpiScale);
+        auto initialSize = options.effectiveInitialSize();
+        auto physicalWidth = static_cast<int>(initialSize.x * dpiScale);
+        auto physicalHeight = static_cast<int>(initialSize.y * dpiScale);
 
         RECT rect = {0, 0, physicalWidth, physicalHeight};
         AdjustWindowRectExForDpi(&rect, style, FALSE, 0, dpi);
@@ -263,7 +281,15 @@ struct Window::Native
         }
 
         auto frame = RECT {x, y, x + windowWidth, y + windowHeight};
-        detail::containWithinWorkArea(frame, area, options.hasAspectRatio());
+        detail::containWithinWorkArea(frame, area);
+
+        // The frame around the client area is whatever AdjustWindowRectExForDpi
+        // added; there is no HWND yet to ask.
+        fitFrameSizeToConstraint(
+            frame,
+            {windowWidth - physicalWidth, windowHeight - physicalHeight},
+            dpiScale,
+            sizeConstraint);
 
         windowWidth = frame.right - frame.left;
         windowHeight = frame.bottom - frame.top;
@@ -448,35 +474,25 @@ struct Window::Native
             showWindow();
     }
 
-    // Snaps a content size to WindowOptions::aspectRatio.
-    //
-    // Which side gives way follows the edge under the cursor: dragging a
+    // The edge under the cursor, as the axis the constraint may not move: a
     // vertical edge sets the width and the height follows, a horizontal edge
-    // the reverse, and a corner is driven by its width. That is what every
-    // fixed-aspect window does, and it matters — deriving the width from the
-    // height while the user drags the right edge makes the window appear to
-    // resist the cursor.
-    //
-    // Unlike macOS, where AppKit owns this (setContentAspectRatio), Win32 has
-    // no such attribute: WM_SIZING is the only place a resize can be
-    // constrained, so the constraint has to be applied by hand here.
-    void applyAspectRatio(int& widthInPoints, int& heightInPoints, WPARAM edge) const
+    // the reverse, and a corner is driven by its width.
+    static ResizeAxis resizeAxisForEdge(WPARAM edge)
     {
-        if (!aspectRatio)
-            return;
-
-        const auto ratio = aspectRatio->x / aspectRatio->y;
-
         if (edge == WMSZ_TOP || edge == WMSZ_BOTTOM)
-            widthInPoints = static_cast<int>(std::lround(heightInPoints * ratio));
-        else
-            heightInPoints = static_cast<int>(std::lround(widthInPoints / ratio));
+            return ResizeAxis::Height;
+
+        if (edge == WMSZ_LEFT || edge == WMSZ_RIGHT)
+            return ResizeAxis::Width;
+
+        return ResizeAxis::Both;
     }
 
-    // Honour WindowOptions::onWillResize and ::aspectRatio by clamping the
-    // dragged window rect (WM_SIZING gives a frame rect; convert to content
-    // points, constrain, convert back, then re-anchor the edge the user is not
-    // dragging).
+    // Honour WindowOptions::sizeConstraint on the dragged window rect. Win32
+    // has no attribute for a shape rule: WM_SIZING is the only place a drag
+    // can be constrained, so the frame rect is converted to content points,
+    // constrained, converted back, and re-anchored on the edge the user is
+    // not dragging.
     void dispatchWillResize(RECT* windowRect, WPARAM edge) const
     {
         auto insets = nonClientInsets(host.hwnd, eatsFrame());
@@ -485,19 +501,14 @@ struct Window::Native
         auto clientWidth = (windowRect->right - windowRect->left) - insets.width;
         auto clientHeight = (windowRect->bottom - windowRect->top) - insets.height;
 
-        auto widthInPoints = static_cast<int>(clientWidth / scale);
-        auto heightInPoints = static_cast<int>(clientHeight / scale);
+        auto proposed = Point {static_cast<float>(clientWidth) / scale,
+                               static_cast<float>(clientHeight) / scale};
+        auto allowed = sizeConstraint({proposed, resizeAxisForEdge(edge)});
 
-        if (onWillResize)
-            onWillResize(widthInPoints, heightInPoints);
-
-        // Last, so the shape the window ends up with is the locked one however
-        // the callback moved the size around.
-        applyAspectRatio(widthInPoints, heightInPoints, edge);
-
-        auto newWindowWidth = static_cast<int>(widthInPoints * scale) + insets.width;
+        auto newWindowWidth =
+            static_cast<int>(std::lround(allowed.x * scale)) + insets.width;
         auto newWindowHeight =
-            static_cast<int>(heightInPoints * scale) + insets.height;
+            static_cast<int>(std::lround(allowed.y * scale)) + insets.height;
 
         if (edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT)
             windowRect->left = windowRect->right - newWindowWidth;
@@ -566,8 +577,8 @@ struct Window::Native
         GetWindowRect(host.hwnd, &frame);
 
         auto contained = frame;
-        detail::containWithinWorkArea(
-            contained, workAreaForRect(frame), aspectRatio.has_value());
+        detail::containWithinWorkArea(contained, workAreaForRect(frame));
+        fitFrameToConstraint(contained, host.getDpiScale());
 
         if (EqualRect(&contained, &frame))
             return;
@@ -616,41 +627,31 @@ struct Window::Native
                            display.rcWork.bottom - display.rcWork.top};
     }
 
-    // A maximise never passes through WM_SIZING, so it is the one shape the
-    // ratio lock would otherwise miss - a click on the maximise button giving
-    // the user what no amount of dragging can. macOS closes the same hole by
-    // denying fullscreen (WindowOptions::allowsFullScreen) and letting the
-    // green button zoom, which AppKit shapes to the ratio; this is that zoom.
-    //
-    // Runs on the maximised size settled above, so shrink that to the largest
-    // rect of the right shape that fits and re-centre what is left.
-    // ptMaxTrackSize is deliberately untouched: it bounds dragging, not this.
-    void applyMaximizedAspectRatio(MINMAXINFO* info) const
+    void fitFrameToConstraint(RECT& frame, float scale) const
     {
-        if (!aspectRatio)
-            return;
+        fitFrameSizeToConstraint(
+            frame, nonClientInsets(host.hwnd, eatsFrame()), scale, sizeConstraint);
+    }
 
-        auto insets = nonClientInsets(host.hwnd, eatsFrame());
-        auto ratio = aspectRatio->x / aspectRatio->y;
+    // A maximise never passes through WM_SIZING, so it is the one shape the
+    // constraint would otherwise miss - a click on the maximise button giving
+    // the user what no amount of dragging can. This is what the green
+    // button's zoom is on macOS: the largest allowed size that fits the work
+    // area, re-centred in what is left.
+    //
+    // Runs on the maximised size settled above. ptMaxTrackSize is
+    // deliberately untouched: it bounds dragging, not this.
+    void applyMaximizedConstraint(MINMAXINFO* info) const
+    {
+        auto frame = RECT {0, 0, info->ptMaxSize.x, info->ptMaxSize.y};
+        fitFrameToConstraint(frame, host.getDpiScale());
 
-        auto availableWidth = info->ptMaxSize.x - insets.width;
-        auto availableHeight = info->ptMaxSize.y - insets.height;
+        auto width = frame.right - frame.left;
+        auto height = frame.bottom - frame.top;
 
-        if (availableWidth <= 0 || availableHeight <= 0)
-            return;
-
-        auto width = static_cast<LONG>(std::lround(availableHeight * ratio));
-        auto height = availableHeight;
-
-        if (width > availableWidth)
-        {
-            width = availableWidth;
-            height = static_cast<LONG>(std::lround(availableWidth / ratio));
-        }
-
-        info->ptMaxPosition.x += (availableWidth - width) / 2;
-        info->ptMaxPosition.y += (availableHeight - height) / 2;
-        info->ptMaxSize = {width + insets.width, height + insets.height};
+        info->ptMaxPosition.x += (info->ptMaxSize.x - width) / 2;
+        info->ptMaxPosition.y += (info->ptMaxSize.y - height) / 2;
+        info->ptMaxSize = {width, height};
     }
 
     bool isKeyPressed(uint16_t vk) const { return host.isKeyPressed(vk); }
@@ -702,11 +703,10 @@ struct Window::Native
     }
 
     ResizeCallback onResize;
-    WillResizeCallback onWillResize;
+    SizeConstraint sizeConstraint;
     WindowEvents* events = nullptr;
     int minWidth = 0;
     int minHeight = 0;
-    std::optional<Point> aspectRatio;
     bool hidesOnClose = false;
     bool showWithoutActivating = false;
     bool ignoresMouseEvents = false;
@@ -812,7 +812,7 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
             self->applyMinTrackSize(info);
             self->applyMaximizedWorkArea(info);
-            self->applyMaximizedAspectRatio(info);
+            self->applyMaximizedConstraint(info);
             return 0;
         }
 
@@ -823,12 +823,8 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         case WM_SIZING:
-            if (self->onWillResize || self->aspectRatio)
-            {
-                self->dispatchWillResize(reinterpret_cast<RECT*>(lParam), wParam);
-                return TRUE;
-            }
-            break;
+            self->dispatchWillResize(reinterpret_cast<RECT*>(lParam), wParam);
+            return TRUE;
 
         // The user toggled the OS light/dark setting while we are running;
         // recolour the caption and re-erase the window background to match.
@@ -845,9 +841,12 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             // The suggested rect scales the window by the DPI ratio, so a
             // window that fitted a 100% display can be handed a size half
             // again too big for the 150% one it just moved to.
+            // The window already reports the new DPI (so nonClientInsets is
+            // right), but the host's scale is only updated below.
             auto frame = *reinterpret_cast<RECT*>(lParam);
-            detail::containWithinWorkArea(
-                frame, workAreaForRect(frame), self->aspectRatio.has_value());
+            detail::containWithinWorkArea(frame, workAreaForRect(frame));
+            self->fitFrameToConstraint(frame,
+                                       static_cast<float>(HIWORD(wParam)) / 96.f);
 
             SetWindowPos(hwnd,
                          nullptr,

@@ -28,6 +28,7 @@ set(graphics_test_sources
         RectTests.cpp
         RoundedRectTests.cpp
         ScrollWheelTests.cpp
+        SizeConstraintTests.cpp
         TestMain.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp

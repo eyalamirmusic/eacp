@@ -39,12 +39,10 @@ struct Window::Native : WaylandWindowSurface
         : title(optionsToUse.title)
         , quitCallback(optionsToUse.effectiveOnQuit())
         , onResize(optionsToUse.onResize)
-        , onWillResize(optionsToUse.onWillResize)
+        , sizeConstraint(optionsToUse.effectiveSizeConstraint())
         , events(&eventsToUse)
         , minWidth(optionsToUse.minWidth)
         , minHeight(optionsToUse.minHeight)
-        , aspectRatio(optionsToUse.hasAspectRatio() ? optionsToUse.aspectRatio
-                                                    : std::optional<Point> {})
         , hidesOnClose(optionsToUse.hidesOnClose)
         , resizable(waylandFlagSet(optionsToUse, WindowFlags::Resizable))
         , closable(waylandFlagSet(optionsToUse, WindowFlags::Closable))
@@ -53,7 +51,7 @@ struct Window::Native : WaylandWindowSurface
         , background(
               optionsToUse.backgroundColor.value_or(waylandDefaultWindowBackground))
     {
-        contentSize = {(float) optionsToUse.width, (float) optionsToUse.height};
+        contentSize = optionsToUse.effectiveInitialSize();
 
         if (optionsToUse.initialPosition)
             position = *optionsToUse.initialPosition;
@@ -198,15 +196,17 @@ struct Window::Native : WaylandWindowSurface
             height = proposedHeight;
         }
 
-        applyConstraints(width, height);
+        auto windowState = LIBDECOR_WINDOW_STATE_NONE;
+        auto hasWindowState =
+            libdecor_configuration_get_window_state(configuration, &windowState);
+
+        applyConstraints(width, height, windowState);
 
         auto* state = libdecor_state_new(width, height);
         libdecor_frame_commit(frame, state, configuration);
         libdecor_state_free(state);
 
-        auto windowState = LIBDECOR_WINDOW_STATE_NONE;
-
-        if (libdecor_configuration_get_window_state(configuration, &windowState))
+        if (hasWindowState)
         {
             maximized = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
             setActive((windowState & LIBDECOR_WINDOW_STATE_ACTIVE) != 0);
@@ -225,20 +225,25 @@ struct Window::Native : WaylandWindowSurface
             waylandWindowSurfaceStateChanged(*contentView);
     }
 
-    void applyConstraints(int& width, int& height) const
+    // A maximised or fullscreen configure is a bound, not a drag: the
+    // compositor names the most it will give, and a smaller size is centred
+    // in it with black around. A drag carries no edge and no start size to
+    // read one off, so the width drives, as it always has here.
+    void applyConstraints(int& width,
+                          int& height,
+                          libdecor_window_state windowState) const
     {
-        if (onWillResize)
-            onWillResize(width, height);
+        auto proposed = Point {(float) width, (float) height};
+        auto bounded =
+            (windowState
+             & (LIBDECOR_WINDOW_STATE_MAXIMIZED | LIBDECOR_WINDOW_STATE_FULLSCREEN))
+            != 0;
 
-        if (aspectRatio)
-        {
-            // Width drives: libdecor's configuration carries no resize edge.
-            const auto ratio = aspectRatio->x / aspectRatio->y;
-            height = (int) std::lround((float) width / ratio);
-        }
+        auto allowed = bounded ? fitWithin(sizeConstraint, proposed)
+                               : sizeConstraint({proposed, ResizeAxis::Both});
 
-        width = std::max(width, std::max(minWidth, 1));
-        height = std::max(height, std::max(minHeight, 1));
+        width = std::max((int) std::lround(allowed.x), std::max(minWidth, 1));
+        height = std::max((int) std::lround(allowed.y), std::max(minHeight, 1));
     }
 
     void resizeTo(Point newSize)
@@ -548,12 +553,11 @@ struct Window::Native : WaylandWindowSurface
     std::string title;
     Callback quitCallback;
     ResizeCallback onResize;
-    WillResizeCallback onWillResize;
+    SizeConstraint sizeConstraint;
     WindowEvents* events;
 
     int minWidth = 0;
     int minHeight = 0;
-    std::optional<Point> aspectRatio;
     bool hidesOnClose = false;
     bool resizable = true;
     bool closable = true;
