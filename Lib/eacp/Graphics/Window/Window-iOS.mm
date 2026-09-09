@@ -65,6 +65,7 @@ struct Window::Native
     }
 
     UIWindow* getWindow() { return window.get(); }
+    UIWindow* getWindow() const { return const_cast<UIWindow*>(window.get()); }
 
     ~Native()
     {
@@ -119,6 +120,17 @@ Point Window::getPosition() const
 void Window::setPosition(Point)
 {
     // iOS apps are single-window; there's nowhere to move to.
+}
+
+Point Window::getSize() const
+{
+    auto bounds = impl->getWindow().bounds.size;
+    return {(float) bounds.width, (float) bounds.height};
+}
+
+void Window::setSize(Point)
+{
+    // iOS apps are single-window and fill the screen; the size is not ours.
 }
 
 void Window::minimize()

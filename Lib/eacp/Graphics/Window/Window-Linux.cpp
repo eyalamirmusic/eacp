@@ -385,6 +385,35 @@ struct Window::Native : WaylandWindowSurface
         events->onMoved(position);
     }
 
+    // `newSize` is content points already through the constraint (see
+    // Window::setSize). A maximised window's size is the compositor's, so
+    // there is nothing to ask for. A frame is committed outside a configure
+    // when there is one; under headless the size is simply taken.
+    void setSize(Point newSize)
+    {
+        if (maximized)
+            return;
+
+        auto width = std::max((int) std::lround(newSize.x), 1);
+        auto height = std::max((int) std::lround(newSize.y), 1);
+
+        if (frame != nullptr)
+        {
+            if (!resizable)
+            {
+                libdecor_frame_set_min_content_size(frame, width, height);
+                libdecor_frame_set_max_content_size(frame, width, height);
+            }
+
+            auto* state = libdecor_state_new(width, height);
+            libdecor_frame_commit(frame, state, nullptr);
+            libdecor_state_free(state);
+        }
+
+        resizeTo({(float) width, (float) height});
+        present();
+    }
+
     void setActive(bool nowActive)
     {
         if (active == nowActive)
@@ -646,6 +675,16 @@ Point Window::getPosition() const
 void Window::setPosition(Point position)
 {
     impl->setPosition(position);
+}
+
+Point Window::getSize() const
+{
+    return impl->contentSize;
+}
+
+void Window::setSize(Point size)
+{
+    impl->setSize(options.effectiveSize(size));
 }
 
 void Window::setMouseLocked(bool locked)
