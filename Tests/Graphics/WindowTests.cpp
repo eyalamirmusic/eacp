@@ -84,12 +84,16 @@ auto tWindowOptionsNewAffordancesDefaultOff =
 // The icons are bring-your-own, and the providers are never null: the
 // defaults are callable and return an invalid Image, which keeps the
 // system default without any null checks at the call sites.
-// Fullscreen is the one resize a locked ratio cannot survive, so setting a
-// ratio is also a statement about fullscreen - unless the app says otherwise.
+// A whole-content ratio lock is a statement about fullscreen too - unless
+// the app says otherwise. A sizeConstraint alone is not: it has its own
+// letterbox path.
 auto tFullScreenFollowsAspectRatio =
     test("WindowOptions/fullScreenClosesWithTheRatioLock") = []
 {
     auto options = WindowOptions {};
+    check(options.effectiveAllowsFullScreen());
+
+    options.sizeConstraint = AspectRatioLock {{16.f, 9.f}};
     check(options.effectiveAllowsFullScreen());
 
     options.aspectRatio = Point {16.f, 9.f};
@@ -103,23 +107,18 @@ auto tFullScreenFollowsAspectRatio =
     check(!options.effectiveAllowsFullScreen());
 };
 
-// Both platforms skip a ratio that describes no shape, so the default has to
-// agree with them: a zero or negative side must not cost the window its
-// fullscreen on the strength of a constraint nobody is enforcing.
-auto tDegenerateAspectRatioIsNoRatio =
-    test("WindowOptions/degenerateAspectRatioIsNotALock") = []
+// A ratio that describes no shape locks nothing, so it must not cost the
+// window its fullscreen on the strength of a constraint nobody is enforcing.
+auto tDegenerateAspectRatioKeepsFullScreen =
+    test("WindowOptions/degenerateAspectRatioKeepsFullScreen") = []
 {
     auto options = WindowOptions {};
 
     for (auto ratio: {Point {0.f, 0.f}, Point {16.f, 0.f}, Point {-16.f, 9.f}})
     {
         options.aspectRatio = ratio;
-        check(!options.hasAspectRatio());
         check(options.effectiveAllowsFullScreen());
     }
-
-    options.aspectRatio = Point {1920.f, 1080.f};
-    check(options.hasAspectRatio());
 };
 
 auto tIconProvidersDefaultToInvalidImage =

@@ -35,7 +35,7 @@ auto tContainLeavesFittingWindowAlone =
     test("WindowGeometry/containLeavesFittingWindowAlone") = []
 {
     auto frame = frameOf(200, 100, 800, 600);
-    containWithinWorkArea(frame, workArea, false);
+    containWithinWorkArea(frame, workArea);
 
     check(frame.left == 200);
     check(frame.top == 100);
@@ -50,7 +50,7 @@ auto tContainTrimsWindowBiggerThanTheDisplay =
     test("WindowGeometry/containTrimsWindowBiggerThanTheDisplay") = []
 {
     auto frame = frameOf(-240, -280, 2400, 1600);
-    containWithinWorkArea(frame, workArea, false);
+    containWithinWorkArea(frame, workArea);
 
     check(widthOf(frame) == 1920);
     check(heightOf(frame) == 1040);
@@ -64,7 +64,7 @@ auto tContainSlidesOffscreenWindowBack =
     test("WindowGeometry/containSlidesOffscreenWindowBack") = []
 {
     auto frame = frameOf(1700, 900, 800, 600);
-    containWithinWorkArea(frame, workArea, false);
+    containWithinWorkArea(frame, workArea);
 
     // Size untouched, moved just far enough to fit above the taskbar.
     check(widthOf(frame) == 800);
@@ -80,38 +80,12 @@ auto tContainRespectsNonZeroWorkAreaOrigin =
     constexpr auto secondary = RECT {1920, 40, 3200, 1080};
 
     auto frame = frameOf(1900, 0, 800, 600);
-    containWithinWorkArea(frame, secondary, false);
+    containWithinWorkArea(frame, secondary);
 
     check(frame.left == 1920);
     check(frame.top == 40);
     check(widthOf(frame) == 800);
     check(heightOf(frame) == 600);
-};
-
-// Trimming the sides independently would hand a ratio-locked window the one
-// shape it exists to refuse, so both give way by the same factor.
-auto tContainKeepsAspectRatio = test("WindowGeometry/containKeepsAspectRatio") = []
-{
-    auto frame = frameOf(0, 0, 3200, 1800); // 16:9, too big for the work area
-    containWithinWorkArea(frame, workArea, true);
-
-    check(widthOf(frame) <= 1920);
-    check(heightOf(frame) <= 1040);
-
-    // Height is the binding constraint (1040/1800 < 1920/3200), so the shape
-    // is preserved off it.
-    check(heightOf(frame) == 1040);
-    check(widthOf(frame) == static_cast<LONG>(3200.0 * (1040.0 / 1800.0)));
-};
-
-auto tContainIgnoresAspectRatioWhenItAlreadyFits =
-    test("WindowGeometry/containIgnoresAspectRatioWhenItAlreadyFits") = []
-{
-    auto frame = frameOf(100, 100, 1600, 900);
-    containWithinWorkArea(frame, workArea, true);
-
-    check(widthOf(frame) == 1600);
-    check(heightOf(frame) == 900);
 };
 
 auto tHitTestCentreIsContent = test("WindowGeometry/hitTestCentreIsContent") = []

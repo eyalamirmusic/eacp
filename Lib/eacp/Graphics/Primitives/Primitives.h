@@ -24,6 +24,19 @@ Point operator+(const Point& a, const Point& b);
 
 Point operator-(const Point& a, const Point& b);
 
+// A border of four thicknesses, one per edge, in points. Every side defaults
+// to zero so a caller names only the edges it means: `Insets {.top = 56.f}`.
+struct Insets
+{
+    // The width and height the four sides add up to.
+    Point size() const;
+
+    float top = 0.f;
+    float left = 0.f;
+    float bottom = 0.f;
+    float right = 0.f;
+};
+
 // An axis-aligned rectangle in a **y-down** space: y grows downward, so y = 0
 // is the top edge and `fromTop` returns the slice against it.
 //
@@ -59,6 +72,7 @@ struct Rect
 
     Rect inset(float amount) const;
     Rect inset(float horizontal, float vertical) const;
+    Rect inset(const Insets& insets) const;
 
     Rect withX(float newX) const;
     Rect withY(float newY) const;
