@@ -61,7 +61,10 @@ enum class ExprKind
     // for a 1D kernel, width/height/depth by component otherwise. Exposed so a
     // kernel that barriers - and therefore has no early-return guard - can
     // bound its stores against the very same value the dispatch supplied.
-    SharedRead // threadgroup-array element read; index = slot, args = {index}
+    SharedRead, // threadgroup-array element read; index = slot, args = {index}
+    SimdGroupIndex // which SIMD group of the threadgroup this thread is in.
+    // Metal's own builtin; the flat local index divided by simdGroupWidth
+    // where there is no builtin, which is the same number.
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
@@ -126,6 +129,26 @@ enum class GroupReduction
     Min
 };
 
+// Where a SIMD-group matrix fragment is loaded from or stored to. The two are
+// different address spaces and nothing else: a threadgroup tile the group
+// staged, or a storage buffer the dispatch bound.
+enum class SimdMatrixMemory
+{
+    Shared,
+    Buffer
+};
+
+// How many threads one SIMD group holds - the width the matrix ops are
+// collective over. 32 on every Apple GPU, which is the only hardware whose
+// intrinsics are used; the backends that emit the scalar fallback define
+// theirs to be the same number so a kernel's tiling arithmetic is one
+// arithmetic everywhere.
+inline constexpr int simdGroupWidth = 32;
+
+// One side of an 8x8 fragment. Fixed, because that is the only shape MSL's
+// simdgroup_float8x8 has.
+inline constexpr int simdMatrixSize = 8;
+
 // The shape of the grid a kernel is dispatched over, decided by which thread
 // index its body asked for: threadId() gives one index over a flat count,
 // threadPosition() a pair over a width and a height, threadPosition3() a triple
@@ -167,6 +190,14 @@ enum class StatementKind
     // is several statements on every backend - a barrier among them - so it has
     // to land where it was written, and every thread of the group has to reach
     // it or none.
+    SimdMatrixFill, // an 8x8 fragment declared and filled with one value.
+    // slot = the fragment, value = what every element is set to.
+    SimdMatrixLoad, // an 8x8 fragment declared and read from an 8x8 patch.
+    // slot = the fragment, memory / bufferSlot = where from, index = the
+    // element the patch starts at, stride = the patch's row stride.
+    SimdMatrixStore, // that patch written back. The same fields, the other way.
+    SimdMatrixMultiplyAdd, // slot = slot + left * right, all three fragments.
+    // slot = the accumulator, left / right = the operands.
     AtomicAdd // vN = atomicAdd(buffer[index], value), declaring vN. slot = the
     // variable the value *before* the add lands in, bufferSlot / index = which
     // element, value = what is added.
@@ -200,6 +231,12 @@ struct Statement
     int recordComponentsLeft = 0; // Store: how many components of that record
     // follow this one
     GroupReduction reduction = GroupReduction::Sum; // GroupReduce: which fold
+    int stride = -1; // SimdMatrixLoad / SimdMatrixStore: the patch's row stride
+    int left = -1; // SimdMatrixMultiplyAdd: the left operand's fragment
+    int right = -1; // SimdMatrixMultiplyAdd: the right operand's fragment
+    SimdMatrixMemory memory = SimdMatrixMemory::Shared; // which address space
+    // a SimdMatrixLoad / SimdMatrixStore reaches, bufferSlot being the slot in
+    // it
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -457,6 +494,17 @@ public:
                           ValueType elementType,
                           int value);
 
+    // The SIMD-group matrix statements. Each of the first two declares a
+    // fragment and returns its slot, which is a numbering of its own: a
+    // fragment is neither a variable nor a value, having no type any of the
+    // three languages shares.
+    int addSimdMatrixFill(int value);
+    int addSimdMatrixLoad(SimdMatrixMemory memory, int slot, int index, int stride);
+    void addSimdMatrixStore(
+        int matrix, SimdMatrixMemory memory, int slot, int index, int stride);
+    void addSimdMatrixMultiplyAdd(int accumulator, int left, int right);
+    int addSimdGroupIndex();
+
     void setPosition(int node) { positionNode = node; }
     void setFragment(int node) { fragmentNode = node; }
 
@@ -525,6 +573,12 @@ public:
     const Vector<ValueType>& groupReductionTypes() const { return reductionTypes; }
     bool usesGroupReduction() const { return !reductionTypes.empty(); }
 
+    // How many 8x8 fragments the kernel declared, and whether it asked the
+    // entry point for the SIMD-group vocabulary at all - a matrix statement or
+    // a read of the SIMD group's index both do.
+    int simdMatrixCount() const { return simdMatrices; }
+    bool usesSimdGroups() const { return simdMatrices > 0 || simdGroupIndexUsed; }
+
     // Which threadgroup pieces the kernel asked for, driving what the emitters
     // add to the entry signature - and, for the barrier, what they take away:
     // a kernel that barriers gets no early-return bounds guard, because a
@@ -541,9 +595,13 @@ public:
     // kernel that only counts things writes nothing, so a graph judged by its
     // stores alone would emit a vertex/fragment pair for it and fail to compile
     // on a `gid` no render stage has.
+    // A SIMD-group matrix is in the list for the same reason the atomic is: it
+    // is a threadgroup facility with no render-stage spelling, so a kernel
+    // whose only output is a fragment stored to a buffer is still a kernel.
     bool isCompute() const
     {
-        return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed;
+        return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed
+               || usesSimdGroups();
     }
 
     DispatchRank dispatchRank() const { return rank; }
@@ -603,6 +661,8 @@ private:
     Vector<ArrayConstant> arrayConstants;
     Vector<SharedArray> sharedArrayList;
     Vector<ValueType> reductionTypes;
+    int simdMatrices = 0;
+    bool simdGroupIndexUsed = false;
     bool localIdUsed = false;
     bool groupIdUsed = false;
     bool barrierUsed = false;

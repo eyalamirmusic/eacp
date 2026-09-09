@@ -623,6 +623,38 @@ const char* groupLaneName(Backend backend)
     return backend == Backend::Vulkan ? "gl_LocalInvocationIndex" : "groupLane";
 }
 
+// A SIMD-group matrix fragment's name. Its own numbering, so it collides with
+// neither the variables nor the shared arrays.
+std::string simdMatrixName(int slot)
+{
+    return "sgm" + std::to_string(slot);
+}
+
+// Where a fragment's patch lives, spelled as the emitted source names it.
+std::string simdMatrixMemoryName(const Statement& statement)
+{
+    return (statement.memory == SimdMatrixMemory::Shared ? "s" : "buffer")
+           + std::to_string(statement.bufferSlot);
+}
+
+// A whole expression parenthesised, since an offset or a stride is printed
+// into the middle of an index computation.
+std::string bracketed(const std::string& expression)
+{
+    return "(" + expression + ")";
+}
+
+// The lane a fallback fragment's store is made by. There is no SIMD group on
+// the backends that take the fallback, so every thread of what would be one
+// holds its own copy of the fragment and computes it redundantly; letting all
+// of them write would be the same bytes 32 times over and a race to say it
+// with, so the first lane of each writes and the rest do not.
+std::string simdLeadLane(Backend backend)
+{
+    return std::string(groupLaneName(backend)) + " % "
+           + std::to_string(simdGroupWidth) + "u == 0u";
+}
+
 // Prints one stage's expressions. Nodes the stage plan named as locals print
 // as tN references; everything else prints inline. print() spells out a node's
 // own expression (used for both inline nodes and local definitions), ref() is
@@ -959,6 +991,16 @@ struct ExprPrinter
             case ExprKind::SharedRead:
                 return "s" + std::to_string(expr.index) + "[" + ref(expr.args[0])
                        + "]";
+
+            // Metal has the builtin; the other two divide the flat local index
+            // by the width, which is the same numbering and the one the
+            // fallback's own arithmetic is written against.
+            case ExprKind::SimdGroupIndex:
+                if (backend == Backend::Metal)
+                    return "simdIndex";
+
+                return "(" + std::string(groupLaneName(backend)) + " / "
+                       + std::to_string(simdGroupWidth) + "u)";
         }
 
         return {};
@@ -1003,6 +1045,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::LocalId:
         case ExprKind::GroupId:
         case ExprKind::GridExtent:
+        case ExprKind::SimdGroupIndex:
             return false;
     }
 
@@ -1114,6 +1157,10 @@ void collectWrites(const ShaderGraph& graph,
         case StatementKind::TextureStore:
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
+        case StatementKind::SimdMatrixFill:
+        case StatementKind::SimdMatrixLoad:
+        case StatementKind::SimdMatrixStore:
+        case StatementKind::SimdMatrixMultiplyAdd:
             return;
     }
 }
@@ -1134,6 +1181,12 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
         case StatementKind::GroupReduce:
             return true;
 
+        // A fragment stored back into a threadgroup tile moves that tile, so
+        // any name read out of it beforehand is given up here; one stored into
+        // a buffer moves no shared memory at all.
+        case StatementKind::SimdMatrixStore:
+            return statement.memory == SimdMatrixMemory::Shared;
+
         case StatementKind::If:
             if (touchesShared(graph, statement.body))
                 return true;
@@ -1151,6 +1204,9 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
         case StatementKind::Store:
         case StatementKind::TextureStore:
         case StatementKind::AtomicAdd:
+        case StatementKind::SimdMatrixFill:
+        case StatementKind::SimdMatrixLoad:
+        case StatementKind::SimdMatrixMultiplyAdd:
             return false;
     }
 
@@ -1195,6 +1251,14 @@ void collectBufferWrites(const ShaderGraph& graph,
             written[statement.bufferSlot] = 1;
             return;
 
+        // Nor is a fragment store's, `slot` there naming the fragment. It
+        // writes a buffer only when that is where its patch is.
+        case StatementKind::SimdMatrixStore:
+            if (statement.memory == SimdMatrixMemory::Buffer)
+                written[statement.bufferSlot] = 1;
+
+            return;
+
         case StatementKind::If:
             collectBufferWrites(graph, statement.body, written);
 
@@ -1215,6 +1279,9 @@ void collectBufferWrites(const ShaderGraph& graph,
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
         case StatementKind::GroupReduce:
+        case StatementKind::SimdMatrixFill:
+        case StatementKind::SimdMatrixLoad:
+        case StatementKind::SimdMatrixMultiplyAdd:
             return;
     }
 }
@@ -1305,6 +1372,7 @@ void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
 
         roots.add(statement.index);
         roots.add(statement.indexY);
+        roots.add(statement.stride);
 
         if (statement.body >= 0)
             collectUseRoots(graph, statement.body, roots);
@@ -1577,6 +1645,24 @@ struct StageEmitter
                 source += groupReduction(statement, indent);
                 break;
 
+            // The SIMD-group matrix statements, each one intrinsic on Metal and
+            // a loop over the 64 elements of a per-thread copy everywhere else.
+            case StatementKind::SimdMatrixFill:
+                source = define({statement.value}, indent, uses, open);
+                source += simdMatrixFill(statement, indent);
+                break;
+
+            case StatementKind::SimdMatrixLoad:
+            case StatementKind::SimdMatrixStore:
+                source =
+                    define({statement.index, statement.stride}, indent, uses, open);
+                source += simdMatrixTransfer(statement, indent);
+                break;
+
+            case StatementKind::SimdMatrixMultiplyAdd:
+                source = simdMatrixMultiplyAdd(statement, indent);
+                break;
+
             // GLSL's imageStore takes a *signed* coordinate; MSL takes the
             // colour first, HLSL subscripts the texture like an array.
             case StatementKind::TextureStore:
@@ -1672,6 +1758,153 @@ private:
         source += indent + type + " " + name + " = " + scratch + "[0];\n";
 
         return source + barrier;
+    }
+
+    bool metal() const { return printer.backend == Backend::Metal; }
+
+    // The four matrix statements below. An 8x8 fragment on Metal is a type MSL
+    // has, and each operation on one is a single intrinsic; on the two backends
+    // with no wave matrix operation it is 64 floats of every thread's own,
+    // computed redundantly by all simdGroupWidth lanes of what would have been
+    // one SIMD group, so that no lane needs a value another lane holds.
+    //
+    // Correctness at whatever it costs, as the reduction's tree is where there
+    // is no wave intrinsic - and unlike that tree, this is not the fastest form
+    // the hardware would allow, which is why the README says so.
+    std::string simdMatrixDeclaration(int slot) const
+    {
+        if (metal())
+            return "simdgroup_float8x8 " + simdMatrixName(slot);
+
+        return "float " + simdMatrixName(slot) + "["
+               + std::to_string(simdMatrixSize * simdMatrixSize) + "]";
+    }
+
+    std::string simdMatrixFill(const Statement& statement, const std::string& indent)
+    {
+        auto name = simdMatrixName(statement.slot);
+        auto value = printer.ref(statement.value);
+
+        if (metal())
+            return indent + simdMatrixDeclaration(statement.slot)
+                   + " = make_filled_simdgroup_matrix<float, "
+                   + std::to_string(simdMatrixSize) + ", "
+                   + std::to_string(simdMatrixSize) + ">(" + value + ");\n";
+
+        auto step = name + "e";
+        auto elements = std::to_string(simdMatrixSize * simdMatrixSize);
+
+        auto source = indent + simdMatrixDeclaration(statement.slot) + ";\n";
+        source += indent + "for (uint " + step + " = 0u; " + step + " < " + elements
+                  + "u; ++" + step + ")\n";
+        source += indent + "    " + name + "[" + step + "] = " + value + ";\n";
+        return source;
+    }
+
+    // The load and the store are the same patch walked in the two directions,
+    // so they are one function: what changes is which side of the assignment
+    // each is on, and that only the store needs a lane to make it.
+    std::string simdMatrixTransfer(const Statement& statement, std::string indent)
+    {
+        auto loading = statement.kind == StatementKind::SimdMatrixLoad;
+        auto name = simdMatrixName(statement.slot);
+        auto memory = simdMatrixMemoryName(statement);
+        auto offset = bracketed(printer.ref(statement.index));
+        auto stride = bracketed(printer.ref(statement.stride));
+
+        if (metal())
+        {
+            auto pointer = memory + " + " + offset;
+
+            if (loading)
+                return indent + simdMatrixDeclaration(statement.slot) + ";\n"
+                       + indent + "simdgroup_load(" + name + ", " + pointer + ", "
+                       + stride + ");\n";
+
+            return indent + "simdgroup_store(" + name + ", " + pointer + ", "
+                   + stride + ");\n";
+        }
+
+        auto row = name + "r";
+        auto column = name + "c";
+        auto side = std::to_string(simdMatrixSize);
+        auto element = memory + "[" + offset + " + " + row + " * " + stride + " + "
+                       + column + "]";
+        auto held = name + "[" + row + " * " + side + "u + " + column + "]";
+
+        auto source = std::string {};
+
+        if (loading)
+            source += indent + simdMatrixDeclaration(statement.slot) + ";\n";
+        else
+        {
+            source += indent + "if (" + simdLeadLane(printer.backend) + ")\n";
+            source += indent + "{\n";
+            indent += "    ";
+        }
+
+        source += indent + "for (uint " + row + " = 0u; " + row + " < " + side
+                  + "u; ++" + row + ")\n";
+        source += indent + "    for (uint " + column + " = 0u; " + column + " < "
+                  + side + "u; ++" + column + ")\n";
+        source += indent + "        "
+                  + (loading ? held + " = " + element : element + " = " + held)
+                  + ";\n";
+
+        if (!loading)
+        {
+            indent.resize(indent.size() - 4);
+            source += indent + "}\n";
+        }
+
+        return source;
+    }
+
+    std::string simdMatrixMultiplyAdd(const Statement& statement,
+                                      const std::string& indent)
+    {
+        auto accumulator = simdMatrixName(statement.slot);
+        auto left = simdMatrixName(statement.left);
+        auto right = simdMatrixName(statement.right);
+
+        if (metal())
+            return indent + "simdgroup_multiply_accumulate(" + accumulator + ", "
+                   + left + ", " + right + ", " + accumulator + ");\n";
+
+        // Through a temporary, and inside a block of its own: an accumulator is
+        // allowed to be one of the operands, and a second product in the same
+        // scope would otherwise redeclare the temporary.
+        auto sum = accumulator + "p";
+        auto row = accumulator + "i";
+        auto column = accumulator + "j";
+        auto step = accumulator + "k";
+        auto copy = accumulator + "n";
+        auto side = std::to_string(simdMatrixSize);
+        auto elements = std::to_string(simdMatrixSize * simdMatrixSize);
+
+        auto source = indent + "{\n";
+        source += indent + "    float " + sum + "[" + elements + "];\n";
+        source += indent + "    for (uint " + row + " = 0u; " + row + " < " + side
+                  + "u; ++" + row + ")\n";
+        source += indent + "        for (uint " + column + " = 0u; " + column + " < "
+                  + side + "u; ++" + column + ")\n";
+        source += indent + "        {\n";
+        source += indent + "            float " + sum + "e = 0.0;\n";
+        source += indent + "            for (uint " + step + " = 0u; " + step + " < "
+                  + side + "u; ++" + step + ")\n";
+        source += indent + "                " + sum + "e += " + left + "[" + row
+                  + " * " + side + "u + " + step + "] * " + right + "[" + step
+                  + " * " + side + "u + " + column + "];\n";
+        source += indent + "            " + sum + "[" + row + " * " + side + "u + "
+                  + column + "] = " + accumulator + "[" + row + " * " + side + "u + "
+                  + column + "] + " + sum + "e;\n";
+        source += indent + "        }\n";
+        source += indent + "    for (uint " + copy + " = 0u; " + copy + " < "
+                  + elements + "u; ++" + copy + ")\n";
+        source += indent + "        " + accumulator + "[" + copy + "] = " + sum + "["
+                  + copy + "];\n";
+        source += indent + "}\n";
+        return source;
     }
 
     Vector<int> countUsesOver(const Vector<int>& roots) const
@@ -1860,6 +2093,7 @@ void collectStatementRoots(const ShaderGraph& graph, int block, Vector<int>& roo
         roots.add(statement.value);
         roots.add(statement.index);
         roots.add(statement.indexY);
+        roots.add(statement.stride);
 
         if (statement.body >= 0)
             collectStatementRoots(graph, statement.body, roots);
@@ -2314,6 +2548,13 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     auto source = std::string {};
     auto rank = graph.dispatchRank();
 
+    assert((!graph.usesSimdGroups()
+            || graph.threadGroupShape().threadCount() % simdGroupWidth == 0)
+           && "eacp: a kernel using SIMD groups has to be dispatched in a "
+              "threadgroup of a whole number of them - a multiple of "
+              "ComputeProgram::simdWidth threads. A group that is not leaves a "
+              "partial SIMD group, whose matrix operations are undefined.");
+
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
 
@@ -2401,8 +2642,10 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         // What a group reduction folds through: the SIMD-group intrinsics run
         // per SIMD group, so combining their partials takes the lane, the SIMD
-        // group's index and how many of them the threadgroup was given.
-        if (graph.usesGroupReduction())
+        // group's index and how many of them the threadgroup was given. A
+        // kernel holding SIMD-group matrices takes the same three, the index
+        // being what places the block of the output each SIMD group owns.
+        if (graph.usesGroupReduction() || graph.usesSimdGroups())
             source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
                       "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
                       "uint simdCount [[simdgroups_per_threadgroup]]";
@@ -2569,7 +2812,10 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
         // The flattened local index the scratch tree walks, which cs_5_0 hands
         // over as a semantic of its own rather than leaving it to be derived.
-        if (graph.usesGroupReduction())
+        // A kernel holding SIMD-group matrices needs it too: with no wave
+        // matrix operation to lower to, it is what stands in for the SIMD
+        // group's index and what picks the lane that makes a fragment's store.
+        if (graph.usesGroupReduction() || graph.usesSimdGroups())
             source += ", uint groupLane : SV_GroupIndex";
 
         source += ")\n{\n";
