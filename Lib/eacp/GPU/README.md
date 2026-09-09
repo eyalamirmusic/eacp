@@ -219,8 +219,10 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   a float, an index, an integer vector, a mask — and takes a literal on either
   side of a scalar one; the condition is a scalar `Bool` in all of them, which
   is the conditional operator both languages already print
-- Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId`, and the
-  group-wide `groupSum` / `groupMax` / `groupMin` — see the compute section
+- Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId`, the
+  group-wide `groupSum` / `groupMax` / `groupMin`, and the SIMD-group matrix —
+  `simdGroupIndex`, `simdMatrix`, `multiplyAccumulate` and the `write` that
+  stores a fragment — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
   coordinates
@@ -1058,6 +1060,101 @@ partials through a scratch array; HLSL under FXC has no wave intrinsic at
 so both walk a `groupshared` tree with a barrier per halving step. The scratch
 is the emitter's own, declared once per kernel and only where a reduction asked
 for it.
+
+### The SIMD-group matrix
+
+`SimdMatrix` is an 8×8 patch of a float matrix held between the registers of a
+whole SIMD group rather than by any one thread, and `multiplyAccumulate` is the
+product of two of them added into a third. It is the primitive a blocked matrix
+product is written out of, and on Metal it is one instruction:
+
+```cpp
+struct Product final : ComputeProgram
+{
+    // 256 threads, so eight SIMD groups; each owns a 32 x 16 block of a
+    // 64 x 64 tile of C as eight accumulator fragments.
+    Product() : ComputeProgram({256, 1, 1}) { compile(); }
+
+    void define() override
+    {
+        auto tile = shared<Float>(64 * 32 + 32 * 64);
+        auto simd = simdGroupIndex();
+
+        auto rowOffset = (simd % 2u) * 32u;
+        auto columnOffset = (simd / 2u) * 16u;
+
+        SimdMatrix accumulators[8];
+
+        for (auto& accumulator: accumulators)
+            accumulator = simdMatrix();          // a fragment of zeroes
+
+        // ... stage a 64 x 32 slab of A and a 32 x 64 slab of B into `tile`,
+        // then barrier() ...
+
+        auto left = simdMatrix(tile, rowOffset * 32u, unsignedInteger(32u));
+        auto right = simdMatrix(tile, 2048u + columnOffset, unsignedInteger(64u));
+
+        multiplyAccumulate(accumulators[0], left, right);
+
+        // ... and back out through the same tile, or straight to the buffer
+        write(output, at, cRowStride, accumulators[0]);
+    }
+};
+```
+
+Six calls, and they are the whole vocabulary:
+
+| call | what it is |
+| --- | --- |
+| `simdGroupIndex()` | which SIMD group of the threadgroup this thread is in, numbered from the flat local index. What places the block of the output a SIMD group owns |
+| `simdMatrix(fill)` | a fragment every element of which is that value — the zero an accumulator starts from. `fill` is a literal, not an expression |
+| `simdMatrix(tile, offset, rowStride)` | a fragment read from an 8×8 patch of a threadgroup array: element (r, c) at `offset + r * rowStride + c` |
+| `simdMatrix(buffer, offset, rowStride)` | the same out of a storage buffer, input or output |
+| `multiplyAccumulate(acc, left, right)` | `acc += left * right`, over the three fragments |
+| `write(buffer, offset, rowStride, fragment)` | the patch written back, addressed the way the load addresses one. `write(tile, ...)` is its threadgroup sibling |
+
+`ComputeProgram::simdWidth` is how many threads a SIMD group holds and
+`simdMatrixWidth` the side of a fragment — 32 and 8. Both are constants of the
+EDSL rather than of the device: Metal's own are the same numbers, and the
+backends that emit the fallback below define theirs to match, so a kernel's
+tiling arithmetic is one arithmetic everywhere.
+
+What that costs is four rules, all of them the shape a SIMD-group intrinsic
+already has:
+
+- **A fragment is loaded and stored whole.** There is no element of one to
+  subscript and no per-element guard to put on one, so the 8×8 patch has to be
+  inside the array. A tile hanging off the edge of a ragged shape goes back
+  through threadgroup memory and is copied out element by element — which costs
+  nothing measurable, since the copy is once per tile against a slab loop.
+- **The offset and the stride are the same on every lane.** They address one
+  patch for the group, not one per lane. A value derived from `localId()` is
+  not one of those; `simdGroupIndex()` and `groupPosition()` are.
+- **Every thread of the group reaches every operation on one**, the way it
+  reaches a barrier. A kernel holding a fragment therefore loses its
+  early-return bounds guard exactly as one that barriers does, and bounds its
+  own stores.
+- **The threadgroup has to be a whole number of SIMD groups** — a multiple of
+  `simdWidth` threads. The stock 64 and 8×8 are; a shape named by
+  `ComputeProgram({...})` is asserted on.
+
+**Metal is the fast path and the other two are correctness.** MSL has
+`simdgroup_float8x8` and the three intrinsics, so each call above is one line of
+emitted source. HLSL at `cs_5_0` under FXC has no wave matrix operation and
+neither does GLSL without an extension no lane here is held to, so a fragment
+becomes 64 floats of each thread's own and each operation a loop over them: the
+fill and the load are 64 element copies, the product is the 512 multiply-adds
+written out, and the store is made by the first lane of each notional SIMD group
+so the same bytes are not written 32 times over. Every lane of that group
+computes the same fragment, so the arithmetic is done 32 times where Metal does
+it once. That is the price of one kernel running everywhere, and it is a price
+worth naming: a kernel whose throughput matters on Windows or Linux wants the
+register-tiled form beside this one, not this one.
+
+`Tests/GPU/SimdMatrixTests.cpp` holds the worked blocked product — a 64×64 tile,
+a 32-deep slab, clamped loads and a guarded copy-out — checked against a scalar
+reference on whole tiles, on a ragged shape and at a transformer's own
+[1500, 384] × [384, 1536].
 
 ### Textures a kernel writes
 

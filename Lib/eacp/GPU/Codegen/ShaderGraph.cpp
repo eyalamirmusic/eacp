@@ -51,6 +51,7 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::LocalId:
         case ExprKind::GroupId:
         case ExprKind::GridExtent:
+        case ExprKind::SimdGroupIndex:
             return false;
     }
 
@@ -603,6 +604,81 @@ int ShaderGraph::addGroupReduction(GroupReduction operation,
     addStatement(fold);
 
     return slot;
+}
+
+// The four matrix statements, and after them the index that places a SIMD
+// group's tile. Each of the four marks the kernel as barriering, for the reason
+// a reduction does: an intrinsic collective over a SIMD group is undefined
+// where some of its lanes returned early, so a kernel holding one gets no
+// bounds guard and bounds its own stores. The index marks nothing, being a read
+// of a builtin rather than anything collective.
+int ShaderGraph::addSimdMatrixFill(int value)
+{
+    barrierUsed = true;
+
+    auto matrix = simdMatrices++;
+
+    auto fill = Statement {StatementKind::SimdMatrixFill};
+    fill.slot = matrix;
+    fill.value = value;
+    addStatement(fill);
+
+    return matrix;
+}
+
+int ShaderGraph::addSimdMatrixLoad(SimdMatrixMemory memory,
+                                   int slot,
+                                   int index,
+                                   int stride)
+{
+    barrierUsed = true;
+
+    auto matrix = simdMatrices++;
+
+    auto load = Statement {StatementKind::SimdMatrixLoad};
+    load.slot = matrix;
+    load.memory = memory;
+    load.bufferSlot = slot;
+    load.index = index;
+    load.stride = stride;
+    addStatement(load);
+
+    return matrix;
+}
+
+void ShaderGraph::addSimdMatrixStore(
+    int matrix, SimdMatrixMemory memory, int slot, int index, int stride)
+{
+    barrierUsed = true;
+
+    auto store = Statement {StatementKind::SimdMatrixStore};
+    store.slot = matrix;
+    store.memory = memory;
+    store.bufferSlot = slot;
+    store.index = index;
+    store.stride = stride;
+    addStatement(store);
+}
+
+void ShaderGraph::addSimdMatrixMultiplyAdd(int accumulator, int left, int right)
+{
+    barrierUsed = true;
+
+    auto product = Statement {StatementKind::SimdMatrixMultiplyAdd};
+    product.slot = accumulator;
+    product.left = left;
+    product.right = right;
+    addStatement(product);
+}
+
+int ShaderGraph::addSimdGroupIndex()
+{
+    simdGroupIndexUsed = true;
+
+    auto node = Expr {};
+    node.kind = ExprKind::SimdGroupIndex;
+    node.type = ValueType::UInt;
+    return add(std::move(node));
 }
 
 ThreadGroupShape ShaderGraph::threadGroupShape() const

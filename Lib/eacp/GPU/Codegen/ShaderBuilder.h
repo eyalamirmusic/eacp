@@ -346,6 +346,94 @@ public:
     UInt groupMax(const UInt& value) { return fold(GroupReduction::Max, value); }
     UInt groupMin(const UInt& value) { return fold(GroupReduction::Min, value); }
 
+    // Which SIMD group of the threadgroup this thread is in, which is what
+    // places the block of the output that SIMD group owns. They are numbered
+    // from the flat local index, so a group of simdGroupWidth * n threads holds
+    // SIMD groups 0 to n - 1.
+    UInt simdGroupIndex() { return indexValue<UInt>(graphData.addSimdGroupIndex()); }
+
+    // An 8x8 fragment filled with one value - the zero an accumulator starts
+    // from - or read from an 8x8 patch of a threadgroup tile or of a buffer.
+    // Element (r, c) of the patch sits at offset + r * rowStride + c, and the
+    // whole patch has to be inside the array: a fragment is loaded and stored
+    // whole, and there is no per-element guard to put on one.
+    //
+    // Every thread of a SIMD group reaches these, and reaches them with the
+    // same offset and the same stride. See SimdMatrix.
+    SimdMatrix simdMatrix(float fill = 0.f)
+    {
+        return {&graphData,
+                graphData.addSimdMatrixFill(graphData.addConstant(fill))};
+    }
+
+    SimdMatrix simdMatrix(const Shared<Float>& tile,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return {
+            &graphData,
+            graphData.addSimdMatrixLoad(
+                SimdMatrixMemory::Shared, tile.slot, offset.node, rowStride.node)};
+    }
+
+    SimdMatrix simdMatrix(const InputBuffer& buffer,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return {
+            &graphData,
+            graphData.addSimdMatrixLoad(
+                SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
+    }
+
+    // An output is readable here as it is elementwise, which is what a product
+    // accumulated across dispatches needs.
+    SimdMatrix simdMatrix(const OutputBuffer& buffer,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return {
+            &graphData,
+            graphData.addSimdMatrixLoad(
+                SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
+    }
+
+    // accumulator += left * right over the 8x8 fragments: the whole reason the
+    // type exists, and one instruction on Metal.
+    void multiplyAccumulate(const SimdMatrix& accumulator,
+                            const SimdMatrix& left,
+                            const SimdMatrix& right)
+    {
+        graphData.addSimdMatrixMultiplyAdd(accumulator.slot, left.slot, right.slot);
+    }
+
+    // The fragment written back to an 8x8 patch, addressed the way the load
+    // addresses one. Beside the element writes rather than named apart from
+    // them: the extra argument already says which is meant.
+    void write(const OutputBuffer& buffer,
+               const UInt& offset,
+               const UInt& rowStride,
+               const SimdMatrix& value)
+    {
+        graphData.addSimdMatrixStore(value.slot,
+                                     SimdMatrixMemory::Buffer,
+                                     buffer.slot,
+                                     offset.node,
+                                     rowStride.node);
+    }
+
+    void write(const Shared<Float>& tile,
+               const UInt& offset,
+               const UInt& rowStride,
+               const SimdMatrix& value)
+    {
+        graphData.addSimdMatrixStore(value.slot,
+                                     SimdMatrixMemory::Shared,
+                                     tile.slot,
+                                     offset.node,
+                                     rowStride.node);
+    }
+
     InputBuffer inputBuffer()
     {
         return {&graphData, graphData.addStorageBuffer(BufferAccess::Read)};
