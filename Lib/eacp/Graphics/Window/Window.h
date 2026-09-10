@@ -116,6 +116,17 @@ struct WindowOptions
             {{(float) width, (float) height}, ResizeAxis::Both});
     }
 
+    // The content size a programmatic resize (Window::setSize) lands on:
+    // floored at minWidth/minHeight, as a drag is before the rule sees it,
+    // then through the rule as a corner resize.
+    Point effectiveSize(Point size) const
+    {
+        auto floored = Point {std::max(size.x, (float) minWidth),
+                              std::max(size.y, (float) minHeight)};
+
+        return effectiveSizeConstraint()({floored, ResizeAxis::Both});
+    }
+
     // When the user closes the window. If left empty, falls back to
     // Apps::quit when isPrimary is true, or a no-op otherwise.
     Callback onQuit {};
@@ -344,6 +355,27 @@ public:
     // moved, and an app saving its position wants to hear about it however it
     // happened. No-op on iOS.
     void setPosition(Point position);
+
+    // The content size in points - the measure WindowOptions::width/height,
+    // minWidth/minHeight, onResize and sizeConstraint are all in, not the
+    // outer frame. Under headless the window is made and simply never shown,
+    // so this reads a real size there too. The screen on iOS.
+    Point getSize() const;
+
+    // Resizes the content to `size`, keeping the top-left where it is.
+    //
+    // The one rule the window has is asked as on every other path: the size
+    // goes through sizeConstraint as a corner resize (ResizeAxis::Both) and
+    // is floored at minWidth/minHeight, so a constrained window cannot be
+    // put into a shape it would refuse to be dragged into. The size it took
+    // may therefore differ from the one asked for; getSize says which. Nothing
+    // contains it within the display: an app resizing a window on purpose is
+    // told what size to make it.
+    //
+    // Fires WindowOptions::onResize like a drag does - the window resized,
+    // and the content that lays out from that callback wants to hear about
+    // it however it happened. No-op on iOS.
+    void setSize(Point size);
 
     // Minimizes to the Dock / taskbar (macOS miniaturize, Windows
     // SW_MINIMIZE). Lets borderless windows with web-rendered window

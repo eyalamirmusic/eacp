@@ -959,6 +959,27 @@ void Window::setPosition(Point position)
                                          primaryScreenTop() - position.y)];
 }
 
+Point Window::getSize() const
+{
+    return currentContentSize(impl->getWindow());
+}
+
+// setContentSize keeps the bottom-left, which on a screen with y growing up
+// is the corner the user does not think of as anchored; the frame is
+// recomputed by hand so the top-left holds instead.
+void Window::setSize(Point size)
+{
+    NSWindow* window = impl->getWindow();
+    auto frame = window.frame;
+    auto newSize =
+        frameSizeForContentSize(window, options.effectiveSize(size));
+
+    frame.origin.y = NSMaxY(frame) - newSize.height;
+    frame.size = newSize;
+
+    [window setFrame:frame display:YES];
+}
+
 bool Window::isMouseLocked() const
 {
     return impl->mouseLockIntent;
