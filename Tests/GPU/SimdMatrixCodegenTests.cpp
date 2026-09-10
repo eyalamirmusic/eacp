@@ -1,8 +1,8 @@
 #include "CodegenCommon.h"
 
 // One 8x8 fragment, three dialects: MSL's own type and its three intrinsics on
-// Metal, and a per-thread copy walked element by element on the two backends
-// with no wave matrix operation to lower to.
+// Metal, and a pair of elements per lane exchanged through threadgroup memory
+// on the two backends with no wave matrix operation to lower to.
 
 using namespace nano;
 using namespace eacp;
@@ -13,6 +13,17 @@ namespace
 auto has(const std::string& source, std::string_view text)
 {
     return source.find(text) != std::string::npos;
+}
+
+int count(const std::string& source, std::string_view text)
+{
+    auto found = 0;
+
+    for (auto at = source.find(text); at != std::string::npos;
+         at = source.find(text, at + text.size()))
+        ++found;
+
+    return found;
 }
 
 // The whole vocabulary in one kernel: a fragment filled, one loaded out of a
@@ -68,35 +79,62 @@ auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
     check(has(metal, "simdgroup_store(sgm0, buffer1 + "));
 
     // Neither of the others has a wave matrix operation at the level eacp
-    // targets, so a fragment is 64 floats of each thread's own and every
-    // operation on one is a loop over them.
+    // targets, so a fragment is spread over the lanes the way Metal spreads
+    // it: a pair of elements of each thread's own, at the row and the two
+    // columns its lane within the SIMD group picks. The fill, the load and
+    // the store move that pair, every lane its own, so nothing guards a
+    // store; the product is the one operation that needs what other lanes
+    // hold, and stages both operands through a scratch between two barriers.
     for (const auto& source: {hlsl, glsl})
     {
-        check(has(source, "float sgm0[64];"));
-        check(has(source, "for (uint sgm0e = 0u; sgm0e < 64u; ++sgm0e)"));
-        check(has(source, "sgm0[sgm0e] = 0.0;"));
-        check(has(source, "float sgm1[64];"));
-        check(has(source, "for (uint sgm1r = 0u; sgm1r < 8u; ++sgm1r)"));
-        check(has(source, "for (uint sgm1c = 0u; sgm1c < 8u; ++sgm1c)"));
-        check(has(source, "sgm1[sgm1r * 8u + sgm1c] = s0["));
-        check(has(source, "sgm2[sgm2r * 8u + sgm2c] = buffer0["));
-        check(has(source, "sgm0p[64];"));
+        check(has(source, "uint sgmRow = sgmLane / 4u;"));
+        check(has(source, "uint sgmColumn = (sgmLane % 4u) * 2u;"));
+        check(has(source, "sgm1 = "));
+        check(has(source, "(s0["));
+        check(has(source, "+ sgmRow * ("));
+        check(has(source, "+ sgmColumn + 1u]);"));
+        check(has(source, "(buffer0["));
+        check(
+            has(source, "sgmScratch[sgmBase + sgmRow * 8u + sgmColumn] = sgm1.x;"));
         check(has(source,
-                  "sgm0p[sgm0i * 8u + sgm0j] = sgm0[sgm0i * 8u + sgm0j] + "
-                  "sgm0pe;"));
+                  "sgmScratch[sgmBase + 64u + sgmRow * 8u + sgmColumn + 1u] = "
+                  "sgm2.y;"));
+        check(has(source, "for (uint sgm0k = 0u; sgm0k < 8u; ++sgm0k)"));
+        check(
+            has(source, "float sgm0l = sgmScratch[sgmBase + sgmRow * 8u + sgm0k];"));
+        check(has(source,
+                  "sgm0.x += sgm0l * sgmScratch[sgmBase + 64u + sgm0k * 8u + "
+                  "sgmColumn];"));
+        check(has(source,
+                  "sgm0.y += sgm0l * sgmScratch[sgmBase + 64u + sgm0k * 8u + "
+                  "sgmColumn + 1u];"));
+        check(has(source, "+ sgmColumn] = sgm0.x;"));
+        check(has(source, "+ sgmColumn + 1u] = sgm0.y;"));
+        check(!has(source, "% 32u == 0u"));
         check(!has(source, "simdgroup_multiply_accumulate"));
     }
 
-    // The lane that makes a store: with every lane of what would have been a
-    // SIMD group holding its own copy, letting all of them write would be the
-    // same bytes 32 times over.
-    check(has(hlsl, "uint groupLane : SV_GroupIndex"));
-    check(has(hlsl, "if (groupLane % 32u == 0u)"));
-    check(has(glsl, "if (gl_LocalInvocationIndex % 32u == 0u)"));
+    // The two-vector each dialect spells a lane's pair as, and the scratch:
+    // 128 threads are four SIMD groups, each with two fragments of its own.
+    check(has(hlsl, "groupshared float sgmScratch[512];"));
+    check(has(hlsl, "float2 sgm0 = float2(0.0, 0.0);"));
+    check(has(hlsl, "float2 sgm1 = float2(s0["));
+    check(has(glsl, "shared float sgmScratch[512];"));
+    check(has(glsl, "vec2 sgm0 = vec2(0.0, 0.0);"));
+    check(has(glsl, "vec2 sgm1 = vec2(s0["));
 
-    // And the SIMD group's index, which Metal has a builtin for and the other
-    // two divide the flat local index for.
+    // The kernel's own barrier and the two around the product's exchange.
+    check(count(hlsl, "GroupMemoryBarrierWithGroupSync();") == 3);
+    check(count(glsl, "barrier();") == 3);
+
+    // The lane within the SIMD group, and the SIMD group's index, which Metal
+    // has a builtin for and the other two divide the flat local index for.
+    check(has(hlsl, "uint groupLane : SV_GroupIndex"));
+    check(has(hlsl, "uint sgmLane = groupLane % 32u;"));
+    check(has(hlsl, "uint sgmBase = (groupLane / 32u) * 128u;"));
     check(has(hlsl, "(groupLane / 32u)"));
+    check(has(glsl, "uint sgmLane = gl_LocalInvocationIndex % 32u;"));
+    check(has(glsl, "uint sgmBase = (gl_LocalInvocationIndex / 32u) * 128u;"));
     check(has(glsl, "(gl_LocalInvocationIndex / 32u)"));
 
     expectGlslCompiles(graph);

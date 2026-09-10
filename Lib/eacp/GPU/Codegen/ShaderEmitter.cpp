@@ -644,15 +644,76 @@ std::string bracketed(const std::string& expression)
     return "(" + expression + ")";
 }
 
-// The lane a fallback fragment's store is made by. There is no SIMD group on
-// the backends that take the fallback, so every thread of what would be one
-// holds its own copy of the fragment and computes it redundantly; letting all
-// of them write would be the same bytes 32 times over and a race to say it
-// with, so the first lane of each writes and the rest do not.
-std::string simdLeadLane(Backend backend)
+// How the fallback backends hold a fragment: spread over the lanes of what
+// would have been the SIMD group the way Metal spreads it, each lane owning
+// the pair of elements at row lane / 4, columns (lane % 4) * 2 and the next -
+// which is elements 2 * lane and 2 * lane + 1 of the row-major patch. A pair
+// rather than the whole 8x8, because FXC counts every per-thread array against
+// one budget of 4096 registers for the kernel, and a blocked product holding a
+// few dozen fragments as 64 floats each went over it.
+constexpr int simdMatrixLaneElements =
+    simdMatrixSize * simdMatrixSize / simdGroupWidth;
+constexpr int simdMatrixLanesPerRow = simdMatrixSize / simdMatrixLaneElements;
+
+static_assert(simdMatrixLaneElements == 2,
+              "the fallback holds a lane's share of a fragment as a two-vector");
+
+// The two-component type a lane's share is declared as.
+const char* simdMatrixLaneType(Backend backend)
 {
-    return std::string(groupLaneName(backend)) + " % "
-           + std::to_string(simdGroupWidth) + "u == 0u";
+    return typeName(backend, ValueType::Float2);
+}
+
+// The scratch a product stages its two operands in, whole, so each lane can
+// read the row and the columns other lanes hold: two fragments per SIMD group,
+// one slice per SIMD group of the threadgroup. Named rather than slotted, like
+// the reduction's, because it is the emitter's own.
+constexpr auto simdMatrixScratchName = "sgmScratch";
+constexpr int simdMatrixScratchPerGroup = 2 * simdMatrixSize * simdMatrixSize;
+
+int simdMatrixScratchElements(const ShaderGraph& graph)
+{
+    return graph.threadGroupShape().threadCount() / simdGroupWidth
+           * simdMatrixScratchPerGroup;
+}
+
+// The scratch declared, under the storage qualifier the dialect gives
+// threadgroup memory, in a kernel that holds any fragment at all.
+std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
+                                         const std::string& qualifier)
+{
+    if (graph.simdMatrixCount() == 0)
+        return {};
+
+    return qualifier + " float " + simdMatrixScratchName + "["
+           + std::to_string(simdMatrixScratchElements(graph)) + "];\n";
+}
+
+// Whether a kernel declares any threadgroup memory of its own or the
+// emitter's - what the blank line after those declarations is for.
+bool declaresGroupMemory(const ShaderGraph& graph)
+{
+    return graph.sharedArrays().size() > 0 || graph.usesGroupReduction()
+           || graph.simdMatrixCount() > 0;
+}
+
+// What the fallback addresses a fragment by, declared once at the top of any
+// kernel that holds one: the lane within its notional SIMD group, the row and
+// the first column of the pair that lane holds, and where that group's slice
+// of the scratch starts.
+std::string simdMatrixPreamble(Backend backend)
+{
+    auto lane = std::string(groupLaneName(backend));
+    auto width = std::to_string(simdGroupWidth);
+    auto perRow = std::to_string(simdMatrixLanesPerRow);
+
+    auto source = "    uint sgmLane = " + lane + " % " + width + "u;\n";
+    source += "    uint sgmRow = sgmLane / " + perRow + "u;\n";
+    source += "    uint sgmColumn = (sgmLane % " + perRow + "u) * "
+              + std::to_string(simdMatrixLaneElements) + "u;\n";
+    source += "    uint sgmBase = (" + lane + " / " + width + "u) * "
+              + std::to_string(simdMatrixScratchPerGroup) + "u;\n";
+    return source;
 }
 
 // Prints one stage's expressions. Nodes the stage plan named as locals print
@@ -1646,7 +1707,8 @@ struct StageEmitter
                 break;
 
             // The SIMD-group matrix statements, each one intrinsic on Metal and
-            // a loop over the 64 elements of a per-thread copy everywhere else.
+            // a lane's two elements of the fragment everywhere else, the
+            // product staging its operands through the threadgroup scratch.
             case StatementKind::SimdMatrixFill:
                 source = define({statement.value}, indent, uses, open);
                 source += simdMatrixFill(statement, indent);
@@ -1763,10 +1825,12 @@ private:
     bool metal() const { return printer.backend == Backend::Metal; }
 
     // The four matrix statements below. An 8x8 fragment on Metal is a type MSL
-    // has, and each operation on one is a single intrinsic; on the two backends
-    // with no wave matrix operation it is 64 floats of every thread's own,
-    // computed redundantly by all simdGroupWidth lanes of what would have been
-    // one SIMD group, so that no lane needs a value another lane holds.
+    // has, and each operation on one is a single intrinsic. On the two backends
+    // with no wave matrix operation it is spread over the lanes the way Metal
+    // spreads it - see simdMatrixLaneElements - so a fill, a load and a store
+    // are two scalars of each lane's own, and only the product needs what
+    // other lanes hold, which it fetches through the threadgroup scratch
+    // between two barriers: the exchange a wave intrinsic does in registers.
     //
     // Correctness at whatever it costs, as the reduction's tree is where there
     // is no wave intrinsic - and unlike that tree, this is not the fastest form
@@ -1776,13 +1840,12 @@ private:
         if (metal())
             return "simdgroup_float8x8 " + simdMatrixName(slot);
 
-        return "float " + simdMatrixName(slot) + "["
-               + std::to_string(simdMatrixSize * simdMatrixSize) + "]";
+        return std::string(simdMatrixLaneType(printer.backend)) + " "
+               + simdMatrixName(slot);
     }
 
     std::string simdMatrixFill(const Statement& statement, const std::string& indent)
     {
-        auto name = simdMatrixName(statement.slot);
         auto value = printer.ref(statement.value);
 
         if (metal())
@@ -1791,20 +1854,31 @@ private:
                    + std::to_string(simdMatrixSize) + ", "
                    + std::to_string(simdMatrixSize) + ">(" + value + ");\n";
 
-        auto step = name + "e";
-        auto elements = std::to_string(simdMatrixSize * simdMatrixSize);
+        return indent + simdMatrixDeclaration(statement.slot) + " = "
+               + simdMatrixLaneType(printer.backend) + "(" + value + ", " + value
+               + ");\n";
+    }
 
-        auto source = indent + simdMatrixDeclaration(statement.slot) + ";\n";
-        source += indent + "for (uint " + step + " = 0u; " + step + " < " + elements
-                  + "u; ++" + step + ")\n";
-        source += indent + "    " + name + "[" + step + "] = " + value + ";\n";
-        return source;
+    // One of the two elements of a patch a lane holds, as the memory names it:
+    // the lane's row at the first of its pair of columns or the one after.
+    static std::string simdMatrixLaneElement(const std::string& memory,
+                                             const std::string& offset,
+                                             const std::string& stride,
+                                             int which)
+    {
+        auto column = which == 0 ? std::string("sgmColumn")
+                                 : "sgmColumn + " + std::to_string(which) + "u";
+
+        return memory + "[" + offset + " + sgmRow * " + stride + " + " + column
+               + "]";
     }
 
     // The load and the store are the same patch walked in the two directions,
     // so they are one function: what changes is which side of the assignment
-    // each is on, and that only the store needs a lane to make it.
-    std::string simdMatrixTransfer(const Statement& statement, std::string indent)
+    // each is on. Every lane moves the pair it holds, so the store needs no
+    // guard to make it once - no lane's share is another's.
+    std::string simdMatrixTransfer(const Statement& statement,
+                                   const std::string& indent)
     {
         auto loading = statement.kind == StatementKind::SimdMatrixLoad;
         auto name = simdMatrixName(statement.slot);
@@ -1825,39 +1899,29 @@ private:
                    + stride + ");\n";
         }
 
-        auto row = name + "r";
-        auto column = name + "c";
-        auto side = std::to_string(simdMatrixSize);
-        auto element = memory + "[" + offset + " + " + row + " * " + stride + " + "
-                       + column + "]";
-        auto held = name + "[" + row + " * " + side + "u + " + column + "]";
-
-        auto source = std::string {};
+        auto first = simdMatrixLaneElement(memory, offset, stride, 0);
+        auto second = simdMatrixLaneElement(memory, offset, stride, 1);
 
         if (loading)
-            source += indent + simdMatrixDeclaration(statement.slot) + ";\n";
-        else
-        {
-            source += indent + "if (" + simdLeadLane(printer.backend) + ")\n";
-            source += indent + "{\n";
-            indent += "    ";
-        }
+            return indent + simdMatrixDeclaration(statement.slot) + " = "
+                   + simdMatrixLaneType(printer.backend) + "(" + first + ", "
+                   + second + ");\n";
 
-        source += indent + "for (uint " + row + " = 0u; " + row + " < " + side
-                  + "u; ++" + row + ")\n";
-        source += indent + "    for (uint " + column + " = 0u; " + column + " < "
-                  + side + "u; ++" + column + ")\n";
-        source += indent + "        "
-                  + (loading ? held + " = " + element : element + " = " + held)
-                  + ";\n";
+        return indent + first + " = " + name + ".x;\n" + indent + second + " = "
+               + name + ".y;\n";
+    }
 
-        if (!loading)
-        {
-            indent.resize(indent.size() - 4);
-            source += indent + "}\n";
-        }
+    // An element of an operand a product staged in the scratch: the left
+    // fragment at the start of this SIMD group's slice, the right one a
+    // fragment further on.
+    static std::string simdMatrixStaged(bool right, const std::string& element)
+    {
+        auto base = std::string("sgmBase + ");
 
-        return source;
+        if (right)
+            base += std::to_string(simdMatrixSize * simdMatrixSize) + "u + ";
+
+        return std::string(simdMatrixScratchName) + "[" + base + element + "]";
     }
 
     std::string simdMatrixMultiplyAdd(const Statement& statement,
@@ -1871,40 +1935,42 @@ private:
             return indent + "simdgroup_multiply_accumulate(" + accumulator + ", "
                    + left + ", " + right + ", " + accumulator + ");\n";
 
-        // Through a temporary, and inside a block of its own: an accumulator is
-        // allowed to be one of the operands, and a second product in the same
-        // scope would otherwise redeclare the temporary.
-        auto sum = accumulator + "p";
-        auto row = accumulator + "i";
-        auto column = accumulator + "j";
+        // Both operands staged whole, each lane putting down the pair it
+        // holds; then, once every pair is there, each lane takes its row of
+        // the left against its two columns of the right. The accumulator is
+        // allowed to be an operand, and the staging is what makes that safe:
+        // what is multiplied is the copy in the scratch, complete before
+        // anything is added. The trailing barrier is what lets the next
+        // product stage over this one.
         auto step = accumulator + "k";
-        auto copy = accumulator + "n";
+        auto term = accumulator + "l";
         auto side = std::to_string(simdMatrixSize);
-        auto elements = std::to_string(simdMatrixSize * simdMatrixSize);
+        auto barrier = barrierStatement(printer.backend, indent);
+        auto held = "sgmRow * " + side + "u + sgmColumn";
 
-        auto source = indent + "{\n";
-        source += indent + "    float " + sum + "[" + elements + "];\n";
-        source += indent + "    for (uint " + row + " = 0u; " + row + " < " + side
-                  + "u; ++" + row + ")\n";
-        source += indent + "        for (uint " + column + " = 0u; " + column + " < "
-                  + side + "u; ++" + column + ")\n";
-        source += indent + "        {\n";
-        source += indent + "            float " + sum + "e = 0.0;\n";
-        source += indent + "            for (uint " + step + " = 0u; " + step + " < "
-                  + side + "u; ++" + step + ")\n";
-        source += indent + "                " + sum + "e += " + left + "[" + row
-                  + " * " + side + "u + " + step + "] * " + right + "[" + step
-                  + " * " + side + "u + " + column + "];\n";
-        source += indent + "            " + sum + "[" + row + " * " + side + "u + "
-                  + column + "] = " + accumulator + "[" + row + " * " + side + "u + "
-                  + column + "] + " + sum + "e;\n";
-        source += indent + "        }\n";
-        source += indent + "    for (uint " + copy + " = 0u; " + copy + " < "
-                  + elements + "u; ++" + copy + ")\n";
-        source += indent + "        " + accumulator + "[" + copy + "] = " + sum + "["
-                  + copy + "];\n";
+        auto source =
+            indent + simdMatrixStaged(false, held) + " = " + left + ".x;\n";
+        source += indent + simdMatrixStaged(false, held + " + 1u") + " = " + left
+                  + ".y;\n";
+        source += indent + simdMatrixStaged(true, held) + " = " + right + ".x;\n";
+        source += indent + simdMatrixStaged(true, held + " + 1u") + " = " + right
+                  + ".y;\n";
+        source += barrier;
+        source += indent + "for (uint " + step + " = 0u; " + step + " < " + side
+                  + "u; ++" + step + ")\n";
+        source += indent + "{\n";
+        source += indent + "    float " + term + " = "
+                  + simdMatrixStaged(false, "sgmRow * " + side + "u + " + step)
+                  + ";\n";
+        source += indent + "    " + accumulator + ".x += " + term + " * "
+                  + simdMatrixStaged(true, step + " * " + side + "u + sgmColumn")
+                  + ";\n";
+        source +=
+            indent + "    " + accumulator + ".y += " + term + " * "
+            + simdMatrixStaged(true, step + " * " + side + "u + sgmColumn + 1u")
+            + ";\n";
         source += indent + "}\n";
-        return source;
+        return source + barrier;
     }
 
     Vector<int> countUsesOver(const Vector<int>& roots) const
@@ -2708,7 +2774,9 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + groupScratchName(elementType) + "["
                       + std::to_string(threadsPerGroup(graph)) + "];\n";
 
-        if (graph.sharedArrays().size() > 0 || graph.usesGroupReduction())
+        source += simdMatrixScratchDeclaration(graph, "shared");
+
+        if (declaresGroupMemory(graph))
             source += "\n";
 
         const auto group = graph.threadGroupShape();
@@ -2794,7 +2862,9 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + groupScratchName(elementType) + "["
                       + std::to_string(threadsPerGroup(graph)) + "];\n";
 
-        if (graph.sharedArrays().size() > 0 || graph.usesGroupReduction())
+        source += simdMatrixScratchDeclaration(graph, "groupshared");
+
+        if (declaresGroupMemory(graph))
             source += "\n";
 
         const auto group = graph.threadGroupShape();
@@ -2831,6 +2901,11 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         if (graph.usesGroupId())
             source += "    " + indexType + " tgid = groupIndex" + swizzle + ";\n";
     }
+
+    // Where the fallback keeps a fragment is fixed by the lane, so the two
+    // backends that take it work that out once, ahead of the body.
+    if (backend != Backend::Metal && graph.simdMatrixCount() > 0)
+        source += simdMatrixPreamble(backend);
 
     // The early-return bounds guard the rounded-up dispatch needs - except in
     // a kernel that barriers, where a return some threads take ahead of a
