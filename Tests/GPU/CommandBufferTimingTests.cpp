@@ -36,10 +36,20 @@ Buffer makeOutput()
                                        BufferUsage::Storage);
 }
 
-void checkBounded(const FrameTimings& timings)
+// The bounds a measurement can be held to. The buffer's own total needs no
+// counters and is reported everywhere; the breakdown needs them, and is asked
+// about only once the timings have been resolved, because resolving is where
+// an adapter that only claimed to have counters is found out and support
+// retired. The Parallels virtual GPU is one: it answers with a heap of zeroes,
+// and reading it is what turns supportsPassTimings() false - before that it
+// still says true, and a column of zeroes would fail the per-pass bound below.
+void checkBounded(const CommandBuffer& commands, const FrameTimings& timings)
 {
     check(timings.milliseconds >= 0.0);
     check(timings.milliseconds < 1000.0);
+
+    if (!commands.supportsPassTimings())
+        return;
 
     for (const auto& pass: timings.passes)
     {
@@ -85,7 +95,7 @@ auto tLabelledPassesComeBack =
     commands.commit();
 
     const auto& timings = commands.timings();
-    checkBounded(timings);
+    checkBounded(commands, timings);
 
     if (!commands.supportsPassTimings())
         return;
@@ -126,7 +136,7 @@ auto tUnlabelledPassIsNotTimed =
     commands.commit();
 
     const auto& timings = commands.timings();
-    checkBounded(timings);
+    checkBounded(commands, timings);
 
     if (!commands.supportsPassTimings())
         return;
@@ -164,7 +174,7 @@ auto tAsyncCommitReportsToo = test("CommandBufferTiming/asyncCommitReportsToo") 
     check(finished.isResolved());
 
     const auto& timings = commands.timings();
-    checkBounded(timings);
+    checkBounded(commands, timings);
 
     if (!commands.supportsPassTimings())
         return;

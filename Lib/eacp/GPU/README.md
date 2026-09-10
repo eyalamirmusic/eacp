@@ -1141,15 +1141,28 @@ already has:
 **Metal is the fast path and the other two are correctness.** MSL has
 `simdgroup_float8x8` and the three intrinsics, so each call above is one line of
 emitted source. HLSL at `cs_5_0` under FXC has no wave matrix operation and
-neither does GLSL without an extension no lane here is held to, so a fragment
-becomes 64 floats of each thread's own and each operation a loop over them: the
-fill and the load are 64 element copies, the product is the 512 multiply-adds
-written out, and the store is made by the first lane of each notional SIMD group
-so the same bytes are not written 32 times over. Every lane of that group
-computes the same fragment, so the arithmetic is done 32 times where Metal does
-it once. That is the price of one kernel running everywhere, and it is a price
+neither does GLSL without an extension no lane here is held to, so both spread
+a fragment over the 32 lanes of what would have been the SIMD group the way
+Metal does: lane *l* holds the pair of elements at row *l* / 4, columns
+(*l* % 4) × 2 and the next, as two floats of its own. The fill, the load and the
+store are that pair moved, every lane its own, so no store needs a lane picked
+to make it. The product is the one operation that needs what other lanes hold:
+it stages both operands whole in a `groupshared` scratch of the emitter's own,
+one slice per SIMD group, and between two barriers each lane takes its row of
+the left against its two columns of the right — the exchange a wave intrinsic
+makes in registers, made through threadgroup memory instead. That is why the
+third rule above is a barrier's rule: on these two backends every product
+holds one. The price is those barriers and the staging, and it is a price
 worth naming: a kernel whose throughput matters on Windows or Linux wants the
 register-tiled form beside this one, not this one.
+
+The fallback was first written the other way round, the whole 64 floats in
+every thread and the product computed 32 times over, and it fell to a limit
+FXC keeps that no other compiler here does: every per-thread array counts
+against one budget of 4096 registers for the kernel, and the blocked product
+below, holding a few dozen fragments at once, went past it — `error X4505`
+after seconds of compiling, on every Windows lane. Two floats a fragment is
+what keeps a kernel of any reasonable width under that budget.
 
 `Tests/GPU/SimdMatrixTests.cpp` holds the worked blocked product — a 64×64 tile,
 a 32-deep slab, clamped loads and a guarded copy-out — checked against a scalar
