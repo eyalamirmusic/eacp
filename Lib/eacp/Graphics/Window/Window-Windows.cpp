@@ -702,6 +702,38 @@ struct Window::Native
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
+    Point getSize() const
+    {
+        if (host.hwnd == nullptr)
+            return {};
+
+        auto client = RECT {};
+        GetClientRect(host.hwnd, &client);
+
+        auto scale = host.getDpiScale();
+        return {static_cast<float>(client.right - client.left) / scale,
+                static_cast<float>(client.bottom - client.top) / scale};
+    }
+
+    // `size` is content points already through the constraint (see
+    // Window::setSize); here it only becomes a frame in pixels.
+    void setSize(Point size)
+    {
+        if (host.hwnd == nullptr)
+            return;
+
+        auto insets = nonClientInsets(host.hwnd, eatsFrame());
+        auto scale = host.getDpiScale();
+
+        SetWindowPos(host.hwnd,
+                     nullptr,
+                     0,
+                     0,
+                     static_cast<int>(std::lround(size.x * scale)) + insets.width,
+                     static_cast<int>(std::lround(size.y * scale)) + insets.height,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     ResizeCallback onResize;
     SizeConstraint sizeConstraint;
     WindowEvents* events = nullptr;
@@ -958,6 +990,16 @@ Point Window::getPosition() const
 void Window::setPosition(Point position)
 {
     impl->setPosition(position);
+}
+
+Point Window::getSize() const
+{
+    return impl->getSize();
+}
+
+void Window::setSize(Point size)
+{
+    impl->setSize(options.effectiveSize(size));
 }
 
 bool Window::isMouseLocked() const

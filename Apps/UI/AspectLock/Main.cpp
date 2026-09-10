@@ -19,6 +19,12 @@
 //
 // Drag any edge and watch the inspector: the canvas stays 16:9 to the point,
 // the header keeps its height, the inspector its width.
+//
+// The inspector's buttons are the programmatic path, Window::setSize, and it
+// is put through the same rule: the two canvas presets ask for a size the
+// lock allows and get it exactly, and the third asks for a square and gets
+// the 16:9 window nearest to it, width winning as on a corner drag. The app
+// cannot put the window into a shape it would refuse the user.
 
 using namespace eacp;
 
@@ -129,7 +135,20 @@ struct Inspector final : UI::Component
                      canvasCaption,
                      canvasSize,
                      ratioCaption,
-                     ratio});
+                     ratio,
+                     setSizeCaption,
+                     smallCanvas,
+                     largeCanvas,
+                     square});
+
+        smallCanvas.onClick = [this] { requestCanvasSize({640.f, 360.f}); };
+        largeCanvas.onClick = [this] { requestCanvasSize({1280.f, 720.f}); };
+        square.onClick = [this] { onSizeRequested({800.f, 800.f}); };
+    }
+
+    void requestCanvasSize(Graphics::Point canvas)
+    {
+        onSizeRequested({canvas.x + inspectorWidth, canvas.y + headerHeight});
     }
 
     void paint(UI::Graphics& g) override
@@ -154,6 +173,15 @@ struct Inspector final : UI::Component
         {
             row->setBounds(area.removeFromTop(22.f));
         }
+
+        area.removeFromTop(padding);
+        setSizeCaption.setBounds(area.removeFromTop(22.f));
+
+        for (auto* button: {&smallCanvas, &largeCanvas, &square})
+        {
+            button->setBounds(area.removeFromTop(28.f));
+            area.removeFromTop(6.f);
+        }
     }
 
     void showSizes(Graphics::Point window, Graphics::Point canvas)
@@ -171,6 +199,12 @@ struct Inspector final : UI::Component
     UI::Label canvasSize;
     UI::Label ratioCaption {"Canvas ratio"};
     UI::Label ratio;
+    UI::Label setSizeCaption {"Set size"};
+    UI::Button smallCanvas {"Canvas 640 x 360"};
+    UI::Button largeCanvas {"Canvas 1280 x 720"};
+    UI::Button square {"Ask for 800 x 800"};
+
+    std::function<void(Graphics::Point size)> onSizeRequested = [](auto&&) {};
 };
 
 struct DemoRoot final : UI::Component
@@ -228,7 +262,13 @@ Graphics::WindowOptions makeOptions()
 
 struct App
 {
-    App() { window.setContentView(host); }
+    App()
+    {
+        host.root.inspector.onSizeRequested = [this](Graphics::Point size)
+        { window.setSize(size); };
+
+        window.setContentView(host);
+    }
 
     DemoHost host;
     Graphics::Window window {makeOptions()};
