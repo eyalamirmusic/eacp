@@ -10,6 +10,7 @@ target_link_libraries(eacp-core PUBLIC ResEmbed Miro)
 
 target_sources(eacp-core PRIVATE
         App/App.cpp
+        App/CommandLine.cpp
         Platform/AppInfo.cpp
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp

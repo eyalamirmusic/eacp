@@ -2,6 +2,7 @@
 
 #include "App/App.h"
 #include "App/Clipboard.h"
+#include "App/CommandLine.h"
 #include "App/LoginItem.h"
 #include "Maths/Maths.h"
 #include "Plugins/DynamicLibrary.h"

@@ -7,6 +7,7 @@ set(core_test_sources
         Base64Tests.cpp
         # Touches the real system clipboard, and restores whatever was there.
         ClipboardTests.cpp
+        CommandLineTests.cpp
         DynamicLibraryTests.cpp
         EventLoopTests.cpp
         FilePathTests.cpp
