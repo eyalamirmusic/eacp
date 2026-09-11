@@ -109,7 +109,7 @@ elseif (UNIX AND NOT APPLE)
             Utils/Files-Linux.cpp
             Utils/Logging-Posix.cpp
             Utils/MemoryMappedFile-Posix.cpp)
-    find_package(Threads REQUIRED)
+    find_package(Threads ${EACP_FIND_QUIET} REQUIRED)
     target_link_libraries(eacp-core PRIVATE Threads::Threads)
 endif ()
 
