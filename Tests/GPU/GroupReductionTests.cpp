@@ -189,6 +189,181 @@ struct UIntFoldKernel final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
+// The SIMD-scoped folds, over a group of four SIMD groups so that a fold which
+// reached the whole group instead of one of them is a different number in every
+// slot. Each SIMD group's values are offset by a hundred from the one before,
+// which puts the four sums, maxima and minima a long way apart.
+constexpr auto simdWidth = ComputeProgram::simdWidth;
+constexpr auto simdGroupsPerGroup = 4;
+constexpr auto simdGroupThreads = simdWidth * simdGroupsPerGroup;
+constexpr auto simdThreadCount = simdGroupThreads * 2;
+
+float simdLaneValue(int index)
+{
+    auto block = index / simdWidth;
+    auto lane = index % simdWidth;
+
+    return (float) ((lane * 7) % 23) - 9.f + (float) block * 100.f;
+}
+
+float simdBlockTotal(int block)
+{
+    auto total = 0.f;
+
+    for (auto lane = 0; lane < simdWidth; ++lane)
+        total += simdLaneValue(block * simdWidth + lane);
+
+    return total;
+}
+
+std::vector<float> simdLaneValues()
+{
+    auto values = std::vector<float> {};
+
+    for (auto i = 0; i < simdThreadCount; ++i)
+        values.push_back(simdLaneValue(i));
+
+    return values;
+}
+
+struct SimdFoldKernel final : ComputeProgram
+{
+    SimdFoldKernel()
+        : ComputeProgram({simdGroupThreads, 1, 1})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto value = input[id];
+
+        auto total = simdSum(value);
+        auto peak = simdMax(value);
+        auto least = simdMin(value);
+
+        ifThen(id < gridCount(),
+               [&]
+               {
+                   write(sums, id, total);
+                   write(maxima, id, peak);
+                   write(minima, id, least);
+               });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> sums;
+    Uniform<OutputBuffer> maxima;
+    Uniform<OutputBuffer> minima;
+
+    EACP_SHADER(input, sums, maxima, minima)
+};
+
+// Both scopes over the same values, which is the relation between them: the
+// whole group's sum is the four SIMD groups' sums added up.
+struct BothScopesKernel final : ComputeProgram
+{
+    BothScopesKernel()
+        : ComputeProgram({simdGroupThreads, 1, 1})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto value = input[id];
+
+        auto whole = groupSum(value);
+        auto narrow = simdSum(value);
+
+        ifThen(id < gridCount(),
+               [&]
+               {
+                   write(wholeGroup, id, whole);
+                   write(perSimdGroup, id, narrow);
+               });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> wholeGroup;
+    Uniform<OutputBuffer> perSimdGroup;
+
+    EACP_SHADER(input, wholeGroup, perSimdGroup)
+};
+
+// The unsigned sibling of the narrow fold, on the terms UIntFoldKernel sets.
+struct UIntSimdFoldKernel final : ComputeProgram
+{
+    UIntSimdFoldKernel()
+        : ComputeProgram({simdGroupThreads, 1, 1})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto value = input[id];
+
+        auto total = simdSum(value);
+        auto peak = simdMax(value);
+        auto least = simdMin(value);
+
+        ifThen(id < gridCount(),
+               [&] { write(output, id, uint3(total, peak, least)); });
+    }
+
+    Uniform<UIntInputBuffer> input;
+    Uniform<UIntOutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+// A group of exactly simdWidth threads, which is where the two scopes fold the
+// same set of threads on paper and where the emitter used to be tempted to
+// answer the wide one with a bare intrinsic. What makes that wrong is that the
+// hardware SIMD group is not necessarily simdWidth threads - an Intel Mac runs
+// a kernel at eight or sixteen - so both folds run here and both are checked.
+constexpr auto narrowGroupThreads = simdWidth;
+constexpr auto narrowGroupCount = 3;
+constexpr auto narrowThreadCount = narrowGroupThreads * narrowGroupCount;
+
+struct NarrowGroupKernel final : ComputeProgram
+{
+    NarrowGroupKernel()
+        : ComputeProgram({narrowGroupThreads, 1, 1})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto value = input[id];
+
+        auto whole = groupSum(value);
+        auto narrow = simdSum(value);
+        auto peak = groupMax(value);
+
+        ifThen(id < gridCount(),
+               [&]
+               {
+                   write(wholeGroup, id, whole);
+                   write(perSimdGroup, id, narrow);
+                   write(maxima, id, peak);
+               });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> wholeGroup;
+    Uniform<OutputBuffer> perSimdGroup;
+    Uniform<OutputBuffer> maxima;
+
+    EACP_SHADER(input, wholeGroup, perSimdGroup, maxima)
+};
+
 Buffer makeFloatBuffer(Device& device, const std::vector<float>& values)
 {
     return device.makeBuffer(
@@ -495,4 +670,286 @@ auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
             ++agreeing;
 
     check(agreeing == threadCount);
+};
+
+// The narrow fold: every thread holds the fold of the thirty-two threads it
+// shares a SIMD group with, and the four SIMD groups of a threadgroup come out
+// holding four different numbers.
+auto tSimdFoldsAreRight = test("GroupReduction/sumMaxAndMinOverOneSimdGroup") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = simdLaneValues();
+    auto input = makeFloatBuffer(device, values);
+
+    auto bytes = sizeof(float) * simdThreadCount;
+    auto sums = device.makeBuffer((int) bytes, BufferUsage::Storage);
+    auto maxima = device.makeBuffer((int) bytes, BufferUsage::Storage);
+    auto minima = device.makeBuffer((int) bytes, BufferUsage::Storage);
+
+    auto kernel = SimdFoldKernel {};
+    kernel.input = input;
+    kernel.sums = sums;
+    kernel.maxima = maxima;
+    kernel.minima = minima;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, simdThreadCount);
+        }
+
+        commands.commit();
+    }
+
+    auto readBack = [&](Buffer& buffer)
+    {
+        auto out = std::vector<float>(simdThreadCount, 0.f);
+        buffer.read(out.data(), (int) bytes);
+        return out;
+    };
+
+    auto summed = readBack(sums);
+    auto peaks = readBack(maxima);
+    auto least = readBack(minima);
+
+    auto agreeing = 0;
+
+    for (auto i = 0; i < simdThreadCount; ++i)
+    {
+        auto block = i / simdWidth;
+
+        auto expectedMax = simdLaneValue(block * simdWidth);
+        auto expectedMin = expectedMax;
+
+        for (auto lane = 1; lane < simdWidth; ++lane)
+        {
+            auto value = simdLaneValue(block * simdWidth + lane);
+            expectedMax = std::max(expectedMax, value);
+            expectedMin = std::min(expectedMin, value);
+        }
+
+        if (std::abs(summed[(size_t) i] - simdBlockTotal(block)) < 1.0e-2f
+            && peaks[(size_t) i] == expectedMax && least[(size_t) i] == expectedMin)
+            ++agreeing;
+    }
+
+    check(agreeing == simdThreadCount);
+
+    // And the four SIMD groups of a threadgroup disagree with each other, which
+    // is what says the fold stopped at a SIMD group rather than running on.
+    auto distinct = 0;
+
+    for (auto block = 1; block < simdGroupsPerGroup; ++block)
+        if (summed[(size_t) block * simdWidth] != summed[0])
+            ++distinct;
+
+    check(distinct == simdGroupsPerGroup - 1);
+};
+
+// The relation between the two scopes: a group's sum is its SIMD groups' sums
+// added up, which is the same arithmetic reached two ways in one kernel.
+auto tScopesAgree = test("GroupReduction/theWideFoldIsTheNarrowOnesAddedUp") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = simdLaneValues();
+    auto input = makeFloatBuffer(device, values);
+
+    auto bytes = sizeof(float) * simdThreadCount;
+    auto wholeGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
+    auto perSimdGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
+
+    auto kernel = BothScopesKernel {};
+    kernel.input = input;
+    kernel.wholeGroup = wholeGroup;
+    kernel.perSimdGroup = perSimdGroup;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, simdThreadCount);
+        }
+
+        commands.commit();
+    }
+
+    auto wide = std::vector<float>(simdThreadCount, 0.f);
+    auto narrow = std::vector<float>(simdThreadCount, 0.f);
+    wholeGroup.read(wide.data(), (int) bytes);
+    perSimdGroup.read(narrow.data(), (int) bytes);
+
+    auto agreeing = 0;
+
+    for (auto i = 0; i < simdThreadCount; ++i)
+    {
+        auto firstBlock = (i / simdGroupThreads) * simdGroupsPerGroup;
+        auto expectedWide = 0.f;
+
+        for (auto block = 0; block < simdGroupsPerGroup; ++block)
+            expectedWide += simdBlockTotal(firstBlock + block);
+
+        if (std::abs(wide[(size_t) i] - expectedWide) < 1.0e-1f
+            && std::abs(narrow[(size_t) i] - simdBlockTotal(i / simdWidth))
+                   < 1.0e-2f)
+            ++agreeing;
+    }
+
+    check(agreeing == simdThreadCount);
+};
+
+// The unsigned siblings, which take the same path with a scratch array of their
+// own where the fold goes through one.
+auto tUIntSimdFolds = test("GroupReduction/theUnsignedNarrowFold") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = std::vector<std::uint32_t> {};
+
+    for (auto i = 0; i < simdThreadCount; ++i)
+        values.push_back((std::uint32_t) (((i % simdWidth) * 11) % 37)
+                         + (std::uint32_t) (i / simdWidth) * 1000u);
+
+    auto input = device.makeBuffer(values.data(),
+                                   (int) (sizeof(std::uint32_t) * values.size()),
+                                   BufferUsage::Storage);
+
+    auto output = device.makeBuffer(
+        (int) (sizeof(std::uint32_t) * simdThreadCount * 3), BufferUsage::Storage);
+
+    auto kernel = UIntSimdFoldKernel {};
+    kernel.input = input;
+    kernel.output = output;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, simdThreadCount);
+        }
+
+        commands.commit();
+    }
+
+    auto back = std::vector<std::uint32_t>((size_t) simdThreadCount * 3, 0u);
+    output.read(back.data(), (int) (sizeof(std::uint32_t) * back.size()));
+
+    auto agreeing = 0;
+
+    for (auto i = 0; i < simdThreadCount; ++i)
+    {
+        auto block = i / simdWidth;
+
+        auto expectedSum = std::uint32_t {0};
+        auto expectedMax = std::uint32_t {0};
+        auto expectedMin = std::uint32_t {~0u};
+
+        for (auto lane = 0; lane < simdWidth; ++lane)
+        {
+            auto value = values[(size_t) (block * simdWidth + lane)];
+            expectedSum += value;
+            expectedMax = std::max(expectedMax, value);
+            expectedMin = std::min(expectedMin, value);
+        }
+
+        if (back[(size_t) i * 3] == expectedSum
+            && back[(size_t) i * 3 + 1] == expectedMax
+            && back[(size_t) i * 3 + 2] == expectedMin)
+            ++agreeing;
+    }
+
+    check(agreeing == simdThreadCount);
+};
+
+// A group of exactly simdWidth threads, folded both ways against a CPU
+// reference. The wide fold has to be right whatever the hardware SIMD group
+// turns out to be, which is what the combine through the scratch is for; the
+// narrow one is the same set of threads here, so on a device whose SIMD groups
+// really are simdWidth wide the two agree to the bit.
+auto tNarrowGroupFoldsBothWays =
+    test("GroupReduction/aGroupOfOneSimdGroupFoldsBothWays") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = std::vector<float> {};
+
+    for (auto i = 0; i < narrowThreadCount; ++i)
+        values.push_back(simdLaneValue(i));
+
+    auto input = makeFloatBuffer(device, values);
+
+    auto bytes = sizeof(float) * narrowThreadCount;
+    auto wholeGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
+    auto perSimdGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
+    auto maxima = device.makeBuffer((int) bytes, BufferUsage::Storage);
+
+    auto kernel = NarrowGroupKernel {};
+    kernel.input = input;
+    kernel.wholeGroup = wholeGroup;
+    kernel.perSimdGroup = perSimdGroup;
+    kernel.maxima = maxima;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, narrowThreadCount);
+        }
+
+        commands.commit();
+    }
+
+    auto readBack = [&](Buffer& buffer)
+    {
+        auto out = std::vector<float>(narrowThreadCount, 0.f);
+        buffer.read(out.data(), (int) bytes);
+        return out;
+    };
+
+    auto wide = readBack(wholeGroup);
+    auto narrow = readBack(perSimdGroup);
+    auto peaks = readBack(maxima);
+
+    auto agreeing = 0;
+
+    for (auto i = 0; i < narrowThreadCount; ++i)
+    {
+        auto block = i / narrowGroupThreads;
+        auto expected = simdBlockTotal(block);
+
+        auto expectedMax = simdLaneValue(block * narrowGroupThreads);
+
+        for (auto lane = 1; lane < narrowGroupThreads; ++lane)
+            expectedMax = std::max(expectedMax,
+                                   simdLaneValue(block * narrowGroupThreads + lane));
+
+        if (std::abs(wide[(size_t) i] - expected) < 1.0e-2f
+            && std::abs(narrow[(size_t) i] - expected) < 1.0e-2f
+            && peaks[(size_t) i] == expectedMax)
+            ++agreeing;
+    }
+
+    check(agreeing == narrowThreadCount);
 };

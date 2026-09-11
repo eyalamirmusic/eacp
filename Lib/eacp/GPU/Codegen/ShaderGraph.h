@@ -50,6 +50,13 @@ enum class ExprKind
     // a 2D or 3D one prints gid.x, gid.y or gid.z - or the whole gid again at
     // allComponents, where the node is the position as one vector.
     BufferRead, // storage-buffer element read; index = buffer slot, args = {index}
+    BufferVectorRead, // a run of 2, 3 or 4 consecutive elements of a read-only
+    // storage buffer, taken as one vector. index = buffer slot, args = {the
+    // *first element's* index}, type = the vector. Separate from a Construct
+    // over that many BufferReads because Metal reinterprets the pointer and
+    // makes one load of it, where the other two have no spelling for that and
+    // emit exactly the componentwise construct this stands in for. Read-only
+    // buffers only - see InputBuffer::read4 for why an output stays scalar.
     AtomicLoad, // one element of an atomic buffer; index = buffer slot,
     // args = {index}. An expression on both backends, unlike the add - MSL
     // spells it atomic_load_explicit and HLSL is an ordinary subscript, since
@@ -127,6 +134,19 @@ enum class GroupReduction
     Sum,
     Max,
     Min
+};
+
+// How many threads a reduction folds over: the whole threadgroup, or only the
+// SIMD group the folding thread belongs to.
+//
+// The narrow one is what a kernel wants wherever its partials are already one
+// per SIMD group - the tile loop of an attention kernel, say, where the whole
+// group has nothing to say to each other yet. On Metal the difference is one
+// instruction against a scratch array between two threadgroup barriers.
+enum class ReductionScope
+{
+    Group,
+    Simd
 };
 
 // Where a SIMD-group matrix fragment is loaded from or stored to. The two are
@@ -231,6 +251,7 @@ struct Statement
     int recordComponentsLeft = 0; // Store: how many components of that record
     // follow this one
     GroupReduction reduction = GroupReduction::Sum; // GroupReduce: which fold
+    ReductionScope scope = ReductionScope::Group; // GroupReduce: over how many
     int stride = -1; // SimdMatrixLoad / SimdMatrixStore: the patch's row stride
     int left = -1; // SimdMatrixMultiplyAdd: the left operand's fragment
     int right = -1; // SimdMatrixMultiplyAdd: the right operand's fragment
@@ -446,6 +467,12 @@ public:
     int addStorageBuffer(BufferAccess access,
                          ValueType elementType = ValueType::Float);
     int addBufferRead(int slot, int index);
+
+    // A run of consecutive elements of a read-only buffer as one vector, the
+    // index being the first element's rather than the record's. Metal makes one
+    // load of it; the other two spell the componentwise construct it stands for.
+    int addBufferVectorRead(int slot, int firstElement, ValueType type);
+
     void addStore(int slot, int index, int value);
 
     // The N element stores one record write lays down, told apart from N
@@ -487,12 +514,15 @@ public:
     void addSharedStore(int slot, int index, int value);
     void addBarrier();
 
-    // A group-wide fold. Returns the *variable* slot every thread's result
-    // lands in, which addVarRead then reads - a statement like the atomic add,
-    // and one that barriers, so it counts as a barrier for the bounds guard.
+    // A fold over the threadgroup or over one SIMD group of it. Returns the
+    // *variable* slot every thread's result lands in, which addVarRead then
+    // reads - a statement like the atomic add, and one that counts as a barrier
+    // for the bounds guard whichever scope it has, since the backends with no
+    // wave intrinsic reach even the narrow one through threadgroup memory.
     int addGroupReduction(GroupReduction operation,
                           ValueType elementType,
-                          int value);
+                          int value,
+                          ReductionScope scope = ReductionScope::Group);
 
     // The SIMD-group matrix statements. Each of the first two declares a
     // fragment and returns its slot, which is a numbering of its own: a
@@ -568,10 +598,40 @@ public:
     const Vector<TextureStore>& textureStores() const { return textureStoreList; }
     const Vector<SharedArray>& sharedArrays() const { return sharedArrayList; }
 
-    // The element types the kernel's group reductions fold, one entry each, so
-    // the emitter declares the scratch a reduction needs and no more.
+    // The element types the kernel's reductions fold, one entry each, so the
+    // emitter declares the scratch a reduction needs and no more. Both scopes
+    // are in here, because a backend with no wave intrinsic stages the narrow
+    // fold in the same array the wide one uses.
     const Vector<ValueType>& groupReductionTypes() const { return reductionTypes; }
     bool usesGroupReduction() const { return !reductionTypes.empty(); }
+
+    // The subset folded over the *whole* group, which is the only scope Metal
+    // needs an array for: there a SIMD-group fold is one instruction, and so is
+    // a whole-group fold in a group no wider than a SIMD group.
+    const Vector<ValueType>& wholeGroupReductionTypes() const
+    {
+        return wholeGroupTypes;
+    }
+
+    // Whether any reduction is collective over a SIMD group rather than over
+    // the threadgroup - which puts the kernel under the same rule a SIMD-group
+    // matrix is under, that the group has to be a whole number of SIMD groups.
+    bool usesSimdReduction() const { return simdReductionUsed; }
+
+    // How many bytes of threadgroup memory one group of this kernel takes: the
+    // shared arrays it declared, plus the scratch the emitter adds behind them
+    // for a reduction and for a SIMD-group matrix.
+    //
+    // The worst case of the three backends rather than this one's, since the
+    // number is what a kernel is written against and a kernel is written once.
+    // A vector element therefore counts as sixteen bytes, which is the stride
+    // an std430 block and a DXBC groupshared array give it where MSL packs a
+    // three-vector to twelve.
+    //
+    // Padding *between* arrays is not counted, so this is a bound on what the
+    // declarations ask for rather than a byte-exact prediction of what the
+    // backend will allocate.
+    int threadgroupMemoryBytes() const;
 
     // How many 8x8 fragments the kernel declared, and whether it asked the
     // entry point for the SIMD-group vocabulary at all - a matrix statement or
@@ -661,6 +721,8 @@ private:
     Vector<ArrayConstant> arrayConstants;
     Vector<SharedArray> sharedArrayList;
     Vector<ValueType> reductionTypes;
+    Vector<ValueType> wholeGroupTypes;
+    bool simdReductionUsed = false;
     int simdMatrices = 0;
     bool simdGroupIndexUsed = false;
     bool localIdUsed = false;

@@ -163,6 +163,16 @@ int Device::storageBufferOffsetAlignment() const
     return 4;
 }
 
+int Device::maxThreadgroupMemory() const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil)
+        return 0;
+
+    return (int) metalDevice.maxThreadgroupMemoryLength;
+}
+
 void* Device::nativeContext() const
 {
     // Nothing to hand out: the queue, the texture cache and the samplers are

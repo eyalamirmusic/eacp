@@ -28,6 +28,7 @@ bool dependsOnMutableState(ExprKind kind)
     {
         case ExprKind::VarRead:
         case ExprKind::BufferRead:
+        case ExprKind::BufferVectorRead:
         case ExprKind::AtomicLoad:
         case ExprKind::Sample:
         case ExprKind::Fetch:
@@ -587,12 +588,18 @@ void ShaderGraph::addBarrier()
 
 int ShaderGraph::addGroupReduction(GroupReduction operation,
                                    ValueType elementType,
-                                   int value)
+                                   int value,
+                                   ReductionScope scope)
 {
     barrierUsed = true;
 
     if (!reductionTypes.contains(elementType))
         reductionTypes.add(elementType);
+
+    if (scope == ReductionScope::Simd)
+        simdReductionUsed = true;
+    else if (!wholeGroupTypes.contains(elementType))
+        wholeGroupTypes.add(elementType);
 
     auto slot = variableTypes.size();
     variableTypes.add(elementType);
@@ -601,6 +608,7 @@ int ShaderGraph::addGroupReduction(GroupReduction operation,
     fold.slot = slot;
     fold.value = value;
     fold.reduction = operation;
+    fold.scope = scope;
     addStatement(fold);
 
     return slot;
@@ -697,6 +705,45 @@ ThreadGroupShape ShaderGraph::threadGroupShape() const
             ComputePass::threadGroupSize3D};
 }
 
+// What one element of a threadgroup array really costs, which is not always
+// what the value occupies: an std430 block and a DXBC groupshared array both
+// round a vector's stride up to sixteen bytes, so an array of three-vectors is
+// a quarter larger than its components add up to. MSL packs them to twelve, so
+// this is the worst of the three - which is what a budget is asked for.
+int threadgroupElementBytes(ValueType type)
+{
+    auto bytes = byteSize(type);
+
+    return componentCount(type) > 1 && bytes < 16 ? 16 : bytes;
+}
+
+// The kernel's declarations plus the emitter's own: one scratch array per
+// element type any reduction folds, sized to the group, and one slice of a
+// SIMD-group matrix scratch per SIMD group of it - two whole fragments each,
+// which is what the product stages between its barriers.
+//
+// What it does not count is the padding *between* arrays. A backend may align
+// one array's base against the next, so a kernel sitting within a few bytes of
+// the budget may still be refused; the number is a bound on the declarations
+// and not a byte-exact prediction of the allocation.
+int ShaderGraph::threadgroupMemoryBytes() const
+{
+    auto threads = threadGroupShape().threadCount();
+    auto bytes = 0;
+
+    for (const auto& shared: sharedArrayList)
+        bytes += shared.elements * threadgroupElementBytes(shared.elementType);
+
+    for (auto elementType: reductionTypes)
+        bytes += threads * threadgroupElementBytes(elementType);
+
+    if (simdMatrices > 0)
+        bytes += threads / simdGroupWidth * 2 * simdMatrixSize * simdMatrixSize
+                 * (int) sizeof(float);
+
+    return bytes;
+}
+
 int ShaderGraph::addStorageBuffer(BufferAccess access, ValueType elementType)
 {
     storageSlots.add(access);
@@ -711,6 +758,16 @@ int ShaderGraph::addBufferRead(int slot, int index)
     node.type = storageElementType(slot);
     node.index = slot;
     node.args.add(index);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addBufferVectorRead(int slot, int firstElement, ValueType type)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::BufferVectorRead;
+    node.type = type;
+    node.index = slot;
+    node.args.add(firstElement);
     return add(std::move(node));
 }
 

@@ -581,17 +581,39 @@ inline UInt bufferIndex(ShaderGraph* graph, unsigned index)
     return result;
 }
 
+// The first element of record `index` in a buffer of `count`-wide records,
+// which is the one index a vector read and its matching write share.
+inline int recordBase(ShaderGraph* graph, const UInt& index, int count)
+{
+    return graph->addBinary(
+        ValueType::UInt, '*', index.node, graph->addUIntConstant((unsigned) count));
+}
+
 // count consecutive elements starting at index * count, assembled into a
-// vector. A buffer stays a run of floats on both backends - this is arithmetic
-// over the binding that already works, not a retyped one - so what it costs is
-// count scalar loads rather than one wide load. See ShaderBuilder::write for
-// the store that lays the same layout down.
+// vector, as count separate subscripts. A buffer stays a run of floats on every
+// backend - this is arithmetic over the binding that already works, not a
+// retyped one - so what it costs is count scalar loads. See
+// ShaderBuilder::write for the store that lays the same layout down.
+//
+// What a *read-only* buffer takes instead is readBufferVectorLoad below. This
+// is what an output takes, and the difference is not a missing optimisation:
+// an output may hold what this very thread stored into it a statement ago, and
+// the subscript through the pointer that was written is what orders the two.
+// A load through a second pointer of another type has nothing saying it may not
+// be hoisted above the store.
+//
+// Which is also why one GPU::Buffer must not be bound to an input slot and an
+// output slot of the same kernel, as InputBuffer's own comment says: the
+// emitter orders a read against the stores to *its slot*, not against the
+// stores to whatever resource the slot was bound, so an input's packed load is
+// unordered against a write through the output slot that happens to name the
+// same buffer. A kernel computing in place declares one OutputBuffer and reads
+// that.
 template <typename T>
 T readBufferVector(
     ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
 {
-    auto base = graph->addBinary(
-        ValueType::UInt, '*', index.node, graph->addUIntConstant((unsigned) count));
+    auto base = recordBase(graph, index, count);
 
     auto components = Vector<int> {};
 
@@ -610,6 +632,20 @@ T readBufferVector(
     auto result = T {};
     result.graph = graph;
     result.node = graph->addConstruct(type, std::move(components));
+    return result;
+}
+
+// The same run of elements as one node, which Metal makes one load of and the
+// other two print as exactly the construct above. Read-only buffers only.
+template <typename T>
+T readBufferVectorLoad(
+    ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
+{
+    auto result = T {};
+    result.graph = graph;
+    result.node =
+        graph->addBufferVectorRead(slot, recordBase(graph, index, count), type);
+
     return result;
 }
 } // namespace detail
@@ -647,21 +683,31 @@ struct InputBuffer
     // The index is in records, not in floats - read4(i) and the matching
     // write(output, i, Float4) address the same record - so a kernel never
     // spells the stride itself.
+    //
+    // And on Metal it is one load rather than that many: the run of elements is
+    // read through a packed vector pointer, sixteen bytes in one instruction
+    // for read4. HLSL and GLSL emit the componentwise construct, because a
+    // StructuredBuffer<float> and an std430 block of floats have no spelling
+    // for reinterpreting themselves - see ExprKind::BufferVectorRead and the
+    // emitter's metalPackedVectorType.
+    //
+    // OutputBuffer's siblings stay scalar on every backend on purpose; the
+    // comment on readBufferVector says why.
     Float2 read2(const UInt& index) const
     {
-        return detail::readBufferVector<Float2>(
+        return detail::readBufferVectorLoad<Float2>(
             graph, slot, index, ValueType::Float2, 2);
     }
 
     Float3 read3(const UInt& index) const
     {
-        return detail::readBufferVector<Float3>(
+        return detail::readBufferVectorLoad<Float3>(
             graph, slot, index, ValueType::Float3, 3);
     }
 
     Float4 read4(const UInt& index) const
     {
-        return detail::readBufferVector<Float4>(
+        return detail::readBufferVectorLoad<Float4>(
             graph, slot, index, ValueType::Float4, 4);
     }
 
@@ -681,22 +727,32 @@ struct InputBuffer
     }
 
     // The fp16 reads, for a buffer whose elements are halves: readHalf counts
-    // in halves, readHalf2 in the words that hold two of them. Declared here
+    // in halves, readHalf2 in the words that hold two of them, readHalf4 in
+    // records of four - the two words starting at word 2 * i. Declared here
     // and defined further down, since they are spelled in terms of asUInt and
     // unpackHalf2, neither of which exists yet at this point in the header.
-    // Both fetch a whole word, so the buffer needs a whole number of them.
+    // All of them fetch whole words, so the buffer needs a whole number of them.
+    //
+    // The four-wide one is the width a weight walk wants: it takes its two
+    // words through read2, so on Metal the eight bytes arrive in one load and
+    // the unpacking is register arithmetic over them.
     Float readHalf(const UInt& index) const;
     Float readHalf(unsigned index) const;
     Float2 readHalf2(const UInt& index) const;
     Float2 readHalf2(unsigned index) const;
+    Float4 readHalf4(const UInt& index) const;
+    Float4 readHalf4(unsigned index) const;
 
     // The bf16 reads, on exactly those terms: readBFloat16 counts in bfloat16s,
-    // readBFloat16x2 in the words that hold two. The two-wide name carries an
-    // x2 rather than a bare 2, which after "16" would read as one number.
+    // readBFloat16x2 in the words that hold two, readBFloat16x4 in records of
+    // four. The wide names carry an x rather than a bare digit, which after
+    // "16" would read as one number.
     Float readBFloat16(const UInt& index) const;
     Float readBFloat16(unsigned index) const;
     Float2 readBFloat16x2(const UInt& index) const;
     Float2 readBFloat16x2(unsigned index) const;
+    Float4 readBFloat16x4(const UInt& index) const;
+    Float4 readBFloat16x4(unsigned index) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -792,22 +848,22 @@ struct UIntInputBuffer
     // rather than single ones: read4(i) is elements 4i..4i+3 as a UInt4. The
     // index is in records, not in elements - read4(i) and the matching
     // write(output, i, UInt4) address the same record - so a kernel never
-    // spells the stride itself.
+    // spells the stride itself. One load on Metal, as InputBuffer's are.
     UInt2 read2(const UInt& index) const
     {
-        return detail::readBufferVector<UInt2>(
+        return detail::readBufferVectorLoad<UInt2>(
             graph, slot, index, ValueType::UInt2, 2);
     }
 
     UInt3 read3(const UInt& index) const
     {
-        return detail::readBufferVector<UInt3>(
+        return detail::readBufferVectorLoad<UInt3>(
             graph, slot, index, ValueType::UInt3, 3);
     }
 
     UInt4 read4(const UInt& index) const
     {
-        return detail::readBufferVector<UInt4>(
+        return detail::readBufferVectorLoad<UInt4>(
             graph, slot, index, ValueType::UInt4, 4);
     }
 
@@ -1452,6 +1508,28 @@ template <ShaderValueLike T>
 ShaderBase<T> tanh(const T& value)
 {
     return detail::componentCall(value, "tanh");
+}
+
+// tanh with its tails answered rather than computed: exactly +/-1 past an
+// argument of ten, the native builtin inside it.
+//
+// What the native one does with a large argument is the driver's business, and
+// on the backend eacp compiles with fast math - Metal, whose library is built
+// with no MTLCompileOptions - tanh(990) is a NaN rather than a one. That is not
+// a contrived argument: a tanh GELU cubes its input on the way in, so an
+// activation of thirty arrives here as nine hundred, and the NaN it comes back
+// with is the whole rest of a transformer's residual stream.
+//
+// The two spellings agree everywhere either is defined. Float32 resolves
+// nothing between tanh(9.011) and one, so every argument this answers with a
+// constant is one whose correctly rounded tanh is that same constant - which is
+// what makes this a repair of the tails and not a different function. Reach for
+// it wherever the argument is not bounded by construction, and for a saturating
+// activation that is always.
+template <ShaderValueLike T>
+ShaderBase<T> saturatingTanh(const T& value)
+{
+    return detail::componentCall(value, "eacpSaturatingTanh");
 }
 
 template <ShaderValueLike T>
@@ -3558,5 +3636,44 @@ template <typename... Args>
 Bool4 bool4(const Args&... args)
 {
     return detail::buildFrom<Bool4, ValueType::Bool>(args...);
+}
+
+// The four-wide packed reads, down here because they are the one pair spelled
+// in terms of float4(), which the vector builders below the conversions
+// declare. Both take their two words through read2 rather than through two
+// subscripts, so the eight bytes are a single load wherever the backend has
+// one and the unpacking is register arithmetic over what it brought back.
+
+// Four halves, which is two words - and read as one record of two floats rather
+// than as two subscripts, so the eight bytes are a single load wherever the
+// backend has one. The index counts records of four halves, so element k of the
+// buffer is readHalf(k) and readHalf4(k / 4) component k % 4, on the layout
+// readHalf2 already fixes: the low half of a word comes first.
+inline Float4 InputBuffer::readHalf4(const UInt& index) const
+{
+    auto words = read2(index);
+
+    return float4(unpackHalf2(asUInt(words.x())), unpackHalf2(asUInt(words.y())));
+}
+
+inline Float4 InputBuffer::readHalf4(unsigned index) const
+{
+    return readHalf4(detail::bufferIndex(graph, index));
+}
+
+// Four bfloat16s in two words, on exactly the terms readHalf4 sets: one record
+// read of two floats, so one load, and the widening is four shifts over what it
+// brought back.
+inline Float4 InputBuffer::readBFloat16x4(const UInt& index) const
+{
+    auto words = read2(index);
+
+    return float4(unpackBFloat16x2(asUInt(words.x())),
+                  unpackBFloat16x2(asUInt(words.y())));
+}
+
+inline Float4 InputBuffer::readBFloat16x4(unsigned index) const
+{
+    return readBFloat16x4(detail::bufferIndex(graph, index));
 }
 } // namespace eacp::GPU
