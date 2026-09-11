@@ -48,7 +48,8 @@ endif ()
 if (NOT WIN32)
     list(APPEND core_test_sources
             FilesTests-Posix.cpp
-            MemoryMappedFileTests-Posix.cpp)
+            MemoryMappedFileTests-Posix.cpp
+            ModuleInfoTests-Posix.cpp)
 endif ()
 
 if (APPLE AND NOT IOS)
@@ -84,6 +85,18 @@ add_custom_command(TARGET CoreTests POST_BUILD
 
 target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_RESOURCE_MARKER="${resource_marker_name}")
+
+# The image a standalone executable reports for itself cannot be checked from
+# inside the test binary: it depends on the path the launcher used, so the
+# fixture is a second executable the cases start three different ways.
+if (NOT WIN32)
+    add_executable(ModuleInfoHarness ModuleInfoHarness.cpp)
+    target_link_libraries(ModuleInfoHarness PRIVATE eacp-core)
+
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_MODULE_INFO_HARNESS="$<TARGET_FILE:ModuleInfoHarness>")
+    add_dependencies(CoreTests ModuleInfoHarness)
+endif ()
 
 # The fixture plugin's static initializer counts genuine loads in the
 # process environment, so the tests can observe real unmaps.
