@@ -31,6 +31,9 @@ endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
+# Before anything that fetches or probes: it decides how loud they are.
+include(ConfigureLog)
+
 option(EACP_UNITY_BUILD "Compile eacp libraries as CMake unity builds" OFF)
 option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)

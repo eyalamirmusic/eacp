@@ -122,6 +122,21 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_PCH=ON
 ```
 
+- `EACP_VERBOSE_CONFIGURE` (default `OFF`): prints the configure detail a clean
+  configure leaves out — the FetchContent population of the `DOWNLOAD_ONLY`
+  Vulkan sources, the pkg-config and `find_package` probes and the `check_*`
+  results under them. CPM's own line per package is not part of that and prints
+  either way: it names the source, the tag, and any local override, which is
+  the one thing worth reading. `CMake/ConfigureLog.cmake` is the whole of it:
+  it raises `CMAKE_MESSAGE_LOG_LEVEL` to `VERBOSE` and drops the `QUIET` it
+  otherwise hands the finders. Warnings and errors sit above the log level, so
+  nothing this hides is something that went wrong.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_VERBOSE_CONFIGURE=ON
+```
+
 - `EACP_BUILD_SPIRV` (default `ON` on Linux, `OFF` elsewhere): builds
   `eacp-spirv`, fetching glslang via CPM (a shallow ~75 MB checkout, about 5 s
   of build on a laptop, a minute on a 4-core CI runner). It is on where
