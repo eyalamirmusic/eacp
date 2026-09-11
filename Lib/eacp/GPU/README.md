@@ -215,7 +215,8 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   is not: `erf` is odd across it bit for bit and zero at it, `erfc` is one
   there, and the two sum to one
 - `saturatingTanh`, which is `tanh` with its two tails answered rather than
-  computed: exactly ±1 past an argument of ten, the native builtin inside it.
+  computed: exactly ±1 from an argument of ten outward, the native builtin
+  inside it.
   What the native one does with a large argument is the driver's business, and
   eacp compiles its Metal library with no `MTLCompileOptions` — so fast math is
   on, `tanh` is evaluated through `exp`, and `tanh(990)` comes back NaN. A tanh

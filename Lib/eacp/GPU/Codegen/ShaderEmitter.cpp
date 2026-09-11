@@ -377,7 +377,7 @@ constexpr auto erfcHelperGlsl =
 constexpr auto saturatingTanhHelper =
     "float eacpSaturatingTanh(float x)\n"
     "{\n"
-    "    return x > 10.0 ? 1.0 : (x < -10.0 ? -1.0 : tanh(x));\n"
+    "    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));\n"
     "}\n\n"
     "float2 eacpSaturatingTanh(float2 x)\n"
     "{\n"
@@ -397,7 +397,7 @@ constexpr auto saturatingTanhHelper =
 constexpr auto saturatingTanhHelperGlsl =
     "float eacpSaturatingTanh(float x)\n"
     "{\n"
-    "    return x > 10.0 ? 1.0 : (x < -10.0 ? -1.0 : tanh(x));\n"
+    "    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));\n"
     "}\n\n"
     "vec2 eacpSaturatingTanh(vec2 x)\n"
     "{\n"

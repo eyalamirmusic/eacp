@@ -314,7 +314,7 @@ auto tSaturatingTanhGoesThroughAHelper =
     for (const auto& source: {emitMetal(graph), emitHlsl(graph)})
     {
         check(contains(source, "float eacpSaturatingTanh(float x)"));
-        check(contains(source, "x > 10.0 ? 1.0 : (x < -10.0 ? -1.0 : tanh(x))"));
+        check(contains(source, "x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x))"));
 
         for (const auto& width:
              {std::string("float2"), std::string("float3"), std::string("float4")})
@@ -329,7 +329,7 @@ auto tSaturatingTanhGoesThroughAHelper =
 
     check(contains(glsl, "float eacpSaturatingTanh(float x)"));
     check(contains(glsl, "vec4 eacpSaturatingTanh(vec4 x)"));
-    check(contains(glsl, "x > 10.0 ? 1.0 : (x < -10.0 ? -1.0 : tanh(x))"));
+    check(contains(glsl, "x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x))"));
     check(!contains(glsl, "float4"));
 
     expectGlslCompiles(graph);
@@ -436,11 +436,13 @@ auto tSaturatingTanh = test("Intrinsics/saturatingTanhAnswersTheTails") = []
         check(std::isfinite(result[i]));
         check(near(result[i], std::tanh((double) x), 1.0e-6));
 
-        // And exactly, not nearly, past the threshold the helper answers at.
-        // Between 9.011 and ten the function has already rounded to one in
-        // float32 and the native builtin is what returns it, which is a claim
-        // about the driver's tanh rather than about this - so the tolerance
-        // above covers that stretch and this covers the constant.
+        // And exactly, not nearly, from the threshold outward - ten itself
+        // included, since the helper compares inclusively so that the value it
+        // documents as the threshold is one it answers. Between 9.011 and ten
+        // the function has already rounded to one in float32 and the native
+        // builtin is what returns it, which is a claim about the driver's tanh
+        // rather than about this - so the tolerance above covers that stretch
+        // and this covers the constant.
         if (std::fabs(x) >= 10.0f)
             check(result[i] == (x > 0.0f ? 1.0f : -1.0f));
     }
