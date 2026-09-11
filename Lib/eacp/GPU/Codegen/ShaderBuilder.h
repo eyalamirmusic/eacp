@@ -569,6 +569,15 @@ public:
         write(buffer, index, asFloat(packHalf2(value)));
     }
 
+    // The same store for bf16, which InputBuffer::readBFloat16x2 reads back at
+    // the same index.
+    void writeBFloat16x2(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float2& value)
+    {
+        write(buffer, index, asFloat(packBFloat16x2(value)));
+    }
+
     // One element of an integer output, index or value spelled as a literal
     // where it is one.
     void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value)

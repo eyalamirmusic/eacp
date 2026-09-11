@@ -102,6 +102,27 @@ float halfToFloat(std::uint16_t bits)
                                 | ((significand & 0x3FFu) << 13));
 }
 
+std::uint16_t bfloat16FromFloat(float value)
+{
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+
+    // A NaN is quieted rather than rounded: adding to a mantissa of all ones
+    // carries into the exponent and lands on an infinity, which is a different
+    // answer rather than a coarser one. Above the infinity pattern is exactly
+    // the NaNs.
+    if ((bits & 0x7FFFFFFFu) > infinityAsFloat)
+        return (std::uint16_t) ((bits | 0x00400000u) >> 16);
+
+    // Round to nearest even: half an ulp, plus one where the surviving low bit
+    // is odd, which is what breaks a tie towards the even neighbour.
+    return (std::uint16_t) ((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16);
+}
+
+float bfloat16ToFloat(std::uint16_t bits)
+{
+    return std::bit_cast<float>((std::uint32_t) bits << 16);
+}
+
 UNorm8x4 UNorm8x4::fromFloats(float x, float y, float z, float w)
 {
     return {{toUnsignedNormalized(x),

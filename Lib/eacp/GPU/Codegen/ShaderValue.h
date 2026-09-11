@@ -690,6 +690,14 @@ struct InputBuffer
     Float2 readHalf2(const UInt& index) const;
     Float2 readHalf2(unsigned index) const;
 
+    // The bf16 reads, on exactly those terms: readBFloat16 counts in bfloat16s,
+    // readBFloat16x2 in the words that hold two. The two-wide name carries an
+    // x2 rather than a bare 2, which after "16" would read as one number.
+    Float readBFloat16(const UInt& index) const;
+    Float readBFloat16(unsigned index) const;
+    Float2 readBFloat16x2(const UInt& index) const;
+    Float2 readBFloat16x2(unsigned index) const;
+
     ShaderGraph* graph = nullptr;
     int slot = -1;
 };
@@ -2851,6 +2859,85 @@ inline Float2 InputBuffer::readHalf2(const UInt& index) const
 inline Float2 InputBuffer::readHalf2(unsigned index) const
 {
     return readHalf2(detail::bufferIndex(graph, index));
+}
+
+// The bfloat16 pair in one word, widened: .x the low sixteen bits, .y the high,
+// on exactly the layout unpackHalf2 promises for fp16.
+//
+// bf16 is fp32 with sixteen mantissa bits thrown away, so a widening is the
+// bits back in the top half of a word and nothing else - no exponent to rebias,
+// no subnormal case, no rounding. That makes it exact and, unlike the fp16
+// path, identical on every backend down to the instruction: the three dialects
+// differ only in how they spell a bitcast.
+//
+// Which is why this may not go through fp16. bf16 has eight exponent bits and
+// fp16 five, so 1e-6 and 1e30 are ordinary bf16 values that fp16 flushes to
+// zero and to infinity. A checkpoint routed through half is not less precise,
+// it is wrong.
+inline Float2 unpackBFloat16x2(const UInt& bits)
+{
+    auto arguments = Vector<int> {};
+    arguments.add(bits.node);
+
+    auto result = Float2 {};
+    result.graph = bits.graph;
+    result.node = bits.graph->addCall(
+        ValueType::Float2, "eacpUnpackBFloat16x2", std::move(arguments));
+
+    return result;
+}
+
+// The inverse: two floats narrowed to bf16 and packed into one word, .x in the
+// low sixteen bits.
+//
+// Unlike packHalf2 this *is* bit-identical across the backends, and that is the
+// point of doing it by hand. The rounding is round-to-nearest-even written in
+// integer arithmetic - add half an ulp plus the low bit of what survives, then
+// shift - so no dialect's narrowing instruction is involved and none of their
+// disagreements can reach it. A NaN is quieted rather than rounded, since
+// carrying one into the exponent would land it on an infinity, which is a
+// different answer rather than a coarser one.
+inline UInt packBFloat16x2(const Float2& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackBFloat16x2");
+}
+
+// One bf16 element of a buffer whose elements are bfloat16s rather than floats,
+// widened to a Float. The index counts bfloat16s, so a buffer of N weights is
+// walked 0..N-1 and the call site never spells the packing: the word is
+// index / 2 and which half of it is index % 2.
+//
+// The parity goes into the helper rather than selecting between both halves,
+// for the reason readHalf gives: shifting the wanted half up is one instruction
+// in every language.
+inline Float InputBuffer::readBFloat16(const UInt& index) const
+{
+    return detail::call2<Float>(asUInt((*this)[index / 2u]),
+                                index % 2u,
+                                ValueType::Float,
+                                "eacpReadBFloat16");
+}
+
+// The literal form, folded here rather than emitted as `6u / 2u`.
+inline Float InputBuffer::readBFloat16(unsigned index) const
+{
+    return detail::call2<Float>(asUInt((*this)[index / 2u]),
+                                detail::bufferIndex(graph, index % 2u),
+                                ValueType::Float,
+                                "eacpReadBFloat16");
+}
+
+// Both bfloat16s of one word, which is what a kernel walking a weight matrix
+// two at a time wants. The index counts words here rather than elements - it is
+// the same index the matching writeBFloat16x2 stores at.
+inline Float2 InputBuffer::readBFloat16x2(const UInt& index) const
+{
+    return unpackBFloat16x2(asUInt((*this)[index]));
+}
+
+inline Float2 InputBuffer::readBFloat16x2(unsigned index) const
+{
+    return readBFloat16x2(detail::bufferIndex(graph, index));
 }
 
 template <ShaderScalarLike T>
