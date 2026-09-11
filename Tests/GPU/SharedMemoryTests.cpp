@@ -94,3 +94,137 @@ auto tExchangeCrossesLanes = test("SharedMemory/everyThreadReadsAnotherLane") = 
     // kernel with unshared scratch would have produced.
     check(values[0] != 0.f);
 };
+
+namespace
+{
+// A kilobyte of tile, which every device eacp runs on has room for, beside a
+// reduction whose scratch the emitter adds behind it.
+constexpr auto tileElements = 256;
+
+struct BudgetedKernel final : ComputeProgram
+{
+    BudgetedKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto lane = localId();
+        auto tile = shared<Float>(tileElements);
+
+        write(tile, lane, input[id]);
+        barrier();
+
+        auto total = groupSum(tile[lane]);
+        ifThen(id < gridCount(), [&] { write(output, id, total); });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+// A tile of three-vectors, which is the one element type whose bytes and whose
+// stride differ: MSL packs a float3 to twelve and an std430 block and a DXBC
+// groupshared array give it sixteen.
+struct WideElementKernel final : ComputeProgram
+{
+    WideElementKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto lane = localId();
+        auto tile = shared<Float3>(tileElements);
+
+        write(tile, lane, float3(input[id], input[id], input[id]));
+        barrier();
+
+        ifThen(id < gridCount(), [&] { write(output, id, tile[lane].x()); });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+// Past every budget any of the three backends reports: Vulkan's floor is 16 KB,
+// the two with a fixed number give 32 KB, and no Metal device reaches a
+// megabyte.
+struct OverBudgetKernel final : ComputeProgram
+{
+    OverBudgetKernel() { compile(); }
+
+    void define() override
+    {
+        auto id = threadId();
+        auto lane = localId();
+        auto tile = shared<Float>(1024 * 1024);
+
+        write(tile, lane, input[id]);
+        barrier();
+
+        ifThen(id < gridCount(), [&] { write(output, id, tile[lane]); });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+} // namespace
+
+// What the device allows, which is the number a kernel author has had to carry
+// in a comment until now.
+auto tThreadgroupBudgetIsReported =
+    test("SharedMemory/theDeviceReportsItsThreadgroupBudget") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    // Vulkan's spec floor, and so what a kernel may assume on any of the three.
+    check(device.maxThreadgroupMemory() >= 16 * 1024);
+};
+
+// What a kernel spends: its own arrays plus the scratch the emitter adds for a
+// reduction, counted in the same bytes the budget is in.
+auto tKernelReportsWhatItDeclares =
+    test("SharedMemory/aKernelReportsWhatItDeclares") = []
+{
+    auto& device = Device::shared();
+
+    auto budgeted = BudgetedKernel {};
+
+    auto tile = tileElements * (int) sizeof(float);
+    auto scratch = ComputePass::threadGroupWidth * (int) sizeof(float);
+
+    check(budgeted.threadgroupMemoryBytes() == tile + scratch);
+
+    // A vector element is counted at the stride the backends that pad give it,
+    // not at the twelve bytes MSL packs a three-vector to: the budget is what a
+    // kernel is written against, and a kernel is written once.
+    auto wide = WideElementKernel {};
+
+    check(wide.threadgroupMemoryBytes() == tileElements * 16);
+
+    if (!device.isValid())
+        return;
+
+    check(budgeted.fitsThreadgroupMemory(device));
+
+    // And the overspend is answered before the backend is asked to make a
+    // pipeline it cannot: prepare() names the two numbers in the log, and what
+    // it goes on to build is the invalid pipeline the backend was always going
+    // to hand back - the log line being the difference between a kernel that
+    // asked for too much and a kernel that would not compile.
+    auto over = OverBudgetKernel {};
+
+    check(over.threadgroupMemoryBytes() > device.maxThreadgroupMemory());
+    check(!over.fitsThreadgroupMemory(device));
+
+    over.prepare(device);
+    check(!over.pipeline().isValid());
+};

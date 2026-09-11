@@ -171,12 +171,18 @@ auto tUIntPairsEmitTheirOwnStride =
     for (const auto& text: {metal, hlsl})
     {
         check(contains(text, "uint t0 = (gid * 2u);"));
-        check(contains(text, "uint t1 = (t0 + 1u);"));
-        check(contains(text, "uint2 t2 = (uint2(buffer0[t0], buffer0[t1]) + 1u);"));
-        check(contains(text, "buffer1[t0] = (t2).x;"));
-        check(contains(text, "buffer1[t1] = (t2).y;"));
+        check(contains(text, "buffer1[t0] = (t1).x;"));
+        check(contains(text, "buffer1[(t0 + 1u)] = (t1).y;"));
         check(!contains(text, "t0 + 2u"));
     }
+
+    // The read is one eight-byte load on Metal and the pair of subscripts it
+    // stands in for on HLSL, which has no spelling for reinterpreting a
+    // StructuredBuffer<uint>.
+    check(contains(
+        metal,
+        "uint2 t1 = (uint2(*((device const packed_uint2*) (buffer0 + t0))) + 1u);"));
+    check(contains(hlsl, "uint2 t1 = (uint2(buffer0[t0], buffer0[t0 + 1u]) + 1u);"));
 
     check(contains(metal, "device const uint* buffer0"));
     check(contains(metal, "device uint* buffer1"));

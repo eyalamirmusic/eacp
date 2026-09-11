@@ -346,6 +346,56 @@ public:
     UInt groupMax(const UInt& value) { return fold(GroupReduction::Max, value); }
     UInt groupMin(const UInt& value) { return fold(GroupReduction::Min, value); }
 
+    // The same three narrowed to one SIMD group. Every thread is handed the
+    // fold of the simdWidth threads it shares a SIMD group with, so a group of
+    // several SIMD groups leaves one of these holding several answers - one per
+    // SIMD group - rather than one.
+    //
+    // On Metal that is a single instruction with no threadgroup memory and no
+    // barrier, which is what a fold inside a per-tile loop wants. It is still
+    // collective, and the backends with no wave intrinsic still reach it
+    // through a scratch array between barriers, so the group rule holds: every
+    // thread of the threadgroup reaches it or none does, and a kernel holding
+    // one loses its bounds guard and bounds its own stores.
+    //
+    // **How many threads is a promise these three cannot keep on their own.**
+    // The two emulated backends fold exactly simdWidth lanes, because that is
+    // what the emitted tree walks. Metal folds the *hardware* SIMD group, since
+    // that is what simd_sum is collective over - 32 on every Apple GPU, and
+    // eight or sixteen on an Intel one, where the same call would fold a
+    // quarter of what the arithmetic around it assumes. eacp requires the two
+    // to agree and cannot check it until there is a pipeline, so
+    // ComputeProgram::prepare compares the compiled kernel's
+    // threadExecutionWidth against simdWidth and says so when they differ. A
+    // kernel that wants to be right at any width wants groupSum/groupMax/
+    // groupMin, which combine per-SIMD-group partials however many there were.
+    //
+    // **Uniform control flow, not just a uniform arrival.** Every thread of the
+    // group must reach a fold *with the same branches taken*: loop(condition,
+    // body) takes an ordinary per-thread Bool, so a fold inside a loop whose
+    // condition some lanes leave earlier than others is divergent. The emulated
+    // backends hang at the barrier inside the fold; Metal's intrinsic tolerates
+    // it silently and folds only the lanes still running, which is worse -
+    // correct-looking on the machine it was written on and a hang on the next
+    // one. Hoist the condition to something uniform across the group, or bound
+    // the loop by a uniform and guard the body's stores instead.
+    Float simdSum(const Float& value)
+    {
+        return simdFold(GroupReduction::Sum, value);
+    }
+    Float simdMax(const Float& value)
+    {
+        return simdFold(GroupReduction::Max, value);
+    }
+    Float simdMin(const Float& value)
+    {
+        return simdFold(GroupReduction::Min, value);
+    }
+
+    UInt simdSum(const UInt& value) { return simdFold(GroupReduction::Sum, value); }
+    UInt simdMax(const UInt& value) { return simdFold(GroupReduction::Max, value); }
+    UInt simdMin(const UInt& value) { return simdFold(GroupReduction::Min, value); }
+
     // Which SIMD group of the threadgroup this thread is in, which is what
     // places the block of the output that SIMD group owns. They are numbered
     // from the flat local index, so a group of simdGroupWidth * n threads holds
@@ -877,12 +927,20 @@ private:
     }
 
     template <typename T>
-    T fold(GroupReduction operation, const T& value)
+    T fold(GroupReduction operation,
+           const T& value,
+           ReductionScope scope = ReductionScope::Group)
     {
         auto result = graphData.addGroupReduction(
-            operation, ValueTypeOf<T>::value, value.node);
+            operation, ValueTypeOf<T>::value, value.node, scope);
 
         return indexValue<T>(graphData.addVarRead(result));
+    }
+
+    template <typename T>
+    T simdFold(GroupReduction operation, const T& value)
+    {
+        return fold(operation, value, ReductionScope::Simd);
     }
 
     ShaderGraph graphData;

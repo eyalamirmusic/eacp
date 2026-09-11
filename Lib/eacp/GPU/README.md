@@ -214,13 +214,24 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   tanh approximation of it. The origin is exact, which the polynomial on its own
   is not: `erf` is odd across it bit for bit and zero at it, `erfc` is one
   there, and the two sum to one
+- `saturatingTanh`, which is `tanh` with its two tails answered rather than
+  computed: exactly ±1 past an argument of ten, the native builtin inside it.
+  What the native one does with a large argument is the driver's business, and
+  eacp compiles its Metal library with no `MTLCompileOptions` — so fast math is
+  on, `tanh` is evaluated through `exp`, and `tanh(990)` comes back NaN. A tanh
+  GELU cubes its input on the way in, so an activation of thirty arrives as
+  exactly that argument. Float32 resolves nothing between `tanh(9.011)` and one,
+  so every argument answered with a constant is one whose correctly rounded tanh
+  is that constant: it is a repair of the tails, not a different function. Reach
+  for it wherever the argument is not bounded by construction
 - Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
   A `var` takes any handle and any matrix. `select` runs across every family —
   a float, an index, an integer vector, a mask — and takes a literal on either
   side of a scalar one; the condition is a scalar `Bool` in all of them, which
   is the conditional operator both languages already print
 - Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId`, the
-  group-wide `groupSum` / `groupMax` / `groupMin`, and the SIMD-group matrix —
+  group-wide `groupSum` / `groupMax` / `groupMin` and their SIMD-group-scoped
+  siblings `simdSum` / `simdMax` / `simdMin`, and the SIMD-group matrix —
   `simdGroupIndex`, `simdMatrix`, `multiplyAccumulate` and the `write` that
   stores a fragment — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
@@ -932,6 +943,19 @@ void define() override
 `groupShape()` is what to size the tile against rather than a literal, since it
 follows the shape the kernel asked for — 64 for one that asked for nothing.
 
+**How much there is to spend is a device question, and one the EDSL answers.**
+`Device::maxThreadgroupMemory()` is the budget in bytes — Metal's
+`maxThreadgroupMemoryLength`, a flat 32 KB at D3D's `cs_5_0`, Vulkan's
+`maxComputeSharedMemorySize`, whose spec floor of 16 KB is therefore what a
+kernel may assume anywhere. `ComputeProgram::threadgroupMemoryBytes()` is the
+other half: what this kernel takes, its `shared<>` arrays plus the scratch the
+emitter adds behind them for a reduction and for a SIMD-group matrix, counted as
+the worst of the three backends since a kernel is written once.
+`fitsThreadgroupMemory(device)` is the two compared, and `prepare()` names an
+overspend in the log — both numbers — before the backend reports it as a
+pipeline that would not build, which on Metal happens after the library compiled
+clean and points at the wrong thing.
+
 Nothing initialises it — what it holds before the group writes it is undefined,
 which is why every use starts by filling it and waiting. Reading is a subscript;
 writing goes through the same `write()` the buffers and textures use, because a
@@ -966,12 +990,34 @@ auto particle = state.read4(index);           // position.xy, velocity.xy
 write(next, index, float4(newPosition, newVelocity));
 ```
 
-Underneath it is still N scalar accesses over a run of floats, deliberately: a
-retyped `float4` binding would buy one wide store and cost the CPU-side element
-size that makes those same bytes bindable as a per-instance vertex stream. It is
-one write above them all the same — every component is stored the value the
-record held before the first of them ran — so a record read out of an output and
-rearranged back into it swaps its components rather than broadcasting one:
+Underneath, the buffer is still a run of floats and the *store* is still N
+scalar accesses over it, deliberately: a retyped `float4` binding would buy one
+wide store and cost the CPU-side element size that makes those same bytes
+bindable as a per-instance vertex stream.
+
+The *read* of a read-only buffer is one load where the dialect has a spelling
+for one. On Metal `input.read4(i)` is the sixteen bytes fetched through a
+`packed_float4` pointer — packed and not `float4`, because a ranged bind's
+offset only has to sit on `Device::storageBufferOffsetAlignment()`, which is
+four bytes there, and a `float4` load wants sixteen. HLSL and GLSL have nothing
+to reinterpret — a `StructuredBuffer<float>` and an std430 block of floats are
+runs of scalars — so they emit exactly the componentwise construct, with the
+base index named once. Giving them a real vector load would mean changing the
+binding itself: a raw `ByteAddressBuffer` SRV on D3D12, with every scalar read
+respelled as `asfloat(buffer0.Load(i * 4))`, or a second block aliasing the same
+binding in GLSL. Neither is worth what it would cost the scalar path, which is
+what almost every kernel reads through.
+
+`OutputBuffer`'s vector reads stay scalar on every backend, and that is not an
+oversight: an output may hold what this very thread stored into it a statement
+ago, and the subscript through the pointer that was written is what orders the
+two. A load through a second pointer of another type has nothing saying it may
+not be hoisted above the store.
+
+A record read is one write above its stores all the same — every component is
+stored the value the record held before the first of them ran — so a record read
+out of an output and rearranged back into it swaps its components rather than
+broadcasting one:
 
 ```cpp
 auto pair = output.read2(i);
@@ -1059,7 +1105,58 @@ partials through a scratch array; HLSL under FXC has no wave intrinsic at
 `cs_5_0` and GLSL is held to what a driver compiles with no subgroup extension,
 so both walk a `groupshared` tree with a barrier per halving step. The scratch
 is the emitter's own, declared once per kernel and only where a reduction asked
-for it.
+for it — and on Metal only where a *whole-group* fold asked, since a SIMD-scoped
+one needs none.
+
+A group of `simdWidth` threads is not a special case of that: whether it is one
+SIMD group is a property of the compiled pipeline
+(`ComputePipeline::threadExecutionWidth`) and not of the EDSL, and an Intel Mac
+runs a kernel at eight or sixteen lanes. The wide fold therefore keeps its
+combine at every group size — `simdCount` is whatever the hardware gave — which
+is what it was always for.
+
+**`simdSum`, `simdMax` and `simdMin` are the same three narrowed to one SIMD
+group.** Every thread is handed the fold of the `simdWidth` threads it shares a
+SIMD group with, so a group of several comes out holding one answer per SIMD
+group rather than one for the group. That is what a fold inside a per-tile loop
+wants — attention walking its keys a SIMD group at a time has nothing to say to
+the rest of the threadgroup yet — and on Metal it is a single instruction with
+no threadgroup memory and no barrier, against the two barriers the wide fold
+costs.
+
+They are still collective, and the rule is the wide fold's: every thread of the
+*threadgroup* reaches one or none does, and a kernel holding one loses its
+bounds guard. That is because the other two backends still reach it through the
+scratch, narrowed to the folding thread's own block of lanes — HLSL has no wave
+intrinsic at `cs_5_0`, and GLSL's `subgroupAdd` is both an extension no lane
+here is held to and the wrong fold: a subgroup is whatever width the device says
+it is (eight on Mesa's lavapipe), where `simdWidth` is thirty-two everywhere by
+construction, exactly as the SIMD-group matrix fixes it. An intrinsic that folded
+a different number of threads under the same name would be worse than no
+intrinsic. The group has to be a whole number of SIMD groups, or narrower than
+one — the same rule a fragment is under, with the one allowance that a group
+smaller than a SIMD group *is* its own SIMD group.
+
+**How many threads one folds is the one promise these three cannot keep on
+their own.** The emulated backends fold exactly `simdWidth` lanes, because that
+is what the emitted tree walks. Metal folds the *hardware* SIMD group, which is
+what `simd_sum` is collective over — thirty-two on every Apple GPU, eight or
+sixteen on an Intel one, where the same call folds a quarter of what the
+arithmetic around it assumes. eacp needs the two to agree and cannot know until
+there is a pipeline, so `ComputeProgram::prepare` compares the compiled kernel's
+`threadExecutionWidth` against `simdWidth` and says so in the log when they
+differ — for a kernel using `simdSum`/`simdMax`/`simdMin` or a `SimdMatrix`.
+A kernel that has to be right at any width wants `groupSum`/`groupMax`/
+`groupMin` instead.
+
+**Uniform control flow, not merely a uniform arrival.** Every thread must reach
+a fold with the same branches taken. `loop(condition, body)` takes an ordinary
+per-thread `Bool`, so a fold inside a loop some lanes leave earlier than others
+is divergent: the emulated backends hang at the barrier inside the fold, and
+Metal's intrinsic tolerates it silently and folds only the lanes still running —
+which is the worse of the two, being right on the machine it was written on and
+a hang on the next. Bound the loop by something uniform across the group and
+guard the body's stores instead.
 
 ### The SIMD-group matrix
 
@@ -1277,13 +1374,23 @@ These are the way in and out of that:
 | --- | --- |
 | `input.readHalf(i)` | element `i` of a buffer of halves, widened to a `Float`. `i` counts halves, so an N-weight buffer is walked `0..N-1` |
 | `input.readHalf2(i)` | both halves of word `i` as a `Float2`, `.x` the low bits |
+| `input.readHalf4(i)` | four halves as a `Float4` — the two words starting at word `2 * i`, so `i` counts records of four and element `k` is `readHalf4(k / 4)` component `k % 4` |
 | `unpackHalf2(bits)` | the same, from a `UInt` already in hand |
 | `packHalf2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeHalf2(out, i, pair)` | that word stored at `i` — `readHalf2` reads it back |
 | `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways |
 
 Size the buffer in whole words: `readHalf` fetches the word at `i / 2`, so an
-odd count of halves reads past its last byte on the final element.
+odd count of halves reads past its last byte on the final element. `readHalf4`
+and `readBFloat16x4` want a whole number of *pairs* of words for the same
+reason.
+
+The four-wide pair is the width a weight walk wants, and it is not four
+subscripts: both take their two words through `read2`, so on Metal the eight
+bytes arrive in one `packed_float2` load and the unpacking is register
+arithmetic over what came back. HLSL and GLSL fetch the two words as two
+scalars, which is what their float buffers give — see the vector reads above
+for why neither can reinterpret one.
 
 `readHalf` emits a two-argument helper — the word and which half of it — rather
 than unpacking both and selecting: MSL and HLSL each reach the wanted half with
@@ -1320,6 +1427,7 @@ void define() override
 | --- | --- |
 | `input.readBFloat16(i)` | element `i` of a buffer of bfloat16s, widened to a `Float`. `i` counts bfloat16s |
 | `input.readBFloat16x2(i)` | both bfloat16s of word `i` as a `Float2`, `.x` the low bits |
+| `input.readBFloat16x4(i)` | four bfloat16s as a `Float4` — the two words starting at word `2 * i`, on the terms `readHalf4` sets |
 | `unpackBFloat16x2(bits)` | the same, from a `UInt` already in hand |
 | `packBFloat16x2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeBFloat16x2(out, i, pair)` | that word stored at `i` — `readBFloat16x2` reads it back |

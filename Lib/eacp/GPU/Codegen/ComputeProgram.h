@@ -5,6 +5,8 @@
 #include "../Pipeline/ComputePipeline.h"
 #include "ShaderProgram.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
 // assigned the GPU::Buffer to bind - or a BufferRange, to bind a slice of one
@@ -174,11 +176,33 @@ public:
     // compiled on that Device rather than on the process-wide one.
     void prepare(Device& device)
     {
+        reportThreadgroupMemoryOverBudget(device);
+
         shaderLibrary.emplace(device, generated.source);
         pipelineState.emplace(device, *shaderLibrary);
+
+        reportSimdWidthMismatch();
     }
 
     void prepare() { prepare(Device::shared()); }
+
+    // How many bytes of threadgroup memory one group of this kernel takes, and
+    // whether that is inside what the device allows. The first counts the
+    // emitter's own reduction and matrix scratch beside the shared<> arrays,
+    // and takes the worst case of the three backends rather than this one's -
+    // a kernel is written once and has to fit everywhere it runs.
+    //
+    // Together with Device::maxThreadgroupMemory they are what a kernel author
+    // sizes a tile against, instead of carrying the backend's number in a
+    // comment. An invalid Device has no budget to be inside, so it fits.
+    int threadgroupMemoryBytes() const { return graph().threadgroupMemoryBytes(); }
+
+    bool fitsThreadgroupMemory(const Device& device) const
+    {
+        auto budget = device.maxThreadgroupMemory();
+
+        return budget <= 0 || threadgroupMemoryBytes() <= budget;
+    }
 
     const ComputePipeline& pipeline() const { return *pipelineState; }
 
@@ -315,6 +339,20 @@ protected:
     UInt groupSum(const UInt& value) { return builder.groupSum(value); }
     UInt groupMax(const UInt& value) { return builder.groupMax(value); }
     UInt groupMin(const UInt& value) { return builder.groupMin(value); }
+
+    // The same fold narrowed to one SIMD group: every thread is handed the
+    // fold of the simdWidth threads it shares one with, so a group of several
+    // SIMD groups comes out holding one answer per SIMD group rather than one
+    // for the group. Collective on the terms the group version sets, and on
+    // Metal a single instruction with neither scratch nor a barrier - see
+    // ShaderBuilder.
+    Float simdSum(const Float& value) { return builder.simdSum(value); }
+    Float simdMax(const Float& value) { return builder.simdMax(value); }
+    Float simdMin(const Float& value) { return builder.simdMin(value); }
+
+    UInt simdSum(const UInt& value) { return builder.simdSum(value); }
+    UInt simdMax(const UInt& value) { return builder.simdMax(value); }
+    UInt simdMin(const UInt& value) { return builder.simdMin(value); }
 
     // The SIMD-group matrix vocabulary: which SIMD group a thread is in, an
     // 8x8 float fragment filled or loaded, and the multiply-accumulate over
@@ -559,6 +597,51 @@ protected:
     virtual void define() = 0;
 
 private:
+    // The one thing a kernel using simdSum/simdMax/simdMin or a SIMD-group
+    // matrix cannot check for itself: those lower to intrinsics collective over
+    // the *hardware* SIMD group, and the EDSL's arithmetic - simdWidth, the
+    // fragment layout, simdGroupIndex - is written against a fixed 32. Every
+    // Apple GPU agrees; an Intel Mac dispatches at eight or sixteen and the two
+    // stop meaning the same thing, silently, since an intrinsic over a narrower
+    // SIMD group is a well-formed fold of the wrong set of threads.
+    //
+    // Only the compiled pipeline knows the number, which is why this is here
+    // and not in the emitter. The backends that emulate a SIMD group report
+    // nothing, and there is nothing for them to disagree with.
+    void reportSimdWidthMismatch() const
+    {
+        if (!graph().usesSimdReduction() && !graph().usesSimdGroups())
+            return;
+
+        auto width = pipelineState->threadExecutionWidth();
+
+        if (width <= 0 || width == ComputeProgram::simdWidth)
+            return;
+
+        LOG("eacp: this kernel folds or multiplies over SIMD groups of ",
+            ComputeProgram::simdWidth,
+            " threads and this device runs it at ",
+            width,
+            ". simdSum/simdMax/simdMin and SimdMatrix need the two to agree; "
+            "use the whole-group groupSum/groupMax/groupMin, which is correct "
+            "at any width.");
+    }
+
+    // Named here rather than left to the backend, which reports a threadgroup
+    // allocation it cannot make as a pipeline that would not build - on Metal
+    // after the library compiled clean, which points at the wrong thing.
+    void reportThreadgroupMemoryOverBudget(const Device& device) const
+    {
+        if (fitsThreadgroupMemory(device))
+            return;
+
+        LOG("eacp: this kernel declares ",
+            threadgroupMemoryBytes(),
+            " bytes of threadgroup memory and this device allows ",
+            device.maxThreadgroupMemory(),
+            ". Size its shared<> arrays against Device::maxThreadgroupMemory().");
+    }
+
     const void* packWithExtents(const std::uint32_t* extents, int count)
     {
         uniformBytes.clear();
