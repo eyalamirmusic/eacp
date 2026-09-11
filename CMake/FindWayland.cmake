@@ -1,10 +1,10 @@
-include(FindPkgConfig)
+find_package(PkgConfig ${EACP_FIND_QUIET} REQUIRED)
 
 # The Wayland half of the Linux graphics backend: the client library, the cursor
 # loader, xkbcommon and libdecor, plus the protocol XML wayland-scanner reads.
 
 if (NOT TARGET eacp-wayland)
-    pkg_check_modules(EACP_WAYLAND IMPORTED_TARGET
+    pkg_check_modules(EACP_WAYLAND ${EACP_FIND_QUIET} IMPORTED_TARGET
             wayland-client
             wayland-cursor
             xkbcommon
@@ -19,8 +19,10 @@ if (NOT TARGET eacp-wayland)
     endif ()
 
     # The tool and the XML directory come from the .pc files, never from a path.
-    pkg_check_modules(EACP_WAYLAND_SCANNER_PC REQUIRED wayland-scanner)
-    pkg_check_modules(EACP_WAYLAND_PROTOCOLS_PC REQUIRED wayland-protocols)
+    pkg_check_modules(EACP_WAYLAND_SCANNER_PC ${EACP_FIND_QUIET} REQUIRED
+            wayland-scanner)
+    pkg_check_modules(EACP_WAYLAND_PROTOCOLS_PC ${EACP_FIND_QUIET} REQUIRED
+            wayland-protocols)
 
     pkg_get_variable(EACP_WAYLAND_SCANNER wayland-scanner wayland_scanner)
     pkg_get_variable(EACP_WAYLAND_PROTOCOL_DIR wayland-protocols pkgdatadir)
