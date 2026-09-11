@@ -1,10 +1,10 @@
-include(FindPkgConfig)
+find_package(PkgConfig ${EACP_FIND_QUIET} REQUIRED)
 
 # The Linux text stack: FreeType rasterizes the outlines, HarfBuzz shapes the
 # runs, fontconfig resolves families and codepoints.
 
 if (NOT TARGET eacp-linux-text)
-    pkg_check_modules(EACP_LINUX_TEXT IMPORTED_TARGET
+    pkg_check_modules(EACP_LINUX_TEXT ${EACP_FIND_QUIET} IMPORTED_TARGET
             freetype2
             harfbuzz
             fontconfig)
