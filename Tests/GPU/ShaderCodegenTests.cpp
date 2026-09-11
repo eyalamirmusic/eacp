@@ -2937,6 +2937,47 @@ auto tCodegenGlslHalfHelpers = test("GPU/codegenGlslHalfHelpers") = []
     expectGlslCompiles(graph);
 };
 
+// The bf16 family has no builtin in any of the three, so all that differs is
+// how each spells a bitcast - uintBitsToFloat here, as_type on MSL, asfloat on
+// HLSL - and the arithmetic around it is the same integer arithmetic
+// everywhere, which is what makes the narrowing bit-identical.
+auto tCodegenGlslBFloat16Helpers = test("GPU/codegenGlslBFloat16Helpers") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, weights.readBFloat16(i));
+
+    builder.write(
+        output, i + 1u, asFloat(packBFloat16x2(weights.readBFloat16x2(i))));
+
+    builder.writeBFloat16x2(output, i + 2u, weights.readBFloat16x2(i + 1u));
+
+    const auto& graph = builder.graph();
+    auto glsl = emitGlsl(graph);
+
+    check(contains(glsl, "float eacpReadBFloat16(uint bits, uint parity)"));
+    check(contains(glsl, "uintBitsToFloat((bits >> (16u * parity)) << 16u)"));
+    check(contains(glsl, "vec2 eacpUnpackBFloat16x2(uint bits)"));
+    check(contains(glsl, "uint eacpPackBFloat16x2(vec2 values)"));
+    check(contains(glsl, "uintBitsToFloat(bits << 16u)"));
+    check(contains(glsl, "floatBitsToUint(values.x)"));
+    check(contains(glsl, "low + 0x7fffu + ((low >> 16u) & 1u)"));
+
+    check(!contains(glsl, "as_type"));
+    check(!contains(glsl, "asfloat"));
+    check(!contains(glsl, "float2"));
+
+    // Nothing here reaches for fp16, whose five exponent bits cannot hold
+    // bf16's range.
+    check(!contains(glsl, "Half2x16"));
+
+    expectGlslCompiles(graph);
+};
+
 // A GLSL sampler2D over a depth image hands back four channels, so the call
 // takes .r; on MSL and HLSL the declared type does that instead.
 auto tCodegenGlslDepthSample = test("GPU/codegenGlslDepthSample") = []

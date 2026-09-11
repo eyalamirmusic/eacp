@@ -1300,6 +1300,45 @@ infinity — while D3D specifies round-to-zero and saturates that magnitude to t
 largest finite half instead. Round before narrowing if the answer has to be the
 same on both.
 
+### bf16 weights, kept packed
+
+The same storage trick for the other 16-bit float, which is what a modern
+checkpoint actually ships — Gemma, Llama and Mistral are all bf16 on disk.
+bfloat16 is fp32 with the low sixteen mantissa bits dropped: eight exponent
+bits against fp16's five, and seven mantissa bits against ten. The family
+mirrors the fp16 one call for call:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    write(output, i, weights.readBFloat16(i) * input[i]);  // bf16 in, fp32 out
+}
+```
+
+| call | what it gives |
+| --- | --- |
+| `input.readBFloat16(i)` | element `i` of a buffer of bfloat16s, widened to a `Float`. `i` counts bfloat16s |
+| `input.readBFloat16x2(i)` | both bfloat16s of word `i` as a `Float2`, `.x` the low bits |
+| `unpackBFloat16x2(bits)` | the same, from a `UInt` already in hand |
+| `packBFloat16x2(pair)` | two floats narrowed and packed into a `UInt` |
+| `writeBFloat16x2(out, i, pair)` | that word stored at `i` — `readBFloat16x2` reads it back |
+
+**Do not reach a bf16 weight through the fp16 path.** The two are not
+interchangeable storage: with five exponent bits, fp16 flushes 1e-6 to a
+subnormal and takes 1e30 to infinity, both of which are ordinary bf16 values.
+A checkpoint routed through `readHalf` is not less precise, it is wrong.
+
+Widening is a shift and a bitcast — the sixteen bits back at the top of a word,
+nothing to rebias and no subnormal case — so it is exact and **bit-identical on
+every backend**, which the fp16 widening is too. Unlike `packHalf2`, the
+narrowing is bit-identical as well: no dialect has a bf16 instruction to hand
+the rounding to, so `packBFloat16x2` does round-to-nearest-even in integer
+arithmetic itself, and every backend emits the same arithmetic. A NaN is
+quieted rather than rounded, so it cannot carry into the exponent and come back
+as an infinity. `bfloat16FromFloat` / `bfloat16ToFloat` in `PackedVertex.h` are
+the host side of the same encoding, for filling a buffer or checking one.
+
 ## Mipmaps
 
 ```cpp

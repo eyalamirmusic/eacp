@@ -59,6 +59,7 @@ set(gpu_test_sources
         MipmapTests.cpp
         MultiDeviceTests.cpp
         MultisampledTargetTests.cpp
+        PackedBFloat16Tests.cpp
         PackedHalfTests.cpp
         PipelineStateTests.cpp
         ProgramGraphTests.cpp

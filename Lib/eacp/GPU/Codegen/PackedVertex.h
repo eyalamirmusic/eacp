@@ -44,6 +44,19 @@ namespace eacp::GPU
 std::uint16_t halfFromFloat(float value);
 float halfToFloat(std::uint16_t bits);
 
+// float -> bfloat16, and back: the host side of InputBuffer::readBFloat16 and
+// packBFloat16x2, and what fills or checks a packed bf16 buffer before it is
+// uploaded. No vertex format carries bf16 - these are here because they are the
+// same kind of thing as the pair above and belong beside it.
+//
+// bf16 is fp32 with the low sixteen mantissa bits dropped, so widening is exact
+// and is the bits back at the top of a word. Narrowing rounds to nearest even
+// in integer arithmetic, which is what the shader helper does bit for bit, so a
+// buffer packed here and read on any backend agrees with this. A NaN stays a
+// NaN rather than carrying into the exponent and becoming an infinity.
+std::uint16_t bfloat16FromFloat(float value);
+float bfloat16ToFloat(std::uint16_t bits);
+
 // Four bytes, read as 0..1 in the shader. What a vertex colour should be: this
 // is the storage ImDrawVert and every mesh format already use, and expanding it
 // to four floats costs twelve bytes a vertex to say nothing new.

@@ -374,7 +374,62 @@ constexpr auto log10HelperGlsl = "float eacpLog10(float x)\n"
                                  "    return log2(x) * 0.30102999566;\n"
                                  "}\n\n";
 
-const auto shaderHelpers = Array<ShaderHelper, 6> {
+// The bf16 narrowing, written in integer arithmetic on purpose.
+//
+// packHalf2 hands the rounding to the dialect's own narrowing instruction and
+// so cannot be bit-identical across the three. Here there is no instruction to
+// hand it to - no language has bf16 - and doing it by hand costs nothing and
+// buys an answer that is the same on every backend: add half an ulp plus the
+// low bit of what survives, which is round-to-nearest-even, then keep the top
+// sixteen bits.
+//
+// A NaN is quieted rather than rounded. Adding to one whose mantissa is all
+// ones carries into the exponent and lands on an infinity, which is a different
+// value rather than a coarser one, so the two are told apart first: a magnitude
+// above the infinity pattern is exactly a NaN.
+constexpr auto packBFloat16HelperMetal =
+    "inline uint eacpPackBFloat16x2(float2 values)\n"
+    "{\n"
+    "    uint low = as_type<uint>(values.x);\n"
+    "    uint high = as_type<uint>(values.y);\n"
+    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
+    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
+    "    low = lowIsNaN ? (low | 0x400000u)\n"
+    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
+    "    high = highIsNaN ? (high | 0x400000u)\n"
+    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
+    "    return (low >> 16u) | (high & 0xffff0000u);\n"
+    "}\n\n";
+
+constexpr auto packBFloat16HelperHlsl =
+    "uint eacpPackBFloat16x2(float2 values)\n"
+    "{\n"
+    "    uint low = asuint(values.x);\n"
+    "    uint high = asuint(values.y);\n"
+    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
+    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
+    "    low = lowIsNaN ? (low | 0x400000u)\n"
+    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
+    "    high = highIsNaN ? (high | 0x400000u)\n"
+    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
+    "    return (low >> 16u) | (high & 0xffff0000u);\n"
+    "}\n\n";
+
+constexpr auto packBFloat16HelperGlsl =
+    "uint eacpPackBFloat16x2(vec2 values)\n"
+    "{\n"
+    "    uint low = floatBitsToUint(values.x);\n"
+    "    uint high = floatBitsToUint(values.y);\n"
+    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
+    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
+    "    low = lowIsNaN ? (low | 0x400000u)\n"
+    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
+    "    high = highIsNaN ? (high | 0x400000u)\n"
+    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
+    "    return (low >> 16u) | (high & 0xffff0000u);\n"
+    "}\n\n";
+
+const auto shaderHelpers = Array<ShaderHelper, 9> {
     ShaderHelper {"eacpUnpackHalf2",
                   "inline float2 eacpUnpackHalf2(uint bits)\n"
                   "{\n"
@@ -426,6 +481,52 @@ const auto shaderHelpers = Array<ShaderHelper, 6> {
                   "{\n"
                   "    return packHalf2x16(values);\n"
                   "}\n\n"},
+
+    // bf16 is fp32 with the low sixteen mantissa bits dropped, so widening one
+    // is those bits put back at the top of a word - a shift and a bitcast, with
+    // nothing to rebias and no subnormal case. The three dialects differ only
+    // in how they spell the bitcast, and the result is bit-identical on all of
+    // them. Deliberately not routed through fp16: five exponent bits against
+    // bf16's eight would flush a small weight to zero and take a large one to
+    // infinity.
+    ShaderHelper {"eacpUnpackBFloat16x2",
+                  "inline float2 eacpUnpackBFloat16x2(uint bits)\n"
+                  "{\n"
+                  "    return float2(as_type<float>(bits << 16u),\n"
+                  "                  as_type<float>(bits & 0xffff0000u));\n"
+                  "}\n\n",
+                  "float2 eacpUnpackBFloat16x2(uint bits)\n"
+                  "{\n"
+                  "    return float2(asfloat(bits << 16u),\n"
+                  "                  asfloat(bits & 0xffff0000u));\n"
+                  "}\n\n",
+                  "vec2 eacpUnpackBFloat16x2(uint bits)\n"
+                  "{\n"
+                  "    return vec2(uintBitsToFloat(bits << 16u),\n"
+                  "                uintBitsToFloat(bits & 0xffff0000u));\n"
+                  "}\n\n"},
+
+    // One element chosen by a parity, as eacpReadHalf does: shifting the wanted
+    // half down and back up leaves it at the top of the word with zeroes under
+    // it, which is the widened float already.
+    ShaderHelper {"eacpReadBFloat16",
+                  "inline float eacpReadBFloat16(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return as_type<float>((bits >> (16u * parity)) << 16u);\n"
+                  "}\n\n",
+                  "float eacpReadBFloat16(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return asfloat((bits >> (16u * parity)) << 16u);\n"
+                  "}\n\n",
+                  "float eacpReadBFloat16(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return uintBitsToFloat((bits >> (16u * parity)) << 16u);\n"
+                  "}\n\n"},
+
+    ShaderHelper {"eacpPackBFloat16x2",
+                  packBFloat16HelperMetal,
+                  packBFloat16HelperHlsl,
+                  packBFloat16HelperGlsl},
 
     ShaderHelper {"log10", nullptr, nullptr, log10HelperGlsl}};
 
