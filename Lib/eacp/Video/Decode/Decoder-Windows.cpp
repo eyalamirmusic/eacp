@@ -4,6 +4,8 @@
 
 #include "FrameImage.h"
 
+#include <eacp/Video/WideString-Windows.h>
+
 #include <d3d11.h>
 #include <mfapi.h>
 #include <mferror.h>
