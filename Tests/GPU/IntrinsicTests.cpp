@@ -113,6 +113,26 @@ struct HyperbolicKernel final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
+// The repaired tanh, one value per thread. What the sweep it runs over is for
+// is the two tails: a driver is free to evaluate tanh through exp, and the one
+// eacp compiles its library with - fast math, no MTLCompileOptions - does, so
+// the native builtin hands back a NaN out where this has to hand back a one.
+struct SaturatingTanhKernel final : ComputeProgram
+{
+    SaturatingTanhKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, saturatingTanh(input[i]));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
 struct Log10Kernel final : ComputeProgram
 {
     Log10Kernel() { compile(); }
@@ -275,6 +295,46 @@ auto tErrorFunctionGoesThroughAHelper =
     }
 };
 
+// The saturating tanh is a helper on all three backends rather than a rename:
+// what it adds is the two constant tails, which no dialect spells for us.
+auto tSaturatingTanhGoesThroughAHelper =
+    test("Intrinsics/saturatingTanhIsEmittedAsAHelper") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(
+        output, i, saturatingTanh(input[i]) + saturatingTanh(input.read4(i)).w());
+
+    const auto& graph = builder.graph();
+
+    for (const auto& source: {emitMetal(graph), emitHlsl(graph)})
+    {
+        check(contains(source, "float eacpSaturatingTanh(float x)"));
+        check(contains(source, "x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x))"));
+
+        for (const auto& width:
+             {std::string("float2"), std::string("float3"), std::string("float4")})
+            check(contains(
+                source, (width + " eacpSaturatingTanh(" + width + " x)").c_str()));
+
+        check(source.find("eacpSaturatingTanh(")
+              < source.rfind("eacpSaturatingTanh("));
+    }
+
+    auto glsl = emitGlsl(graph);
+
+    check(contains(glsl, "float eacpSaturatingTanh(float x)"));
+    check(contains(glsl, "vec4 eacpSaturatingTanh(vec4 x)"));
+    check(contains(glsl, "x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x))"));
+    check(!contains(glsl, "float4"));
+
+    expectGlslCompiles(graph);
+};
+
 // The helpers are emitted only into shaders that call them.
 auto tHelpersAreNotAlwaysEmitted =
     test("Intrinsics/emitsTheErrorFunctionHelperOnlyWhenUsed") = []
@@ -282,6 +342,7 @@ auto tHelpersAreNotAlwaysEmitted =
     auto plain = PlainIntrinsicKernel {};
     const auto& source = plain.source().source;
 
+    check(!contains(source, "eacpSaturatingTanh"));
     check(!contains(source, "eacpErf"));
     check(!contains(source, "eacpErfc"));
 };
@@ -323,6 +384,67 @@ auto tHyperbolics = test("Intrinsics/computesTheHyperbolics") = []
         check(near(result[i * 3], std::tanh(x), tolerance(std::tanh(x))));
         check(near(result[i * 3 + 1], std::sinh(x), tolerance(std::sinh(x))));
         check(near(result[i * 3 + 2], std::cosh(x), tolerance(std::cosh(x))));
+    }
+};
+
+// The saturating tanh, swept from the origin out past where a fast-math tanh
+// stops being a number at all. std::tanh is the reference over the whole sweep,
+// which is the claim: the two agree everywhere, and where the native builtin
+// on this backend does not agree with either, this one still does.
+auto tSaturatingTanh = test("Intrinsics/saturatingTanhAnswersTheTails") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto values = Vector<float> {};
+
+    // The small end first, the origin and its negative zero included, then the
+    // body of the curve, then the tails - 990 being what a tanh GELU's cubic
+    // argument reaches for an activation of thirty, which is the value that
+    // came back NaN and started this.
+    for (auto small: {0.0f, -0.0f, 1.0e-20f, -1.0e-20f, 1.0e-7f, -1.0e-7f})
+        values.add(small);
+
+    for (auto i = -120; i <= 120; ++i)
+        values.add((float) i / 20.0f);
+
+    for (auto far: {9.0f, 9.5f, 10.0f, 10.5f, 30.0f, 120.0f, 990.0f, 1.0e20f})
+    {
+        values.add(far);
+        values.add(-far);
+    }
+
+    auto count = values.size();
+
+    auto input = device.makeBuffer(
+        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
+    auto output = device.makeBuffer(count * (int) sizeof(float));
+
+    auto kernel = SaturatingTanhKernel {};
+    kernel.input = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    auto result = runKernel(kernel, output, count, 1);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto x = values[i];
+
+        check(std::isfinite(result[i]));
+        check(near(result[i], std::tanh((double) x), 1.0e-6));
+
+        // And exactly, not nearly, from the threshold outward - ten itself
+        // included, since the helper compares inclusively so that the value it
+        // documents as the threshold is one it answers. Between 9.011 and ten
+        // the function has already rounded to one in float32 and the native
+        // builtin is what returns it, which is a claim about the driver's tanh
+        // rather than about this - so the tolerance above covers that stretch
+        // and this covers the constant.
+        if (std::fabs(x) >= 10.0f)
+            check(result[i] == (x > 0.0f ? 1.0f : -1.0f));
     }
 };
 

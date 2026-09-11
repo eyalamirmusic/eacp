@@ -191,6 +191,24 @@ struct ReadBFloat16x2Kernel final : ComputeProgram
     EACP_SHADER(weights, output)
 };
 
+// Four bfloat16s at a time, which is two words: the width a weight walk wants,
+// and the one the record read underneath turns into a single eight-byte load.
+struct ReadBFloat16x4Kernel final : ComputeProgram
+{
+    ReadBFloat16x4Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, weights.readBFloat16x4(i));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
 // Widen a word and narrow it straight back, storing the packed result in the
 // float slot it came out of - the whole bf16-storage round trip in one line.
 struct RoundTripKernel final : ComputeProgram
@@ -349,6 +367,17 @@ bool contains(const std::string& text, const char* needle)
 {
     return text.find(needle) != std::string::npos;
 }
+
+int countOccurrences(const std::string& haystack, const std::string& needle)
+{
+    auto count = 0;
+
+    for (auto found = haystack.find(needle); found != std::string::npos;
+         found = haystack.find(needle, found + needle.size()))
+        ++count;
+
+    return count;
+}
 } // namespace
 
 // What the encoding *is*, pinned against values rather than against the shift
@@ -505,6 +534,52 @@ auto tReadPair = test("PackedBFloat16/readBFloat16x2ReadsBothHalvesOfAWord") = [
     {
         check(matches(result[i * 2], widened((std::uint16_t) (words[i] & 0xffffu))));
         check(matches(result[i * 2 + 1], widened((std::uint16_t) (words[i] >> 16))));
+    }
+};
+
+// Four elements across two words, in the order readBFloat16 walks them: the low
+// half of the first word, its high half, then the second word's two.
+auto tReadQuad = test("PackedBFloat16/readBFloat16x4ReadsFourAcrossTwoWords") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto words = everyPackedPair();
+    auto records = words.size() / 2;
+
+    auto input = storageOf(device, words);
+    auto output = device.makeBuffer(records * 4 * (int) sizeof(float));
+
+    auto kernel = ReadBFloat16x4Kernel {};
+    kernel.weights = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    runKernel(device, kernel, records);
+    auto result = floatsOf(output);
+
+    for (auto i = 0; i < records; ++i)
+    {
+        auto low = words[i * 2];
+        auto high = words[i * 2 + 1];
+
+        check(matches(result[i * 4], widened((std::uint16_t) (low & 0xffffu))));
+        check(matches(result[i * 4 + 1], widened((std::uint16_t) (low >> 16))));
+        check(matches(result[i * 4 + 2], widened((std::uint16_t) (high & 0xffffu))));
+        check(matches(result[i * 4 + 3], widened((std::uint16_t) (high >> 16))));
+    }
+
+    // And element by element it is the same walk readBFloat16 makes, which is
+    // what says the two spellings address one layout.
+    for (auto element = 0; element < records * 4; ++element)
+    {
+        auto word = words[element / 2];
+        auto half = (element % 2) == 0 ? (std::uint16_t) (word & 0xffffu)
+                                       : (std::uint16_t) (word >> 16);
+
+        check(matches(result[element], widened(half)));
     }
 };
 
@@ -686,6 +761,62 @@ auto tSourceIsRight = test("PackedBFloat16/bothBackendsSpellTheHelpers") = []
     check(!contains(hlsl, "f16tof32"));
     check(!contains(hlsl, "f32tof16"));
     check(!contains(hlsl, "as_type"));
+};
+
+// The four-wide read, per backend: two words fetched as one record - which is a
+// single packed load on Metal and two subscripts where there is no such
+// spelling - then the same two unpack helpers over what came back.
+auto tQuadSourceIsRight = test("PackedBFloat16/theFourWideReadIsOneRecordRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, weights.readBFloat16x4(i));
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    // The index counts records of four bfloat16s, which is two words - so the
+    // record read underneath strides by two, and the widening is the same
+    // helper the two-wide read calls, once per word.
+    for (const auto& source: {metal, hlsl, glsl})
+    {
+        check(contains(source, "uint t1 = (gid * 2u);"));
+
+        // Three spellings of the name: the one definition and the two calls,
+        // one per word, which is what says nothing unpacks twice over.
+        check(countOccurrences(source, "eacpUnpackBFloat16x2(") == 3);
+    }
+
+    // One eight-byte load on Metal, and the two words taken out of it in
+    // registers rather than fetched twice.
+    check(contains(metal,
+                   "float2 t2 = float2(*((device const packed_float2*) "
+                   "(buffer0 + t1)));"));
+    check(contains(metal,
+                   "float4 t3 = float4(eacpUnpackBFloat16x2(as_type<uint>((t2).x)), "
+                   "eacpUnpackBFloat16x2(as_type<uint>((t2).y)));"));
+    check(!contains(metal, "buffer0[t1]"));
+
+    // Two scalar loads elsewhere, since neither dialect can reinterpret a run
+    // of floats as anything wider - the low half of the first word first, which
+    // is the order readBFloat16 walks the elements in.
+    check(contains(hlsl, "float2 t2 = float2(buffer0[t1], buffer0[t1 + 1u]);"));
+    check(contains(hlsl,
+                   "float4 t3 = float4(eacpUnpackBFloat16x2(asuint((t2).x)), "
+                   "eacpUnpackBFloat16x2(asuint((t2).y)));"));
+
+    check(contains(glsl, "vec2 t2 = vec2(buffer0[t1], buffer0[t1 + 1u]);"));
+    check(contains(glsl,
+                   "vec4 t3 = vec4(eacpUnpackBFloat16x2(floatBitsToUint((t2).x)), "
+                   "eacpUnpackBFloat16x2(floatBitsToUint((t2).y)));"));
+
+    expectGlslCompiles(graph);
 };
 
 // Each helper is emitted only into shaders that call it, so a kernel narrowing

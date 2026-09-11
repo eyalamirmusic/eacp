@@ -148,6 +148,27 @@ public:
     // ranges are four-byte everywhere, this backend included.
     int storageBufferOffsetAlignment() const;
 
+    // How many bytes of threadgroup memory one group may declare on this
+    // device - the budget every `shared<>` array in a kernel is spent out of,
+    // the emitter's own reduction and SIMD-matrix scratch included.
+    //
+    // It is a device property on two of the three backends and a shader-model
+    // constant on the third: Metal's maxThreadgroupMemoryLength is 32 KB on
+    // every Mac eacp runs on and larger on some Apple-family parts, D3D12 at
+    // cs_5_0 gives a group a flat 32 KB of groupshared, and Vulkan reports
+    // maxComputeSharedMemorySize, which the spec floors at 16 KB. So 16 KB is
+    // what a kernel may assume anywhere and 32 KB is what the two backends with
+    // a fixed number give.
+    //
+    // Worth asking rather than knowing, because the alternative is what a
+    // kernel author does today: carry the number in a comment, size the tile by
+    // hand against it, and find out from a pipeline that would not build.
+    // ComputeProgram::threadgroupMemoryBytes() is the other half - what the
+    // kernel spends - and prepare() names the overspend before the backend
+    // reports it as a pipeline it could not make. An invalid Device answers
+    // zero, and a check against zero stands down.
+    int maxThreadgroupMemory() const;
+
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;

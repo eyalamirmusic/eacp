@@ -2200,8 +2200,9 @@ auto tCodegenCompute1DUnchanged = test("GPU/codegenCompute1DKeepsScalarId") = []
 // Vector reads and writes over a buffer of records: read4(i) is elements
 // 4i..4i+3 and write(out, i, Float4) puts four back at the same place, so a
 // kernel over a struct of four floats never spells the stride. The buffer is
-// still a run of floats underneath - N scalar accesses, one index expression -
-// which is what keeps its bytes bindable as a per-instance stream.
+// still a run of floats underneath, which is what keeps its bytes bindable as a
+// per-instance stream - but the read of one is a single sixteen-byte load where
+// the dialect has a spelling for one.
 auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = []
 {
     auto builder = ShaderBuilder {};
@@ -2216,7 +2217,6 @@ auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = 
     for (const auto& dialect: everyDialect(builder.graph()))
     {
         const auto& text = dialect.source;
-        auto vec4 = std::string(dialect.spell(ValueType::Float4));
 
         // The base index is computed once for the whole kernel. The read and
         // the write build it through separate calls, but the product is the
@@ -2224,22 +2224,36 @@ auto tCodegenComputeVectorElements = test("GPU/codegenComputeVectorElements") = 
         check(contains(text, "uint t0 = (gid * 4u);"));
         check(countOccurrences(text, "(gid * 4u)") == 1);
 
-        // The three offsets off that base are shared the same way - each is
-        // addressed by the read and by the write, so each is named once.
-        check(contains(text, "uint t1 = (t0 + 1u);"));
-        check(contains(text, "uint t2 = (t0 + 2u);"));
-        check(contains(text, "uint t3 = (t0 + 3u);"));
-
-        check(contains(text,
-                       vec4 + " t4 = (" + vec4
-                           + "(buffer0[t0], buffer0[t1], buffer0[t2], buffer0[t3]) "
-                             "* 2.0);"));
-
         // One store per component, at the record's own offsets.
-        check(contains(text, "buffer1[t0] = (t4).x;"));
-        check(contains(text, "buffer1[t1] = (t4).y;"));
-        check(contains(text, "buffer1[t2] = (t4).z;"));
-        check(contains(text, "buffer1[t3] = (t4).w;"));
+        check(contains(text, "buffer1[t0] = (t1).x;"));
+        check(contains(text, "buffer1[(t0 + 1u)] = (t1).y;"));
+        check(contains(text, "buffer1[(t0 + 2u)] = (t1).z;"));
+        check(contains(text, "buffer1[(t0 + 3u)] = (t1).w;"));
+    }
+
+    // Metal reads the four floats as one packed vector through the pointer it
+    // was handed - a packed one, because a BufferRange may start at any
+    // four-byte offset and a float4 load may not.
+    auto metal = emitMetal(builder.graph());
+
+    check(contains(
+        metal,
+        "float4 t1 = (float4(*((device const packed_float4*) (buffer0 + t0))) "
+        "* 2.0);"));
+    check(!contains(metal, "buffer0[t0]"));
+
+    // The other two have nothing to reinterpret: a StructuredBuffer<float> and
+    // an std430 block of floats are runs of scalars and are read as such.
+    for (const auto& dialect: {Dialect {emitHlsl(builder.graph()), false},
+                               Dialect {emitGlsl(builder.graph()), true}})
+    {
+        auto vec4 = std::string(dialect.spell(ValueType::Float4));
+
+        check(contains(dialect.source,
+                       vec4 + " t1 = (" + vec4
+                           + "(buffer0[t0], buffer0[t0 + 1u], buffer0[t0 + 2u], "
+                             "buffer0[t0 + 3u]) * 2.0);"));
+        check(!contains(dialect.source, "packed_float4"));
     }
 
     expectGlslCompiles(builder.graph());
@@ -2260,8 +2274,10 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
 
     auto metal = emitMetal(builder.graph());
     check(contains(metal, "uint t0 = (gid * 2u);"));
-    check(contains(metal, "float2 t2 = float2(buffer0[t0], buffer0[t1]);"));
-    check(contains(metal, "buffer1[t1] = (t2).y;"));
+    check(contains(
+        metal,
+        "float2 t1 = float2(*((device const packed_float2*) (buffer0 + t0)));"));
+    check(contains(metal, "buffer1[(t0 + 1u)] = (t1).y;"));
     check(!contains(metal, "t0 + 2u"));
 
     auto triples = ShaderBuilder {};
@@ -2271,10 +2287,16 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
 
     auto hlsl = emitHlsl(triples.graph());
     check(contains(hlsl, "uint t0 = (gid * 3u);"));
-    check(contains(hlsl,
-                   "float3 t3 = float3(buffer0[t0], buffer0[t1], buffer0[t2]);"));
-    check(contains(hlsl, "buffer1[t2] = (t3).z;"));
+    check(contains(
+        hlsl,
+        "float3 t1 = float3(buffer0[t0], buffer0[t0 + 1u], buffer0[t0 + 2u]);"));
+    check(contains(hlsl, "buffer1[(t0 + 2u)] = (t1).z;"));
     check(!contains(hlsl, "t0 + 3u"));
+
+    // And the three-wide Metal form is the twelve-byte packed one, not a
+    // float4 load that would read a float past the record.
+    check(contains(emitMetal(triples.graph()), "packed_float3"));
+    check(!contains(emitMetal(triples.graph()), "packed_float4"));
 
     expectGlslCompiles(builder.graph());
     expectGlslCompiles(triples.graph());
@@ -2328,15 +2350,18 @@ auto tCodegenFragmentBufferRead = test("GPU/codegenFragmentBufferRead") = []
                        + ") readonly buffer Buffer0\n{\n    float buffer0[];\n};"));
     check(!contains(glsl, "} buffer0;"));
 
-    for (const auto& dialect: everyDialect(builder.graph()))
+    for (const auto& dialect: {Dialect {hlsl, false}, Dialect {glsl, true}})
     {
         auto vec3 = std::string(dialect.spell(ValueType::Float3));
 
         check(contains(dialect.source, "uint t0 = (uniforms.u0 * 3u);"));
-        check(contains(
-            dialect.source,
-            vec3 + "(buffer0[t0], buffer0[(t0 + 1u)], buffer0[(t0 + 2u)])"));
+        check(contains(dialect.source,
+                       vec3 + "(buffer0[t0], buffer0[t0 + 1u], buffer0[t0 + 2u])"));
     }
+
+    check(contains(metal, "uint t0 = (uniforms.u0 * 3u);"));
+    check(
+        contains(metal, "float3(*((device const packed_float3*) (buffer0 + t0)))"));
 
     expectGlslCompiles(builder.graph());
 };
