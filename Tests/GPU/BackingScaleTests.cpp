@@ -88,7 +88,8 @@ auto tScaleMatchesRenderedPixels = test("BackingScale/matchesRenderedPixelSize")
 
 // The callback is never null, so the framework can fire it without a null check
 // and an app that ignores scale changes needs no boilerplate.
-auto tNotificationDefaultsToNoOp = test("BackingScale/notificationDefaultsToNoOp") = []
+auto tNotificationDefaultsToNoOp =
+    test("BackingScale/notificationDefaultsToNoOp") = []
 {
     if (!Device::shared().isValid())
         return;
@@ -129,8 +130,9 @@ auto tHookIsVirtualOnView = test("BackingScale/hookIsVirtualOnBaseView") = []
     check(view.changes == 1);
 };
 
-// The same call on a GPUView re-syncs the drawable and stays safe to invoke
-// directly -- the platform hook calls exactly this.
+// The bracket the platform dispatches around it re-syncs the drawable on a
+// GPUView, and the three together stay safe to invoke directly -- the platform
+// hook calls exactly this.
 auto tHookIsSafeOnGPUView = test("BackingScale/hookIsSafeOnGPUView") = []
 {
     if (!Device::shared().isValid())
@@ -140,7 +142,9 @@ auto tHookIsSafeOnGPUView = test("BackingScale/hookIsSafeOnGPUView") = []
     view.setBounds({0.f, 0.f, 48.f, 48.f});
 
     auto& asBase = static_cast<Graphics::View&>(view);
+    asBase.resizeStarted();
     asBase.backingScaleChanged();
+    asBase.resizeFinished();
 
     check(view.backingScale() > 0.f);
 };

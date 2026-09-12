@@ -144,18 +144,35 @@ struct Frame::Native
     bool offscreen = false;
 };
 
-Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
+Frame::Frame(Device& device,
+             void* drawable,
+             void* msaaTexture,
+             void* depthTexture,
+             float backingScaleToUse)
     : impl(device, drawable, msaaTexture, depthTexture)
+    , scale(backingScaleToUse)
 {
     device.beginFrame();
     impl->beginTiming();
 }
 
-Frame::Frame(Device& device, const OffscreenTarget& target)
+Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleToUse)
     : impl(device, target)
+    , scale(backingScaleToUse)
 {
     device.beginFrame();
     impl->beginTiming();
+}
+
+// The back buffer's size, which the off-screen path carries in a D3D12Drawable
+// of its own - the same pair of numbers beginPass sets the viewport from.
+Graphics::Point Frame::pixelSize() const
+{
+    if (impl->drawable == nullptr)
+        return {};
+
+    return {static_cast<float>(impl->drawable->width),
+            static_cast<float>(impl->drawable->height)};
 }
 
 Frame::~Frame()

@@ -279,24 +279,19 @@ int GPUView::framesInFlight() const
     return impl->framesInFlight;
 }
 
-void GPUView::resized()
+// Serves both events: the drawable follows the new bounds or the new scale, and
+// updateSize() fires onBackingScaleChanged for itself when the scale is what
+// moved.
+void GPUView::resizeStarted()
 {
-    Graphics::View::resized();
     impl->updateSize();
-
-    // Draw at the new size now, synchronously within the layout/resize pass,
-    // instead of waiting for the async display link a frame or more later.
-    renderNow();
 }
 
-void GPUView::backingScaleChanged()
+void GPUView::resizeFinished()
 {
-    Graphics::View::backingScaleChanged();
-
-    // Resize the drawable to the new scale (same logical bounds, different pixel
-    // count) and fire onBackingScaleChanged, then redraw: the presented frame
-    // was rasterized for the old scale.
-    impl->updateSize();
+    // Synchronously inside the layout pass, and after the subclass has answered
+    // the new size: presentsWithTransaction makes this the frame the compositor
+    // shows, so it has to be drawn with the new projection.
     renderNow();
 }
 
@@ -340,7 +335,8 @@ void GPUView::renderNow()
         auto frame = Frame(Device::shared(),
                            (__bridge void*) drawable,
                            (__bridge void*) impl->msaaTexture.get(),
-                           (__bridge void*) impl->depthTexture.get());
+                           (__bridge void*) impl->depthTexture.get(),
+                           backingScale());
         render(frame);
     }
 }
@@ -392,7 +388,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
             auto target = OffscreenTarget {(__bridge void*) colorTexture,
                                            (__bridge void*) msaaTexture,
                                            (__bridge void*) depthTexture};
-            auto frame = Frame(Device::shared(), target);
+            auto frame = Frame(Device::shared(), target, scale);
 
             // Rendered as a view of this scale: a snapshot at 1x on a 2x
             // display would otherwise rasterize its masks and glyphs, and
@@ -478,6 +474,10 @@ bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
     auto device = (__bridge id<MTLDevice>) Device::shared().nativeDevice();
     auto samples = (NSUInteger) impl->sampleCount;
 
+    const auto logicalWidth = getLocalBounds().w;
+    const auto targetScale =
+        logicalWidth > 0.f ? (float) pixelWidth / logicalWidth : backingScale();
+
     @autoreleasepool
     {
         // The colour target aliases the CVPixelBuffer's IOSurface, so render()
@@ -525,7 +525,12 @@ bool GPUView::renderNativeContentToTarget(void* nativeTarget, float)
         auto target = OffscreenTarget {(__bridge void*) colorTexture,
                                        (__bridge void*) msaaTexture,
                                        (__bridge void*) depthTexture};
-        auto frame = Frame(Device::shared(), target);
+
+        // Measured against the view rather than taken from the caller: the
+        // recorder sizes its buffers from a probe and rounds them to even, so
+        // the encoder's `scale` is not the one this buffer actually came out at,
+        // and it is this one that makes frame.logicalSize() the view's bounds.
+        auto frame = Frame(Device::shared(), target, targetScale);
         render(frame);
     }
 

@@ -181,16 +181,32 @@ struct Frame::Native
     Device* device = nullptr;
 };
 
-Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
+Frame::Frame(Device& device,
+             void* drawable,
+             void* msaaTexture,
+             void* depthTexture,
+             float backingScaleToUse)
     : impl(device, drawable, msaaTexture, depthTexture)
+    , scale(backingScaleToUse)
 {
     device.beginFrame();
 }
 
-Frame::Frame(Device& device, const OffscreenTarget& target)
+Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleToUse)
     : impl(device, target)
+    , scale(backingScaleToUse)
 {
     device.beginFrame();
+}
+
+Graphics::Point Frame::pixelSize() const
+{
+    auto target = impl->storeTexture();
+
+    if (target == nil)
+        return {};
+
+    return {(float) target.width, (float) target.height};
 }
 
 Frame::~Frame()

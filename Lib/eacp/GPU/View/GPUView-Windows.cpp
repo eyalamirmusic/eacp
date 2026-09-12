@@ -174,6 +174,20 @@ struct GPUView::Native : DeviceResourceHolder
 
         updateMultisampleTexture();
         updateDepthTexture();
+
+        notifyScaleChange(scale);
+    }
+
+    // Told after the swapchain is consistent at the new scale, so a handler
+    // rebuilding pixel-sized resources sees what it will draw into. The first
+    // pass only records: there is no previous scale for it to differ from.
+    void notifyScaleChange(float newScale)
+    {
+        const auto changed = backingScale > 0.f && newScale != backingScale;
+        backingScale = newScale;
+
+        if (changed)
+            view.onBackingScaleChanged(newScale);
     }
 
     void createSwapChain()
@@ -476,7 +490,8 @@ struct GPUView::Native : DeviceResourceHolder
             auto frame = Frame(Device::shared(),
                                &drawable,
                                useMsaa ? &msaa : nullptr,
-                               useDepth ? &depth : nullptr);
+                               useDepth ? &depth : nullptr,
+                               dpiScale());
             view.render(frame);
         }
 
@@ -508,8 +523,8 @@ struct GPUView::Native : DeviceResourceHolder
             reported = true;
 
             char code[16] = {};
-            std::snprintf(code, sizeof(code), "0x%08lX",
-                          static_cast<unsigned long>(reason));
+            std::snprintf(
+                code, sizeof(code), "0x%08lX", static_cast<unsigned long>(reason));
 
             LOG("GPUView: the D3D12 device was removed, reason ", code);
         }
@@ -559,6 +574,10 @@ struct GPUView::Native : DeviceResourceHolder
     bool stencilEnabled = false;
     UINT width = 0;
     UINT height = 0;
+
+    // Device pixels per logical point, refreshed by updateSize(). Zero until the
+    // first update, which is how the initial scale is told apart from a change.
+    float backingScale = 0.f;
 
     IDCompositionDesktopDevice* compositionDevice = nullptr;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> spriteVisual;
@@ -672,23 +691,18 @@ int GPUView::framesInFlight() const
     return impl->framesInFlight;
 }
 
-void GPUView::resized()
+// Serves both events: the swapchain follows the new bounds or the new scale
+// (same logical bounds, different pixel count), and updateSize() fires
+// onBackingScaleChanged for itself when the scale is what moved.
+void GPUView::resizeStarted()
 {
-    Graphics::View::resized();
     impl->updateSize();
     repaint();
 }
 
-void GPUView::backingScaleChanged()
-{
-    Graphics::View::backingScaleChanged();
-
-    // Resize the swapchain to the new scale (same logical bounds, different
-    // pixel count), then redraw: the presented frame was built for the old one.
-    impl->updateSize();
-    onBackingScaleChanged(backingScale());
-    repaint();
-}
+// Nothing to order after the subclass: the repaint above draws the frame, by
+// which time every override has run.
+void GPUView::resizeFinished() {}
 
 float GPUView::backingScale() const
 {
@@ -893,7 +907,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         target.msaaTexture = useMsaa ? &msaaTarget : nullptr;
         target.depthTexture = depthTexture ? &depthTarget : nullptr;
 
-        auto frame = Frame(Device::shared(), target);
+        auto frame = Frame(Device::shared(), target, scale);
 
         // Rendered as a view of this scale: see the Apple side.
         renderScale = scale;

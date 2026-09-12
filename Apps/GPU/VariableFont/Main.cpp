@@ -185,32 +185,29 @@ struct VariableFontView final : GPU::GPUView
         staticColumn = specimenColumn + widest + columnGap;
     }
 
-    void resized() override
+    void resized() override { repaint(); }
+
+    // The size both renderers project from, taken off the frame each time: it
+    // is a uniform on each rather than anything they compiled, and read there it
+    // is always the size of the target being drawn into.
+    void ensureRenderers(Graphics::Point size)
     {
-        GPUView::resized();
+        if (size.x <= 0.f || size.y <= 0.f)
+            return;
 
-        const auto bounds = getLocalBounds();
+        if (sprites)
+            sprites->setLogicalSize(size);
+        else
+            sprites.emplace(size, sampleCount());
 
-        if (bounds.w > 0 && bounds.h > 0)
-        {
-            if (sprites)
-                sprites->setLogicalSize({bounds.w, bounds.h});
-            else
-                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+        if (!glyphs)
+            glyphs.emplace();
 
-            if (!glyphs)
-                glyphs.emplace();
-
-            glyphs->setViewportSize({bounds.w, bounds.h});
-        }
-
-        repaint();
+        glyphs->setViewportSize(size);
     }
 
     void backingScaleChanged() override
     {
-        GPUView::backingScaleChanged();
-
         ensureAtlas();
         repaint();
     }
@@ -283,7 +280,7 @@ struct VariableFontView final : GPU::GPUView
             top + (rowHeight - metrics.lineHeight()) * 0.5f + metrics.ascent;
 
         if (pass == Pass::draw)
-            sprites->fillRect({0.f, top, getLocalBounds().w, rowHeight},
+            sprites->fillRect({0.f, top, sprites->getLogicalSize().x, rowHeight},
                               live ? liveRowFill : rowFill);
 
         const auto label = std::to_string(weight);
@@ -379,6 +376,7 @@ struct VariableFontView final : GPU::GPUView
     void render(GPU::Frame& frame) override
     {
         ensureAtlas();
+        ensureRenderers(frame.logicalSize());
 
         auto pass = frame.beginPass({background});
 
