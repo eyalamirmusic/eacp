@@ -9,8 +9,7 @@ using namespace eacp;
 // server whether it changed. It throws if the file could not be had.
 int main()
 {
-    auto options = OnlineResource::Options {};
-    options.url = "https://media.w3.org/2010/05/sintel/trailer.mp4";
-
-    LOG(OnlineResource::fetch(options).path.str());
+    auto res = OnlineResource::fetch(
+        {.info = {.url = "https://www.google.com/robots.txt"}});
+    LOG(res->read());
 }

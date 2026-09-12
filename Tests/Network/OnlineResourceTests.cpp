@@ -425,8 +425,8 @@ auto tFetchAsync = test("OnlineResource/fetchAsyncOwnsTheObjectAndCallsBack") = 
     auto finished = std::optional<OnlineResource::Result> {};
 
     auto options = OnlineResource::Options {};
-    options.name = "Data";
-    options.url = server.url("data.bin");
+    options.info.name = "Data";
+    options.info.url = server.url("data.bin");
     options.directory = directory;
     options.progressInterval = eacp::Time::MS {5};
     options.onProgress = [&](const OnlineResource::Progress& progress)
@@ -456,8 +456,8 @@ auto tFetchBlocking = test("OnlineResource/fetchBlocksUntilTheResourceIsOnDisk")
     auto finishedBeforeReturn = false;
 
     auto options = OnlineResource::Options {};
-    options.name = "Data";
-    options.url = server.url("data.txt");
+    options.info.name = "Data";
+    options.info.url = server.url("data.txt");
     options.directory = directory;
     options.onFinished = [&](const OnlineResource::Result&)
     { finishedBeforeReturn = true; };
@@ -490,10 +490,10 @@ auto tFetchTimesOut = test("OnlineResource/fetchThrowsAfterItsTimeout") = []
                         }));
 
     auto options = OnlineResource::Options {};
-    options.name = "Late";
-    options.url = baseUrl(server.boundPort()) + "/late.txt";
+    options.info.name = "Late";
+    options.info.url = baseUrl(server.boundPort()) + "/late.txt";
     options.directory = scratchDirectory("timeout");
-    options.timeout = eacp::Time::MS {100};
+    options.info.timeout = eacp::Time::MS {100};
 
     auto finished = std::optional<OnlineResource::Result> {};
     options.onFinished = [&](const OnlineResource::Result& result)
@@ -537,7 +537,7 @@ auto tFetchThrowsOnFailure =
                         }));
 
     auto options = OnlineResource::Options {};
-    options.url = baseUrl(server.boundPort()) + "/missing.bin";
+    options.info.url = baseUrl(server.boundPort()) + "/missing.bin";
     options.directory = scratchDirectory("throws");
 
     auto message = std::string {};

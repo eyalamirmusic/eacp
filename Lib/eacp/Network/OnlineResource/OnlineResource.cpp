@@ -492,9 +492,8 @@ Threads::Async<OnlineResource::Result>
     startOwned(const std::shared_ptr<OwnedFetch>& owned,
                OnlineResource::Options options)
 {
-    auto info = static_cast<OnlineResource::Info&>(options);
     owned->resource = std::make_unique<OnlineResource>(
-        std::move(info), std::move(options.directory), options.freshness);
+        options.info, std::move(options.directory), options.freshness);
 
     auto async = owned->resource->start();
 

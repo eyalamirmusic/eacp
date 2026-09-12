@@ -35,14 +35,14 @@ public:
     {
         // For messages; the file name when empty. The file on disk is named
         // by fileName.
-        std::string name;
-        std::string url;
+        std::string name {};
+        std::string url {};
 
         // Empty takes the URL's last path segment. Ends in .zip to unpack.
-        std::string fileName;
+        std::string fileName {};
 
         // Bumping it forces a download regardless of what the server says.
-        std::string version;
+        std::string version {};
 
         // Wall-clock limit on the transfer, after which it fails. Zero
         // leaves the platform's own limit in place.
@@ -63,6 +63,9 @@ public:
 
     struct Result
     {
+        const FilePath* operator->() const { return &path; }
+        const FilePath& operator*() const { return path; }
+
         bool ok = false;
         bool cancelled = false;
 
@@ -106,8 +109,10 @@ public:
     // it goes, and what to call as it arrives. Both callbacks run on the
     // main thread; onProgress every progressInterval while a transfer is
     // under way and once more when it is over, onFinished exactly once.
-    struct Options : Info
+    struct Options
     {
+        Info info {};
+
         FilePath directory = defaultDirectory();
         Freshness freshness = Freshness::check;
 

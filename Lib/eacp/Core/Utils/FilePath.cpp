@@ -130,6 +130,11 @@ FilePath FilePath::fromWide(std::wstring_view wide)
     return path;
 }
 
+std::string FilePath::read() const
+{
+    return Files::readFile(*this);
+}
+
 void FilePath::assignFromWide(std::wstring_view wide)
 {
     text = Strings::narrow(wide);

@@ -97,6 +97,9 @@ public:
 
     bool operator==(const FilePath& other) const = default;
 
+    //Reads the contents of the file to a std::string
+    std::string read() const;
+
 private:
     // UTF-16 or UTF-32 (by wchar_t width) to UTF-8, with '\' normalized to
     // '/' and invalid units mapped to U+FFFD — never throws.
