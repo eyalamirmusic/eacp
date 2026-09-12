@@ -41,7 +41,9 @@
 - (void)layoutSubviews
 {
     [super layoutSubviews];
+    cppView->resizeStarted();
     cppView->resized();
+    cppView->resizeFinished();
 }
 
 - (void)setFrame:(CGRect)newFrame

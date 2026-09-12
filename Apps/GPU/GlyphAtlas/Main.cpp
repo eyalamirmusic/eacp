@@ -125,34 +125,26 @@ struct AtlasTextView final : GPU::GPUView
         builtAtScale = scale;
     }
 
-    void resized() override
+    void resized() override { repaint(); }
+
+    void ensureRenderers(Graphics::Point size)
     {
-        GPUView::resized();
+        if (size.x <= 0.f || size.y <= 0.f)
+            return;
 
-        const auto bounds = getLocalBounds();
+        if (sprites)
+            sprites->setLogicalSize(size);
+        else
+            sprites.emplace(size, sampleCount());
 
-        if (bounds.w > 0 && bounds.h > 0)
-        {
-            // Both renderers take the new size the same cheap way: it is a
-            // uniform on each, not anything either of them compiled.
-            if (sprites)
-                sprites->setLogicalSize({bounds.w, bounds.h});
-            else
-                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
+        if (!glyphs)
+            glyphs.emplace();
 
-            if (!glyphs)
-                glyphs.emplace();
-
-            glyphs->setViewportSize({bounds.w, bounds.h});
-        }
-
-        repaint();
+        glyphs->setViewportSize(size);
     }
 
     void backingScaleChanged() override
     {
-        GPUView::backingScaleChanged();
-
         // Glyphs cached for the old display are the wrong size now.
         ensureAtlas();
         repaint();
@@ -228,6 +220,9 @@ struct AtlasTextView final : GPU::GPUView
     {
         ensureAtlas();
 
+        const auto size = frame.logicalSize();
+        ensureRenderers(size);
+
         auto pass = frame.beginPass({background});
 
         if (!sprites || !glyphs || !atlas)
@@ -251,9 +246,9 @@ struct AtlasTextView final : GPU::GPUView
 
         for (const auto& line: lines)
         {
-            sprites->fillRect(
-                {0.f, baseline - metrics.ascent, getLocalBounds().w, lineHeight},
-                &line == &lines.back() ? gutter : Graphics::Color {0, 0, 0, 0});
+            sprites->fillRect({0.f, baseline - metrics.ascent, size.x, lineHeight},
+                              &line == &lines.back() ? gutter
+                                                     : Graphics::Color {0, 0, 0, 0});
 
             layOutLine(line, left, baseline, false);
             baseline += lineHeight;

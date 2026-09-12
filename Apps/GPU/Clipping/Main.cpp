@@ -56,22 +56,23 @@ struct ClippingView final : GPU::GPUView
 
     void resized() override
     {
-        GPUView::resized();
-
-        const auto bounds = getLocalBounds();
-
-        // A resize only moves the logical space; the pipelines the renderer
-        // compiled are unaffected, so it is set rather than rebuilt.
-        if (bounds.w > 0 && bounds.h > 0)
-        {
-            if (sprites)
-                sprites->setLogicalSize({bounds.w, bounds.h});
-            else
-                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
-        }
-
         layOutPanes();
         repaint();
+    }
+
+    // A resize only moves the logical space; the pipelines the renderer compiled
+    // are unaffected, so it is set rather than rebuilt - and set from the frame,
+    // whose size is the one being drawn into whatever the layout pass has
+    // reached.
+    void ensureRenderer(Graphics::Point size)
+    {
+        if (size.x <= 0.f || size.y <= 0.f)
+            return;
+
+        if (sprites)
+            sprites->setLogicalSize(size);
+        else
+            sprites.emplace(size, sampleCount());
     }
 
     void layOutPanes()
@@ -166,6 +167,8 @@ struct ClippingView final : GPU::GPUView
 
     void render(GPU::Frame& frame) override
     {
+        ensureRenderer(frame.logicalSize());
+
         auto pass = frame.beginPass({background});
 
         if (!sprites)
