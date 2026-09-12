@@ -6,7 +6,7 @@ namespace eacp
 {
 namespace Files
 {
-FilePath resourcesDirectory()
+FilePath executablePath()
 {
     // GetModuleFileNameW truncates instead of failing, so a full buffer means
     // try again — up to the longest path Windows accepts.
@@ -21,11 +21,16 @@ FilePath resourcesDirectory()
         if (length < size)
         {
             buffer.resize(length);
-            return FilePath::fromWide(buffer).parentDirectory();
+            return FilePath::fromWide(buffer);
         }
     }
 
     return {};
+}
+
+FilePath resourcesDirectory()
+{
+    return executablePath().parentDirectory();
 }
 } // namespace Files
 

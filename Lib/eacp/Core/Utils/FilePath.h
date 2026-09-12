@@ -59,6 +59,19 @@ public:
     static FilePath appDataDirectory();
     static FilePath cacheDirectory();
 
+    // This app's own folder under those roots: <root>/<Company>/<App>, e.g.
+    // ~/Library/Application Support/Acme/My App. The names come from the
+    // embedded AppInfo (Platform::getAppName / getCompanyName); the company
+    // level is left out when there is none, and an app with no AppInfo is
+    // named after its executable. The explicit overloads take the names
+    // instead, for a plugin that shares its host's folder or a test.
+    static FilePath appSupportDirectory();
+    static FilePath appCacheDirectory();
+    static FilePath appSupportDirectory(std::string_view company,
+                                        std::string_view app);
+    static FilePath appCacheDirectory(std::string_view company,
+                                      std::string_view app);
+
     // Builds a path from a native wide string — a Win32 out-parameter, a
     // GetModuleFileNameW buffer. Converts to UTF-8 and normalizes '\' to '/',
     // the same treatment the std::filesystem::path constructor above gets.

@@ -86,16 +86,24 @@ function(eacp_force_optimization target)
     endif ()
 endfunction()
 
-# Stamps an app's name and the enclosing project's version into the binary two
-# ways: the native metadata the OS reads (macOS bundle plist keys / a Windows
-# VERSIONINFO resource), and an AppInfo.json embedded via ResEmbed that
-# Platform::getAppName()/getAppVersion() read back at runtime. The name comes
-# from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before calling us) or the target
-# name; the version from ${PROJECT_VERSION}, defaulting to 0.0.0.
+# Stamps an app's name, company and the enclosing project's version into the
+# binary two ways: the native metadata the OS reads (macOS bundle plist keys /
+# a Windows VERSIONINFO resource), and an AppInfo.json embedded via ResEmbed
+# that Platform::getAppName()/getCompanyName()/getAppVersion() read back at
+# runtime. The name comes from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before
+# calling us) or the target name; the company from the target's
+# EACP_COMPANY_NAME property, else the EACP_COMPANY_NAME variable, else empty;
+# the version from ${PROJECT_VERSION}, defaulting to 0.0.0. Name and company
+# are what FilePath::appSupportDirectory() puts the app's own folder under.
 function(eacp_embed_app_info target)
     get_target_property(app_name ${target} MACOSX_BUNDLE_BUNDLE_NAME)
     if (NOT app_name)
         set(app_name "${target}")
+    endif ()
+
+    get_target_property(company_name ${target} EACP_COMPANY_NAME)
+    if (NOT company_name)
+        set(company_name "${EACP_COMPANY_NAME}")
     endif ()
 
     set(app_version "${PROJECT_VERSION}")
@@ -155,6 +163,7 @@ END
     file(CONFIGURE OUTPUT "${app_info_json}" @ONLY CONTENT [==[
 {
     "name": "@app_name@",
+    "company": "@company_name@",
     "version": "@app_version@"
 }
 ]==])

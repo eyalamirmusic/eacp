@@ -1,5 +1,4 @@
 #include "Catalogue.h"
-#include "Downloader.h"
 
 #include <eacp/Text/TextRenderer.h>
 #include <eacp/VideoView/VideoView.h>
@@ -39,11 +38,6 @@ std::string megabytes(std::int64_t bytes)
     return formatted("%.1f MB", (double) bytes / (1024.0 * 1024.0));
 }
 
-FilePath cachePathFor(const std::string& fileName)
-{
-    return FilePath::cacheDirectory() / fileName;
-}
-
 Graphics::WindowOptions windowOptions()
 {
     auto options = Graphics::WindowOptions {};
@@ -59,7 +53,8 @@ Graphics::WindowOptions windowOptions()
 //
 // This class is only the UI: the catalogue is parsed by Catalogue.h out of a
 // resource embedded at build time, and the transfer — thread, progress,
-// cancellation, the partial-file dance — belongs to Downloader.
+// cancellation, the partial-file dance, not fetching what is already here —
+// belongs to OnlineResource.
 struct BrowserView final : Video::VideoView
 {
     enum class Mode
@@ -110,42 +105,37 @@ struct BrowserView final : Video::VideoView
         if (index < 0 || index >= clips().size())
             return;
 
-        const auto& clip = clips()[index];
-        startUrl(clip.url, clip.name, cachePathFor(clip.fileName));
+        startResource(clips()[index].resource());
     }
 
     // Any H.264 MP4 the platform decoder can read. The catalogue is a
     // convenience, not a limit — a 4K clip is one command-line argument away.
-    void startUrl(const std::string& url,
-                  const std::string& name,
-                  const FilePath& path)
+    // A clip already on disk plays after one round trip asking the server
+    // whether it changed, or none if the server gave nothing to ask with.
+    void startResource(OnlineResource::Info info)
     {
         if (mode == Mode::Downloading)
             return;
 
-        title = name;
-
-        if (File {path}.exists())
-        {
-            play(path);
-            return;
-        }
-
+        title = info.name;
         mode = Mode::Downloading;
-        message = "Downloading " + name;
+        message = "Fetching " + info.name;
         setContinuous(true); // keep the progress bar moving
 
-        downloader.start(url,
-                         path,
-                         [this](Downloader::Result result)
-                         {
-                             if (result.cancelled)
-                                 showCatalogue();
-                             else if (result.ok)
-                                 play(result.path);
-                             else
-                                 fail(result.error);
-                         });
+        resource = std::make_unique<OnlineResource>(std::move(info));
+
+        // Destroying `resource` abandons this, so a view going away
+        // mid-transfer is never called back.
+        resource->start().then(
+            [this](OnlineResource::Result result)
+            {
+                if (result.cancelled)
+                    showCatalogue();
+                else if (result.ok)
+                    play(result.path);
+                else
+                    fail(result.error);
+            });
     }
 
     void play(const FilePath& path)
@@ -199,7 +189,7 @@ struct BrowserView final : Video::VideoView
         {
             const auto& clip = clips()[index];
             auto area = rowArea(index);
-            auto cached = File {cachePathFor(clip.fileName)}.exists();
+            auto cached = OnlineResource {clip.resource()}.isAvailable();
             auto hot = index == hovered;
 
             renderer.fillRect(area,
@@ -235,9 +225,10 @@ struct BrowserView final : Video::VideoView
     void drawDownload(Sprites::SpriteRenderer& renderer)
     {
         auto bounds = getLocalBounds();
-        auto received = downloader.bytesReceived();
-        auto total = downloader.totalBytes();
-        auto fraction = downloader.fraction();
+        auto progress = resource->progress();
+        auto received = progress.bytesReceived;
+        auto total = progress.totalBytes;
+        auto fraction = progress.fraction;
 
         auto bar = Graphics::Rect {
             margin, bounds.h * 0.5f - 12.0f, bounds.w - margin * 2.0f, 24.0f};
@@ -364,7 +355,7 @@ struct BrowserView final : Video::VideoView
     {
         if (mode == Mode::Downloading)
         {
-            downloader.cancel();
+            resource->cancel();
             return;
         }
 
@@ -407,7 +398,7 @@ struct BrowserView final : Video::VideoView
     Video::FrameStream stream;
     Video::Player player {stream};
     Text::TextRenderer text {13.0f};
-    Downloader downloader;
+    std::unique_ptr<OnlineResource> resource;
 
     Mode mode = Mode::Browsing;
     std::string message;
@@ -442,8 +433,7 @@ struct DownloadApp
             return;
         }
 
-        auto name = Files::filenameFromPath(argument);
-        view.startUrl(argument, name, FilePath::cacheDirectory() / name);
+        view.startResource({Files::filenameFromPath(argument), argument});
     }
 
     BrowserView view;

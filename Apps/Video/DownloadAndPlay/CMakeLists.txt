@@ -1,6 +1,5 @@
 add_executable(DownloadAndPlay
         Catalogue.cpp
-        Downloader.cpp
         Main.cpp)
 
 target_link_libraries(DownloadAndPlay PRIVATE eacp-video-view eacp-text eacp-network)
@@ -17,8 +16,11 @@ res_embed_add(DownloadAndPlay
 
 set(BUNDLE_ID "com.eacp.downloadandplay")
 
+# The company and bundle name decide where OnlineResource keeps the clips:
+# <Application Support>/eacp/Download and Play/Resources.
 set_target_properties(DownloadAndPlay PROPERTIES
         MACOSX_BUNDLE TRUE
+        EACP_COMPANY_NAME "eacp"
         MACOSX_BUNDLE_BUNDLE_NAME "Download and Play"
         MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
