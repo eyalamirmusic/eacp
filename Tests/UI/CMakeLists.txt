@@ -13,12 +13,13 @@ nano_add_executable(UITests
             MaskCacheTests.cpp
             LayerTests.cpp
             ModuleShaderTests.cpp
+            OnlineResourceMonitorTests.cpp
             RepaintTests.cpp
             ShadowTests.cpp
             SliderTests.cpp
             TabsTests.cpp
             TextEditorTests.cpp
-        TARGETS eacp-ui eacp-sprites)
+        TARGETS eacp-ui eacp-ui-network eacp-sprites)
 
 # ModuleShaderTests emits every shader this tier builds as GLSL and compiles it
 # with glslang wherever eacp-spirv is built. The helper comes from Tests/GPU.

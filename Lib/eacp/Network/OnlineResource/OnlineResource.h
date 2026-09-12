@@ -98,7 +98,8 @@ public:
         float fraction = -1.0f;
     };
 
-    // FilePath::appSupportDirectory() / "Resources"
+    // OnlineResources::get().getDirectory(): the app's one place for
+    // resources, FilePath::appSupportDirectory() / "Resources" unless set.
     static FilePath defaultDirectory();
 
     // Everything the free functions need in one place: the resource, where

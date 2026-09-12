@@ -39,7 +39,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   Linux. `OnlineResource` fetches a file an app needs into its own
   Application Support folder once, revalidates it against the server's ETag
   on later runs, and unpacks a zip — `Apps/Console/OnlineResource` fetches
-  one before it does anything else.
+  one before it does anything else. Every fetch reports into the
+  `OnlineResources` registry, and `UI::OnlineResourceMonitor` shows that
+  registry as a list with progress bars and a Clear all button —
+  `Apps/UI/ResourceMonitor` is it in a window over DownloadAndPlay's clips.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load

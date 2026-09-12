@@ -8,6 +8,7 @@
 #include "IPC/Lock.h"
 #include "IPC/Messenger.h"
 #include "OnlineResource/OnlineResource.h"
+#include "OnlineResource/OnlineResources.h"
 #include "TCP/Listener.h"
 #include "WebSocket/Server.h"
 #include "WebSocket/WebSocket.h"

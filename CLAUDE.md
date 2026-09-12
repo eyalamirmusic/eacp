@@ -334,6 +334,27 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   that needs the file before its loop runs. Destroying the object abandons
   its Async, so a dead view is never called back. `Apps/Console/OnlineResource`
   and `Apps/Video/DownloadAndPlay` are the two users.
+- `OnlineResources` (`Network/OnlineResource/OnlineResources.h`): the
+  process-wide registry every `OnlineResource` reports into as it starts,
+  finishes and removes, keyed by the path the file lands at. It owns the
+  app's one resource directory (`setDirectory`/`getDirectory`, which is
+  what `OnlineResource::defaultDirectory()` answers). An `Entry` is
+  whether a complete copy is on disk and how big, what last happened
+  (`Status`: idle, fetching, fetched, failed, cancelled) with the error, and
+  the live `Progress` of a transfer in flight. `declare()` lists a resource
+  in the directory before anything fetches it, `fetch(path)` runs one the
+  registry owns, `cancel`/`remove`/`forget` act on one entry, and `clear()`
+  deletes the directory — refused while anything under it is fetching.
+  Listeners are called on the main thread once per loop turn after a state
+  change; progress is polled. `UI::OnlineResourceMonitor` (`UI/Network/`,
+  its own `eacp-ui-network` target so `eacp-ui` stays free of
+  `eacp-network`) is the registry as a list with a progress bar per
+  transfer and Fetch / Cancel / Delete copy / Clear all buttons.
+  `OnlineResourceMonitorHost` is it as a whole component tree and
+  `OnlineResourceMonitorWindow` is that host in a window of its own, so an
+  app sets the directory, declares its resources and constructs one;
+  `Apps/UI/ResourceMonitor` does exactly that over DownloadAndPlay's own
+  folder.
 - `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
   platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
   NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on

@@ -1,4 +1,5 @@
 #include "OnlineResource.h"
+#include "OnlineResources.h"
 
 #include "../HTTP/Http.h"
 
@@ -135,6 +136,20 @@ struct OnlineResource::Job
     std::atomic<bool> running {false};
     std::atomic<bool> abandoned {false};
     Threads::AsyncPromise<Result> promise;
+
+    Progress progress() const
+    {
+        auto result = Progress {};
+        result.stage = stage;
+        result.bytesReceived = transfer.bytesReceived;
+        result.totalBytes = transfer.totalBytes;
+
+        if (result.totalBytes > 0)
+            result.fraction =
+                (float) ((double) result.bytesReceived / (double) result.totalBytes);
+
+        return result;
+    }
 };
 
 namespace
@@ -305,7 +320,7 @@ OnlineResource::Result
 
 FilePath OnlineResource::defaultDirectory()
 {
-    return FilePath::appSupportDirectory() / "Resources";
+    return OnlineResources::get().getDirectory();
 }
 
 OnlineResource::OnlineResource(Info infoToUse,
@@ -369,20 +384,7 @@ void OnlineResource::cancel()
 
 OnlineResource::Progress OnlineResource::progress() const
 {
-    auto result = Progress {};
-
-    if (job == nullptr)
-        return result;
-
-    result.stage = job->stage;
-    result.bytesReceived = job->transfer.bytesReceived;
-    result.totalBytes = job->transfer.totalBytes;
-
-    if (result.totalBytes > 0)
-        result.fraction =
-            (float) ((double) result.bytesReceived / (double) result.totalBytes);
-
-    return result;
+    return job == nullptr ? Progress {} : job->progress();
 }
 
 bool OnlineResource::remove()
@@ -393,6 +395,7 @@ bool OnlineResource::remove()
     auto target = path();
     removeQuietly(target);
     removeQuietly(sidecarPathFor(target));
+    OnlineResources::get().reportRemoved(target);
     return true;
 }
 
@@ -431,6 +434,12 @@ Threads::Async<OnlineResource::Result> OnlineResource::start()
     auto askServer = matchesRequest && freshness == Freshness::check
                      && plan.previous->hasValidators();
 
+    auto& registry = OnlineResources::get();
+    registry.reportStarted(
+        *this,
+        [current] { return current->progress(); },
+        [current] { current->transfer.cancel = true; });
+
     if (matchesRequest && !askServer)
     {
         current->stage = Progress::Stage::done;
@@ -438,27 +447,31 @@ Threads::Async<OnlineResource::Result> OnlineResource::start()
         auto result = Result {};
         result.ok = true;
         result.path = plan.target;
+        registry.reportFinished(plan.target, result);
         current->promise.resolve(std::move(result));
         return current->promise.get();
     }
 
     current->running = true;
 
-    std::thread {[current, plan = std::move(plan)]
-                 {
-                     auto result =
-                         performFetch(plan, current->transfer, current->stage);
-                     current->stage = Progress::Stage::done;
+    // The registry hears the outcome even when the object is gone: the
+    // file landed, or did not, whoever was waiting for it.
+    std::thread {
+        [current, plan = std::move(plan)]
+        {
+            auto result = performFetch(plan, current->transfer, current->stage);
+            current->stage = Progress::Stage::done;
 
-                     Threads::callAsync(
-                         [current, result = std::move(result)]() mutable
-                         {
-                             current->running = false;
+            Threads::callAsync(
+                [current, target = plan.target, result = std::move(result)]() mutable
+                {
+                    current->running = false;
+                    OnlineResources::get().reportFinished(target, result);
 
-                             if (!current->abandoned)
-                                 current->promise.resolve(std::move(result));
-                         });
-                 }}
+                    if (!current->abandoned)
+                        current->promise.resolve(std::move(result));
+                });
+        }}
         .detach();
 
     return current->promise.get();

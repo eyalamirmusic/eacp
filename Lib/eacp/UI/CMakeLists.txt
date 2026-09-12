@@ -31,3 +31,16 @@ target_sources(eacp-ui PRIVATE
 set_default_target_setting(eacp-ui)
 eacp_enable_unity_build(eacp-ui)
 add_ide_sources(eacp-ui)
+
+# The one widget that knows the network: a view of the OnlineResources
+# registry. Its own target so eacp-ui stays free of eacp-network, and an app
+# with no downloads links nothing for them.
+add_library(eacp-ui-network STATIC)
+target_sources(eacp-ui-network PRIVATE
+        Network/OnlineResourceMonitor.cpp
+        Network/OnlineResourceMonitorWindow.cpp)
+target_link_libraries(eacp-ui-network PUBLIC eacp-ui eacp-network)
+
+set_default_target_setting(eacp-ui-network)
+eacp_enable_unity_build(eacp-ui-network)
+add_ide_sources(eacp-ui-network)
