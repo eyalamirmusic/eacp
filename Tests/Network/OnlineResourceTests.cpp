@@ -495,7 +495,11 @@ auto tFetchTimesOut = test("OnlineResource/fetchThrowsAfterItsTimeout") = []
     options.directory = scratchDirectory("timeout");
     options.timeout = eacp::Time::MS {100};
 
-    auto threw = false;
+    auto finished = std::optional<OnlineResource::Result> {};
+    options.onFinished = [&](const OnlineResource::Result& result)
+    { finished = result; };
+
+    auto message = std::string {};
 
     try
     {
@@ -503,10 +507,18 @@ auto tFetchTimesOut = test("OnlineResource/fetchThrowsAfterItsTimeout") = []
     }
     catch (const std::runtime_error& error)
     {
-        threw = std::string {error.what()}.find("Timed out") != std::string::npos;
+        message = error.what();
     }
 
-    check(threw);
+    check(message.find("Could not fetch Late") != std::string::npos);
+
+    // The transfer itself gave up: the worker has reported back, so the
+    // caller can exit without a thread still inside the request.
+    check(finished.has_value());
+    check(!finished->ok);
+    check(!finished->cancelled);
+    check(!finished->error.empty());
+    check(!exists(options.directory / "late.txt.part"));
 
     gate.release();
     server.stop();

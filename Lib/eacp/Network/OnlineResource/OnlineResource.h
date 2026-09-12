@@ -43,6 +43,10 @@ public:
 
         // Bumping it forces a download regardless of what the server says.
         std::string version;
+
+        // Wall-clock limit on the transfer, after which it fails. Zero
+        // leaves the platform's own limit in place.
+        Time::MS timeout {0};
     };
 
     enum class Freshness
@@ -109,11 +113,6 @@ public:
         std::function<void(const Progress&)> onProgress = [](const Progress&) {};
         std::function<void(const Result&)> onFinished = [](const Result&) {};
         Time::MS progressInterval {100};
-
-        // For the blocking fetch(): how long to wait before giving up, with
-        // the result saying so and the transfer cancelled. Zero waits for
-        // as long as it takes.
-        Time::MS timeout {0};
     };
 
     // Runs the whole fetch with no object to hold: resolves on the main
@@ -123,8 +122,10 @@ public:
     // fetchAsync, pumping the event loop until it is done. Main thread only,
     // and not from inside another event-loop callback; meant for the start
     // of a console app, before its own loop runs. Throws std::runtime_error
-    // when the resource could not be had - a failed transfer, a cancel or
-    // the timeout - so the caller uses the path without checking.
+    // when the resource could not be had - a failed transfer, Info::timeout
+    // included - so the caller uses the path without checking. It returns
+    // only once the transfer has wound down, so exiting straight after is
+    // safe.
     static Result fetch(Options options);
 
     explicit OnlineResource(Info info,
@@ -151,7 +152,9 @@ public:
     // an error saying so.
     Threads::Async<Result> start();
 
-    // Asks the transfer to stop; it still resolves, with cancelled set.
+    // Asks the transfer to stop; it still resolves, with cancelled set. A
+    // server that has gone quiet delays that: the cancel lands with the next
+    // byte or Info::timeout, whichever comes first.
     void cancel();
 
     bool isRunning() const;

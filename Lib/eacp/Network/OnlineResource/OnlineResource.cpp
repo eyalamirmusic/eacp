@@ -179,6 +179,7 @@ HTTP::Request conditionalRequest(const FetchPlan& plan,
 {
     auto request = HTTP::Request {plan.info.url};
     request.progress = &transfer;
+    request.timeout = plan.info.timeout;
 
     if (plan.previous)
     {
@@ -514,30 +515,14 @@ OnlineResource::Result OnlineResource::fetch(Options options)
 {
     Threads::assertMainThread();
 
-    auto timeout = options.timeout;
     auto owned = std::make_shared<OwnedFetch>();
     auto async = startOwned(owned, std::move(options));
-    auto ready = [&] { return async.isReady(); };
 
-    if (timeout.count > 0)
-    {
-        Threads::runEventLoopUntil(ready, timeout);
-    }
-    else
-    {
-        while (!ready())
-            Threads::runEventLoopFor(Time::MS {20});
-    }
-
-    const auto& name = owned->resource->info().name;
-
-    if (!async.isReady())
-    {
-        owned->resource->cancel();
-        throw std::runtime_error {"Timed out fetching " + name};
-    }
+    while (!async.isReady())
+        Threads::runEventLoopFor(Time::MS {20});
 
     auto result = async.waitFor(Time::MS {0});
+    const auto& name = owned->resource->info().name;
 
     if (result.cancelled)
         throw std::runtime_error {"Cancelled fetching " + name};
