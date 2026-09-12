@@ -59,11 +59,16 @@ function(eacp_force_optimization target)
         # The cl/clang-cl Debug defaults fight optimization: /RTC1 is a hard
         # error under any /O level (D8016) and /Od warns when overridden by /O2
         # (D9025). Strip both before forcing the level below.
-        string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG
-                "${CMAKE_CXX_FLAGS_DEBUG}")
-        string(REGEX REPLACE "/Od" "" CMAKE_CXX_FLAGS_DEBUG
-                "${CMAKE_CXX_FLAGS_DEBUG}")
-        set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}" PARENT_SCOPE)
+        # Both languages: a vendored C library (ThirdParty/miniz) is forced
+        # the same way, and cl's C Debug defaults carry the same two flags.
+        foreach (lang C CXX)
+            string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_${lang}_FLAGS_DEBUG
+                    "${CMAKE_${lang}_FLAGS_DEBUG}")
+            string(REGEX REPLACE "/Od" "" CMAKE_${lang}_FLAGS_DEBUG
+                    "${CMAKE_${lang}_FLAGS_DEBUG}")
+            set(CMAKE_${lang}_FLAGS_DEBUG "${CMAKE_${lang}_FLAGS_DEBUG}"
+                    PARENT_SCOPE)
+        endforeach ()
 
         # clang-cl reports CXX_COMPILER_ID==Clang but parses the MSVC-style
         # driver, so its GCC-style flags must tunnel through /clang: or they are

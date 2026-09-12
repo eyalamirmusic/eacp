@@ -18,7 +18,8 @@ set(core_test_sources
         ProcessInheritStdioTests.cpp
         RangeTests.cpp
         StringsTests.cpp
-        TimerTests.cpp)
+        TimerTests.cpp
+        ZipTests.cpp)
 
 # Cross-platform proof for captureOutput=false: redirect the test's own
 # stdout to a file and assert a non-capturing child writes through to it,

@@ -61,6 +61,13 @@ one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
+One dependency is carried in the tree instead: `ThirdParty/miniz`, the
+amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C target
+so it never joins a unity build and its warnings are silenced. Only `eacp-core`
+links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
+of it is reached through `eacp::Zip`. To update it, replace the files under
+`ThirdParty/miniz` and the version in its README.
+
 ## Build Commands
 
 ```bash
@@ -349,6 +356,13 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)
 - `Base64::encode`/`decode`: RFC 4648, the framework's only implementation -
   the WebSocket handshake's accept key goes through it too
+- `Zip::Reader`/`Zip::Writer` (`Utils/Zip.h`): zip archives over the vendored
+  miniz, read from a file (memory-mapped) or from bytes, written to either.
+  `extractAll` refuses entries that would land outside the target directory.
+  `Zip::compress`/`decompress` deflate a single blob as a zlib stream. It is
+  compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`
+  and `Files::writeFile`, so UTF-8 paths take the same route as everything
+  else. `Apps/Console/Zip` is the worked example.
 
 ### Key Design Patterns
 
