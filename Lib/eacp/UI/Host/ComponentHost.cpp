@@ -153,34 +153,16 @@ void ComponentHost::setFontFamily(const std::string& family)
     setFont(updated);
 }
 
-// The tree is laid out BEFORE the base class hears of the resize, because
-// GPUView::resized draws a frame there and then - inside the resize's own
-// transaction, which on macOS is the frame that lands with the new size. Laid
-// out after it, that frame is the old layout in the new drawable, and the
-// correct one that follows presents into a transaction that has already
-// committed, so the window keeps the stale frame until something else
-// invalidates it: at the end of a drag, that is what the user is left with.
 void ComponentHost::resized()
 {
     auto bounds = getLocalBounds();
 
     if (bounds.w <= 0.f || bounds.h <= 0.f)
-    {
-        GPUView::resized();
         return;
-    }
 
-    // A resize only moves the logical space the shaders map from, so the
-    // renderer is told rather than rebuilt -- its pipelines are unaffected.
-    if (shapes.has_value())
-    {
-        shapes->setLogicalSize({bounds.w, bounds.h});
-        shapes->setPixelScale(backingScale());
-        meshes->setLogicalSize({bounds.w, bounds.h});
-        images->setLogicalSize({bounds.w, bounds.h});
-        layers->setLogicalSize({bounds.w, bounds.h});
-    }
-    else
+    // Only built here. What each of them projects from is set per frame, from
+    // the frame's own size -- see setSurfaceSize in render().
+    if (!shapes.has_value())
     {
         paths.emplace();
         shapes.emplace(*paths,
@@ -196,8 +178,20 @@ void ComponentHost::resized()
 
     if (root != nullptr)
         root->setBounds(bounds);
+}
 
-    GPUView::resized();
+// A resize only moves the logical space the shaders map from, so every batch is
+// told rather than rebuilt -- their pipelines are unaffected by it.
+void ComponentHost::setSurfaceSize(Point size)
+{
+    if (!shapes.has_value())
+        return;
+
+    shapes->setLogicalSize(size);
+    shapes->setPixelScale(backingScale());
+    meshes->setLogicalSize(size);
+    images->setLogicalSize(size);
+    layers->setLogicalSize(size);
 }
 
 void ComponentHost::markTreeDirty(Component& component)
@@ -436,10 +430,7 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 
     auto pass = frame.beginPass(layer.getTexture(), descriptor);
 
-    shapes->setLogicalSize({bounds.w, bounds.h});
-    meshes->setLogicalSize({bounds.w, bounds.h});
-    images->setLogicalSize({bounds.w, bounds.h});
-    layers->setLogicalSize({bounds.w, bounds.h});
+    setSurfaceSize({bounds.w, bounds.h});
 
     shapes->begin(pass);
     meshes->begin(pass);
@@ -483,12 +474,9 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     meshes->end();
     images->end();
 
-    auto surface = getLocalBounds();
-
-    shapes->setLogicalSize({surface.w, surface.h});
-    meshes->setLogicalSize({surface.w, surface.h});
-    images->setLogicalSize({surface.w, surface.h});
-    layers->setLogicalSize({surface.w, surface.h});
+    // Back to the frame's own space for whatever draws into the drawable after
+    // this layer's pass.
+    setSurfaceSize(frame.logicalSize());
 
     layer.markRendered();
     ++lastRenderedLayers;
@@ -599,7 +587,11 @@ void ComponentHost::reportDroppedPaths(int count)
 
 void ComponentHost::render(GPU::Frame& frame)
 {
-    auto bounds = getLocalBounds();
+    // The frame's own size rather than the view's: on a live resize the drawable
+    // is already the new one while a size cached at layout is still the old one,
+    // and it is the drawable this projection has to agree with.
+    const auto size = frame.logicalSize();
+    auto bounds = Rect {0.f, 0.f, size.x, size.y};
 
     if (root == nullptr || !shapes.has_value() || bounds.w <= 0.f || bounds.h <= 0.f)
     {
@@ -608,6 +600,8 @@ void ComponentHost::render(GPU::Frame& frame)
     }
 
     renderer();
+
+    setSurfaceSize(size);
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
 

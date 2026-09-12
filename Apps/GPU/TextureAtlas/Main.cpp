@@ -83,23 +83,21 @@ struct AtlasView final : GPU::GPUView
         setSampleCount(1);
     }
 
-    void resized() override
+    void resized() override { repaint(); }
+
+    // A resize only moves the logical space; the pipelines the renderer compiled
+    // are unaffected, so it is set rather than rebuilt - and set from the frame,
+    // whose size is the one being drawn into whatever the layout pass has
+    // reached.
+    void ensureRenderer(Graphics::Point size)
     {
-        GPUView::resized();
+        if (size.x <= 0.f || size.y <= 0.f)
+            return;
 
-        const auto bounds = getLocalBounds();
-
-        // A resize only moves the logical space; the pipelines the renderer
-        // compiled are unaffected, so it is set rather than rebuilt.
-        if (bounds.w > 0 && bounds.h > 0)
-        {
-            if (sprites)
-                sprites->setLogicalSize({bounds.w, bounds.h});
-            else
-                sprites.emplace(Graphics::Point {bounds.w, bounds.h}, sampleCount());
-        }
-
-        repaint();
+        if (sprites)
+            sprites->setLogicalSize(size);
+        else
+            sprites.emplace(size, sampleCount());
     }
 
     void addNextTile()
@@ -145,6 +143,9 @@ struct AtlasView final : GPU::GPUView
 
     void render(GPU::Frame& frame) override
     {
+        const auto size = frame.logicalSize();
+        ensureRenderer(size);
+
         auto pass = frame.beginPass({background});
 
         if (!sprites)
@@ -152,7 +153,7 @@ struct AtlasView final : GPU::GPUView
 
         sprites->begin(pass);
 
-        const auto bounds = getLocalBounds();
+        const auto bounds = Graphics::Rect {0.f, 0.f, size.x, size.y};
         const auto margin = 24.f;
         const auto barHeight = 10.f;
 

@@ -228,6 +228,11 @@ public:
     virtual void keyUp(const KeyEvent&) {}
     virtual void resized();
 
+    //Internal helpers to deal with scaling
+    //you likely never have to call or override those
+    virtual void resizeStarted() {}
+    virtual void resizeFinished() {}
+
     // The view moved to a display with a different backing scale (a window
     // dragged between a Retina and a non-Retina screen), or that display's scale
     // changed. Anything sized in device pixels rather than logical points is now

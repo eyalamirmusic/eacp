@@ -394,7 +394,9 @@ struct View::Native
     {
         bounds = newBounds;
         updateVisualPosition();
+        ownerView->resizeStarted();
         ownerView->resized();
+        ownerView->resizeFinished();
 
         // Repaint at the new size, so a view that draws shows up on its initial
         // layout and on resize without waiting for an external repaint(). Views

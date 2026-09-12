@@ -31,8 +31,11 @@ public:
     // frame's delta time, so motion stays smooth and rate-independent.
     virtual void update(Threads::FrameTime) {}
 
-    void resized() override;
-    void backingScaleChanged() override;
+    // The drawable is resized before the subclass answers the new size, and the
+    // resize's own frame drawn after it on the backends that draw one -- so a
+    // subclass overriding resized() or backingScaleChanged() calls neither base.
+    void resizeStarted() override;
+    void resizeFinished() override;
 
     // Multisample (MSAA) count used for rendering; defaults to 4 for smooth
     // edges. Feed this into your RenderPipelineDescriptor::sampleCount so the

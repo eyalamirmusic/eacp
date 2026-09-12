@@ -206,6 +206,11 @@ private:
         int shared = 0;
     };
 
+    // The logical space every batch projects from. Set at the top of each frame
+    // from the frame's own size rather than cached at layout: it is the size of
+    // the target being drawn into, so it cannot be a resize behind the drawable.
+    void setSurfaceSize(Point size);
+
     // Rendering every Layer in the tree whose content changed, each into a pass
     // of its own, before the frame's own pass opens -- which is the only place
     // it can happen, a pass not being able to begin inside another one.
