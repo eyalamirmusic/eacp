@@ -371,7 +371,9 @@ dispatch the GPU sized. What the two backends cannot pack the same way — a
 ## Building
 
 eacp uses CMake (3.31+) and a C++20 toolchain. Dependencies are fetched via
-[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time.
+[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time,
+except [miniz](https://github.com/richgel999/miniz), which is carried in
+`ThirdParty/` and wrapped by `eacp::Zip`.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
@@ -432,6 +434,7 @@ Lib/eacp/
   Video/      Screen capture and encoding, plus VideoView/ for playback
 Apps/         Example applications
 Tests/        Unit tests
+ThirdParty/   Vendored single-file libraries (miniz, behind eacp::Zip)
 CMake/        Build helpers (TargetSetup, CPM)
 ```
 

@@ -137,6 +137,9 @@ endif ()
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Vendored single-file C libraries, ahead of Lib so its modules can link them.
+add_subdirectory(ThirdParty)
+
 add_subdirectory(Lib)
 
 option(EACP_ENABLE_EXAMPLES "Enable Examples for EACP" ${PROJECT_IS_TOP_LEVEL})
