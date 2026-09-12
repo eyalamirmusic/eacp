@@ -244,11 +244,7 @@ private:
 
 struct UserAgentApp
 {
-    UserAgentApp()
-    {
-        setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
-        window.setContentView(root);
-    }
+    UserAgentApp() { setApplicationMenuBar(buildDefaultWebViewMenuBar(), window); }
 
     static WindowOptions getOptions()
     {
@@ -265,7 +261,7 @@ struct UserAgentApp
     }
 
     DemoRoot root;
-    Window window {getOptions()};
+    Window window {root, getOptions()};
 };
 
 int main()

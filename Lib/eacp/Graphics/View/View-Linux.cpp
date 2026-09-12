@@ -307,7 +307,9 @@ struct View::Native
     void setBounds(const Rect& newBounds)
     {
         bounds = newBounds;
+        ownerView->resizeStarted();
         ownerView->resized();
+        ownerView->resizeFinished();
     }
 
     void focus() { focused = true; }
@@ -457,7 +459,9 @@ bool View::hasFocus() const
 
 void notifyBackingScaleChanged(View& view)
 {
+    view.resizeStarted();
     view.backingScaleChanged();
+    view.resizeFinished();
 
     for (auto* child: view.getSubviews())
         notifyBackingScaleChanged(*child);

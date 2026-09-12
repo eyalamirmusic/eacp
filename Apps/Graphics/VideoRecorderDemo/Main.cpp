@@ -61,8 +61,6 @@ struct Host final : UI::ComponentHost
 
 struct App
 {
-    App() { window.setContentView(host); }
-
     void tick(Threads::FrameTime time)
     {
         host.animated.phase = (float) (std::fmod(time.time, 2.0) / 2.0);
@@ -107,7 +105,7 @@ struct App
         o.height = 160;
         return o;
     }();
-    Window window {options};
+    Window window {host, options};
 
     bool started = false;
     bool stopping = false;

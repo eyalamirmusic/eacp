@@ -11,11 +11,10 @@ struct MyApp
     {
         Graphics::setApplicationMenuBar(Graphics::buildDefaultWebViewMenuBar(),
                                         window);
-        window.setContentView(webView);
     }
 
     Api::RootApi root;
     Graphics::WebView webView {Graphics::embeddedOptions("SubApiReactApp")};
     Graphics::WebViewBridge transport {webView, root};
-    Graphics::Window window;
+    Graphics::Window window {webView};
 };

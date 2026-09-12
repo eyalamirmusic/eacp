@@ -61,6 +61,13 @@ one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
+One dependency is carried in the tree instead: `ThirdParty/miniz`, the
+amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C target
+so it never joins a unity build and its warnings are silenced. Only `eacp-core`
+links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
+of it is reached through `eacp::Zip`. To update it, replace the files under
+`ThirdParty/miniz` and the version in its README.
+
 ## Build Commands
 
 ```bash
@@ -120,6 +127,21 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_PCH=ON
+```
+
+- `EACP_VERBOSE_CONFIGURE` (default `OFF`): prints the configure detail a clean
+  configure leaves out — the FetchContent population of the `DOWNLOAD_ONLY`
+  Vulkan sources, the pkg-config and `find_package` probes and the `check_*`
+  results under them. CPM's own line per package is not part of that and prints
+  either way: it names the source, the tag, and any local override, which is
+  the one thing worth reading. `CMake/ConfigureLog.cmake` is the whole of it:
+  it raises `CMAKE_MESSAGE_LOG_LEVEL` to `VERBOSE` and drops the `QUIET` it
+  otherwise hands the finders. Warnings and errors sit above the log level, so
+  nothing this hides is something that went wrong.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_VERBOSE_CONFIGURE=ON
 ```
 
 - `EACP_BUILD_SPIRV` (default `ON` on Linux, `OFF` elsewhere): builds
@@ -267,8 +289,14 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 
 **App/** - Application lifecycle management
 - `App<T>`: Template wrapper for user-defined app structs
-- `run<T>()`: Template function that starts the event loop
-- Entry point pattern: define a struct and pass to `eacp::Apps::run<MyApp>()`
+- `run<T>(args...)`: Template function that starts the event loop; `args` are
+  copied and handed to T's constructor on every construction, restarts included
+- Entry point pattern: define a struct and pass to `eacp::Apps::run<MyApp>()`.
+  A struct that is one view in one window is `Graphics::ViewWindow<MyView>`
+  (`Graphics/Window/ViewWindow.h`), and `Graphics::runWindowedApp<MyView>(
+  options, viewArgs...)` runs one as the app with no struct written at all; a
+  struct that does more still pairs its view and window in one member,
+  `Window window {view, options};`
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations; `MacOSContext` is the Core Graphics implementation
@@ -299,6 +327,40 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - Multipart parts come from a path (`addFileField`) or from bytes already in
   memory (`addFileBytes`/`FileField::fromBytes`, no temporary file needed)
 - `urlEncode`/`urlDecode` and `parseQueryString` (`HTTP/Http.h`)
+- `OnlineResource` (`Network/OnlineResource/`): a file an app needs from the
+  network, kept under `FilePath::appSupportDirectory() / "Resources"` and
+  fetched at most once. A sidecar (`<path>.resource.json`) records the URL,
+  the app-declared version and the server's ETag / Last-Modified; a later
+  fetch re-downloads on a URL or version change, revalidates with one
+  conditional GET when the server gave validators, and otherwise trusts the
+  copy. A `.zip` is unpacked and `path()` is the folder. Three tiers: the
+  stateful object (`start()` returning `Threads::Async<Result>`, `cancel()`,
+  `progress()` readable from any thread), `fetchAsync(Options)` with the
+  callbacks in `Options`, and the blocking `fetch(Options)` for a console app
+  that needs the file before its loop runs. Destroying the object abandons
+  its Async, so a dead view is never called back. `Apps/Console/OnlineResource`
+  and `Apps/Video/DownloadAndPlay` are the two users.
+- `OnlineResources` (`Network/OnlineResource/OnlineResources.h`): the
+  process-wide registry every `OnlineResource` reports into as it starts,
+  finishes and removes, keyed by the path the file lands at. It owns the
+  app's one resource directory (`setDirectory`/`getDirectory`, which is
+  what `OnlineResource::defaultDirectory()` answers). An `Entry` is
+  whether a complete copy is on disk and how big, what last happened
+  (`Status`: idle, fetching, fetched, failed, cancelled) with the error, and
+  the live `Progress` of a transfer in flight. `declare()` lists a resource
+  in the directory before anything fetches it, `fetch(path)` runs one the
+  registry owns, `cancel`/`remove`/`forget` act on one entry, and `clear()`
+  deletes the directory — refused while anything under it is fetching.
+  Listeners are called on the main thread once per loop turn after a state
+  change; progress is polled. `UI::OnlineResourceMonitor` (`UI/Network/`,
+  its own `eacp-ui-network` target so `eacp-ui` stays free of
+  `eacp-network`) is the registry as a list with a progress bar per
+  transfer and Fetch / Cancel / Delete copy / Clear all buttons.
+  `OnlineResourceMonitorHost` is it as a whole component tree and
+  `OnlineResourceMonitorWindow` is that host in a window of its own, so an
+  app sets the directory, declares its resources and constructs one;
+  `Apps/UI/ResourceMonitor` does exactly that over DownloadAndPlay's own
+  folder.
 - `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
   platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
   NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on
@@ -329,11 +391,25 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `AutoReleasePool`: RAII wrapper for NSAutoreleasePool
 
 **Utils/** - Generic patterns
+- `FilePath::appSupportDirectory()` / `appCacheDirectory()`: this app's own
+  folder under the per-user data and cache roots, `<root>/<Company>/<App>`.
+  The names come from the embedded `AppInfo.json` (`Platform::getAppName`,
+  `getCompanyName`; the company is the target's `EACP_COMPANY_NAME` property
+  or the variable of that name, and its level is omitted when empty); an app
+  with no `AppInfo` is named after its executable (`Files::executablePath`).
+  The two-argument overloads take the names instead
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)
 - `Base64::encode`/`decode`: RFC 4648, the framework's only implementation -
   the WebSocket handshake's accept key goes through it too
+- `Zip::Reader`/`Zip::Writer` (`Utils/Zip.h`): zip archives over the vendored
+  miniz, read from a file (memory-mapped) or from bytes, written to either.
+  `extractAll` refuses entries that would land outside the target directory.
+  `Zip::compress`/`decompress` deflate a single blob as a zlib stream. It is
+  compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`
+  and `Files::writeFile`, so UTF-8 paths take the same route as everything
+  else. `Apps/Console/Zip` is the worked example.
 
 ### Key Design Patterns
 

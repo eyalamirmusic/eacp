@@ -222,7 +222,6 @@ struct MyApp
     {
         Graphics::setApplicationMenuBar(Graphics::buildDefaultWebViewMenuBar(),
                                         window);
-        window.setContentView(root);
         setupDemoAutomation();
     }
 
@@ -262,7 +261,7 @@ struct MyApp
     }
 
     ToggleRoot root;
-    Graphics::Window window {toggleWindowOptions()};
+    Graphics::Window window {root, toggleWindowOptions()};
     std::optional<Threads::Timer> autoToggle;
     std::optional<Threads::Timer> autoQuit;
     int toggleTicks = 0;

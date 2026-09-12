@@ -9,7 +9,8 @@ target_sources(eacp-graphics PRIVATE
         Menu/MenuCommands.cpp
         Primitives/Primitives.cpp
         View/View.cpp
-        Window/SizeConstraint.cpp)
+        Window/SizeConstraint.cpp
+        Window/Window.cpp)
 
 # Portable C++ that nonetheless stands on the 2D drawing stack, which is the
 # tier EACP_HAS_CONTEXT names. Left out where there is none, not stubbed.

@@ -99,15 +99,7 @@ struct SpritesView final : GPU::GPUView
     GPU::Texture sprite = GPU::Device::shared().makeTexture(makeSpriteImage());
 };
 
-struct SpritesApp
-{
-    SpritesApp() { window.setContentView(view); }
-
-    SpritesView view;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<SpritesApp>();
+    return Graphics::runWindowedApp<SpritesView>(windowOptions());
 }

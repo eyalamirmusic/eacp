@@ -10,6 +10,8 @@ target_sources(eacp-network PRIVATE
         IPC/Channel.cpp
         IPC/Lock.cpp
         IPC/Messenger.cpp
+        OnlineResource/OnlineResource.cpp
+        OnlineResource/OnlineResources.cpp
         TCP/Connection.cpp
         TCP/Listener.cpp
         WebSocket/Protocol.cpp
@@ -49,7 +51,7 @@ elseif (UNIX AND NOT APPLE)
             IPC/Lock-Posix.cpp
             TCP/Connection-Posix.cpp
             WebSocket/WebSocket-Linux.cpp)
-    find_package(CURL REQUIRED)
+    find_package(CURL ${EACP_FIND_QUIET} REQUIRED)
     target_link_libraries(eacp-network PRIVATE CURL::libcurl)
 endif ()
 

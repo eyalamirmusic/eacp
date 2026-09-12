@@ -516,8 +516,6 @@ struct InstancingApp
         root.addSubview(panelA);
         root.addSubview(panelB);
         root.addSubview(panelC);
-
-        window.setContentView(root);
     }
 
     RootView root;
@@ -549,7 +547,7 @@ struct InstancingApp
         "tests: firstInstance offset stepping through the buffer, indexed instanced draw",
     };
 
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {root, windowOptions()};
 };
 
 int main()

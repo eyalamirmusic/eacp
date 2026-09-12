@@ -335,12 +335,10 @@ struct PlaybackApp
         view.attach(view.player);
         view.player.setLooping(true);
         view.player.play();
-
-        window.setContentView(view);
     }
 
     PlaybackView view;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {view, windowOptions()};
 };
 
 int main(int argc, char* argv[])

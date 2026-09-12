@@ -82,6 +82,14 @@ int Device::storageBufferOffsetAlignment() const
     return alignment > 0 ? (int) alignment : 4;
 }
 
+int Device::maxThreadgroupMemory() const
+{
+    if (!isValid())
+        return 0;
+
+    return (int) getVulkanShared().getProperties().limits.maxComputeSharedMemorySize;
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;

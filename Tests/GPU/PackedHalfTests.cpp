@@ -197,6 +197,24 @@ struct LiteralHalfKernel final : ComputeProgram
     EACP_SHADER(weights, output)
 };
 
+// Four halves at a time, which is two words: the width a weight walk wants, and
+// the one the record read underneath turns into a single eight-byte load.
+struct ReadHalf4Kernel final : ComputeProgram
+{
+    ReadHalf4Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, weights.readHalf4(i));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
 struct ReadHalf2Kernel final : ComputeProgram
 {
     ReadHalf2Kernel() { compile(); }
@@ -600,6 +618,44 @@ auto tReadHalf2 = test("PackedHalf/readHalf2ReadsBothHalvesOfAWord") = []
     }
 };
 
+// Four halves across two words, in the order readHalf walks them: the low half
+// of the first word, its high half, then the second word's two.
+auto tReadHalf4 = test("PackedHalf/readHalf4ReadsFourAcrossTwoWords") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto words = everyPackedPair();
+    auto records = words.size() / 2;
+
+    auto input = device.makeBuffer(words.data(),
+                                   words.size() * (int) sizeof(std::uint32_t),
+                                   BufferUsage::Storage);
+
+    auto output = device.makeBuffer(records * 4 * (int) sizeof(float));
+
+    auto kernel = ReadHalf4Kernel {};
+    kernel.weights = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    runKernel(device, kernel, records);
+    auto result = floatsOf(output);
+
+    // Element by element it is the same walk readHalf makes, which is what says
+    // the two spellings address one layout.
+    for (auto element = 0; element < records * 4; ++element)
+    {
+        auto word = words[element / 2];
+        auto half = (element % 2) == 0 ? (std::uint16_t) (word & 0xffffu)
+                                       : (std::uint16_t) (word >> 16);
+
+        check(matches(result[element], widened(half)));
+    }
+};
+
 // asFloat is asUInt run backwards, so the pair is the identity on bits - and
 // on these bits in particular, most of which are denormal floats.
 auto tBitcastRoundTrip = test("PackedHalf/asFloatUndoesAsUInt") = []
@@ -788,6 +844,52 @@ auto tHalfSourceIsRight = test("PackedHalf/bothBackendsSpellTheHalfHelpers") = [
     // The HLSL carries no MSL spelling anywhere - not in a helper body, not in
     // the kernel - which is the failure a shared emitter invites.
     check(!has(hlsl, "as_type"));
+};
+
+// The four-wide read, per backend: two words fetched as one record - a single
+// packed load on Metal and two subscripts where there is no such spelling -
+// then one unpack helper over each of them.
+auto tHalf4SourceIsRight = test("PackedHalf/theFourWideReadIsOneRecordRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, weights.readHalf4(i));
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    auto has = [](const std::string& source, const std::string& text)
+    { return source.find(text) != std::string::npos; };
+
+    // The index counts records of four halves, which is two words.
+    for (const auto& source: {metal, hlsl, glsl})
+        check(has(source, "uint t1 = (gid * 2u);"));
+
+    check(has(metal,
+              "float2 t2 = float2(*((device const packed_float2*) "
+              "(buffer0 + t1)));"));
+    check(has(metal,
+              "float4 t3 = float4(eacpUnpackHalf2(as_type<uint>((t2).x)), "
+              "eacpUnpackHalf2(as_type<uint>((t2).y)));"));
+    check(!has(metal, "buffer0[t1]"));
+
+    check(has(hlsl, "float2 t2 = float2(buffer0[t1], buffer0[t1 + 1u]);"));
+    check(has(hlsl,
+              "float4 t3 = float4(eacpUnpackHalf2(asuint((t2).x)), "
+              "eacpUnpackHalf2(asuint((t2).y)));"));
+
+    check(has(glsl, "vec2 t2 = vec2(buffer0[t1], buffer0[t1 + 1u]);"));
+    check(has(glsl,
+              "vec4 t3 = vec4(eacpUnpackHalf2(floatBitsToUint((t2).x)), "
+              "eacpUnpackHalf2(floatBitsToUint((t2).y)));"));
+
+    expectGlslCompiles(graph);
 };
 
 // Each helper is emitted only into shaders that call it, so a kernel narrowing

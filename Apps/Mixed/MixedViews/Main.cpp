@@ -275,7 +275,6 @@ struct MixedViewsApp
             std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
 
         root.cameraView.attach(camera);
-        window.setContentView(root);
         beginCapture();
     }
 
@@ -312,7 +311,7 @@ struct MixedViewsApp
 
     Cameras::Camera camera;
     MixedRoot root;
-    Graphics::Window window {makeOptions()};
+    Graphics::Window window {root, makeOptions()};
 };
 } // namespace
 

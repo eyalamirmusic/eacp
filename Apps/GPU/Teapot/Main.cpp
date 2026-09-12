@@ -212,15 +212,7 @@ struct TeapotView final : GPUView
     float spin = 0.0f;
 };
 
-struct MyApp
-{
-    MyApp() { window.setContentView(teapot); }
-
-    TeapotView teapot;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<MyApp>();
+    return Graphics::runWindowedApp<TeapotView>(windowOptions());
 }

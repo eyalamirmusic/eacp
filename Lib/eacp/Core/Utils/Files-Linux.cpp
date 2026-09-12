@@ -7,7 +7,7 @@ namespace eacp
 {
 namespace Files
 {
-FilePath resourcesDirectory()
+FilePath executablePath()
 {
     auto ec = std::error_code {};
     auto executable = std::filesystem::read_symlink("/proc/self/exe", ec);
@@ -15,7 +15,13 @@ FilePath resourcesDirectory()
     if (ec)
         return {};
 
-    return FilePath {executable.parent_path()};
+    return FilePath {executable};
+}
+
+FilePath resourcesDirectory()
+{
+    auto executable = executablePath();
+    return executable.empty() ? FilePath {} : executable.parentDirectory();
 }
 } // namespace Files
 

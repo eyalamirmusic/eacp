@@ -151,12 +151,11 @@ struct MyApp
     MyApp()
     {
         setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
-        window.setContentView(webView);
         webView.loadHTML(cameraPage, "https://localhost/");
     }
 
     WebView webView;
-    Window window;
+    Window window {webView};
 };
 
 int main()

@@ -13,6 +13,14 @@ using namespace nano;
 using eacp::File;
 using eacp::FilePath;
 
+auto tExecutablePath = test("Files/executablePathIsThisBinary") = []
+{
+    auto executable = eacp::Files::executablePath();
+    check(!executable.empty());
+    check(std::filesystem::exists(eacp::toStdPath(executable)));
+    check(eacp::Files::filenameFromPath(executable.str()).starts_with("CoreTests"));
+};
+
 namespace
 {
 std::filesystem::path scratchDirectory(const std::string& name)

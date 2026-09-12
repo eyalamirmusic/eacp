@@ -249,16 +249,9 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-struct App
-{
-    App() { window.setContentView(host); }
-
-    DemoHost host;
-    Graphics::Window window {makeOptions()};
-};
 } // namespace
 
 int main()
 {
-    return eacp::Apps::run<App>();
+    return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

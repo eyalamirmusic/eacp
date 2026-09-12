@@ -214,13 +214,25 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   tanh approximation of it. The origin is exact, which the polynomial on its own
   is not: `erf` is odd across it bit for bit and zero at it, `erfc` is one
   there, and the two sum to one
+- `saturatingTanh`, which is `tanh` with its two tails answered rather than
+  computed: exactly ±1 from an argument of ten outward, the native builtin
+  inside it.
+  What the native one does with a large argument is the driver's business, and
+  eacp compiles its Metal library with no `MTLCompileOptions` — so fast math is
+  on, `tanh` is evaluated through `exp`, and `tanh(990)` comes back NaN. A tanh
+  GELU cubes its input on the way in, so an activation of thirty arrives as
+  exactly that argument. Float32 resolves nothing between `tanh(9.011)` and one,
+  so every argument answered with a constant is one whose correctly rounded tanh
+  is that constant: it is a repair of the tails, not a different function. Reach
+  for it wherever the argument is not bounded by construction
 - Statements: `var`, `select`, `ifThen`, `loop`, `breakLoop`, `continueLoop`.
   A `var` takes any handle and any matrix. `select` runs across every family —
   a float, an index, an integer vector, a mask — and takes a literal on either
   side of a scalar one; the condition is a scalar `Bool` in all of them, which
   is the conditional operator both languages already print
 - Compute-only: `atomicAdd`, `shared<T>(count)`, `barrier`, `localId`, the
-  group-wide `groupSum` / `groupMax` / `groupMin`, and the SIMD-group matrix —
+  group-wide `groupSum` / `groupMax` / `groupMin` and their SIMD-group-scoped
+  siblings `simdSum` / `simdMax` / `simdMin`, and the SIMD-group matrix —
   `simdGroupIndex`, `simdMatrix`, `multiplyAccumulate` and the `write` that
   stores a fragment — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
@@ -932,6 +944,19 @@ void define() override
 `groupShape()` is what to size the tile against rather than a literal, since it
 follows the shape the kernel asked for — 64 for one that asked for nothing.
 
+**How much there is to spend is a device question, and one the EDSL answers.**
+`Device::maxThreadgroupMemory()` is the budget in bytes — Metal's
+`maxThreadgroupMemoryLength`, a flat 32 KB at D3D's `cs_5_0`, Vulkan's
+`maxComputeSharedMemorySize`, whose spec floor of 16 KB is therefore what a
+kernel may assume anywhere. `ComputeProgram::threadgroupMemoryBytes()` is the
+other half: what this kernel takes, its `shared<>` arrays plus the scratch the
+emitter adds behind them for a reduction and for a SIMD-group matrix, counted as
+the worst of the three backends since a kernel is written once.
+`fitsThreadgroupMemory(device)` is the two compared, and `prepare()` names an
+overspend in the log — both numbers — before the backend reports it as a
+pipeline that would not build, which on Metal happens after the library compiled
+clean and points at the wrong thing.
+
 Nothing initialises it — what it holds before the group writes it is undefined,
 which is why every use starts by filling it and waiting. Reading is a subscript;
 writing goes through the same `write()` the buffers and textures use, because a
@@ -966,12 +991,34 @@ auto particle = state.read4(index);           // position.xy, velocity.xy
 write(next, index, float4(newPosition, newVelocity));
 ```
 
-Underneath it is still N scalar accesses over a run of floats, deliberately: a
-retyped `float4` binding would buy one wide store and cost the CPU-side element
-size that makes those same bytes bindable as a per-instance vertex stream. It is
-one write above them all the same — every component is stored the value the
-record held before the first of them ran — so a record read out of an output and
-rearranged back into it swaps its components rather than broadcasting one:
+Underneath, the buffer is still a run of floats and the *store* is still N
+scalar accesses over it, deliberately: a retyped `float4` binding would buy one
+wide store and cost the CPU-side element size that makes those same bytes
+bindable as a per-instance vertex stream.
+
+The *read* of a read-only buffer is one load where the dialect has a spelling
+for one. On Metal `input.read4(i)` is the sixteen bytes fetched through a
+`packed_float4` pointer — packed and not `float4`, because a ranged bind's
+offset only has to sit on `Device::storageBufferOffsetAlignment()`, which is
+four bytes there, and a `float4` load wants sixteen. HLSL and GLSL have nothing
+to reinterpret — a `StructuredBuffer<float>` and an std430 block of floats are
+runs of scalars — so they emit exactly the componentwise construct, with the
+base index named once. Giving them a real vector load would mean changing the
+binding itself: a raw `ByteAddressBuffer` SRV on D3D12, with every scalar read
+respelled as `asfloat(buffer0.Load(i * 4))`, or a second block aliasing the same
+binding in GLSL. Neither is worth what it would cost the scalar path, which is
+what almost every kernel reads through.
+
+`OutputBuffer`'s vector reads stay scalar on every backend, and that is not an
+oversight: an output may hold what this very thread stored into it a statement
+ago, and the subscript through the pointer that was written is what orders the
+two. A load through a second pointer of another type has nothing saying it may
+not be hoisted above the store.
+
+A record read is one write above its stores all the same — every component is
+stored the value the record held before the first of them ran — so a record read
+out of an output and rearranged back into it swaps its components rather than
+broadcasting one:
 
 ```cpp
 auto pair = output.read2(i);
@@ -1059,7 +1106,58 @@ partials through a scratch array; HLSL under FXC has no wave intrinsic at
 `cs_5_0` and GLSL is held to what a driver compiles with no subgroup extension,
 so both walk a `groupshared` tree with a barrier per halving step. The scratch
 is the emitter's own, declared once per kernel and only where a reduction asked
-for it.
+for it — and on Metal only where a *whole-group* fold asked, since a SIMD-scoped
+one needs none.
+
+A group of `simdWidth` threads is not a special case of that: whether it is one
+SIMD group is a property of the compiled pipeline
+(`ComputePipeline::threadExecutionWidth`) and not of the EDSL, and an Intel Mac
+runs a kernel at eight or sixteen lanes. The wide fold therefore keeps its
+combine at every group size — `simdCount` is whatever the hardware gave — which
+is what it was always for.
+
+**`simdSum`, `simdMax` and `simdMin` are the same three narrowed to one SIMD
+group.** Every thread is handed the fold of the `simdWidth` threads it shares a
+SIMD group with, so a group of several comes out holding one answer per SIMD
+group rather than one for the group. That is what a fold inside a per-tile loop
+wants — attention walking its keys a SIMD group at a time has nothing to say to
+the rest of the threadgroup yet — and on Metal it is a single instruction with
+no threadgroup memory and no barrier, against the two barriers the wide fold
+costs.
+
+They are still collective, and the rule is the wide fold's: every thread of the
+*threadgroup* reaches one or none does, and a kernel holding one loses its
+bounds guard. That is because the other two backends still reach it through the
+scratch, narrowed to the folding thread's own block of lanes — HLSL has no wave
+intrinsic at `cs_5_0`, and GLSL's `subgroupAdd` is both an extension no lane
+here is held to and the wrong fold: a subgroup is whatever width the device says
+it is (eight on Mesa's lavapipe), where `simdWidth` is thirty-two everywhere by
+construction, exactly as the SIMD-group matrix fixes it. An intrinsic that folded
+a different number of threads under the same name would be worse than no
+intrinsic. The group has to be a whole number of SIMD groups, or narrower than
+one — the same rule a fragment is under, with the one allowance that a group
+smaller than a SIMD group *is* its own SIMD group.
+
+**How many threads one folds is the one promise these three cannot keep on
+their own.** The emulated backends fold exactly `simdWidth` lanes, because that
+is what the emitted tree walks. Metal folds the *hardware* SIMD group, which is
+what `simd_sum` is collective over — thirty-two on every Apple GPU, eight or
+sixteen on an Intel one, where the same call folds a quarter of what the
+arithmetic around it assumes. eacp needs the two to agree and cannot know until
+there is a pipeline, so `ComputeProgram::prepare` compares the compiled kernel's
+`threadExecutionWidth` against `simdWidth` and says so in the log when they
+differ — for a kernel using `simdSum`/`simdMax`/`simdMin` or a `SimdMatrix`.
+A kernel that has to be right at any width wants `groupSum`/`groupMax`/
+`groupMin` instead.
+
+**Uniform control flow, not merely a uniform arrival.** Every thread must reach
+a fold with the same branches taken. `loop(condition, body)` takes an ordinary
+per-thread `Bool`, so a fold inside a loop some lanes leave earlier than others
+is divergent: the emulated backends hang at the barrier inside the fold, and
+Metal's intrinsic tolerates it silently and folds only the lanes still running —
+which is the worse of the two, being right on the machine it was written on and
+a hang on the next. Bound the loop by something uniform across the group and
+guard the body's stores instead.
 
 ### The SIMD-group matrix
 
@@ -1277,13 +1375,23 @@ These are the way in and out of that:
 | --- | --- |
 | `input.readHalf(i)` | element `i` of a buffer of halves, widened to a `Float`. `i` counts halves, so an N-weight buffer is walked `0..N-1` |
 | `input.readHalf2(i)` | both halves of word `i` as a `Float2`, `.x` the low bits |
+| `input.readHalf4(i)` | four halves as a `Float4` — the two words starting at word `2 * i`, so `i` counts records of four and element `k` is `readHalf4(k / 4)` component `k % 4` |
 | `unpackHalf2(bits)` | the same, from a `UInt` already in hand |
 | `packHalf2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeHalf2(out, i, pair)` | that word stored at `i` — `readHalf2` reads it back |
 | `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways |
 
 Size the buffer in whole words: `readHalf` fetches the word at `i / 2`, so an
-odd count of halves reads past its last byte on the final element.
+odd count of halves reads past its last byte on the final element. `readHalf4`
+and `readBFloat16x4` want a whole number of *pairs* of words for the same
+reason.
+
+The four-wide pair is the width a weight walk wants, and it is not four
+subscripts: both take their two words through `read2`, so on Metal the eight
+bytes arrive in one `packed_float2` load and the unpacking is register
+arithmetic over what came back. HLSL and GLSL fetch the two words as two
+scalars, which is what their float buffers give — see the vector reads above
+for why neither can reinterpret one.
 
 `readHalf` emits a two-argument helper — the word and which half of it — rather
 than unpacking both and selecting: MSL and HLSL each reach the wanted half with
@@ -1299,6 +1407,178 @@ converts per IEEE — nearest-even, and a finite magnitude past 65504 becomes an
 infinity — while D3D specifies round-to-zero and saturates that magnitude to the
 largest finite half instead. Round before narrowing if the answer has to be the
 same on both.
+
+### bf16 weights, kept packed
+
+The same storage trick for the other 16-bit float, which is what a modern
+checkpoint actually ships — Gemma, Llama and Mistral are all bf16 on disk.
+bfloat16 is fp32 with the low sixteen mantissa bits dropped: eight exponent
+bits against fp16's five, and seven mantissa bits against ten. The family
+mirrors the fp16 one call for call:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    write(output, i, weights.readBFloat16(i) * input[i]);  // bf16 in, fp32 out
+}
+```
+
+| call | what it gives |
+| --- | --- |
+| `input.readBFloat16(i)` | element `i` of a buffer of bfloat16s, widened to a `Float`. `i` counts bfloat16s |
+| `input.readBFloat16x2(i)` | both bfloat16s of word `i` as a `Float2`, `.x` the low bits |
+| `input.readBFloat16x4(i)` | four bfloat16s as a `Float4` — the two words starting at word `2 * i`, on the terms `readHalf4` sets |
+| `unpackBFloat16x2(bits)` | the same, from a `UInt` already in hand |
+| `packBFloat16x2(pair)` | two floats narrowed and packed into a `UInt` |
+| `writeBFloat16x2(out, i, pair)` | that word stored at `i` — `readBFloat16x2` reads it back |
+
+**Do not reach a bf16 weight through the fp16 path.** The two are not
+interchangeable storage: with five exponent bits, fp16 flushes 1e-6 to a
+subnormal and takes 1e30 to infinity, both of which are ordinary bf16 values.
+A checkpoint routed through `readHalf` is not less precise, it is wrong.
+
+Widening is a shift and a bitcast — the sixteen bits back at the top of a word,
+nothing to rebias and no subnormal case — so it is exact and **bit-identical on
+every backend**, which the fp16 widening is too. Unlike `packHalf2`, the
+narrowing is bit-identical as well: no dialect has a bf16 instruction to hand
+the rounding to, so `packBFloat16x2` does round-to-nearest-even in integer
+arithmetic itself, and every backend emits the same arithmetic. A NaN is
+quieted rather than rounded, so it cannot carry into the exponent and come back
+as an infinity. `bfloat16FromFloat` / `bfloat16ToFloat` in `PackedVertex.h` are
+the host side of the same encoding, for filling a buffer or checking one.
+
+### int8 and int4 weights, kept packed
+
+The same storage trick again, for weights that are not floats at all. A
+block-quantized checkpoint stores a run of small integers and one scale per
+block, so what a read owes is the **integer, exactly** — the scale is a multiply
+the kernel does, since which scale belongs to which run is the format's business
+and not a buffer read's:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    auto block = i / 32u;
+
+    write(output, i, weights.readInt8(i) * scales[block]);  // int8 in, fp32 out
+}
+```
+
+| call | what it gives |
+| --- | --- |
+| `input.readInt8(i)` / `readUInt8(i)` | element `i` of a buffer of bytes, widened to a `Float`. `i` counts bytes, so an N-weight buffer is walked `0..N-1` |
+| `input.readInt8x4(i)` / `readUInt8x4(i)` | all four bytes of word `i` as a `Float4`, `.x` the low eight bits. `i` counts words, and element `k` is `readInt8x4(k / 4)` component `k % 4` |
+| `input.readInt8x8(i)` / `readUInt8x8(i)` | eight bytes as a `Float4Pair`, one eight-byte load. `i` counts records of eight |
+| `input.readInt8x16(i)` / `readUInt8x16(i)` | sixteen bytes as a `Float4Quad` — `.a .b .c .d` in address order, one sixteen-byte load. `i` counts records of sixteen |
+| `input.readInt4x8(i)` / `readUInt4x8(i)` | the eight nibbles of word `i` as a `Float4Pair` — `.low` is nibbles 0..3 and `.high` nibbles 4..7. `i` counts words |
+| `input.readInt4x16(i)` / `readUInt4x16(i)` | sixteen nibbles — the same eight bytes, one load — as a `Float4Quad`. `i` counts records of sixteen |
+| `unpackInt8x4(bits)` / `unpackUInt8x4(bits)` | the same, from a `UInt` already in hand |
+| `unpackInt4x8(bits)` / `unpackUInt4x8(bits)` | likewise for the eight nibbles |
+| `packInt8x4(values)` | four `Int4` components packed into a `UInt`, `.x` in the low eight bits |
+| `packUInt8x4(values)` | the same from a `UInt4` |
+| `writeInt8x4(out, i, values)` / `writeUInt8x4(out, i, values)` | that word stored at `i` — `readInt8x4` reads it back |
+
+Signed values are two's complement: a byte over `[-128, 127]`, a nibble over
+`[-8, 7]`. Size the buffer in whole words — `readInt8` fetches the word at
+`i / 4`, so a count of bytes that is not a multiple of four reads past the last
+one on the final element.
+
+Every read in the family is on one index convention: `i` counts records of
+whatever the name's last number says, and every record is the elements
+`width * i` through `width * i + width - 1` of the buffer. So element `k` is
+`readInt8(k)`, and component `k % 16` of `readInt8x16(k / 16)`, and the tests
+assert exactly that.
+
+### Pick the widest read, not the widest type
+
+`readInt8x4` is correct and slow, and the reason is worth stating because it is
+not obvious from the call: **four bytes is a four-byte load**. `readBFloat16x4`
+fetches eight bytes in one load for its four weights, so an int8 kernel written
+with `readInt8x4` issues the same number of loads as the bf16 kernel it replaced
+for half the data — and stops being bound by bandwidth and starts being bound by
+how fast it can issue loads. Halving the bytes then buys a fraction of what it
+should. Measured downstream on gemma-2b: bf16 at 427–478 GB/s, int8 through
+`readInt8x4` at 298–335 GB/s, a 1.32x decode speedup where halving the bytes
+predicts 1.88x.
+
+`readInt8x8` and `readInt8x16` are the fix. They take their words through one
+record read — `read2` and `read4` — so the eight or sixteen bytes arrive in a
+single vector load wherever the backend has one (a `packed_float2` or
+`packed_float4` pointer on Metal, the componentwise construct on HLSL and GLSL),
+and the widening is register arithmetic over the value it brought back.
+`readInt8x16` is the sixteen-byte load `read4` already lowers to, holding
+sixteen weights instead of four.
+
+This is not something to leave to the shader compiler: the graph shares
+constants and pure binaries and **not reads**, so four subscripts of the same
+address stay four loads. One record read is one node, and the emitter names any
+node it evaluates more than once, which is what puts the load in a local with
+the four words as swizzles of it. `GPU/codegenWideInt8Reads` asserts the emitted
+MSL has exactly one buffer subscript for a `readInt8x16`, and
+`PackedQuantized/aWideReadCostsOneRecordRead` asserts on the real
+`ComputeProgram` path that sixteen bytes cost what a `read4` of plain floats
+costs.
+
+`Float4Pair` is what an eight-wide read hands back, and `Float4Quad` a
+sixteen-wide one, because no dialect has a float8 and inventing one in the EDSL
+would leave nothing to emit it into. They are single structs rather than a
+`readInt4x8Low` beside a `readInt4x8High` for the sharing reason above — two
+calls would be two loads of the same words. One read, unpacked in registers:
+
+```cpp
+auto w = quantized.readInt4x8(block);
+auto sum = dot(w.low, activations.read4(block * 2u))
+         + dot(w.high, activations.read4(block * 2u + 1u));
+```
+
+`Float4Pair` names its halves `.low` and `.high`; `Float4Quad` letters its four
+`.a .b .c .d` rather than inventing a `.lowMid`, which would read as an ordering
+of magnitudes where this is an ordering of addresses. Inside a `Float4` the
+components already run `x, y, z, w` in the order the bytes sit, so across the
+quad `q.a.x` is the record's first element and `q.d.w` its sixteenth:
+
+```cpp
+auto w = quantized.readInt8x16(block);
+auto sum = dot(w.a, activations.read4(block * 4u))
+         + dot(w.b, activations.read4(block * 4u + 1u))
+         + dot(w.c, activations.read4(block * 4u + 2u))
+         + dot(w.d, activations.read4(block * 4u + 3u));
+```
+
+The widening is **bit-identical on every backend**, and that is why the sign
+extension is written the way it is. A byte read as unsigned stands for
+`(b ^ 0x80) - 128` and a nibble for `(n ^ 0x8) - 8` — arithmetic on values no
+wider than the word, moving no bit into or out of a sign position, which MSL,
+HLSL and GLSL all define identically. `as_type<char4>` would be Metal's answer
+and nothing else's, and shifting a byte up into the sign bit and arithmetically
+back asks each language what its own sign bit does under a shift. The same
+arithmetic serves Metal and DirectX from one helper string, as `eacpErf` does.
+
+There are four widening helpers for the whole family and no more:
+`eacpUnpackInt8x4` and `eacpUnpackInt4x4` and their unsigned twins. The wide
+reads are those helpers applied once per word of the record, so a
+`readInt8x16` emits one load and four calls, and a `readInt4x16` one load and
+four calls of the nibble helper — the high nibbles of a word being the same
+helper over the word shifted down sixteen, which is a shift node in the graph
+rather than a fifth helper.
+
+`packInt8x4` takes an `Int4` rather than a `Float4` on purpose: narrowing a
+float to an integer is a rounding decision and the three dialects each make
+their own, so a kernel that has floats rounds them itself — with `round()` or
+`floor()` — where the choice is visible. Only the low eight bits of each
+component are stored, so a value outside the range wraps rather than saturating;
+quantization clamps before this point and nothing is spent re-clamping in the
+shader.
+
+`int8x4FromBytes` / `uint8x4FromBytes` / `int4x8FromNibbles` /
+`uint4x8FromNibbles` in `PackedVertex.h`, with `int8x4ToByte` and
+`int4x8ToNibble` going the other way, are the host side of the same layout —
+what a loader turning a quantized checkpoint into a storage buffer writes. They
+are per word, and that is all the wide reads need: a record is a run of
+consecutive words, so a buffer packed one word at a time reads back through
+`readInt8x16` in the order it was written.
 
 ## Mipmaps
 

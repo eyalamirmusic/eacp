@@ -425,9 +425,16 @@ auto tUIntVectorConversions = test("UIntVector/theCrossingsAreNamedCasts") = []
     builder.write(output, 1u, toUInt(signedCell).y());
     builder.write(output, 2u, toUInt(widened).x());
 
+    // The pair itself is one load on Metal and two subscripts on HLSL; what
+    // this is about is the conversion around it, which is a named cast either
+    // way and is spelled over the vector rather than per component.
+    check(contains(emitMetal(builder.graph()),
+                   "uint2 t1 = uint2(float2(*((device const packed_float2*) "));
+    check(contains(emitHlsl(builder.graph()),
+                   "uint2 t1 = uint2(float2(buffer0[t0], "));
+
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        check(contains(source, "uint2 t1 = uint2(float2(buffer0[t0], "));
         check(contains(source, "buffer1[1u] = (uint2(int2(t1))).y;"));
         check(contains(source, "buffer1[2u] = (uint2(float2(t1))).x;"));
     }
@@ -452,7 +459,9 @@ auto tUIntVectorBitcasts = test("UIntVector/theBitcastsUseTheVectorSpelling") = 
     auto metal = emitMetal(builder.graph());
     auto hlsl = emitHlsl(builder.graph());
 
-    check(contains(metal, "uint2 t1 = as_type<uint2>(float2(buffer0[t0], "));
+    check(contains(metal,
+                   "uint2 t1 = as_type<uint2>(float2(*((device const "
+                   "packed_float2*) (buffer0 + t0))));"));
     check(contains(metal, "buffer1[1u] = uint((as_type<float2>(t1)).y);"));
 
     check(contains(hlsl, "uint2 t1 = asuint(float2(buffer0[t0], "));

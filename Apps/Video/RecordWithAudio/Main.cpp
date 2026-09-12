@@ -192,8 +192,6 @@ struct App
 {
     App()
     {
-        window.setContentView(host);
-
         // The animation is what the recording is measured against, so it is
         // paced to the rate being captured rather than to the panel: repainting
         // at 120 Hz into a 60 Hz capture leaves the compositor a frame behind
@@ -280,7 +278,7 @@ struct App
         o.height = 200;
         return o;
     }();
-    Window window {options};
+    Window window {host, options};
 
     bool started = false;
     bool stopping = false;

@@ -15,7 +15,6 @@ struct MyApp
         transport.getBridge().use(clock);
 
         setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
-        window.setContentView(webView);
     }
 
     // Declaration order matters: clock comes first so it's destructed
@@ -25,7 +24,7 @@ struct MyApp
     Api::Clock clock;
     WebView webView {embeddedOptions("ReactAnimApp")};
     WebViewBridge transport {webView};
-    Window window;
+    Window window {webView};
     Threads::Timer timer {[&] { clock.update(); }, 120};
 };
 

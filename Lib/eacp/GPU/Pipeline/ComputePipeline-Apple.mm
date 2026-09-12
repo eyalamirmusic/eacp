@@ -78,6 +78,14 @@ bool ComputePipeline::isValid() const
     return impl->state.get() != nil;
 }
 
+int ComputePipeline::threadExecutionWidth() const
+{
+    if (impl->state.get() == nil)
+        return 0;
+
+    return (int) impl->state.get().threadExecutionWidth;
+}
+
 void* ComputePipeline::nativeState() const
 {
     return (__bridge void*) impl->state.get();

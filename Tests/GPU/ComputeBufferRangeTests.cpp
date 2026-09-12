@@ -27,6 +27,24 @@ struct CopyKernel final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
+// Four floats at a time, so the read is the one vector load rather than four
+// subscripts - the whole point of the range offset below.
+struct RecordCopyKernel final : ComputeProgram
+{
+    RecordCopyKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, input.read4(i));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
 // One add per thread into a counter of its own, so an offset shows up as which
 // counters moved.
 struct BumpKernel final : ComputeProgram
@@ -142,6 +160,46 @@ auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
         pass.setInputBuffer(elements(input, first, count), kernel.input.slot);
         pass.setOutputBuffer(output, kernel.output.slot);
         dispatchBoundByHand(pass, kernel, count);
+    }
+
+    commands.commit();
+
+    auto values = readFloats(output, count);
+
+    for (auto i = 0; i < count; ++i)
+        check(values[i] == (float) (first + i));
+};
+
+// A vector read through a range that does not start on a sixteen-byte boundary,
+// which is the case the Metal load is shaped around: a ranged bind's offset has
+// to sit on Device::storageBufferOffsetAlignment and that is four bytes here, so
+// read4 cannot ask for a float4's alignment and reads a packed vector instead.
+auto tVectorReadFromAnOffsetRange =
+    test("GPU/computeVectorReadFromAnOffsetRange") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const auto records = 6;
+    const auto count = records * 4;
+    const auto first = rowElements(floatBytes);
+
+    auto input = makeRamp(first + count);
+    auto output = makeFilled(count, -1.0f);
+
+    auto kernel = RecordCopyKernel {};
+    kernel.prepare();
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.setPipeline(kernel.pipeline());
+        pass.setInputBuffer(elements(input, first, count), kernel.input.slot);
+        pass.setOutputBuffer(output, kernel.output.slot);
+        dispatchBoundByHand(pass, kernel, records);
     }
 
     commands.commit();
