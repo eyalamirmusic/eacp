@@ -1448,6 +1448,138 @@ quieted rather than rounded, so it cannot carry into the exponent and come back
 as an infinity. `bfloat16FromFloat` / `bfloat16ToFloat` in `PackedVertex.h` are
 the host side of the same encoding, for filling a buffer or checking one.
 
+### int8 and int4 weights, kept packed
+
+The same storage trick again, for weights that are not floats at all. A
+block-quantized checkpoint stores a run of small integers and one scale per
+block, so what a read owes is the **integer, exactly** — the scale is a multiply
+the kernel does, since which scale belongs to which run is the format's business
+and not a buffer read's:
+
+```cpp
+void define() override
+{
+    auto i = threadId();
+    auto block = i / 32u;
+
+    write(output, i, weights.readInt8(i) * scales[block]);  // int8 in, fp32 out
+}
+```
+
+| call | what it gives |
+| --- | --- |
+| `input.readInt8(i)` / `readUInt8(i)` | element `i` of a buffer of bytes, widened to a `Float`. `i` counts bytes, so an N-weight buffer is walked `0..N-1` |
+| `input.readInt8x4(i)` / `readUInt8x4(i)` | all four bytes of word `i` as a `Float4`, `.x` the low eight bits. `i` counts words, and element `k` is `readInt8x4(k / 4)` component `k % 4` |
+| `input.readInt8x8(i)` / `readUInt8x8(i)` | eight bytes as a `Float4Pair`, one eight-byte load. `i` counts records of eight |
+| `input.readInt8x16(i)` / `readUInt8x16(i)` | sixteen bytes as a `Float4Quad` — `.a .b .c .d` in address order, one sixteen-byte load. `i` counts records of sixteen |
+| `input.readInt4x8(i)` / `readUInt4x8(i)` | the eight nibbles of word `i` as a `Float4Pair` — `.low` is nibbles 0..3 and `.high` nibbles 4..7. `i` counts words |
+| `input.readInt4x16(i)` / `readUInt4x16(i)` | sixteen nibbles — the same eight bytes, one load — as a `Float4Quad`. `i` counts records of sixteen |
+| `unpackInt8x4(bits)` / `unpackUInt8x4(bits)` | the same, from a `UInt` already in hand |
+| `unpackInt4x8(bits)` / `unpackUInt4x8(bits)` | likewise for the eight nibbles |
+| `packInt8x4(values)` | four `Int4` components packed into a `UInt`, `.x` in the low eight bits |
+| `packUInt8x4(values)` | the same from a `UInt4` |
+| `writeInt8x4(out, i, values)` / `writeUInt8x4(out, i, values)` | that word stored at `i` — `readInt8x4` reads it back |
+
+Signed values are two's complement: a byte over `[-128, 127]`, a nibble over
+`[-8, 7]`. Size the buffer in whole words — `readInt8` fetches the word at
+`i / 4`, so a count of bytes that is not a multiple of four reads past the last
+one on the final element.
+
+Every read in the family is on one index convention: `i` counts records of
+whatever the name's last number says, and every record is the elements
+`width * i` through `width * i + width - 1` of the buffer. So element `k` is
+`readInt8(k)`, and component `k % 16` of `readInt8x16(k / 16)`, and the tests
+assert exactly that.
+
+### Pick the widest read, not the widest type
+
+`readInt8x4` is correct and slow, and the reason is worth stating because it is
+not obvious from the call: **four bytes is a four-byte load**. `readBFloat16x4`
+fetches eight bytes in one load for its four weights, so an int8 kernel written
+with `readInt8x4` issues the same number of loads as the bf16 kernel it replaced
+for half the data — and stops being bound by bandwidth and starts being bound by
+how fast it can issue loads. Halving the bytes then buys a fraction of what it
+should. Measured downstream on gemma-2b: bf16 at 427–478 GB/s, int8 through
+`readInt8x4` at 298–335 GB/s, a 1.32x decode speedup where halving the bytes
+predicts 1.88x.
+
+`readInt8x8` and `readInt8x16` are the fix. They take their words through one
+record read — `read2` and `read4` — so the eight or sixteen bytes arrive in a
+single vector load wherever the backend has one (a `packed_float2` or
+`packed_float4` pointer on Metal, the componentwise construct on HLSL and GLSL),
+and the widening is register arithmetic over the value it brought back.
+`readInt8x16` is the sixteen-byte load `read4` already lowers to, holding
+sixteen weights instead of four.
+
+This is not something to leave to the shader compiler: the graph shares
+constants and pure binaries and **not reads**, so four subscripts of the same
+address stay four loads. One record read is one node, and the emitter names any
+node it evaluates more than once, which is what puts the load in a local with
+the four words as swizzles of it. `GPU/codegenWideInt8Reads` asserts the emitted
+MSL has exactly one buffer subscript for a `readInt8x16`, and
+`PackedQuantized/aWideReadCostsOneRecordRead` asserts on the real
+`ComputeProgram` path that sixteen bytes cost what a `read4` of plain floats
+costs.
+
+`Float4Pair` is what an eight-wide read hands back, and `Float4Quad` a
+sixteen-wide one, because no dialect has a float8 and inventing one in the EDSL
+would leave nothing to emit it into. They are single structs rather than a
+`readInt4x8Low` beside a `readInt4x8High` for the sharing reason above — two
+calls would be two loads of the same words. One read, unpacked in registers:
+
+```cpp
+auto w = quantized.readInt4x8(block);
+auto sum = dot(w.low, activations.read4(block * 2u))
+         + dot(w.high, activations.read4(block * 2u + 1u));
+```
+
+`Float4Pair` names its halves `.low` and `.high`; `Float4Quad` letters its four
+`.a .b .c .d` rather than inventing a `.lowMid`, which would read as an ordering
+of magnitudes where this is an ordering of addresses. Inside a `Float4` the
+components already run `x, y, z, w` in the order the bytes sit, so across the
+quad `q.a.x` is the record's first element and `q.d.w` its sixteenth:
+
+```cpp
+auto w = quantized.readInt8x16(block);
+auto sum = dot(w.a, activations.read4(block * 4u))
+         + dot(w.b, activations.read4(block * 4u + 1u))
+         + dot(w.c, activations.read4(block * 4u + 2u))
+         + dot(w.d, activations.read4(block * 4u + 3u));
+```
+
+The widening is **bit-identical on every backend**, and that is why the sign
+extension is written the way it is. A byte read as unsigned stands for
+`(b ^ 0x80) - 128` and a nibble for `(n ^ 0x8) - 8` — arithmetic on values no
+wider than the word, moving no bit into or out of a sign position, which MSL,
+HLSL and GLSL all define identically. `as_type<char4>` would be Metal's answer
+and nothing else's, and shifting a byte up into the sign bit and arithmetically
+back asks each language what its own sign bit does under a shift. The same
+arithmetic serves Metal and DirectX from one helper string, as `eacpErf` does.
+
+There are four widening helpers for the whole family and no more:
+`eacpUnpackInt8x4` and `eacpUnpackInt4x4` and their unsigned twins. The wide
+reads are those helpers applied once per word of the record, so a
+`readInt8x16` emits one load and four calls, and a `readInt4x16` one load and
+four calls of the nibble helper — the high nibbles of a word being the same
+helper over the word shifted down sixteen, which is a shift node in the graph
+rather than a fifth helper.
+
+`packInt8x4` takes an `Int4` rather than a `Float4` on purpose: narrowing a
+float to an integer is a rounding decision and the three dialects each make
+their own, so a kernel that has floats rounds them itself — with `round()` or
+`floor()` — where the choice is visible. Only the low eight bits of each
+component are stored, so a value outside the range wraps rather than saturating;
+quantization clamps before this point and nothing is spent re-clamping in the
+shader.
+
+`int8x4FromBytes` / `uint8x4FromBytes` / `int4x8FromNibbles` /
+`uint4x8FromNibbles` in `PackedVertex.h`, with `int8x4ToByte` and
+`int4x8ToNibble` going the other way, are the host side of the same layout —
+what a loader turning a quantized checkpoint into a storage buffer writes. They
+are per word, and that is all the wide reads need: a record is a run of
+consecutive words, so a buffer packed one word at a time reads back through
+`readInt8x16` in the order it was written.
+
 ## Mipmaps
 
 ```cpp

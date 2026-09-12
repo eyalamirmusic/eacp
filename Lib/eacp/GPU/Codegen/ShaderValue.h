@@ -650,6 +650,53 @@ T readBufferVectorLoad(
 }
 } // namespace detail
 
+// Eight values out of one word, which is wider than any vector the three
+// languages share - none of them has a float8, and inventing one in the EDSL
+// would leave nothing to emit it into. So the eight nibbles of a word come back
+// as the two Float4s they unpack into: .low is nibbles 0..3 and .high nibbles
+// 4..7, in the order the word holds them.
+//
+// A pair rather than a readInt4x8Low beside a readInt4x8High, because the graph
+// shares constants and pure binaries and nothing else, so the two calls would
+// be two loads of the same word. One read unpacked twice in registers is what a
+// kernel consuming eight consecutive weights wants, and the call site reads as
+// one fetch because it is one:
+//
+//     auto weights = quantized.readInt4x8(block);
+//     sum += dot(weights.low, activations.read4(block * 2u))
+//          + dot(weights.high, activations.read4(block * 2u + 1u));
+struct Float4Pair
+{
+    Float4 low;
+    Float4 high;
+};
+
+// Sixteen values out of one record, for the same reason and one width further:
+// the widest single load the three backends have is sixteen bytes, and what
+// that many quantized weights unpack into is four Float4s.
+//
+// Lettered a..d rather than extended from .low/.high, because those two words
+// name a two-way split honestly and there is no equally honest pair of words
+// for the middle of a four-way one - .lowMid and .highMid would invent a
+// vocabulary, and read as an ordering of magnitudes where this is an ordering
+// of addresses. Inside a Float4 the components already run x, y, z, w in the
+// order the bytes sit; across the quad they run a, b, c, d the same way, so
+// q.a.x is the record's first element and q.d.w its sixteenth, and the whole
+// thing reads left to right:
+//
+//     auto weights = quantized.readInt8x16(block);
+//     sum += dot(weights.a, activations.read4(block * 4u))
+//          + dot(weights.b, activations.read4(block * 4u + 1u))
+//          + dot(weights.c, activations.read4(block * 4u + 2u))
+//          + dot(weights.d, activations.read4(block * 4u + 3u));
+struct Float4Quad
+{
+    Float4 a;
+    Float4 b;
+    Float4 c;
+    Float4 d;
+};
+
 // Storage buffers of float elements, declared by a compute kernel. Like
 // Texture2D they are slot-identified rather than expression nodes: an input's
 // one operation is the indexed read, an output's is the store recorded via
@@ -753,6 +800,60 @@ struct InputBuffer
     Float2 readBFloat16x2(unsigned index) const;
     Float4 readBFloat16x4(const UInt& index) const;
     Float4 readBFloat16x4(unsigned index) const;
+
+    // The byte reads, for the int8 half of a block-quantized checkpoint, on the
+    // same two index conventions: readInt8 and readUInt8 count bytes, so a
+    // buffer of N quantized weights is walked 0..N-1, and readInt8x4 and
+    // readUInt8x4 count the words that hold four. Each hands back the stored
+    // integer widened to a float exactly - the block's scale is a multiply the
+    // kernel does itself, since which scale belongs to which run of weights is
+    // the format's business and not a buffer read's.
+    Float readInt8(const UInt& index) const;
+    Float readInt8(unsigned index) const;
+    Float readUInt8(const UInt& index) const;
+    Float readUInt8(unsigned index) const;
+    Float4 readInt8x4(const UInt& index) const;
+    Float4 readInt8x4(unsigned index) const;
+    Float4 readUInt8x4(const UInt& index) const;
+    Float4 readUInt8x4(unsigned index) const;
+
+    // The wide byte reads, on the same convention one width up: readInt8x8
+    // counts records of eight bytes - the two words starting at word 2 * i -
+    // and readInt8x16 records of sixteen, the four words starting at word
+    // 4 * i. Both take their words through a single record read, so the eight
+    // or sixteen bytes arrive in one load wherever the backend has one and the
+    // widening is register arithmetic over what it brought back.
+    //
+    // That is the whole point of them. readInt8x4 fetches four bytes in a
+    // four-byte load, so a kernel walking a row with it issues as many loads as
+    // the same walk in bf16 does for twice the data, and becomes bound by how
+    // fast it can issue them rather than by memory. These two put the same
+    // bytes behind a load as wide as the bf16 one.
+    Float4Pair readInt8x8(const UInt& index) const;
+    Float4Pair readInt8x8(unsigned index) const;
+    Float4Pair readUInt8x8(const UInt& index) const;
+    Float4Pair readUInt8x8(unsigned index) const;
+    Float4Quad readInt8x16(const UInt& index) const;
+    Float4Quad readInt8x16(unsigned index) const;
+    Float4Quad readUInt8x16(const UInt& index) const;
+    Float4Quad readUInt8x16(unsigned index) const;
+
+    // The nibble reads, for the int4 half of one. The index counts words - one
+    // word is eight nibbles, nibble 0 in the low four bits - and the eight
+    // values arrive as a Float4Pair for the reason that type gives. A signed
+    // nibble is two's complement over [-8, 7] and an unsigned one is [0, 15].
+    Float4Pair readInt4x8(const UInt& index) const;
+    Float4Pair readInt4x8(unsigned index) const;
+    Float4Pair readUInt4x8(const UInt& index) const;
+    Float4Pair readUInt4x8(unsigned index) const;
+
+    // Sixteen nibbles, which is the same eight bytes readInt8x8 fetches and so
+    // the same single load: two words read as one record, each unpacked into
+    // the pair of Float4s it holds. The index counts records of sixteen.
+    Float4Quad readInt4x16(const UInt& index) const;
+    Float4Quad readInt4x16(unsigned index) const;
+    Float4Quad readUInt4x16(const UInt& index) const;
+    Float4Quad readUInt4x16(unsigned index) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -3016,6 +3117,252 @@ inline Float2 InputBuffer::readBFloat16x2(const UInt& index) const
 inline Float2 InputBuffer::readBFloat16x2(unsigned index) const
 {
     return readBFloat16x2(detail::bufferIndex(graph, index));
+}
+
+// The four bytes of one word, widened: .x the low eight bits through .w the
+// high, which is little-endian order and so the order a memcpy of a row of
+// int8 weights already leaves them in.
+//
+// The sign extension is an exclusive-or and a subtraction rather than a cast or
+// a pair of shifts, because that is the one spelling the three languages define
+// identically: a byte read as unsigned is the signed value (b ^ 0x80) - 128,
+// which is arithmetic entirely inside the range a uint holds and moves no bit
+// into or out of a sign position. as_type<char4> would be Metal's answer and
+// nothing else's, and shifting a byte up into the sign bit and
+// arithmetically back leans on each language's own rule for what the sign bit
+// does under a shift - three rules, spelled three ways, for a widening that has
+// to be bit-identical.
+inline Float4 unpackInt8x4(const UInt& bits)
+{
+    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackInt8x4");
+}
+
+inline Float4 unpackUInt8x4(const UInt& bits)
+{
+    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackUInt8x4");
+}
+
+// The inverse: four integers packed into one word, .x in the low eight bits.
+//
+// It takes an Int4 rather than a Float4 on purpose. Narrowing a float to an
+// integer is a rounding decision, and the three dialects each make their own -
+// which is exactly the disagreement packHalf2 documents. An already-integral
+// vector leaves nothing to disagree about, and a kernel that has floats rounds
+// them itself, with round() or floor(), where the choice is visible.
+//
+// Only the low eight bits of each component are stored, so a value outside
+// [-128, 127] wraps rather than saturating. Quantization clamps before it gets
+// here; nothing is spent re-clamping in the shader.
+inline UInt packInt8x4(const Int4& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackInt8x4");
+}
+
+inline UInt packUInt8x4(const UInt4& values)
+{
+    return detail::call<UInt>(values, ValueType::UInt, "eacpPackUInt8x4");
+}
+
+// The eight nibbles of one word, widened, as the two halves Float4Pair
+// describes. Two float4s rather than one returned aggregate because no dialect
+// spells a returned struct the way the others do, and a float4 is what all
+// three have.
+//
+// The high half is the low half of the word shifted down sixteen, so it is the
+// same helper over a shift node rather than a second helper - one definition
+// covers both halves, and the shift is a pure binary the graph shares with any
+// other use of it.
+inline Float4Pair unpackInt4x8(const UInt& bits)
+{
+    return {
+        detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackInt4x4"),
+        detail::call<Float4>(bits >> 16u, ValueType::Float4, "eacpUnpackInt4x4")};
+}
+
+inline Float4Pair unpackUInt4x8(const UInt& bits)
+{
+    return {
+        detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackUInt4x4"),
+        detail::call<Float4>(bits >> 16u, ValueType::Float4, "eacpUnpackUInt4x4")};
+}
+
+// One byte of a buffer whose elements are int8 rather than float, widened. The
+// index counts bytes, so the call site never spells the packing: the word is
+// index / 4 and which byte of it is index % 4.
+//
+// The byte position goes into the helper rather than selecting between four
+// unpacked values, for the reason readHalf gives - shifting the wanted byte
+// down is one instruction in every language, where a select computes four and
+// throws three away.
+inline Float InputBuffer::readInt8(const UInt& index) const
+{
+    return detail::call2<Float>(
+        asUInt((*this)[index / 4u]), index % 4u, ValueType::Float, "eacpReadInt8");
+}
+
+// The literal form, folded here rather than emitted as `6u / 4u`.
+inline Float InputBuffer::readInt8(unsigned index) const
+{
+    return detail::call2<Float>(asUInt((*this)[index / 4u]),
+                                detail::bufferIndex(graph, index % 4u),
+                                ValueType::Float,
+                                "eacpReadInt8");
+}
+
+inline Float InputBuffer::readUInt8(const UInt& index) const
+{
+    return detail::call2<Float>(
+        asUInt((*this)[index / 4u]), index % 4u, ValueType::Float, "eacpReadUInt8");
+}
+
+inline Float InputBuffer::readUInt8(unsigned index) const
+{
+    return detail::call2<Float>(asUInt((*this)[index / 4u]),
+                                detail::bufferIndex(graph, index % 4u),
+                                ValueType::Float,
+                                "eacpReadUInt8");
+}
+
+// All four bytes of one word, which is what a kernel walking a quantized row
+// wants. The index counts words here rather than bytes - it is the same index
+// the matching writeInt8x4 stores at.
+inline Float4 InputBuffer::readInt8x4(const UInt& index) const
+{
+    return unpackInt8x4(asUInt((*this)[index]));
+}
+
+inline Float4 InputBuffer::readInt8x4(unsigned index) const
+{
+    return readInt8x4(detail::bufferIndex(graph, index));
+}
+
+inline Float4 InputBuffer::readUInt8x4(const UInt& index) const
+{
+    return unpackUInt8x4(asUInt((*this)[index]));
+}
+
+inline Float4 InputBuffer::readUInt8x4(unsigned index) const
+{
+    return readUInt8x4(detail::bufferIndex(graph, index));
+}
+
+// Eight nibbles out of one word, on the terms readInt8x4 sets: the index counts
+// words, and the whole word is fetched once.
+inline Float4Pair InputBuffer::readInt4x8(const UInt& index) const
+{
+    return unpackInt4x8(asUInt((*this)[index]));
+}
+
+inline Float4Pair InputBuffer::readInt4x8(unsigned index) const
+{
+    return readInt4x8(detail::bufferIndex(graph, index));
+}
+
+inline Float4Pair InputBuffer::readUInt4x8(const UInt& index) const
+{
+    return unpackUInt4x8(asUInt((*this)[index]));
+}
+
+inline Float4Pair InputBuffer::readUInt4x8(unsigned index) const
+{
+    return readUInt4x8(detail::bufferIndex(graph, index));
+}
+
+// The wide byte reads. Each takes its words through one record read - read2 for
+// eight bytes, read4 for sixteen - rather than through that many subscripts, so
+// the whole record is one vector load wherever the backend has one and the four
+// unpackings are register arithmetic over the value it brought back. It is the
+// same shape readBFloat16x4 has, and deliberately: half the bytes for the same
+// number of loads is the point of storing weights as bytes at all.
+//
+// The load is emitted once because the record read is one node with four uses,
+// and the emitter names any node it evaluates more than once. Nothing here
+// depends on a compiler noticing two subscripts are the same address, which the
+// graph does not look for.
+inline Float4Pair InputBuffer::readInt8x8(const UInt& index) const
+{
+    auto words = read2(index);
+
+    return {unpackInt8x4(asUInt(words.x())), unpackInt8x4(asUInt(words.y()))};
+}
+
+inline Float4Pair InputBuffer::readInt8x8(unsigned index) const
+{
+    return readInt8x8(detail::bufferIndex(graph, index));
+}
+
+inline Float4Pair InputBuffer::readUInt8x8(const UInt& index) const
+{
+    auto words = read2(index);
+
+    return {unpackUInt8x4(asUInt(words.x())), unpackUInt8x4(asUInt(words.y()))};
+}
+
+inline Float4Pair InputBuffer::readUInt8x8(unsigned index) const
+{
+    return readUInt8x8(detail::bufferIndex(graph, index));
+}
+
+inline Float4Quad InputBuffer::readInt8x16(const UInt& index) const
+{
+    auto words = read4(index);
+
+    return {unpackInt8x4(asUInt(words.x())),
+            unpackInt8x4(asUInt(words.y())),
+            unpackInt8x4(asUInt(words.z())),
+            unpackInt8x4(asUInt(words.w()))};
+}
+
+inline Float4Quad InputBuffer::readInt8x16(unsigned index) const
+{
+    return readInt8x16(detail::bufferIndex(graph, index));
+}
+
+inline Float4Quad InputBuffer::readUInt8x16(const UInt& index) const
+{
+    auto words = read4(index);
+
+    return {unpackUInt8x4(asUInt(words.x())),
+            unpackUInt8x4(asUInt(words.y())),
+            unpackUInt8x4(asUInt(words.z())),
+            unpackUInt8x4(asUInt(words.w()))};
+}
+
+inline Float4Quad InputBuffer::readUInt8x16(unsigned index) const
+{
+    return readUInt8x16(detail::bufferIndex(graph, index));
+}
+
+// Sixteen nibbles are the eight bytes readInt8x8 already fetches in one load,
+// unpacked four ways instead of two - so the wide nibble read is the wide byte
+// read's machinery with unpackInt4x8 in place of unpackInt8x4, and costs a
+// helper of its own nothing.
+inline Float4Quad InputBuffer::readInt4x16(const UInt& index) const
+{
+    auto words = read2(index);
+    auto first = unpackInt4x8(asUInt(words.x()));
+    auto second = unpackInt4x8(asUInt(words.y()));
+
+    return {first.low, first.high, second.low, second.high};
+}
+
+inline Float4Quad InputBuffer::readInt4x16(unsigned index) const
+{
+    return readInt4x16(detail::bufferIndex(graph, index));
+}
+
+inline Float4Quad InputBuffer::readUInt4x16(const UInt& index) const
+{
+    auto words = read2(index);
+    auto first = unpackUInt4x8(asUInt(words.x()));
+    auto second = unpackUInt4x8(asUInt(words.y()));
+
+    return {first.low, first.high, second.low, second.high};
+}
+
+inline Float4Quad InputBuffer::readUInt4x16(unsigned index) const
+{
+    return readUInt4x16(detail::bufferIndex(graph, index));
 }
 
 template <ShaderScalarLike T>

@@ -628,6 +628,23 @@ public:
         write(buffer, index, asFloat(packBFloat16x2(value)));
     }
 
+    // Four integers packed into the one float slot that holds them, which
+    // InputBuffer::readInt8x4 and readUInt8x4 read back at the same index. The
+    // value is an integer vector rather than a Float4 for the reason
+    // packInt8x4 gives: the rounding is the caller's decision to make.
+    void
+        writeInt8x4(const OutputBuffer& buffer, const UInt& index, const Int4& value)
+    {
+        write(buffer, index, asFloat(packInt8x4(value)));
+    }
+
+    void writeUInt8x4(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& value)
+    {
+        write(buffer, index, asFloat(packUInt8x4(value)));
+    }
+
     // One element of an integer output, index or value spelled as a literal
     // where it is one.
     void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value)

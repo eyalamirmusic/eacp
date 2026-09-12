@@ -487,7 +487,133 @@ constexpr auto packBFloat16HelperGlsl =
     "    return (low >> 16u) | (high & 0xffff0000u);\n"
     "}\n\n";
 
-const auto shaderHelpers = Array<ShaderHelper, 10> {
+// The quantized widenings, and the sign extension inside them, which is why
+// these are helpers rather than arithmetic at the call site.
+//
+// A byte lifted out of a word is an unsigned 0..255, and the signed value it
+// stands for is (b ^ 0x80) - 128; a nibble's is (n ^ 0x8) - 8. That spelling is
+// arithmetic on values no wider than the word, moving no bit into or out of a
+// sign position, so MSL, HLSL and GLSL define it identically - which is why one
+// string serves Metal and DirectX here, as it does for erf. The alternatives do
+// not: as_type<char4> is Metal's answer alone, and shifting a byte up into the
+// sign bit and arithmetically back asks each language what its own sign bit
+// does under a shift, which is three rules spelled three ways for a widening
+// that has to agree to the bit.
+constexpr auto unpackInt8x4Helper =
+    "float4 eacpUnpackInt8x4(uint bits)\n"
+    "{\n"
+    "    return float4(float((bits & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                  float(((bits >> 8u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                  float(((bits >> 16u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                  float(((bits >> 24u) & 0xffu) ^ 0x80u) - 128.0);\n"
+    "}\n\n";
+
+constexpr auto unpackInt8x4HelperGlsl =
+    "vec4 eacpUnpackInt8x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float((bits & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                float(((bits >> 8u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                float(((bits >> 16u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                float(((bits >> 24u) & 0xffu) ^ 0x80u) - 128.0);\n"
+    "}\n\n";
+
+constexpr auto unpackUInt8x4Helper =
+    "float4 eacpUnpackUInt8x4(uint bits)\n"
+    "{\n"
+    "    return float4(float(bits & 0xffu),\n"
+    "                  float((bits >> 8u) & 0xffu),\n"
+    "                  float((bits >> 16u) & 0xffu),\n"
+    "                  float((bits >> 24u) & 0xffu));\n"
+    "}\n\n";
+
+constexpr auto unpackUInt8x4HelperGlsl =
+    "vec4 eacpUnpackUInt8x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float(bits & 0xffu),\n"
+    "                float((bits >> 8u) & 0xffu),\n"
+    "                float((bits >> 16u) & 0xffu),\n"
+    "                float((bits >> 24u) & 0xffu));\n"
+    "}\n\n";
+
+// Four nibbles out of the low sixteen bits of a word. The high four are the
+// same function of the word shifted down sixteen, which unpackInt4x8 records as
+// a shift node rather than a second helper - so one definition covers both
+// halves and the shift is visible in the emitted source.
+constexpr auto unpackInt4x4Helper =
+    "float4 eacpUnpackInt4x4(uint bits)\n"
+    "{\n"
+    "    return float4(float((bits & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                  float(((bits >> 4u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                  float(((bits >> 8u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                  float(((bits >> 12u) & 0xfu) ^ 0x8u) - 8.0);\n"
+    "}\n\n";
+
+constexpr auto unpackInt4x4HelperGlsl =
+    "vec4 eacpUnpackInt4x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float((bits & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                float(((bits >> 4u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                float(((bits >> 8u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                float(((bits >> 12u) & 0xfu) ^ 0x8u) - 8.0);\n"
+    "}\n\n";
+
+constexpr auto unpackUInt4x4Helper =
+    "float4 eacpUnpackUInt4x4(uint bits)\n"
+    "{\n"
+    "    return float4(float(bits & 0xfu),\n"
+    "                  float((bits >> 4u) & 0xfu),\n"
+    "                  float((bits >> 8u) & 0xfu),\n"
+    "                  float((bits >> 12u) & 0xfu));\n"
+    "}\n\n";
+
+constexpr auto unpackUInt4x4HelperGlsl =
+    "vec4 eacpUnpackUInt4x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float(bits & 0xfu),\n"
+    "                float((bits >> 4u) & 0xfu),\n"
+    "                float((bits >> 8u) & 0xfu),\n"
+    "                float((bits >> 12u) & 0xfu));\n"
+    "}\n\n";
+
+// The inverse. Each component is masked to its low eight bits in the *signed*
+// domain first, which every one of the three defines as the two's-complement
+// pattern and which leaves a value in 0..255 - so the conversion to uint that
+// follows is of a non-negative number and has nothing left to disagree about.
+// Casting a negative int straight to uint would be the shorter spelling and the
+// one whose result each language words differently.
+constexpr auto packInt8x4Helper =
+    "uint eacpPackInt8x4(int4 values)\n"
+    "{\n"
+    "    return uint(values.x & 0xff) | (uint(values.y & 0xff) << 8u)\n"
+    "           | (uint(values.z & 0xff) << 16u)\n"
+    "           | (uint(values.w & 0xff) << 24u);\n"
+    "}\n\n";
+
+constexpr auto packInt8x4HelperGlsl =
+    "uint eacpPackInt8x4(ivec4 values)\n"
+    "{\n"
+    "    return uint(values.x & 0xff) | (uint(values.y & 0xff) << 8u)\n"
+    "           | (uint(values.z & 0xff) << 16u)\n"
+    "           | (uint(values.w & 0xff) << 24u);\n"
+    "}\n\n";
+
+constexpr auto packUInt8x4Helper =
+    "uint eacpPackUInt8x4(uint4 values)\n"
+    "{\n"
+    "    return (values.x & 0xffu) | ((values.y & 0xffu) << 8u)\n"
+    "           | ((values.z & 0xffu) << 16u)\n"
+    "           | ((values.w & 0xffu) << 24u);\n"
+    "}\n\n";
+
+constexpr auto packUInt8x4HelperGlsl =
+    "uint eacpPackUInt8x4(uvec4 values)\n"
+    "{\n"
+    "    return (values.x & 0xffu) | ((values.y & 0xffu) << 8u)\n"
+    "           | ((values.z & 0xffu) << 16u)\n"
+    "           | ((values.w & 0xffu) << 24u);\n"
+    "}\n\n";
+
+const auto shaderHelpers = Array<ShaderHelper, 18> {
     ShaderHelper {"eacpUnpackHalf2",
                   "inline float2 eacpUnpackHalf2(uint bits)\n"
                   "{\n"
@@ -589,6 +715,69 @@ const auto shaderHelpers = Array<ShaderHelper, 10> {
                   packBFloat16HelperMetal,
                   packBFloat16HelperHlsl,
                   packBFloat16HelperGlsl},
+
+    // One byte chosen by its position in the word, as eacpReadHalf and
+    // eacpReadBFloat16 choose a half: shifting the wanted byte down is one
+    // instruction everywhere, where selecting between four unpacked values
+    // computes four and keeps one.
+    ShaderHelper {"eacpReadInt8",
+                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
+                  "    return float(value ^ 0x80u) - 128.0;\n"
+                  "}\n\n",
+                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
+                  "    return float(value ^ 0x80u) - 128.0;\n"
+                  "}\n\n",
+                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
+                  "    return float(value ^ 0x80u) - 128.0;\n"
+                  "}\n\n"},
+
+    ShaderHelper {"eacpReadUInt8",
+                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
+                  "}\n\n",
+                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
+                  "}\n\n",
+                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
+                  "}\n\n"},
+
+    ShaderHelper {"eacpUnpackInt8x4",
+                  unpackInt8x4Helper,
+                  unpackInt8x4Helper,
+                  unpackInt8x4HelperGlsl},
+
+    ShaderHelper {"eacpUnpackUInt8x4",
+                  unpackUInt8x4Helper,
+                  unpackUInt8x4Helper,
+                  unpackUInt8x4HelperGlsl},
+
+    ShaderHelper {"eacpUnpackInt4x4",
+                  unpackInt4x4Helper,
+                  unpackInt4x4Helper,
+                  unpackInt4x4HelperGlsl},
+
+    ShaderHelper {"eacpUnpackUInt4x4",
+                  unpackUInt4x4Helper,
+                  unpackUInt4x4Helper,
+                  unpackUInt4x4HelperGlsl},
+
+    ShaderHelper {
+        "eacpPackInt8x4", packInt8x4Helper, packInt8x4Helper, packInt8x4HelperGlsl},
+
+    ShaderHelper {"eacpPackUInt8x4",
+                  packUInt8x4Helper,
+                  packUInt8x4Helper,
+                  packUInt8x4HelperGlsl},
 
     ShaderHelper {"log10", nullptr, nullptr, log10HelperGlsl}};
 

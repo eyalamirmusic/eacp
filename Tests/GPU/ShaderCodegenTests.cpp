@@ -3003,6 +3003,310 @@ auto tCodegenGlslBFloat16Helpers = test("GPU/codegenGlslBFloat16Helpers") = []
     expectGlslCompiles(graph);
 };
 
+// The int8 reads, per backend. Nothing here is a builtin anywhere, and the
+// arithmetic is integer arithmetic all three define the same way - which is why
+// one helper string serves Metal and DirectX, and why the GLSL differs only in
+// its type names.
+auto tCodegenInt8Helpers = test("GPU/codegenInt8ReadHelpers") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, weights.readInt8(i));
+    builder.write(output, i + 1u, weights.readUInt8(i));
+    builder.write(output, i + 2u, weights.readInt8x4(i));
+    builder.write(output, i + 3u, weights.readUInt8x4(i));
+    builder.writeInt8x4(output, i + 4u, toInt(weights.readInt8x4(i)));
+    builder.writeUInt8x4(output, i + 5u, toUInt(weights.readUInt8x4(i)));
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    // The scalar reads count bytes, so the word and the byte within it are
+    // computed at the call site and the helper is handed both.
+    for (const auto& source: {metal, hlsl, glsl})
+    {
+        check(contains(source, "uint t0 = (gid / 4u);"));
+        check(contains(source, "uint t1 = (gid % 4u);"));
+
+        check(contains(source, "float eacpReadInt8(uint bits, uint byteIndex)"));
+        check(contains(source, "uint value = (bits >> (8u * byteIndex)) & 0xffu;"));
+        check(contains(source, "return float(value ^ 0x80u) - 128.0;"));
+        check(contains(source, "float eacpReadUInt8(uint bits, uint byteIndex)"));
+
+        // The sign extension, which is the one thing that has to be the same
+        // arithmetic everywhere rather than each dialect's own cast.
+        check(contains(source, "float((bits & 0xffu) ^ 0x80u) - 128.0"));
+        check(!contains(source, "char4"));
+    }
+
+    check(contains(metal, "float4 eacpUnpackInt8x4(uint bits)"));
+    check(contains(metal, "float4 eacpUnpackUInt8x4(uint bits)"));
+    check(contains(metal, "uint eacpPackInt8x4(int4 values)"));
+    check(contains(metal, "uint eacpPackUInt8x4(uint4 values)"));
+    check(contains(metal, "as_type<float>(eacpPackInt8x4(int4("));
+
+    check(contains(hlsl, "float4 eacpUnpackInt8x4(uint bits)"));
+    check(contains(hlsl, "float4 eacpUnpackUInt8x4(uint bits)"));
+    check(contains(hlsl, "uint eacpPackInt8x4(int4 values)"));
+    check(contains(hlsl, "uint eacpPackUInt8x4(uint4 values)"));
+    check(contains(hlsl, "asfloat(eacpPackInt8x4(int4("));
+    check(!contains(hlsl, "as_type"));
+
+    check(contains(glsl, "vec4 eacpUnpackInt8x4(uint bits)"));
+    check(contains(glsl, "vec4 eacpUnpackUInt8x4(uint bits)"));
+    check(contains(glsl, "uint eacpPackInt8x4(ivec4 values)"));
+    check(contains(glsl, "uint eacpPackUInt8x4(uvec4 values)"));
+    check(contains(glsl, "uintBitsToFloat(eacpPackInt8x4(ivec4("));
+    check(!contains(glsl, "as_type"));
+    check(!contains(glsl, "asfloat"));
+    check(!contains(glsl, "float4"));
+
+    // The packer masks in the signed domain before it converts, so the
+    // conversion it does make is of a value in 0..255.
+    for (const auto& source: {metal, hlsl, glsl})
+        check(contains(source, "uint(values.x & 0xff) | (uint(values.y & 0xff)"));
+
+    expectGlslCompiles(graph);
+};
+
+// The nibble reads. Eight values come out of one word as two float4s over one
+// load, the high half being the low half of the word shifted down sixteen -
+// which is a shift node in the graph rather than a second helper.
+auto tCodegenInt4Helpers = test("GPU/codegenInt4ReadHelpers") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    auto signedNibbles = weights.readInt4x8(i);
+    auto unsignedNibbles = weights.readUInt4x8(i);
+
+    builder.write(output, i * 4u, signedNibbles.low);
+    builder.write(output, i * 4u + 1u, signedNibbles.high);
+    builder.write(output, i * 4u + 2u, unsignedNibbles.low);
+    builder.write(output, i * 4u + 3u, unsignedNibbles.high);
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    for (const auto& source: {metal, hlsl, glsl})
+    {
+        // One definition and two calls for each of the two, which is what says
+        // the high half reuses the low half's helper.
+        check(countOccurrences(source, "eacpUnpackInt4x4(") == 3);
+        check(countOccurrences(source, "eacpUnpackUInt4x4(") == 3);
+
+        // Two's complement over [-8, 7], written as the same exclusive-or and
+        // subtraction the byte reads use.
+        check(contains(source, "float((bits & 0xfu) ^ 0x8u) - 8.0"));
+
+        // The high half is that same helper over the word shifted down
+        // sixteen, and the word is fetched once for the four values either
+        // side of the shift - which is the whole reason the pair comes back
+        // from one call rather than from a Low and a High.
+        check(contains(source, "eacpUnpackInt4x4((t2 >> 16u))"));
+        check(contains(source, "eacpUnpackUInt4x4((t7 >> 16u))"));
+        check(countOccurrences(source, "buffer0[gid]") == 2);
+    }
+
+    check(contains(metal, "float4 eacpUnpackInt4x4(uint bits)"));
+    check(contains(metal, "float4 eacpUnpackUInt4x4(uint bits)"));
+    check(contains(metal, "uint t2 = as_type<uint>(buffer0[gid]);"));
+
+    check(contains(hlsl, "float4 eacpUnpackInt4x4(uint bits)"));
+    check(contains(hlsl, "uint t2 = asuint(buffer0[gid]);"));
+
+    check(contains(glsl, "vec4 eacpUnpackInt4x4(uint bits)"));
+    check(contains(glsl, "vec4 eacpUnpackUInt4x4(uint bits)"));
+    check(contains(glsl, "uint t2 = floatBitsToUint(buffer0[gid]);"));
+    check(!contains(glsl, "float4"));
+
+    expectGlslCompiles(graph);
+};
+
+// Sixteen bytes in one load. This is the whole claim readInt8x16 makes, so it
+// is the emitted text the test pins rather than the values, which the device
+// suite covers: one packed vector load into a local, and the four words as four
+// swizzles of it.
+//
+// It matters because nothing downstream would catch it going wrong. Four
+// subscripts of the same address is still correct arithmetic - it just issues
+// four loads where the point of storing weights as bytes was to issue one, and
+// the kernel goes back to being bound by how fast it can ask for memory. The
+// graph shares constants and pure binaries and not reads, so it is the single
+// record node that makes this one load, not a compiler noticing anything.
+auto tCodegenWideInt8Reads = test("GPU/codegenWideInt8Reads") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    auto quad = weights.readInt8x16(i);
+
+    builder.write(output, i * 4u, quad.a);
+    builder.write(output, i * 4u + 1u, quad.b);
+    builder.write(output, i * 4u + 2u, quad.c);
+    builder.write(output, i * 4u + 3u, quad.d);
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    // Sixteen bytes through a packed_uint4-shaped pointer, once, and no
+    // element subscript of the weights anywhere.
+    check(contains(
+        metal,
+        "float4 t2 = float4(*((device const packed_float4*) (buffer0 + t0)));"));
+    check(countOccurrences(metal, "buffer0 + t0") == 1);
+    check(!contains(metal, "buffer0["));
+
+    // And the four words are swizzles of that one local rather than four
+    // reads - which is what makes the load count one rather than four.
+    check(contains(metal, "eacpUnpackInt8x4(as_type<uint>((t2).x))"));
+    check(contains(metal, "eacpUnpackInt8x4(as_type<uint>((t2).y))"));
+    check(contains(metal, "eacpUnpackInt8x4(as_type<uint>((t2).z))"));
+    check(contains(metal, "eacpUnpackInt8x4(as_type<uint>((t2).w))"));
+
+    // One definition and four calls.
+    check(countOccurrences(metal, "eacpUnpackInt8x4(") == 5);
+
+    // The other two spell the record as the componentwise construct read4
+    // already emits there, for the reason ExprKind::BufferVectorRead gives: a
+    // StructuredBuffer<float> and an std430 block of floats have no way to
+    // reinterpret themselves. Four subscripts, not sixteen, and still one
+    // widening per word.
+    check(contains(hlsl,
+                   "float4 t2 = float4(buffer0[t0], buffer0[t0 + 1u], "
+                   "buffer0[t0 + 2u], buffer0[t0 + 3u]);"));
+    check(countOccurrences(hlsl, "buffer0[t0") == 4);
+    check(contains(hlsl, "eacpUnpackInt8x4(asuint((t2).x))"));
+    check(contains(hlsl, "eacpUnpackInt8x4(asuint((t2).w))"));
+    check(countOccurrences(hlsl, "eacpUnpackInt8x4(") == 5);
+
+    check(contains(glsl,
+                   "vec4 t2 = vec4(buffer0[t0], buffer0[t0 + 1u], "
+                   "buffer0[t0 + 2u], buffer0[t0 + 3u]);"));
+    check(countOccurrences(glsl, "buffer0[t0") == 4);
+    check(contains(glsl, "eacpUnpackInt8x4(floatBitsToUint((t2).x))"));
+    check(contains(glsl, "eacpUnpackInt8x4(floatBitsToUint((t2).w))"));
+    check(!contains(glsl, "float4"));
+
+    expectGlslCompiles(graph);
+};
+
+// Eight bytes in one load, which is the same eight bytes readBFloat16x4 fetches
+// - so an int8 walk issues the loads a bf16 walk does for twice the weights.
+auto tCodegenWideInt8PairReads = test("GPU/codegenWideInt8PairReads") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    auto pair = weights.readUInt8x8(i);
+
+    builder.write(output, i * 2u, pair.low);
+    builder.write(output, i * 2u + 1u, pair.high);
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    check(contains(
+        metal,
+        "float2 t2 = float2(*((device const packed_float2*) (buffer0 + t0)));"));
+    check(countOccurrences(metal, "buffer0 + t0") == 1);
+    check(!contains(metal, "buffer0["));
+
+    check(contains(metal, "eacpUnpackUInt8x4(as_type<uint>((t2).x))"));
+    check(contains(metal, "eacpUnpackUInt8x4(as_type<uint>((t2).y))"));
+    check(countOccurrences(metal, "eacpUnpackUInt8x4(") == 3);
+
+    check(contains(hlsl, "float2 t2 = float2(buffer0[t0], buffer0[t0 + 1u]);"));
+    check(countOccurrences(hlsl, "buffer0[t0") == 2);
+    check(contains(hlsl, "eacpUnpackUInt8x4(asuint((t2).y))"));
+
+    check(contains(glsl, "vec2 t2 = vec2(buffer0[t0], buffer0[t0 + 1u]);"));
+    check(countOccurrences(glsl, "buffer0[t0") == 2);
+    check(contains(glsl, "eacpUnpackUInt8x4(floatBitsToUint((t2).y))"));
+    check(!contains(glsl, "float4"));
+
+    expectGlslCompiles(graph);
+};
+
+// Sixteen nibbles are those same eight bytes, so the wide nibble read is the
+// wide byte read's load with the nibble helper over it - twice per word, the
+// high four being the word shifted down sixteen.
+auto tCodegenWideInt4Reads = test("GPU/codegenWideInt4Reads") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    auto quad = weights.readInt4x16(i);
+
+    builder.write(output, i * 4u, quad.a);
+    builder.write(output, i * 4u + 1u, quad.b);
+    builder.write(output, i * 4u + 2u, quad.c);
+    builder.write(output, i * 4u + 3u, quad.d);
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    check(contains(
+        metal,
+        "float2 t3 = float2(*((device const packed_float2*) (buffer0 + t2)));"));
+    check(countOccurrences(metal, "buffer0 + t2") == 1);
+    check(!contains(metal, "buffer0["));
+
+    check(contains(metal, "uint t4 = as_type<uint>((t3).x);"));
+    check(contains(metal, "uint t9 = as_type<uint>((t3).y);"));
+
+    check(contains(hlsl, "float2 t3 = float2(buffer0[t2], buffer0[t2 + 1u]);"));
+    check(contains(hlsl, "uint t4 = asuint((t3).x);"));
+    check(countOccurrences(hlsl, "buffer0[t2") == 2);
+
+    check(contains(glsl, "vec2 t3 = vec2(buffer0[t2], buffer0[t2 + 1u]);"));
+    check(contains(glsl, "uint t4 = floatBitsToUint((t3).x);"));
+    check(countOccurrences(glsl, "buffer0[t2") == 2);
+    check(!contains(glsl, "float4"));
+
+    // Both halves of each word from the one helper, the high half over the
+    // shift - so sixteen values cost one load, two reinterpretations and four
+    // calls, and the word a pair of calls shares is named once rather than
+    // recomputed.
+    for (const auto& source: {metal, hlsl, glsl})
+    {
+        check(countOccurrences(source, "eacpUnpackInt4x4(") == 5);
+        check(contains(source, "eacpUnpackInt4x4(t4)"));
+        check(contains(source, "eacpUnpackInt4x4((t4 >> 16u))"));
+        check(contains(source, "eacpUnpackInt4x4(t9)"));
+        check(contains(source, "eacpUnpackInt4x4((t9 >> 16u))"));
+        check(contains(source, "float((bits & 0xfu) ^ 0x8u) - 8.0"));
+    }
+
+    expectGlslCompiles(graph);
+};
+
 // A GLSL sampler2D over a depth image hands back four channels, so the call
 // takes .r; on MSL and HLSL the declared type does that instead.
 auto tCodegenGlslDepthSample = test("GPU/codegenGlslDepthSample") = []
