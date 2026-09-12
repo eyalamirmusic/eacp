@@ -8,6 +8,9 @@ find_package(ResEmbed REQUIRED)
 find_package(Miro REQUIRED)
 target_link_libraries(eacp-core PUBLIC ResEmbed Miro)
 
+# PRIVATE: Zip.cpp is the only thing that includes miniz.h.
+target_link_libraries(eacp-core PRIVATE miniz)
+
 target_sources(eacp-core PRIVATE
         App/App.cpp
         Platform/AppInfo.cpp
@@ -27,7 +30,8 @@ target_sources(eacp-core PRIVATE
         Utils/MemoryMappedFile.cpp
         Utils/Random.cpp
         Utils/Strings.cpp
-        Utils/Time.cpp)
+        Utils/Time.cpp
+        Utils/Zip.cpp)
 
 if (APPLE)
     target_sources(eacp-core PRIVATE
