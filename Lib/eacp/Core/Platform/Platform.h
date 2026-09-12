@@ -93,10 +93,12 @@ constexpr std::string_view name()
 bool isStandalone();
 bool isDLL();
 
-// The running app's name and version, read from the AppInfo.json that
-// eacp_set_gui_subsystem embeds via ResEmbed. Empty when this binary has no
-// embedded AppInfo (e.g. a console app that never called the CMake helper).
+// The running app's name, company and version, read from the AppInfo.json
+// that eacp_set_gui_subsystem embeds via ResEmbed. Empty when this binary has
+// no embedded AppInfo (e.g. a console app that never called the CMake helper);
+// the company is also empty when the target set none.
 std::string_view getAppName();
+std::string_view getCompanyName();
 std::string_view getAppVersion();
 
 } // namespace eacp::Platform

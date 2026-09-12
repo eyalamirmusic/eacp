@@ -36,7 +36,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
   runs both WebSocket ends in one process. Backed by NSURLSession and
   Network.framework on Apple platforms, WinHTTP on Windows and libcurl on
-  Linux.
+  Linux. `OnlineResource` fetches a file an app needs into its own
+  Application Support folder once, revalidates it against the server's ETag
+  on later runs, and unpacks a zip — `Apps/Console/OnlineResource` fetches
+  one before it does anything else.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load

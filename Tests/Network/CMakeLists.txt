@@ -7,6 +7,7 @@ set(network_test_sources
         HttpRpcTests.cpp
         HttpServerTests.cpp
         HttpTimeoutTests.cpp
+        OnlineResourceTests.cpp
         TcpConnectionTests.cpp
         WebSocketProtocolTests.cpp
         WebSocketServerTests.cpp

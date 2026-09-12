@@ -13,9 +13,10 @@ namespace
 struct AppInfo
 {
     std::string name;
+    std::string company;
     std::string version;
 
-    MIRO_REFLECT(name, version)
+    MIRO_REFLECT(name, company, version)
 };
 
 AppInfo loadAppInfo()
@@ -36,6 +37,11 @@ const AppInfo& appInfo()
 std::string_view getAppName()
 {
     return appInfo().name;
+}
+
+std::string_view getCompanyName()
+{
+    return appInfo().company;
 }
 
 std::string_view getAppVersion()

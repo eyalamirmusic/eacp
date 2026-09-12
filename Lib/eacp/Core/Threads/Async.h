@@ -111,6 +111,17 @@ public:
         state->settle();
     }
 
+    // Leaves the Async pending forever and drops every continuation queued
+    // on it, so nothing runs and nothing it captured is kept alive. For an
+    // owner going away whose callers must not hear from it again.
+    void abandon() const
+    {
+        assertMainThread();
+        if (state->status != detail::AsyncState<T>::Status::Pending)
+            return;
+        state->continuations.clear();
+    }
+
 private:
     std::shared_ptr<detail::AsyncState<T>> state;
 };

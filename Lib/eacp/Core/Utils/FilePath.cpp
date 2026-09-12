@@ -1,5 +1,7 @@
 #include "FilePath.h"
 
+#include "../Platform/Platform.h"
+#include "Files.h"
 #include "Strings.h"
 
 #include <cstddef>
@@ -60,6 +62,60 @@ FilePath FilePath::parentDirectory() const
         return FilePath {"/"};
 
     return FilePath {text.substr(0, separator)};
+}
+
+namespace
+{
+std::string executableName()
+{
+    auto name = Files::filenameFromPath(Files::executablePath().str());
+    auto dot = name.find_last_of('.');
+
+    if (dot != std::string::npos && dot > 0)
+        name.erase(dot);
+
+    return name;
+}
+
+std::string currentAppName()
+{
+    if (auto name = Platform::getAppName(); !name.empty())
+        return std::string {name};
+
+    if (auto name = executableName(); !name.empty())
+        return name;
+
+    return "eacp";
+}
+
+FilePath appFolderUnder(const FilePath& root,
+                        std::string_view company,
+                        std::string_view app)
+{
+    auto folder = company.empty() ? root : root / company;
+    return app.empty() ? folder : folder / app;
+}
+} // namespace
+
+FilePath FilePath::appSupportDirectory()
+{
+    return appSupportDirectory(Platform::getCompanyName(), currentAppName());
+}
+
+FilePath FilePath::appCacheDirectory()
+{
+    return appCacheDirectory(Platform::getCompanyName(), currentAppName());
+}
+
+FilePath FilePath::appSupportDirectory(std::string_view company,
+                                       std::string_view app)
+{
+    return appFolderUnder(appDataDirectory(), company, app);
+}
+
+FilePath FilePath::appCacheDirectory(std::string_view company, std::string_view app)
+{
+    return appFolderUnder(cacheDirectory(), company, app);
 }
 
 std::wstring FilePath::wide() const

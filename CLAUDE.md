@@ -321,6 +321,19 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - Multipart parts come from a path (`addFileField`) or from bytes already in
   memory (`addFileBytes`/`FileField::fromBytes`, no temporary file needed)
 - `urlEncode`/`urlDecode` and `parseQueryString` (`HTTP/Http.h`)
+- `OnlineResource` (`Network/OnlineResource/`): a file an app needs from the
+  network, kept under `FilePath::appSupportDirectory() / "Resources"` and
+  fetched at most once. A sidecar (`<path>.resource.json`) records the URL,
+  the app-declared version and the server's ETag / Last-Modified; a later
+  fetch re-downloads on a URL or version change, revalidates with one
+  conditional GET when the server gave validators, and otherwise trusts the
+  copy. A `.zip` is unpacked and `path()` is the folder. Three tiers: the
+  stateful object (`start()` returning `Threads::Async<Result>`, `cancel()`,
+  `progress()` readable from any thread), `fetchAsync(Options)` with the
+  callbacks in `Options`, and the blocking `fetch(Options)` for a console app
+  that needs the file before its loop runs. Destroying the object abandons
+  its Async, so a dead view is never called back. `Apps/Console/OnlineResource`
+  and `Apps/Video/DownloadAndPlay` are the two users.
 - `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
   platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
   NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on
@@ -351,6 +364,13 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `AutoReleasePool`: RAII wrapper for NSAutoreleasePool
 
 **Utils/** - Generic patterns
+- `FilePath::appSupportDirectory()` / `appCacheDirectory()`: this app's own
+  folder under the per-user data and cache roots, `<root>/<Company>/<App>`.
+  The names come from the embedded `AppInfo.json` (`Platform::getAppName`,
+  `getCompanyName`; the company is the target's `EACP_COMPANY_NAME` property
+  or the variable of that name, and its level is omitted when empty); an app
+  with no `AppInfo` is named after its executable (`Files::executablePath`).
+  The two-argument overloads take the names instead
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)

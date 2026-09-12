@@ -29,6 +29,9 @@ void writeFile(const FilePath& path, Span<const std::uint8_t> bytes);
 // Throws std::runtime_error, like writeFile, if the write or the rename fails.
 void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes);
 
+// The running process's executable. Empty if unresolvable.
+FilePath executablePath();
+
 // Where the running binary's shipped resources live: Contents/Resources for a
 // bundle, the executable's own directory otherwise. Empty if unresolvable.
 FilePath resourcesDirectory();
