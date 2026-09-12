@@ -61,6 +61,7 @@ set(gpu_test_sources
         MultisampledTargetTests.cpp
         PackedBFloat16Tests.cpp
         PackedHalfTests.cpp
+        PackedQuantizedTests.cpp
         PipelineStateTests.cpp
         ProgramGraphTests.cpp
         RenderBufferRangeTests.cpp

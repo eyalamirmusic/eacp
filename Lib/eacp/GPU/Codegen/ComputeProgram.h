@@ -493,6 +493,21 @@ protected:
         builder.writeBFloat16x2(buffer, index, value);
     }
 
+    // Four integers packed into the one float slot that holds them, which
+    // InputBuffer::readInt8x4 and readUInt8x4 read back at the same index.
+    void
+        writeInt8x4(const OutputBuffer& buffer, const UInt& index, const Int4& value)
+    {
+        builder.writeInt8x4(buffer, index, value);
+    }
+
+    void writeUInt8x4(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& value)
+    {
+        builder.writeUInt8x4(buffer, index, value);
+    }
+
     // One element of a threadgroup-shared array, published to the rest of the
     // group by the next barrier().
     template <typename T>
