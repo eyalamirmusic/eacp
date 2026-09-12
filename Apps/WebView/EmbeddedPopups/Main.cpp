@@ -10,10 +10,9 @@ struct PopupWindow final
                 std::function<void(PopupWindow*)> onClose)
         : closeHandler(std::move(onClose))
         , webView(std::move(popup))
-        , window(makeWindowOptions())
+        , window(*webView, makeWindowOptions())
     {
         webView->onClose = [this]() { requestClose(); };
-        window.setContentView(*webView);
     }
 
     std::function<void(PopupWindow*)> closeHandler;
@@ -71,15 +70,7 @@ struct ParentView final : View
     EA::OwnedVector<PopupWindow> popups;
 };
 
-struct MyApp
-{
-    MyApp() { window.setContentView(parentView); }
-
-    ParentView parentView;
-    Window window;
-};
-
 int main()
 {
-    return eacp::Apps::run<MyApp>();
+    return Graphics::runWindowedApp<ParentView>();
 }

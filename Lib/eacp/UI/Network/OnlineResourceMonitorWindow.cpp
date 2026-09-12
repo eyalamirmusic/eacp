@@ -21,8 +21,7 @@ eacp::Graphics::WindowOptions OnlineResourceMonitorWindow::defaultOptions()
 
 OnlineResourceMonitorWindow::OnlineResourceMonitorWindow(
     const eacp::Graphics::WindowOptions& options)
-    : window(options)
+    : window(host, options)
 {
-    window.setContentView(host);
 }
 } // namespace eacp::UI

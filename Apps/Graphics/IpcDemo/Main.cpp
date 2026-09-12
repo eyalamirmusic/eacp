@@ -247,7 +247,7 @@ struct IpcDemoApp
         : host(peer.isServer() ? "Server" : "Client",
                peer.isServer() ? serverColor : clientColor,
                peer.isServer() ? clientColor : serverColor)
-        , window(windowOptionsFor(peer.isServer()))
+        , window(host, windowOptionsFor(peer.isServer()))
     {
         auto& content = host.content;
 
@@ -277,8 +277,6 @@ struct IpcDemoApp
             host.content.setStatus(
                 peer.isServer() ? "Peer left - waiting for a new one" : "Peer left");
         };
-
-        window.setContentView(host);
     }
 
     Peer peer;

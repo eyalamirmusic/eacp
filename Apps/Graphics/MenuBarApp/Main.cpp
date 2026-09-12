@@ -104,7 +104,6 @@ struct MenuBarApp
 {
     MenuBarApp()
     {
-        window.setContentView(host);
         host.focus();
         installMenuBar();
     }
@@ -165,7 +164,8 @@ struct MenuBarApp
     }
 
     StateHost host;
-    Window window {[]
+    Window window {host,
+                   []
                    {
                        auto options = WindowOptions {};
                        options.width = 620;

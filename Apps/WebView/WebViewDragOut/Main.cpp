@@ -130,18 +130,14 @@ private:
 
 struct MyApp
 {
-    MyApp()
-    {
-        setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
-        window.setContentView(webView);
-    }
+    MyApp() { setApplicationMenuBar(buildDefaultWebViewMenuBar(), window); }
 
     // api declared first -> destructed last (after the bridge tears down its
     // handlers/listeners, which hold &api).
     DragOutApi api;
     WebView webView {dragOutOptions()};
     WebViewBridge transport {webView, api};
-    Window window;
+    Window window {webView};
 };
 
 int main()

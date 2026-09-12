@@ -97,12 +97,11 @@ struct PathsApp
         view.setStrokeColor({0.96f, 0.97f, 1.0f, 1.0f});
         view.setStrokeWidth(6.0f);
         view.setPath(buildScene());
-
-        window.setContentView(view);
     }
 
     PathView view;
-    Graphics::Window window {[]
+    Graphics::Window window {view,
+                             []
                              {
                                  auto options = Graphics::WindowOptions {};
                                  options.width = (int) designWidth;

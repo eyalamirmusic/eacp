@@ -129,10 +129,7 @@ struct TrayApp
         // app starts with the main window only. setVisible keeps the window
         // (and its content) alive across toggles, so it reappears exactly
         // where the user left it.
-        window.setContentView(panelHost);
         window.setVisible(false);
-
-        mainWindow.setContentView(mainHost);
 
         // The Cmd+Q the demo below refuses lives on this menu — without a
         // main menu the key equivalent has nothing to fire.
@@ -249,8 +246,8 @@ struct TrayApp
 
     PanelHost panelHost;
     MainHost mainHost;
-    Window window {getPanelOptions()};
-    Window mainWindow {getMainWindowOptions()};
+    Window window {panelHost, getPanelOptions()};
+    Window mainWindow {mainHost, getMainWindowOptions()};
     TrayIcon tray;
 };
 

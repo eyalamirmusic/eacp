@@ -89,15 +89,7 @@ struct TriangleView final : GPUView
     RenderPipeline pipeline;
 };
 
-struct MyApp
-{
-    MyApp() { window.setContentView(triangle); }
-
-    TriangleView triangle;
-    Graphics::Window window;
-};
-
 int main()
 {
-    return eacp::Apps::run<MyApp>();
+    return Graphics::runWindowedApp<TriangleView>();
 }

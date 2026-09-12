@@ -432,7 +432,6 @@ struct StreamingStressApp
     StreamingStressApp()
     {
         view.printStats = true;
-        window.setContentView(view);
 
         std::printf("%d meshes a frame, each its own write + bind + drawIndexed; "
                     "the load doubles for one second in every three.\n"
@@ -443,7 +442,7 @@ struct StreamingStressApp
     }
 
     StreamingStressView view;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {view, windowOptions()};
 };
 
 namespace

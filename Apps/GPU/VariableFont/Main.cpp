@@ -437,16 +437,9 @@ Graphics::WindowOptions windowOptions()
     return options;
 }
 
-struct VariableFontApp
-{
-    VariableFontApp() { window.setContentView(view); }
-
-    VariableFontView view;
-    Graphics::Window window {windowOptions()};
-};
 } // namespace
 
 int main()
 {
-    return eacp::Apps::run<VariableFontApp>();
+    return Graphics::runWindowedApp<VariableFontView>(windowOptions());
 }

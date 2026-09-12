@@ -289,16 +289,9 @@ Graphics::WindowOptions windowOptions()
     return options;
 }
 
-struct GlyphAtlasApp
-{
-    GlyphAtlasApp() { window.setContentView(view); }
-
-    AtlasTextView view;
-    Graphics::Window window {windowOptions()};
-};
 } // namespace
 
 int main()
 {
-    return eacp::Apps::run<GlyphAtlasApp>();
+    return Graphics::runWindowedApp<AtlasTextView>(windowOptions());
 }

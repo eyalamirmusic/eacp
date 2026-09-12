@@ -250,14 +250,6 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-struct App
-{
-    App() { window.setContentView(host); }
-
-    DemoHost host;
-    Graphics::Window window {makeOptions()};
-};
-
 // The same tree rendered to a file with no window, which is how the picture is
 // looked at on a machine with nobody at the screen. Sized and told resized() by
 // hand, since a view in no window is never told and that is where the host
@@ -289,5 +281,5 @@ int main(int argc, char** argv)
     if (argc > 1)
         return snapshot(argv[1]);
 
-    return eacp::Apps::run<App>();
+    return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

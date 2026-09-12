@@ -244,13 +244,12 @@ struct BlendingApp
     {
         root.addSubview(blending);
         root.addSubview(labels);
-        window.setContentView(root);
     }
 
     RootView root;
     BlendingView blending;
     LabelStripView labels;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {root, windowOptions()};
 };
 
 int main()

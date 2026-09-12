@@ -445,13 +445,12 @@ struct MyApp
 {
     MyApp()
     {
-        window.setContentView(maze);
         maze.window = &window;
         maze.focus();
     }
 
     MazeView maze;
-    Graphics::Window window;
+    Graphics::Window window {maze};
 };
 
 int main()

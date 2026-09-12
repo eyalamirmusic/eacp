@@ -45,7 +45,44 @@ void installCountedFactory()
     getAppFactory() = [] { getGlobalApp().create<App<CountedPayload>>(); };
 }
 
+struct ArgumentPayload
+{
+    ArgumentPayload(int numberToKeep, std::string nameToKeep)
+        : number(numberToKeep)
+        , name(std::move(nameToKeep))
+    {
+    }
+
+    int number = 0;
+    std::string name;
+};
+
 } // namespace
+
+// run<T>(args...) builds T from the arguments on every construction, so a
+// restart() gets the same app the launch did. The factory is tested rather
+// than run<T>() itself: run<T>() owns the process's loop, and the tests are
+// already running inside one.
+auto tFactoryForwardsConstructorArgs =
+    test("App/factoryForwardsConstructorArgs") = []
+{
+    resetAppState();
+
+    auto name = std::string {"forwarded"};
+    getAppFactory() = eacp::Apps::Detail::makeAppFactory<ArgumentPayload>(42, name);
+
+    for (auto construction = 0; construction < 2; ++construction)
+    {
+        getAppFactory()();
+
+        auto* app = getGlobalApp().getAs<App<ArgumentPayload>>();
+        check(app != nullptr);
+        check(app->app.number == 42);
+        check(app->app.name == "forwarded");
+    }
+
+    resetAppState();
+};
 
 auto tGlobalAppIsSingleton = test("App/getGlobalAppReturnsSameInstance") = []
 {

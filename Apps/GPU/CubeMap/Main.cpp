@@ -524,13 +524,12 @@ struct CubeMapApp
     {
         root.addSubview(scene);
         root.addSubview(legend);
-        window.setContentView(root);
     }
 
     RootView root;
     CubeMapView scene;
     LegendView legend;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {root, windowOptions()};
 };
 
 namespace

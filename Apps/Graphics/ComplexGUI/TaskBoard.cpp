@@ -552,13 +552,12 @@ struct TaskBoardApp
 {
     TaskBoardApp()
     {
-        window.setContentView(host);
         host.focus();
         host.board.grabKeyboardFocus();
     }
 
     Host host;
-    eacp::Graphics::Window window {windowOptions()};
+    eacp::Graphics::Window window {host, windowOptions()};
 };
 } // namespace
 

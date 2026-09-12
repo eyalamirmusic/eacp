@@ -16,13 +16,12 @@ struct PluginApp
     {
         transport.getBridge().use(clock);
         window.setTitle("WebViewReactAnim (plugin)");
-        window.setContentView(webView);
     }
 
     Api::Clock clock;
     WebView webView {embeddedOptions("ReactAnimApp")};
     WebViewBridge transport {webView};
-    Window window;
+    Window window {webView};
     Threads::Timer timer {[&] { clock.update(); }, 120};
 };
 

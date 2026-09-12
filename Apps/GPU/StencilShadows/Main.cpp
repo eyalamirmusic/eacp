@@ -688,13 +688,12 @@ struct StencilShadowsApp
     {
         root.addSubview(shadows);
         root.addSubview(labels);
-        window.setContentView(root);
     }
 
     RootView root;
     StencilShadowsView shadows;
     LabelStripView labels;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {root, windowOptions()};
 };
 
 namespace

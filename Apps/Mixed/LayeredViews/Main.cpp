@@ -529,27 +529,19 @@ struct LayeredRoot final : View
     Threads::DisplayLink link {[this](Threads::FrameTime time) { advance(time); }};
 };
 
-struct MyApp
+WindowOptions windowOptions()
 {
-    MyApp() { window.setContentView(root); }
-
-    static WindowOptions options()
-    {
-        auto opts = WindowOptions {};
-        opts.width = 1100;
-        opts.height = 760;
-        opts.minWidth = 720;
-        opts.minHeight = 520;
-        opts.title = "Layered Views — Primitives · GPU · WebView";
-        opts.backgroundColor = Color {0.04f, 0.045f, 0.06f};
-        return opts;
-    }
-
-    LayeredRoot root;
-    Window window {options()};
-};
+    auto opts = WindowOptions {};
+    opts.width = 1100;
+    opts.height = 760;
+    opts.minWidth = 720;
+    opts.minHeight = 520;
+    opts.title = "Layered Views — Primitives · GPU · WebView";
+    opts.backgroundColor = Color {0.04f, 0.045f, 0.06f};
+    return opts;
+}
 
 int main()
 {
-    return eacp::Apps::run<MyApp>();
+    return Graphics::runWindowedApp<LayeredRoot>(windowOptions());
 }

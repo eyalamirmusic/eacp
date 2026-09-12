@@ -15,6 +15,12 @@ struct AppBase
 template <typename T>
 struct App : AppBase
 {
+    template <typename... Args>
+    explicit App(Args&&... args)
+        : app(std::forward<Args>(args)...)
+    {
+    }
+
     T app;
 };
 
@@ -185,10 +191,23 @@ namespace Detail
 void runAsPlugin(const AppFactory& createFunc);
 } // namespace Detail
 
-template <typename T>
-int run()
+namespace Detail
 {
-    auto createFunc = [] { getGlobalApp().template create<App<T>>(); };
+// The factory run<T>(args...) installs: `args` are copied in and handed to T's
+// constructor on every construction — the first and each restart() — so T
+// takes them by value or const reference.
+template <typename T, typename... Args>
+AppFactory makeAppFactory(Args&&... args)
+{
+    return [... args = std::forward<Args>(args)]
+    { getGlobalApp().template create<App<T>>(args...); };
+}
+} // namespace Detail
+
+template <typename T, typename... Args>
+int run(Args&&... args)
+{
+    auto createFunc = Detail::makeAppFactory<T>(std::forward<Args>(args)...);
     getAppFactory() = createFunc;
 
     // In a dynamic library the process executable owns the root loop —

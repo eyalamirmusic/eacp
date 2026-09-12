@@ -79,8 +79,6 @@ struct SpinView final : GPUView
 
 struct App
 {
-    App() { window.setContentView(view); }
-
     void tick(Threads::FrameTime time)
     {
         view.phase = (float) (std::fmod(time.time, 2.0) / 2.0);
@@ -121,7 +119,7 @@ struct App
         o.height = 160;
         return o;
     }();
-    Graphics::Window window {options};
+    Graphics::Window window {view, options};
 
     bool started = false;
     bool stopping = false;

@@ -306,6 +306,13 @@ class Window
 {
 public:
     Window(const WindowOptions& optionsToUse = {});
+
+    // The window with `view` already as its content, so a struct that pairs a
+    // view with a window can write `Window window {view, options};` as a
+    // member initializer and needs no constructor body for it. Declare the
+    // view before the window.
+    Window(View& view, const WindowOptions& optionsToUse = {});
+
     ~Window();
 
     void setTitle(const std::string& title);

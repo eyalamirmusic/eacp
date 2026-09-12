@@ -289,8 +289,14 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 
 **App/** - Application lifecycle management
 - `App<T>`: Template wrapper for user-defined app structs
-- `run<T>()`: Template function that starts the event loop
-- Entry point pattern: define a struct and pass to `eacp::Apps::run<MyApp>()`
+- `run<T>(args...)`: Template function that starts the event loop; `args` are
+  copied and handed to T's constructor on every construction, restarts included
+- Entry point pattern: define a struct and pass to `eacp::Apps::run<MyApp>()`.
+  A struct that is one view in one window is `Graphics::ViewWindow<MyView>`
+  (`Graphics/Window/ViewWindow.h`), and `Graphics::runWindowedApp<MyView>(
+  options, viewArgs...)` runs one as the app with no struct written at all; a
+  struct that does more still pairs its view and window in one member,
+  `Window window {view, options};`
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations; `MacOSContext` is the Core Graphics implementation

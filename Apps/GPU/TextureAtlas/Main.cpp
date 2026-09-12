@@ -203,16 +203,9 @@ Graphics::WindowOptions windowOptions()
     return options;
 }
 
-struct AtlasApp
-{
-    AtlasApp() { window.setContentView(view); }
-
-    AtlasView view;
-    Graphics::Window window {windowOptions()};
-};
 } // namespace
 
 int main()
 {
-    return eacp::Apps::run<AtlasApp>();
+    return Graphics::runWindowedApp<AtlasView>(windowOptions());
 }

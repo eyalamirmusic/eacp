@@ -409,11 +409,7 @@ struct BrowserView final : Video::VideoView
 
 struct DownloadApp
 {
-    DownloadApp()
-    {
-        window.setContentView(view);
-        startFromCommandLine();
-    }
+    DownloadApp() { startFromCommandLine(); }
 
     // `DownloadAndPlay <index>` picks a catalogue entry, `DownloadAndPlay <url>`
     // fetches anything else — which is how to point this at a 4K clip, since no
@@ -437,7 +433,7 @@ struct DownloadApp
     }
 
     BrowserView view;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {view, windowOptions()};
 };
 
 int main(int argc, char* argv[])

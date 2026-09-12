@@ -246,21 +246,56 @@ A GUI app embedding a web view:
 using namespace eacp;
 using namespace Graphics;
 
+WindowOptions windowOptions()
+{
+    auto options = WindowOptions {};
+    options.title = "Browser";
+    options.width = 1100;
+    options.height = 760;
+    return options;
+}
+
+// A Window built with its view adopts it as its content, so the pair is two
+// members and the constructor body is left for what the app actually does.
 struct MyApp
 {
-    MyApp()
-    {
-        webView.loadURL("https://example.com");
-        window.setContentView(webView);
-    }
+    MyApp() { webView.loadURL("https://example.com"); }
 
     WebView webView;
-    Window window;
+    Window window {webView, windowOptions()};
 };
 
 int main()
 {
     return eacp::Apps::run<MyApp>();
+}
+```
+
+An app that is one view in one window and nothing else needs no struct at all:
+`Graphics::runWindowedApp<MyView>(options, viewArgs...)` runs a
+`ViewWindow<MyView>` — the view built from `viewArgs`, then the window showing
+it — as the app.
+
+```cpp
+#include <eacp/Graphics/Graphics.h>
+
+using namespace eacp;
+
+struct HelloView final : Graphics::View
+{
+    void paint(Graphics::Context& g) override
+    {
+        g.setColor(Graphics::Color::white());
+        g.fillRect(getLocalBounds());
+    }
+};
+
+int main()
+{
+    auto options = Graphics::WindowOptions {};
+    options.title = "Hello";
+
+    return Graphics::runWindowedApp<HelloView>(options);
 }
 ```
 

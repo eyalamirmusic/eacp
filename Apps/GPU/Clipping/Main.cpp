@@ -218,16 +218,9 @@ Graphics::WindowOptions windowOptions()
     return options;
 }
 
-struct ClippingApp
-{
-    ClippingApp() { window.setContentView(view); }
-
-    ClippingView view;
-    Graphics::Window window {windowOptions()};
-};
 } // namespace
 
 int main()
 {
-    return eacp::Apps::run<ClippingApp>();
+    return Graphics::runWindowedApp<ClippingView>(windowOptions());
 }

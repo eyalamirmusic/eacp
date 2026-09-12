@@ -150,11 +150,7 @@ struct RootView final : View
 
 struct MyApp
 {
-    MyApp()
-    {
-        rootView.webView.loadHTML(kDemoHtml);
-        window.setContentView(rootView);
-    }
+    MyApp() { rootView.webView.loadHTML(kDemoHtml); }
 
     // Mirrors the Electron window's titleBarStyle: 'hidden' + backgroundColor
     // + trafficLightPosition so the native window's chrome matches the web
@@ -196,7 +192,7 @@ struct MyApp
     }
 
     RootView rootView;
-    Window window {getOptions()};
+    Window window {rootView, getOptions()};
 };
 
 int main()

@@ -183,15 +183,7 @@ struct ComputeImageView final : GPUView
     float elapsed = 0.f;
 };
 
-struct ComputeImageApp
-{
-    ComputeImageApp() { window.setContentView(view); }
-
-    ComputeImageView view;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<ComputeImageApp>();
+    return Graphics::runWindowedApp<ComputeImageView>(windowOptions());
 }

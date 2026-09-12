@@ -187,15 +187,7 @@ struct PathQualityRoot final : Graphics::View
     Graphics::Font font {Graphics::FontOptions {}.withSize(13.f)};
 };
 
-struct PathQualityApp
-{
-    PathQualityApp() { window.setContentView(root); }
-
-    PathQualityRoot root;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<PathQualityApp>();
+    return Graphics::runWindowedApp<PathQualityRoot>(windowOptions());
 }

@@ -24,7 +24,6 @@ struct App
     App()
     {
         window.setTitle("PluginHost (host eacp)");
-        window.setContentView(view);
 
         if (!library.isOpen())
         {
@@ -55,7 +54,7 @@ struct App
 
     eacp::Plugins::DynamicLibrary library {DEMO_PLUGIN_PATH};
     HostView view;
-    eacp::Graphics::Window window;
+    eacp::Graphics::Window window {view};
     eacp::Threads::Timer timer {[&] { update(); }, 1};
 };
 

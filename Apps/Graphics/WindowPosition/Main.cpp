@@ -144,8 +144,6 @@ struct WindowPositionApp
 {
     WindowPositionApp()
     {
-        window.setContentView(root);
-
         // onMoved lives on WindowEvents rather than WindowOptions precisely so
         // it can be set here, after the window exists — a first position is
         // nothing the constructor needs.
@@ -173,7 +171,7 @@ struct WindowPositionApp
     }
 
     PositionRoot root;
-    Window window {getOptions()};
+    Window window {root, getOptions()};
 };
 
 int main()

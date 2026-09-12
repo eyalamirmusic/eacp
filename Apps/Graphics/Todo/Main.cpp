@@ -205,14 +205,10 @@ struct Host final : UI::ComponentHost
 
 struct TodoApp
 {
-    TodoApp()
-    {
-        window.setContentView(host);
-        host.focus();
-    }
+    TodoApp() { host.focus(); }
 
     Host host;
-    eacp::Graphics::Window window;
+    eacp::Graphics::Window window {host};
 };
 } // namespace
 

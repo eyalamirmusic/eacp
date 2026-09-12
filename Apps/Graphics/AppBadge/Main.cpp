@@ -160,8 +160,6 @@ private:
 
 struct AppBadgeApp
 {
-    AppBadgeApp() { window.setContentView(root); }
-
     // The badge outlives nothing: an app that leaves one behind on exit has
     // lied to the Dock, which keeps drawing it until the tile is rebuilt.
     ~AppBadgeApp() { Apps::setAppBadge(""); }
@@ -179,7 +177,7 @@ struct AppBadgeApp
     }
 
     BadgeRoot root;
-    Window window {getOptions()};
+    Window window {root, getOptions()};
 };
 
 int main()

@@ -82,15 +82,7 @@ struct TextureView final : GPUView
     TexturedShader shader;
 };
 
-struct MyApp
-{
-    MyApp() { window.setContentView(view); }
-
-    TextureView view;
-    Graphics::Window window;
-};
-
 int main()
 {
-    return eacp::Apps::run<MyApp>();
+    return Graphics::runWindowedApp<TextureView>();
 }

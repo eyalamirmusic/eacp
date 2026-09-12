@@ -107,16 +107,9 @@ eacp::Graphics::WindowOptions windowOptions()
     return options;
 }
 
-struct CursorShapesApp
-{
-    CursorShapesApp() { window.setContentView(host); }
-
-    Host host;
-    eacp::Graphics::Window window {windowOptions()};
-};
 } // namespace
 
 int main(int argc, char* argv[])
 {
-    return Apps::run<CursorShapesApp>(argc, argv);
+    return eacp::Graphics::runWindowedApp<Host>(argc, argv, windowOptions());
 }

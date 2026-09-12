@@ -237,8 +237,6 @@ struct KeyInspectorApp
 {
     KeyInspectorApp()
     {
-        window.setContentView(host);
-
         // The native view has to be the window's first responder for the tree to
         // hear anything at all; the component inside it already holds the focus
         // the tree routes by.
@@ -246,7 +244,7 @@ struct KeyInspectorApp
     }
 
     InspectorHost host;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {host, windowOptions()};
 };
 } // namespace
 
