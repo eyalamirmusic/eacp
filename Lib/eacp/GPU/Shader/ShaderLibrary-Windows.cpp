@@ -55,7 +55,10 @@ struct ShaderLibrary::Native
 {
     Native(Device& device, const ShaderSource& source)
     {
-        if (!device.isValid())
+        // An empty source is a build something declined to make, and whatever
+        // declined it has already said why - see ComputeProgram::prepare. There
+        // is nothing here to compile and nothing for FXC to complain about.
+        if (!device.isValid() || source.source.empty())
             return;
 
         if (source.isCompute())

@@ -18,4 +18,9 @@ void setEnv(std::string_view name, std::string_view value)
     setenv(std::string {name}.c_str(), std::string {value}.c_str(), 1);
 }
 
+void unsetEnv(std::string_view name)
+{
+    unsetenv(std::string {name}.c_str());
+}
+
 } // namespace eacp

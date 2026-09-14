@@ -796,6 +796,24 @@ const char* helperDefinition(const ShaderHelper& helper, Backend backend)
     return helper.metal;
 }
 
+// The one helper a graph needs that no expression node names: the fallback's
+// packed fragment load is a statement, and it widens each of a lane's two
+// elements through the same helper a scalar packed read goes through. Metal
+// loads such a patch as a packed fragment and calls nothing.
+bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
+                                  std::string_view name,
+                                  Backend backend)
+{
+    if (backend == Backend::Metal)
+        return false;
+
+    if (name == "eacpReadHalf")
+        return graph.usesPackedSimdMatrix(SimdMatrixElement::Half);
+
+    return name == "eacpReadBFloat16"
+           && graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
+}
+
 // Only the helpers a graph actually calls, so a shader that unpacks nothing
 // carries no definition for one.
 std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
@@ -804,7 +822,7 @@ std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
 
     for (const auto& helper: shaderHelpers)
     {
-        auto used = false;
+        auto used = helperWidensPackedSimdMatrix(graph, helper.name, backend);
 
         for (auto node = 0; node < graph.nodeCount() && !used; ++node)
         {
@@ -1074,6 +1092,49 @@ std::string simdMatrixMemoryName(const Statement& statement)
 std::string bracketed(const std::string& expression)
 {
     return "(" + expression + ")";
+}
+
+// The MSL type a fragment of each element is, and the element type its load
+// reinterprets the buffer's pointer as. A packed fragment stays packed right
+// through the product: MSL's simdgroup_multiply_accumulate takes mixed operand
+// types into a float accumulator, which is the instruction the hardware has and
+// the reason there is no widening step to emit between the two.
+const char* metalSimdMatrixType(SimdMatrixElement element)
+{
+    switch (element)
+    {
+        case SimdMatrixElement::Half:
+            return "simdgroup_half8x8";
+        case SimdMatrixElement::BFloat16:
+            return "simdgroup_bfloat8x8";
+        case SimdMatrixElement::Float:
+            break;
+    }
+
+    return "simdgroup_float8x8";
+}
+
+const char* metalPackedElementType(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "half" : "bfloat";
+}
+
+// What the fallback widens one packed element with - the same helper a scalar
+// InputBuffer::readHalf or readBFloat16 goes through, so the arithmetic that
+// produces a lane's pair here is the arithmetic every other packed read in the
+// shader uses.
+const char* packedSimdMatrixHelper(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
+}
+
+// How the two fallback dialects read a buffer's float element as the word its
+// bits are. The buffer is declared float whatever it holds, which is what the
+// packed scalar reads already assume. Metal never asks: a packed patch is a
+// fragment of its own type there, loaded through a reinterpreted pointer.
+const char* bitsOfFloat(Backend backend)
+{
+    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
 }
 
 // How the fallback backends hold a fragment: spread over the lanes of what
@@ -2392,8 +2453,12 @@ private:
     std::string simdMatrixDeclaration(int slot) const
     {
         if (metal())
-            return "simdgroup_float8x8 " + simdMatrixName(slot);
+            return std::string(metalSimdMatrixType(graph().simdMatrixElement(slot)))
+                   + " " + simdMatrixName(slot);
 
+        // The fallback holds every fragment as a lane's pair of floats,
+        // whatever the memory it came out of: what a packed load changes there
+        // is the arithmetic that produces the pair, not the fragment.
         return std::string(simdMatrixLaneType(printer.backend)) + " "
                + simdMatrixName(slot);
     }
@@ -2427,6 +2492,33 @@ private:
                + "]";
     }
 
+    // The same element where the patch is packed: the index counts sixteen-bit
+    // elements, so the word holding one is at half that index and which half of
+    // it is the parity - exactly the arithmetic InputBuffer::readHalf and
+    // readBFloat16 do, through the same helper.
+    //
+    // Each element is fetched on its own rather than a lane's pair taken out of
+    // one word. The pair is two adjacent columns, but the patch's offset and
+    // row stride are the caller's and neither has to be even, so the pair is
+    // not reliably inside one word and a walk that assumed it was would read
+    // the wrong element on every odd row.
+    static std::string simdMatrixPackedLaneElement(Backend backend,
+                                                   SimdMatrixElement element,
+                                                   const std::string& memory,
+                                                   const std::string& offset,
+                                                   const std::string& stride,
+                                                   int which)
+    {
+        auto column = which == 0 ? std::string("sgmColumn")
+                                 : "sgmColumn + " + std::to_string(which) + "u";
+
+        auto index = "(" + offset + " + sgmRow * " + stride + " + " + column + ")";
+
+        return std::string(packedSimdMatrixHelper(element)) + "("
+               + bitsOfFloat(backend) + "(" + memory + "[" + index + " / 2u]), "
+               + index + " % 2u)";
+    }
+
     // The load and the store are the same patch walked in the two directions,
     // so they are one function: what changes is which side of the assignment
     // each is on. Every lane moves the pair it holds, so the store needs no
@@ -2439,10 +2531,20 @@ private:
         auto memory = simdMatrixMemoryName(statement);
         auto offset = bracketed(printer.ref(statement.index));
         auto stride = bracketed(printer.ref(statement.stride));
+        auto element = graph().simdMatrixElement(statement.slot);
+        auto packed = element != SimdMatrixElement::Float;
 
         if (metal())
         {
-            auto pointer = memory + " + " + offset;
+            // The buffer is declared float whatever it holds, so a packed load
+            // reinterprets its pointer the way the wide packed reads
+            // reinterpret one - and then counts in the packed element, which is
+            // what makes the offset the caller's own row arithmetic.
+            auto pointer = packed
+                               ? "(device const "
+                                     + std::string(metalPackedElementType(element))
+                                     + "*) (" + memory + ") + " + offset
+                               : memory + " + " + offset;
 
             if (loading)
                 return indent + simdMatrixDeclaration(statement.slot) + ";\n"
@@ -2453,8 +2555,15 @@ private:
                    + stride + ");\n";
         }
 
-        auto first = simdMatrixLaneElement(memory, offset, stride, 0);
-        auto second = simdMatrixLaneElement(memory, offset, stride, 1);
+        auto backend = printer.backend;
+
+        auto first = packed ? simdMatrixPackedLaneElement(
+                                  backend, element, memory, offset, stride, 0)
+                            : simdMatrixLaneElement(memory, offset, stride, 0);
+
+        auto second = packed ? simdMatrixPackedLaneElement(
+                                   backend, element, memory, offset, stride, 1)
+                             : simdMatrixLaneElement(memory, offset, stride, 1);
 
         if (loading)
             return indent + simdMatrixDeclaration(statement.slot) + " = "

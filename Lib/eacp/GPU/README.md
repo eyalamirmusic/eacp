@@ -1365,7 +1365,7 @@ struct Product final : ComputeProgram
 };
 ```
 
-Six calls, and they are the whole vocabulary:
+Eight calls, and they are the whole vocabulary:
 
 | call | what it is |
 | --- | --- |
@@ -1373,6 +1373,8 @@ Six calls, and they are the whole vocabulary:
 | `simdMatrix(fill)` | a fragment every element of which is that value — the zero an accumulator starts from. `fill` is a literal, not an expression |
 | `simdMatrix(tile, offset, rowStride)` | a fragment read from an 8×8 patch of a threadgroup array: element (r, c) at `offset + r * rowStride + c` |
 | `simdMatrix(buffer, offset, rowStride)` | the same out of a storage buffer, input or output |
+| `simdMatrixHalf(buffer, offset, rowStride)` | a fragment read straight out of a buffer of packed fp16, the offset and the stride counting in halves. An operand only |
+| `simdMatrixBFloat16(buffer, offset, rowStride)` | the same for packed bf16 |
 | `multiplyAccumulate(acc, left, right)` | `acc += left * right`, over the three fragments |
 | `write(buffer, offset, rowStride, fragment)` | the patch written back, addressed the way the load addresses one. `write(tile, ...)` is its threadgroup sibling |
 
@@ -1431,6 +1433,89 @@ what keeps a kernel of any reasonable width under that budget.
 a 32-deep slab, clamped loads and a guarded copy-out — checked against a scalar
 reference on whole tiles, on a ragged shape and at a transformer's own
 [1500, 384] × [384, 1536].
+
+#### A weight read where it lies
+
+A checkpoint ships its weights in sixteen bits, and the product above wants
+floats, so a tiled kernel widens a tile of them into threadgroup memory before
+it can load a fragment: twice the memory the weights occupy, and two barriers
+around the staging. `simdMatrixHalf` and `simdMatrixBFloat16` remove all three.
+They read the 8×8 patch out of the packed buffer directly, and the offset and
+the row stride count in those sixteen-bit elements — a bf16 weight matrix's row
+stride is the number of columns it has, not half of it, which is the convention
+`readHalf` and `readBFloat16` already set. The buffer is an ordinary
+`InputBuffer`; what is packed is its contents, not its declared type.
+
+On Metal the patch becomes a `simdgroup_half8x8` or a `simdgroup_bfloat8x8`,
+loaded through the buffer's pointer reinterpreted, and it stays that type
+through the product: MSL's `simdgroup_multiply_accumulate` takes mixed operands
+into a float accumulator, so there is no widening step between the load and the
+multiply. That is what makes it free — a staged activation against a packed
+weight is one instruction.
+
+```cpp
+auto accumulator = simdMatrix();
+auto activations = simdMatrix(tile, tileOffset, slabStride);
+auto weights = simdMatrixBFloat16(weightBuffer, row * columns, columns);
+
+multiplyAccumulate(accumulator, activations, weights);
+```
+
+A packed fragment is an **operand and nothing else**. It cannot be an
+accumulator — sixteen bits would lose what the sum is being accumulated in —
+and it cannot be written back, there being no instruction that stores one.
+Both are asserts, not compile errors the shader compiler reports.
+
+**The native path is Metal's alone.** `simdgroup_half8x8` is Metal 2.3 and lands
+on the macOS 11 floor eacp builds against; `simdgroup_bfloat8x8` is Metal 3.1
+and needs macOS 14 or iOS 17. So there are two queries and not one:
+
+```cpp
+if (Device::shared().supportsBFloat16SimdMatrix())
+    // build the kernel that loads the weight packed
+else
+    // build the kernel that stages it into a shared<Float> tile
+```
+
+Both are false on D3D12 and Vulkan, which have no wave matrix operation to
+lower to. **Both calls still build there and still compute the right thing**:
+a packed load becomes each lane widening the two elements it holds, through the
+same helper a scalar `readBFloat16` goes through, and the fragment is the float
+pair the fallback always was. What the query answers is whether the load is
+*native* — one instruction, nothing widened — and so whether it is worth
+shaping a kernel around. It is not the question of whether the kernel compiles.
+
+Those are two questions and eacp keeps them apart.
+`ComputeProgram::fitsPackedSimdMatrix` is the second one, and it is false only
+where the shader would genuinely not compile: on Metal, when the device says
+no. On the other two backends it is true regardless.
+
+The choice belongs **outside** the kernel, at the point where it is built, and
+never inside one as a branch. The staging path carries barriers that the packed
+path does not, and a barrier some threads in a group reach and others do not is
+undefined — the two cannot be the arms of one `if`. A Metal kernel built
+against the wrong answer is refused by `ComputeProgram::prepare()`, which names
+the query and leaves an invalid pipeline, rather than handed to a shader
+compiler that would complain about a type instead. A refused program reports
+`ComputeProgram::isValid() == false`, and dispatching one is a no-op rather than
+a crash — `ComputePass` drops a dispatch whose pipeline never bound.
+
+`EACP_NO_PACKED_SIMD_MATRIX=1` makes both queries answer no on a device that
+would have said yes. It is how the staged path stays exercised on hardware that
+never takes it, and how a kernel's two shapes can be run against each other on
+one machine.
+
+**The float operand is not narrowed** — measured, not promised. A mixed
+`simdgroup_multiply_accumulate` could in principle bring both operands to the
+packed one's format before multiplying, which would quietly cost the
+*activation* eight significand bits and give back more than the staging ever
+saved. On an M5 Max under macOS 26 it does not: a left operand of 1 + 2⁻¹²
+against eight packed ones accumulates to 8.001953125, where narrowing would
+have given a flat 8. `Tests/GPU/SimdMatrixTests.cpp` asserts this for both
+formats, so a device or a driver that behaves otherwise fails the suite rather
+than silently losing precision. It is a measurement on the hardware to hand and
+nothing in the Metal specification requires it, so treat a new part as unmeasured
+until the suite has run on it.
 
 ### Textures a kernel writes
 

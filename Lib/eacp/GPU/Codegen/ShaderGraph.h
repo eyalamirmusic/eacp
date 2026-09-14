@@ -158,6 +158,29 @@ enum class SimdMatrixMemory
     Buffer
 };
 
+// What the elements of a loaded fragment are in the memory it comes out of.
+// Float is the buffer's own elements; the two packed ones are sixteen bits
+// each, two to a word, and the offset and the row stride of such a load count
+// in those elements rather than in the words holding them - the convention
+// InputBuffer::readHalf and readBFloat16 already set.
+//
+// A packed fragment is an operand and nothing else. Metal multiplies one
+// straight into a float accumulator, which is the whole point of loading one;
+// it has no instruction that stores one, and an accumulator in sixteen bits
+// would lose the precision a product is accumulated in. The EDSL offers no way
+// to ask for either, and the graph asserts on both.
+//
+// Whether a device loads one natively is Device::supportsHalfSimdMatrix and
+// Device::supportsBFloat16SimdMatrix, asked before the kernel is written; the
+// two backends that answer no still build such a load, widening each lane's
+// pair by hand. See ComputeProgram::simdMatrixBFloat16.
+enum class SimdMatrixElement
+{
+    Float,
+    Half,
+    BFloat16
+};
+
 // How many threads one SIMD group holds - the width the matrix ops are
 // collective over. 32 on every Apple GPU, which is the only hardware whose
 // intrinsics are used; the backends that emit the scalar fallback define
@@ -219,7 +242,8 @@ enum class StatementKind
     // slot = the fragment, value = what every element is set to.
     SimdMatrixLoad, // an 8x8 fragment declared and read from an 8x8 patch.
     // slot = the fragment, memory / bufferSlot = where from, index = the
-    // element the patch starts at, stride = the patch's row stride.
+    // element the patch starts at, stride = the patch's row stride, element =
+    // what those elements are in memory.
     SimdMatrixStore, // that patch written back. The same fields, the other way.
     SimdMatrixMultiplyAdd, // slot = slot + left * right, all three fragments.
     // slot = the accumulator, left / right = the operands.
@@ -264,6 +288,8 @@ struct Statement
     SimdMatrixMemory memory = SimdMatrixMemory::Shared; // which address space
     // a SimdMatrixLoad / SimdMatrixStore reaches, bufferSlot being the slot in
     // it
+    SimdMatrixElement element = SimdMatrixElement::Float; // SimdMatrixLoad:
+    // what the patch's elements are in memory, and so what the fragment is
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -541,7 +567,11 @@ public:
     // fragment is neither a variable nor a value, having no type any of the
     // three languages shares.
     int addSimdMatrixFill(int value);
-    int addSimdMatrixLoad(SimdMatrixMemory memory, int slot, int index, int stride);
+    int addSimdMatrixLoad(SimdMatrixMemory memory,
+                          int slot,
+                          int index,
+                          int stride,
+                          SimdMatrixElement element = SimdMatrixElement::Float);
     void addSimdMatrixStore(
         int matrix, SimdMatrixMemory memory, int slot, int index, int stride);
     void addSimdMatrixMultiplyAdd(int accumulator, int left, int right);
@@ -648,8 +678,23 @@ public:
     // How many 8x8 fragments the kernel declared, and whether it asked the
     // entry point for the SIMD-group vocabulary at all - a matrix statement or
     // a read of the SIMD group's index both do.
-    int simdMatrixCount() const { return simdMatrices; }
-    bool usesSimdGroups() const { return simdMatrices > 0 || simdGroupIndexUsed; }
+    int simdMatrixCount() const { return simdMatrixElementList.size(); }
+
+    bool usesSimdGroups() const
+    {
+        return simdMatrixCount() > 0 || simdGroupIndexUsed;
+    }
+
+    // What one fragment is made of, and whether any fragment at all is made of
+    // a packed sixteen-bit element. The emitter takes the declared type and the
+    // pointer reinterpret from the first; ComputeProgram::fitsPackedSimdMatrix
+    // takes from the second the question it puts to the device.
+    SimdMatrixElement simdMatrixElement(int matrix) const
+    {
+        return simdMatrixElementList[matrix];
+    }
+
+    bool usesPackedSimdMatrix(SimdMatrixElement element) const;
 
     // Which threadgroup pieces the kernel asked for, driving what the emitters
     // add to the entry signature - and, for the barrier, what they take away:
@@ -697,6 +742,10 @@ public:
 private:
     int add(Expr node);
     int addStatement(Statement newStatement);
+
+    // A fragment's slot, taken from a numbering of its own and remembering what
+    // the fragment is made of.
+    int declareSimdMatrix(SimdMatrixElement element);
     int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
 
     // Structural sharing for the three kinds that can take it. A key holds
@@ -743,7 +792,7 @@ private:
     Vector<ValueType> reductionTypes;
     Vector<ValueType> wholeGroupTypes;
     bool simdReductionUsed = false;
-    int simdMatrices = 0;
+    Vector<SimdMatrixElement> simdMatrixElementList; // one entry per fragment
     bool simdGroupIndexUsed = false;
     bool localIdUsed = false;
     bool groupIdUsed = false;
