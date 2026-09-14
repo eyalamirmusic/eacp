@@ -2302,6 +2302,230 @@ auto tCodegenComputeVectorStrides = test("GPU/codegenComputeVectorStrides") = []
     expectGlslCompiles(triples.graph());
 };
 
+// The wide store: the same bytes the record write lays down, as one store where
+// the dialect has a spelling for one. Metal reinterprets the address it is
+// writing to - a packed vector pointer, so four-byte alignment and not sixteen,
+// exactly as the read's is - and the other two print the subscripts it stands
+// in for.
+auto tCodegenWideStore = test("GPU/codegenWideStore") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write4(output, i, input.read4(i) * 2.0f);
+
+    // The read and the store build the same base through separate calls, so it
+    // is one node and one name on every dialect.
+    for (const auto& dialect: everyDialect(builder.graph()))
+    {
+        check(contains(dialect.source, "uint t0 = (gid * 4u);"));
+        check(countOccurrences(dialect.source, "(gid * 4u)") == 1);
+    }
+
+    auto metal = emitMetal(builder.graph());
+
+    check(contains(metal, "*((device packed_float4*) (buffer1 + t0)) = t1;"));
+    check(!contains(metal, "buffer1["));
+
+    for (const auto& dialect: {Dialect {emitHlsl(builder.graph()), false},
+                               Dialect {emitGlsl(builder.graph()), true}})
+    {
+        check(contains(dialect.source, "buffer1[t0] = (t1).x;"));
+        check(contains(dialect.source, "buffer1[t0 + 1u] = (t1).y;"));
+        check(contains(dialect.source, "buffer1[t0 + 2u] = (t1).z;"));
+        check(contains(dialect.source, "buffer1[t0 + 3u] = (t1).w;"));
+        check(!contains(dialect.source, "packed_float4"));
+    }
+
+    expectGlslCompiles(builder.graph());
+};
+
+// The narrow wide stores address their own records, and the value is named
+// before any component of it reaches memory - which is what makes a store over
+// the buffer it just read mean what it says where the expansion would otherwise
+// read back an element it had already overwritten.
+auto tCodegenWideStoreStrides = test("GPU/codegenWideStoreStrides") = []
+{
+    auto pairs = ShaderBuilder {};
+    auto pairOutput = pairs.outputBuffer();
+    auto pairIndex = pairs.threadId();
+
+    pairs.write2(pairOutput, pairIndex, pairOutput.read2(pairIndex).yx());
+
+    auto metal = emitMetal(pairs.graph());
+
+    check(contains(metal,
+                   "float2 t1 = (float2(buffer0[t0], buffer0[(t0 + 1u)])).yx;"));
+    check(contains(metal, "*((device packed_float2*) (buffer0 + t0)) = t1;"));
+    check(!contains(metal, "packed_float4"));
+
+    auto hlsl = emitHlsl(pairs.graph());
+
+    check(
+        contains(hlsl, "float2 t1 = (float2(buffer0[t0], buffer0[(t0 + 1u)])).yx;"));
+    check(contains(hlsl, "buffer0[t0] = (t1).x;"));
+    check(contains(hlsl, "buffer0[t0 + 1u] = (t1).y;"));
+    check(!contains(hlsl, "t0 + 2u"));
+
+    auto triples = ShaderBuilder {};
+    auto source = triples.inputBuffer();
+    auto index = triples.threadId();
+
+    triples.write3(triples.outputBuffer(), index, source.read3(index));
+
+    check(contains(emitMetal(triples.graph()),
+                   "*((device packed_float3*) (buffer1 + t0)) = t1;"));
+    check(contains(emitHlsl(triples.graph()), "buffer1[t0 + 2u] = (t1).z;"));
+    check(!contains(emitHlsl(triples.graph()), "t0 + 3u"));
+
+    expectGlslCompiles(pairs.graph());
+    expectGlslCompiles(triples.graph());
+};
+
+// An index computed from the very buffer being written. Metal prints the
+// address once and could inline it; HLSL and GLSL print it into all four
+// subscripts, so inlined it would be re-evaluated after the first component had
+// already landed on it - reading back a value this store had just written and
+// addressing the rest of the record somewhere else entirely. Naming it is what
+// keeps the three dialects saying one thing.
+auto tCodegenWideStoreHoldsItsIndex = test("GPU/codegenWideStoreHoldsItsIndex") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+    auto where = toUInt(output[i]);
+
+    builder.write4(output, where, float4(builder.constant(1.0f), 2.0f, 3.0f, 4.0f));
+
+    // The element the address is computed from is read once on every dialect,
+    // which is the whole of the claim.
+    for (const auto& dialect: everyDialect(builder.graph()))
+        check(countOccurrences(dialect.source, "buffer0[gid]") == 1);
+
+    for (const auto& dialect: {Dialect {emitHlsl(builder.graph()), false},
+                               Dialect {emitGlsl(builder.graph()), true}})
+    {
+        check(contains(dialect.source, "uint t0 = (uint(buffer0[gid]) * 4u);"));
+        check(contains(dialect.source, "buffer0[t0] = (t1).x;"));
+        check(contains(dialect.source, "buffer0[t0 + 1u] = (t1).y;"));
+        check(contains(dialect.source, "buffer0[t0 + 2u] = (t1).z;"));
+        check(contains(dialect.source, "buffer0[t0 + 3u] = (t1).w;"));
+    }
+
+    expectGlslCompiles(builder.graph());
+};
+
+// A pure base is named on the expanding backends too, where leaving it inline
+// would evaluate it once per component - the scalar store prints it once, and
+// the wide one should not cost more than the store it replaces.
+auto tCodegenWideStoreNamesItsBase = test("GPU/codegenWideStoreNamesItsBase") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto output = builder.outputBuffer();
+    auto scale = builder.uniform<Float>();
+    auto i = builder.threadId();
+
+    builder.write4(output, i, float4(scale, scale, scale, scale));
+
+    for (const auto& dialect: {Dialect {emitHlsl(builder.graph()), false},
+                               Dialect {emitGlsl(builder.graph()), true}})
+    {
+        check(contains(dialect.source, "uint t0 = (gid * 4u);"));
+        check(countOccurrences(dialect.source, "(gid * 4u)") == 1);
+    }
+
+    // Metal prints the address once anyway, so it takes no name it has no use
+    // for - the same thing the scalar store does with a base it prints once.
+    check(!contains(emitMetal(builder.graph()), "uint t0 = (gid * 4u);"));
+    check(contains(emitMetal(builder.graph()),
+                   "*((device packed_float4*) (buffer0 + (gid * 4u))) = t0;"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// The integer outputs take the wide store on exactly the terms the float ones
+// do, down to the packed pointer Metal reinterprets through.
+auto tCodegenWideUIntStore = test("GPU/codegenWideUIntStore") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.uintInputBuffer();
+    auto output = builder.uintOutputBuffer();
+    auto i = builder.threadId();
+
+    builder.write4(output, i, input.read4(i) + 1u);
+
+    check(contains(emitMetal(builder.graph()),
+                   "*((device packed_uint4*) (buffer1 + t0)) = t1;"));
+
+    for (const auto& dialect: {Dialect {emitHlsl(builder.graph()), false},
+                               Dialect {emitGlsl(builder.graph()), true}})
+    {
+        check(contains(dialect.source, "buffer1[t0] = (t1).x;"));
+        check(contains(dialect.source, "buffer1[t0 + 3u] = (t1).w;"));
+        check(!contains(dialect.source, "packed_uint4"));
+    }
+
+    auto pairs = ShaderBuilder {};
+    auto pairIndex = pairs.threadId();
+
+    pairs.write2(pairs.uintOutputBuffer(), pairIndex, uint2(pairIndex, 1u));
+
+    check(contains(emitMetal(pairs.graph()), "packed_uint2"));
+    check(!contains(emitMetal(pairs.graph()), "packed_uint4"));
+
+    expectGlslCompiles(builder.graph());
+    expectGlslCompiles(pairs.graph());
+};
+
+// The packed wide stores are the wide store with the packing in front of it:
+// four halves are two words and sixteen bytes are four, so each leaves in one
+// store at the index its own read counts in.
+auto tCodegenWidePackedStores = test("GPU/codegenWidePackedStores") = []
+{
+    auto halves = ShaderBuilder {};
+    auto weights = halves.inputBuffer();
+    auto halfOutput = halves.outputBuffer();
+    auto i = halves.threadId();
+
+    halves.writeHalf4(halfOutput, i, weights.readHalf4(i));
+
+    check(contains(emitMetal(halves.graph()),
+                   "*((device packed_float2*) (buffer1 + t0)) = t"));
+    check(contains(emitMetal(halves.graph()), "as_type<float>(eacpPackHalf2("));
+
+    auto hlsl = emitHlsl(halves.graph());
+
+    check(contains(hlsl, "asfloat(eacpPackHalf2("));
+    check(countOccurrences(hlsl, "buffer1[t0") == 2);
+
+    auto bytes = ShaderBuilder {};
+    auto quantized = bytes.inputBuffer();
+    auto byteOutput = bytes.outputBuffer();
+    auto block = bytes.threadId();
+    auto values = quantized.readInt8x16(block);
+
+    bytes.writeInt8x16(byteOutput,
+                       block,
+                       toInt(values.a),
+                       toInt(values.b),
+                       toInt(values.c),
+                       toInt(values.d));
+
+    check(contains(emitMetal(bytes.graph()),
+                   "*((device packed_float4*) (buffer1 + t0)) = t"));
+    check(!contains(emitMetal(bytes.graph()), "buffer1[t0"));
+    check(countOccurrences(emitGlsl(bytes.graph()), "buffer1[t0") == 4);
+
+    expectGlslCompiles(halves.graph());
+    expectGlslCompiles(bytes.graph());
+};
+
 // A storage buffer read from a render stage: the same InputBuffer a kernel
 // subscripts, declared by a graph with no stores at all, so the shader is a
 // vertex/fragment pair rather than a kernel. What it buys is the indexed read a
@@ -3028,11 +3252,16 @@ auto tCodegenInt8Helpers = test("GPU/codegenInt8ReadHelpers") = []
     auto glsl = emitGlsl(graph);
 
     // The scalar reads count bytes, so the word and the byte within it are
-    // computed at the call site and the helper is handed both.
+    // computed at the call site and the helper is handed both. Both reads name
+    // the same word of the same read-only buffer, so the graph hands them one
+    // node and the load happens once for the two of them - as it does for the
+    // four record reads below, which all name element gid.
     for (const auto& source: {metal, hlsl, glsl})
     {
-        check(contains(source, "uint t0 = (gid / 4u);"));
+        check(contains(source, "float t0 = buffer0[(gid / 4u)];"));
         check(contains(source, "uint t1 = (gid % 4u);"));
+        check(countOccurrences(source, "buffer0[(gid / 4u)]") == 1);
+        check(countOccurrences(source, "buffer0[gid]") == 1);
 
         check(contains(source, "float eacpReadInt8(uint bits, uint byteIndex)"));
         check(contains(source, "uint value = (bits >> (8u * byteIndex)) & 0xffu;"));
@@ -3114,21 +3343,26 @@ auto tCodegenInt4Helpers = test("GPU/codegenInt4ReadHelpers") = []
         // sixteen, and the word is fetched once for the four values either
         // side of the shift - which is the whole reason the pair comes back
         // from one call rather than from a Low and a High.
-        check(contains(source, "eacpUnpackInt4x4((t2 >> 16u))"));
-        check(contains(source, "eacpUnpackUInt4x4((t7 >> 16u))"));
-        check(countOccurrences(source, "buffer0[gid]") == 2);
+        check(contains(source, "eacpUnpackInt4x4((t3 >> 16u))"));
+        check(contains(source, "eacpUnpackUInt4x4((t8 >> 16u))"));
+
+        // Once for all eight, in fact: the signed read and the unsigned one
+        // name the same element of the same read-only buffer, so the graph
+        // hands them one load and each bitcasts what it brought back.
+        check(countOccurrences(source, "buffer0[gid]") == 1);
     }
 
     check(contains(metal, "float4 eacpUnpackInt4x4(uint bits)"));
     check(contains(metal, "float4 eacpUnpackUInt4x4(uint bits)"));
-    check(contains(metal, "uint t2 = as_type<uint>(buffer0[gid]);"));
+    check(contains(metal, "float t2 = buffer0[gid];"));
+    check(contains(metal, "uint t3 = as_type<uint>(t2);"));
 
     check(contains(hlsl, "float4 eacpUnpackInt4x4(uint bits)"));
-    check(contains(hlsl, "uint t2 = asuint(buffer0[gid]);"));
+    check(contains(hlsl, "uint t3 = asuint(t2);"));
 
     check(contains(glsl, "vec4 eacpUnpackInt4x4(uint bits)"));
     check(contains(glsl, "vec4 eacpUnpackUInt4x4(uint bits)"));
-    check(contains(glsl, "uint t2 = floatBitsToUint(buffer0[gid]);"));
+    check(contains(glsl, "uint t3 = floatBitsToUint(t2);"));
     check(!contains(glsl, "float4"));
 
     expectGlslCompiles(graph);
@@ -3140,11 +3374,12 @@ auto tCodegenInt4Helpers = test("GPU/codegenInt4ReadHelpers") = []
 // swizzles of it.
 //
 // It matters because nothing downstream would catch it going wrong. Four
-// subscripts of the same address is still correct arithmetic - it just issues
-// four loads where the point of storing weights as bytes was to issue one, and
-// the kernel goes back to being bound by how fast it can ask for memory. The
-// graph shares constants and pure binaries and not reads, so it is the single
-// record node that makes this one load, not a compiler noticing anything.
+// subscripts of four consecutive addresses is still correct arithmetic - it just
+// issues four loads where the point of storing weights as bytes was to issue
+// one, and the kernel goes back to being bound by how fast it can ask for
+// memory. The graph's sharing does not reach that: four addresses are four
+// values however read-only the buffer is, so it is the single record node that
+// makes this one load, not a compiler noticing anything.
 auto tCodegenWideInt8Reads = test("GPU/codegenWideInt8Reads") = []
 {
     auto builder = ShaderBuilder {};

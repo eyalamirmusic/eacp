@@ -266,6 +266,24 @@ struct WriteHalf2Kernel final : ComputeProgram
     EACP_SHADER(weights, output)
 };
 
+// The same round trip one width up: four halves are two words, read as one
+// record and written back as one store.
+struct WriteHalf4Kernel final : ComputeProgram
+{
+    WriteHalf4Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        writeHalf4(output, i, weights.readHalf4(i));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
 struct BitcastKernel final : ComputeProgram
 {
     BitcastKernel() { compile(); }
@@ -751,6 +769,47 @@ auto tWriteHalf2 = test("PackedHalf/writeHalf2IsThePackedStore") = []
     shorthand.prepare(device);
 
     runKernel(device, shorthand, count);
+    auto result = wordsOf(output);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        check(halfMatches((std::uint16_t) (result[i] & 0xffffu),
+                          (std::uint16_t) (words[i] & 0xffffu)));
+
+        check(halfMatches((std::uint16_t) (result[i] >> 16),
+                          (std::uint16_t) (words[i] >> 16)));
+    }
+};
+
+// writeHalf4 is readHalf4 run backwards, at the index readHalf4 counts in: two
+// words out and the same two words back, put there by one store.
+auto tWriteHalf4 = test("PackedHalf/writeHalf4IsTheWidePackedStore") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto words = everyPackedPair();
+
+    // The wide store addresses two words at a time, so an odd count would leave
+    // a last word nothing writes rather than one written wrong.
+    while (words.size() % 2 != 0)
+        words.add(0u);
+
+    auto count = words.size();
+
+    auto input = device.makeBuffer(
+        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
+
+    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+
+    auto kernel = WriteHalf4Kernel {};
+    kernel.weights = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    runKernel(device, kernel, count / 2);
     auto result = wordsOf(output);
 
     for (auto i = 0; i < count; ++i)

@@ -200,6 +200,11 @@ enum class StatementKind
     Break,
     Continue,
     Store, // buffer[index] = value; slot = the storage slot
+    VectorStore, // buffer[index .. index + N - 1] = value; slot = the storage
+    // slot, index = the *first element's* index, value = the vector stored. The
+    // write mirror of ExprKind::BufferVectorRead, and one store for the same
+    // reason: Metal reinterprets the pointer at the address it is storing to,
+    // which retypes the access and not the binding.
     TextureStore, // texture[index, indexY] = value; slot = the texture slot
     SharedStore, // shared[index] = value; slot = the threadgroup-array slot
     Barrier, // threadgroup barrier: every thread in the group arrives before
@@ -241,8 +246,9 @@ struct Statement
     int value = -1; // Declare / Assign / stores: the value; If / Loop: the condition
     int body = -1; // If / Loop: the block that runs
     int elseBody = -1; // If: the block that runs when the condition is false
-    int index = -1; // Store: the element index; TextureStore: x; AtomicAdd: the
-    // element
+    int index = -1; // Store: the element index; VectorStore: the *first*
+    // element's index, the rest of the record following it; TextureStore: x;
+    // AtomicAdd: the element
     int indexY = -1; // TextureStore: y
     int bufferSlot = -1; // AtomicAdd: the buffer, its slot field being taken by
     // the variable the old value lands in
@@ -475,6 +481,12 @@ public:
 
     void addStore(int slot, int index, int value);
 
+    // A run of consecutive elements written as one vector, the index being the
+    // first element's rather than the record's - addBufferVectorRead run
+    // backwards. Metal makes one store of it; the other two spell the N
+    // subscripts it stands for, over a value named once beforehand.
+    void addVectorStore(int slot, int firstElement, int value);
+
     // The N element stores one record write lays down, told apart from N
     // writes of their own: a record is one write above, so every component of
     // it takes the value the record had before the first of them ran.
@@ -687,22 +699,30 @@ private:
     int addStatement(Statement newStatement);
     int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
 
-    // Structural sharing for the two kinds that can take it. A key holds
+    // Structural sharing for the three kinds that can take it. A key holds
     // everything add() would have to compare to call two nodes the same value;
-    // a binary's operands are node ids, which is enough because the nodes they
-    // name were themselves shared on the way in.
+    // a binary's operands and a read's index are node ids, which is enough
+    // because the nodes they name were themselves shared on the way in.
+    //
+    // A read's key is its kind and width beside its slot and its index, so a
+    // read2 and a read4 starting at the same element stay two nodes - and only
+    // a read of a read-only slot is ever pure enough to reach the cache at all.
     using ConstantKey = std::tuple<ValueType, int, std::uint32_t>;
     using BinaryKey = std::tuple<ValueType, char, std::string, int, int>;
+    using ReadKey = std::tuple<ExprKind, ValueType, int, int>;
 
     static ConstantKey constantKeyFor(const Expr& node);
     static BinaryKey binaryKeyFor(const Expr& node);
+    static ReadKey readKeyFor(const Expr& node);
 
     bool isPure(int node) const;
     bool purityOf(const Expr& node) const;
+    bool readsImmutableStorage(const Expr& node) const;
     int findShared(const Expr& node) const;
 
     std::map<ConstantKey, int> constantCache;
     std::map<BinaryKey, int> binaryCache;
+    std::map<ReadKey, int> readCache;
     Vector<char> pureFlags; // parallel to nodes
 
     Vector<Expr> nodes;

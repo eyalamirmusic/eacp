@@ -22,6 +22,10 @@ ValueType indexNodeType(DispatchRank forRank, int component)
 // a mutable local, or a resource the kernel may have written since. Two such
 // nodes spelled identically are not the same value, so neither they nor
 // anything built over them may be shared.
+//
+// A storage-buffer read is listed here and taken back out again by
+// readsImmutableStorage below, since which of the two it is depends on the slot
+// and not on the kind.
 bool dependsOnMutableState(ExprKind kind)
 {
     switch (kind)
@@ -65,9 +69,30 @@ bool ShaderGraph::isPure(int node) const
     return node >= 0 && node < pureFlags.size() && pureFlags[node] != 0;
 }
 
+// The reads the rule above is too coarse for. Nothing can store to a read-only
+// slot - ShaderBuilder::write takes an output - so what an element of one holds
+// is fixed for the whole kernel, and two reads of it at the same index are the
+// same value however far apart they were written. An output's read is not:
+// it may hold what this very thread stored a statement ago, which is the whole
+// point of OutputBuffer::operator[], so the access the slot was declared with
+// is what decides.
+//
+// The index still has to be pure for the read to be, which purityOf checks for
+// every node alike. That is what keeps a read subscripted by a loop counter out
+// of this: the counter is a VarRead, so the read over it is impure and neither
+// shared nor carried across the assignment that advances it.
+bool ShaderGraph::readsImmutableStorage(const Expr& node) const
+{
+    if (node.kind != ExprKind::BufferRead && node.kind != ExprKind::BufferVectorRead)
+        return false;
+
+    return node.index >= 0 && node.index < storageSlots.size()
+           && storageSlots[node.index] == BufferAccess::Read;
+}
+
 bool ShaderGraph::purityOf(const Expr& node) const
 {
-    if (dependsOnMutableState(node.kind))
+    if (dependsOnMutableState(node.kind) && !readsImmutableStorage(node))
         return false;
 
     for (auto argument: node.args)
@@ -77,12 +102,15 @@ bool ShaderGraph::purityOf(const Expr& node) const
     return true;
 }
 
-// Constants and pure binaries are shared by structure rather than by the call
-// that built them, so a base index two separate calls arrive at - the write's
-// `gid * 4u` and the read's - is one node and prints under one name. Only these
-// two kinds: every other add() registers a slot in a parallel vector before it
-// gets here, and returning an existing node would leave that registration
-// stranded.
+// Constants, pure binaries and reads of read-only buffers are shared by
+// structure rather than by the call that built them, so a base index two
+// separate calls arrive at - the write's `gid * 4u` and the read's - is one node
+// and prints under one name, and two readHalf(scale, i) calls at one index are
+// one load rather than two.
+//
+// Only these three kinds: every other add() registers a slot in a parallel
+// vector before it gets here, and returning an existing node would leave that
+// registration stranded.
 int ShaderGraph::findShared(const Expr& node) const
 {
     if (node.kind == ExprKind::Constant)
@@ -97,6 +125,12 @@ int ShaderGraph::findShared(const Expr& node) const
         return found != binaryCache.end() ? found->second : -1;
     }
 
+    if (node.kind == ExprKind::BufferRead || node.kind == ExprKind::BufferVectorRead)
+    {
+        auto found = readCache.find(readKeyFor(node));
+        return found != readCache.end() ? found->second : -1;
+    }
+
     return -1;
 }
 
@@ -108,6 +142,14 @@ ShaderGraph::ConstantKey ShaderGraph::constantKeyFor(const Expr& node)
 ShaderGraph::BinaryKey ShaderGraph::binaryKeyFor(const Expr& node)
 {
     return {node.type, node.op, node.text, node.args[0], node.args[1]};
+}
+
+// The kind tells a scalar read from a record one and the type tells a record's
+// width, so a read2 and a read4 at the same first element stay two nodes: they
+// are different values, however much of the same memory they cover.
+ShaderGraph::ReadKey ShaderGraph::readKeyFor(const Expr& node)
+{
+    return {node.kind, node.type, node.index, node.args[0]};
 }
 
 int ShaderGraph::add(Expr node)
@@ -130,6 +172,9 @@ int ShaderGraph::add(Expr node)
             constantCache.emplace(constantKeyFor(node), id);
         else if (node.kind == ExprKind::Binary)
             binaryCache.emplace(binaryKeyFor(node), id);
+        else if (node.kind == ExprKind::BufferRead
+                 || node.kind == ExprKind::BufferVectorRead)
+            readCache.emplace(readKeyFor(node), id);
     }
 
     pureFlags.add(pure ? (char) 1 : (char) 0);
@@ -778,6 +823,17 @@ void ShaderGraph::addStore(int slot, int index, int value)
     auto statement = Statement {StatementKind::Store};
     statement.slot = slot;
     statement.index = index;
+    statement.value = value;
+    addStatement(statement);
+}
+
+void ShaderGraph::addVectorStore(int slot, int firstElement, int value)
+{
+    storeList.add({slot, firstElement, value});
+
+    auto statement = Statement {StatementKind::VectorStore};
+    statement.slot = slot;
+    statement.index = firstElement;
     statement.value = value;
     addStatement(statement);
 }

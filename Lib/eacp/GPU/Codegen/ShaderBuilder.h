@@ -573,10 +573,13 @@ public:
     // floats already has. The index is in records rather than in floats, so a
     // kernel writing a struct of four never spells the stride itself.
     //
-    // N scalar stores rather than one wide one: the buffer stays a run of
-    // floats on both backends, which is what keeps a kernel's output bindable
-    // as a per-instance vertex stream with no CPU-side element size to agree
-    // on. Retyping the binding would buy one 16-byte store and cost that.
+    // These lay the record down as N scalar stores; write2/write3/write4 below
+    // lay the same bytes down as one. Both are here because the wide form is
+    // not the trade it was once taken for: it reinterprets the address being
+    // written rather than the binding - the same pointer cast read4 makes - so
+    // an output written wide is still a run of floats and still bindable as a
+    // per-instance vertex stream. These keep the callers that have them, and a
+    // kernel bound by how fast it can issue stores reaches for the wide one.
     void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
     {
         auto base = index * 2u;
@@ -603,6 +606,37 @@ public:
             {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
             {value.x().node, value.y().node, value.z().node, value.w().node},
             value.node);
+    }
+
+    // The same record laid down as one store rather than as N. write4(out, i,
+    // v) is elements 4i..4i+3, exactly the bytes InputBuffer::read4(i) reads
+    // back, and on Metal it is one sixteen-byte instruction where the write()
+    // above is four.
+    //
+    // Named rather than another write() overload because the value type cannot
+    // tell the two apart: both take a Float4 at a record index and leave the
+    // same thing in memory, so which store a kernel gets is something it has to
+    // say rather than something to infer.
+    //
+    // The alignment contract is read4's, and for the same reason: the run is
+    // written through a *packed* vector pointer, which wants four-byte
+    // alignment and not sixteen, so any offset
+    // Device::storageBufferOffsetAlignment allows a BufferRange to start at is
+    // one these can write to. The index counts records, so the first element
+    // written is index * N.
+    void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
+    }
+
+    void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
+    }
+
+    void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
     }
 
     // Two values narrowed to fp16 and stored in the single float slot that
@@ -643,6 +677,89 @@ public:
                       const UInt4& value)
     {
         write(buffer, index, asFloat(packUInt8x4(value)));
+    }
+
+    // The wide packed stores, one per wide read: each packs its values into the
+    // two or four words that hold them and lays those down through write2 or
+    // write4, so the eight or sixteen bytes leave in one store wherever the
+    // backend has one. The index counts records on exactly the terms the
+    // matching read does - writeHalf4(out, i, v) is what readHalf4(i) reads
+    // back - so a kernel that widens a row and narrows it again spells one
+    // index.
+    void writeHalf4(const OutputBuffer& buffer,
+                    const UInt& index,
+                    const Float4& value)
+    {
+        write2(
+            buffer,
+            index,
+            float2(asFloat(packHalf2(value.xy())), asFloat(packHalf2(value.zw()))));
+    }
+
+    void writeBFloat16x4(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float4& value)
+    {
+        write2(buffer,
+               index,
+               float2(asFloat(packBFloat16x2(value.xy())),
+                      asFloat(packBFloat16x2(value.zw()))));
+    }
+
+    // The byte ones take their values as integer vectors rather than as a
+    // Float4Pair or a Float4Quad, which is what the reads hand back: the pair
+    // and the quad are what eight and sixteen *widened* values arrive as, and
+    // the rounding back down is the caller's decision to make, exactly as it is
+    // for writeInt8x4. The parameters carry the read's own names, so what goes
+    // out in .low goes in as low.
+    void writeInt8x8(const OutputBuffer& buffer,
+                     const UInt& index,
+                     const Int4& low,
+                     const Int4& high)
+    {
+        write2(buffer,
+               index,
+               float2(asFloat(packInt8x4(low)), asFloat(packInt8x4(high))));
+    }
+
+    void writeUInt8x8(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& low,
+                      const UInt4& high)
+    {
+        write2(buffer,
+               index,
+               float2(asFloat(packUInt8x4(low)), asFloat(packUInt8x4(high))));
+    }
+
+    void writeInt8x16(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const Int4& a,
+                      const Int4& b,
+                      const Int4& c,
+                      const Int4& d)
+    {
+        write4(buffer,
+               index,
+               float4(asFloat(packInt8x4(a)),
+                      asFloat(packInt8x4(b)),
+                      asFloat(packInt8x4(c)),
+                      asFloat(packInt8x4(d))));
+    }
+
+    void writeUInt8x16(const OutputBuffer& buffer,
+                       const UInt& index,
+                       const UInt4& a,
+                       const UInt4& b,
+                       const UInt4& c,
+                       const UInt4& d)
+    {
+        write4(buffer,
+               index,
+               float4(asFloat(packUInt8x4(a)),
+                      asFloat(packUInt8x4(b)),
+                      asFloat(packUInt8x4(c)),
+                      asFloat(packUInt8x4(d))));
     }
 
     // One element of an integer output, index or value spelled as a literal
@@ -696,6 +813,28 @@ public:
             {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
             {value.x().node, value.y().node, value.z().node, value.w().node},
             value.node);
+    }
+
+    // The same records laid down as one store, pairing with
+    // UIntInputBuffer::read2/3/4 the way the float ones pair with InputBuffer's:
+    // a packed_uintN pointer on Metal, the N subscripts on the other two, and
+    // the same four-byte alignment a ranged bind already guarantees.
+    void
+        write2(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
+    }
+
+    void
+        write3(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
+    }
+
+    void
+        write4(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
     }
 
     // One element of an atomic buffer, set outright rather than added to. It
