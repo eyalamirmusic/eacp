@@ -41,7 +41,9 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
     auto activeEncoder = impl->encoder.get();
     auto state = (__bridge id<MTLComputePipelineState>) pipeline.nativeState();
 
-    if (activeEncoder != nil && state != nil)
+    boundPipeline = activeEncoder != nil && state != nil;
+
+    if (boundPipeline)
         [activeEncoder setComputePipelineState:state];
 }
 
@@ -126,7 +128,7 @@ void ComputePass::dispatch(int count)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || count <= 0)
+    if (activeEncoder == nil || !boundPipeline || count <= 0)
         return;
 
     auto group = groupFor1D();
@@ -144,7 +146,7 @@ void ComputePass::dispatch(int width, int height)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || width <= 0 || height <= 0)
+    if (activeEncoder == nil || !boundPipeline || width <= 0 || height <= 0)
         return;
 
     auto group = groupFor2D();
@@ -162,7 +164,8 @@ void ComputePass::dispatch(int width, int height, int depth)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || width <= 0 || height <= 0 || depth <= 0)
+    if (activeEncoder == nil || !boundPipeline || width <= 0 || height <= 0
+        || depth <= 0)
         return;
 
     auto group = groupFor3D();
@@ -185,7 +188,8 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) arguments.nativeBuffer();
 
-    if (activeEncoder == nil || metalBuffer == nil || offsetInBytes < 0
+    if (activeEncoder == nil || !boundPipeline || metalBuffer == nil
+        || offsetInBytes < 0
         || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
         return;
 

@@ -448,6 +448,53 @@ public:
                 SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
     }
 
+    // The same 8x8 patch out of a buffer whose elements are packed sixteen-bit
+    // values rather than floats - the layout a checkpoint ships a weight in,
+    // read here with no widening pass and no threadgroup tile to widen into.
+    //
+    // The offset and the row stride count in those sixteen-bit elements, which
+    // is the convention InputBuffer::readHalf and readBFloat16 already set: a
+    // row of a bf16 weight matrix has the row stride its columns say, not half
+    // of it. The patch still has to be inside the buffer and still has to be
+    // the same on every lane.
+    //
+    // The fragment these hand back is an operand of multiplyAccumulate and
+    // nothing else - it cannot be an accumulator and cannot be written back.
+    //
+    // Both build on every backend. Where the hardware has the instruction the
+    // patch is one load and the product is one more; where it does not, each
+    // lane widens the pair it holds and the fragment is the float pair the
+    // fallback always was. Ask Device::supportsHalfSimdMatrix or
+    // supportsBFloat16SimdMatrix *before* recording one to decide whether that
+    // is worth having, and where it is not, build the kernel that stages a tile
+    // instead - which of the two shapes a kernel is has to be settled while it
+    // is built rather than branched on at dispatch, because staging carries
+    // barriers and this does not. See ComputeProgram::fitsPackedSimdMatrix,
+    // which is the narrower question of whether this one builds at all.
+    SimdMatrix simdMatrixHalf(const InputBuffer& buffer,
+                              const UInt& offset,
+                              const UInt& rowStride)
+    {
+        return {&graphData,
+                graphData.addSimdMatrixLoad(SimdMatrixMemory::Buffer,
+                                            buffer.slot,
+                                            offset.node,
+                                            rowStride.node,
+                                            SimdMatrixElement::Half)};
+    }
+
+    SimdMatrix simdMatrixBFloat16(const InputBuffer& buffer,
+                                  const UInt& offset,
+                                  const UInt& rowStride)
+    {
+        return {&graphData,
+                graphData.addSimdMatrixLoad(SimdMatrixMemory::Buffer,
+                                            buffer.slot,
+                                            offset.node,
+                                            rowStride.node,
+                                            SimdMatrixElement::BFloat16)};
+    }
+
     // accumulator += left * right over the 8x8 fragments: the whole reason the
     // type exists, and one instruction on Metal.
     void multiplyAccumulate(const SimdMatrix& accumulator,

@@ -261,6 +261,16 @@ private:
 
     ThreadGroupShape boundGroup;
 
+    // Whether the last setPipeline had a pipeline to bind. A pipeline that
+    // would not build is not something a dispatch can report - the encoder is
+    // recorded against and the failure surfaces much later, as a crash on
+    // Metal, where an encoder with no pipeline state aborts the process - so a
+    // dispatch under one is dropped instead. Every dispatch below tests it.
+    //
+    // False until something is bound, which makes a pass that dispatches
+    // before it binds a no-op rather than whatever the encoder held.
+    bool boundPipeline = false;
+
     struct Native;
     Pimpl<Native> impl;
 };

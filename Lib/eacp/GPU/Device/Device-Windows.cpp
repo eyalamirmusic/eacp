@@ -126,6 +126,21 @@ int Device::maxThreadgroupMemory() const
     return isValid() ? 32 * 1024 : 0;
 }
 
+// No, and it says nothing about the adapter: eacp compiles HLSL at cs_5_0 under
+// FXC, which has no wave matrix operation to lower a fragment to, so one is the
+// two-floats-per-lane emulation on every Direct3D device. The packed loads work
+// there - each lane unpacks the pair it holds with the same helper a scalar
+// packed read uses - and are simply not faster than staging would be.
+bool Device::supportsHalfSimdMatrix() const
+{
+    return false;
+}
+
+bool Device::supportsBFloat16SimdMatrix() const
+{
+    return false;
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;

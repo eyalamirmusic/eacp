@@ -90,6 +90,21 @@ int Device::maxThreadgroupMemory() const
     return (int) getVulkanShared().getProperties().limits.maxComputeSharedMemorySize;
 }
 
+// No, and not because of the hardware: eacp emits GLSL 450 with no
+// cooperative-matrix extension, so a fragment here is the two-floats-per-lane
+// emulation whatever the driver could have done. The packed loads work on it -
+// each lane unpacks the pair it holds - and are simply not faster, so there is
+// nothing for a kernel to restructure itself around.
+bool Device::supportsHalfSimdMatrix() const
+{
+    return false;
+}
+
+bool Device::supportsBFloat16SimdMatrix() const
+{
+    return false;
+}
+
 void* Device::nativeContext() const
 {
     return &impl->context;

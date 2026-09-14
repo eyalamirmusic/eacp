@@ -169,6 +169,37 @@ public:
     // zero, and a check against zero stands down.
     int maxThreadgroupMemory() const;
 
+    // Whether this device loads an 8x8 SIMD-group matrix fragment out of a
+    // buffer of packed sixteen-bit elements **natively** - one instruction, no
+    // widening - which is what ComputeProgram::simdMatrixHalf and
+    // simdMatrixBFloat16 emit on Metal.
+    //
+    // "Natively" is the whole of what these answer, and not "at all". They are
+    // false on D3D12 and Vulkan, where the same two calls still build and still
+    // compute the right thing: a fragment there is spread over the lanes, and a
+    // packed load is each lane widening the pair it holds through the helper
+    // every other packed read uses. Whether a program *builds* is
+    // ComputeProgram::fitsPackedSimdMatrix, which is the check prepare() makes
+    // and which only Metal can fail.
+    //
+    // So this is the question a kernel author asks **before building**, to
+    // choose between two kernels: the packed load where the answer is yes, and
+    // a staged threadgroup tile of widened floats where it is no. It is not a
+    // branch to put inside a kernel. The staging path carries barriers the
+    // packed path does not, and a barrier some threads in a group reach and
+    // others do not is undefined - so the two cannot be the arms of one `if`.
+    // On Windows and Linux both shapes build, and this answering no says the
+    // staged one is the one worth having.
+    //
+    // fp16 fragments are Metal 2.3, so they are on the macOS 11 floor eacp
+    // builds against; bf16 fragments are Metal 3.1 and need macOS 14 or iOS 17,
+    // which is the whole reason these are two calls and not one. Both
+    // additionally want the Apple-family GPU whose SIMD group is the 32 threads
+    // the EDSL's tiling arithmetic is written against - ComputeProgram::
+    // simdWidth. An invalid Device answers false to both.
+    bool supportsHalfSimdMatrix() const;
+    bool supportsBFloat16SimdMatrix() const;
+
     // Opaque native handles for cross-translation-unit use by other GPU types.
     void* nativeDevice() const;
     void* nativeQueue() const;

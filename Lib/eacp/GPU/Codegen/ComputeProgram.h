@@ -178,6 +178,17 @@ public:
     {
         reportThreadgroupMemoryOverBudget(device);
 
+        // Refused here rather than handed to the backend. A packed fragment
+        // this device has no instruction for is a kernel built against the
+        // wrong answer to a question it was supposed to ask first, and what
+        // the shader compiler would say about it names a type, not the query.
+        if (!fitsPackedSimdMatrix(device))
+        {
+            reportUnsupportedPackedSimdMatrix(device);
+            buildRefusedPipeline(device);
+            return;
+        }
+
         shaderLibrary.emplace(device, generated.source);
         pipelineState.emplace(device, *shaderLibrary);
 
@@ -204,7 +215,43 @@ public:
         return budget <= 0 || threadgroupMemoryBytes() <= budget;
     }
 
+    // Whether this kernel's packed fragments are ones this device can **build**
+    // - a different question from whether it has instructions for them, and the
+    // two are worth keeping apart.
+    //
+    // Device::supportsHalfSimdMatrix and supportsBFloat16SimdMatrix answer
+    // "natively, in one instruction". They are what a kernel author picks a
+    // tiling around, and they are false on D3D12 and Vulkan. This answers "at
+    // all", and on those two backends it is true whatever they said: a packed
+    // load lowers there to the same two-floats-per-lane emulation every other
+    // fragment operation lowers to, each lane widening the pair it holds. Only
+    // Metal has a shader that would literally not compile - the packed fragment
+    // is a type the dialect either has or does not - so only Metal refuses.
+    //
+    // A kernel that loads no packed fragment builds anywhere.
+    bool fitsPackedSimdMatrix(const Device& device) const
+    {
+        if (source().backend != ShaderBackend::Metal)
+            return true;
+
+        auto needsHalf = graph().usesPackedSimdMatrix(SimdMatrixElement::Half);
+        auto needsBFloat16 =
+            graph().usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
+
+        return (!needsHalf || device.supportsHalfSimdMatrix())
+               && (!needsBFloat16 || device.supportsBFloat16SimdMatrix());
+    }
+
     const ComputePipeline& pipeline() const { return *pipelineState; }
+
+    // Whether prepare() left something dispatchable. False before prepare(), of
+    // a refused build, and of a shader that would not compile - all three being
+    // states in which a dispatch of this program does nothing, so a caller that
+    // would rather know than find out asks here.
+    bool isValid() const
+    {
+        return pipelineState.has_value() && pipelineState->isValid();
+    }
 
     // Re-packs the current uniform values, appends the element count the
     // generated bounds guard reads, and returns the block, ready for
@@ -382,6 +429,26 @@ protected:
                           const UInt& rowStride)
     {
         return builder.simdMatrix(buffer, offset, rowStride);
+    }
+
+    // The packed siblings: an 8x8 patch of fp16 or bf16 read straight out of a
+    // device buffer, the offset and the row stride counting in those
+    // sixteen-bit elements. What a kernel saves by taking one is the tile it
+    // would otherwise widen a weight into and the two barriers around it. See
+    // ShaderBuilder for the rules, and fitsPackedSimdMatrix for the question to
+    // put to the device before recording one.
+    SimdMatrix simdMatrixHalf(const InputBuffer& buffer,
+                              const UInt& offset,
+                              const UInt& rowStride)
+    {
+        return builder.simdMatrixHalf(buffer, offset, rowStride);
+    }
+
+    SimdMatrix simdMatrixBFloat16(const InputBuffer& buffer,
+                                  const UInt& offset,
+                                  const UInt& rowStride)
+    {
+        return builder.simdMatrixBFloat16(buffer, offset, rowStride);
     }
 
     void multiplyAccumulate(const SimdMatrix& accumulator,
@@ -640,6 +707,43 @@ private:
             ". simdSum/simdMax/simdMin and SimdMatrix need the two to agree; "
             "use the whole-group groupSum/groupMax/groupMin, which is correct "
             "at any width.");
+    }
+
+    // What a kernel gets instead of the one it asked for when the device has no
+    // instruction for a fragment it loads: an empty library, and so a pipeline
+    // that is not valid, which ComputePass::dispatch drops rather than encodes.
+    // Built rather than left unset so that everything holding this program
+    // still has a pipeline to name, and empty rather than the generated source
+    // because every backend's ShaderLibrary declines an empty one in silence -
+    // so the only thing logged is the reason above, not a shader compiler's
+    // complaint about a type.
+    void buildRefusedPipeline(Device& device)
+    {
+        shaderLibrary.emplace(device, ShaderSource {});
+        pipelineState.emplace(device, *shaderLibrary);
+    }
+
+    void reportUnsupportedPackedSimdMatrix(const Device& device) const
+    {
+        auto missingBFloat16 =
+            graph().usesPackedSimdMatrix(SimdMatrixElement::BFloat16)
+            && !device.supportsBFloat16SimdMatrix();
+
+        const auto* load = missingBFloat16 ? "simdMatrixBFloat16" : "simdMatrixHalf";
+
+        const auto* query = missingBFloat16 ? "supportsBFloat16SimdMatrix"
+                                            : "supportsHalfSimdMatrix";
+
+        LOG("eacp: this kernel loads a packed SIMD-group matrix fragment "
+            "through ",
+            load,
+            ", and Device::",
+            query,
+            " answers no, so no pipeline was built for it. Ask that query "
+            "before recording the load, and where it answers no build the "
+            "kernel that stages the weight into a shared<Float> tile instead. "
+            "The two are different kernels rather than two arms of one, "
+            "because staging carries barriers and the packed load does not.");
     }
 
     // Named here rather than left to the backend, which reports a threadgroup

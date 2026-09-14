@@ -70,12 +70,16 @@ ComputePass::~ComputePass()
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
     boundGroup = pipeline.threadGroupShape();
+    boundPipeline = false;
 
     if (!impl->encoder)
         return;
 
     if (auto* state = static_cast<ID3D12PipelineState*>(pipeline.nativeState()))
+    {
         impl->encoder->commands->list->SetPipelineState(state);
+        boundPipeline = true;
+    }
 }
 
 namespace
@@ -189,7 +193,7 @@ void ComputePass::setBytes(const void* data, int bytes, int slot)
 
 void ComputePass::dispatch(int count)
 {
-    if (!impl->encoder || count <= 0)
+    if (!impl->encoder || !boundPipeline || count <= 0)
         return;
 
     auto width = static_cast<UINT>(groupFor1D().x);
@@ -202,7 +206,7 @@ void ComputePass::dispatch(int count)
 
 void ComputePass::dispatch(int width, int height)
 {
-    if (!impl->encoder || width <= 0 || height <= 0)
+    if (!impl->encoder || !boundPipeline || width <= 0 || height <= 0)
         return;
 
     auto group = groupFor2D();
@@ -218,7 +222,7 @@ void ComputePass::dispatch(int width, int height)
 
 void ComputePass::dispatch(int width, int height, int depth)
 {
-    if (!impl->encoder || width <= 0 || height <= 0 || depth <= 0)
+    if (!impl->encoder || !boundPipeline || width <= 0 || height <= 0 || depth <= 0)
         return;
 
     auto group = groupFor3D();
@@ -247,7 +251,7 @@ void ComputePass::dispatch(int width, int height, int depth)
 // it by hand first.
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
 {
-    if (!impl->encoder || offsetInBytes < 0
+    if (!impl->encoder || !boundPipeline || offsetInBytes < 0
         || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
         return;
 

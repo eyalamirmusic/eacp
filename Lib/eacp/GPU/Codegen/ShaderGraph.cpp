@@ -3,6 +3,7 @@
 #include "../Frame/ComputePass.h"
 
 #include <bit>
+#include <cassert>
 
 namespace eacp::GPU
 {
@@ -624,7 +625,7 @@ int ShaderGraph::addSimdMatrixFill(int value)
 {
     barrierUsed = true;
 
-    auto matrix = simdMatrices++;
+    auto matrix = declareSimdMatrix(SimdMatrixElement::Float);
 
     auto fill = Statement {StatementKind::SimdMatrixFill};
     fill.slot = matrix;
@@ -637,11 +638,18 @@ int ShaderGraph::addSimdMatrixFill(int value)
 int ShaderGraph::addSimdMatrixLoad(SimdMatrixMemory memory,
                                    int slot,
                                    int index,
-                                   int stride)
+                                   int stride,
+                                   SimdMatrixElement element)
 {
+    assert(
+        (element == SimdMatrixElement::Float || memory == SimdMatrixMemory::Buffer)
+        && "eacp: a packed fragment is loaded out of a storage buffer. A "
+           "threadgroup tile holds floats, so a patch of one is already the "
+           "fragment simdMatrix(tile, ...) reads.");
+
     barrierUsed = true;
 
-    auto matrix = simdMatrices++;
+    auto matrix = declareSimdMatrix(element);
 
     auto load = Statement {StatementKind::SimdMatrixLoad};
     load.slot = matrix;
@@ -649,14 +657,31 @@ int ShaderGraph::addSimdMatrixLoad(SimdMatrixMemory memory,
     load.bufferSlot = slot;
     load.index = index;
     load.stride = stride;
+    load.element = element;
     addStatement(load);
 
     return matrix;
 }
 
+int ShaderGraph::declareSimdMatrix(SimdMatrixElement element)
+{
+    simdMatrixElementList.add(element);
+    return simdMatrixElementList.size() - 1;
+}
+
+bool ShaderGraph::usesPackedSimdMatrix(SimdMatrixElement element) const
+{
+    return simdMatrixElementList.contains(element);
+}
+
 void ShaderGraph::addSimdMatrixStore(
     int matrix, SimdMatrixMemory memory, int slot, int index, int stride)
 {
+    assert(simdMatrixElement(matrix) == SimdMatrixElement::Float
+           && "eacp: a packed fragment cannot be stored - there is no "
+              "instruction that writes one back. Multiply it into a float "
+              "accumulator and store that.");
+
     barrierUsed = true;
 
     auto store = Statement {StatementKind::SimdMatrixStore};
@@ -670,6 +695,11 @@ void ShaderGraph::addSimdMatrixStore(
 
 void ShaderGraph::addSimdMatrixMultiplyAdd(int accumulator, int left, int right)
 {
+    assert(simdMatrixElement(accumulator) == SimdMatrixElement::Float
+           && "eacp: a product accumulates into a float fragment. A packed one "
+              "is an operand only - sixteen bits would lose what the sum is "
+              "being accumulated in.");
+
     barrierUsed = true;
 
     auto product = Statement {StatementKind::SimdMatrixMultiplyAdd};
@@ -737,7 +767,7 @@ int ShaderGraph::threadgroupMemoryBytes() const
     for (auto elementType: reductionTypes)
         bytes += threads * threadgroupElementBytes(elementType);
 
-    if (simdMatrices > 0)
+    if (simdMatrixCount() > 0)
         bytes += threads / simdGroupWidth * 2 * simdMatrixSize * simdMatrixSize
                  * (int) sizeof(float);
 
