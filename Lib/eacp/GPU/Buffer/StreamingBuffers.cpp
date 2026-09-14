@@ -26,13 +26,13 @@ namespace
 // from one small allocation walks up through several doublings - each of which
 // is a GPU allocation - before it gets there. Three pools of this is the whole
 // cost of a stream that is barely used, which is why it is not larger.
-constexpr auto minimumArenaBytes = 64 * 1024;
+constexpr std::int64_t minimumArenaBytes = 64 * 1024;
 
 // The cursor only ever advances by whole alignment units, so every slice
 // starts where the next bind may begin.
-int alignedUp(int bytes)
+std::int64_t alignedUp(std::int64_t bytes)
 {
-    constexpr auto mask = StreamingBuffers::alignment - 1;
+    constexpr std::int64_t mask = StreamingBuffers::alignment - 1;
 
     return (bytes + mask) & ~mask;
 }
@@ -40,7 +40,7 @@ int alignedUp(int bytes)
 // Doubling rather than fitting each new high-water mark: what a batching
 // renderer writes swings by a lot between frames, and resizing to every peak
 // would allocate on most of them.
-int grownCapacity(int needed, int current)
+std::int64_t grownCapacity(std::int64_t needed, std::int64_t current)
 {
     auto capacity = std::max(current, minimumArenaBytes);
 
@@ -100,7 +100,7 @@ void StreamingBuffers::beginFrame(Pool& pool, std::uint64_t frame)
 
 // The arena the next `bytes` go into: the current one when they fit after the
 // cursor, otherwise a new one appended beside it.
-Buffer& StreamingBuffers::arenaFor(Pool& pool, int bytes)
+Buffer& StreamingBuffers::arenaFor(Pool& pool, std::int64_t bytes)
 {
     if (!pool.arenas.empty())
     {
@@ -128,7 +128,7 @@ Buffer& StreamingBuffers::arenaFor(Pool& pool, int bytes)
                                  BufferStorage::Streaming);
 }
 
-BufferRange StreamingBuffers::write(const void* data, int bytes)
+BufferRange StreamingBuffers::write(const void* data, std::int64_t bytes)
 {
     const auto frame = Device::shared().frameIndex();
     auto& pool = pools[(int) (frame % (std::uint64_t) framesInFlight)];
@@ -149,7 +149,12 @@ BufferRange StreamingBuffers::write(const void* data, int bytes)
     auto& arena = arenaFor(pool, bytes);
     const auto offset = pool.used;
 
-    arena.update(data, bytes, offset);
+    // Unordered on purpose, and the rotation above is why it is allowed to be:
+    // no frame that can still be on the GPU was drawn from the bytes this write
+    // lands on, so there is nothing for it to be ordered behind. The ordered
+    // Buffer::update would wait for the newest submission here, in the middle
+    // of a frame, which is the CPU and the GPU taking turns.
+    arena.updateUnordered(data, bytes, offset);
 
     const auto taken = alignedUp(bytes);
 
@@ -170,9 +175,9 @@ int StreamingBuffers::bufferCount() const
     return total;
 }
 
-int StreamingBuffers::bytesReserved() const
+std::int64_t StreamingBuffers::bytesReserved() const
 {
-    auto total = 0;
+    auto total = std::int64_t {0};
 
     for (const auto& pool: pools)
         for (const auto& arena: pool.arenas)

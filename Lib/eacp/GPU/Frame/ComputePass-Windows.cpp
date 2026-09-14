@@ -173,9 +173,11 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), data->uav.gpu);
 }
 
-void ComputePass::setBytes(const void* data, int bytes, int slot)
+void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
+    // The `bytes <= 0` half is what keeps the cast below honest: a negative
+    // count would arrive at uploadConstants as an enormous std::size_t.
+    if (!impl->encoder || bytes <= 0 || slot < 0 || slot >= maxUniformSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
@@ -245,10 +247,12 @@ void ComputePass::dispatch(int width, int height, int depth)
 // this is not simply the same three lines twice. That transition is only a
 // transition, so in a concurrent pass the writer's UAV work is ordered against
 // it by hand first.
-void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+void ComputePass::dispatchIndirect(const Buffer& arguments,
+                                   std::int64_t offsetInBytes)
 {
     if (!impl->encoder || offsetInBytes < 0
-        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
+        || offsetInBytes
+               > arguments.size() - (std::int64_t) sizeof(DispatchArguments))
         return;
 
     auto* data = static_cast<D3D12BufferData*>(arguments.nativeBuffer());

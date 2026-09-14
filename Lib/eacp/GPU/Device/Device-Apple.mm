@@ -104,6 +104,13 @@ Device::Device()
 Device& Device::shared()
 {
     static Device instance;
+
+    // Created lazily but owned by the main thread whichever thread asked for it
+    // first — every GPUView and every Frame drives this one from there. See the
+    // thread rule on Device.
+    [[maybe_unused]] static const auto boundToMainThread =
+        (instance.followMainThread(), true);
+
     return instance;
 }
 

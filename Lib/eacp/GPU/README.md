@@ -7,6 +7,18 @@ Everything here is main-thread only, like the rest of eacp, and every public
 type hides its backend behind a `Pimpl`, so nothing Metal or D3D leaks into a
 header an app includes.
 
+More precisely: everything belongs to the thread that made the `Device` it came
+from, and `Device::shared()` belongs to the main thread whichever thread asked
+for it first — every `GPUView` and every `Frame` drives that one from there. A
+worker that wants the GPU without queueing behind the main thread makes a
+`Device` of its own (`auto worker = GPU::Device();`) and keeps the whole chain —
+buffers, pipelines, command buffers — on that thread; reaching `Device::shared()`
+from there to compile a kernel is allowed and does not move its ownership.
+`Device::assertOwningThread()` is the rule as a debug assertion, and creating a
+buffer, reading or updating one, beginning a frame, and submitting, waiting on
+or reading back a command buffer all call it. It is one thread-id compare behind
+an `assert`, so a release build pays for nothing but the call.
+
 ## The pieces
 
 | | |
@@ -790,6 +802,110 @@ only a word-aligned offset, and `setVertexStorageBuffer` and
 device's alignment like a kernel's slot — the latter being what a
 `Uniform<InputBuffer>` on a `ShaderProgram` binds through. A draw handed an
 unbindable index range draws nothing.
+
+### Byte counts are 64-bit
+
+Every byte count and offset on the buffer API is a `std::int64_t` —
+`Buffer::size()`, the constructor's count, `read` and `update`, `BufferRange`'s
+`offset` and `bytes`, `Device::makeBuffer`, `CommandBuffer::read`,
+`ComputePass::setBytes` and the indirect-dispatch offset. A single buffer is
+routinely past what an `int` holds: a language model's weight shard is
+gigabytes, and a batch of logits reaches two of them at a few thousand rows, at
+which point an `int` count wrapped silently and allocated something small and
+negative instead of failing.
+
+Signed rather than `std::size_t`, so a negative offset arriving from a caller's
+own arithmetic stays negative and the guards that reject it keep working, and so
+that mixing a count with the `int` element counts the rest of the API uses needs
+no cast in either direction. Shader-side indexing is untouched and stays 32-bit:
+what is wide is the host's description of the allocation, not the index a thread
+computes.
+
+Most call sites need no change — a `sizeof` or an `int` widens on its own. What
+does need one is a count read back *out*: `int bytes = buffer.size();` narrows
+where `auto` does not.
+
+### A buffer over memory you already have
+
+`Device::makeBufferOverMemory` takes an `ExternalMemory` — a pointer, a length
+and a callback — and makes a buffer over those bytes rather than a copy of them:
+
+```cpp
+auto mapped = std::make_shared<MemoryMappedFile>(FilePath {weightsFile});
+
+auto weights = device.makeBufferOverMemory(
+    {const_cast<std::uint8_t*>(mapped->bytes().data()),
+     (std::int64_t) mapped->size(),
+     [mapped] {}},                       // holds the mapping open
+    BufferUsage::Storage);
+
+kernel.layer = BufferRange {&weights, tensor.offset, tensor.bytes};
+```
+
+That is what it is for: one mapping of a large file becomes one buffer, every
+tensor in it a `BufferRange`, and the pages arrive from the page cache as the
+GPU first touches them. The address must sit on `Buffer::memoryPageSize()`,
+which a mapping of a whole file already does; the length may be anything, and
+`size()` reports the count given rather than the page it is rounded up to
+underneath. `Buffer::isPageAligned` answers the contract before the call, and a
+descriptor that fails it makes an invalid `Buffer` rather than a quietly copied
+one on every backend — so a call site written on one is one the others take.
+
+`Buffer::canAdoptMemory(device)` says which of the two actually happened. True
+on Metal, where a shared-storage `MTLBuffer` is built straight over the host
+pages, so the caller and the GPU look at the same bytes in both directions and
+nothing is copied; the callback then runs when the buffer is destroyed. False on
+D3D12 and Vulkan, whose device heaps are not host memory: the same call copies,
+and the callback runs as soon as the copy has been taken. Worth asking before
+mapping a file the size of a model, since where it is false the bytes are paid
+for twice.
+
+### Writing a buffer the GPU may be reading
+
+`Buffer::update` is ordered after everything submitted to the device before the
+call, the same way `read` is: a kernel still writing those bytes has finished
+before the host's arrive, and the host's are the ones that stay. The wait is
+paid only where the write is a bare memcpy into memory the GPU can see — on
+Metal, whose buffers are all shared storage, and on a host-mapped
+`BufferStorage::Streaming` buffer anywhere. A device-storage write on D3D12 and
+Vulkan is a copy recorded into the command stream, which the stream itself
+orders, and waits for nothing.
+
+**That wait is new**, and it is a cost every existing caller now pays: an update
+that used to be a bare memcpy on Metal is a memcpy behind a wait for the newest
+submission. Code that was already right by construction gets its old cost back
+by asking for the unordered call by name — which is what `StreamingBuffers`,
+`GPUWidgets`' coverage batch and the `Apps/GPU` samples in this tree were
+changed to do.
+
+`Buffer::updateUnordered` is that write with the wait given up, the caller
+saying instead that no work the GPU still has in hand touches those bytes. There
+are two ways to be able to say it. One is the frame loop: a renderer rewriting
+its geometry every tick cannot stop in the middle of a frame to wait for the
+newest submission — that is the CPU and the GPU taking turns rather than
+overlapping — so it buys the ordering another way. `StreamingBuffers` is that
+other way, and never hands out bytes from an arena a frame still in flight was
+drawn from, which is why its own writes go through the unordered call. The other
+is a caller that has ordered by hand and knows more than a `Buffer` can: it
+waited on the command buffer that wrote those bytes, or read them back, or is a
+step-by-step loop where the writer finished long ago and only a later, unrelated
+submission is still running.
+
+`CommandBuffer::update` is that second case with the wait built in and scoped to
+one command buffer — `Buffer::update`'s sibling exactly as `CommandBuffer::read`
+is `Buffer::read`'s. It waits for *this* command buffer and then writes, so a
+loop keeping two in flight can overwrite step k's buffer without draining step
+k+1:
+
+```cpp
+commands.submit();                             // step k
+trailing.submit();                             // step k+1, still running
+
+commands.update(state, patch.data(), bytes);   // waits for step k alone
+```
+
+Where the writer is known, that is the better call than either of the two on
+`Buffer`.
 
 ### Buffers of integers
 

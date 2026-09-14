@@ -259,7 +259,7 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     impl->sampledTextures &= ~(1u << slot);
 }
 
-void ComputePass::setBytes(const void* data, int bytes, int slot)
+void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     if (!impl->encoder || bytes <= 0 || slot < 0 || slot >= maxUniformSlots)
         return;
@@ -325,10 +325,12 @@ void ComputePass::dispatch(int width, int height, int depth)
     impl->orderAfterDispatch(commandBuffer);
 }
 
-void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+void ComputePass::dispatchIndirect(const Buffer& arguments,
+                                   std::int64_t offsetInBytes)
 {
     if (!impl->canRecord() || offsetInBytes < 0 || offsetInBytes % 4 != 0
-        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
+        || offsetInBytes
+               > arguments.size() - (std::int64_t) sizeof(DispatchArguments))
         return;
 
     auto* data = static_cast<VulkanBufferData*>(arguments.nativeBuffer());
