@@ -841,6 +841,19 @@ const char* componentSuffix(int component)
     return component == 1 ? ".y" : ".z";
 }
 
+// The lane of a vector value, which is a different question: a thread index
+// reaches three components and a vector reaches four, so the one above stops
+// where it does and this one names .w. Nothing in the EDSL is wider than four,
+// so a fifth component is a caller's mistake rather than a lane to name.
+const char* vectorComponentSuffix(int component)
+{
+    assert(component >= 0 && component < 4
+           && "eacp: a vector has no component past .w");
+
+    constexpr const char* lanes[] = {".x", ".y", ".z", ".w"};
+    return lanes[component];
+}
+
 // The MSL type a run of consecutive buffer elements is loaded through.
 //
 // The packed one and not float4, because the alignment is not ours to promise.
@@ -1678,6 +1691,7 @@ void collectWrites(const ShaderGraph& graph,
         case StatementKind::Break:
         case StatementKind::Continue:
         case StatementKind::Store:
+        case StatementKind::VectorStore:
         case StatementKind::TextureStore:
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
@@ -1726,6 +1740,7 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
         case StatementKind::Break:
         case StatementKind::Continue:
         case StatementKind::Store:
+        case StatementKind::VectorStore:
         case StatementKind::TextureStore:
         case StatementKind::AtomicAdd:
         case StatementKind::SimdMatrixFill:
@@ -1766,6 +1781,7 @@ void collectBufferWrites(const ShaderGraph& graph,
     switch (statement.kind)
     {
         case StatementKind::Store:
+        case StatementKind::VectorStore:
             written[statement.slot] = 1;
             return;
 
@@ -2105,6 +2121,53 @@ struct StageEmitter
                               + stored + ", memory_order_relaxed);\n";
                 else
                     source += indent + element + " = " + stored + ";\n";
+
+                break;
+            }
+
+            // The write mirror of a vector read: one store where the dialect
+            // has a spelling for one, and the N subscripts it stands in for
+            // where it has not. Metal reinterprets the address being stored to
+            // rather than the binding, so an output stays a run of floats and
+            // nothing it was bindable as is given up.
+            //
+            // Both operands are named first - see holdTheVector - so each is
+            // evaluated once and in full before any part of the record reaches
+            // memory. That is what lets write4(out, i, f(out.read4(i))) mean
+            // what it says, and what keeps an index computed from the buffer
+            // being written - write4(out, toUInt(out[i]), v) - addressing the
+            // element it was aimed at rather than the one the first component
+            // just landed on.
+            case StatementKind::VectorStore:
+            {
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+                source += holdTheVector(statement, indent, open);
+
+                auto name = "buffer" + std::to_string(statement.slot);
+                auto base = printer.ref(statement.index);
+                auto stored = printer.ref(statement.value);
+                auto type = graph().expr(statement.value).type;
+
+                if (printer.backend == Backend::Metal)
+                {
+                    source += indent + "*((device " + metalPackedVectorType(type)
+                              + "*) (" + name + " + " + base + ")) = " + stored
+                              + ";\n";
+                    break;
+                }
+
+                for (auto component = 0; component < componentCount(type);
+                     ++component)
+                {
+                    source += indent + name + "[" + base;
+
+                    if (component > 0)
+                        source += " + " + std::to_string(component) + "u";
+
+                    source += "] = (" + stored + ")"
+                              + vectorComponentSuffix(component) + ";\n";
+                }
 
                 break;
             }
@@ -2530,6 +2593,49 @@ private:
             return {};
 
         return bind(statement.record, indent, open);
+    }
+
+    // A wide store's operands, named before the store rather than printed into
+    // it.
+    //
+    // The index is the one the backends disagree about. Metal stores the whole
+    // vector through one pointer and prints the address once; HLSL and GLSL
+    // print it into every subscript, so an index inlined there is evaluated N
+    // times - and if it reads the buffer being written, every evaluation after
+    // the first reads back what this very store has already put there.
+    // write4(out, toUInt(out[i]), v) is exactly that shape, and inlined it would
+    // mean one thing on Metal and another on the other two.
+    //
+    // The value is named on every backend all the same, for the reason
+    // holdTheRecord names a record's: a wide store is one write of one record,
+    // and the record is worth a name wherever it is an operation rather than a
+    // leaf.
+    std::string holdTheVector(const Statement& statement,
+                              const std::string& indent,
+                              Vector<int>& open)
+    {
+        auto source = std::string {};
+
+        if (printer.backend != Backend::Metal)
+            source += holdOperand(statement.index, statement.slot, indent, open);
+
+        return source + holdOperand(statement.value, statement.slot, indent, open);
+    }
+
+    // One of them, unless naming it would buy nothing: something already named
+    // is already computed, and a leaf costs nothing however often it is
+    // repeated - unless it is a read of the buffer being written, which is not
+    // a matter of cost.
+    std::string
+        holdOperand(int node, int slot, const std::string& indent, Vector<int>& open)
+    {
+        if (node < 0 || locals[node] >= 0)
+            return {};
+
+        if (!wantsLocal(graph().expr(node).kind) && !readsSlot(node, slot))
+            return {};
+
+        return bind(node, indent, open);
     }
 
     bool readsSlot(int node, int slot)

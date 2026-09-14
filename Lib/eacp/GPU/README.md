@@ -1107,10 +1107,26 @@ auto particle = state.read4(index);           // position.xy, velocity.xy
 write(next, index, float4(newPosition, newVelocity));
 ```
 
-Underneath, the buffer is still a run of floats and the *store* is still N
-scalar accesses over it, deliberately: a retyped `float4` binding would buy one
-wide store and cost the CPU-side element size that makes those same bytes
-bindable as a per-instance vertex stream.
+Underneath, the `write` overloads are N scalar accesses over a buffer that is
+still a run of floats. `write2`/`write3`/`write4` lay the same bytes down as
+**one** store, at the same record index:
+
+```cpp
+write4(next, index, float4(newPosition, newVelocity));   // one store on Metal
+```
+
+The two coexist because the wide store is not the trade it was once taken for.
+It does not retype the binding — it reinterprets the *address being written*,
+which is the same pointer cast `read4` makes at the address being read — so an
+output written wide is still a run of floats, still bindable as a per-instance
+vertex stream with no CPU-side element size to agree on. The alignment contract
+is `read4`'s too: the pointer is a `packed_float4`, wanting four-byte alignment
+and not sixteen, so any offset `Device::storageBufferOffsetAlignment()` lets a
+`BufferRange` start at is one a wide store can write to. On HLSL and GLSL, which
+have nothing to reinterpret, `write4` prints the four subscripts `write` already
+prints — over a value named once first, so the whole record is evaluated before
+any part of it reaches memory and `write4(out, i, f(out.read4(i)))` means what it
+says.
 
 The *read* of a read-only buffer is one load where the dialect has a spelling
 for one. On Metal `input.read4(i)` is the sixteen bytes fetched through a
@@ -1179,6 +1195,39 @@ worth stating because it was not always true — stores used to be collected and
 emitted after the body, so a guarded write ran unconditionally and a looped one
 ran once afterwards on the counter's final value. Both compiled and neither
 complained; `Tests/GPU/StorePlacementTests.cpp` is what now says otherwise.
+
+### What the graph shares, and what it will not move
+
+Two calls that build the same value get the same node, so the emitter prints it
+once and names it. Three kinds take that: **constants**, **pure binaries** — the
+write's `gid * 4u` and the read's are one node — and **reads of read-only
+buffers**. That last one is what makes two `readHalf(scale, i)` calls at one
+index a single load rather than two, however far apart in a kernel they were
+written, and it is what a hand-unrolled inner loop that fetches the same scale
+per lane depends on.
+
+An **output's** reads are never shared, and that is not an omission. An output
+may hold what this very thread stored a statement ago — the whole point of
+`output[i]` — so two reads of one element with a store between them are two
+different values and stay two loads. The slot's declared access is what decides:
+an `InputBuffer` cannot be stored to by anything the EDSL can express, so what
+its elements hold is fixed for the dispatch.
+
+Which is why **one `GPU::Buffer` must not be bound to an input slot and an
+output slot of the same kernel** — a rule `InputBuffer` already states, and one
+this sharing now has teeth behind: the emitter orders a read against the stores
+to *its slot*, so two reads of an input either side of a store through an output
+slot that happens to name the same buffer are merged into one load above that
+store. A kernel that computes in place declares one `OutputBuffer` and reads it.
+
+Sharing a node is **not** licence to move it. A node's name is handed out where
+the statement being emitted evaluates it anyway, so a read used only inside a
+`loop` body or an `ifThen` is named inside that body and issued there — a
+loop-invariant read written inside a loop stays inside it, and a read written
+under a guard stays under the guard. And a read subscripted by a mutable local
+is not shared at all: the index is a `var()` read, which makes the read impure,
+which is what keeps a row walk from collapsing into one load of the counter's
+first value. `Tests/GPU/HoistingTests.cpp` pins all four of these.
 
 ### Reducing over the group
 
@@ -1495,7 +1544,8 @@ These are the way in and out of that:
 | `unpackHalf2(bits)` | the same, from a `UInt` already in hand |
 | `packHalf2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeHalf2(out, i, pair)` | that word stored at `i` — `readHalf2` reads it back |
-| `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways |
+| `writeHalf4(out, i, quad)` | four halves narrowed into two words and laid down in one store at the index `readHalf4` counts in |
+| `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways — componentwise over a `Float2/3/4` and a `UInt2/3/4` as well as over the scalars |
 
 Size the buffer in whole words: `readHalf` fetches the word at `i / 2`, so an
 odd count of halves reads past its last byte on the final element. `readHalf4`
@@ -1548,6 +1598,7 @@ void define() override
 | `unpackBFloat16x2(bits)` | the same, from a `UInt` already in hand |
 | `packBFloat16x2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeBFloat16x2(out, i, pair)` | that word stored at `i` — `readBFloat16x2` reads it back |
+| `writeBFloat16x4(out, i, quad)` | four bfloat16s narrowed into two words and laid down in one store at the index `readBFloat16x4` counts in |
 
 **Do not reach a bf16 weight through the fp16 path.** The two are not
 interchangeable storage: with five exponent bits, fp16 flushes 1e-6 to a
@@ -1595,6 +1646,14 @@ void define() override
 | `packInt8x4(values)` | four `Int4` components packed into a `UInt`, `.x` in the low eight bits |
 | `packUInt8x4(values)` | the same from a `UInt4` |
 | `writeInt8x4(out, i, values)` / `writeUInt8x4(out, i, values)` | that word stored at `i` — `readInt8x4` reads it back |
+| `writeInt8x8(out, i, low, high)` / `writeUInt8x8(out, i, low, high)` | eight bytes packed into two words and laid down in one store at the index `readInt8x8` counts in |
+| `writeInt8x16(out, i, a, b, c, d)` / `writeUInt8x16(out, i, a, b, c, d)` | sixteen bytes packed into four words and laid down in one store at the index `readInt8x16` counts in |
+
+The wide byte stores take integer vectors rather than the `Float4Pair` and
+`Float4Quad` their reads hand back, and they carry the read's own component
+names — `low`/`high`, `a`/`b`/`c`/`d`. It is the same reason `writeInt8x4` takes
+an `Int4`: rounding a float back down to a byte is the caller's decision, and a
+store that took floats would make it silently.
 
 Signed values are two's complement: a byte over `[-128, 127]`, a nibble over
 `[-8, 7]`. Size the buffer in whole words — `readInt8` fetches the word at
@@ -1627,10 +1686,12 @@ and the widening is register arithmetic over the value it brought back.
 `readInt8x16` is the sixteen-byte load `read4` already lowers to, holding
 sixteen weights instead of four.
 
-This is not something to leave to the shader compiler: the graph shares
-constants and pure binaries and **not reads**, so four subscripts of the same
-address stay four loads. One record read is one node, and the emitter names any
-node it evaluates more than once, which is what puts the load in a local with
+This is not something to leave to the shader compiler. The graph does share
+reads of read-only buffers (see below), so four subscripts of *one* address are
+one load — but four subscripts of four consecutive addresses are four different
+values and stay four loads, which is exactly what walking a row byte by byte
+does. One record read is one node instead, and the emitter names any node it
+evaluates more than once, which is what puts the whole record in a local with
 the four words as swizzles of it. `GPU/codegenWideInt8Reads` asserts the emitted
 MSL has exactly one buffer subscript for a `readInt8x16`, and
 `PackedQuantized/aWideReadCostsOneRecordRead` asserts on the real
@@ -1640,8 +1701,9 @@ costs.
 `Float4Pair` is what an eight-wide read hands back, and `Float4Quad` a
 sixteen-wide one, because no dialect has a float8 and inventing one in the EDSL
 would leave nothing to emit it into. They are single structs rather than a
-`readInt4x8Low` beside a `readInt4x8High` for the sharing reason above — two
-calls would be two loads of the same words. One read, unpacked in registers:
+`readInt4x8Low` beside a `readInt4x8High` because one fetch should read as one
+call — the sharing below would now collapse the two loads either way, but a call
+site that fetches once should say so. One read, unpacked in registers:
 
 ```cpp
 auto w = quantized.readInt4x8(block);

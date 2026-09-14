@@ -475,6 +475,25 @@ protected:
         builder.write(buffer, index, value);
     }
 
+    // The same records laid down as one store rather than as N - the write
+    // mirror of read2/read3/read4, down to the index counting records and the
+    // four-byte alignment a packed vector pointer asks of the binding. See
+    // ShaderBuilder::write4 for why this is a name of its own.
+    void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        builder.write2(buffer, index, value);
+    }
+
+    void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        builder.write3(buffer, index, value);
+    }
+
+    void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        builder.write4(buffer, index, value);
+    }
+
     // Two values narrowed to fp16 and packed into the one float slot that
     // holds them, which InputBuffer::readHalf2 reads back at the same index.
     void writeHalf2(const OutputBuffer& buffer,
@@ -506,6 +525,61 @@ protected:
                       const UInt4& value)
     {
         builder.writeUInt8x4(buffer, index, value);
+    }
+
+    // The wide packed stores, one per wide read and at the read's own index:
+    // eight or sixteen values packed into the two or four words that hold them
+    // and laid down in one store. The byte ones take integer vectors for the
+    // reason writeInt8x4 does, named after the read's own .low / .high and
+    // .a .b .c .d.
+    void writeHalf4(const OutputBuffer& buffer,
+                    const UInt& index,
+                    const Float4& value)
+    {
+        builder.writeHalf4(buffer, index, value);
+    }
+
+    void writeBFloat16x4(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float4& value)
+    {
+        builder.writeBFloat16x4(buffer, index, value);
+    }
+
+    void writeInt8x8(const OutputBuffer& buffer,
+                     const UInt& index,
+                     const Int4& low,
+                     const Int4& high)
+    {
+        builder.writeInt8x8(buffer, index, low, high);
+    }
+
+    void writeUInt8x8(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& low,
+                      const UInt4& high)
+    {
+        builder.writeUInt8x8(buffer, index, low, high);
+    }
+
+    void writeInt8x16(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const Int4& a,
+                      const Int4& b,
+                      const Int4& c,
+                      const Int4& d)
+    {
+        builder.writeInt8x16(buffer, index, a, b, c, d);
+    }
+
+    void writeUInt8x16(const OutputBuffer& buffer,
+                       const UInt& index,
+                       const UInt4& a,
+                       const UInt4& b,
+                       const UInt4& c,
+                       const UInt4& d)
+    {
+        builder.writeUInt8x16(buffer, index, a, b, c, d);
     }
 
     // One element of a threadgroup-shared array, published to the rest of the
@@ -571,6 +645,26 @@ protected:
     void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
     {
         builder.write(buffer, index, value);
+    }
+
+    // The same records laid down as one store, on the terms the float wide
+    // stores set and at the index UIntInputBuffer::read2/3/4 counts in.
+    void
+        write2(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
+    {
+        builder.write2(buffer, index, value);
+    }
+
+    void
+        write3(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
+    {
+        builder.write3(buffer, index, value);
+    }
+
+    void
+        write4(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
+    {
+        builder.write4(buffer, index, value);
     }
 
     // An atomic buffer's element, set rather than added to - what a kernel
