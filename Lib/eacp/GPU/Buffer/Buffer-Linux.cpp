@@ -4,6 +4,7 @@
 #include "../Vulkan/VulkanTypes.h"
 
 #include <cstring>
+#include <unistd.h>
 
 namespace eacp::GPU
 {
@@ -21,10 +22,11 @@ struct Buffer::Native
 {
     Native(Device& device,
            const void* data,
-           int byteCount,
+           std::int64_t byteCount,
            BufferUsage usage,
            BufferStorage storage)
         : context(getVulkanContext(device))
+        , owner(&device)
     {
         const auto bytes = (std::size_t) (byteCount > 0 ? byteCount : 0);
 
@@ -175,8 +177,40 @@ struct Buffer::Native
         return true;
     }
 
+    // The copy both update paths end in, so that each of them asserts the
+    // owning thread once rather than once on the way through the other.
+    void write(const void* data, std::int64_t byteCount, std::int64_t byteOffset)
+    {
+        if (bufferData.buffer == VK_NULL_HANDLE || data == nullptr || byteCount <= 0
+            || byteOffset < 0 || (std::size_t) byteOffset >= bufferData.size)
+            return;
+
+        if (!context.isValid())
+            return;
+
+        const auto offset = (std::size_t) byteOffset;
+        const auto bytes = (std::size_t) byteCount;
+
+        const auto available = bufferData.size - offset;
+        const auto count = bytes < available ? bytes : available;
+
+        // Unordered against everything already recorded: not writing bytes an
+        // in-flight frame reads is the caller's contract under Streaming.
+        if (bufferData.mapped != nullptr)
+        {
+            std::memcpy(bufferData.mapped + offset, data, count);
+            return;
+        }
+
+        stage(data, count, offset);
+    }
+
     // A buffer never moves between Devices.
     VulkanContext& context;
+
+    // The Device beside it, for the thread rule alone - see
+    // Device::assertOwningThread.
+    Device* owner = nullptr;
 
     // Mutable because the use tracking advances inside the const read().
     mutable VulkanBufferData bufferData;
@@ -184,7 +218,7 @@ struct Buffer::Native
 
 Buffer::Buffer(Device& device,
                const void* data,
-               int bytes,
+               std::int64_t bytes,
                BufferUsage usage,
                BufferStorage storage)
     : impl(device, data, bytes, usage, storage)
@@ -194,9 +228,36 @@ Buffer::Buffer(Device& device,
         device.noteBufferCreated();
 }
 
-int Buffer::size() const
+// Vulkan can import host memory, but only where VK_EXT_external_memory_host is
+// present and only in whole allocations of the device's own granularity, which
+// is not something an API this shape can promise. So the memory is copied into
+// a buffer of our own, the copy is taken by the constructor this delegates to,
+// and the release runs the moment it returns - see ExternalMemory.
+//
+// A descriptor off the page grid is refused here as it is on Metal, so that a
+// call site written against this backend is one Metal will also take.
+Buffer::Buffer(Device& device, ExternalMemory memory, BufferUsage usage)
+    : Buffer(device,
+             isPageAligned(memory) ? memory.bytes : nullptr,
+             isPageAligned(memory) ? memory.byteCount : 0,
+             usage)
 {
-    return (int) impl->bufferData.size;
+    memory.onReleased();
+}
+
+bool Buffer::canAdoptMemory(const Device&)
+{
+    return false;
+}
+
+std::int64_t Buffer::memoryPageSize()
+{
+    return (std::int64_t) sysconf(_SC_PAGESIZE);
+}
+
+std::int64_t Buffer::size() const
+{
+    return (std::int64_t) impl->bufferData.size;
 }
 
 bool Buffer::isValid() const
@@ -204,8 +265,11 @@ bool Buffer::isValid() const
     return impl->bufferData.buffer != VK_NULL_HANDLE;
 }
 
-void Buffer::read(void* dst, int byteCount, int byteOffset) const
+void Buffer::read(void* dst, std::int64_t byteCount, std::int64_t byteOffset) const
 {
+    if (impl->owner != nullptr)
+        impl->owner->assertOwningThread();
+
     if (impl->bufferData.buffer == VK_NULL_HANDLE || byteCount <= 0 || byteOffset < 0
         || (std::size_t) byteOffset >= impl->bufferData.size)
         return;
@@ -259,31 +323,30 @@ void Buffer::read(void* dst, int byteCount, int byteOffset) const
     std::memcpy(dst, mapped, count);
 }
 
-void Buffer::update(const void* data, int byteCount, int byteOffset)
+void Buffer::update(const void* data,
+                    std::int64_t byteCount,
+                    std::int64_t byteOffset)
 {
-    if (impl->bufferData.buffer == VK_NULL_HANDLE || data == nullptr
-        || byteCount <= 0 || byteOffset < 0
-        || (std::size_t) byteOffset >= impl->bufferData.size)
-        return;
+    if (impl->owner != nullptr)
+        impl->owner->assertOwningThread();
 
-    if (!impl->context.isValid())
-        return;
+    // Only the host-mapped shape needs the wait. A device-storage write below
+    // is a vkCmdCopyBuffer recorded into the command stream, and the stream is
+    // already the ordering - see the rule on Buffer::update.
+    if (impl->bufferData.mapped != nullptr && impl->context.isValid())
+        impl->context.waitFor(impl->context.lastSubmitted());
 
-    const auto offset = (std::size_t) byteOffset;
-    const auto bytes = (std::size_t) byteCount;
+    impl->write(data, byteCount, byteOffset);
+}
 
-    const auto available = impl->bufferData.size - offset;
-    const auto count = bytes < available ? bytes : available;
+void Buffer::updateUnordered(const void* data,
+                             std::int64_t byteCount,
+                             std::int64_t byteOffset)
+{
+    if (impl->owner != nullptr)
+        impl->owner->assertOwningThread();
 
-    // Unordered against everything already recorded: not writing bytes an
-    // in-flight frame reads is the caller's contract under Streaming.
-    if (impl->bufferData.mapped != nullptr)
-    {
-        std::memcpy(impl->bufferData.mapped + offset, data, count);
-        return;
-    }
-
-    impl->stage(data, count, offset);
+    impl->write(data, byteCount, byteOffset);
 }
 
 void* Buffer::nativeBuffer() const

@@ -448,7 +448,8 @@ void runKernel(Device& device, ComputeProgram& kernel, int threads)
 
 Vector<float> floatsOf(const Buffer& buffer)
 {
-    auto values = Vector<float>(buffer.size() / (int) sizeof(float));
+    auto values =
+        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
     buffer.read(values.data(), buffer.size());
     return values;
 }
@@ -457,7 +458,8 @@ Vector<float> floatsOf(const Buffer& buffer)
 // bit pattern rather than a value.
 Vector<std::uint32_t> wordsOf(const Buffer& buffer)
 {
-    auto words = Vector<std::uint32_t>(buffer.size() / (int) sizeof(std::uint32_t));
+    auto words = Vector<std::uint32_t>(
+        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
     buffer.read(words.data(), buffer.size());
     return words;
 }

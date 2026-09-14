@@ -94,6 +94,8 @@ CommandBuffer::CommandBuffer(Device& device)
 
 ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
 {
+    impl->device->assertOwningThread();
+
     if (impl->commands == nullptr || impl->committed)
         return ComputePass(nullptr, order);
 
@@ -169,6 +171,8 @@ void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
 
 void CommandBuffer::submit()
 {
+    impl->device->assertOwningThread();
+
     if (impl->canSubmit())
         impl->endAndSubmit();
 }
@@ -188,6 +192,10 @@ void CommandBuffer::commit()
 
 Threads::Async<void> CommandBuffer::commitAsync()
 {
+    // The submission is the part that belongs to this thread; the completion
+    // handler below hops to the message thread on its own and asserts nothing.
+    impl->device->assertOwningThread();
+
     auto promise = Threads::AsyncPromise<void> {};
 
     if (!impl->canSubmit())
@@ -210,6 +218,8 @@ Threads::Async<void> CommandBuffer::commitAsync()
 
 void CommandBuffer::wait()
 {
+    impl->device->assertOwningThread();
+
     if (impl->committed)
         impl->context.waitFor(impl->completionValue);
 }
@@ -224,7 +234,10 @@ bool CommandBuffer::isComplete() const
 // submitted in between. That costs a pipelined loop here what it saves on
 // Metal, and is the price of a default-heap buffer having no CPU mapping to
 // memcpy out of.
-void CommandBuffer::read(const Buffer& buffer, void* dst, int bytes, int offset)
+void CommandBuffer::read(const Buffer& buffer,
+                         void* dst,
+                         std::int64_t bytes,
+                         std::int64_t offset)
 {
     wait();
     buffer.read(dst, bytes, offset);

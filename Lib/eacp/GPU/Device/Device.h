@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <thread>
 
 namespace eacp::Graphics
 {
@@ -32,6 +33,20 @@ namespace eacp::GPU
 // (an MTLBuffer belongs to its MTLDevice; a D3D12 recording to its queue's
 // pool). Using a Device off the thread that constructed it is a debug assertion
 // rather than a race left to be found later.
+//
+// The rule in full, because it is what assertOwningThread() below checks. A
+// Device is owned by the thread that constructed it, and the process-wide
+// Device::shared() is owned by the main thread whichever thread happened to ask
+// for it first - every GPUView and every Frame drives that one from the main
+// thread, so binding it to the first caller would be an accident of startup
+// order. Everything a Device makes is used on its owning thread: creating a
+// buffer, reading or updating one, beginning a frame, and submitting, waiting
+// on or reading back a command buffer all assert it. A worker thread that wants
+// the GPU makes a Device of its own and keeps the whole chain - buffers,
+// pipelines, command buffers - on that thread; touching Device::shared() from
+// there to compile a kernel is allowed and does not move its ownership. The
+// check is one thread-id compare behind an assert, so a release build pays for
+// nothing but the call.
 class Device
 {
 public:
@@ -39,24 +54,50 @@ public:
 
     static Device& shared();
 
+    // Fires a debug assertion when this Device is used from a thread that does
+    // not own it. Called at the top of the operations that touch the backend;
+    // an app may call it at the top of its own, on the same terms.
+    void assertOwningThread() const;
+
     Buffer makeBuffer(const void* data,
-                      int bytes,
+                      std::int64_t bytes,
                       BufferUsage usage = BufferUsage::Vertex,
                       BufferStorage storage = BufferStorage::Device)
     {
+        assertOwningThread();
+
         return {*this, data, bytes, usage, storage};
     }
 
     template <typename T, std::size_t N>
     Buffer makeBuffer(const T (&array)[N], BufferUsage usage = BufferUsage::Vertex)
     {
-        return makeBuffer(array, (int) sizeof(array), usage);
+        return makeBuffer(array, (std::int64_t) sizeof(array), usage);
     }
 
     // An uninitialised buffer of the given size, e.g. a compute output target.
-    Buffer makeBuffer(int bytes, BufferUsage usage = BufferUsage::Storage)
+    Buffer makeBuffer(std::int64_t bytes, BufferUsage usage = BufferUsage::Storage)
     {
+        assertOwningThread();
+
         return {*this, nullptr, bytes, usage};
+    }
+
+    // A buffer over memory the caller owns: shared with it where the backend
+    // can, copied out of it where it cannot, which Buffer::canAdoptMemory
+    // answers. The memory must be page-aligned in both address and length -
+    // see ExternalMemory, which also carries the callback that frees it.
+    //
+    // What this is for is a file already in the address space. Mapping a
+    // weights file and adopting the whole mapping makes every tensor in it a
+    // BufferRange into one buffer, with nothing copied and nothing to keep in
+    // step: the pages arrive as the GPU first touches them.
+    Buffer makeBufferOverMemory(ExternalMemory memory,
+                                BufferUsage usage = BufferUsage::Storage)
+    {
+        assertOwningThread();
+
+        return {*this, std::move(memory), usage};
     }
 
     // A 2D texture from tightly packed 4-byte pixels (row 0 at the top), or an
@@ -97,7 +138,12 @@ public:
         return {*this, library};
     }
 
-    CommandBuffer makeCommandBuffer() { return CommandBuffer {*this}; }
+    CommandBuffer makeCommandBuffer()
+    {
+        assertOwningThread();
+
+        return CommandBuffer {*this};
+    }
 
     bool isValid() const;
 
@@ -257,10 +303,21 @@ public:
     void noteBufferCreated() { ++bufferCount; }
 
 private:
+    // Makes this Device follow the main thread rather than the one that
+    // constructed it. Private because Device::shared() is the only caller and
+    // it is a member, so nothing outside can move a Device's ownership.
+    void followMainThread() { mainThreadOwned = true; }
+
     struct Native;
     Pimpl<Native> impl;
 
     FrameTimer timer;
+
+    // The thread this Device was constructed on, and therefore the one it may
+    // be used from - unless followMainThread() said to track the main thread
+    // instead, which Device::shared() does.
+    std::thread::id owningThread = std::this_thread::get_id();
+    bool mainThreadOwned = false;
 
     std::uint64_t frameCount = 0;
     int bufferCount = 0;

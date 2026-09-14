@@ -114,7 +114,7 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
 }
 
-void ComputePass::setBytes(const void* data, int bytes, int slot)
+void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setBytes:data
@@ -180,13 +180,14 @@ void ComputePass::dispatch(int width, int height, int depth)
 // The threadgroup size still comes from here - only the *count* is in the
 // buffer. Metal reads three uint32s at the offset, which is what
 // DispatchArguments is, so no conversion happens on the way.
-void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+void ComputePass::dispatchIndirect(const Buffer& arguments,
+                                   std::int64_t offsetInBytes)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) arguments.nativeBuffer();
 
     if (activeEncoder == nil || metalBuffer == nil || offsetInBytes < 0
-        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
+        || offsetInBytes > arguments.size() - (std::int64_t) sizeof(DispatchArguments))
         return;
 
     auto group = groupFor1D();

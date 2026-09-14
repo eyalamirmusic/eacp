@@ -88,7 +88,10 @@ const std::optional<Text::RegisteredFont>& embeddedFont()
         if (!file)
             return std::nullopt;
 
-        return Text::registerMemoryFont(file.asRaw(), file.size());
+        // registerMemoryFont counts in an int, and an embedded font file is
+        // tens of kilobytes, so the narrowing is named here rather than left
+        // for the compiler to point out.
+        return Text::registerMemoryFont(file.asRaw(), (int) file.size());
     }();
 
     return registered;

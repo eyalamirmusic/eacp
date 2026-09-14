@@ -37,7 +37,9 @@ Device& Device::shared()
     // regardless of which thread asked for it first — every GPUView and every
     // Frame drives it from there. See D3D12Context::followMainThread.
     [[maybe_unused]] static const auto boundToMainThread =
-        (instance.impl->context.followMainThread(), true);
+        (instance.followMainThread(),
+         instance.impl->context.followMainThread(),
+         true);
 
     return instance;
 }

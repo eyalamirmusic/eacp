@@ -22,7 +22,9 @@ Device& Device::shared()
 
     // Belongs to the main thread whichever thread asked for it first.
     [[maybe_unused]] static const auto boundToMainThread =
-        (instance.impl->context.followMainThread(), true);
+        (instance.followMainThread(),
+         instance.impl->context.followMainThread(),
+         true);
 
     return instance;
 }
