@@ -22,7 +22,7 @@ struct ComputePipeline::Native
             return;
 
         auto kernelName = @(library.computeEntry().c_str());
-        id<MTLFunction> kernel = [metalLibrary newFunctionWithName:kernelName];
+        auto kernel = [metalLibrary newFunctionWithName:kernelName];
 
         if (kernel == nil)
             return;

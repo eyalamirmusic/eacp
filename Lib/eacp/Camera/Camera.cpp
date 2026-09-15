@@ -54,13 +54,13 @@ Graphics::Image CameraFrame::toImage() const
     return image;
 }
 
+// Only BGRA8 converts today. NV12 / other planar formats land in a later phase;
+// until then an unreadable or unsupported frame yields an empty image.
 void CameraFrame::toImage(Graphics::Image& reuse) const
 {
     if (pixels == nullptr || frameWidth <= 0 || frameHeight <= 0
         || pixelFormat != PixelFormat::BGRA8)
     {
-        // NV12 / other planar formats land in a later phase; until then an
-        // unreadable or unsupported frame yields an empty image.
         reuse = {};
         return;
     }

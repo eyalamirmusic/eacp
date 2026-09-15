@@ -87,7 +87,7 @@ struct RotatingTriangleView final : GPUView
         pass.draw(shader);
     }
 
-    static constexpr float radiansPerSecond = 1.2f;
+    static constexpr auto radiansPerSecond = 1.2f;
 
     RotatingShader shader;
     float angle = 0.0f;

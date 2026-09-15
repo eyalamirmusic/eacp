@@ -19,30 +19,30 @@ void resizeBilinearImpl(const std::uint8_t* in,
                         int dstW,
                         int dstH)
 {
-    const float scaleX = static_cast<float>(srcW) / static_cast<float>(dstW);
-    const float scaleY = static_cast<float>(srcH) / static_cast<float>(dstH);
-    const int maxX = srcW - 1;
-    const int maxY = srcH - 1;
+    const auto scaleX = static_cast<float>(srcW) / static_cast<float>(dstW);
+    const auto scaleY = static_cast<float>(srcH) / static_cast<float>(dstH);
+    const auto maxX = srcW - 1;
+    const auto maxY = srcH - 1;
 
-    for (int dy = 0; dy < dstH; ++dy)
+    for (auto dy = 0; dy < dstH; ++dy)
     {
-        const float fy = (static_cast<float>(dy) + 0.5f) * scaleY - 0.5f;
-        const int y0 = static_cast<int>(std::floor(fy));
-        const float wy = fy - static_cast<float>(y0);
-        const float oneMinusWy = 1.f - wy;
-        const std::uint8_t* rowTop =
+        const auto fy = (static_cast<float>(dy) + 0.5f) * scaleY - 0.5f;
+        const auto y0 = static_cast<int>(std::floor(fy));
+        const auto wy = fy - static_cast<float>(y0);
+        const auto oneMinusWy = 1.f - wy;
+        const auto* rowTop =
             in + static_cast<std::ptrdiff_t>(clampi(y0, 0, maxY)) * srcW * 4;
-        const std::uint8_t* rowBot =
+        const auto* rowBot =
             in + static_cast<std::ptrdiff_t>(clampi(y0 + 1, 0, maxY)) * srcW * 4;
 
-        for (int dx = 0; dx < dstW; ++dx)
+        for (auto dx = 0; dx < dstW; ++dx)
         {
-            const float fx = (static_cast<float>(dx) + 0.5f) * scaleX - 0.5f;
-            const int x0 = static_cast<int>(std::floor(fx));
-            const float wx = fx - static_cast<float>(x0);
-            const float oneMinusWx = 1.f - wx;
-            const int x0c = clampi(x0, 0, maxX);
-            const int x1c = clampi(x0 + 1, 0, maxX);
+            const auto fx = (static_cast<float>(dx) + 0.5f) * scaleX - 0.5f;
+            const auto x0 = static_cast<int>(std::floor(fx));
+            const auto wx = fx - static_cast<float>(x0);
+            const auto oneMinusWx = 1.f - wx;
+            const auto x0c = clampi(x0, 0, maxX);
+            const auto x1c = clampi(x0 + 1, 0, maxX);
 
             blendTaps<B>(rowTop + x0c * 4,
                          rowTop + x1c * 4,

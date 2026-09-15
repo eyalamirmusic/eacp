@@ -13,10 +13,10 @@ constexpr auto frameSampling = GPU::TextureSampling {GPU::TextureFilter::Linear,
                                                      GPU::TextureAddressMode::Clamp};
 } // namespace
 
+// The camera feed is already smooth video, so MSAA buys nothing; keep it at
+// one sample.
 CameraView::CameraView()
 {
-    // The camera feed is already smooth video, so MSAA buys nothing; keep it at
-    // one sample.
     setSampleCount(1);
 
     arrivalTick = Threads::DisplayLink::timedTick(
@@ -118,6 +118,8 @@ Graphics::Rect CameraView::imageAreaFor(int textureWidth, int textureHeight) con
     return computeImageArea(bounds.w, bounds.h, textureWidth, textureHeight, fit);
 }
 
+// The wrapped texture holds its own reference to the frame's surface, so the
+// pixel buffer is released as soon as the texture has been drawn.
 bool CameraView::renderZeroCopy(Graphics::Rect& imageArea)
 {
     auto* buffer = camera->acquireLatestPixelBuffer();
@@ -140,8 +142,6 @@ bool CameraView::renderZeroCopy(Graphics::Rect& imageArea)
         drew = true;
     }
 
-    // The wrapped texture holds its own reference to the frame's surface, so the
-    // buffer can be released now.
     Camera::releasePixelBuffer(buffer);
     return drew;
 }

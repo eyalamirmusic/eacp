@@ -84,7 +84,7 @@ OSStatus hotKeyHandler(EventHandlerCallRef, EventRef event, void*)
 
 bool installHandlerOnce()
 {
-    static bool installed = false;
+    static auto installed = false;
     if (installed)
         return true;
 
@@ -149,7 +149,7 @@ struct GlobalHotKey::Native
 
     EventHotKeyRef hotKeyRef = nullptr;
     UInt32 id = 0;
-    Callback onPressed;
+    Callback onPressed = [] {};
 };
 
 GlobalHotKey::GlobalHotKey(ModifierKeys modifiers,

@@ -343,22 +343,21 @@ void RenderPass::setFragmentStorageBuffer(const BufferRange& range, int slot)
                                  atIndex:(NSUInteger) (bufferBase + slot)];
 }
 
+// Uniforms live at buffer(uniformBase + slot) so multi-slot vertex layouts
+// (e.g. instancing with slots 0..N) never collide with the uniform bind.
+// Matches ComputePass::uniformBase.
 void RenderPass::setVertexBytes(const void* data, int bytes, int slot)
 {
-    // Uniforms live at buffer(uniformBase + slot) so multi-slot vertex
-    // layouts (e.g. instancing with slots 0..N) never collide with the
-    // uniform bind. Matches ComputePass::uniformBase.
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setVertexBytes:data
                                length:(NSUInteger) bytes
                               atIndex:(NSUInteger) (uniformBase + slot)];
 }
 
+// Same uniformBase mapping as the vertex stage, so one slot rule covers both;
+// the generated fragment functions declare the block at buffer(uniformBase).
 void RenderPass::setFragmentBytes(const void* data, int bytes, int slot)
 {
-    // Same uniformBase mapping as the vertex stage, so one slot rule covers
-    // both; the generated fragment functions declare the block at
-    // buffer(uniformBase).
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setFragmentBytes:data
                                  length:(NSUInteger) bytes

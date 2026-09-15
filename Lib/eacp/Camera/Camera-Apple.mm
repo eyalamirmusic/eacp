@@ -39,7 +39,7 @@ struct LatestFrame
         CVPixelBufferRef previous = nullptr;
 
         {
-            std::lock_guard<std::mutex> lock(mutex);
+            auto lock = std::lock_guard(mutex);
             previous = current;
             current = retained;
             ++sequence;
@@ -52,7 +52,7 @@ struct LatestFrame
     // Returns the current buffer retained (caller releases), or null.
     void* acquire()
     {
-        std::lock_guard<std::mutex> lock(mutex);
+        auto lock = std::lock_guard(mutex);
 
         if (current != nullptr)
             CFRetain(current);
@@ -69,7 +69,7 @@ struct LatestFrame
         std::uint64_t copiedSequence = 0;
 
         {
-            std::lock_guard<std::mutex> lock(mutex);
+            auto lock = std::lock_guard(mutex);
 
             if (current == nullptr || sequence == out.sequence)
                 return false;
@@ -116,7 +116,7 @@ struct CaptureContext
 {
     void setFrameArrived(Callback callbackToUse)
     {
-        std::lock_guard<std::mutex> lock(arrivedMutex);
+        auto lock = std::lock_guard(arrivedMutex);
         frameArrived = std::move(callbackToUse);
     }
 
@@ -125,14 +125,14 @@ struct CaptureContext
         auto arrived = Callback {};
 
         {
-            std::lock_guard<std::mutex> lock(arrivedMutex);
+            auto lock = std::lock_guard(arrivedMutex);
             arrived = frameArrived;
         }
 
         arrived();
     }
 
-    FrameCallback callback;
+    FrameCallback callback = [] (const eacp::Cameras::CameraFrame &) {};
     LatestFrame latest;
 
     // Unlike `callback` this may be rewired while capture runs (CameraView
@@ -441,9 +441,15 @@ struct Camera::Native
         configureFormatAndFrameRate(
             device, config.width, config.height, config.frameRate);
 
-        // startRunning blocks while the device warms up, so run it on a serial
-        // session queue rather than the caller's (often the main) thread. stop()
-        // serialises with it on the same queue.
+        startRunningOnSessionQueue();
+        return true;
+    }
+
+    // startRunning blocks while the device warms up, so run it on a serial
+    // session queue rather than the caller's (often the main) thread. stop()
+    // serialises with it on the same queue.
+    void startRunningOnSessionQueue()
+    {
         sessionQueue =
             dispatch_queue_create("com.eacp.camera.session", DISPATCH_QUEUE_SERIAL);
 
@@ -454,16 +460,14 @@ struct Camera::Native
             [sessionPtr startRunning];
             runningPtr->store([sessionPtr isRunning]);
         });
-
-        return true;
     }
 
+    // Serialise with the pending startRunning, then stop, on the session
+    // queue before tearing anything down.
     void stop()
     {
         ObjC::AutoReleasePool pool;
 
-        // Serialise with the pending startRunning, then stop, on the session
-        // queue before tearing anything down.
         if (sessionQueue != nullptr && session)
         {
             auto* sessionPtr = session.get();
@@ -483,11 +487,7 @@ struct Camera::Native
         if (output)
             [output.get() setSampleBufferDelegate:nil queue:nullptr];
 
-        // Drain any delegate call still in flight before the context it points
-        // at goes away.
-        if (captureQueue != nullptr)
-            dispatch_sync(captureQueue, ^ {
-            });
+        drainCaptureQueue();
 
         delegate.release();
         output.release();
@@ -504,6 +504,15 @@ struct Camera::Native
             dispatch_release(sessionQueue);
             sessionQueue = nullptr;
         }
+    }
+
+    // Drain any delegate call still in flight before the context it points
+    // at goes away.
+    void drainCaptureQueue()
+    {
+        if (captureQueue != nullptr)
+            dispatch_sync(captureQueue, ^ {
+            });
     }
 
     CaptureContext context;

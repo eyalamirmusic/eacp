@@ -20,16 +20,16 @@
 namespace
 {
 
-int gExitCode = 0;
+auto gExitCode = 0;
 
+// Mirrors NanoTest's argv parsing — same surface, sourced from
+// AppEnvironment::commandLineArgs (populated in main()) instead of
+// taking argc/argv from a global.
 nano::RunOptions parseRunOptions()
 {
     auto& args = eacp::Apps::getAppEnvironment().commandLineArgs;
     auto opts = nano::RunOptions {};
 
-    // Mirror NanoTest's argv parsing — same surface, sourced from
-    // AppEnvironment::commandLineArgs (populated in main()) instead
-    // of taking argc/argv from a global.
     for (auto i = 1; i < args.size(); ++i)
     {
         if (args[i] == "--list-tests")
@@ -43,12 +43,13 @@ nano::RunOptions parseRunOptions()
 
 struct TestRunner
 {
+    // After the run, markTestShutdown lets the platform crash guard
+    // know the real result before WebView2 teardown can fault during
+    // process shutdown (see TestCrashGuard).
     TestRunner()
     {
         gExitCode = nano::run(parseRunOptions());
 
-        // Let the platform crash guard know the real result before WebView2
-        // teardown can fault during process shutdown (see TestCrashGuard).
         eacp::WebView::Test::markTestShutdown(gExitCode);
         eacp::Apps::quit();
     }
@@ -56,13 +57,13 @@ struct TestRunner
 
 } // namespace
 
+// Runs headless, skipping Window's show/activate calls, so test
+// binaries can run on CI machines without an active windowing session.
+// WebView/JS still functions; only the visible surface is suppressed.
 int main(int argc, char* argv[])
 {
     eacp::WebView::Test::installShutdownCrashGuard();
 
-    // Skip Window's show/activate calls so test binaries can run on
-    // CI machines without an active windowing session. WebView/JS
-    // still functions; only the visible surface is suppressed.
     eacp::Apps::getAppEnvironment().headless = true;
 
     eacp::Apps::run<TestRunner>(argc, argv);

@@ -184,6 +184,32 @@ std::string initialJsonFor(const EventEntry& event)
     return Miro::Json::print(event.defaultPayloadJson());
 }
 
+struct HookNames
+{
+    std::string getCmdName;
+    std::string fetchAccess;
+    std::string stateHookName;
+};
+
+// Wire name (event.name) may contain dots from sub-API recursion.
+// Project it onto:
+//  - getCmdName: the wire command we look for, "prefix.getLocal"
+//  - fetchAccess: the JS access path into backend, where the nested
+//    object the CommandExport tree builds shows up at
+//    backend.prefix.getLocal (dotted name appends directly after
+//    "backend.")
+//  - stateHookName: the exported TS identifier, which can't contain
+//    dots — concatenate Pascal-cased segments.
+HookNames hookNamesFor(const EventEntry& event)
+{
+    auto getCmdName = getCommandNameFor(event.name);
+    auto fetchAccess = std::string {"backend."} + getCmdName;
+
+    return {std::move(getCmdName),
+            std::move(fetchAccess),
+            "use" + toPascalConcat(event.name)};
+}
+
 } // namespace
 
 std::string formatHooksModule(Span<TypeNode> typeRoots,
@@ -205,19 +231,8 @@ std::string formatHooksModule(Span<TypeNode> typeRoots,
         if (payloadNode == nullptr)
             continue;
 
-        // Wire name (event.name) may contain dots from sub-API
-        // recursion. Project it onto:
-        //  - getCmdName: the wire command we look for, "prefix.getLocal"
-        //  - fetchAccess: the JS access path into backend, where the
-        //    nested object the CommandExport tree builds shows up at
-        //    backend.prefix.getLocal (dotted name appends directly
-        //    after "backend.")
-        //  - stateHookName: the exported TS identifier, which can't
-        //    contain dots — concatenate Pascal-cased segments.
-        auto getCmdName = getCommandNameFor(event.name);
-        auto hasGetCmd = commandExists(commands, getCmdName);
-        auto fetchAccess = std::string {"backend."} + getCmdName;
-        auto stateHookName = "use" + toPascalConcat(event.name);
+        auto names = hookNamesFor(event);
+        auto hasGetCmd = commandExists(commands, names.getCmdName);
         auto initialJson = initialJsonFor(event);
 
         if (event.isKeyed && hasGetCmd)
@@ -235,13 +250,13 @@ std::string formatHooksModule(Span<TypeNode> typeRoots,
                  << "const " << storeVar << " = makeKeyedStore({\n"
                  << "    backend,\n"
                  << "    event: '" << event.name << "',\n"
-                 << "    fetch: " << fetchAccess << ",\n"
+                 << "    fetch: " << names.fetchAccess << ",\n"
                  << "    shouldFetch: isBackendAvailable,\n"
                  << "    initial: " << initialJson << ",\n"
                  << "    getItems: (s) => s." << event.collectionField << ",\n"
                  << "    getKey:   (i) => i." << event.keyField << ",\n"
                  << "});\n"
-                 << "export const " << stateHookName << " = " << storeVar
+                 << "export const " << names.stateHookName << " = " << storeVar
                  << ".useAll;\n"
                  << "export const use" << idsBase << "Ids = " << storeVar
                  << ".useIds;\n"
@@ -255,10 +270,11 @@ std::string formatHooksModule(Span<TypeNode> typeRoots,
         if (hasGetCmd)
         {
             body << "\n"
-                 << "export const " << stateHookName << " = makeBridgeStore({\n"
+                 << "export const " << names.stateHookName
+                 << " = makeBridgeStore({\n"
                  << "    backend,\n"
                  << "    event: '" << event.name << "',\n"
-                 << "    fetch: " << fetchAccess << ",\n"
+                 << "    fetch: " << names.fetchAccess << ",\n"
                  << "    shouldFetch: isBackendAvailable,\n"
                  << "    initial: " << initialJson << ",\n"
                  << "});\n";
@@ -268,7 +284,7 @@ std::string formatHooksModule(Span<TypeNode> typeRoots,
         }
 
         body << "\n"
-             << "export const " << stateHookName << " = makeNativeEvent({\n"
+             << "export const " << names.stateHookName << " = makeNativeEvent({\n"
              << "    backend,\n"
              << "    event: '" << event.name << "',\n"
              << "    initial: " << initialJson << ",\n"

@@ -10,10 +10,8 @@ std::tm localTime(std::time_t time)
     return result;
 }
 
-void platformDebugOutput(std::string_view)
-{
-    // No separate debugger channel on POSIX platforms — the stdout/file
-    // writes in Logging.cpp already carry the line.
-}
+// No separate debugger channel on POSIX platforms — the stdout/file writes
+// in Logging.cpp already carry the line.
+void platformDebugOutput(std::string_view) {}
 
 } // namespace eacp::Detail

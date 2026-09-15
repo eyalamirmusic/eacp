@@ -31,7 +31,7 @@ struct Timer::Native
         [nsTimer.get() invalidate];
     }
 
-    Callback cb;
+    Callback cb = [] {};
     ObjC::Ptr<NSTimer> nsTimer;
 };
 

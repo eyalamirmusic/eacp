@@ -223,7 +223,7 @@ struct MixedRoot final : Graphics::View
     {
         addChildren({cameraView, controls});
 
-        cameraView.setMirrored(true); // front-camera-style preview by default
+        cameraView.setMirrored(true);
         wireBridge();
     }
 

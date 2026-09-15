@@ -88,7 +88,7 @@ struct XMLReader
         if (atEnd() || peek() != '<')
             return std::nullopt;
 
-        advance(); // '<'
+        advance();
 
         if (match("?"))
         {

@@ -119,7 +119,7 @@ void TextInput::onSubmit(std::function<void(const std::string&)> callback)
 
 void TextInput::resized()
 {
-    Rect bounds = getLocalBounds();
+    auto bounds = getLocalBounds();
 
     Path bgPath;
     bgPath.addRoundedRect(bounds, 4.f);
@@ -179,7 +179,7 @@ void TextInput::keyDown(const KeyEvent& event)
     }
     else if (!event.characters.empty())
     {
-        char c = event.characters[0];
+        auto c = event.characters[0];
         if (c >= 32 && c < 127)
         {
             text.insert((size_t) cursorIndex, event.characters);
@@ -198,7 +198,7 @@ void TextInput::keyDown(const KeyEvent& event)
 
 void TextInput::mouseDown(const MouseEvent& event)
 {
-    float xOffset = event.pos.x - padding;
+    auto xOffset = event.pos.x - padding;
 
     if (xOffset < 0.f)
         xOffset = 0.f;
@@ -226,10 +226,10 @@ void TextInput::updateTextDisplay()
 
 void TextInput::updateCursorPosition()
 {
-    float xOffset = TextMetrics::getOffsetForIndex(text, cursorIndex, font);
-    float ascent = TextMetrics::getAscent(font);
-    float descent = TextMetrics::getDescent(font);
-    float textHeight = ascent + descent;
+    auto xOffset = TextMetrics::getOffsetForIndex(text, cursorIndex, font);
+    auto ascent = TextMetrics::getAscent(font);
+    auto descent = TextMetrics::getDescent(font);
+    auto textHeight = ascent + descent;
 
     Path cursorPath;
     cursorPath.addRect({0.f, 0.f, 2.f, textHeight});

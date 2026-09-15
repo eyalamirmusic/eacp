@@ -209,6 +209,8 @@ Graphics::Point Frame::pixelSize() const
     return {(float) target.width, (float) target.height};
 }
 
+// The layer presents with transaction, so commit, wait for the buffer to be
+// scheduled, then present the drawable as part of the current CATransaction.
 Frame::~Frame()
 {
     auto buffer = impl->commandBuffer.get();

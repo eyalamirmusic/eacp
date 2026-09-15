@@ -146,6 +146,25 @@ int asInt(const Miro::JSON& v)
 
 } // namespace
 
+// The window.__test agent is AppDriver's wire protocol — the constructor
+// installs it at document-start so it's available before page scripts
+// run. Headless mode defers the WebView's first navigation by one
+// runloop tick (see WebView-Shared.cpp), giving us this window to
+// register the script before the load fires.
+//
+// evaluateJavaScript before the first navigation finishes sometimes
+// fails — the JS context isn't fully set up yet. Latch on the first
+// didFinishNavigation callback so command methods can wait for the page
+// to be ready (either by awaiting the promise from a coroutine, or by
+// pumping it via waitFor in the sync path). Latch on failure too, so a
+// broken scheme / 404 / etc. unblocks the wait immediately with the
+// actual WebView error instead of hanging until the timeout; the
+// reject() carries the error string straight through to the AsyncError
+// that waitForFirstNavigation / any co_await on the promise will
+// surface.
+//
+// Both handlers chain through whatever was already installed so users
+// aren't surprised by their own handler getting clobbered.
 AppDriver::AppDriver(Graphics::WebView& webViewToUse,
                      Miro::Bridge& bridgeToUse,
                      AppDriverOptions options)
@@ -155,22 +174,8 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
     , snapshotDir(resolveSnapshotDir(std::move(options.snapshotDir)))
     , firstNavigation(firstNavigationPromise.get())
 {
-    // The window.__test agent is AppDriver's wire protocol — install
-    // it at document-start so it's available before page scripts run.
-    // Headless mode defers the WebView's first navigation by one
-    // runloop tick (see WebView-Shared.cpp), giving us this window to
-    // register the script before the load fires.
     webView.addUserScript(loadTestAgentSource(), true);
 
-    // evaluateJavaScript before the first navigation finishes
-    // sometimes fails — the JS context isn't fully set up yet. Latch
-    // on the first didFinishNavigation callback so command methods
-    // can wait for the page to be ready (either by awaiting the
-    // promise from a coroutine, or by pumping it via waitFor in the
-    // sync path).
-    //
-    // Chain through whatever was already installed so users aren't
-    // surprised by their own handler getting clobbered.
     previousFinishedHandler = webView.onNavigationFinished;
     webView.onNavigationFinished =
         [this, previous = previousFinishedHandler](const std::string& url)
@@ -185,11 +190,6 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
         firstNavigationPromise.resolve();
     };
 
-    // Latch on failure too, so a broken scheme / 404 / etc. unblocks
-    // the wait immediately with the actual WebView error instead of
-    // hanging until the timeout. The reject() carries the error string
-    // straight through to the AsyncError that waitForFirstNavigation /
-    // any co_await on the promise will surface.
     previousFailedHandler = webView.onNavigationFailed;
     webView.onNavigationFailed =
         [this, previous = previousFailedHandler](const std::string& error)
@@ -205,10 +205,10 @@ AppDriver::AppDriver(Graphics::WebView& webViewToUse,
     };
 }
 
+// Restores the user's handlers so a longer-lived WebView doesn't keep
+// firing into this dead driver.
 AppDriver::~AppDriver()
 {
-    // Restore the user's handlers so a longer-lived WebView doesn't
-    // keep firing into this dead driver.
     webView.onNavigationFinished = std::move(previousFinishedHandler);
     webView.onNavigationFailed = std::move(previousFailedHandler);
 }
@@ -227,6 +227,10 @@ Threads::Async<void> AppDriver::waitForFirstNavigationAsync(const CallOptions&)
     return firstNavigation;
 }
 
+// If the first-navigation latch has fired by the time waitFor throws,
+// the promise was reject()'d (by onNavigationFailed) — surface the
+// actual WebView error. Otherwise we hit Async::waitFor's own "timed
+// out" path; report it as a load timeout.
 void AppDriver::waitForFirstNavigation(const CallOptions& opts)
 {
     auto timeout = Time::MS {opts.timeoutMs ? *opts.timeoutMs : startupTimeoutMs};
@@ -236,10 +240,6 @@ void AppDriver::waitForFirstNavigation(const CallOptions& opts)
     }
     catch (const Threads::AsyncError& e)
     {
-        // If the latch has fired by the time waitFor throws, the
-        // promise was reject()'d (by onNavigationFailed) — surface the
-        // actual WebView2 error. Otherwise we hit Async::waitFor's own
-        // "timed out" path; report it as a load timeout.
         if (firstNavigationFired)
             throw std::runtime_error("AppDriver: navigation failed: "
                                      + std::string {e.what()});
@@ -294,12 +294,12 @@ constexpr auto syncTimeoutBufferMs = 1000;
 
 } // namespace
 
+// Until the first navigation has fired, the inner coroutine is still
+// waiting on the page load, which gets the (much larger) startup
+// budget — extend the outer wait to match so a slow cold start isn't
+// cut short by the per-command timeout.
 Time::MS AppDriver::syncOuterTimeout(int innerTimeoutMs) const
 {
-    // Until the first navigation has fired, the inner coroutine is
-    // still waiting on the page load, which gets the (much larger)
-    // startup budget — extend the outer wait to match so a slow cold
-    // start isn't cut short by the per-command timeout.
     auto startupGraceMs = firstNavigationFired ? 0 : startupTimeoutMs;
 
     return Time::MS {innerTimeoutMs + syncTimeoutBufferMs + startupGraceMs};

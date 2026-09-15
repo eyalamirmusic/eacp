@@ -123,12 +123,16 @@ struct MainHost final : UI::ComponentHost
 
 struct TrayApp
 {
+    // The panel shows itself on construction; hide it immediately so the
+    // app starts with the main window only. setVisible keeps the window
+    // (and its content) alive across toggles, so it reappears exactly
+    // where the user left it.
+    //
+    // On Windows a left-click on the tray icon toggles the panel (the
+    // menu stays on right-click). On macOS the menu owns the click, so
+    // onClick never fires there — use the menu item instead.
     TrayApp()
     {
-        // The panel shows itself on construction; hide it immediately so the
-        // app starts with the main window only. setVisible keeps the window
-        // (and its content) alive across toggles, so it reappears exactly
-        // where the user left it.
         window.setVisible(false);
 
         // The Cmd+Q the demo below refuses lives on this menu — without a
@@ -164,9 +168,6 @@ struct TrayApp
 
         tray.setMenu(createTrayMenu());
 
-        // Windows: a left-click on the tray icon toggles the panel (the
-        // menu stays on right-click). On macOS the menu owns the click, so
-        // this never fires there — use the menu item instead.
         tray.setOnClick([this] { togglePanel(); });
 
         // The bundle is LSUIElement, so the app launched with no Dock icon

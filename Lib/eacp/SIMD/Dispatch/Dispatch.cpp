@@ -30,11 +30,10 @@ SwapFn pickSwapRedBlue() noexcept
 
 using ResizeFn = void (*)(const std::uint8_t*, int, int, std::uint8_t*, int, int);
 
+// Bilinear blends one pixel's four channels per 128-bit step, so AVX2's 256-bit
+// width adds nothing yet; x86 uses SSE2 until a 2-pixel AVX2 path lands.
 ResizeFn pickResizeBilinear() noexcept
 {
-    // Bilinear blends one pixel's four channels per 128-bit step, so AVX2's
-    // 256-bit width adds nothing yet; x86 uses SSE2 until a 2-pixel AVX2 path
-    // lands.
 #if defined(__x86_64__) || defined(_M_X64)
     return &backends::resizeBilinear_sse2;
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -47,9 +46,9 @@ ResizeFn pickResizeBilinear() noexcept
 using WarpFn =
     void (*)(const std::uint8_t*, int, int, const float*, std::uint8_t*, int, int);
 
+// Same 128-bit per-pixel blend as resizeBilinear, so AVX2 adds nothing yet.
 WarpFn pickWarpAffineInverse() noexcept
 {
-    // Same 128-bit per-pixel blend as resizeBilinear, so AVX2 adds nothing yet.
 #if defined(__x86_64__) || defined(_M_X64)
     return &backends::warpAffineInverse_sse2;
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -63,7 +62,7 @@ WarpFn pickWarpAffineInverse() noexcept
 
 void swapRedBlue(const std::uint8_t* in, std::uint8_t* out, int pixelCount)
 {
-    static const SwapFn fn = pickSwapRedBlue();
+    static const auto fn = pickSwapRedBlue();
     fn(in, out, pixelCount);
 }
 
@@ -101,7 +100,7 @@ void resizeBilinear(const std::uint8_t* src,
                     int dstWidth,
                     int dstHeight)
 {
-    static const ResizeFn fn = pickResizeBilinear();
+    static const auto fn = pickResizeBilinear();
     fn(src, srcWidth, srcHeight, dst, dstWidth, dstHeight);
 }
 
@@ -113,7 +112,7 @@ void warpAffineInverse(const std::uint8_t* src,
                        int dstWidth,
                        int dstHeight)
 {
-    static const WarpFn fn = pickWarpAffineInverse();
+    static const auto fn = pickWarpAffineInverse();
     fn(src, srcWidth, srcHeight, inverse2x3, dst, dstWidth, dstHeight);
 }
 

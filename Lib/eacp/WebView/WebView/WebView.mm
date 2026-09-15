@@ -120,7 +120,7 @@ struct StreamContext
     eacp::Graphics::Bytes buffer;
 };
 
-constexpr int streamChunkSize = 256 * 1024;
+constexpr auto streamChunkSize = 256 * 1024;
 
 // State of the runtime-built WKURLSchemeHandler class.
 struct ResourceSchemeHandlerState
@@ -330,6 +330,7 @@ struct WebViewNativeAccess
         makePopup(WKWebViewConfiguration* configuration, bool inspectable)
     {
         auto init = WebView::PopupInit {configuration, inspectable};
+        // NOLINTNEXTLINE(eacp-no-raw-new-delete): private ctor, owned immediately
         return OwningPointer<WebView> {new WebView {init}};
     }
 
@@ -517,7 +518,7 @@ void webViewDelegateDidReceiveScriptMessage(id self,
             else if ([NSJSONSerialization isValidJSONObject:message.body])
             {
                 NSError* error = nil;
-                NSData* data = [NSJSONSerialization dataWithJSONObject:message.body
+                auto* data = [NSJSONSerialization dataWithJSONObject:message.body
                                                                options:0
                                                                  error:&error];
                 if (data && !error)
@@ -846,6 +847,8 @@ WKWebView* wkWebViewOf(WebView* view)
 }
 } // namespace detail
 
+// The window drag/control shims are desktop-only; iOS windows have no
+// chrome to drive.
 void WebView::initNative(Options options)
 {
     auto forwardKeys = options.forwardUnhandledKeys;
@@ -856,7 +859,7 @@ void WebView::initNative(Options options)
     impl->attachToParentView();
     detail::registerWebView(this);
 
-    if constexpr (Platform::isMac()) // desktop-only; iOS windows have no chrome to drive
+    if constexpr (Platform::isMac())
     {
         installWindowDragSupport();
         installWindowControlSupport();
@@ -988,6 +991,10 @@ bool WebView::isRuntimeAvailable()
     return true;
 }
 
+// The completion block must capture its own copy of the callback: a block
+// captures a C++ reference AS a reference, and `callback` may bind to a
+// caller temporary (callJS passes one) that is gone by the time the async
+// completion handler fires.
 void WebView::evaluateJavaScript(const std::string& script, const JSCallback& callback)
 {
     Threads::assertMainThread();
@@ -1000,10 +1007,6 @@ void WebView::evaluateJavaScript(const std::string& script, const JSCallback& ca
         return;
     }
 
-    // The block must capture its own copy of the callback: a block captures
-    // a C++ reference AS a reference, and `callback` may bind to a caller
-    // temporary (callJS passes one) that is gone by the time the async
-    // completion handler fires.
     auto ownedCallback = callback;
 
     [impl->webView.get()
@@ -1030,7 +1033,7 @@ void WebView::evaluateJavaScript(const std::string& script, const JSCallback& ca
                else
                {
                    NSError* jsonError = nil;
-                   NSData* data =
+                   auto* data =
                        [NSJSONSerialization dataWithJSONObject:result
                                                        options:0
                                                          error:&jsonError];

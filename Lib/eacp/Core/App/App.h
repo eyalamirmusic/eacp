@@ -204,17 +204,17 @@ AppFactory makeAppFactory(Args&&... args)
 }
 } // namespace Detail
 
+// In a dynamic library the process executable owns the root loop — running
+// one here would fight it (or, under a foreign host, steal its app delegate).
+// Such a build schedules the app onto the host's loop and returns
+// immediately; the app is destroyed when the library's image is torn down,
+// after the host's loop has exited.
 template <typename T, typename... Args>
 int run(Args&&... args)
 {
     auto createFunc = Detail::makeAppFactory<T>(std::forward<Args>(args)...);
     getAppFactory() = createFunc;
 
-    // In a dynamic library the process executable owns the root loop —
-    // running one here would fight it (or, under a foreign host, steal its
-    // app delegate). Schedule the app onto the host's loop and return
-    // immediately; the app is destroyed when the library's image is torn
-    // down, after the host's loop has exited.
     if (Platform::isDLL())
     {
         Detail::runAsPlugin(createFunc);
@@ -223,10 +223,6 @@ int run(Args&&... args)
 
     setReturnValue(0);
     Threads::runEventLoop(createFunc);
-    // The single teardown point: the app is constructed on the first loop
-    // tick and destroyed here on the main thread once the loop has fully
-    // exited, so no native event delivery or nested pump can still be
-    // referencing the views. Apps::quit() only stops the loop.
     destroyApp();
     return getReturnValue();
 }
