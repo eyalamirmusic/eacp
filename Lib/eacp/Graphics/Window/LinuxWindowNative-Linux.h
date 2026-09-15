@@ -28,8 +28,16 @@ struct LinuxWindowState
                      const WindowOptions& options,
                      WindowEvents& eventsToUse);
 
-    // onWillResize first, then the aspect ratio and the minimum size.
-    void applyConstraints(int& width, int& height) const;
+    // The window's one rule (WindowOptions::effectiveSizeConstraint), then
+    // the minimum size.
+    //
+    // `bounded` says the size is a ceiling rather than a drag - a maximise or
+    // a fullscreen, where the compositor names the most it will give and a
+    // smaller size is centred in it - so the constraint is fitted inside it
+    // instead of being run across it. A drag carries no edge on either window
+    // system (libdecor's configure has none, and a ConfigureNotify is after
+    // the fact), so the width drives, as ResizeAxis::Both asks for.
+    void applyConstraints(int& width, int& height, bool bounded) const;
 
     // Resizes the content view and reports it; silent when the size asked for
     // is the one already there.
@@ -56,12 +64,18 @@ struct LinuxWindowState
     std::string title;
     Callback quitCallback;
     ResizeCallback onResize;
-    WillResizeCallback onWillResize;
+    SizeConstraint sizeConstraint;
     WindowEvents* events;
 
     int minWidth = 0;
     int minHeight = 0;
-    std::optional<Point> aspectRatio;
+
+    // Advisory only, and set just for the WindowOptions::aspectRatio
+    // shorthand: it is the one shape ICCCM can state, so an X11 window
+    // manager can hold the drag itself rather than rubber-banding against the
+    // size we ask back for. sizeConstraint is what actually enforces the
+    // shape, this or no this.
+    std::optional<Point> aspectRatioHint;
     bool hidesOnClose = false;
     bool resizable = true;
     bool closable = true;
@@ -89,6 +103,11 @@ public:
     virtual void* getHandle() = 0;
 
     virtual void setVisible(bool visible) = 0;
+
+    // `newSize` is content points already through the constraint (see
+    // Window::setSize), so a backend applies it rather than asking again.
+    virtual void setSize(Point newSize) = 0;
+
     virtual void setTitle(const std::string& title) = 0;
     virtual void minimize() = 0;
     virtual void toggleMaximize() = 0;

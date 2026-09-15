@@ -146,6 +146,15 @@ class ComputeProgram
 {
 public:
     ComputeProgram() = default;
+
+    // The threadgroup this kernel is dispatched in, in place of the stock shape
+    // for its rank: ComputeProgram({256}) over a 1D grid, ComputeProgram({16,
+    // 16}) over a 2D one. The body reads it back through groupShape().
+    explicit ComputeProgram(ThreadGroupShape shape)
+    {
+        builder.setThreadGroupShape(shape);
+    }
+
     virtual ~ComputeProgram() = default;
 
     // Members point into the owned builder's graph and the GPU resources are
@@ -215,13 +224,23 @@ public:
     // it takes.
     DispatchRank dispatchRank() const { return generated.dispatchRank; }
 
-    // The fixed group shape every dispatch uses, restated here because it is
-    // part of a shared-memory kernel's arithmetic: localId() runs to
-    // groupWidth in a 1D kernel (groupSize2D or groupSize3D per axis in a 2D
-    // or 3D one), and a shared tile is sized in these units.
+    // This kernel's own group, which is what localId() runs to and what a
+    // shared tile is sized in. Read it inside define() after the body has asked
+    // for its thread index, since an unset shape resolves against the rank.
+    ThreadGroupShape groupShape() const { return builder.threadGroupShape(); }
+
+    // The stock group shape, which is what a kernel that named none is
+    // dispatched in: groupWidth threads in a 1D kernel, groupSize2D squared in
+    // a 2D one, groupSize3D cubed in a 3D one.
     static constexpr int groupWidth = ComputePass::threadGroupWidth;
     static constexpr int groupSize2D = ComputePass::threadGroupSize2D;
     static constexpr int groupSize3D = ComputePass::threadGroupSize3D;
+
+    // How many threads one SIMD group holds, and the side of a SimdMatrix
+    // fragment: what a kernel divides its group into blocks by, and what its
+    // tiles are multiples of.
+    static constexpr int simdWidth = simdGroupWidth;
+    static constexpr int simdMatrixWidth = simdMatrixSize;
 
     int uniformByteSize() const { return uniformBytes.size(); }
 
@@ -259,8 +278,8 @@ protected:
     // The threadgroup vocabulary, forwarded on the terms the ids above set:
     // where a thread sits in its group, which group it is in, the implicit
     // grid bound the dispatch supplied, a shared array, and the barrier that
-    // orders access to it. The group shape is the fixed one the dispatch
-    // uses, so shared tiles are sized against the constants below.
+    // orders access to it. Shared tiles are sized against groupShape(), which
+    // is the group the dispatch really runs.
     UInt localId() { return builder.localId(); }
     ThreadPosition localPosition() { return builder.localPosition(); }
     ThreadPosition3 localPosition3() { return builder.localPosition3(); }
@@ -284,6 +303,54 @@ protected:
     Shared<T> shared(int count)
     {
         return builder.shared<T>(count);
+    }
+
+    // The fold of what every thread of the group contributed, returned to
+    // every thread. It barriers, so - like barrier() - every thread of the
+    // group has to reach it or none of them.
+    Float groupSum(const Float& value) { return builder.groupSum(value); }
+    Float groupMax(const Float& value) { return builder.groupMax(value); }
+    Float groupMin(const Float& value) { return builder.groupMin(value); }
+
+    UInt groupSum(const UInt& value) { return builder.groupSum(value); }
+    UInt groupMax(const UInt& value) { return builder.groupMax(value); }
+    UInt groupMin(const UInt& value) { return builder.groupMin(value); }
+
+    // The SIMD-group matrix vocabulary: which SIMD group a thread is in, an
+    // 8x8 float fragment filled or loaded, and the multiply-accumulate over
+    // three of them. A fragment is written back through write(), beside the
+    // element writes. See ShaderBuilder for what each takes, and SimdMatrix
+    // for what one is.
+    UInt simdGroupIndex() { return builder.simdGroupIndex(); }
+
+    SimdMatrix simdMatrix(float fill = 0.f) { return builder.simdMatrix(fill); }
+
+    SimdMatrix simdMatrix(const Shared<Float>& tile,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return builder.simdMatrix(tile, offset, rowStride);
+    }
+
+    SimdMatrix simdMatrix(const InputBuffer& buffer,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return builder.simdMatrix(buffer, offset, rowStride);
+    }
+
+    SimdMatrix simdMatrix(const OutputBuffer& buffer,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return builder.simdMatrix(buffer, offset, rowStride);
+    }
+
+    void multiplyAccumulate(const SimdMatrix& accumulator,
+                            const SimdMatrix& left,
+                            const SimdMatrix& right)
+    {
+        builder.multiplyAccumulate(accumulator, left, right);
     }
 
     // Adds to one element of a shared counter and yields what it held before, so
@@ -385,6 +452,25 @@ protected:
     void write(const Shared<T>& array, const UInt& index, const T& value)
     {
         builder.write(array, index, value);
+    }
+
+    // An 8x8 fragment written back to the patch a load reads: element (r, c)
+    // of it at offset + r * rowStride + c, and the whole patch inside the
+    // array. See ShaderBuilder and SimdMatrix.
+    void write(const OutputBuffer& buffer,
+               const UInt& offset,
+               const UInt& rowStride,
+               const SimdMatrix& value)
+    {
+        builder.write(buffer, offset, rowStride, value);
+    }
+
+    void write(const Shared<Float>& tile,
+               const UInt& offset,
+               const UInt& rowStride,
+               const SimdMatrix& value)
+    {
+        builder.write(tile, offset, rowStride, value);
     }
 
     // One element of an integer output: the id or the count a kernel arrived

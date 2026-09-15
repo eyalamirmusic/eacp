@@ -112,6 +112,18 @@ void Window::setPosition(Point position)
     impl->native->setPosition(position);
 }
 
+// The content size the window is holding, which under headless is simply the
+// one it was given: the state is real there, only never shown.
+Point Window::getSize() const
+{
+    return impl->native->getWindowSurface().contentSize;
+}
+
+void Window::setSize(Point size)
+{
+    impl->native->setSize(options.effectiveSize(size));
+}
+
 void Window::setMouseLocked(bool locked)
 {
     impl->native->setMouseLocked(locked);

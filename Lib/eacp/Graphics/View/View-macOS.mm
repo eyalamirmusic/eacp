@@ -224,6 +224,15 @@ BOOL acceptsFirstResponder(id, SEL)
     return YES;
 }
 
+// A click into a window whose app is not active is spent on the activation
+// itself unless the view claims it, and the window that most needs the click is
+// the one that has just come up behind somebody else's. Claiming it puts the
+// first press on the control the user aimed at.
+BOOL acceptsFirstMouse(id, SEL, NSEvent*)
+{
+    return YES;
+}
+
 void viewDidChangeBackingProperties(id self, SEL)
 {
     ObjC::sendSuper<void>(
@@ -370,6 +379,7 @@ Class getNativeViewClass()
         builder->addMethod(@selector(isOpaque), isOpaque);
         builder->addMethod(@selector(acceptsFirstResponder),
                            acceptsFirstResponder);
+        builder->addMethod(@selector(acceptsFirstMouse:), acceptsFirstMouse);
         builder->addMethod(@selector(viewDidChangeBackingProperties),
                            viewDidChangeBackingProperties);
         builder->addMethod(@selector(setFrame:), setFrame);

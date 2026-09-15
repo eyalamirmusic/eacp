@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include "../Shader/ShaderSource.h"
+
 namespace eacp::GPU
 {
 class Device;
@@ -18,10 +20,16 @@ public:
 
     bool isValid() const;
 
+    // The group the kernel was compiled for, which is the group the pass
+    // dispatches it in. Unset for a hand-written source that named none.
+    ThreadGroupShape threadGroupShape() const { return groupShape; }
+
     // Opaque native handle for cross-translation-unit use by the compute pass.
     void* nativeState() const;
 
 private:
+    ThreadGroupShape groupShape;
+
     struct Native;
     Pimpl<Native> impl;
 };

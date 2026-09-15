@@ -108,7 +108,8 @@ auto tSlowResponseTimesOut = test("HttpTimeout/slowResponseFailsBeforeTheReply")
 
     auto perform = [&]
     {
-        auto beforeTheServerReplies = eacp::Time::Deadline {MS {1000}};
+        auto beforeTheServerReplies =
+            eacp::Time::Deadline {withoutWaitingForTheServer};
         auto res = eacp::HTTP::httpRequest(req);
         gaveUpEarly = !beforeTheServerReplies.expired();
         stalled.release();
@@ -161,7 +162,8 @@ auto tDownloadTimesOut = test("HttpTimeout/downloadFailsWhenTheServerStalls") = 
 
     auto perform = [&]
     {
-        auto beforeTheServerReplies = eacp::Time::Deadline {MS {1000}};
+        auto beforeTheServerReplies =
+            eacp::Time::Deadline {withoutWaitingForTheServer};
         auto res = req.downloadTo(destination);
         gaveUpEarly = !beforeTheServerReplies.expired();
         stalled.release();

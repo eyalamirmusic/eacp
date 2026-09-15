@@ -25,6 +25,20 @@ enum class ResourceKind
     Sampler
 };
 
+// The threadgroup a kernel is dispatched in, chosen by its author. A default
+// shape means the stock one for the kernel's rank - 64 threads in 1D, 8x8 in
+// 2D, 4x4x4 in 3D - which is what ComputePass::threadGroupWidth and its two
+// siblings spell.
+struct ThreadGroupShape
+{
+    bool isSet() const { return x > 0; }
+    int threadCount() const { return x * y * z; }
+
+    int x = 0;
+    int y = 1;
+    int z = 1;
+};
+
 // An explicit shader resource binding. Kept as plain data (never inferred via
 // runtime reflection) so a future C++ shader EDSL can populate the exact same
 // description it generated the source for.
@@ -90,6 +104,15 @@ struct ShaderSource
 
     bool isCompute() const { return !computeEntry.empty(); }
 
+    // The group the kernel's entry point was emitted for, which is the group
+    // the pass has to dispatch it in. Left unset for a hand-written source, and
+    // the stock shape for the dispatch's rank is used.
+    ShaderSource& withThreadGroup(ThreadGroupShape shape)
+    {
+        threadGroup = shape;
+        return *this;
+    }
+
     ShaderSource& withBinding(ResourceBinding binding)
     {
         bindings.add(std::move(binding));
@@ -101,6 +124,7 @@ struct ShaderSource
     std::string vertexEntry = "vertexMain";
     std::string fragmentEntry = "fragmentMain";
     std::string computeEntry; // empty unless this is a compute source
+    ThreadGroupShape threadGroup;
     Vector<ResourceBinding> bindings;
 };
 } // namespace eacp::GPU

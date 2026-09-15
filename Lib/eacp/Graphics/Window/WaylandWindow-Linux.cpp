@@ -158,15 +158,24 @@ struct WaylandWindowNative final
             height = proposedHeight;
         }
 
-        state.applyConstraints(width, height);
+        // Read before the commit, not after: the constraint needs to know
+        // whether this configure is a ceiling or a drag.
+        auto windowState = LIBDECOR_WINDOW_STATE_NONE;
+        auto hasWindowState =
+            libdecor_configuration_get_window_state(configuration, &windowState);
+
+        auto bounded =
+            (windowState
+             & (LIBDECOR_WINDOW_STATE_MAXIMIZED | LIBDECOR_WINDOW_STATE_FULLSCREEN))
+            != 0;
+
+        state.applyConstraints(width, height, bounded);
 
         auto* newState = libdecor_state_new(width, height);
         libdecor_frame_commit(frame, newState, configuration);
         libdecor_state_free(newState);
 
-        auto windowState = LIBDECOR_WINDOW_STATE_NONE;
-
-        if (libdecor_configuration_get_window_state(configuration, &windowState))
+        if (hasWindowState)
         {
             state.maximized = (windowState & LIBDECOR_WINDOW_STATE_MAXIMIZED) != 0;
             state.setActive((windowState & LIBDECOR_WINDOW_STATE_ACTIVE) != 0);
@@ -278,6 +287,36 @@ struct WaylandWindowNative final
 
         if (wasMapped)
             state.notifyHostVisibility(false);
+    }
+
+    // A maximised window's size is the compositor's, so there is nothing to
+    // ask for. A frame is committed outside a configure when there is one;
+    // with no frame yet the size is simply taken, and createFrame maps it.
+    void setSize(Point newSize) override
+    {
+        if (state.maximized)
+            return;
+
+        auto width = std::max((int) std::lround(newSize.x), 1);
+        auto height = std::max((int) std::lround(newSize.y), 1);
+
+        if (frame != nullptr)
+        {
+            // The pin createFrame put on a non-resizable window names the old
+            // size, and would hold the new one back.
+            if (!state.resizable)
+            {
+                libdecor_frame_set_min_content_size(frame, width, height);
+                libdecor_frame_set_max_content_size(frame, width, height);
+            }
+
+            auto* newState = libdecor_state_new(width, height);
+            libdecor_frame_commit(frame, newState, nullptr);
+            libdecor_state_free(newState);
+        }
+
+        state.resizeTo({(float) width, (float) height});
+        present();
     }
 
     void setTitle(const std::string& newTitle) override

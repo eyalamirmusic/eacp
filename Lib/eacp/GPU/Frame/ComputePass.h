@@ -3,6 +3,7 @@
 #include "../Common.h"
 
 #include "../Buffer/Buffer.h"
+#include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
 
 namespace eacp::GPU
@@ -15,13 +16,24 @@ class ComputePipeline;
 // are the same three 32-bit unsigned integers - so a kernel writing one is
 // writing the same three numbers whichever machine it runs on.
 //
-// **Threadgroups, not threads.** A kernel that has counted 1000 items writes
-// (1000 + threadGroupWidth - 1) / threadGroupWidth here, not 1000.
+// **Threadgroups, not threads.** A kernel that has counted 1000 items divides
+// by the group width the consuming kernel was compiled for - its own
+// ComputeProgram::groupShape().x - and writes that, not 1000.
 struct DispatchArguments
 {
     std::uint32_t groupsX = 1;
     std::uint32_t groupsY = 1;
     std::uint32_t groupsZ = 1;
+};
+
+// Whether a pass's dispatches are ordered against each other. Serial is what
+// every pass is unless it asked otherwise: each dispatch sees the writes of
+// every dispatch recorded before it. Concurrent lets them overlap, and
+// ComputePass::barrier() is what orders one stage against the next.
+enum class DispatchOrder
+{
+    Serial,
+    Concurrent
 };
 
 // Records dispatch commands for a single compute pass (MTLComputeCommandEncoder
@@ -38,12 +50,14 @@ struct DispatchArguments
 class ComputePass
 {
 public:
-    explicit ComputePass(void* encoder);
+    explicit ComputePass(void* encoder, DispatchOrder order = DispatchOrder::Serial);
     ~ComputePass();
 
     ComputePass(const ComputePass&) = delete;
     ComputePass& operator=(const ComputePass&) = delete;
 
+    // Binds the pipeline and adopts the threadgroup it was compiled for, which
+    // is what every dispatch below is then encoded with.
     void setPipeline(const ComputePipeline& pipeline);
 
     // A read-only input (Metal device buffer / D3D shader-resource view) and a
@@ -81,17 +95,18 @@ public:
         setBytes(&value, (int) sizeof(T), slot);
     }
 
-    // Runs the kernel over count work items, in groups of threadGroupWidth.
+    // Runs the kernel over count work items, in the bound pipeline's groups -
+    // threadGroupWidth wide where it named no shape of its own.
     void dispatch(int count);
 
-    // The 2D sibling, over a width × height grid in groups of threadGroupSize2D
-    // squared. What anything image-shaped is dispatched with, and what a kernel
-    // authored against threadPosition() needs.
+    // The 2D sibling, over a width × height grid. What anything image-shaped is
+    // dispatched with, and what a kernel authored against threadPosition()
+    // needs; the stock group is threadGroupSize2D squared.
     void dispatch(int width, int height);
 
-    // The 3D sibling, over a width × height × depth volume in groups of
-    // threadGroupSize3D cubed. What a kernel authored against threadPosition3()
-    // needs.
+    // The 3D sibling, over a width × height × depth volume. What a kernel
+    // authored against threadPosition3() needs; the stock group is
+    // threadGroupSize3D cubed.
     void dispatch(int width, int height, int depth);
 
     // Runs the kernel over a grid the **GPU** decided: the threadgroup counts
@@ -177,23 +192,28 @@ public:
         dispatchIndirect(arguments, offsetInBytes);
     }
 
+    // Every dispatch recorded before this one completes - its buffer and texture
+    // writes visible - before any dispatch recorded after it begins. A no-op in
+    // a Serial pass, where the dispatches are already ordered.
+    void barrier();
+
     void end();
 
     // The Metal buffer index the first uniform block binds to. Storage buffers
     // take the low indices, so uniforms start above them.
     static constexpr int uniformBase = 16;
 
-    // Threadgroup width the 1D dispatch uses; the example kernels declare a
-    // matching [numthreads(64,1,1)] on D3D.
+    // The stock threadgroup width of a 1D dispatch, used by every kernel that
+    // named no ThreadGroupShape of its own.
     static constexpr int threadGroupWidth = 64;
 
-    // The 2D dispatch's group is this squared, which is the same 64 threads the
-    // 1D path already budgets for - and square, so a group covers a tile rather
+    // The stock 2D group is this squared, which is the same 64 threads the 1D
+    // path already budgets for - and square, so a group covers a tile rather
     // than a strip, which is what a kernel reading its neighbours wants.
     static constexpr int threadGroupSize2D = 8;
 
-    // The 3D dispatch's group is this cubed, which is those 64 threads again,
-    // as a block rather than a tile.
+    // The stock 3D group is this cubed, which is those 64 threads again, as a
+    // block rather than a tile.
     static constexpr int threadGroupSize3D = 4;
 
     // How many storage buffers one kernel may bind. The D3D root signature
@@ -216,6 +236,31 @@ public:
     static constexpr int textureRegisterBase = maxBufferSlots;
 
 private:
+    // The group each dispatch is encoded with: the bound pipeline's own, or the
+    // stock shape for the dispatch's rank when it carried none.
+    ThreadGroupShape groupFor1D() const
+    {
+        return boundGroup.isSet() ? boundGroup
+                                  : ThreadGroupShape {threadGroupWidth, 1, 1};
+    }
+
+    ThreadGroupShape groupFor2D() const
+    {
+        return boundGroup.isSet()
+                   ? boundGroup
+                   : ThreadGroupShape {threadGroupSize2D, threadGroupSize2D, 1};
+    }
+
+    ThreadGroupShape groupFor3D() const
+    {
+        return boundGroup.isSet() ? boundGroup
+                                  : ThreadGroupShape {threadGroupSize3D,
+                                                      threadGroupSize3D,
+                                                      threadGroupSize3D};
+    }
+
+    ThreadGroupShape boundGroup;
+
     struct Native;
     Pimpl<Native> impl;
 };

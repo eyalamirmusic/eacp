@@ -168,7 +168,11 @@ public:
     //
     // A label times the pass, exactly as it does on a render pass — see
     // RenderPassDescriptor::label.
-    ComputePass beginCompute(std::string_view label = {});
+    //
+    // DispatchOrder::Concurrent lets the pass's dispatches overlap, and leaves
+    // the ordering between dependent ones to ComputePass::barrier().
+    ComputePass beginCompute(std::string_view label = {},
+                             DispatchOrder order = DispatchOrder::Serial);
 
     // Sends everything recorded so far to the GPU and carries on recording, so
     // that the rest of the frame is encoded onto a second submission rather

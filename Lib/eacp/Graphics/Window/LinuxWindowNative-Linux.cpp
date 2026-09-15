@@ -31,12 +31,12 @@ LinuxWindowState::LinuxWindowState(LinuxWindowSurface& surfaceToUse,
     , title(options.title)
     , quitCallback(options.effectiveOnQuit())
     , onResize(options.onResize)
-    , onWillResize(options.onWillResize)
+    , sizeConstraint(options.effectiveSizeConstraint())
     , events(&eventsToUse)
     , minWidth(options.minWidth)
     , minHeight(options.minHeight)
-    , aspectRatio(options.hasAspectRatio() ? options.aspectRatio
-                                           : std::optional<Point> {})
+    , aspectRatioHint(options.hasAspectRatio() ? options.aspectRatio
+                                               : std::optional<Point> {})
     , hidesOnClose(options.hidesOnClose)
     , resizable(linuxFlagSet(options, WindowFlags::Resizable))
     , closable(linuxFlagSet(options, WindowFlags::Closable))
@@ -44,7 +44,7 @@ LinuxWindowState::LinuxWindowState(LinuxWindowSurface& surfaceToUse,
     , transparent(options.transparentBackground)
     , background(options.backgroundColor.value_or(linuxDefaultWindowBackground))
 {
-    surface.contentSize = {(float) options.width, (float) options.height};
+    surface.contentSize = options.effectiveInitialSize();
 
     if (options.initialPosition)
         position = *options.initialPosition;
@@ -53,20 +53,15 @@ LinuxWindowState::LinuxWindowState(LinuxWindowSurface& surfaceToUse,
         background = Color {0.f, 0.f, 0.f, 0.f};
 }
 
-void LinuxWindowState::applyConstraints(int& width, int& height) const
+void LinuxWindowState::applyConstraints(int& width, int& height, bool bounded) const
 {
-    if (onWillResize)
-        onWillResize(width, height);
+    auto proposed = Point {(float) width, (float) height};
 
-    if (aspectRatio)
-    {
-        // Width drives: the configure that got here carries no resize edge.
-        const auto ratio = aspectRatio->x / aspectRatio->y;
-        height = (int) std::lround((float) width / ratio);
-    }
+    auto allowed = bounded ? fitWithin(sizeConstraint, proposed)
+                           : sizeConstraint({proposed, ResizeAxis::Both});
 
-    width = std::max(width, std::max(minWidth, 1));
-    height = std::max(height, std::max(minHeight, 1));
+    width = std::max((int) std::lround(allowed.x), std::max(minWidth, 1));
+    height = std::max((int) std::lround(allowed.y), std::max(minHeight, 1));
 }
 
 void LinuxWindowState::resizeTo(Point newSize)

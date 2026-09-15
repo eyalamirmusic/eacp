@@ -133,7 +133,7 @@ auto tReturnsBeforeTheReply = test("HttpAsync/returnsBeforeTheServerReplies") = 
     auto calls = 0;
     auto onResponse = [&](const Response&) { ++calls; };
 
-    auto beforeTheReply = eacp::Time::Deadline {MS {200}};
+    auto beforeTheReply = eacp::Time::Deadline {withoutWaitingForTheServer};
     asyncRequest(Request(baseUrl(server.boundPort()) + "/slow"), onResponse);
 
     check(!beforeTheReply.expired());
@@ -188,7 +188,7 @@ auto tHonoursTimeout = test("HttpAsync/honoursTheRequestTimeout") = []
         ++calls;
     };
 
-    auto beforeTheServerReplies = eacp::Time::Deadline {MS {1000}};
+    auto beforeTheServerReplies = eacp::Time::Deadline {withoutWaitingForTheServer};
     asyncRequest(req, onResponse);
 
     auto arrived = [&] { return calls > 0; };

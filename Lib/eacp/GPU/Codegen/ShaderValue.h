@@ -3020,6 +3020,27 @@ struct Shared
     int slot = -1;
 };
 
+// An 8x8 patch of a float matrix, held between the registers of a whole SIMD
+// group rather than by one thread. It is the one handle here that stands for
+// nothing a thread can read: there is no element of it to subscript and no
+// value to take out of it, only the four operations ShaderBuilder spells -
+// filled, loaded from an 8x8 patch of memory, multiplied into an accumulator,
+// stored back to one. Everything it does is a statement, so it lands where it
+// was written and cannot be hoisted.
+//
+// A copy of the handle names the same fragment, the way a copy of a Shared
+// does, and assigning one rebinds the handle rather than moving any data -
+// which is what makes an array of accumulators the plain loop it looks like.
+//
+// Every thread of the SIMD group has to reach every operation on it, and the
+// offsets and strides it is given have to be the same on all of them: they
+// address one patch for the group, not one per lane.
+struct SimdMatrix
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
 // uint min/max, the branchless way to clamp an index to a valid range.
 inline UInt min(const UInt& a, const UInt& b)
 {

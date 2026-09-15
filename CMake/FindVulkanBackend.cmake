@@ -19,7 +19,8 @@ function(eacp_fetch_vulkan_sources)
             GIT_TAG ${EACP_VULKAN_SDK_TAG}
             GIT_SHALLOW YES
             DOWNLOAD_ONLY YES
-            SYSTEM YES)
+            SYSTEM YES
+            ${EACP_FETCH_QUIET})
 
     CPMAddPackage(
             NAME volk
@@ -27,7 +28,8 @@ function(eacp_fetch_vulkan_sources)
             GIT_TAG ${EACP_VULKAN_SDK_TAG}
             GIT_SHALLOW YES
             DOWNLOAD_ONLY YES
-            SYSTEM YES)
+            SYSTEM YES
+            ${EACP_FETCH_QUIET})
 
     CPMAddPackage(
             NAME VulkanMemoryAllocator
@@ -35,7 +37,8 @@ function(eacp_fetch_vulkan_sources)
             GIT_TAG ${EACP_VMA_TAG}
             GIT_SHALLOW YES
             DOWNLOAD_ONLY YES
-            SYSTEM YES)
+            SYSTEM YES
+            ${EACP_FETCH_QUIET})
 
     set(VulkanHeaders_SOURCE_DIR "${VulkanHeaders_SOURCE_DIR}" PARENT_SCOPE)
     set(volk_SOURCE_DIR "${volk_SOURCE_DIR}" PARENT_SCOPE)

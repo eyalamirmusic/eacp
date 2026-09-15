@@ -43,28 +43,14 @@ inline RECT toPhysicalPixels(const Rect& bounds, float scale)
 // corner, which is also the way back — so the one window the user cannot fix
 // by dragging is the one that most needs it.
 //
-// keepAspectRatio trims both sides by the same factor: shrinking them
-// independently would hand a ratio-locked window the one shape it exists to
-// refuse.
-inline void
-    containWithinWorkArea(RECT& frame, const RECT& work, bool keepAspectRatio)
+// The sides are trimmed independently; a window with a shape rule puts the
+// result back through its WindowOptions::sizeConstraint afterwards.
+inline void containWithinWorkArea(RECT& frame, const RECT& work)
 {
-    auto width = frame.right - frame.left;
-    auto height = frame.bottom - frame.top;
     auto maxWidth = work.right - work.left;
     auto maxHeight = work.bottom - work.top;
-
-    if (keepAspectRatio && width > 0 && height > 0
-        && (width > maxWidth || height > maxHeight))
-    {
-        auto factor = std::min(static_cast<double>(maxWidth) / width,
-                               static_cast<double>(maxHeight) / height);
-        width = static_cast<LONG>(width * factor);
-        height = static_cast<LONG>(height * factor);
-    }
-
-    width = std::min(width, maxWidth);
-    height = std::min(height, maxHeight);
+    auto width = std::min(frame.right - frame.left, maxWidth);
+    auto height = std::min(frame.bottom - frame.top, maxHeight);
 
     auto left = std::clamp(frame.left, work.left, work.right - width);
     auto top = std::clamp(frame.top, work.top, work.bottom - height);

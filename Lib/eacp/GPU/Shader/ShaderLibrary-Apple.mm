@@ -33,6 +33,7 @@ ShaderLibrary::ShaderLibrary(Device& device, const ShaderSource& source)
     : vertexEntryName(source.vertexEntry)
     , fragmentEntryName(source.fragmentEntry)
     , computeEntryName(source.computeEntry)
+    , groupShape(source.threadGroup)
     , impl(device, source)
 {
 }

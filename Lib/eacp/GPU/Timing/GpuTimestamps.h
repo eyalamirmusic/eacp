@@ -102,7 +102,11 @@ public:
     // The per-frame ceiling on labelled passes. A pass past it draws exactly as
     // it would have and is simply not timed - see FrameTimer::beginPass, which
     // is where that is decided and where it would be noticed.
-    static constexpr int maxTimedPasses = 16;
+    //
+    // High enough to give every kernel of a net a label of its own: the whole
+    // pool is two timestamps a pass, so 128 costs a slot 2 KB of samples and
+    // the resolve one 1 KB stack array.
+    static constexpr int maxTimedPasses = 128;
 
 private:
     struct Native;

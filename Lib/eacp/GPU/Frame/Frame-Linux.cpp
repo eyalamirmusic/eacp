@@ -328,15 +328,15 @@ RenderPass Frame::beginPass(const Texture& target,
     return impl->beginPassOn(*data, descriptor);
 }
 
-ComputePass Frame::beginCompute(std::string_view label)
+ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
 {
     if (impl->commands == nullptr)
-        return ComputePass(nullptr);
+        return ComputePass(nullptr, order);
 
     auto* encoder = new VulkanComputeEncoder {impl->commands};
     impl->timePass(*encoder, label);
 
-    return ComputePass(encoder);
+    return ComputePass(encoder, order);
 }
 
 bool Frame::isValid() const

@@ -153,6 +153,8 @@ void applyTimeouts(HINTERNET request, const Request& req)
 // ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout.
 class TimedRequestHandle
 {
+    using Clock = std::chrono::steady_clock;
+
 public:
     ~TimedRequestHandle()
     {
@@ -166,8 +168,14 @@ public:
     {
         handle = requestToOwn;
 
-        if (timeout.count > 0)
-            watchdog = std::thread([this, timeout] { watch(timeout); });
+        if (timeout.count <= 0)
+            return;
+
+        // The deadline is pinned here rather than inside the watchdog: a
+        // contended machine can take a while to schedule the thread, and that
+        // delay would otherwise be added to the limit the caller asked for.
+        auto due = Clock::now() + std::chrono::milliseconds(timeout.count);
+        watchdog = std::thread([this, due] { watch(due); });
     }
 
     HINTERNET get() const { return handle; }
@@ -179,11 +187,9 @@ public:
     }
 
 private:
-    void watch(Time::MS timeout)
+    void watch(Clock::time_point due)
     {
         auto lock = std::unique_lock(mutex);
-        auto due = std::chrono::steady_clock::now()
-                   + std::chrono::milliseconds(timeout.count);
 
         if (settled.wait_until(lock, due, [this] { return finished; }))
             return;

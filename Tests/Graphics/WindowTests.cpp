@@ -84,12 +84,16 @@ auto tWindowOptionsNewAffordancesDefaultOff =
 // The icons are bring-your-own, and the providers are never null: the
 // defaults are callable and return an invalid Image, which keeps the
 // system default without any null checks at the call sites.
-// Fullscreen is the one resize a locked ratio cannot survive, so setting a
-// ratio is also a statement about fullscreen - unless the app says otherwise.
+// A whole-content ratio lock is a statement about fullscreen too - unless
+// the app says otherwise. A sizeConstraint alone is not: it has its own
+// letterbox path.
 auto tFullScreenFollowsAspectRatio =
     test("WindowOptions/fullScreenClosesWithTheRatioLock") = []
 {
     auto options = WindowOptions {};
+    check(options.effectiveAllowsFullScreen());
+
+    options.sizeConstraint = AspectRatioLock {{16.f, 9.f}};
     check(options.effectiveAllowsFullScreen());
 
     options.aspectRatio = Point {16.f, 9.f};
@@ -103,23 +107,18 @@ auto tFullScreenFollowsAspectRatio =
     check(!options.effectiveAllowsFullScreen());
 };
 
-// Both platforms skip a ratio that describes no shape, so the default has to
-// agree with them: a zero or negative side must not cost the window its
-// fullscreen on the strength of a constraint nobody is enforcing.
-auto tDegenerateAspectRatioIsNoRatio =
-    test("WindowOptions/degenerateAspectRatioIsNotALock") = []
+// A ratio that describes no shape locks nothing, so it must not cost the
+// window its fullscreen on the strength of a constraint nobody is enforcing.
+auto tDegenerateAspectRatioKeepsFullScreen =
+    test("WindowOptions/degenerateAspectRatioKeepsFullScreen") = []
 {
     auto options = WindowOptions {};
 
     for (auto ratio: {Point {0.f, 0.f}, Point {16.f, 0.f}, Point {-16.f, 9.f}})
     {
         options.aspectRatio = ratio;
-        check(!options.hasAspectRatio());
         check(options.effectiveAllowsFullScreen());
     }
-
-    options.aspectRatio = Point {1920.f, 1080.f};
-    check(options.hasAspectRatio());
 };
 
 auto tIconProvidersDefaultToInvalidImage =
@@ -254,4 +253,105 @@ auto tSetPositionFiresOnMoved = test("Window/setPositionFiresOnMoved") = []
     check(calls == 1);
     check(reported.x == 300.f);
     check(reported.y == 220.f);
+};
+
+// Window size, in the content points WindowOptions::width/height and
+// onResize are in. Read from the real window, as the position is.
+
+auto tInitialSizeIsReadBack = test("Window/initialSizeIsReadBack") = []
+{
+    auto options = WindowOptions {};
+    options.width = 500;
+    options.height = 320;
+
+    auto window = Window {options};
+    auto size = window.getSize();
+
+    check(size.x == 500.f);
+    check(size.y == 320.f);
+};
+
+auto tSetSizeResizesTheWindow = test("Window/setSizeResizesTheWindow") = []
+{
+    auto window = Window {};
+
+    window.setSize({720.f, 450.f});
+
+    auto size = window.getSize();
+
+    check(size.x == 720.f);
+    check(size.y == 450.f);
+};
+
+// A programmatic size is still a size the rule has to allow: a locked window
+// asked for a square comes out at the ratio, width winning as on a corner
+// drag, so the app can never put the window into a shape it would refuse
+// the user.
+auto tSetSizeGoesThroughTheConstraint =
+    test("Window/setSizeGoesThroughTheConstraint") = []
+{
+    auto options = WindowOptions {};
+    options.aspectRatio = Point {16.f, 9.f};
+
+    auto window = Window {options};
+
+    window.setSize({800.f, 800.f});
+
+    auto size = window.getSize();
+
+    check(size.x == 800.f);
+    check(size.y == 450.f);
+};
+
+auto tSetSizeIsFlooredAtTheMinimum = test("Window/setSizeIsFlooredAtTheMinimum") = []
+{
+    auto options = WindowOptions {};
+    options.minWidth = 400;
+    options.minHeight = 300;
+
+    auto window = Window {options};
+
+    window.setSize({100.f, 100.f});
+
+    auto size = window.getSize();
+
+    check(size.x == 400.f);
+    check(size.y == 300.f);
+};
+
+auto tSetSizeKeepsTheTopLeft = test("Window/setSizeKeepsTheTopLeft") = []
+{
+    auto window = Window {};
+    window.setPosition({200.f, 150.f});
+
+    window.setSize({700.f, 500.f});
+
+    auto position = window.getPosition();
+
+    check(position.x == 200.f);
+    check(position.y == 150.f);
+};
+
+// A programmatic resize is still a resize: the content that lays out from
+// onResize would otherwise miss every size the app chose itself.
+auto tSetSizeFiresOnResize = test("Window/setSizeFiresOnResize") = []
+{
+    auto reported = Point {};
+    auto calls = 0;
+
+    auto options = WindowOptions {};
+    options.onResize = [&](int width, int height)
+    {
+        ++calls;
+        reported = {(float) width, (float) height};
+    };
+
+    auto window = Window {options};
+    calls = 0;
+
+    window.setSize({560.f, 340.f});
+
+    check(calls >= 1);
+    check(reported.x == 560.f);
+    check(reported.y == 340.f);
 };

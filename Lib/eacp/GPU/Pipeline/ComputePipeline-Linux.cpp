@@ -117,7 +117,8 @@ struct ComputePipeline::Native
 };
 
 ComputePipeline::ComputePipeline(Device& device, const ShaderLibrary& library)
-    : impl(device, library)
+    : groupShape(library.threadGroupShape())
+    , impl(device, library)
 {
 }
 

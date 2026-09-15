@@ -318,12 +318,12 @@ struct X11WindowNative final
 
         xcb_icccm_size_hints_set_min_size(&hints, minWidth, minHeight);
 
-        if (state.aspectRatio)
+        if (state.aspectRatioHint)
         {
             const auto numerator =
-                (int32_t) std::lround(state.aspectRatio->x * x11AspectPrecision);
+                (int32_t) std::lround(state.aspectRatioHint->x * x11AspectPrecision);
             const auto denominator =
-                (int32_t) std::lround(state.aspectRatio->y * x11AspectPrecision);
+                (int32_t) std::lround(state.aspectRatioHint->y * x11AspectPrecision);
 
             xcb_icccm_size_hints_set_aspect(
                 &hints, numerator, denominator, numerator, denominator);
@@ -502,7 +502,8 @@ struct X11WindowNative final
         auto width = (int) event.width;
         auto height = (int) event.height;
 
-        state.applyConstraints(width, height);
+        // A maximised toplevel is being given a ceiling, not dragged.
+        state.applyConstraints(width, height, state.maximized);
 
         // Nothing negotiates a size on X11: the server has resized already, so
         // a constraint that disagrees is asked for back rather than agreed in
@@ -769,6 +770,31 @@ struct X11WindowNative final
 
         if (wasMapped)
             state.notifyHostVisibility(false);
+    }
+
+    // A maximised toplevel holds the size the window manager gave it, so
+    // there is nothing to ask for. Otherwise the content size is taken first
+    // - the hints are derived from it, and a non-resizable window is pinned
+    // to the old size until they are rewritten - and the server is then asked
+    // to catch up. The ConfigureNotify that answers carries this same size,
+    // where resizeTo is silent, or the size a window manager insisted on
+    // instead, which is a real resize and reports itself.
+    void setSize(Point newSize) override
+    {
+        if (state.maximized)
+            return;
+
+        auto width = std::max((int) std::lround(newSize.x), 1);
+        auto height = std::max((int) std::lround(newSize.y), 1);
+
+        state.resizeTo({(float) width, (float) height});
+
+        // This size is ours, not an answer to one the server sent, so it
+        // leaves no request for configureNotify to match against.
+        lastSizeRequest.reset();
+
+        applySizeHints();
+        resizeWindowTo(width, height);
     }
 
     void setTitle(const std::string& newTitle) override

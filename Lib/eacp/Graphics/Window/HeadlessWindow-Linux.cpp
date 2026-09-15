@@ -40,6 +40,9 @@ struct HeadlessWindowNative final
 
     void setVisible(bool) override {}
 
+    // Nothing to negotiate with, so the size asked for is the size taken.
+    void setSize(Point newSize) override { state.resizeTo(newSize); }
+
     void setTitle(const std::string& newTitle) override { state.title = newTitle; }
 
     void minimize() override {}

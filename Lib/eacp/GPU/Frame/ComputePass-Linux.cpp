@@ -10,14 +10,29 @@ namespace eacp::GPU
 {
 struct ComputePass::Native
 {
-    explicit Native(void* encoderHandle)
+    Native(void* encoderHandle, DispatchOrder dispatchOrder)
         : encoder(static_cast<VulkanComputeEncoder*>(encoderHandle))
+        , order(dispatchOrder)
     {
     }
 
     bool canRecord() const { return encoder != nullptr && pipeline != nullptr; }
 
+    bool isConcurrent() const { return order == DispatchOrder::Concurrent; }
+
     VkCommandBuffer commandBuffer() const { return encoder->commands->buffer; }
+
+    void orderAfterDispatch(VkCommandBuffer buffer) const
+    {
+        if (!isConcurrent())
+            barrierAfterDispatch(buffer);
+    }
+
+    void recordBarrier() const
+    {
+        if (encoder != nullptr && encoder->commands != nullptr)
+            barrierAfterDispatch(encoder->commands->buffer);
+    }
 
     // Writes have to land before the set is bound, so binds are collected and
     // written here, at the dispatch, where the pipeline's layout is known.
@@ -115,6 +130,8 @@ struct ComputePass::Native
 
     std::unique_ptr<VulkanComputeEncoder> encoder;
 
+    DispatchOrder order = DispatchOrder::Serial;
+
     const VulkanComputePipeline* pipeline = nullptr;
 
     VkDescriptorBufferInfo buffers[maxBufferSlots] = {};
@@ -127,8 +144,8 @@ struct ComputePass::Native
     ConstantRange uniforms;
 };
 
-ComputePass::ComputePass(void* encoder)
-    : impl(encoder)
+ComputePass::ComputePass(void* encoder, DispatchOrder order)
+    : impl(encoder, order)
 {
 }
 
@@ -139,6 +156,8 @@ ComputePass::~ComputePass()
 
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
+    boundGroup = pipeline.threadGroupShape();
+
     if (!impl->encoder)
         return;
 
@@ -258,12 +277,12 @@ void ComputePass::dispatch(int count)
     if (!impl->bindDescriptors())
         return;
 
-    const auto groups = (static_cast<std::uint32_t>(count) + threadGroupWidth - 1)
-                        / threadGroupWidth;
+    const auto width = static_cast<std::uint32_t>(groupFor1D().x);
+    const auto groups = (static_cast<std::uint32_t>(count) + width - 1) / width;
 
     auto commandBuffer = impl->commandBuffer();
     vkCmdDispatch(commandBuffer, groups, 1, 1);
-    barrierAfterDispatch(commandBuffer);
+    impl->orderAfterDispatch(commandBuffer);
 }
 
 void ComputePass::dispatch(int width, int height)
@@ -274,13 +293,15 @@ void ComputePass::dispatch(int width, int height)
     if (!impl->bindDescriptors())
         return;
 
-    const auto size = static_cast<std::uint32_t>(threadGroupSize2D);
-    const auto groupsX = (static_cast<std::uint32_t>(width) + size - 1) / size;
-    const auto groupsY = (static_cast<std::uint32_t>(height) + size - 1) / size;
+    const auto group = groupFor2D();
+    const auto sizeX = static_cast<std::uint32_t>(group.x);
+    const auto sizeY = static_cast<std::uint32_t>(group.y);
+    const auto groupsX = (static_cast<std::uint32_t>(width) + sizeX - 1) / sizeX;
+    const auto groupsY = (static_cast<std::uint32_t>(height) + sizeY - 1) / sizeY;
 
     auto commandBuffer = impl->commandBuffer();
     vkCmdDispatch(commandBuffer, groupsX, groupsY, 1);
-    barrierAfterDispatch(commandBuffer);
+    impl->orderAfterDispatch(commandBuffer);
 }
 
 void ComputePass::dispatch(int width, int height, int depth)
@@ -291,14 +312,17 @@ void ComputePass::dispatch(int width, int height, int depth)
     if (!impl->bindDescriptors())
         return;
 
-    const auto size = static_cast<std::uint32_t>(threadGroupSize3D);
-    const auto groupsX = (static_cast<std::uint32_t>(width) + size - 1) / size;
-    const auto groupsY = (static_cast<std::uint32_t>(height) + size - 1) / size;
-    const auto groupsZ = (static_cast<std::uint32_t>(depth) + size - 1) / size;
+    const auto group = groupFor3D();
+    const auto sizeX = static_cast<std::uint32_t>(group.x);
+    const auto sizeY = static_cast<std::uint32_t>(group.y);
+    const auto sizeZ = static_cast<std::uint32_t>(group.z);
+    const auto groupsX = (static_cast<std::uint32_t>(width) + sizeX - 1) / sizeX;
+    const auto groupsY = (static_cast<std::uint32_t>(height) + sizeY - 1) / sizeY;
+    const auto groupsZ = (static_cast<std::uint32_t>(depth) + sizeZ - 1) / sizeZ;
 
     auto commandBuffer = impl->commandBuffer();
     vkCmdDispatch(commandBuffer, groupsX, groupsY, groupsZ);
-    barrierAfterDispatch(commandBuffer);
+    impl->orderAfterDispatch(commandBuffer);
 }
 
 void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
@@ -312,6 +336,12 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
     if (data == nullptr || data->buffer == VK_NULL_HANDLE)
         return;
 
+    // The arguments come out of a kernel that may still be running, and the
+    // transition below says nothing about a buffer already in the state it
+    // wants.
+    if (impl->isConcurrent())
+        impl->recordBarrier();
+
     transitionForUse(*impl->encoder->commands, *data, bufferIndirectRead);
 
     if (!impl->bindDescriptors())
@@ -320,13 +350,27 @@ void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
     auto commandBuffer = impl->commandBuffer();
     vkCmdDispatchIndirect(
         commandBuffer, data->buffer, static_cast<VkDeviceSize>(offsetInBytes));
-    barrierAfterDispatch(commandBuffer);
+    impl->orderAfterDispatch(commandBuffer);
 }
 
+void ComputePass::barrier()
+{
+    if (impl->isConcurrent())
+        impl->recordBarrier();
+}
+
+// A concurrent pass owes the rest of the recording what the per-dispatch
+// barriers owed it in a serial one, so the last dispatches are ordered here
+// against whatever the next pass or a readback copy does.
 void ComputePass::end()
 {
     if (impl->encoder)
+    {
+        if (impl->isConcurrent())
+            impl->recordBarrier();
+
         endTimedPass(*impl->encoder);
+    }
 
     impl->encoder.reset();
     impl->pipeline = nullptr;

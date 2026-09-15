@@ -306,10 +306,21 @@ public:
         return value;
     }
 
+    // The threadgroup the kernel is dispatched in. Left unset, the stock shape
+    // for the kernel's rank is used.
+    void setThreadGroupShape(ThreadGroupShape shape)
+    {
+        graphData.setThreadGroupShape(shape);
+    }
+
+    ThreadGroupShape threadGroupShape() const
+    {
+        return graphData.threadGroupShape();
+    }
+
     // A threadgroup-shared array of count elements, its size a compile-time
-    // constant in the emitted kernel. Size it against the fixed group shape
-    // the dispatch uses (ComputePass::threadGroupWidth wide in 1D,
-    // threadGroupSize2D squared in 2D, threadGroupSize3D cubed in 3D).
+    // constant in the emitted kernel. Size it against threadGroupShape(), which
+    // is what the group the dispatch runs really is.
     template <typename T>
     Shared<T> shared(int count)
     {
@@ -323,6 +334,105 @@ public:
     // so every thread runs the whole body and the kernel bounds its own
     // stores instead, typically with ifThen(id < gridCount(), ...).
     void barrier() { graphData.addBarrier(); }
+
+    // The whole group's fold of what every thread contributed, handed back to
+    // every thread. It barriers, so - like barrier() itself - every thread of
+    // the group has to reach it or none of them.
+    Float groupSum(const Float& value) { return fold(GroupReduction::Sum, value); }
+    Float groupMax(const Float& value) { return fold(GroupReduction::Max, value); }
+    Float groupMin(const Float& value) { return fold(GroupReduction::Min, value); }
+
+    UInt groupSum(const UInt& value) { return fold(GroupReduction::Sum, value); }
+    UInt groupMax(const UInt& value) { return fold(GroupReduction::Max, value); }
+    UInt groupMin(const UInt& value) { return fold(GroupReduction::Min, value); }
+
+    // Which SIMD group of the threadgroup this thread is in, which is what
+    // places the block of the output that SIMD group owns. They are numbered
+    // from the flat local index, so a group of simdGroupWidth * n threads holds
+    // SIMD groups 0 to n - 1.
+    UInt simdGroupIndex() { return indexValue<UInt>(graphData.addSimdGroupIndex()); }
+
+    // An 8x8 fragment filled with one value - the zero an accumulator starts
+    // from - or read from an 8x8 patch of a threadgroup tile or of a buffer.
+    // Element (r, c) of the patch sits at offset + r * rowStride + c, and the
+    // whole patch has to be inside the array: a fragment is loaded and stored
+    // whole, and there is no per-element guard to put on one.
+    //
+    // Every thread of a SIMD group reaches these, and reaches them with the
+    // same offset and the same stride. See SimdMatrix.
+    SimdMatrix simdMatrix(float fill = 0.f)
+    {
+        return {&graphData,
+                graphData.addSimdMatrixFill(graphData.addConstant(fill))};
+    }
+
+    SimdMatrix simdMatrix(const Shared<Float>& tile,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return {
+            &graphData,
+            graphData.addSimdMatrixLoad(
+                SimdMatrixMemory::Shared, tile.slot, offset.node, rowStride.node)};
+    }
+
+    SimdMatrix simdMatrix(const InputBuffer& buffer,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return {
+            &graphData,
+            graphData.addSimdMatrixLoad(
+                SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
+    }
+
+    // An output is readable here as it is elementwise, which is what a product
+    // accumulated across dispatches needs.
+    SimdMatrix simdMatrix(const OutputBuffer& buffer,
+                          const UInt& offset,
+                          const UInt& rowStride)
+    {
+        return {
+            &graphData,
+            graphData.addSimdMatrixLoad(
+                SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
+    }
+
+    // accumulator += left * right over the 8x8 fragments: the whole reason the
+    // type exists, and one instruction on Metal.
+    void multiplyAccumulate(const SimdMatrix& accumulator,
+                            const SimdMatrix& left,
+                            const SimdMatrix& right)
+    {
+        graphData.addSimdMatrixMultiplyAdd(accumulator.slot, left.slot, right.slot);
+    }
+
+    // The fragment written back to an 8x8 patch, addressed the way the load
+    // addresses one. Beside the element writes rather than named apart from
+    // them: the extra argument already says which is meant.
+    void write(const OutputBuffer& buffer,
+               const UInt& offset,
+               const UInt& rowStride,
+               const SimdMatrix& value)
+    {
+        graphData.addSimdMatrixStore(value.slot,
+                                     SimdMatrixMemory::Buffer,
+                                     buffer.slot,
+                                     offset.node,
+                                     rowStride.node);
+    }
+
+    void write(const Shared<Float>& tile,
+               const UInt& offset,
+               const UInt& rowStride,
+               const SimdMatrix& value)
+    {
+        graphData.addSimdMatrixStore(value.slot,
+                                     SimdMatrixMemory::Shared,
+                                     tile.slot,
+                                     offset.node,
+                                     rowStride.node);
+    }
 
     InputBuffer inputBuffer()
     {
@@ -755,6 +865,15 @@ private:
         value.graph = &graphData;
         value.node = node;
         return value;
+    }
+
+    template <typename T>
+    T fold(GroupReduction operation, const T& value)
+    {
+        auto result = graphData.addGroupReduction(
+            operation, ValueTypeOf<T>::value, value.node);
+
+        return indexValue<T>(graphData.addVarRead(result));
     }
 
     ShaderGraph graphData;

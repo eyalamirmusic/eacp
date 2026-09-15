@@ -31,7 +31,7 @@ if(NOT WEBVIEW2_VERSION)
 
         set(WEBVIEW2_VERSION "${webview2_latest}" CACHE STRING
             "WebView2 NuGet package version (empty = resolve latest stable)" FORCE)
-        message(STATUS "WebView2: resolved latest stable version ${WEBVIEW2_VERSION}")
+        message(VERBOSE "WebView2: resolved latest stable version ${WEBVIEW2_VERSION}")
     else()
         set(WEBVIEW2_VERSION "${WEBVIEW2_FALLBACK_VERSION}")
         message(WARNING
@@ -58,14 +58,14 @@ else()
     set(WebView2_arch x86)
 endif()
 
-message(STATUS "WebView2 target architecture: ${WebView2_arch} (compiler arch ID: ${CMAKE_CXX_COMPILER_ARCHITECTURE_ID})")
+message(VERBOSE "WebView2 target architecture: ${WebView2_arch} (compiler arch ID: ${CMAKE_CXX_COMPILER_ARCHITECTURE_ID})")
 
 set(local_nuget_dir "$ENV{USERPROFILE}/AppData/Local/PackageManagement/NuGet/Packages")
 file(GLOB subdirs "${local_nuget_dir}/*Microsoft.Web.WebView2*")
 
 if(subdirs)
     list(GET subdirs 0 WebView2_root_dir)
-    message(STATUS "Found WebView2 in local NuGet cache: ${WebView2_root_dir}")
+    message(VERBOSE "Found WebView2 in local NuGet cache: ${WebView2_root_dir}")
 else()
     set(WebView2_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/_deps/webview2")
     set(WebView2_root_dir "${WebView2_DOWNLOAD_DIR}/Microsoft.Web.WebView2.${WEBVIEW2_VERSION}")
@@ -92,7 +92,7 @@ else()
             DESTINATION "${WebView2_root_dir}"
         )
 
-        message(STATUS "WebView2 extracted to: ${WebView2_root_dir}")
+        message(VERBOSE "WebView2 extracted to: ${WebView2_root_dir}")
     endif()
 endif()
 
