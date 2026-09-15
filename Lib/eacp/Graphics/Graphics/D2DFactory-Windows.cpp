@@ -281,6 +281,12 @@ void commitComposition()
     DCompCompositor::instance().commit();
 }
 
+void waitForCommitCompletion()
+{
+    if (auto* device = DCompCompositor::instance().getDevice())
+        device->WaitForCommitCompletion();
+}
+
 uint64_t getCompositionGeneration()
 {
     return DCompCompositor::instance().getGeneration();

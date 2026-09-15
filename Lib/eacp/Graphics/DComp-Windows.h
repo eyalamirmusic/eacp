@@ -43,6 +43,12 @@ bool isCompositorInitialized();
 // changed, so callers batch a whole render pass and commit once at the end.
 void commitComposition();
 
+// Blocks until every commit so far has been processed by the compositor.
+// Required before ResizeBuffers on a composition swapchain: resizing while
+// the commit that bound it (SetContent) is still in flight silently orphans
+// the visual's content, and every later Present composes to nothing.
+void waitForCommitCompletion();
+
 // AddVisual's insertAbove flag reads inverted when referenceVisual is null:
 // TRUE prepends to the child list (BOTTOM of the z-order — siblings added
 // earlier render on top), FALSE appends (TOP). These wrappers carry the WinRT
