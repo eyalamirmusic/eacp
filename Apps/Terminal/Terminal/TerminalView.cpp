@@ -396,8 +396,11 @@ void TerminalView::drawGlyphs(int visualRow, const Line& line, float y)
                 const auto tint = slot.colored ? Graphics::Color::white(alpha)
                                                : toColor(fg, alpha);
 
-                sprites->drawTexture(
-                    atlas->texture(), slot.src, {x, y, width, cellH}, tint);
+                sprites->drawTexture(atlas->texture(),
+                                     slot.src,
+                                     {x, y, width, cellH},
+                                     tint,
+                                     {GPU::TextureFilter::Linear});
             }
         }
 
@@ -471,7 +474,8 @@ void TerminalView::drawCursor()
                 sprites->drawTexture(atlas->texture(),
                                      slot.src,
                                      {x, y, wide ? cellW * 2 : cellW, cellH},
-                                     toColor(theme.background));
+                                     toColor(theme.background),
+                                     {GPU::TextureFilter::Linear});
             }
         }
     }

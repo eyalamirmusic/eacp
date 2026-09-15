@@ -2,7 +2,8 @@
 #include "TermTypes.h"
 
 #include <eacp/Core/Utils/WinInclude.h>
-#include <eacp/Graphics/Helpers/StringUtils-Windows.h>
+#include <eacp/Core/Utils/Strings.h>
+#include <eacp/Graphics/D2D-Windows.h>
 
 #include <ResEmbed/ResEmbed.h>
 
@@ -22,8 +23,6 @@ namespace eacp::Graphics
 {
 IDWriteFactory* getDWriteFactory();
 ID2D1Factory1* getD2DFactory();
-void registerInMemoryFont(const void* data, std::size_t bytes);
-IDWriteFontCollection1* getApplicationFontCollection();
 } // namespace eacp::Graphics
 
 namespace term
@@ -94,7 +93,8 @@ void registerEmbeddedFonts()
             const auto resource = ResEmbed::get(name);
 
             if (resource.size() > 0)
-                Graphics::registerInMemoryFont(resource.data(), resource.size());
+                Graphics::registerMemoryFontData(resource.data(),
+                                                 (int) resource.size());
         }
 
         return true;
@@ -127,8 +127,8 @@ struct GlyphAtlas::Impl
         if (factory == nullptr)
             return;
 
-        familyName = Graphics::toWideString(requested);
-        collection = Graphics::getApplicationFontCollection();
+        familyName = Strings::widen(requested);
+        collection = Graphics::getFontCollection();
 
         if (containsFamily(collection.Get(), familyName))
             return;
@@ -441,7 +441,6 @@ struct GlyphAtlas::Impl
             descriptor.width = atlasSize;
             descriptor.height = atlasSize;
             descriptor.format = GPU::TextureFormat::RGBA8Unorm;
-            descriptor.filter = GPU::TextureFilter::Linear;
             tex.emplace(
                 GPU::Device::shared().makeTexture(descriptor, pixels.data()));
             dirty = false;

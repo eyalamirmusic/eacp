@@ -288,7 +288,6 @@ struct GlyphAtlas::Impl
             descriptor.width = atlasSize;
             descriptor.height = atlasSize;
             descriptor.format = GPU::TextureFormat::RGBA8Unorm;
-            descriptor.filter = GPU::TextureFilter::Linear;
             tex.emplace(
                 GPU::Device::shared().makeTexture(descriptor, pixels.data()));
             dirty = false;
