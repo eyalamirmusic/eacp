@@ -25,4 +25,5 @@
 #include "Primitives/TextMetrics.h"
 #include "Widgets/TextInput.h"
 #include "Window/EmbeddedView.h"
+#include "Window/NativeChildSurface.h"
 #endif

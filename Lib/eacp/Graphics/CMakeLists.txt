@@ -80,6 +80,7 @@ if (APPLE)
                 View/View-macOS.mm
                 Window/Display-macOS.mm
                 Window/EmbeddedView-macOS.mm
+                Window/NativeChildSurface-macOS.mm
                 Window/Window-macOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework Cocoa"
@@ -107,6 +108,7 @@ elseif (WIN32)
             Window/CompositionHostWindow-Windows.cpp
             Window/Display-Windows.cpp
             Window/EmbeddedView-Windows.cpp
+            Window/NativeChildSurface-Windows.cpp
             Window/Window-Windows.cpp)
 
     target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
