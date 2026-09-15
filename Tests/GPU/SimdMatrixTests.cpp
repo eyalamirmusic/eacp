@@ -652,6 +652,17 @@ void checkPackedFragmentProduct(SimdMatrixElement element)
     checkMatches(
         readBack(result, fragmentElements), expected, toleranceFor(fragment));
 }
+
+// Whether prepare() has a refusal to make here at all. A packed fragment is a
+// Metal type the dialect either has or does not, so only that backend can be
+// handed a shader it would not compile; D3D12 and Vulkan lower the load to the
+// same two-floats-per-lane emulation every other fragment operation lowers to
+// and build the kernel whatever the device answered. See
+// ComputeProgram::fitsPackedSimdMatrix, which is where that split lives.
+bool packedFragmentsCanBeRefused(const ComputeProgram& kernel)
+{
+    return kernel.source().backend == ShaderBackend::Metal;
+}
 } // namespace
 
 // A bf16 weight multiplied where it lies. The fragment is loaded straight out
@@ -687,7 +698,8 @@ auto tPackedHalfProduct =
 // beside it names the query to ask before recording the load.
 //
 // Exercised by taking the capability away from a device that has it, which is
-// the only way to reach this path on hardware that answers yes.
+// the only way to reach this path on hardware that answers yes - and on Metal
+// alone, because it is the only backend with a refusal to make.
 auto tPackedLoadRefusedWithoutTheFeature =
     test("SimdMatrix/aPackedLoadIsRefusedWhereTheDeviceSaysNo") = []
 {
@@ -702,6 +714,19 @@ auto tPackedLoadRefusedWithoutTheFeature =
     check(!device.supportsBFloat16SimdMatrix());
 
     auto kernel = PackedFragmentProduct {SimdMatrixElement::BFloat16};
+
+    // The other half of the same contract, and the only place the emulating
+    // backends run it: where the load lowers rather than naming a type, the no
+    // above costs the kernel nothing and it builds.
+    if (!packedFragmentsCanBeRefused(kernel))
+    {
+        check(kernel.fitsPackedSimdMatrix(device));
+
+        kernel.prepare();
+
+        check(kernel.isValid());
+        return;
+    }
 
     check(!kernel.fitsPackedSimdMatrix(device));
 
@@ -739,6 +764,14 @@ auto tRefusedKernelDispatchesNothing =
 
     auto withoutPackedFragments = ScopedEnv {"EACP_NO_PACKED_SIMD_MATRIX", "1"};
 
+    auto kernel = PackedFragmentProduct {SimdMatrixElement::BFloat16};
+
+    // Nothing is refused where the load lowers to the emulation, so there is no
+    // dropped dispatch to watch for: the kernel is the one the packed product
+    // tests above already build.
+    if (!packedFragmentsCanBeRefused(kernel))
+        return;
+
     auto a = bufferOf(scatteredValues(fragmentElements, 31));
     auto b = packedBufferOf(inexactValues(fragmentElements, 37),
                             SimdMatrixElement::BFloat16);
@@ -746,7 +779,6 @@ auto tRefusedKernelDispatchesNothing =
     auto untouched = std::vector<float>(fragmentElements, 7.5f);
     auto result = bufferOf(untouched);
 
-    auto kernel = PackedFragmentProduct {SimdMatrixElement::BFloat16};
     kernel.a = a;
     kernel.b = b;
     kernel.output = result;
