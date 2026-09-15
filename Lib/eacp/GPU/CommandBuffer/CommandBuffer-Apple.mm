@@ -56,6 +56,8 @@ CommandBuffer::CommandBuffer(Device& device)
 
 ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
 {
+    impl->device->assertOwningThread();
+
     auto buffer = (id<MTLCommandBuffer>) impl->commandBuffer.get();
 
     if (buffer == nil)
@@ -114,6 +116,8 @@ void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
 
 void CommandBuffer::submit()
 {
+    impl->device->assertOwningThread();
+
     if (auto buffer = impl->takeForCommit())
     {
         // Before the commit: a committed buffer may finish at any moment.
@@ -131,6 +135,8 @@ void CommandBuffer::commit()
 
 void CommandBuffer::wait()
 {
+    impl->device->assertOwningThread();
+
     // waitUntilCompleted on a buffer that already finished returns at once, so
     // a wait after the work has landed costs nothing.
     if (auto buffer = impl->submitted())
@@ -150,7 +156,10 @@ bool CommandBuffer::isComplete() const
            || status == MTLCommandBufferStatusError;
 }
 
-void CommandBuffer::read(const Buffer& buffer, void* dst, int bytes, int offset)
+void CommandBuffer::read(const Buffer& buffer,
+                         void* dst,
+                         std::int64_t bytes,
+                         std::int64_t offset)
 {
     wait();
 
@@ -170,6 +179,10 @@ void CommandBuffer::read(const Buffer& buffer, void* dst, int bytes, int offset)
 
 Threads::Async<void> CommandBuffer::commitAsync()
 {
+    // The submission is the part that belongs to this thread; the completion
+    // handler below hops to the message thread on its own and asserts nothing.
+    impl->device->assertOwningThread();
+
     auto promise = Threads::AsyncPromise<void> {};
     auto buffer = impl->takeForCommit();
 

@@ -6,6 +6,7 @@
 #include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Containers.h>
+#include <eacp/Core/Utils/Environment.h>
 
 namespace eacp::GPU
 {
@@ -104,6 +105,13 @@ Device::Device()
 Device& Device::shared()
 {
     static Device instance;
+
+    // Created lazily but owned by the main thread whichever thread asked for it
+    // first — every GPUView and every Frame drives this one from there. See the
+    // thread rule on Device.
+    [[maybe_unused]] static const auto boundToMainThread =
+        (instance.followMainThread(), true);
+
     return instance;
 }
 
@@ -171,6 +179,51 @@ int Device::maxThreadgroupMemory() const
         return 0;
 
     return (int) metalDevice.maxThreadgroupMemoryLength;
+}
+
+// The family is the gate both packed fragment types share. MTLGPUFamilyApple7
+// is the first with the SIMD-group matrix instructions, and it is also where
+// the SIMD group is the 32 threads the EDSL's fragment layout is written
+// against - an Intel Mac has neither, and answering no there is a claim about
+// this GPU rather than about the OS.
+//
+// EACP_NO_PACKED_SIMD_MATRIX takes the answer away on a machine that has it, so
+// the staged path both queries exist to select stays reachable in a test on
+// hardware that would otherwise never take it.
+bool Device::supportsHalfSimdMatrix() const
+{
+    if (!isValid() || getEnvValue("EACP_NO_PACKED_SIMD_MATRIX") == "1")
+        return false;
+
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    return [metalDevice supportsFamily:MTLGPUFamilyApple7] == YES;
+}
+
+// Everything above plus the OS: simdgroup_bfloat8x8 is Metal 3.1, which is
+// macOS 14 and iOS 17, and eacp's deployment targets are 11.0 and 14.0. The
+// guard is therefore real on both platforms rather than inert on one.
+//
+// Known risk, stated rather than hidden: this pairs the OS with Apple7, and
+// Apple7 is an M1. Metal 3.1 is a *language* version, so the type exists
+// wherever the OS is new enough, but whether every Apple7 part has the bf16
+// matrix instruction under it was measured here on an Apple9 only - an M1 on
+// macOS 14 will answer yes to this and has not been checked. Should such a part
+// turn out not to have it, the shader fails to compile, and the whole of what
+// that costs is the quiet refusal ComputeProgram::prepare already makes: an
+// invalid library, an invalid pipeline, and a dispatch that ComputePass drops.
+// Nothing crashes and nothing silently computes a wrong answer. Narrow this to
+// a later family, or to a runtime compile probe, the moment such a device is
+// found.
+bool Device::supportsBFloat16SimdMatrix() const
+{
+    if (!supportsHalfSimdMatrix())
+        return false;
+
+    if (@available(macOS 14.0, iOS 17.0, *))
+        return true;
+
+    return false;
 }
 
 void* Device::nativeContext() const

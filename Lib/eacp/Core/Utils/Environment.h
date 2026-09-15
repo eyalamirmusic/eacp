@@ -17,4 +17,10 @@ std::string getEnvValue(std::string_view name);
 // Sets (or overwrites) an environment variable for this process.
 void setEnv(std::string_view name, std::string_view value);
 
+// Removes one, so that getEnv answers nullopt again. Not the same as setting it
+// to the empty string: code that asks whether a variable is present at all
+// tells those two apart, and anything putting back what it found needs to be
+// able to put back "nothing".
+void unsetEnv(std::string_view name);
+
 } // namespace eacp

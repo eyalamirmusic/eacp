@@ -158,6 +158,29 @@ enum class SimdMatrixMemory
     Buffer
 };
 
+// What the elements of a loaded fragment are in the memory it comes out of.
+// Float is the buffer's own elements; the two packed ones are sixteen bits
+// each, two to a word, and the offset and the row stride of such a load count
+// in those elements rather than in the words holding them - the convention
+// InputBuffer::readHalf and readBFloat16 already set.
+//
+// A packed fragment is an operand and nothing else. Metal multiplies one
+// straight into a float accumulator, which is the whole point of loading one;
+// it has no instruction that stores one, and an accumulator in sixteen bits
+// would lose the precision a product is accumulated in. The EDSL offers no way
+// to ask for either, and the graph asserts on both.
+//
+// Whether a device loads one natively is Device::supportsHalfSimdMatrix and
+// Device::supportsBFloat16SimdMatrix, asked before the kernel is written; the
+// two backends that answer no still build such a load, widening each lane's
+// pair by hand. See ComputeProgram::simdMatrixBFloat16.
+enum class SimdMatrixElement
+{
+    Float,
+    Half,
+    BFloat16
+};
+
 // How many threads one SIMD group holds - the width the matrix ops are
 // collective over. 32 on every Apple GPU, which is the only hardware whose
 // intrinsics are used; the backends that emit the scalar fallback define
@@ -200,6 +223,11 @@ enum class StatementKind
     Break,
     Continue,
     Store, // buffer[index] = value; slot = the storage slot
+    VectorStore, // buffer[index .. index + N - 1] = value; slot = the storage
+    // slot, index = the *first element's* index, value = the vector stored. The
+    // write mirror of ExprKind::BufferVectorRead, and one store for the same
+    // reason: Metal reinterprets the pointer at the address it is storing to,
+    // which retypes the access and not the binding.
     TextureStore, // texture[index, indexY] = value; slot = the texture slot
     SharedStore, // shared[index] = value; slot = the threadgroup-array slot
     Barrier, // threadgroup barrier: every thread in the group arrives before
@@ -214,7 +242,8 @@ enum class StatementKind
     // slot = the fragment, value = what every element is set to.
     SimdMatrixLoad, // an 8x8 fragment declared and read from an 8x8 patch.
     // slot = the fragment, memory / bufferSlot = where from, index = the
-    // element the patch starts at, stride = the patch's row stride.
+    // element the patch starts at, stride = the patch's row stride, element =
+    // what those elements are in memory.
     SimdMatrixStore, // that patch written back. The same fields, the other way.
     SimdMatrixMultiplyAdd, // slot = slot + left * right, all three fragments.
     // slot = the accumulator, left / right = the operands.
@@ -241,8 +270,9 @@ struct Statement
     int value = -1; // Declare / Assign / stores: the value; If / Loop: the condition
     int body = -1; // If / Loop: the block that runs
     int elseBody = -1; // If: the block that runs when the condition is false
-    int index = -1; // Store: the element index; TextureStore: x; AtomicAdd: the
-    // element
+    int index = -1; // Store: the element index; VectorStore: the *first*
+    // element's index, the rest of the record following it; TextureStore: x;
+    // AtomicAdd: the element
     int indexY = -1; // TextureStore: y
     int bufferSlot = -1; // AtomicAdd: the buffer, its slot field being taken by
     // the variable the old value lands in
@@ -258,6 +288,8 @@ struct Statement
     SimdMatrixMemory memory = SimdMatrixMemory::Shared; // which address space
     // a SimdMatrixLoad / SimdMatrixStore reaches, bufferSlot being the slot in
     // it
+    SimdMatrixElement element = SimdMatrixElement::Float; // SimdMatrixLoad:
+    // what the patch's elements are in memory, and so what the fragment is
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -475,6 +507,12 @@ public:
 
     void addStore(int slot, int index, int value);
 
+    // A run of consecutive elements written as one vector, the index being the
+    // first element's rather than the record's - addBufferVectorRead run
+    // backwards. Metal makes one store of it; the other two spell the N
+    // subscripts it stands for, over a value named once beforehand.
+    void addVectorStore(int slot, int firstElement, int value);
+
     // The N element stores one record write lays down, told apart from N
     // writes of their own: a record is one write above, so every component of
     // it takes the value the record had before the first of them ran.
@@ -529,7 +567,11 @@ public:
     // fragment is neither a variable nor a value, having no type any of the
     // three languages shares.
     int addSimdMatrixFill(int value);
-    int addSimdMatrixLoad(SimdMatrixMemory memory, int slot, int index, int stride);
+    int addSimdMatrixLoad(SimdMatrixMemory memory,
+                          int slot,
+                          int index,
+                          int stride,
+                          SimdMatrixElement element = SimdMatrixElement::Float);
     void addSimdMatrixStore(
         int matrix, SimdMatrixMemory memory, int slot, int index, int stride);
     void addSimdMatrixMultiplyAdd(int accumulator, int left, int right);
@@ -636,8 +678,23 @@ public:
     // How many 8x8 fragments the kernel declared, and whether it asked the
     // entry point for the SIMD-group vocabulary at all - a matrix statement or
     // a read of the SIMD group's index both do.
-    int simdMatrixCount() const { return simdMatrices; }
-    bool usesSimdGroups() const { return simdMatrices > 0 || simdGroupIndexUsed; }
+    int simdMatrixCount() const { return simdMatrixElementList.size(); }
+
+    bool usesSimdGroups() const
+    {
+        return simdMatrixCount() > 0 || simdGroupIndexUsed;
+    }
+
+    // What one fragment is made of, and whether any fragment at all is made of
+    // a packed sixteen-bit element. The emitter takes the declared type and the
+    // pointer reinterpret from the first; ComputeProgram::fitsPackedSimdMatrix
+    // takes from the second the question it puts to the device.
+    SimdMatrixElement simdMatrixElement(int matrix) const
+    {
+        return simdMatrixElementList[matrix];
+    }
+
+    bool usesPackedSimdMatrix(SimdMatrixElement element) const;
 
     // Which threadgroup pieces the kernel asked for, driving what the emitters
     // add to the entry signature - and, for the barrier, what they take away:
@@ -685,24 +742,36 @@ public:
 private:
     int add(Expr node);
     int addStatement(Statement newStatement);
+
+    // A fragment's slot, taken from a numbering of its own and remembering what
+    // the fragment is made of.
+    int declareSimdMatrix(SimdMatrixElement element);
     int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
 
-    // Structural sharing for the two kinds that can take it. A key holds
+    // Structural sharing for the three kinds that can take it. A key holds
     // everything add() would have to compare to call two nodes the same value;
-    // a binary's operands are node ids, which is enough because the nodes they
-    // name were themselves shared on the way in.
+    // a binary's operands and a read's index are node ids, which is enough
+    // because the nodes they name were themselves shared on the way in.
+    //
+    // A read's key is its kind and width beside its slot and its index, so a
+    // read2 and a read4 starting at the same element stay two nodes - and only
+    // a read of a read-only slot is ever pure enough to reach the cache at all.
     using ConstantKey = std::tuple<ValueType, int, std::uint32_t>;
     using BinaryKey = std::tuple<ValueType, char, std::string, int, int>;
+    using ReadKey = std::tuple<ExprKind, ValueType, int, int>;
 
     static ConstantKey constantKeyFor(const Expr& node);
     static BinaryKey binaryKeyFor(const Expr& node);
+    static ReadKey readKeyFor(const Expr& node);
 
     bool isPure(int node) const;
     bool purityOf(const Expr& node) const;
+    bool readsImmutableStorage(const Expr& node) const;
     int findShared(const Expr& node) const;
 
     std::map<ConstantKey, int> constantCache;
     std::map<BinaryKey, int> binaryCache;
+    std::map<ReadKey, int> readCache;
     Vector<char> pureFlags; // parallel to nodes
 
     Vector<Expr> nodes;
@@ -723,7 +792,7 @@ private:
     Vector<ValueType> reductionTypes;
     Vector<ValueType> wholeGroupTypes;
     bool simdReductionUsed = false;
-    int simdMatrices = 0;
+    Vector<SimdMatrixElement> simdMatrixElementList; // one entry per fragment
     bool simdGroupIndexUsed = false;
     bool localIdUsed = false;
     bool groupIdUsed = false;

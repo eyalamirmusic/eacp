@@ -108,6 +108,51 @@ struct RereadKernel final : ComputeProgram
     EACP_SHADER(input, output, doubled, after)
 };
 
+// The wide stores, one per width, each at the index its matching read counts
+// in. What they have to leave behind is byte for byte what the record write
+// would have: the layout is the contract both sides name, so a row written wide
+// is a row anything else can read narrow.
+struct WideStoreKernel final : ComputeProgram
+{
+    WideStoreKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+
+        write4(quads, i, input.read4(i) * 2.0f);
+        write3(triples, i, input.read3(i));
+        write2(pairs, i, input.read2(i));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> quads;
+    Uniform<OutputBuffer> triples;
+    Uniform<OutputBuffer> pairs;
+
+    EACP_SHADER(input, quads, triples, pairs)
+};
+
+// A record reversed in place, which is the case that catches a wide store whose
+// value was not held first: componentwise, storing x = w leaves the components
+// after it reading back what this very store has already overwritten.
+struct WideReverseKernel final : ComputeProgram
+{
+    WideReverseKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto values = inPlace.read4(i);
+
+        write4(inPlace, i, float4(values.w(), values.z(), values.y(), values.x()));
+    }
+
+    Uniform<OutputBuffer> inPlace;
+
+    EACP_SHADER(inPlace)
+};
+
 // Assigning a temporary would leave the program holding a pointer into a buffer
 // destroyed on the same line, which is why the rvalue overload is deleted. The
 // lvalue form is what every call site writes and must keep working.
@@ -314,4 +359,108 @@ auto tTemporaryBufferIsRefused =
     check(!std::is_assignable_v<Uniform<AtomicBuffer>&, Buffer>);
     check(!std::is_assignable_v<Uniform<Texture2D>&, Texture>);
     check(!std::is_assignable_v<Uniform<WritableTexture2D>&, Texture>);
+};
+
+// The wide stores lay down the same bytes at the same offsets the record write
+// does, which is the whole of what a caller has to be able to rely on: the
+// index counts records on both sides, and the run starts at index * N.
+auto tWideStoresMatchTheLayout =
+    test("BufferAccess/aWideStoreLaysTheRecordDown") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto threads = 16;
+    constexpr auto count = threads * 4;
+    constexpr auto bytes = count * (int) sizeof(float);
+
+    auto source = Vector<float> {};
+
+    for (auto i = 0; i < count; ++i)
+        source.add((float) i * 0.5f - 3.0f);
+
+    auto input = device.makeBuffer(source.data(), bytes, BufferUsage::Storage);
+    auto quads = device.makeBuffer(bytes, BufferUsage::Storage);
+    auto triples = device.makeBuffer(bytes, BufferUsage::Storage);
+    auto pairs = device.makeBuffer(bytes, BufferUsage::Storage);
+
+    auto kernel = WideStoreKernel {};
+    kernel.input = input;
+    kernel.quads = quads;
+    kernel.triples = triples;
+    kernel.pairs = pairs;
+    kernel.prepare();
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, threads);
+    }
+
+    commands.commit();
+
+    auto wide = Vector<float>(count);
+    auto three = Vector<float>(count);
+    auto two = Vector<float>(count);
+
+    quads.read(wide.data(), bytes);
+    triples.read(three.data(), bytes);
+    pairs.read(two.data(), bytes);
+
+    for (auto thread = 0; thread < threads; ++thread)
+    {
+        for (auto lane = 0; lane < 4; ++lane)
+            check(wide[thread * 4 + lane] == source[thread * 4 + lane] * 2.0f);
+
+        for (auto lane = 0; lane < 3; ++lane)
+            check(three[thread * 3 + lane] == source[thread * 3 + lane]);
+
+        for (auto lane = 0; lane < 2; ++lane)
+            check(two[thread * 2 + lane] == source[thread * 2 + lane]);
+    }
+};
+
+// And the value reaches memory whole: a record reversed in place is the
+// reversal, not the smear a componentwise expansion over an unnamed value would
+// leave.
+auto tWideStoreHoldsItsValue = test("BufferAccess/aWideStoreHoldsItsValue") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto threads = 16;
+    constexpr auto count = threads * 4;
+    constexpr auto bytes = count * (int) sizeof(float);
+
+    auto source = Vector<float> {};
+
+    for (auto i = 0; i < count; ++i)
+        source.add((float) i);
+
+    auto inPlace = device.makeBuffer(source.data(), bytes, BufferUsage::Storage);
+
+    auto kernel = WideReverseKernel {};
+    kernel.inPlace = inPlace;
+    kernel.prepare();
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, threads);
+    }
+
+    commands.commit();
+
+    auto values = Vector<float>(count);
+    inPlace.read(values.data(), bytes);
+
+    for (auto thread = 0; thread < threads; ++thread)
+        for (auto lane = 0; lane < 4; ++lane)
+            check(values[thread * 4 + lane] == source[thread * 4 + 3 - lane]);
 };

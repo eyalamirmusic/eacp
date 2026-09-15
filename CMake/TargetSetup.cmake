@@ -6,6 +6,16 @@ function(set_default_warnings_level target)
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif ()
+
+    # A 64-bit count assigned into an int is silent under -Wall -Wextra, and it
+    # is exactly the bug the GPU buffer API's byte counts were widened to stop,
+    # so the one warning that catches it is on wherever it exists. Clang only:
+    # GCC has no equivalent short of -Wconversion, which is a far larger and
+    # much noisier set, and MSVC already reports it as C4244 under /W4. A
+    # narrowing that is genuinely intended is written as a cast with a comment.
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
+        target_compile_options(${target} PRIVATE -Wshorten-64-to-32)
+    endif ()
 endfunction()
 
 # For a vendored dependency, whose warnings are not ours to fix and whose noise is

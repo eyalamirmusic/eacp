@@ -26,6 +26,7 @@ endif ()
 # Everything here runs on every backend, drawing included: a scissor or a blend
 # mode has no CPU-side observable. Every case self-skips without a device.
 set(gpu_test_sources
+        AdoptedMemoryTests.cpp
         AtomicTests.cpp
         BackingScaleTests.cpp
         BaseVertexTests.cpp
@@ -56,6 +57,7 @@ set(gpu_test_sources
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp
+        LargeBufferTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp
         MultisampledTargetTests.cpp

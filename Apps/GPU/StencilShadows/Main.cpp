@@ -424,8 +424,9 @@ struct StencilShadowsView final : GPUView
                             corners[cubeFaces[face][3]],
                             faceNormals[face]);
 
-        sceneBuffer.update(vertices.data(),
-                           vertices.size() * (int) sizeof(SceneVertex));
+        // Unordered: rewritten once a frame, which is what this variant is for.
+        sceneBuffer.updateUnordered(vertices.data(),
+                                    vertices.size() * (int) sizeof(SceneVertex));
     }
 
     Vec3 extrude(Vec3 point) const
@@ -495,8 +496,8 @@ struct StencilShadowsView final : GPUView
         volumeVertexCount = vertices.size();
 
         if (volumeVertexCount > 0)
-            volumeBuffer.update(vertices.data(),
-                                vertices.size() * (int) sizeof(VolumeVertex));
+            volumeBuffer.updateUnordered(
+                vertices.data(), vertices.size() * (int) sizeof(VolumeVertex));
     }
 
     Camera cameraFor(float aspect) const

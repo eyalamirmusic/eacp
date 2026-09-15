@@ -245,6 +245,24 @@ struct WriteBFloat16x2Kernel final : ComputeProgram
     EACP_SHADER(weights, output)
 };
 
+// The same round trip one width up: four bfloat16s are two words, read as one
+// record and written back as one store.
+struct WriteBFloat16x4Kernel final : ComputeProgram
+{
+    WriteBFloat16x4Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        writeBFloat16x4(output, i, weights.readBFloat16x4(i));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
 // Two ordinary fp32 values narrowed and packed, which is what a kernel writing
 // bf16 output does.
 struct NarrowKernel final : ComputeProgram
@@ -342,7 +360,8 @@ void runKernel(Device& device, ComputeProgram& kernel, int threads)
 
 Vector<float> floatsOf(const Buffer& buffer)
 {
-    auto values = Vector<float>(buffer.size() / (int) sizeof(float));
+    auto values =
+        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
     buffer.read(values.data(), buffer.size());
     return values;
 }
@@ -351,7 +370,8 @@ Vector<float> floatsOf(const Buffer& buffer)
 // bit pattern rather than a value.
 Vector<std::uint32_t> wordsOf(const Buffer& buffer)
 {
-    auto words = Vector<std::uint32_t>(buffer.size() / (int) sizeof(std::uint32_t));
+    auto words = Vector<std::uint32_t>(
+        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
     buffer.read(words.data(), buffer.size());
     return words;
 }
@@ -642,6 +662,45 @@ auto tWritePair = test("PackedBFloat16/writeBFloat16x2IsThePackedStore") = []
     shorthand.prepare(device);
 
     runKernel(device, shorthand, count);
+    auto result = wordsOf(output);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        check(bfloat16Matches((std::uint16_t) (result[i] & 0xffffu),
+                              (std::uint16_t) (words[i] & 0xffffu)));
+
+        check(bfloat16Matches((std::uint16_t) (result[i] >> 16),
+                              (std::uint16_t) (words[i] >> 16)));
+    }
+};
+
+// writeBFloat16x4 is readBFloat16x4 run backwards, at the index that read
+// counts in: two words out and the same two words back, put there by one store.
+auto tWriteWide = test("PackedBFloat16/writeBFloat16x4IsTheWidePackedStore") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto words = everyPackedPair();
+
+    // The wide store addresses two words at a time, so an odd count would leave
+    // a last word nothing writes rather than one written wrong.
+    while (words.size() % 2 != 0)
+        words.add(0u);
+
+    auto count = words.size();
+
+    auto input = storageOf(device, words);
+    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+
+    auto kernel = WriteBFloat16x4Kernel {};
+    kernel.weights = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    runKernel(device, kernel, count / 2);
     auto result = wordsOf(output);
 
     for (auto i = 0; i < count; ++i)

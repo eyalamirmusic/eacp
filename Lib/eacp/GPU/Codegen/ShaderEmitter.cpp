@@ -796,6 +796,24 @@ const char* helperDefinition(const ShaderHelper& helper, Backend backend)
     return helper.metal;
 }
 
+// The one helper a graph needs that no expression node names: the fallback's
+// packed fragment load is a statement, and it widens each of a lane's two
+// elements through the same helper a scalar packed read goes through. Metal
+// loads such a patch as a packed fragment and calls nothing.
+bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
+                                  std::string_view name,
+                                  Backend backend)
+{
+    if (backend == Backend::Metal)
+        return false;
+
+    if (name == "eacpReadHalf")
+        return graph.usesPackedSimdMatrix(SimdMatrixElement::Half);
+
+    return name == "eacpReadBFloat16"
+           && graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
+}
+
 // Only the helpers a graph actually calls, so a shader that unpacks nothing
 // carries no definition for one.
 std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
@@ -804,7 +822,7 @@ std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
 
     for (const auto& helper: shaderHelpers)
     {
-        auto used = false;
+        auto used = helperWidensPackedSimdMatrix(graph, helper.name, backend);
 
         for (auto node = 0; node < graph.nodeCount() && !used; ++node)
         {
@@ -839,6 +857,19 @@ const char* componentSuffix(int component)
         return ".x";
 
     return component == 1 ? ".y" : ".z";
+}
+
+// The lane of a vector value, which is a different question: a thread index
+// reaches three components and a vector reaches four, so the one above stops
+// where it does and this one names .w. Nothing in the EDSL is wider than four,
+// so a fifth component is a caller's mistake rather than a lane to name.
+const char* vectorComponentSuffix(int component)
+{
+    assert(component >= 0 && component < 4
+           && "eacp: a vector has no component past .w");
+
+    constexpr const char* lanes[] = {".x", ".y", ".z", ".w"};
+    return lanes[component];
 }
 
 // The MSL type a run of consecutive buffer elements is loaded through.
@@ -1061,6 +1092,49 @@ std::string simdMatrixMemoryName(const Statement& statement)
 std::string bracketed(const std::string& expression)
 {
     return "(" + expression + ")";
+}
+
+// The MSL type a fragment of each element is, and the element type its load
+// reinterprets the buffer's pointer as. A packed fragment stays packed right
+// through the product: MSL's simdgroup_multiply_accumulate takes mixed operand
+// types into a float accumulator, which is the instruction the hardware has and
+// the reason there is no widening step to emit between the two.
+const char* metalSimdMatrixType(SimdMatrixElement element)
+{
+    switch (element)
+    {
+        case SimdMatrixElement::Half:
+            return "simdgroup_half8x8";
+        case SimdMatrixElement::BFloat16:
+            return "simdgroup_bfloat8x8";
+        case SimdMatrixElement::Float:
+            break;
+    }
+
+    return "simdgroup_float8x8";
+}
+
+const char* metalPackedElementType(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "half" : "bfloat";
+}
+
+// What the fallback widens one packed element with - the same helper a scalar
+// InputBuffer::readHalf or readBFloat16 goes through, so the arithmetic that
+// produces a lane's pair here is the arithmetic every other packed read in the
+// shader uses.
+const char* packedSimdMatrixHelper(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
+}
+
+// How the two fallback dialects read a buffer's float element as the word its
+// bits are. The buffer is declared float whatever it holds, which is what the
+// packed scalar reads already assume. Metal never asks: a packed patch is a
+// fragment of its own type there, loaded through a reinterpreted pointer.
+const char* bitsOfFloat(Backend backend)
+{
+    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
 }
 
 // How the fallback backends hold a fragment: spread over the lanes of what
@@ -1678,6 +1752,7 @@ void collectWrites(const ShaderGraph& graph,
         case StatementKind::Break:
         case StatementKind::Continue:
         case StatementKind::Store:
+        case StatementKind::VectorStore:
         case StatementKind::TextureStore:
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
@@ -1726,6 +1801,7 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
         case StatementKind::Break:
         case StatementKind::Continue:
         case StatementKind::Store:
+        case StatementKind::VectorStore:
         case StatementKind::TextureStore:
         case StatementKind::AtomicAdd:
         case StatementKind::SimdMatrixFill:
@@ -1766,6 +1842,7 @@ void collectBufferWrites(const ShaderGraph& graph,
     switch (statement.kind)
     {
         case StatementKind::Store:
+        case StatementKind::VectorStore:
             written[statement.slot] = 1;
             return;
 
@@ -2109,6 +2186,53 @@ struct StageEmitter
                 break;
             }
 
+            // The write mirror of a vector read: one store where the dialect
+            // has a spelling for one, and the N subscripts it stands in for
+            // where it has not. Metal reinterprets the address being stored to
+            // rather than the binding, so an output stays a run of floats and
+            // nothing it was bindable as is given up.
+            //
+            // Both operands are named first - see holdTheVector - so each is
+            // evaluated once and in full before any part of the record reaches
+            // memory. That is what lets write4(out, i, f(out.read4(i))) mean
+            // what it says, and what keeps an index computed from the buffer
+            // being written - write4(out, toUInt(out[i]), v) - addressing the
+            // element it was aimed at rather than the one the first component
+            // just landed on.
+            case StatementKind::VectorStore:
+            {
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+                source += holdTheVector(statement, indent, open);
+
+                auto name = "buffer" + std::to_string(statement.slot);
+                auto base = printer.ref(statement.index);
+                auto stored = printer.ref(statement.value);
+                auto type = graph().expr(statement.value).type;
+
+                if (printer.backend == Backend::Metal)
+                {
+                    source += indent + "*((device " + metalPackedVectorType(type)
+                              + "*) (" + name + " + " + base + ")) = " + stored
+                              + ";\n";
+                    break;
+                }
+
+                for (auto component = 0; component < componentCount(type);
+                     ++component)
+                {
+                    source += indent + name + "[" + base;
+
+                    if (component > 0)
+                        source += " + " + std::to_string(component) + "u";
+
+                    source += "] = (" + stored + ")"
+                              + vectorComponentSuffix(component) + ";\n";
+                }
+
+                break;
+            }
+
             case StatementKind::AtomicAdd:
             {
                 source =
@@ -2329,8 +2453,12 @@ private:
     std::string simdMatrixDeclaration(int slot) const
     {
         if (metal())
-            return "simdgroup_float8x8 " + simdMatrixName(slot);
+            return std::string(metalSimdMatrixType(graph().simdMatrixElement(slot)))
+                   + " " + simdMatrixName(slot);
 
+        // The fallback holds every fragment as a lane's pair of floats,
+        // whatever the memory it came out of: what a packed load changes there
+        // is the arithmetic that produces the pair, not the fragment.
         return std::string(simdMatrixLaneType(printer.backend)) + " "
                + simdMatrixName(slot);
     }
@@ -2364,6 +2492,33 @@ private:
                + "]";
     }
 
+    // The same element where the patch is packed: the index counts sixteen-bit
+    // elements, so the word holding one is at half that index and which half of
+    // it is the parity - exactly the arithmetic InputBuffer::readHalf and
+    // readBFloat16 do, through the same helper.
+    //
+    // Each element is fetched on its own rather than a lane's pair taken out of
+    // one word. The pair is two adjacent columns, but the patch's offset and
+    // row stride are the caller's and neither has to be even, so the pair is
+    // not reliably inside one word and a walk that assumed it was would read
+    // the wrong element on every odd row.
+    static std::string simdMatrixPackedLaneElement(Backend backend,
+                                                   SimdMatrixElement element,
+                                                   const std::string& memory,
+                                                   const std::string& offset,
+                                                   const std::string& stride,
+                                                   int which)
+    {
+        auto column = which == 0 ? std::string("sgmColumn")
+                                 : "sgmColumn + " + std::to_string(which) + "u";
+
+        auto index = "(" + offset + " + sgmRow * " + stride + " + " + column + ")";
+
+        return std::string(packedSimdMatrixHelper(element)) + "("
+               + bitsOfFloat(backend) + "(" + memory + "[" + index + " / 2u]), "
+               + index + " % 2u)";
+    }
+
     // The load and the store are the same patch walked in the two directions,
     // so they are one function: what changes is which side of the assignment
     // each is on. Every lane moves the pair it holds, so the store needs no
@@ -2376,10 +2531,20 @@ private:
         auto memory = simdMatrixMemoryName(statement);
         auto offset = bracketed(printer.ref(statement.index));
         auto stride = bracketed(printer.ref(statement.stride));
+        auto element = graph().simdMatrixElement(statement.slot);
+        auto packed = element != SimdMatrixElement::Float;
 
         if (metal())
         {
-            auto pointer = memory + " + " + offset;
+            // The buffer is declared float whatever it holds, so a packed load
+            // reinterprets its pointer the way the wide packed reads
+            // reinterpret one - and then counts in the packed element, which is
+            // what makes the offset the caller's own row arithmetic.
+            auto pointer = packed
+                               ? "(device const "
+                                     + std::string(metalPackedElementType(element))
+                                     + "*) (" + memory + ") + " + offset
+                               : memory + " + " + offset;
 
             if (loading)
                 return indent + simdMatrixDeclaration(statement.slot) + ";\n"
@@ -2390,8 +2555,15 @@ private:
                    + stride + ");\n";
         }
 
-        auto first = simdMatrixLaneElement(memory, offset, stride, 0);
-        auto second = simdMatrixLaneElement(memory, offset, stride, 1);
+        auto backend = printer.backend;
+
+        auto first = packed ? simdMatrixPackedLaneElement(
+                                  backend, element, memory, offset, stride, 0)
+                            : simdMatrixLaneElement(memory, offset, stride, 0);
+
+        auto second = packed ? simdMatrixPackedLaneElement(
+                                   backend, element, memory, offset, stride, 1)
+                             : simdMatrixLaneElement(memory, offset, stride, 1);
 
         if (loading)
             return indent + simdMatrixDeclaration(statement.slot) + " = "
@@ -2530,6 +2702,49 @@ private:
             return {};
 
         return bind(statement.record, indent, open);
+    }
+
+    // A wide store's operands, named before the store rather than printed into
+    // it.
+    //
+    // The index is the one the backends disagree about. Metal stores the whole
+    // vector through one pointer and prints the address once; HLSL and GLSL
+    // print it into every subscript, so an index inlined there is evaluated N
+    // times - and if it reads the buffer being written, every evaluation after
+    // the first reads back what this very store has already put there.
+    // write4(out, toUInt(out[i]), v) is exactly that shape, and inlined it would
+    // mean one thing on Metal and another on the other two.
+    //
+    // The value is named on every backend all the same, for the reason
+    // holdTheRecord names a record's: a wide store is one write of one record,
+    // and the record is worth a name wherever it is an operation rather than a
+    // leaf.
+    std::string holdTheVector(const Statement& statement,
+                              const std::string& indent,
+                              Vector<int>& open)
+    {
+        auto source = std::string {};
+
+        if (printer.backend != Backend::Metal)
+            source += holdOperand(statement.index, statement.slot, indent, open);
+
+        return source + holdOperand(statement.value, statement.slot, indent, open);
+    }
+
+    // One of them, unless naming it would buy nothing: something already named
+    // is already computed, and a leaf costs nothing however often it is
+    // repeated - unless it is a read of the buffer being written, which is not
+    // a matter of cost.
+    std::string
+        holdOperand(int node, int slot, const std::string& indent, Vector<int>& open)
+    {
+        if (node < 0 || locals[node] >= 0)
+            return {};
+
+        if (!wantsLocal(graph().expr(node).kind) && !readsSlot(node, slot))
+            return {};
+
+        return bind(node, indent, open);
     }
 
     bool readsSlot(int node, int slot)

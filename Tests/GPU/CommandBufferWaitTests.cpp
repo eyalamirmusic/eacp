@@ -11,6 +11,10 @@
 // work is still running. The last of them is the shape a step-by-step loop
 // takes - record and submit step k+1, then wait for step k and read it - and it
 // is the one that fails if wait() ever waits for the newest submission again.
+//
+// The last case is about Buffer::update rather than about scope: a host write
+// into a buffer a kernel is still filling is ordered by update() and by nothing
+// else, and the kernel it races is slow enough that an unordered write loses.
 
 using namespace nano;
 using namespace eacp;
@@ -378,4 +382,110 @@ auto tFortyLabelledPassesAreTimed =
 
     for (const auto& pass: timings.passes)
         check(pass.milliseconds > 0.0);
+};
+
+// A host write against a kernel that is still writing the same buffer. The
+// write is issued the instant after the submit, so on an unordered update it
+// lands first and the kernel paints over it; update() waits for the submission
+// and the host's bytes are the ones left standing.
+//
+// The marker is a value the kernel cannot produce - it sums at most a few
+// hundred sines - so a slot holding it came from the host and a slot that does
+// not came from the kernel, with nothing in between to be unsure about.
+auto tHostUpdateWinsOverAnInFlightKernel =
+    test("CommandBufferWait/aHostUpdateWinsOverAnInFlightKernel") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto markerCount = 1 << 10;
+    constexpr auto marker = 4242.0f;
+
+    auto output = makeOutput(slowElements);
+
+    auto slow = SlowKernel {};
+    slow.output = output;
+    slow.prepare();
+
+    auto commands = device.makeCommandBuffer();
+
+    dispatchSlowWork(commands, slow);
+    commands.submit();
+
+    auto markers = Vector<float> {};
+    markers.assign(markerCount, marker);
+
+    output.update(markers.data(), (std::int64_t) floatBytes * markerCount);
+
+    commands.wait();
+
+    auto values = Vector<float>(markerCount);
+    commands.read(output, values.data(), (std::int64_t) floatBytes * markerCount);
+
+    for (auto i = 0; i < markerCount; ++i)
+        check(values[i] == marker);
+};
+
+// The scoped twin, and the case Buffer::update cannot serve: the host writes a
+// buffer the *first* command buffer filled, while a second and longer one
+// submitted after it is still running. Buffer::update would wait for that
+// second one too, which is the overlap a pipelined loop exists for;
+// CommandBuffer::update waits for its own and returns.
+//
+// Both halves are numbers rather than timings. The markers say the write landed
+// after the kernel that was filling those bytes, and the trailing buffer still
+// being incomplete says the wait did not reach past this one - it is several
+// times the work, submitted behind it, so it cannot have finished in the time a
+// four-kilobyte memcpy took.
+auto tScopedUpdateWaitsForOneBufferOnly =
+    test("CommandBufferWait/aScopedUpdateWaitsForOneBufferOnly") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto markerCount = 1 << 10;
+    constexpr auto marker = 777.0f;
+    constexpr auto trailingPasses = 4;
+
+    auto output = makeOutput(slowElements);
+    auto trailingOutput = makeOutput(slowElements);
+
+    auto slow = SlowKernel {};
+    slow.output = output;
+    slow.prepare();
+
+    auto trailingSlow = SlowKernel {};
+    trailingSlow.output = trailingOutput;
+    trailingSlow.prepare();
+
+    auto commands = device.makeCommandBuffer();
+    dispatchSlowWork(commands, slow);
+    commands.submit();
+
+    auto trailing = device.makeCommandBuffer();
+
+    for (auto pass = 0; pass < trailingPasses; ++pass)
+        dispatchSlowWork(trailing, trailingSlow);
+
+    trailing.submit();
+
+    auto markers = Vector<float> {};
+    markers.assign(markerCount, marker);
+
+    commands.update(output, markers.data(), (std::int64_t) floatBytes * markerCount);
+
+    check(commands.isComplete());
+    check(!trailing.isComplete());
+
+    auto values = Vector<float>(markerCount);
+    commands.read(output, values.data(), (std::int64_t) floatBytes * markerCount);
+
+    for (auto i = 0; i < markerCount; ++i)
+        check(values[i] == marker);
+
+    trailing.wait();
 };

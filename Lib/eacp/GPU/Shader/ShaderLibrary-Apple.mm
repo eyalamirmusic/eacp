@@ -15,7 +15,10 @@ struct ShaderLibrary::Native
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
-        if (metalDevice == nil)
+        // An empty source is a build something declined to make, and whatever
+        // declined it has already said why - see ComputeProgram::prepare. There
+        // is nothing here to compile and nothing to report.
+        if (metalDevice == nil || source.source.empty())
             return;
 
         NSError* error = nil;

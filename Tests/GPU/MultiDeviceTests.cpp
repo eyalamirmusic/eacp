@@ -15,6 +15,13 @@ using namespace eacp::GPU;
 // behind the UI's frames. Metal has always honoured it - Device::Native holds
 // its MTLCommandQueue as an instance member - and it is the D3D12 backend these
 // caught, where every Device forwarded to one process-wide context.
+//
+// These are also the positive half of Device::assertOwningThread: every case
+// below runs a whole chain - buffers, pipeline, command buffer, read-back - on
+// the thread that made the Device, and a worker reaching Device::shared() to
+// compile a kernel does not take ownership of it. There is no negative case and
+// there cannot be one here: the rule is an assert, and an assert that fires
+// aborts the run rather than failing a test.
 
 namespace
 {
