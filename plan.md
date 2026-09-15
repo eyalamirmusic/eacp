@@ -517,7 +517,7 @@ Linux once `DemoPlugin`'s `ShapeLayerView` content is replaced with a
 
 **Docs, with each stage:** `CLAUDE.md` ("The Linux Backend"), README's module
 table and the Linux paragraph, `GPU/README.md`'s surface section, the CI
-`apt-get` line (`libxcb1-dev libxcb-xkb1-dev libxkbcommon-x11-dev
+`apt-get` line (`libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev
 libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev
 xvfb`), the `Dockerfile`.
 

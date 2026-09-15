@@ -67,7 +67,7 @@ RUN apt-get update \
         libxcb-icccm4-dev \
         libxcb-randr0-dev \
         libxcb-xfixes0-dev \
-        libxcb-xkb1-dev \
+        libxcb-xkb-dev \
         libxcb-xtest0-dev \
         libxcb1-dev \
         libxkbcommon-dev \

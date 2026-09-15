@@ -19,7 +19,7 @@ if (NOT TARGET eacp-x11)
         message(FATAL_ERROR
                 "A Linux build needs the xcb client libraries, and they were "
                 "not found. On Debian/Ubuntu:\n"
-                "  sudo apt-get install libxcb1-dev libxcb-xkb1-dev "
+                "  sudo apt-get install libxcb1-dev libxcb-xkb-dev "
                 "libxkbcommon-x11-dev libxcb-randr0-dev libxcb-xfixes0-dev "
                 "libxcb-cursor-dev libxcb-icccm4-dev pkg-config")
     endif ()

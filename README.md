@@ -206,7 +206,7 @@ device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
 silently skips into a suite that fails. The Wayland, X11 and text halves are
 found the way libcurl is, by pkg-config against the machine's own libraries:
 `libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
-libdecor-0-dev libxcb1-dev libxcb-xkb1-dev libxkbcommon-x11-dev
+libdecor-0-dev libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev
 libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev
 libfreetype-dev libharfbuzz-dev libfontconfig-dev pkg-config` on Debian/Ubuntu,
 `weston` and `xvfb` to run the window tests without a desktop
