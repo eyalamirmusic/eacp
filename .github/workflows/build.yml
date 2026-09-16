@@ -150,8 +150,8 @@ jobs:
       # run for real, and EACP_REQUIRE_DISPLAY turns their self-skip into a
       # failure so a lane whose compositor never came up cannot report green.
       # The build above still ran headless, which is what NanoTest's build-time
-      # test discovery wants. The X11 suite is left out here: it prefers X11 by
-      # its own default, and there is no X server in this session.
+      # test discovery wants. The two X11 suites are left out here: each prefers
+      # X11 by its own default, and there is no X server in this session.
       - name: Test under Weston
         if: matrix.vulkan
         env:
@@ -159,7 +159,7 @@ jobs:
           EACP_REQUIRE_DISPLAY: '1'
         run: >
           Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
-          -E '^X11/'
+          -E '^(X11|EmbeddedView)/'
 
       # The same windows on the other window system: an Xvfb with no window
       # manager, which is the harshest X11 target there is, and the swapchain
@@ -172,7 +172,7 @@ jobs:
           EACP_REQUIRE_DISPLAY: '1'
         run: >
           Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
-          -R '^(X11|Present)/'
+          -R '^(X11|EmbeddedView|Present)/'
 
   build-ios:
     name: iOS Simulator

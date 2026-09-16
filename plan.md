@@ -12,8 +12,8 @@ counts are estimates, not commitments.
 | 0 — hosted event loop | **done** 2026-09-07 | `HostedLoopTests-Linux.cpp`, 16 cases; Core suite 212/212 |
 | 1 — carve the seam | **done** 2026-09-07 | full headless suite 1568/1568, Wayland/Present on Mutter 28/28 |
 | 2 — X11 toplevel | **done** 2026-09-08 | `X11WindowTests` 27 cases (13 of them input, on Xvfb only); full suite 1596/1596; `with-xvfb` X11+Present 36/36 ×5; XWayland and Mutter green |
-| 3 — EmbeddedView | next | `X11Connection` is already ungated on the preference; `LinuxWindowNative` is the interface to implement |
-| 4 — in-tree fake host | | |
+| 3 — EmbeddedView | **done** 2026-09-15 | `EmbeddedViewTests` 17 cases (2 of them seat-driven, on Xvfb only), plus `Present/anEmbeddedViewPresentsIntoItsHost`; headless suite 1670/1670; `with-xvfb` X11+EmbeddedView+Present 54/54 ×6; XWayland green |
+| 4 — in-tree fake host | **done** 2026-09-15 | `X11Host`/`X11Plugin` over a four-function C ABI: 346 frames in 6 s on bare Xvfb over lavapipe, 290 in 5 s under XWayland on a real GPU |
 | 5 — parity and polish | | |
 | 6 — thin eacp host bridge | | |
 
@@ -85,6 +85,8 @@ API for a plugin already: `setBounds`, `setSize`, `setVisible`,
 itself). It is gated by `EACP_HAS_CONTEXT`, which Linux lacks. That gate is
 an accident of history: embedding is a windowing feature, not a 2D-drawing
 one, and on Linux the content of an embedded surface is a `GPUView` tree.
+[Stage 3 moved it to `EACP_HAS_DRAW`; the rest of this section is the
+snapshot it was written as.]
 
 **Vulkan.** `FindVulkanBackend.cmake` defines `VK_USE_PLATFORM_WAYLAND_KHR`
 only; the instance enables `VK_KHR_wayland_surface` when offered. The
@@ -300,6 +302,47 @@ gives nothing back — the same thing JUCE and iPlug do, and the reason typing
 into a plugin works in one DAW and not another is the DAW, not the plugin.
 No XEmbed protocol: none of the three hosts speaks it.
 
+*As built (stage 3).* `Window/EmbeddedView-Linux.cpp` is `EmbeddedView::Native`
+and an `X11WindowSurface`, and nothing else — no `LinuxWindowNative`, no
+`WindowOptions`, no `WindowEvents`: there is no `Window` above it, and what a
+toplevel decides for itself the host decides here. The child is an
+`xcb_create_window` InputOutput window of the host's id, `XCB_COPY_FROM_PARENT`
+in depth and visual because those are the only ones a child of it may have,
+with no background pixmap so what the host painted stands until our own content
+does, and the same event mask a toplevel selects — which moved to
+`X11Connection-Linux.h` as `x11WindowEventMask` so both take it from one place.
+Being an `X11WindowSurface` is the whole of the integration: the base
+constructor installs the X11 `ViewSurfaceBackend`, so a `GPUView` inside
+presents through stage 2's child-window path with nothing in `eacp-gpu` changed,
+and the seat reaches the content view through the same `X11Input`.
+`Threads::attachCurrentThreadAsMain()` is the first thing the constructor does,
+as on Windows, before anything can defer work. The host's window is watched,
+never owned: `StructureNotify` is selected on it with
+`xcb_change_window_attributes` — skipped where the host is a window of this
+copy's, whose own mask that would replace — and the id goes into a second list
+on the connection (`watchForeignWindow`/`unwatchForeignWindow`, dispatched after
+the window's own target and over a copy of the list, since a watcher may take
+itself out from inside its handler), because registering a foreign id in the
+window map would take that window's routing away from it. The parent's
+`ConfigureNotify` sizes the surface until `setBounds` is first called and never
+after, with `xcb_get_geometry` on the parent at construction as the starting
+size and the options' size the fallback; a `ReparentNotify` moves the watch to
+the new parent, and a size the host configures onto the child itself is adopted
+whether or not anything is being followed. Only the child's own `DestroyNotify`
+is acted on: the server hands a departed client's resource-id base straight back
+out, so a stale notice for a previous host would otherwise kill a live surface
+(a real failure while the tests were being written). `setPixelsPerPoint` is the
+whole of the scale — 0 means 1, X11 having no per-window one to read — and
+re-derives the content's point size and, for a placed surface, the pixels it
+covers, rounded outwards as on Windows so no seam of the host's window is left
+showing; `X11Input` now divides an event position by the window's scale
+(identity on a toplevel) and multiplies a lock warp back up. Keyboard focus is
+stage 2's focus-on-click unchanged. Connection loss and the child's
+`DestroyNotify` both end in `markWindowGone`, which is also the surfaceless
+object a null `x11Connection()`, `EACP_HEADLESS=1` or a null host id give from
+the start. `Graphics.h` moved `EmbeddedView` out of its `EACP_HAS_CONTEXT`
+block.
+
 **D7 — X11 frame pacing is a pacer, not a compositor signal.** X11 has no
 `wl_surface.frame`. The X11 `ViewSurfaceBackend::requestFrame` arms a
 one-shot on a per-connection pacer running at the RandR mode's rate (the
@@ -321,9 +364,18 @@ pacer is one process-wide `X11FramePacer`, leaked like the connection: a
 (24–480 Hz, else 60 — Xvfb reports no mode) that moves the armed set into a
 batch per tick, clears `frameCallbackPending` and fires `onFrameDone` per
 record; a re-arm from inside lands in the next batch, a native destroyed
-while armed is nulled out of the in-flight batch, and a tick that ends with
-nothing armed drops the timer through a `callAsync`, so an idle connection
-runs no thread.
+while armed is nulled out of the in-flight batch, and the timer is dropped as
+soon as nothing is armed — synchronously from `disarm` when the last presenting
+view goes, through a `callAsync` only when it is a tick itself that ends with
+nothing armed — so an idle connection runs no thread and no pacing thread
+outlives the last presenting view. Stage 3 needed the synchronous half: a
+plugin's `close()` is followed by `dlclose` with no pump in between, and a
+`Threads::Timer` still ticking into an unmapped image is the classic plugin
+crash. The same stage added `X11WindowSurface::inferiorsGone`, set from a
+`DestroyNotify` the server sent rather than one we asked for (a host taking its
+own window down, a `KillClient`), so a view's child window is unregistered
+without a `DestroyWindow` for what the server already reaped — the toplevel had
+the same latent `BadWindow`.
 
 **D8 — X11 is a mandatory Linux dependency, like Wayland.** One
 `CMake/FindX11Backend.cmake` producing `eacp-x11` (pkg-config: `xcb`,
@@ -357,6 +409,28 @@ four calls above (`EmbeddedView`, `setPixelsPerPoint`, `getEventLoopFd`,
 `pumpEventLoop`) plus `attachCurrentThreadAsMain`. A VST3/CLAP/LV2 wrapper
 lives in the plugin project. The demo in stage 4 stands in for one with a
 four-function C ABI so the whole path is exercised in-tree.
+
+*As built (stage 4).* About 330 lines under `Apps/Plugins`, and nothing in
+`Lib`: `X11WindowNative::getHandle()` already hands the toplevel's
+`xcb_window_t` back through `Window::getHandle()`, which is the whole of what a
+host has to give. `Apps/CMakeLists.txt` enters `Plugins` under
+`EACP_HAS_CONTEXT OR LINUX` and `Apps/Plugins/CMakeLists.txt` splits itself in
+two — `DemoPlugin`/`PluginHost` on the 2D tier, `X11Plugin`/`X11Host` on
+`LINUX AND EACP_HAS_GPU`. The four are `eacp_x11_plugin_{open,loop_fd,pump,close}`,
+declared once in `Apps/Plugins/X11PluginABI.h` as function-pointer aliases
+beside their symbol names, with the id an `unsigned long` exactly as
+`clap_window_t::x11` and VST3's `"X11EmbedWindowID"` hand one out.
+`EACP_PLUGIN_EXPORT` over the tree's global `-fvisibility=hidden` and
+`CMAKE_POSITION_INDEPENDENT_CODE` was the whole of the isolation work — `nm -D`
+shows those four `T` symbols and no other strong one — plus `--no-undefined` on
+the plugin's own link, because a MODULE links with a missing platform source and
+only fails at `dlopen`. There is no fifth function for resizing: the surface
+follows the parent's `ConfigureNotify`, and `--exit-after-ms` drives an
+unattended run that resizes the host window once to prove it. The host sets
+`EACP_WINDOW_SYSTEM=x11` in `main`, before either copy opens a window and reads
+the preference. Measured: 346 presented frames in 6 s on bare Xvfb over lavapipe
+and 290 in 5 s under XWayland on a real GPU, from a 60 Hz `Timer` in the plugin
+copy reaching the host only through `getEventLoopFd()`.
 
 **D10 — The thin eacp host (`PluginHost` + `DemoPlugin`) is a separate,
 optional bridge.** Under a foreign host the plugin registers its fd and
@@ -496,7 +570,30 @@ an `EmbeddedView` on the id, pumps through `getEventLoopFd()` from its own
 `setBounds`/`setSize`, that a `GPUView` inside presents, that
 `setPixelsPerPoint` changes the content view's point size, that the click
 takes focus and a key arrives. `Graphics.h` and README/CLAUDE.md move
-`EmbeddedView` to the draw tier. ~400 lines, ~250 of tests.
+`EmbeddedView` to the draw tier. ~400 lines, ~250 of tests. *Landed:
+`Tests/Graphics/EmbeddedViewTests-Linux.cpp`, 17 cases in a binary of its own
+with a plain `main` — the test creates the parent window on an xcb connection of
+its own and drives eacp only through `getEventLoopFd()`/`pumpEventLoop()`, which
+is also why no case can sit inside `Apps::run` — of which 2 drive the seat
+through XTest and skip again under XWayland, and one,
+`EmbeddedView/aSurfaceWithNoHostIdIsHeadlessAndSafe`, needs no server at all
+and asserts the content view is still laid out at the surface's point size, the
+one thing a surfaceless surface got wrong on the first pass. A review pass
+added four more — a second `setContentView`, two surfaces on one host, the host
+destroying its own window under two presenting views, and a `/proc/self/task`
+count proving no pacer thread survives the last presenting view — and made the
+cases that read geometry back wait for the host window to settle first, so they
+hold under a window manager as well as under none.
+`Present/anEmbeddedViewPresentsIntoItsHost` in `Tests/GPU` is the swapchain
+half, hosted by a `Graphics::Window` of the same copy and skipped off the X11
+lane. `EmbeddedView/` joins the `eacp-linux-display` `RESOURCE_LOCK` and both CI
+filters — out under Weston, in under Xvfb. Run as one process the binary logs a
+few harmless `X11: protocol error 3` lines from the two-client teardown race;
+under ctest each case is its own process. Two desktop-only failures under
+XWayland and mutter — `X11/windowComesUpAtItsConfiguredSize` and
+`Present/renderToImageWorksWhilePresenting`, both asserting an exact size mutter
+widens by a pixel — predate this stage, pass on Xvfb, and did not reproduce in
+the final runs.*
 
 **Stage 4 — in-tree fake host.** `Apps/Plugins/X11Host` (Linux only): a
 standalone eacp app whose window is X11 by override, exposing its content
@@ -504,7 +601,15 @@ view's id to a `dlopen`ed `X11Plugin.so` through a C ABI of four functions —
 `open(parent_id, scale)`, `loop_fd()`, `pump()`, `close()` — that mirrors CLAP
 posix-fd/gui exactly, so the plugin's `Timer`-driven `GPUView` animates from
 the host's loop source. Doubles as the manual test against a real DAW
-(REAPER and Bitwig both run natively on Linux). ~300 lines.
+(REAPER and Bitwig both run natively on Linux). ~300 lines. *Landed: about 330
+lines, `Apps/Plugins/X11Host` and `Apps/Plugins/X11Plugin` over
+`X11PluginABI.h`. The id handed over is the host toplevel's own rather than a
+content view's — `Window::getHandle()` already returned it — and each copy
+resolves its own eacp, the executable exporting nothing and `DynamicLibrary`
+opening the module `RTLD_LOCAL`; the host takes the descriptor out of its loop
+before `Plugins::unload` defers the close. Not
+verified by anyone yet: a run under `VK_LAYER_KHRONOS_validation`, which is not
+installed on the dev machine, and a real DAW.*
 
 **Stage 5 — parity and polish.** Clipboard (D8's `X11Clipboard`), XI2 raw
 motion for mouse lock and smooth scrolling, cursor themes, `Xft.dpi` as the

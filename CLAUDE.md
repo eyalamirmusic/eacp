@@ -14,13 +14,15 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 Platform coverage splits on whether a module draws, decided once in the
 top-level `CMakeLists.txt` by six capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
-(`Graphics` and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`, `GPUWidgets`,
-`Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`, `Apps/UI` and the
-GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the platform's own 2D tier —
-`Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the
-retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
-`SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG`, `Apps/UI/SVGDocument`
-and the GPU examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
+(`Graphics` — `EmbeddedView` with it, since embedding is a windowing feature
+rather than a drawing one — and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`,
+`GPUWidgets`, `Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`,
+`Apps/UI` and the GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the
+platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
+`TextInput`, the retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
+`SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`'s 2D half
+(`DemoPlugin`/`PluginHost`), `Apps/SVG`, `Apps/UI/SVGDocument` and the GPU
+examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
 `CameraView`, `Video`, `VideoView`, the last two additionally off on iOS) and
 `EACP_HAS_WEBVIEW` (the native `WebView`). The first three are
 `APPLE OR WIN32 OR LINUX` — everywhere graphics builds at all — and stay
@@ -259,12 +261,13 @@ size when not resizable, aspect), `_MOTIF_WM_HINTS` for borderless, a
 taken from the `MapNotify` rather than from the request, `ConfigureNotify` into
 a resize and a real `onMoved` through `xcb_translate_coordinates` — positions
 are real here, unlike Wayland — and `FocusIn`/`FocusOut` into activation. The
-scale is 1 in this stage; `Xft.dpi` is stage 5.
+scale of a toplevel is 1; `Xft.dpi` is stage 5.
 `View/X11ViewSurface-Linux.cpp` makes a presenting view an `xcb_create_window`
 child of the toplevel selecting `EXPOSURE` only, so pointer and key events
 propagate up to the toplevel already in its coordinates, and paces frames from
 a process-wide `X11FramePacer` — a `Threads::Timer` at the RandR mode's rate,
-60 Hz where there is none, dropped again on a tick that leaves nothing armed —
+60 Hz where there is none, dropped as soon as nothing is armed, so no pacing
+thread outlives the last presenting view —
 firing `onFrameDone` where Wayland has `wl_surface.frame`: a pacer, not a
 compositor signal (`plan.md` D7). `Window/X11Input-Linux.cpp` feeds the core
 pointer and key events into the shared state machines, with the keymap taken
@@ -278,7 +281,49 @@ toplevel, mouse lock is `xcb_grab_pointer` plus `xcb_xfixes_hide_cursor` plus a
 warp to the centre with the deltas read back from the warp, held only while the
 window has keyboard focus, and a `ButtonPress` in an unfocused mapped window
 takes focus with `xcb_set_input_focus`. No XI2 and no clipboard yet: both are
-stage 5, as `EmbeddedView` is stage 3.
+stage 5.
+
+Embedding is the other half of the X11 backend and the reason for it.
+`Window/EmbeddedView-Linux.cpp` is an `EmbeddedView::Native` that is an
+`X11WindowSurface` and nothing more — no `LinuxWindowNative`, no options, no
+`WindowEvents`, because there is no `Window` above it and the host decides what
+a toplevel decides for itself. The child is an `xcb_create_window` InputOutput
+window of the host's id, `XCB_COPY_FROM_PARENT` in depth and visual, with no
+background pixmap so the host's own paint stands until ours does, and the same
+`x11WindowEventMask` a toplevel selects (now in `X11Connection-Linux.h`, so both
+take it from one place); being an `X11WindowSurface` is the whole of the
+integration, so a `GPUView` inside presents through the same child-window path
+and the seat reaches the content through the same `X11Input`. The host's window
+is watched, never owned: `StructureNotify` is selected on it — unless it is a
+window of this copy's, whose own mask that would replace — and the id is kept in
+a second list on the connection (`watchForeignWindow`, dispatched after the
+window's own target) rather than in the id map, which would take that window's
+routing away from it. The parent's `ConfigureNotify` sizes the surface until
+`setBounds` is first called and never after, a `ReparentNotify` moves the watch,
+and only the child's own `DestroyNotify` is acted on, since the server hands a
+departed client's ids straight back out; a notice the server sent rather than
+one we asked for sets `X11WindowSurface::inferiorsGone`, so the view children
+the server reaped with it are unregistered without a `DestroyWindow` each. With
+no window at all — no connection, `EACP_HEADLESS=1`, a host id of 0 — the
+surface is surfaceless and its content is still laid out at its point size,
+like a headless toplevel. `setPixelsPerPoint` is the whole of the
+scale (0 means 1 — X11 has none to read) and everything follows from it: the
+pixels the surface covers, rounded outwards so no seam of the host's window
+shows, the points its content is laid out in, and the event positions
+`X11Input` now divides by the window's scale. Keyboard focus is the toplevel's
+rule unchanged — a click inside takes it with `xcb_set_input_focus` and nothing
+gives it back, which is what every Linux plugin does.
+`Tests/Graphics/EmbeddedViewTests-Linux.cpp` is the suite: 17 cases in a binary
+with a plain `main` that plays host itself, its own xcb connection owning the
+parent window and eacp driven only through `getEventLoopFd()`/`pumpEventLoop()`,
+2 of them seat-driven and so Xvfb-only;
+`Present/anEmbeddedViewPresentsIntoItsHost` in `Tests/GPU` is the swapchain
+half. `Apps/Plugins/X11Host` and `Apps/Plugins/X11Plugin` are the in-tree DAW
+stand-in: a host app whose window id crosses a four-function C ABI
+(`Apps/Plugins/X11PluginABI.h` — `open`, `loop_fd`, `pump`, `close`, mirroring
+CLAP's gui and posix-fd extensions) to a `dlopen`ed plugin copy that animates a
+`GPUView` from a 60 Hz `Timer` and reaches the host's loop only through that
+descriptor.
 
 Under both is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
@@ -321,9 +366,10 @@ libfontconfig-dev fonts-dejavu-core fonts-dejavu-extra fonts-droid-fallback
 fonts-noto-color-emoji`.
 
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
-`TextMetrics`, `TextInput`, `EmbeddedView`, the retained layer classes and the
-image codecs are left out of the Linux source list rather than stubbed, and
-with them `SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/Plugins`,
+`TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
+left out of the Linux source list rather than stubbed, and with them
+`SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/Plugins`'s 2D half
+(`DemoPlugin`/`PluginHost`, the X11 pair beside them building on Linux),
 `Apps/SVG`, `Apps/UI/SVGDocument` and the `Apps/GPU` examples that paint a 2D
 overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
@@ -342,12 +388,13 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
-      with-weston ctest --test-dir build-ci-linux --output-on-failure -E '^X11/'
+      with-weston ctest --test-dir build-ci-linux --output-on-failure \
+      -E '^(X11|EmbeddedView)/'
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -v "$PWD":/workspace eacp-ci-linux \
       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-      -R '^(X11|Present)/'
+      -R '^(X11|EmbeddedView|Present)/'
 ```
 
 `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
@@ -362,27 +409,29 @@ wraps a command in a headless Weston session, which is where
 at all — the harshest thing a toplevel meets — exporting
 `EACP_WINDOW_SYSTEM=x11` and `EACP_XVFB_OUTPUT`, which is where
 `X11WindowTests` (27 cases, its own `main` defaulting the same override so the
-binary run by hand on a desktop still tests X11) and the same `Present` cases
-run over `VK_KHR_xcb_surface`. Only the two window suites are filtered in and
-out; everything else already ran under Weston. `EACP_REQUIRE_DISPLAY=1` makes
-those tests fail rather than self-skip without a display server, as
+binary run by hand on a desktop still tests X11), `EmbeddedViewTests` (13, the
+same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
+the X11 suites are filtered in and out; everything else already ran under
+Weston. `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
+without a display server, as
 `EACP_REQUIRE_FONTS=1` does for the font tests. Weston's headless backend has
 no seat, so Xvfb is the first place input is exercised on any lane: 13 of the
-X11 cases drive the server's own pointer and keyboard through XTest, and under
-XWayland — where the compositor owns the seat, so neither XTest nor a warp
+`X11WindowTests` cases and 2 of the embedded ones drive the server's own
+pointer and keyboard through XTest, and under XWayland — where the compositor
+owns the seat, so neither XTest nor a warp
 reaches anything — they self-skip again. A display has one pointer, one
 keyboard, one focus and one clipboard, and with no window manager under Xvfb
 every window a case opens lands on top of the last one and exposes it into a
 repaint, so `Tests/Graphics/CMakeLists.txt` and `Tests/GPU/CMakeLists.txt` read
 the case names back out of the sources (which are `CMAKE_CONFIGURE_DEPENDS`, so
 a renamed case is not silently left unlocked) and give them a `RESOURCE_LOCK`:
-`eacp-linux-display` over every `X11/` and `Present/` case, and
+`eacp-linux-display` over every `X11/`, `EmbeddedView/` and `Present/` case, and
 `eacp-system-clipboard` over the clipboard ones. Each serialises its own set
 under `ctest -j` while the rest of the suite runs beside them.
-`DisplayLinkTests` is a third Linux-only binary and a headless one: it plays
-host to the loop, so `DisplayLink/ticksOnlyWhenPumped` needs a plain `main`
-outside `Apps::run`, which `pumpEventLoop`'s refusal to re-enter would
-otherwise make a no-op.
+`DisplayLinkTests` is a fourth Linux-only binary and a headless one: it plays
+host to the loop, as `EmbeddedViewTests` does, so
+`DisplayLink/ticksOnlyWhenPumped` needs a plain `main` outside `Apps::run`,
+which `pumpEventLoop`'s refusal to re-enter would otherwise make a no-op.
 See `Lib/eacp/GPU/README.md`.
 
 ## Architecture

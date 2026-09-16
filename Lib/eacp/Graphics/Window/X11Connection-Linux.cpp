@@ -476,6 +476,22 @@ void X11Connection::dispatch(const xcb_generic_event_t& event)
     // only the native knows what to make of an event on one.
     if (auto target = findWindow(window); target.windowSurface != nullptr)
         target.windowSurface->handleEvent(event);
+
+    if (!watchers.empty())
+        dispatchToWatchers(event, window);
+}
+
+// After the window's own target, and as well as it: a window of this copy's
+// that an EmbeddedView was parented onto is both, and each has its own reason
+// to hear the event. Over a copy of the list, because a watcher is allowed to
+// take itself out from inside its own handler - and rechecked, because it may
+// have taken another one out with it.
+void X11Connection::dispatchToWatchers(const xcb_generic_event_t& event,
+                                       xcb_window_t window)
+{
+    for (auto watching = watchers; const auto& watcher: watching)
+        if (watcher.window == window && watchers.contains(watcher))
+            watcher.windowSurface->handleEvent(event);
 }
 
 void X11Connection::checkForConnectionLoss()
@@ -511,6 +527,7 @@ void X11Connection::connectionLost()
         surface->onConnectionLost();
 
     windows.clear();
+    watchers.clear();
 }
 
 void X11Connection::flush()
@@ -570,6 +587,19 @@ void X11Connection::unregisterWindow(xcb_window_t window)
 {
     windows.removeIndexesMatching([window](const X11WindowTarget& target)
                                   { return target.window == window; });
+}
+
+void X11Connection::watchForeignWindow(const X11WindowTarget& watcher)
+{
+    unwatchForeignWindow(*watcher.windowSurface);
+
+    watchers.add(watcher);
+}
+
+void X11Connection::unwatchForeignWindow(const X11WindowSurface& surface)
+{
+    watchers.removeIndexesMatching([&surface](const X11WindowTarget& watcher)
+                                   { return watcher.windowSurface == &surface; });
 }
 
 X11WindowTarget X11Connection::findWindow(xcb_window_t window) const

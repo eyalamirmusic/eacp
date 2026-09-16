@@ -76,6 +76,17 @@ bool x11IsWheelButton(uint8_t button)
     return button >= x11WheelUp && button <= x11WheelRight;
 }
 
+// A window's own points, which an event is not: the server measures a pointer
+// in the pixels of the window it is over. The two are the same number on a
+// toplevel, whose scale is 1, and half of one inside an EmbeddedView a host
+// told to put two pixels in a point.
+Point x11PointIn(const X11WindowSurface& window, int16_t x, int16_t y)
+{
+    const auto scale = window.scale > 0.f ? window.scale : 1.f;
+
+    return {(float) x / scale, (float) y / scale};
+}
+
 // A crossing into or out of one of our own child windows is not the pointer
 // leaving, and a grab taking it away is not either.
 bool x11IsRealCrossing(uint8_t mode, uint8_t detail)
@@ -345,7 +356,7 @@ void X11Input::pointerEntered(X11WindowSurface& window,
         return;
 
     setPointerWindow(&window);
-    pointerState.setPosition({(float) event.event_x, (float) event.event_y});
+    pointerState.setPosition(x11PointIn(window, event.event_x, event.event_y));
 
     cursor.setHidden(lockedWindow == &window);
 
@@ -389,7 +400,7 @@ void X11Input::pointerMoved(X11WindowSurface& window,
     if (pointerWindow != &window)
         setPointerWindow(&window);
 
-    const auto moved = Point {(float) event.event_x, (float) event.event_y};
+    const auto moved = x11PointIn(window, event.event_x, event.event_y);
 
     auto delta = Point {};
 
@@ -439,7 +450,7 @@ void X11Input::buttonChanged(X11WindowSurface& window,
         setPointerWindow(&window);
 
     if (lockedWindow != &window)
-        pointerState.setPosition({(float) event.event_x, (float) event.event_y});
+        pointerState.setPosition(x11PointIn(window, event.event_x, event.event_y));
 
     if (x11IsWheelButton(event.detail))
     {
@@ -721,7 +732,9 @@ void X11Input::warpToLockCentre()
     if (lockedWindow == nullptr || !connection.isConnected())
         return;
 
+    // Back into the window's pixels, which is what the server warps in.
     const auto centre = lockCentre();
+    const auto scale = lockedWindow->scale > 0.f ? lockedWindow->scale : 1.f;
 
     xcb_warp_pointer(xcb(),
                      XCB_NONE,
@@ -730,8 +743,8 @@ void X11Input::warpToLockCentre()
                      0,
                      0,
                      0,
-                     (int16_t) centre.x,
-                     (int16_t) centre.y);
+                     (int16_t) std::lround(centre.x * scale),
+                     (int16_t) std::lround(centre.y * scale));
     connection.flush();
 }
 

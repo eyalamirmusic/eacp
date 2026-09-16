@@ -20,17 +20,6 @@ namespace eacp::Graphics
 {
 namespace
 {
-// Everything the toplevel is ever told about, structure and seat alike. A
-// view's child window selects Exposure and nothing else, so the pointer and
-// key events over one propagate up to here already in the toplevel's points.
-constexpr uint32_t x11ToplevelEventMask =
-    XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE
-    | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_PROPERTY_CHANGE
-    | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
-    | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE
-    | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW
-    | XCB_EVENT_MASK_LEAVE_WINDOW;
-
 constexpr uint32_t x11NetWmStateToggle = 2;
 
 // _NET_WM_STATE's source indication: 1 is an ordinary application, which is
@@ -151,7 +140,7 @@ struct X11WindowNative final
         auto window = xcb_generate_id(xcb);
 
         const uint32_t values[] = {x11BackgroundPixel(state.background),
-                                   x11ToplevelEventMask};
+                                   x11WindowEventMask};
 
         xcb_create_window(xcb,
                           XCB_COPY_FROM_PARENT,
@@ -609,6 +598,10 @@ struct X11WindowNative final
 
         if (auto* connection = x11Connection())
             connection->unregisterWindow(getWindow());
+
+        // Before the view surfaces are told: their own windows were inside
+        // this one and the server took them with it.
+        inferiorsGone = true;
 
         markWindowGone();
     }

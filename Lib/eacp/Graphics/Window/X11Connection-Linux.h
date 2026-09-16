@@ -48,6 +48,13 @@ struct X11WindowSurface : LinuxWindowSurface
 
     void setWindow(xcb_window_t window);
 
+    // Set when the server destroyed this window rather than we did - a host
+    // taking its own window down, or a KillClient. Every child window inside
+    // it went with it, so a view surface still holding one unregisters it and
+    // leaves it alone: asking for it to be destroyed again is one BadWindow
+    // per presenting view.
+    bool inferiorsGone = false;
+
     // Every event the connection routed here, a view child's included: only
     // the native knows what one of its own windows means.
     virtual void handleEvent(const xcb_generic_event_t& event);
@@ -60,7 +67,21 @@ struct X11WindowTarget
 
     // Null for the window's own toplevel, set for a view's child window.
     View* view = nullptr;
+
+    bool operator==(const X11WindowTarget&) const = default;
 };
+
+// Everything a window of ours is ever told about, structure and seat alike. A
+// view's child window selects Exposure and nothing else, so the pointer and
+// key events over one propagate up to the window it is in, already in that
+// window's points.
+inline constexpr uint32_t x11WindowEventMask =
+    XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_EXPOSURE
+    | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_PROPERTY_CHANGE
+    | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
+    | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE
+    | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW
+    | XCB_EVENT_MASK_LEAVE_WINDOW;
 
 // What the display and the frame pacer need of the output the windows are on.
 struct X11OutputInfo
@@ -138,6 +159,14 @@ public:
     void unregisterWindow(xcb_window_t window);
     X11WindowTarget findWindow(xcb_window_t window) const;
 
+    // A window somebody else owns that one of ours has to hear about: an
+    // EmbeddedView's host parent, whose ConfigureNotify its child follows.
+    // Apart from the map above because the id is not ours to claim - it may
+    // already be a window of this copy's, and registering it there would take
+    // that window's own events away from it.
+    void watchForeignWindow(const X11WindowTarget& watcher);
+    void unwatchForeignWindow(const X11WindowSurface& surface);
+
     void flush();
 
     // XKB's events name a device rather than a window, so they are routed
@@ -155,6 +184,7 @@ private:
     void prepareForPoll();
     void readAndDispatch();
     void dispatch(const xcb_generic_event_t& event);
+    void dispatchToWatchers(const xcb_generic_event_t& event, xcb_window_t window);
     void reportError(const xcb_generic_error_t& error);
 
     // Fired once, when a poll or a flush says the server has gone.
@@ -172,6 +202,7 @@ private:
     mutable std::optional<X11OutputInfo> primaryOutput;
 
     Vector<X11WindowTarget> windows;
+    Vector<X11WindowTarget> watchers;
 
     int screenNumber = 0;
     int loopFd = -1;

@@ -1513,8 +1513,10 @@ target and reads it back — the path every pixel-comparison test rides — so a
 of `Tests/GPU` (bar the Metal-only `TextureInteropTests.mm`) and
 `Tests/GPUWidgets` run on lavapipe with no display at all; and a `GPUView` in a
 `Graphics::Window` presents through a `VK_KHR_swapchain` over whichever window
-system that window came up on, Wayland or X11. It is built on every Linux
-build, exactly as the Metal and D3D12 backends are on theirs;
+system that window came up on, Wayland or X11 — as does one in an
+`EmbeddedView`, whose surface is an X11 child of a window a host owns, and which
+is the same code path from `createSurface()` down. The backend is built on every
+Linux build, exactly as the Metal and D3D12 backends are on theirs;
 `-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it out.
 
 Notes worth having:

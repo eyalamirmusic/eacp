@@ -69,12 +69,23 @@ public:
 
         // Mid-tick, with this record still waiting its turn: a native
         // destroyed by another record's onFrameDone takes its own entry out of
-        // the batch rather than leaving a dangling one behind.
+        // the batch rather than leaving a dangling one behind, and the tick
+        // itself decides afterwards whether anything is left to pace.
         if (firing != nullptr)
+        {
             std::replace(firing->begin(),
                          firing->end(),
                          &record,
                          static_cast<ViewSurface*>(nullptr));
+            return;
+        }
+
+        // Otherwise the thread goes here and now, not through a callAsync: a
+        // plugin destroys its UI and is dlclosed with no pump of its loop in
+        // between, and a pacing thread that outlives the last presenting view
+        // is a timer ticking into unmapped code (DynamicLibrary.h).
+        if (armed.empty())
+            timer.reset();
     }
 
 private:
@@ -157,7 +168,7 @@ public:
 
         connection->unregisterWindow(child);
 
-        if (!connection->isConnected())
+        if (!connection->isConnected() || window.inferiorsGone)
             return;
 
         xcb_destroy_window(connection->getConnection(), child);

@@ -89,16 +89,17 @@ if (APPLE AND NOT IOS)
     target_link_libraries(GraphicsTests PRIVATE "-framework AppKit")
 endif ()
 
-# Three binaries of their own. The two window suites must NOT be headless,
+# Four binaries of their own. The three window suites must NOT be headless,
 # unlike GraphicsTests, and each needs the raw client library a case reaches
 # for: WaylandWindowTests attaches a wl_shm buffer to a subsurface, and
-# X11WindowTests opens a second connection so what it asserts about a window
-# comes from the server rather than from the backend under test, and drives
-# real pointer and key input into it through XTest.
+# X11WindowTests and EmbeddedViewTests open a second connection so what they
+# assert about a window comes from the server rather than from the backend
+# under test, and drive real pointer and key input into it through XTest.
 #
-# DisplayLinkTests is headless and has a plain main because it plays host to
-# the loop: pumpEventLoop refuses re-entry, so a case inside Apps::run would
-# pump nothing (plan.md stage 0's note).
+# EmbeddedViewTests and DisplayLinkTests have a plain main because they play
+# host to the loop rather than running it: pumpEventLoop refuses re-entry, so a
+# case inside Apps::run would pump nothing (plan.md stage 0's note, and D6 -
+# an embedded surface never runs the loop it is in).
 if (LINUX)
     nano_add_executable(WaylandWindowTests
             NO_MAIN
@@ -125,6 +126,21 @@ if (LINUX)
     if (EACP_XTEST_FOUND)
         target_link_libraries(X11WindowTests PRIVATE PkgConfig::EACP_XTEST)
         target_compile_definitions(X11WindowTests PRIVATE EACP_HAS_XTEST=1)
+    endif ()
+
+    # The one suite that plays host to eacp: its own connection owns the parent
+    # window the surface is embedded in, and XTest is how a click reaches it.
+    nano_add_executable(EmbeddedViewTests
+            NO_MAIN
+            SOURCES
+                EmbeddedViewTests-Linux.cpp
+            TARGETS eacp-graphics)
+
+    target_link_libraries(EmbeddedViewTests PRIVATE eacp-x11)
+
+    if (EACP_XTEST_FOUND)
+        target_link_libraries(EmbeddedViewTests PRIVATE PkgConfig::EACP_XTEST)
+        target_compile_definitions(EmbeddedViewTests PRIVATE EACP_HAS_XTEST=1)
     endif ()
 
     nano_add_executable(DisplayLinkTests
@@ -164,7 +180,8 @@ if (LINUX AND NOT CMAKE_CROSSCOMPILING)
             TEST_INCLUDE_FILES "${wayland_clipboard_lock_file}")
 endif ()
 
-# Everything that opens a window on the X11 lane takes one lock. There is no
+# Everything that opens a window on the X11 lane takes one lock, the embedded
+# surfaces included: each of those maps a host window of its own. There is no
 # window manager under Scripts/with-xvfb, so every window a case opens lands at
 # the same place and over whatever is already there: the case underneath gets
 # an Expose on its presenting child and repaints, which is a frame nobody asked
@@ -176,10 +193,14 @@ endif ()
 # rather than left unlocked until the next reconfigure.
 if (LINUX AND NOT CMAKE_CROSSCOMPILING)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/X11WindowTests-Linux.cpp")
+            "${CMAKE_CURRENT_SOURCE_DIR}/X11WindowTests-Linux.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/EmbeddedViewTests-Linux.cpp")
 
     file(STRINGS X11WindowTests-Linux.cpp x11_test_lines
             REGEX "\"X11/[^\"]+\"")
+
+    file(STRINGS EmbeddedViewTests-Linux.cpp embedded_test_lines
+            REGEX "\"EmbeddedView/[^\"]+\"")
 
     set(x11_lock_file "${CMAKE_CURRENT_BINARY_DIR}/X11Serialisation.cmake")
     file(WRITE "${x11_lock_file}" "")
@@ -189,6 +210,14 @@ if (LINUX AND NOT CMAKE_CROSSCOMPILING)
 
         file(APPEND "${x11_lock_file}"
                 "set_tests_properties(\"${x11_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK eacp-linux-display)\n")
+    endforeach ()
+
+    foreach (line IN LISTS embedded_test_lines)
+        string(REGEX MATCH "EmbeddedView/[^\"]+" embedded_test "${line}")
+
+        file(APPEND "${x11_lock_file}"
+                "set_tests_properties(\"${embedded_test}\" PROPERTIES\n"
                 "        RESOURCE_LOCK eacp-linux-display)\n")
     endforeach ()
 

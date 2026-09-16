@@ -145,6 +145,13 @@ void showWith(Graphics::Window& window, Graphics::View& view)
     window.setContentView(view);
     window.setVisible(true);
 }
+
+// An X11 window handle is an id an EmbeddedView can be a child of; a Wayland
+// one is a wl_surface and nothing may be embedded in it.
+bool embeddingIsPossible()
+{
+    return getEnvValue("EACP_WINDOW_SYSTEM") == "x11";
+}
 } // namespace
 
 auto tWindowPresentsAFrame = test("Present/aShownWindowPresentsAFrame") = []
@@ -371,6 +378,39 @@ auto tTeardownAndRebuild = test("Present/aWindowCanBeReplaced") = []
     check(pumpUntil(presentTimeout, [&] { return second.renders > 0; }),
           "a window built after one was destroyed never presented");
     check(second.everyFrameWasValid);
+};
+
+// The same swapchain, in a surface inside somebody else's window. Only on the
+// X11 lane: an embedded surface is an X11 child of the id its host handed over
+// (plan.md D6), and a Wayland toplevel's handle is a wl_surface rather than an
+// id. Tests/Graphics/EmbeddedViewTests is where the surface itself is checked,
+// with a host on a connection of its own; here the host is a Window of ours,
+// which is all a swapchain needs to be presented into.
+auto tEmbeddedViewPresents = test("Present/anEmbeddedViewPresentsIntoItsHost") = []
+{
+    if (noDeviceOrDisplay() || !embeddingIsPossible())
+        return;
+
+    auto host = Graphics::Window {windowSized(320, 240)};
+    host.setVisible(true);
+
+    check(pumpUntil(presentTimeout, [&] { return host.isVisible(); }),
+          "the host window never came up");
+
+    auto view = CountingView {};
+    auto embedded = Graphics::EmbeddedView {host.getHandle()};
+    embedded.setContentView(view);
+
+    check(pumpUntil(presentTimeout, [&] { return view.renders > 0; }),
+          "no frame was presented into the embedded surface");
+
+    check(view.everyFrameWasValid, "a drawable Frame reported itself invalid");
+    check(view.lastWidth > 0);
+    check(view.lastHeight > 0);
+
+    // The surface filled its host, so the swapchain is the host's size.
+    check(matchesPixels(view.lastWidth, 320.f, 1.f));
+    check(matchesPixels(view.lastHeight, 240.f, 1.f));
 };
 
 auto tNoSurfaceStillSnapshots = test("Present/aViewWithNoSurfaceStillSnapshots") = []

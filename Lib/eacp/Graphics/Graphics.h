@@ -7,6 +7,7 @@
 #include "Tray/TrayIcon.h"
 #include "View/ViewList.h"
 #include "Window/Display.h"
+#include "Window/EmbeddedView.h"
 #include "Window/Window.h"
 
 // eacp-graphics defines this PUBLIC for every consumer, so a translation unit
@@ -23,5 +24,4 @@
     #include "Layers/LayerViews.h"
     #include "Primitives/TextMetrics.h"
     #include "Widgets/TextInput.h"
-    #include "Window/EmbeddedView.h"
 #endif

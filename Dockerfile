@@ -110,12 +110,13 @@ RUN printf '%s\n' \
 # CI Vulkan lane runs, copied out of the tree so it is on PATH here:
 #
 #   docker run --rm -v "$PWD":/workspace eacp-ci-linux \
-#       with-weston ctest --test-dir build-ci-linux --output-on-failure -E '^X11/'
+#       with-weston ctest --test-dir build-ci-linux --output-on-failure \
+#       -E '^(X11|EmbeddedView)/'
 #
-# The X11 suite is filtered out: it prefers X11 by its own default and there is
-# no X server in a Weston session, so under EACP_REQUIRE_DISPLAY=1 its
-# X11/aServerIsPresentWhenRequired would fail rather than self-skip. The two
-# steps together are what build.yml runs.
+# The two X11 suites are filtered out: each prefers X11 by its own default and
+# there is no X server in a Weston session, so under EACP_REQUIRE_DISPLAY=1
+# their aServerIsPresentWhenRequired cases would fail rather than self-skip.
+# The two steps together are what build.yml runs.
 #
 # EACP_HEADLESS is deliberately not set by the script: a test binary that
 # wants to open windows runs with it unset (or 0), and EACP_REQUIRE_DISPLAY=1
@@ -129,7 +130,7 @@ COPY Scripts/with-weston /usr/local/bin/with-weston
 #
 #   docker run --rm -v "$PWD":/workspace eacp-ci-linux \
 #       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-#       -R '^(X11|Present)/'
+#       -R '^(X11|EmbeddedView|Present)/'
 COPY Scripts/with-xvfb /usr/local/bin/with-xvfb
 
 WORKDIR /workspace

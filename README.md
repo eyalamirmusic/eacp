@@ -103,17 +103,20 @@ properties a window manager reads, with an `xcb_create_window` child per
 presenting view, the keymap taken from the server through `xkbcommon-x11` so
 layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
 grab and a warp to the centre, and frames paced by a timer at the RandR mode's
-rate because X11 has no frame callback; a position is a real one there, and the
-clipboard is not there yet. Both backends sit behind one window-system seam
+rate because X11 has no frame callback; a position is a real one there, an
+`EmbeddedView` is an `xcb_create_window` child of a window id its host owns, and
+the clipboard is not there yet. Both backends sit behind one window-system seam
 (`LinuxWindowSystem`, `LinuxWindowNative`, `LinuxWindowSurface`,
 `ViewSurfaceBackend`, `LinuxInput`, `LinuxSeat`) and both are compiled into
 every copy, so which one a window gets is a runtime decision:
 `EACP_WINDOW_SYSTEM=wayland|x11` overrides, and otherwise a plugin copy takes
 X11 while a standalone app takes Wayland when a compositor answers and X11 when
-none does. That, together with an event loop that is one `epoll` descriptor
-with a pump (`getEventLoopFd`, `pumpEventLoop`) a plugin host's own loop can
-drive, is what audio-plugin hosting on Linux needs. A Vulkan backend under it:
-everything from `Device` to `RenderPass` is real, the drawable `Frame` renders
+none does. That embedded surface, together with an event loop that is one `epoll`
+descriptor with a pump (`getEventLoopFd`, `pumpEventLoop`) a plugin host's own
+loop can drive, is what audio-plugin hosting on Linux needs —
+`Apps/Plugins/X11Host` and `X11Plugin` run the whole path in-tree, a window id
+and four C functions apart. A Vulkan backend under it: everything from `Device`
+to `RenderPass` is real, the drawable `Frame` renders
 into a swapchain image and presents it, and `GPUView` owns that swapchain —
 mailbox or FIFO, frames in flight, rebuilt on resize and `OUT_OF_DATE`, with
 continuous rendering paced by the compositor's frame callbacks on Wayland and
@@ -127,9 +130,9 @@ inside one `GPUView` through the coverage rasterizer and the glyph atlas.
 What Linux still does not have is the platform's own 2D tier. There is no
 `Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
 recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
-them, `TextInput`, `EmbeddedView`, the image codecs (an `Image` is a pixel
-container there, and loading a file yields an invalid one), menus and the tray
-are absent or honest stubs. `SVG`'s native-layer builder and the `SVG::parse`
+them, `TextInput`, the image codecs (an `Image` is a pixel container there, and
+loading a file yields an invalid one), menus and the tray are absent or honest
+stubs. `SVG`'s native-layer builder and the `SVG::parse`
 in front of it go with them; the same document parses and draws through
 `SVGComponent`. Under `EACP_HEADLESS=1`, or with neither display server to
 reach, every window is built and never shown and every GPU test still runs on
@@ -147,10 +150,10 @@ a new port reaches them one at a time; the other three hang off
 
 | Variable | On when | Gates |
 | --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics`, and `Tests/Graphics` |
+| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`'s 2D half, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 

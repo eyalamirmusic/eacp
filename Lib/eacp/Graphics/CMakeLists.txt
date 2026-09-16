@@ -137,6 +137,7 @@ elseif (UNIX)
             View/WaylandViewSurface-Linux.cpp
             View/X11ViewSurface-Linux.cpp
             Window/Display-Linux.cpp
+            Window/EmbeddedView-Linux.cpp
             Window/HeadlessWindow-Linux.cpp
             Window/LinuxInput-Linux.cpp
             Window/LinuxWindowNative-Linux.cpp
