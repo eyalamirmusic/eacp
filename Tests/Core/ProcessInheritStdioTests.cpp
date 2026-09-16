@@ -105,3 +105,33 @@ auto tStreamsWhileRunning = test("Process/inheritStdio/streamsWhileRunning") = [
     check(sawItLive);
     std::filesystem::remove(file);
 };
+
+// noWindow only changes how the child is created, never where its output
+// goes: a capturing child still lands in output(), an inheriting one still
+// writes through.
+auto tNoWindowStillCaptures = test("Process/noWindow/stillCaptures") = []
+{
+    auto options = StdioCapture::echoCommand("no-window-captured");
+    options.noWindow = true;
+    auto result = Proc::run(std::move(options));
+
+    check(result.exitCode == 0);
+    check(contains(result.output, "no-window-captured"));
+};
+
+auto tNoWindowStillWritesThrough = test("Process/noWindow/stillWritesThrough") = []
+{
+    const auto file = tempPath("eacp-no-window-through.txt");
+    auto result = Proc::ProcessResult {};
+    {
+        auto redirect = StdioCapture::StdoutToFile {file};
+        auto options = StdioCapture::echoCommand("no-window-through");
+        options.captureOutput = false;
+        options.noWindow = true;
+        result = Proc::run(std::move(options));
+    }
+
+    check(result.exitCode == 0);
+    check(contains(contentsOf(file), "no-window-through"));
+    std::filesystem::remove(file);
+};

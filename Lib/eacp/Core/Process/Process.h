@@ -30,6 +30,12 @@ struct ProcessOptions
     // soon after (a detached child that outlives a still-running launcher is
     // not reaped on POSIX until the launcher exits).
     bool detached = false;
+
+    // Windows only: the child is created with CREATE_NO_WINDOW, so a
+    // console-subsystem child started from a GUI process does not pop a console
+    // window of its own. Ignored for detached launches, which already come
+    // without a console.
+    bool noWindow = false;
 };
 
 struct ProcessResult
