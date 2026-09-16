@@ -66,6 +66,25 @@ uint32_t x11BackgroundPixel(Color colour)
     return (channel(colour.r) << 16) | (channel(colour.g) << 8) | channel(colour.b);
 }
 
+// The server measures a toplevel in pixels and the framework in points, so
+// every size and every position crossing that line is converted here and
+// rounded once, at the crossing. A window of at least one pixel, because the
+// protocol has no zero-sized one.
+int x11PixelSize(float points, float scale)
+{
+    return std::max((int) std::lround(points * scale), 1);
+}
+
+int x11PixelOrigin(float points, float scale)
+{
+    return (int) std::lround((double) points * (double) scale);
+}
+
+int x11PointSize(int pixels, float scale)
+{
+    return std::max((int) std::lround((double) pixels / (double) scale), 1);
+}
+
 int x11WholePoints(float points)
 {
     return std::max((int) std::lround(points), 1);
@@ -96,6 +115,9 @@ struct X11WindowNative final
 
         onKeyboardFocus = [this](bool focused) { state.setActive(focused); };
         onConnectionLost = [this] { connectionLost(); };
+
+        if (auto* connection = x11Connection())
+            scale = connection->getScale();
 
         createWindow();
     }
@@ -140,16 +162,16 @@ struct X11WindowNative final
         auto window = xcb_generate_id(xcb);
 
         const uint32_t values[] = {x11BackgroundPixel(state.background),
-                                   x11WindowEventMask};
+                                   connection->getWindowEventMask()};
 
         xcb_create_window(xcb,
                           XCB_COPY_FROM_PARENT,
                           window,
                           screen->root,
-                          x11ClampPosition(std::lround(state.position.x)),
-                          x11ClampPosition(std::lround(state.position.y)),
-                          x11ClampSize(contentWidth()),
-                          x11ClampSize(contentHeight()),
+                          x11ClampPosition(pixelX()),
+                          x11ClampPosition(pixelY()),
+                          x11ClampSize(pixelWidth()),
+                          x11ClampSize(pixelHeight()),
                           0,
                           XCB_WINDOW_CLASS_INPUT_OUTPUT,
                           screen->root_visual,
@@ -158,6 +180,7 @@ struct X11WindowNative final
 
         setWindow(window);
         connection->registerWindow({window, this, nullptr});
+        connection->selectPointerEvents(window);
 
         applyProtocols();
         applyTitle();
@@ -278,22 +301,21 @@ struct X11WindowNative final
         if (connection == nullptr)
             return;
 
-        auto width = contentWidth();
-        auto height = contentHeight();
+        // Every number in the hints is a pixel to a window manager, this
+        // window's own minimum included.
+        auto width = pixelWidth();
+        auto height = pixelHeight();
 
         auto hints = xcb_size_hints_t {};
 
         if (positionRequested)
             xcb_icccm_size_hints_set_position(
-                &hints,
-                1,
-                (int32_t) std::lround(state.position.x),
-                (int32_t) std::lround(state.position.y));
+                &hints, 1, (int32_t) pixelX(), (int32_t) pixelY());
 
         xcb_icccm_size_hints_set_size(&hints, 1, width, height);
 
-        auto minWidth = std::max(state.minWidth, 1);
-        auto minHeight = std::max(state.minHeight, 1);
+        auto minWidth = x11PixelSize((float) std::max(state.minWidth, 1), scale);
+        auto minHeight = x11PixelSize((float) std::max(state.minHeight, 1), scale);
 
         // Pinned rather than merely unset, the way the Wayland frame is: min
         // equal to max is the only way X11 says "this window does not resize".
@@ -457,6 +479,35 @@ struct X11WindowNative final
         }
     }
 
+    // Xft.dpi changed under an open window. The content keeps the point size
+    // it was laid out at, exactly as a Wayland toplevel keeps its logical
+    // size, so what moves is the pixels: the window is asked for the size that
+    // many points now needs, and every view surface is rebuilt against the new
+    // scale. A window manager that refuses the resize answers with the size it
+    // is keeping, and the ConfigureNotify turns that back into points.
+    void scaleChanged(float newScale) override
+    {
+        if (newScale <= 0.f || newScale == scale)
+            return;
+
+        scale = newScale;
+
+        applySizeHints();
+
+        if (!state.maximized)
+        {
+            lastSizeRequest.reset();
+            resizeWindowTo(x11WholePoints(contentSize.x),
+                           x11WholePoints(contentSize.y));
+        }
+
+        if (contentView == nullptr)
+            return;
+
+        notifyBackingScaleChanged(*contentView);
+        linuxWindowSurfaceStateChanged(*contentView);
+    }
+
     void mapNotify(const xcb_map_notify_event_t& event)
     {
         if (event.window != getWindow() || mapped)
@@ -488,8 +539,13 @@ struct X11WindowNative final
         if (event.window != getWindow())
             return;
 
-        auto width = (int) event.width;
-        auto height = (int) event.height;
+        // The wire is pixels and everything below here is points, the
+        // constraint and the size request included.
+        const auto givenWidth = x11PointSize((int) event.width, scale);
+        const auto givenHeight = x11PointSize((int) event.height, scale);
+
+        auto width = givenWidth;
+        auto height = givenHeight;
 
         // A maximised toplevel is being given a ceiling, not dragged.
         state.applyConstraints(width, height, state.maximized);
@@ -500,8 +556,8 @@ struct X11WindowNative final
         // that enforces a geometry of its own answers the request with the
         // size it sent in the first place, and a request per answer would
         // never end.
-        if (width != (int) event.width || height != (int) event.height)
-            askForSize({(int) event.width, (int) event.height, width, height});
+        if (width != givenWidth || height != givenHeight)
+            askForSize({givenWidth, givenHeight, width, height});
         else
             lastSizeRequest.reset();
 
@@ -532,7 +588,7 @@ struct X11WindowNative final
     {
         if (synthetic || parentIsRoot)
         {
-            reportPosition({(float) event.x, (float) event.y});
+            reportPosition(pointsFromPixels(event.x, event.y));
             return;
         }
 
@@ -557,10 +613,19 @@ struct X11WindowNative final
         if (reply == nullptr)
             return;
 
-        const auto position = Point {(float) reply->dst_x, (float) reply->dst_y};
+        const auto position = pointsFromPixels(reply->dst_x, reply->dst_y);
         std::free(reply);
 
         reportPosition(position);
+    }
+
+    // A screen position the server gave, in the points WindowOptions and
+    // Display are in.
+    Point pointsFromPixels(int x, int y) const
+    {
+        const auto divisor = scale > 0.f ? scale : 1.f;
+
+        return {(float) x / divisor, (float) y / divisor};
     }
 
     void reportPosition(Point position)
@@ -880,9 +945,10 @@ struct X11WindowNative final
         if (connection == nullptr)
             return;
 
-        const uint32_t values[] = {
-            (uint32_t) (int32_t) x11ClampPosition(std::lround(newPosition.x)),
-            (uint32_t) (int32_t) x11ClampPosition(std::lround(newPosition.y))};
+        const uint32_t values[] = {(uint32_t) (int32_t) x11ClampPosition(
+                                       x11PixelOrigin(newPosition.x, scale)),
+                                   (uint32_t) (int32_t) x11ClampPosition(
+                                       x11PixelOrigin(newPosition.y, scale))};
 
         xcb_configure_window(connection->getConnection(),
                              getWindow(),
@@ -891,6 +957,7 @@ struct X11WindowNative final
         connection->flush();
     }
 
+    // In points, like everything that calls it.
     void resizeWindowTo(int width, int height)
     {
         auto* connection = liveConnection();
@@ -898,7 +965,9 @@ struct X11WindowNative final
         if (connection == nullptr)
             return;
 
-        const uint32_t values[] = {x11ClampSize(width), x11ClampSize(height)};
+        const uint32_t values[] = {
+            x11ClampSize(x11PixelSize((float) width, scale)),
+            x11ClampSize(x11PixelSize((float) height, scale))};
 
         xcb_configure_window(connection->getConnection(),
                              getWindow(),
@@ -980,8 +1049,10 @@ struct X11WindowNative final
             state.notifyHostVisibility(false);
     }
 
-    int contentWidth() const { return x11WholePoints(contentSize.x); }
-    int contentHeight() const { return x11WholePoints(contentSize.y); }
+    int pixelWidth() const { return x11PixelSize(contentSize.x, scale); }
+    int pixelHeight() const { return x11PixelSize(contentSize.y, scale); }
+    int pixelX() const { return x11PixelOrigin(state.position.x, scale); }
+    int pixelY() const { return x11PixelOrigin(state.position.y, scale); }
 
     LinuxWindowState& getState() override { return state; }
 

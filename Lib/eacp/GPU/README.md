@@ -1692,7 +1692,8 @@ CI lane's second test step.
   renders nothing, and the main thread never blocks inside
   `vkAcquireNextImageKHR`. On Wayland that callback is `wl_surface.frame`; X11
   has no equivalent, so the backend answers from a timer at the RandR mode's
-  rate and this loop does not know the difference. The
+  rate — rebuilt at the new rate when a RandR change moves it — and this loop
+  does not know the difference. The
   acquire is given a 100 ms timeout rather than `UINT64_MAX` for the same
   reason. `setMaxFps` uses the divider `DisplayLink::setMaxFps` documents: a
   tick that arrives too early presents nothing and asks for the next callback

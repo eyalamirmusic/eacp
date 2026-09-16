@@ -112,6 +112,7 @@ if (LINUX)
     nano_add_executable(X11WindowTests
             NO_MAIN
             SOURCES
+                X11ClipboardTests-Linux.cpp
                 X11WindowTests-Linux.cpp
             TARGETS eacp-graphics)
 
@@ -194,9 +195,16 @@ endif ()
 if (LINUX AND NOT CMAKE_CROSSCOMPILING)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/X11WindowTests-Linux.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/X11ClipboardTests-Linux.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/EmbeddedViewTests-Linux.cpp")
 
     file(STRINGS X11WindowTests-Linux.cpp x11_test_lines
+            REGEX "\"X11/[^\"]+\"")
+
+    # The clipboard half of the same binary takes the clipboard lock as well:
+    # one display has one selection, and a case's copy must not land between
+    # another's copy and its read.
+    file(STRINGS X11ClipboardTests-Linux.cpp x11_clipboard_test_lines
             REGEX "\"X11/[^\"]+\"")
 
     file(STRINGS EmbeddedViewTests-Linux.cpp embedded_test_lines
@@ -211,6 +219,14 @@ if (LINUX AND NOT CMAKE_CROSSCOMPILING)
         file(APPEND "${x11_lock_file}"
                 "set_tests_properties(\"${x11_test}\" PROPERTIES\n"
                 "        RESOURCE_LOCK eacp-linux-display)\n")
+    endforeach ()
+
+    foreach (line IN LISTS x11_clipboard_test_lines)
+        string(REGEX MATCH "X11/[^\"]+" x11_clipboard_test "${line}")
+
+        file(APPEND "${x11_lock_file}"
+                "set_tests_properties(\"${x11_clipboard_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK \"eacp-linux-display;eacp-system-clipboard\")\n")
     endforeach ()
 
     foreach (line IN LISTS embedded_test_lines)

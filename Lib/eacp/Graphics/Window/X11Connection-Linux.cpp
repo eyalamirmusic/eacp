@@ -1,6 +1,7 @@
 #include "X11Connection-Linux.h"
 
 #include "../View/X11ViewSurface-Linux.h"
+#include "X11Clipboard-Linux.h"
 #include "X11Input-Linux.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
@@ -9,12 +10,16 @@
 
 #include <xcb/randr.h>
 #include <xcb/xfixes.h>
+#include <xcb/xinput.h>
 #include <xkbcommon/xkbcommon-x11.h>
 
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <poll.h>
+#include <string>
+#include <string_view>
 
 // Events are drained with xcb_poll_for_queued_event before every poll(2) as
 // well as after one: Mesa's Vulkan WSI is a second reader of this same
@@ -26,6 +31,21 @@ namespace
 {
 constexpr uint16_t x11RandrVersionMajor = 1;
 constexpr uint16_t x11RandrVersionMinor = 5;
+
+// 2.1 is where a scroll valuator replaces buttons 4-7; raw events are 2.0's,
+// and a server with one but not the other is old enough that keeping the two
+// halves apart would buy nothing.
+constexpr uint16_t x11XinputVersionMajor = 2;
+constexpr uint16_t x11XinputVersionMinor = 2;
+constexpr uint16_t x11XinputLeastMinor = 1;
+
+// The pointer events of a window of ours, which is every core pointer event
+// with a valuator on it. Keys and focus stay core: XI2 adds nothing to either,
+// and a server that suppressed the core ones would take the keymap with them.
+constexpr uint32_t x11XinputPointerMask =
+    XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS | XCB_INPUT_XI_EVENT_MASK_BUTTON_RELEASE
+    | XCB_INPUT_XI_EVENT_MASK_MOTION | XCB_INPUT_XI_EVENT_MASK_ENTER
+    | XCB_INPUT_XI_EVENT_MASK_LEAVE;
 
 template <typename T>
 const T& x11EventAs(const xcb_generic_event_t& event)
@@ -183,6 +203,131 @@ int x11RefreshMilliHz(xcb_connection_t* connection,
     return refresh;
 }
 
+// The root window as the server has it now, which is not what the setup said
+// once a RandR screen change has resized it: xcb reads the setup at connect
+// and never revises it.
+Rect x11RootFrame(xcb_connection_t* connection, const xcb_screen_t& screen)
+{
+    auto frame = Rect {
+        0.f, 0.f, (float) screen.width_in_pixels, (float) screen.height_in_pixels};
+
+    auto* reply = xcb_get_geometry_reply(
+        connection, xcb_get_geometry(connection, screen.root), nullptr);
+
+    if (reply == nullptr)
+        return frame;
+
+    if (reply->width > 0 && reply->height > 0)
+        frame = {0.f, 0.f, (float) reply->width, (float) reply->height};
+
+    std::free(reply);
+
+    return frame;
+}
+
+// The xrdb database, as xrdb itself and every toolkit read it: one STRING
+// property on the root, whose lines are `key:<whitespace>value`. Requested in
+// one go and again with whatever the first reply said was left, so a database
+// bigger than the guess is still read whole.
+std::string x11ResourceDatabase(xcb_connection_t* connection, xcb_window_t root)
+{
+    constexpr uint32_t initialWords = 4096;
+
+    auto read = [connection, root](uint32_t words) -> xcb_get_property_reply_t*
+    {
+        return xcb_get_property_reply(connection,
+                                      xcb_get_property(connection,
+                                                       0,
+                                                       root,
+                                                       XCB_ATOM_RESOURCE_MANAGER,
+                                                       XCB_ATOM_STRING,
+                                                       0,
+                                                       words),
+                                      nullptr);
+    };
+
+    auto* reply = read(initialWords);
+
+    if (reply == nullptr)
+        return {};
+
+    if (reply->bytes_after > 0)
+    {
+        const auto needed = initialWords + (reply->bytes_after + 3) / 4;
+        std::free(reply);
+
+        reply = read(needed);
+
+        if (reply == nullptr)
+            return {};
+    }
+
+    auto database = std::string {(const char*) xcb_get_property_value(reply),
+                                 (size_t) xcb_get_property_value_length(reply)};
+
+    std::free(reply);
+
+    return database;
+}
+
+// The value of one key, and nothing where the database does not name it. Only
+// a whole line counts, so Xft.dpi is not found inside somebody else's
+// XTerm*Xft.dpi.
+std::string x11ResourceValue(std::string_view database, std::string_view key)
+{
+    for (auto rest = database; !rest.empty();)
+    {
+        const auto end = rest.find('\n');
+        const auto line = rest.substr(0, end);
+
+        rest = end == std::string_view::npos ? std::string_view {}
+                                             : rest.substr(end + 1);
+
+        const auto colon = line.find(':');
+
+        if (colon == std::string_view::npos || line.substr(0, colon) != key)
+            continue;
+
+        auto value = line.substr(colon + 1);
+
+        while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
+            value.remove_prefix(1);
+
+        while (
+            !value.empty()
+            && (value.back() == ' ' || value.back() == '\t' || value.back() == '\r'))
+            value.remove_suffix(1);
+
+        return std::string {value};
+    }
+
+    return {};
+}
+
+// 96 dpi is one pixel per point by definition, so a desktop at 200% writes 192
+// and one at 150% writes 144. Anything outside what a panel could plausibly
+// be is a database somebody else's program wrote badly, and 1 is safer than
+// half a window.
+float x11ScaleFromResources(std::string_view database)
+{
+    constexpr auto pointsPerInch = 96.f;
+    constexpr auto lowestDpi = 24.f;
+    constexpr auto highestDpi = 960.f;
+
+    const auto dpi = x11ResourceValue(database, "Xft.dpi");
+
+    if (dpi.empty())
+        return 1.f;
+
+    auto* end = (char*) nullptr;
+    const auto value = std::strtof(dpi.c_str(), &end);
+
+    if (end == dpi.c_str() || value < lowestDpi || value > highestDpi)
+        return 1.f;
+
+    return value / pointsPerInch;
+}
+
 // Whether the environment names a display to connect to. Asked before any
 // connection is opened, so it is the environment and nothing more.
 bool x11ServerIsReachable()
@@ -213,6 +358,8 @@ void X11WindowSurface::setWindow(xcb_window_t window)
 }
 
 void X11WindowSurface::handleEvent(const xcb_generic_event_t&) {}
+
+void X11WindowSurface::scaleChanged(float) {}
 
 X11Connection::X11Connection()
 {
@@ -246,24 +393,22 @@ X11Connection::X11Connection()
 
     internAtoms();
     setupXkb();
+    setupXinput();
     setupRandr();
     setupXfixes();
-
-    if (xcb_cursor_context_new(connection, screen, &cursors) != 0)
-    {
-        cursors = nullptr;
-        LOG("X11: no cursor theme could be opened; the pointer keeps whatever "
-            "shape the window manager gave it.");
-    }
+    setupRoot();
+    openCursorContext();
 
     input = std::make_unique<X11Input>(*this);
+    clipboard = std::make_unique<X11Clipboard>(*this);
 
     openLoopSource();
 }
 
 X11Connection::~X11Connection()
 {
-    // Before the disconnect: what it holds was made from this connection.
+    // Before the disconnect: what they hold was made from this connection.
+    clipboard.reset();
     input.reset();
 
     closeLoopSource();
@@ -302,6 +447,11 @@ void X11Connection::internAtoms()
         {"CLIPBOARD", &X11Atoms::clipboard},
         {"TARGETS", &X11Atoms::targets},
         {"INCR", &X11Atoms::incr},
+        {"TEXT", &X11Atoms::text},
+        {"text/plain", &X11Atoms::textPlain},
+        {"text/plain;charset=utf-8", &X11Atoms::textPlainUtf8},
+        {"text/uri-list", &X11Atoms::textUriList},
+        {"EACP_SELECTION", &X11Atoms::eacpSelection},
         {"_NET_WM_WINDOW_TYPE", &X11Atoms::netWmWindowType},
         {"_NET_WM_WINDOW_TYPE_NORMAL", &X11Atoms::netWmWindowTypeNormal},
     };
@@ -351,6 +501,79 @@ void X11Connection::setupXkb()
     keyboardDeviceId = xkb_x11_get_core_keyboard_device_id(connection);
 }
 
+// The version has to be negotiated before any other XI2 request, and what the
+// server answers is what it will speak from here: asking for 2.2 and being
+// told 2.0 is a server with no scroll valuators, which is the core pointer
+// path and nothing else.
+void X11Connection::setupXinput()
+{
+    if (getEnvValue("EACP_X11_NO_XI2") == "1")
+    {
+        LOG("X11: EACP_X11_NO_XI2 is set, so the pointer is the core one: "
+            "scrolling arrives as buttons 4-7 and a mouse lock measures "
+            "itself from the warps that recentre it.");
+        return;
+    }
+
+    const auto* extension = xcb_get_extension_data(connection, &xcb_input_id);
+
+    if (extension == nullptr || extension->present == 0)
+        return;
+
+    auto* reply = xcb_input_xi_query_version_reply(
+        connection,
+        xcb_input_xi_query_version(
+            connection, x11XinputVersionMajor, x11XinputVersionMinor),
+        nullptr);
+
+    if (reply == nullptr)
+        return;
+
+    const auto usable = reply->major_version > x11XinputVersionMajor
+                        || (reply->major_version == x11XinputVersionMajor
+                            && reply->minor_version >= x11XinputLeastMinor);
+
+    std::free(reply);
+
+    if (usable)
+        xinputOpcode = extension->major_opcode;
+}
+
+uint32_t X11Connection::getWindowEventMask() const
+{
+    return isXinputAvailable() ? x11WindowEventMask & ~x11PointerEventMask
+                               : x11WindowEventMask;
+}
+
+void X11Connection::selectPointerEvents(xcb_window_t window)
+{
+    selectXinputEvents(window, XCB_INPUT_DEVICE_ALL_MASTER, x11XinputPointerMask);
+}
+
+// One device spec and one mask word, which is all XI2's event numbers need:
+// the request is a header followed by the mask, so the two are laid out
+// together rather than sent as a pointer to each.
+void X11Connection::selectXinputEvents(xcb_window_t window,
+                                       uint16_t device,
+                                       uint32_t mask)
+{
+    if (!isXinputAvailable() || !isConnected() || window == XCB_NONE)
+        return;
+
+    struct Selection
+    {
+        xcb_input_event_mask_t header;
+        uint32_t mask;
+    };
+
+    auto selection = Selection {};
+    selection.header.deviceid = device;
+    selection.header.mask_len = 1;
+    selection.mask = mask;
+
+    xcb_input_xi_select_events(connection, window, 1, &selection.header);
+}
+
 // GetOutputPrimary is a 1.3 request: a server told nothing about the version
 // answers as 1.0 and rejects it.
 void X11Connection::setupRandr()
@@ -371,6 +594,20 @@ void X11Connection::setupRandr()
 
     randrAvailable = reply->major_version > 1 || reply->minor_version >= 3;
     std::free(reply);
+
+    if (!randrAvailable)
+        return;
+
+    randrEventBase = extension->first_event;
+
+    // A screen change is a resized root, a crtc change a mode or a position,
+    // an output change a monitor plugged in: the first two move the frame the
+    // pacer and Display report, and the third decides which output is primary.
+    xcb_randr_select_input(connection,
+                           screen->root,
+                           XCB_RANDR_NOTIFY_MASK_SCREEN_CHANGE
+                               | XCB_RANDR_NOTIFY_MASK_CRTC_CHANGE
+                               | XCB_RANDR_NOTIFY_MASK_OUTPUT_CHANGE);
 }
 
 // Nothing here needs XFixes yet; hiding the cursor for a mouse lock does, and
@@ -389,6 +626,87 @@ void X11Connection::setupXfixes()
         nullptr);
 
     std::free(reply);
+}
+
+// A PropertyNotify on the root is how a session says the resource database
+// changed, which is how it says the scale or the cursor theme did. The mask is
+// per client, so selecting it takes nothing away from the window manager or
+// from anybody else watching the same root.
+void X11Connection::setupRoot()
+{
+    const uint32_t mask = XCB_EVENT_MASK_PROPERTY_CHANGE;
+
+    xcb_change_window_attributes(connection, screen->root, XCB_CW_EVENT_MASK, &mask);
+
+    scale = x11ScaleFromResources(x11ResourceDatabase(connection, screen->root));
+}
+
+// xcb-cursor reads the theme, its size and Xft.dpi out of the resource
+// database once, here, and never looks again - so a database that changes is a
+// context that has to be built anew.
+void X11Connection::openCursorContext()
+{
+    if (xcb_cursor_context_new(connection, screen, &cursors) != 0)
+    {
+        cursors = nullptr;
+        LOG("X11: no cursor theme could be opened; the pointer keeps whatever "
+            "shape the window manager gave it.");
+    }
+}
+
+void X11Connection::resourcesChanged()
+{
+    const auto database = x11ResourceDatabase(connection, screen->root);
+
+    scaleChanged(x11ScaleFromResources(database));
+    cursorThemeChanged();
+}
+
+void X11Connection::scaleChanged(float newScale)
+{
+    if (newScale <= 0.f || newScale == scale)
+        return;
+
+    scale = newScale;
+
+    // Snapshotted and deduplicated: a window is in the map once per child
+    // window a presenting view gave it.
+    auto surfaces = Vector<X11WindowSurface*> {};
+
+    for (const auto& target: windows)
+        if (target.windowSurface != nullptr
+            && !surfaces.contains(target.windowSurface))
+            surfaces.add(target.windowSurface);
+
+    for (auto* surface: surfaces)
+        surface->scaleChanged(scale);
+}
+
+// The cursors already loaded came out of the old context and out of whatever
+// the database said then, so they go with it; the seat reloads the shape the
+// pointer is wearing from the new one.
+void X11Connection::cursorThemeChanged()
+{
+    if (cursors != nullptr)
+        xcb_cursor_context_free(cursors);
+
+    cursors = nullptr;
+
+    openCursorContext();
+
+    if (input != nullptr)
+        input->cursorThemeChanged();
+}
+
+void X11Connection::outputChanged()
+{
+    primaryOutput.reset();
+
+    // Read back here rather than left to the next question: the pacer is the
+    // one thing that has to be told rather than asked.
+    getPrimaryOutput();
+
+    x11FramePacerRateChanged();
 }
 
 void X11Connection::openLoopSource()
@@ -415,13 +733,19 @@ void X11Connection::prepareForPoll()
     if (!isConnected())
         return;
 
+    drainQueuedEvents();
+    flush();
+}
+
+// What another reader of this socket - Mesa's WSI - already took off it and
+// left in xcb's queue. Reads nothing itself.
+void X11Connection::drainQueuedEvents()
+{
     while (auto* event = xcb_poll_for_queued_event(connection))
     {
         dispatch(*event);
         std::free(event);
     }
-
-    flush();
 }
 
 void X11Connection::readAndDispatch()
@@ -467,10 +791,45 @@ void X11Connection::dispatch(const xcb_generic_event_t& event)
         return;
     }
 
+    if (dispatchXinput(event))
+        return;
+
+    // Before the window map, and taking nothing from it: what the clipboard
+    // answers to is its own never-mapped window, which is no toplevel of ours.
+    if (clipboard != nullptr && clipboard->handleEvent(event))
+        return;
+
+    // RandR names a screen rather than a window of ours, and both of its
+    // events - the screen's size and one output's mode or position - mean the
+    // same thing here: read the output again.
+    if (randrEventBase != 0)
+    {
+        const auto randr = (event.response_type & ~0x80) - randrEventBase;
+
+        if (randr == XCB_RANDR_SCREEN_CHANGE_NOTIFY || randr == XCB_RANDR_NOTIFY)
+        {
+            outputChanged();
+            return;
+        }
+    }
+
     const auto window = x11EventWindow(event);
 
     if (window == XCB_NONE)
         return;
+
+    // The root is nobody's window: the resource database that names the scale
+    // and the cursor theme is a property on it, and nothing else we hear about
+    // it is ours.
+    if (screen != nullptr && window == screen->root
+        && (event.response_type & ~0x80) == XCB_PROPERTY_NOTIFY)
+    {
+        if (x11EventAs<xcb_property_notify_event_t>(event).atom
+            == XCB_ATOM_RESOURCE_MANAGER)
+            resourcesChanged();
+
+        return;
+    }
 
     // Passed through as it came: a view's child window is the native's, and
     // only the native knows what to make of an event on one.
@@ -479,6 +838,25 @@ void X11Connection::dispatch(const xcb_generic_event_t& event)
 
     if (!watchers.empty())
         dispatchToWatchers(event, window);
+}
+
+// XI2 speaks entirely in GenericEvents, and one of them names no window at all:
+// raw motion is selected on the root and delivered whatever has the pointer
+// grabbed. So the whole extension goes to the seat, which is the only thing
+// here that knows what a valuator means, and the window lookup a device event
+// needs happens there.
+bool X11Connection::dispatchXinput(const xcb_generic_event_t& event)
+{
+    if (xinputOpcode == 0 || (event.response_type & ~0x80) != XCB_GE_GENERIC)
+        return false;
+
+    if (x11EventAs<xcb_ge_generic_event_t>(event).extension != xinputOpcode)
+        return false;
+
+    if (input != nullptr)
+        input->xinputEvent(event);
+
+    return true;
 }
 
 // After the window's own target, and as well as it: a window of this copy's
@@ -516,6 +894,9 @@ void X11Connection::connectionLost()
 
     closeLoopSource();
 
+    if (clipboard != nullptr)
+        clipboard->connectionLost();
+
     // Snapshotted: every one of these unregisters the windows it made.
     auto lost = Vector<X11WindowSurface*> {};
 
@@ -539,6 +920,37 @@ void X11Connection::flush()
     checkForConnectionLoss();
 }
 
+// The loop source's two halves, run by hand: nothing is filtered out, so a
+// window whose ConfigureNotify lands beside the clipboard's SelectionNotify
+// hears about it here exactly as it would have a moment later.
+bool X11Connection::dispatchUntil(const std::function<bool()>& satisfied,
+                                  Time::Deadline deadline)
+{
+    while (isConnected())
+    {
+        drainQueuedEvents();
+
+        if (satisfied())
+            return true;
+
+        flush();
+
+        if (!isConnected() || deadline.expired())
+            break;
+
+        auto watched = pollfd {xcb_get_file_descriptor(connection), POLLIN, 0};
+        const auto left =
+            (int) std::clamp<int64_t>(deadline.remaining().count, 0, 1000);
+
+        if (::poll(&watched, 1, left) < 0 && errno != EINTR)
+            break;
+
+        readAndDispatch();
+    }
+
+    return satisfied();
+}
+
 const std::optional<X11OutputInfo>& X11Connection::getPrimaryOutput() const
 {
     if (primaryOutput || !isConnected() || screen == nullptr)
@@ -546,11 +958,7 @@ const std::optional<X11OutputInfo>& X11Connection::getPrimaryOutput() const
 
     // No RandR, or a server with no primary output named (Xvfb has none): the
     // root window is the one output there is.
-    auto output = X11OutputInfo {{0.f,
-                                  0.f,
-                                  (float) screen->width_in_pixels,
-                                  (float) screen->height_in_pixels},
-                                 0};
+    auto output = X11OutputInfo {x11RootFrame(connection, *screen), 0};
 
     if (auto* crtc =
             randrAvailable ? x11PrimaryCrtcInfo(connection, screen->root) : nullptr)

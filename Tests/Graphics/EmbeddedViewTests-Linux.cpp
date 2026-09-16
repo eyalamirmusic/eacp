@@ -14,6 +14,7 @@
 #endif
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -24,6 +25,7 @@
 #include <optional>
 #include <poll.h>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -490,6 +492,22 @@ int threadCount()
         count += entry.is_directory() ? 1 : 0;
 
     return count;
+}
+
+bool threadCountSettlesTo(int expected)
+{
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds {2};
+
+    while (threadCount() != expected)
+    {
+        if (std::chrono::steady_clock::now() > deadline)
+            return false;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds {1});
+    }
+
+    return true;
 }
 
 // XTest against the test's own connection: the server's real pointer and
@@ -1064,8 +1082,10 @@ auto tPacerLeavesNoThreadBehind =
     }
 
     // No pump in between, which is exactly what a host gives a plugin between
-    // close() and dlclose().
-    check(threadCount() == idle,
+    // close() and dlclose(). The thread was joined before the view's destructor
+    // returned, but the kernel lists a just-exited thread under /proc for a
+    // moment longer, and a loaded machine stretches that moment.
+    check(threadCountSettlesTo(idle),
           "a pacing thread outlived the last presenting view");
 };
 

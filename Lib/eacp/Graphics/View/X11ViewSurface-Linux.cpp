@@ -59,8 +59,18 @@ public:
         armed.push_back(&record);
 
         if (timer == nullptr)
-            timer =
-                std::make_unique<Threads::Timer>([this] { tick(); }, x11PacerHz());
+            startTimer();
+    }
+
+    // A Threads::Timer's interval is fixed at construction, so a new rate is a
+    // new timer; the records it is pacing are untouched. Nothing to do while
+    // none is armed - the next arm builds one at whatever the rate is then.
+    void rateChanged()
+    {
+        if (timer == nullptr || x11PacerHz() == hz)
+            return;
+
+        startTimer();
     }
 
     void disarm(ViewSurface& record)
@@ -89,6 +99,16 @@ public:
     }
 
 private:
+    void startTimer()
+    {
+        hz = x11PacerHz();
+
+        // Assigned rather than reset first: the old timer is destroyed by the
+        // assignment, after the new one is already ticking, and a pacer is
+        // never without one while something is armed.
+        timer = std::make_unique<Threads::Timer>([this] { tick(); }, hz);
+    }
+
     void tick()
     {
         auto batch = std::move(armed);
@@ -122,6 +142,7 @@ private:
     std::vector<ViewSurface*> armed;
     std::vector<ViewSurface*>* firing = nullptr;
     std::unique_ptr<Threads::Timer> timer;
+    int hz = x11FallbackRefreshHz;
 };
 
 // Leaked for the reason the connection is: a Timer's destructor asserts the
@@ -321,5 +342,10 @@ std::unique_ptr<ViewSurfaceBackend>
     makeX11ViewSurfaceBackend(X11WindowSurface& window)
 {
     return std::make_unique<X11ViewSurfaceBackend>(window);
+}
+
+void x11FramePacerRateChanged()
+{
+    x11FramePacer().rateChanged();
 }
 } // namespace eacp::Graphics

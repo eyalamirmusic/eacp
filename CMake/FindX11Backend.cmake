@@ -2,8 +2,10 @@ include(FindPkgConfig)
 
 # The X11 half of the Linux graphics backend: xcb and the extension libraries
 # a window needs - XKB for the keymap, RandR for the outputs, XFixes for the
-# hidden cursor a mouse lock wants, xcb-cursor for the themed ones, and
-# xcb-icccm for the window-manager hints. No Xlib anywhere (plan.md D2).
+# hidden cursor a mouse lock wants, xcb-cursor for the themed ones, xcb-icccm
+# for the window-manager hints, and XInput 2 for the pointer: smooth scrolling
+# and the raw motion a locked pointer is measured by. No Xlib anywhere
+# (plan.md D2).
 
 if (NOT TARGET eacp-x11)
     pkg_check_modules(EACP_X11 IMPORTED_TARGET
@@ -13,7 +15,8 @@ if (NOT TARGET eacp-x11)
             xcb-randr
             xcb-xfixes
             xcb-cursor
-            xcb-icccm)
+            xcb-icccm
+            xcb-xinput)
 
     if (NOT EACP_X11_FOUND)
         message(FATAL_ERROR
@@ -21,7 +24,8 @@ if (NOT TARGET eacp-x11)
                 "not found. On Debian/Ubuntu:\n"
                 "  sudo apt-get install libxcb1-dev libxcb-xkb-dev "
                 "libxkbcommon-x11-dev libxcb-randr0-dev libxcb-xfixes0-dev "
-                "libxcb-cursor-dev libxcb-icccm4-dev pkg-config")
+                "libxcb-cursor-dev libxcb-icccm4-dev libxcb-xinput-dev "
+                "pkg-config")
     endif ()
 
     add_library(eacp-x11 INTERFACE)

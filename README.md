@@ -103,9 +103,16 @@ properties a window manager reads, with an `xcb_create_window` child per
 presenting view, the keymap taken from the server through `xkbcommon-x11` so
 layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
 grab and a warp to the centre, and frames paced by a timer at the RandR mode's
-rate because X11 has no frame callback; a position is a real one there, an
-`EmbeddedView` is an `xcb_create_window` child of a window id its host owns, and
-the clipboard is not there yet. Both backends sit behind one window-system seam
+rate because X11 has no frame callback — re-rated when a RandR change moves
+that rate; a position is a real one there, the display's scale is `Xft.dpi`
+over 96 read from the root's `RESOURCE_MANAGER` and followed when it changes,
+kept as a fraction so 150% is 1.5, an
+`EmbeddedView` is an `xcb_create_window` child of a window id its host owns
+whose scale is whatever that host says, and
+the clipboard is the `CLIPBOARD` selection owned by a 1x1 window that is never
+mapped, so a copy needs neither a toplevel nor keyboard focus to take it (text
+and `text/uri-list`, `TARGETS`, INCR on the receiving side, behind the same
+backend hook as the Wayland one). Both backends sit behind one window-system seam
 (`LinuxWindowSystem`, `LinuxWindowNative`, `LinuxWindowSurface`,
 `ViewSurfaceBackend`, `LinuxInput`, `LinuxSeat`) and both are compiled into
 every copy, so which one a window gets is a runtime decision:
@@ -211,7 +218,8 @@ found the way libcurl is, by pkg-config against the machine's own libraries:
 `libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
 libdecor-0-dev libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev
 libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev
-libfreetype-dev libharfbuzz-dev libfontconfig-dev pkg-config` on Debian/Ubuntu,
+libxcb-xinput-dev libfreetype-dev libharfbuzz-dev libfontconfig-dev
+pkg-config` on Debian/Ubuntu,
 `weston` and `xvfb` to run the window tests without a desktop
 (`Scripts/with-weston` and `Scripts/with-xvfb`, which are also `with-weston` and
 `with-xvfb` in the image) with `libxcb-xtest0-dev` for the X11 suite's own

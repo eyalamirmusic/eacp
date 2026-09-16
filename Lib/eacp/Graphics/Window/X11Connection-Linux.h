@@ -3,6 +3,8 @@
 #include "../Primitives/Primitives.h"
 #include "LinuxWindowSurface-Linux.h"
 
+#include <eacp/Core/Utils/Time.h>
+
 #include <xcb/xcb.h>
 #include <xcb/xcb_cursor.h>
 
@@ -18,6 +20,7 @@
 namespace eacp::Graphics
 {
 class View;
+class X11Clipboard;
 class X11Input;
 
 // A position on the wire is a signed 16-bit number and a size an unsigned one,
@@ -58,6 +61,11 @@ struct X11WindowSurface : LinuxWindowSurface
     // Every event the connection routed here, a view child's included: only
     // the native knows what one of its own windows means.
     virtual void handleEvent(const xcb_generic_event_t& event);
+
+    // The display's scale changed under an open window. A toplevel takes it,
+    // because Xft.dpi is the only thing that names one; an embedded surface
+    // does not, because its host already did (EmbeddedView::setPixelsPerPoint).
+    virtual void scaleChanged(float newScale);
 };
 
 struct X11WindowTarget
@@ -80,6 +88,15 @@ inline constexpr uint32_t x11WindowEventMask =
     | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_PROPERTY_CHANGE
     | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
     | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE
+    | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW
+    | XCB_EVENT_MASK_LEAVE_WINDOW;
+
+// The pointer half of it, which XI2 takes over whole where the server has it.
+// A window that selects an XI2 event and the core event it replaces is a
+// window told about the same press twice on some servers and once on others,
+// so the core bits come off rather than being relied on to be suppressed.
+inline constexpr uint32_t x11PointerEventMask =
+    XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE
     | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW
     | XCB_EVENT_MASK_LEAVE_WINDOW;
 
@@ -114,8 +131,18 @@ struct X11Atoms
     xcb_atom_t clipboard = XCB_ATOM_NONE;
     xcb_atom_t targets = XCB_ATOM_NONE;
     xcb_atom_t incr = XCB_ATOM_NONE;
+    xcb_atom_t text = XCB_ATOM_NONE;
+    xcb_atom_t textPlain = XCB_ATOM_NONE;
+    xcb_atom_t textPlainUtf8 = XCB_ATOM_NONE;
+    xcb_atom_t textUriList = XCB_ATOM_NONE;
+
     xcb_atom_t netWmWindowType = XCB_ATOM_NONE;
     xcb_atom_t netWmWindowTypeNormal = XCB_ATOM_NONE;
+
+    // The property a conversion of ours is delivered into, on the clipboard's
+    // own window: named after this framework so no other client's transfer can
+    // land on it.
+    xcb_atom_t eacpSelection = XCB_ATOM_NONE;
 };
 
 class X11Connection
@@ -144,16 +171,50 @@ public:
     // Null when no cursor theme could be opened.
     xcb_cursor_context_t* getCursorContext() const { return cursors; }
 
+    // XInput 2.1 or better, which is where a pointer's scroll arrives as a
+    // valuator rather than as buttons 4-7 and where a locked pointer can be
+    // measured from the device itself. False on an older server and under
+    // EACP_X11_NO_XI2=1, and the core pointer events are then the whole of the
+    // seat, exactly as they were before any of this.
+    bool isXinputAvailable() const { return xinputOpcode != 0; }
+
+    // What a window of ours selects: the mask above, less the pointer bits
+    // XI2 is carrying where it is there.
+    uint32_t getWindowEventMask() const;
+
+    // The pointer events of one window of ours, for every master device. Both
+    // window natives call it; nothing else does.
+    void selectPointerEvents(xcb_window_t window);
+
+    // The seat's own selection, on the root and not on a window: the device
+    // table and the raw motion a mouse lock reads. The device spec is part of
+    // what is being selected rather than a detail of it - a hierarchy notice
+    // is only ever sent for all devices at once, and raw motion only for the
+    // masters - and each spec keeps a mask of its own on the window.
+    void selectXinputEvents(xcb_window_t window, uint16_t device, uint32_t mask);
+
     // The core pointer and keyboard of this connection. Never null once the
     // connection came up.
     X11Input* getInput() const { return input.get(); }
 
+    // The CLIPBOARD selection of this connection. Never null once the
+    // connection came up, and answering the no-clipboard answers once it has
+    // gone.
+    X11Clipboard* getClipboard() const { return clipboard.get(); }
+
     // The RandR primary output, falling back to the root window's size where
     // there is no RandR or no primary, and nothing at all with no connection.
     // Read once and kept: four round trips is far too much for the frame
-    // pacer, which asks on every request. Stage 5's RandR change events are
-    // what will have to invalidate it (plan.md D7).
+    // pacer, which asks on every request. A RandR screen or output change
+    // drops it, so the next question is answered from the server again.
     const std::optional<X11OutputInfo>& getPrimaryOutput() const;
+
+    // Pixels per point for a standalone toplevel: Xft.dpi over 96, and 1
+    // wherever the resource database names no dpi. Kept as a fraction rather
+    // than rounded to a whole factor - Qt's rule, not GTK's - because a
+    // desktop at 150% says 144 and means 1.5, and every pixel the backend
+    // derives from it is rounded at the point it is derived.
+    float getScale() const { return scale; }
 
     void registerWindow(const X11WindowTarget& target);
     void unregisterWindow(xcb_window_t window);
@@ -169,6 +230,14 @@ public:
 
     void flush();
 
+    // Dispatches this connection's events, exactly as the loop source would,
+    // until `satisfied` answers true or the deadline passes; true when it was
+    // satisfied. A synchronous clipboard read is the only caller: the answer
+    // it waits for is an ordinary event, and everything that arrives beside it
+    // has to reach the window it belongs to rather than be thrown away.
+    bool dispatchUntil(const std::function<bool()>& satisfied,
+                       Time::Deadline deadline);
+
     // XKB's events name a device rather than a window, so they are routed
     // here instead of to a surface; the input glue installs the handler.
     std::function<void(const xcb_generic_event_t&)> onXkbEvent =
@@ -177,13 +246,30 @@ public:
 private:
     void internAtoms();
     void setupXkb();
+    void setupXinput();
     void setupRandr();
     void setupXfixes();
+    void setupRoot();
+    void openCursorContext();
+
+    // The root's RESOURCE_MANAGER changed: the scale every toplevel is laid
+    // out at, and the theme and size every cursor is loaded from, both live in
+    // it.
+    void resourcesChanged();
+    void scaleChanged(float newScale);
+    void cursorThemeChanged();
+
+    // A RandR screen or output change: the output's frame and the refresh rate
+    // the pacer runs at are read again. Not the scale, which is the resource
+    // database's to name and not an output's.
+    void outputChanged();
     void openLoopSource();
     void closeLoopSource();
     void prepareForPoll();
+    void drainQueuedEvents();
     void readAndDispatch();
     void dispatch(const xcb_generic_event_t& event);
+    bool dispatchXinput(const xcb_generic_event_t& event);
     void dispatchToWatchers(const xcb_generic_event_t& event, xcb_window_t window);
     void reportError(const xcb_generic_error_t& error);
 
@@ -196,6 +282,7 @@ private:
     xcb_cursor_context_t* cursors = nullptr;
 
     std::unique_ptr<X11Input> input;
+    std::unique_ptr<X11Clipboard> clipboard;
 
     X11Atoms atoms;
 
@@ -204,10 +291,14 @@ private:
     Vector<X11WindowTarget> windows;
     Vector<X11WindowTarget> watchers;
 
+    float scale = 1.f;
+
     int screenNumber = 0;
     int loopFd = -1;
     int32_t keyboardDeviceId = -1;
     uint8_t xkbEventBase = 0;
+    uint8_t randrEventBase = 0;
+    uint8_t xinputOpcode = 0;
     bool randrAvailable = false;
     bool connected = false;
 };

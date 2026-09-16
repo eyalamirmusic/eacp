@@ -147,6 +147,7 @@ elseif (UNIX)
             Window/WaylandInput-Linux.cpp
             Window/WaylandWindow-Linux.cpp
             Window/Window-Linux.cpp
+            Window/X11Clipboard-Linux.cpp
             Window/X11Connection-Linux.cpp
             Window/X11Input-Linux.cpp
             Window/X11Window-Linux.cpp)

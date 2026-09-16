@@ -14,7 +14,7 @@ counts are estimates, not commitments.
 | 2 — X11 toplevel | **done** 2026-09-08 | `X11WindowTests` 27 cases (13 of them input, on Xvfb only); full suite 1596/1596; `with-xvfb` X11+Present 36/36 ×5; XWayland and Mutter green |
 | 3 — EmbeddedView | **done** 2026-09-15 | `EmbeddedViewTests` 17 cases (2 of them seat-driven, on Xvfb only), plus `Present/anEmbeddedViewPresentsIntoItsHost`; headless suite 1670/1670; `with-xvfb` X11+EmbeddedView+Present 54/54 ×6; XWayland green |
 | 4 — in-tree fake host | **done** 2026-09-15 | `X11Host`/`X11Plugin` over a four-function C ABI: 346 frames in 6 s on bare Xvfb over lavapipe, 290 in 5 s under XWayland on a real GPU |
-| 5 — parity and polish | | |
+| 5 — parity and polish | **done** 2026-09-16 | clipboard, `Xft.dpi`, RandR change events, the cursor-theme rebuild and XI2 (raw motion for the lock, scroll valuators): `X11WindowTests` 47 cases (9 clipboard, 6 scale/RandR/cursor, 5 XI2); `with-xvfb` X11+EmbeddedView+Present 74/74; headless 1616/1616; XWayland at scale 2 64/64. `Present` pacing left alone: nobody has seen the pacer misbehave on hardware |
 | 6 — thin eacp host bridge | | |
 
 Where the code differs from the sketches below, the code wins; each such
@@ -615,6 +615,163 @@ installed on the dev machine, and a real DAW.*
 motion for mouse lock and smooth scrolling, cursor themes, `Xft.dpi` as the
 standalone scale source, RandR change events, `Present` pacing if the pacer
 proves visibly worse on real hardware. Each item independent.
+*Landed 2026-09-16, the clipboard: ~430 lines in
+`Window/X11Clipboard-Linux.{h,cpp}` plus 40 in the connection. Owned by
+`X11Connection` and installed through the same `Clipboard::Backend` hook the
+Wayland twin uses, so it is live for a copy that prefers X11 and silent for one
+that does not. The owner is a 1×1 `InputOutput` window made on first use and
+never mapped: unlike Wayland, where `set_selection` wants the serial of an
+input event on a focused surface of ours, taking `CLIPBOARD` here needs no
+toplevel and no keyboard focus, which is the whole point for a plugin copy.
+`xcb_set_selection_owner` is verified with `xcb_get_selection_owner` before a
+copy reports success; a `SelectionRequest` is answered with `TARGETS`,
+`UTF8_STRING`, `text/plain;charset=utf-8`, `text/plain`, `STRING` and `TEXT`
+for text and `text/uri-list` for files, honouring a requestor that names no
+property and refusing `MULTIPLE` and everything else with a `SelectionNotify`
+naming none; `SelectionClear` drops the store. The uri-list itself moved to
+`linuxUriList` in `LinuxWindowSystem`, so both backends emit the same bytes
+from one implementation. A read is `xcb_convert_selection` into one property
+on that window followed by `X11Connection::dispatchUntil` — the loop source's
+own drain-poll-dispatch cycle run by hand for a bounded two seconds, so a
+window whose `ConfigureNotify` lands beside the answer still gets it, which is
+the thing a hand-rolled `xcb_wait_for_event` would have quietly broken. Our
+own selection is answered from the store with no round trip, since the
+conversion would otherwise be served by the very thread waiting on it.
+`TARGETS` is asked first and decides both `hasText` and the target to convert,
+so the two never disagree, and an `INCR` reply is read chunk by chunk off the
+`PropertyNotify`s. Sending INCR is not implemented and deliberately so: past
+one request's worth (~16 MB with BIG-REQUESTS) the paste is refused rather
+than truncated; `MULTIPLE` and `TIMESTAMP` are not served, and `STRING` is
+UTF-8 bytes rather than Latin-1. `Tests/Graphics/X11ClipboardTests-Linux.cpp`
+is 9 cases in the `X11WindowTests` binary, taking the display and the
+clipboard lock both, with a second xcb connection playing another client — on
+the message thread with eacp's loop pumped when it reads what we own, and on a
+thread of its own when it must own the selection while `getText` blocks,
+including a real 256 KB INCR sender, which keeps one transfer per requestor:
+under XWayland the compositor's clipboard bridge converts a fresh selection at
+the same moment eacp does, and a sender holding one requestor's state stalled
+the other's read — a one-in-ten failure under load on the desktop, never on
+Xvfb, and eacp's receiver was right throughout. Green on bare Xvfb and under
+XWayland; the ownerless case skips on a desktop, where the compositor takes a
+dropped selection back within a millisecond. Not verified by anyone yet: a paste into
+or out of GTK, Qt or a DAW's own widgets, and a clipboard manager taking the
+selection on exit — a copy dies with the process, as it does on Wayland.*
+
+*Landed 2026-09-16, `Xft.dpi`, RandR change events and cursor themes. The
+connection reads the root's `RESOURCE_MANAGER` at startup and selects
+`PROPERTY_CHANGE` on the root, and the scale is `Xft.dpi / 96` kept as a
+fraction rather than rounded to a whole factor — Qt's rule, not GTK's, so a
+desktop at 150% is 1.5 and not 2. With that, `X11Window-Linux.cpp` grew the
+points↔pixels seam it had not needed: the server measures a toplevel in pixels
+and everything above the native in points, and the size, the position, the
+`ConfigureNotify`, the translated position and `WM_NORMAL_HINTS` each convert
+and round once at the crossing (`applyConstraints` had been handed pixels
+while it works in points, which only ever looked right because the scale was
+1). `Display` is halved into points with the scale as its `backingScale`, the
+frame pacer and the view-surface children needed nothing — they were already
+written against `window.scale` for `EmbeddedView` — and a `PropertyNotify` for
+`RESOURCE_MANAGER` reaches every toplevel, which keeps the point size it was
+laid out at, asks the server for the pixels that size now needs and fires
+`backingScaleChanged` down its tree: the Wayland scale change exactly. An
+`EmbeddedView`'s scale is still only what `setPixelsPerPoint` said (D6's
+contract, and the Risks bullet's answer to XWayland). RandR change events are
+`SCREEN_CHANGE|CRTC_CHANGE|OUTPUT_CHANGE` on the root; either event drops the
+cached output, reads it again — from the root's live geometry, since xcb never
+revises the setup it read at connect — and re-rates the pacer, which assigns a
+new `Threads::Timer` over the old one because a `Timer`'s interval is fixed at
+construction. Cursor themes turned out to need one fix and no more:
+`libxcb-cursor` already honours `Xcursor.theme`, `Xcursor.size` and a size
+derived from `Xft.dpi` out of the same database, and `XCURSOR_PATH` and
+`XCURSOR_SIZE` out of the environment — measured with a probe that sets the
+property and reads the drawn cursor back through `XFixesGetCursorImage` — but
+it reads them only at `xcb_cursor_context_new`, so the context and the cursors
+cached from it are now freed and built again on every database change and the
+shape under the pointer re-applied. It does not read `XCURSOR_THEME` from the
+environment at all — the string is not in the library — and there is no API
+to pass a theme in, so that one is documented rather than fixed. Six cases: the
+new toplevel's scale, a fractional 144 dpi proving the rounding holds at 1.5
+for the window and for a presenting child, a database change rescaling an
+open window, pointer positions in points, the RandR re-read and the cursor
+size. All six rewrite the root's database or the screen and so are keyed on
+`EACP_XVFB_OUTPUT` — a desktop session's database is not ours to write — and
+five existing cases that compared server pixels with point numbers now scale
+their expectations, which is what lets the whole suite run for real at scale 2
+under XWayland on a HiDPI desktop. Not verified by anyone yet: a screen resize
+actually moving the frame and the refresh, and with it the pacer re-rating onto
+a new rate. Xvfb's RandR is rigid — one mode with a zero dot clock, a screen
+whose maximum is the size it started at, no transforms and no new modes — so
+`RRSetScreenSize` is refused there and the case drives a primary-output change
+instead, which exercises the selection, the dispatch and the re-read but never
+a different answer.*
+
+*Also on 2026-09-16, a stage-3 case made honest:
+`EmbeddedView/aPacedViewLeavesNoThreadBehindWhenItGoes` counted
+`/proc/self/task` the instant the view was gone, and the kernel lists a
+just-joined thread there a moment longer — under a loaded machine it failed
+one run in three, on the stage-3 code as much as on this. It now waits up to
+two seconds for the count to settle, still with no pump in between, which is
+the property it exists to prove.*
+
+*Landed 2026-09-16, XI2. `X11Connection` negotiates XInput, asking 2.2 and
+requiring 2.1 — raw events are 2.0's and smooth scrolling 2.1's, and a server
+with one but not the other is old enough that keeping the halves apart would
+buy nothing — and `EACP_X11_NO_XI2=1` refuses it, which is how the fallback
+stays a tested path rather than a hopeful one. The whole pointer moved to XI2
+rather than scroll alone (GTK, Qt and SDL all do the same), and the core
+pointer bits now come off the window's own mask where XI2 is live rather than
+being left to the server to suppress: `getWindowEventMask()` subtracts them,
+both natives take their mask from it and call `selectPointerEvents()` after
+`registerWindow`, and a press delivered twice is impossible by construction.
+Every `XCB_GE_GENERIC` with the extension's opcode goes straight from
+`dispatch` to the seat — including raw motion, which names no window at all —
+and `X11Input` does its own window lookup through the connection's map, which
+is what both natives were doing by hand for the core events. The seam that
+made this cheap is that the core handlers were split into neutral ones
+(`pointerMovedTo`, `buttonAction`, `pointerEntering`/`Leaving`,
+`dispatchMotion`) taking a point and a button number, so the XI2 path is
+protocol decoding and nothing else. Scrolling is `xcb_input_xi_query_device`
+read for each device's `ScrollClass`, re-read on `XI_DeviceChanged` and
+`XI_Hierarchy`, with a per-axis last value so each report is a difference and
+the first after a change is a baseline that scrolls nothing; the difference
+over the increment is clicks, and the buttons 4–7 the server emulates beside
+it carry `XIPointerEmulated` and are dropped, while a device with no scroll
+class — Xvfb's virtual pointer, most VMs — still arrives as those buttons
+with no flag and notches exactly as before. X11 measures scroll in clicks and
+never in pixels, so a frame is always lines, fractional ones from a trackpad,
+and `preciseScrolling` stays false rather than promising points nothing
+measured. A mouse lock keeps its grab, its hidden cursor and its recentring
+warp, and selects `XI_RawMotion` for `XIAllMasterDevices` on the root for the
+length of the lock: the device's own report, delivered whoever holds the
+pointer grabbed, and generated by no warp — so the recentre, which a position
+could never be told apart from the hand, now contributes nothing and the
+motion path stops counting deltas while raw is live. Both figures a raw event
+carries are used, as Wayland's relative pointer gives both: `axisvalues` is
+`delta` and `axisvalues_raw` is `rawDelta`. One thing had to change for that:
+the grab's `owner_events` is now off, because with it on the server hands the
+same raw event to the root's selection twice — once on the normal delivery up
+from the window under the pointer and once in the delivery to every root a
+raw event always gets — and every delta was doubled. Measured with a
+standalone probe: no grab one event, grab with `owner_events` two with the
+same sequence and timestamp, grab without one. Off is what a lock means
+anyway; the cost is that a scroll while locked is wheel buttons rather than
+valuators. `X11WindowTests` is 47 cases now: the lock case drives relative
+XTest motion instead of a warp and asserts `rawDelta`, three new ones cover
+the warp counting nothing, the core bits being absent from the window's mask
+with one press arriving once, and the whole thing again under
+`EACP_X11_NO_XI2`, and two need no display at all because neither server this
+suite can run on has a device with a scroll class — Xvfb's virtual pointer
+has none and XWayland's seat is the compositor's — so the valuator arithmetic
+and the emulated-button filter are checked as functions. `with-xvfb`
+X11+EmbeddedView+Present 74/74, headless 1616/1616, XWayland 64/64 at scale 2.
+Not verified by anyone yet: a physical wheel or trackpad actually scrolling,
+and nothing scrolling twice, which is the one thing no server here can be
+made to do — what was checked on the desktop is that XWayland's device table
+reads back through the same calls (valuators 2 and 3, increment 1.0) and that
+a real `WidgetGallery` comes up with no core pointer bits on its window; also
+unverified, a hotplug driving the table re-read, and acceleration differing
+from the raw figure, which Xvfb's XTEST device never applies. `Present`
+pacing, the stage's last item, is left as it is: it was conditional on the
+pacer proving visibly worse on real hardware, and nobody has seen that.*
 
 **Stage 6 — thin eacp host bridge.** D10, and `Apps/Plugins` builds on
 Linux once `DemoPlugin`'s `ShapeLayerView` content is replaced with a

@@ -3,6 +3,7 @@
 #include "../Graphics/Keyboard-Linux.h"
 
 #include <xcb/xfixes.h>
+#include <xcb/xinput.h>
 #include <xkbcommon/xkbcommon-x11.h>
 
 // xcb/xkb.h names a struct field `explicit`, which C++ will not take.
@@ -27,11 +28,35 @@ namespace
 constexpr uint32_t x11KeycodeOffset = 8;
 
 // The wheel is buttons on core X11; 4/5 are one notch up and down, 6/7 one
-// left and right. Smooth scrolling is XI2's, and stage 5's (plan.md).
-constexpr uint8_t x11WheelUp = 4;
-constexpr uint8_t x11WheelDown = 5;
-constexpr uint8_t x11WheelLeft = 6;
-constexpr uint8_t x11WheelRight = 7;
+// left and right. A device with a scroll valuator reports the same turn twice
+// - once as a valuator and once as one of these, flagged emulated - and the
+// flagged half is dropped; a device with no valuator, which is what a virtual
+// pointer under Xvfb or in a VM is, has only these.
+constexpr uint32_t x11WheelUp = 4;
+constexpr uint32_t x11WheelDown = 5;
+constexpr uint32_t x11WheelLeft = 6;
+constexpr uint32_t x11WheelRight = 7;
+
+// What the seat selects on the root, where no window would do: the two notices
+// that say the device table has changed. Both go under XIAllDevices, because a
+// hierarchy notice is about every device at once and the server refuses to
+// select one for anything narrower.
+constexpr uint32_t x11XinputDeviceTableMask =
+    XCB_INPUT_XI_EVENT_MASK_DEVICE_CHANGED | XCB_INPUT_XI_EVENT_MASK_HIERARCHY;
+
+// A pointer's position on the wire is 16.16 fixed point, and a valuator 32.32.
+constexpr double x11Fp3232Scale = 4294967296.0;
+constexpr float x11Fp1616Scale = 65536.f;
+
+float x11Fp1616(xcb_input_fp1616_t value)
+{
+    return (float) value / x11Fp1616Scale;
+}
+
+double x11Fp3232(xcb_input_fp3232_t value)
+{
+    return (double) value.integral + (double) value.frac / x11Fp3232Scale;
+}
 
 // Everything a locked pointer's grab has to keep reporting.
 constexpr uint16_t x11PointerGrabMask =
@@ -71,20 +96,43 @@ uint32_t x11EvdevFromButton(uint8_t button)
     }
 }
 
-bool x11IsWheelButton(uint8_t button)
+bool x11IsWheelButton(uint32_t button)
 {
     return button >= x11WheelUp && button <= x11WheelRight;
+}
+
+// The valuators an event carries, in order, against the numbers they were set
+// under: a mask bit per valuator and one value for each bit that is set.
+template <typename Visit>
+void x11ForEachValuator(const uint32_t* mask, int words, Visit&& visit)
+{
+    auto taken = 0;
+
+    for (auto valuator = 0; valuator < words * 32; ++valuator)
+    {
+        if ((mask[valuator / 32] & (1u << (valuator % 32))) == 0)
+            continue;
+
+        visit((uint16_t) valuator, taken);
+        ++taken;
+    }
 }
 
 // A window's own points, which an event is not: the server measures a pointer
 // in the pixels of the window it is over. The two are the same number on a
 // toplevel, whose scale is 1, and half of one inside an EmbeddedView a host
 // told to put two pixels in a point.
-Point x11PointIn(const X11WindowSurface& window, int16_t x, int16_t y)
+Point x11PointIn(const X11WindowSurface& window, float x, float y)
 {
     const auto scale = window.scale > 0.f ? window.scale : 1.f;
 
-    return {(float) x / scale, (float) y / scale};
+    return {x / scale, y / scale};
+}
+
+template <typename Event>
+Point x11EventPointIn(const X11WindowSurface& window, const Event& event)
+{
+    return x11PointIn(window, x11Fp1616(event.event_x), x11Fp1616(event.event_y));
 }
 
 // A crossing into or out of one of our own child windows is not the pointer
@@ -112,6 +160,8 @@ X11Input::X11Input(X11Connection& connectionToUse)
 
     connection.onXkbEvent = [this](const xcb_generic_event_t& event)
     { handleXkbEvent(event); };
+
+    setupXinput();
 }
 
 X11Input::~X11Input()
@@ -352,11 +402,24 @@ void X11Input::setKeyboardFocus(X11WindowSurface* window)
 void X11Input::pointerEntered(X11WindowSurface& window,
                               const xcb_enter_notify_event_t& event)
 {
-    if (!x11IsRealCrossing(event.mode, event.detail))
+    pointerEntering(window,
+                    event.mode,
+                    event.detail,
+                    x11PointIn(window, event.event_x, event.event_y),
+                    event.time);
+}
+
+void X11Input::pointerEntering(X11WindowSurface& window,
+                               uint8_t mode,
+                               uint8_t detail,
+                               Point position,
+                               uint32_t time)
+{
+    if (!x11IsRealCrossing(mode, detail))
         return;
 
     setPointerWindow(&window);
-    pointerState.setPosition(x11PointIn(window, event.event_x, event.event_y));
+    pointerState.setPosition(position);
 
     cursor.setHidden(lockedWindow == &window);
 
@@ -367,7 +430,7 @@ void X11Input::pointerEntered(X11WindowSurface& window,
     moved.type = MouseEventType::Moved;
     moved.pos = pointerState.getPosition();
     moved.modifiers = getModifiers();
-    moved.timestamp = linuxTimestamp(event.time);
+    moved.timestamp = linuxTimestamp(time);
 
     dispatchMouse(moved);
 }
@@ -375,7 +438,17 @@ void X11Input::pointerEntered(X11WindowSurface& window,
 void X11Input::pointerLeft(X11WindowSurface& window,
                            const xcb_leave_notify_event_t& event)
 {
-    if (pointerWindow != &window || !x11IsRealCrossing(event.mode, event.detail))
+    pointerLeaving(window,
+                   event.mode,
+                   event.detail,
+                   x11PointIn(window, event.event_x, event.event_y),
+                   event.time);
+}
+
+void X11Input::pointerLeaving(
+    X11WindowSurface& window, uint8_t mode, uint8_t detail, Point, uint32_t time)
+{
+    if (pointerWindow != &window || !x11IsRealCrossing(mode, detail))
         return;
 
     if (window.contentView != nullptr)
@@ -384,7 +457,7 @@ void X11Input::pointerLeft(X11WindowSurface& window,
         exited.type = MouseEventType::Exited;
         exited.pos = pointerState.getPosition();
         exited.modifiers = getModifiers();
-        exited.timestamp = linuxTimestamp(event.time);
+        exited.timestamp = linuxTimestamp(time);
 
         window.contentView->dispatchMouseEvent(exited);
     }
@@ -395,12 +468,16 @@ void X11Input::pointerLeft(X11WindowSurface& window,
 void X11Input::pointerMoved(X11WindowSurface& window,
                             const xcb_motion_notify_event_t& event)
 {
+    pointerMovedTo(
+        window, x11PointIn(window, event.event_x, event.event_y), event.time);
+}
+
+void X11Input::pointerMovedTo(X11WindowSurface& window, Point moved, uint32_t time)
+{
     // A grab keeps reporting motion after the enter that would have named the
     // window; a pointer over one of our windows is in it whatever happened.
     if (pointerWindow != &window)
         setPointerWindow(&window);
-
-    const auto moved = x11PointIn(window, event.event_x, event.event_y);
 
     auto delta = Point {};
 
@@ -415,6 +492,13 @@ void X11Input::pointerMoved(X11WindowSurface& window,
             return;
 
         warpToLockCentre();
+
+        // Where the device is reporting itself, this is the pointer being put
+        // back in the middle as often as it is the hand moving, and the two
+        // cannot be told apart from a position: the deltas are the raw
+        // events' alone, and counting these as well would double them.
+        if (rawMotionActive)
+            return;
     }
     else
     {
@@ -424,14 +508,19 @@ void X11Input::pointerMoved(X11WindowSurface& window,
         pointerState.setPosition(moved);
     }
 
+    dispatchMotion(delta, delta, time);
+}
+
+void X11Input::dispatchMotion(Point delta, Point unaccelerated, uint32_t time)
+{
     auto dispatched = MouseEvent {};
     dispatched.pos = pointerState.getPosition();
     dispatched.delta = delta;
-    dispatched.rawDelta = delta;
+    dispatched.rawDelta = unaccelerated;
     dispatched.button = pointerState.getHeldButton();
     dispatched.modifiers = getModifiers();
     dispatched.clickCount = pointerState.getClickCount();
-    dispatched.timestamp = linuxTimestamp(event.time);
+    dispatched.timestamp = linuxTimestamp(time);
 
     // Only Dragged and Up go to the view that captured the mouse down; a plain
     // Moved is re-hit-tested, and would lose a grab in progress.
@@ -446,28 +535,41 @@ void X11Input::buttonChanged(X11WindowSurface& window,
                              const xcb_button_press_event_t& event,
                              bool pressed)
 {
+    buttonAction(window,
+                 event.detail,
+                 pressed,
+                 x11PointIn(window, event.event_x, event.event_y),
+                 event.time);
+}
+
+void X11Input::buttonAction(X11WindowSurface& window,
+                            uint32_t button,
+                            bool pressed,
+                            Point position,
+                            uint32_t time)
+{
     if (pointerWindow != &window)
         setPointerWindow(&window);
 
     if (lockedWindow != &window)
-        pointerState.setPosition(x11PointIn(window, event.event_x, event.event_y));
+        pointerState.setPosition(position);
 
-    if (x11IsWheelButton(event.detail))
+    if (x11IsWheelButton(button))
     {
         // The release of a wheel button is the same notch reported twice.
         if (pressed)
         {
-            wheelFromButton(event.detail);
-            dispatchWheel(event.time);
+            wheelFromButton(button);
+            dispatchWheel(time);
         }
 
         return;
     }
 
     if (pressed)
-        takeFocusOnClick(window, event.time);
+        takeFocusOnClick(window, time);
 
-    const auto code = x11EvdevFromButton(event.detail);
+    const auto code = x11EvdevFromButton((uint8_t) button);
 
     // Back and forward have no MouseButton to land on.
     if (code == 0)
@@ -477,12 +579,12 @@ void X11Input::buttonChanged(X11WindowSurface& window,
     dispatched.pos = pointerState.getPosition();
     dispatched.button = linuxButtonFromEvdev(code);
     dispatched.modifiers = getModifiers();
-    dispatched.timestamp = linuxTimestamp(event.time);
+    dispatched.timestamp = linuxTimestamp(time);
 
     if (pressed)
     {
         dispatched.type = MouseEventType::Down;
-        dispatched.clickCount = pointerState.pressed(dispatched.button, event.time);
+        dispatched.clickCount = pointerState.pressed(dispatched.button, time);
     }
     else
     {
@@ -497,7 +599,7 @@ void X11Input::buttonChanged(X11WindowSurface& window,
 
 // MouseEvent::delta is positive upwards and leftwards, which is the opposite
 // of the direction each button names.
-void X11Input::wheelFromButton(uint8_t button)
+void X11Input::wheelFromButton(uint32_t button)
 {
     switch (button)
     {
@@ -612,6 +714,23 @@ void X11Input::applyCursor()
     connection.flush();
 }
 
+// A cursor the server still has a window pointing at outlives the free, so the
+// pointer keeps the old shape until the new one is set rather than blinking
+// through the server's default on the way.
+void X11Input::cursorThemeChanged()
+{
+    if (!connection.isConnected())
+        return;
+
+    for (const auto& cached: cursorCache)
+        if (cached.cursor != XCB_CURSOR_NONE)
+            xcb_free_cursor(xcb(), cached.cursor);
+
+    cursorCache.clear();
+
+    applyCursor();
+}
+
 // One cursor per shape for the life of the connection: loading one is a round
 // trip through the theme, and a pointer crossing a few views would repeat it
 // several times a second.
@@ -663,8 +782,17 @@ void X11Input::updateMouseLock(X11WindowSurface& window)
         disengageMouseLock();
 }
 
-// The grab confines the pointer to the window, the warp pins it in the middle
-// and every motion from there is a delta the warp then undoes.
+// The grab confines the pointer to the window and takes everything the pointer
+// does to that window alone, the warp pins it in the middle, and what the hand
+// moved is the raw events' to say where the server has them.
+//
+// owner_events is off, and that is not a detail: with it on, a pointer over a
+// window of ours is delivered to that window as if there were no grab, and the
+// server then hands the same raw event to the root's selection twice - once on
+// its way up from that window and once again in the delivery to every root
+// that a raw event always gets. Every delta would be counted twice. Off, a
+// locked pointer's events reach the locked window and nothing else, which is
+// what a lock means anyway.
 void X11Input::engageMouseLock(X11WindowSurface& window)
 {
     if (lockedWindow != nullptr || window.getWindow() == XCB_NONE
@@ -673,7 +801,7 @@ void X11Input::engageMouseLock(X11WindowSurface& window)
 
     auto* reply = xcb_grab_pointer_reply(xcb(),
                                          xcb_grab_pointer(xcb(),
-                                                          1,
+                                                          0,
                                                           window.getWindow(),
                                                           x11PointerGrabMask,
                                                           XCB_GRAB_MODE_ASYNC,
@@ -695,6 +823,7 @@ void X11Input::engageMouseLock(X11WindowSurface& window)
     lockedWindow = &window;
 
     setPointerWindow(&window);
+    selectRawMotion(true);
 
     cursor.setHidden(true);
     applyCursor();
@@ -708,6 +837,8 @@ void X11Input::disengageMouseLock()
         return;
 
     lockedWindow = nullptr;
+
+    selectRawMotion(false);
 
     if (connection.isConnected())
         xcb_ungrab_pointer(xcb(), XCB_CURRENT_TIME);
@@ -746,6 +877,332 @@ void X11Input::warpToLockCentre()
                      (int16_t) std::lround(centre.x * scale),
                      (int16_t) std::lround(centre.y * scale));
     connection.flush();
+}
+
+float X11ScrollAxis::step(double value)
+{
+    const auto previous = last;
+    const auto seen = hasLast;
+
+    last = value;
+    hasLast = true;
+
+    // The number a valuator starts at is wherever the device happened to be,
+    // and the one after a device change is wherever the new device is: neither
+    // is a scroll, and reporting the difference would fling a view across.
+    if (!seen || increment == 0.0)
+        return 0.f;
+
+    return (float) ((value - previous) / increment);
+}
+
+bool x11IsEmulatedWheelButton(uint32_t flags, uint32_t button)
+{
+    return (flags & XCB_INPUT_POINTER_EVENT_FLAGS_POINTER_EMULATED) != 0
+           && x11IsWheelButton(button);
+}
+
+// The device table is the root's business rather than any window's, and so is
+// raw motion. Selecting it costs nothing where no device has a scroll valuator
+// - there is simply no table to keep.
+void X11Input::setupXinput()
+{
+    if (!connection.isXinputAvailable() || connection.getScreen() == nullptr)
+        return;
+
+    xinput = true;
+
+    connection.selectXinputEvents(connection.getScreen()->root,
+                                  XCB_INPUT_DEVICE_ALL,
+                                  x11XinputDeviceTableMask);
+
+    readScrollDevices();
+}
+
+// Every device, master and slave alike: an event names the slave that made it
+// in sourceid, and the master it was routed through in deviceid, and either
+// may be what a scroll arrives under.
+void X11Input::readScrollDevices()
+{
+    scrollDevices.clear();
+
+    if (!xinput || !connection.isConnected())
+        return;
+
+    auto* reply = xcb_input_xi_query_device_reply(
+        xcb(), xcb_input_xi_query_device(xcb(), XCB_INPUT_DEVICE_ALL), nullptr);
+
+    if (reply == nullptr)
+        return;
+
+    auto devices = xcb_input_xi_query_device_infos_iterator(reply);
+
+    for (; devices.rem > 0; xcb_input_xi_device_info_next(&devices))
+    {
+        auto found = X11ScrollDevice {devices.data->deviceid, {}, {}};
+        auto classes = xcb_input_xi_device_info_classes_iterator(devices.data);
+
+        for (; classes.rem > 0; xcb_input_device_class_next(&classes))
+        {
+            if (classes.data->type != XCB_INPUT_DEVICE_CLASS_TYPE_SCROLL)
+                continue;
+
+            const auto& scroll =
+                *reinterpret_cast<const xcb_input_scroll_class_t*>(classes.data);
+
+            auto& axis = scroll.scroll_type == XCB_INPUT_SCROLL_TYPE_HORIZONTAL
+                             ? found.horizontal
+                             : found.vertical;
+
+            axis = {true, scroll.number, x11Fp3232(scroll.increment), 0.0, false};
+        }
+
+        if (found.vertical.present || found.horizontal.present)
+            scrollDevices.add(found);
+    }
+
+    std::free(reply);
+}
+
+X11ScrollDevice* X11Input::scrollDeviceFor(uint16_t sourceId)
+{
+    for (auto& device: scrollDevices)
+        if (device.deviceId == sourceId)
+            return &device;
+
+    return nullptr;
+}
+
+// Raw motion is delivered whoever holds the pointer grabbed and wherever it
+// is, which is exactly what a locked pointer needs and exactly what nothing
+// else wants to be woken for: it is selected for the length of a lock and
+// dropped again with it.
+void X11Input::selectRawMotion(bool wanted)
+{
+    if (!xinput || rawMotionActive == wanted || connection.getScreen() == nullptr)
+        return;
+
+    rawMotionActive = wanted;
+
+    // Its own selection, under its own device spec: raw motion is the masters'
+    // to report, and the table's notices are every device's.
+    connection.selectXinputEvents(connection.getScreen()->root,
+                                  XCB_INPUT_DEVICE_ALL_MASTER,
+                                  wanted ? XCB_INPUT_XI_EVENT_MASK_RAW_MOTION : 0);
+    connection.flush();
+}
+
+void X11Input::xinputEvent(const xcb_generic_event_t& event)
+{
+    switch (x11InputAs<xcb_ge_generic_event_t>(event).event_type)
+    {
+        case XCB_INPUT_MOTION:
+            xinputMotion(event);
+            break;
+
+        case XCB_INPUT_BUTTON_PRESS:
+            xinputButton(event, true);
+            break;
+
+        case XCB_INPUT_BUTTON_RELEASE:
+            xinputButton(event, false);
+            break;
+
+        case XCB_INPUT_ENTER:
+            xinputCrossing(event, true);
+            break;
+
+        case XCB_INPUT_LEAVE:
+            xinputCrossing(event, false);
+            break;
+
+        case XCB_INPUT_RAW_MOTION:
+            rawMotion(event);
+            break;
+
+        // A slave device took the master over, or one was plugged in: the
+        // valuator numbers and the increments are the new device's, and the
+        // value it starts counting from is its own.
+        case XCB_INPUT_DEVICE_CHANGED:
+        case XCB_INPUT_HIERARCHY:
+            readScrollDevices();
+            break;
+
+        default:
+            break;
+    }
+}
+
+// An XI2 event names a window exactly as a core one does, and the connection's
+// map is what turns it into a surface: the two window natives both hand a core
+// pointer event straight to the seat, so there is nothing for either to add to
+// one of these either.
+X11WindowSurface* X11Input::windowForXinputEvent(const xcb_generic_event_t& event)
+{
+    const auto& device = x11InputAs<xcb_input_button_press_event_t>(event);
+
+    return connection.findWindow(device.event).windowSurface;
+}
+
+void X11Input::xinputMotion(const xcb_generic_event_t& event)
+{
+    auto* window = windowForXinputEvent(event);
+
+    if (window == nullptr)
+        return;
+
+    const auto& motion = x11InputAs<xcb_input_motion_event_t>(event);
+
+    // Before the scroll rather than after it: a wheel turned the moment the
+    // pointer arrived would otherwise be delivered to the window it left.
+    if (pointerWindow != window)
+        setPointerWindow(window);
+
+    const auto carriedScroll = accumulateScroll(event);
+
+    if (carriedScroll)
+        dispatchWheel(motion.time);
+
+    const auto moved = x11EventPointIn(*window, motion);
+    const auto here = pointerState.getPosition();
+
+    // A wheel is a motion event with a scroll valuator moved and nothing else:
+    // a zero move beside it would re-hit-test a pointer that never left.
+    if (carriedScroll && moved.x == here.x && moved.y == here.y)
+        return;
+
+    pointerMovedTo(*window, moved, motion.time);
+}
+
+void X11Input::xinputButton(const xcb_generic_event_t& event, bool pressed)
+{
+    auto* window = windowForXinputEvent(event);
+
+    if (window == nullptr)
+        return;
+
+    const auto& button = x11InputAs<xcb_input_button_press_event_t>(event);
+
+    if (x11IsEmulatedWheelButton(button.flags, button.detail))
+        return;
+
+    buttonAction(*window,
+                 button.detail,
+                 pressed,
+                 x11EventPointIn(*window, button),
+                 button.time);
+}
+
+// XI2 numbers its crossing modes and details as the core protocol does, so the
+// one rule about what a crossing means serves both.
+void X11Input::xinputCrossing(const xcb_generic_event_t& event, bool entering)
+{
+    const auto& crossing = x11InputAs<xcb_input_enter_event_t>(event);
+
+    auto* window = connection.findWindow(crossing.event).windowSurface;
+
+    if (window == nullptr)
+        return;
+
+    const auto position = x11EventPointIn(*window, crossing);
+
+    if (entering)
+        pointerEntering(
+            *window, crossing.mode, crossing.detail, position, crossing.time);
+    else
+        pointerLeaving(
+            *window, crossing.mode, crossing.detail, position, crossing.time);
+}
+
+// Valuators 0 and 1 are the pointer's own x and y on every device that has
+// them. Both figures the event carries are read: the accelerated one is what
+// the pointer would have moved on screen, the unaccelerated one what the
+// device reported before any pointer curve was applied.
+void X11Input::rawMotion(const xcb_generic_event_t& event)
+{
+    if (lockedWindow == nullptr)
+        return;
+
+    const auto& raw = x11InputAs<xcb_input_raw_motion_event_t>(event);
+
+    const auto* mask = xcb_input_raw_button_press_valuator_mask(&raw);
+    const auto words = xcb_input_raw_button_press_valuator_mask_length(&raw);
+    const auto* accelerated = xcb_input_raw_button_press_axisvalues(&raw);
+    const auto* device = xcb_input_raw_button_press_axisvalues_raw(&raw);
+
+    auto delta = Point {};
+    auto unaccelerated = Point {};
+
+    x11ForEachValuator(mask,
+                       words,
+                       [&](uint16_t valuator, int index)
+                       {
+                           if (valuator == 0)
+                           {
+                               delta.x = (float) x11Fp3232(accelerated[index]);
+                               unaccelerated.x = (float) x11Fp3232(device[index]);
+                           }
+                           else if (valuator == 1)
+                           {
+                               delta.y = (float) x11Fp3232(accelerated[index]);
+                               unaccelerated.y = (float) x11Fp3232(device[index]);
+                           }
+                       });
+
+    if (delta.x == 0.f && delta.y == 0.f && unaccelerated.x == 0.f
+        && unaccelerated.y == 0.f)
+        return;
+
+    // A device counts in pixels, and everything above the native in points.
+    const auto scale = lockedWindow->scale > 0.f ? lockedWindow->scale : 1.f;
+
+    dispatchMotion({delta.x / scale, delta.y / scale},
+                   {unaccelerated.x / scale, unaccelerated.y / scale},
+                   raw.time);
+}
+
+// X11 measures a scroll in clicks of a wheel and never in pixels: a device
+// that scrolls smoothly says so by sending a fraction of one. So every frame
+// here is lines - fractional ones from a trackpad - and preciseScrolling stays
+// false, which is the truth rather than points nothing ever measured.
+bool X11Input::accumulateScroll(const xcb_generic_event_t& event)
+{
+    const auto& motion = x11InputAs<xcb_input_motion_event_t>(event);
+
+    auto* device = scrollDeviceFor(motion.sourceid);
+
+    if (device == nullptr)
+        return false;
+
+    const auto* mask = xcb_input_button_press_valuator_mask(&motion);
+    const auto words = xcb_input_button_press_valuator_mask_length(&motion);
+    const auto* values = xcb_input_button_press_axisvalues(&motion);
+
+    auto carried = false;
+
+    x11ForEachValuator(
+        mask,
+        words,
+        [&](uint16_t valuator, int index)
+        {
+            const auto value = x11Fp3232(values[index]);
+
+            // MouseEvent::delta is positive upwards and leftwards; a scroll
+            // valuator counts the other way on both axes.
+            if (device->vertical.present && valuator == device->vertical.number)
+            {
+                carried = true;
+                wheel.addNotches({0.f, -device->vertical.step(value)});
+            }
+            else if (device->horizontal.present
+                     && valuator == device->horizontal.number)
+            {
+                carried = true;
+                wheel.addNotches({-device->horizontal.step(value), 0.f});
+            }
+        });
+
+    return carried;
 }
 
 bool X11Input::isKeyPressed(uint32_t evdevCode) const

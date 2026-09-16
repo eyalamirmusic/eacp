@@ -88,7 +88,7 @@ jobs:
             libdecor-0-dev pkg-config \
             libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev \
             libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev \
-            libxcb-icccm4-dev libxcb-xtest0-dev \
+            libxcb-icccm4-dev libxcb-xinput-dev libxcb-xtest0-dev \
             libfreetype-dev libharfbuzz-dev libfontconfig-dev \
             fonts-dejavu-core fonts-dejavu-extra fonts-noto-color-emoji \
             fonts-droid-fallback

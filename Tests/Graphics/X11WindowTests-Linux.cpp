@@ -6,8 +6,12 @@
 #include <eacp/Graphics/View/View-Linux.h>
 #include <eacp/Graphics/Window/LinuxSeat-Linux.h>
 #include <eacp/Graphics/Window/LinuxWindowSystem-Linux.h>
+#include <eacp/Graphics/Window/X11Input-Linux.h>
 
+#include <xcb/randr.h>
 #include <xcb/xcb.h>
+#include <xcb/xfixes.h>
+#include <xcb/xinput.h>
 
 #if EACP_HAS_XTEST
 #include <xcb/xtest.h>
@@ -15,10 +19,13 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <source_location>
 #include <linux/input-event-codes.h>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 // The X11 backend against a real server: not headless, and every case
@@ -158,6 +165,14 @@ TestGeometry rootPositionOf(xcb_connection_t* connection, xcb_window_t window)
     return position;
 }
 
+// A content view that counts the one thing a scale change tells it.
+struct ScaleCountingView : View
+{
+    void backingScaleChanged() override { ++scaleChanges; }
+
+    int scaleChanges = 0;
+};
+
 // The view is declared first so it outlives the window.
 struct ServerWindow
 {
@@ -191,7 +206,7 @@ struct ServerWindow
 
     xcb_window_t id() { return windowIdOf(*window); }
 
-    View content;
+    ScaleCountingView content;
     int moves = 0;
     int hidden = 0;
     Point lastPosition;
@@ -376,6 +391,15 @@ struct FakeInput
         xcb_flush(connection);
     }
 
+    // XTest's own motion, which is relative when the detail is non-zero: the
+    // server's virtual XTEST pointer posts it as a device would, so it is the
+    // only thing here that makes an XI2 raw event - a warp makes none, which
+    // is the whole reason a locked pointer is measured from one.
+    void moveBy(Point delta)
+    {
+        fake(XCB_MOTION_NOTIFY, 1, (int16_t) delta.x, (int16_t) delta.y);
+    }
+
     void button(uint8_t number, bool pressed)
     {
         fake(pressed ? XCB_BUTTON_PRESS : XCB_BUTTON_RELEASE, number, 0, 0);
@@ -553,6 +577,41 @@ bool takeFocus(xcb_connection_t* probe, InputWindow& host)
     return host.active;
 }
 
+// Whether XI2 is carrying this window's pointer events. all_event_masks is the
+// union of what every client selected on the window, and nothing but the
+// backend has ours selected: with XI2 there the core pointer bits are simply
+// not among them, because a window that selected an XI2 event and the core one
+// it replaces would be told about the same press twice on some servers.
+bool pointerGoesThroughXinput(xcb_connection_t* probe, xcb_window_t window)
+{
+    auto* reply = xcb_get_window_attributes_reply(
+        probe, xcb_get_window_attributes(probe, window), nullptr);
+
+    if (reply == nullptr)
+        return false;
+
+    const auto core = (reply->all_event_masks & XCB_EVENT_MASK_POINTER_MOTION) != 0;
+
+    std::free(reply);
+
+    return !core;
+}
+
+// Where the server has the pointer right now, in root coordinates.
+Point pointerPosition(xcb_connection_t* probe, xcb_window_t root)
+{
+    auto* reply =
+        xcb_query_pointer_reply(probe, xcb_query_pointer(probe, root), nullptr);
+
+    if (reply == nullptr)
+        return {};
+
+    const auto position = Point {(float) reply->root_x, (float) reply->root_y};
+    std::free(reply);
+
+    return position;
+}
+
 // Set by Scripts/with-xvfb, and by nothing a real desktop session runs.
 std::optional<Point> xvfbOutputSize()
 {
@@ -564,6 +623,268 @@ std::optional<Point> xvfbOutputSize()
 
     return Point {std::stof(value.substr(0, separator)),
                   std::stof(value.substr(separator + 1))};
+}
+
+// A geometry the server reports is in pixels and everything a case asks a
+// window for is in points: the same number only where the display's scale is
+// 1, which is every server this suite starts for itself and not a desktop
+// whose session has written an Xft.dpi.
+int pixelsOf(float points)
+{
+    return (int) std::lround(points * primaryDisplay().backingScale);
+}
+
+float pointsOf(int pixels)
+{
+    return (float) pixels / primaryDisplay().backingScale;
+}
+
+// The xrdb database is one STRING property on the root that the whole display
+// shares: a session's settings daemon owns it, and only a server this suite
+// started for itself may have it written to. A desktop's own scale and cursor
+// theme are not this suite's to change, so the cases that write it run where
+// Scripts/with-xvfb is the one that started the server.
+bool canChangeTheResourceDatabase()
+{
+    if (onOwnXvfb())
+        return true;
+
+    LOG("The resource database on this display belongs to the desktop session "
+        "rather than to this suite, so the cases that rewrite Xft.dpi and the "
+        "cursor theme are skipped. Scripts/with-xvfb runs them for real, which "
+        "is what CI does.");
+
+    return false;
+}
+
+std::string resourceDatabaseOf(xcb_connection_t* probe)
+{
+    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+
+    auto* reply = xcb_get_property_reply(
+        probe,
+        xcb_get_property(
+            probe, 0, root, XCB_ATOM_RESOURCE_MANAGER, XCB_ATOM_STRING, 0, 65536),
+        nullptr);
+
+    if (reply == nullptr)
+        return {};
+
+    auto database = std::string {(const char*) xcb_get_property_value(reply),
+                                 (size_t) xcb_get_property_value_length(reply)};
+
+    std::free(reply);
+
+    return database;
+}
+
+// What the backend made of the database, seen through the one public thing
+// that reports it.
+bool scaleBecomes(float wanted)
+{
+    Threads::runEventLoopUntil([wanted]
+                               { return primaryDisplay().backingScale == wanted; },
+                               x11TestTimeout);
+
+    return primaryDisplay().backingScale == wanted;
+}
+
+// Writes the database and puts back whatever was there, waiting each time for
+// the backend to have taken it: a case that left a scale of 2 behind would
+// hand it to the next case in a direct run, where the whole file is one
+// process.
+struct ResourceDatabase
+{
+    explicit ResourceDatabase(xcb_connection_t* probeToUse)
+        : probe(probeToUse)
+        , original(resourceDatabaseOf(probeToUse))
+        , originalScale(primaryDisplay().backingScale)
+    {
+    }
+
+    ~ResourceDatabase()
+    {
+        write(original);
+        scaleBecomes(originalScale);
+    }
+
+    void write(const std::string& database)
+    {
+        const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+
+        xcb_change_property(probe,
+                            XCB_PROP_MODE_REPLACE,
+                            root,
+                            XCB_ATOM_RESOURCE_MANAGER,
+                            XCB_ATOM_STRING,
+                            8,
+                            (uint32_t) database.size(),
+                            database.c_str());
+        xcb_flush(probe);
+    }
+
+    xcb_connection_t* probe = nullptr;
+    std::string original;
+    float originalScale = 1.f;
+};
+
+// The size of the cursor the server is showing, which is the size the theme
+// gave it. Zero where XFixes cannot answer.
+Point cursorImageSize(xcb_connection_t* probe)
+{
+    auto* version = xcb_xfixes_query_version_reply(
+        probe,
+        xcb_xfixes_query_version(
+            probe, XCB_XFIXES_MAJOR_VERSION, XCB_XFIXES_MINOR_VERSION),
+        nullptr);
+
+    if (version == nullptr)
+        return {};
+
+    std::free(version);
+
+    auto* image = xcb_xfixes_get_cursor_image_reply(
+        probe, xcb_xfixes_get_cursor_image(probe), nullptr);
+
+    if (image == nullptr)
+        return {};
+
+    const auto size = Point {(float) image->width, (float) image->height};
+    std::free(image);
+
+    return size;
+}
+
+// Whether any theme with cursors in it is installed, which is what decides
+// whether a size in the database can change anything: with none, xcb-cursor
+// falls back to the server's own cursor font, whose glyphs are one size
+// whatever the database says.
+bool aCursorThemeIsInstalled()
+{
+    auto roots = std::vector<std::string> {};
+
+    if (const auto path = getEnvValue("XCURSOR_PATH"); !path.empty())
+    {
+        for (auto rest = std::string_view {path}; !rest.empty();)
+        {
+            const auto end = rest.find(':');
+            roots.emplace_back(rest.substr(0, end));
+            rest = end == std::string_view::npos ? std::string_view {}
+                                                 : rest.substr(end + 1);
+        }
+    }
+    else
+    {
+        const auto home = getEnvValue("HOME");
+
+        roots = {home + "/.local/share/icons",
+                 home + "/.icons",
+                 "/usr/share/icons",
+                 "/usr/share/pixmaps"};
+    }
+
+    auto ignored = std::error_code {};
+
+    for (const auto& root: roots)
+        for (const auto& theme: std::filesystem::directory_iterator {root, ignored})
+            if (std::filesystem::exists(theme.path() / "cursors", ignored))
+                return true;
+
+    return false;
+}
+
+// The output the server has now, read through the test's own connection: the
+// root's size where RandR names no primary output, which is the case on Xvfb.
+Point serverOutputSize(xcb_connection_t* probe)
+{
+    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+    const auto geometry = geometryOf(probe, root);
+
+    return {(float) geometry.width, (float) geometry.height};
+}
+
+bool randrIsUsable(xcb_connection_t* probe)
+{
+    auto* reply = xcb_randr_query_version_reply(
+        probe, xcb_randr_query_version(probe, 1, 5), nullptr);
+
+    if (reply == nullptr)
+        return false;
+
+    const auto usable = reply->major_version > 1 || reply->minor_version >= 3;
+    std::free(reply);
+
+    return usable;
+}
+
+// True when the server took the new screen size. Xvfb refuses every one of
+// them: its screen's maximum is the size it was started at and its one crtc
+// already covers all of it, so there is nothing to grow into and nothing the
+// crtc would fit inside.
+bool resizeTheScreen(xcb_connection_t* probe, Point size)
+{
+    constexpr auto millimetresPerPoint = 25.4f / 96.f;
+
+    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+
+    auto* error = xcb_request_check(probe,
+                                    xcb_randr_set_screen_size_checked(
+                                        probe,
+                                        root,
+                                        (uint16_t) size.x,
+                                        (uint16_t) size.y,
+                                        (uint32_t) (size.x * millimetresPerPoint),
+                                        (uint32_t) (size.y * millimetresPerPoint)));
+
+    if (error == nullptr)
+        return true;
+
+    std::free(error);
+
+    return false;
+}
+
+xcb_randr_output_t primaryOutputOf(xcb_connection_t* probe)
+{
+    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+
+    auto* reply = xcb_randr_get_output_primary_reply(
+        probe, xcb_randr_get_output_primary(probe, root), nullptr);
+
+    if (reply == nullptr)
+        return XCB_NONE;
+
+    const auto output = reply->output;
+    std::free(reply);
+
+    return output;
+}
+
+xcb_randr_output_t firstOutputOf(xcb_connection_t* probe)
+{
+    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+
+    auto* reply = xcb_randr_get_screen_resources_current_reply(
+        probe, xcb_randr_get_screen_resources_current(probe, root), nullptr);
+
+    if (reply == nullptr)
+        return XCB_NONE;
+
+    const auto* outputs = xcb_randr_get_screen_resources_current_outputs(reply);
+    const auto count = xcb_randr_get_screen_resources_current_outputs_length(reply);
+
+    const auto output = count > 0 ? outputs[0] : (xcb_randr_output_t) XCB_NONE;
+    std::free(reply);
+
+    return output;
+}
+
+void setPrimaryOutput(xcb_connection_t* probe, xcb_randr_output_t output)
+{
+    const auto root = xcb_setup_roots_iterator(xcb_get_setup(probe)).data->root;
+
+    xcb_randr_set_output_primary(probe, root, output);
+    xcb_flush(probe);
 }
 } // namespace
 
@@ -612,8 +933,8 @@ auto tHandleIsTheWindowId = test("X11/handleIsTheServersWindowId") = []
     const auto geometry = geometryOf(probe.connection, host.id());
 
     check(geometry.found, "the id the handle carries is not a window");
-    check(geometry.width == 640);
-    check(geometry.height == 400);
+    check(geometry.width == pixelsOf(640.f));
+    check(geometry.height == pixelsOf(400.f));
 
     check(host.window->getContentViewHandle() != host.window->getHandle());
 };
@@ -673,8 +994,8 @@ auto tSetPositionMovesTheWindow =
         {
             const auto placed = rootPositionOf(probe.connection, host.id());
 
-            return placed.found && host.lastPosition.x == (float) placed.x
-                   && host.lastPosition.y == (float) placed.y;
+            return placed.found && host.lastPosition.x == pointsOf(placed.x)
+                   && host.lastPosition.y == pointsOf(placed.y);
         },
         x11TestTimeout);
 
@@ -684,9 +1005,9 @@ auto tSetPositionMovesTheWindow =
 
     // What the server put it at is what was reported, whatever a window
     // manager's frame did to the request.
-    check(host.lastPosition.x == (float) position.x);
-    check(host.lastPosition.y == (float) position.y);
-    check(host.window->getPosition().x == (float) position.x);
+    check(host.lastPosition.x == pointsOf(position.x));
+    check(host.lastPosition.y == pointsOf(position.y));
+    check(host.window->getPosition().x == pointsOf(position.x));
 
     // With no window manager in the way the request is honoured exactly.
     if (onOwnXvfb())
@@ -825,9 +1146,9 @@ auto tViewSurfaceIsAChildWindow = test("X11/viewSurfaceIsAChildWindow") = []
     check(presenter.record.handle.connection != nullptr);
     check(presenter.id() != XCB_NONE);
 
-    check(presenter.record.scale == 1.f);
-    check(presenter.record.pixelWidth == 320);
-    check(presenter.record.pixelHeight == 240);
+    check(presenter.record.scale == primaryDisplay().backingScale);
+    check(presenter.record.pixelWidth == pixelsOf(320.f));
+    check(presenter.record.pixelHeight == pixelsOf(240.f));
 
     auto probe = TestConnection {};
     check(probe.isValid());
@@ -835,10 +1156,10 @@ auto tViewSurfaceIsAChildWindow = test("X11/viewSurfaceIsAChildWindow") = []
     const auto geometry = geometryOf(probe.connection, presenter.id());
 
     check(geometry.found, "the record names no window the server knows");
-    check(geometry.x == 10);
-    check(geometry.y == 20);
-    check(geometry.width == 320);
-    check(geometry.height == 240);
+    check(geometry.x == pixelsOf(10.f));
+    check(geometry.y == pixelsOf(20.f));
+    check(geometry.width == pixelsOf(320.f));
+    check(geometry.height == pixelsOf(240.f));
 };
 
 auto tMovingTheViewMovesItsChild = test("X11/movingTheViewMovesItsChildWindow") = []
@@ -861,8 +1182,8 @@ auto tMovingTheViewMovesItsChild = test("X11/movingTheViewMovesItsChildWindow") 
     presenter.setBounds({40.f, 60.f, 160.f, 120.f});
 
     check(presenter.resized == resizesBefore + 1);
-    check(presenter.record.pixelWidth == 160);
-    check(presenter.record.pixelHeight == 120);
+    check(presenter.record.pixelWidth == pixelsOf(160.f));
+    check(presenter.record.pixelHeight == pixelsOf(120.f));
 
     auto probe = TestConnection {};
     check(probe.isValid());
@@ -870,10 +1191,10 @@ auto tMovingTheViewMovesItsChild = test("X11/movingTheViewMovesItsChildWindow") 
     const auto geometry = geometryOf(probe.connection, presenter.id());
 
     check(geometry.found);
-    check(geometry.x == 40);
-    check(geometry.y == 60);
-    check(geometry.width == 160);
-    check(geometry.height == 120);
+    check(geometry.x == pixelsOf(40.f));
+    check(geometry.y == pixelsOf(60.f));
+    check(geometry.width == pixelsOf(160.f));
+    check(geometry.height == pixelsOf(120.f));
 
     // A move with no size change is not a resize.
     const auto resizesAfterMove = presenter.resized;
@@ -959,19 +1280,387 @@ auto tPrimaryDisplayReportsTheOutput =
     check(display.frame.w > 0.f);
     check(display.frame.h > 0.f);
 
-    // X11 has one scale, and stage 2 does not read Xft.dpi.
-    check(display.backingScale == 1.f);
+    // X11 has one scale for the whole display, and it is Xft.dpi over 96: a
+    // desktop that names none is at 1, and Xvfb never names one.
+    check(display.backingScale > 0.f);
 
     // No work area is published, so it is the whole display.
     check(display.workArea.w == display.frame.w);
     check(display.workArea.h == display.frame.h);
 
-    // Only Scripts/with-xvfb knows the output size in advance.
+    // Only Scripts/with-xvfb knows the output size in advance - in pixels,
+    // where a Display is in points.
     if (const auto expected = xvfbOutputSize())
     {
+        check(display.backingScale == 1.f, "Xvfb has no resource database");
         check(display.frame.w == expected->x);
         check(display.frame.h == expected->y);
     }
+};
+
+auto tXftDpiIsTheScaleOfANewToplevel =
+    test("X11/xftDpiIsTheScaleANewToplevelComesUpAt") = []
+{
+    if (!x11ServerReachable() || !canChangeTheResourceDatabase())
+        return;
+
+    auto probe = TestConnection {};
+
+    if (!checkArrived(probe.isValid()))
+        return;
+
+    auto database = ResourceDatabase {probe.connection};
+
+    database.write("Xft.dpi:\t192\n");
+
+    if (!checkArrived(scaleBecomes(2.f), "the backend never read the new Xft.dpi"))
+        return;
+
+    // A Display is in points, so twice the scale is half the display.
+    if (const auto expected = xvfbOutputSize())
+    {
+        check(primaryDisplay().frame.w == expected->x / 2.f);
+        check(primaryDisplay().frame.h == expected->y / 2.f);
+    }
+
+    auto host = ServerWindow {320, 200};
+
+    check(host.isUp());
+
+    // The content is laid out in the points it was asked for...
+    const auto bounds = host.content.getBounds();
+
+    check(bounds.w == 320.f);
+    check(bounds.h == 200.f);
+
+    // ...and the window covers two pixels for each of them.
+    const auto geometry = geometryOf(probe.connection, host.id());
+
+    if (!checkArrived(geometry.found))
+        return;
+
+    check(geometry.width == 640, "the window did not take two pixels per point");
+    check(geometry.height == 400);
+};
+
+// GTK rounds a fractional dpi to a whole factor and Qt does not; this backend
+// does not either, so a desktop at 150% is 1.5 and every pixel derived from it
+// is rounded once, where it is derived.
+auto tAFractionalDpiIsNotRounded = test("X11/aFractionalXftDpiIsNotRounded") = []
+{
+    if (!x11ServerReachable() || !canChangeTheResourceDatabase())
+        return;
+
+    auto probe = TestConnection {};
+
+    if (!checkArrived(probe.isValid()))
+        return;
+
+    auto database = ResourceDatabase {probe.connection};
+
+    database.write("Xft.dpi:\t144\n");
+
+    if (!checkArrived(scaleBecomes(1.5f), "144 dpi was not read as a scale of 1.5"))
+        return;
+
+    auto host = ServerWindow {320, 200};
+    auto presenter = PresentingView {};
+
+    check(host.isUp());
+
+    presenter.setBounds({10.f, 20.f, 100.f, 60.f});
+    host.content.addSubview(presenter);
+
+    Threads::runEventLoopUntil([&] { return presenter.available > 0; },
+                               x11TestTimeout);
+
+    check(host.content.getBounds().w == 320.f);
+    check(host.content.getBounds().h == 200.f);
+
+    const auto geometry = geometryOf(probe.connection, host.id());
+
+    if (!checkArrived(geometry.found))
+        return;
+
+    check(geometry.width == 480, "a window at 1.5 was not 480 pixels wide");
+    check(geometry.height == 300);
+
+    // And a presenting view inside it is the same arithmetic, rounded where
+    // its own bounds are turned into pixels rather than beforehand.
+    if (!checkArrived(presenter.available == 1))
+        return;
+
+    check(presenter.record.scale == 1.5f);
+    check(presenter.record.pixelWidth == 150);
+    check(presenter.record.pixelHeight == 90);
+
+    const auto child = geometryOf(probe.connection, presenter.id());
+
+    check(child.found);
+    check(child.x == 15);
+    check(child.y == 30);
+    check(child.width == 150);
+    check(child.height == 90);
+};
+
+auto tAResourceChangeRescalesAnOpenWindow =
+    test("X11/aResourceManagerChangeRescalesAnOpenWindow") = []
+{
+    if (!x11ServerReachable() || !canChangeTheResourceDatabase())
+        return;
+
+    auto probe = TestConnection {};
+
+    if (!checkArrived(probe.isValid()))
+        return;
+
+    auto database = ResourceDatabase {probe.connection};
+
+    check(primaryDisplay().backingScale == 1.f, "Xvfb has no resource database");
+
+    auto host = ServerWindow {320, 200};
+
+    check(host.isUp());
+    check(host.content.scaleChanges == 0);
+
+    database.write("Xft.dpi:\t192\n");
+
+    Threads::runEventLoopUntil([&] { return host.content.scaleChanges > 0; },
+                               x11TestTimeout);
+
+    if (!checkArrived(host.content.scaleChanges == 1,
+                      "backingScaleChanged never reached the content view"))
+        return;
+
+    check(primaryDisplay().backingScale == 2.f, "Display kept the old scale");
+
+    // The content keeps the point size it was laid out at, exactly as a
+    // Wayland toplevel keeps its logical size; the pixels are what move.
+    check(host.content.getBounds().w == 320.f);
+    check(host.content.getBounds().h == 200.f);
+
+    Threads::runEventLoopUntil(
+        [&] { return geometryOf(probe.connection, host.id()).width == 640; },
+        x11TestTimeout);
+
+    const auto geometry = geometryOf(probe.connection, host.id());
+
+    check(geometry.width == 640, "the window was never asked to grow");
+    check(geometry.height == 400);
+
+    // And back, so the window a case leaves behind is the one it started with.
+    database.write(database.original);
+
+    if (!checkArrived(scaleBecomes(1.f)))
+        return;
+
+    check(host.content.scaleChanges == 2);
+
+    Threads::runEventLoopUntil(
+        [&] { return geometryOf(probe.connection, host.id()).width == 320; },
+        x11TestTimeout);
+
+    check(geometryOf(probe.connection, host.id()).width == 320);
+};
+
+auto tPointerPositionsAreInPoints =
+    test("X11/pointerPositionsArriveInPointsUnderAScale") = []
+{
+    if (!x11ServerReachable() || !canChangeTheResourceDatabase())
+        return;
+
+    auto probe = TestConnection {};
+
+    if (!checkArrived(probe.isValid()))
+        return;
+
+    auto input = FakeInput {probe.connection};
+
+    if (!canDriveTheSeat(probe.connection, input))
+        return;
+
+    auto database = ResourceDatabase {probe.connection};
+
+    database.write("Xft.dpi:\t192\n");
+
+    if (!checkArrived(scaleBecomes(2.f)))
+        return;
+
+    auto host = InputWindow {200, 150};
+
+    check(host.isUp());
+
+    raiseWindow(probe.connection, host.id());
+
+    const auto origin = rootOriginOf(probe.connection, host.id());
+
+    // The server measures the pointer in the window's pixels, and a view is
+    // laid out in its points: half as many of them.
+    input.moveTo(origin + Point {260.f, 180.f});
+
+    Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
+                               x11TestTimeout);
+
+    if (!checkArrived(!host.content.moves.empty(),
+                      "no mouseMoved reached the content view"))
+        return;
+
+    const auto& moved = host.content.moves.back();
+
+    check(moved.pos.x == 130.f, "the pointer arrived in pixels rather than points");
+    check(moved.pos.y == 90.f);
+};
+
+// Xvfb's RandR is as fixed as a screen gets: one output, one mode, and a
+// maximum screen size equal to the size it was started at, so RRSetScreenSize
+// is refused and the frame cannot be made to move there. What every server
+// does answer is the event - a primary-output change is an RRNotify - and what
+// this asserts either way is that the output the backend reports is the one
+// the server has now rather than the one it cached when it was first asked.
+auto tARandrChangeRefreshesTheOutput =
+    test("X11/aRandrChangeRefreshesThePrimaryOutput") = []
+{
+    if (!x11ServerReachable() || !onOwnXvfb())
+        return;
+
+    auto probe = TestConnection {};
+
+    if (!checkArrived(probe.isValid()))
+        return;
+
+    if (!randrIsUsable(probe.connection))
+    {
+        LOG("This server has no RandR 1.3, so there is no output change to "
+            "drive; the case is skipped.");
+        return;
+    }
+
+    const auto scale = primaryDisplay().backingScale;
+
+    // Asked for once, so what comes back afterwards is either a re-read or a
+    // cache.
+    check(primaryDisplay().frame.w == serverOutputSize(probe.connection).x / scale);
+
+    const auto original = serverOutputSize(probe.connection);
+    const auto halved = Point {original.x / 2.f, original.y / 2.f};
+
+    if (resizeTheScreen(probe.connection, halved))
+    {
+        Threads::runEventLoopUntil(
+            [&] { return primaryDisplay().frame.w == halved.x / scale; },
+            x11TestTimeout);
+
+        check(primaryDisplay().frame.w == halved.x / scale,
+              "the display kept the size it had cached");
+
+        check(resizeTheScreen(probe.connection, original));
+
+        Threads::runEventLoopUntil(
+            [&] { return primaryDisplay().frame.w == original.x / scale; },
+            x11TestTimeout);
+
+        check(primaryDisplay().frame.w == original.x / scale);
+
+        return;
+    }
+
+    LOG("This server will not resize its screen - Xvfb never does - so the "
+        "output change this drives is the primary output rather than the "
+        "frame.");
+
+    const auto primary = primaryOutputOf(probe.connection);
+    const auto output = firstOutputOf(probe.connection);
+
+    if (output == XCB_NONE)
+    {
+        LOG("This server has no RandR output at all; the case is skipped.");
+        return;
+    }
+
+    setPrimaryOutput(probe.connection, output);
+
+    Threads::runEventLoopFor(Time::MS {200});
+
+    check(primaryDisplay().frame.w == serverOutputSize(probe.connection).x / scale,
+          "the display no longer reports the output the server has");
+    check(primaryDisplay().frame.h == serverOutputSize(probe.connection).y / scale);
+
+    setPrimaryOutput(probe.connection, primary);
+
+    Threads::runEventLoopFor(Time::MS {200});
+
+    check(primaryOutputOf(probe.connection) == primary);
+};
+
+// xcb-cursor reads the theme and its size out of the resource database once,
+// when a context is made, so a database that changes is a context that has to
+// be made again: without that, the size below never moves.
+auto tCursorSizeFollowsTheDatabase =
+    test("X11/theCursorSizeFollowsTheResourceDatabase") = []
+{
+    if (!x11ServerReachable() || !canChangeTheResourceDatabase())
+        return;
+
+    auto probe = TestConnection {};
+
+    if (!checkArrived(probe.isValid()))
+        return;
+
+    auto input = FakeInput {probe.connection};
+
+    if (!canDriveTheSeat(probe.connection, input))
+        return;
+
+    if (!aCursorThemeIsInstalled())
+    {
+        LOG("No cursor theme is installed on this machine, so xcb-cursor falls "
+            "back to the server's cursor font, whose glyphs are one size "
+            "whatever the database says; the case is skipped.");
+        return;
+    }
+
+    auto database = ResourceDatabase {probe.connection};
+
+    database.write("Xcursor.size:\t24\n");
+
+    auto host = InputWindow {200, 150};
+
+    check(host.isUp());
+
+    raiseWindow(probe.connection, host.id());
+
+    const auto origin = rootOriginOf(probe.connection, host.id());
+
+    input.moveTo(origin + Point {80.f, 60.f});
+
+    // The cursor XFixes reports is the root's until the pointer has entered
+    // one of ours and the shape that entry set has reached the server, so the
+    // first measurement waits for the event that says it did and then for the
+    // request behind it.
+    Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
+                               x11TestTimeout);
+
+    if (!checkArrived(!host.content.moves.empty(),
+                      "the pointer never entered the window"))
+        return;
+
+    Threads::runEventLoopFor(Time::MS {150});
+
+    const auto small = cursorImageSize(probe.connection);
+
+    if (!checkArrived(small.x > 0.f, "XFixes reported no cursor over the window"))
+        return;
+
+    database.write("Xcursor.size:\t64\n");
+
+    Threads::runEventLoopUntil(
+        [&] { return cursorImageSize(probe.connection).x != small.x; },
+        x11TestTimeout);
+
+    const auto large = cursorImageSize(probe.connection);
+
+    check(large.x > small.x,
+          "the cursor context was never rebuilt from the new database");
 };
 
 auto tPointerMotionReachesTheContentView =
@@ -1663,9 +2352,10 @@ auto tMouseLockDeliversDeltas =
 
     host.content.forget();
 
-    // The pointer is pinned at the middle of the window, so a move to any
-    // other point is that far from the middle and nothing else.
-    input.moveTo(origin + Point {230.f, 170.f});
+    // Relative motion, as a device makes it: the pointer is pinned in the
+    // middle of the window, and what a lock reports is how far the hand went
+    // and not where the pointer ended up.
+    input.moveBy({30.f, 20.f});
 
     Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
                                x11TestTimeout);
@@ -1679,8 +2369,10 @@ auto tMouseLockDeliversDeltas =
 
     const auto& moved = host.content.moves.front();
 
-    check(moved.delta.x == 30.f, "the delta was not measured from the centre");
+    check(moved.delta.x == 30.f, "the delta was not the distance moved");
     check(moved.delta.y == 20.f);
+    check(moved.rawDelta.x == 30.f, "rawDelta was not the device's own figure");
+    check(moved.rawDelta.y == 20.f);
 
     host.window->setMouseLocked(false);
     Threads::runEventLoopFor(Time::MS {100});
@@ -1709,6 +2401,227 @@ auto tMouseLockDeliversDeltas =
     }
 
     std::free(released);
+};
+
+auto tALockedPointerCountsNoWarp =
+    test("X11/aLockedPointerCountsNoneOfTheWarpsThatRecentreIt") = []
+{
+    if (!x11ServerReachable())
+        return;
+
+    auto host = InputWindow {400, 300};
+    auto probe = TestConnection {};
+    check(probe.isValid());
+
+    if (!pointerGoesThroughXinput(probe.connection, host.id()))
+    {
+        LOG("This server has no XInput 2.1, so a locked pointer is measured "
+            "from the warps that recentre it and there is nothing here to "
+            "check.");
+        return;
+    }
+
+    auto input = FakeInput {probe.connection};
+
+    if (!canDriveTheSeat(probe.connection, input))
+        return;
+
+    check(takeFocus(probe.connection, host));
+
+    const auto origin = rootOriginOf(probe.connection, host.id());
+    const auto root =
+        xcb_setup_roots_iterator(xcb_get_setup(probe.connection)).data->root;
+
+    input.moveTo(origin + Point {100.f, 100.f});
+    Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
+                               x11TestTimeout);
+
+    host.window->setMouseLocked(true);
+    Threads::runEventLoopFor(Time::MS {100});
+
+    host.content.forget();
+
+    // A warp is the one thing that moves a pointer without a device having
+    // moved, which is what the lock itself keeps doing: it makes no raw event,
+    // and so it must make no delta either.
+    input.moveTo(origin + Point {230.f, 170.f});
+    Threads::runEventLoopFor(Time::MS {200});
+
+    check(host.content.moves.empty(),
+          "a warp was counted as the hand moving the pointer");
+    check(host.content.drags.empty());
+
+    const auto centre = origin + Point {200.f, 150.f};
+    const auto pinned = pointerPosition(probe.connection, root);
+
+    check(pinned.x == centre.x && pinned.y == centre.y,
+          "the lock did not put the pointer back in the middle");
+
+    // And the device itself, which is counted exactly once.
+    input.moveBy({10.f, -6.f});
+
+    Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
+                               x11TestTimeout);
+    Threads::runEventLoopFor(Time::MS {100});
+
+    if (!checkArrived(host.content.moves.size() == 1,
+                      "one device movement gave something other than one move"))
+    {
+        host.window->setMouseLocked(false);
+        return;
+    }
+
+    check(host.content.moves.front().delta.x == 10.f);
+    check(host.content.moves.front().delta.y == -6.f);
+
+    host.window->setMouseLocked(false);
+};
+
+auto tThePointerIsSelectedThroughXinput =
+    test("X11/thePointerIsSelectedThroughXinput") = []
+{
+    if (!x11ServerReachable())
+        return;
+
+    auto host = InputWindow {400, 300};
+    auto probe = TestConnection {};
+    check(probe.isValid());
+
+    if (!pointerGoesThroughXinput(probe.connection, host.id()))
+    {
+        LOG("This server has no XInput 2.1, so the core pointer is the whole "
+            "of the seat and there is nothing here to check.");
+        return;
+    }
+
+    auto input = FakeInput {probe.connection};
+
+    if (!canDriveTheSeat(probe.connection, input))
+        return;
+
+    raiseWindow(probe.connection, host.id());
+
+    const auto origin = rootOriginOf(probe.connection, host.id());
+
+    input.moveTo(origin + Point {70.f, 60.f});
+    Threads::runEventLoopFor(Time::MS {50});
+
+    host.content.forget();
+
+    input.click(1);
+
+    Threads::runEventLoopUntil([&] { return !host.content.ups.empty(); },
+                               x11TestTimeout);
+    Threads::runEventLoopFor(Time::MS {100});
+
+    check(host.content.downs.size() == 1, "the press arrived more than once");
+    check(host.content.ups.size() == 1, "the release arrived more than once");
+};
+
+// The fallback a server older than XI2 2.1 leaves, which EACP_X11_NO_XI2 asks
+// for by hand. It has to be set before the connection is opened, and opening
+// it is what x11ServerReachable does: under ctest, where every case is a
+// process of its own, this case's first line is early enough, and a run of the
+// whole binary by hand finds the connection already open and says so.
+auto tWithoutXinputTheCorePointerStillArrives =
+    test("X11/withoutXinputTheCorePointerStillArrives") = []
+{
+    ::setenv("EACP_X11_NO_XI2", "1", 1);
+
+    if (!x11ServerReachable())
+        return;
+
+    auto host = InputWindow {400, 300};
+    auto probe = TestConnection {};
+    check(probe.isValid());
+
+    if (pointerGoesThroughXinput(probe.connection, host.id()))
+    {
+        LOG("The connection was already open when EACP_X11_NO_XI2 was set, "
+            "which is a run of the whole binary in one process: the fallback "
+            "cannot be reached from here. ctest runs this case on its own.");
+        return;
+    }
+
+    auto input = FakeInput {probe.connection};
+
+    if (!canDriveTheSeat(probe.connection, input))
+        return;
+
+    raiseWindow(probe.connection, host.id());
+
+    const auto origin = rootOriginOf(probe.connection, host.id());
+
+    input.moveTo(origin + Point {60.f, 50.f});
+
+    Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
+                               x11TestTimeout);
+    check(!host.content.moves.empty(), "core motion reached nothing");
+
+    input.click(1);
+
+    Threads::runEventLoopUntil([&] { return !host.content.ups.empty(); },
+                               x11TestTimeout);
+
+    check(host.content.downs.size() == 1, "a core press reached nothing");
+
+    input.click(4);
+
+    Threads::runEventLoopUntil([&] { return !host.content.wheels.empty(); },
+                               x11TestTimeout);
+
+    if (!checkArrived(host.content.wheels.size() == 1,
+                      "a core wheel button gave other than one notch"))
+        return;
+
+    check(host.content.wheels.front().delta.y > 0.f);
+};
+
+// No display needed: a scroll valuator is arithmetic, and the one thing no
+// server this suite can run on has is a device with one. Xvfb's virtual
+// pointer has no scroll class at all and XWayland owns its seat, so the sums
+// are checked here and the wheel-button path beside them is what the server
+// actually drives.
+auto tScrollValuatorsBecomeNotches = test("X11/aScrollValuatorCountsInClicks") = []
+{
+    auto axis = X11ScrollAxis {true, 3, 15.0, 0.0, false};
+
+    // Wherever the device happens to be counting from is not a scroll.
+    check(axis.step(1234.0) == 0.f, "the first value was taken for a scroll");
+
+    check(axis.step(1249.0) == 1.f, "one increment was not one click");
+    check(axis.step(1234.0) == -1.f, "counting back was not a click back");
+
+    // A trackpad sends a fraction of a click, which stays a fraction: X11
+    // measures scrolling in clicks and never in pixels.
+    check(axis.step(1239.0) == 1.f / 3.f);
+
+    // A device whose class named no increment cannot be divided by it.
+    auto broken = X11ScrollAxis {true, 2, 0.0, 0.0, false};
+
+    check(broken.step(4.0) == 0.f);
+    check(broken.step(40.0) == 0.f, "a zero increment scrolled something");
+};
+
+auto tEmulatedWheelButtonsAreDropped =
+    test("X11/anEmulatedWheelButtonIsNotAnotherNotch") = []
+{
+    constexpr auto emulated =
+        (uint32_t) XCB_INPUT_POINTER_EVENT_FLAGS_POINTER_EMULATED;
+
+    // The four the server makes up for clients that know nothing of valuators.
+    for (auto button = 4u; button <= 7u; ++button)
+        check(x11IsEmulatedWheelButton(emulated, button),
+              "an emulated wheel button was let through as a notch");
+
+    // The same buttons from a device with no scroll valuator, which is the
+    // only thing that ever scrolls under Xvfb or in most VMs.
+    for (auto button = 4u; button <= 7u; ++button)
+        check(!x11IsEmulatedWheelButton(0, button));
+
+    // An emulated press that is not a wheel is a touch, and that one is wanted.
+    check(!x11IsEmulatedWheelButton(emulated, 1));
+    check(!x11IsEmulatedWheelButton(emulated, 8));
 };
 
 // Last in the file on purpose: the connection it closes is the process's only

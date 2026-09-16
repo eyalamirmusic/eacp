@@ -408,9 +408,13 @@ auto tEmbeddedViewPresents = test("Present/anEmbeddedViewPresentsIntoItsHost") =
     check(view.lastWidth > 0);
     check(view.lastHeight > 0);
 
-    // The surface filled its host, so the swapchain is the host's size.
-    check(matchesPixels(view.lastWidth, 320.f, 1.f));
-    check(matchesPixels(view.lastHeight, 240.f, 1.f));
+    // The surface filled its host, so the swapchain is the host's size - in
+    // the pixels the host's own scale makes of those points, since nothing
+    // told this surface a scale of its own.
+    const auto hostScale = Graphics::primaryDisplay().backingScale;
+
+    check(matchesPixels(view.lastWidth, 320.f, hostScale));
+    check(matchesPixels(view.lastHeight, 240.f, hostScale));
 };
 
 auto tNoSurfaceStillSnapshots = test("Present/aViewWithNoSurfaceStillSnapshots") = []

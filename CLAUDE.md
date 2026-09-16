@@ -59,8 +59,9 @@ which backs the HTTP client there, and — on Linux, where none of them are
 optional — three pkg-config groups: the Wayland client library,
 `wayland-protocols` with `wayland-scanner`, xkbcommon and libdecor (`CMake/FindWayland.cmake`, one
 `eacp-wayland` target holding the generated protocol code), xcb with
-`xcb-xkb`, `xkbcommon-x11`, `xcb-randr`, `xcb-xfixes`, `xcb-cursor` and
-`xcb-icccm` for the X11 backend (`CMake/FindX11Backend.cmake`, one `eacp-x11`
+`xcb-xkb`, `xkbcommon-x11`, `xcb-randr`, `xcb-xfixes`, `xcb-cursor`,
+`xcb-icccm` and `xcb-xinput` for the X11 backend
+(`CMake/FindX11Backend.cmake`, one `eacp-x11`
 target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
 glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
@@ -246,8 +247,13 @@ The X11 half is its twin, on xcb with no Xlib symbol anywhere (`plan.md` D2).
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
 and deliberately *not* gated on the preference — stage 3's `EmbeddedView` is
 X11 whichever backend a toplevel prefers: the atoms interned in one batch, XKB
-through `xkbcommon-x11`, RandR for the primary output (the root size and no
-refresh where there is no mode, as on Xvfb), XFixes, an `xcb-cursor` context,
+through `xkbcommon-x11`, RandR for the primary output (the root's live geometry
+and no refresh where there is no mode, as on Xvfb) with
+`XCB_RANDR_NOTIFY_MASK_SCREEN_CHANGE|CRTC_CHANGE|OUTPUT_CHANGE` selected on the
+root so a screen resize or a mode change drops that cached output, reads it
+again and re-rates the frame pacer, XFixes, an `xcb-cursor` context,
+`PROPERTY_CHANGE` on the root for the `RESOURCE_MANAGER` that carries the
+display's scale and cursor theme,
 the id-to-target map that routes an event to its toplevel and, where the id is
 a view's child window, to the view beside it, and the loop source whose
 `prepare` drains `xcb_poll_for_queued_event` — the events Mesa's WSI pulled off
@@ -261,27 +267,98 @@ size when not resizable, aspect), `_MOTIF_WM_HINTS` for borderless, a
 taken from the `MapNotify` rather than from the request, `ConfigureNotify` into
 a resize and a real `onMoved` through `xcb_translate_coordinates` — positions
 are real here, unlike Wayland — and `FocusIn`/`FocusOut` into activation. The
-scale of a toplevel is 1; `Xft.dpi` is stage 5.
+scale of a toplevel is `Xft.dpi` over 96, read from the root's
+`RESOURCE_MANAGER` and kept as a fraction rather than rounded to a whole factor
+(Qt's rule, not GTK's), so 144 is 1.5; the server measures a toplevel in pixels
+and everything above the native in points, and `X11Window-Linux.cpp` converts
+and rounds once at that crossing — the window's size and position on the way
+out, the `ConfigureNotify` and the translated position on the way back,
+`WM_NORMAL_HINTS` in pixels, and `Display` halved into points with the scale
+reported as its `backingScale`. A `PropertyNotify` for `RESOURCE_MANAGER` re-reads
+it and tells every toplevel, which keeps the point size it was laid out at,
+asks the server for the pixels that size now needs and fires
+`backingScaleChanged` down its content tree — the Wayland scale change exactly.
+An `EmbeddedView`'s scale is still only what `setPixelsPerPoint` said.
 `View/X11ViewSurface-Linux.cpp` makes a presenting view an `xcb_create_window`
 child of the toplevel selecting `EXPOSURE` only, so pointer and key events
 propagate up to the toplevel already in its coordinates, and paces frames from
 a process-wide `X11FramePacer` — a `Threads::Timer` at the RandR mode's rate,
-60 Hz where there is none, dropped as soon as nothing is armed, so no pacing
-thread outlives the last presenting view —
+60 Hz where there is none, rebuilt at the new rate when a RandR change moves it
+(a `Timer`'s interval is fixed at construction), dropped as soon as nothing is
+armed, so no pacing thread outlives the last presenting view —
 firing `onFrameDone` where Wayland has `wl_surface.frame`: a pacer, not a
-compositor signal (`plan.md` D7). `Window/X11Input-Linux.cpp` feeds the core
+compositor signal (`plan.md` D7). `Window/X11Input-Linux.cpp` feeds the
 pointer and key events into the shared state machines, with the keymap taken
 from the server (`xkb_x11_keymap_new_from_device`) and kept current through the
 XKB state, map and new-keyboard events, so layouts and dead keys behave as they
 do on Wayland. Repeat is the server's own — detectable auto-repeat is asked for
 and a press of an already-pressed key is marked `isRepeat`, so `KeyRepeat` is
-not used here — wheel buttons 4–7 are notches, the cursor is
-`xcb_cursor_load_cursor` over the shared `linuxCursorNames` applied to the
-toplevel, mouse lock is `xcb_grab_pointer` plus `xcb_xfixes_hide_cursor` plus a
-warp to the centre with the deltas read back from the warp, held only while the
-window has keyboard focus, and a `ButtonPress` in an unfocused mapped window
-takes focus with `xcb_set_input_focus`. No XI2 and no clipboard yet: both are
-stage 5.
+not used here — the cursor is `xcb_cursor_load_cursor` over the shared
+`linuxCursorNames` applied to the toplevel, and a `ButtonPress` in an unfocused
+mapped window takes focus with `xcb_set_input_focus`. The pointer half is
+XInput 2 where the server has 2.1 or better: `X11Connection` negotiates it once
+(`EACP_X11_NO_XI2=1` refuses it), a window of ours selects
+`XI_ButtonPress/Release/Motion/Enter/Leave` for `XIAllMasterDevices` and leaves
+the core pointer bits out of its own mask — the union the two would otherwise
+form is a press delivered twice on some servers — and every
+`XCB_GE_GENERIC` with the extension's opcode goes straight to the seat, which
+is the only thing that knows what a valuator means. Scrolling is then a
+valuator rather than buttons 4–7: `xcb_input_xi_query_device` is read for each
+device's `ScrollClass` and read again on `XI_DeviceChanged`/`XI_Hierarchy`, a
+per-axis last value makes each report a difference (the first after a change is
+a baseline and scrolls nothing), the difference over the class's increment is
+clicks, and the buttons 4–7 the server emulates beside it carry
+`XIPointerEmulated` and are dropped. X11 measures scroll in clicks and never in
+pixels, so a frame is always lines — fractional ones from a trackpad — and
+`preciseScrolling` stays false; a device with no scroll class at all, which is
+what a virtual pointer under Xvfb or in a VM is, still arrives as buttons 4–7,
+now as XI2 button events with no emulated flag. Mouse lock is
+`xcb_grab_pointer` plus `xcb_xfixes_hide_cursor` plus a warp to the centre,
+held only while the window has keyboard focus, and what it reports is
+`XI_RawMotion` selected on the root for the length of the lock: the device's
+own report, delivered whoever holds the pointer grabbed, and made by no warp —
+so the recentring warp, which a position could never be told apart from the
+hand, contributes nothing and the motion path stops counting deltas while raw
+events are live. Both figures a raw event carries are used, exactly as
+Wayland's relative pointer gives both: `axisvalues` (accelerated) is
+`MouseEvent::delta` and `axisvalues_raw` (the driver's own, before any pointer
+curve) is `rawDelta`, which is what aiming a camera wants. The grab's
+`owner_events` is off for that reason and no other: with it on the server hands
+the same raw event to the root's selection twice — once on the normal delivery
+up from the window under the pointer and once in the delivery to every root a
+raw event always gets — and every delta would be doubled. Without XI2 all of
+this falls back to the core pointer path unchanged, wheel buttons and
+warp-measured deltas included, and that path is a test of its own. The cursor
+theme and its size are
+xcb-cursor's to read out of the same `RESOURCE_MANAGER` (`Xcursor.theme`,
+`Xcursor.size`, and a size derived from `Xft.dpi` when neither names one,
+plus `XCURSOR_PATH` and `XCURSOR_SIZE` from the environment — but not
+`XCURSOR_THEME`, which xcb-util-cursor does not look at), and it reads them
+only at `xcb_cursor_context_new`, so a `RESOURCE_MANAGER` change frees the
+context and the cursors cached from it and builds both again. The clipboard is
+the `CLIPBOARD` selection (`Window/X11Clipboard-Linux.{h,cpp}`, owned by the
+connection and installed into `Core`'s `Clipboard` through the same backend hook in
+`Core/App/Clipboard-Linux.h` the Wayland one uses), and where Wayland needs the
+serial of an input event on a focused surface of ours, here the owner is a 1x1
+`InputOutput` window made on first use and never mapped — so a plugin copy
+with no toplevel and no keyboard focus can still copy. A copy takes the
+selection with `xcb_set_selection_owner` and checks with
+`xcb_get_selection_owner` that it took; a `SelectionRequest` is answered with
+`TARGETS`, `UTF8_STRING`, `text/plain;charset=utf-8`, `text/plain`, `STRING`
+and `TEXT` for text and
+`text/uri-list` for files (the list built by `linuxUriList`, which both
+backends now share), honouring a requestor that names no property and refusing
+`MULTIPLE` and everything else with a `SelectionNotify` naming none; a
+`SelectionClear` drops the store. A read is `xcb_convert_selection` into one
+property on that window followed by `X11Connection::dispatchUntil`, the loop
+source's own drain-poll-dispatch run by hand for a bounded 2s, so a window whose
+`ConfigureNotify` lands beside the answer still gets it; our own selection is
+answered from the store with no round trip, since the conversion would be served
+by the thread waiting for it. `TARGETS` is asked first and decides both
+`hasText` and which target to convert, an owner that will not answer it holds
+nothing, and an `INCR` reply is read chunk by chunk off the `PropertyNotify`s.
+Sending `INCR` is not implemented: a selection larger than one request to the
+server is refused rather than truncated.
 
 Embedding is the other half of the X11 backend and the reason for it.
 `Window/EmbeddedView-Linux.cpp` is an `EmbeddedView::Native` that is an
@@ -408,26 +485,38 @@ wraps a command in a headless Weston session, which is where
 `Scripts/with-xvfb` (`with-xvfb`) wraps one in an Xvfb with no window manager
 at all — the harshest thing a toplevel meets — exporting
 `EACP_WINDOW_SYSTEM=x11` and `EACP_XVFB_OUTPUT`, which is where
-`X11WindowTests` (27 cases, its own `main` defaulting the same override so the
-binary run by hand on a desktop still tests X11), `EmbeddedViewTests` (13, the
+`X11WindowTests` (47 cases over two sources, its own `main` defaulting the
+same override so the binary run by hand on a desktop still tests X11; the 9
+`X11/clipboard` ones in `X11ClipboardTests-Linux.cpp` drive a second xcb
+connection as another client, on a thread of its own where it has to own the
+selection while eacp blocks reading it), `EmbeddedViewTests` (13, the
 same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
 the X11 suites are filtered in and out; everything else already ran under
 Weston. `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip
 without a display server, as
 `EACP_REQUIRE_FONTS=1` does for the font tests. Weston's headless backend has
-no seat, so Xvfb is the first place input is exercised on any lane: 13 of the
+no seat, so Xvfb is the first place input is exercised on any lane: 18 of the
 `X11WindowTests` cases and 2 of the embedded ones drive the server's own
 pointer and keyboard through XTest, and under XWayland — where the compositor
 owns the seat, so neither XTest nor a warp
-reaches anything — they self-skip again. A display has one pointer, one
+reaches anything — they self-skip again. Two more need no display at all: a
+scroll valuator and an emulated wheel button are arithmetic, and neither server
+this suite can run on has a device with a scroll class to drive one for real.
+Five more rewrite the root's
+`RESOURCE_MANAGER` to drive the scale and the cursor theme, and one drives
+RandR, all keyed on `EACP_XVFB_OUTPUT`: a desktop's resource database and
+screen size belong to the desktop, so on a real session they skip and the rest
+of the suite runs at whatever scale that session named. A display has one
+pointer, one
 keyboard, one focus and one clipboard, and with no window manager under Xvfb
 every window a case opens lands on top of the last one and exposes it into a
 repaint, so `Tests/Graphics/CMakeLists.txt` and `Tests/GPU/CMakeLists.txt` read
 the case names back out of the sources (which are `CMAKE_CONFIGURE_DEPENDS`, so
 a renamed case is not silently left unlocked) and give them a `RESOURCE_LOCK`:
 `eacp-linux-display` over every `X11/`, `EmbeddedView/` and `Present/` case, and
-`eacp-system-clipboard` over the clipboard ones. Each serialises its own set
-under `ctest -j` while the rest of the suite runs beside them.
+`eacp-system-clipboard` over the clipboard ones, which take both. Each
+serialises its own set under `ctest -j` while the rest of the suite runs beside
+them.
 `DisplayLinkTests` is a fourth Linux-only binary and a headless one: it plays
 host to the loop, as `EmbeddedViewTests` does, so
 `DisplayLink/ticksOnlyWhenPumped` needs a plain `main` outside `Apps::run`,
@@ -536,9 +625,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
-xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor and
-xcb-icccm, FreeType, HarfBuzz and fontconfig, plus the Vulkan loader, opened
-with `dlopen` rather than linked.
+xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor,
+xcb-icccm and xcb-xinput, FreeType, HarfBuzz and fontconfig, plus the Vulkan
+loader, opened with `dlopen` rather than linked.
 
 ## Code Style
 

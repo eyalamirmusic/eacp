@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <string_view>
 
 namespace eacp::Graphics
@@ -73,8 +74,9 @@ std::optional<LinuxOutput> waylandPrimaryOutput()
                         output->refreshMilliHz};
 }
 
-// One scale, because X11 has one: a per-window one arrives with Xft.dpi in
-// stage 5.
+// One scale, because X11 has one: Xft.dpi is a property of the display and
+// not of an output. The frame RandR reports is pixels, and everything above
+// here is points.
 std::optional<LinuxOutput> x11PrimaryOutput()
 {
     auto* connection = x11Connection();
@@ -87,7 +89,40 @@ std::optional<LinuxOutput> x11PrimaryOutput()
     if (!output || output->frame.w <= 0.f || output->frame.h <= 0.f)
         return {};
 
-    return LinuxOutput {output->frame, 1.f, output->refreshMilliHz};
+    const auto scale = connection->getScale();
+    const auto frame = Rect {output->frame.x / scale,
+                             output->frame.y / scale,
+                             output->frame.w / scale,
+                             output->frame.h / scale};
+
+    return LinuxOutput {frame, scale, output->refreshMilliHz};
+}
+
+// RFC 8089 with RFC 3986 escaping: a path with a space in it is not a URI.
+std::string linuxFileUri(const std::string& path)
+{
+    auto uri = std::string {"file://"};
+
+    for (auto character: path)
+    {
+        const auto byte = (unsigned char) character;
+        const auto unreserved =
+            (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z')
+            || (byte >= '0' && byte <= '9') || byte == '-' || byte == '_'
+            || byte == '.' || byte == '~' || byte == '/';
+
+        if (unreserved)
+        {
+            uri += (char) byte;
+            continue;
+        }
+
+        char escaped[4] = {};
+        std::snprintf(escaped, sizeof(escaped), "%%%02X", byte);
+        uri += escaped;
+    }
+
+    return uri;
 }
 } // namespace
 
@@ -171,5 +206,15 @@ void linuxClearClipboard(LinuxWindowSystem system)
         return;
 
     Clipboard::clearBackend();
+}
+
+std::string linuxUriList(const Vector<std::string>& paths)
+{
+    auto list = std::string {};
+
+    for (const auto& path: paths)
+        list += linuxFileUri(path) + "\r\n";
+
+    return list;
 }
 } // namespace eacp::Graphics

@@ -5,6 +5,7 @@
 #include <eacp/Core/App/Clipboard-Linux.h>
 
 #include <optional>
+#include <string>
 
 // Which window system this copy of eacp talks to, and the process-wide
 // questions that have no window to hang off. A copy whose preferred backend
@@ -61,4 +62,8 @@ void linuxRefreshCursor();
 // backend's connection comes up and again on the way down.
 void linuxInstallClipboard(LinuxWindowSystem system, Clipboard::Backend backend);
 void linuxClearClipboard(LinuxWindowSystem system);
+
+// What a copyFiles puts on the clipboard, whichever backend holds it: one
+// RFC 8089 file:// URI per path, CRLF separated as text/uri-list is specified.
+std::string linuxUriList(const Vector<std::string>& paths);
 } // namespace eacp::Graphics

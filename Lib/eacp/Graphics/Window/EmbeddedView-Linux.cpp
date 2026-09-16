@@ -150,7 +150,8 @@ struct EmbeddedView::Native final : X11WindowSurface
         // content is there, rather than a flash of a colour we invented. The
         // depth and visual are the host's, because they are the only ones the
         // child may be a child of.
-        const uint32_t values[] = {XCB_BACK_PIXMAP_NONE, x11WindowEventMask};
+        const uint32_t values[] = {XCB_BACK_PIXMAP_NONE,
+                                   connection->getWindowEventMask()};
 
         xcb_create_window(xcb,
                           XCB_COPY_FROM_PARENT,
@@ -168,6 +169,7 @@ struct EmbeddedView::Native final : X11WindowSurface
 
         setWindow(window);
         connection->registerWindow({window, this, nullptr});
+        connection->selectPointerEvents(window);
 
         watchParent();
         updateContentSize();

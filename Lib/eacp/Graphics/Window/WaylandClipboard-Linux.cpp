@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
-#include <cstdio>
 #include <fcntl.h>
 #include <mutex>
 #include <poll.h>
@@ -86,33 +85,6 @@ void waylandWriteAll(int fd, const std::string& data)
         // EPIPE: the reader gave up, which is its right.
         return;
     }
-}
-
-// RFC 8089 with RFC 3986 escaping: a path with a space in it is not a URI.
-std::string waylandFileUri(const std::string& path)
-{
-    auto uri = std::string {"file://"};
-
-    for (auto character: path)
-    {
-        const auto byte = (unsigned char) character;
-        const auto unreserved =
-            (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z')
-            || (byte >= '0' && byte <= '9') || byte == '-' || byte == '_'
-            || byte == '.' || byte == '~' || byte == '/';
-
-        if (unreserved)
-        {
-            uri += (char) byte;
-            continue;
-        }
-
-        char escaped[4] = {};
-        std::snprintf(escaped, sizeof(escaped), "%%%02X", byte);
-        uri += escaped;
-    }
-
-    return uri;
 }
 } // namespace
 
@@ -425,13 +397,7 @@ bool WaylandClipboard::copyFiles(const Vector<std::string>& paths)
     if (paths.empty())
         return false;
 
-    auto list = std::string {};
-
-    // CRLF, as text/uri-list is specified.
-    for (const auto& path: paths)
-        list += waylandFileUri(path) + "\r\n";
-
-    return offerSelection(std::move(list), waylandUriListMimes);
+    return offerSelection(linuxUriList(paths), waylandUriListMimes);
 }
 
 std::string WaylandClipboard::getText()
