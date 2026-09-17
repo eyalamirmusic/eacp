@@ -127,6 +127,8 @@ struct GPUView::Native : DeviceResourceHolder
         if (spriteVisual)
             spriteVisual->SetContent(nullptr);
 
+        contentAttached = false;
+
         // The DComp device is replaced along with the rendering device, so
         // re-acquire it and rebuild the visual before the swapchain reattaches.
         compositionDevice = Graphics::getCompositionDevice();
@@ -159,17 +161,40 @@ struct GPUView::Native : DeviceResourceHolder
 
         auto bounds = view.getLocalBounds();
         auto scale = dpiScale();
-        width = static_cast<UINT>(bounds.w * scale);
-        height = static_cast<UINT>(bounds.h * scale);
+        auto newWidth = static_cast<UINT>(bounds.w * scale);
+        auto newHeight = static_cast<UINT>(bounds.h * scale);
 
-        if (width == 0 || height == 0)
+        // A view hidden by zero-sizing (e.g. a pane behind a zoom) must stop
+        // compositing: the swapchain still holds its last presented frame and
+        // DComp would keep showing it as a frozen block over whatever now
+        // occupies the space. Detaching mirrors the 2D layer's createSurface,
+        // which drops its content at zero size for the same reason.
+        if (newWidth == 0 || newHeight == 0)
+        {
+            detachContent();
             return;
+        }
+
+        // A same-size pass must not touch the swapchain: layout runs more
+        // than once per structural change, and a ResizeBuffers immediately
+        // after the creation commit orphans the visual's content. Reattach
+        // in case a prior zero-size pass had detached us (un-zoom restores
+        // the pane at its original size, so nothing else would).
+        if (swapChain && newWidth == width && newHeight == height)
+        {
+            reattachContent();
+            return;
+        }
+
+        width = newWidth;
+        height = newHeight;
 
         if (!swapChain)
             createSwapChain();
         else
             resizeSwapChain();
 
+        reattachContent();
         applyContentScale();
 
         updateMultisampleTexture();
@@ -188,6 +213,30 @@ struct GPUView::Native : DeviceResourceHolder
 
         if (changed)
             view.onBackingScaleChanged(newScale);
+    }
+
+    // Drops the swapchain from the visual so a hidden view stops compositing
+    // its last frame; reattachContent restores it. attachSwapChainToVisual
+    // owns the initial attach and sets contentAttached true.
+    void detachContent()
+    {
+        if (spriteVisual && contentAttached)
+        {
+            spriteVisual->SetContent(nullptr);
+            Graphics::commitComposition();
+            contentAttached = false;
+        }
+    }
+
+    void reattachContent()
+    {
+        if (spriteVisual && swapChain && !contentAttached)
+        {
+            spriteVisual->SetContent(swapChain.get());
+            applyContentScale();
+            Graphics::commitComposition();
+            contentAttached = true;
+        }
     }
 
     void createSwapChain()
@@ -258,6 +307,7 @@ struct GPUView::Native : DeviceResourceHolder
         spriteVisual->SetContent(swapChain.get());
         applyContentScale();
         Graphics::commitComposition();
+        contentAttached = true;
     }
 
     void applyContentScale()
@@ -326,7 +376,12 @@ struct GPUView::Native : DeviceResourceHolder
     {
         // The buffers being replaced may still be referenced by an in-flight
         // frame, and ResizeBuffers requires every outstanding reference gone.
+        // The compositor must also have processed every pending commit —
+        // resizing while the SetContent commit is still in flight silently
+        // detaches the visual's content and later Presents compose to
+        // nothing.
         getD3D12Context(Device::shared()).waitIdle();
+        Graphics::waitForCommitCompletion();
 
         for (auto& buffer: backBuffers)
             buffer = nullptr;
@@ -572,6 +627,11 @@ struct GPUView::Native : DeviceResourceHolder
     bool continuous = false;
     bool depthEnabled = false;
     bool stencilEnabled = false;
+
+    // Whether spriteVisual currently holds the swapchain. Cleared when a
+    // zero-sized (hidden) view detaches it, so it is not composited as a
+    // frozen last frame; restored when the view regains size.
+    bool contentAttached = false;
     UINT width = 0;
     UINT height = 0;
 
