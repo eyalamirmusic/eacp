@@ -79,10 +79,10 @@ struct Process::Native
         launch(options);
     }
 
+    // A detached child is deliberately left running and unreaped — it
+    // outlives this object (and typically this process).
     ~Native()
     {
-        // A detached child is deliberately left running and unreaped — it
-        // outlives this object (and typically this process).
         if (detached)
             return;
 
@@ -176,7 +176,13 @@ private:
     // Spawns the child with posix_spawn: the env/argv are built in the parent
     // and stdio is wired through file actions, so no arbitrary code (and no
     // allocation) runs in the child — avoiding the fork-in-a-threaded-process
-    // deadlock. posix_spawnp keeps PATH lookup for bare executables.
+    // deadlock. posix_spawnp keeps PATH lookup for bare executables. A
+    // detached child is made its own session leader (POSIX_SPAWN_SETSID) so
+    // it survives the launcher's terminal/session, not just the launcher
+    // process. Unlike fork+execvp — where a missing/non-executable file
+    // produced a child that exited 127 — posix_spawn reports it as a launch
+    // error with no child; execFailed preserves that 127 "command not found"
+    // contract for callers.
     void launch(const ProcessOptions& options)
     {
         auto argStrings = Vector<std::string> {options.executable};
@@ -215,8 +221,7 @@ private:
 
         if (!options.workingDirectory.empty())
         {
-            // _np is the only variant available at our deployment target; the
-            // non-suffixed addchdir is macOS 26+ only.
+            // The non-_np addchdir is macOS 26+. NOLINT(eacp-no-body-comments)
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -232,8 +237,6 @@ private:
         posix_spawnattr_init(&attr);
 
 #if defined(POSIX_SPAWN_SETSID)
-        // A detached child becomes its own session leader so it survives the
-        // launcher's terminal/session, not just the launcher process.
         if (options.detached)
             posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
 #endif
@@ -250,9 +253,6 @@ private:
 
         if (result != 0)
         {
-            // posix_spawn reports a missing/non-executable file as a launch error
-            // (no child), where fork+execvp produced a child that exited 127.
-            // Preserve that 127 "command not found" contract for callers.
             pid = -1;
             execFailed = true;
             closeAllPipes(inPipe, outPipe, errPipe);
@@ -352,7 +352,7 @@ private:
         if (pid <= 0)
             return false;
 
-        int status = 0;
+        auto status = 0;
         auto result = waitpid(pid, &status, blocking ? 0 : WNOHANG);
 
         if (result == 0)

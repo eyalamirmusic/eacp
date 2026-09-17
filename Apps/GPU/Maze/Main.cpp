@@ -427,9 +427,9 @@ struct MazeView final : GPUView
         pass.draw(shader);
     }
 
-    static constexpr float moveSpeed = 3.0f;
-    static constexpr float turnSpeed = 2.4f;
-    static constexpr float mouseSensitivity = 0.0035f;
+    static constexpr auto moveSpeed = 3.0f;
+    static constexpr auto turnSpeed = 2.4f;
+    static constexpr auto mouseSensitivity = 0.0035f;
 
     Graphics::Window* window = nullptr;
     MazeMesh mesh;

@@ -35,10 +35,12 @@ bool File::isRegularFile() const
     return std::filesystem::is_regular_file(impl->fsPath, ec);
 }
 
+// Canonicalise both sides so the check is symlink-consistent (e.g. macOS
+// /var -> /private/var) regardless of whether the caller pre-normalised. A
+// path that escapes the root resolves to a relative path starting with "..";
+// anything else (including ".") is contained.
 bool File::isUnder(const FilePath& root) const
 {
-    // Canonicalise both sides so the check is symlink-consistent (e.g. macOS
-    // /var -> /private/var) regardless of whether the caller pre-normalised.
     auto ec = std::error_code {};
     auto canonicalRoot = std::filesystem::weakly_canonical(toStdPath(root), ec);
     auto canonicalFile = std::filesystem::weakly_canonical(impl->fsPath, ec);
@@ -47,8 +49,6 @@ bool File::isUnder(const FilePath& root) const
     if (ec || rel.empty())
         return false;
 
-    // A path that escapes the root resolves to a relative path starting with
-    // "..". Anything else (including ".") is contained.
     return rel.generic_string().rfind("..", 0) != 0;
 }
 
@@ -82,6 +82,8 @@ bool File::isOpen() const
     return impl->stream.is_open();
 }
 
+// Seeks clear the stream state first: a previous read may have left EOF/fail
+// bits set, and seekg would fail while they are latched.
 int File::read(std::uint64_t offset, Span<std::uint8_t> out)
 {
     if (!openForRead() || out.empty())
@@ -91,7 +93,6 @@ int File::read(std::uint64_t offset, Span<std::uint8_t> out)
 
     if (offset != impl->position)
     {
-        // Clear any EOF/fail bit left by a previous read before seeking.
         stream.clear();
         stream.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
         impl->position = offset;

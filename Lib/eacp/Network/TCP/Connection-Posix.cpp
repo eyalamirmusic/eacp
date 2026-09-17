@@ -31,6 +31,7 @@ timeval toTimeval(Time::MS timeout)
     return tv;
 }
 
+// A zero timeout passes select a null deadline, i.e. block forever.
 bool waitWritable(int fd, Time::MS timeout)
 {
     auto writable = fd_set {};
@@ -38,7 +39,7 @@ bool waitWritable(int fd, Time::MS timeout)
     FD_SET(fd, &writable);
 
     auto tv = toTimeval(timeout);
-    auto* deadline = timeout.count > 0 ? &tv : nullptr; // null = block forever
+    auto* deadline = timeout.count > 0 ? &tv : nullptr;
     return ::select(fd + 1, nullptr, &writable, nullptr, deadline) > 0;
 }
 
@@ -51,9 +52,10 @@ int pendingSocketError(int fd)
     return error;
 }
 
+// A zero ioTimeout leaves the socket blocking forever.
 void armTimeouts(int fd, Time::MS ioTimeout)
 {
-    if (ioTimeout.count > 0) // otherwise leave the socket blocking forever
+    if (ioTimeout.count > 0)
     {
         auto tv = toTimeval(ioTimeout);
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -228,6 +230,7 @@ NativeSocket
     return (NativeSocket) fd;
 }
 
+// A zero acceptTimeout passes select a null deadline, i.e. wait forever.
 NativeSocket socketAccept(NativeSocket listenSocket,
                           Time::MS acceptTimeout,
                           Time::MS ioTimeout,
@@ -240,7 +243,7 @@ NativeSocket socketAccept(NativeSocket listenSocket,
     FD_SET(lfd, &readable);
 
     auto tv = toTimeval(acceptTimeout);
-    auto* deadline = acceptTimeout.count > 0 ? &tv : nullptr; // null = forever
+    auto* deadline = acceptTimeout.count > 0 ? &tv : nullptr;
     auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
         throw TimeoutError("accept timed out");

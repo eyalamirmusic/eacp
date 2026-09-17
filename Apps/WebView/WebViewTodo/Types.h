@@ -67,6 +67,10 @@ public:
         todos.publish(std::move(seed));
     }
 
+    // keyedEvent matches the old EACP_KEYED_STATE: tells the hooks
+    // codegen that this state's payload is a collection (items)
+    // indexed by id, so useTodos / useTodoIds / useTodoItem get
+    // emitted with per-id selector semantics.
     void reflect(Miro::ApiReflector& r)
     {
         using T = TodosApi;
@@ -76,10 +80,6 @@ public:
                    &T::editTodo,
                    &T::removeTodo,
                    &T::clearCompleted>();
-        // keyedEvent matches the old EACP_KEYED_STATE: tells the hooks
-        // codegen that this state's payload is a collection (items)
-        // indexed by id, so useTodos / useTodoIds / useTodoItem get
-        // emitted with per-id selector semantics.
         r.keyedEvent(&T::todos, "todos", "items", "id");
     }
 

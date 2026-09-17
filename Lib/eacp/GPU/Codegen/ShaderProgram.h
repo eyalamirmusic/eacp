@@ -498,6 +498,8 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
     const Texture* value = nullptr;
 };
 
+// Matrix, integer and bool values are never vertex attributes, so they fall
+// back to Float4.
 constexpr VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -524,7 +526,7 @@ constexpr VertexFormat toVertexFormat(ValueType type)
         case ValueType::Bool2:
         case ValueType::Bool3:
         case ValueType::Bool4:
-            return VertexFormat::Float4; // matrix/integer/bool are never attributes
+            return VertexFormat::Float4;
     }
 
     return VertexFormat::Float;
@@ -1187,7 +1189,9 @@ public:
 
 protected:
     // Runs the uniform build walk, the user's define() (which pulls vertex inputs),
-    // then emits source + layouts. Called from the most-derived constructor.
+    // then emits source + layouts. When define() pulled any vertex input, the
+    // layout it assembled from the pulled fields' real offsets replaces the
+    // generated one. Called from the most-derived constructor.
     void compile()
     {
         auto buildVisitor = ShaderBuildVisitor {builder};
@@ -1195,8 +1199,6 @@ protected:
         define();
         generated = builder.build();
 
-        // define() assembled the vertex layout from the pulled fields' real
-        // offsets; use it when any input was pulled.
         if (vertexLayoutData.attributes.size() > 0)
         {
             // instanceInput populated the per-instance slots; publish the

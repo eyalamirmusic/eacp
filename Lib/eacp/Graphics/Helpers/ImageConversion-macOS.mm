@@ -3,6 +3,8 @@
 namespace eacp::Graphics
 {
 
+// The Image stores straight (non-premultiplied) 8-bit RGBA, top-left
+// origin — exactly an NSBitmapImageRep with the non-premultiplied flag.
 NSImage* toNSImage(const Image& image)
 {
     auto width = image.width();
@@ -11,8 +13,6 @@ NSImage* toNSImage(const Image& image)
     if (width <= 0 || height <= 0)
         return nil;
 
-    // The Image stores straight (non-premultiplied) 8-bit RGBA, top-left
-    // origin — exactly an NSBitmapImageRep with the non-premultiplied flag.
     auto* rep = [[NSBitmapImageRep alloc]
         initWithBitmapDataPlanes:nullptr
                       pixelsWide:width

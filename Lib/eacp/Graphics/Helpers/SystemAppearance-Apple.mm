@@ -22,11 +22,11 @@ bool isSystemDarkMode()
 
 #else
 
+// Prefer the running app's effective appearance; before NSApp exists
+// (e.g. very early startup) fall back to the global interface-style
+// default, which is "Dark" only in dark mode.
 bool isSystemDarkMode()
 {
-    // Prefer the running app's effective appearance; before NSApp exists
-    // (e.g. very early startup) fall back to the global interface-style
-    // default, which is "Dark" only in dark mode.
     if (NSApp != nil)
     {
         auto* match = [NSApp.effectiveAppearance

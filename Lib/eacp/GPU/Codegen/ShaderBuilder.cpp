@@ -7,6 +7,8 @@ namespace eacp::GPU
 {
 namespace
 {
+// Matrix, integer and bool values are never vertex attributes, so they fall
+// back to Float4.
 VertexFormat toVertexFormat(ValueType type)
 {
     switch (type)
@@ -33,7 +35,7 @@ VertexFormat toVertexFormat(ValueType type)
         case ValueType::Bool2:
         case ValueType::Bool3:
         case ValueType::Bool4:
-            return VertexFormat::Float4; // matrix/integer/bool are never attributes
+            return VertexFormat::Float4;
     }
 
     return VertexFormat::Float;

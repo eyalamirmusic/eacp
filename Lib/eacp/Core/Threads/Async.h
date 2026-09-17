@@ -255,6 +255,11 @@ private:
             cb(*s.value);
     }
 
+    // Other code (e.g. a Window's onQuit-via-callAsync) may call
+    // stopEventLoop from a queued callback that has nothing to do with this
+    // Async. If that happens, runEventLoopFor returns before our state has
+    // settled — re-enter and keep pumping until either the state actually
+    // settles or the deadline expires.
     void pumpUntilSettled(Time::MS timeout)
     {
         assertMainThread();
@@ -266,12 +271,6 @@ private:
 
         state->continuations.push_back([] { stopEventLoop(); });
 
-        // Other code (e.g. a Window's onQuit-via-callAsync) may call
-        // stopEventLoop from a queued callback that has nothing to do
-        // with this Async. If that happens, runEventLoopFor returns
-        // before our state has settled — re-enter and keep pumping
-        // until either the state actually settles or the deadline
-        // expires.
         auto deadline = Time::Deadline {timeout};
         while (state->status == detail::AsyncState<T>::Status::Pending
                && !deadline.expired())

@@ -34,6 +34,10 @@ Class getImmediateMetalLayerClass()
 
 struct GPUView::Native
 {
+    // presentsWithTransaction presents the drawable inside the current
+    // CATransaction so new content lands atomically with the layer's new size
+    // during live resize, rather than the old drawable being stretched until
+    // the next async present.
     explicit Native(GPUView& viewToUse)
         : view(viewToUse)
     {
@@ -43,10 +47,6 @@ struct GPUView::Native
         metalLayer.get().device = metalDevice;
         metalLayer.get().pixelFormat = MTLPixelFormatBGRA8Unorm;
         metalLayer.get().framebufferOnly = YES;
-
-        // Present the drawable inside the current CATransaction so new content
-        // lands atomically with the layer's new size during live resize, rather
-        // than the old drawable being stretched until the next async present.
         metalLayer.get().presentsWithTransaction = YES;
 
         metalLayer.get().maximumDrawableCount = framesInFlight;
@@ -121,6 +121,7 @@ struct GPUView::Native
                               : MTLPixelFormatDepth32Float;
     }
 
+    // The depth attachment must match the colour attachment's sample count.
     void updateDepthTexture(NSUInteger width, NSUInteger height)
     {
         if (! depthEnabled || width == 0 || height == 0)
@@ -137,7 +138,6 @@ struct GPUView::Native
                                         height:height
                                      mipmapped:NO];
 
-        // The depth attachment must match the colour attachment's sample count.
         if (sampleCount > 1)
         {
             textureDescriptor.textureType = MTLTextureType2DMultisample;
@@ -287,11 +287,11 @@ void GPUView::resizeStarted()
     impl->updateSize();
 }
 
+// Synchronously inside the layout pass, and after the subclass has answered the
+// new size: presentsWithTransaction makes this the frame the compositor shows,
+// so it has to be drawn with the new projection.
 void GPUView::resizeFinished()
 {
-    // Synchronously inside the layout pass, and after the subclass has answered
-    // the new size: presentsWithTransaction makes this the frame the compositor
-    // shows, so it has to be drawn with the new projection.
     renderNow();
 }
 
@@ -327,7 +327,7 @@ void GPUView::renderNow()
 
     @autoreleasepool
     {
-        id<CAMetalDrawable> drawable = [layer nextDrawable];
+        auto drawable = [layer nextDrawable];
 
         if (drawable == nil)
             return;

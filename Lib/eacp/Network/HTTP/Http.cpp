@@ -75,7 +75,7 @@ std::string generateBoundary()
 
     auto ss = std::stringstream();
     ss << "----eacp";
-    for (int i = 0; i < 16; i++)
+    for (auto i = 0; i < 16; i++)
         ss << chars[dist(gen)];
 
     return ss.str();
@@ -207,7 +207,7 @@ Response Request::perform() const
 namespace
 {
 constexpr std::int64_t kMinParallelTotal = 1024 * 1024;
-constexpr int kMaxParallelChunks = 8;
+constexpr auto kMaxParallelChunks = 8;
 
 struct ChunkRange
 {

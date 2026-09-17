@@ -125,14 +125,15 @@ public:
     // storage buffers and uniform block (including the implicit element count
     // its generated bounds guard reads), then a dispatch over count work items.
     // Templated so this header stays independent of the codegen layer.
+    // packedUniforms() is sequenced in its own statement because packing must
+    // happen before uniformByteSize() is read, and argument evaluation order
+    // would not guarantee that.
     template <typename Program>
     void dispatch(Program& program, int count)
     {
         setPipeline(program.pipeline());
         program.bindResources(*this);
 
-        // Sequenced separately: packing must happen before the size is read,
-        // and argument evaluation order would not guarantee that.
         const auto* uniforms = program.packedUniforms(count);
         setBytes(uniforms, program.uniformByteSize());
         dispatch(count);
@@ -201,11 +202,11 @@ public:
 
     // The Metal buffer index the first uniform block binds to. Storage buffers
     // take the low indices, so uniforms start above them.
-    static constexpr int uniformBase = 16;
+    static constexpr auto uniformBase = 16;
 
     // The stock threadgroup width of a 1D dispatch, used by every kernel that
     // named no ThreadGroupShape of its own.
-    static constexpr int threadGroupWidth = 64;
+    static constexpr auto threadGroupWidth = 64;
 
     // The stock 2D group is this squared, which is the same 64 threads the 1D
     // path already budgets for - and square, so a group covers a tile rather

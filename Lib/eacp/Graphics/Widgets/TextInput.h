@@ -57,8 +57,10 @@ private:
     TextLayer textLayer;
     ShapeLayer cursorLayer;
 
-    std::function<void(const std::string&)> onChangeCallback;
-    std::function<void(const std::string&)> onSubmitCallback;
+    std::function<void(const std::string&)> onChangeCallback =
+        [](const std::string&) {};
+    std::function<void(const std::string&)> onSubmitCallback =
+        [](const std::string&) {};
 
     Threads::Timer cursorTimer {[this] { toggleCursorVisibility(); }, 2};
     bool cursorVisible = true;

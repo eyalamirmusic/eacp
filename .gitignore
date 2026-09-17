@@ -7,11 +7,11 @@ Makefile
 .vs
 .cache
 /nul
-.claude
 CMakeSettings.json
 
 cmake-build*
 .clangd
+/compile_commands.json
 CMakeFiles
 CMakeCache.txt
 cmake_install.cmake
@@ -32,3 +32,4 @@ xcschememanagement.plist
 
 workspace.xml
 xcuserdata
+ExtraClangRules/plugin/build/

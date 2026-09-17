@@ -7,11 +7,11 @@ namespace eacp::Graphics::detail
 {
 namespace
 {
+// NSImage may wrap a vector representation (PDF, EPS); round-tripping
+// through TIFF guarantees a bitmap rep that representationUsingType:
+// accepts.
 Bytes encodeAsPng(NSImage* image, std::string& error)
 {
-    // NSImage may wrap a vector representation (PDF, EPS); round-tripping
-    // through TIFF guarantees a bitmap rep that representationUsingType:
-    // accepts.
     auto* tiff = [image TIFFRepresentation];
     if (tiff == nil)
     {

@@ -10,8 +10,9 @@ using SendResponseFn = std::function<void(const Response&)>;
 struct DispatchTask
 {
     Request request;
-    RequestHandler handler;
-    SendResponseFn sendResponse;
+    RequestHandler handler = [](const eacp::HTTP::Request&)
+    { return eacp::HTTP::Response {}; };
+    SendResponseFn sendResponse = [](const eacp::HTTP::Response&) {};
 };
 
 struct Dispatcher
