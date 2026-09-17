@@ -774,8 +774,9 @@ struct DepthSamplingView final : GPUView
                 vertices.add(PuffVertex {puff.centre + offset, corner});
             }
 
-        puffBuffer.update(vertices.data(),
-                          vertices.size() * (int) sizeof(PuffVertex));
+        // Unordered: rewritten once a frame, which is what this variant is for.
+        puffBuffer.updateUnordered(vertices.data(),
+                                   vertices.size() * (int) sizeof(PuffVertex));
     }
 
     void drawScene(RenderPass& pass, SceneShader& shader, const Camera& camera)
@@ -1011,13 +1012,12 @@ struct DepthSamplingApp
     {
         root.addSubview(scene);
         root.addSubview(labels);
-        window.setContentView(root);
     }
 
     RootView root;
     DepthSamplingView scene;
     LabelStripView labels;
-    Graphics::Window window {windowOptions()};
+    Graphics::Window window {root, windowOptions()};
 };
 
 namespace

@@ -9,12 +9,12 @@ struct MyApp
 {
     MyApp()
     {
-        Graphics::setApplicationMenuBar(Graphics::buildDefaultWebViewMenuBar(), window);
-        window.setContentView(webView);
+        Graphics::setApplicationMenuBar(Graphics::buildDefaultWebViewMenuBar(),
+                                        window);
     }
 
     Api::TodosApi todos;
     Graphics::WebView webView {Graphics::embeddedOptions("TodoApp")};
     Graphics::WebViewBridge transport {webView, todos};
-    Graphics::Window window;
+    Graphics::Window window {webView};
 };

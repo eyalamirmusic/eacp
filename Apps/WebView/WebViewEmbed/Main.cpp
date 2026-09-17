@@ -12,7 +12,6 @@ struct MyApp
         transport.getBridge().use(params);
 
         setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);
-        window.setContentView(webView);
     }
 
     // params declared first → destructed last (after the transport's
@@ -20,7 +19,7 @@ struct MyApp
     Api::ParametersApi params;
     WebView webView {embeddedOptions("WebApp")};
     WebViewBridge transport {webView};
-    Window window;
+    Window window {webView};
     Threads::Timer timer {[this] { params.advanceTick(); }, 30};
 };
 

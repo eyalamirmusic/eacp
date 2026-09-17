@@ -239,18 +239,36 @@ struct Frame::Native
     bool offscreen = false;
 };
 
-Frame::Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture)
+Frame::Frame(Device& device,
+             void* drawable,
+             void* msaaTexture,
+             void* depthTexture,
+             float backingScaleToUse)
     : impl(device, drawable, msaaTexture, depthTexture)
+    , scale(backingScaleToUse)
 {
     device.beginFrame();
     impl->beginTiming();
 }
 
-Frame::Frame(Device& device, const OffscreenTarget& target)
+Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleToUse)
     : impl(device, target)
+    , scale(backingScaleToUse)
 {
     device.beginFrame();
     impl->beginTiming();
+}
+
+// The swapchain image for a drawable frame and the app's texture off screen are
+// the same VulkanTextureData either way - the one beginPassOn takes its render
+// area and viewport from.
+Graphics::Point Frame::pixelSize() const
+{
+    if (impl->target == nullptr)
+        return {};
+
+    return {static_cast<float>(impl->target->width),
+            static_cast<float>(impl->target->height)};
 }
 
 Frame::~Frame()

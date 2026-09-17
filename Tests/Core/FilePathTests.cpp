@@ -21,6 +21,29 @@ auto tCommonDirectories = test("FilePath/commonDirectories") = []
     check(!FilePath::cacheDirectory().empty());
 };
 
+auto tAppDirectories = test("FilePath/appDirectories") = []
+{
+    auto root = FilePath::appDataDirectory();
+    auto cacheRoot = FilePath::cacheDirectory();
+
+    check(FilePath::appSupportDirectory("Acme", "My App")
+          == root / "Acme" / "My App");
+    check(FilePath::appCacheDirectory("Acme", "My App")
+          == cacheRoot / "Acme" / "My App");
+
+    // No company: the level is left out rather than left blank.
+    check(FilePath::appSupportDirectory("", "My App") == root / "My App");
+    check(FilePath::appSupportDirectory("", "My App").str().find("//")
+          == std::string::npos);
+
+    // This binary embeds no AppInfo, so the app level comes from somewhere
+    // else - but it is never empty, and never the bare root.
+    auto support = FilePath::appSupportDirectory();
+    check(support.str().starts_with(root.str()));
+    check(support.str().size() > root.str().size() + 1);
+    check(FilePath::appCacheDirectory().str().starts_with(cacheRoot.str()));
+};
+
 auto tTempDirectory = test("FilePath/tempDirectory") = []
 {
     auto temp = FilePath::tempDirectory();

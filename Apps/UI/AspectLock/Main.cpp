@@ -266,12 +266,10 @@ struct App
     {
         host.root.inspector.onSizeRequested = [this](Graphics::Point size)
         { window.setSize(size); };
-
-        window.setContentView(host);
     }
 
     DemoHost host;
-    Graphics::Window window {makeOptions()};
+    Graphics::Window window {host, makeOptions()};
 };
 } // namespace
 

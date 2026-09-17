@@ -23,11 +23,7 @@ struct PluginView final : eacp::Graphics::View
 
 struct PluginWindow
 {
-    PluginWindow()
-    {
-        window.setTitle("DemoPlugin (plugin's own eacp)");
-        window.setContentView(view);
-    }
+    PluginWindow() { window.setTitle("DemoPlugin (plugin's own eacp)"); }
 
     void tick()
     {
@@ -36,7 +32,7 @@ struct PluginWindow
     }
 
     PluginView view;
-    eacp::Graphics::Window window;
+    eacp::Graphics::Window window {view};
     int ticks = 0;
     eacp::Threads::Timer timer {[&] { tick(); }, 10};
 };

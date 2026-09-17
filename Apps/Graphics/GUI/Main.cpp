@@ -206,14 +206,10 @@ struct Host final : UI::ComponentHost
 
 struct MyApp
 {
-    MyApp()
-    {
-        LOG(Platform::getAppName(), " v", Platform::getAppVersion());
-        window.setContentView(host);
-    }
+    MyApp() { LOG(Platform::getAppName(), " v", Platform::getAppVersion()); }
 
     Host host;
-    eacp::Graphics::Window window;
+    eacp::Graphics::Window window {host};
 };
 } // namespace
 

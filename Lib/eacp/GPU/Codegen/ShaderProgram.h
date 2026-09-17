@@ -956,7 +956,11 @@ public:
         assert((int) sizeof(V) == vertexLayout().stride
                && "vertex element size does not match the shader's vertex layout");
 
-        vertexBufferData.emplace(Device::shared(), data, (int) sizeof(V) * count);
+        // Widened before the multiply rather than after it: the product is the
+        // buffer's byte count, and a large enough mesh overflows an int on the
+        // way in, where the parameter it lands in would have held it.
+        vertexBufferData.emplace(
+            Device::shared(), data, (std::int64_t) sizeof(V) * count);
         vertexCountValue = count;
     }
 
@@ -1023,7 +1027,10 @@ public:
         if (!stream.has_value())
             stream.emplace(BufferUsage::Vertex);
 
-        instanceBuffers[bufferIndex] = stream->write(data, (int) sizeof(I) * count);
+        // Widened before the multiply, as setVertices is and for the reason it
+        // is: the product is a byte count.
+        instanceBuffers[bufferIndex] =
+            stream->write(data, (std::int64_t) sizeof(I) * count);
         instanceCountValue = count;
         setExternalInstanceBuffer(bufferIndex, nullptr);
     }
@@ -1472,8 +1479,10 @@ private:
                        int count,
                        IndexFormat format)
     {
-        indexBufferData.emplace(
-            Device::shared(), data, elementSize * count, BufferUsage::Index);
+        indexBufferData.emplace(Device::shared(),
+                                data,
+                                (std::int64_t) elementSize * count,
+                                BufferUsage::Index);
         indexCountValue = count;
         indexFormatValue = format;
     }

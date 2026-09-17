@@ -81,7 +81,6 @@ struct CameraApp
 
         view.setMirrored(true); // front-camera-style preview
         view.attach(camera);
-        window.setContentView(view);
         installMenuBar();
         beginCapture();
         armAutoQuit();
@@ -123,8 +122,7 @@ struct CameraApp
 
         selectedDeviceId = std::move(deviceId);
         std::printf("switching camera to %s\n",
-                    selectedDeviceId ? selectedDeviceId->c_str()
-                                     : "system default");
+                    selectedDeviceId ? selectedDeviceId->c_str() : "system default");
 
         // The view stays attached across the restart: it follows the Camera
         // object, not the capture session.
@@ -205,7 +203,7 @@ struct CameraApp
 
     Cameras::Camera camera;
     DemoCameraView view;
-    Graphics::Window window {makeOptions()};
+    Graphics::Window window {view, makeOptions()};
     // nullopt = system default. What the Camera menu's checkmarks read.
     std::optional<std::string> selectedDeviceId;
     std::optional<Threads::Timer> quitTimer;

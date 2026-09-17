@@ -10,6 +10,8 @@ target_sources(eacp-network PRIVATE
         IPC/Channel.cpp
         IPC/Lock.cpp
         IPC/Messenger.cpp
+        OnlineResource/OnlineResource.cpp
+        OnlineResource/OnlineResources.cpp
         TCP/Connection.cpp
         TCP/Listener.cpp
         WebSocket/Protocol.cpp

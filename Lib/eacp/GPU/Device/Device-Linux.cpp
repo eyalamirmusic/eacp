@@ -22,7 +22,9 @@ Device& Device::shared()
 
     // Belongs to the main thread whichever thread asked for it first.
     [[maybe_unused]] static const auto boundToMainThread =
-        (instance.impl->context.followMainThread(), true);
+        (instance.followMainThread(),
+         instance.impl->context.followMainThread(),
+         true);
 
     return instance;
 }
@@ -80,6 +82,29 @@ int Device::storageBufferOffsetAlignment() const
         getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
 
     return alignment > 0 ? (int) alignment : 4;
+}
+
+int Device::maxThreadgroupMemory() const
+{
+    if (!isValid())
+        return 0;
+
+    return (int) getVulkanShared().getProperties().limits.maxComputeSharedMemorySize;
+}
+
+// No, and not because of the hardware: eacp emits GLSL 450 with no
+// cooperative-matrix extension, so a fragment here is the two-floats-per-lane
+// emulation whatever the driver could have done. The packed loads work on it -
+// each lane unpacks the pair it holds - and are simply not faster, so there is
+// nothing for a kernel to restructure itself around.
+bool Device::supportsHalfSimdMatrix() const
+{
+    return false;
+}
+
+bool Device::supportsBFloat16SimdMatrix() const
+{
+    return false;
 }
 
 void* Device::nativeContext() const

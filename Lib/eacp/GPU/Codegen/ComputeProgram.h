@@ -5,6 +5,8 @@
 #include "../Pipeline/ComputePipeline.h"
 #include "ShaderProgram.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
 // assigned the GPU::Buffer to bind - or a BufferRange, to bind a slice of one
@@ -174,13 +176,82 @@ public:
     // compiled on that Device rather than on the process-wide one.
     void prepare(Device& device)
     {
+        reportThreadgroupMemoryOverBudget(device);
+
+        // Refused here rather than handed to the backend. A packed fragment
+        // this device has no instruction for is a kernel built against the
+        // wrong answer to a question it was supposed to ask first, and what
+        // the shader compiler would say about it names a type, not the query.
+        if (!fitsPackedSimdMatrix(device))
+        {
+            reportUnsupportedPackedSimdMatrix(device);
+            buildRefusedPipeline(device);
+            return;
+        }
+
         shaderLibrary.emplace(device, generated.source);
         pipelineState.emplace(device, *shaderLibrary);
+
+        reportSimdWidthMismatch();
     }
 
     void prepare() { prepare(Device::shared()); }
 
+    // How many bytes of threadgroup memory one group of this kernel takes, and
+    // whether that is inside what the device allows. The first counts the
+    // emitter's own reduction and matrix scratch beside the shared<> arrays,
+    // and takes the worst case of the three backends rather than this one's -
+    // a kernel is written once and has to fit everywhere it runs.
+    //
+    // Together with Device::maxThreadgroupMemory they are what a kernel author
+    // sizes a tile against, instead of carrying the backend's number in a
+    // comment. An invalid Device has no budget to be inside, so it fits.
+    int threadgroupMemoryBytes() const { return graph().threadgroupMemoryBytes(); }
+
+    bool fitsThreadgroupMemory(const Device& device) const
+    {
+        auto budget = device.maxThreadgroupMemory();
+
+        return budget <= 0 || threadgroupMemoryBytes() <= budget;
+    }
+
+    // Whether this kernel's packed fragments are ones this device can **build**
+    // - a different question from whether it has instructions for them, and the
+    // two are worth keeping apart.
+    //
+    // Device::supportsHalfSimdMatrix and supportsBFloat16SimdMatrix answer
+    // "natively, in one instruction". They are what a kernel author picks a
+    // tiling around, and they are false on D3D12 and Vulkan. This answers "at
+    // all", and on those two backends it is true whatever they said: a packed
+    // load lowers there to the same two-floats-per-lane emulation every other
+    // fragment operation lowers to, each lane widening the pair it holds. Only
+    // Metal has a shader that would literally not compile - the packed fragment
+    // is a type the dialect either has or does not - so only Metal refuses.
+    //
+    // A kernel that loads no packed fragment builds anywhere.
+    bool fitsPackedSimdMatrix(const Device& device) const
+    {
+        if (source().backend != ShaderBackend::Metal)
+            return true;
+
+        auto needsHalf = graph().usesPackedSimdMatrix(SimdMatrixElement::Half);
+        auto needsBFloat16 =
+            graph().usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
+
+        return (!needsHalf || device.supportsHalfSimdMatrix())
+               && (!needsBFloat16 || device.supportsBFloat16SimdMatrix());
+    }
+
     const ComputePipeline& pipeline() const { return *pipelineState; }
+
+    // Whether prepare() left something dispatchable. False before prepare(), of
+    // a refused build, and of a shader that would not compile - all three being
+    // states in which a dispatch of this program does nothing, so a caller that
+    // would rather know than find out asks here.
+    bool isValid() const
+    {
+        return pipelineState.has_value() && pipelineState->isValid();
+    }
 
     // Re-packs the current uniform values, appends the element count the
     // generated bounds guard reads, and returns the block, ready for
@@ -316,6 +387,20 @@ protected:
     UInt groupMax(const UInt& value) { return builder.groupMax(value); }
     UInt groupMin(const UInt& value) { return builder.groupMin(value); }
 
+    // The same fold narrowed to one SIMD group: every thread is handed the
+    // fold of the simdWidth threads it shares one with, so a group of several
+    // SIMD groups comes out holding one answer per SIMD group rather than one
+    // for the group. Collective on the terms the group version sets, and on
+    // Metal a single instruction with neither scratch nor a barrier - see
+    // ShaderBuilder.
+    Float simdSum(const Float& value) { return builder.simdSum(value); }
+    Float simdMax(const Float& value) { return builder.simdMax(value); }
+    Float simdMin(const Float& value) { return builder.simdMin(value); }
+
+    UInt simdSum(const UInt& value) { return builder.simdSum(value); }
+    UInt simdMax(const UInt& value) { return builder.simdMax(value); }
+    UInt simdMin(const UInt& value) { return builder.simdMin(value); }
+
     // The SIMD-group matrix vocabulary: which SIMD group a thread is in, an
     // 8x8 float fragment filled or loaded, and the multiply-accumulate over
     // three of them. A fragment is written back through write(), beside the
@@ -344,6 +429,26 @@ protected:
                           const UInt& rowStride)
     {
         return builder.simdMatrix(buffer, offset, rowStride);
+    }
+
+    // The packed siblings: an 8x8 patch of fp16 or bf16 read straight out of a
+    // device buffer, the offset and the row stride counting in those
+    // sixteen-bit elements. What a kernel saves by taking one is the tile it
+    // would otherwise widen a weight into and the two barriers around it. See
+    // ShaderBuilder for the rules, and fitsPackedSimdMatrix for the question to
+    // put to the device before recording one.
+    SimdMatrix simdMatrixHalf(const InputBuffer& buffer,
+                              const UInt& offset,
+                              const UInt& rowStride)
+    {
+        return builder.simdMatrixHalf(buffer, offset, rowStride);
+    }
+
+    SimdMatrix simdMatrixBFloat16(const InputBuffer& buffer,
+                                  const UInt& offset,
+                                  const UInt& rowStride)
+    {
+        return builder.simdMatrixBFloat16(buffer, offset, rowStride);
     }
 
     void multiplyAccumulate(const SimdMatrix& accumulator,
@@ -437,6 +542,25 @@ protected:
         builder.write(buffer, index, value);
     }
 
+    // The same records laid down as one store rather than as N - the write
+    // mirror of read2/read3/read4, down to the index counting records and the
+    // four-byte alignment a packed vector pointer asks of the binding. See
+    // ShaderBuilder::write4 for why this is a name of its own.
+    void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        builder.write2(buffer, index, value);
+    }
+
+    void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        builder.write3(buffer, index, value);
+    }
+
+    void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        builder.write4(buffer, index, value);
+    }
+
     // Two values narrowed to fp16 and packed into the one float slot that
     // holds them, which InputBuffer::readHalf2 reads back at the same index.
     void writeHalf2(const OutputBuffer& buffer,
@@ -444,6 +568,85 @@ protected:
                     const Float2& value)
     {
         builder.writeHalf2(buffer, index, value);
+    }
+
+    // Two values narrowed to bf16 and packed into the one float slot that holds
+    // them, which InputBuffer::readBFloat16x2 reads back at the same index.
+    void writeBFloat16x2(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float2& value)
+    {
+        builder.writeBFloat16x2(buffer, index, value);
+    }
+
+    // Four integers packed into the one float slot that holds them, which
+    // InputBuffer::readInt8x4 and readUInt8x4 read back at the same index.
+    void
+        writeInt8x4(const OutputBuffer& buffer, const UInt& index, const Int4& value)
+    {
+        builder.writeInt8x4(buffer, index, value);
+    }
+
+    void writeUInt8x4(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& value)
+    {
+        builder.writeUInt8x4(buffer, index, value);
+    }
+
+    // The wide packed stores, one per wide read and at the read's own index:
+    // eight or sixteen values packed into the two or four words that hold them
+    // and laid down in one store. The byte ones take integer vectors for the
+    // reason writeInt8x4 does, named after the read's own .low / .high and
+    // .a .b .c .d.
+    void writeHalf4(const OutputBuffer& buffer,
+                    const UInt& index,
+                    const Float4& value)
+    {
+        builder.writeHalf4(buffer, index, value);
+    }
+
+    void writeBFloat16x4(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float4& value)
+    {
+        builder.writeBFloat16x4(buffer, index, value);
+    }
+
+    void writeInt8x8(const OutputBuffer& buffer,
+                     const UInt& index,
+                     const Int4& low,
+                     const Int4& high)
+    {
+        builder.writeInt8x8(buffer, index, low, high);
+    }
+
+    void writeUInt8x8(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& low,
+                      const UInt4& high)
+    {
+        builder.writeUInt8x8(buffer, index, low, high);
+    }
+
+    void writeInt8x16(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const Int4& a,
+                      const Int4& b,
+                      const Int4& c,
+                      const Int4& d)
+    {
+        builder.writeInt8x16(buffer, index, a, b, c, d);
+    }
+
+    void writeUInt8x16(const OutputBuffer& buffer,
+                       const UInt& index,
+                       const UInt4& a,
+                       const UInt4& b,
+                       const UInt4& c,
+                       const UInt4& d)
+    {
+        builder.writeUInt8x16(buffer, index, a, b, c, d);
     }
 
     // One element of a threadgroup-shared array, published to the rest of the
@@ -511,6 +714,26 @@ protected:
         builder.write(buffer, index, value);
     }
 
+    // The same records laid down as one store, on the terms the float wide
+    // stores set and at the index UIntInputBuffer::read2/3/4 counts in.
+    void
+        write2(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
+    {
+        builder.write2(buffer, index, value);
+    }
+
+    void
+        write3(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
+    {
+        builder.write3(buffer, index, value);
+    }
+
+    void
+        write4(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
+    {
+        builder.write4(buffer, index, value);
+    }
+
     // An atomic buffer's element, set rather than added to - what a kernel
     // computing a dispatch size writes.
     void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
@@ -550,6 +773,88 @@ protected:
     virtual void define() = 0;
 
 private:
+    // The one thing a kernel using simdSum/simdMax/simdMin or a SIMD-group
+    // matrix cannot check for itself: those lower to intrinsics collective over
+    // the *hardware* SIMD group, and the EDSL's arithmetic - simdWidth, the
+    // fragment layout, simdGroupIndex - is written against a fixed 32. Every
+    // Apple GPU agrees; an Intel Mac dispatches at eight or sixteen and the two
+    // stop meaning the same thing, silently, since an intrinsic over a narrower
+    // SIMD group is a well-formed fold of the wrong set of threads.
+    //
+    // Only the compiled pipeline knows the number, which is why this is here
+    // and not in the emitter. The backends that emulate a SIMD group report
+    // nothing, and there is nothing for them to disagree with.
+    void reportSimdWidthMismatch() const
+    {
+        if (!graph().usesSimdReduction() && !graph().usesSimdGroups())
+            return;
+
+        auto width = pipelineState->threadExecutionWidth();
+
+        if (width <= 0 || width == ComputeProgram::simdWidth)
+            return;
+
+        LOG("eacp: this kernel folds or multiplies over SIMD groups of ",
+            ComputeProgram::simdWidth,
+            " threads and this device runs it at ",
+            width,
+            ". simdSum/simdMax/simdMin and SimdMatrix need the two to agree; "
+            "use the whole-group groupSum/groupMax/groupMin, which is correct "
+            "at any width.");
+    }
+
+    // What a kernel gets instead of the one it asked for when the device has no
+    // instruction for a fragment it loads: an empty library, and so a pipeline
+    // that is not valid, which ComputePass::dispatch drops rather than encodes.
+    // Built rather than left unset so that everything holding this program
+    // still has a pipeline to name, and empty rather than the generated source
+    // because every backend's ShaderLibrary declines an empty one in silence -
+    // so the only thing logged is the reason above, not a shader compiler's
+    // complaint about a type.
+    void buildRefusedPipeline(Device& device)
+    {
+        shaderLibrary.emplace(device, ShaderSource {});
+        pipelineState.emplace(device, *shaderLibrary);
+    }
+
+    void reportUnsupportedPackedSimdMatrix(const Device& device) const
+    {
+        auto missingBFloat16 =
+            graph().usesPackedSimdMatrix(SimdMatrixElement::BFloat16)
+            && !device.supportsBFloat16SimdMatrix();
+
+        const auto* load = missingBFloat16 ? "simdMatrixBFloat16" : "simdMatrixHalf";
+
+        const auto* query = missingBFloat16 ? "supportsBFloat16SimdMatrix"
+                                            : "supportsHalfSimdMatrix";
+
+        LOG("eacp: this kernel loads a packed SIMD-group matrix fragment "
+            "through ",
+            load,
+            ", and Device::",
+            query,
+            " answers no, so no pipeline was built for it. Ask that query "
+            "before recording the load, and where it answers no build the "
+            "kernel that stages the weight into a shared<Float> tile instead. "
+            "The two are different kernels rather than two arms of one, "
+            "because staging carries barriers and the packed load does not.");
+    }
+
+    // Named here rather than left to the backend, which reports a threadgroup
+    // allocation it cannot make as a pipeline that would not build - on Metal
+    // after the library compiled clean, which points at the wrong thing.
+    void reportThreadgroupMemoryOverBudget(const Device& device) const
+    {
+        if (fitsThreadgroupMemory(device))
+            return;
+
+        LOG("eacp: this kernel declares ",
+            threadgroupMemoryBytes(),
+            " bytes of threadgroup memory and this device allows ",
+            device.maxThreadgroupMemory(),
+            ". Size its shared<> arrays against Device::maxThreadgroupMemory().");
+    }
+
     const void* packWithExtents(const std::uint32_t* extents, int count)
     {
         uniformBytes.clear();

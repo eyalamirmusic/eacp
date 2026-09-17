@@ -3,6 +3,7 @@
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
 #include <cstdint>
+#include <iterator>
 #include <string>
 
 // The unsigned integer vectors: a pair of indices held in one value, the four
@@ -227,6 +228,52 @@ struct SharedPairKernel final : ComputeProgram
 
     EACP_SHADER(output)
 };
+
+// A whole Float4 through the bitcasts and back, with one bit manipulation in
+// between. The flip is an exclusive-or against the sign bit, which is a thing
+// only the bits can say - there is no float arithmetic that negates a NaN - so
+// a backend that routed the cast through a conversion answers differently
+// rather than approximately.
+struct WideBitcastKernel final : ComputeProgram
+{
+    WideBitcastKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto bits = asUInt(values.read4(i));
+
+        write(output, i * 2u, bits);
+        write(output, i * 2u + 1u, asUInt(asFloat(bits ^ 0x80000000u)));
+    }
+
+    Uniform<InputBuffer> values;
+    Uniform<UIntOutputBuffer> output;
+
+    EACP_SHADER(values, output)
+};
+
+// The wide store on an integer output, which Metal reaches through a
+// packed_uint4 pointer exactly as it reaches the float one. What it leaves
+// behind has to be what the record write would have.
+struct WideUIntStoreKernel final : ComputeProgram
+{
+    WideUIntStoreKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+
+        write4(quads, i, source.read4(i) + 1u);
+        write2(pairs, i, uint2(i, i * 3u));
+    }
+
+    Uniform<UIntInputBuffer> source;
+    Uniform<UIntOutputBuffer> quads;
+    Uniform<UIntOutputBuffer> pairs;
+
+    EACP_SHADER(source, quads, pairs)
+};
 } // namespace
 
 auto tUIntVectorConstructAndSwizzle = test("UIntVector/aPairIsBuiltAndSwizzled") = []
@@ -425,9 +472,16 @@ auto tUIntVectorConversions = test("UIntVector/theCrossingsAreNamedCasts") = []
     builder.write(output, 1u, toUInt(signedCell).y());
     builder.write(output, 2u, toUInt(widened).x());
 
+    // The pair itself is one load on Metal and two subscripts on HLSL; what
+    // this is about is the conversion around it, which is a named cast either
+    // way and is spelled over the vector rather than per component.
+    check(contains(emitMetal(builder.graph()),
+                   "uint2 t1 = uint2(float2(*((device const packed_float2*) "));
+    check(contains(emitHlsl(builder.graph()),
+                   "uint2 t1 = uint2(float2(buffer0[t0], "));
+
     for (const auto& source: {emitMetal(builder.graph()), emitHlsl(builder.graph())})
     {
-        check(contains(source, "uint2 t1 = uint2(float2(buffer0[t0], "));
         check(contains(source, "buffer1[1u] = (uint2(int2(t1))).y;"));
         check(contains(source, "buffer1[2u] = (uint2(float2(t1))).x;"));
     }
@@ -452,12 +506,51 @@ auto tUIntVectorBitcasts = test("UIntVector/theBitcastsUseTheVectorSpelling") = 
     auto metal = emitMetal(builder.graph());
     auto hlsl = emitHlsl(builder.graph());
 
-    check(contains(metal, "uint2 t1 = as_type<uint2>(float2(buffer0[t0], "));
+    check(contains(metal,
+                   "uint2 t1 = as_type<uint2>(float2(*((device const "
+                   "packed_float2*) (buffer0 + t0))));"));
     check(contains(metal, "buffer1[1u] = uint((as_type<float2>(t1)).y);"));
 
     check(contains(hlsl, "uint2 t1 = asuint(float2(buffer0[t0], "));
     check(contains(hlsl, "buffer1[1u] = uint((asfloat(t1)).y);"));
     check(!contains(hlsl, "as_type"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// The same pair of casts a width up, spelled out on all three dialects: MSL
+// carries the width in the name, and HLSL and GLSL have one name per direction
+// because both are componentwise over a vector already.
+auto tUIntVectorWideBitcasts = test("UIntVector/aQuadBitcastsOnEveryDialect") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto input = builder.inputBuffer();
+    auto output = builder.uintOutputBuffer();
+    auto i = builder.threadId();
+
+    auto bits = asUInt(input.read4(i));
+
+    builder.write(output, i, bits ^ 0x80000000u);
+    builder.write(output, i + 4u, asUInt(asFloat(bits)));
+
+    auto metal = emitMetal(builder.graph());
+    auto hlsl = emitHlsl(builder.graph());
+    auto glsl = emitGlsl(builder.graph());
+
+    check(contains(metal,
+                   "uint4 t1 = as_type<uint4>(float4(*((device const "
+                   "packed_float4*) (buffer0 + t0))));"));
+    check(contains(metal, "as_type<uint4>(as_type<float4>(t1))"));
+
+    check(contains(hlsl, "uint4 t1 = asuint(float4(buffer0[t0], "));
+    check(contains(hlsl, "asuint(asfloat(t1))"));
+    check(!contains(hlsl, "as_type"));
+
+    check(contains(glsl, "uvec4 t1 = floatBitsToUint(vec4(buffer0[t0], "));
+    check(contains(glsl, "floatBitsToUint(uintBitsToFloat(t1))"));
+    check(!contains(glsl, "as_type"));
+    check(!contains(glsl, "asuint"));
 
     expectGlslCompiles(builder.graph());
 };
@@ -645,4 +738,117 @@ auto tUIntVectorSharedRuns = test("UIntVector/sharedPairsCrossLanes") = []
 
     // A reversal rather than the identity, which unshared scratch would give.
     check(values[0] != 0u);
+};
+
+// The patterns a bitcast has to carry unchanged are exactly the ones a
+// conversion would not: a denormal, a signalling NaN, an infinity and a
+// negative zero go up as the bits of a float buffer and have to come back as
+// themselves.
+auto tUIntVectorWideBitcastsRun = test("UIntVector/aQuadBitcastKeepsEveryBit") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr std::uint32_t patterns[] = {0x00000000u,
+                                          0x80000000u,
+                                          0x3f800000u,
+                                          0xbf800000u,
+                                          0x00000001u,
+                                          0x007fffffu,
+                                          0x7f800000u,
+                                          0xff800000u,
+                                          0x7fc00000u,
+                                          0x7f800001u,
+                                          0x12345678u,
+                                          0xdeadbeefu,
+                                          0x00800000u,
+                                          0xcafef00du,
+                                          0x40490fdbu,
+                                          0xffffffffu};
+
+    constexpr auto elements = (int) std::size(patterns);
+    constexpr auto threads = elements / 4;
+
+    auto values =
+        Buffer {device, patterns, uintBytes * elements, BufferUsage::Storage};
+    auto output = makeFilledUInts(threads * 8, 0u);
+
+    auto kernel = WideBitcastKernel {};
+    kernel.values = values;
+    kernel.output = output;
+    kernel.prepare();
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, threads);
+    }
+
+    commands.commit();
+
+    auto read = readUInts(output, threads * 8);
+
+    for (auto element = 0; element < elements; ++element)
+    {
+        auto record = element / 4;
+        auto lane = element % 4;
+
+        check(read[record * 8 + lane] == patterns[element]);
+        check(read[record * 8 + 4 + lane] == (patterns[element] ^ 0x80000000u));
+    }
+};
+
+// The integer wide store lays its record down where the record write would
+// have, at the index UIntInputBuffer::read2/3/4 counts in.
+auto tUIntVectorWideStoreRuns = test("UIntVector/aWideStoreLaysTheRecordDown") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto threads = 8;
+    constexpr auto quadCount = threads * 4;
+    constexpr auto pairCount = threads * 2;
+
+    auto seed = Vector<std::uint32_t> {};
+
+    for (auto i = 0; i < quadCount; ++i)
+        seed.add((std::uint32_t) i * 7u + 1u);
+
+    auto source =
+        Buffer {device, seed.data(), uintBytes * quadCount, BufferUsage::Storage};
+
+    auto quads = makeFilledUInts(quadCount, 0u);
+    auto pairs = makeFilledUInts(pairCount, 0u);
+
+    auto kernel = WideUIntStoreKernel {};
+    kernel.source = source;
+    kernel.quads = quads;
+    kernel.pairs = pairs;
+    kernel.prepare();
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, threads);
+    }
+
+    commands.commit();
+
+    auto wide = readUInts(quads, quadCount);
+    auto two = readUInts(pairs, pairCount);
+
+    for (auto thread = 0; thread < threads; ++thread)
+    {
+        for (auto lane = 0; lane < 4; ++lane)
+            check(wide[thread * 4 + lane] == seed[thread * 4 + lane] + 1u);
+
+        check(two[thread * 2 + 0] == (std::uint32_t) thread);
+        check(two[thread * 2 + 1] == (std::uint32_t) thread * 3u);
+    }
 };

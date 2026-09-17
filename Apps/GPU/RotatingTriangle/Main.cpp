@@ -93,15 +93,7 @@ struct RotatingTriangleView final : GPUView
     float angle = 0.0f;
 };
 
-struct MyApp
-{
-    MyApp() { window.setContentView(triangle); }
-
-    RotatingTriangleView triangle;
-    Graphics::Window window;
-};
-
 int main()
 {
-    return eacp::Apps::run<MyApp>();
+    return Graphics::runWindowedApp<RotatingTriangleView>();
 }

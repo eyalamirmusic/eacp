@@ -261,15 +261,7 @@ struct PathStrokeRoot final : Graphics::View
     Graphics::Font font {Graphics::FontOptions {}.withSize(13.f)};
 };
 
-struct PathStrokeApp
-{
-    PathStrokeApp() { window.setContentView(root); }
-
-    PathStrokeRoot root;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<PathStrokeApp>();
+    return Graphics::runWindowedApp<PathStrokeRoot>(windowOptions());
 }

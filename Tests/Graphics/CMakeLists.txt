@@ -61,12 +61,15 @@ endif ()
 #
 # EmbeddedViewTests-macOS has no portable half: where a surface lands inside a
 # host's view is the AppKit frame, and the y-axis conversion it turns on is
-# decided by a host view that only exists here.
+# decided by a host view that only exists here. NativeChildSurfaceTests-macOS
+# is the same story from the other side -- where foreign content lands inside
+# one of our layouts is a native frame or it is nothing.
 if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
             EmbeddedViewTests-macOS.mm
             MenuTests-macOS.mm
+            NativeChildSurfaceTests-macOS.mm
             ScrollWheelTests-macOS.mm
             ViewVisibilityTests-macOS.mm
             WindowTests-macOS.mm)

@@ -119,6 +119,22 @@ struct GPUView::Native
         return Graphics::linuxDefaultBackingScale;
     }
 
+    // A scale change tells itself apart from a resize by the surface's own
+    // scale. Nothing is recorded before a surface carries a real one, so the
+    // first that arrives is the initial scale rather than a change.
+    void notifyScaleChange()
+    {
+        if (!record.handle.isValid())
+            return;
+
+        const auto scale = surfaceScale();
+        const auto changed = backingScale > 0.f && scale != backingScale;
+        backingScale = scale;
+
+        if (changed)
+            view.onBackingScaleChanged(scale);
+    }
+
     void startContinuous()
     {
         stampedTick = Threads::DisplayLink::timedTick(
@@ -738,7 +754,7 @@ struct GPUView::Native
         record.requestFrameCallback();
 
         {
-            auto frame = Frame(gpu, &drawable, nullptr, nullptr);
+            auto frame = Frame(gpu, &drawable, nullptr, nullptr, surfaceScale());
             view.render(frame);
         }
 
@@ -812,6 +828,10 @@ struct GPUView::Native
     bool companionsStale = false;
     bool deviceLost = false;
     bool rendering = false;
+
+    // Zero until the surface reports one, which is how the initial scale is told
+    // apart from a change.
+    float backingScale = 0.f;
 
     Callback stampedTick = [] {};
 
@@ -914,17 +934,17 @@ int GPUView::framesInFlight() const
     return impl->framesInFlight;
 }
 
-void GPUView::resized()
+// No drawable to resize here: the swapchain is rebuilt from the surface's own
+// configure, so all this owes either event is the scale notification.
+void GPUView::resizeStarted()
 {
-    Graphics::View::resized();
+    impl->notifyScaleChange();
 }
 
-void GPUView::backingScaleChanged()
-{
-    Graphics::View::backingScaleChanged();
-
-    onBackingScaleChanged(backingScale());
-}
+// Nothing to order after the subclass: the swapchain is rebuilt from that
+// configure and the frame drawn from a frame callback, both after every
+// override has run.
+void GPUView::resizeFinished() {}
 
 float GPUView::backingScale() const
 {
@@ -981,7 +1001,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         auto target = OffscreenTarget {};
         target.colorTexture = texture.nativeTexture();
 
-        auto frame = Frame(device, target);
+        auto frame = Frame(device, target, scale);
 
         renderScale = scale;
         render(frame);

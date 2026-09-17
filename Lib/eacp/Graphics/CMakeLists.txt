@@ -9,7 +9,8 @@ target_sources(eacp-graphics PRIVATE
         Menu/MenuCommands.cpp
         Primitives/Primitives.cpp
         View/View.cpp
-        Window/SizeConstraint.cpp)
+        Window/SizeConstraint.cpp
+        Window/Window.cpp)
 
 # Portable C++ that nonetheless stands on the 2D drawing stack, which is the
 # tier EACP_HAS_CONTEXT names. Left out where there is none, not stubbed.
@@ -79,6 +80,7 @@ if (APPLE)
                 View/View-macOS.mm
                 Window/Display-macOS.mm
                 Window/EmbeddedView-macOS.mm
+                Window/NativeChildSurface-macOS.mm
                 Window/Window-macOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework Cocoa"
@@ -106,6 +108,7 @@ elseif (WIN32)
             Window/CompositionHostWindow-Windows.cpp
             Window/Display-Windows.cpp
             Window/EmbeddedView-Windows.cpp
+            Window/NativeChildSurface-Windows.cpp
             Window/Window-Windows.cpp)
 
     target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE

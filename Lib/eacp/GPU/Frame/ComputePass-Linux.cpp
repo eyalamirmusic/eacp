@@ -157,6 +157,7 @@ ComputePass::~ComputePass()
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
     boundGroup = pipeline.threadGroupShape();
+    boundPipeline = false;
 
     if (!impl->encoder)
         return;
@@ -166,6 +167,7 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
     if (state == nullptr || state->pipeline == VK_NULL_HANDLE)
         return;
 
+    boundPipeline = true;
     impl->pipeline = state;
     vkCmdBindPipeline(
         impl->commandBuffer(), VK_PIPELINE_BIND_POINT_COMPUTE, state->pipeline);
@@ -259,7 +261,7 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     impl->sampledTextures &= ~(1u << slot);
 }
 
-void ComputePass::setBytes(const void* data, int bytes, int slot)
+void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     if (!impl->encoder || bytes <= 0 || slot < 0 || slot >= maxUniformSlots)
         return;
@@ -271,7 +273,7 @@ void ComputePass::setBytes(const void* data, int bytes, int slot)
 
 void ComputePass::dispatch(int count)
 {
-    if (!impl->canRecord() || count <= 0)
+    if (!impl->canRecord() || !boundPipeline || count <= 0)
         return;
 
     if (!impl->bindDescriptors())
@@ -287,7 +289,7 @@ void ComputePass::dispatch(int count)
 
 void ComputePass::dispatch(int width, int height)
 {
-    if (!impl->canRecord() || width <= 0 || height <= 0)
+    if (!impl->canRecord() || !boundPipeline || width <= 0 || height <= 0)
         return;
 
     if (!impl->bindDescriptors())
@@ -306,7 +308,8 @@ void ComputePass::dispatch(int width, int height)
 
 void ComputePass::dispatch(int width, int height, int depth)
 {
-    if (!impl->canRecord() || width <= 0 || height <= 0 || depth <= 0)
+    if (!impl->canRecord() || !boundPipeline || width <= 0 || height <= 0
+        || depth <= 0)
         return;
 
     if (!impl->bindDescriptors())
@@ -325,10 +328,13 @@ void ComputePass::dispatch(int width, int height, int depth)
     impl->orderAfterDispatch(commandBuffer);
 }
 
-void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+void ComputePass::dispatchIndirect(const Buffer& arguments,
+                                   std::int64_t offsetInBytes)
 {
-    if (!impl->canRecord() || offsetInBytes < 0 || offsetInBytes % 4 != 0
-        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
+    if (!impl->canRecord() || !boundPipeline || offsetInBytes < 0
+        || offsetInBytes % 4 != 0
+        || offsetInBytes
+               > arguments.size() - (std::int64_t) sizeof(DispatchArguments))
         return;
 
     auto* data = static_cast<VulkanBufferData*>(arguments.nativeBuffer());

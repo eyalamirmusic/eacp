@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/Core/Core.h>
+#include <eacp/Network/OnlineResource/OnlineResource.h>
 
 #include <Miro/Reflect.h>
 
@@ -15,10 +16,12 @@ struct Clip
     std::string detail;
     std::string url;
 
-    // What the clip is cached as, so the same download is not fetched twice.
+    // What the clip is kept as on disk: URL basenames like trailer.mp4 collide.
     std::string fileName;
 
     MIRO_REFLECT(name, detail, url, fileName)
+
+    eacp::OnlineResource::Info resource() const { return {name, url, fileName}; }
 };
 
 struct Catalogue

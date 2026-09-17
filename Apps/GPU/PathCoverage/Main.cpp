@@ -139,15 +139,7 @@ struct PathCoverageView final : GPUView
     float builtScale = 0.f;
 };
 
-struct PathCoverageApp
-{
-    PathCoverageApp() { window.setContentView(view); }
-
-    PathCoverageView view;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<PathCoverageApp>();
+    return Graphics::runWindowedApp<PathCoverageView>(windowOptions());
 }

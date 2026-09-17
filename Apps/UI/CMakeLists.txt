@@ -35,6 +35,11 @@ add_subdirectory(AspectLock)
 # because a row is something a model paints rather than something the tree holds.
 add_subdirectory(WidgetGallery)
 
+# The OnlineResources registry as a list: DownloadAndPlay's clips, each with
+# whether it is on disk, a progress bar while one is fetched, and one button
+# that empties the folder both apps share.
+add_subdirectory(ResourceMonitor)
+
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
 # screen and for reading what a real document costs the atlas.

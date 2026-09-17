@@ -504,8 +504,10 @@ struct X11WindowNative final
         if (contentView == nullptr)
             return;
 
-        notifyBackingScaleChanged(*contentView);
+        // The surfaces take the new scale first, so the notification after them
+        // reads it rather than the one it replaces.
         linuxWindowSurfaceStateChanged(*contentView);
+        notifyBackingScaleChanged(*contentView);
     }
 
     void mapNotify(const xcb_map_notify_event_t& event)

@@ -197,6 +197,24 @@ struct LiteralHalfKernel final : ComputeProgram
     EACP_SHADER(weights, output)
 };
 
+// Four halves at a time, which is two words: the width a weight walk wants, and
+// the one the record read underneath turns into a single eight-byte load.
+struct ReadHalf4Kernel final : ComputeProgram
+{
+    ReadHalf4Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, weights.readHalf4(i));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
 struct ReadHalf2Kernel final : ComputeProgram
 {
     ReadHalf2Kernel() { compile(); }
@@ -240,6 +258,24 @@ struct WriteHalf2Kernel final : ComputeProgram
     {
         auto i = threadId();
         writeHalf2(output, i, weights.readHalf2(i));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
+// The same round trip one width up: four halves are two words, read as one
+// record and written back as one store.
+struct WriteHalf4Kernel final : ComputeProgram
+{
+    WriteHalf4Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        writeHalf4(output, i, weights.readHalf4(i));
     }
 
     Uniform<InputBuffer> weights;
@@ -430,7 +466,8 @@ void runKernel(Device& device, ComputeProgram& kernel, int threads)
 
 Vector<float> floatsOf(const Buffer& buffer)
 {
-    auto values = Vector<float>(buffer.size() / (int) sizeof(float));
+    auto values =
+        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
     buffer.read(values.data(), buffer.size());
     return values;
 }
@@ -439,7 +476,8 @@ Vector<float> floatsOf(const Buffer& buffer)
 // bit pattern rather than a value.
 Vector<std::uint32_t> wordsOf(const Buffer& buffer)
 {
-    auto words = Vector<std::uint32_t>(buffer.size() / (int) sizeof(std::uint32_t));
+    auto words = Vector<std::uint32_t>(
+        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
     buffer.read(words.data(), buffer.size());
     return words;
 }
@@ -600,6 +638,44 @@ auto tReadHalf2 = test("PackedHalf/readHalf2ReadsBothHalvesOfAWord") = []
     }
 };
 
+// Four halves across two words, in the order readHalf walks them: the low half
+// of the first word, its high half, then the second word's two.
+auto tReadHalf4 = test("PackedHalf/readHalf4ReadsFourAcrossTwoWords") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto words = everyPackedPair();
+    auto records = words.size() / 2;
+
+    auto input = device.makeBuffer(words.data(),
+                                   words.size() * (int) sizeof(std::uint32_t),
+                                   BufferUsage::Storage);
+
+    auto output = device.makeBuffer(records * 4 * (int) sizeof(float));
+
+    auto kernel = ReadHalf4Kernel {};
+    kernel.weights = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    runKernel(device, kernel, records);
+    auto result = floatsOf(output);
+
+    // Element by element it is the same walk readHalf makes, which is what says
+    // the two spellings address one layout.
+    for (auto element = 0; element < records * 4; ++element)
+    {
+        auto word = words[element / 2];
+        auto half = (element % 2) == 0 ? (std::uint16_t) (word & 0xffffu)
+                                       : (std::uint16_t) (word >> 16);
+
+        check(matches(result[element], widened(half)));
+    }
+};
+
 // asFloat is asUInt run backwards, so the pair is the identity on bits - and
 // on these bits in particular, most of which are denormal floats.
 auto tBitcastRoundTrip = test("PackedHalf/asFloatUndoesAsUInt") = []
@@ -707,6 +783,47 @@ auto tWriteHalf2 = test("PackedHalf/writeHalf2IsThePackedStore") = []
     }
 };
 
+// writeHalf4 is readHalf4 run backwards, at the index readHalf4 counts in: two
+// words out and the same two words back, put there by one store.
+auto tWriteHalf4 = test("PackedHalf/writeHalf4IsTheWidePackedStore") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto words = everyPackedPair();
+
+    // The wide store addresses two words at a time, so an odd count would leave
+    // a last word nothing writes rather than one written wrong.
+    while (words.size() % 2 != 0)
+        words.add(0u);
+
+    auto count = words.size();
+
+    auto input = device.makeBuffer(
+        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
+
+    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+
+    auto kernel = WriteHalf4Kernel {};
+    kernel.weights = input;
+    kernel.output = output;
+    kernel.prepare(device);
+
+    runKernel(device, kernel, count / 2);
+    auto result = wordsOf(output);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        check(halfMatches((std::uint16_t) (result[i] & 0xffffu),
+                          (std::uint16_t) (words[i] & 0xffffu)));
+
+        check(halfMatches((std::uint16_t) (result[i] >> 16),
+                          (std::uint16_t) (words[i] >> 16)));
+    }
+};
+
 // The narrowing itself, against values fp16 cannot hold exactly: the ties, the
 // overflow boundary, and the subnormal range where a half loses mantissa bits
 // one at a time. Each has to land on what one of the two rounding rules gives,
@@ -788,6 +905,52 @@ auto tHalfSourceIsRight = test("PackedHalf/bothBackendsSpellTheHalfHelpers") = [
     // The HLSL carries no MSL spelling anywhere - not in a helper body, not in
     // the kernel - which is the failure a shared emitter invites.
     check(!has(hlsl, "as_type"));
+};
+
+// The four-wide read, per backend: two words fetched as one record - a single
+// packed load on Metal and two subscripts where there is no such spelling -
+// then one unpack helper over each of them.
+auto tHalf4SourceIsRight = test("PackedHalf/theFourWideReadIsOneRecordRead") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto i = builder.threadId();
+
+    builder.write(output, i, weights.readHalf4(i));
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    auto has = [](const std::string& source, const std::string& text)
+    { return source.find(text) != std::string::npos; };
+
+    // The index counts records of four halves, which is two words.
+    for (const auto& source: {metal, hlsl, glsl})
+        check(has(source, "uint t1 = (gid * 2u);"));
+
+    check(has(metal,
+              "float2 t2 = float2(*((device const packed_float2*) "
+              "(buffer0 + t1)));"));
+    check(has(metal,
+              "float4 t3 = float4(eacpUnpackHalf2(as_type<uint>((t2).x)), "
+              "eacpUnpackHalf2(as_type<uint>((t2).y)));"));
+    check(!has(metal, "buffer0[t1]"));
+
+    check(has(hlsl, "float2 t2 = float2(buffer0[t1], buffer0[t1 + 1u]);"));
+    check(has(hlsl,
+              "float4 t3 = float4(eacpUnpackHalf2(asuint((t2).x)), "
+              "eacpUnpackHalf2(asuint((t2).y)));"));
+
+    check(has(glsl, "vec2 t2 = vec2(buffer0[t1], buffer0[t1 + 1u]);"));
+    check(has(glsl,
+              "vec4 t3 = vec4(eacpUnpackHalf2(floatBitsToUint((t2).x)), "
+              "eacpUnpackHalf2(floatBitsToUint((t2).y)));"));
+
+    expectGlslCompiles(graph);
 };
 
 // Each helper is emitted only into shaders that call it, so a kernel narrowing

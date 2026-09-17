@@ -557,13 +557,6 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-struct App
-{
-    App() { window.setContentView(host); }
-
-    DemoHost host;
-    Graphics::Window window {makeOptions()};
-};
 } // namespace
 
 int main(int argc, char** argv)
@@ -571,5 +564,5 @@ int main(int argc, char** argv)
     if (argc > 1)
         startupTab = static_cast<int>(std::strtol(argv[1], nullptr, 10));
 
-    return eacp::Apps::run<App>();
+    return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

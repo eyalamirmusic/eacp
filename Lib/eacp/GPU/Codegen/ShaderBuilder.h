@@ -346,6 +346,56 @@ public:
     UInt groupMax(const UInt& value) { return fold(GroupReduction::Max, value); }
     UInt groupMin(const UInt& value) { return fold(GroupReduction::Min, value); }
 
+    // The same three narrowed to one SIMD group. Every thread is handed the
+    // fold of the simdWidth threads it shares a SIMD group with, so a group of
+    // several SIMD groups leaves one of these holding several answers - one per
+    // SIMD group - rather than one.
+    //
+    // On Metal that is a single instruction with no threadgroup memory and no
+    // barrier, which is what a fold inside a per-tile loop wants. It is still
+    // collective, and the backends with no wave intrinsic still reach it
+    // through a scratch array between barriers, so the group rule holds: every
+    // thread of the threadgroup reaches it or none does, and a kernel holding
+    // one loses its bounds guard and bounds its own stores.
+    //
+    // **How many threads is a promise these three cannot keep on their own.**
+    // The two emulated backends fold exactly simdWidth lanes, because that is
+    // what the emitted tree walks. Metal folds the *hardware* SIMD group, since
+    // that is what simd_sum is collective over - 32 on every Apple GPU, and
+    // eight or sixteen on an Intel one, where the same call would fold a
+    // quarter of what the arithmetic around it assumes. eacp requires the two
+    // to agree and cannot check it until there is a pipeline, so
+    // ComputeProgram::prepare compares the compiled kernel's
+    // threadExecutionWidth against simdWidth and says so when they differ. A
+    // kernel that wants to be right at any width wants groupSum/groupMax/
+    // groupMin, which combine per-SIMD-group partials however many there were.
+    //
+    // **Uniform control flow, not just a uniform arrival.** Every thread of the
+    // group must reach a fold *with the same branches taken*: loop(condition,
+    // body) takes an ordinary per-thread Bool, so a fold inside a loop whose
+    // condition some lanes leave earlier than others is divergent. The emulated
+    // backends hang at the barrier inside the fold; Metal's intrinsic tolerates
+    // it silently and folds only the lanes still running, which is worse -
+    // correct-looking on the machine it was written on and a hang on the next
+    // one. Hoist the condition to something uniform across the group, or bound
+    // the loop by a uniform and guard the body's stores instead.
+    Float simdSum(const Float& value)
+    {
+        return simdFold(GroupReduction::Sum, value);
+    }
+    Float simdMax(const Float& value)
+    {
+        return simdFold(GroupReduction::Max, value);
+    }
+    Float simdMin(const Float& value)
+    {
+        return simdFold(GroupReduction::Min, value);
+    }
+
+    UInt simdSum(const UInt& value) { return simdFold(GroupReduction::Sum, value); }
+    UInt simdMax(const UInt& value) { return simdFold(GroupReduction::Max, value); }
+    UInt simdMin(const UInt& value) { return simdFold(GroupReduction::Min, value); }
+
     // Which SIMD group of the threadgroup this thread is in, which is what
     // places the block of the output that SIMD group owns. They are numbered
     // from the flat local index, so a group of simdGroupWidth * n threads holds
@@ -396,6 +446,53 @@ public:
             &graphData,
             graphData.addSimdMatrixLoad(
                 SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
+    }
+
+    // The same 8x8 patch out of a buffer whose elements are packed sixteen-bit
+    // values rather than floats - the layout a checkpoint ships a weight in,
+    // read here with no widening pass and no threadgroup tile to widen into.
+    //
+    // The offset and the row stride count in those sixteen-bit elements, which
+    // is the convention InputBuffer::readHalf and readBFloat16 already set: a
+    // row of a bf16 weight matrix has the row stride its columns say, not half
+    // of it. The patch still has to be inside the buffer and still has to be
+    // the same on every lane.
+    //
+    // The fragment these hand back is an operand of multiplyAccumulate and
+    // nothing else - it cannot be an accumulator and cannot be written back.
+    //
+    // Both build on every backend. Where the hardware has the instruction the
+    // patch is one load and the product is one more; where it does not, each
+    // lane widens the pair it holds and the fragment is the float pair the
+    // fallback always was. Ask Device::supportsHalfSimdMatrix or
+    // supportsBFloat16SimdMatrix *before* recording one to decide whether that
+    // is worth having, and where it is not, build the kernel that stages a tile
+    // instead - which of the two shapes a kernel is has to be settled while it
+    // is built rather than branched on at dispatch, because staging carries
+    // barriers and this does not. See ComputeProgram::fitsPackedSimdMatrix,
+    // which is the narrower question of whether this one builds at all.
+    SimdMatrix simdMatrixHalf(const InputBuffer& buffer,
+                              const UInt& offset,
+                              const UInt& rowStride)
+    {
+        return {&graphData,
+                graphData.addSimdMatrixLoad(SimdMatrixMemory::Buffer,
+                                            buffer.slot,
+                                            offset.node,
+                                            rowStride.node,
+                                            SimdMatrixElement::Half)};
+    }
+
+    SimdMatrix simdMatrixBFloat16(const InputBuffer& buffer,
+                                  const UInt& offset,
+                                  const UInt& rowStride)
+    {
+        return {&graphData,
+                graphData.addSimdMatrixLoad(SimdMatrixMemory::Buffer,
+                                            buffer.slot,
+                                            offset.node,
+                                            rowStride.node,
+                                            SimdMatrixElement::BFloat16)};
     }
 
     // accumulator += left * right over the 8x8 fragments: the whole reason the
@@ -523,10 +620,13 @@ public:
     // floats already has. The index is in records rather than in floats, so a
     // kernel writing a struct of four never spells the stride itself.
     //
-    // N scalar stores rather than one wide one: the buffer stays a run of
-    // floats on both backends, which is what keeps a kernel's output bindable
-    // as a per-instance vertex stream with no CPU-side element size to agree
-    // on. Retyping the binding would buy one 16-byte store and cost that.
+    // These lay the record down as N scalar stores; write2/write3/write4 below
+    // lay the same bytes down as one. Both are here because the wide form is
+    // not the trade it was once taken for: it reinterprets the address being
+    // written rather than the binding - the same pointer cast read4 makes - so
+    // an output written wide is still a run of floats and still bindable as a
+    // per-instance vertex stream. These keep the callers that have them, and a
+    // kernel bound by how fast it can issue stores reaches for the wide one.
     void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
     {
         auto base = index * 2u;
@@ -555,6 +655,37 @@ public:
             value.node);
     }
 
+    // The same record laid down as one store rather than as N. write4(out, i,
+    // v) is elements 4i..4i+3, exactly the bytes InputBuffer::read4(i) reads
+    // back, and on Metal it is one sixteen-byte instruction where the write()
+    // above is four.
+    //
+    // Named rather than another write() overload because the value type cannot
+    // tell the two apart: both take a Float4 at a record index and leave the
+    // same thing in memory, so which store a kernel gets is something it has to
+    // say rather than something to infer.
+    //
+    // The alignment contract is read4's, and for the same reason: the run is
+    // written through a *packed* vector pointer, which wants four-byte
+    // alignment and not sixteen, so any offset
+    // Device::storageBufferOffsetAlignment allows a BufferRange to start at is
+    // one these can write to. The index counts records, so the first element
+    // written is index * N.
+    void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
+    }
+
+    void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
+    }
+
+    void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
+    }
+
     // Two values narrowed to fp16 and stored in the single float slot that
     // holds them both - the store InputBuffer::readHalf2 reads back, and the
     // index is in those slots rather than in halves for the same reason.
@@ -567,6 +698,115 @@ public:
                     const Float2& value)
     {
         write(buffer, index, asFloat(packHalf2(value)));
+    }
+
+    // The same store for bf16, which InputBuffer::readBFloat16x2 reads back at
+    // the same index.
+    void writeBFloat16x2(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float2& value)
+    {
+        write(buffer, index, asFloat(packBFloat16x2(value)));
+    }
+
+    // Four integers packed into the one float slot that holds them, which
+    // InputBuffer::readInt8x4 and readUInt8x4 read back at the same index. The
+    // value is an integer vector rather than a Float4 for the reason
+    // packInt8x4 gives: the rounding is the caller's decision to make.
+    void
+        writeInt8x4(const OutputBuffer& buffer, const UInt& index, const Int4& value)
+    {
+        write(buffer, index, asFloat(packInt8x4(value)));
+    }
+
+    void writeUInt8x4(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& value)
+    {
+        write(buffer, index, asFloat(packUInt8x4(value)));
+    }
+
+    // The wide packed stores, one per wide read: each packs its values into the
+    // two or four words that hold them and lays those down through write2 or
+    // write4, so the eight or sixteen bytes leave in one store wherever the
+    // backend has one. The index counts records on exactly the terms the
+    // matching read does - writeHalf4(out, i, v) is what readHalf4(i) reads
+    // back - so a kernel that widens a row and narrows it again spells one
+    // index.
+    void writeHalf4(const OutputBuffer& buffer,
+                    const UInt& index,
+                    const Float4& value)
+    {
+        write2(
+            buffer,
+            index,
+            float2(asFloat(packHalf2(value.xy())), asFloat(packHalf2(value.zw()))));
+    }
+
+    void writeBFloat16x4(const OutputBuffer& buffer,
+                         const UInt& index,
+                         const Float4& value)
+    {
+        write2(buffer,
+               index,
+               float2(asFloat(packBFloat16x2(value.xy())),
+                      asFloat(packBFloat16x2(value.zw()))));
+    }
+
+    // The byte ones take their values as integer vectors rather than as a
+    // Float4Pair or a Float4Quad, which is what the reads hand back: the pair
+    // and the quad are what eight and sixteen *widened* values arrive as, and
+    // the rounding back down is the caller's decision to make, exactly as it is
+    // for writeInt8x4. The parameters carry the read's own names, so what goes
+    // out in .low goes in as low.
+    void writeInt8x8(const OutputBuffer& buffer,
+                     const UInt& index,
+                     const Int4& low,
+                     const Int4& high)
+    {
+        write2(buffer,
+               index,
+               float2(asFloat(packInt8x4(low)), asFloat(packInt8x4(high))));
+    }
+
+    void writeUInt8x8(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const UInt4& low,
+                      const UInt4& high)
+    {
+        write2(buffer,
+               index,
+               float2(asFloat(packUInt8x4(low)), asFloat(packUInt8x4(high))));
+    }
+
+    void writeInt8x16(const OutputBuffer& buffer,
+                      const UInt& index,
+                      const Int4& a,
+                      const Int4& b,
+                      const Int4& c,
+                      const Int4& d)
+    {
+        write4(buffer,
+               index,
+               float4(asFloat(packInt8x4(a)),
+                      asFloat(packInt8x4(b)),
+                      asFloat(packInt8x4(c)),
+                      asFloat(packInt8x4(d))));
+    }
+
+    void writeUInt8x16(const OutputBuffer& buffer,
+                       const UInt& index,
+                       const UInt4& a,
+                       const UInt4& b,
+                       const UInt4& c,
+                       const UInt4& d)
+    {
+        write4(buffer,
+               index,
+               float4(asFloat(packUInt8x4(a)),
+                      asFloat(packUInt8x4(b)),
+                      asFloat(packUInt8x4(c)),
+                      asFloat(packUInt8x4(d))));
     }
 
     // One element of an integer output, index or value spelled as a literal
@@ -620,6 +860,28 @@ public:
             {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
             {value.x().node, value.y().node, value.z().node, value.w().node},
             value.node);
+    }
+
+    // The same records laid down as one store, pairing with
+    // UIntInputBuffer::read2/3/4 the way the float ones pair with InputBuffer's:
+    // a packed_uintN pointer on Metal, the N subscripts on the other two, and
+    // the same four-byte alignment a ranged bind already guarantees.
+    void
+        write2(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
+    }
+
+    void
+        write3(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
+    }
+
+    void
+        write4(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
+    {
+        graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
     }
 
     // One element of an atomic buffer, set outright rather than added to. It
@@ -868,12 +1130,20 @@ private:
     }
 
     template <typename T>
-    T fold(GroupReduction operation, const T& value)
+    T fold(GroupReduction operation,
+           const T& value,
+           ReductionScope scope = ReductionScope::Group)
     {
         auto result = graphData.addGroupReduction(
-            operation, ValueTypeOf<T>::value, value.node);
+            operation, ValueTypeOf<T>::value, value.node, scope);
 
         return indexValue<T>(graphData.addVarRead(result));
+    }
+
+    template <typename T>
+    T simdFold(GroupReduction operation, const T& value)
+    {
+        return fold(operation, value, ReductionScope::Simd);
     }
 
     ShaderGraph graphData;

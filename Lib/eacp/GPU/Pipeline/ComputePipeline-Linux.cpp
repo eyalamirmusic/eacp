@@ -127,6 +127,13 @@ bool ComputePipeline::isValid() const
     return impl->state.pipeline != VK_NULL_HANDLE;
 }
 
+// Nothing to report: this backend emulates a SIMD group at the EDSL's own width
+// rather than lowering to a hardware one, so there is no second number here.
+int ComputePipeline::threadExecutionWidth() const
+{
+    return 0;
+}
+
 void* ComputePipeline::nativeState() const
 {
     return const_cast<VulkanComputePipeline*>(&impl->state);

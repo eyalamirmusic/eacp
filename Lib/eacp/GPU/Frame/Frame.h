@@ -104,12 +104,39 @@ struct OffscreenTarget
 class Frame
 {
 public:
-    Frame(Device& device, void* drawable, void* msaaTexture, void* depthTexture);
-    Frame(Device& device, const OffscreenTarget& target);
+    Frame(Device& device,
+          void* drawable,
+          void* msaaTexture,
+          void* depthTexture,
+          float backingScaleToUse = 1.f);
+
+    Frame(Device& device,
+          const OffscreenTarget& target,
+          float backingScaleToUse = 1.f);
+
     ~Frame();
 
     Frame(const Frame&) = delete;
     Frame& operator=(const Frame&) = delete;
+
+    // The size of the target this frame draws into: the drawable's texture on
+    // screen, the app's texture off it.
+    //
+    // **This is what a projection set inside render() should be derived from.**
+    // A size cached in resized() is a different thing that is usually equal to
+    // it - what the view will be once the layout pass is over - and the one
+    // frame where the two disagree is a live resize, whose drawable is already
+    // the new size while the cached divisor is still the old one. Read off the
+    // frame, a projection cannot disagree with the viewport it draws through.
+    Graphics::Point pixelSize() const;
+
+    // Device pixels per logical point for this frame's target: the view's
+    // backing scale on screen, and the scale a snapshot was asked for off it.
+    float backingScale() const;
+
+    // pixelSize() in logical points - the units views, mouse events and the
+    // sprite and glyph renderers all work in.
+    Graphics::Point logicalSize() const;
 
     RenderPass beginPass(const RenderPassDescriptor& descriptor = {});
 
@@ -202,5 +229,7 @@ public:
 private:
     struct Native;
     Pimpl<Native> impl;
+
+    float scale = 1.f;
 };
 } // namespace eacp::GPU

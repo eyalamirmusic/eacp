@@ -294,15 +294,7 @@ struct ParticleView final : GPUView
     bool front = true;
 };
 
-struct ComputeParticlesApp
-{
-    ComputeParticlesApp() { window.setContentView(view); }
-
-    ParticleView view;
-    Graphics::Window window {windowOptions()};
-};
-
 int main()
 {
-    return eacp::Apps::run<ComputeParticlesApp>();
+    return Graphics::runWindowedApp<ParticleView>(windowOptions());
 }

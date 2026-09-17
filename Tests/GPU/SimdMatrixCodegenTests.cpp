@@ -54,6 +54,37 @@ ShaderBuilder productKernel()
 
     return builder;
 }
+
+// A weight read where it lies: the activation staged as floats in a threadgroup
+// tile, the weight loaded straight out of the buffer that holds it packed, and
+// the two multiplied into a float accumulator with nothing widened in between.
+ShaderBuilder packedKernel(SimdMatrixElement element)
+{
+    auto builder = ShaderBuilder {};
+    builder.setThreadGroupShape({64});
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto tile = builder.shared<Float>(64);
+    auto lane = builder.localId();
+    auto simd = builder.simdGroupIndex();
+    auto stride = builder.unsignedInteger(8u);
+
+    builder.write(tile, lane, weights[lane]);
+    builder.barrier();
+
+    auto accumulator = builder.simdMatrix();
+    auto left = builder.simdMatrix(tile, simd * 64u, stride);
+
+    auto right = element == SimdMatrixElement::Half
+                     ? builder.simdMatrixHalf(weights, simd * 64u, stride)
+                     : builder.simdMatrixBFloat16(weights, simd * 64u, stride);
+
+    builder.multiplyAccumulate(accumulator, left, right);
+    builder.write(output, simd * 64u, stride, accumulator);
+
+    return builder;
+}
 } // namespace
 
 auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
@@ -186,4 +217,143 @@ auto tNoFragmentNoScaffolding =
     check(!has(emitHlsl(graph), "sgm"));
 
     expectGlslCompiles(graph);
+};
+
+// A fragment read out of a buffer of packed bf16. On Metal it is the type MSL
+// has for one, loaded through the buffer's pointer reinterpreted as bfloat and
+// multiplied into a float accumulator with nothing widened in between - which
+// is what a packed load is for, since staging is the whole cost it removes.
+auto tBFloat16Fragment = test("SimdMatrix/bfloat16LoadsWithoutStaging") = []
+{
+    auto builder = packedKernel(SimdMatrixElement::BFloat16);
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    check(has(metal, "simdgroup_bfloat8x8 sgm2;"));
+    check(has(metal,
+              "simdgroup_load(sgm2, (device const bfloat*) (buffer0) + (t0), "
+              "(8u));"));
+    check(has(metal, "simdgroup_multiply_accumulate(sgm0, sgm1, sgm2, sgm0);"));
+
+    // The float operand beside it is untouched, which is the mixed-precision
+    // product the instruction takes: a staged activation against a packed
+    // weight, accumulating in float.
+    check(has(metal, "simdgroup_float8x8 sgm1;"));
+    check(has(metal, "simdgroup_load(sgm1, s0 + (t0), (8u));"));
+    check(!has(metal, "eacpReadBFloat16"));
+
+    // The two fallback backends hold every fragment as a lane's pair of floats
+    // whatever the memory it came from, so what the packed load changes there
+    // is only the arithmetic that produces the pair: the word at half the
+    // element's index, and which half of it the parity picks - the same helper
+    // a scalar readBFloat16 goes through, and the definition carried with it.
+    check(has(hlsl, "float eacpReadBFloat16(uint bits, uint parity)"));
+    check(has(hlsl,
+              "float2 sgm2 = float2(eacpReadBFloat16(asuint(buffer0[((t0) + "
+              "sgmRow * (8u) + sgmColumn) / 2u]), ((t0) + sgmRow * (8u) + "
+              "sgmColumn) % 2u), eacpReadBFloat16(asuint(buffer0[((t0) + sgmRow "
+              "* (8u) + sgmColumn + 1u) / 2u]), ((t0) + sgmRow * (8u) + "
+              "sgmColumn + 1u) % 2u));"));
+
+    check(has(glsl, "float eacpReadBFloat16(uint bits, uint parity)"));
+    check(has(glsl,
+              "vec2 sgm2 = vec2(eacpReadBFloat16(floatBitsToUint(buffer0[((t0) "
+              "+ sgmRow * (8u) + sgmColumn) / 2u])"));
+
+    // The product below it is the one the float pair always had: what a lane
+    // holds is two floats either way.
+    for (const auto& source: {hlsl, glsl})
+    {
+        check(has(source,
+                  "sgmScratch[sgmBase + 64u + sgmRow * 8u + sgmColumn] = "
+                  "sgm2.x;"));
+        check(!has(source, "bfloat"));
+    }
+
+    expectGlslCompiles(graph);
+};
+
+// The fp16 sibling, which differs in the two names and nothing else - and is
+// the one of the pair that is on eacp's macOS floor rather than above it.
+auto tHalfFragment = test("SimdMatrix/halfLoadsWithoutStaging") = []
+{
+    auto builder = packedKernel(SimdMatrixElement::Half);
+
+    const auto& graph = builder.graph();
+    auto metal = emitMetal(graph);
+    auto hlsl = emitHlsl(graph);
+
+    check(has(metal, "simdgroup_half8x8 sgm2;"));
+    check(has(metal,
+              "simdgroup_load(sgm2, (device const half*) (buffer0) + (t0), (8u));"));
+    check(has(metal, "simdgroup_multiply_accumulate(sgm0, sgm1, sgm2, sgm0);"));
+
+    check(has(hlsl, "float eacpReadHalf(uint bits, uint parity)"));
+    check(has(hlsl,
+              "float2 sgm2 = float2(eacpReadHalf(asuint(buffer0[((t0) + sgmRow "
+              "* (8u) + sgmColumn) / 2u])"));
+    check(!has(hlsl, "eacpReadBFloat16"));
+
+    expectGlslCompiles(graph);
+};
+
+// The packed element is the fragment's, not the kernel's: a kernel holding both
+// kinds declares each as what it is, and carries only the widening its own
+// fallback needs.
+auto tPackedElementIsPerFragment =
+    test("SimdMatrix/eachFragmentCarriesItsOwnElement") = []
+{
+    auto builder = ShaderBuilder {};
+    builder.setThreadGroupShape({64});
+
+    auto weights = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto simd = builder.simdGroupIndex();
+    auto stride = builder.unsignedInteger(8u);
+
+    auto accumulator = builder.simdMatrix();
+    auto left = builder.simdMatrixHalf(weights, simd * 64u, stride);
+    auto right = builder.simdMatrixBFloat16(weights, simd * 64u, stride);
+
+    builder.multiplyAccumulate(accumulator, left, right);
+    builder.write(output, simd * 64u, stride, accumulator);
+
+    const auto& graph = builder.graph();
+
+    check(graph.simdMatrixElement(0) == SimdMatrixElement::Float);
+    check(graph.simdMatrixElement(1) == SimdMatrixElement::Half);
+    check(graph.simdMatrixElement(2) == SimdMatrixElement::BFloat16);
+    check(graph.usesPackedSimdMatrix(SimdMatrixElement::Half));
+    check(graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16));
+
+    auto metal = emitMetal(graph);
+
+    check(has(metal, "simdgroup_half8x8 sgm1;"));
+    check(has(metal, "simdgroup_bfloat8x8 sgm2;"));
+    check(has(metal, "simdgroup_multiply_accumulate(sgm0, sgm1, sgm2, sgm0);"));
+
+    auto hlsl = emitHlsl(graph);
+
+    check(has(hlsl, "float eacpReadHalf(uint bits, uint parity)"));
+    check(has(hlsl, "float eacpReadBFloat16(uint bits, uint parity)"));
+
+    expectGlslCompiles(graph);
+};
+
+// A kernel that loads no packed fragment answers no to both, which is what
+// makes ComputeProgram::fitsPackedSimdMatrix true everywhere for one.
+auto tPlainFragmentNeedsNothing =
+    test("SimdMatrix/aFloatFragmentAsksForNothing") = []
+{
+    auto builder = productKernel();
+
+    const auto& graph = builder.graph();
+
+    check(!graph.usesPackedSimdMatrix(SimdMatrixElement::Half));
+    check(!graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16));
+    check(!has(emitMetal(graph), "bfloat"));
+    check(!has(emitHlsl(graph), "eacpReadBFloat16"));
 };

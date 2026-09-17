@@ -356,6 +356,64 @@ constexpr auto erfcHelperGlsl =
     "eacpErfc(x.w));\n"
     "}\n\n";
 
+// tanh with its two tails answered outright.
+//
+// The native one is there in all three languages, and in none of them is what
+// it does to a large argument something a caller can rely on. Metal is the case
+// that forced this: eacp compiles its library with no MTLCompileOptions, so
+// fast math is on, and under it tanh is evaluated through exp - which overflows
+// somewhere past an argument of 44 and hands back inf/inf, a NaN, where the
+// function saturated at one long before. HLSL and GLSL leave the same freedom
+// to the driver. A tanh GELU's argument is cubic in its input, so an activation
+// of thirty is an argument of nine hundred, and one NaN in a residual stream is
+// the rest of the sequence.
+//
+// Ten is the threshold because float32 resolves nothing between tanh(9.011) and
+// one: 1 - tanh(x) falls below half an ulp of one there, so every argument this
+// answers with a constant is an argument whose correctly rounded tanh is that
+// same constant. The branch therefore changes no representable value of the
+// function - it only keeps the intrinsic inside the range where a driver's
+// version of it is worth calling.
+constexpr auto saturatingTanhHelper =
+    "float eacpSaturatingTanh(float x)\n"
+    "{\n"
+    "    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));\n"
+    "}\n\n"
+    "float2 eacpSaturatingTanh(float2 x)\n"
+    "{\n"
+    "    return float2(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y));\n"
+    "}\n\n"
+    "float3 eacpSaturatingTanh(float3 x)\n"
+    "{\n"
+    "    return float3(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
+    "                  eacpSaturatingTanh(x.z));\n"
+    "}\n\n"
+    "float4 eacpSaturatingTanh(float4 x)\n"
+    "{\n"
+    "    return float4(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
+    "                  eacpSaturatingTanh(x.z), eacpSaturatingTanh(x.w));\n"
+    "}\n\n";
+
+constexpr auto saturatingTanhHelperGlsl =
+    "float eacpSaturatingTanh(float x)\n"
+    "{\n"
+    "    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));\n"
+    "}\n\n"
+    "vec2 eacpSaturatingTanh(vec2 x)\n"
+    "{\n"
+    "    return vec2(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y));\n"
+    "}\n\n"
+    "vec3 eacpSaturatingTanh(vec3 x)\n"
+    "{\n"
+    "    return vec3(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
+    "                eacpSaturatingTanh(x.z));\n"
+    "}\n\n"
+    "vec4 eacpSaturatingTanh(vec4 x)\n"
+    "{\n"
+    "    return vec4(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),\n"
+    "                eacpSaturatingTanh(x.z), eacpSaturatingTanh(x.w));\n"
+    "}\n\n";
+
 // log2 scaled by log10(2), which is what a driver's own log10 lowers to.
 constexpr auto log10HelperGlsl = "float eacpLog10(float x)\n"
                                  "{\n"
@@ -374,7 +432,188 @@ constexpr auto log10HelperGlsl = "float eacpLog10(float x)\n"
                                  "    return log2(x) * 0.30102999566;\n"
                                  "}\n\n";
 
-const auto shaderHelpers = Array<ShaderHelper, 6> {
+// The bf16 narrowing, written in integer arithmetic on purpose.
+//
+// packHalf2 hands the rounding to the dialect's own narrowing instruction and
+// so cannot be bit-identical across the three. Here there is no instruction to
+// hand it to - no language has bf16 - and doing it by hand costs nothing and
+// buys an answer that is the same on every backend: add half an ulp plus the
+// low bit of what survives, which is round-to-nearest-even, then keep the top
+// sixteen bits.
+//
+// A NaN is quieted rather than rounded. Adding to one whose mantissa is all
+// ones carries into the exponent and lands on an infinity, which is a different
+// value rather than a coarser one, so the two are told apart first: a magnitude
+// above the infinity pattern is exactly a NaN.
+constexpr auto packBFloat16HelperMetal =
+    "inline uint eacpPackBFloat16x2(float2 values)\n"
+    "{\n"
+    "    uint low = as_type<uint>(values.x);\n"
+    "    uint high = as_type<uint>(values.y);\n"
+    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
+    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
+    "    low = lowIsNaN ? (low | 0x400000u)\n"
+    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
+    "    high = highIsNaN ? (high | 0x400000u)\n"
+    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
+    "    return (low >> 16u) | (high & 0xffff0000u);\n"
+    "}\n\n";
+
+constexpr auto packBFloat16HelperHlsl =
+    "uint eacpPackBFloat16x2(float2 values)\n"
+    "{\n"
+    "    uint low = asuint(values.x);\n"
+    "    uint high = asuint(values.y);\n"
+    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
+    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
+    "    low = lowIsNaN ? (low | 0x400000u)\n"
+    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
+    "    high = highIsNaN ? (high | 0x400000u)\n"
+    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
+    "    return (low >> 16u) | (high & 0xffff0000u);\n"
+    "}\n\n";
+
+constexpr auto packBFloat16HelperGlsl =
+    "uint eacpPackBFloat16x2(vec2 values)\n"
+    "{\n"
+    "    uint low = floatBitsToUint(values.x);\n"
+    "    uint high = floatBitsToUint(values.y);\n"
+    "    bool lowIsNaN = (low & 0x7fffffffu) > 0x7f800000u;\n"
+    "    bool highIsNaN = (high & 0x7fffffffu) > 0x7f800000u;\n"
+    "    low = lowIsNaN ? (low | 0x400000u)\n"
+    "                   : (low + 0x7fffu + ((low >> 16u) & 1u));\n"
+    "    high = highIsNaN ? (high | 0x400000u)\n"
+    "                     : (high + 0x7fffu + ((high >> 16u) & 1u));\n"
+    "    return (low >> 16u) | (high & 0xffff0000u);\n"
+    "}\n\n";
+
+// The quantized widenings, and the sign extension inside them, which is why
+// these are helpers rather than arithmetic at the call site.
+//
+// A byte lifted out of a word is an unsigned 0..255, and the signed value it
+// stands for is (b ^ 0x80) - 128; a nibble's is (n ^ 0x8) - 8. That spelling is
+// arithmetic on values no wider than the word, moving no bit into or out of a
+// sign position, so MSL, HLSL and GLSL define it identically - which is why one
+// string serves Metal and DirectX here, as it does for erf. The alternatives do
+// not: as_type<char4> is Metal's answer alone, and shifting a byte up into the
+// sign bit and arithmetically back asks each language what its own sign bit
+// does under a shift, which is three rules spelled three ways for a widening
+// that has to agree to the bit.
+constexpr auto unpackInt8x4Helper =
+    "float4 eacpUnpackInt8x4(uint bits)\n"
+    "{\n"
+    "    return float4(float((bits & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                  float(((bits >> 8u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                  float(((bits >> 16u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                  float(((bits >> 24u) & 0xffu) ^ 0x80u) - 128.0);\n"
+    "}\n\n";
+
+constexpr auto unpackInt8x4HelperGlsl =
+    "vec4 eacpUnpackInt8x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float((bits & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                float(((bits >> 8u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                float(((bits >> 16u) & 0xffu) ^ 0x80u) - 128.0,\n"
+    "                float(((bits >> 24u) & 0xffu) ^ 0x80u) - 128.0);\n"
+    "}\n\n";
+
+constexpr auto unpackUInt8x4Helper =
+    "float4 eacpUnpackUInt8x4(uint bits)\n"
+    "{\n"
+    "    return float4(float(bits & 0xffu),\n"
+    "                  float((bits >> 8u) & 0xffu),\n"
+    "                  float((bits >> 16u) & 0xffu),\n"
+    "                  float((bits >> 24u) & 0xffu));\n"
+    "}\n\n";
+
+constexpr auto unpackUInt8x4HelperGlsl =
+    "vec4 eacpUnpackUInt8x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float(bits & 0xffu),\n"
+    "                float((bits >> 8u) & 0xffu),\n"
+    "                float((bits >> 16u) & 0xffu),\n"
+    "                float((bits >> 24u) & 0xffu));\n"
+    "}\n\n";
+
+// Four nibbles out of the low sixteen bits of a word. The high four are the
+// same function of the word shifted down sixteen, which unpackInt4x8 records as
+// a shift node rather than a second helper - so one definition covers both
+// halves and the shift is visible in the emitted source.
+constexpr auto unpackInt4x4Helper =
+    "float4 eacpUnpackInt4x4(uint bits)\n"
+    "{\n"
+    "    return float4(float((bits & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                  float(((bits >> 4u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                  float(((bits >> 8u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                  float(((bits >> 12u) & 0xfu) ^ 0x8u) - 8.0);\n"
+    "}\n\n";
+
+constexpr auto unpackInt4x4HelperGlsl =
+    "vec4 eacpUnpackInt4x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float((bits & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                float(((bits >> 4u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                float(((bits >> 8u) & 0xfu) ^ 0x8u) - 8.0,\n"
+    "                float(((bits >> 12u) & 0xfu) ^ 0x8u) - 8.0);\n"
+    "}\n\n";
+
+constexpr auto unpackUInt4x4Helper =
+    "float4 eacpUnpackUInt4x4(uint bits)\n"
+    "{\n"
+    "    return float4(float(bits & 0xfu),\n"
+    "                  float((bits >> 4u) & 0xfu),\n"
+    "                  float((bits >> 8u) & 0xfu),\n"
+    "                  float((bits >> 12u) & 0xfu));\n"
+    "}\n\n";
+
+constexpr auto unpackUInt4x4HelperGlsl =
+    "vec4 eacpUnpackUInt4x4(uint bits)\n"
+    "{\n"
+    "    return vec4(float(bits & 0xfu),\n"
+    "                float((bits >> 4u) & 0xfu),\n"
+    "                float((bits >> 8u) & 0xfu),\n"
+    "                float((bits >> 12u) & 0xfu));\n"
+    "}\n\n";
+
+// The inverse. Each component is masked to its low eight bits in the *signed*
+// domain first, which every one of the three defines as the two's-complement
+// pattern and which leaves a value in 0..255 - so the conversion to uint that
+// follows is of a non-negative number and has nothing left to disagree about.
+// Casting a negative int straight to uint would be the shorter spelling and the
+// one whose result each language words differently.
+constexpr auto packInt8x4Helper =
+    "uint eacpPackInt8x4(int4 values)\n"
+    "{\n"
+    "    return uint(values.x & 0xff) | (uint(values.y & 0xff) << 8u)\n"
+    "           | (uint(values.z & 0xff) << 16u)\n"
+    "           | (uint(values.w & 0xff) << 24u);\n"
+    "}\n\n";
+
+constexpr auto packInt8x4HelperGlsl =
+    "uint eacpPackInt8x4(ivec4 values)\n"
+    "{\n"
+    "    return uint(values.x & 0xff) | (uint(values.y & 0xff) << 8u)\n"
+    "           | (uint(values.z & 0xff) << 16u)\n"
+    "           | (uint(values.w & 0xff) << 24u);\n"
+    "}\n\n";
+
+constexpr auto packUInt8x4Helper =
+    "uint eacpPackUInt8x4(uint4 values)\n"
+    "{\n"
+    "    return (values.x & 0xffu) | ((values.y & 0xffu) << 8u)\n"
+    "           | ((values.z & 0xffu) << 16u)\n"
+    "           | ((values.w & 0xffu) << 24u);\n"
+    "}\n\n";
+
+constexpr auto packUInt8x4HelperGlsl =
+    "uint eacpPackUInt8x4(uvec4 values)\n"
+    "{\n"
+    "    return (values.x & 0xffu) | ((values.y & 0xffu) << 8u)\n"
+    "           | ((values.z & 0xffu) << 16u)\n"
+    "           | ((values.w & 0xffu) << 24u);\n"
+    "}\n\n";
+
+const auto shaderHelpers = Array<ShaderHelper, 18> {
     ShaderHelper {"eacpUnpackHalf2",
                   "inline float2 eacpUnpackHalf2(uint bits)\n"
                   "{\n"
@@ -390,6 +629,10 @@ const auto shaderHelpers = Array<ShaderHelper, 6> {
                   "}\n\n"},
     ShaderHelper {"eacpErf", erfHelper, erfHelper, erfHelperGlsl},
     ShaderHelper {"eacpErfc", erfcHelper, erfcHelper, erfcHelperGlsl},
+    ShaderHelper {"eacpSaturatingTanh",
+                  saturatingTanhHelper,
+                  saturatingTanhHelper,
+                  saturatingTanhHelperGlsl},
     // One half chosen by a parity rather than both unpacked and one dropped:
     // shifting the wanted half down is a single instruction in every language.
     // as_type<half2>, f16tof32 and unpackHalf2x16 all read the low sixteen bits.
@@ -427,6 +670,115 @@ const auto shaderHelpers = Array<ShaderHelper, 6> {
                   "    return packHalf2x16(values);\n"
                   "}\n\n"},
 
+    // bf16 is fp32 with the low sixteen mantissa bits dropped, so widening one
+    // is those bits put back at the top of a word - a shift and a bitcast, with
+    // nothing to rebias and no subnormal case. The three dialects differ only
+    // in how they spell the bitcast, and the result is bit-identical on all of
+    // them. Deliberately not routed through fp16: five exponent bits against
+    // bf16's eight would flush a small weight to zero and take a large one to
+    // infinity.
+    ShaderHelper {"eacpUnpackBFloat16x2",
+                  "inline float2 eacpUnpackBFloat16x2(uint bits)\n"
+                  "{\n"
+                  "    return float2(as_type<float>(bits << 16u),\n"
+                  "                  as_type<float>(bits & 0xffff0000u));\n"
+                  "}\n\n",
+                  "float2 eacpUnpackBFloat16x2(uint bits)\n"
+                  "{\n"
+                  "    return float2(asfloat(bits << 16u),\n"
+                  "                  asfloat(bits & 0xffff0000u));\n"
+                  "}\n\n",
+                  "vec2 eacpUnpackBFloat16x2(uint bits)\n"
+                  "{\n"
+                  "    return vec2(uintBitsToFloat(bits << 16u),\n"
+                  "                uintBitsToFloat(bits & 0xffff0000u));\n"
+                  "}\n\n"},
+
+    // One element chosen by a parity, as eacpReadHalf does: shifting the wanted
+    // half down and back up leaves it at the top of the word with zeroes under
+    // it, which is the widened float already.
+    ShaderHelper {"eacpReadBFloat16",
+                  "inline float eacpReadBFloat16(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return as_type<float>((bits >> (16u * parity)) << 16u);\n"
+                  "}\n\n",
+                  "float eacpReadBFloat16(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return asfloat((bits >> (16u * parity)) << 16u);\n"
+                  "}\n\n",
+                  "float eacpReadBFloat16(uint bits, uint parity)\n"
+                  "{\n"
+                  "    return uintBitsToFloat((bits >> (16u * parity)) << 16u);\n"
+                  "}\n\n"},
+
+    ShaderHelper {"eacpPackBFloat16x2",
+                  packBFloat16HelperMetal,
+                  packBFloat16HelperHlsl,
+                  packBFloat16HelperGlsl},
+
+    // One byte chosen by its position in the word, as eacpReadHalf and
+    // eacpReadBFloat16 choose a half: shifting the wanted byte down is one
+    // instruction everywhere, where selecting between four unpacked values
+    // computes four and keeps one.
+    ShaderHelper {"eacpReadInt8",
+                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
+                  "    return float(value ^ 0x80u) - 128.0;\n"
+                  "}\n\n",
+                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
+                  "    return float(value ^ 0x80u) - 128.0;\n"
+                  "}\n\n",
+                  "float eacpReadInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    uint value = (bits >> (8u * byteIndex)) & 0xffu;\n"
+                  "    return float(value ^ 0x80u) - 128.0;\n"
+                  "}\n\n"},
+
+    ShaderHelper {"eacpReadUInt8",
+                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
+                  "}\n\n",
+                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
+                  "}\n\n",
+                  "float eacpReadUInt8(uint bits, uint byteIndex)\n"
+                  "{\n"
+                  "    return float((bits >> (8u * byteIndex)) & 0xffu);\n"
+                  "}\n\n"},
+
+    ShaderHelper {"eacpUnpackInt8x4",
+                  unpackInt8x4Helper,
+                  unpackInt8x4Helper,
+                  unpackInt8x4HelperGlsl},
+
+    ShaderHelper {"eacpUnpackUInt8x4",
+                  unpackUInt8x4Helper,
+                  unpackUInt8x4Helper,
+                  unpackUInt8x4HelperGlsl},
+
+    ShaderHelper {"eacpUnpackInt4x4",
+                  unpackInt4x4Helper,
+                  unpackInt4x4Helper,
+                  unpackInt4x4HelperGlsl},
+
+    ShaderHelper {"eacpUnpackUInt4x4",
+                  unpackUInt4x4Helper,
+                  unpackUInt4x4Helper,
+                  unpackUInt4x4HelperGlsl},
+
+    ShaderHelper {
+        "eacpPackInt8x4", packInt8x4Helper, packInt8x4Helper, packInt8x4HelperGlsl},
+
+    ShaderHelper {"eacpPackUInt8x4",
+                  packUInt8x4Helper,
+                  packUInt8x4Helper,
+                  packUInt8x4HelperGlsl},
+
     ShaderHelper {"log10", nullptr, nullptr, log10HelperGlsl}};
 
 const char* helperDefinition(const ShaderHelper& helper, Backend backend)
@@ -444,6 +796,24 @@ const char* helperDefinition(const ShaderHelper& helper, Backend backend)
     return helper.metal;
 }
 
+// The one helper a graph needs that no expression node names: the fallback's
+// packed fragment load is a statement, and it widens each of a lane's two
+// elements through the same helper a scalar packed read goes through. Metal
+// loads such a patch as a packed fragment and calls nothing.
+bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
+                                  std::string_view name,
+                                  Backend backend)
+{
+    if (backend == Backend::Metal)
+        return false;
+
+    if (name == "eacpReadHalf")
+        return graph.usesPackedSimdMatrix(SimdMatrixElement::Half);
+
+    return name == "eacpReadBFloat16"
+           && graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16);
+}
+
 // Only the helpers a graph actually calls, so a shader that unpacks nothing
 // carries no definition for one.
 std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
@@ -452,7 +822,7 @@ std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
 
     for (const auto& helper: shaderHelpers)
     {
-        auto used = false;
+        auto used = helperWidensPackedSimdMatrix(graph, helper.name, backend);
 
         for (auto node = 0; node < graph.nodeCount() && !used; ++node)
         {
@@ -487,6 +857,43 @@ const char* componentSuffix(int component)
         return ".x";
 
     return component == 1 ? ".y" : ".z";
+}
+
+// The lane of a vector value, which is a different question: a thread index
+// reaches three components and a vector reaches four, so the one above stops
+// where it does and this one names .w. Nothing in the EDSL is wider than four,
+// so a fifth component is a caller's mistake rather than a lane to name.
+const char* vectorComponentSuffix(int component)
+{
+    assert(component >= 0 && component < 4
+           && "eacp: a vector has no component past .w");
+
+    constexpr const char* lanes[] = {".x", ".y", ".z", ".w"};
+    return lanes[component];
+}
+
+// The MSL type a run of consecutive buffer elements is loaded through.
+//
+// The packed one and not float4, because the alignment is not ours to promise.
+// A plain float4 wants a sixteen-byte-aligned address, and eacp binds a
+// BufferRange at any four-byte offset - Device::storageBufferOffsetAlignment
+// answers four on this backend - so a range starting one float into a buffer
+// would make every such load undefined. packed_float4 is the same sixteen bytes
+// with an alignment of four, which is exactly what the binding guarantees, and
+// it converts to float4 on the way out.
+const char* metalPackedVectorType(ValueType type)
+{
+    auto integers = isUnsignedInteger(type);
+
+    switch (componentCount(type))
+    {
+        case 2:
+            return integers ? "packed_uint2" : "packed_float2";
+        case 3:
+            return integers ? "packed_uint3" : "packed_float3";
+        default:
+            return integers ? "packed_uint4" : "packed_float4";
+    }
 }
 
 // A thread index under the name both kernel scaffoldings bind it to: the whole
@@ -558,6 +965,49 @@ int reductionStride(int threads)
         stride *= 2;
 
     return stride;
+}
+
+// How many threads one fold spans: the whole group, or one SIMD group of it -
+// and a group smaller than a SIMD group is its own SIMD group, so the narrow
+// scope never reaches past what was dispatched.
+int reductionWidth(const ShaderGraph& graph, ReductionScope scope)
+{
+    auto threads = threadsPerGroup(graph);
+
+    if (scope == ReductionScope::Group)
+        return threads;
+
+    return threads < simdGroupWidth ? threads : simdGroupWidth;
+}
+
+// Whether a fold spans the whole group either because that is its scope or
+// because the group is one SIMD group and the two are the same set of threads.
+bool spansWholeGroup(const ShaderGraph& graph, ReductionScope scope)
+{
+    return reductionWidth(graph, scope) == threadsPerGroup(graph);
+}
+
+// Whether Metal answers a fold with the SIMD-group intrinsic alone, which is
+// the narrow scope and only the narrow scope.
+//
+// Not a whole-group fold in a group of simdGroupWidth threads or fewer, however
+// much it looks like the same thing: that argument holds only where the
+// hardware SIMD group is at least as wide as the group, and the hardware's
+// width is a property of the compiled pipeline (threadExecutionWidth) rather
+// than a constant. An Intel Mac dispatches a kernel at eight or sixteen lanes,
+// so a 32-thread group there is two or four SIMD groups and simd_sum alone
+// would fold a quarter of it. The wide fold keeps the combine at every width -
+// simdCount is whatever the hardware gave - which is what it was always for.
+bool metalFoldsInOneInstruction(ReductionScope scope)
+{
+    return scope == ReductionScope::Simd;
+}
+
+// So a kernel whose folds are all SIMD-scoped on Metal declares neither the
+// scratch nor the three SIMD-group builtins the combine walks.
+bool metalCombinesPartials(const ShaderGraph& graph)
+{
+    return !graph.wholeGroupReductionTypes().empty();
 }
 
 // The scratch a reduction stages its partials in, one array per element type
@@ -642,6 +1092,49 @@ std::string simdMatrixMemoryName(const Statement& statement)
 std::string bracketed(const std::string& expression)
 {
     return "(" + expression + ")";
+}
+
+// The MSL type a fragment of each element is, and the element type its load
+// reinterprets the buffer's pointer as. A packed fragment stays packed right
+// through the product: MSL's simdgroup_multiply_accumulate takes mixed operand
+// types into a float accumulator, which is the instruction the hardware has and
+// the reason there is no widening step to emit between the two.
+const char* metalSimdMatrixType(SimdMatrixElement element)
+{
+    switch (element)
+    {
+        case SimdMatrixElement::Half:
+            return "simdgroup_half8x8";
+        case SimdMatrixElement::BFloat16:
+            return "simdgroup_bfloat8x8";
+        case SimdMatrixElement::Float:
+            break;
+    }
+
+    return "simdgroup_float8x8";
+}
+
+const char* metalPackedElementType(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "half" : "bfloat";
+}
+
+// What the fallback widens one packed element with - the same helper a scalar
+// InputBuffer::readHalf or readBFloat16 goes through, so the arithmetic that
+// produces a lane's pair here is the arithmetic every other packed read in the
+// shader uses.
+const char* packedSimdMatrixHelper(SimdMatrixElement element)
+{
+    return element == SimdMatrixElement::Half ? "eacpReadHalf" : "eacpReadBFloat16";
+}
+
+// How the two fallback dialects read a buffer's float element as the word its
+// bits are. The buffer is declared float whatever it holds, which is what the
+// packed scalar reads already assume. Metal never asks: a packed patch is a
+// fragment of its own type there, loaded through a reinterpreted pointer.
+const char* bitsOfFloat(Backend backend)
+{
+    return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
 }
 
 // How the fallback backends hold a fragment: spread over the lanes of what
@@ -1012,6 +1505,39 @@ struct ExprPrinter
                 return "buffer" + std::to_string(expr.index) + "["
                        + ref(expr.args[0]) + "]";
 
+            // One load where the dialect has a spelling for one, and the
+            // componentwise construct it stands in for where it has not. See
+            // metalPackedVectorType for why the Metal form reinterprets the
+            // pointer as a packed type rather than as a plain float4.
+            case ExprKind::BufferVectorRead:
+            {
+                auto name = "buffer" + std::to_string(expr.index);
+                auto base = ref(expr.args[0]);
+
+                if (backend == Backend::Metal)
+                    return std::string(typeName(backend, expr.type))
+                           + "(*((device const " + metalPackedVectorType(expr.type)
+                           + "*) (" + name + " + " + base + ")))";
+
+                auto text = std::string(typeName(backend, expr.type)) + "(";
+
+                for (auto component = 0; component < componentCount(expr.type);
+                     ++component)
+                {
+                    if (component > 0)
+                        text += ", ";
+
+                    text += name + "[" + base;
+
+                    if (component > 0)
+                        text += " + " + std::to_string(component) + "u";
+
+                    text += "]";
+                }
+
+                return text + ")";
+            }
+
             case ExprKind::AtomicLoad:
             {
                 // HLSL has nothing to spell: a UAV element of an
@@ -1091,6 +1617,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::Sample:
         case ExprKind::Fetch:
         case ExprKind::BufferRead:
+        case ExprKind::BufferVectorRead:
         case ExprKind::AtomicLoad:
         case ExprKind::ArrayRead:
         case ExprKind::SharedRead:
@@ -1130,8 +1657,18 @@ void countUses(const ShaderGraph& graph,
 
     seen[node] = 1;
 
-    for (auto argument: graph.expr(node).args)
-        countUses(graph, argument, uses, seen);
+    const auto& expr = graph.expr(node);
+
+    // A vector load's index is printed once per component by the backends that
+    // expand it into subscripts, so it earns a name there the way any
+    // subexpression evaluated more than once does - and Metal, which prints it
+    // once, reads the same name and is no worse for it.
+    auto perArgument =
+        expr.kind == ExprKind::BufferVectorRead ? componentCount(expr.type) : 1;
+
+    for (auto argument: expr.args)
+        for (auto i = 0; i < perArgument; ++i)
+            countUses(graph, argument, uses, seen);
 }
 
 // Which nodes a run of expressions evaluates more than once, in dependency
@@ -1215,6 +1752,7 @@ void collectWrites(const ShaderGraph& graph,
         case StatementKind::Break:
         case StatementKind::Continue:
         case StatementKind::Store:
+        case StatementKind::VectorStore:
         case StatementKind::TextureStore:
         case StatementKind::SharedStore:
         case StatementKind::Barrier:
@@ -1263,6 +1801,7 @@ bool touchesShared(const ShaderGraph& graph, const Statement& statement)
         case StatementKind::Break:
         case StatementKind::Continue:
         case StatementKind::Store:
+        case StatementKind::VectorStore:
         case StatementKind::TextureStore:
         case StatementKind::AtomicAdd:
         case StatementKind::SimdMatrixFill:
@@ -1303,6 +1842,7 @@ void collectBufferWrites(const ShaderGraph& graph,
     switch (statement.kind)
     {
         case StatementKind::Store:
+        case StatementKind::VectorStore:
             written[statement.slot] = 1;
             return;
 
@@ -1409,7 +1949,8 @@ bool readsStale(const ShaderGraph& graph,
 
     // Whichever way the buffer was declared: an output a kernel reads back and
     // an atomic counter it loads are both elements a store can have changed.
-    if ((expr.kind == ExprKind::BufferRead || expr.kind == ExprKind::AtomicLoad)
+    if ((expr.kind == ExprKind::BufferRead || expr.kind == ExprKind::BufferVectorRead
+         || expr.kind == ExprKind::AtomicLoad)
         && buffersWritten[expr.index] != 0)
         return true;
 
@@ -1645,6 +2186,53 @@ struct StageEmitter
                 break;
             }
 
+            // The write mirror of a vector read: one store where the dialect
+            // has a spelling for one, and the N subscripts it stands in for
+            // where it has not. Metal reinterprets the address being stored to
+            // rather than the binding, so an output stays a run of floats and
+            // nothing it was bindable as is given up.
+            //
+            // Both operands are named first - see holdTheVector - so each is
+            // evaluated once and in full before any part of the record reaches
+            // memory. That is what lets write4(out, i, f(out.read4(i))) mean
+            // what it says, and what keeps an index computed from the buffer
+            // being written - write4(out, toUInt(out[i]), v) - addressing the
+            // element it was aimed at rather than the one the first component
+            // just landed on.
+            case StatementKind::VectorStore:
+            {
+                source =
+                    define({statement.index, statement.value}, indent, uses, open);
+                source += holdTheVector(statement, indent, open);
+
+                auto name = "buffer" + std::to_string(statement.slot);
+                auto base = printer.ref(statement.index);
+                auto stored = printer.ref(statement.value);
+                auto type = graph().expr(statement.value).type;
+
+                if (printer.backend == Backend::Metal)
+                {
+                    source += indent + "*((device " + metalPackedVectorType(type)
+                              + "*) (" + name + " + " + base + ")) = " + stored
+                              + ";\n";
+                    break;
+                }
+
+                for (auto component = 0; component < componentCount(type);
+                     ++component)
+                {
+                    source += indent + name + "[" + base;
+
+                    if (component > 0)
+                        source += " + " + std::to_string(component) + "u";
+
+                    source += "] = (" + stored + ")"
+                              + vectorComponentSuffix(component) + ";\n";
+                }
+
+                break;
+            }
+
             case StatementKind::AtomicAdd:
             {
                 source =
@@ -1765,12 +2353,15 @@ struct StageEmitter
     }
 
 private:
-    // MSL folds within each SIMD group first and combines the few partials
-    // through the scratch; HLSL under FXC has no wave intrinsic and GLSL is
-    // held to what lavapipe compiles with no extension, so both take the
-    // scratch tree. Either way the result lands in the reduction's variable on
-    // every thread, and a trailing barrier leaves the scratch free for the
-    // next one.
+    // MSL has the SIMD-group intrinsics, so a fold scoped to one is a single
+    // instruction and a fold over a wider group is those partials combined
+    // through the scratch. HLSL under FXC has no wave intrinsic at cs_5_0, and
+    // GLSL's subgroup extension is both unassumable and the wrong width - a
+    // subgroup is whatever the device says it is, where eacp's simdWidth is 32
+    // everywhere by construction - so both take the scratch tree, narrowed to
+    // the folding thread's own block of lanes where the scope is the SIMD
+    // group. Either way the result lands in the reduction's variable on every
+    // thread, and a trailing barrier leaves the scratch free for the next one.
     std::string groupReduction(const Statement& statement, const std::string& indent)
     {
         auto elementType = graph().variables()[statement.slot];
@@ -1787,6 +2378,9 @@ private:
                           + metalSimdReduction(statement.reduction) + "("
                           + contributed + ");\n";
 
+            if (metalFoldsInOneInstruction(statement.scope))
+                return source;
+
             source += indent + "if (simdLane == 0u)\n" + indent + "    " + scratch
                       + "[simdIndex] = " + name + ";\n";
             source += barrier;
@@ -1802,22 +2396,43 @@ private:
         }
 
         auto lane = std::string(groupLaneName(printer.backend));
-        auto threads = threadsPerGroup(graph());
+        auto width = reductionWidth(graph(), statement.scope);
+        auto whole = spansWholeGroup(graph(), statement.scope);
+        auto widthText = std::to_string(width) + "u";
+
+        // Within the fold, a lane counts from the start of its own block; the
+        // answer is read from that block's first slot. Both collapse to the
+        // plain lane and slot zero where the block is the whole group, which is
+        // what keeps the wide fold spelled exactly as it always was.
+        auto within = whole ? lane : bracketed(lane + " % " + widthText);
+        auto first = whole ? std::string("0")
+                           : bracketed(lane + " / " + widthText) + " * " + widthText;
+
         auto element = scratch + "[" + lane + "]";
         auto partner = scratch + "[" + lane + " + " + step + "]";
 
         auto source = indent + element + " = " + contributed + ";\n";
         source += barrier;
         source += indent + "for (uint " + step + " = "
-                  + std::to_string(reductionStride(threads)) + "u; " + step
-                  + " > 0u; " + step + " >>= 1u)\n" + indent + "{\n";
-        source += indent + "    if (" + lane + " < " + step + " && " + lane + " + "
-                  + step + " < " + std::to_string(threads) + "u)\n";
+                  + std::to_string(reductionStride(width)) + "u; " + step + " > 0u; "
+                  + step + " >>= 1u)\n" + indent + "{\n";
+        // The third conjunct is the scratch's own bound, and it is not implied
+        // by the second: a narrow fold indexes with the global lane while it
+        // counts with the lane within its block, so a group that is not a whole
+        // number of SIMD groups - which the assert in emitCompute refuses, and
+        // which a release build does not - would otherwise read past the array.
+        auto bounded = whole ? std::string {}
+                             : " && " + lane + " + " + step + " < "
+                                   + std::to_string(threadsPerGroup(graph())) + "u";
+
+        source += indent + "    if (" + within + " < " + step + " && " + within
+                  + " + " + step + " < " + widthText + bounded + ")\n";
         source += indent + "        " + element + " = "
                   + foldedPair(statement.reduction, element, partner) + ";\n";
         source += barrierStatement(printer.backend, indent + "    ");
         source += indent + "}\n";
-        source += indent + type + " " + name + " = " + scratch + "[0];\n";
+        source +=
+            indent + type + " " + name + " = " + scratch + "[" + first + "];\n";
 
         return source + barrier;
     }
@@ -1838,8 +2453,12 @@ private:
     std::string simdMatrixDeclaration(int slot) const
     {
         if (metal())
-            return "simdgroup_float8x8 " + simdMatrixName(slot);
+            return std::string(metalSimdMatrixType(graph().simdMatrixElement(slot)))
+                   + " " + simdMatrixName(slot);
 
+        // The fallback holds every fragment as a lane's pair of floats,
+        // whatever the memory it came out of: what a packed load changes there
+        // is the arithmetic that produces the pair, not the fragment.
         return std::string(simdMatrixLaneType(printer.backend)) + " "
                + simdMatrixName(slot);
     }
@@ -1873,6 +2492,33 @@ private:
                + "]";
     }
 
+    // The same element where the patch is packed: the index counts sixteen-bit
+    // elements, so the word holding one is at half that index and which half of
+    // it is the parity - exactly the arithmetic InputBuffer::readHalf and
+    // readBFloat16 do, through the same helper.
+    //
+    // Each element is fetched on its own rather than a lane's pair taken out of
+    // one word. The pair is two adjacent columns, but the patch's offset and
+    // row stride are the caller's and neither has to be even, so the pair is
+    // not reliably inside one word and a walk that assumed it was would read
+    // the wrong element on every odd row.
+    static std::string simdMatrixPackedLaneElement(Backend backend,
+                                                   SimdMatrixElement element,
+                                                   const std::string& memory,
+                                                   const std::string& offset,
+                                                   const std::string& stride,
+                                                   int which)
+    {
+        auto column = which == 0 ? std::string("sgmColumn")
+                                 : "sgmColumn + " + std::to_string(which) + "u";
+
+        auto index = "(" + offset + " + sgmRow * " + stride + " + " + column + ")";
+
+        return std::string(packedSimdMatrixHelper(element)) + "("
+               + bitsOfFloat(backend) + "(" + memory + "[" + index + " / 2u]), "
+               + index + " % 2u)";
+    }
+
     // The load and the store are the same patch walked in the two directions,
     // so they are one function: what changes is which side of the assignment
     // each is on. Every lane moves the pair it holds, so the store needs no
@@ -1885,10 +2531,20 @@ private:
         auto memory = simdMatrixMemoryName(statement);
         auto offset = bracketed(printer.ref(statement.index));
         auto stride = bracketed(printer.ref(statement.stride));
+        auto element = graph().simdMatrixElement(statement.slot);
+        auto packed = element != SimdMatrixElement::Float;
 
         if (metal())
         {
-            auto pointer = memory + " + " + offset;
+            // The buffer is declared float whatever it holds, so a packed load
+            // reinterprets its pointer the way the wide packed reads
+            // reinterpret one - and then counts in the packed element, which is
+            // what makes the offset the caller's own row arithmetic.
+            auto pointer = packed
+                               ? "(device const "
+                                     + std::string(metalPackedElementType(element))
+                                     + "*) (" + memory + ") + " + offset
+                               : memory + " + " + offset;
 
             if (loading)
                 return indent + simdMatrixDeclaration(statement.slot) + ";\n"
@@ -1899,8 +2555,15 @@ private:
                    + stride + ");\n";
         }
 
-        auto first = simdMatrixLaneElement(memory, offset, stride, 0);
-        auto second = simdMatrixLaneElement(memory, offset, stride, 1);
+        auto backend = printer.backend;
+
+        auto first = packed ? simdMatrixPackedLaneElement(
+                                  backend, element, memory, offset, stride, 0)
+                            : simdMatrixLaneElement(memory, offset, stride, 0);
+
+        auto second = packed ? simdMatrixPackedLaneElement(
+                                   backend, element, memory, offset, stride, 1)
+                             : simdMatrixLaneElement(memory, offset, stride, 1);
 
         if (loading)
             return indent + simdMatrixDeclaration(statement.slot) + " = "
@@ -2039,6 +2702,49 @@ private:
             return {};
 
         return bind(statement.record, indent, open);
+    }
+
+    // A wide store's operands, named before the store rather than printed into
+    // it.
+    //
+    // The index is the one the backends disagree about. Metal stores the whole
+    // vector through one pointer and prints the address once; HLSL and GLSL
+    // print it into every subscript, so an index inlined there is evaluated N
+    // times - and if it reads the buffer being written, every evaluation after
+    // the first reads back what this very store has already put there.
+    // write4(out, toUInt(out[i]), v) is exactly that shape, and inlined it would
+    // mean one thing on Metal and another on the other two.
+    //
+    // The value is named on every backend all the same, for the reason
+    // holdTheRecord names a record's: a wide store is one write of one record,
+    // and the record is worth a name wherever it is an operation rather than a
+    // leaf.
+    std::string holdTheVector(const Statement& statement,
+                              const std::string& indent,
+                              Vector<int>& open)
+    {
+        auto source = std::string {};
+
+        if (printer.backend != Backend::Metal)
+            source += holdOperand(statement.index, statement.slot, indent, open);
+
+        return source + holdOperand(statement.value, statement.slot, indent, open);
+    }
+
+    // One of them, unless naming it would buy nothing: something already named
+    // is already computed, and a leaf costs nothing however often it is
+    // repeated - unless it is a read of the buffer being written, which is not
+    // a matter of cost.
+    std::string
+        holdOperand(int node, int slot, const std::string& indent, Vector<int>& open)
+    {
+        if (node < 0 || locals[node] >= 0)
+            return {};
+
+        if (!wantsLocal(graph().expr(node).kind) && !readsSlot(node, slot))
+            return {};
+
+        return bind(node, indent, open);
     }
 
     bool readsSlot(int node, int slot)
@@ -2363,7 +3069,9 @@ void collectBufferSlots(const ShaderGraph& graph,
 
     const auto& expr = graph.expr(node);
 
-    if (expr.kind == ExprKind::BufferRead && expr.index < used.size())
+    if ((expr.kind == ExprKind::BufferRead
+         || expr.kind == ExprKind::BufferVectorRead)
+        && expr.index < used.size())
         used[expr.index] = 1;
 
     for (auto argument: expr.args)
@@ -2621,6 +3329,18 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
               "ComputeProgram::simdWidth threads. A group that is not leaves a "
               "partial SIMD group, whose matrix operations are undefined.");
 
+    // A SIMD-scoped fold takes the same rule with one allowance: a group
+    // narrower than a SIMD group *is* its own SIMD group, and folding it is
+    // well defined. What is not is a group that leaves a partial one at its
+    // end, where two threads a lane apart would fold over different sets.
+    assert((!graph.usesSimdReduction()
+            || graph.threadGroupShape().threadCount() <= simdGroupWidth
+            || graph.threadGroupShape().threadCount() % simdGroupWidth == 0)
+           && "eacp: a kernel using simdSum/simdMax/simdMin has to be "
+              "dispatched in a threadgroup that is a whole number of SIMD "
+              "groups - a multiple of ComputeProgram::simdWidth threads - or "
+              "in one narrower than a single SIMD group.");
+
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
 
@@ -2711,7 +3431,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
         // group's index and how many of them the threadgroup was given. A
         // kernel holding SIMD-group matrices takes the same three, the index
         // being what places the block of the output each SIMD group owns.
-        if (graph.usesGroupReduction() || graph.usesSimdGroups())
+        if (metalCombinesPartials(graph) || graph.usesSimdGroups())
             source += ",\n    uint simdLane [[thread_index_in_simdgroup]],\n    "
                       "uint simdIndex [[simdgroup_index_in_threadgroup]],\n    "
                       "uint simdCount [[simdgroups_per_threadgroup]]";
@@ -2730,11 +3450,14 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + "];\n";
         }
 
-        for (auto elementType: graph.groupReductionTypes())
-            source += "    threadgroup "
-                      + std::string(typeName(backend, elementType)) + " "
-                      + groupScratchName(elementType) + "["
-                      + std::to_string(threadsPerGroup(graph)) + "];\n";
+        // Only the wide folds stage anything here, and only where the group is
+        // more than one SIMD group: everything else is the intrinsic alone.
+        if (metalCombinesPartials(graph))
+            for (auto elementType: graph.wholeGroupReductionTypes())
+                source += "    threadgroup "
+                          + std::string(typeName(backend, elementType)) + " "
+                          + groupScratchName(elementType) + "["
+                          + std::to_string(threadsPerGroup(graph)) + "];\n";
     }
     else if (backend == Backend::Vulkan)
     {

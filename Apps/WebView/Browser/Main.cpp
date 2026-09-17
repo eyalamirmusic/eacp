@@ -55,36 +55,28 @@ struct BrowserView final : View
     WebView webView {getWebViewOptions()};
 };
 
-struct BrowserApp
+Image decodeIcon(const std::string& name)
 {
-    BrowserApp() { window.setContentView(view); }
+    auto png = ResEmbed::get(name, "Browser");
+    return Image::decode(png.data(), png.getSize());
+}
 
-    static WindowOptions getOptions()
-    {
-        auto options = WindowOptions();
+WindowOptions windowOptions()
+{
+    auto options = WindowOptions();
 
-        options.title = "EACP Browser";
-        options.width = 1100;
-        options.height = 760;
-        options.minWidth = 480;
-        options.minHeight = 320;
+    options.title = "EACP Browser";
+    options.width = 1100;
+    options.height = 760;
+    options.minWidth = 480;
+    options.minHeight = 320;
 
-        options.altTabIcon = [] { return decodeIcon("AltTabIcon.png"); };
+    options.altTabIcon = [] { return decodeIcon("AltTabIcon.png"); };
 
-        return options;
-    }
-
-    static Image decodeIcon(const std::string& name)
-    {
-        auto png = ResEmbed::get(name, "Browser");
-        return Image::decode(png.data(), png.getSize());
-    }
-
-    BrowserView view;
-    Window window {getOptions()};
-};
+    return options;
+}
 
 int main()
 {
-    return eacp::Apps::run<BrowserApp>();
+    return Graphics::runWindowedApp<BrowserView>(windowOptions());
 }

@@ -102,6 +102,94 @@ float halfToFloat(std::uint16_t bits)
                                 | ((significand & 0x3FFu) << 13));
 }
 
+std::uint16_t bfloat16FromFloat(float value)
+{
+    const auto bits = std::bit_cast<std::uint32_t>(value);
+
+    // A NaN is quieted rather than rounded: adding to a mantissa of all ones
+    // carries into the exponent and lands on an infinity, which is a different
+    // answer rather than a coarser one. Above the infinity pattern is exactly
+    // the NaNs.
+    if ((bits & 0x7FFFFFFFu) > infinityAsFloat)
+        return (std::uint16_t) ((bits | 0x00400000u) >> 16);
+
+    // Round to nearest even: half an ulp, plus one where the surviving low bit
+    // is odd, which is what breaks a tie towards the even neighbour.
+    return (std::uint16_t) ((bits + 0x7FFFu + ((bits >> 16) & 1u)) >> 16);
+}
+
+float bfloat16ToFloat(std::uint16_t bits)
+{
+    return std::bit_cast<float>((std::uint32_t) bits << 16);
+}
+
+std::uint32_t int8x4FromBytes(const std::array<std::int8_t, 4>& values)
+{
+    auto word = std::uint32_t {};
+
+    for (auto i = std::size_t {}; i < values.size(); ++i)
+        word |= (std::uint32_t) (std::uint8_t) values[i] << (i * 8);
+
+    return word;
+}
+
+std::uint32_t uint8x4FromBytes(const std::array<std::uint8_t, 4>& values)
+{
+    auto word = std::uint32_t {};
+
+    for (auto i = std::size_t {}; i < values.size(); ++i)
+        word |= (std::uint32_t) values[i] << (i * 8);
+
+    return word;
+}
+
+std::int8_t int8x4ToByte(std::uint32_t word, int index)
+{
+    const auto byte = (word >> (index * 8)) & 0xFFu;
+
+    // The shader's sign extension, not a cast: a byte read as unsigned stands
+    // for (b ^ 0x80) - 128, and writing it the same way on both sides is what
+    // makes a disagreement a real fault rather than two spellings drifting.
+    return (std::int8_t) ((int) (byte ^ 0x80u) - 128);
+}
+
+std::uint8_t uint8x4ToByte(std::uint32_t word, int index)
+{
+    return (std::uint8_t) ((word >> (index * 8)) & 0xFFu);
+}
+
+std::uint32_t int4x8FromNibbles(const std::array<std::int8_t, 8>& values)
+{
+    auto word = std::uint32_t {};
+
+    for (auto i = std::size_t {}; i < values.size(); ++i)
+        word |= ((std::uint32_t) (std::uint8_t) values[i] & 0xFu) << (i * 4);
+
+    return word;
+}
+
+std::uint32_t uint4x8FromNibbles(const std::array<std::uint8_t, 8>& values)
+{
+    auto word = std::uint32_t {};
+
+    for (auto i = std::size_t {}; i < values.size(); ++i)
+        word |= ((std::uint32_t) values[i] & 0xFu) << (i * 4);
+
+    return word;
+}
+
+std::int8_t int4x8ToNibble(std::uint32_t word, int index)
+{
+    const auto nibble = (word >> (index * 4)) & 0xFu;
+
+    return (std::int8_t) ((int) (nibble ^ 0x8u) - 8);
+}
+
+std::uint8_t uint4x8ToNibble(std::uint32_t word, int index)
+{
+    return (std::uint8_t) ((word >> (index * 4)) & 0xFu);
+}
+
 UNorm8x4 UNorm8x4::fromFloats(float x, float y, float z, float w)
 {
     return {{toUnsignedNormalized(x),

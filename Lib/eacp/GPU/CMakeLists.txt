@@ -41,7 +41,9 @@ target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
 
 target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
+        CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
+        Frame/Frame.cpp
         Frame/RenderPass.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp

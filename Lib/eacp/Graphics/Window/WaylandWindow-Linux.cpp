@@ -395,9 +395,11 @@ struct WaylandWindowNative final
         if (contentView == nullptr)
             return;
 
-        // A scale change carries no size with it, so nothing else reports it.
-        notifyBackingScaleChanged(*contentView);
+        // The surfaces take the new scale first, so the notification after them
+        // reads it rather than the one it replaces. A scale change carries no
+        // size with it, so nothing else reports either.
         linuxWindowSurfaceStateChanged(*contentView);
+        notifyBackingScaleChanged(*contentView);
     }
 
     void setMouseLocked(bool locked) override

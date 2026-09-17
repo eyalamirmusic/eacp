@@ -23,4 +23,12 @@ void setEnv(std::string_view name, std::string_view value)
     _putenv_s(std::string {name}.c_str(), std::string {value}.c_str());
 }
 
+// An empty value is how the CRT spells a removal: _putenv_s deletes the
+// variable rather than storing an empty one, so getEnv answers nullopt after
+// this exactly as it does on POSIX.
+void unsetEnv(std::string_view name)
+{
+    _putenv_s(std::string {name}.c_str(), "");
+}
+
 } // namespace eacp

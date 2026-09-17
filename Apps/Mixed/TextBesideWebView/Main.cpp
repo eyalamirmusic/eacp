@@ -297,16 +297,9 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-struct App
-{
-    App() { window.setContentView(split); }
-
-    SplitView split;
-    Graphics::Window window {makeOptions()};
-};
 } // namespace
 
 int main()
 {
-    return Apps::run<App>();
+    return Graphics::runWindowedApp<SplitView>(makeOptions());
 }

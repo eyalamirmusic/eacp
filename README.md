@@ -36,7 +36,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
   sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
   runs both WebSocket ends in one process. Backed by NSURLSession and
   Network.framework on Apple platforms, WinHTTP on Windows and libcurl on
-  Linux.
+  Linux. `OnlineResource` fetches a file an app needs into its own
+  Application Support folder once, revalidates it against the server's ETag
+  on later runs, and unpacks a zip — `Apps/Console/OnlineResource` fetches
+  one before it does anything else. Every fetch reports into the
+  `OnlineResources` registry, and `UI::OnlineResourceMonitor` shows that
+  registry as a list with progress bars and a Clear all button —
+  `Apps/UI/ResourceMonitor` is it in a window over DownloadAndPlay's clips.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
@@ -280,21 +286,56 @@ A GUI app embedding a web view:
 using namespace eacp;
 using namespace Graphics;
 
+WindowOptions windowOptions()
+{
+    auto options = WindowOptions {};
+    options.title = "Browser";
+    options.width = 1100;
+    options.height = 760;
+    return options;
+}
+
+// A Window built with its view adopts it as its content, so the pair is two
+// members and the constructor body is left for what the app actually does.
 struct MyApp
 {
-    MyApp()
-    {
-        webView.loadURL("https://example.com");
-        window.setContentView(webView);
-    }
+    MyApp() { webView.loadURL("https://example.com"); }
 
     WebView webView;
-    Window window;
+    Window window {webView, windowOptions()};
 };
 
 int main()
 {
     return eacp::Apps::run<MyApp>();
+}
+```
+
+An app that is one view in one window and nothing else needs no struct at all:
+`Graphics::runWindowedApp<MyView>(options, viewArgs...)` runs a
+`ViewWindow<MyView>` — the view built from `viewArgs`, then the window showing
+it — as the app.
+
+```cpp
+#include <eacp/Graphics/Graphics.h>
+
+using namespace eacp;
+
+struct HelloView final : Graphics::View
+{
+    void paint(Graphics::Context& g) override
+    {
+        g.setColor(Graphics::Color::white());
+        g.fillRect(getLocalBounds());
+    }
+};
+
+int main()
+{
+    auto options = Graphics::WindowOptions {};
+    options.title = "Hello";
+
+    return Graphics::runWindowedApp<HelloView>(options);
 }
 ```
 
@@ -411,7 +452,9 @@ dispatch the GPU sized. What the two backends cannot pack the same way — a
 ## Building
 
 eacp uses CMake (3.31+) and a C++20 toolchain. Dependencies are fetched via
-[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time.
+[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time,
+except [miniz](https://github.com/richgel999/miniz), which is carried in
+`ThirdParty/` and wrapped by `eacp::Zip`.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
@@ -472,6 +515,7 @@ Lib/eacp/
   Video/      Screen capture and encoding, plus VideoView/ for playback
 Apps/         Example applications
 Tests/        Unit tests
+ThirdParty/   Vendored single-file libraries (miniz, behind eacp::Zip)
 CMake/        Build helpers (TargetSetup, CPM)
 ```
 

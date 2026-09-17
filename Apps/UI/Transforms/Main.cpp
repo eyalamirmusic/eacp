@@ -69,7 +69,8 @@ struct Turned final : UI::Component
     Turned()
         : layer(*this)
     {
-        layer.onPaint = [this](UI::Graphics& g) { paintCard(g, cardBox(), caption); };
+        layer.onPaint = [this](UI::Graphics& g)
+        { paintCard(g, cardBox(), caption); };
     }
 
     Rect cardBox() const { return {room, room, cardWidth, cardHeight}; }
@@ -127,8 +128,9 @@ struct Nested final : UI::Component
         outer.setBounds(getLocalBounds());
         inner.setBounds(getLocalBounds());
 
-        outer.setTransform(about(GPUWidgets::AffineTransform::rotation(-0.35f),
-                                 {room + cardWidth * 0.5f, room + cardHeight * 0.5f}));
+        outer.setTransform(
+            about(GPUWidgets::AffineTransform::rotation(-0.35f),
+                  {room + cardWidth * 0.5f, room + cardHeight * 0.5f}));
 
         inner.setTransform(about(GPUWidgets::AffineTransform::rotation(0.7f),
                                  {innerBox().x + innerBox().w * 0.5f,
@@ -159,11 +161,11 @@ struct Stats final : UI::Component
         if (host == nullptr)
             return;
 
-        auto text = std::to_string(host->getLastRenderedLayerCount())
-                    + " layers rendered last frame   "
-                    + std::to_string(host->getLastComponentCount()) + " components   "
-                    + std::to_string(host->getLastClipChangeCount())
-                    + " clip changes";
+        auto text =
+            std::to_string(host->getLastRenderedLayerCount())
+            + " layers rendered last frame   "
+            + std::to_string(host->getLastComponentCount()) + " components   "
+            + std::to_string(host->getLastClipChangeCount()) + " clip changes";
 
         g.setColour(UI::defaultTheme().dimText);
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
@@ -257,7 +259,10 @@ struct DemoRoot final : UI::Component
         place();
     }
 
-    void paint(UI::Graphics& g) override { g.fillAll(UI::defaultTheme().background); }
+    void paint(UI::Graphics& g) override
+    {
+        g.fillAll(UI::defaultTheme().background);
+    }
 
     Vector<OwningPointer<Label>> labels;
     Vector<OwningPointer<Turned>> cards;
@@ -303,14 +308,6 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-struct App
-{
-    App() { window.setContentView(host); }
-
-    DemoHost host;
-    Graphics::Window window {makeOptions()};
-};
-
 // The same tree rendered to a file with no window, which is how the picture is
 // looked at on a machine with nobody at the screen.
 int snapshot(const char* path)
@@ -340,5 +337,5 @@ int main(int argc, char** argv)
     if (argc > 1)
         return snapshot(argv[1]);
 
-    return eacp::Apps::run<App>();
+    return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

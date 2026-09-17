@@ -6,6 +6,16 @@ function(set_default_warnings_level target)
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif ()
+
+    # A 64-bit count assigned into an int is silent under -Wall -Wextra, and it
+    # is exactly the bug the GPU buffer API's byte counts were widened to stop,
+    # so the one warning that catches it is on wherever it exists. Clang only:
+    # GCC has no equivalent short of -Wconversion, which is a far larger and
+    # much noisier set, and MSVC already reports it as C4244 under /W4. A
+    # narrowing that is genuinely intended is written as a cast with a comment.
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
+        target_compile_options(${target} PRIVATE -Wshorten-64-to-32)
+    endif ()
 endfunction()
 
 # For a vendored dependency, whose warnings are not ours to fix and whose noise is
@@ -59,11 +69,16 @@ function(eacp_force_optimization target)
         # The cl/clang-cl Debug defaults fight optimization: /RTC1 is a hard
         # error under any /O level (D8016) and /Od warns when overridden by /O2
         # (D9025). Strip both before forcing the level below.
-        string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG
-                "${CMAKE_CXX_FLAGS_DEBUG}")
-        string(REGEX REPLACE "/Od" "" CMAKE_CXX_FLAGS_DEBUG
-                "${CMAKE_CXX_FLAGS_DEBUG}")
-        set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}" PARENT_SCOPE)
+        # Both languages: a vendored C library (ThirdParty/miniz) is forced
+        # the same way, and cl's C Debug defaults carry the same two flags.
+        foreach (lang C CXX)
+            string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_${lang}_FLAGS_DEBUG
+                    "${CMAKE_${lang}_FLAGS_DEBUG}")
+            string(REGEX REPLACE "/Od" "" CMAKE_${lang}_FLAGS_DEBUG
+                    "${CMAKE_${lang}_FLAGS_DEBUG}")
+            set(CMAKE_${lang}_FLAGS_DEBUG "${CMAKE_${lang}_FLAGS_DEBUG}"
+                    PARENT_SCOPE)
+        endforeach ()
 
         # clang-cl reports CXX_COMPILER_ID==Clang but parses the MSVC-style
         # driver, so its GCC-style flags must tunnel through /clang: or they are
@@ -81,16 +96,24 @@ function(eacp_force_optimization target)
     endif ()
 endfunction()
 
-# Stamps an app's name and the enclosing project's version into the binary two
-# ways: the native metadata the OS reads (macOS bundle plist keys / a Windows
-# VERSIONINFO resource), and an AppInfo.json embedded via ResEmbed that
-# Platform::getAppName()/getAppVersion() read back at runtime. The name comes
-# from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before calling us) or the target
-# name; the version from ${PROJECT_VERSION}, defaulting to 0.0.0.
+# Stamps an app's name, company and the enclosing project's version into the
+# binary two ways: the native metadata the OS reads (macOS bundle plist keys /
+# a Windows VERSIONINFO resource), and an AppInfo.json embedded via ResEmbed
+# that Platform::getAppName()/getCompanyName()/getAppVersion() read back at
+# runtime. The name comes from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before
+# calling us) or the target name; the company from the target's
+# EACP_COMPANY_NAME property, else the EACP_COMPANY_NAME variable, else empty;
+# the version from ${PROJECT_VERSION}, defaulting to 0.0.0. Name and company
+# are what FilePath::appSupportDirectory() puts the app's own folder under.
 function(eacp_embed_app_info target)
     get_target_property(app_name ${target} MACOSX_BUNDLE_BUNDLE_NAME)
     if (NOT app_name)
         set(app_name "${target}")
+    endif ()
+
+    get_target_property(company_name ${target} EACP_COMPANY_NAME)
+    if (NOT company_name)
+        set(company_name "${EACP_COMPANY_NAME}")
     endif ()
 
     set(app_version "${PROJECT_VERSION}")
@@ -150,6 +173,7 @@ END
     file(CONFIGURE OUTPUT "${app_info_json}" @ONLY CONTENT [==[
 {
     "name": "@app_name@",
+    "company": "@company_name@",
     "version": "@app_version@"
 }
 ]==])

@@ -206,7 +206,11 @@ void layout(id self, SEL)
     ObjC::sendSuper<void>(self, [NSView class], @selector(layout));
 
     if (auto* view = getView(self))
+    {
+        view->resizeStarted();
         view->resized();
+        view->resizeFinished();
+    }
 }
 
 BOOL isFlipped(id, SEL)
@@ -245,7 +249,11 @@ void viewDidChangeBackingProperties(id self, SEL)
     // sized in device pixels (a CAMetalLayer's drawableSize, a glyph atlas) does
     // not, so tell the view.
     if (auto* eacpView = getView(self))
+    {
+        eacpView->resizeStarted();
         eacpView->backingScaleChanged();
+        eacpView->resizeFinished();
+    }
 }
 
 void setFrame(id self, SEL, NSRect newFrame)

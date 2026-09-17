@@ -26,6 +26,11 @@ FilePath toFilePath(const CFRef<CFURLRef>& url)
 
 namespace Files
 {
+FilePath executablePath()
+{
+    return toFilePath(CFBundleCopyExecutableURL(CFBundleGetMainBundle()));
+}
+
 FilePath resourcesDirectory()
 {
     return toFilePath(CFBundleCopyResourcesDirectoryURL(CFBundleGetMainBundle()));
