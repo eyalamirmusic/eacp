@@ -496,7 +496,7 @@ at all — the harshest thing a toplevel meets — exporting
 same override so the binary run by hand on a desktop still tests X11; the 9
 `X11/clipboard` ones in `X11ClipboardTests-Linux.cpp` drive a second xcb
 connection as another client, on a thread of its own where it has to own the
-selection while eacp blocks reading it), `EmbeddedViewTests` (13, the
+selection while eacp blocks reading it), `EmbeddedViewTests` (17, the
 same default) and the same `Present` cases run over `VK_KHR_xcb_surface`. Only
 the X11 suites are filtered in and out; everything else already ran under
 Weston. `EACP_REQUIRE_DISPLAY=1` makes those tests fail rather than self-skip

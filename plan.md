@@ -17,6 +17,10 @@ counts are estimates, not commitments.
 | 5 — parity and polish | **done** 2026-09-16 | clipboard, `Xft.dpi`, RandR change events, the cursor-theme rebuild and XI2 (raw motion for the lock, scroll valuators): `X11WindowTests` 47 cases (9 clipboard, 6 scale/RandR/cursor, 5 XI2); `with-xvfb` X11+EmbeddedView+Present 74/74; headless 1616/1616; XWayland at scale 2 64/64. `Present` pacing left alone: nobody has seen the pacer misbehave on hardware |
 | 6 — thin eacp host bridge | | |
 
+*2026-09-17: `origin/develop` (8301b53b) merged in — after it the headless
+suite is 1847/1847, `with-xvfb` X11+EmbeddedView+Present 74/74 and
+`with-weston` Wayland+Present 23/23, so the merge costs the backend nothing.*
+
 Where the code differs from the sketches below, the code wins; each such
 point is marked *as built* in place.
 
@@ -480,8 +484,13 @@ New:
   `_MOTIF_WM_HINTS` for `Borderless`, `_NET_WM_STATE` for always-on-top,
   maximise and fullscreen, iconify, `ConfigureNotify` → resize/`onMoved`
   (positions are real here, unlike Wayland), `FocusIn/Out` → activation,
-  `Expose` → repaint of presenting children. `Window-Linux.cpp` keeps the
-  option handling and constructs one of two natives.
+  `Expose` → repaint of presenting children. *As built:* the only state the
+  window sends is a `_NET_WM_STATE` toggle of the two maximise atoms, with
+  iconify going out as `WM_CHANGE_STATE`. `_NET_WM_STATE_ABOVE` and
+  `_NET_WM_STATE_FULLSCREEN` are interned and never used, and neither Linux
+  backend honours `WindowOptions::alwaysOnTop` or `allowsFullScreen`.
+  `Window-Linux.cpp` keeps the option handling and constructs one of two
+  natives.
 - `Window/X11Input-Linux.cpp`: core pointer and key events into the shared
   state machines; XKB extension events for keymap and state changes; cursor
   through `xcb-cursor`; mouse lock as a pointer grab + hidden cursor + warp
@@ -563,7 +572,7 @@ auto-repeat only removes the synthetic release. Not verified by anyone yet:
 real mouse and keyboard input into an X11 window under XWayland on a desktop,
 which no test can drive.*
 
-**Stage 3 — EmbeddedView and the plugin path.** D6. Test: the test itself
+**Stage 3 — EmbeddedView and the plugin path — done.** D6. Test: the test itself
 plays host — opens its own xcb connection, creates a parent window, builds
 an `EmbeddedView` on the id, pumps through `getEventLoopFd()` from its own
 `poll()` (never `runEventLoop`), asserts the child's geometry follows
@@ -595,7 +604,7 @@ XWayland and mutter — `X11/windowComesUpAtItsConfiguredSize` and
 widens by a pixel — predate this stage, pass on Xvfb, and did not reproduce in
 the final runs.*
 
-**Stage 4 — in-tree fake host.** `Apps/Plugins/X11Host` (Linux only): a
+**Stage 4 — in-tree fake host — done.** `Apps/Plugins/X11Host` (Linux only): a
 standalone eacp app whose window is X11 by override, exposing its content
 view's id to a `dlopen`ed `X11Plugin.so` through a C ABI of four functions —
 `open(parent_id, scale)`, `loop_fd()`, `pump()`, `close()` — that mirrors CLAP
@@ -611,7 +620,7 @@ before `Plugins::unload` defers the close. Not
 verified by anyone yet: a run under `VK_LAYER_KHRONOS_validation`, which is not
 installed on the dev machine, and a real DAW.*
 
-**Stage 5 — parity and polish.** Clipboard (D8's `X11Clipboard`), XI2 raw
+**Stage 5 — parity and polish — done.** Clipboard (D8's `X11Clipboard`), XI2 raw
 motion for mouse lock and smooth scrolling, cursor themes, `Xft.dpi` as the
 standalone scale source, RandR change events, `Present` pacing if the pacer
 proves visibly worse on real hardware. Each item independent.
@@ -781,7 +790,7 @@ Linux once `DemoPlugin`'s `ShapeLayerView` content is replaced with a
 table and the Linux paragraph, `GPU/README.md`'s surface section, the CI
 `apt-get` line (`libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev
 libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev
-xvfb`), the `Dockerfile`.
+libxcb-xinput-dev libxcb-xtest0-dev xvfb`), the `Dockerfile`.
 
 ## 5. Risks and open questions
 
