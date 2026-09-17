@@ -1,14 +1,14 @@
 #pragma once
 
+#include "LinuxWindowSystem-Linux.h"
 #include "WaylandDisplay-Linux.h"
-
-#include <eacp/Core/App/Clipboard-Linux.h>
 
 #include <memory>
 
 // wl_data_device, behind the Clipboard::Backend hooks. Owned by WaylandDisplay,
-// which installs the backend as soon as the connection is up and clears it on
-// the way down, so a build with no compositor keeps Core's empty answers.
+// which offers the backend to LinuxWindowSystem as soon as the connection is
+// up and takes it away again on the way down, so a build with no compositor
+// keeps Core's empty answers.
 //
 // Wayland has no clipboard the way X11 has none either: the selection belongs
 // to whichever client owns it, and a paste is a pipe the owner writes into. So

@@ -5,9 +5,12 @@
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Time.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
 
-// Without a compositor these skip, which ctest scores as a pass, so
+// Without a display server these skip, which ctest scores as a pass, so
 // EACP_REQUIRE_DISPLAY=1 turns the skip into a failure.
 
 using namespace nano;
@@ -16,13 +19,38 @@ using namespace eacp::GPU;
 
 namespace
 {
-// Not a connection attempt - making one is the window backend's job.
+bool waylandIsNamed()
+{
+    return !getEnvValue("WAYLAND_DISPLAY").empty()
+           || !getEnvValue("WAYLAND_SOCKET").empty();
+}
+
+bool x11IsNamed()
+{
+    return !getEnvValue("DISPLAY").empty();
+}
+
+// Not a connection attempt - making one is the window backend's job. The rule
+// mirrors linuxChooseWindowSystem: eacp-gpu links no window system, so the
+// test reads the same environment the backend does rather than asking it.
 bool displayIsReachable()
 {
     if (Apps::getAppEnvironment().headless)
         return false;
 
-    return !getEnvValue("WAYLAND_DISPLAY").empty();
+    auto requested = getEnvValue("EACP_WINDOW_SYSTEM");
+    std::transform(requested.begin(),
+                   requested.end(),
+                   requested.begin(),
+                   [](unsigned char c) { return (char) std::tolower(c); });
+
+    if (requested == "x11")
+        return x11IsNamed();
+
+    if (requested == "wayland")
+        return waylandIsNamed();
+
+    return waylandIsNamed() || x11IsNamed();
 }
 
 bool noDisplay()
@@ -31,7 +59,7 @@ bool noDisplay()
         return false;
 
     check(getEnvValue("EACP_REQUIRE_DISPLAY") != "1",
-          "EACP_REQUIRE_DISPLAY=1 but no Wayland compositor was reachable - "
+          "EACP_REQUIRE_DISPLAY=1 but no display server was reachable - "
           "every case in this file would otherwise have skipped and reported "
           "a pass");
 
@@ -116,6 +144,13 @@ void showWith(Graphics::Window& window, Graphics::View& view)
 {
     window.setContentView(view);
     window.setVisible(true);
+}
+
+// An X11 window handle is an id an EmbeddedView can be a child of; a Wayland
+// one is a wl_surface and nothing may be embedded in it.
+bool embeddingIsPossible()
+{
+    return getEnvValue("EACP_WINDOW_SYSTEM") == "x11";
 }
 } // namespace
 
@@ -343,6 +378,43 @@ auto tTeardownAndRebuild = test("Present/aWindowCanBeReplaced") = []
     check(pumpUntil(presentTimeout, [&] { return second.renders > 0; }),
           "a window built after one was destroyed never presented");
     check(second.everyFrameWasValid);
+};
+
+// The same swapchain, in a surface inside somebody else's window. Only on the
+// X11 lane: an embedded surface is an X11 child of the id its host handed over
+// (plan.md D6), and a Wayland toplevel's handle is a wl_surface rather than an
+// id. Tests/Graphics/EmbeddedViewTests is where the surface itself is checked,
+// with a host on a connection of its own; here the host is a Window of ours,
+// which is all a swapchain needs to be presented into.
+auto tEmbeddedViewPresents = test("Present/anEmbeddedViewPresentsIntoItsHost") = []
+{
+    if (noDeviceOrDisplay() || !embeddingIsPossible())
+        return;
+
+    auto host = Graphics::Window {windowSized(320, 240)};
+    host.setVisible(true);
+
+    check(pumpUntil(presentTimeout, [&] { return host.isVisible(); }),
+          "the host window never came up");
+
+    auto view = CountingView {};
+    auto embedded = Graphics::EmbeddedView {host.getHandle()};
+    embedded.setContentView(view);
+
+    check(pumpUntil(presentTimeout, [&] { return view.renders > 0; }),
+          "no frame was presented into the embedded surface");
+
+    check(view.everyFrameWasValid, "a drawable Frame reported itself invalid");
+    check(view.lastWidth > 0);
+    check(view.lastHeight > 0);
+
+    // The surface filled its host, so the swapchain is the host's size - in
+    // the pixels the host's own scale makes of those points, since nothing
+    // told this surface a scale of its own.
+    const auto hostScale = Graphics::primaryDisplay().backingScale;
+
+    check(matchesPixels(view.lastWidth, 320.f, hostScale));
+    check(matchesPixels(view.lastHeight, 240.f, hostScale));
 };
 
 auto tNoSurfaceStillSnapshots = test("Present/aViewWithNoSurfaceStillSnapshots") = []

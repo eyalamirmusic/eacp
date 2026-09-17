@@ -1,26 +1,12 @@
+#include "../SpinningTriangle.h"
+
+#include <eacp/Core/Plugins/PluginExport.h>
 #include <eacp/Graphics/Graphics.h>
+
+#include <memory>
 
 namespace
 {
-struct PluginView final : eacp::Graphics::View
-{
-    PluginView()
-    {
-        layer->setFillColor({0.9f, 0.4f, 0.1f});
-        addChildren({layer});
-    }
-
-    void resized() override
-    {
-        auto path = eacp::Graphics::Path();
-        path.addRoundedRect(getLocalBounds(), 12.f);
-        layer->setPath(path);
-        scaleToFit({layer});
-    }
-
-    eacp::Graphics::ShapeLayerView layer;
-};
-
 struct PluginWindow
 {
     PluginWindow() { window.setTitle("DemoPlugin (plugin's own eacp)"); }
@@ -29,9 +15,13 @@ struct PluginWindow
     {
         if (++ticks == 1)
             eacp::LOG("DemoPlugin: timer tick via the plugin's own eacp copy");
+
+        view.advance();
     }
 
-    PluginView view;
+    // Orange to the host's blue, and turning for as long as the plugin copy's
+    // own loop is being served.
+    eacp::PluginDemo::SpinningTriangleView view {{0.9f, 0.4f, 0.1f}};
     eacp::Graphics::Window window {view};
     int ticks = 0;
     eacp::Threads::Timer timer {[&] { tick(); }, 10};
@@ -67,6 +57,10 @@ EACP_PLUGIN_EXPORT void demo_try_quit()
 
 EACP_PLUGIN_EXPORT void demo_close_window()
 {
+    if (pluginWindow != nullptr)
+        eacp::LOG("DemoPlugin: window closed (frames drawn: ",
+                  pluginWindow->view.framesRendered,
+                  ")");
+
     pluginWindow.reset();
-    eacp::LOG("DemoPlugin: window closed");
 }
