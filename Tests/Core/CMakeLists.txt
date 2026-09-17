@@ -62,7 +62,8 @@ endif ()
 if (LINUX)
     list(APPEND core_test_sources
             EventLoopSourceTests-Linux.cpp
-            HostedLoopTests-Linux.cpp)
+            HostedLoopTests-Linux.cpp
+            RootLoopTests-Linux.cpp)
 endif ()
 
 nano_add_executable(CoreTests
@@ -110,6 +111,17 @@ target_link_libraries(DynamicLibraryTestPlugin PRIVATE eacp-core)
 target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
 add_dependencies(CoreTests DynamicLibraryTestPlugin)
+
+# The thin-eacp-host bridge: a plugin whose own copy defers work, so the
+# tests can watch this binary's root loop pump it (RootLoopTests-Linux.cpp).
+if (LINUX)
+    eacp_add_plugin(RootLoopTestPlugin RootLoopTestPlugin.cpp)
+    target_link_libraries(RootLoopTestPlugin PRIVATE eacp-core)
+
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_ROOT_LOOP_TEST_PLUGIN="$<TARGET_FILE:RootLoopTestPlugin>")
+    add_dependencies(CoreTests RootLoopTestPlugin)
+endif ()
 
 # The system clipboard is a single global object shared with the whole machine,
 # and NanoTest gives every case its own process, so these cannot overlap: under

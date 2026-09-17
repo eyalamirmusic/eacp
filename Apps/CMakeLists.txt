@@ -5,18 +5,16 @@ add_subdirectory(Network)
 
 if (EACP_HAS_GPU)
     add_subdirectory(GPU)
+
+    # Every host and plugin under here draws a GPUView, so a window and a
+    # device are the whole of what the pairs need.
+    add_subdirectory(Plugins)
 endif ()
 
 # These two paint through the platform's own 2D stack.
 if (EACP_HAS_CONTEXT)
     add_subdirectory(Graphics)
     add_subdirectory(SVG)
-endif ()
-
-# Half of this one does too, and says so itself: the X11 host and plugin below
-# it need only a window and the GPU, so Linux enters it as well.
-if (EACP_HAS_CONTEXT OR LINUX)
-    add_subdirectory(Plugins)
 endif ()
 
 # The component tier draws itself in one GPUView through the glyph and sprite

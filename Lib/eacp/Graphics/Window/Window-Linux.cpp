@@ -6,6 +6,9 @@
 #include "X11Connection-Linux.h"
 #include "X11Window-Linux.h"
 
+#include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Threads/EventLoop.h>
+
 namespace eacp::Graphics
 {
 namespace
@@ -13,6 +16,12 @@ namespace
 std::unique_ptr<LinuxWindowNative> makeWindowNative(const WindowOptions& options,
                                                     WindowEvents& events)
 {
+    // As on Windows: in a copy living in a dynamic library the host owns the
+    // loop, and a window is the first thing here that will defer work onto
+    // the thread it was built on.
+    if (Platform::isDLL())
+        Threads::attachCurrentThreadAsMain();
+
     switch (linuxPreferredWindowSystem())
     {
         case LinuxWindowSystem::Wayland:

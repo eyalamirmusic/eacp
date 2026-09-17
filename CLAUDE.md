@@ -16,12 +16,11 @@ top-level `CMakeLists.txt` by six capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` — `EmbeddedView` with it, since embedding is a windowing feature
 rather than a drawing one — and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`,
-`GPUWidgets`, `Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`,
+`GPUWidgets`, `Sprites`, `Apps/GPU`, `Apps/Plugins`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`,
 `Apps/UI` and the GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the
 platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
 `TextInput`, the retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
-`SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`'s 2D half
-(`DemoPlugin`/`PluginHost`), `Apps/SVG`, `Apps/UI/SVGDocument` and the GPU
+`SVGBuilder`, `Apps/Graphics`, `Apps/SVG`, `Apps/UI/SVGDocument` and the GPU
 examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
 `CameraView`, `Video`, `VideoView`, the last two additionally off on iOS) and
 `EACP_HAS_WEBVIEW` (the native `WebView`). The first three are
@@ -407,7 +406,36 @@ stand-in: a host app whose window id crosses a four-function C ABI
 (`Apps/Plugins/X11PluginABI.h` — `open`, `loop_fd`, `pump`, `close`, mirroring
 CLAP's gui and posix-fd extensions) to a `dlopen`ed plugin copy that animates a
 `GPUView` from a 60 Hz `Timer` and reaches the host's loop only through that
-descriptor.
+descriptor. When the host executable is itself an eacp app, none of that is
+needed: the copy running the process's root loop (`EventLoop::run`, or an
+outermost `runFor`) advertises a bridge — `EACP_ROOT_LOOP=1` beside
+`EACP_ROOT_LOOP_BRIDGE=<pid>:<address>`, the address of a static C table of
+`attach(fd, pump, context)`, `detach(fd)` and `stop()` in the root copy, the
+same environment channel `EACP_ROOT_LOOP_THREAD` is on Windows and so no
+`-rdynamic` on any host — and a copy for which `Platform::isDLL()` is true
+hands its epoll fd across it on the first thing that defers work
+(`attachCurrentThreadAsMain`, the first `callAsync`, `addLoopSource`, a
+`Window`, `Detail::runAsPlugin`). The root copy pumps that fd as a loop
+source, both on readiness and as a `prepare` before it waits, so a hosted
+`Window`, `Timer`, `callAsync` or `Apps::run<T>` app runs with neither side
+knowing the other; `stopProcessRootLoop` is the table's `stop`, which is how
+a hosted app's `Apps::quit()` ends the thin host. The hosted `LoopState`
+detaches in its destructor, before its epoll fd closes and before `dlclose`
+unmaps the image, and the root holds each guest's pump behind an atomic it
+clears on detach, so a callback already copied out for the round calls into
+nothing, so a bare `DynamicLibrary::close()` inside a loop round is as safe
+as `Plugins::unload`'s deferred one. The pid
+is part of the advertisement because a child process inherits the environment
+without the address space, and a magic/size pair refuses a copy built from
+another revision. Under a foreign host nothing advertises and the path is
+inert. `Tests/Core/RootLoopTests-Linux.cpp` (10 `RootLoop/` cases over the
+`RootLoopTestPlugin` fixture) covers it, and `Apps/Plugins/PluginHost` with
+`DemoPlugin` — both now a `GPUView` (`Apps/Plugins/SpinningTriangle.h`), so
+the pair builds wherever `EACP_HAS_GPU` does — is the demo: the plugin's
+toplevel, its timer and its `callAsync` all run off the host's loop. `X11Host`
+now takes both paths at once, since it is an eacp app as well: the plugin
+attaches through the bridge and the host registers the same fd through the C
+ABI, and `addLoopSource` keeps whichever came last.
 
 Under both is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
@@ -452,10 +480,8 @@ fonts-noto-color-emoji`.
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
 `TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
 left out of the Linux source list rather than stubbed, and with them
-`SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/Plugins`'s 2D half
-(`DemoPlugin`/`PluginHost`, the X11 pair beside them building on Linux),
-`Apps/SVG`, `Apps/UI/SVGDocument` and the `Apps/GPU` examples that paint a 2D
-overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
+`SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/SVG`, `Apps/UI/SVGDocument`
+and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
 where it is 0. `Path` is there as recorded geometry only
 (`Primitives/Path-Linux.h`). Every GPU test but the Metal-only
@@ -582,8 +608,13 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   fd, so the standalone loop exercises the hosted one on every tick.
   `attachCurrentThreadAsMain` is real on Linux (not the `EventLoop-Default`
   no-op): it makes `isEventLoopRunning` true so deferred work is kept for a
-  pump rather than dropped. No plugin SDK enters eacp; the VST3/CLAP/LV2
-  wrapper lives in the plugin project (`plan.md` D1, D9)
+  pump rather than dropped. Under an eacp host no host code is needed at
+  all: the root copy advertises a bridge in the environment and a
+  `Platform::isDLL()` copy attaches its fd to it on first use, so a hosted
+  copy's callbacks, timers and windows run off the host's loop and
+  `stopProcessRootLoop` is real (see "The Linux Backend"). No plugin SDK
+  enters eacp; the VST3/CLAP/LV2 wrapper lives in the plugin project
+  (`plan.md` D1, D9, D10)
 
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)

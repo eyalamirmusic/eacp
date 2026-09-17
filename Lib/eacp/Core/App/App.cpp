@@ -94,6 +94,10 @@ bool isRunningAsPlugin()
 void Detail::runAsPlugin(const AppFactory& createFunc)
 {
     s_runningAsPlugin = true;
+
+    // Nothing else in a dynamic library names the thread this copy's
+    // callbacks belong to, and the app is about to be scheduled onto it.
+    Threads::attachCurrentThreadAsMain();
     Threads::scheduleStartup(createFunc);
 }
 

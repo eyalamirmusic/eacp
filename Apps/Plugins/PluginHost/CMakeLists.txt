@@ -1,5 +1,5 @@
 add_executable(PluginHost Main.cpp)
-target_link_libraries(PluginHost PRIVATE eacp-graphics)
+target_link_libraries(PluginHost PRIVATE eacp-gpu)
 
 add_dependencies(PluginHost DemoPlugin)
 target_compile_definitions(PluginHost PRIVATE

@@ -37,8 +37,10 @@ void stopEventLoop();
 // callbacks and timers. Idempotent. A no-op on macOS, where the main run loop
 // is a process singleton and callAsync already reaches the host's loop without
 // any setup; on Linux the loop is per-copy, so this is what makes callAsync
-// reach a pump — the host drives it through getEventLoopFd()/pumpEventLoop()
-// (EventLoop-Linux.h).
+// reach a pump — a foreign host drives it through
+// getEventLoopFd()/pumpEventLoop() (EventLoop-Linux.h), and under an eacp
+// host this is also where the copy hands that descriptor to the copy running
+// the root loop.
 void attachCurrentThreadAsMain();
 
 // Stops the process's root run loop, provided an eacp copy is running it —
@@ -48,6 +50,11 @@ void attachCurrentThreadAsMain();
 // loop (Apps::run<T> detects that case and rides the host's loop). A loop
 // owned by a foreign host (a DAW) carries no marker, so this is a no-op
 // there: that loop is never ours to stop.
+//
+// On Linux the marker carries the address of the root copy's bridge
+// (EACP_ROOT_LOOP_BRIDGE), which is also how a hosted copy's loop
+// descriptor joins the root copy's poll set — so an eacp host pumps a
+// plugin's timers and callbacks without either side knowing the other.
 void stopProcessRootLoop();
 
 // True while a loop is running that work handed to callAsync will reach: this

@@ -1,10 +1,14 @@
 #include "EventLoop-Linux.h"
 #include "ThreadUtils-Linux.h"
+#include "../Platform/Platform.h"
+#include "../Utils/Environment.h"
 #include "../Utils/Singleton.h"
 
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <fcntl.h>
+#include <memory>
 #include <mutex>
 #include <poll.h>
 #include <sys/epoll.h>
@@ -65,6 +69,33 @@ struct LoopSource
     Callback prepare;
 };
 
+// What the copy running the process's root loop offers every other copy in
+// the process: add a hosted copy's loop descriptor as a source of the root's,
+// remove it again, and stop the root loop. Function pointers and a void* —
+// nothing with C++ layout crosses an image boundary. The address of one of
+// these rides the environment (EACP_ROOT_LOOP_BRIDGE), which is the same
+// cross-copy channel EACP_ROOT_LOOP_THREAD is on Windows.
+using RootLoopPump = void (*)(void*);
+
+struct RootLoopBridge
+{
+    unsigned magic = 0;
+    unsigned size = 0;
+    void (*attach)(int fd, RootLoopPump pump, void* context) = nullptr;
+    void (*detach)(int fd) = nullptr;
+    void (*stop)() = nullptr;
+};
+
+// A hosted copy's loop as the root copy holds it. Detach clears `pump`, so a
+// callback already copied out of the source list for this round does nothing
+// instead of jumping into an image that has since been unmapped.
+struct RootLoopGuest
+{
+    int fd = -1;
+    void* context = nullptr;
+    std::atomic<RootLoopPump> pump {nullptr};
+};
+
 namespace
 {
 constexpr auto maxReadySourcesPerPump = 32;
@@ -97,6 +128,58 @@ void unwatchLoopFd(int epollFd, int fd)
 {
     ::epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, nullptr);
 }
+
+constexpr auto rootLoopMagic = 0x45414350u;
+constexpr auto rootLoopMarkerName = "EACP_ROOT_LOOP";
+constexpr auto rootLoopBridgeName = "EACP_ROOT_LOOP_BRIDGE";
+
+void rootLoopAttach(int fd, RootLoopPump pump, void* context);
+void rootLoopDetach(int fd);
+void rootLoopStop();
+
+// Constant-initialised and trivially destructible, so it is readable for as
+// long as this image is mapped and registers nothing for atexit.
+RootLoopBridge rootLoopBridge {rootLoopMagic,
+                               (unsigned) sizeof(RootLoopBridge),
+                               rootLoopAttach,
+                               rootLoopDetach,
+                               rootLoopStop};
+
+std::string rootLoopBridgeAdvertisement()
+{
+    return std::to_string((long long) ::getpid()) + ':'
+           + std::to_string(reinterpret_cast<uintptr_t>(&rootLoopBridge));
+}
+
+// The bridge another copy advertised, or null when no eacp copy runs the
+// process's root loop. The pid is part of the advertisement because a child
+// process inherits the environment without the address space that gave it
+// meaning.
+RootLoopBridge* findRootLoopBridge()
+{
+    if (getEnvValue(rootLoopMarkerName) != "1")
+        return nullptr;
+
+    const auto advertised = getEnvValue(rootLoopBridgeName);
+    const auto separator = advertised.find(':');
+
+    if (separator == std::string::npos)
+        return nullptr;
+
+    if (std::strtoll(advertised.c_str(), nullptr, 10) != (long long) ::getpid())
+        return nullptr;
+
+    const auto address =
+        std::strtoull(advertised.c_str() + separator + 1, nullptr, 10);
+
+    auto* bridge = reinterpret_cast<RootLoopBridge*>((uintptr_t) address);
+
+    if (bridge == nullptr || bridge->magic != rootLoopMagic
+        || bridge->size != sizeof(RootLoopBridge))
+        return nullptr;
+
+    return bridge;
+}
 } // namespace
 
 // One epoll instance holds the waker and every source, so a host watches a
@@ -109,10 +192,20 @@ struct LoopState
         watchLoopFd(epollFd, waker.readFd, POLLIN);
     }
 
+    // Before the descriptor closes, and before the image this copy lives in
+    // can be unmapped: the root copy holds a function pointer into it.
     ~LoopState()
     {
+        detachFromRootLoop();
+
         if (epollFd >= 0)
             ::close(epollFd);
+    }
+
+    void detachFromRootLoop()
+    {
+        if (auto* bridge = rootBridge.exchange(nullptr))
+            bridge->detach(epollFd);
     }
 
     LoopState(const LoopState&) = delete;
@@ -130,6 +223,16 @@ struct LoopState
 
     std::mutex sourceMutex;
     Vector<LoopSource> sources;
+
+    // Root side: the hosted copies attached to this loop.
+    std::mutex guestMutex;
+    Vector<std::shared_ptr<RootLoopGuest>> guests;
+
+    // Hosted side: the root copy's bridge, once attached to.
+    std::atomic<RootLoopBridge*> rootBridge {nullptr};
+
+    std::atomic<int> rootLoopDepth {0};
+    bool advertisingRootLoop = false;
 };
 
 static LoopState& getLoop()
@@ -243,6 +346,143 @@ WaitResult waitForLoopActivity(const LoopState& loop, int timeoutMs)
 
     return errno == EINTR ? WaitResult::Ready : WaitResult::Failed;
 }
+
+void pumpLoopState(LoopState& loop)
+{
+    if (loop.pumpDepth.load() > 0)
+        return;
+
+    auto scope = PumpScope {loop};
+    pumpLoopOnce(loop);
+}
+
+// What the root copy calls through the bridge. The context is this copy's
+// LoopState, so the round runs against this copy's own depth counter.
+void pumpFromRootLoop(void* context)
+{
+    pumpLoopState(*static_cast<LoopState*>(context));
+}
+
+// Hosted side. The first thing that defers work in a copy living in a
+// dynamic library hands the copy's one descriptor to whichever copy is
+// running the process's root loop. Idempotent, and a no-op under a foreign
+// host (a DAW), where nothing advertises a bridge and the plugin registers
+// its own descriptor with the host instead.
+void attachToRootLoop(LoopState& loop)
+{
+    if (loop.rootBridge.load() != nullptr || !Platform::isDLL() || !isMainThread())
+        return;
+
+    auto* bridge = findRootLoopBridge();
+
+    if (bridge == nullptr || bridge == &rootLoopBridge)
+        return;
+
+    loop.hosted = true;
+    loop.rootBridge = bridge;
+    bridge->attach(loop.epollFd, pumpFromRootLoop, &loop);
+}
+
+// Root side. Another copy already running the root loop keeps it: a nested
+// pump inside a hosted copy must never take the advertisement over.
+void publishRootLoop(LoopState& loop)
+{
+    if (auto* other = findRootLoopBridge();
+        other != nullptr && other != &rootLoopBridge)
+        return;
+
+    setEnv(rootLoopBridgeName, rootLoopBridgeAdvertisement());
+    setEnv(rootLoopMarkerName, "1");
+    loop.advertisingRootLoop = true;
+}
+
+void withdrawRootLoop(LoopState& loop)
+{
+    if (!loop.advertisingRootLoop)
+        return;
+
+    loop.advertisingRootLoop = false;
+    setEnv(rootLoopMarkerName, "0");
+    unsetEnv(rootLoopBridgeName);
+}
+
+// Held for the whole of run()/runFor, so a nested pump neither re-advertises
+// nor withdraws the outermost loop's advertisement.
+struct RootLoopScope
+{
+    explicit RootLoopScope(LoopState& loopToUse)
+        : loop(loopToUse)
+    {
+        if (++loop.rootLoopDepth == 1)
+            publishRootLoop(loop);
+    }
+
+    ~RootLoopScope()
+    {
+        if (--loop.rootLoopDepth == 0)
+            withdrawRootLoop(loop);
+    }
+
+    RootLoopScope(const RootLoopScope&) = delete;
+    RootLoopScope& operator=(const RootLoopScope&) = delete;
+
+    LoopState& loop;
+};
+
+void forgetGuestLocked(LoopState& loop, int fd)
+{
+    for (const auto& guest: loop.guests)
+        if (guest->fd == fd)
+            guest->pump = nullptr;
+
+    loop.guests.removeIndexesMatching(
+        [fd](const std::shared_ptr<RootLoopGuest>& guest)
+        { return guest->fd == fd; });
+}
+
+void rootLoopAttach(int fd, RootLoopPump pump, void* context)
+{
+    auto& loop = getLoop();
+
+    auto guest = std::make_shared<RootLoopGuest>();
+    guest->fd = fd;
+    guest->context = context;
+    guest->pump = pump;
+
+    {
+        auto lock = std::lock_guard(loop.guestMutex);
+        forgetGuestLocked(loop, fd);
+        loop.guests.add(guest);
+    }
+
+    // Readiness dispatches the guest's round; the prepare runs it again
+    // before the root waits, which is the guest's chance to flush a display
+    // connection it opened from a call the host made into it directly.
+    auto pumpGuest = [guest]
+    {
+        if (auto run = guest->pump.load())
+            run(guest->context);
+    };
+
+    addLoopSource(fd, POLLIN, pumpGuest, pumpGuest);
+}
+
+void rootLoopDetach(int fd)
+{
+    auto& loop = getLoop();
+
+    {
+        auto lock = std::lock_guard(loop.guestMutex);
+        forgetGuestLocked(loop, fd);
+    }
+
+    removeLoopSource(fd);
+}
+
+void rootLoopStop()
+{
+    getEventLoop().quit();
+}
 } // namespace
 
 int getEventLoopFd()
@@ -252,13 +492,7 @@ int getEventLoopFd()
 
 void pumpEventLoop()
 {
-    auto& loop = getLoop();
-
-    if (loop.pumpDepth.load() > 0)
-        return;
-
-    auto scope = PumpScope {loop};
-    pumpLoopOnce(loop);
+    pumpLoopState(getLoop());
 }
 
 void EventLoop::run()
@@ -268,6 +502,7 @@ void EventLoop::run()
     auto& loop = getLoop();
     loop.running = true;
 
+    auto advertised = RootLoopScope {loop};
     auto scope = PumpScope {loop};
 
     while (loop.running)
@@ -289,6 +524,7 @@ bool EventLoop::runFor(Time::MS timeout)
     auto& loop = getLoop();
     loop.running = true;
 
+    auto advertised = RootLoopScope {loop};
     auto scope = PumpScope {loop};
     auto deadline = Time::Deadline {timeout};
 
@@ -333,6 +569,8 @@ void EventLoop::call(Callback func)
         auto lock = std::lock_guard(loop.mutex);
         loop.queue.add(std::move(func));
     }
+
+    attachToRootLoop(loop);
     loop.waker.wake();
 }
 
@@ -352,6 +590,7 @@ void addLoopSource(int fd, short events, Callback callback, Callback prepare)
         watchLoopFd(loop.epollFd, fd, events);
     }
 
+    attachToRootLoop(loop);
     loop.waker.wake();
 }
 
@@ -384,7 +623,11 @@ void scheduleStartup(const Callback& func)
 bool isEventLoopRunning()
 {
     auto& loop = getLoop();
-    return loop.running.load() || loop.hosted.load();
+
+    if (loop.running.load() || loop.hosted.load())
+        return true;
+
+    return findRootLoopBridge() != nullptr;
 }
 
 void attachCurrentThreadAsMain()
@@ -393,11 +636,14 @@ void attachCurrentThreadAsMain()
 
     auto& loop = getLoop();
     loop.hosted = true;
+    attachToRootLoop(loop);
     loop.waker.wake();
 }
 
-// The Linux loop is per-copy (no process-global pump to reach into yet);
-// wire this up alongside a Linux plugin host when one exists.
-void stopProcessRootLoop() {}
+void stopProcessRootLoop()
+{
+    if (auto* bridge = findRootLoopBridge())
+        bridge->stop();
+}
 
 } // namespace eacp::Threads

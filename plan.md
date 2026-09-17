@@ -15,7 +15,7 @@ counts are estimates, not commitments.
 | 3 — EmbeddedView | **done** 2026-09-15 | `EmbeddedViewTests` 17 cases (2 of them seat-driven, on Xvfb only), plus `Present/anEmbeddedViewPresentsIntoItsHost`; headless suite 1670/1670; `with-xvfb` X11+EmbeddedView+Present 54/54 ×6; XWayland green |
 | 4 — in-tree fake host | **done** 2026-09-15 | `X11Host`/`X11Plugin` over a four-function C ABI: 346 frames in 6 s on bare Xvfb over lavapipe, 290 in 5 s under XWayland on a real GPU |
 | 5 — parity and polish | **done** 2026-09-16 | clipboard, `Xft.dpi`, RandR change events, the cursor-theme rebuild and XI2 (raw motion for the lock, scroll valuators): `X11WindowTests` 47 cases (9 clipboard, 6 scale/RandR/cursor, 5 XI2); `with-xvfb` X11+EmbeddedView+Present 74/74; headless 1616/1616; XWayland at scale 2 64/64. `Present` pacing left alone: nobody has seen the pacer misbehave on hardware |
-| 6 — thin eacp host bridge | | |
+| 6 — thin eacp host bridge | **done** 2026-09-17 | `RootLoopTests-Linux.cpp`, 10 cases over a fixture plugin; Core suite 251/251, headless 1857/1857, `with-xvfb` X11+EmbeddedView+Present 74/74, `with-weston` Wayland+Present 23/23; `PluginHost`/`DemoPlugin` on `GPUView`, building and running on Linux (plugin timer, `callAsync` and 9 presented frames off the host's loop under Xvfb and Weston); X11Host 170 frames in 3 s |
 
 *2026-09-17: `origin/develop` (8301b53b) merged in — after it the headless
 suite is 1847/1847, `with-xvfb` X11+EmbeddedView+Present 74/74 and
@@ -447,6 +447,50 @@ epoll fd as a loop source; `stopProcessRootLoop` rides the same channel.
 Worth doing for the Linux `Apps/Plugins` demo and for `Plugins::unload`'s
 deferral, but nothing a DAW needs — so it is its own stage and can slip.
 
+*As built (stage 6).* The channel is the environment rather than `dlsym`:
+the root copy sets `EACP_ROOT_LOOP=1` (the marker macOS and Windows already
+use) and `EACP_ROOT_LOOP_BRIDGE=<pid>:<address>`, the address of a
+constant-initialised, trivially destructible `RootLoopBridge` in the root
+copy — `magic`, `size`, `attach(fd, pump, context)`, `detach(fd)`, `stop()`,
+function pointers and a `void*` and nothing with C++ layout — exactly the
+shape `EACP_ROOT_LOOP_THREAD` takes on Windows. That needs no
+`ENABLE_EXPORTS`/`-rdynamic` on any thin host (`X11Host` deliberately exports
+nothing) and no interposition between two copies that both define the symbol.
+The pid is in the advertisement because `Processes::Process` children inherit
+the environment without the address space, so an inherited address would be a
+wild pointer where the inherited marker was only a wrong answer — a child now
+correctly answers `isEventLoopRunning()` false, where macOS and Windows still
+say true — and `magic`/`size` refuse a copy built from another revision.
+Both `run()` and an outermost `runFor()` advertise, nesting-aware through a
+`rootLoopDepth` (Windows marks only `run()`, but CoreTests drive their loops
+through `runFor`, and a nested `runEventLoopFor` inside a hosted copy never
+takes the advertisement over because `publishRootLoop` refuses when another
+copy already holds it). The hosted side attaches lazily and idempotently from
+`attachCurrentThreadAsMain`, the first `EventLoop::call` on the main thread,
+`addLoopSource`, `Detail::runAsPlugin` and the Linux `Window` constructor
+(gated on `Platform::isDLL()`, unlike Windows, because on Linux
+`attachCurrentThreadAsMain` sets `hosted` and a standalone app must not
+answer `isEventLoopRunning` true through teardown). The root registers the
+guest's pump as both the source callback and its `prepare`, so a hosted copy
+that opened a display connection from a call the host made into it directly
+still flushes before the root waits. Detach safety is a guard as well as a
+removal: the root holds a `shared_ptr<RootLoopGuest>` per attached copy with
+the pump behind an atomic, cleared on detach, so a callback already copied
+out of the source list for the round calls into nothing; `~LoopState`
+detaches before closing its epoll fd, and that destructor does run at
+`dlclose` for a `MODULE` built by `eacp_add_plugin` — checked by commenting
+the detach out, which segfaults both unload cases. Nothing else changed in
+`Core`: `stopProcessRootLoop` is the table's `stop`. `X11Host` now takes
+both paths at once, being an eacp app itself — the plugin attaches through
+the bridge and the host registers the same fd through the C ABI, and
+`addLoopSource` keeps whichever came last; `RootLoop/withNoRootLoopNothingAttaches`
+is the pure foreign-host case. Not made airtight: `isEventLoopRunning()`
+off the main thread reads the environment on its cold path, the pre-existing
+macOS/Windows pattern, while glibc's `setenv` can reallocate `environ` under
+a concurrent `getenv`; and if a hosted copy's `CallAfterScheduler` were ever
+constructed before its `LoopState` it would be joined after the detach — no
+path constructs that order, and 40 unload cycles under ASan saw nothing.
+
 ## 3. Files
 
 Renamed or split (pure refactor, Wayland tests stay green):
@@ -782,9 +826,40 @@ from the raw figure, which Xvfb's XTEST device never applies. `Present`
 pacing, the stage's last item, is left as it is: it was conditional on the
 pacer proving visibly worse on real hardware, and nobody has seen that.*
 
-**Stage 6 — thin eacp host bridge.** D10, and `Apps/Plugins` builds on
+**Stage 6 — thin eacp host bridge — done.** D10, and `Apps/Plugins` builds on
 Linux once `DemoPlugin`'s `ShapeLayerView` content is replaced with a
 `GPUView`.
+
+*As built.* The bridge is the D10 *as built* note. `Tests/Core/RootLoopTests-Linux.cpp`
+is 10 `RootLoop/` cases over `RootLoopTestPlugin`, a fixture built with
+`eacp_add_plugin` that exports C entry points which defer work inside its own
+copy: hosted `callAsync`/`callAfter`/`Timer` delivering under the test
+binary's loop, the first `callAsync` finding the root loop with no explicit
+attach, the hosted copy seeing the root loop as running, an `Apps::run<T>`
+inside the plugin constructing under the root loop and its `Apps::quit()`
+returning the root `runFor`, the marker cleared when the loop exits, the
+foreign-host shape (only the fixture's own `getEventLoopFd`/`pumpEventLoop`
+move it) attaching nothing, `Plugins::unload` and a bare
+`DynamicLibrary::close()` each detaching across 20 real unmaps, and two
+hosted copies sharing one attachment. Core suite 251/251, an ASan build of
+Core 256/256, headless 1857/1857, `with-xvfb` 74/74, `with-weston` 23/23.
+`DemoPlugin` and `PluginHost` each draw a `PluginDemo::SpinningTriangleView`
+(`Apps/Plugins/SpinningTriangle.h`, the X11Plugin triangle with the clear
+colour as an argument): the host's blue and still, the plugin's orange and
+turned by its own 10 Hz `Timer`, so a still of the two windows says which
+copy is being pumped. `Apps/CMakeLists.txt` enters `Plugins` under
+`EACP_HAS_GPU` beside `GPU`, the pair is unconditional inside it and the X11
+pair is `LINUX`; `DemoPlugin` links `eacp-gpu` and takes `--no-undefined` as
+`X11Plugin` does; `PluginHost` tears down through `Plugins::unload` with
+`demo_close_window` as the quiesce and quits from a `callAsync` queued behind
+the deferred unmap. Under Xvfb the plugin's `callAsync` and timer lines now
+print and it presents 9 frames in its second; under headless Weston the host
+is Wayland, the plugin copy takes X11, finds no `DISPLAY` and falls back to
+the headless native, and the same lines print. Neither the pair on macOS or
+Windows nor an actual screenshot has been checked; `framesRendered` is the
+evidence. Seen and not chased: under Weston about a second passes between the
+plugin's quiesce and the host's quit line (the deferred unmap sits between
+them), where under Xvfb it is milliseconds.
 
 **Docs, with each stage:** `CLAUDE.md` ("The Linux Backend"), README's module
 table and the Linux paragraph, `GPU/README.md`'s surface section, the CI

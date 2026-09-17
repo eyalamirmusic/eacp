@@ -128,7 +128,12 @@ none does. That embedded surface, together with an event loop that is one `epoll
 descriptor with a pump (`getEventLoopFd`, `pumpEventLoop`) a plugin host's own
 loop can drive, is what audio-plugin hosting on Linux needs —
 `Apps/Plugins/X11Host` and `X11Plugin` run the whole path in-tree, a window id
-and four C functions apart. A Vulkan backend under it: everything from `Device`
+and four C functions apart. When the host is itself an eacp app even those
+four are not needed: the copy running the root loop advertises a bridge in the
+process environment, a copy loaded from a dynamic library attaches its
+descriptor to it on the first thing it defers, and its windows, timers and
+`callAsync`s then run off the host's loop with no code on either side —
+`Apps/Plugins/PluginHost` and `DemoPlugin`, now a `GPUView` pair, show it. A Vulkan backend under it: everything from `Device`
 to `RenderPass` is real, the drawable `Frame` renders
 into a swapchain image and presents it, and `GPUView` owns that swapchain —
 mailbox or FIFO, frames in flight, rebuilt on resize and `OUT_OF_DATE`, with
@@ -164,9 +169,9 @@ a new port reaches them one at a time; the other three hang off
 | Variable | On when | Gates |
 | --- | --- | --- |
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests and `Apps/GPU` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`'s 2D half, `Apps/SVG` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 
