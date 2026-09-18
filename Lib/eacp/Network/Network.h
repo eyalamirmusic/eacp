@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Connectivity/Connectivity.h"
 #include "HTTP/HttpAsync.h"
 #include "HTTP/HttpProtocol.h"
 #include "HTTPServer/HttpServerDispatcher.h"

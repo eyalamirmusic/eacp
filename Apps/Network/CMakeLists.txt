@@ -10,3 +10,8 @@ add_subdirectory(WebSocketDemo)
 if (NOT IOS)
     add_subdirectory(HttpRpcDemo)
 endif ()
+
+# Draws its state through the platform's own 2D tier, which Linux has none of.
+if (EACP_HAS_CONTEXT)
+    add_subdirectory(ConnectivityDemo)
+endif ()

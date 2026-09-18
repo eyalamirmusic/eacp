@@ -1,4 +1,5 @@
 set(network_test_sources
+        ConnectivityTests.cpp
         HttpAsyncTests.cpp
         HttpDownloadProgressTests.cpp
         HttpJsonTests.cpp
