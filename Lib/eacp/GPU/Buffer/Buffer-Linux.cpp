@@ -1,219 +1,25 @@
 #include "Buffer.h"
 
 #include "../Device/Device.h"
-#include "../Vulkan/VulkanTypes.h"
+#include "../Linux/GPUBackend-Linux.h"
 
-#include <cstring>
 #include <unistd.h>
 
 namespace eacp::GPU
 {
-namespace
-{
-// Vulkan refuses a buffer bound any way it was not created for, and nothing
-// above this layer promises a Vertex buffer is never read by a kernel.
-constexpr VkBufferUsageFlags vulkanBufferUsage =
-    VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-    | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT
-    | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-} // namespace
-
 struct Buffer::Native
 {
     Native(Device& device,
            const void* data,
-           std::int64_t byteCount,
+           std::int64_t bytes,
            BufferUsage usage,
            BufferStorage storage)
-        : context(getVulkanContext(device))
-        , owner(&device)
+        : backend(getDeviceBackend(device)
+                      .makeBuffer(device, data, bytes, usage, storage))
     {
-        const auto bytes = (std::size_t) (byteCount > 0 ? byteCount : 0);
-
-        bufferData.size = bytes;
-
-        if (!context.isValid() || bytes == 0)
-            return;
-
-        // A Storage buffer keeps device storage whatever was asked for.
-        if (storage == BufferStorage::Streaming && usage != BufferUsage::Storage)
-            if (mapStreamingStorage(data, bytes))
-                return;
-
-        if (!makeDeviceBuffer(bytes))
-            return;
-
-        // Initial data that never arrived leaves the buffer invalid.
-        if (data != nullptr && !stage(data, bytes))
-            release();
     }
 
-    // Deferred, a recording still naming the old handle.
-    ~Native() { release(); }
-
-    void release()
-    {
-        context.deferReleaseBuffer(bufferData.buffer, bufferData.allocation);
-
-        bufferData.buffer = VK_NULL_HANDLE;
-        bufferData.allocation = nullptr;
-        bufferData.mapped = nullptr;
-    }
-
-    bool makeDeviceBuffer(std::size_t bytes)
-    {
-        VkBufferCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        info.size = bytes;
-        info.usage = vulkanBufferUsage;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        // No host-access flag, which is what puts this in device memory.
-        VmaAllocationCreateInfo allocationInfo = {};
-        allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
-
-        return vmaCreateBuffer(context.getAllocator(),
-                               &info,
-                               &allocationInfo,
-                               &bufferData.buffer,
-                               &bufferData.allocation,
-                               nullptr)
-               == VK_SUCCESS;
-    }
-
-    // False leaves the caller to fall through to the device path.
-    bool mapStreamingStorage(const void* data, std::size_t bytes)
-    {
-        VkBufferCreateInfo info = {};
-        info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        info.size = bytes;
-        info.usage = vulkanBufferUsage;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        VmaAllocationCreateInfo allocationInfo = {};
-        allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
-        allocationInfo.flags =
-            VMA_ALLOCATION_CREATE_MAPPED_BIT
-            | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-        allocationInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                                       | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-        VmaAllocationInfo result = {};
-
-        if (vmaCreateBuffer(context.getAllocator(),
-                            &info,
-                            &allocationInfo,
-                            &bufferData.buffer,
-                            &bufferData.allocation,
-                            &result)
-            != VK_SUCCESS)
-            return false;
-
-        bufferData.mapped = static_cast<std::byte*>(result.pMappedData);
-
-        if (bufferData.mapped == nullptr)
-        {
-            release();
-            return false;
-        }
-
-        if (data != nullptr)
-            std::memcpy(bufferData.mapped, data, bytes);
-
-        return true;
-    }
-
-    // Recorded onto whatever recording is open, so the copy lands ahead of the
-    // dispatch that wanted the bytes. A render pass gets a recording of its own.
-    bool stage(const void* data, std::size_t bytes, std::size_t destination = 0)
-    {
-        if (bufferData.buffer == VK_NULL_HANDLE)
-            return false;
-
-        auto* commands = context.getRecordingForCopy();
-        const auto ownsRecording = commands == nullptr;
-
-        if (ownsRecording)
-            commands = context.acquire();
-
-        if (commands == nullptr)
-            return false;
-
-        const auto copied = copyInto(*commands, data, bytes, destination);
-
-        if (!ownsRecording)
-            return copied;
-
-        if (copied)
-            context.submit(commands);
-        else
-            context.discard(commands);
-
-        return copied;
-    }
-
-    bool copyInto(CommandContext& commands,
-                  const void* data,
-                  std::size_t bytes,
-                  std::size_t destination)
-    {
-        auto source = context.allocateUpload(commands, bytes);
-
-        if (!source.isValid())
-            return false;
-
-        std::memcpy(source.mapped, data, bytes);
-
-        transitionForUse(commands, bufferData, bufferTransferWrite);
-
-        VkBufferCopy region = {};
-        region.srcOffset = source.offset;
-        region.dstOffset = static_cast<VkDeviceSize>(destination);
-        region.size = static_cast<VkDeviceSize>(bytes);
-
-        vkCmdCopyBuffer(
-            commands.buffer, source.buffer, bufferData.buffer, 1, &region);
-
-        return true;
-    }
-
-    // The copy both update paths end in, so that each of them asserts the
-    // owning thread once rather than once on the way through the other.
-    void write(const void* data, std::int64_t byteCount, std::int64_t byteOffset)
-    {
-        if (bufferData.buffer == VK_NULL_HANDLE || data == nullptr || byteCount <= 0
-            || byteOffset < 0 || (std::size_t) byteOffset >= bufferData.size)
-            return;
-
-        if (!context.isValid())
-            return;
-
-        const auto offset = (std::size_t) byteOffset;
-        const auto bytes = (std::size_t) byteCount;
-
-        const auto available = bufferData.size - offset;
-        const auto count = bytes < available ? bytes : available;
-
-        // Unordered against everything already recorded: not writing bytes an
-        // in-flight frame reads is the caller's contract under Streaming.
-        if (bufferData.mapped != nullptr)
-        {
-            std::memcpy(bufferData.mapped + offset, data, count);
-            return;
-        }
-
-        stage(data, count, offset);
-    }
-
-    // A buffer never moves between Devices.
-    VulkanContext& context;
-
-    // The Device beside it, for the thread rule alone - see
-    // Device::assertOwningThread.
-    Device* owner = nullptr;
-
-    // Mutable because the use tracking advances inside the const read().
-    mutable VulkanBufferData bufferData;
+    std::unique_ptr<BufferBackend> backend;
 };
 
 Buffer::Buffer(Device& device,
@@ -228,11 +34,12 @@ Buffer::Buffer(Device& device,
         device.noteBufferCreated();
 }
 
-// Vulkan can import host memory, but only where VK_EXT_external_memory_host is
-// present and only in whole allocations of the device's own granularity, which
-// is not something an API this shape can promise. So the memory is copied into
-// a buffer of our own, the copy is taken by the constructor this delegates to,
-// and the release runs the moment it returns - see ExternalMemory.
+// Neither Linux backend can import host memory - Vulkan only where
+// VK_EXT_external_memory_host is present and only in whole allocations of the
+// device's own granularity, which is not something an API this shape can
+// promise. So the memory is copied into a buffer of our own, the copy is taken
+// by the constructor this delegates to, and the release runs the moment it
+// returns - see ExternalMemory.
 //
 // A descriptor off the page grid is refused here as it is on Metal, so that a
 // call site written against this backend is one Metal will also take.
@@ -257,111 +64,45 @@ std::int64_t Buffer::memoryPageSize()
 
 std::int64_t Buffer::size() const
 {
-    return (std::int64_t) impl->bufferData.size;
+    return impl->backend->size();
 }
 
 bool Buffer::isValid() const
 {
-    return impl->bufferData.buffer != VK_NULL_HANDLE;
+    return impl->backend->isValid();
 }
 
 void Buffer::read(void* dst, std::int64_t byteCount, std::int64_t byteOffset) const
 {
-    if (impl->owner != nullptr)
-        impl->owner->assertOwningThread();
-
-    if (impl->bufferData.buffer == VK_NULL_HANDLE || byteCount <= 0 || byteOffset < 0
-        || (std::size_t) byteOffset >= impl->bufferData.size)
-        return;
-
-    const auto offset = (std::size_t) byteOffset;
-    const auto bytes = (std::size_t) byteCount;
-
-    const auto available = impl->bufferData.size - offset;
-    const auto count = bytes < available ? bytes : available;
-
-    // Nothing on the GPU writes host storage, so there is nothing to wait for.
-    if (impl->bufferData.mapped != nullptr)
-    {
-        std::memcpy(dst, impl->bufferData.mapped + offset, count);
-        return;
-    }
-
-    auto& context = impl->context;
-    auto* commands = context.acquire();
-
-    if (commands == nullptr)
-        return;
-
-    std::byte* mapped = nullptr;
-    auto staging = context.acquireReadbackBuffer(*commands, count, mapped);
-
-    if (staging == VK_NULL_HANDLE || mapped == nullptr)
-    {
-        context.discard(commands);
-        return;
-    }
-
-    // Use tracking is per recording, and this one lives beside whatever is open:
-    // stamping it would cost that one a barrier it may still owe.
-    const auto trackedRecording = impl->bufferData.recordingId;
-    const auto trackedUse = impl->bufferData.use;
-
-    transitionForUse(*commands, impl->bufferData, bufferTransferRead);
-
-    VkBufferCopy region = {};
-    region.srcOffset = static_cast<VkDeviceSize>(offset);
-    region.size = static_cast<VkDeviceSize>(count);
-
-    vkCmdCopyBuffer(commands->buffer, impl->bufferData.buffer, staging, 1, &region);
-
-    context.waitFor(context.submit(commands));
-
-    impl->bufferData.recordingId = trackedRecording;
-    impl->bufferData.use = trackedUse;
-
-    std::memcpy(dst, mapped, count);
+    impl->backend->read(dst, byteCount, byteOffset);
 }
 
 void Buffer::update(const void* data,
                     std::int64_t byteCount,
                     std::int64_t byteOffset)
 {
-    if (impl->owner != nullptr)
-        impl->owner->assertOwningThread();
-
-    // Only the host-mapped shape needs the wait. A device-storage write below
-    // is a vkCmdCopyBuffer recorded into the command stream, and the stream is
-    // already the ordering - see the rule on Buffer::update.
-    if (impl->bufferData.mapped != nullptr && impl->context.isValid())
-        impl->context.waitFor(impl->context.lastSubmitted());
-
-    impl->write(data, byteCount, byteOffset);
+    impl->backend->update(data, byteCount, byteOffset);
 }
 
 void Buffer::updateUnordered(const void* data,
                              std::int64_t byteCount,
                              std::int64_t byteOffset)
 {
-    if (impl->owner != nullptr)
-        impl->owner->assertOwningThread();
-
-    impl->write(data, byteCount, byteOffset);
+    impl->backend->updateUnordered(data, byteCount, byteOffset);
 }
 
 void* Buffer::nativeBuffer() const
 {
-    return &impl->bufferData;
+    return impl->backend->nativeBuffer();
 }
 
-// One std430 block whichever way the kernel uses it.
 void* Buffer::nativeReadView() const
 {
-    return &impl->bufferData;
+    return impl->backend->nativeReadView();
 }
 
 void* Buffer::nativeWriteView() const
 {
-    return &impl->bufferData;
+    return impl->backend->nativeWriteView();
 }
 } // namespace eacp::GPU

@@ -20,9 +20,10 @@ add_library(eacp-spirv STATIC)
 
 target_sources(eacp-spirv PRIVATE SpirvCompiler.cpp)
 
-# eacp-core, not eacp-gpu: the wrapper is portable C++ over glslang and builds
-# on a tree with no graphics backend at all.
-target_link_libraries(eacp-spirv PUBLIC eacp-core)
+# eacp-gpu-codegen, not eacp-gpu: the wrapper is portable C++ over glslang -
+# pulling in eacp-core and the GlslTarget a lowered source is validated for -
+# and builds on a tree with no graphics backend at all.
+target_link_libraries(eacp-spirv PUBLIC eacp-gpu-codegen)
 
 # PRIVATE so glslang stops here.
 target_link_libraries(eacp-spirv PRIVATE eacp-glslang)

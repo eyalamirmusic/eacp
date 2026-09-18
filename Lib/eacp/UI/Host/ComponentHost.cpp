@@ -346,15 +346,24 @@ void ComponentHost::markAllPathsDirty(Component& component)
         markAllPathsDirty(*child);
 }
 
+bool ComponentHost::hasCoverageKernels()
+{
+    if (!coverageKernels.has_value())
+        coverageKernels = GPU::Device::shared().supportsCompute();
+
+    return *coverageKernels;
+}
+
 void ComponentHost::rasterizeDirtyPaths(Component& component,
                                         GPUWidgets::CoverageBatch& batch,
-                                        PathWalk& walk)
+                                        PathWalk& walk,
+                                        bool meshOnly)
 {
     for (auto* shape: component.getPathShapes())
     {
         if (shape->isDirty())
         {
-            shape->rasterize(*paths, masks, backingScale(), batch);
+            shape->rasterize(*paths, masks, backingScale(), batch, meshOnly);
 
             // Growing or compacting the atlas relocates every slot already
             // handed out, so everything rasterized before this one now points
@@ -380,7 +389,7 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
     }
 
     for (auto* child: component.getChildren())
-        rasterizeDirtyPaths(*child, batch, walk);
+        rasterizeDirtyPaths(*child, batch, walk, meshOnly);
 }
 
 // Every layer whose content changed, each rendered into its own texture on this
@@ -511,6 +520,10 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
 
     auto generationBefore = paths->generation();
 
+    // No coverage kernel on this device: every shape is triangles, nothing is
+    // gathered into the batch and no compute pass is begun at all.
+    const auto meshOnly = !hasCoverageKernels();
+
     auto walk = PathWalk {};
 
     // Twice at most. The first pass may move the atlas under what it has already
@@ -535,7 +548,7 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         // away, where recording a dispatch per shape meant every one of them had
         // already been issued against a layout that no longer held.
         pathBatch.begin(paths->getTexture());
-        rasterizeDirtyPaths(*root, pathBatch, walk);
+        rasterizeDirtyPaths(*root, pathBatch, walk, meshOnly);
 
         if (!walk.atlasMoved)
             break;
@@ -554,7 +567,10 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         masks.clear();
     }
 
-    if (!pathBatch.isEmpty())
+    // A meshed walk gathers nothing, and a device with no kernels has no
+    // encoder to give: the emptiness is the guard, and the check beside it says
+    // so rather than leaving it to be rediscovered.
+    if (!meshOnly && !pathBatch.isEmpty())
     {
         auto compute = frame.beginCompute();
         pathBatch.dispatch(compute);

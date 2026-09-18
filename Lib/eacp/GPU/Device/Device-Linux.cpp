@@ -1,14 +1,19 @@
 #include "Device.h"
 
-#include "../Vulkan/VulkanContext.h"
+#include "../Linux/LinuxGPUBackend-Linux.h"
+
+#include <eacp/Core/Utils/Environment.h>
 
 namespace eacp::GPU
 {
 struct Device::Native
 {
-    // Mutable because the accessors that reach it are const, and a const Device
-    // still submits.
-    mutable VulkanContext context;
+    Native()
+        : backend(makeDeviceBackend())
+    {
+    }
+
+    std::unique_ptr<DeviceBackend> backend;
 };
 
 Device::Device()
@@ -23,119 +28,98 @@ Device& Device::shared()
     // Belongs to the main thread whichever thread asked for it first.
     [[maybe_unused]] static const auto boundToMainThread =
         (instance.followMainThread(),
-         instance.impl->context.followMainThread(),
+         instance.impl->backend->followMainThread(),
          true);
 
     return instance;
 }
 
-VulkanContext& getVulkanContext(const Device& device)
+DeviceBackend& getDeviceBackend(const Device& device)
 {
-    return *static_cast<VulkanContext*>(device.nativeContext());
+    return *static_cast<DeviceBackend*>(device.nativeContext());
+}
+
+std::string Device::backendName() const
+{
+    return impl->backend->backendName();
 }
 
 bool Device::isValid() const
 {
-    return impl->context.isValid();
+    return impl->backend->isValid();
 }
 
 std::string Device::name() const
 {
-    if (!isValid())
-        return "no Vulkan device";
-
-    return getVulkanShared().getAdapterName();
+    return impl->backend->name();
 }
 
-// The intersection of the three masks a pass touches.
-bool Device::supportsSampleCount(int count) const
+// EACP_GPU_NO_COMPUTE=1 takes the answer away on a device that has it, so the
+// routes an interface takes without a compute tier stay reachable in a test on
+// a device that would otherwise never take them.
+bool Device::supportsCompute() const
 {
-    if (count <= 1)
-        return true;
-
-    if (!isValid() || count > 64 || (count & (count - 1)) != 0)
+    if (getEnvValue("EACP_GPU_NO_COMPUTE") == "1")
         return false;
 
-    const auto& limits = getVulkanShared().getProperties().limits;
-    const auto bit = static_cast<VkSampleCountFlags>(count);
-
-    return (limits.framebufferColorSampleCounts & bit) != 0
-           && (limits.framebufferDepthSampleCounts & bit) != 0
-           && (limits.sampledImageColorSampleCounts & bit) != 0;
+    return impl->backend->supportsCompute();
 }
 
-// BC support is optional in Vulkan.
+bool Device::supportsSampleCount(int count) const
+{
+    return impl->backend->supportsSampleCount(count);
+}
+
 bool Device::supportsBlockCompression() const
 {
-    return isValid()
-           && getVulkanShared().getFeatures().textureCompressionBC == VK_TRUE;
+    return impl->backend->supportsBlockCompression();
 }
 
-// The one range rule that is a device property rather than a constant: a
-// descriptor may name no offset off minStorageBufferOffsetAlignment.
 int Device::storageBufferOffsetAlignment() const
 {
-    if (!isValid())
-        return 4;
-
-    const auto alignment =
-        getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
-
-    return alignment > 0 ? (int) alignment : 4;
+    return impl->backend->storageBufferOffsetAlignment();
 }
 
 int Device::maxThreadgroupMemory() const
 {
-    if (!isValid())
-        return 0;
-
-    return (int) getVulkanShared().getProperties().limits.maxComputeSharedMemorySize;
+    return impl->backend->maxThreadgroupMemory();
 }
 
-// No, and not because of the hardware: eacp emits GLSL 450 with no
-// cooperative-matrix extension, so a fragment here is the two-floats-per-lane
-// emulation whatever the driver could have done. The packed loads work on it -
-// each lane unpacks the pair it holds - and are simply not faster, so there is
-// nothing for a kernel to restructure itself around.
 bool Device::supportsHalfSimdMatrix() const
 {
-    return false;
+    return impl->backend->supportsHalfSimdMatrix();
 }
 
 bool Device::supportsBFloat16SimdMatrix() const
 {
-    return false;
+    return impl->backend->supportsBFloat16SimdMatrix();
 }
 
+// The backend itself, which is what getDeviceBackend hands every object this
+// Device makes. Its own per-Device state is one virtual call further in.
 void* Device::nativeContext() const
 {
-    return &impl->context;
+    return impl->backend.get();
 }
 
 void* Device::nativeDevice() const
 {
-    return getVulkanShared().getDevice();
+    return impl->backend->nativeDevice();
 }
 
 void* Device::nativeQueue() const
 {
-    return getVulkanShared().getQueue();
+    return impl->backend->nativeQueue();
 }
 
 void* Device::nativeTextureCache() const
 {
-    // No zero-copy pixel-buffer path on Linux.
-    return nullptr;
+    return impl->backend->nativeTextureCache();
 }
 
-// For callers outside the backend: the bind sites take the sampler straight off
-// VulkanShared.
 void* Device::nativeSampler(TextureSampling sampling) const
 {
-    if (!isValid())
-        return nullptr;
-
-    return getVulkanShared().getSampler(sampling);
+    return impl->backend->nativeSampler(sampling);
 }
 
 void Device::trackSubmittedWork(void*)
@@ -145,6 +129,6 @@ void Device::trackSubmittedWork(void*)
 
 void Device::waitForSubmittedWork()
 {
-    impl->context.waitIdle();
+    impl->backend->waitForSubmittedWork();
 }
 } // namespace eacp::GPU

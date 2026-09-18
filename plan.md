@@ -9,8 +9,8 @@ estimates, not commitments.
 
 | Stage | State | Notes |
 | --- | --- | --- |
-| 0 — runtime backend seam | pending | |
-| 1 — GLSL lowering | pending | |
+| 0 — runtime backend seam | done | Landed against `1c465650`. Headless (`EACP_HEADLESS=1 EACP_VK_SOFTWARE=1 EACP_REQUIRE_GPU=1`): `GPUTests` 490 -> 491, `GPUWidgetsTests` 57, `UITests` 183 -> 184; 720 -> 722 cases, all passing. Under `with-weston`, the same 722 and the 10 `Present/` cases; under `with-xvfb`, the same 10 `Present/` cases. The two new ones are `GPU/computeIsSupportedAndCanBeTakenAway` and `ComponentHost/aHostWithoutComputeMeshesEveryPath`. |
+| 1 — GLSL lowering | done | Landed beside stage 0. `Codegen/GlslLowering.{h,cpp}` and `Spirv::validateGlsl`; `GlslLoweringTests` 13 cases in `GPUCodegenTests` (104 -> 117), and every source the suite compiles for Vulkan is now lowered and validated for the four targets as well. No device involved. |
 | 2 — GL render, headless | pending | |
 | 3 — GL present | pending | |
 | 4 — selection and the dev VM | pending | |
@@ -157,6 +157,32 @@ that backend's files, exactly as today. `Pimpl<T>` gains a constructor from
 `std::shared_ptr<T>` (or the Linux `Native` structs hold the pointer
 themselves; either way `Core/Utils/Pimpl.h` is touched at most once).
 
+*As built.* The second of those: every Linux `X::Native` is
+`std::unique_ptr<XBackend> backend` and `Core/Utils/Pimpl.h` is untouched.
+Four more things the sketch did not say:
+
+- A `Device`'s backend is reached through `getDeviceBackend(device)`
+  (`GPUBackend-Linux.h`), which is `Device::nativeContext()` cast: on Linux
+  that handle is now the `DeviceBackend` itself and the backend's own
+  per-Device state is one virtual further in
+  (`DeviceBackend::nativeContext()`, which is what `getVulkanContext` reads).
+  So no new accessor on `Device.h`.
+- The per-class Vulkan factories (`makeVulkanBuffer` and the rest) are
+  declared in a header of their own, `GPU/Vulkan/VulkanBackend-Linux.h`, so no
+  `-Vulkan.cpp` includes another.
+- A pass is made by whatever opened the recording rather than by the Device:
+  `FrameBackend::beginPass` and `CommandBufferBackend::beginCompute` return
+  the pass backend, and the `void*` the public `RenderPass`/`ComputePass`
+  constructor takes is that pointer, adopted. `ComputePassBackend::dispatch`
+  is one call taking the three extents and the group, since the public
+  overloads differ only in what they clamp; `setPipeline` answers whether it
+  bound, which is what the portable half drops a dispatch under.
+  `RenderPassBackend` has one `setStorageBuffer` and one `setBytes` for the
+  vertex and fragment pairs, which is what the backend already did.
+- `Buffer::canAdoptMemory` and `Buffer::memoryPageSize` stay in the forwarder:
+  they are the platform's answer rather than a backend's, and no Linux backend
+  adopts host memory.
+
 The virtual call per public method is noise against the API call behind it.
 Metal and D3D12 are untouched: their `Native` structs stay concrete, and the
 interface header is compiled on Linux only.
@@ -168,6 +194,12 @@ pacing — `startContinuous`, `tickIsDue`, `setMaxFps`'s divider, the
 and it stays there. What moves behind `GPUViewBackend` is
 `createSurface`/`destroySurface`, the swapchain and its companions,
 `renderOneFrame` and `handlePresentResult`.
+
+*As built.* The backend is made in `GPUView::Native`'s constructor from
+`Device::shared()`, so constructing a `GPUView` is now what brings the shared
+device up rather than the first frame that needs companions. `noteDeviceLost`
+reports through a `GPUViewBackend::onDeviceLost` callback the pacing half sets
+to `stopContinuous`, since stopping the tick is the pacing half's business.
 
 **D2 — One `Device`, one context, one thread.** The GL `DeviceBackend` owns
 one `EGLDisplay` (process-wide, refcounted, like `VulkanShared`), one
@@ -227,6 +259,43 @@ emitter change that leaks a Vulkan-only construct, fails on every Linux
 lane with no GL device at all — the same guarantee the Vulkan dialect has
 today. `ShaderBackend::Vulkan` is left as the tag for "eacp's GLSL"; the GL
 `ShaderLibraryBackend` accepts it and lowers.
+
+*As built (stage 1).* The pass is line-based text in and text out, and it
+answers with more than the source. It also **defines the stage macro**
+(`#define EACP_VERTEX 1` / `EACP_FRAGMENT`) under the rewritten `#version`,
+because a render source is two stages behind one pair of `#ifdef`s and what a
+GL `glShaderSource` takes is one: the result is a standalone single-stage
+source, compiled with no preamble. It **records every binding** in
+`LoweredGlsl::bindings` whatever the target let the `layout()` keep, since D4
+binds by name after linking anyway, and a complete list costs nothing.
+Failure is two things, not one: `error` alone is a source the pass does not
+recognise (a push constant, `gl_VertexIndex`, a `subgroup*` call, an
+`#extension`, a `#version` that is not 450, a vertex stage that does not spell
+its entry `void main()`), while `needsNewerTarget` beside it is a source the
+*target* is too old for — a kernel or a storage buffer below core 430 / ES 310,
+an image below core 420 / ES 310, `packHalf2x16` below core 420 — which is
+"this device cannot run this shader", and the four-target test check skips
+rather than fails on it. Two rewrites beyond the rules above turned out to be
+needed, both found by glslang and both unavoidable on the floor: ES declares no
+default precision for an image, so a source declaring one gets
+`precision highp image2D;` beside the two the rules name; and a brace
+initializer is core 420 and has never been ES, so the emitter's
+`vec3 a0[4] = {...}` becomes the constructor form `vec3 a0[4] = vec3[4](...)`
+every version reads.
+
+The validation is `Spirv::validateGlsl(stage, source, target)` — its own entry
+point returning a `ValidationResult` rather than an overload of `compileGlsl`,
+because OpenGL compiles GLSL in the driver and there is no SPIR-V to hand back
+— and it runs glslang's **plain GLSL front end** at the target's version and
+profile, not `EShClientOpenGL`. That client means "GLSL compiled to SPIR-V for
+GL" (`ARB_gl_spirv`), whose extra rules include a location on every default
+uniform, which would reject D7's own `eacpClipYSign`. `eacp-spirv` links
+`eacp-gpu-codegen` for the `GlslTarget`, and `Spirv/` is added after that
+target in `GPU/CMakeLists.txt`. The four-target check sits in
+`Tests/GPU/CodegenCommon.h`'s `expectStageCompiles`, so one place covers the
+emitted sources of `GPUCodegenTests`, the hand-written twins of `GPUTests` and
+`UITests`' module shaders; it also fails a source no target carried at all, so
+a pass that refused everything could not pass as green.
 
 **D4 — One GL backend for every version, capabilities not versions.** The
 GL backend is one set of `-GL.cpp` files. `GPU/OpenGL/GLCapabilities.h` is
@@ -312,6 +381,13 @@ the top row, so `Texture::read` and `renderNativeContent` need no flip of
 their own. This is the same trick SPIRV-Cross and ANGLE use; the wrapper is
 the *only* thing the lowering injects.
 
+*As built (stage 1).* The wrapper is the only *code* injected; the lines the
+lowering adds beside it are the stage macro and the ES precision declarations
+(D3, as built). A vertex lowering renames every `void main()` in the text,
+including the fragment half's — that half is behind the macro this source does
+not define, so it never reaches the compiler — and a vertex source with no
+`void main()` at all is refused.
+
 **D8 — Which backend a `Device` gets.** `EACP_GPU_BACKEND=vulkan|gl|auto`
 (default `auto`), read once, in `GPU/Linux/LinuxGPUBackend-Linux.cpp`,
 beside the window system's `EACP_WINDOW_SYSTEM` and answering the same
@@ -323,6 +399,12 @@ name); else Vulkan, because llvmpipe has the fuller feature set and is the
 test baseline. `EACP_VK_SOFTWARE` keeps its meaning inside the Vulkan
 choice. `Device::isValid()` stays the one thing tests read, and
 `DevicePresenceTests` prints the backend beside the device name.
+
+*As built (stage 0).* `EACP_GPU_BACKEND` is read once into
+`getRequestedGPUBackend()`; `gl` and `composite` log once that no such backend
+is built and fall through to Vulkan, and `auto` is Vulkan. The name printed
+comes from a new `Device::backendName()`, implemented on all three backends
+("Metal", "D3D12", and the `DeviceBackend`'s own name on Linux).
 
 **D9 — Compute on GL is a tier, not a fork.** When `computeShaders` is set
 (GL 4.3, ES 3.1) the GL backend makes real `ComputePipelineBackend` and
@@ -345,6 +427,19 @@ This lands in stage 0, before any GL code, because it is what makes a
 device with no compute a device the UI runs on, and it is testable on
 lavapipe by forcing it (`EACP_GPU_NO_COMPUTE=1`, a test-only override read
 by the same query).
+
+*As built.* `ComponentHost` asks once, on the first frame that rasterizes a
+path rather than in its constructor (asking is what makes the `Device`), and
+passes the answer down as a `meshOnly` flag to `PathShape::rasterize` rather
+than writing `Backing::Mesh` into every shape: the flag overrides a
+`Backing::Mask` the widget asked for, drops the `Automatic` size threshold so
+the smallest shape is meshed too, and **drops** a shape the triangulator
+cannot read - counted by `wasDropped()`, drawn as nothing - because there is
+no mask route left to fall back on. The compute pass is then not begun at all,
+which the gathered batch being empty would have achieved on its own; the check
+beside it says so rather than leaving it to be rediscovered. The override is
+read on every call, like `EACP_NO_PACKED_SIMD_MATRIX` beside it, so a test can
+take the tier away and give it back.
 
 **D11 — The composite device: GL render, Vulkan compute.** On a machine
 whose GL has no compute and whose Vulkan is a CPU one — this VM — the UI
@@ -393,18 +488,21 @@ Renamed or split (pure refactor, every suite stays green — stage 0):
 - `GPU/Vulkan/VulkanContext-Linux.cpp` and the two headers: unchanged but
   for the `DeviceBackend` implementation that constructs a `VulkanContext`.
 - `Core/Utils/Pimpl.h`: a constructor taking a ready `std::shared_ptr<T>`.
+  *As built: untouched — each Linux `Native` holds the `unique_ptr` itself.*
 - `UI/Host/ComponentHost.cpp`, `UI/Render/PathShape.{h,cpp}`: the
   no-compute route (D10).
 
 New:
 
-- `GPU/Linux/GPUBackend-Linux.h`: the twelve abstract backends (D1).
+- `GPU/Linux/GPUBackend-Linux.h`: the twelve abstract backends (D1), and
+  `GPU/Vulkan/VulkanBackend-Linux.h` beside it, the Vulkan factory per class.
 - `GPU/Linux/LinuxGPUBackend-Linux.{h,cpp}`: `EACP_GPU_BACKEND`, the `auto`
   rule, `makeDeviceBackend()` (D8).
 - `GPU/Codegen/GlslLowering.{h,cpp}`: `GlslTarget`, `lowerGlsl` (D3, D7).
   Portable, in `eacp-gpu-codegen`, built and tested on every platform.
-- `GPU/Spirv/SpirvCompiler.{h,cpp}`: `compileGlsl` gains a `GlslTarget`
-  overload that validates for the OpenGL client / ES profile.
+- `GPU/Spirv/SpirvCompiler.{h,cpp}`: `validateGlsl`, a lowered source against
+  a `GlslTarget` (as built: its own entry point, and the plain GLSL front end
+  rather than the OpenGL client — D3 as built).
 - `CMake/FindGLBackend.cmake` → `eacp-gl`; `ThirdParty/glad/` with its
   README naming the generator command and the extension list (D5).
 - `GPU/OpenGL/GLContext-Linux.{h,cpp}`: the EGL display, the context per
@@ -423,7 +521,8 @@ New:
   `CLAUDE.md` and `README.md`: the backend list and the selection rule.
 
 Unchanged: every public header in `GPU/` but `Device.h`
-(`supportsCompute`, `uniformBufferOffsetAlignment`, the crossing counters),
+(`supportsCompute` and `backendName` in stage 0;
+`uniformBufferOffsetAlignment` and the crossing counters later),
 the emitter, the Metal and D3D12 backends, the window-system code — the GL
 backend consumes the same `NativeSurfaceHandle` and `ViewSurface` hooks the
 Vulkan one does.

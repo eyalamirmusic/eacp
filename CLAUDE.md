@@ -437,9 +437,16 @@ now takes both paths at once, since it is an eacp app as well: the plugin
 attaches through the bridge and the host registers the same fd through the C
 ABI, and `addLoopSource` keeps whichever came last.
 
-Under both is the Vulkan backend (`GPU/Vulkan/`): everything from `Device` to
+Under both is the Vulkan backend (`GPU/Vulkan/`), reached through a runtime
+seam Linux alone has: each class's `-Linux.cpp` is a one-line-per-method
+forwarder onto an abstract backend struct (`GPU/Linux/GPUBackend-Linux.h`),
+the Vulkan bodies sit in a `-Vulkan.cpp` beside each forwarder, and
+`GPU/Linux/LinuxGPUBackend-Linux.cpp` reads `EACP_GPU_BACKEND`
+(`vulkan|gl|auto`) once to decide which backend makes a `Device` — only Vulkan
+is built today, so anything else logs that and falls through to it, and
+`Device::backendName()` is what a copy reports. Everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
-`GPUView-Linux.cpp` owns the swapchain over the view's subsurface or child
+`GPUView-Vulkan.cpp` owns the swapchain over the view's subsurface or child
 window (`eacp-vulkan` defines `VK_USE_PLATFORM_WAYLAND_KHR` and
 `VK_USE_PLATFORM_XCB_KHR`, and the instance enables `VK_KHR_wayland_surface`
 and `VK_KHR_xcb_surface` each when the driver offers it, so one binary presents
@@ -449,7 +456,9 @@ on resize and `OUT_OF_DATE`; continuous mode paced by whatever answered
 `setMaxFps` skipping early ticks rather than running a timer), every pipeline
 built through one `VkPipelineCache` persisted under `$XDG_CACHE_HOME/eacp/`,
 with the off-screen `renderNativeContent` path
-unchanged beside it. The GPU module knows the window system only as the
+unchanged beside it — that path and the pacing around it, the `ViewSurface`
+hooks and the continuous tick with its `setMaxFps` divider, are what stays in
+`GPUView-Linux.cpp`. The GPU module knows the window system only as the
 `NativeSurfaceHandle` it branches on in `createSurface()` and neither links
 nor includes it. Under `EACP_HEADLESS=1`, with neither `WAYLAND_DISPLAY` nor
 `DISPLAY` to reach, or when the preferred backend cannot connect, a window is

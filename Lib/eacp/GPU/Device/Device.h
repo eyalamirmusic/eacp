@@ -155,6 +155,32 @@ public:
     // nothing, so a caller can print it either way.
     std::string name() const;
 
+    // Which backend this Device runs on — "Metal", "D3D12", "Vulkan" — beside
+    // the name above, which says what it opened rather than what it opened it
+    // with. One backend per platform everywhere but Linux, where Vulkan and
+    // OpenGL are both built and the choice is made at runtime, so a log line or
+    // a benchmark header that already prints the device has the other half of
+    // what produced a number.
+    std::string backendName() const;
+
+    // Whether kernels run on this device at all: whether ComputePass,
+    // ComputePipeline and everything the EDSL builds out of them work.
+    //
+    // True on Metal, D3D12 and Vulkan, which is every backend that has a
+    // compute tier at all. It is a question worth asking because one backend
+    // does not: OpenGL before 4.3 (ES before 3.1) has no compute stage, and an
+    // interface on such a device takes the triangle route for its vector shapes
+    // rather than the coverage kernel - see UI::ComponentHost, which reads this
+    // once and decides for every PathShape under it.
+    //
+    // A caller that has a choice makes it before it records anything: a
+    // beginCompute on a device that answers false has no encoder to give.
+    //
+    // EACP_GPU_NO_COMPUTE=1 takes the answer away on a device that has it, so
+    // the no-compute routes stay reachable in a test on hardware that would
+    // otherwise never take them.
+    bool supportsCompute() const;
+
     // Whether a render target of this many samples can be created on this
     // device - TextureDescriptor::sampleCount, and the drawable's
     // GPUView::setSampleCount.

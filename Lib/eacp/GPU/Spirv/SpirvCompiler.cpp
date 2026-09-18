@@ -71,6 +71,11 @@ void initializeGlslang()
     std::call_once(once, [] { glslang::InitializeProcess(); });
 }
 
+EProfile toProfile(const GlslTarget& target)
+{
+    return target.isES() ? EEsProfile : ECoreProfile;
+}
+
 std::string warmUpSource()
 {
     return "#version 450\n"
@@ -130,6 +135,51 @@ CompileResult compileGlsl(Stage stage, const std::string& source)
 
     for (auto word: words)
         result.words.add(word);
+
+    return result;
+}
+
+ValidationResult
+    validateGlsl(Stage stage, const std::string& source, const GlslTarget& target)
+{
+    initializeGlslang();
+
+    auto result = ValidationResult {};
+
+    const auto language = toLanguage(stage);
+    auto shader = glslang::TShader {language};
+
+    const auto* text = source.c_str();
+    shader.setStrings(&text, 1);
+    shader.setEntryPoint("main");
+    shader.setEnvInput(glslang::EShSourceGlsl,
+                       language,
+                       glslang::EShClientNone,
+                       inputSemanticsVersion);
+
+    // The plain GLSL front end at the target's version and profile, which is
+    // what a driver compiles. glslang's OpenGL *client* means GLSL compiled to
+    // SPIR-V for GL (ARB_gl_spirv), whose extra rules - a location on every
+    // default uniform, so none on eacpClipYSign - are not GL's own.
+    //
+    // No preamble either: a lowered source carries its own stage macro.
+    const auto parsed = shader.parse(GetDefaultResources(),
+                                     target.version,
+                                     toProfile(target),
+                                     false,
+                                     false,
+                                     EShMsgDefault);
+
+    appendTo(result.log, shader.getInfoLog());
+
+    if (!parsed)
+        return result;
+
+    auto program = glslang::TProgram {};
+    program.addShader(&shader);
+
+    result.succeeded = program.link(EShMsgDefault);
+    appendTo(result.log, program.getInfoLog());
 
     return result;
 }

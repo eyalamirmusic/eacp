@@ -143,11 +143,11 @@ Rect PathShape::getBounds() const
 // A feather a device pixel wide, expressed in the path's own points: the widest
 // ramp that still reads as an edge rather than a blur, which is the same
 // judgement the distance-field shapes make.
-bool PathShape::buildMesh(float scale)
+bool PathShape::buildMesh(float scale, bool meshOnly)
 {
     auto pathBounds = path.getBounds();
 
-    if (backing == Backing::Automatic
+    if (!meshOnly && backing == Backing::Automatic
         && pathBounds.w * scale * pathBounds.h * scale < meshTexelThreshold)
         return false;
 
@@ -173,7 +173,8 @@ bool PathShape::buildMesh(float scale)
 void PathShape::rasterize(CoverageAtlas& atlas,
                           MaskCache& cache,
                           float scale,
-                          GPUWidgets::CoverageBatch& batch)
+                          GPUWidgets::CoverageBatch& batch,
+                          bool meshOnly)
 {
     dirty = false;
     ready = false;
@@ -186,8 +187,18 @@ void PathShape::rasterize(CoverageAtlas& atlas,
 
     // Tried first, and it takes no atlas slot at all when it works - which is
     // the whole point of it, the atlas being the thing a large shape exhausts.
-    if (backing != Backing::Mask && buildMesh(scale))
+    if ((backing != Backing::Mask || meshOnly) && buildMesh(scale, meshOnly))
         return;
+
+    // Without a coverage kernel there is nothing below this to fall back on: a
+    // shape the triangulator could not read is counted as dropped and draws as
+    // nothing, which is the same answer an atlas at its ceiling gives.
+    if (meshOnly)
+    {
+        dropped = true;
+        bounds = {};
+        return;
+    }
 
     // What this shape published is no longer what it draws, and the slot behind
     // that offer is the one it is about to rasterize into. Taken back while

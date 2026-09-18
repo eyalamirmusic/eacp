@@ -4,6 +4,8 @@
 
 #include "../Windows/D3D12Context.h"
 
+#include <eacp/Core/Utils/Environment.h>
+
 // Windows/D3D12 backend. A Device owns its D3D12Context — its command queue,
 // fence, command-list pool, staging and readback pools, constant ring and
 // descriptor heaps — and shares only the ID3D12Device and the root signatures
@@ -60,6 +62,18 @@ std::string Device::name() const
         return "no D3D12 device";
 
     return getD3D12Shared().getAdapterName();
+}
+
+std::string Device::backendName() const
+{
+    return "D3D12";
+}
+
+// Every Direct3D 12 device has the compute tier; the override is what makes
+// the routes a device without one takes reachable here.
+bool Device::supportsCompute() const
+{
+    return getEnvValue("EACP_GPU_NO_COMPUTE") != "1";
 }
 
 // D3D12 answers per format rather than per device, so this asks about the two

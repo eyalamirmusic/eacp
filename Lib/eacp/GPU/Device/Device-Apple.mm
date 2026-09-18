@@ -128,6 +128,18 @@ std::string Device::name() const
     return [[impl->device.get() name] UTF8String];
 }
 
+std::string Device::backendName() const
+{
+    return "Metal";
+}
+
+// Every Metal device eacp runs on has the compute tier; the override is what
+// makes the routes a device without one takes reachable here.
+bool Device::supportsCompute() const
+{
+    return getEnvValue("EACP_GPU_NO_COMPUTE") != "1";
+}
+
 // Metal answers this directly, and answers it for the *texture*: a count it
 // takes here is one a render attachment can be created at, which is the whole of
 // what a caller wants to know.

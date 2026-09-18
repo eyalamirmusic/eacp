@@ -1,5 +1,3 @@
-add_subdirectory(Spirv)
-
 # The shader codegen layer is pure portable C++ (string generation only), so it
 # is its own target and builds on every platform. eacp-gpu links it publicly.
 add_library(eacp-gpu-codegen STATIC)
@@ -13,6 +11,7 @@ target_compile_options(eacp-gpu-codegen PUBLIC
         $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
 
 target_sources(eacp-gpu-codegen PRIVATE
+        Codegen/GlslLowering.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderBuilder.cpp
         Codegen/ShaderEmitter.cpp
@@ -30,6 +29,10 @@ endif ()
 set_default_target_setting(eacp-gpu-codegen)
 eacp_enable_unity_build(eacp-gpu-codegen)
 add_ide_sources(eacp-gpu-codegen)
+
+# After the codegen target: the compiler validates a lowered source against a
+# GlslTarget, which is that library's own header.
+add_subdirectory(Spirv)
 
 if (NOT EACP_HAS_GPU)
     return ()
@@ -116,17 +119,30 @@ else ()
 
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Linux.cpp
+            Buffer/Buffer-Vulkan.cpp
             CommandBuffer/CommandBuffer-Linux.cpp
+            CommandBuffer/CommandBuffer-Vulkan.cpp
             Device/Device-Linux.cpp
+            Device/Device-Vulkan.cpp
             Frame/ComputePass-Linux.cpp
+            Frame/ComputePass-Vulkan.cpp
             Frame/Frame-Linux.cpp
+            Frame/Frame-Vulkan.cpp
             Frame/RenderPass-Linux.cpp
+            Frame/RenderPass-Vulkan.cpp
+            Linux/LinuxGPUBackend-Linux.cpp
             Pipeline/ComputePipeline-Linux.cpp
+            Pipeline/ComputePipeline-Vulkan.cpp
             Pipeline/RenderPipeline-Linux.cpp
+            Pipeline/RenderPipeline-Vulkan.cpp
             Shader/ShaderLibrary-Linux.cpp
+            Shader/ShaderLibrary-Vulkan.cpp
             Texture/Texture-Linux.cpp
+            Texture/Texture-Vulkan.cpp
             Timing/GpuTimestamps-Linux.cpp
+            Timing/GpuTimestamps-Vulkan.cpp
             View/GPUView-Linux.cpp
+            View/GPUView-Vulkan.cpp
             Vulkan/VulkanContext-Linux.cpp)
 
     # Both PRIVATE: neither Vulkan nor glslang reaches past this library.

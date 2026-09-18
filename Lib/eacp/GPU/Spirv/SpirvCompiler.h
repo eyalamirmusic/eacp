@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/Core/Utils/Containers.h>
+#include <eacp/GPU/Codegen/GlslLowering.h>
 
 #include <cstdint>
 #include <string>
@@ -26,6 +27,18 @@ struct CompileResult
 // One stage of a whole GLSL 450 source, for Vulkan 1.3 / SPIR-V 1.6. Defines
 // EACP_VERTEX or EACP_FRAGMENT ahead of it; the entry point is always main.
 CompileResult compileGlsl(Stage stage, const std::string& source);
+
+// Whether a lowered source (Codegen/GlslLowering.h) is legal GLSL for a GL
+// target. There is nothing to hand back but the answer: OpenGL compiles GLSL in
+// the driver, so no SPIR-V is generated.
+struct ValidationResult
+{
+    bool succeeded = false;
+    std::string log;
+};
+
+ValidationResult
+    validateGlsl(Stage stage, const std::string& source, const GlslTarget& target);
 
 // Builds glslang's symbol tables, a one-time 90 ms the first compileGlsl would
 // otherwise pay. Idempotent and thread-safe.

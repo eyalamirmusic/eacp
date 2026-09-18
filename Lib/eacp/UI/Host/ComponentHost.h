@@ -223,7 +223,17 @@ private:
     void rasterizePaths(GPU::Frame& frame);
     void rasterizeDirtyPaths(Component& component,
                              GPUWidgets::CoverageBatch& batch,
-                             PathWalk& walk);
+                             PathWalk& walk,
+                             bool meshOnly);
+
+    // Whether this host has the coverage kernel at all, asked of the device
+    // once and then remembered. False is a device with no compute tier - an
+    // OpenGL one below 4.3 - where every vector shape is triangles and the
+    // atlas holds nothing but the opaque texel every unmasked shape samples,
+    // so the fragment stage's multiply is unchanged. Asked here rather than in
+    // the constructor because asking is what makes the Device, and a host can
+    // exist before there is one.
+    bool hasCoverageKernels();
     void markAllPathsDirty(Component& component);
     void reportDroppedPaths(int count);
 
@@ -306,6 +316,10 @@ private:
     // The ramp table, built on the first ask. Painting needs one and drawing is
     // what the batches are for, so this cannot wait for a size the way they do.
     GradientRamps& gradientRamps() const;
+
+    // Unset until the first frame that rasterizes a path - see
+    // hasCoverageKernels.
+    std::optional<bool> coverageKernels;
 
     // The scale everything in the atlas was rasterized at, so a move between
     // displays can be noticed.

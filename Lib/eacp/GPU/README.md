@@ -2062,6 +2062,34 @@ is the same code path from `createSurface()` down. The backend is built on every
 Linux build, exactly as the Metal and D3D12 backends are on theirs;
 `-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it out.
 
+**Which backend a `Device` is on is a runtime question here**, and on Linux
+alone. Each class's `-Linux.cpp` is a forwarder of one line a method onto an
+abstract struct declared in `GPU/Linux/GPUBackend-Linux.h` — `DeviceBackend`,
+`BufferBackend` and ten more, whose virtuals are that class's public methods one
+to one — and the Vulkan bodies live in a `-Vulkan.cpp` beside each forwarder
+(`Device-Vulkan.cpp`, `Buffer-Vulkan.cpp`, … `GPUView-Vulkan.cpp`), with
+`Vulkan/VulkanBackend-Linux.h` declaring the factory each of them defines. The
+backend that made the `Device` makes every object under it, so nothing below a
+`Device` asks which one it is on, and every `void* nativeX()` still hands back
+that backend's own type for the files that know what it is. `Device.h`'s
+`nativeContext()` is the `DeviceBackend` on Linux and the backend's own context
+is one virtual further in, which is how `getVulkanContext(device)` still
+answers a `VulkanContext&`.
+
+`GPU/Linux/LinuxGPUBackend-Linux.cpp` is the choice itself, read once from
+`EACP_GPU_BACKEND` (`vulkan`, `gl`, `auto`; `auto` is the default). Only the
+Vulkan backend is built today, so a copy asked for anything else logs that it
+was not built and takes Vulkan. `Device::backendName()` is what a `Device`
+answers with, and `DevicePresenceTests` prints it beside the device's own name
+so a lane says which of the two it got.
+
+`GPUView-Linux.cpp` is the one file that is not a pure forwarder: the pacing
+half — the `ViewSurface` hooks, the continuous tick and its `setMaxFps`
+divider, the frame callbacks, and the off-screen `renderNativeContent` that
+touches no drawable — is window-system logic neither API owns and stays there,
+while the surface, the swapchain, its companions and `renderOneFrame` are
+`GPUViewBackend`'s.
+
 Notes worth having:
 
 - **Nothing links the loader.** `volkInitialize()` opens `libvulkan.so.1` by
@@ -2286,6 +2314,8 @@ EACP_REQUIRE_GPU=1 EACP_VK_SOFTWARE=1 ctest --test-dir build
 | `EACP_VK_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs warnings and errors through `LOG`. Off by default — the layer costs several times the driver's own time per call. |
 | `EACP_REQUIRE_DISPLAY=1` | The swapchain's sibling of `EACP_REQUIRE_GPU`. `Tests/GPU/PresentTests-Linux.cpp` needs a display server — a compositor, or an X server where `EACP_WINDOW_SYSTEM=x11` — and every case in it self-skips without one, which ctest scores as a pass. This makes those cases fail instead, so a lane whose Weston or Xvfb session did not come up says so. Set it wherever the suite is run under a display server; leave it unset everywhere else. |
 | `EACP_HEADLESS=1` | Not Vulkan's, but it belongs here: it is what tells the window backend to build no surface, and therefore what the present tests read to decide there is nothing to present to. |
+| `EACP_GPU_BACKEND=` | Which backend a Linux `Device` is made on: `vulkan`, `gl` or `auto` (the default). Only Vulkan is built today, so anything else logs that it was not built and falls through to it. `Device::backendName()` reports what was made, and `EACP_VK_SOFTWARE` keeps its meaning inside the Vulkan choice. |
+| `EACP_GPU_NO_COMPUTE=1` | Makes `Device::supportsCompute()` answer false on a device that has kernels, which is the only way to reach the routes a device without them takes — an interface meshes every vector shape and leaves the coverage atlas empty (`UI::ComponentHost`). Read on every call, so a test can take the tier away for a scope and give it back. |
 
 CI runs the suite on lavapipe with `EACP_VK_SOFTWARE`, `EACP_REQUIRE_GPU` and
 `EACP_VK_VALIDATION` set and no display server. The lavapipe ICD manifest is

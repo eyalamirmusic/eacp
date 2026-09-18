@@ -148,16 +148,25 @@ private:
     // Or none of that: a shape whose geometry somebody has already rasterized
     // takes their mask and dispatches nothing at all. See MaskCache for what
     // that costs the shape that published it.
+    //
+    // meshOnly is a device with no compute tier: there is no coverage kernel to
+    // rasterize a mask with, so every shape takes the triangle route whatever
+    // its backing asked for, and one the triangulator cannot read is dropped
+    // rather than left sampling texels nothing wrote. See
+    // GPU::Device::supportsCompute and D10 of the OpenGL plan.
     void rasterize(CoverageAtlas& atlas,
                    MaskCache& cache,
                    float scale,
-                   GPUWidgets::CoverageBatch& batch);
+                   GPUWidgets::CoverageBatch& batch,
+                   bool meshOnly = false);
 
     // The mesh route, tried first when the backing asks for it. False when the
     // shape is small enough to be worth a mask, or when the geometry is
     // something a triangulator cannot read - either way the mask route answers
-    // for it, so a refusal here costs the atlas rather than the picture.
-    bool buildMesh(float scale);
+    // for it, so a refusal here costs the atlas rather than the picture. Where
+    // there is no mask route the size threshold does not apply: the smallest
+    // shape is meshed too.
+    bool buildMesh(float scale, bool meshOnly);
 
     // The atlas moved everything, or the display did: whatever was rasterized
     // is no longer where the uv says it is, and the slot it was in belongs to
