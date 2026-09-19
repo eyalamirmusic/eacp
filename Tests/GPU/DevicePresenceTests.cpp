@@ -55,9 +55,10 @@ auto tDeviceIsPresentWhenRequired = test("GPU/aDeviceIsPresentWhenRequired") = [
           "otherwise have skipped every test in it and reported a pass");
 };
 
-// Compute is the tier every backend eacp ships has, and the query exists for
-// the one that will not - OpenGL below 4.3 - and for the override that makes
-// the routes it takes reachable here.
+// Compute is the tier every backend but one has, and the query exists for the
+// one that has not - the OpenGL backend, whose kernels are a later stage and
+// which answers false whatever its context could do - and for the override that
+// makes the routes a device without it takes reachable here.
 auto tComputeIsSupported = test("GPU/computeIsSupportedAndCanBeTakenAway") = []
 {
     auto& device = Device::shared();
@@ -65,7 +66,10 @@ auto tComputeIsSupported = test("GPU/computeIsSupportedAndCanBeTakenAway") = []
     if (!device.isValid())
         return;
 
-    check(device.supportsCompute(), "every backend built today has kernels");
+    const auto hasKernels = device.backendName() != "OpenGL";
+
+    check(device.supportsCompute() == hasKernels,
+          "every backend but OpenGL has kernels");
 
     auto withoutCompute = ScopedEnv {"EACP_GPU_NO_COMPUTE", "1"};
 

@@ -310,7 +310,7 @@ auto tUIntPairSwapsInPlace = test("InPlaceRecord/aUIntPairSwapsWhereItLies") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto records = 128;
@@ -339,7 +339,7 @@ auto tFloatPairSwapsInPlace = test("InPlaceRecord/aFloatPairSwapsWhereItLies") =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto records = 128;
@@ -370,7 +370,7 @@ auto tFloatQuadRotatesInPlace =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto records = 64;
@@ -399,7 +399,7 @@ auto tSwizzleRotateRunsInPlace =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto records = 64;
@@ -431,7 +431,7 @@ auto tTwoWritesAreTwoStatements =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto pairs = 128;

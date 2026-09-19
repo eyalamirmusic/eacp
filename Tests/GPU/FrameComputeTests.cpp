@@ -440,7 +440,7 @@ struct ComputeVolumeView final : GPUView
 // buffer starts uninitialised, the CPU never writes it, and the clear is black.
 auto tKernelOutputFeedsDraw = test("FrameCompute/kernelOutputFeedsTheDraw") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto view = ComputeThenDrawView {};
@@ -467,7 +467,7 @@ auto tKernelOutputFeedsDraw = test("FrameCompute/kernelOutputFeedsTheDraw") = []
 // black.
 auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto view = ComputeImageThenDrawView {};
@@ -507,7 +507,7 @@ auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = [
 auto tIndexedBufferReadFeedsTheDraw =
     test("FrameCompute/indexedBufferReadFeedsTheDraw") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto view = ComputeThenIndexedDrawView {};
@@ -535,7 +535,7 @@ auto tVectorElementsRoundTrip = test("FrameCompute/vectorElementsRoundTrip") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto floatsPerRecord = 4;
@@ -619,7 +619,7 @@ auto tCommitAsyncMatchesCommit = test("FrameCompute/commitAsyncMatchesCommit") =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto source = device.makeBuffer(kernelInput, BufferUsage::Storage);
@@ -682,7 +682,7 @@ auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid")
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto cells = gridWidth * gridHeight;
@@ -716,7 +716,7 @@ auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid")
 // records onto Frame::beginCompute exactly as the other two do.
 auto tVolumeDispatchOnTheFrame = test("FrameCompute/volumeDispatchOnTheFrame") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto view = ComputeVolumeView {};
@@ -743,7 +743,7 @@ auto tReadAfterCommitAsyncIsOrdered =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto source = device.makeBuffer(kernelInput, BufferUsage::Storage);
@@ -825,7 +825,7 @@ auto tSharedMemoryGroupSums = test("FrameCompute/sharedMemoryGroupSums") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto count = 130;

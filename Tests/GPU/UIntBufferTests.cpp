@@ -241,7 +241,7 @@ auto tGatherReadsIdsAsIntegers = test("UIntBuffer/aGatherIndexesWithReadIds") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto idCount = (int) std::size(gatheredIds);
@@ -294,7 +294,7 @@ auto tUIntOutputKeepsEveryBit = test("UIntBuffer/anOutputKeepsBitsAFloatLoses") 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 6000;
@@ -336,7 +336,7 @@ auto tOneKernelHandsIdsToTheNext =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 64;
@@ -387,7 +387,7 @@ auto tAtomicStorageReadsBackAsUInts =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 400;
@@ -436,7 +436,7 @@ auto tUIntRangesBindAtTheirOffset =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto row = device.storageBufferOffsetAlignment() / uintBytes;
@@ -507,7 +507,7 @@ auto tTheRereadSeesTheStore = test("UIntBuffer/aRereadSeesWhatWasStored") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 8;

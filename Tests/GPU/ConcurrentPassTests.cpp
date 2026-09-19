@@ -182,7 +182,7 @@ auto tBarrierOrdersDependentStages =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto chain = Chain {};
@@ -204,7 +204,7 @@ auto tIndependentDispatchesAllLand =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto stride = sliceStrideElements();
@@ -242,7 +242,7 @@ auto tSerialPassIgnoresBarriers =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto chain = Chain {};
@@ -264,7 +264,7 @@ auto tNextPassSeesTheConcurrentPass =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto stride = sliceStrideElements();
@@ -316,7 +316,7 @@ auto tNextPassSeesTheConcurrentPass =
 auto tConcurrentPassOnTheFrame =
     test("ConcurrentPass/aFrameBeginsAConcurrentPassToo") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto view = ConcurrentFrameView {};

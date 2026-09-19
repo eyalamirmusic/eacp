@@ -421,7 +421,7 @@ auto tComputeRunsKernel = test("GPU/computeRunsKernel") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const float input[] = {1.f, 2.f, 3.f, 4.f};
@@ -465,7 +465,7 @@ auto tComputeProgramRunsKernel = test("GPU/computeProgramRunsKernel") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const float input[] = {1.f, 2.f, 3.f, 4.f};
@@ -506,7 +506,7 @@ auto tComputeProgramIndexArithmetic = test("GPU/computeProgramIndexArithmetic") 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const float input[] = {1.f, 2.f, 4.f, 8.f};

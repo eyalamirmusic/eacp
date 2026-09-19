@@ -41,7 +41,14 @@ GPU::TextureDescriptor describeAtlas(int size)
     descriptor.width = size;
     descriptor.height = size;
     descriptor.format = GPU::TextureFormat::RGBA8Unorm;
-    descriptor.computeWrite = true;
+
+    // Only where a kernel will write it. A device with no compute tier meshes
+    // every path (plan.md D10) and leaves this holding its opaque texel alone -
+    // and a backend that has no image store for the format refuses a
+    // computeWrite texture outright, which would take the opaque texel with it
+    // and leave every fragment's multiply reading nothing.
+    descriptor.computeWrite = GPU::Device::shared().supportsCompute();
+
     return descriptor;
 }
 } // namespace

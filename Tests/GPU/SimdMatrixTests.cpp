@@ -490,7 +490,7 @@ auto tOneFragmentProduct =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto a = scatteredValues(fragmentElements, 1);
@@ -536,7 +536,7 @@ auto tOneFragmentProduct =
 auto tTiledProductOnWholeTiles =
     test("SimdMatrix/blockedProductMatchesTheReference") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto rows = 128;
@@ -558,7 +558,7 @@ auto tTiledProductOnWholeTiles =
 // neighbour here and is neither above.
 auto tTiledProductOnRaggedShape = test("SimdMatrix/blockedProductHoldsTheEdges") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto rows = 100;
@@ -580,7 +580,7 @@ auto tTiledProductOnRaggedShape = test("SimdMatrix/blockedProductHoldsTheEdges")
 auto tTiledProductAtEncoderShape =
     test("SimdMatrix/blockedProductAtAnEncoderShape") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto rows = 1500;
@@ -705,7 +705,7 @@ auto tPackedLoadRefusedWithoutTheFeature =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto withoutPackedFragments = ScopedEnv {"EACP_NO_PACKED_SIMD_MATRIX", "1"};

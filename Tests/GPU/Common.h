@@ -30,6 +30,18 @@ inline eacp::GPU::ShaderSource nativeShaderSource(
     return nativeDialect(std::move(msl), std::move(hlsl), std::move(glsl));
 }
 
+// Every case self-skips on Device::isValid(); a case that dispatches a kernel
+// self-skips on this instead, which is the same question one tier down - a
+// device whose backend has no compute at all (plan.md D12). The OpenGL backend
+// is the one that answers false today, and a GL context below 4.3 will answer
+// false once its tier is built.
+inline bool computeIsAvailable()
+{
+    auto& device = eacp::GPU::Device::shared();
+
+    return device.isValid() && device.supportsCompute();
+}
+
 inline eacp::GPU::ShaderSource nativeComputeShaderSource(
     std::string msl,
     std::string hlsl,

@@ -118,11 +118,20 @@ auto tMeshesWithoutCompute =
     if (!GPU::Device::shared().isValid())
         return;
 
-    const auto withCompute = renderOnce();
+    // The first half is what a device with a kernel tier does. A backend
+    // without one - OpenGL, until its compute tier is built - is the second
+    // half all the way through, and takes the mesh route below without being
+    // told to, so there is nothing of the first half to compare against.
+    const auto hasKernels = GPU::Device::shared().supportsCompute();
+    const auto withCompute = hasKernels ? renderOnce() : Rendered {};
 
-    check(!withCompute.isMeshed, "a masked shape is a mask where a kernel runs");
-    check(withCompute.meshed == 0);
-    check(withCompute.drawn, "and it draws");
+    if (hasKernels)
+    {
+        check(!withCompute.isMeshed,
+              "a masked shape is a mask where a kernel runs");
+        check(withCompute.meshed == 0);
+        check(withCompute.drawn, "and it draws");
+    }
 
     auto withoutCompute = ScopedEnv {"EACP_GPU_NO_COMPUTE", "1"};
 
@@ -136,6 +145,7 @@ auto tMeshesWithoutCompute =
 
     // Nothing was rasterized into it, so what it holds is the opaque corner it
     // is seeded with and nothing else.
-    check(meshedOnly.atlasFill < withCompute.atlasFill,
-          "the atlas is left empty but for its opaque texel");
+    if (hasKernels)
+        check(meshedOnly.atlasFill < withCompute.atlasFill,
+              "the atlas is left empty but for its opaque texel");
 };

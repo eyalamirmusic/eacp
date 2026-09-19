@@ -141,7 +141,7 @@ auto tPassAfterFillSeesIt = test("GPU/bufferFillIsSeenByALaterPass") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto input = makeFloats(7.0f);
@@ -175,7 +175,7 @@ auto tFillAfterPassOverwritesIt = test("GPU/bufferFillOverwritesAnEarlierPass") 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto target = device.makeBuffer(byteCount);

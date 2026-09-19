@@ -252,7 +252,7 @@ auto tUIntScalarBitsRun = test("UIntScalar/masksRotatesAndFoldsExactly") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 128;
@@ -288,7 +288,7 @@ auto tUIntScalarLiteralRuns = test("UIntScalar/aWhollyLiteralPairArrives") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 32;

@@ -114,7 +114,7 @@ Vector<float> readFloats(const Buffer& buffer, int elements)
 // rather than checking a total that a broken build would merely undershoot.
 auto tTicketsArePermutation = test("Atomic/everyThreadGetsADistinctTicket") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto counter = makeZeroed(1);
@@ -171,7 +171,7 @@ auto tTicketsArePermutation = test("Atomic/everyThreadGetsADistinctTicket") = []
 // the total the tickets were drawn from - and load() is what reads it.
 auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto counts = makeZeroed(bucketCount);

@@ -582,7 +582,7 @@ auto tUIntVectorArithmeticRuns = test("UIntVector/wrapsAndMasksExactly") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 128;
@@ -625,7 +625,7 @@ auto tUIntVectorUniformsRun = test("UIntVector/uniformPairsArriveAsSent") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 32;
@@ -665,7 +665,7 @@ auto tUIntVectorVarRuns = test("UIntVector/aPairAdvancesThroughALoop") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 64;
@@ -707,7 +707,7 @@ auto tUIntVectorSharedRuns = test("UIntVector/sharedPairsCrossLanes") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeFilledUInts(sharedThreads * 2, 0u);
@@ -748,7 +748,7 @@ auto tUIntVectorWideBitcastsRun = test("UIntVector/aQuadBitcastKeepsEveryBit") =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr std::uint32_t patterns[] = {0x00000000u,
@@ -807,7 +807,7 @@ auto tUIntVectorWideStoreRuns = test("UIntVector/aWideStoreLaysTheRecordDown") =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 8;

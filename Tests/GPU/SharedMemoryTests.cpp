@@ -53,7 +53,7 @@ auto tExchangeCrossesLanes = test("SharedMemory/everyThreadReadsAnotherLane") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output =
@@ -182,7 +182,9 @@ auto tThreadgroupBudgetIsReported =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    // A device with no kernel tier has no budget to report, which is the same
+    // question one tier down from isValid().
+    if (!computeIsAvailable())
         return;
 
     // Vulkan's spec floor, and so what a kernel may assume on any of the three.
@@ -210,7 +212,10 @@ auto tKernelReportsWhatItDeclares =
 
     check(wide.threadgroupMemoryBytes() == tileElements * 16);
 
-    if (!device.isValid())
+    // The two counts above are the kernel's own and need no device at all; what
+    // follows is the device's budget, which a device with no kernel tier has
+    // none of.
+    if (!computeIsAvailable())
         return;
 
     check(budgeted.fitsThreadgroupMemory(device));

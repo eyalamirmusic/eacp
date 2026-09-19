@@ -2077,11 +2077,12 @@ is one virtual further in, which is how `getVulkanContext(device)` still
 answers a `VulkanContext&`.
 
 `GPU/Linux/LinuxGPUBackend-Linux.cpp` is the choice itself, read once from
-`EACP_GPU_BACKEND` (`vulkan`, `gl`, `auto`; `auto` is the default). Only the
-Vulkan backend is built today, so a copy asked for anything else logs that it
-was not built and takes Vulkan. `Device::backendName()` is what a `Device`
-answers with, and `DevicePresenceTests` prints it beside the device's own name
-so a lane says which of the two it got.
+`EACP_GPU_BACKEND` (`vulkan`, `gl`, `auto`; `auto` is the default). `gl` is the
+OpenGL backend, which has its own section below; `auto` is still Vulkan, and
+`composite` logs that it was not built and takes Vulkan.
+`Device::backendName()` is what a `Device` answers with, and
+`DevicePresenceTests` prints it beside the device's own name so a lane says
+which of the two it got.
 
 `GPUView-Linux.cpp` is the one file that is not a pure forwarder: the pacing
 half — the `ViewSurface` hooks, the continuous tick and its `setMaxFps`
@@ -2314,7 +2315,7 @@ EACP_REQUIRE_GPU=1 EACP_VK_SOFTWARE=1 ctest --test-dir build
 | `EACP_VK_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs warnings and errors through `LOG`. Off by default — the layer costs several times the driver's own time per call. |
 | `EACP_REQUIRE_DISPLAY=1` | The swapchain's sibling of `EACP_REQUIRE_GPU`. `Tests/GPU/PresentTests-Linux.cpp` needs a display server — a compositor, or an X server where `EACP_WINDOW_SYSTEM=x11` — and every case in it self-skips without one, which ctest scores as a pass. This makes those cases fail instead, so a lane whose Weston or Xvfb session did not come up says so. Set it wherever the suite is run under a display server; leave it unset everywhere else. |
 | `EACP_HEADLESS=1` | Not Vulkan's, but it belongs here: it is what tells the window backend to build no surface, and therefore what the present tests read to decide there is nothing to present to. |
-| `EACP_GPU_BACKEND=` | Which backend a Linux `Device` is made on: `vulkan`, `gl` or `auto` (the default). Only Vulkan is built today, so anything else logs that it was not built and falls through to it. `Device::backendName()` reports what was made, and `EACP_VK_SOFTWARE` keeps its meaning inside the Vulkan choice. |
+| `EACP_GPU_BACKEND=` | Which backend a Linux `Device` is made on: `vulkan`, `gl` or `auto` (the default). `auto` is still Vulkan; `gl` is the OpenGL backend and has a table of its own below. `Device::backendName()` reports what was made, and `EACP_VK_SOFTWARE` keeps its meaning inside the Vulkan choice. |
 | `EACP_GPU_NO_COMPUTE=1` | Makes `Device::supportsCompute()` answer false on a device that has kernels, which is the only way to reach the routes a device without them takes — an interface meshes every vector shape and leaves the coverage atlas empty (`UI::ComponentHost`). Read on every call, so a test can take the tier away for a scope and give it back. |
 
 CI runs the suite on lavapipe with `EACP_VK_SOFTWARE`, `EACP_REQUIRE_GPU` and
@@ -2340,3 +2341,176 @@ docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
     -R '^(X11|EmbeddedView|Present)/'
 ```
+
+## OpenGL
+
+The second Linux backend, beside the Vulkan one and chosen at runtime with
+`EACP_GPU_BACKEND=gl`. It is there because a Linux guest in a virtual machine
+commonly has no Vulkan device but a good OpenGL one — the development VM is
+that case exactly, an arm64 Ubuntu guest whose virtio-gpu speaks virgl and
+answers Vulkan with llvmpipe on the CPU. The floor is **OpenGL 3.3 core and
+OpenGL ES 3.0**, because that is what such a machine offers and because
+everything below it wants a different uniform model from the one every eacp
+shader assumes.
+
+**The render half is built; the present half and the kernel tier are not.**
+`Device`, `Buffer`, `Texture`, `ShaderLibrary`, `GpuTimestamps`,
+`RenderPipeline`, `Frame`, `RenderPass` and `CommandBuffer` are real, and every
+render case of `GPUTests`, `GPUWidgetsTests` and `UITests` passes on this
+backend against the expectations the Vulkan one meets. `GPUView` has no
+drawable yet, so a view's content goes through the off-screen
+`renderNativeContent` path and nothing presents; `ComputePipeline` is never
+valid and `beginCompute` answers null, so `Device::supportsCompute()` is false
+here whatever the context could do — which is the case `UI::ComponentHost`'s
+mesh route exists for, and which every kernel test self-skips on. `plan.md` is
+the rest of it.
+
+- **One backend for every version, capabilities not versions.**
+  `OpenGL/GLCapabilities.h` is filled once when the context comes up — profile,
+  version, and a flag per feature: `computeShaders`, `storageBuffers`,
+  `imageLoadStore`, `bufferStorage`, `textureStorage`, `timerQuery`,
+  `explicitBindings`, `bptc`, `s3tc`, `clipControl`, `debugOutput` and the
+  handful beside them. No line under device creation compares a version number.
+  The floor path is the default everywhere and every higher-version form is
+  optional speed behind a flag: `glBufferSubData` always, a persistent mapping
+  for a `BufferStorage::Streaming` buffer where `glBufferStorage` is,
+  `glTexStorage2D` where it is and a `glTexImage2D` per level where it is not,
+  link-time binding by name always, and the FBO-and-`glReadPixels` read-back on
+  both profiles.
+- **One context per `Device`, current on its thread.** `GLContext-Linux.cpp`
+  holds a process-wide refcounted `EGLDisplay` — the surfaceless platform
+  (`EGL_MESA_platform_surfaceless`) where neither a Wayland nor an X11 display
+  is reachable, the default display otherwise — and one `EGLContext` on it per
+  `Device`, made current over no surface at all
+  (`EGL_KHR_surfaceless_context`). Two `Device`s on one thread are two
+  contexts, and a thread-local "who is current" pointer makes `eglMakeCurrent`
+  happen only when the device changes. A `Device` is already single-threaded
+  above this layer, which is exactly the constraint a GL context has, so there
+  is no context sharing anywhere.
+- **Nothing links libEGL or libGL.** `libEGL.so.1` is opened by name and
+  `eglGetProcAddress` comes out of it; every GL entry point comes through that.
+  The loader is a glad2 one generated once and committed under
+  `ThirdParty/glad` beside its license, built as the `eacp-gl` C target of
+  `CMake/FindGLBackend.cmake` so it never joins a unity build. A machine with
+  no EGL builds the same binary and reports `Device::isValid()` false, which is
+  the rule `volkInitialize()` gives the Vulkan backend.
+- **One GLSL, lowered.** The emitter keeps emitting Vulkan GLSL 450 and
+  `Codegen/GlslLowering.cpp` turns it into the version and profile this context
+  reports — core 330/400/430/460, ES 300/310/320 — one standalone stage at a
+  time. A source the pass refuses is an invalid `ShaderLibrary` with the
+  lowering's own message logged, and it says which of the two kinds of refusal
+  it was: a source that is not eacp's GLSL, or a target too old for it — a
+  kernel on GL 4.0, which is what virgl offers.
+- **y is flipped by the lowering, not by a call.** `ARB_clip_control` would fix
+  it in one call and virgl does not have it, so the lowering renames a vertex
+  stage's `main` and wraps it in one that multiplies `gl_Position.y` by an
+  `eacpClipYSign` uniform. A pass on a texture sets the sign to −1 and reverses
+  the front face with it; a pass on a drawable sets +1. An upload therefore
+  needs no flip — eacp's row 0 is GL's y = 0 — and neither does a read-back of a
+  target that was rendered into. A scissor or a viewport rect, which arrives in
+  target pixels counted from the top of the picture, needs no flip on a texture
+  for the same reason, and does need one on a drawable.
+- **Clip-space depth is `glClipControl`'s, where there is one.** GL leaves it
+  in [−1, 1] and the other three backends in [0, 1], so a context that has
+  `glClipControl` — core 4.5, `GL_EXT_clip_control` on ES — is told
+  `GL_ZERO_TO_ONE` once when it comes up, and a depth value read back off a
+  target is then the number the vertex stage wrote. The y half of that call is
+  deliberately not used: the wrapper above is the flip on every context, so
+  there is one rule rather than two. A context without it — virgl — orders
+  fragments identically and lands every depth in the far half of the range,
+  which only a read-back can tell.
+- **`BGRA8Unorm` on ES is stored `GL_RGBA8` with the rows swapped.** There is no
+  `GL_BGRA` internal format there, so every upload row is swapped on the CPU and
+  every read-back row swapped back — and nothing else, no
+  `GL_TEXTURE_SWIZZLE_R`/`_B` beside it: the swizzle is the other way of doing
+  this rather than a second half of it, and doing both reverses every sample and
+  every fragment written into one as a render target. On desktop core the
+  `GL_BGRA` pair is used directly and nothing is copied.
+- **Block-compressed formats are refused where their extension is absent**
+  rather than half-supported: `EXT_texture_compression_s3tc` carries BC1-BC3
+  and `ARB_texture_compression_bptc` BC7, and
+  `Device::supportsBlockCompression()` is both families or neither.
+- **`storageBufferOffsetAlignment()` is one number for both binds**: the larger
+  of `GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT` and, where there are storage buffers,
+  `GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT`. A caller that rounds to it
+  satisfies the uniform ring and a kernel's storage range alike, so there is no
+  second query on `Device` for the smaller of the two.
+- **Compute is a tier, and it is not built yet.** `Device::supportsCompute()`
+  is false on this backend whatever the context's own compute stage is, so
+  `UI::ComponentHost` takes its mesh route on llvmpipe's GL 4.5 exactly as it
+  would on a GL 3.3. When the tier lands the query becomes the capability —
+  GL 4.3, ES 3.1 — and nothing above it changes. The two SIMD-matrix queries
+  answer false at every GL version either way: there is no cooperative-matrix
+  extension in the dialect eacp emits.
+
+**The render mapping, as built.** A `RenderPipeline` is one program linked from
+the library's shader objects plus a plain struct of the descriptor's state,
+which the pass applies by diffing against what it last applied — so a pipeline
+switch costs only the calls that change, and the first `setPipeline` of a pass
+costs all of them, since what the pass before it left is not this pass's to
+assume. Every uniform block, sampler and storage block is bound **by name**
+after linking (`glGetUniformBlockIndex` / `glGetUniformLocation` /
+`glGetProgramResourceIndex`, then `glUniformBlockBinding`, `glUniform1i` and
+`glShaderStorageBlockBinding`), which is the only route below core 420 / ES 310
+and costs nothing above it; a Vulkan binding number is mapped onto GL's own much
+smaller counts on the way — a driver need offer only eight shader-storage
+binding points, and the emitter numbers a render storage buffer 24 and up.
+`eacpClipYSign` is found the same way and set per pass.
+
+A `Frame` is the framebuffer it targets. `beginPass` makes the target's FBO if it
+has none — the multisampled renderbuffer companion where the target has one, the
+texture itself otherwise, with the depth renderbuffer or the depth texture
+attached beside it — sets the write masks and turns the scissor off (every clear
+is subject to both), and applies the load actions with `glClearBufferfv` and
+`glClearBufferfi`. `end()` resolves a multisampled target into it with
+`glBlitFramebuffer`, so the texture an app holds is always the resolved picture,
+and writes the pass's closing timestamp. The uniform ring is one buffer per
+frame, written at a rising aligned offset with `glBufferSubData` and bound with
+`glBindBufferRange`; `setBytes` keeps the bytes and the draw writes them, since
+the block std140 made may be larger than what the caller handed over and only
+the pipeline knows. The vertex layout is applied at the draw through the
+context's one VAO whenever the buffers, the layout, `baseVertex` or
+`firstInstance` changed — and those last two are folded into the attribute
+pointers rather than passed to the draw, because GL puts each behind something
+the floor has not (base instance is 4.2 and never ES, base vertex never ES 3.0)
+while the whole of what either means is where a slot starts reading. So every
+context draws through `glDrawArraysInstanced` and `glDrawElementsInstanced`
+alone.
+
+A `CommandBuffer` is the context's own stream plus a fence: `submit` plants one
+after a `glFlush`, `wait` blocks on it, `isComplete` polls it and `commitAsync`
+gives the poll a fence of its own so a buffer destroyed under it leaves nothing
+dangling. `fill` is `glClearBufferSubData` where core 4.3 has it and a word-wise
+`glBufferSubData` where it has not. `Frame::flush()` is the same pair, which is
+what makes a read-back of what the frame has drawn so far valid inside it.
+
+One thing worth knowing about `glGetError`: it is not polled outside
+`EACP_GL_DEBUG=1`, because on a command-stream driver like virgl each call is a
+round trip to the host. What is polled is the *creation* path, which decides
+whether a texture exists by asking — so it empties the queue first
+(`glForgetErrors()`), or an error some earlier call left behind would be read as
+this one's.
+
+### Running the OpenGL backend
+
+```bash
+EACP_GPU_BACKEND=gl EACP_REQUIRE_GPU=1 ./build/Tests/GPU/GPUTests
+```
+
+| Variable | What it does |
+| --- | --- |
+| `EACP_GPU_BACKEND=gl` | Makes every `Device` in the copy an OpenGL one. |
+| `EACP_GL_ES=1` | Binds `EGL_OPENGL_ES_API` instead of `EGL_OPENGL_API`, so the ES path is a run of the same binary rather than a second build. |
+| `EACP_GL_DEBUG=1` | Installs a `GL_KHR_debug` messenger that logs, and turns on a `glGetError` drain after each operation. The twin of `EACP_VK_VALIDATION`, and off by default for the same kind of reason: polling `glGetError` on a command-stream driver like virgl is a round trip to the host per call. |
+| `LIBGL_ALWAYS_SOFTWARE=1` | Mesa's, not eacp's, and the GL twin of `EACP_VK_SOFTWARE`: llvmpipe's GL 4.5 rather than whatever the machine's own driver offers. |
+| `MESA_GL_VERSION_OVERRIDE=3.3` | Mesa's again, and what makes the floor path a run of one driver rather than a second machine: it caps what llvmpipe reports. `MESA_GLES_VERSION_OVERRIDE` is its ES half. |
+
+`Tests/GPU/GLCapabilityTests-Linux.cpp` is the one GL-specific test: it prints
+the profile, version, renderer and every capability flag, and checks the
+handful of implications that would make a capability set incoherent — a compute
+stage without storage buffers, a `Device` that disagrees with its own context.
+Everything else is the existing suite run again, each case self-skipping on
+`Device::isValid()` exactly as it does everywhere else — and a case that
+dispatches a kernel self-skipping on `computeIsAvailable()`, which is
+`Device::supportsCompute()` one tier down, so the kernel half of the suite goes
+quiet here rather than red.

@@ -91,7 +91,7 @@ bool scaleRunsOn(Device& device, float scale)
 // device - where two Devices share it and the queue pointers are equal.
 auto tDevicesHaveTheirOwnQueue = test("GPU/devicesHaveTheirOwnQueue") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto worker = Device();
@@ -113,7 +113,7 @@ auto tDevicesHaveTheirOwnQueue = test("GPU/devicesHaveTheirOwnQueue") = []
 // one Device's uniforms arriving in the other's dispatch.
 auto tTwoDevicesRunIndependently = test("GPU/twoDevicesRunIndependently") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto worker = Device();
@@ -132,7 +132,7 @@ auto tTwoDevicesRunIndependently = test("GPU/twoDevicesRunIndependently") = []
 auto tSharedDeviceStaysWithTheMainThread =
     test("GPU/sharedDeviceStaysWithTheMainThread") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto reachedFromWorker = false;
@@ -153,7 +153,7 @@ auto tSharedDeviceStaysWithTheMainThread =
 // pools, its buffers - was made on that thread and dies there.
 auto tDeviceRunsOnAWorkerThread = test("GPU/deviceRunsOnAWorkerThread") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto ran = false;
@@ -185,7 +185,7 @@ auto tDeviceRunsOnAWorkerThread = test("GPU/deviceRunsOnAWorkerThread") = []
 // window to land in.
 auto tWorkerDevicesRunConcurrently = test("GPU/workerDevicesRunConcurrently") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto runs = 20;

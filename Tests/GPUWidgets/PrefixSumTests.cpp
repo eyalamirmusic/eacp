@@ -1,4 +1,4 @@
-#include <eacp/GPUWidgets/GPUWidgets.h>
+#include "CoverageProbe.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -79,7 +79,7 @@ Result scanOnGpu(const Vector<std::uint32_t>& counts)
 
 void expectScans(int count)
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto counts = countsOfLength(count);

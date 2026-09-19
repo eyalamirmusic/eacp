@@ -21,12 +21,16 @@ TextureDescriptor unwritten(int size)
 // barrier is queued rather than submitted, so a burst of such textures costs
 // nothing until the next recording carries all of them at once - what a glyph
 // atlas building its pages does, and what used to cost a submission each.
+//
+// Vulkan-only, and the one case here that names a backend: there is no image
+// layout on OpenGL and so nothing to settle, and getVulkanContext below would
+// be reading a GL context as one.
 auto tABurstOfUnwrittenTexturesCostsNoSubmission =
     test("TextureSettle/aBurstOfUnwrittenTexturesCostsNoSubmission") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!device.isValid() || device.backendName() != "Vulkan")
         return;
 
     auto& context = getVulkanContext(device);

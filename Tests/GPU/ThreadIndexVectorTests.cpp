@@ -241,7 +241,7 @@ auto tPairAddressesTheGrid = test("ThreadIndexVector/aPairAddressesTheGrid") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeSentinelBuffer(cells + padding);
@@ -276,7 +276,7 @@ auto tTripleAddressesTheVolume =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto width = 5;
@@ -318,7 +318,7 @@ auto tRebuiltPairIsTheThreadId =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeSentinelBuffer(cells * 2);

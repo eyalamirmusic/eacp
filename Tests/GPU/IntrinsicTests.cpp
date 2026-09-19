@@ -351,7 +351,7 @@ auto tHyperbolics = test("Intrinsics/computesTheHyperbolics") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};
@@ -395,7 +395,7 @@ auto tSaturatingTanh = test("Intrinsics/saturatingTanhAnswersTheTails") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};
@@ -452,7 +452,7 @@ auto tLog10 = test("Intrinsics/computesLog10") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     // Twenty decades, which is where a mel front-end's clamped magnitudes sit
@@ -492,7 +492,7 @@ auto tErrorFunction = test("Intrinsics/computesErfAndErfc") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};
@@ -537,7 +537,7 @@ auto tVectorIntrinsics = test("Intrinsics/appliesComponentwiseToAVector") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};
@@ -637,7 +637,7 @@ auto tErrorFunctionIsOddAboutZero =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};
@@ -675,7 +675,7 @@ auto tComplementIsExactlyOneAtZero =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};

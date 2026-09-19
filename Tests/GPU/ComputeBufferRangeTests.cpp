@@ -140,7 +140,7 @@ auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto count = 8;
@@ -179,7 +179,7 @@ auto tVectorReadFromAnOffsetRange =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto records = 6;
@@ -216,7 +216,7 @@ auto tOutputBoundAtOffset = test("GPU/computeOutputBoundAtOffset") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto count = 4;
@@ -255,7 +255,7 @@ auto tProgramMembersTakeRanges = test("GPU/computeProgramMembersTakeRanges") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto count = 4;
@@ -296,7 +296,7 @@ auto tWholeBufferStillBindsFromZero =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto count = 8;
@@ -330,7 +330,7 @@ auto tAtomicBoundAtOffset = test("GPU/computeAtomicBoundAtOffset") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto count = 3;
@@ -368,7 +368,7 @@ auto tOutOfRangeBindsNothing = test("GPU/computeOutOfRangeRangeBindsNothing") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto count = 4;

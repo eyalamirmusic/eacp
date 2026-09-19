@@ -631,7 +631,7 @@ auto tBranchBodyRecomputesWhatItMoved =
 // The scan itself, against the same argmax written in C++.
 auto tArgMaxRuns = test("Hoisting/theScanFindsTheSameIndex") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto rows = makeRows();
@@ -674,7 +674,7 @@ auto tArgMaxRuns = test("Hoisting/theScanFindsTheSameIndex") = []
 // The normalising pass, against the same division written in C++.
 auto tNormaliseRuns = test("Hoisting/theNormaliserScalesByTheSameFactor") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto rows = makeRows();
@@ -734,7 +734,7 @@ auto tNormaliseRuns = test("Hoisting/theNormaliserScalesByTheSameFactor") = []
 // factor the one before it raised, not the one the product was named with.
 auto tRaisedScaleRuns = test("Hoisting/theRaisedFactorReachesEveryIteration") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto rows = makeRows();

@@ -442,7 +442,7 @@ auto tUnpack = test("PackedBFloat16/unpacksEveryBFloat16Class") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -473,7 +473,7 @@ auto tReadBFloat16 = test("PackedBFloat16/readsEachElementByIndex") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -533,7 +533,7 @@ auto tReadPair = test("PackedBFloat16/readBFloat16x2ReadsBothHalvesOfAWord") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -563,7 +563,7 @@ auto tReadQuad = test("PackedBFloat16/readBFloat16x4ReadsFourAcrossTwoWords") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -610,7 +610,7 @@ auto tRoundTrip = test("PackedBFloat16/packRoundTripsEveryPattern") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -648,7 +648,7 @@ auto tWritePair = test("PackedBFloat16/writeBFloat16x2IsThePackedStore") = []
 
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -680,7 +680,7 @@ auto tWriteWide = test("PackedBFloat16/writeBFloat16x4IsTheWidePackedStore") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -721,7 +721,7 @@ auto tBFloat16Narrowing = test("PackedBFloat16/narrowsToNearestEvenEverywhere") 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     // The table has to actually contain a tie, or this would pass on data that

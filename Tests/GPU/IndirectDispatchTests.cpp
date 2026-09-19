@@ -260,7 +260,7 @@ Vector<float> dispatchAtOffset(int offsetInBytes)
 auto tIndirectGridComesFromTheGpu =
     test("IndirectDispatch/theGridComesFromAKernel") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto consume = ConsumeKernel {};
@@ -297,7 +297,7 @@ auto tIndirectZeroGridRunsNothing =
 auto tIndirectOffsetMustFitTheArguments =
     test("IndirectDispatch/theOffsetMustLeaveRoomForTheArguments") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     check(countWritten(dispatchAtOffset(4)) == ComputePass::threadGroupWidth);
@@ -312,7 +312,7 @@ auto tIndirectOffsetMustFitTheArguments =
 auto tGuardedConsumerStopsAtTheCount =
     test("IndirectDispatch/aGuardedStageStopsAtTheExactCount") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto arguments = makeArguments();

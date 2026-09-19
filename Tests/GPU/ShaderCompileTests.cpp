@@ -602,7 +602,7 @@ auto tCodegenComputeCompiles = test("GPU/codegenComputeCompiles") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto builder = ShaderBuilder {};

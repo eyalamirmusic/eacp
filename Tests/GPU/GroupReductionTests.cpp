@@ -376,7 +376,7 @@ auto tGroupFoldsAreRight = test("GroupReduction/sumMaxAndMinOverTheGroup") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = laneValues();
@@ -445,7 +445,7 @@ auto tTwoFoldsInOneKernel = test("GroupReduction/aMeanThenAVariance") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = laneValues();
@@ -503,7 +503,7 @@ auto tFoldInsideALoop = test("GroupReduction/aFoldPerLoopIteration") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto rows = 5;
@@ -551,7 +551,7 @@ auto tTwoDimensionalFold = test("GroupReduction/aTwoDGroupFoldsAllOfIt") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto tile = ComputePass::threadGroupSize2D;
@@ -612,7 +612,7 @@ auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = std::vector<std::uint32_t> {};
@@ -679,7 +679,7 @@ auto tSimdFoldsAreRight = test("GroupReduction/sumMaxAndMinOverOneSimdGroup") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = simdLaneValues();
@@ -759,7 +759,7 @@ auto tScopesAgree = test("GroupReduction/theWideFoldIsTheNarrowOnesAddedUp") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = simdLaneValues();
@@ -816,7 +816,7 @@ auto tUIntSimdFolds = test("GroupReduction/theUnsignedNarrowFold") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = std::vector<std::uint32_t> {};
@@ -888,7 +888,7 @@ auto tNarrowGroupFoldsBothWays =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = std::vector<float> {};

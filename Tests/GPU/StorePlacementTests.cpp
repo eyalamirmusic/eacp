@@ -117,7 +117,7 @@ Vector<float>
 // followed it unconditionally.
 auto tGuardedStoreRespectsTheGuard = test("StorePlacement/aStoreObeysItsIfThen") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeFilled(elementCount, untouched);
@@ -150,7 +150,7 @@ auto tGuardedStoreRespectsTheGuard = test("StorePlacement/aStoreObeysItsIfThen")
 auto tLoopStoreRunsEveryIteration =
     test("StorePlacement/aStoreInsideALoopRepeats") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     auto threads = elementCount / perThread;

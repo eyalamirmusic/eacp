@@ -487,7 +487,7 @@ auto tUnpackHalf2 = test("PackedHalf/unpacksEveryFloat16Class") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -547,7 +547,7 @@ auto tReadHalf = test("PackedHalf/readsEachHalfElementByIndex") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -612,7 +612,7 @@ auto tReadHalf2 = test("PackedHalf/readHalf2ReadsBothHalvesOfAWord") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -644,7 +644,7 @@ auto tReadHalf4 = test("PackedHalf/readHalf4ReadsFourAcrossTwoWords") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -682,7 +682,7 @@ auto tBitcastRoundTrip = test("PackedHalf/asFloatUndoesAsUInt") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -715,7 +715,7 @@ auto tPackRoundTrip = test("PackedHalf/packHalf2RoundTripsEveryPattern") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -755,7 +755,7 @@ auto tWriteHalf2 = test("PackedHalf/writeHalf2IsThePackedStore") = []
 
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -789,7 +789,7 @@ auto tWriteHalf4 = test("PackedHalf/writeHalf4IsTheWidePackedStore") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto words = everyPackedPair();
@@ -832,7 +832,7 @@ auto tNarrowing = test("PackedHalf/packHalf2NarrowsAsItsBackendRounds") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     // The table has to actually contain the disagreement, or this test would

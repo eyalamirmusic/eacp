@@ -265,7 +265,7 @@ auto tPairsComputeAndStoreExactly =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 256;
@@ -317,7 +317,7 @@ auto tQuadsKeepEveryBit = test("UIntBufferVector/quadsKeepBitsAFloatLoses") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 128;
@@ -383,7 +383,7 @@ auto tARecordReadsBackWhatItStored =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 64;
@@ -438,7 +438,7 @@ auto tRecordsReadThroughARangeStartAtItsOffset =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto row = device.storageBufferOffsetAlignment() / uintBytes;

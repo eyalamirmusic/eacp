@@ -13,6 +13,16 @@
 // no window is involved, which is what lets it run wherever the suite does.
 namespace eacp::GPUWidgets::probe
 {
+// Every helper here dispatches a kernel, so a device with no compute tier has
+// no coverage at all rather than empty coverage - which is what the callers
+// read an empty answer as (plan.md D12).
+inline bool computeIsAvailable()
+{
+    auto& device = GPU::Device::shared();
+
+    return device.isValid() && device.supportsCompute();
+}
+
 struct MaskReadKernel final : GPU::ComputeProgram
 {
     MaskReadKernel() { compile(); }
@@ -61,8 +71,7 @@ inline Vector<float>
     auto values = Vector<float> {};
 
     // Zeroes out of an invalid texture read as a wrong answer, not a missing one.
-    if (!GPU::Device::shared().isValid() || !texture.isValid() || width <= 0
-        || height <= 0)
+    if (!computeIsAvailable() || !texture.isValid() || width <= 0 || height <= 0)
         return values;
 
     auto bytes = (int) sizeof(float) * width * height;
@@ -100,7 +109,7 @@ inline Vector<float> rasterize(PathRasterizer& rasterizer,
 {
     auto coverage = Vector<float> {};
 
-    if (!GPU::Device::shared().isValid())
+    if (!computeIsAvailable())
         return coverage;
 
     rasterizer.setScale(scale);

@@ -68,7 +68,7 @@ auto tInPlaceGeluRewritesItsOwnBuffer =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto values = Vector<float> {};

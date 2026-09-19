@@ -233,7 +233,7 @@ Comparison compareAgainstReference(const Path& path, float scale, FillRule rule)
 {
     auto result = Comparison {};
 
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return result;
 
     auto rasterizer = PathRasterizer {};
@@ -357,7 +357,7 @@ auto tDiagonal = test("PathRasterizer/thinDiagonalMatchesUnbinned") = []
 // a size the reference can afford.
 auto tBinningCutsWork = test("PathRasterizer/binningCutsWorkWithArea") = []
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto path = Path {};
@@ -438,7 +438,7 @@ auto tEntryBoundHolds = test("PathRasterizer/theEntryBoundIsOne") = []
 auto tCoverageIsPresentWhenRequired =
     test("PathRasterizer/coverageIsPresentWhenRequired") = []
 {
-    if (getEnvValue("EACP_REQUIRE_GPU") != "1" || !GPU::Device::shared().isValid())
+    if (getEnvValue("EACP_REQUIRE_GPU") != "1" || !probe::computeIsAvailable())
         return;
 
     auto path = Path {};

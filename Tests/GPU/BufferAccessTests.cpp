@@ -223,7 +223,7 @@ auto tLiteralIndexReadsElementZero =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const float source[] = {3.0f, 5.0f, 7.0f, 11.0f};
@@ -259,7 +259,7 @@ auto tReadsBackWhatItWrote = test("BufferAccess/aKernelReadsBackWhatItWrote") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto count = 128;
@@ -303,7 +303,7 @@ auto tStoreGivesUpTheReadsName =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto count = 64;
@@ -369,7 +369,7 @@ auto tWideStoresMatchTheLayout =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 16;
@@ -430,7 +430,7 @@ auto tWideStoreHoldsItsValue = test("BufferAccess/aWideStoreHoldsItsValue") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto threads = 16;

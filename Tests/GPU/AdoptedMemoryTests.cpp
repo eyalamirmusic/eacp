@@ -153,7 +153,7 @@ auto tBufferOverPagesReadsThem =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto source = ramp(elementCount);
@@ -246,7 +246,7 @@ auto tMappedFileBecomesOneBuffer =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     const auto source = ramp(elementCount);

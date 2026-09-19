@@ -756,7 +756,7 @@ auto tReadInt8 = test("PackedQuantized/readsEverySignedByteByIndex") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -784,7 +784,7 @@ auto tReadUInt8 = test("PackedQuantized/readsEveryUnsignedByteByIndex") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -810,7 +810,7 @@ auto tQuantizedReadLiteral = test("PackedQuantized/readsBytesAtLiteralIndices") 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -835,7 +835,7 @@ auto tReadInt8x4 = test("PackedQuantized/readInt8x4ReadsAllFourOfAWord") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -863,7 +863,7 @@ auto tReadUInt8x4 = test("PackedQuantized/readUInt8x4ReadsAllFourOfAWord") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -889,7 +889,7 @@ auto tReadInt4x8 = test("PackedQuantized/readInt4x8ReadsEightNibbles") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyNibblePattern();
@@ -917,7 +917,7 @@ auto tReadUInt4x8 = test("PackedQuantized/readUInt4x8ReadsEightNibbles") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyNibblePattern();
@@ -948,7 +948,7 @@ auto tReadInt8x8 = test("PackedQuantized/readInt8x8ReadsEightAcrossTwoWords") = 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePatternIn(8);
@@ -961,7 +961,7 @@ auto tReadUInt8x8 = test("PackedQuantized/readUInt8x8ReadsEightAcrossTwoWords") 
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePatternIn(8);
@@ -975,7 +975,7 @@ auto tReadInt8x16 =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePatternIn(16);
@@ -989,7 +989,7 @@ auto tReadUInt8x16 =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePatternIn(16);
@@ -1002,7 +1002,7 @@ auto tReadInt4x16 = test("PackedQuantized/readInt4x16ReadsSixteenNibbles") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyNibblePatternIn(16);
@@ -1015,7 +1015,7 @@ auto tReadUInt4x16 = test("PackedQuantized/readUInt4x16ReadsSixteenNibbles") = [
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyNibblePatternIn(16);
@@ -1150,7 +1150,7 @@ auto tQuantizedRoundTrip = test("PackedQuantized/packRoundTripsEveryByte") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -1197,7 +1197,7 @@ auto tWriteIsTheStore = test("PackedQuantized/writeInt8x4IsThePackedStore") = []
 
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -1226,7 +1226,7 @@ auto tWideByteStores = test("PackedQuantized/theWideStoresAreTheWideReads") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();
@@ -1276,7 +1276,7 @@ auto tHostPackedBufferReadsBack =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto patterns = everyBytePattern();

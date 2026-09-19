@@ -220,7 +220,7 @@ auto tCodegenCompute3DGroupIds = test("GPU/codegenCompute3DGroupIds") = []
 auto tVolumeDispatchCoversTheVolume =
     test("Dispatch3D/volumeDispatchCoversTheVolume") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     checkVolumeFill(5, 6, 7);
@@ -230,7 +230,7 @@ auto tVolumeDispatchCoversTheVolume =
 // volume is still dispatched as one.
 auto tVolumeDispatchWithFlatAxis = test("Dispatch3D/volumeDispatchWithFlatAxis") = []
 {
-    if (!Device::shared().isValid())
+    if (!computeIsAvailable())
         return;
 
     checkVolumeFill(5, 6, 1);
@@ -246,7 +246,7 @@ auto tGroupAndLocalPositionsAgree =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto width = 5;

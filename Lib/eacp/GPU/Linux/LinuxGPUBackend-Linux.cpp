@@ -1,5 +1,6 @@
 #include "LinuxGPUBackend-Linux.h"
 
+#include "../OpenGL/GLBackend-Linux.h"
 #include "../Vulkan/VulkanBackend-Linux.h"
 
 #include <eacp/Core/Utils/Environment.h>
@@ -52,16 +53,15 @@ std::unique_ptr<DeviceBackend> makeDeviceBackend()
     switch (getRequestedGPUBackend())
     {
         case LinuxGPUBackend::OpenGL:
-            reportNotBuilt("OpenGL");
-            break;
+            return makeGLDeviceBackend();
 
         case LinuxGPUBackend::Composite:
             reportNotBuilt("composite");
             break;
 
-        // Vulkan is the whole of the choice while it is the only backend
-        // built: the auto rule that weighs it against a GL device arrives
-        // with that backend.
+        // Vulkan is still the whole of auto: the rule that weighs it against
+        // a GL device is stage 4's, and until then the backend that has every
+        // feature is the one a copy that did not ask gets.
         case LinuxGPUBackend::Auto:
         case LinuxGPUBackend::Vulkan:
             break;

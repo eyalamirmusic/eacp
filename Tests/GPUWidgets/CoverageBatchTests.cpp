@@ -250,7 +250,7 @@ void checkEachMatchesAlone(Vector<Entry>& entries, const GPU::Texture& target)
 
 void checkBatchMatchesAlone(Vector<Entry>& entries)
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto batch = CoverageBatch {};
@@ -282,7 +282,7 @@ auto tMixedBatchMatchesAlone =
 // it produces the other one.
 auto tFillRulesDoNotCross = test("CoverageBatch/eachPathKeepsItsOwnFillRule") = []
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto entries = Vector<Entry> {};
@@ -344,7 +344,7 @@ auto tCellBasesDoNotCross = test("CoverageBatch/backdropsOfVeryDifferentSizes") 
 auto tSecondDispatchDrawsTheSame =
     test("CoverageBatch/dispatchingTwiceDrawsTheSameThing") = []
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto entries = Vector<Entry> {};
@@ -390,7 +390,7 @@ auto tManyPathsInOneDispatch = test("CoverageBatch/manyPathsStillOneDispatch") =
 auto tEmptyBatchDispatchesNothing =
     test("CoverageBatch/nothingGatheredIsNoDispatch") = []
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto target = makeTarget(64, 64);
@@ -423,7 +423,7 @@ auto tEmptyBatchDispatchesNothing =
 auto tOneDispatchWhateverTheCount =
     test("CoverageBatch/costIsPerFrameNotPerPath") = []
 {
-    if (!GPU::Device::shared().isValid())
+    if (!probe::computeIsAvailable())
         return;
 
     auto shape = ellipse({0.f, 0.f, 44.f, 24.f});

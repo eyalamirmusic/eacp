@@ -223,7 +223,7 @@ auto tWideGroupSums = test("ThreadGroupSize/aWideGroupSumsItsOwnRun") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto groups = 3;
@@ -275,7 +275,7 @@ auto tTileGroupTransposes =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto side = tile * 2;
@@ -330,7 +330,7 @@ auto tLocalIdRunsToTheGroupWidth =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto count = wideGroup * 2;
@@ -363,7 +363,7 @@ auto tStockGridGroupIsEightSquared =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto side = 32;
@@ -407,7 +407,7 @@ auto tIndirectDispatchUsesTheProgramsGroup =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto capacity = 1024;

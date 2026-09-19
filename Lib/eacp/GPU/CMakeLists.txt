@@ -103,10 +103,11 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 else ()
-    # The Vulkan backend. Nothing here links a window system: the connection,
-    # surface and window it presents to arrive as a NativeSurfaceHandle, and
-    # the only headers that come in are the ones vulkan_wayland.h and
-    # vulkan_xcb.h declare their create-info structs from.
+    # The Vulkan and OpenGL backends, both compiled in: which one a Device gets
+    # is a runtime choice (Linux/LinuxGPUBackend-Linux.cpp). Neither links a
+    # window system: the connection, surface and window they present to arrive
+    # as a NativeSurfaceHandle, and the only headers that come in are the ones
+    # vulkan_wayland.h and vulkan_xcb.h declare their create-info structs from.
     if (NOT TARGET eacp-spirv)
         message(FATAL_ERROR
                 "A Linux build needs the SPIR-V compiler: the Vulkan "
@@ -116,37 +117,51 @@ else ()
     endif ()
 
     find_package(VulkanBackend REQUIRED)
+    find_package(GLBackend REQUIRED)
 
     target_sources(eacp-gpu PRIVATE
+            Buffer/Buffer-GL.cpp
             Buffer/Buffer-Linux.cpp
             Buffer/Buffer-Vulkan.cpp
+            CommandBuffer/CommandBuffer-GL.cpp
             CommandBuffer/CommandBuffer-Linux.cpp
             CommandBuffer/CommandBuffer-Vulkan.cpp
+            Device/Device-GL.cpp
             Device/Device-Linux.cpp
             Device/Device-Vulkan.cpp
             Frame/ComputePass-Linux.cpp
             Frame/ComputePass-Vulkan.cpp
+            Frame/Frame-GL.cpp
             Frame/Frame-Linux.cpp
             Frame/Frame-Vulkan.cpp
+            Frame/RenderPass-GL.cpp
             Frame/RenderPass-Linux.cpp
             Frame/RenderPass-Vulkan.cpp
             Linux/LinuxGPUBackend-Linux.cpp
+            OpenGL/GLContext-Linux.cpp
+            Pipeline/ComputePipeline-GL.cpp
             Pipeline/ComputePipeline-Linux.cpp
             Pipeline/ComputePipeline-Vulkan.cpp
+            Pipeline/RenderPipeline-GL.cpp
             Pipeline/RenderPipeline-Linux.cpp
             Pipeline/RenderPipeline-Vulkan.cpp
+            Shader/ShaderLibrary-GL.cpp
             Shader/ShaderLibrary-Linux.cpp
             Shader/ShaderLibrary-Vulkan.cpp
+            Texture/Texture-GL.cpp
             Texture/Texture-Linux.cpp
             Texture/Texture-Vulkan.cpp
+            Timing/GpuTimestamps-GL.cpp
             Timing/GpuTimestamps-Linux.cpp
             Timing/GpuTimestamps-Vulkan.cpp
+            View/GPUView-GL.cpp
             View/GPUView-Linux.cpp
             View/GPUView-Vulkan.cpp
             Vulkan/VulkanContext-Linux.cpp)
 
-    # Both PRIVATE: neither Vulkan nor glslang reaches past this library.
-    target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)
+    # All PRIVATE: neither Vulkan, nor glslang, nor the GL loader reaches past
+    # this library.
+    target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-gl eacp-spirv)
 endif ()
 
 set_default_target_setting(eacp-gpu)

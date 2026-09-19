@@ -159,7 +159,7 @@ auto tScopedReadSeesTheKernelsWrite =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeOutput(elementCount);
@@ -210,7 +210,7 @@ auto tAsyncCommitCanBeWaitedOn =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeOutput(elementCount);
@@ -251,7 +251,7 @@ auto tPipelinedStepsReadEverySlot =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto chain = makeZeroed(stepCount);
@@ -303,7 +303,7 @@ auto tFirstIsReadableWhileSecondRuns =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     auto output = makeOutput(elementCount);
@@ -444,7 +444,7 @@ auto tScopedUpdateWaitsForOneBufferOnly =
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    if (!computeIsAvailable())
         return;
 
     constexpr auto markerCount = 1 << 10;
