@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/Core/Utils/Broadcaster.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <string>
 
@@ -28,6 +29,15 @@ struct State
     // about its own routes.
     bool online = false;
 
+    // Something on the internet answered. Every platform's own verdict is
+    // route-based and only ever refreshed when a link changes, so a wired
+    // machine whose router lost its uplink - or a VM whose host did - stays
+    // online forever by that measure. The probe (Monitor::startProbe) is
+    // what catches it: while one runs, this is whether its last fetch was
+    // answered as expected, assumed true until the first fetch says
+    // otherwise. While none runs, this is simply online.
+    bool reachable = false;
+
     Interface interfaceKind = Interface::None;
 
     // The link bills by the byte (a tethered phone, a metered Windows
@@ -39,7 +49,31 @@ struct State
     // say.
     bool constrained = false;
 
+    bool hasInternet() const { return online && reachable; }
+
     friend bool operator==(const State&, const State&) = default;
+};
+
+// What the probe fetches, what it expects back, and how often it asks. The
+// defaults are the platform's own captive-portal endpoint - the same one
+// its network indicator already talks to - and its expected body, so a
+// portal's login page answering with 200 still counts as unreachable.
+struct ProbeOptions
+{
+    static std::string defaultUrl();
+    static std::string defaultExpectedContent();
+
+    std::string url = defaultUrl();
+
+    // The body must contain this. Empty accepts any 2xx.
+    std::string expectedContent = defaultExpectedContent();
+
+    // Between fetches after one that succeeded, and after one that failed,
+    // so an outage is confirmed gone soon after it ends.
+    Time::MS interval {30000};
+    Time::MS retryInterval {5000};
+
+    Time::MS timeout {5000};
 };
 
 // The process's one view of the network, and the broadcaster that says when
@@ -65,15 +99,46 @@ struct Monitor : EA::BroadcasterOwner
 
     // The platform layer's way in. Stores the state and triggers when it
     // differs from the last one - so the broadcaster fires on changes, not
-    // on every report the OS makes.
+    // on every report the OS makes. What it carries for reachable is
+    // ignored: that field is the monitor's own, from the probe.
     void setState(const State& newState);
 
+    // Starts fetching options.url on a background thread, once now and then
+    // on the interval, for as long as the machine is online: an offline
+    // machine has nothing to ask. Opt-in, because it is traffic every half
+    // minute on whatever link the machine has, metered ones included.
+    // Calling it again replaces the options and restarts the schedule.
+    void startProbe(const ProbeOptions& options = {});
+
+    // Stops asking; reachable goes back to mirroring online.
+    void stopProbe();
+
+    bool isProbing() const { return probing; }
+
+    // The next fetch right away instead of at the scheduled time: when a
+    // window regains focus, when a request of the app's own just failed -
+    // whenever the user is about to act on the answer. The schedule
+    // restarts from that fetch. Nothing when no probe runs.
+    void probeNow();
+
 private:
+    void publish();
+    void scheduleProbe(Time::MS delay);
+    void runProbe();
+    void onProbeResult(int generation, bool succeeded);
+
+    State reported;
     State state;
+
+    ProbeOptions probeOptions;
+    bool probing = false;
+    bool lastProbeSucceeded = true;
+    int probeGeneration = 0;
 };
 
-// Both are Monitor::get() in shorthand, so both start the monitor and both
-// want the message thread.
+// All three are Monitor::get() in shorthand, so all three start the monitor
+// and all three want the message thread.
 bool isThisMachineOnline();
+bool hasInternet();
 const State& getState();
 } // namespace eacp::Network::Connectivity

@@ -12,10 +12,19 @@ namespace Connectivity = Network::Connectivity;
 // follow it.
 //
 // Turn Wi-Fi off and the headline flips to red before the menu bar icon has
-// finished animating; turn it back on and it flips back. Nothing is polled
-// and nothing is fetched: the OS pushes its own view of the machine's routes
-// (Network.framework here, the connectivity hint on Windows, netlink on
-// Linux) and the monitor triggers.
+// finished animating; turn it back on and it flips back. That half is the
+// OS pushing its own view of the machine's routes (Network.framework here,
+// the connectivity hint on Windows, netlink on Linux) and the monitor
+// triggering - nothing polled, nothing fetched.
+//
+// Pull the cable out of the router instead, or run this in a VM whose host
+// lost its Wi-Fi, and the OS never notices: every link it has is still up.
+// That is what the probe is for. Started below, it fetches the platform's
+// captive-portal endpoint every half minute, every five seconds after a
+// failure, and the headline follows hasInternet() - online and reachable
+// both - rather than online alone. Focusing the window asks for a fetch
+// right away (Monitor::probeNow), so the answer is fresh when it is looked
+// at.
 //
 // The listener is an EA::Listener member, built last so the view it refreshes
 // already exists. Its default mode, TriggerNow, calls refresh() once as it is
@@ -46,12 +55,8 @@ struct StatusRoot final : View
         g.setColor(background);
         g.fillRect(bounds);
 
-        g.setColor(state.online ? connected : disconnected);
-        drawCentred(g,
-                    state.online ? "Connected to the internet"
-                                 : "Not connected to the internet",
-                    middle,
-                    headlineFont);
+        g.setColor(state.hasInternet() ? connected : disconnected);
+        drawCentred(g, headline(), middle, headlineFont);
 
         g.setColor(Color::white(0.6f));
         drawCentred(g, describeLink(), middle + 34.f, detailFont);
@@ -73,6 +78,17 @@ private:
         std::strftime(buffer, sizeof(buffer), "%H:%M:%S", local);
 
         return buffer;
+    }
+
+    std::string headline() const
+    {
+        if (state.hasInternet())
+            return "Connected to the internet";
+
+        if (state.online)
+            return "On a network, but not the internet";
+
+        return "Not connected to the internet";
     }
 
     std::string describeLink() const
@@ -125,7 +141,25 @@ struct ConnectivityDemoApp
     StatusRoot root;
     Window window {root, getOptions()};
 
-    EA::Listener listener {Connectivity::Monitor::get(), [this] { root.refresh(); }};
+    EA::Listener listener {probingMonitor(), [this] { root.refresh(); }};
+
+    // Coming back to the window is the moment the user is about to trust
+    // the headline, so it is checked then rather than at the scheduled time.
+    ConnectivityDemoApp()
+    {
+        window.events.onActivationChanged = [](bool isKey)
+        {
+            if (isKey)
+                Connectivity::Monitor::get().probeNow();
+        };
+    }
+
+    static Connectivity::Monitor& probingMonitor()
+    {
+        auto& monitor = Connectivity::Monitor::get();
+        monitor.startProbe();
+        return monitor;
+    }
 };
 
 int main()
