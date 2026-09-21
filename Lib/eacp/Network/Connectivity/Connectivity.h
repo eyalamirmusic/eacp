@@ -3,6 +3,7 @@
 #include <eacp/Core/Utils/Broadcaster.h>
 #include <eacp/Core/Utils/Time.h>
 
+#include <memory>
 #include <string>
 
 namespace eacp::Network::Connectivity
@@ -95,6 +96,10 @@ struct Monitor : EA::BroadcasterOwner
 {
     static Monitor& get();
 
+    Monitor() = default;
+    Monitor(const Monitor&) = delete;
+    Monitor& operator=(const Monitor&) = delete;
+
     const State& getState() const { return state; }
 
     // The platform layer's way in. Stores the state and triggers when it
@@ -124,6 +129,7 @@ struct Monitor : EA::BroadcasterOwner
 private:
     void publish();
     void scheduleProbe(Time::MS delay);
+    void onProbeDue(int generation);
     void runProbe();
     void onProbeResult(int generation, bool succeeded);
 
@@ -135,6 +141,12 @@ private:
     bool probeInFlight = false;
     bool lastProbeSucceeded = true;
     int probeGeneration = 0;
+
+    // What the probe's deferred callbacks hold in place of `this`. The
+    // process singleton never dies, but a monitor of a test's own does, with
+    // a fetch still out and a scheduled tick still pending; a token they can
+    // no longer lock is how those learn to do nothing.
+    std::shared_ptr<Monitor*> alive {std::make_shared<Monitor*>(this)};
 };
 
 // All three are Monitor::get() in shorthand, so all three start the monitor

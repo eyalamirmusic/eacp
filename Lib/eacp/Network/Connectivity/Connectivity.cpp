@@ -31,6 +31,16 @@ void ensureMonitoring()
                    });
 }
 
+template <typename Fn>
+auto whenAlive(const std::weak_ptr<Monitor*>& token, Fn fn)
+{
+    return [token, fn]
+    {
+        if (auto live = token.lock())
+            fn(**live);
+    };
+}
+
 bool answeredAsExpected(const HTTP::Response& response,
                         const std::string& expectedContent)
 {
@@ -147,22 +157,29 @@ void Monitor::probeNow()
 }
 
 // callAfter cannot be cancelled, so every schedule and every stop bumps the
-// generation and a callback from before the bump does nothing. The monitor
-// is a process singleton, so the pointer the callbacks reach is always live.
+// generation and a callback from before the bump does nothing.
 void Monitor::scheduleProbe(Time::MS delay)
 {
     auto generation = ++probeGeneration;
 
-    auto fire = [this, generation]
-    {
-        if (generation == probeGeneration && probing)
-            runProbe();
-    };
-
     if (delay.count <= 0)
-        fire();
-    else
-        Threads::callAfter(delay, fire);
+    {
+        onProbeDue(generation);
+        return;
+    }
+
+    auto token = std::weak_ptr(alive);
+
+    Threads::callAfter(delay,
+                       whenAlive(token,
+                                 [generation](Monitor& monitor)
+                                 { monitor.onProbeDue(generation); }));
+}
+
+void Monitor::onProbeDue(int generation)
+{
+    if (generation == probeGeneration && probing)
+        runProbe();
 }
 
 // Its own thread rather than HTTP::asyncRequest: cancelAllAsyncRequests
@@ -181,14 +198,17 @@ void Monitor::runProbe()
 
     auto generation = probeGeneration;
     auto expected = probeOptions.expectedContent;
+    auto token = std::weak_ptr(alive);
     probeInFlight = true;
 
-    auto fetch = [request, expected, generation]
+    auto fetch = [request, expected, generation, token]
     {
         auto succeeded = answeredAsExpected(request.perform(), expected);
 
-        Threads::callAsync([generation, succeeded]
-                           { instance().onProbeResult(generation, succeeded); });
+        Threads::callAsync(
+            whenAlive(token,
+                      [generation, succeeded](Monitor& monitor)
+                      { monitor.onProbeResult(generation, succeeded); }));
     };
 
     auto worker = std::thread(fetch);

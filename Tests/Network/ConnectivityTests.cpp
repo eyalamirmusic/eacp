@@ -57,10 +57,15 @@ auto tConnectivityListenerStartsFromTheCurrentState =
     check(calls == 1);
 };
 
+// Everything from here down drives a monitor of the test's own rather than
+// the process singleton. CI runs each case in a process of its own, where
+// the platform monitor has only just started: its first report lands
+// asynchronously, in the middle of any case that pumps the loop, and on a
+// wired runner it seeds the very state a case would set to see a change.
 auto tConnectivityChangeTriggersTheListener =
     test("Connectivity/changeTriggersTheListener") = []
 {
-    auto& monitor = Connectivity::Monitor::get();
+    auto monitor = Connectivity::Monitor {};
     auto seen = Connectivity::State {};
 
     auto listener = EA::Listener {monitor, [&] { seen = monitor.getState(); }};
@@ -81,7 +86,7 @@ auto tConnectivityChangeTriggersTheListener =
 auto tConnectivityRepeatedStateDoesNotTrigger =
     test("Connectivity/repeatedStateDoesNotTrigger") = []
 {
-    auto& monitor = Connectivity::Monitor::get();
+    auto monitor = Connectivity::Monitor {};
     auto wired = stateWith(true, Connectivity::Interface::Wired);
 
     monitor.setState(wired);
@@ -100,7 +105,7 @@ auto tConnectivityRepeatedStateDoesNotTrigger =
 auto tConnectivityListenerStopsWhenDestroyed =
     test("Connectivity/listenerStopsWhenDestroyed") = []
 {
-    auto& monitor = Connectivity::Monitor::get();
+    auto monitor = Connectivity::Monitor {};
     auto calls = 0;
 
     {
@@ -115,19 +120,60 @@ auto tConnectivityListenerStopsWhenDestroyed =
     check(calls == 1);
 };
 
-// The probe, against a server of the test's own. Every case below sets the
-// state by hand and stops the probe on the way out, so the platform monitor
-// and the cases above see nothing of it.
+// The order static destruction can produce: a listener held by something
+// constructed before the monitor - another singleton, a namespace-scope
+// object - outlives the monitor's own static and deregisters after it is
+// gone. The broadcaster nulls its listeners' back-pointers as it dies, so
+// the listener's destructor is a no-op and nothing is reached after the fact.
+auto tConnectivityListenerOutlivingTheMonitorIsHarmless =
+    test("Connectivity/listenerOutlivingTheMonitorIsHarmless") = []
+{
+    auto calls = 0;
+    auto listener = std::optional<EA::Listener> {};
+
+    {
+        auto monitor = Connectivity::Monitor {};
+
+        listener.emplace(monitor, [&] { ++calls; });
+        check(calls == 1);
+
+        monitor.setState(stateWith(true, Connectivity::Interface::Wired));
+        check(calls == 2);
+    }
+
+    listener.reset();
+    check(calls == 2);
+};
+
+// The probe, against a server of the test's own.
 namespace
 {
 using eacp::HTTP::Request;
 using eacp::HTTP::Response;
 using eacp::HTTP::Server;
+using eacp::HTTP::ServerOptions;
+using eacp::HTTP::ServerThreadingMode;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::MS;
 
 constexpr auto probeTimeout = MS {5000};
 constexpr auto probeBody = "eacp-probe-ok";
+
+Response portalPage()
+{
+    auto response = Response();
+    response.statusCode = 200;
+    response.content = "<html>log in</html>";
+    return response;
+}
+
+Response probeAnswer()
+{
+    auto response = Response();
+    response.statusCode = 200;
+    response.content = probeBody;
+    return response;
+}
 
 struct ProbeServer
 {
@@ -135,12 +181,8 @@ struct ProbeServer
     {
         auto handler = [this](const Request&)
         {
-            auto response = Response();
-            response.statusCode = 200;
-            response.content = body.load() ? probeBody : "<html>log in</html>";
-
             ++hits;
-            return response;
+            return body.load() ? probeAnswer() : portalPage();
         };
 
         listening = server.listen(0, handler);
@@ -172,22 +214,74 @@ struct ProbeServer
     bool listening = false;
 };
 
-struct StopProbeOnExit
+// A server whose handler blocks until the test lets it go, which has to run
+// off the event loop the test is pumping. Its first answer is a portal's and
+// every later one the probe's, so the first answer's landing is visible as
+// reachable going false: the assumed-true start would hide a good one.
+struct StallingProbeServer
 {
-    ~StopProbeOnExit() { Connectivity::Monitor::get().stopProbe(); }
+    StallingProbeServer()
+        : server(options())
+    {
+        auto handler = [this](const Request&)
+        {
+            auto hit = ++hits;
+            gate.wait();
+            return hit == 1 ? portalPage() : probeAnswer();
+        };
+
+        listening = server.listen(0, handler);
+    }
+
+    ~StallingProbeServer()
+    {
+        gate.release();
+        server.stop();
+    }
+
+    static ServerOptions options()
+    {
+        auto serverOptions = ServerOptions();
+        serverOptions.threading = ServerThreadingMode::ThreadPool;
+        serverOptions.threadPoolSize = 2;
+        return serverOptions;
+    }
+
+    Connectivity::ProbeOptions probeOptions(MS timeout) const
+    {
+        auto probe = Connectivity::ProbeOptions {};
+
+        probe.url =
+            "http://127.0.0.1:" + std::to_string(server.boundPort()) + "/probe";
+        probe.expectedContent = probeBody;
+        probe.interval = MS {60000};
+        probe.retryInterval = MS {60000};
+        probe.timeout = timeout;
+
+        return probe;
+    }
+
+    StallGate gate;
+    Server server;
+    std::atomic<int> hits {0};
+    bool listening = false;
 };
 
 bool pumpUntil(const std::function<bool()>& ready)
 {
     return runEventLoopUntil(ready, probeTimeout);
 }
+
+void pumpFor(MS duration)
+{
+    runEventLoopUntil([] { return false; }, duration);
+}
 } // namespace
 
 auto tConnectivityReachableMirrorsOnlineWithoutAProbe =
     test("Connectivity/reachableMirrorsOnlineWithoutAProbe") = []
 {
-    auto& monitor = Connectivity::Monitor::get();
-    monitor.stopProbe();
+    auto monitor = Connectivity::Monitor {};
 
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
     check(monitor.getState().reachable);
@@ -195,15 +289,13 @@ auto tConnectivityReachableMirrorsOnlineWithoutAProbe =
 
     monitor.setState(stateWith(false, Connectivity::Interface::None));
     check(!monitor.getState().reachable);
-    check(!Connectivity::hasInternet());
+    check(!monitor.getState().hasInternet());
 };
 
 auto tConnectivityProbeAssumesReachableUntilAnswered =
     test("Connectivity/probeAssumesReachableUntilAnswered") = []
 {
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
 
     auto probe = Connectivity::ProbeOptions {};
@@ -223,9 +315,7 @@ auto tConnectivityProbeAgainstAnAnsweringServer =
     auto server = ProbeServer {};
     check(server.listening);
 
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
     monitor.startProbe(server.options());
 
@@ -241,8 +331,7 @@ auto tConnectivityProbeClearsReachableWhenTheAnswerIsWrong =
     check(server.listening);
     server.body.store(false);
 
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
+    auto monitor = Connectivity::Monitor {};
     auto triggers = 0;
 
     auto listener = EA::Listener {
@@ -265,17 +354,14 @@ auto tConnectivityProbeClearsReachableWhenTheAnswerIsWrong =
 auto tConnectivityProbeClearsReachableWhenNothingAnswers =
     test("Connectivity/probeClearsReachableWhenNothingAnswers") = []
 {
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
-    monitor.setState(stateWith(true, Connectivity::Interface::Wired));
-
     auto server = ProbeServer {};
     check(server.listening);
 
     auto probe = server.options();
     server.server.stop();
 
+    auto monitor = Connectivity::Monitor {};
+    monitor.setState(stateWith(true, Connectivity::Interface::Wired));
     monitor.startProbe(probe);
 
     check(pumpUntil([&] { return !monitor.getState().reachable; }));
@@ -289,8 +375,7 @@ auto tConnectivityStoppingTheProbeRestoresTheMirror =
     check(server.listening);
     server.body.store(false);
 
-    auto& monitor = Connectivity::Monitor::get();
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
     monitor.startProbe(server.options());
 
@@ -302,7 +387,7 @@ auto tConnectivityStoppingTheProbeRestoresTheMirror =
     check(monitor.getState().reachable);
 
     auto hitsAtStop = server.hits.load();
-    runEventLoopUntil([] { return false; }, MS {200});
+    pumpFor(MS {200});
     check(server.hits.load() == hitsAtStop);
 };
 
@@ -312,13 +397,11 @@ auto tConnectivityProbeWaitsWhileOffline =
     auto server = ProbeServer {};
     check(server.listening);
 
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(false, Connectivity::Interface::None));
     monitor.startProbe(server.options());
 
-    runEventLoopUntil([] { return false; }, MS {200});
+    pumpFor(MS {200});
     check(server.hits.load() == 0);
     check(!monitor.getState().reachable);
 
@@ -334,9 +417,7 @@ auto tConnectivityProbeNowSkipsTheWait =
     auto server = ProbeServer {};
     check(server.listening);
 
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
 
     auto probe = server.options();
@@ -351,30 +432,29 @@ auto tConnectivityProbeNowSkipsTheWait =
 
 // The interval counts from the on-demand fetch, not from the one before it:
 // the fetch the schedule had pending is dropped, or a focus-triggered check
-// would be followed by a second one moments later.
+// would be followed by a second one moments later. The spans are wide
+// because a shared CI runner can stall a process for most of a second.
 auto tConnectivityProbeNowRestartsTheInterval =
     test("Connectivity/probeNowRestartsTheInterval") = []
 {
     auto server = ProbeServer {};
     check(server.listening);
 
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
 
     auto probe = server.options();
-    probe.interval = MS {800};
+    probe.interval = MS {2400};
     monitor.startProbe(probe);
 
     check(pumpUntil([&] { return server.hits.load() == 1; }));
 
-    runEventLoopUntil([] { return false; }, MS {400});
+    pumpFor(MS {1200});
     monitor.probeNow();
     check(pumpUntil([&] { return server.hits.load() == 2; }));
 
     // Past where the original schedule would have fired, short of the new one.
-    runEventLoopUntil([] { return false; }, MS {600});
+    pumpFor(MS {1800});
     check(server.hits.load() == 2);
 
     check(pumpUntil([&] { return server.hits.load() == 3; }));
@@ -389,9 +469,7 @@ auto tConnectivityRestartingTheProbeKeepsTheVerdict =
     check(server.listening);
     server.body.store(false);
 
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
     monitor.startProbe(server.options());
 
@@ -409,84 +487,26 @@ auto tConnectivityRestartingTheProbeKeepsTheVerdict =
 auto tConnectivityProbeNowDoesNotDoubleUpAnInFlightFetch =
     test("Connectivity/probeNowDoesNotDoubleUpAnInFlightFetch") = []
 {
-    auto gate = StallGate {};
-    auto hits = std::atomic<int> {0};
+    auto server = StallingProbeServer {};
+    check(server.listening);
 
-    auto options = eacp::HTTP::ServerOptions();
-    options.threading = eacp::HTTP::ServerThreadingMode::ThreadPool;
-    options.threadPoolSize = 2;
-
-    auto server = Server(options);
-
-    // The first, stalled answer is a portal's, so its landing is visible as
-    // reachable going false; the assumed-true start would hide a good one.
-    auto handler = [&](const Request&)
-    {
-        auto hit = ++hits;
-        gate.wait();
-
-        auto response = Response();
-        response.statusCode = 200;
-        response.content = hit == 1 ? "<html>log in</html>" : probeBody;
-        return response;
-    };
-
-    check(server.listen(0, handler));
-
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
+    monitor.startProbe(server.probeOptions(MS {5000}));
 
-    auto probe = Connectivity::ProbeOptions {};
-    probe.url = "http://127.0.0.1:" + std::to_string(server.boundPort()) + "/probe";
-    probe.expectedContent = probeBody;
-    probe.interval = MS {60000};
-    probe.retryInterval = MS {60000};
-    probe.timeout = MS {5000};
-
-    monitor.startProbe(probe);
-    check(pumpUntil([&] { return hits.load() == 1; }));
+    check(pumpUntil([&] { return server.hits.load() == 1; }));
 
     monitor.probeNow();
     monitor.probeNow();
-    runEventLoopUntil([] { return false; }, MS {100});
-    check(hits.load() == 1);
+    pumpFor(MS {100});
+    check(server.hits.load() == 1);
 
-    gate.release();
+    server.gate.release();
     check(pumpUntil([&] { return !monitor.getState().reachable; }));
 
     monitor.probeNow();
-    check(pumpUntil([&] { return hits.load() == 2; }));
+    check(pumpUntil([&] { return server.hits.load() == 2; }));
     check(pumpUntil([&] { return monitor.getState().reachable; }));
-
-    server.stop();
-};
-
-// The order static destruction can produce: a listener held by something
-// constructed before the monitor - another singleton, a namespace-scope
-// object - outlives the monitor's own static and deregisters after it is
-// gone. Reproduced here with a monitor of the test's own destroyed first.
-// The broadcaster nulls its listeners' back-pointers as it dies, so the
-// listener's destructor is a no-op and nothing is reached after the fact.
-auto tConnectivityListenerOutlivingTheMonitorIsHarmless =
-    test("Connectivity/listenerOutlivingTheMonitorIsHarmless") = []
-{
-    auto calls = 0;
-    auto listener = std::optional<EA::Listener> {};
-
-    {
-        auto monitor = Connectivity::Monitor {};
-
-        listener.emplace(monitor, [&] { ++calls; });
-        check(calls == 1);
-
-        monitor.setState(stateWith(true, Connectivity::Interface::Wired));
-        check(calls == 2);
-    }
-
-    listener.reset();
-    check(calls == 2);
 };
 
 // A fetch that runs out of time is a failed one - every backend reports it
@@ -495,42 +515,36 @@ auto tConnectivityListenerOutlivingTheMonitorIsHarmless =
 auto tConnectivityProbeTimeoutCountsAsUnreachable =
     test("Connectivity/probeTimeoutCountsAsUnreachable") = []
 {
-    auto gate = StallGate {};
+    auto server = StallingProbeServer {};
+    check(server.listening);
 
-    auto options = eacp::HTTP::ServerOptions();
-    options.threading = eacp::HTTP::ServerThreadingMode::ThreadPool;
-    options.threadPoolSize = 2;
-
-    auto server = Server(options);
-
-    auto handler = [&](const Request&)
-    {
-        gate.wait();
-
-        auto response = Response();
-        response.statusCode = 200;
-        response.content = probeBody;
-        return response;
-    };
-
-    check(server.listen(0, handler));
-
-    auto& monitor = Connectivity::Monitor::get();
-    auto guard = StopProbeOnExit {};
-
+    auto monitor = Connectivity::Monitor {};
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
-
-    auto probe = Connectivity::ProbeOptions {};
-    probe.url = "http://127.0.0.1:" + std::to_string(server.boundPort()) + "/probe";
-    probe.expectedContent = probeBody;
-    probe.interval = MS {60000};
-    probe.retryInterval = MS {60000};
-    probe.timeout = MS {100};
-
-    monitor.startProbe(probe);
+    monitor.startProbe(server.probeOptions(MS {100}));
 
     check(pumpUntil([&] { return !monitor.getState().reachable; }));
+};
 
-    gate.release();
-    server.stop();
+// A monitor destroyed with a fetch out and a tick scheduled: both land
+// afterwards, on the message thread, and find nothing to report to.
+auto tConnectivityDestroyingTheMonitorMidFetchIsHarmless =
+    test("Connectivity/destroyingTheMonitorMidFetchIsHarmless") = []
+{
+    auto server = StallingProbeServer {};
+    check(server.listening);
+
+    {
+        auto monitor = Connectivity::Monitor {};
+        monitor.setState(stateWith(true, Connectivity::Interface::Wired));
+
+        auto probe = server.probeOptions(MS {5000});
+        probe.interval = MS {50};
+        monitor.startProbe(probe);
+
+        check(pumpUntil([&] { return server.hits.load() == 1; }));
+    }
+
+    server.gate.release();
+    pumpFor(MS {300});
+    check(server.hits.load() == 1);
 };
