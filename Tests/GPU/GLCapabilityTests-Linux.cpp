@@ -157,6 +157,21 @@ auto tGLDeviceAgreesWithTheContext =
         check(alignment >= caps->storageBufferOffsetAlignment,
               "and a storage-buffer bind");
 
+    // Not the extension flag alone: a std430 block is a thing the language has,
+    // so the target the lowering would be asked for decides it - which is what
+    // makes a driver capped to the floor answer no while its extension string
+    // still says yes.
+    check(device.supportsStorageBuffers()
+              == (caps->storageBuffers && caps->glslTarget().allowsStorageBuffers()),
+          "storage buffers are what this context's GLSL target can spell");
+
+    if (device.supportsCompute())
+        check(device.supportsStorageBuffers(),
+              "a compute tier comes with the buffers its kernels write");
+
+    check(device.supportsZeroToOneDepth() == caps->clipControl,
+          "glClipControl is the whole of the [0, 1] depth range on GL");
+
     check(!device.supportsHalfSimdMatrix() && !device.supportsBFloat16SimdMatrix(),
           "no GL version has a cooperative-matrix fragment");
 };

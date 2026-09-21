@@ -181,6 +181,35 @@ public:
     // otherwise never take them.
     bool supportsCompute() const;
 
+    // Whether a storage buffer can be bound to a stage at all: the EDSL's
+    // inputBuffer and outputBuffer, RenderPass::setVertexStorageBuffer and
+    // setFragmentStorageBuffer, and everything a kernel reads or writes.
+    //
+    // True on Metal, D3D12 and Vulkan. The one backend that answers false is
+    // OpenGL below 4.3 (ES below 3.1), where the std430 block a shader would
+    // read through is not in the language yet - a shader that names one is
+    // refused when its pipeline is built rather than quietly reading nothing -
+    // so a caller with a second route takes it before it builds the shader.
+    //
+    // Every device with a compute tier has these; a device with these need not
+    // have the tier, which is what makes it a second query rather than the same
+    // one under another name.
+    bool supportsStorageBuffers() const;
+
+    // Whether the depth a pass leaves in a depth attachment is the clip-space
+    // depth the vertex stage produced - 0 at the near plane, 1 at the far one -
+    // which is what a read-back of a depth texture, or a shader sampling one,
+    // gets.
+    //
+    // True on Metal, D3D12 and Vulkan, whose clip space is that range. OpenGL's
+    // own is [-1, 1] and glClipControl is the call that moves it, so a context
+    // that has no such call - GL below 4.5 without GL_ARB_clip_control, which
+    // is what a virtualised driver commonly offers - lands every depth in the
+    // far half of the range, at (z + 1) / 2. Ordering is untouched either way,
+    // so every depth *test* behaves the same and it is only the value read back
+    // that differs, which is the only thing this is for.
+    bool supportsZeroToOneDepth() const;
+
     // Whether a render target of this many samples can be created on this
     // device - TextureDescriptor::sampleCount, and the drawable's
     // GPUView::setSampleCount.
@@ -346,6 +375,34 @@ public:
     // Internal: the timer Frame drives. Apps read lastFrameTimings().
     FrameTimer& frameTimer() { return timer; }
 
+    // How much moved between the two halves of a composite Device this frame,
+    // and in how many separate copies - Linux's OpenGL-render, Vulkan-compute
+    // Device (plan.md D11), where a resource both sides touch exists twice and
+    // what one side wrote is copied through host memory before the other reads
+    // it. Zero on every other backend and on Linux's own single-API ones, where
+    // nothing crosses at all.
+    //
+    // Here rather than hidden because the crossing is the whole cost of that
+    // device: an interface whose kernels write one R8 atlas pays for that
+    // atlas once a frame, and a demo that hands a full-screen texture back and
+    // forth pays for it every frame and should be told so. Both reset at
+    // Device::beginFrame, so a caller reads them beside lastFrameTimings().
+    std::int64_t crossingBytesThisFrame() const { return crossingBytes; }
+    int crossingsThisFrame() const { return crossingCount; }
+
+    // And what those copies took off the wall clock, which is the number the
+    // other two are read against: the copy is on the CPU, between two GPUs that
+    // do not share memory, and it is time the frame spent doing no drawing.
+    double crossingMillisecondsThisFrame() const { return crossingMs; }
+
+    // Called by the composite backend as each copy is made.
+    void noteCrossing(std::int64_t bytes, double milliseconds)
+    {
+        crossingBytes += bytes;
+        crossingMs += milliseconds;
+        ++crossingCount;
+    }
+
     // How many GPU buffers have been created on this device since it came up.
     //
     // Per-frame data goes through StreamingBuffers, which recycles, so this
@@ -378,5 +435,9 @@ private:
 
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
+
+    std::int64_t crossingBytes = 0;
+    double crossingMs = 0.0;
+    int crossingCount = 0;
 };
 } // namespace eacp::GPU

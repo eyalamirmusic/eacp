@@ -14,13 +14,18 @@ struct Buffer::Native
            std::int64_t bytes,
            BufferUsage usage,
            BufferStorage storage)
-        : backend(getDeviceBackend(device)
-                      .makeBuffer(device, data, bytes, usage, storage))
+        : backend(getDeviceBackend(device).makeBuffer(
+              device, data, bytes, usage, storage))
     {
     }
 
     std::unique_ptr<BufferBackend> backend;
 };
+
+BufferBackend& getBufferBackend(const Buffer& buffer)
+{
+    return *buffer.impl->backend;
+}
 
 Buffer::Buffer(Device& device,
                const void* data,

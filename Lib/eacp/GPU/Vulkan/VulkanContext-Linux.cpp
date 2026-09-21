@@ -1,5 +1,6 @@
 #include "../Common.h"
 
+#include "VulkanBackend-Linux.h"
 #include "VulkanContext.h"
 #include "VulkanTypes.h"
 
@@ -466,6 +467,75 @@ VkSampler makeSampler(VkDevice device, int index)
     return sampler;
 }
 } // namespace
+
+GPUDeviceClass vulkanDeviceClass()
+{
+    if (volkInitialize() != VK_SUCCESS)
+        return GPUDeviceClass::None;
+
+    if (vkEnumerateInstanceVersion == nullptr)
+        return GPUDeviceClass::None;
+
+    auto loaderVersion = std::uint32_t {0};
+
+    if (vkEnumerateInstanceVersion(&loaderVersion) != VK_SUCCESS
+        || loaderVersion < VK_API_VERSION_1_3)
+        return GPUDeviceClass::None;
+
+    VkApplicationInfo application = {};
+    application.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    application.pApplicationName = "eacp";
+    application.pEngineName = "eacp";
+    application.apiVersion = VK_API_VERSION_1_3;
+
+    VkInstanceCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    info.pApplicationInfo = &application;
+
+    auto instance = VkInstance {VK_NULL_HANDLE};
+
+    if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS)
+        return GPUDeviceClass::None;
+
+    volkLoadInstanceOnly(instance);
+
+    auto count = std::uint32_t {0};
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+
+    auto candidates = Vector<VkPhysicalDevice> {};
+    candidates.resize(static_cast<int>(count));
+
+    if (count > 0)
+        vkEnumeratePhysicalDevices(instance, &count, candidates.data());
+
+    auto found = GPUDeviceClass::None;
+
+    // The same filter selectPhysicalDevice applies, so what this answers is
+    // what that would go on to pick rather than what the loader listed.
+    for (auto candidate: candidates)
+    {
+        VkPhysicalDeviceProperties properties = {};
+        vkGetPhysicalDeviceProperties(candidate, &properties);
+
+        if (properties.apiVersion < VK_API_VERSION_1_3)
+            continue;
+
+        if (!probeFeatures(candidate).allPresent() || findQueueFamily(candidate) < 0)
+            continue;
+
+        if (properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU)
+        {
+            found = GPUDeviceClass::Hardware;
+            break;
+        }
+
+        found = GPUDeviceClass::Software;
+    }
+
+    vkDestroyInstance(instance, nullptr);
+
+    return found;
+}
 
 VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
                                            int firstBinding)

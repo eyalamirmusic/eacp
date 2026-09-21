@@ -242,6 +242,13 @@ public:
 private:
     struct Native;
     Pimpl<Native> impl;
+
+    // The one backend that wraps another - Linux's composite Device, which is
+    // OpenGL for render and Vulkan for compute (plan.md D11) - has to reach the
+    // backend behind a Buffer a pass was handed, since the native handle it
+    // would otherwise go by is the one of whichever side asked. Declared here
+    // on every platform and defined only in Buffer-Linux.cpp.
+    friend struct BufferBackend& getBufferBackend(const Buffer& buffer);
 };
 
 // A contiguous slice of one Buffer: where it starts and how long it is, in

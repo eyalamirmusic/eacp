@@ -26,7 +26,11 @@ ARG CMAKE_VERSION=3.31.6
 # (gcc/g++/make), gdb for debugging, ca-certificates/curl/git for
 # CMake FetchContent, and Mesa's lavapipe (mesa-vulkan-drivers) with the
 # Vulkan loader, tools and validation layers so the Vulkan backend's tests
-# run headless on a software device, as the Windows lane runs on WARP.
+# run headless on a software device, as the Windows lane runs on WARP. The
+# OpenGL backend's runtime is beside it: libegl1 is the dispatch library eacp
+# dlopens, libegl-mesa0 the implementation behind it, libgles2 the ES one
+# EACP_GL_ES binds, and libgl1-mesa-dri the drivers - llvmpipe among them,
+# which is what LIBGL_ALWAYS_SOFTWARE picks.
 # The Wayland half of the graphics backend needs libwayland-client, the
 # protocol XML and wayland-scanner, xkbcommon and libdecor to build, and
 # Weston's headless backend gives the tests a compositor to open windows on
@@ -57,8 +61,12 @@ RUN apt-get update \
         git \
         libcurl4-openssl-dev \
         libdecor-0-dev \
+        libegl-mesa0 \
+        libegl1 \
         libfontconfig-dev \
         libfreetype-dev \
+        libgl1-mesa-dri \
+        libgles2 \
         libharfbuzz-dev \
         libvulkan1 \
         libwayland-bin \
@@ -133,6 +141,52 @@ COPY Scripts/with-weston /usr/local/bin/with-weston
 #       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
 #       -R '^(X11|EmbeddedView|Present)/'
 COPY Scripts/with-xvfb /usr/local/bin/with-xvfb
+
+# The same three runs again on the OpenGL backend, which is what the CI Vulkan
+# lane does after them (plan.md D12). EACP_GPU_BACKEND=gl is the whole of the
+# difference and LIBGL_ALWAYS_SOFTWARE keeps Mesa on llvmpipe; the three device
+# suites are named rather than ctest because every other suite has already run:
+#
+#   docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 \
+#       -e EACP_GPU_BACKEND=gl -e LIBGL_ALWAYS_SOFTWARE=1 \
+#       -v "$PWD":/workspace eacp-ci-linux \
+#       bash -c 'build-ci-linux/Tests/GPU/GPUTests \
+#                && build-ci-linux/Tests/GPUWidgets/GPUWidgetsTests \
+#                && build-ci-linux/Tests/UI/UITests'
+#
+#   docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_REQUIRE_DISPLAY=1 \
+#       -e EACP_GPU_BACKEND=gl -e LIBGL_ALWAYS_SOFTWARE=1 \
+#       -v "$PWD":/workspace eacp-ci-linux \
+#       with-weston ctest --test-dir build-ci-linux --output-on-failure \
+#       -R '^(Wayland|Present)/'
+#
+#   docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_REQUIRE_DISPLAY=1 \
+#       -e EACP_GPU_BACKEND=gl -e LIBGL_ALWAYS_SOFTWARE=1 \
+#       -v "$PWD":/workspace eacp-ci-linux \
+#       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
+#       -R '^(X11|EmbeddedView|Present)/'
+#
+# And the two capped runs, which are the floor the backend is written to:
+# MESA_GL_VERSION_OVERRIDE=3.3 with MESA_GLSL_VERSION_OVERRIDE=330 for GL 3.3
+# core, and EACP_GL_ES=1 with MESA_GLES_VERSION_OVERRIDE=3.0 for ES 3.0, each
+# added to the headless command above.
+#
+# Then the composite device (plan.md D11): one Device over both backends,
+# OpenGL for render and Vulkan for compute, which over two llvmpipes exercises
+# every crossing path with no hardware. It is EACP_GPU_BACKEND=composite in
+# place of gl, and it is the only GL-side run whose compute half does not
+# self-skip:
+#
+#   docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 \
+#       -e EACP_GPU_BACKEND=composite -e EACP_VK_SOFTWARE=1 \
+#       -e LIBGL_ALWAYS_SOFTWARE=1 \
+#       -v "$PWD":/workspace eacp-ci-linux \
+#       bash -c 'build-ci-linux/Tests/GPU/GPUTests \
+#                && build-ci-linux/Tests/GPUWidgets/GPUWidgetsTests \
+#                && build-ci-linux/Tests/UI/UITests'
+#
+# with the two session scripts after it over -R '^Present/' alone, a composite
+# presenting through the OpenGL half exactly as the GL backend does.
 
 WORKDIR /workspace
 

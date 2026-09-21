@@ -162,6 +162,7 @@ public:
 
     xcb_connection_t* getConnection() const { return connection; }
     xcb_screen_t* getScreen() const { return screen; }
+    int getScreenNumber() const { return screenNumber; }
 
     const X11Atoms& getAtoms() const { return atoms; }
 

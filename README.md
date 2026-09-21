@@ -71,7 +71,8 @@ and threading core, processes, plugins, files, the HTTP client and server, IPC
 and RPC, the SIMD kernels — builds on Linux too, which is what makes eacp usable
 for a headless service as well as for a GUI. The graphics stack builds on all
 four platforms, because it wraps each one's own compositor instead of shipping
-one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
+one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan
+or OpenGL.
 
 | Module | macOS | Windows | iOS | Linux |
 | --- | :---: | :---: | :---: | :---: |
@@ -79,7 +80,7 @@ one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 | `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
-| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
+| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan, OpenGL and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
 | `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
 | `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † |
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
@@ -220,12 +221,37 @@ docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISP
     -R '^(X11|EmbeddedView|Present)/'
 ```
 
+CI then runs the GPU suites again on the OpenGL backend — headless, under both
+session scripts, and twice more capped to GL 3.3 and to ES 3.0 — which is
+`EACP_GPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1` in front of the same commands,
+and once more on the composite device (`EACP_GPU_BACKEND=composite`), which is
+the only GL-side run whose compute half does not self-skip.
+
 The Vulkan half needs no new build dependency: the headers, `volk` and the
 allocator are fetched by CPM, and the loader is opened by name at runtime, so
 all a machine needs to run it is a driver — `mesa-vulkan-drivers` is enough, and
 its software rasterizer is what CI uses. `EACP_VK_SOFTWARE=1` asks for that
 device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
-silently skips into a suite that fails. The Wayland, X11 and text halves are
+silently skips into a suite that fails.
+
+**There are two GPU backends on Linux and the choice is made at runtime.**
+Beside Vulkan there is an OpenGL one — GL 3.3 core and ES 3.0 as its floor, over
+EGL, with `libEGL.so.1` opened by name exactly as the Vulkan loader is, so it
+needs no build dependency either. It is there for the machine a virtual machine
+usually is: a software Vulkan beside a driver-backed OpenGL, which is what a
+guest whose virtio-gpu speaks virgl offers.
+`EACP_GPU_BACKEND=vulkan|gl|composite|auto` picks one and the default is `auto`:
+Vulkan wherever it has a device that is not a CPU one, else OpenGL where EGL
+names a device that is not software and the GL backend has kernels of its own,
+else the **composite** — one `Device` drawing through OpenGL and dispatching
+through Vulkan, which is what such a machine really has — else Vulkan. The
+render and present halves of the GL backend are built and the whole suite runs
+on it, windows and presented pixels included; the kernel tier is not, so
+`Device::supportsCompute()` is false there and the UI takes its mesh route,
+while on the composite it is true and the UI keeps its analytic coverage at the
+price of a copy between the halves that
+`Device::crossingBytesThisFrame()` counts. `Lib/eacp/GPU/README.md` has the
+rest. The Wayland, X11 and text halves are
 found the way libcurl is, by pkg-config against the machine's own libraries:
 `libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
 libdecor-0-dev libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev
@@ -235,7 +261,9 @@ pkg-config` on Debian/Ubuntu,
 `weston` and `xvfb` to run the window tests without a desktop
 (`Scripts/with-weston` and `Scripts/with-xvfb`, which are also `with-weston` and
 `with-xvfb` in the image) with `libxcb-xtest0-dev` for the X11 suite's own
-synthetic input, and fonts for the text tests to resolve —
+synthetic input, `libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri` to run the
+OpenGL backend (a runtime, not a build dependency, as the Vulkan driver is), and
+fonts for the text tests to resolve —
 `fonts-dejavu-core fonts-dejavu-extra
 fonts-droid-fallback fonts-noto-color-emoji`. `EACP_REQUIRE_DISPLAY=1` does for
 the display server what `EACP_REQUIRE_GPU=1` does for the device, and

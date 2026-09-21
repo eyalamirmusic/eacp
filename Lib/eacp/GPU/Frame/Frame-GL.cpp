@@ -54,16 +54,11 @@ GLuint glPassFramebuffer(GLTextureData& data)
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
 
     if (multisampled)
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER,
-                                  GL_COLOR_ATTACHMENT0,
-                                  GL_RENDERBUFFER,
-                                  data.msaaColor);
+        glFramebufferRenderbuffer(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, data.msaaColor);
     else
-        glFramebufferTexture2D(GL_FRAMEBUFFER,
-                               GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D,
-                               data.texture,
-                               0);
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, data.texture, 0);
 
     glAttachDepth(data);
 
@@ -82,15 +77,26 @@ GLuint glPassFramebuffer(GLTextureData& data)
 
 struct GLFrameBackend final : FrameBackend
 {
-    // Stage 3's: a drawable is an EGLSurface over the view's own surface, and
-    // until there is one a frame built on a drawable has no target at all -
-    // isValid() is false and beginPass answers null, which is what the portable
-    // half turns into a RenderPass over no encoder.
-    GLFrameBackend(Device& deviceToUse, void*)
+    // A drawable is the view's own surface, already made current by the view
+    // before the frame was opened (GPUView-GL.cpp). Null where there is nothing
+    // to present to, which is the headless case: isValid() is false and
+    // beginPass answers null, which the portable half turns into a RenderPass
+    // over no encoder.
+    GLFrameBackend(Device& deviceToUse, void* drawableToUse)
         : device(&deviceToUse)
         , context(getGLContext(deviceToUse))
+        , drawable(static_cast<GLDrawable*>(drawableToUse))
     {
         open();
+
+        if (drawable == nullptr || drawable->width <= 0 || drawable->height <= 0)
+        {
+            drawable = nullptr;
+            return;
+        }
+
+        frame.width = drawable->width;
+        frame.height = drawable->height;
     }
 
     GLFrameBackend(Device& deviceToUse, const OffscreenTarget& offscreen)
@@ -116,8 +122,7 @@ struct GLFrameBackend final : FrameBackend
             return;
 
         context.makeCurrent();
-        frame.ringAlignment =
-            context.getCapabilities().uniformBufferOffsetAlignment;
+        frame.ringAlignment = context.getCapabilities().uniformBufferOffsetAlignment;
     }
 
     ~GLFrameBackend() override
@@ -136,6 +141,11 @@ struct GLFrameBackend final : FrameBackend
         // order, so a read of what this frame drew needs no wait of its own -
         // the flush is what starts it moving rather than what it waits for.
         glFlush();
+
+        // Presented as the frame goes, which is where every other backend
+        // presents it.
+        if (drawable != nullptr)
+            drawable->present();
     }
 
     // The frame's own start, before anything else is recorded, which is what
@@ -186,13 +196,43 @@ struct GLFrameBackend final : FrameBackend
         encoder->framebuffer = framebuffer;
         encoder->width = data.width;
         encoder->height = data.height;
+        encoder->samples = data.sampleCount;
 
         // A texture's row 0 is its own y = 0, and GL rasterizes clip +1 into the
         // highest row, so the sign turns eacp's top row into texel row 0 (D7).
         encoder->clipYSign = -1.f;
 
         timePass(*encoder, descriptor.label);
-        applyLoadActions(data, descriptor);
+        applyLoadActions(data.depth, data.stencil, *encoder, descriptor);
+
+        return makeGLRenderPass(encoder);
+    }
+
+    // The default framebuffer of the surface the view made current, or the
+    // companion it resolves out of. Its row 0 is the bottom of the screen,
+    // which is GL's own convention, so the y sign stays +1 and the scissor and
+    // viewport are the ones that flip (D7 as built).
+    std::unique_ptr<RenderPassBackend>
+        beginPassOnDrawable(const RenderPassDescriptor& descriptor)
+    {
+        if (!context.isValid())
+            return nullptr;
+
+        context.makeCurrent();
+        glBindFramebuffer(GL_FRAMEBUFFER, drawable->framebuffer);
+
+        auto* encoder = new GLRenderEncoder {};
+
+        encoder->device = device;
+        encoder->frame = &frame;
+        encoder->framebuffer = drawable->framebuffer;
+        encoder->width = drawable->width;
+        encoder->height = drawable->height;
+        encoder->samples = drawable->samples;
+        encoder->resolveToDefault = drawable->resolveToDefault;
+
+        timePass(*encoder, descriptor.label);
+        applyLoadActions(drawable->depth, drawable->stencil, *encoder, descriptor);
 
         return makeGLRenderPass(encoder);
     }
@@ -201,7 +241,9 @@ struct GLFrameBackend final : FrameBackend
     // they start from is set here rather than assumed - and it is the state the
     // pass records as last applied, so the first setPipeline diffs against what
     // is really there.
-    void applyLoadActions(const GLTextureData& data,
+    void applyLoadActions(bool depth,
+                          bool stencil,
+                          const GLRenderEncoder& encoder,
                           const RenderPassDescriptor& descriptor)
     {
         glDisable(GL_SCISSOR_TEST);
@@ -209,7 +251,7 @@ struct GLFrameBackend final : FrameBackend
         glDepthMask(GL_TRUE);
         glStencilMask(0xff);
 
-        glViewport(0, 0, (GLsizei) data.width, (GLsizei) data.height);
+        glViewport(0, 0, (GLsizei) encoder.width, (GLsizei) encoder.height);
 
         if (descriptor.clear)
         {
@@ -219,10 +261,10 @@ struct GLFrameBackend final : FrameBackend
             glClearBufferfv(GL_COLOR, 0, values);
         }
 
-        if (!data.depth || descriptor.depthAction == DepthAction::Resume)
+        if (!depth || descriptor.depthAction == DepthAction::Resume)
             return;
 
-        if (data.stencil)
+        if (stencil)
         {
             glClearBufferfi(
                 GL_DEPTH_STENCIL, 0, 1.f, (GLint) descriptor.clearStencil);
@@ -235,6 +277,9 @@ struct GLFrameBackend final : FrameBackend
 
     bool isValid() const override
     {
+        if (drawable != nullptr)
+            return true;
+
         return target != nullptr && target->isValid() && target->renderTarget;
     }
 
@@ -266,6 +311,9 @@ struct GLFrameBackend final : FrameBackend
     std::unique_ptr<RenderPassBackend>
         beginPass(const RenderPassDescriptor& descriptor) override
     {
+        if (drawable != nullptr)
+            return beginPassOnDrawable(descriptor);
+
         if (target == nullptr)
             return nullptr;
 
@@ -295,6 +343,7 @@ struct GLFrameBackend final : FrameBackend
     Device* device = nullptr;
     GLContext& context;
 
+    GLDrawable* drawable = nullptr;
     GLTextureData* target = nullptr;
     GLFrameData frame;
 };
@@ -302,9 +351,8 @@ struct GLFrameBackend final : FrameBackend
 
 // Out of line, beside the frame that owns the ring: GLTypes.h is the structs
 // the -GL.cpp files cast to and nothing else.
-GLFrameData::Range GLFrameData::writeUniforms(const void* data,
-                                              int bytes,
-                                              int leastBytes)
+GLFrameData::Range
+    GLFrameData::writeUniforms(const void* data, int bytes, int leastBytes)
 {
     const auto size = (GLsizeiptr) std::max(bytes, leastBytes);
 

@@ -103,8 +103,9 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 else ()
-    # The Vulkan and OpenGL backends, both compiled in: which one a Device gets
-    # is a runtime choice (Linux/LinuxGPUBackend-Linux.cpp). Neither links a
+    # The Vulkan and OpenGL backends, both compiled in - and the composite of
+    # the two (Linux/CompositeBackend-Linux.cpp): which one a Device gets is a
+    # runtime choice (Linux/LinuxGPUBackend-Linux.cpp). Neither links a
     # window system: the connection, surface and window they present to arrive
     # as a NativeSurfaceHandle, and the only headers that come in are the ones
     # vulkan_wayland.h and vulkan_xcb.h declare their create-info structs from.
@@ -137,6 +138,7 @@ else ()
             Frame/RenderPass-GL.cpp
             Frame/RenderPass-Linux.cpp
             Frame/RenderPass-Vulkan.cpp
+            Linux/CompositeBackend-Linux.cpp
             Linux/LinuxGPUBackend-Linux.cpp
             OpenGL/GLContext-Linux.cpp
             Pipeline/ComputePipeline-GL.cpp

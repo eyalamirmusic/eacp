@@ -51,6 +51,12 @@ void Device::beginFrame()
 
     ++frameCount;
 
+    // Per frame, and so cleared here: a crossing recorded on the frame that
+    // paid for it is the only number worth reading.
+    crossingBytes = 0;
+    crossingMs = 0.0;
+    crossingCount = 0;
+
     // The timer takes its slot from the counter, the same way StreamingBuffers
     // takes its pool from it - one advance, driven by whoever built the Frame,
     // and nothing for either of them to be told separately.

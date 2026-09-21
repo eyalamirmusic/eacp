@@ -35,6 +35,17 @@ struct NativeSurfaceHandle
     uint32_t window = 0;
 };
 
+// The preferred window system's own connection, with no surface on it: what a
+// presenter that has to name its platform before any view has a surface needs.
+// An EGL display is opened from the connection and the context made on it when
+// the Device comes up, which is long before the first view is shown, and a
+// surface can only be made on a display of its own platform. Kind::None where
+// the preferred backend has nothing to reach, which is the headless case.
+//
+// `window` carries the X screen number rather than a window id, that being the
+// other half of naming an xcb display; it is zero on Wayland.
+NativeSurfaceHandle linuxPresentationConnection();
+
 // The native surface behind a view that presents its own pixels (a GPUView).
 // Owned by the window backend; the presenter sets the hooks and draws.
 struct ViewSurface

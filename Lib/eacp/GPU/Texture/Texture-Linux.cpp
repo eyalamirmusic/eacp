@@ -23,6 +23,11 @@ struct Texture::Native
     std::unique_ptr<TextureBackend> backend;
 };
 
+TextureBackend& getTextureBackend(const Texture& texture)
+{
+    return *texture.impl->backend;
+}
+
 Texture::Texture(Device& device,
                  const TextureDescriptor& descriptor,
                  const void* pixels)

@@ -64,7 +64,10 @@ optional — three pkg-config groups: the Wayland client library,
 target; no Xlib symbol anywhere), and FreeType, HarfBuzz and fontconfig for the
 glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). Nothing links `libvulkan`: `volkInitialize()`
 opens it by name at runtime, so a machine with no driver builds the same binary
-and reports `Device::isValid()` false.
+and reports `Device::isValid()` false, and nothing links `libEGL` or `libGL`
+either — the OpenGL backend opens `libEGL.so.1` the same way over a committed
+glad2 loader, so it too is a runtime dependency (`libegl1 libegl-mesa0 libgles2
+libgl1-mesa-dri` on Debian/Ubuntu) rather than a build one.
 
 One dependency is carried in the tree instead: `ThirdParty/miniz`, the
 amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C target
@@ -442,8 +445,7 @@ seam Linux alone has: each class's `-Linux.cpp` is a one-line-per-method
 forwarder onto an abstract backend struct (`GPU/Linux/GPUBackend-Linux.h`),
 the Vulkan bodies sit in a `-Vulkan.cpp` beside each forwarder, and
 `GPU/Linux/LinuxGPUBackend-Linux.cpp` reads `EACP_GPU_BACKEND`
-(`vulkan|gl|auto`) once to decide which backend makes a `Device` — only Vulkan
-is built today, so anything else logs that and falls through to it, and
+(`vulkan|gl|composite|auto`) once to decide which backend makes a `Device`, and
 `Device::backendName()` is what a copy reports. Everything from `Device` to
 `RenderPass` is real, the drawable `Frame` presents a swapchain image, and
 `GPUView-Vulkan.cpp` owns the swapchain over the view's subsurface or child
@@ -464,6 +466,58 @@ nor includes it. Under `EACP_HEADLESS=1`, with neither `WAYLAND_DISPLAY` nor
 `DISPLAY` to reach, or when the preferred backend cannot connect, a window is
 built with no surface, exactly the headless backend this grew out of. Device loss is terminal (no `VkDevice`
 rebuild; `onDeviceRestored` never fires).
+
+Beside it is the OpenGL backend (`GPU/OpenGL/`, one `-GL.cpp` per class over a
+committed glad2 loader in `ThirdParty/glad` and `CMake/FindGLBackend.cmake`'s
+`eacp-gl`), which the same seam picks between at runtime and which exists for
+the machine a VM usually is: a software Vulkan beside a driver-backed GL. The
+floor is GL 3.3 core and ES 3.0, `libEGL.so.1` is opened by name as the Vulkan
+loader is, the emitter's one Vulkan GLSL 450 is turned into the context's own
+version by `Codegen/GlslLowering.{h,cpp}` (portable, in `eacp-gpu-codegen`,
+tested on every platform), the y flip that `glClipControl` would do in one call
+is a wrapper the lowering puts round `main` (D7), and a `GPUView` presents an
+`EGLSurface` over the view's `wl_egl_window` or its X11 child window, so the EGL
+display is opened on the window system's own platform and connection. The render
+and present halves are real and the whole suite runs on them; the kernel tier is
+not, so `Device::supportsCompute()` is false there and `UI::ComponentHost` takes
+its mesh route — except on the composite below. `EACP_GPU_BACKEND=auto`, the
+default, is Vulkan where its best physical device is not
+`PHYSICAL_DEVICE_TYPE_CPU`, else OpenGL where EGL names a device without
+`EGL_MESA_device_software` *and* the GL backend has kernels of its own, else the
+composite where it does not, else Vulkan; `EACP_VK_SOFTWARE` picks
+among Vulkan's devices once Vulkan is chosen rather than deciding whether it is.
+Beside it: `EACP_GL_ES=1` binds `EGL_OPENGL_ES_API` so ES is a run of the same
+binary, `EACP_GL_DEBUG=1` is `EACP_VK_VALIDATION`'s twin, and Mesa's own
+`LIBGL_ALWAYS_SOFTWARE`, `MESA_GL_VERSION_OVERRIDE` and
+`MESA_GLES_VERSION_OVERRIDE` are what make the software, floor and ES runs one
+driver rather than four machines. `Device::supportsStorageBuffers()` and
+`supportsZeroToOneDepth()` are the two queries the GL backend can answer no to
+and every other backend answers yes, and the cases that need either self-skip on
+them. See `Lib/eacp/GPU/README.md`'s OpenGL section, which also records what the
+development VM's virgl driver does and does not offer.
+
+Third beside the two is the **composite** `Device`
+(`GPU/Linux/CompositeBackend-Linux.{h,cpp}`, D11): one `Device` built out of both
+backends on one thread, OpenGL for everything that draws and Vulkan for
+everything that dispatches, so a machine with a real GL and a CPU Vulkan — this
+VM, and every VMware/VirtualBox/older-QEMU guest — keeps its analytic coverage
+and still runs every kernel in the tree. `auto` chooses it exactly where the GL
+is hardware and has no compute tier and a Vulkan of any kind is there;
+`EACP_GPU_BACKEND=composite` forces it, which over two llvmpipes is how CI
+exercises it. The render half is the primary and the compute half gets a twin —
+at creation for a `computeWrite` texture, at first kernel bind for everything
+else — and what one half wrote is read back into host memory and uploaded into
+the other at the other's next use: a dirty rectangle where the write reported one
+(a host `update`), the whole resource where it did not (a dispatch, a render
+pass). `Device::crossingBytesThisFrame()`, `crossingsThisFrame()` and
+`crossingMillisecondsThisFrame()` count it per frame and answer zero on every
+single-backend device; a `RenderPass` storage bind on a GL half with no std430
+block is refused rather than copied into nothing; `supportsCompute()` is the
+Vulkan half's, `supportsStorageBuffers()`/`supportsZeroToOneDepth()` the OpenGL
+half's, and the two clocks stay apart — `Device::lastFrameTimings()` is the GL
+frame, `CommandBuffer::timings()` the Vulkan recording, never a sum. The seam it
+needed is `DeviceBackend::sideFor(GPUApi)`, which is what `getVulkanContext` and
+`getGLContext` now read. `Tests/GPU/CrossingTests.cpp` is its suite.
 
 The text half is `Text/GlyphRasterizer-Linux.cpp` on FreeType, HarfBuzz and
 fontconfig, found by pkg-config through `CMake/FindLinuxText.cmake` into one
@@ -514,6 +568,26 @@ docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISP
       -v "$PWD":/workspace eacp-ci-linux \
       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
       -R '^(X11|EmbeddedView|Present)/'
+```
+
+The GPU suites then run again on the OpenGL backend, which is
+`-e EACP_GPU_BACKEND=gl -e LIBGL_ALWAYS_SOFTWARE=1` added to each of those three
+plus two capped headless runs — `MESA_GL_VERSION_OVERRIDE=3.3` with
+`MESA_GLSL_VERSION_OVERRIDE=330` for the GL 3.3 floor, and `EACP_GL_ES=1` with
+`MESA_GLES_VERSION_OVERRIDE=3.0` for ES — and once more on the composite
+(`-e EACP_GPU_BACKEND=composite -e EACP_VK_SOFTWARE=1 -e
+LIBGL_ALWAYS_SOFTWARE=1`, headless and then `-R '^Present/'` under each session
+script), which is the only GL-side run whose compute half does not self-skip.
+Headless it is the three device
+binaries by name rather than ctest, every other suite having already run:
+
+```bash
+docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 \
+      -e EACP_GPU_BACKEND=gl -e LIBGL_ALWAYS_SOFTWARE=1 \
+      -v "$PWD":/workspace eacp-ci-linux \
+      bash -c 'build-ci-linux/Tests/GPU/GPUTests \
+               && build-ci-linux/Tests/GPUWidgets/GPUWidgetsTests \
+               && build-ci-linux/Tests/UI/UITests'
 ```
 
 `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
@@ -728,7 +802,7 @@ Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
 xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor,
 xcb-icccm and xcb-xinput, FreeType, HarfBuzz and fontconfig, plus the Vulkan
-loader, opened with `dlopen` rather than linked.
+loader and EGL, both opened with `dlopen` rather than linked.
 
 ## Code Style
 

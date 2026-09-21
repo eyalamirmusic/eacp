@@ -4,6 +4,7 @@
 #include "WaylandInput-Linux.h"
 #include "X11Connection-Linux.h"
 #include "X11Input-Linux.h"
+#include "../View/View-Linux.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -141,6 +142,33 @@ std::optional<LinuxOutput> linuxPrimaryOutput()
 
         case LinuxWindowSystem::X11:
             return x11PrimaryOutput();
+
+        case LinuxWindowSystem::None:
+            break;
+    }
+
+    return {};
+}
+
+NativeSurfaceHandle linuxPresentationConnection()
+{
+    switch (linuxPreferredWindowSystem())
+    {
+        case LinuxWindowSystem::Wayland:
+            if (auto* connection = waylandDisplay())
+                return {NativeSurfaceHandle::Kind::Wayland,
+                        connection->getDisplay(),
+                        nullptr,
+                        0};
+            break;
+
+        case LinuxWindowSystem::X11:
+            if (auto* connection = x11Connection())
+                return {NativeSurfaceHandle::Kind::X11,
+                        connection->getConnection(),
+                        nullptr,
+                        (uint32_t) connection->getScreenNumber()};
+            break;
 
         case LinuxWindowSystem::None:
             break;

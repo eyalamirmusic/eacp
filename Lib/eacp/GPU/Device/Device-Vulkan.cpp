@@ -11,6 +11,11 @@ struct VulkanDeviceBackend final : DeviceBackend
 {
     std::string backendName() const override { return "Vulkan"; }
 
+    DeviceBackend* sideFor(GPUApi api) override
+    {
+        return api == GPUApi::Vulkan ? this : nullptr;
+    }
+
     bool isValid() const override { return context.isValid(); }
 
     std::string name() const override
@@ -25,6 +30,11 @@ struct VulkanDeviceBackend final : DeviceBackend
     // whole kernel tier is built on: the graphics queue family it picks is
     // required to carry VK_QUEUE_COMPUTE_BIT.
     bool supportsCompute() const override { return true; }
+
+    bool supportsStorageBuffers() const override { return true; }
+
+    // Vulkan's clip space is the [0, 1] every eacp projection produces.
+    bool supportsZeroToOneDepth() const override { return true; }
 
     // The intersection of the three masks a pass touches.
     bool supportsSampleCount(int count) const override
@@ -57,9 +67,8 @@ struct VulkanDeviceBackend final : DeviceBackend
         if (!isValid())
             return 4;
 
-        const auto alignment = getVulkanShared()
-                                   .getProperties()
-                                   .limits.minStorageBufferOffsetAlignment;
+        const auto alignment =
+            getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
 
         return alignment > 0 ? (int) alignment : 4;
     }
@@ -190,6 +199,7 @@ std::unique_ptr<DeviceBackend> makeVulkanDeviceBackend()
 
 VulkanContext& getVulkanContext(const Device& device)
 {
-    return *static_cast<VulkanContext*>(getDeviceBackend(device).nativeContext());
+    return *static_cast<VulkanContext*>(
+        getDeviceBackend(device, GPUApi::Vulkan).nativeContext());
 }
 } // namespace eacp::GPU

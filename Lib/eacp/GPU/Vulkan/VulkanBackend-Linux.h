@@ -9,6 +9,15 @@ namespace eacp::GPU
 {
 std::unique_ptr<DeviceBackend> makeVulkanDeviceBackend();
 
+// What the auto rule asks of this backend before any Device is made (D8):
+// whether there is a Vulkan device here that eacp could use, and whether it is
+// a CPU implementation. Asked on an instance of its own, created and destroyed
+// inside the call, so a copy that goes on to take the GL backend has not built
+// a VkDevice it would never use. EACP_VK_SOFTWARE is not read here - it picks
+// among devices once Vulkan is the backend, and the question here is which
+// backend.
+GPUDeviceClass vulkanDeviceClass();
+
 std::unique_ptr<BufferBackend> makeVulkanBuffer(Device& device,
                                                 const void* data,
                                                 std::int64_t bytes,

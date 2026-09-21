@@ -507,7 +507,12 @@ auto tKernelImageFeedsTheDraw = test("FrameCompute/kernelImageFeedsTheDraw") = [
 auto tIndexedBufferReadFeedsTheDraw =
     test("FrameCompute/indexedBufferReadFeedsTheDraw") = []
 {
-    if (!computeIsAvailable())
+    // Two capabilities, not one: the kernel needs a compute tier and the
+    // fragment stage needs a std430 block to subscript. A composite Device has
+    // the first from its Vulkan half and may still lack the second, its render
+    // half being an OpenGL below 4.3 - which is the machine the composite was
+    // built for.
+    if (!computeIsAvailable() || !storageBuffersAreAvailable())
         return;
 
     auto view = ComputeThenIndexedDrawView {};

@@ -1,5 +1,7 @@
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
+#include <cstdio>
+
 using namespace eacp;
 using namespace GPU;
 
@@ -83,6 +85,39 @@ struct PathCoverageView final : GPUView
 
         drawCoverage(pass, nonZero);
         drawCoverage(pass, evenOdd);
+
+        reportCrossing();
+    }
+
+    // What the frame paid to have its coverage computed on one backend and
+    // painted on another (plan.md D11). Said on the first frame that crosses
+    // anything and once every sixty after it, and not at all on a Device with
+    // one backend - which is every Device but Linux's composite. This view
+    // redraws only when it is resized, so the first line is usually the only
+    // one.
+    void reportCrossing()
+    {
+        auto& device = Device::shared();
+
+        if (device.crossingBytesThisFrame() <= 0)
+            return;
+
+        crossedMilliseconds += device.crossingMillisecondsThisFrame();
+        ++framesSinceReport;
+
+        if (reported && framesSinceReport < 60)
+            return;
+
+        std::printf("coverage crossed %7.1f KB in %2d copies, %6.3f ms a "
+                    "frame\n",
+                    (double) device.crossingBytesThisFrame() / 1024.0,
+                    device.crossingsThisFrame(),
+                    crossedMilliseconds / (double) framesSinceReport);
+        std::fflush(stdout);
+
+        reported = true;
+        framesSinceReport = 0;
+        crossedMilliseconds = 0.0;
     }
 
     void drawCoverage(RenderPass& pass, const GPUWidgets::PathRasterizer& rasterizer)
@@ -137,6 +172,10 @@ struct PathCoverageView final : GPUView
     float builtWidth = 0.f;
     float builtHeight = 0.f;
     float builtScale = 0.f;
+
+    double crossedMilliseconds = 0.0;
+    int framesSinceReport = 0;
+    bool reported = false;
 };
 
 int main()

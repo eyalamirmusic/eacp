@@ -5,9 +5,12 @@
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Time.h>
 
+#include <xcb/xcb.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 // Without a display server these skip, which ctest scores as a pass, so
@@ -81,7 +84,7 @@ struct CountingView final : GPUView
         ++renders;
         everyFrameWasValid = everyFrameWasValid && frame.isValid();
 
-        auto pass = frame.beginPass({});
+        auto pass = frame.beginPass({clearColor});
 
         lastWidth = pass.targetWidth();
         lastHeight = pass.targetHeight();
@@ -92,6 +95,8 @@ struct CountingView final : GPUView
         ++updates;
         lastTime = time;
     }
+
+    Graphics::Color clearColor = Graphics::Color::black();
 
     int renders = 0;
     int updates = 0;
@@ -147,10 +152,78 @@ void showWith(Graphics::Window& window, Graphics::View& view)
 }
 
 // An X11 window handle is an id an EmbeddedView can be a child of; a Wayland
-// one is a wl_surface and nothing may be embedded in it.
+// one is a wl_surface and nothing may be embedded in it. It is also the only
+// one whose server will hand a window's own pixels back.
 bool embeddingIsPossible()
 {
     return getEnvValue("EACP_WINDOW_SYSTEM") == "x11";
+}
+
+struct SampledPixel
+{
+    bool isValid() const { return valid; }
+
+    // Within a few levels: what a backend rounds a float clear colour to is
+    // its own business, and the two round 0.4 to either side of 102.
+    bool matches(const Graphics::Color& color) const
+    {
+        const auto close = [](int sampled, float wanted)
+        {
+            const auto expected = (int) std::lround(wanted * 255.f);
+
+            return std::abs(sampled - expected) <= 4;
+        };
+
+        return close(red, color.r) && close(green, color.g) && close(blue, color.b);
+    }
+
+    bool valid = false;
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+};
+
+// One pixel of a window, read off the server on a connection of this test's
+// own - which is how a host, a screenshot or a person sees what was presented,
+// and the only thing in this file that looks at a pixel at all.
+SampledPixel readWindowPixel(void* handle, int x, int y)
+{
+    auto screen = 0;
+    auto* connection = xcb_connect(nullptr, &screen);
+
+    if (xcb_connection_has_error(connection) != 0)
+    {
+        xcb_disconnect(connection);
+        return {};
+    }
+
+    const auto window = (xcb_window_t) reinterpret_cast<std::uintptr_t>(handle);
+
+    auto cookie = xcb_get_image(connection,
+                                XCB_IMAGE_FORMAT_Z_PIXMAP,
+                                window,
+                                (std::int16_t) x,
+                                (std::int16_t) y,
+                                1,
+                                1,
+                                ~0u);
+
+    auto* reply = xcb_get_image_reply(connection, cookie, nullptr);
+    auto sampled = SampledPixel {};
+
+    if (reply != nullptr && xcb_get_image_data_length(reply) >= 4)
+    {
+        // Z-pixmap on a TrueColor visual, which every server this runs on
+        // spells little-endian BGRX.
+        const auto* pixel = xcb_get_image_data(reply);
+
+        sampled = {true, pixel[2], pixel[1], pixel[0]};
+    }
+
+    free(reply);
+    xcb_disconnect(connection);
+
+    return sampled;
 }
 } // namespace
 
@@ -415,6 +488,42 @@ auto tEmbeddedViewPresents = test("Present/anEmbeddedViewPresentsIntoItsHost") =
 
     check(matchesPixels(view.lastWidth, 320.f, hostScale));
     check(matchesPixels(view.lastHeight, 240.f, hostScale));
+};
+
+// Every case above counts frames and measures the drawable, and a backend that
+// presents nothing at all passes all of them: a GL swap into a default
+// framebuffer whose draw buffer was never taken off GL_NONE draws, swaps and
+// reports success with an empty window behind it. So one case looks at the
+// window itself. X11 only, xcb being the one window system here whose server
+// will hand a window's contents back - and what it hands back covers the
+// presenting child, GetImage on a window including its inferiors.
+auto tPresentedPixelsAreOnTheWindow =
+    test("Present/whatIsPresentedIsOnTheWindow") = []
+{
+    if (noDeviceOrDisplay() || !embeddingIsPossible())
+        return;
+
+    const auto cleared = Graphics::Color {0.2f, 0.4f, 0.8f, 1.f};
+
+    auto view = CountingView {};
+    view.clearColor = cleared;
+
+    auto window = Graphics::Window {windowSized(320, 240)};
+    showWith(window, view);
+
+    check(pumpUntil(presentTimeout, [&] { return view.renders > 0; }),
+          "no frame was presented within the timeout");
+
+    // A present is a request like any other and the read runs on a connection
+    // of its own, so the server is given a turn to catch up with it.
+    pumpUntil(Time::MS {250}, [] { return false; });
+
+    const auto sampled =
+        readWindowPixel(window.getHandle(), view.lastWidth / 2, view.lastHeight / 2);
+
+    check(sampled.isValid(), "the window's own pixels would not read back");
+    check(sampled.matches(cleared),
+          "the window does not carry the colour the view cleared its frame to");
 };
 
 auto tNoSurfaceStillSnapshots = test("Present/aViewWithNoSurfaceStillSnapshots") = []

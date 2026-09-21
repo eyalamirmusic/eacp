@@ -140,6 +140,19 @@ bool Device::supportsCompute() const
     return getEnvValue("EACP_GPU_NO_COMPUTE") != "1";
 }
 
+// Every Metal device has buffer arguments in every stage, and Metal's clip
+// space leaves depth in [0, 1]. Both are here because one backend answers no
+// to each (plan.md D4).
+bool Device::supportsStorageBuffers() const
+{
+    return true;
+}
+
+bool Device::supportsZeroToOneDepth() const
+{
+    return true;
+}
+
 // Metal answers this directly, and answers it for the *texture*: a count it
 // takes here is one a render attachment can be created at, which is the whole of
 // what a caller wants to know.

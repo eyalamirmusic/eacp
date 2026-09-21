@@ -31,6 +31,11 @@ struct GLDeviceBackend final : DeviceBackend
 {
     std::string backendName() const override { return "OpenGL"; }
 
+    DeviceBackend* sideFor(GPUApi api) override
+    {
+        return api == GPUApi::OpenGL ? this : nullptr;
+    }
+
     bool isValid() const override { return context.isValid(); }
 
     std::string name() const override
@@ -46,6 +51,20 @@ struct GLDeviceBackend final : DeviceBackend
     // UI takes the mesh route (D10) and every kernel test self-skips on this
     // rather than on a pipeline that would never be valid (D9, D12).
     bool supportsCompute() const override { return false; }
+
+    // The context's own flag, which is already the GLSL target's answer rather
+    // than an extension string's: a std430 block is a thing the language has.
+    bool supportsStorageBuffers() const override
+    {
+        return isValid() && context.getCapabilities().storageBuffers;
+    }
+
+    // glClipControl is the whole of it: without it GL's clip space leaves depth
+    // in [-1, 1] and every value lands in the far half of the attachment.
+    bool supportsZeroToOneDepth() const override
+    {
+        return isValid() && context.getCapabilities().clipControl;
+    }
 
     bool supportsSampleCount(int count) const override
     {
@@ -81,10 +100,10 @@ struct GLDeviceBackend final : DeviceBackend
             return 4;
 
         const auto& caps = context.getCapabilities();
-        const auto alignment = caps.uniformBufferOffsetAlignment
-                                       > caps.storageBufferOffsetAlignment
-                                   ? caps.uniformBufferOffsetAlignment
-                                   : caps.storageBufferOffsetAlignment;
+        const auto alignment =
+            caps.uniformBufferOffsetAlignment > caps.storageBufferOffsetAlignment
+                ? caps.uniformBufferOffsetAlignment
+                : caps.storageBufferOffsetAlignment;
 
         return alignment > 0 ? alignment : 4;
     }
@@ -248,8 +267,30 @@ std::unique_ptr<DeviceBackend> makeGLDeviceBackend()
     return std::make_unique<GLDeviceBackend>();
 }
 
+// No context is made here: opening a display and asking EGL what device it sits
+// on is the whole of it, and that display is the one the Device that follows
+// joins.
+GPUDeviceClass glDeviceClass()
+{
+    if (!glDisplayIsAvailable())
+        return GPUDeviceClass::None;
+
+    return glDisplayIsSoftware() ? GPUDeviceClass::Software
+                                 : GPUDeviceClass::Hardware;
+}
+
 GLContext& getGLContext(const Device& device)
 {
-    return *static_cast<GLContext*>(getDeviceBackend(device).nativeContext());
+    return *static_cast<GLContext*>(
+        getDeviceBackend(device, GPUApi::OpenGL).nativeContext());
+}
+
+// No, and not on any context this backend opens: D9's tier is stage 6's, so a
+// kernel has nowhere to run on the OpenGL backend whatever the version reports.
+// Asked by the auto rule before any Device exists, which is why it is a
+// question about the backend rather than about a context (D11).
+bool glBackendHasCompute()
+{
+    return false;
 }
 } // namespace eacp::GPU

@@ -663,5 +663,9 @@ public:
 private:
     struct Native;
     Pimpl<Native> impl;
+
+    // See Buffer's own: the composite Device (plan.md D11) reaches the backend
+    // behind a Texture a pass was handed. Defined only in Texture-Linux.cpp.
+    friend struct TextureBackend& getTextureBackend(const Texture& texture);
 };
 } // namespace eacp::GPU

@@ -38,6 +38,7 @@ set(gpu_test_sources
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp
         CompressedTextureTests.cpp
+        CrossingTests.cpp
         ComputeBufferRangeTests.cpp
         ConcurrentPassTests.cpp
         CoordinateSpaceTests.cpp
@@ -105,10 +106,12 @@ endif ()
 # The one file that needs a display: a GPUView presenting through a Vulkan
 # swapchain onto a Wayland surface. Self-skips without a compositor. Beside it,
 # the deferred initial image transition, which is a Vulkan-only shape and is
-# pinned by counting the backend's submissions, and the GL context's own
-# capability report, which self-skips on any backend but OpenGL.
+# pinned by counting the backend's submissions, the GL context's own capability
+# report, which self-skips on any backend but OpenGL, and the backend selection
+# rule, which needs no device of either kind.
 if (LINUX)
     list(APPEND gpu_test_sources
+            BackendSelectionTests-Linux.cpp
             GLCapabilityTests-Linux.cpp
             PresentTests-Linux.cpp
             TextureSettleTests-Linux.cpp)
@@ -128,9 +131,12 @@ eacp_enable_glsl_compile_checks(GPUTests)
 
 # TextureSettleTests reads VulkanContext::submissionCount and
 # GLCapabilityTests the GL context's own flags, so this one test target sees
-# both backends eacp-gpu otherwise keeps to itself.
+# both backends eacp-gpu otherwise keeps to itself. xcb is beside them for the
+# one present case that reads its window's pixels back off the server, which is
+# the only thing in the suite that sees what was presented rather than counting
+# frames.
 if (LINUX)
-    target_link_libraries(GPUTests PRIVATE eacp-vulkan eacp-gl)
+    target_link_libraries(GPUTests PRIVATE eacp-vulkan eacp-gl eacp-x11)
 endif ()
 
 if (APPLE)

@@ -552,5 +552,18 @@ int main()
     auto shape = qualityPanel({0.f, 0.f, 304.f, 497.f});
     reportCanvas("panels x 128", 128, shape, 2.f);
 
+    // What the run paid to have the kernels on one backend and everything that
+    // reads them on another (plan.md D11). Nothing here draws, so a coverage
+    // texture never crosses; a buffer does, the first time a read-back asks a
+    // question of it. Silent on every Device with one backend.
+    const auto& device = GPU::Device::shared();
+
+    if (device.crossingBytesThisFrame() > 0)
+        std::printf("\n%s: crossed %.1f KB in %d copies, %.3f ms\n",
+                    device.backendName().c_str(),
+                    (double) device.crossingBytesThisFrame() / 1024.0,
+                    device.crossingsThisFrame(),
+                    device.crossingMillisecondsThisFrame());
+
     return 0;
 }

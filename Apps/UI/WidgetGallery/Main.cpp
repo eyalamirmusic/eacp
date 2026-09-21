@@ -542,6 +542,28 @@ struct DemoHost final : UI::ComponentHost
         setRootComponent(root);
     }
 
+    // What a frame of ordinary widgets costs on a Device built out of two
+    // backends: the coverage atlas is written by a kernel on one half and
+    // sampled by the draw on the other, so a frame that rasterizes any vector
+    // shape carries it across (plan.md D11). After the base, when the counters
+    // mean the frame that has just been recorded, and silent on every Device
+    // with one backend - which is every Device but Linux's composite.
+    void render(GPU::Frame& frame) override
+    {
+        UI::ComponentHost::render(frame);
+
+        auto& device = GPU::Device::shared();
+
+        if (device.crossingBytesThisFrame() <= 0)
+            return;
+
+        std::printf("crossed %8.1f KB in %2d copies, %6.3f ms of the frame\n",
+                    (double) device.crossingBytesThisFrame() / 1024.0,
+                    device.crossingsThisFrame(),
+                    device.crossingMillisecondsThisFrame());
+        std::fflush(stdout);
+    }
+
     DemoRoot root;
 };
 

@@ -31,6 +31,39 @@
 // stay concrete.
 namespace eacp::GPU
 {
+// What a backend found when it went looking for a device, which is the whole of
+// what the auto rule weighs (plan.md D8): nothing to open at all, a CPU
+// implementation of the API, or hardware.
+enum class GPUDeviceClass
+{
+    None,
+    Software,
+    Hardware
+};
+
+// Which of the two APIs a question is about. One backend speaks one of them
+// and answers for the other with null; the composite (D11) speaks both and
+// hands out the side that owns each.
+enum class GPUApi
+{
+    Vulkan,
+    OpenGL
+};
+
+// What a resource the composite gave two lives says to the composite's own
+// passes, and the whole of what anything outside CompositeBackend-Linux.cpp
+// knows about one (D11). Every single-API backend answers null to crossing()
+// below, so a pass on such a backend never asks.
+struct CrossingResource
+{
+    virtual ~CrossingResource() = default;
+
+    // Said before the side records the write, not after: the flag says which
+    // copy is behind, and the other side's next use is what pays for it.
+    virtual void willWriteOnComputeSide() = 0;
+    virtual void willWriteOnRenderSide() = 0;
+};
+
 struct BufferBackend
 {
     virtual ~BufferBackend() = default;
@@ -39,9 +72,8 @@ struct BufferBackend
     virtual bool isValid() const = 0;
 
     virtual void read(void* dst, std::int64_t bytes, std::int64_t offset) const = 0;
-    virtual void update(const void* data,
-                        std::int64_t bytes,
-                        std::int64_t offset) = 0;
+    virtual void
+        update(const void* data, std::int64_t bytes, std::int64_t offset) = 0;
     virtual void updateUnordered(const void* data,
                                  std::int64_t bytes,
                                  std::int64_t offset) = 0;
@@ -49,6 +81,9 @@ struct BufferBackend
     virtual void* nativeBuffer() const = 0;
     virtual void* nativeReadView() const = 0;
     virtual void* nativeWriteView() const = 0;
+
+    // Null on every backend but the composite's (D11).
+    virtual CrossingResource* crossing() { return nullptr; }
 };
 
 struct TextureBackend
@@ -87,6 +122,9 @@ struct TextureBackend
     virtual void* nativeDepthTexture() const = 0;
     virtual void* nativeMultisampleTexture() const = 0;
     virtual void* nativeResolvedDepthTexture() const = 0;
+
+    // Null on every backend but the composite's (D11).
+    virtual CrossingResource* crossing() { return nullptr; }
 };
 
 struct ShaderLibraryBackend
@@ -137,10 +175,8 @@ struct ComputePassBackend
     virtual void setOutputTexture(const Texture& texture, int slot) = 0;
     virtual void setBytes(const void* data, std::int64_t bytes, int slot) = 0;
 
-    virtual void dispatch(int width,
-                          int height,
-                          int depth,
-                          ThreadGroupShape group) = 0;
+    virtual void
+        dispatch(int width, int height, int depth, ThreadGroupShape group) = 0;
     virtual void dispatchIndirect(const Buffer& arguments,
                                   std::int64_t offsetInBytes) = 0;
 
@@ -157,9 +193,8 @@ struct RenderPassBackend
 
     virtual void setScissorRect(const Graphics::Rect& rect) = 0;
     virtual void clearScissorRect() = 0;
-    virtual void setViewport(const Graphics::Rect& rect,
-                             float nearDepth,
-                             float farDepth) = 0;
+    virtual void
+        setViewport(const Graphics::Rect& rect, float nearDepth, float farDepth) = 0;
     virtual void clearViewport() = 0;
 
     virtual void setPipeline(const RenderPipeline& pipeline) = 0;
@@ -292,10 +327,18 @@ struct DeviceBackend
     // the device it opened.
     virtual std::string backendName() const = 0;
 
+    // The backend that runs one API's work under this Device: itself where it
+    // is that API, the matching half of a composite (D11), and null where this
+    // Device has no such side - which is a question nothing asks, every
+    // -Vulkan.cpp and -GL.cpp being reached only through a Device that has one.
+    virtual DeviceBackend* sideFor(GPUApi api) = 0;
+
     virtual bool isValid() const = 0;
     virtual std::string name() const = 0;
 
     virtual bool supportsCompute() const = 0;
+    virtual bool supportsStorageBuffers() const = 0;
+    virtual bool supportsZeroToOneDepth() const = 0;
     virtual bool supportsSampleCount(int count) const = 0;
     virtual bool supportsBlockCompression() const = 0;
     virtual int storageBufferOffsetAlignment() const = 0;
@@ -318,10 +361,8 @@ struct DeviceBackend
                                                       BufferUsage usage,
                                                       BufferStorage storage) = 0;
 
-    virtual std::unique_ptr<TextureBackend>
-        makeTexture(Device& device,
-                    const TextureDescriptor& descriptor,
-                    const void* pixels) = 0;
+    virtual std::unique_ptr<TextureBackend> makeTexture(
+        Device& device, const TextureDescriptor& descriptor, const void* pixels) = 0;
 
     virtual std::unique_ptr<TextureBackend>
         wrapPixelBuffer(Device& device, void* nativePixelBuffer) = 0;
@@ -354,4 +395,15 @@ struct DeviceBackend
 // The Device's own backend, for the objects it makes. Every Linux Native
 // struct that is handed a Device goes through this and nothing else.
 DeviceBackend& getDeviceBackend(const Device& device);
+
+// The half of it that speaks one API, which is what getVulkanContext and
+// getGLContext read: a composite Device has one of each and a single-API one
+// is its own.
+DeviceBackend& getDeviceBackend(const Device& device, GPUApi api);
+
+// The backend behind a public object, for the one backend that wraps another.
+// Defined in each class's -Linux.cpp beside its Native, and read by nothing
+// but CompositeBackend-Linux.cpp.
+BufferBackend& getBufferBackend(const Buffer& buffer);
+TextureBackend& getTextureBackend(const Texture& texture);
 } // namespace eacp::GPU

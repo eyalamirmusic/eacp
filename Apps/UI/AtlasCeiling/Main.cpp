@@ -1,6 +1,7 @@
 #include <eacp/UI/UI.h>
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 // What an interface looks like when it asks the coverage atlas for more than the
@@ -168,7 +169,7 @@ struct StatsBar final : UI::Component
         auto text = std::to_string(tileCount) + " shapes   atlas "
                     + std::to_string(host->getAtlasSize()) + "²  "
                     + std::to_string(percent) + "% full   " + std::to_string(dropped)
-                    + " dropped";
+                    + " dropped" + crossingText();
 
         g.setColour(dropped > 0 ? UI::defaultTheme().text
                                 : UI::defaultTheme().dimText);
@@ -179,6 +180,58 @@ struct StatsBar final : UI::Component
             lastPainted = text;
             Threads::callAsync([this] { repaint(); });
         }
+    }
+
+    // What the frame cost on a Device built out of two backends: the coverage
+    // atlas is written by a kernel on one half and sampled by the draw on the
+    // other, so every frame that rasterizes carries it across. Empty on every
+    // device that has one backend, which is every device but Linux's composite.
+    static std::string crossingText()
+    {
+        const auto& device = GPU::Device::shared();
+        const auto bytes = device.crossingBytesThisFrame();
+
+        if (bytes <= 0)
+            return {};
+
+        return "   crossed " + std::to_string(bytes / 1024) + " KB in "
+               + std::to_string(device.crossingsThisFrame()) + " copies";
+    }
+
+    // The same figures on stdout, so a run under `timeout` says what a frame of
+    // this interface costs on a composite Device without anybody reading the
+    // window. Said on the first frame that crosses anything and once every
+    // sixty frames that cross after it - a frame that rasterizes nothing new
+    // crosses nothing and is not one of them. Silent everywhere else.
+    static void reportCrossing()
+    {
+        auto& device = GPU::Device::shared();
+        const auto bytes = device.crossingBytesThisFrame();
+
+        if (bytes <= 0)
+            return;
+
+        static auto reported = false;
+        static auto frames = 0;
+        static auto milliseconds = 0.0;
+
+        ++frames;
+        milliseconds += device.crossingMillisecondsThisFrame();
+
+        if (reported && frames < 60)
+            return;
+
+        std::printf("crossed %8.1f KB in %2d copies, %6.3f ms of the frame "
+                    "(over %d crossing frames)\n",
+                    (double) bytes / 1024.0,
+                    device.crossingsThisFrame(),
+                    milliseconds / (double) frames,
+                    frames);
+        std::fflush(stdout);
+
+        reported = true;
+        frames = 0;
+        milliseconds = 0.0;
     }
 
     UI::ComponentHost* host = nullptr;
@@ -252,8 +305,19 @@ struct DemoHost final : UI::ComponentHost
     // and a position it is already at is what says so. Torn down from a fresh
     // stack frame because stopContinuous() destroys the link, and this is running
     // inside the link's own callback.
+    // After the base, not before it: the counters are cleared when the frame
+    // begins and filled as it draws, so this is the moment they mean the frame
+    // that has just been recorded.
+    void render(GPU::Frame& frame) override
+    {
+        UI::ComponentHost::render(frame);
+        StatsBar::reportCrossing();
+    }
+
     void update(Threads::FrameTime frame) override
     {
+        elapsed += (float) frame.delta;
+
         auto step = scrollPerSecond * (float) frame.delta;
 
         // The first tick carries no delta, so it asks for no movement -- and a
@@ -274,6 +338,7 @@ struct DemoHost final : UI::ComponentHost
     }
 
     DemoRoot root;
+    float elapsed = 0.f;
     bool stopping = false;
 };
 

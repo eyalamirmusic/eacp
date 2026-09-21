@@ -596,7 +596,9 @@ auto tSuspensionKeepsColourAndStencil =
 auto tDepthResolvesForSampling =
     test("MultisampledTarget/theDepthPlaneResolvesForSampling") = []
 {
-    if (!supportsMultisampling())
+    // Two absolute depths, so this wants the [0, 1] clip space beside the
+    // samples.
+    if (!supportsMultisampling() || !zeroToOneDepthIsAvailable())
         return;
 
     auto view = DepthSampleView {samples};
@@ -620,7 +622,9 @@ auto tDepthResolvesForSampling =
 auto tSingleSampledDepthReadsTheSame =
     test("MultisampledTarget/oneSampleReadsTheSameDepth") = []
 {
-    if (!supportsMultisampling())
+    // Two absolute depths, so this wants the [0, 1] clip space beside the
+    // samples.
+    if (!supportsMultisampling() || !zeroToOneDepthIsAvailable())
         return;
 
     auto view = DepthSampleView {1};

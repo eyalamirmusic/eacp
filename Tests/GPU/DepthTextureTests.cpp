@@ -357,7 +357,10 @@ auto tSampleableDepthNeedsARenderTarget =
 auto tDepthReadsBackAsTheDepthThatWasWritten =
     test("DepthTexture/aLaterPassReadsTheDepthAnEarlierOneWrote") = []
 {
-    if (!Device::shared().isValid())
+    // The values below are absolute depths rather than an ordering, so this
+    // wants a device whose clip space is the [0, 1] every eacp projection
+    // produces.
+    if (!zeroToOneDepthIsAvailable())
         return;
 
     auto view = DepthCopyView {};

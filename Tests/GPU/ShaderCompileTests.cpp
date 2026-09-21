@@ -580,7 +580,10 @@ auto tCodegenBufferReadCompiles = test("GPU/codegenBufferReadCompiles") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
+    // The shader reads through a storage buffer, which is a thing the language
+    // has only from GL 4.3 / ES 3.1: below that the source is refused when the
+    // pipeline is built, which is the backend doing what it should.
+    if (!storageBuffersAreAvailable())
         return;
 
     auto builder = ShaderBuilder {};

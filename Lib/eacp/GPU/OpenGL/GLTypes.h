@@ -228,6 +228,36 @@ struct GLFrameData
     int ringAlignment = 4;
 };
 
+// What a presenting view hands a Frame: where on the view's own surface the
+// pass draws, and how what it drew reaches the screen. The surface itself is an
+// EGLSurface the view owns and nothing here names, this being the one struct
+// the Frame and the pass read (GPUView-GL.cpp).
+struct GLDrawable
+{
+    // The view's companion framebuffer where it has one - a multisampled
+    // colour, a depth plane, or both - and the default framebuffer of the
+    // current surface otherwise, which is what a plain view draws straight
+    // into.
+    GLuint framebuffer = 0;
+
+    // Whether that companion is blitted into the default framebuffer at the end
+    // of the pass; a multisampled one resolves in the same blit.
+    bool resolveToDefault = false;
+
+    int width = 0;
+    int height = 0;
+
+    // What the companion carries, which is what a pipeline built for a sample
+    // count is matched against.
+    int samples = 1;
+    bool depth = false;
+    bool stencil = false;
+
+    // Presents what the frame drew, as the Frame goes: eglSwapBuffers on the
+    // view's surface.
+    std::function<void()> present = [] {};
+};
+
 // The open render pass, handed from the Frame to the RenderPass: what it draws
 // into, what it resolves at the end, and the y sign this target wants. The
 // last-applied state the next setPipeline diffs against belongs to the pass
@@ -244,6 +274,15 @@ struct GLRenderEncoder
 
     int width = 0;
     int height = 0;
+
+    // What the target takes, which a pipeline built for another count is
+    // refused against. The texture's own on a texture target; the view's
+    // companion on a drawable.
+    int samples = 1;
+
+    // A drawable's companion is blitted into the default framebuffer when the
+    // pass ends, which is where a multisampled one resolves.
+    bool resolveToDefault = false;
 
     // -1 on a texture, where the lowering's wrapper turns eacp's clip space
     // the right way up for an FBO, and +1 on a drawable (D7).

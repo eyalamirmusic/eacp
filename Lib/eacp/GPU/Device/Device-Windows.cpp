@@ -76,6 +76,19 @@ bool Device::supportsCompute() const
     return getEnvValue("EACP_GPU_NO_COMPUTE") != "1";
 }
 
+// Every Direct3D 12 device takes a structured buffer in every stage, and D3D's
+// clip space leaves depth in [0, 1]. Both are here because one backend answers
+// no to each (plan.md D4).
+bool Device::supportsStorageBuffers() const
+{
+    return true;
+}
+
+bool Device::supportsZeroToOneDepth() const
+{
+    return true;
+}
+
 // D3D12 answers per format rather than per device, so this asks about the two
 // formats a multisampled attachment is ever created in here: the colour targets
 // eacp makes (BGRA8, the drawable's own) and the combined depth-stencil the

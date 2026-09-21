@@ -32,8 +32,21 @@ public:
 
     // Makes this context current on the calling thread, unless the thread
     // already has it. Called at the top of every operation that touches GL,
-    // which is what lets two Devices share a thread.
+    // which is what lets two Devices share a thread. Whichever surface the
+    // context has is left alone: everything off-screen draws into a
+    // framebuffer object, which no surface is involved in.
     void makeCurrent() const;
+
+    // Makes it current with `surface` as both the draw and the read surface,
+    // which is what a view that presents needs and the only thing that puts
+    // anything in the default framebuffer. Views on one Device are one context
+    // and a surface each, so this is what a frame on one of them starts with.
+    bool makeCurrentOn(EGLSurface surface) const;
+
+    // Said before a surface is destroyed: a surface that is current when it
+    // goes leaves the context pointing at freed memory, so the context falls
+    // back to surfaceless first.
+    void surfaceIsGoing(EGLSurface surface) const;
 
     // Gives the context up, so the next thread to want it can take it: an
     // EGLContext is current on one thread at a time. What Device's
@@ -51,16 +64,27 @@ public:
     // How many of its attribute arrays are enabled, so a draw disables the ones
     // its own layout does not name rather than counting from a fixed ceiling.
     int getEnabledVertexAttributes() const { return enabledAttributes; }
-    void setEnabledVertexAttributes(int count) const
-    {
-        enabledAttributes = count;
-    }
+    void setEnabledVertexAttributes(int count) const { enabledAttributes = count; }
 
-    // The display and config a surface is made on, which is stage 3's business
-    // and nothing this stage reads.
+    // The display and config a surface is made on.
     EGLDisplay getDisplay() const { return display; }
     EGLContext getContext() const { return context; }
+
+    // Null where the context was made with no config at all
+    // (EGL_KHR_no_config_context), which is what lets a window surface be made
+    // on whichever config the native window's own visual matches.
     EGLConfig getConfig() const { return config; }
+
+    // The configs a window surface may be made on, best first: the context's
+    // own where it has one, and every single-sampled window-capable RGB8
+    // config otherwise, carrying a depth or stencil plane where the view asked
+    // for one. Empty where nothing answers, which is what sends the view to a
+    // companion framebuffer for the planes instead.
+    //
+    // A caller tries them in turn rather than taking the first: only the
+    // native window knows which visual it was made with, and on X11 a config
+    // that does not match it is refused.
+    Vector<EGLConfig> windowConfigs(bool depth, bool stencil) const;
 
 private:
     bool createContext();
@@ -69,12 +93,22 @@ private:
     mutable GLuint vertexArray = 0;
     mutable int enabledAttributes = 0;
 
+    // The surface this context was last made current with, so a thread that
+    // already has the context keeps whatever it was drawing into and a frame
+    // on a view binds its own.
+    mutable EGLSurface currentSurface = EGL_NO_SURFACE;
+
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;
     EGLConfig config = nullptr;
 
     GLCapabilities capabilities;
 };
+
+// One integer attribute of a config, and zero where the display will not say:
+// what a surface asks a config it is about to be made on - how deep its depth
+// plane is, whether it carries a stencil one.
+int glConfigAttribute(EGLDisplay display, EGLConfig config, EGLint attribute);
 
 // The process-wide EGL display, opened on the first Device and closed with the
 // last. False where libEGL is absent or no display answered.

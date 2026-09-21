@@ -268,6 +268,13 @@ bool ready(View& view)
 auto tStorageBufferBoundAtOffset =
     test("RenderRanges/storageBufferReadsFromTheOffset") = []
 {
+    // Said before the pipeline is asked about: a device with no storage buffers
+    // refuses this shader, and skipping on the capability rather than on the
+    // refusal is what keeps a pipeline that failed for any other reason a
+    // failure here.
+    if (!storageBuffersAreAvailable())
+        return;
+
     auto view = RangedPaletteView {};
 
     if (!ready(view))
@@ -282,6 +289,9 @@ auto tStorageBufferBoundAtOffset =
 auto tStorageGuardsLeaveTheBind =
     test("RenderRanges/anUnbindableStorageRangeBindsNothing") = []
 {
+    if (!storageBuffersAreAvailable())
+        return;
+
     auto view = GuardedPaletteView {};
 
     if (!ready(view))

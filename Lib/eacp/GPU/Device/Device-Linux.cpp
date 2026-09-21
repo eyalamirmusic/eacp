@@ -39,6 +39,11 @@ DeviceBackend& getDeviceBackend(const Device& device)
     return *static_cast<DeviceBackend*>(device.nativeContext());
 }
 
+DeviceBackend& getDeviceBackend(const Device& device, GPUApi api)
+{
+    return *getDeviceBackend(device).sideFor(api);
+}
+
 std::string Device::backendName() const
 {
     return impl->backend->backendName();
@@ -63,6 +68,16 @@ bool Device::supportsCompute() const
         return false;
 
     return impl->backend->supportsCompute();
+}
+
+bool Device::supportsStorageBuffers() const
+{
+    return impl->backend->supportsStorageBuffers();
+}
+
+bool Device::supportsZeroToOneDepth() const
+{
+    return impl->backend->supportsZeroToOneDepth();
 }
 
 bool Device::supportsSampleCount(int count) const

@@ -2,9 +2,11 @@
 
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Logging.h>
+#include <eacp/Graphics/View/View-Linux.h>
 
 #include <dlfcn.h>
 
+#include <cstdint>
 #include <mutex>
 
 namespace eacp::GPU
@@ -108,32 +110,79 @@ bool glHasClientExtension(const char* extensions, std::string_view name)
     return false;
 }
 
-// Neither a Wayland compositor nor an X server to reach, which is the headless
-// case the whole of stage 2 runs in.
-bool glHasNoWindowSystem()
+// One platform display, through whichever spelling this loader has. The core
+// 1.5 entry point is not one of them before a display exists: glad reads the
+// version off a display, and there is none to read yet, so the client
+// extension EGL_EXT_platform_base is what answers here and the core call is
+// loaded by the second pass, once the display it named has been initialized.
+EGLDisplay glPlatformDisplay(EGLenum platform, void* native, int screen)
 {
-    if (getEnvValue("EACP_HEADLESS") == "1")
-        return true;
+    const auto hasScreen = screen >= 0;
 
-    return getEnvValue("WAYLAND_DISPLAY").empty() && getEnvValue("DISPLAY").empty();
+    if (eglGetPlatformDisplayEXT != nullptr)
+    {
+        const EGLint attributes[] = {
+            EGL_PLATFORM_XCB_SCREEN_EXT, (EGLint) screen, EGL_NONE};
+
+        return eglGetPlatformDisplayEXT(
+            platform, native, hasScreen ? attributes : nullptr);
+    }
+
+    if (eglGetPlatformDisplay == nullptr)
+        return EGL_NO_DISPLAY;
+
+    const EGLAttrib attributes[] = {
+        EGL_PLATFORM_XCB_SCREEN_EXT, (EGLAttrib) screen, EGL_NONE};
+
+    return eglGetPlatformDisplay(platform, native, hasScreen ? attributes : nullptr);
+}
+
+// The display is opened on the platform of the window system this copy will
+// present to, because a window surface can only be made on a display of its
+// own platform and the display is opened when the Device comes up - before any
+// view has a surface to read one off. Kind::None is the headless case the whole
+// of stage 2 runs in, and the one a surfaceless display is for.
+EGLDisplay glOpenPlatformDisplay(const Graphics::NativeSurfaceHandle& connection)
+{
+    const auto* clientExtensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+
+    const auto has = [clientExtensions](std::string_view name)
+    { return glHasClientExtension(clientExtensions, name); };
+
+    switch (connection.kind)
+    {
+        case Graphics::NativeSurfaceHandle::Kind::Wayland:
+            if (has("EGL_KHR_platform_wayland") || has("EGL_EXT_platform_wayland"))
+                return glPlatformDisplay(
+                    EGL_PLATFORM_WAYLAND_KHR, connection.connection, -1);
+            break;
+
+        case Graphics::NativeSurfaceHandle::Kind::X11:
+            if (has("EGL_EXT_platform_xcb"))
+                return glPlatformDisplay(EGL_PLATFORM_XCB_EXT,
+                                         connection.connection,
+                                         (int) connection.window);
+            break;
+
+        case Graphics::NativeSurfaceHandle::Kind::None:
+            if (has("EGL_MESA_platform_surfaceless"))
+                return glPlatformDisplay(
+                    EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, -1);
+            break;
+    }
+
+    return EGL_NO_DISPLAY;
 }
 
 EGLDisplay glOpenDisplay()
 {
-    const auto* clientExtensions = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
+    const auto connection = Graphics::linuxPresentationConnection();
 
-    const auto hasSurfaceless =
-        glHasClientExtension(clientExtensions, "EGL_MESA_platform_surfaceless");
+    if (auto display = glOpenPlatformDisplay(connection); display != EGL_NO_DISPLAY)
+        return display;
 
-    if (glHasNoWindowSystem() && hasSurfaceless && eglGetPlatformDisplay != nullptr)
-    {
-        auto display = eglGetPlatformDisplay(
-            EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
-
-        if (display != EGL_NO_DISPLAY)
-            return display;
-    }
-
+    // Whatever the loader makes of the environment, which is what a machine
+    // with no platform extension at all still has.
     return eglGetDisplay(EGL_DEFAULT_DISPLAY);
 }
 
@@ -268,8 +317,7 @@ bool glHasExtension(std::string_view name)
     {
         const auto* extension = glGetStringi(GL_EXTENSIONS, (GLuint) i);
 
-        if (extension != nullptr
-            && name == reinterpret_cast<const char*>(extension))
+        if (extension != nullptr && name == reinterpret_cast<const char*>(extension))
             return true;
     }
 
@@ -299,8 +347,7 @@ int glReadInteger(GLenum name, int fallback)
 
 // The versions asked for, highest first: a driver hands back what it can, and
 // virgl refuses 4.6 and 4.3 while answering a 3.3 request with a 4.0 context.
-constexpr int glCoreVersions[][2] = {
-    {4, 6}, {4, 5}, {4, 3}, {4, 1}, {4, 0}, {3, 3}};
+constexpr int glCoreVersions[][2] = {{4, 6}, {4, 5}, {4, 3}, {4, 1}, {4, 0}, {3, 3}};
 
 constexpr int glESVersions[][2] = {{3, 2}, {3, 1}, {3, 0}};
 } // namespace
@@ -481,15 +528,38 @@ void GLContext::makeCurrent() const
         return;
 
     // Surfaceless: EGL_KHR_surfaceless_context, which Mesa has had for a
-    // decade, and the only thing a headless render needs.
-    if (eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, context)
-        == EGL_FALSE)
+    // decade, and the only thing a headless render needs. A context that a
+    // view already gave a surface to keeps it - an off-screen frame draws
+    // through a framebuffer object either way.
+    makeCurrentOn(currentSurface);
+}
+
+bool GLContext::makeCurrentOn(EGLSurface surface) const
+{
+    if (context == EGL_NO_CONTEXT)
+        return false;
+
+    if (glCurrentContext == this && currentSurface == surface)
+        return true;
+
+    if (eglMakeCurrent(display, surface, surface, context) == EGL_FALSE)
     {
         LOG("OpenGL: the context would not be made current on this thread");
-        return;
+        return false;
     }
 
+    currentSurface = surface;
     glCurrentContext = this;
+
+    return true;
+}
+
+void GLContext::surfaceIsGoing(EGLSurface surface) const
+{
+    if (surface == EGL_NO_SURFACE || currentSurface != surface)
+        return;
+
+    makeCurrentOn(EGL_NO_SURFACE);
 }
 
 void GLContext::releaseCurrent() const
@@ -499,6 +569,66 @@ void GLContext::releaseCurrent() const
 
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     glCurrentContext = nullptr;
+}
+
+Vector<EGLConfig> GLContext::windowConfigs(bool depth, bool stencil) const
+{
+    auto found = Vector<EGLConfig> {};
+
+    if (display == EGL_NO_DISPLAY)
+        return found;
+
+    // The context was built on one, so a surface has no choice to make.
+    if (config != nullptr)
+    {
+        found.add(config);
+        return found;
+    }
+
+    const EGLint attributes[] = {EGL_SURFACE_TYPE,
+                                 EGL_WINDOW_BIT,
+                                 EGL_RENDERABLE_TYPE,
+                                 capabilities.isES ? EGL_OPENGL_ES3_BIT
+                                                   : EGL_OPENGL_BIT,
+                                 EGL_RED_SIZE,
+                                 8,
+                                 EGL_GREEN_SIZE,
+                                 8,
+                                 EGL_BLUE_SIZE,
+                                 8,
+                                 EGL_DEPTH_SIZE,
+                                 depth ? 24 : 0,
+                                 EGL_STENCIL_SIZE,
+                                 stencil ? 8 : 0,
+                                 EGL_NONE};
+
+    // EGL sorts what it returns: no caveat first, then the smallest buffer
+    // that answers, so the opaque configs come before the ones carrying planes
+    // nothing here draws into.
+    constexpr auto mostConfigs = 32;
+
+    EGLConfig configs[mostConfigs] = {};
+    auto count = EGLint {0};
+
+    if (eglChooseConfig(display, attributes, configs, mostConfigs, &count)
+        == EGL_FALSE)
+        return found;
+
+    for (auto index = 0; index < count; ++index)
+        if (glConfigAttribute(display, configs[index], EGL_SAMPLES) <= 1)
+            found.add(configs[index]);
+
+    return found;
+}
+
+int glConfigAttribute(EGLDisplay display, EGLConfig config, EGLint attribute)
+{
+    auto value = EGLint {0};
+
+    if (eglGetConfigAttrib(display, config, attribute, &value) == EGL_FALSE)
+        return 0;
+
+    return (int) value;
 }
 
 GLuint GLContext::getVertexArray() const
@@ -538,17 +668,18 @@ void GLContext::probeCapabilities()
 
     caps.version = major * 100 + minor * 10;
 
-    caps.computeShaders =
-        es ? caps.version >= 310 : (caps.version >= 430 || glHasExtension(
-                                        "GL_ARB_compute_shader"));
-    caps.storageBuffers =
-        es ? caps.version >= 310
-           : (caps.version >= 430
-              || glHasExtension("GL_ARB_shader_storage_buffer_object"));
-    caps.imageLoadStore =
-        es ? caps.version >= 310
-           : (caps.version >= 420
-              || glHasExtension("GL_ARB_shader_image_load_store"));
+    // The three that are a language question before they are an API one, so
+    // what decides them is the GLSL target rather than an extension string: the
+    // lowering emits no #extension line (D3), so a kernel, a std430 block and
+    // an image store can only be spelled where the version itself has them.
+    // It is also what makes a driver capped with MESA_GL_VERSION_OVERRIDE
+    // report the floor coherently, its extension string being untouched by the
+    // cap.
+    const auto target = caps.glslTarget();
+
+    caps.computeShaders = target.allowsCompute();
+    caps.storageBuffers = target.allowsStorageBuffers();
+    caps.imageLoadStore = target.allowsImageStore();
 
     caps.bufferStorage = glad_glBufferStorage != nullptr;
     caps.bufferStorageIsEXT = false;
@@ -733,8 +864,9 @@ void glSwapRedAndBlue(std::byte* rows, int width, int height, int bytesPerRow)
 {
     for (auto row = 0; row < height; ++row)
     {
-        auto* pixels = rows + static_cast<std::size_t>(row)
-                                  * static_cast<std::size_t>(bytesPerRow);
+        auto* pixels =
+            rows
+            + static_cast<std::size_t>(row) * static_cast<std::size_t>(bytesPerRow);
 
         for (auto x = 0; x < width; ++x)
         {

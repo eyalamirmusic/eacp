@@ -267,10 +267,8 @@ struct GLRenderPassBackend final : RenderPassBackend
 
         // Outward: rounding an edge inward would shave a column of coverage off
         // it.
-        const auto left =
-            std::clamp((int) std::floor(rect.x), 0, encoder->width);
-        const auto top =
-            std::clamp((int) std::floor(rect.y), 0, encoder->height);
+        const auto left = std::clamp((int) std::floor(rect.x), 0, encoder->width);
+        const auto top = std::clamp((int) std::floor(rect.y), 0, encoder->height);
         const auto right =
             std::clamp((int) std::ceil(rect.x + rect.w), left, encoder->width);
         const auto bottom =
@@ -361,10 +359,7 @@ struct GLRenderPassBackend final : RenderPassBackend
         uniformsDirty = true;
     }
 
-    int targetSamples() const
-    {
-        return encoder->target != nullptr ? encoder->target->sampleCount : 1;
-    }
+    int targetSamples() const { return encoder->samples; }
 
     bool samplesMatch(const GLRenderPipelineData& state) const
     {
@@ -577,8 +572,8 @@ struct GLRenderPassBackend final : RenderPassBackend
             return;
 
         const auto unit = glTextureUnitFor(vulkanTextureBinding(slot));
-        const auto sampler = (GLuint) (std::uintptr_t)
-            encoder->device->nativeSampler(sampling);
+        const auto sampler =
+            (GLuint) (std::uintptr_t) encoder->device->nativeSampler(sampling);
 
         glActiveTexture((GLenum) (GL_TEXTURE0 + unit));
         glBindTexture(target, texture);
@@ -642,10 +637,9 @@ struct GLRenderPassBackend final : RenderPassBackend
 
         uniformsDirty = false;
 
-        const auto range = encoder->frame->writeUniforms(
-            uniformBytes.data(),
-            (int) uniformBytes.size(),
-            pipeline->uniformBlockSize);
+        const auto range = encoder->frame->writeUniforms(uniformBytes.data(),
+                                                         (int) uniformBytes.size(),
+                                                         pipeline->uniformBlockSize);
 
         if (!range.isValid())
             return;
@@ -698,8 +692,7 @@ struct GLRenderPassBackend final : RenderPassBackend
             if (!applyAttribute(i, attributes[i], baseVertex, firstInstance))
                 return false;
 
-        for (auto i = attributes.size();
-             i < context.getEnabledVertexAttributes();
+        for (auto i = attributes.size(); i < context.getEnabledVertexAttributes();
              ++i)
             glDisableVertexAttribArray((GLuint) i);
 
@@ -718,9 +711,8 @@ struct GLRenderPassBackend final : RenderPassBackend
                         int firstInstance)
     {
         const auto slot = attribute.bufferIndex;
-        const auto bound = slot >= 0 && slot < glMaxVertexSlots
-                               ? vertexBuffers[slot]
-                               : GLBoundBuffer {};
+        const auto bound = slot >= 0 && slot < glMaxVertexSlots ? vertexBuffers[slot]
+                                                                : GLBoundBuffer {};
 
         if (bound.buffer == 0)
         {
@@ -793,15 +785,13 @@ struct GLRenderPassBackend final : RenderPassBackend
         bindUniforms();
 
         const auto indexBytes = format == IndexFormat::UInt16 ? 2 : 4;
-        const auto offset =
-            indices.offset + (std::int64_t) firstIndex * indexBytes;
+        const auto offset = indices.offset + (std::int64_t) firstIndex * indexBytes;
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, data->buffer);
         glDrawElementsInstanced(glTopologyFor(pipeline->state.topology),
                                 (GLsizei) indexCount,
-                                format == IndexFormat::UInt16
-                                    ? GL_UNSIGNED_SHORT
-                                    : GL_UNSIGNED_INT,
+                                format == IndexFormat::UInt16 ? GL_UNSIGNED_SHORT
+                                                              : GL_UNSIGNED_INT,
                                 reinterpret_cast<const void*>(offset),
                                 (GLsizei) instanceCount);
     }
@@ -832,7 +822,13 @@ struct GLRenderPassBackend final : RenderPassBackend
     {
         auto* data = encoder->target;
 
-        if (data == nullptr || data->sampleCount <= 1 || data->msaaFramebuffer == 0)
+        if (data == nullptr)
+        {
+            resolveIntoDefaultFramebuffer();
+            return;
+        }
+
+        if (data->sampleCount <= 1 || data->msaaFramebuffer == 0)
             return;
 
         if (scissorOn)
@@ -840,20 +836,41 @@ struct GLRenderPassBackend final : RenderPassBackend
 
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
-        blitInto(resolveFramebuffer(*data), GL_COLOR_BUFFER_BIT);
+        const auto color = resolveFramebuffer(*data);
 
-        if (data->sampleableDepth)
-            blitInto(resolvedDepthFramebuffer(*data),
-                     data->stencil
-                         ? GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
-                         : GL_DEPTH_BUFFER_BIT);
+        if (color != 0)
+            blitInto(color, GL_COLOR_BUFFER_BIT);
+
+        if (!data->sampleableDepth)
+            return;
+
+        const auto depth = resolvedDepthFramebuffer(*data);
+
+        if (depth != 0)
+            blitInto(depth,
+                     data->stencil ? GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
+                                   : GL_DEPTH_BUFFER_BIT);
+    }
+
+    // A view whose surface carries what it asked for draws into the default
+    // framebuffer and has nothing to resolve; one that needed a companion - a
+    // depth plane, more than one sample, or both - resolves out of it here,
+    // which is the same blit a multisampled texture takes.
+    void resolveIntoDefaultFramebuffer()
+    {
+        if (!encoder->resolveToDefault || encoder->framebuffer == 0)
+            return;
+
+        if (scissorOn)
+            glDisable(GL_SCISSOR_TEST);
+
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+
+        blitInto(0, GL_COLOR_BUFFER_BIT);
     }
 
     void blitInto(GLuint destination, GLbitfield planes)
     {
-        if (destination == 0)
-            return;
-
         glBindFramebuffer(GL_READ_FRAMEBUFFER, encoder->framebuffer);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination);
 
@@ -875,11 +892,8 @@ struct GLRenderPassBackend final : RenderPassBackend
             glGenFramebuffers(1, &data.framebuffer);
 
         glBindFramebuffer(GL_FRAMEBUFFER, data.framebuffer);
-        glFramebufferTexture2D(GL_FRAMEBUFFER,
-                               GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D,
-                               data.texture,
-                               0);
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, data.texture, 0);
 
         return data.framebuffer;
     }

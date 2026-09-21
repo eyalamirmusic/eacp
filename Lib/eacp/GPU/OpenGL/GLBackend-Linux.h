@@ -12,6 +12,21 @@ class GLContext;
 
 std::unique_ptr<DeviceBackend> makeGLDeviceBackend();
 
+// vulkanDeviceClass's twin, and what the auto rule weighs against it (D8): the
+// EGL display this copy would present on, and whether the device EGL names
+// under it carries EGL_MESA_device_software. No renderer string is matched by
+// name. The display a probe opens is kept up and joined by the next Device
+// rather than terminated and opened again (D2).
+GPUDeviceClass glDeviceClass();
+
+// Whether this backend has a compute tier at all - D9's, which stage 6 builds.
+// False today whatever a context reports, exactly as Device::supportsCompute()
+// answers on it, and it is the third fact the auto rule weighs: a hardware GL
+// with no kernels beside a CPU Vulkan is what the composite is for (D11).
+// Asked before any Device, so it is a question about the backend and not about
+// a context.
+bool glBackendHasCompute();
+
 // The context the Device opened, which is what every object under it renders
 // on. Defined beside the DeviceBackend in Device-GL.cpp.
 GLContext& getGLContext(const Device& device);

@@ -57,12 +57,18 @@ jobs:
     # lane can carry them. Only the lane with a device: EACP_REQUIRE_GPU makes
     # DevicePresenceTests fail rather than let the whole GPU suite self-skip
     # into a silent green, and EACP_VK_SOFTWARE picks the CPU device, which on
-    # a runner is the only one there is.
+    # a runner is the only one there is. EACP_GPU_BACKEND names that lane's
+    # backend rather than leaving it to the auto rule: the rule weighs a
+    # software Vulkan against a hardware GL, both of which are software on a
+    # runner, so it would answer Vulkan anyway - but a runner image that one
+    # day carries a GPU would flip the lane silently, and the GL steps below
+    # name theirs the same way.
     env:
       EACP_HEADLESS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_FONTS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_GPU: ${{ matrix.vulkan && '1' || '' }}
       EACP_VK_SOFTWARE: ${{ matrix.vulkan && '1' || '' }}
+      EACP_GPU_BACKEND: ${{ matrix.vulkan && 'vulkan' || '' }}
 
     steps:
       - uses: actions/checkout@v6
@@ -95,13 +101,24 @@ jobs:
 
       # What the one lane that runs the backend needs on top, and none of it is
       # a build dependency: nothing links the loader or Mesa's software
-      # rasterizer - volk opens libvulkan.so.1 by name at runtime - Weston is
-      # the compositor the Wayland tests open their windows on, and Xvfb the X
+      # rasterizer - volk opens libvulkan.so.1 by name at runtime, and the
+      # OpenGL backend opens libEGL.so.1 the same way - Weston is the
+      # compositor the Wayland tests open their windows on, and Xvfb the X
       # server the X11 ones do.
-      - name: Install the Vulkan runtime, a compositor and an X server
+      #
+      # The GL half of that runtime is four packages: libegl1 is the dispatch
+      # library eacp dlopens, libegl-mesa0 the implementation behind it,
+      # libgles2 the ES one the EACP_GL_ES run binds, and libgl1-mesa-dri the
+      # drivers - llvmpipe among them, which is what LIBGL_ALWAYS_SOFTWARE
+      # picks. They are here and not in the shared step above for the reason
+      # the Vulkan ICD is: the other two Linux lanes have no device on purpose,
+      # and a GL driver on them would turn their self-skipping GPU suites into
+      # a third run of the whole thing.
+      - name: Install the GPU runtimes, a compositor and an X server
         if: matrix.vulkan
         run: >
           sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
+          libegl1 libegl-mesa0 libgles2 libgl1-mesa-dri
           weston xvfb
 
       # Before the build, not before the test. NanoTest discovers cases by
@@ -173,6 +190,136 @@ jobs:
         run: >
           Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
           -R '^(X11|EmbeddedView|Present)/'
+
+      # The same suite again on the other backend (plan.md D12). There is no
+      # GL-specific test to run: EACP_GPU_BACKEND=gl is the whole of the
+      # difference, and LIBGL_ALWAYS_SOFTWARE keeps Mesa on llvmpipe whatever
+      # the runner turns out to have under it. Headless, and the three device
+      # suites by name rather than ctest: every other suite on this lane has
+      # already run twice above, and these are the only ones a backend change
+      # can move. The compute half of them self-skips - the GL kernel tier is a
+      # later stage - which is what makes the count differ from the Vulkan one
+      # in the log without differing in the total.
+      - name: Test the OpenGL backend
+        if: matrix.vulkan
+        env:
+          EACP_GPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          build/Tests/GPU/GPUTests
+          build/Tests/GPUWidgets/GPUWidgetsTests
+          build/Tests/UI/UITests
+
+      # The windows again, one window system each, with the EGLSurface over a
+      # wl_egl_window and over the view's X11 child window where the Vulkan
+      # steps above had a swapchain. Only the suites that open one run: the
+      # rest ran headless one step up.
+      - name: Test the OpenGL backend under Weston
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_GPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: >
+          Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
+          -R '^(Wayland|Present)/'
+
+      - name: Test the OpenGL backend under Xvfb
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_GPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: >
+          Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
+          -R '^(X11|EmbeddedView|Present)/'
+
+      # The floor the backend is written to: GL 3.3 core, which is what the
+      # development VM's driver offers and what every version above it is an
+      # optional speed over. MESA_GL_VERSION_OVERRIDE caps what llvmpipe
+      # reports rather than removing the fast paths it takes anyway, so this is
+      # a compile-and-bind check of the floor path and not a performance one -
+      # the GLSL cap beside it is what makes the lowering emit 330 and the
+      # driver hold it to 330.
+      - name: Test the OpenGL backend at its floor
+        if: matrix.vulkan
+        env:
+          EACP_GPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          MESA_GL_VERSION_OVERRIDE: '3.3'
+          MESA_GLSL_VERSION_OVERRIDE: '330'
+        run: |
+          build/Tests/GPU/GPUTests
+          build/Tests/GPUWidgets/GPUWidgetsTests
+          build/Tests/UI/UITests
+
+      # And the other profile, at its own floor: EACP_GL_ES binds
+      # EGL_OPENGL_ES_API so the same binary comes up on ES, and the cap holds
+      # it at ES 3.0 - where the BGRA route, the precision declarations and the
+      # read-backs that have no glGetTexImage are the paths that differ.
+      #
+      # The cap is not only for fidelity. On llvmpipe's uncapped ES 3.2 a draw
+      # whose fragment stage declares a storage block segfaults inside Mesa,
+      # which is a driver bug and not this backend's (it crashes with the bind
+      # removed, and the program compiles and links without complaint). ES 3.0
+      # has no storage buffers at all, so the two cases that would hit it
+      # self-skip on Device::supportsStorageBuffers() and no exclusion list is
+      # needed here.
+      - name: Test the OpenGL backend on ES
+        if: matrix.vulkan
+        env:
+          EACP_GPU_BACKEND: gl
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          EACP_GL_ES: '1'
+          MESA_GLES_VERSION_OVERRIDE: '3.0'
+        run: |
+          build/Tests/GPU/GPUTests
+          build/Tests/GPUWidgets/GPUWidgetsTests
+          build/Tests/UI/UITests
+
+      # The third backend (plan.md D11): one Device over both, OpenGL for
+      # render and Vulkan for compute. On this lane both halves are llvmpipe,
+      # which is the point - the machine it selects itself on has a hardware GL
+      # and no runner has one, and over two software stacks every crossing path
+      # runs with no hardware at all. The compute half of the suite stops
+      # self-skipping here, so this is the only GL-side lane that dispatches a
+      # kernel.
+      - name: Test the composite device
+        if: matrix.vulkan
+        env:
+          EACP_GPU_BACKEND: composite
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          build/Tests/GPU/GPUTests
+          build/Tests/GPUWidgets/GPUWidgetsTests
+          build/Tests/UI/UITests
+
+      # And its windows, which are the OpenGL half's: a composite presents
+      # through an EGLSurface exactly as the GL backend does, so only the
+      # Present cases are worth running again.
+      - name: Test the composite device under Weston
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_GPU_BACKEND: composite
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: >
+          Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
+          -R '^Present/'
+
+      - name: Test the composite device under Xvfb
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_GPU_BACKEND: composite
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: >
+          Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
+          -R '^Present/'
 
   build-ios:
     name: iOS Simulator

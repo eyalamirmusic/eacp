@@ -2344,8 +2344,9 @@ docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
 
 ## OpenGL
 
-The second Linux backend, beside the Vulkan one and chosen at runtime with
-`EACP_GPU_BACKEND=gl`. It is there because a Linux guest in a virtual machine
+The second Linux backend, beside the Vulkan one and chosen at runtime — by
+`EACP_GPU_BACKEND=gl`, or by the `auto` rule below where nothing is asked for.
+It is there because a Linux guest in a virtual machine
 commonly has no Vulkan device but a good OpenGL one — the development VM is
 that case exactly, an arm64 Ubuntu guest whose virtio-gpu speaks virgl and
 answers Vulkan with llvmpipe on the CPU. The floor is **OpenGL 3.3 core and
@@ -2353,17 +2354,16 @@ OpenGL ES 3.0**, because that is what such a machine offers and because
 everything below it wants a different uniform model from the one every eacp
 shader assumes.
 
-**The render half is built; the present half and the kernel tier are not.**
+**The render and present halves are built; the kernel tier is not.**
 `Device`, `Buffer`, `Texture`, `ShaderLibrary`, `GpuTimestamps`,
-`RenderPipeline`, `Frame`, `RenderPass` and `CommandBuffer` are real, and every
-render case of `GPUTests`, `GPUWidgetsTests` and `UITests` passes on this
-backend against the expectations the Vulkan one meets. `GPUView` has no
-drawable yet, so a view's content goes through the off-screen
-`renderNativeContent` path and nothing presents; `ComputePipeline` is never
-valid and `beginCompute` answers null, so `Device::supportsCompute()` is false
-here whatever the context could do — which is the case `UI::ComponentHost`'s
-mesh route exists for, and which every kernel test self-skips on. `plan.md` is
-the rest of it.
+`RenderPipeline`, `Frame`, `RenderPass`, `CommandBuffer` and `GPUView` are
+real, and every render case of `GPUTests`, `GPUWidgetsTests` and `UITests`
+passes on this backend against the expectations the Vulkan one meets, the
+`Present/` and `EmbeddedView/` cases included on both window systems.
+`ComputePipeline` is never valid and `beginCompute` answers null, so
+`Device::supportsCompute()` is false here whatever the context could do — which
+is the case `UI::ComponentHost`'s mesh route exists for, and which every kernel
+test self-skips on. `plan.md` is the rest of it.
 
 - **One backend for every version, capabilities not versions.**
   `OpenGL/GLCapabilities.h` is filled once when the context comes up — profile,
@@ -2376,17 +2376,35 @@ the rest of it.
   for a `BufferStorage::Streaming` buffer where `glBufferStorage` is,
   `glTexStorage2D` where it is and a `glTexImage2D` per level where it is not,
   link-time binding by name always, and the FBO-and-`glReadPixels` read-back on
-  both profiles.
+  both profiles. Three of those flags — `computeShaders`, `storageBuffers` and
+  `imageLoadStore` — are taken from the GLSL target this context's version
+  gives rather than from its extension string, because a kernel, a std430 block
+  and an image store are things the *language* has and the lowering emits no
+  `#extension` line; it is also what makes a driver capped with
+  `MESA_GL_VERSION_OVERRIDE` report the floor coherently rather than claiming a
+  stage it cannot be handed a source for.
 - **One context per `Device`, current on its thread.** `GLContext-Linux.cpp`
-  holds a process-wide refcounted `EGLDisplay` — the surfaceless platform
-  (`EGL_MESA_platform_surfaceless`) where neither a Wayland nor an X11 display
-  is reachable, the default display otherwise — and one `EGLContext` on it per
+  holds a process-wide refcounted `EGLDisplay` and one `EGLContext` on it per
   `Device`, made current over no surface at all
-  (`EGL_KHR_surfaceless_context`). Two `Device`s on one thread are two
-  contexts, and a thread-local "who is current" pointer makes `eglMakeCurrent`
-  happen only when the device changes. A `Device` is already single-threaded
-  above this layer, which is exactly the constraint a GL context has, so there
-  is no context sharing anywhere.
+  (`EGL_KHR_surfaceless_context`) until a view gives it one. Two `Device`s on
+  one thread are two contexts, and a thread-local "who is current" pointer plus
+  the context's own current surface make `eglMakeCurrent` happen only when
+  either changes. A `Device` is already single-threaded above this layer, which
+  is exactly the constraint a GL context has, so there is no context sharing
+  anywhere.
+- **The display is opened on the window system's own platform.** A window
+  surface can only be made on a display of its own platform, and an EGL display
+  is opened when the `Device` comes up — long before any view has a surface to
+  read one off — so the GL backend asks the window system for its connection
+  first (`Graphics::linuxPresentationConnection()`) and opens the display on
+  `EGL_PLATFORM_WAYLAND_KHR` with that `wl_display`, on `EGL_PLATFORM_XCB_EXT`
+  with that `xcb_connection_t` and screen, or on
+  `EGL_PLATFORM_SURFACELESS_MESA` where the copy is headless. Sharing the
+  window system's own connection is not optional on Wayland: the buffers the
+  driver attaches to a `wl_surface` have to be made on the display that surface
+  belongs to. One consequence: a copy whose preferred window system is Wayland
+  cannot present an `EmbeddedView`, which is always X11 — the Vulkan backend
+  can, its instance carrying both platform extensions at once.
 - **Nothing links libEGL or libGL.** `libEGL.so.1` is opened by name and
   `eglGetProcAddress` comes out of it; every GL entry point comes through that.
   The loader is a glad2 one generated once and committed under
@@ -2477,6 +2495,38 @@ while the whole of what either means is where a slot starts reading. So every
 context draws through `glDrawArraysInstanced` and `glDrawElementsInstanced`
 alone.
 
+**What a `GPUView` presents to.** An `EGLSurface` over the view's own
+window-system surface: a `wl_egl_window` on its `wl_subsurface` — the three
+`wl_egl_window_*` functions taken out of a `dlopen`ed `libwayland-egl.so.1`, so
+nothing links that either — or its X11 child window through
+`EGL_EXT_platform_xcb`, which takes a window id and no Xlib. The config is
+chosen by trying: the display's window-capable RGB8 configs are asked for in
+turn until one carries the native window, because only the window knows which
+visual it was made with and an X11 config that does not match it is refused.
+`eglSwapInterval(dpy, 0)` is set on it, so the main thread never blocks inside
+the driver and the frame callback the window system already hands the Vulkan
+backend — `wl_surface.frame`, or the X11 pacer — is the whole of the pacing.
+The frame is drawn into the default framebuffer and handed over with
+`eglSwapBuffers` as the `Frame` goes, which is where every other backend
+presents. A view that asked for a depth or stencil plane gets it from the
+config; one that asked for more than one sample — or for a plane no config
+carried — draws into a renderbuffer companion framebuffer instead, which the
+end of the pass blits into the default one, resolving the samples in the same
+call. A resize is `wl_egl_window_resize` on Wayland and nothing at all on X11,
+where the server has already been told by the view surface; `onLost` destroys
+the surface there and then, before the `wl_surface` or the window it was made
+from goes.
+
+One thing that is easy to get wrong and invisible when you do: a context made
+current with no surface at all has `GL_NONE` for its default framebuffer's draw
+and read buffer, and EGL sets those at the *first* `eglMakeCurrent` and never
+again. Every context here starts surfaceless, so the first surface a view binds
+is told `glDrawBuffer(GL_BACK)` / `glReadBuffer(GL_BACK)` (`glDrawBuffers` on
+ES). Without it every frame draws, swaps and reports success into an empty
+window — which is why `Present/whatIsPresentedIsOnTheWindow` reads a pixel back
+off the window with an xcb connection of its own rather than counting frames
+like the cases around it.
+
 A `CommandBuffer` is the context's own stream plus a fence: `submit` plants one
 after a `glFlush`, `wait` blocks on it, `isComplete` polls it and `commitAsync`
 gives the poll a fence of its own so a buffer destroyed under it leaves nothing
@@ -2491,6 +2541,67 @@ whether a texture exists by asking — so it empties the queue first
 (`glForgetErrors()`), or an error some earlier call left behind would be read as
 this one's.
 
+### Which backend a `Device` gets
+
+`EACP_GPU_BACKEND` is read once per process, beside the window system's own
+`EACP_WINDOW_SYSTEM` and answering the same kind of question. `vulkan`, `gl` and
+`composite` name a backend outright and a copy that names one keeps it, invalid
+and all, so a run pinned to a backend cannot quietly become a run on another.
+The default is `auto`, and `auto` is four lines:
+
+- **Vulkan where it has a device that is not a CPU one.** It is the backend
+  with every feature — the kernel tier included — and it is what the suite is
+  written against, so a real Vulkan driver ends the question. `EACP_VK_SOFTWARE`
+  is not weighed here: it says which physical device Vulkan takes once Vulkan
+  has been chosen, not whether it is chosen, so forcing llvmpipe on a machine
+  with a GPU still gives a Vulkan `Device`.
+- **Else OpenGL where EGL names a device that is not software *and* the OpenGL
+  backend has kernels of its own.** The question is asked of EGL and not of a
+  renderer string: `EGL_EXT_device_query` gives the display's `EGLDeviceEXT` and
+  the answer is whether its extension string carries `EGL_MESA_device_software`.
+- **Else the composite, where that hardware GL has no kernels but there is a
+  Vulkan — even a CPU one — to run them on.** This is the virtual machine the
+  backend was written for: a software Vulkan beside a hardware GL whose version
+  is below the 4.3 a compute stage needs. `glBackendHasCompute()` is that third
+  answer and is false on every context today, D9's tier being stage 6's, so this
+  is what the VM gets. With no Vulkan at all there is nothing to compose with
+  and the GL is taken alone.
+- **Else Vulkan.** Two software stacks resolve to the baseline one, which is
+  what every CI lane is — there is nothing to gain by crossing between two CPU
+  stacks, llvmpipe's Vulkan having the kernels and the fuller feature set. The
+  one exception is a machine with no Vulkan at all, where a software GL is still
+  a device and is taken.
+
+Each probe costs an instance or a display and neither is paid twice: the Vulkan
+one creates a bare `VkInstance`, ranks the physical devices with the same filter
+the real selection uses and destroys it again, so a copy that goes on to take
+GL has not built a `VkDevice` it would never use; the EGL one opens the display
+the `Device` after it will join rather than one it will terminate. Vulkan is
+asked first, so the common machine — a real GPU with a real Vulkan driver —
+never opens an EGL display at all. Where the rule picks GL and no context comes
+up, the Vulkan it weighed GL against is taken instead; where a copy *asked* for
+GL, it is not.
+
+What it decides on the two machines in front of it: the development VM picks the
+composite (`GPU: auto chose OpenGL+Vulkan (Vulkan: software, OpenGL: hardware)`,
+logged once), and a CI runner picks Vulkan (`Vulkan: software, OpenGL:
+software`). `Device::backendName()` prints beside `name()` in
+`GPU/aDeviceIsPresentWhenRequired`, so every lane's log says which it got.
+
+The rule is a function of those three answers and nothing else
+(`chooseAutoBackend`), which is what lets `Backend/` in
+`Tests/GPU/BackendSelectionTests-Linux.cpp` pin every pair on a machine
+with neither kind of device.
+
+**One thing the rule does not account for**, and the reason it does not: a copy
+whose preferred window system is Wayland opens its EGL display on Wayland and
+cannot then present an `EmbeddedView`, which is X11 whatever a toplevel prefers.
+Every copy that embeds is a plugin copy and every plugin copy prefers X11
+(`Platform::isDLL()`), so the combination is unreachable in the tree; the way to
+reach it is to force `EACP_WINDOW_SYSTEM=wayland` on a plugin that embeds, and
+the answer there is `EACP_GPU_BACKEND=vulkan`, whose instance carries both
+platform extensions at once.
+
 ### Running the OpenGL backend
 
 ```bash
@@ -2503,7 +2614,10 @@ EACP_GPU_BACKEND=gl EACP_REQUIRE_GPU=1 ./build/Tests/GPU/GPUTests
 | `EACP_GL_ES=1` | Binds `EGL_OPENGL_ES_API` instead of `EGL_OPENGL_API`, so the ES path is a run of the same binary rather than a second build. |
 | `EACP_GL_DEBUG=1` | Installs a `GL_KHR_debug` messenger that logs, and turns on a `glGetError` drain after each operation. The twin of `EACP_VK_VALIDATION`, and off by default for the same kind of reason: polling `glGetError` on a command-stream driver like virgl is a round trip to the host per call. |
 | `LIBGL_ALWAYS_SOFTWARE=1` | Mesa's, not eacp's, and the GL twin of `EACP_VK_SOFTWARE`: llvmpipe's GL 4.5 rather than whatever the machine's own driver offers. |
-| `MESA_GL_VERSION_OVERRIDE=3.3` | Mesa's again, and what makes the floor path a run of one driver rather than a second machine: it caps what llvmpipe reports. `MESA_GLES_VERSION_OVERRIDE` is its ES half. |
+| `MESA_GL_VERSION_OVERRIDE=3.3` | Mesa's again, and what makes the floor path a run of one driver rather than a second machine: it caps what llvmpipe reports. Pair it with `MESA_GLSL_VERSION_OVERRIDE=330` so the shading language is capped with it. |
+| `MESA_GLES_VERSION_OVERRIDE=3.0` | The ES half of the same, and what a run with `EACP_GL_ES=1` wants: llvmpipe's own ES is 3.2 and the floor is 3.0. On ES the cap takes the extensions with it, which it does not do on desktop — a desktop context capped to 3.3 still advertises `ARB_compute_shader`, which is why `GLCapabilities` takes those three flags from the GLSL target rather than from the extension string. |
+| `EACP_GPU_BACKEND=vulkan` | The other way round: pins a copy to Vulkan on a machine where the `auto` rule would take GL or the composite. A copy that names a backend keeps it, invalid and all. |
+| `EACP_GPU_BACKEND=composite` | One `Device` over both: OpenGL for render, Vulkan for compute. See below. Over two llvmpipes it exercises every crossing path with no hardware at all, which is how CI runs it. |
 
 `Tests/GPU/GLCapabilityTests-Linux.cpp` is the one GL-specific test: it prints
 the profile, version, renderer and every capability flag, and checks the
@@ -2514,3 +2628,211 @@ Everything else is the existing suite run again, each case self-skipping on
 dispatches a kernel self-skipping on `computeIsAvailable()`, which is
 `Device::supportsCompute()` one tier down, so the kernel half of the suite goes
 quiet here rather than red.
+
+The presenting half is the same suite run again as well: `Scripts/with-weston`
+runs the `Present/` cases over a real compositor and `Scripts/with-xvfb` runs
+those and the `EmbeddedView/` ones over a real X server, with
+`EACP_GPU_BACKEND=gl` in front of either.
+
+```bash
+EACP_GPU_BACKEND=gl EACP_REQUIRE_GPU=1 EACP_REQUIRE_DISPLAY=1 \
+    LIBGL_ALWAYS_SOFTWARE=1 Scripts/with-weston \
+    ctest --test-dir build -R '^Present/'
+
+EACP_GPU_BACKEND=gl EACP_REQUIRE_GPU=1 EACP_REQUIRE_DISPLAY=1 \
+    LIBGL_ALWAYS_SOFTWARE=1 Scripts/with-xvfb \
+    ctest --test-dir build -R '^(Present|EmbeddedView)/'
+```
+
+Under Weston's headless backend Mesa's Wayland EGL falls back to `wl_shm`
+buffers and under Xvfb its xcb platform to `XPutImage`; both carry the whole
+suite on llvmpipe, and the ES profile (`EACP_GL_ES=1`) carries it too.
+
+CI runs five of these on the Vulkan lane, after its own three: the whole of
+`GPUTests`, `GPUWidgetsTests` and `UITests` headless on llvmpipe's GL, the
+`Present/` cases again under Weston and under Xvfb, and then the same three
+binaries twice more — capped to the floor
+(`MESA_GL_VERSION_OVERRIDE=3.3 MESA_GLSL_VERSION_OVERRIDE=330`) and as ES
+(`EACP_GL_ES=1 MESA_GLES_VERSION_OVERRIDE=3.0`). Nothing on a runner has a
+hardware GL, so virgl itself is exercised on the development VM and nowhere
+else.
+
+One thing the ES cap is load-bearing for, and not for fidelity: on llvmpipe's
+*uncapped* ES 3.2 a draw whose fragment stage declares a storage block
+segfaults inside Mesa before any bind — it crashes with the `glBindBufferRange`
+removed and the program compiles and links without complaint, so it is a driver
+bug and not this backend's. ES 3.0 has no storage buffers at all, so the two
+cases that would reach it (`RenderRanges/storageBufferReadsFromTheOffset` and
+`RenderRanges/anUnbindableStorageRangeBindsNothing`) self-skip on
+`Device::supportsStorageBuffers()` and no exclusion list is needed.
+
+### virgl, the development VM's driver
+
+The machine the backend was written for is an arm64 Ubuntu guest under
+Parallels whose virtio-gpu speaks virgl: OpenGL forwarded to the host's Metal,
+reported as **GL 4.0 core, GLSL 4.00**, beside a Vulkan that is llvmpipe on the
+CPU. It refuses a 4.6 and a 4.3 context and answers a 3.3 request with 4.0, and
+it refuses ES 3.1 and 3.2 while answering ES 3.0. What that costs, in the same
+spirit as the D3D12 driver quirks above — none of it worked around, all of it
+queryable:
+
+- **No `glClipControl`** (core 4.5, `GL_EXT_clip_control` on ES), so clip-space
+  depth stays in GL's own [−1, 1] and a depth attachment holds `(z + 1) / 2`
+  rather than the `z` the other three backends leave there. Every depth *test*
+  is unaffected — ordering is identical — and only a read-back differs, which is
+  what `Device::supportsZeroToOneDepth()` answers and what the three depth
+  read-back cases self-skip on.
+- **No storage buffers**: GL 4.0 is below the 4.3 the language needs, so
+  `Device::supportsStorageBuffers()` is false, a shader that names one is an
+  invalid `ShaderLibrary` with the lowering's `needsNewerTarget` message, and
+  the cases that bind one self-skip.
+- **No compute stage and no image store**, which follow from the same version.
+  `UI::ComponentHost` takes its mesh route (D10), `UI::CoverageAtlas` asks for
+  no `computeWrite` texture, and `Apps/GPU`'s kernel demos — `Compute`,
+  `ComputeImage`, `ComputeParticles`, `AsyncCompute`, `PathCoverage` — come up,
+  say so once and draw what they can. `PathBench` says it per shape, which on a
+  path-heavy frame is thousands of lines: it asks for a coverage texture
+  directly rather than through a `ComponentHost`.
+- **No `ARB_buffer_storage`**, so there is no persistent mapping: a
+  `BufferStorage::Streaming` buffer is `glBufferSubData` into a
+  `GL_DYNAMIC_DRAW` buffer, which is the floor path every context has.
+- **A `glBufferData` of over 2 GB wedges the guest.** The process goes into
+  uninterruptible sleep inside `virtio_gpu_queue_ctrl_sgs` and cannot be killed
+  — virgl has to mirror the allocation on the host and does not survive it;
+  llvmpipe takes the same call without complaint. Nothing here can route around
+  it, so a full `GPUTests` run on virgl leaves
+  `LargeBuffer/aBufferPastTwoGigabytesAddressesItsEnd` out.
+- **Timer queries answer, but a frame's timings read zero.** `GL_TIMESTAMP` is
+  offered and the `CommandTimer` cases pass, while
+  `Device::lastFrameTimings()` reports 0.00 ms on a real frame here — llvmpipe
+  reports a hundredth of a millisecond for the same frame, which is no more
+  believable. `FrameTimer` already tolerates a device with no timings; treat the
+  GPU column of an app's own stats line as absent on this backend rather than as
+  a number.
+- **`EACP_GL_DEBUG=1` is quiet on errors and loud on one hint.** Across every
+  `Apps/GPU`, `Apps/UI` and `Apps/Plugins` demo, on both window systems, the
+  only messages are `GL_DEBUG_TYPE_PERFORMANCE` ones saying that a
+  `GL_STATIC_DRAW` buffer is being updated with `glBufferSubData` — which is
+  what a `BufferStorage::Default` buffer an app rewrites every frame is. Not an
+  error, and the cure is the app asking for `BufferStorage::Streaming`.
+
+**What a frame costs.** `Apps/GPU/StreamingStress` is the measurement worth
+having, because it is the shape this backend was worried about: two thousand
+meshes a frame, each its own vertex write, index write, uniform-ring
+`glBufferSubData`, bind and `drawIndexed`. Over the VM's XWayland, measured with
+the app's own per-second line:
+
+| | CPU ms a frame | frames a second |
+| --- | --- | --- |
+| GL, virgl | 3.0 – 4.7 | ~13 |
+| GL, llvmpipe | 3.2 – 5.8 | ~57 |
+| Vulkan, llvmpipe | 2.0 – 4.0 | ~57 |
+
+So the client-side cost of writing two thousand draws is the same order on all
+three, and the uniform ring's per-draw `glBufferSubData` does **not** show up
+there. What does show up is the stream itself: an empty frame runs at the
+pacer's 47–50 fps on all three, and only the two-thousand-draw frame falls to a
+quarter of that on virgl — the cost is the command stream crossing virtio after
+our own measurement has ended, and it is invisible to both the CPU timer and
+(see above) the GPU one. Fewer, larger writes would not help; fewer *draws*
+would. One more number beside it: the single frame on which the streaming arenas
+fold back and four new buffers are created costs ~150 ms on virgl and is never
+repeated, a `glBufferData` of a few megabytes being a host-side allocation here.
+
+**What runs.** Every `Apps/GPU`, `Apps/UI` and `Apps/Plugins` executable that
+builds on Linux was run on this driver on both window systems, and all of them
+come up and draw; `Present/whatIsPresentedIsOnTheWindow` passes against a live
+XWayland on virgl, so the pixels are checked and not just the frame count.
+`Apps/Plugins/PluginHost` runs its plugin's `GPUView` off the host's loop here
+as it does on Vulkan. The one thing that does not run is not this backend's: on
+the VM's own live GNOME session a window that is not the one being looked at
+stops receiving frame callbacks, so a continuously presenting view stops — on
+Vulkan exactly as on GL, and in the tree before either. Use the X11 backend
+(`EACP_WINDOW_SYSTEM=x11`), whose pacer is a timer, or a nested
+`weston --backend=x11`, to watch one for real.
+
+
+### The composite device: OpenGL render, Vulkan compute
+
+**It costs a copy, and the copy is on the CPU.** A machine whose OpenGL is a
+real driver and whose Vulkan is llvmpipe — this development VM, and every
+VMware, VirtualBox or older QEMU guest — has a good renderer with no compute
+stage beside a poor renderer with one. The composite `Device` takes the render
+half from OpenGL and the kernel half from Vulkan, so an interface on such a
+machine keeps its analytic coverage and every kernel in the tree still runs;
+what it pays for that is that a resource both halves touch exists twice, and
+whatever one half wrote is read back into host memory and uploaded into the
+other before the other reads it. Measured on the VM, over its virgl and its
+llvmpipe:
+
+| Frame | Crossed | Copies | Wall clock |
+| --- | --- | --- | --- |
+| `Apps/UI/WidgetGallery`, a frame that rasterizes | 270 KB | 7 | 0.41 ms |
+| `Apps/GPU/PathCoverage`, its two star masks | 3.1 MB | 12 | 1.37 ms |
+| `Apps/UI/AtlasCeiling`, the first frame (a full 4096² atlas) | 64 MB | 7 | 32.9 ms |
+
+Read the first row and not the third: a UI frame's crossing is the coverage
+atlas's dirty part, and the third row is the demo whose whole point is to fill
+the atlas to its ceiling. `Device::crossingBytesThisFrame()`,
+`crossingsThisFrame()` and `crossingMillisecondsThisFrame()` are where those
+numbers come from; they are cleared at every `Device::beginFrame()` and answer
+zero on every device with one backend, so the same stats line prints nothing on
+Metal, D3D12, Vulkan and OpenGL alike.
+
+**What crosses, and when.** The render half is the primary: a `Buffer` and a
+`Texture` are created there and a draw always binds that one. The compute half
+gets a twin —
+
+- a `Texture` created `computeWrite` gets one when it is created, because the
+  OpenGL this device was built for has no image store and the render copy is
+  made without the flag;
+- every other resource gets one the first time a kernel binds it.
+
+A twin is filled from the render side as it is made, but only where there is
+anything worth carrying: a buffer created empty and bound as a kernel's output
+owes nothing, and copying its undefined bytes would be a crossing charged for
+nothing. After that, each side records what it owes the other:
+
+- a compute pass binding a resource as an **output** leaves the render copy
+  owing the whole resource, because a dispatch reports no rectangle;
+- a render pass **into** a texture leaves the compute copy owing the whole of
+  it, for the same reason;
+- a **host** `update` leaves the compute copy owing exactly the bytes, or
+  exactly the rectangle, it wrote — which is the one write that reports one.
+
+Nothing is copied at the write. The copy happens at the other side's next use,
+inside the `nativeBuffer()`/`nativeTexture()` the pass asks for, and a
+render-side use first submits and waits for whatever the compute half has
+recorded — which is D11's "`beginPass` waits for the Vulkan work", reached from
+the first bind rather than from the pass boundary, so a frame that opens a pass
+and binds nothing a kernel wrote waits for nothing.
+
+**A `Frame` is the render half's** with a Vulkan command buffer beside it,
+created the first time the frame opens a compute pass and submitted when
+anything wants what it wrote or when the frame ends. A `CommandBuffer` is the
+compute half's entirely. So the two clocks stay apart:
+`Device::lastFrameTimings()` is the OpenGL frame and `CommandBuffer::timings()`
+is the Vulkan recording, and neither is ever a sum of the two.
+
+**What a composite answers.** `supportsCompute()` is true, which is its whole
+point, and `maxThreadgroupMemory()` is the Vulkan half's. `supportsStorageBuffers()`,
+`supportsZeroToOneDepth()`, `supportsSampleCount()` and
+`supportsBlockCompression()` are the **OpenGL** half's, because each is a
+question about a render target or about what a shader stage can be handed; a
+kernel's own storage buffers are the Vulkan half's and are never in question.
+`storageBufferOffsetAlignment()` is the larger of the two, since a range a
+caller sub-allocates may be bound on either side.
+`RenderPass::setVertexStorageBuffer` on a half with no std430 block is
+**refused** rather than copied into nothing, which the counters show: that
+frame crosses zero bytes.
+
+So on virgl the composite skips exactly what the OpenGL backend skips, and for
+the same reasons and through the same queries — the three depth read-back cases
+on `supportsZeroToOneDepth()`, and the four storage-buffer cases (three of them
+render-stage reads, plus `FrameCompute/indexedBufferReadFeedsTheDraw`, which
+needs a compute tier *and* a std430 block) on `supportsStorageBuffers()`. It
+skips nothing on `supportsCompute()`, which is the difference.
+
+`Tests/GPU/CrossingTests.cpp` is the suite: six cases written about the API
+rather than about the composite, so each says "this works" on every backend and
+"and this is what it cost" on the one where it costs anything.
