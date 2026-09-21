@@ -258,7 +258,7 @@ bool drainAndTestForChange(int fd, std::vector<char>& buffer)
 void runMonitorThread()
 {
     auto socket = Socket {RTMGRP_LINK | RTMGRP_IPV4_ROUTE | RTMGRP_IPV6_ROUTE
-                          | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR};
+                          | RTMGRP_IPV4_IFADDR};
 
     if (!socket.isOpen())
         return;

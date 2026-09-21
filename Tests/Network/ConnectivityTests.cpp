@@ -318,14 +318,8 @@ auto tConnectivityProbeWaitsWhileOffline =
     monitor.setState(stateWith(false, Connectivity::Interface::None));
     monitor.startProbe(server.options());
 
-    // The live platform monitor shares this singleton, so a report from it
-    // landing in the window would legitimately start a fetch; the count
-    // holds only while the state is still the one this test set.
     runEventLoopUntil([] { return false; }, MS {200});
-
-    if (!monitor.getState().online)
-        check(server.hits.load() == 0);
-
+    check(server.hits.load() == 0);
     check(!monitor.getState().reachable);
 
     monitor.setState(stateWith(true, Connectivity::Interface::Wired));
@@ -493,4 +487,50 @@ auto tConnectivityListenerOutlivingTheMonitorIsHarmless =
 
     listener.reset();
     check(calls == 2);
+};
+
+// A fetch that runs out of time is a failed one - every backend reports it
+// in the response's error rather than throwing - and so the verdict is
+// unreachable, from a server that never answers inside the probe's timeout.
+auto tConnectivityProbeTimeoutCountsAsUnreachable =
+    test("Connectivity/probeTimeoutCountsAsUnreachable") = []
+{
+    auto gate = StallGate {};
+
+    auto options = eacp::HTTP::ServerOptions();
+    options.threading = eacp::HTTP::ServerThreadingMode::ThreadPool;
+    options.threadPoolSize = 2;
+
+    auto server = Server(options);
+
+    auto handler = [&](const Request&)
+    {
+        gate.wait();
+
+        auto response = Response();
+        response.statusCode = 200;
+        response.content = probeBody;
+        return response;
+    };
+
+    check(server.listen(0, handler));
+
+    auto& monitor = Connectivity::Monitor::get();
+    auto guard = StopProbeOnExit {};
+
+    monitor.setState(stateWith(true, Connectivity::Interface::Wired));
+
+    auto probe = Connectivity::ProbeOptions {};
+    probe.url = "http://127.0.0.1:" + std::to_string(server.boundPort()) + "/probe";
+    probe.expectedContent = probeBody;
+    probe.interval = MS {60000};
+    probe.retryInterval = MS {60000};
+    probe.timeout = MS {100};
+
+    monitor.startProbe(probe);
+
+    check(pumpUntil([&] { return !monitor.getState().reachable; }));
+
+    gate.release();
+    server.stop();
 };

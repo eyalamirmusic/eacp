@@ -19,20 +19,6 @@ Monitor& instance()
     return Singleton::get<Monitor>();
 }
 
-HTTP::Response performCatching(const HTTP::Request& request)
-{
-    try
-    {
-        return request.perform();
-    }
-    catch (const std::exception& e)
-    {
-        auto response = HTTP::Response();
-        response.error = e.what();
-        return response;
-    }
-}
-
 void ensureMonitoring()
 {
     static auto started = std::once_flag {};
@@ -181,8 +167,9 @@ void Monitor::scheduleProbe(Time::MS delay)
 
 // Its own thread rather than HTTP::asyncRequest: cancelAllAsyncRequests
 // would silently end the chain, and the generation already guards a stale
-// reply. The no-cache pair keeps a proxy from answering for an uplink that
-// is gone, which is what every platform's own portal check sends too.
+// reply. no-cache because Apple's endpoint answers with a year's max-age: a
+// client cache that honoured it would keep saying reachable with the uplink
+// gone.
 void Monitor::runProbe()
 {
     if (!reported.online)
@@ -191,7 +178,6 @@ void Monitor::runProbe()
     auto request = HTTP::Request(probeOptions.url);
     request.timeout = probeOptions.timeout;
     request.headers["Cache-Control"] = "no-cache";
-    request.headers["Pragma"] = "no-cache";
 
     auto generation = probeGeneration;
     auto expected = probeOptions.expectedContent;
@@ -199,7 +185,7 @@ void Monitor::runProbe()
 
     auto fetch = [request, expected, generation]
     {
-        auto succeeded = answeredAsExpected(performCatching(request), expected);
+        auto succeeded = answeredAsExpected(request.perform(), expected);
 
         Threads::callAsync([generation, succeeded]
                            { instance().onProbeResult(generation, succeeded); });
