@@ -49,6 +49,15 @@ public:
     // tinted, alpha-only). No-op on other platforms. Defaults to true.
     void setTemplateRendering(bool shouldRenderAsTemplate);
 
+    // Windows only: posts a desktop notification anchored to this tray icon
+    // (a balloon, shown as a toast on Windows 10+). No-op elsewhere — macOS
+    // apps use the system notification center instead.
+    void showNotification(const std::string& title, const std::string& body);
+
+    // Windows only: invoked on the main thread when a notification posted
+    // via showNotification is clicked.
+    void setOnNotificationClick(Callback callback);
+
 private:
     struct Native;
     Pimpl<Native> impl;

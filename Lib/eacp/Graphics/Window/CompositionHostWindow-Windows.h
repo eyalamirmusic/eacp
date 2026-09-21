@@ -17,6 +17,14 @@ void registerContentViewHwnd(View* root, HWND hwnd);
 void unregisterContentViewHwnd(View* root);
 HWND findHostHwndForView(View* view);
 
+// Keyboard focus within a host window — the first-responder equivalent:
+// View::focus() registers the view as its window's key target and
+// dispatchKeyEvent routes key events there, falling back to the content view
+// when nothing claimed focus. Main-thread only.
+void setFocusedView(View* view);
+void clearFocusedView(View* view);
+View* findFocusedViewForHwnd(HWND hwnd);
+
 // Whether `hwnd` hosts a WindowOptions::transparentBackground surface. Content
 // that composites straight to the screen (a GPUView's swapchain) must respect
 // its own alpha there — an opaque swapchain would paint the black box the
