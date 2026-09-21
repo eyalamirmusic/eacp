@@ -96,7 +96,9 @@ struct Monitor : EA::BroadcasterOwner
 {
     static Monitor& get();
 
-    Monitor() = default;
+    Monitor();
+    ~Monitor() override;
+
     Monitor(const Monitor&) = delete;
     Monitor& operator=(const Monitor&) = delete;
 
@@ -115,7 +117,9 @@ struct Monitor : EA::BroadcasterOwner
     // Calling it again replaces the options and restarts the schedule.
     void startProbe(const ProbeOptions& options = {});
 
-    // Stops asking; reachable goes back to mirroring online.
+    // Stops asking; reachable goes back to mirroring online. A fetch under
+    // way is cancelled and its thread joined before this returns, as the
+    // destructor does too, so no thread of the probe's outlives its monitor.
     void stopProbe();
 
     bool isProbing() const { return probing; }
@@ -127,11 +131,14 @@ struct Monitor : EA::BroadcasterOwner
     void probeNow();
 
 private:
+    struct Worker;
+
     void publish();
     void scheduleProbe(Time::MS delay);
     void onProbeDue(int generation);
     void runProbe();
     void onProbeResult(int generation, bool succeeded);
+    void cancelWorker();
 
     State reported;
     State state;
@@ -142,10 +149,11 @@ private:
     bool lastProbeSucceeded = true;
     int probeGeneration = 0;
 
-    // What the probe's deferred callbacks hold in place of `this`. The
-    // process singleton never dies, but a monitor of a test's own does, with
-    // a fetch still out and a scheduled tick still pending; a token they can
-    // no longer lock is how those learn to do nothing.
+    // The thread a fetch runs on, and the cancel flag that ends it early.
+    std::unique_ptr<Worker> worker;
+
+    // What a scheduled tick holds in place of `this`: callAfter cannot be
+    // cancelled, and the monitor may be gone by the time it fires.
     std::shared_ptr<Monitor*> alive {std::make_shared<Monitor*>(this)};
 };
 

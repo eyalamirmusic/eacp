@@ -95,19 +95,42 @@ std::string ProbeOptions::defaultExpectedContent()
 #endif
 }
 
+// The fetch's thread, joined before a new one starts and by every stop. Its
+// answer is posted under the mutex, so a stop that has set `stopped` knows
+// nothing more will be posted once it holds the lock.
+struct Monitor::Worker
+{
+    HTTP::DownloadProgress progress;
+    std::mutex mutex;
+    bool stopped = false;
+    std::thread thread;
+};
+
+Monitor::Monitor()
+    : worker(std::make_unique<Worker>())
+{
+}
+
+Monitor::~Monitor()
+{
+    cancelWorker();
+}
+
 Monitor& Monitor::get()
 {
     ensureMonitoring();
     return instance();
 }
 
+// A fetch already out when the machine comes back is left to land: it
+// reschedules itself, and a new one now would orphan its answer.
 void Monitor::setState(const State& newState)
 {
     auto wasOnline = reported.online;
     reported = newState;
     publish();
 
-    if (probing && reported.online && !wasOnline)
+    if (probing && reported.online && !wasOnline && !probeInFlight)
         scheduleProbe(Time::MS {0});
 }
 
@@ -129,6 +152,7 @@ void Monitor::publish()
 // next one.
 void Monitor::startProbe(const ProbeOptions& options)
 {
+    cancelWorker();
     probeOptions = options;
 
     if (!probing)
@@ -142,10 +166,23 @@ void Monitor::startProbe(const ProbeOptions& options)
 
 void Monitor::stopProbe()
 {
+    cancelWorker();
     probing = false;
     probeInFlight = false;
     ++probeGeneration;
     publish();
+}
+
+void Monitor::cancelWorker()
+{
+    {
+        auto lock = std::scoped_lock(worker->mutex);
+        worker->stopped = true;
+        worker->progress.cancel.store(true);
+    }
+
+    if (worker->thread.joinable())
+        worker->thread.join();
 }
 
 // A fetch already under way is the answer being asked for: it lands within
@@ -183,27 +220,41 @@ void Monitor::onProbeDue(int generation)
 }
 
 // Its own thread rather than HTTP::asyncRequest: cancelAllAsyncRequests
-// would silently end the chain, and the generation already guards a stale
-// reply. no-cache because Apple's endpoint answers with a year's max-age: a
-// client cache that honoured it would keep saying reachable with the uplink
-// gone.
+// would silently end the chain, and a stop has to be able to join it. The
+// previous fetch has answered by the time a new one is due, so the join
+// here returns at once. no-cache because Apple's endpoint answers with a
+// year's max-age: a client cache that honoured it would keep saying
+// reachable with the uplink gone.
 void Monitor::runProbe()
 {
     if (!reported.online)
         return;
 
+    if (worker->thread.joinable())
+        worker->thread.join();
+
+    worker->stopped = false;
+    worker->progress.cancel.store(false);
+
     auto request = HTTP::Request(probeOptions.url);
     request.timeout = probeOptions.timeout;
     request.headers["Cache-Control"] = "no-cache";
+    request.progress = &worker->progress;
 
     auto generation = probeGeneration;
     auto expected = probeOptions.expectedContent;
     auto token = std::weak_ptr(alive);
+    auto* shared = worker.get();
     probeInFlight = true;
 
-    auto fetch = [request, expected, generation, token]
+    auto fetch = [request, expected, generation, token, shared]
     {
         auto succeeded = answeredAsExpected(request.perform(), expected);
+
+        auto lock = std::scoped_lock(shared->mutex);
+
+        if (shared->stopped)
+            return;
 
         Threads::callAsync(
             whenAlive(token,
@@ -211,8 +262,7 @@ void Monitor::runProbe()
                       { monitor.onProbeResult(generation, succeeded); }));
     };
 
-    auto worker = std::thread(fetch);
-    worker.detach();
+    worker->thread = std::thread(fetch);
 }
 
 void Monitor::onProbeResult(int generation, bool succeeded)

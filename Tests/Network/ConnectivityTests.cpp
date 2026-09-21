@@ -1,5 +1,6 @@
 #include "Common.h"
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <optional>
 
@@ -525,13 +526,17 @@ auto tConnectivityProbeTimeoutCountsAsUnreachable =
     check(pumpUntil([&] { return !monitor.getState().reachable; }));
 };
 
-// A monitor destroyed with a fetch out and a tick scheduled: both land
-// afterwards, on the message thread, and find nothing to report to.
+// A monitor destroyed with a fetch out: the server is still holding that
+// fetch, so the destructor returning at all is the cancel reaching the
+// backend and the thread being joined - nothing of the probe's outlives the
+// monitor to reach it, or the process, afterwards.
 auto tConnectivityDestroyingTheMonitorMidFetchIsHarmless =
     test("Connectivity/destroyingTheMonitorMidFetchIsHarmless") = []
 {
     auto server = StallingProbeServer {};
     check(server.listening);
+
+    auto destruction = eacp::Time::MS {};
 
     {
         auto monitor = Connectivity::Monitor {};
@@ -542,7 +547,22 @@ auto tConnectivityDestroyingTheMonitorMidFetchIsHarmless =
         monitor.startProbe(probe);
 
         check(pumpUntil([&] { return server.hits.load() == 1; }));
+
+        auto started = std::chrono::steady_clock::now();
+        auto elapsedAfter = [started]
+        {
+            return eacp::Time::MS {
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started)
+                    .count()};
+        };
+
+        monitor.stopProbe();
+        destruction = elapsedAfter();
     }
+
+    // Well inside the fetch's own 5 s limit: the cancel, not the timeout.
+    check(destruction < MS {2000});
 
     server.gate.release();
     pumpFor(MS {300});
