@@ -104,6 +104,16 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
     }
     if (headers.list)
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.list);
+
+    // For every request, not only a download: the callback is also how a
+    // cancel reaches a transfer, curl calling it about once a second while
+    // nothing arrives and aborting on its answer.
+    if (req.progress)
+    {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, req.progress);
+    }
 }
 
 Response httpRequestInternal(const Request& req)
@@ -156,13 +166,6 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     auto response = Response();
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
-
-    if (req.progress)
-    {
-        curl_easy_setopt(curl.handle, CURLOPT_NOPROGRESS, 0L);
-        curl_easy_setopt(curl.handle, CURLOPT_XFERINFOFUNCTION, progressCallback);
-        curl_easy_setopt(curl.handle, CURLOPT_XFERINFODATA, req.progress);
-    }
 
     auto rc = curl_easy_perform(curl.handle);
     std::fclose(file);
