@@ -21,35 +21,33 @@ void warpAffineInverseImpl(const std::uint8_t* in,
                            int dstW,
                            int dstH)
 {
-    const int maxX = srcW - 1;
-    const int maxY = srcH - 1;
+    const auto maxX = srcW - 1;
+    const auto maxY = srcH - 1;
 
-    for (int dy = 0; dy < dstH; ++dy)
+    for (auto dy = 0; dy < dstH; ++dy)
     {
-        const float fdy = static_cast<float>(dy);
+        const auto fdy = static_cast<float>(dy);
 
-        for (int dx = 0; dx < dstW; ++dx)
+        for (auto dx = 0; dx < dstW; ++dx)
         {
-            const float fdx = static_cast<float>(dx);
-            const float srcX = m[0] * fdx + m[1] * fdy + m[2];
-            const float srcY = m[3] * fdx + m[4] * fdy + m[5];
+            const auto fdx = static_cast<float>(dx);
+            const auto srcX = m[0] * fdx + m[1] * fdy + m[2];
+            const auto srcY = m[3] * fdx + m[4] * fdy + m[5];
 
-            const int x0 = static_cast<int>(std::floor(srcX));
-            const int y0 = static_cast<int>(std::floor(srcY));
-            const float wx = srcX - static_cast<float>(x0);
-            const float wy = srcY - static_cast<float>(y0);
-            const float oneMinusWx = 1.f - wx;
-            const float oneMinusWy = 1.f - wy;
+            const auto x0 = static_cast<int>(std::floor(srcX));
+            const auto y0 = static_cast<int>(std::floor(srcY));
+            const auto wx = srcX - static_cast<float>(x0);
+            const auto wy = srcY - static_cast<float>(y0);
+            const auto oneMinusWx = 1.f - wx;
+            const auto oneMinusWy = 1.f - wy;
 
-            const int x0c = clampi(x0, 0, maxX);
-            const int x1c = clampi(x0 + 1, 0, maxX);
-            const int y0c = clampi(y0, 0, maxY);
-            const int y1c = clampi(y0 + 1, 0, maxY);
+            const auto x0c = clampi(x0, 0, maxX);
+            const auto x1c = clampi(x0 + 1, 0, maxX);
+            const auto y0c = clampi(y0, 0, maxY);
+            const auto y1c = clampi(y0 + 1, 0, maxY);
 
-            const std::uint8_t* rowTop =
-                in + static_cast<std::ptrdiff_t>(y0c) * srcW * 4;
-            const std::uint8_t* rowBot =
-                in + static_cast<std::ptrdiff_t>(y1c) * srcW * 4;
+            const auto* rowTop = in + static_cast<std::ptrdiff_t>(y0c) * srcW * 4;
+            const auto* rowBot = in + static_cast<std::ptrdiff_t>(y1c) * srcW * 4;
 
             blendTaps<B>(rowTop + x0c * 4,
                          rowTop + x1c * 4,

@@ -77,11 +77,12 @@ std::string extractBundledAsset(const std::string& name)
     return path.string();
 }
 
+// Bundled ResEmbed assets first, to show embedded resources drag out too,
+// then real audio files from ~/Downloads.
 WebView::DraggableFileList buildFileList()
 {
     auto list = WebView::DraggableFileList {};
 
-    // Bundled ResEmbed assets first, to show embedded resources drag out too.
     for (const auto* name: {"sample.png", "sample.mp3"})
     {
         auto path = extractBundledAsset(name);
@@ -89,7 +90,6 @@ WebView::DraggableFileList buildFileList()
             list.files.push_back({path, name});
     }
 
-    // Then real audio files from ~/Downloads.
     auto ec = std::error_code {};
     auto downloads = Vector<std::string> {};
 

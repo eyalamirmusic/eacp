@@ -127,12 +127,13 @@ struct PrimitiveSurface final : View
         repaint();
     }
 
+    // The background is a translucent wash rather than a solid fill, so panels
+    // stacked behind this one show through and blend with the primitives drawn
+    // on top.
     void paint(Context& g) override
     {
         auto bounds = getLocalBounds();
 
-        // A translucent wash rather than a solid fill, so panels stacked behind
-        // this one show through and blend with the primitives drawn on top.
         g.setColor(Color {0.07f, 0.08f, 0.11f, 0.55f});
         g.fillRect(bounds);
 
@@ -227,9 +228,9 @@ struct PrimitiveSurface final : View
         }
     }
 
-    static constexpr float maxRippleRadius = 90.0f;
-    static constexpr float waveSpeed = 2.7f;
-    static constexpr float rippleSpeed = 156.0f;
+    static constexpr auto maxRippleRadius = 90.0f;
+    static constexpr auto waveSpeed = 2.7f;
+    static constexpr auto rippleSpeed = 156.0f;
 
     float phase = 0.0f;
     Vector<Ripple> ripples;
@@ -245,13 +246,13 @@ struct PrimitiveSurface final : View
 
 struct Panel : View
 {
+    // Group opacity makes the whole panel — chrome plus its GPU / web /
+    // primitive content — blend over the panels stacked behind it.
     Panel(const std::string& titleToUse, const Color& accentToUse)
         : accent(accentToUse)
     {
         setHandlesMouseEvents(true);
 
-        // Group opacity makes the whole panel — chrome plus its GPU / web /
-        // primitive content — blend over the panels stacked behind it.
         setOpacity(panelOpacity);
 
         frame->setFillColor(Color {0.12f, 0.13f, 0.17f, 0.7f});
@@ -331,11 +332,11 @@ struct Panel : View
         layoutOverlay(content);
     }
 
-    std::function<void()> onRaise;
+    std::function<void()> onRaise = [] {};
 
 protected:
-    static constexpr float titleHeight = 28.0f;
-    static constexpr float panelOpacity = 0.85f;
+    static constexpr auto titleHeight = 28.0f;
+    static constexpr auto panelOpacity = 0.85f;
     Color accent;
 
 private:
@@ -519,7 +520,7 @@ struct LayeredRoot final : View
         repaint();
     }
 
-    static constexpr float driftSpeed = 18.0f;
+    static constexpr auto driftSpeed = 18.0f;
 
     PrimitivePanel primitivePanel;
     GpuPanel gpuPanel;

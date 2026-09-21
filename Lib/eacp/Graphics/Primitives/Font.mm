@@ -9,7 +9,7 @@ struct Font::Native
 {
     void reset(const FontOptions& options)
     {
-        CFRef<CFStringRef> name(CFStringCreateWithCString(
+        auto name = CFRef<CFStringRef>(CFStringCreateWithCString(
             nullptr, options.name.c_str(), kCFStringEncodingUTF8));
         font.reset(CTFontCreateWithName(name, options.size, nullptr));
     }

@@ -41,7 +41,8 @@ void unpremultiply(ImageData& rgba)
 // Fast, lossless path: when the decoded image is already 8-bit straight
 // RGBA (or RGBX) in R,G,B,A byte order, copy its pixels straight out of
 // the data provider instead of redrawing through a premultiplied bitmap
-// context (which quantizes non-opaque pixels). Row padding is stripped.
+// context (which quantizes non-opaque pixels). Row padding is stripped,
+// and for RGBX the undefined skipped channel is forced fully opaque.
 // Returns false when the layout needs conversion, leaving the slow path
 // to handle it.
 bool extractStraightRGBA(CGImageRef image, int width, int height, ImageData& out)
@@ -67,7 +68,6 @@ bool extractStraightRGBA(CGImageRef image, int width, int height, ImageData& out
     if (!pixelData)
         return false;
 
-    // Stride and length come from Core Graphics as size_t / CFIndex.
     auto sourceStride = CGImageGetBytesPerRow(image);
     auto available = CFDataGetLength(pixelData);
     auto rowBytes = width * 4;
@@ -83,7 +83,6 @@ bool extractStraightRGBA(CGImageRef image, int width, int height, ImageData& out
                     bytes + static_cast<std::size_t>(y) * sourceStride,
                     rowBytes);
 
-    // RGBX: the skipped channel is undefined, so force fully opaque.
     if (alpha == kCGImageAlphaNoneSkipLast)
     {
         auto count = out.size();
@@ -92,6 +91,42 @@ bool extractStraightRGBA(CGImageRef image, int width, int height, ImageData& out
     }
 
     return true;
+}
+
+// Slow path: redraws through a premultiplied RGBA context and undoes
+// the premultiplication. Handles any source layout (CMYK, grayscale,
+// 16-bit, premultiplied) at the cost of 8-bit precision on alpha.
+Image decodeViaPremultipliedContext(CGImageRef image,
+                                    int width,
+                                    int height,
+                                    std::string& error)
+{
+    auto rgba = ImageData {};
+    rgba.resize(width * height * 4);
+
+    auto colorSpace = deviceRGB();
+    auto bitmapInfo = static_cast<std::uint32_t>(kCGImageAlphaPremultipliedLast)
+                      | static_cast<std::uint32_t>(kCGBitmapByteOrder32Big);
+
+    auto context = CFRef<CGContextRef>(
+        CGBitmapContextCreate(rgba.data(),
+                              static_cast<std::size_t>(width),
+                              static_cast<std::size_t>(height),
+                              8,
+                              static_cast<std::size_t>(width) * 4,
+                              colorSpace,
+                              bitmapInfo));
+    if (!context)
+    {
+        error = "could not create RGBA bitmap context";
+        return {};
+    }
+
+    CGContextSetBlendMode(context, kCGBlendModeCopy);
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
+
+    unpremultiply(rgba);
+    return Image(width, height, std::move(rgba));
 }
 } // namespace
 
@@ -151,37 +186,12 @@ Image imageFromCGImage(CGImageRef image, std::string& error)
     if (extractStraightRGBA(image, width, height, rgba))
         return Image(width, height, std::move(rgba));
 
-    // Slow path: redraw through a premultiplied RGBA context and undo
-    // the premultiplication. Handles any source layout (CMYK, grayscale,
-    // 16-bit, premultiplied) at the cost of 8-bit precision on alpha.
-    rgba.resize(width * height * 4);
-
-    auto colorSpace = deviceRGB();
-    auto bitmapInfo = static_cast<std::uint32_t>(kCGImageAlphaPremultipliedLast)
-                      | static_cast<std::uint32_t>(kCGBitmapByteOrder32Big);
-
-    // Core Graphics bitmap dimensions/stride are size_t by API contract.
-    auto context = CFRef<CGContextRef>(
-        CGBitmapContextCreate(rgba.data(),
-                              static_cast<std::size_t>(width),
-                              static_cast<std::size_t>(height),
-                              8,
-                              static_cast<std::size_t>(width) * 4,
-                              colorSpace,
-                              bitmapInfo));
-    if (!context)
-    {
-        error = "could not create RGBA bitmap context";
-        return {};
-    }
-
-    CGContextSetBlendMode(context, kCGBlendModeCopy);
-    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
-
-    unpremultiply(rgba);
-    return Image(width, height, std::move(rgba));
+    return decodeViaPremultipliedContext(image, width, height, error);
 }
 
+// The data provider wraps the caller's pixel buffer without copying, so
+// `rgba` must stay alive until the CGImage is finalized — which all
+// happens within this function.
 ImageData encodeImageBytes(const std::uint8_t* rgba,
                            int width,
                            int height,
@@ -192,8 +202,6 @@ ImageData encodeImageBytes(const std::uint8_t* rgba,
     auto byteCount = static_cast<std::size_t>(width)
                      * static_cast<std::size_t>(height) * 4;
 
-    // CGDataProviderCreateWithData does not copy; the buffer must stay
-    // alive until the CGImage is finalized, which all happens below.
     auto provider = CFRef<CGDataProviderRef>(
         CGDataProviderCreateWithData(nullptr, rgba, byteCount, nullptr));
     if (!provider)

@@ -25,6 +25,14 @@ std::int64_t roundedUpToPage(std::int64_t bytes)
 
 struct Buffer::Native
 {
+    // Shared storage keeps the buffer CPU-visible, so read() is a memcpy and a
+    // compute output needs no staging copy. The usage flag is a Metal no-op: a
+    // plain MTLBuffer already serves as a vertex or a device storage buffer.
+    //
+    // So is BufferStorage: what it asks for on D3D12 - memory the CPU writes in
+    // place and the GPU reads with no copy in between - is what every buffer
+    // here already is, and update() below is already the memcpy it buys. Metal
+    // has nothing to opt into and no second path to keep right.
     Native(Device& deviceToUse,
            const void* data,
            std::int64_t bytes,
@@ -38,14 +46,6 @@ struct Buffer::Native
         if (metalDevice == nil || bytes <= 0)
             return;
 
-        // Shared storage keeps the buffer CPU-visible, so read() is a memcpy and
-        // a compute output needs no staging copy. The usage flag is a Metal no-op:
-        // a plain MTLBuffer already serves as a vertex or a device storage buffer.
-        //
-        // So is BufferStorage: what it asks for on D3D12 - memory the CPU writes
-        // in place and the GPU reads with no copy in between - is what every
-        // buffer here already is, and update() below is already the memcpy it
-        // buys. Metal has nothing to opt into and no second path to keep right.
         if (data != nullptr)
             buffer = [metalDevice newBufferWithBytes:data
                                               length:(NSUInteger) bytes

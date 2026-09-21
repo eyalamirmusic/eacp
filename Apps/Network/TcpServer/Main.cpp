@@ -10,8 +10,7 @@ int main()
 {
     try
     {
-        // Zero timeouts == block forever: wait for a client, and wait on its
-        // input. That is what a long-lived server wants.
+        // Zero timeouts == block forever, which is what a long-lived server wants. NOLINT(eacp-no-body-comments)
         auto listener = eacp::TCP::Listener::bind(5050, {{0}, {0}});
         std::cout << "listening on port " << listener.port()
                   << " (ctrl-c to stop)\n";

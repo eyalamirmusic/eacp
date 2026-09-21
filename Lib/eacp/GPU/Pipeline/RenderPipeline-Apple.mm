@@ -266,8 +266,8 @@ struct RenderPipeline::Native
         auto vertexName = @(descriptor.library->vertexEntry().c_str());
         auto fragmentName = @(descriptor.library->fragmentEntry().c_str());
 
-        id<MTLFunction> vertexFunction = [library newFunctionWithName:vertexName];
-        id<MTLFunction> fragmentFunction = [library newFunctionWithName:fragmentName];
+        auto vertexFunction = [library newFunctionWithName:vertexName];
+        auto fragmentFunction = [library newFunctionWithName:fragmentName];
 
         auto pipelineDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
         pipelineDescriptor.vertexFunction = vertexFunction;

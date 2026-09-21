@@ -30,15 +30,15 @@ std::string firstItemDescendant(const std::string& child)
     return std::string {itemSelector} + ":first-child " + child;
 }
 
+// Gate readiness on ALL three seed todos rendering, not just the
+// first. useTodoIds() and useTodoItem(id) are separate bridge
+// subscriptions (see web/src/App.tsx), so each TodoRow renders null
+// until its own item round-trips — the list briefly shows fewer
+// todo-items than ids. Waiting on the first todo-item would let a
+// test's one-shot count()/query() race the still-growing list;
+// waiting on the full seeded count guarantees it has settled.
 TestApp<MyApp>& testApp()
 {
-    // Gate readiness on ALL three seed todos rendering, not just the
-    // first. useTodoIds() and useTodoItem(id) are separate bridge
-    // subscriptions (see web/src/App.tsx), so each TodoRow renders null
-    // until its own item round-trips — the list briefly shows fewer
-    // todo-items than ids. Waiting on the first todo-item would let a
-    // test's one-shot count()/query() race the still-growing list;
-    // waiting on the full seeded count guarantees it has settled.
     static auto& instance = []() -> TestApp<MyApp>&
     {
         auto& self = createTestApp<MyApp>();
@@ -104,13 +104,13 @@ auto tRemovingTodo = test("WebViewTodo/removingTodoDecrementsCount") = []
     check(driver().count(itemSelector) == before - 1);
 };
 
+// The bridge is shared with WebViewBridge, so the production
+// commands the React app calls (addTodo / getTodos) are also
+// reachable from the harness — handy for setting up state
+// without going through the UI.
 auto tDomainRpcsReachable =
     test("WebViewTodo/domainRpcsReachableThroughSameBridge") = []
 {
-    // The bridge is shared with WebViewBridge, so the production
-    // commands the React app calls (addTodo / getTodos) are also
-    // reachable from the harness — handy for setting up state
-    // without going through the UI.
     auto before = driver().invoke<TodoState>("getTodos");
 
     auto req = AddTodoRequest {};
@@ -155,6 +155,7 @@ auto tQueryAllReturnsEveryItem =
     check(texts[2] == "Add a new todo above");
 };
 
+// The third seed todo starts completed; the first does not.
 auto tCompletedStateReflectedInDom =
     test("WebViewTodo/completedStateReflectedInClassAndCheckbox") = []
 {
@@ -163,11 +164,11 @@ auto tCompletedStateReflectedInDom =
     check(!items[0].hasClass("done"));
     check(!items[0].find(toggleSelector).checked);
 
-    // The third seed todo starts completed.
     check(items[2].hasClass("done"));
     check(items[2].find(toggleSelector).checked);
 };
 
+// DomNode is a snapshot, so a re-query is needed to see the toggled state.
 auto tTogglingUpdatesReQueriedNode =
     test("WebViewTodo/togglingUpdatesReQueriedNode") = []
 {
@@ -177,7 +178,6 @@ auto tTogglingUpdatesReQueriedNode =
 
     driver().click(firstItemDescendant(toggleSelector));
 
-    // DomNode is a snapshot, so re-query to see the toggled state.
     auto after = driver().query(itemSelector);
     check(after.hasClass("done"));
     check(after.find(toggleSelector).checked);
@@ -216,6 +216,10 @@ auto tCallJsResolvesWithResult = test("WebViewTodo/callJsResolvesWithResult") = 
     check(result == "3");
 };
 
+// evaluateJavaScript surfaces NSError::localizedDescription, which
+// for WKWebView JS exceptions is a generic phrase rather than the
+// thrown message itself. We just verify that a non-empty error
+// text reached us.
 auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
 {
     auto threw = false;
@@ -226,10 +230,6 @@ auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
     catch (const AsyncError& e)
     {
         threw = true;
-        // evaluateJavaScript surfaces NSError::localizedDescription, which
-        // for WKWebView JS exceptions is a generic phrase rather than the
-        // thrown message itself. We just verify that a non-empty error
-        // text reached us.
         check(!std::string {e.what()}.empty());
     }
     check(threw);

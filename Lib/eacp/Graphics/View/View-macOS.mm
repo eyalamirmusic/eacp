@@ -24,7 +24,7 @@ View* getView(id self)
 NSView* getRootView(id self)
 {
     auto* root = (NSView*) self;
-    NSView* current = [root superview];
+    auto current = [root superview];
 
     while (current != nil)
     {
@@ -355,16 +355,15 @@ void updateTrackingAreas(id self, SEL)
     for (NSTrackingArea* area in view.trackingAreas)
         [view removeTrackingArea:area];
 
-    NSTrackingAreaOptions options =
+    auto options =
         NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
         | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
         | NSTrackingCursorUpdate;
 
-    NSTrackingArea* trackingArea =
-        [[NSTrackingArea alloc] initWithRect:view.bounds
-                                     options:options
-                                       owner:view
-                                    userInfo:nil];
+    auto* trackingArea = [[NSTrackingArea alloc] initWithRect:view.bounds
+                                                      options:options
+                                                        owner:view
+                                                     userInfo:nil];
     [view addTrackingArea:trackingArea];
     [trackingArea release];
 }

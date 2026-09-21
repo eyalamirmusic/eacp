@@ -68,7 +68,7 @@ private:
                                 const Callback& tick);
 
     std::shared_ptr<RateLimit> rateLimit;
-    Callback callback;
+    Callback callback = [] {};
 
     struct Native;
     Pimpl<Native> impl;

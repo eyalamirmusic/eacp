@@ -31,7 +31,7 @@ struct DisplayLink::Native
         {
         }
 
-        Callback callback;
+        Callback callback = [] {};
         bool alive = true;
 
         // Set on the link's thread as a tick is handed over, cleared on the

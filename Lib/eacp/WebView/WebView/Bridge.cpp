@@ -37,14 +37,14 @@ WebViewBridge::WebViewBridge(ScriptHost& scriptHostToUse)
         bridgeChannel, [this](const std::string& body) { onMessage(body); });
 }
 
+// Native file drag-out as a first-class bridge command. The page invokes
+// `armFileDrag` with a DraggableFileList from a mousedown handler; Miro
+// deserializes the payload into the typed struct (no hand-rolled JSON), and
+// the host is armed so the next mouseDragged: starts the OS drag. A host with
+// no native drag takes ScriptHost's no-op, so the command still resolves
+// rather than failing.
 void WebViewBridge::registerBuiltins()
 {
-    // Native file drag-out as a first-class bridge command. The page invokes
-    // `armFileDrag` with a DraggableFileList from a mousedown handler; Miro
-    // deserializes the payload into the typed struct (no hand-rolled JSON),
-    // and we arm the host so the next mouseDragged: starts the OS drag. A
-    // host with no native drag takes ScriptHost's no-op, so the command
-    // still resolves rather than failing.
     auto arm = std::function<void(const DraggableFileList&)> {
         [this](const DraggableFileList& list)
         {
@@ -100,6 +100,22 @@ std::optional<Envelope> parseEnvelope(const Miro::Json::Value& value)
 }
 } // namespace
 
+// A reply to a C++ -> page call (window.__eacp.callFunction) carries a
+// "reply" id; everything else is a command invocation from the page.
+//
+// The C++ handlers are plain synchronous functions; the bridge is what makes
+// the call async. runCommand executes the Miro dispatch under the configured
+// execution mode (deferred on the main loop by default, or on a worker
+// thread) and yields an Async that settles on the main thread; resolveWith
+// then delivers the result back to the JS Promise the shim is awaiting,
+// keyed by the envelope id. Miro reports the outcome (result or error)
+// purely through the Resolve std::function — it never touches the event
+// loop.
+//
+// Both hops carry `alive` because both outlive the bridge if the WebView is
+// destroyed while a command is in flight: the dispatch below is queued, and
+// the delivery below that is queued behind it. A dead bridge simply drops the
+// command — the page it would have answered is going away with it.
 void WebViewBridge::onMessage(const std::string& body)
 {
     auto value = Miro::Json::Value {};
@@ -113,8 +129,6 @@ void WebViewBridge::onMessage(const std::string& body)
         return;
     }
 
-    // A reply to a C++ -> page call (window.__eacp.callFunction) carries a
-    // "reply" id; everything else is a command invocation from the page.
     if (handleCallReply(value))
         return;
 
@@ -124,19 +138,6 @@ void WebViewBridge::onMessage(const std::string& body)
 
     auto id = envelope->id;
 
-    // The C++ handlers are plain synchronous functions; the bridge is what
-    // makes the call async. runCommand executes the Miro dispatch under the
-    // configured execution mode (deferred on the main loop by default, or
-    // on a worker thread) and yields an Async that settles on the main
-    // thread; resolveWith then delivers the result back to the JS Promise
-    // the shim is awaiting, keyed by the envelope id. Miro reports the
-    // outcome (result or error) purely through the Resolve std::function —
-    // it never touches the event loop.
-    //
-    // Both hops carry `alive` because both outlive the bridge if the WebView is
-    // destroyed while a command is in flight: the dispatch below is queued, and
-    // the delivery below that is queued behind it. A dead bridge simply drops
-    // the command — the page it would have answered is going away with it.
     auto invoke = [this, alive = alive, command = envelope->command,
                    payload = envelope->payload](const Miro::Resolve& resolve)
     {

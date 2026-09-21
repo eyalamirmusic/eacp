@@ -72,9 +72,9 @@ struct Scalar
         // Round each (non-negative) lane to a byte: lround + clamp to [0, 255].
         static void storePixel(std::uint8_t* out, F4 a)
         {
-            for (int c = 0; c < 4; ++c)
+            for (auto c = 0; c < 4; ++c)
             {
-                const int r = static_cast<int>(std::lround(a.v[c]));
+                const auto r = static_cast<int>(std::lround(a.v[c]));
                 out[c] = static_cast<std::uint8_t>(r < 0 ? 0 : (r > 255 ? 255 : r));
             }
         }

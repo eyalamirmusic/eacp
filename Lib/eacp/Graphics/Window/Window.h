@@ -129,7 +129,7 @@ struct WindowOptions
 
     // When the user closes the window. If left empty, falls back to
     // Apps::quit when isPrimary is true, or a no-op otherwise.
-    Callback onQuit {};
+    Callback onQuit = [] {};
 
     // Set to false for secondary/popup windows so closing them doesn't
     // terminate the app when onQuit is unset.
@@ -147,7 +147,7 @@ struct WindowOptions
     //
     // For reacting to a size, not for choosing one: a resize made from here
     // fires here again. The shape a window may take is sizeConstraint's.
-    ResizeCallback onResize {};
+    ResizeCallback onResize = [](int, int) {};
 
     // Called with the proposed content size, in points, before a resize is
     // applied; may be mutated to clamp it. The older, edge-blind form of

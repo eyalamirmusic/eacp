@@ -12,7 +12,6 @@ NSArray<AVCaptureDeviceType>* platformDiscoveryDeviceTypes()
     auto* types = [NSMutableArray<AVCaptureDeviceType> array];
     [types addObject:AVCaptureDeviceTypeBuiltInWideAngleCamera];
 
-    // External (USB) cameras are macOS-only, and the symbol needs the 14.0 SDK.
     if (@available(macOS 14.0, *))
         [types addObject:AVCaptureDeviceTypeExternal];
 

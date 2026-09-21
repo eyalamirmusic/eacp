@@ -3,10 +3,8 @@
 namespace eacp::WebView::Test
 {
 
-void installShutdownCrashGuard()
-{
-    // No teardown crash guard needed outside Windows.
-}
+// No teardown crash guard needed outside Windows.
+void installShutdownCrashGuard() {}
 
 void markTestShutdown(int) {}
 

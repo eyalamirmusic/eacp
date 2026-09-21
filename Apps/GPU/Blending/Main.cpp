@@ -6,8 +6,8 @@ using namespace Maths;
 
 namespace
 {
-constexpr int viewWidth = 900;
-constexpr int viewHeight = 360;
+constexpr auto viewWidth = 900;
+constexpr auto viewHeight = 360;
 
 // A Venn-triangle of three overlapping RGB circles, drawn as real triangle-list
 // geometry (no shader masking) so the None mode has no outside-the-circle
@@ -17,10 +17,10 @@ constexpr int viewHeight = 360;
 //   AlphaBlend: Straight-alpha over: overlaps mix murkily, blue-tinted.
 //   Additive:   Two-way overlaps saturate into secondaries (yellow / magenta /
 //               cyan); the three-way overlap brightens toward white.
-constexpr float circleRadius = 0.20f;
-constexpr float circleAlpha = 0.75f;
-constexpr int circleSegments = 64;
-constexpr float centerDistance = 0.15f; // origin to each circle centre
+constexpr auto circleRadius = 0.20f;
+constexpr auto circleAlpha = 0.75f;
+constexpr auto circleSegments = 64;
+constexpr auto centerDistance = 0.15f; // origin to each circle centre
 
 struct Vertex
 {
@@ -45,13 +45,13 @@ struct CircleSpec
 // Equilateral triangle around the origin: R at the top, G bottom-left, B
 // bottom-right. sin(120 deg) = sqrt(3)/2, cos(120 deg) = -1/2. Precomputed so
 // `circles` stays constexpr and dodges runtime static init.
-constexpr float sin120 = 0.8660254f;
-constexpr float cos120 = -0.5f;
+constexpr auto sin120 = 0.8660254f;
+constexpr auto cos120 = -0.5f;
 
 constexpr CircleSpec circles[] = {
     {0.f, +centerDistance, 1.f, 0.f, 0.f},
-    {-centerDistance * sin120, +centerDistance * cos120, 0.f, 1.f, 0.f},
-    {+centerDistance * sin120, +centerDistance * cos120, 0.f, 0.f, 1.f},
+    {-centerDistance * sin120, +centerDistance* cos120, 0.f, 1.f, 0.f},
+    {+centerDistance * sin120, +centerDistance* cos120, 0.f, 0.f, 1.f},
 };
 
 // Real triangle-list mesh per circle: segments triangles of shape
@@ -150,11 +150,11 @@ struct BlendingView final : GPUView
         pass.draw(vertexData.size());
     }
 
+    // Near-black clear so additive's overlap has room to brighten toward
+    // white without the single-circle regions saturating. Contrast for the
+    // labels is fine at the top and bottom margins where no circles land.
     void render(Frame& frame) override
     {
-        // Near-black clear so additive's overlap has room to brighten toward
-        // white without the single-circle regions saturating. Contrast for the
-        // labels is fine at the top and bottom margins where no circles land.
         auto pass = frame.beginPass({Graphics::Color {0.05f, 0.05f, 0.07f}});
         drawPanel(pass, none, -2.0f / 3.0f);
         drawPanel(pass, alphaBlend, 0.0f);
@@ -175,6 +175,8 @@ struct BlendingView final : GPUView
 // GPU pixels show through. Same pattern as any HUD label over a GPUView.
 struct LabelStripView final : Graphics::View
 {
+    // Menlo is monospaced. The half-char widths below are approximate but good
+    // enough to keep each label visually centred inside its panel.
     void paint(Graphics::Context& g) override
     {
         struct Panel
@@ -188,14 +190,10 @@ struct LabelStripView final : Graphics::View
             {"Additive", "overlaps -> WHITE"},
         };
 
-        // Menlo is monospaced. These halve-widths are approximate but good
-        // enough to keep each label visually centred inside its panel.
-        constexpr float nameHalfCharWidth = 4.5f;
-        constexpr float expectedHalfCharWidth = 3.3f;
-        constexpr float topBaselineY = 24.f;
+        constexpr auto nameHalfCharWidth = 4.5f;
+        constexpr auto expectedHalfCharWidth = 3.3f;
+        constexpr auto topBaselineY = 24.f;
 
-        // Layout tracks the view's current bounds so the labels stay pinned to
-        // the panel centres and window edges through live resizes.
         const auto bounds = getLocalBounds();
         const auto currentPanelWidth = bounds.w / 3.f;
         const auto bottomBaselineY = bounds.h - 18.f;

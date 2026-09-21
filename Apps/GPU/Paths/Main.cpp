@@ -7,8 +7,8 @@ namespace
 {
 // The paths below are authored in a fixed 800 x 520 design space (see
 // setCoordinateSpace), so they keep filling the window whatever its size.
-constexpr float designWidth = 800.0f;
-constexpr float designHeight = 520.0f;
+constexpr auto designWidth = 800.0f;
+constexpr auto designHeight = 520.0f;
 
 // A concave star: a moveTo / lineTo polygon that only fills correctly once the
 // tessellator handles reflex corners, so it exercises the ear clipper.
@@ -82,8 +82,6 @@ struct PathsApp
 {
     PathsApp()
     {
-        // A vertical gradient across the whole design space, so shapes higher in
-        // the window read warm and lower ones cool.
         auto gradient = Graphics::LinearGradient {
             {0.0f, 0.0f},
             {0.0f, designHeight},

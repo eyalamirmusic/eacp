@@ -14,8 +14,8 @@ struct ViewList
 
     using Container = OwnedVector<T>;
 
-    auto begin() const { return views.begin(); }
-    auto end() const { return views.end(); }
+    typename Container::Const_Iterator begin() const { return views.begin(); }
+    typename Container::Const_Iterator end() const { return views.end(); }
 
     Container* operator->() { return &views; }
 

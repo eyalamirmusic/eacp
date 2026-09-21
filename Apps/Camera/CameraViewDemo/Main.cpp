@@ -43,8 +43,6 @@ struct DemoCameraView final : Cameras::CameraView
         auto center = bounds.center();
         auto radius = 0.25f * std::min(bounds.w, bounds.h);
 
-        // A box orbiting the centre: animated, proving the overlay composites
-        // over the live camera texture in one pass.
         auto bx = center.x + std::cos((float) elapsed) * radius;
         auto by = center.y + std::sin((float) elapsed) * radius;
         renderer.fillRect({bx - 12.0f, by - 12.0f, 24.0f, 24.0f},
@@ -75,11 +73,9 @@ struct CameraApp
 {
     CameraApp()
     {
-        // Force the CPU-upload display path (Windows uses it) for verification.
-        if (getEnvValue("EACP_DEMO_UPLOAD_MODE") == "copy")
-            view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
+        forceCopyUploadModeIfRequested();
 
-        view.setMirrored(true); // front-camera-style preview
+        view.setMirrored(true);
         view.attach(camera);
         installMenuBar();
         beginCapture();
@@ -87,6 +83,14 @@ struct CameraApp
     }
 
     ~CameraApp() { camera.stop(); }
+
+    // Copy forces the CPU-upload display path (the one Windows uses) so it can
+    // be verified on any platform.
+    void forceCopyUploadModeIfRequested()
+    {
+        if (getEnvValue("EACP_DEMO_UPLOAD_MODE") == "copy")
+            view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
+    }
 
     // The Camera menu: every device the system reports, checkable, with the
     // mark following selectedDeviceId live (no rebuild on switch). Exercises
@@ -115,6 +119,8 @@ struct CameraApp
         Graphics::setApplicationMenuBar(bar, window);
     }
 
+    // The view stays attached across the restart: it follows the Camera
+    // object, not the capture session.
     void selectDevice(std::optional<std::string> deviceId)
     {
         if (selectedDeviceId == deviceId)
@@ -124,8 +130,6 @@ struct CameraApp
         std::printf("switching camera to %s\n",
                     selectedDeviceId ? selectedDeviceId->c_str() : "system default");
 
-        // The view stays attached across the restart: it follows the Camera
-        // object, not the capture session.
         if (camera.isRunning())
         {
             camera.stop();

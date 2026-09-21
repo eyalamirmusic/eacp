@@ -35,6 +35,10 @@ static std::string currentExecutablePath()
     return path;
 }
 
+// Validates the signature against the requirement without enforcing expiry
+// or online revocation (see App.h). Resources are skipped too: the question
+// is who signed this binary, not whether the bundle is intact — and hashing
+// every bundle resource on each call would be slow.
 bool isDistributionSigned()
 {
     auto path = currentExecutablePath();
@@ -65,10 +69,6 @@ bool isDistributionSigned()
 
     auto requirement = CFRef(requirementRef);
 
-    // Validates the signature against the requirement without enforcing
-    // expiry or online revocation (see App.h). Resources are skipped too: the
-    // question is who signed this binary, not whether the bundle is intact —
-    // and hashing every bundle resource on each call would be slow.
     return SecStaticCodeCheckValidity(code.get(),
                                       kSecCSDoNotValidateResources,
                                       requirement.get())

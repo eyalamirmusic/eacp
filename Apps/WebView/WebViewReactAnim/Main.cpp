@@ -7,11 +7,11 @@ using namespace Graphics;
 
 struct MyApp
 {
+    // use(clock) binds clock.getCurrentTick to the bridge's command
+    // table and subscribes a listener to clock.tick that re-emits each
+    // published snapshot over the WebView wire.
     MyApp()
     {
-        // Binds clock.getCurrentTick to the bridge's command table and
-        // subscribes a listener to clock.tick that re-emits each
-        // published snapshot over the WebView wire.
         transport.getBridge().use(clock);
 
         setApplicationMenuBar(buildDefaultWebViewMenuBar(), window);

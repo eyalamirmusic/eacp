@@ -6,7 +6,7 @@
 
 namespace teapot
 {
-inline constexpr int patchCount = 32;
+inline constexpr auto patchCount = 32;
 
 // [patch][controlPoint 0..15][x,y,z]; control point (i,j) is index i*4 + j.
 inline constexpr float patches[patchCount][16][3] = {

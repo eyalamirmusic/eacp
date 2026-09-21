@@ -162,6 +162,10 @@ struct MyApp
     // frameless rounded window whose web title bar IS the chrome: drag
     // region, demo button, and the caption buttons. Resizable keeps the
     // invisible frame's edge band live, so the window still resizes.
+    //
+    // The traffic-light position centers the ~54x16pt button cluster in
+    // the 88px-wide, 52px-tall corner the web title bar reserves for it
+    // (padding-left: 88).
     static WindowOptions getOptions()
     {
         auto options = WindowOptions();
@@ -183,8 +187,6 @@ struct MyApp
 
         options.titlebarTransparent = true;
         options.showTitlebarSeparator = false;
-        // Centers the ~54x16pt button cluster in the 88px-wide, 52px-tall
-        // corner the web title bar reserves for it (padding-left: 88).
         options.trafficLightPosition = Point {17.f, 18.f};
         options.backgroundColor = Color::black();
 

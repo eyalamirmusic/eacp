@@ -1303,26 +1303,7 @@ struct ExprPrinter
                 return floatLiteral(expr.value);
 
             case ExprKind::Construct:
-            {
-                auto text = std::string(typeName(backend, expr.type)) + "(";
-
-                for (auto i = 0; i < expr.args.size(); ++i)
-                {
-                    if (i > 0)
-                        text += ", ";
-
-                    text += ref(expr.args[i]);
-                }
-
-                text += ")";
-
-                // MSL and GLSL fill a matrix from columns, HLSL from rows, so
-                // transpose() is what restores the column-major value there.
-                if (backend == Backend::DirectX && isMatrix(expr.type))
-                    return "transpose(" + text + ")";
-
-                return text;
-            }
+                return printConstruct(expr);
 
             case ExprKind::Swizzle:
                 return "(" + ref(expr.args[0]) + ")." + expr.text;
@@ -1344,17 +1325,7 @@ struct ExprPrinter
             }
 
             case ExprKind::Unary:
-                // GLSL gives ! to a scalar bool only; the componentwise
-                // negation of a mask is not().
-                if (backend == Backend::Vulkan && expr.op == '!'
-                    && componentCount(expr.type) > 1)
-                    return "not(" + ref(expr.args[0]) + ")";
-
-                // The operand gets its own parentheses: negating a negative
-                // constant must print (-(-1.0)), never the pre-decrement
-                // (--1.0).
-                return "(" + std::string(1, expr.op) + "(" + ref(expr.args[0])
-                       + "))";
+                return printUnary(expr);
 
             case ExprKind::Binary:
             {
@@ -1402,71 +1373,10 @@ struct ExprPrinter
                 return "v" + std::to_string(expr.index);
 
             case ExprKind::Mul:
-            {
-                // MSL and GLSL spell a matrix product with *; HLSL uses mul().
-                // All three read a vector on the left of one as a row.
-                auto left = ref(expr.args[0]);
-                auto right = ref(expr.args[1]);
-
-                if (backend != Backend::DirectX)
-                    return "(" + left + " * " + right + ")";
-
-                return "mul(" + left + ", " + right + ")";
-            }
+                return printMul(expr);
 
             case ExprKind::Sample:
-            {
-                // Texture sample at a float2 coordinate. A second argument is
-                // the mip level the shader picked, which each backend spells
-                // its own way: Metal as an extra argument to the same call,
-                // HLSL as a different method.
-                //
-                // The two backends also name the sampler differently, and that
-                // is the one place their declarations genuinely differ. MSL
-                // passes a sampler as a function argument, so there is one per
-                // texture and it carries the texture's index; HLSL binds one to
-                // a register, and there is one per sampling configuration that
-                // every texture declaring that sampling shares. See
-                // TextureSampling.
-                auto name = "texture" + std::to_string(expr.index);
-                auto sampler =
-                    backend == Backend::Metal
-                        ? "sampler" + std::to_string(expr.index)
-                        : hlslSamplerName(graph.textureSampling(expr.index));
-                auto uv = ref(expr.args[0]);
-
-                // GLSL's sampler2D over a depth image hands back four
-                // channels, so the .r is the one float the node's type says.
-                if (backend == Backend::Vulkan)
-                {
-                    auto call = expr.args.size() < 2
-                                    ? "texture(" + name + ", " + uv + ")"
-                                    : "textureLod(" + name + ", " + uv + ", "
-                                          + ref(expr.args[1]) + ")";
-
-                    if (graph.textureKind(expr.index) == TextureKind::Depth2D)
-                        return call + ".r";
-
-                    return call;
-                }
-
-                if (expr.args.size() < 2)
-                {
-                    auto method =
-                        backend == Backend::Metal ? ".sample(" : ".Sample(";
-
-                    return name + method + sampler + ", " + uv + ")";
-                }
-
-                auto level = ref(expr.args[1]);
-
-                if (backend == Backend::Metal)
-                    return name + ".sample(" + sampler + ", " + uv + ", level("
-                           + level + "))";
-
-                return name + ".SampleLevel(" + sampler + ", " + uv + ", " + level
-                       + ")";
-            }
+                return printSample(expr);
 
             case ExprKind::Fetch:
             {
@@ -1591,6 +1501,102 @@ struct ExprPrinter
         }
 
         return {};
+    }
+
+    // MSL and GLSL fill a matrix from columns, HLSL from rows, so transpose()
+    // is what restores the column-major value there.
+    std::string printConstruct(const Expr& expr) const
+    {
+        auto text = std::string(typeName(backend, expr.type)) + "(";
+
+        for (auto i = 0; i < expr.args.size(); ++i)
+        {
+            if (i > 0)
+                text += ", ";
+
+            text += ref(expr.args[i]);
+        }
+
+        text += ")";
+
+        if (backend == Backend::DirectX && isMatrix(expr.type))
+            return "transpose(" + text + ")";
+
+        return text;
+    }
+
+    // GLSL gives ! to a scalar bool only; the componentwise negation of a mask
+    // is not(). Otherwise the operand gets its own parentheses: negating a
+    // negative constant must print (-(-1.0)), never the pre-decrement (--1.0).
+    std::string printUnary(const Expr& expr) const
+    {
+        if (backend == Backend::Vulkan && expr.op == '!'
+            && componentCount(expr.type) > 1)
+            return "not(" + ref(expr.args[0]) + ")";
+
+        return "(" + std::string(1, expr.op) + "(" + ref(expr.args[0]) + "))";
+    }
+
+    // MSL and GLSL spell a matrix product with *; HLSL uses mul(). All three
+    // read a vector on the left of one as a row.
+    std::string printMul(const Expr& expr) const
+    {
+        auto left = ref(expr.args[0]);
+        auto right = ref(expr.args[1]);
+
+        if (backend != Backend::DirectX)
+            return "(" + left + " * " + right + ")";
+
+        return "mul(" + left + ", " + right + ")";
+    }
+
+    // Texture sample at a float2 coordinate. A second argument is the mip level
+    // the shader picked, which each backend spells its own way: Metal as an
+    // extra argument to the same call, HLSL as a different method.
+    //
+    // The two backends also name the sampler differently, and that is the one
+    // place their declarations genuinely differ. MSL passes a sampler as a
+    // function argument, so there is one per texture and it carries the
+    // texture's index; HLSL binds one to a register, and there is one per
+    // sampling configuration that every texture declaring that sampling shares.
+    // See TextureSampling.
+    //
+    // GLSL's sampler2D over a depth image hands back four channels, so the .r
+    // is the one float the node's type says.
+    std::string printSample(const Expr& expr) const
+    {
+        auto name = "texture" + std::to_string(expr.index);
+        auto sampler = backend == Backend::Metal
+                           ? "sampler" + std::to_string(expr.index)
+                           : hlslSamplerName(graph.textureSampling(expr.index));
+        auto uv = ref(expr.args[0]);
+
+        if (backend == Backend::Vulkan)
+        {
+            auto call = expr.args.size() < 2 ? "texture(" + name + ", " + uv + ")"
+                                             : "textureLod(" + name + ", " + uv
+                                                   + ", " + ref(expr.args[1]) + ")";
+
+            if (graph.textureKind(expr.index) == TextureKind::Depth2D)
+                return call + ".r";
+
+            return call;
+        }
+
+        if (expr.args.size() < 2)
+        {
+            auto method = backend == Backend::Metal ? ".sample(" : ".Sample(";
+
+            return name + method + sampler + ", " + uv + ")";
+        }
+
+        auto level = ref(expr.args[1]);
+
+        if (backend == Backend::Metal)
+            return name + ".sample(" + sampler + ", " + uv + ", level(" + level
+                   + "))";
+
+        return name + ".SampleLevel(" + sampler + ", " + uv + ", " + level + ")";
     }
 
     const ShaderGraph& graph;
@@ -3308,8 +3314,10 @@ std::string boundsGuard(DispatchRank rank)
 
 // Compute kernel emission. The expression printer is the render one; only the
 // scaffolding differs: storage buffers and the uniform block are MSL kernel
-// parameters but HLSL globals, and the work-item id arrives as a builtin
-// parameter on Metal and as SV_DispatchThreadID on D3D. The block always ends
+// parameters but HLSL globals (SRV t<slot> / UAV u<slot> with one shared slot
+// counter, matching the flat Metal indices ComputePass binds both backends
+// with), and the work-item id arrives as a builtin parameter on Metal and as
+// SV_DispatchThreadID on D3D. The block always ends
 // with the implicit grid extents the bounds guard reads - one count for a 1D
 // kernel, a width and a height for a 2D one, a depth as well for a 3D one - and
 // the kernel opens with the guard the rounded-up dispatch needs; ComputeProgram
@@ -3528,8 +3536,6 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     }
     else
     {
-        // SRV t<slot> / UAV u<slot> with one shared slot counter, matching the
-        // flat Metal indices ComputePass binds both backends with.
         for (auto i = 0; i < buffers.size(); ++i)
         {
             auto slot = std::to_string(i);
@@ -3653,6 +3659,17 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     return source;
 }
 
+// Render emission. One uniform block aggregates every uniform<>() call; both
+// backends expose it as "uniforms.uN" (HLSL wraps the struct in a cbuffer) so
+// the expression printer stays backend-agnostic. HLSL textures and samplers
+// are globals, while Metal declares them as fragment function parameters;
+// texture and sampler share an index, matching RenderPass::setFragmentTexture.
+// On Metal each stage declares the uniform block as a function parameter, and
+// only when that stage's expressions read one; the HLSL cbuffer is a global
+// both functions already see. Slot 0 maps to buffer(uniformBase) in both
+// stages, matching what RenderPass::setVertexBytes / setFragmentBytes bind.
+// Uniforms live at buffer(uniformBase..) so a vertex layout with multiple
+// per-instance slots (0..N) never collides with them.
 std::string emit(const ShaderGraph& graph, Backend backend)
 {
     if (graph.isCompute())
@@ -3756,13 +3773,6 @@ std::string emit(const ShaderGraph& graph, Backend backend)
             source += "\n";
     }
 
-    // On Metal each stage declares the uniform block as a function parameter,
-    // and only when that stage's expressions read one; the HLSL cbuffer is a
-    // global both functions already see. Slot 0 maps to buffer(uniformBase)
-    // in both stages, matching what RenderPass::setVertexBytes /
-    // setFragmentBytes bind. Uniforms live at buffer(uniformBase..) so a
-    // vertex layout with multiple per-instance slots (0..N) never collides
-    // with them.
     auto vertexRoots = vertexStageRoots(graph);
 
     if (backend == Backend::Metal)

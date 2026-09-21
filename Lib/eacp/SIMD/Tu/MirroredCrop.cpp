@@ -18,12 +18,12 @@ void mirroredCrop(const std::uint8_t* src,
                   int height,
                   std::uint8_t* dst)
 {
-    for (int dy = 0; dy < height; ++dy)
+    for (auto dy = 0; dy < height; ++dy)
     {
-        const std::uint8_t* srcRow =
+        const auto* srcRow =
             src + (static_cast<std::ptrdiff_t>(y + dy) * srcWidth + x) * 4;
-        std::uint8_t* dstRow = dst + static_cast<std::ptrdiff_t>(dy) * width * 4;
-        for (int dx = 0; dx < width; ++dx)
+        auto* dstRow = dst + static_cast<std::ptrdiff_t>(dy) * width * 4;
+        for (auto dx = 0; dx < width; ++dx)
             std::memcpy(dstRow + dx * 4, srcRow + (width - 1 - dx) * 4, 4);
     }
 }

@@ -17,7 +17,7 @@ int main()
     req.type = "POST";
     req.headers["secret"] = "MagicTheGathering";
 
-    for (int index = 0; index < 1000; ++index)
+    for (auto index = 0; index < 1000; ++index)
     {
         Req r;
         r.text = std::to_string(index);

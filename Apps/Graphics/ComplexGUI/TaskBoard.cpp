@@ -26,7 +26,7 @@ constexpr auto cardHeight = 62.f;
 constexpr auto cardGap = 8.f;
 constexpr auto headerHeight = 44.f;
 
-Random randomGen {};
+auto randomGen = Random {};
 
 int nextRandom(int min, int max)
 {
@@ -34,7 +34,7 @@ int nextRandom(int min, int max)
 }
 
 template <typename T>
-auto& getRandomElement(T& container)
+const T& getRandomElement(const EA::Vector<T>& container)
 {
     return container[nextRandom(0, container.size() - 1)];
 }

@@ -61,7 +61,7 @@ static Graphics::Color parseRGBFunction(const std::string& value)
 
 static const std::unordered_map<std::string, Graphics::Color>& namedColors()
 {
-    static const std::unordered_map<std::string, Graphics::Color> colors = {
+    static const auto colors = std::unordered_map<std::string, Graphics::Color> {
         {"white", {1.f, 1.f, 1.f}},       {"black", {0.f, 0.f, 0.f}},
         {"red", {1.f, 0.f, 0.f}},         {"green", {0.f, 0.5f, 0.f}},
         {"blue", {0.f, 0.f, 1.f}},        {"yellow", {1.f, 1.f, 0.f}},
