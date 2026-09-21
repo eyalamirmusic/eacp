@@ -132,6 +132,7 @@ private:
 
     ProbeOptions probeOptions;
     bool probing = false;
+    bool probeInFlight = false;
     bool lastProbeSucceeded = true;
     int probeGeneration = 0;
 };

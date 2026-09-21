@@ -19,6 +19,20 @@ Monitor& instance()
     return Singleton::get<Monitor>();
 }
 
+HTTP::Response performCatching(const HTTP::Request& request)
+{
+    try
+    {
+        return request.perform();
+    }
+    catch (const std::exception& e)
+    {
+        auto response = HTTP::Response();
+        response.error = e.what();
+        return response;
+    }
+}
+
 void ensureMonitoring()
 {
     static auto started = std::once_flag {};
@@ -114,11 +128,18 @@ void Monitor::publish()
     trigger();
 }
 
+// The optimism is for a first start only: a restart with new options keeps
+// the verdict the last fetch reached rather than flashing green until the
+// next one.
 void Monitor::startProbe(const ProbeOptions& options)
 {
     probeOptions = options;
+
+    if (!probing)
+        lastProbeSucceeded = true;
+
     probing = true;
-    lastProbeSucceeded = true;
+    probeInFlight = false;
     publish();
     scheduleProbe(Time::MS {0});
 }
@@ -126,13 +147,16 @@ void Monitor::startProbe(const ProbeOptions& options)
 void Monitor::stopProbe()
 {
     probing = false;
+    probeInFlight = false;
     ++probeGeneration;
     publish();
 }
 
+// A fetch already under way is the answer being asked for: it lands within
+// the timeout and restarts the schedule itself, so it is not doubled up.
 void Monitor::probeNow()
 {
-    if (probing)
+    if (probing && !probeInFlight)
         scheduleProbe(Time::MS {0});
 }
 
@@ -157,7 +181,8 @@ void Monitor::scheduleProbe(Time::MS delay)
 
 // Its own thread rather than HTTP::asyncRequest: cancelAllAsyncRequests
 // would silently end the chain, and the generation already guards a stale
-// reply.
+// reply. The no-cache pair keeps a proxy from answering for an uplink that
+// is gone, which is what every platform's own portal check sends too.
 void Monitor::runProbe()
 {
     if (!reported.online)
@@ -165,13 +190,16 @@ void Monitor::runProbe()
 
     auto request = HTTP::Request(probeOptions.url);
     request.timeout = probeOptions.timeout;
+    request.headers["Cache-Control"] = "no-cache";
+    request.headers["Pragma"] = "no-cache";
 
     auto generation = probeGeneration;
     auto expected = probeOptions.expectedContent;
+    probeInFlight = true;
 
     auto fetch = [request, expected, generation]
     {
-        auto succeeded = answeredAsExpected(request.perform(), expected);
+        auto succeeded = answeredAsExpected(performCatching(request), expected);
 
         Threads::callAsync([generation, succeeded]
                            { instance().onProbeResult(generation, succeeded); });
@@ -186,6 +214,7 @@ void Monitor::onProbeResult(int generation, bool succeeded)
     if (generation != probeGeneration || !probing)
         return;
 
+    probeInFlight = false;
     lastProbeSucceeded = succeeded;
     publish();
 
