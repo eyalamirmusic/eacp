@@ -24,6 +24,7 @@ endif ()
 
 if (EACP_HAS_GPU AND NOT IOS)
     add_subdirectory(GPUWidgets)
+    add_subdirectory(ML)
 endif ()
 
 if (EACP_HAS_TEXT AND NOT IOS)
