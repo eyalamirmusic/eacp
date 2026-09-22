@@ -27,7 +27,10 @@ struct ShapeLayer::Native : public NativeLayer
 {
     Native()
     {
-        layer = createImmediateShapeLayer();
+        // attachPtr, not a bare assignment: the layer comes back autoreleased
+        // (which is what the mask below wants), so a Ptr adopting it would owe
+        // a release the pool is already going to make.
+        layer = ObjC::attachPtr(createImmediateShapeLayer());
         layer.get().fillColor = nil;
         layer.get().strokeColor = nil;
         layer.get().lineWidth = 1.0f;
@@ -62,7 +65,7 @@ struct ShapeLayer::Native : public NativeLayer
 
         if (!gradientLayer)
         {
-            gradientLayer = createImmediateGradientLayer();
+            gradientLayer = ObjC::attachPtr(createImmediateGradientLayer());
             gradientLayer.get().anchorPoint = CGPointMake(0, 0);
             [layer.get() addSublayer:gradientLayer.get()];
         }

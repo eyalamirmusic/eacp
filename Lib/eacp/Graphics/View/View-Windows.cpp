@@ -14,8 +14,11 @@
 namespace eacp::Graphics
 {
 
-// Defined in Window-Windows.cpp: the HWND hosting `view`'s root.
+// Defined in Window-Windows.cpp: the HWND hosting `view`'s root, and the scale
+// that host measures in — which is not always the window's own DPI, since a
+// hosted surface can be handed a scale of its own.
 HWND findHostHwndForView(View* view);
+float hostWindowDpiScale(HWND hwnd);
 
 namespace
 {
@@ -724,6 +727,40 @@ void View::setBounds(const Rect& bounds)
 Point View::getMousePosition() const
 {
     return impl->getMousePosition();
+}
+
+// This view's own point through the client area of the window hosting it: the
+// offset inside that window in its pixels, ClientToScreen, and back into
+// points at the same scale — which is the space Window::getPosition and
+// WindowOptions::initialPosition are both in. The window's frame is left to
+// Win32 to account for rather than guessed at, which is what the portable sum
+// below it cannot do; a view not yet in a window has only that sum to answer
+// with.
+Point View::localToScreen(Point point) const
+{
+    auto host = findHostHwndForView(const_cast<View*>(this));
+
+    if (host == nullptr)
+        return localToScreenFallback(point);
+
+    auto inHostWindow = point;
+
+    for (const auto* view = this; view->getParent() != nullptr;
+         view = view->getParent())
+    {
+        auto bounds = view->getBounds();
+        inHostWindow.x += bounds.x;
+        inHostWindow.y += bounds.y;
+    }
+
+    auto scale = hostWindowDpiScale(host);
+
+    auto pixels = POINT {std::lround(inHostWindow.x * scale),
+                         std::lround(inHostWindow.y * scale)};
+    ClientToScreen(host, &pixels);
+
+    return {static_cast<float>(pixels.x) / scale,
+            static_cast<float>(pixels.y) / scale};
 }
 
 // Stored but not yet applied. Windows re-asks for the pointer on every

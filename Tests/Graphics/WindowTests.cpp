@@ -34,6 +34,40 @@ auto tSecondaryWindowDefaultQuitIsNoOp =
     callback();
 };
 
+// A popup is a piece of another window and never the app's last one: the
+// default quit has to be the no-op even though isPrimary was left alone,
+// because nobody writing `options.popup = true` is saying anything about the
+// app's lifetime.
+auto tPopupDefaultQuitIsNoOp = test("WindowOptions/popupDefaultQuitIsNoOp") = []
+{
+    auto options = WindowOptions {};
+    options.popup = true;
+
+    auto callback = options.effectiveOnQuit();
+    check(static_cast<bool>(callback));
+    callback();
+
+    check(options.isPrimary);
+};
+
+// The owner stays key, whatever the window was asked to do, or its title bar
+// greys out the moment a menu opens over it.
+auto tPopupNeverActivates = test("WindowOptions/popupNeverActivates") = []
+{
+    auto options = WindowOptions {};
+    check(!options.effectiveShowInactive());
+
+    options.popup = true;
+    check(options.effectiveShowInactive());
+};
+
+auto tDismissRequestedDefaultsToCallableNoOp =
+    test("WindowEvents/dismissRequestedDefaultsToCallableNoOp") = []
+{
+    auto events = WindowEvents {};
+    events.onDismissRequested();
+};
+
 auto tActivationChangedCallbackIsUserOwned =
     test("WindowEvents/activationChangedCallbackIsUserOwned") = []
 {

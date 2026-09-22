@@ -306,13 +306,20 @@ void X11Input::keyChanged(X11WindowSurface& window,
                           const xcb_key_press_event_t& event,
                           bool pressed)
 {
-    if (keyboardWindow != &window)
-        return;
-
     if (event.detail < x11KeycodeOffset)
         return;
 
     const auto code = (uint32_t) event.detail - x11KeycodeOffset;
+
+    // Before the focus check and whichever window the key reached: a popup
+    // takes no focus, so Escape is delivered to the window that has it - the
+    // one the menu pops over - or to the popup's own keyboard grab, and either
+    // way it is the menu's.
+    if (popupSwallowsKey(code, pressed))
+        return;
+
+    if (keyboardWindow != &window)
+        return;
 
     keyTime = event.time;
 
@@ -535,6 +542,10 @@ void X11Input::buttonChanged(X11WindowSurface& window,
                              const xcb_button_press_event_t& event,
                              bool pressed)
 {
+    if (popupSwallowsButton(
+            event.detail, pressed, {(float) event.root_x, (float) event.root_y}))
+        return;
+
     buttonAction(window,
                  event.detail,
                  pressed,
@@ -665,7 +676,48 @@ void X11Input::setPointerWindow(X11WindowSurface* window)
     if (cursor.setHidden(false))
         applyCursor();
 
+    // Nor is the press it was holding: the up that would have ended it is
+    // going to this window now, so the one it went down in would otherwise sit
+    // pressed forever and the next click here would count as a double.
+    pointerState.reset();
+
     pointerWindow = window;
+}
+
+// Asked of every press before it becomes a MouseEvent. The release that
+// follows a swallowed press is swallowed with it - it is outside too - so no
+// view is told about an up whose down it never saw.
+bool X11Input::popupSwallowsButton(uint32_t button, bool pressed, Point rootPosition)
+{
+    auto* popup = connection.getActivePopup();
+
+    if (popup == nullptr || x11IsWheelButton(button)
+        || !popup->dismissesOnOutsideClick()
+        || popup->containsRootPoint(rootPosition))
+        return false;
+
+    if (pressed)
+        popup->requestDismissal();
+
+    return true;
+}
+
+bool X11Input::popupSwallowsKey(uint32_t evdevCode, bool pressed)
+{
+    auto* popup = connection.getActivePopup();
+
+    if (popup == nullptr || evdevCode != KEY_ESC)
+        return false;
+
+    if (pressed)
+        popup->requestDismissal();
+
+    return true;
+}
+
+void X11Input::popupGrabChanged()
+{
+    pointerState.reset();
 }
 
 // A locked pointer has no shape: it is hidden until the lock lets go, and
@@ -763,8 +815,8 @@ xcb_cursor_t X11Input::cursorForShape(MouseCursor shape)
 // D6). Harmless on a toplevel a window manager is already focusing.
 void X11Input::takeFocusOnClick(X11WindowSurface& window, xcb_timestamp_t time)
 {
-    if (keyboardWindow == &window || !window.mapped || window.getWindow() == XCB_NONE
-        || !connection.isConnected())
+    if (keyboardWindow == &window || window.refusesFocus || !window.mapped
+        || window.getWindow() == XCB_NONE || !connection.isConnected())
         return;
 
     xcb_set_input_focus(xcb(), XCB_INPUT_FOCUS_PARENT, window.getWindow(), time);
@@ -1086,6 +1138,11 @@ void X11Input::xinputButton(const xcb_generic_event_t& event, bool pressed)
     if (x11IsEmulatedWheelButton(button.flags, button.detail))
         return;
 
+    if (popupSwallowsButton(button.detail,
+                            pressed,
+                            {x11Fp1616(button.root_x), x11Fp1616(button.root_y)}))
+        return;
+
     buttonAction(*window,
                  button.detail,
                  pressed,
@@ -1236,6 +1293,8 @@ void X11Input::windowDestroyed(X11WindowSurface& window)
         keyboardWindow = nullptr;
     }
 
+    // setPointerWindow forgets the press this window was holding with it: the
+    // up that would have ended it died with the window.
     if (pointerWindow == &window)
         setPointerWindow(nullptr);
 }

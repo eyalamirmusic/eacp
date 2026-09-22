@@ -79,6 +79,14 @@ if (EACP_HAS_TEXT)
     # faces: registerMemoryFont, and a weight asked of an axis rather than
     # matched.
     add_subdirectory(VariableFont)
+
+    # Apps/Graphics/PopupWindow with the popup drawn on the GPU: panel, drop
+    # shadow, hover glow and sheen as one instanced signed-distance draw, over a
+    # transparent window where the platform composites one. Desktop-only: iOS
+    # has neither a second window nor a foreign view to host.
+    if (NOT IOS)
+        add_subdirectory(PopupMenu)
+    endif ()
 endif ()
 
 # Links eacp-video (macOS-only: AVFoundation + ScreenCaptureKit).

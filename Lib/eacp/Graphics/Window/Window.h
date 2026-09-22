@@ -24,6 +24,8 @@ enum class WindowFlags
     HUDWindow
 };
 
+class Window;
+
 using ResizeCallback = std::function<void(int width, int height)>;
 using WillResizeCallback = std::function<void(int& width, int& height)>;
 
@@ -56,6 +58,17 @@ struct WindowEvents
     // size, nothing needs a position before the window exists: a handler set
     // after construction has still missed nothing.
     std::function<void(Point position)> onMoved = [](auto&&) {};
+
+    // Fires when a WindowOptions::popup window should close: a mouse press
+    // outside it — swallowed, so it never reaches whatever it landed on, the
+    // way every menu in every DAW behaves — Escape, or the owner window losing
+    // key, being hidden or going away, the app deactivating included.
+    //
+    // The popup does not close itself. Which of hiding it and destroying it is
+    // right depends on what it cost to build, so the app does it: reset the
+    // unique_ptr holding it, or setVisible(false). Safe to destroy the Window
+    // from inside the handler.
+    std::function<void()> onDismissRequested = [] {};
 };
 
 struct WindowOptions
@@ -72,8 +85,14 @@ struct WindowOptions
     {
         if (onQuit)
             return onQuit;
-        return isPrimary ? Callback {[] { Apps::quit(); }} : Callback {[] {}};
+
+        auto quitsTheApp = isPrimary && !popup;
+        return quitsTheApp ? Callback {[] { Apps::quit(); }} : Callback {[] {}};
     }
+
+    // A popup never takes focus, whatever showInactive says: the window it
+    // pops over has to stay key, or its title bar greys out under a menu.
+    bool effectiveShowInactive() const { return showInactive || popup; }
 
     bool effectiveAllowsFullScreen() const
     {
@@ -259,6 +278,37 @@ struct WindowOptions
     // frontmost app (macOS orderFront vs makeKeyAndOrderFront). The window
     // can still become key when clicked. Mirrors Electron's showInactive().
     bool showInactive = false;
+
+    // A transient window over another one: a menu, a dropdown, a tooltip.
+    //
+    // Borderless, never activating — the window it pops over stays key, so its
+    // title bar does not grey out — ordered directly above its owner, moving
+    // and hiding with it, and never quitting the app when it goes (isPrimary
+    // and onQuit are both off the table). Levelled above ordinary windows, so
+    // it draws over foreign native content a View overlay cannot reach: a
+    // hosted plugin's editor sits above our own drawing, which is the whole
+    // reason this is a window and not a view.
+    //
+    // It asks to be closed through WindowEvents::onDismissRequested and never
+    // closes itself; see there for what dismisses one. Place it with
+    // initialPosition, in the screen points View::localToScreen answers in.
+    bool popup = false;
+
+    // The window this one belongs to: for a popup, the one it pops over. The
+    // owner keeps key focus, and the child is ordered above it, travels with
+    // it and hides with it.
+    Window* parent = nullptr;
+
+    // The same, as a native handle, for an owner that is not an eacp Window —
+    // a plugin host's window. An NSWindow* or an NSView* on macOS (a view
+    // resolves to the window holding it), an HWND on Windows, an xcb_window_t
+    // widened to a pointer on Linux. Read only when parent is null.
+    void* nativeParent = nullptr;
+
+    // Popups only: whether a press outside the popup dismisses it. On by
+    // default, which is what a menu wants; a tooltip that the app takes down
+    // itself sets it false and keeps the press.
+    bool dismissOnOutsideClick = true;
 
     // Lets mouse clicks pass through this window to whatever is underneath.
     // Useful for transient HUDs and overlays. No-op on iOS.

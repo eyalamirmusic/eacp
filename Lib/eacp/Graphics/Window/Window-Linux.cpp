@@ -1,5 +1,6 @@
 #include "Window.h"
 
+#include "../View/View.h"
 #include "LinuxWindowNative-Linux.h"
 #include "LinuxWindowSystem-Linux.h"
 #include "WaylandWindow-Linux.h"
@@ -48,6 +49,12 @@ struct Window::Native
     Native(const WindowOptions& options, WindowEvents& events)
         : native(makeWindowNative(options, events))
     {
+        // The press that opened the popup is over as far as the owner is
+        // concerned: the view it went down in must not sit waiting for an up
+        // that now belongs to the menu.
+        if (options.popup && options.parent != nullptr)
+            if (auto* content = options.parent->contentLink.contentView)
+                content->cancelMouseCapture();
     }
 
     std::unique_ptr<LinuxWindowNative> native;

@@ -15,4 +15,13 @@ double platformBackingScale(GPUView& view)
     return nativeView.window != nil ? nativeView.window.backingScaleFactor
                                     : NSScreen.mainScreen.backingScaleFactor;
 }
+
+bool platformWindowIsOpaque(GPUView& view)
+{
+    auto* nativeView = (__bridge NSView*) view.getHandle();
+
+    // WindowOptions::transparentBackground and cornerRadius are both this, set
+    // in Window-macOS.mm's constructor, so there is nothing else to ask.
+    return nativeView.window == nil || nativeView.window.isOpaque;
+}
 } // namespace eacp::GPU

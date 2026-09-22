@@ -28,6 +28,11 @@ if (NOT IOS)
     # Snapshot capture is portable (macOS + Windows); the Screen mode falls back
     # gracefully where it is not yet available.
     add_subdirectory(VideoRecorderDemo)
+
+    # A popup Window over a NativeChildSurface holding foreign native content,
+    # which is the one thing a View overlay cannot draw over. Both halves are
+    # desktop-only: iOS has neither a second window nor a foreign view to host.
+    add_subdirectory(PopupWindow)
 endif ()
 
 # Key events and the clipboard, shown live.

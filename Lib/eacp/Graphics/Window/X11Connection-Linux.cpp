@@ -454,6 +454,7 @@ void X11Connection::internAtoms()
         {"EACP_SELECTION", &X11Atoms::eacpSelection},
         {"_NET_WM_WINDOW_TYPE", &X11Atoms::netWmWindowType},
         {"_NET_WM_WINDOW_TYPE_NORMAL", &X11Atoms::netWmWindowTypeNormal},
+        {"_NET_WM_WINDOW_TYPE_POPUP_MENU", &X11Atoms::netWmWindowTypePopupMenu},
     };
 
     constexpr auto count = std::size(requests);
@@ -1008,6 +1009,19 @@ void X11Connection::unwatchForeignWindow(const X11WindowSurface& surface)
 {
     watchers.removeIndexesMatching([&surface](const X11WindowTarget& watcher)
                                    { return watcher.windowSurface == &surface; });
+}
+
+void X11Connection::setActivePopup(X11PopupGrab& popup)
+{
+    activePopup = &popup;
+}
+
+// Only by the popup that took it: a menu closing after the one it opened
+// would otherwise take the newer one's place with it.
+void X11Connection::clearActivePopup(const X11PopupGrab& popup)
+{
+    if (activePopup == &popup)
+        activePopup = nullptr;
 }
 
 X11WindowTarget X11Connection::findWindow(xcb_window_t window) const
