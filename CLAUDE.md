@@ -582,6 +582,27 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Font`: CoreText-based typography
 - `Primitives.h`: Basic types (`Point`, `Rect`, `Color`)
 
+`WindowOptions::popup` is a transient window over another — a menu, a
+dropdown, a tooltip: borderless, never activating, owned by `parent` (an
+eacp `Window`) or `nativeParent` (an `NSWindow*`/`NSView*`, an `HWND`, an
+`xcb_window_t` widened to a pointer), which keeps key while the popup sits
+above it and travels with it. It never closes itself: an outside press —
+swallowed, so it never reaches what it landed on — Escape, the owner losing
+key, hiding or closing, and the app deactivating each fire
+`WindowEvents::onDismissRequested`, and the app hides or destroys it.
+macOS is an `NSPanel` child window at `NSPopUpMenuWindowLevel` with local
+and global event monitors; Windows an owned `WS_POPUP` tool window with
+`WS_EX_NOACTIVATE`, `MA_NOACTIVATE` and the capture held; X11 an
+override-redirect window with `WM_TRANSIENT_FOR` and a core pointer and
+keyboard grab; Wayland ignores it. `View::localToScreen` gives the screen
+points to place one at, `View::cancelMouseCapture` ends the press that
+opened it so the view under it is not left drawn pressed. It is a window and
+not a view because a hosted plugin's native child sits above the host's own
+drawing on Windows and X11. `Apps/Graphics/PopupWindow` is the 2D example
+(Apple and Windows), `Apps/GPU/PopupMenu` the GPU-drawn one (all platforms;
+the Linux popup is opaque — the Vulkan swapchain and the X11 visual carry no
+alpha).
+
 **Threads/** - Event loop and timing
 - `EventLoop`: CFRunLoop wrapper with `run()`, `quit()`, `call(Callback)`
 - `callAsync(Callback)`: Schedule function on main thread
