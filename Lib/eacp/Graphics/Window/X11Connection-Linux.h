@@ -58,6 +58,11 @@ struct X11WindowSurface : LinuxWindowSurface
     // per presenting view.
     bool inferiorsGone = false;
 
+    // A popup takes no keyboard: the window it pops over stays focused, or a
+    // host's editor greys out under the menu. So the click that would
+    // otherwise hand this window the keyboard does not.
+    bool refusesFocus = false;
+
     // Every event the connection routed here, a view child's included: only
     // the native knows what one of its own windows means.
     virtual void handleEvent(const xcb_generic_event_t& event);
@@ -138,11 +143,33 @@ struct X11Atoms
 
     xcb_atom_t netWmWindowType = XCB_ATOM_NONE;
     xcb_atom_t netWmWindowTypeNormal = XCB_ATOM_NONE;
+    xcb_atom_t netWmWindowTypePopupMenu = XCB_ATOM_NONE;
 
     // The property a conversion of ours is delivered into, on the clipboard's
     // own window: named after this framework so no other client's transfer can
     // land on it.
     xcb_atom_t eacpSelection = XCB_ATOM_NONE;
+};
+
+// A popup window for as long as it is up. The seat asks it about every press
+// before turning one into a MouseEvent, because a press outside a menu belongs
+// to the menu: it closes it and goes no further, rather than reaching what it
+// landed on - which may be a host's own window, and no window of ours to
+// decide for.
+struct X11PopupGrab
+{
+    virtual ~X11PopupGrab() = default;
+
+    // In root pixels, which is the one coordinate space every event carries
+    // beside its own window's.
+    virtual bool containsRootPoint(Point rootPosition) const = 0;
+
+    // False for a popup the app takes down itself, which keeps the press.
+    virtual bool dismissesOnOutsideClick() const = 0;
+
+    // Deferred a turn by the popup: the handler is allowed to destroy the
+    // Window it belongs to.
+    virtual void requestDismissal() = 0;
 };
 
 class X11Connection
@@ -220,6 +247,14 @@ public:
     void unregisterWindow(xcb_window_t window);
     X11WindowTarget findWindow(xcb_window_t window) const;
 
+    // One popup at a time: a menu opened over another takes the pointer from
+    // it, and only the popup that took it may give it back.
+    void setActivePopup(X11PopupGrab& popup);
+    void clearActivePopup(const X11PopupGrab& popup);
+
+    // Null while no menu is up, which is nearly always.
+    X11PopupGrab* getActivePopup() const { return activePopup; }
+
     // A window somebody else owns that one of ours has to hear about: an
     // EmbeddedView's host parent, whose ConfigureNotify its child follows.
     // Apart from the map above because the id is not ours to claim - it may
@@ -290,6 +325,8 @@ private:
 
     Vector<X11WindowTarget> windows;
     Vector<X11WindowTarget> watchers;
+
+    X11PopupGrab* activePopup = nullptr;
 
     float scale = 1.f;
 

@@ -25,6 +25,7 @@ set(graphics_test_sources
         KeyCodeTests.cpp
         MenuCommandsTests.cpp
         MenuTests.cpp
+        MouseCaptureTests.cpp
         RectTests.cpp
         RoundedRectTests.cpp
         ScrollWheelTests.cpp
@@ -70,6 +71,7 @@ if (APPLE AND NOT IOS)
             EmbeddedViewTests-macOS.mm
             MenuTests-macOS.mm
             NativeChildSurfaceTests-macOS.mm
+            PopupWindowTests-macOS.mm
             ScrollWheelTests-macOS.mm
             ViewVisibilityTests-macOS.mm
             WindowTests-macOS.mm)
@@ -78,6 +80,7 @@ endif ()
 if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
+            PopupWindowTests-Windows.cpp
             WindowGeometryTests-Windows.cpp)
 endif ()
 
@@ -116,6 +119,7 @@ if (LINUX)
             NO_MAIN
             SOURCES
                 X11ClipboardTests-Linux.cpp
+                X11PopupTests-Linux.cpp
                 X11WindowTests-Linux.cpp
             TARGETS eacp-graphics)
 
@@ -199,10 +203,16 @@ if (LINUX AND NOT CMAKE_CROSSCOMPILING)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/X11WindowTests-Linux.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/X11ClipboardTests-Linux.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/X11PopupTests-Linux.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/EmbeddedViewTests-Linux.cpp")
 
     file(STRINGS X11WindowTests-Linux.cpp x11_test_lines
             REGEX "\"X11/[^\"]+\"")
+
+    file(STRINGS X11PopupTests-Linux.cpp x11_popup_test_lines
+            REGEX "\"X11/[^\"]+\"")
+
+    list(APPEND x11_test_lines ${x11_popup_test_lines})
 
     # The clipboard half of the same binary takes the clipboard lock as well:
     # one display has one selection, and a case's copy must not land between

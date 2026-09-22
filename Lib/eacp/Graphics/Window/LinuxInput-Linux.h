@@ -121,6 +121,12 @@ public:
     int pressed(MouseButton button, uint32_t timeMilliseconds);
     void released() { buttonHeld = false; }
 
+    // Nothing is held any more and the next press is a first click. For the
+    // moments where the up that would have ended a press is going somewhere
+    // else: the pointer moving to another window of ours, that window going
+    // away, or a popup taking the pointer out from under a drag.
+    void reset();
+
     bool isButtonHeld() const { return buttonHeld; }
     MouseButton getHeldButton() const { return heldButton; }
     Point getDownPosition() const { return downPosition; }

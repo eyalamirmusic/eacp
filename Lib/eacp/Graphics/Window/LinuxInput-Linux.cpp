@@ -282,6 +282,17 @@ int PointerTracker::pressed(MouseButton button, uint32_t timeMilliseconds)
     return clickCount;
 }
 
+// The position is left alone: the pointer is wherever it is whatever this
+// tracker has forgotten about it.
+void PointerTracker::reset()
+{
+    buttonHeld = false;
+    downPosition = {};
+    clickCount = 0;
+    lastClickTime = 0;
+    lastClickPosition = {};
+}
+
 void WheelTracker::addDelta(Point delta)
 {
     this->delta.x += delta.x;

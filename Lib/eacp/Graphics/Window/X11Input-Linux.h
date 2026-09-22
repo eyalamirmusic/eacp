@@ -106,6 +106,11 @@ public:
     // Grabs the pointer only while the window also has keyboard focus.
     void updateMouseLock(X11WindowSurface& window);
 
+    // A popup took the pointer, or gave it back: whatever button was held was
+    // held in another window, and the up that would have ended it is going to
+    // the menu now.
+    void popupGrabChanged();
+
     void windowDestroyed(X11WindowSurface& window);
 
 private:
@@ -142,6 +147,12 @@ private:
                       Point position,
                       uint32_t time);
     void dispatchMotion(Point delta, Point unaccelerated, uint32_t time);
+
+    // Both halves of a popup's dismissal, asked before a protocol event
+    // becomes a MouseEvent or a KeyEvent: a press outside an open menu closes
+    // it and is swallowed, and so is Escape.
+    bool popupSwallowsButton(uint32_t button, bool pressed, Point rootPosition);
+    bool popupSwallowsKey(uint32_t evdevCode, bool pressed);
 
     // The XI2 half, one function per event the seat selects.
     void setupXinput();

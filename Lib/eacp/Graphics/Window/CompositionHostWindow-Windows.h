@@ -23,6 +23,11 @@ HWND findHostHwndForView(View* view);
 // option exists to remove. False for an unknown/null HWND.
 bool isHostWindowTransparent(HWND hwnd);
 
+// The scale `hwnd`'s surface measures in, setDpiScaleOverride included — which
+// is what GetDpiForWindow cannot answer, since a hosted surface scales itself.
+// The window's own DPI for an HWND no surface of ours owns.
+float hostWindowDpiScale(HWND hwnd);
+
 // Marks `view` and all its subviews for repaint, e.g. after a DPI change or a
 // rendering-device replacement invalidates every backing surface.
 void repaintViewTree(View* view);
@@ -109,6 +114,13 @@ struct CompositionHostWindow
     // synthesize the Up a stolen capture would otherwise swallow.
     bool mouseButtonHeld = false;
     MouseButton heldMouseButton = MouseButton::Left;
+
+    // The grab is held for as long as this surface is up, not for the length
+    // of a drag: a WindowOptions::popup keeps it so the press that lands
+    // outside arrives here to be noticed and swallowed. While it is set the
+    // button handlers neither take the capture nor give it back — the window
+    // that set it does both.
+    bool holdsCapture = false;
 
     // Fired after a WM_SIZE updates the content-view bounds, with the new
     // content size in points. The top-level Window wires this to
