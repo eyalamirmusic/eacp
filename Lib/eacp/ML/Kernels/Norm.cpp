@@ -179,7 +179,8 @@ void DynamicTanhKernel::define()
     auto position = threadPosition();
     auto index = position.y * dimension + position.x;
 
-    auto value = tanh(alpha * input[index]) * gamma[position.x] + beta[position.x];
+    auto value =
+        saturatingTanh(alpha * input[index]) * gamma[position.x] + beta[position.x];
     write(output, index, value);
 }
 
