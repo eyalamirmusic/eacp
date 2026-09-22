@@ -9,7 +9,8 @@
 #include "../ML/Kernels/SwiGLU.h"
 #include "Ops.h"
 
-#include <cmath>
+#include <algorithm>
+#include <vector>
 
 namespace eacp::SA3DiT
 {
@@ -57,36 +58,13 @@ Tensor rmsNormPerHead(ComputePass& pass,
 }
 }
 
-std::vector<float> expoFourierFeatures(float value, int dim, float minFreq, float maxFreq)
-{
-    auto halfDim = dim / 2;
-    auto result = std::vector<float>((std::size_t) dim);
-
-    auto logMin = std::log(minFreq);
-    auto logMax = std::log(maxFreq);
-
-    for (auto i = 0; i < halfDim; ++i)
-    {
-        auto ramp = halfDim > 1 ? (float) i / (float) (halfDim - 1) : 0.f;
-        auto freq = std::exp(ramp * (logMax - logMin) + logMin);
-        auto arg = value * freq * 2.f * (float) M_PI;
-
-        result[(std::size_t) i] = std::cos(arg);
-        result[(std::size_t) (halfDim + i)] = std::sin(arg);
-    }
-
-    return result;
-}
-
 Tensor timestepEmbedding(ComputePass& pass,
                          const Weights& weights,
                          float timestep,
                          Device& device)
 {
-    auto fourier =
-        expoFourierFeatures(timestep, timestepFeaturesDim, timestepMinFreq, timestepMaxFreq);
-    auto fourierTensor =
-        Tensor::fromHostF32(fourier.data(), {1, timestepFeaturesDim}, device);
+    auto fourierTensor = expoFourierFeatures(
+        pass, timestep, timestepFeaturesDim, timestepMinFreq, timestepMaxFreq, device);
 
     auto h = linear(
         pass, fourierTensor, weights.toTimestepEmbed0Weight, &weights.toTimestepEmbed0Bias, device);
@@ -108,10 +86,8 @@ Tensor globalConditioning(ComputePass& pass,
     auto clamped = std::min(std::max(secondsTotal, secondsMinVal), secondsMaxVal);
     auto normalizedSeconds = clamped / secondsMaxVal;
 
-    auto secondsFourier = expoFourierFeatures(
-        normalizedSeconds, timestepFeaturesDim, timestepMinFreq, timestepMaxFreq);
-    auto secondsFourierTensor =
-        Tensor::fromHostF32(secondsFourier.data(), {1, timestepFeaturesDim}, device);
+    auto secondsFourierTensor = expoFourierFeatures(
+        pass, normalizedSeconds, timestepFeaturesDim, timestepMinFreq, timestepMaxFreq, device);
 
     auto secondsRaw = linear(
         pass, secondsFourierTensor, weights.secondsEmbedWeight, &weights.secondsEmbedBias, device);

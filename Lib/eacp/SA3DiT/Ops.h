@@ -96,6 +96,26 @@ private:
     void define() override;
 };
 
+class ExpoFourierFeaturesKernel final : public GPU::ComputeProgram
+{
+public:
+    ExpoFourierFeaturesKernel();
+
+    void dispatch(GPU::ComputePass& pass, int halfDim);
+
+    GPU::Uniform<GPU::OutputBuffer> output;
+    GPU::Uniform<GPU::Float> value;
+    GPU::Uniform<GPU::Float> logMinFreq;
+    GPU::Uniform<GPU::Float> logMaxFreq;
+    GPU::Uniform<GPU::Float> rampDenominator;
+    GPU::Uniform<GPU::UInt> halfDim;
+
+    EACP_SHADER(output, value, logMinFreq, logMaxFreq, rampDenominator, halfDim)
+
+private:
+    void define() override;
+};
+
 class SliceColumnsKernel final : public GPU::ComputeProgram
 {
 public:
@@ -160,4 +180,11 @@ ML::Tensor sliceColumns(GPU::ComputePass& pass,
 
 ML::Tensor squeezeTrailingUnitDim(ML::Tensor input);
 ML::Tensor reshapeFlat(ML::Tensor input, std::vector<int> newShape);
+
+ML::Tensor expoFourierFeatures(GPU::ComputePass& pass,
+                               float value,
+                               int dim,
+                               float minFreq,
+                               float maxFreq,
+                               GPU::Device& device = GPU::Device::shared());
 }

@@ -2,6 +2,9 @@
 
 #include "../GPU/Frame/ComputePass.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace eacp::SA3DiT
 {
 using namespace eacp::GPU;
@@ -13,6 +16,8 @@ Float sigmoidOf(const Float& x)
 {
     return 1.f / (1.f + exp(-x));
 }
+
+constexpr auto twoPi = 6.283185307179586f;
 }
 
 AddTensorsKernel::AddTensorsKernel()
@@ -134,6 +139,49 @@ void SliceColumnsKernel::define()
     auto destinationIndex = position.y * destinationColumnCount + position.x;
 
     write(destination, destinationIndex, source[sourceIndex]);
+}
+
+ExpoFourierFeaturesKernel::ExpoFourierFeaturesKernel()
+{
+    compile();
+}
+
+void ExpoFourierFeaturesKernel::dispatch(ComputePass& pass, int halfDimToUse)
+{
+    halfDim = (std::uint32_t) halfDimToUse;
+    rampDenominator = (float) std::max(halfDimToUse - 1, 1);
+    pass.dispatch(*this, halfDimToUse);
+}
+
+void ExpoFourierFeaturesKernel::define()
+{
+    auto i = threadId();
+    auto ramp = toFloat(i) / rampDenominator;
+    auto freq = exp(ramp * (logMaxFreq - logMinFreq) + logMinFreq);
+    auto arg = value * freq * twoPi;
+
+    write(output, i, cos(arg));
+    write(output, halfDim + i, sin(arg));
+}
+
+Tensor expoFourierFeatures(ComputePass& pass,
+                           float value,
+                           int dim,
+                           float minFreq,
+                           float maxFreq,
+                           Device& device)
+{
+    auto result = Tensor::uninitializedF32({1, dim}, device);
+
+    auto kernel = ExpoFourierFeaturesKernel {};
+    kernel.output = result.buffer();
+    kernel.value = value;
+    kernel.logMinFreq = std::log(minFreq);
+    kernel.logMaxFreq = std::log(maxFreq);
+    kernel.prepare(device);
+    kernel.dispatch(pass, dim / 2);
+
+    return result;
 }
 
 Tensor addTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Device& device)

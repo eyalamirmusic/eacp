@@ -31,17 +31,43 @@ void checkClose(const std::vector<float>& actual,
 auto tExpoFourierFeaturesConstantFrequency =
     test("SA3DiT/expoFourierFeaturesMatchesReferenceAtConstantFrequency") = []
 {
-    auto features = expoFourierFeatures(0.25f, 2, 1.0f, 1.0f);
+    auto& device = Device::shared();
 
-    checkClose(features, {0.f, 1.f}, 1.0e-5f);
+    if (!device.isValid())
+        return;
+
+    auto commands = device.makeCommandBuffer();
+    auto features = Tensor::uninitializedF32({1, 2}, device);
+
+    {
+        auto pass = commands.beginCompute();
+        features = expoFourierFeatures(pass, 0.25f, 2, 1.0f, 1.0f, device);
+    }
+
+    commands.commit();
+
+    checkClose(features.toHostF32(), {0.f, 1.f}, 1.0e-5f);
 };
 
 auto tExpoFourierFeaturesZeroValue =
     test("SA3DiT/expoFourierFeaturesIsAllCosOneAtZero") = []
 {
-    auto features = expoFourierFeatures(0.f, 4, 0.5f, 10000.f);
+    auto& device = Device::shared();
 
-    checkClose(features, {1.f, 1.f, 0.f, 0.f}, 1.0e-5f);
+    if (!device.isValid())
+        return;
+
+    auto commands = device.makeCommandBuffer();
+    auto features = Tensor::uninitializedF32({1, 4}, device);
+
+    {
+        auto pass = commands.beginCompute();
+        features = expoFourierFeatures(pass, 0.f, 4, 0.5f, 10000.f, device);
+    }
+
+    commands.commit();
+
+    checkClose(features.toHostF32(), {1.f, 1.f, 0.f, 0.f}, 1.0e-5f);
 };
 
 auto tAdaLNModulate = test("SA3DiT/adaLNModulateMatchesReference") = []

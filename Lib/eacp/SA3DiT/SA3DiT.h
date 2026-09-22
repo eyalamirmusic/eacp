@@ -3,14 +3,11 @@
 #include "../GPU/Device/Device.h"
 #include "../GPU/Frame/ComputePass.h"
 #include "../ML/Tensor/Tensor.h"
+#include "Ops.h"
 #include "Weights.h"
-
-#include <vector>
 
 namespace eacp::SA3DiT
 {
-std::vector<float> expoFourierFeatures(float value, int dim, float minFreq, float maxFreq);
-
 ML::Tensor timestepEmbedding(GPU::ComputePass& pass,
                              const Weights& weights,
                              float timestep,
