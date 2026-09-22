@@ -1,5 +1,7 @@
 #include "SA3TextEncoder.h"
 
+#include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/Json.h>
 
 #include <cstdint>
@@ -13,6 +15,40 @@ using namespace eacp::ML;
 
 namespace
 {
+class PadRowSelectKernel final : public ComputeProgram
+{
+public:
+    PadRowSelectKernel()
+    {
+        compile();
+    }
+
+    void dispatch(ComputePass& pass, int rows, int dim, int validRowCount)
+    {
+        dimension = (std::uint32_t) dim;
+        validRows = (std::uint32_t) validRowCount;
+        pass.dispatch(*this, rows * dim);
+    }
+
+    Uniform<InputBuffer> encoded;
+    Uniform<InputBuffer> paddingEmbedding;
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> dimension;
+    Uniform<UInt> validRows;
+
+    EACP_SHADER(encoded, paddingEmbedding, output, dimension, validRows)
+
+private:
+    void define() override
+    {
+        auto i = threadId();
+        auto col = i % dimension;
+        auto row = i / dimension;
+
+        write(output, i, select(row < validRows, encoded[i], paddingEmbedding[col]));
+    }
+};
+
 std::vector<float> readSingleF32TensorFromSafetensors(const std::string& path,
                                                        const std::string& tensorName,
                                                        int elementCount)
@@ -86,16 +122,15 @@ PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
     auto tokenized = tokenizer.encode(text, maxLength);
     auto encoded = encoder.encodeTokens(pass, tokenized.ids, tokenized.validLength, device);
 
-    auto host = encoded.toHostF32();
-    auto padding = paddingEmbedding.toHostF32();
     auto hiddenSize = T5GemmaEncoder::hiddenSize;
+    auto result = Tensor::uninitializedF32({maxLength, hiddenSize}, device);
 
-    for (auto row = tokenized.validLength; row < maxLength; ++row)
-        std::copy(padding.begin(),
-                 padding.end(),
-                 host.begin() + (std::ptrdiff_t) row * hiddenSize);
-
-    auto result = Tensor::fromHostF32(host.data(), {maxLength, hiddenSize}, device);
+    auto kernel = PadRowSelectKernel {};
+    kernel.encoded = encoded.buffer();
+    kernel.paddingEmbedding = paddingEmbedding.buffer();
+    kernel.output = result.buffer();
+    kernel.prepare(device);
+    kernel.dispatch(pass, maxLength, hiddenSize, tokenized.validLength);
 
     return PromptEncoding {std::move(result), tokenized.validLength};
 }
