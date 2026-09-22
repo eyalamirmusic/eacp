@@ -59,13 +59,13 @@ std::optional<SafetensorsFile> SafetensorsFile::open(const FilePath& path)
 
     auto bytes = mapped.bytes();
 
-    if (bytes.size() < 8)
+    if (bytes.getSize() < 8)
         return std::nullopt;
 
     auto headerLength = std::uint64_t {};
     std::memcpy(&headerLength, bytes.data(), sizeof(headerLength));
 
-    if (headerLength > (std::uint64_t) bytes.size() - 8)
+    if (headerLength > bytes.getSize() - 8)
         return std::nullopt;
 
     auto headerText =
