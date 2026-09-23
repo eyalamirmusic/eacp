@@ -17,35 +17,39 @@ using namespace eacp::ML;
 using namespace eacp::SA3DiT;
 using namespace eacp::SA3DiT::TestSupport;
 
-auto tForwardMatchesGolden = test("SA3DiT/fullForwardMatchesPythonReference") = []
+auto tMediumForwardMatchesGolden = test("SA3DiT/mediumFullForwardMatchesPythonReference") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
 
     if (!file.has_value())
         return;
 
-    auto weights = loadWeights(*file, DiTConfig::smallMusic(), device);
+    auto config = DiTConfig::medium();
+    auto weights = loadWeights(*file, config, device);
 
     constexpr auto latentLength = 8;
     constexpr auto contextLen = 5;
+    auto ioChannelsC = config.ioChannels;
+    auto condTokenDimC = config.condTokenDim;
 
     auto dir = std::string(SA3_DIT_GOLDEN_DIR);
-    auto latentInput = readGoldenFloats(dir + "/latent.bin", latentLength * ioChannels);
-    auto contextInput = readGoldenFloats(dir + "/cross_ctx_raw.bin", contextLen * condTokenDim);
-    auto expected = readGoldenFloats(dir + "/full_out.bin", latentLength * ioChannels);
+    auto latentInput = readGoldenFloats(dir + "/medium_latent.bin", latentLength * ioChannelsC);
+    auto contextInput =
+        readGoldenFloats(dir + "/medium_cross_ctx_raw.bin", contextLen * condTokenDimC);
+    auto expected = readGoldenFloats(dir + "/medium_full_out.bin", latentLength * ioChannelsC);
 
     auto latentTensor =
-        Tensor::fromHostF32(latentInput.data(), {latentLength, ioChannels}, device);
+        Tensor::fromHostF32(latentInput.data(), {latentLength, ioChannelsC}, device);
     auto contextTensor =
-        Tensor::fromHostF32(contextInput.data(), {contextLen, condTokenDim}, device);
+        Tensor::fromHostF32(contextInput.data(), {contextLen, condTokenDimC}, device);
 
     auto commands = device.makeCommandBuffer();
-    auto out = Tensor::uninitializedF32({latentLength, ioChannels}, device);
+    auto out = Tensor::uninitializedF32({latentLength, ioChannelsC}, device);
 
     {
         auto pass = commands.beginCompute();
@@ -55,6 +59,6 @@ auto tForwardMatchesGolden = test("SA3DiT/fullForwardMatchesPythonReference") = 
     commands.commit();
 
     auto actual = out.toHostF32();
-    auto gap = maxAllcloseGap(actual, expected, 1.0e-2f, 1.0e-2f);
+    auto gap = maxAllcloseGap(actual, expected, 3.0e-2f, 3.0e-2f);
     check(gap <= 0.f);
 };

@@ -36,6 +36,22 @@ void AddTensorsKernel::define()
     write(output, i, a[i] + b[i]);
 }
 
+SubtractTensorsKernel::SubtractTensorsKernel()
+{
+    compile();
+}
+
+void SubtractTensorsKernel::dispatch(ComputePass& pass, int count)
+{
+    pass.dispatch(*this, count);
+}
+
+void SubtractTensorsKernel::define()
+{
+    auto i = threadId();
+    write(output, i, a[i] - b[i]);
+}
+
 AddBroadcastRowKernel::AddBroadcastRowKernel()
 {
     compile();
@@ -189,6 +205,20 @@ Tensor addTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Device& d
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
     auto kernel = AddTensorsKernel {};
+    kernel.a = a.buffer();
+    kernel.b = b.buffer();
+    kernel.output = result.buffer();
+    kernel.prepare(device);
+    kernel.dispatch(pass, a.count());
+
+    return result;
+}
+
+Tensor subtractTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Device& device)
+{
+    auto result = Tensor::uninitializedF32(a.shape(), device);
+
+    auto kernel = SubtractTensorsKernel {};
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();

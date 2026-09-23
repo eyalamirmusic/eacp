@@ -21,6 +21,7 @@ ML::Tensor globalConditioning(GPU::ComputePass& pass,
                               GPU::Device& device = GPU::Device::shared());
 
 ML::Tensor transformerBlock(GPU::ComputePass& pass,
+                            const DiTConfig& config,
                             const LayerWeights& layer,
                             const ML::Tensor& x,
                             const ML::Tensor& rotaryInvFreq,

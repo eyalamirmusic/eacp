@@ -21,19 +21,21 @@ using namespace eacp::ML;
 namespace
 {
 Tensor withLocalConditioning(ComputePass& pass,
+                             const DiTConfig& config,
                              const LayerWeights& layer,
                              Tensor x,
                              Device& device)
 {
-    auto zeros = std::vector<float>((std::size_t) localAddCondDim, 0.f);
-    auto zerosTensor = Tensor::fromHostF32(zeros.data(), {1, localAddCondDim}, device);
+    auto zeros = std::vector<float>((std::size_t) config.localAddCondDim, 0.f);
+    auto zerosTensor =
+        Tensor::fromHostF32(zeros.data(), {1, config.localAddCondDim}, device);
     auto localH =
         linear(pass, zerosTensor, layer.toLocalEmbed0Weight, &layer.toLocalEmbed0Bias, device);
     localH = applyActivation(pass, localH, ActivationKind::SiLU, device);
     auto localEmb =
         linear(pass, localH, layer.toLocalEmbed2Weight, &layer.toLocalEmbed2Bias, device);
 
-    return addBroadcastRow(pass, x, localEmb, numMemoryTokens, device);
+    return addBroadcastRow(pass, x, localEmb, config.numMemoryTokens, device);
 }
 
 Tensor rmsNormPerHead(ComputePass& pass,
@@ -64,8 +66,10 @@ Tensor timestepEmbedding(ComputePass& pass,
                          float timestep,
                          Device& device)
 {
+    auto& config = weights.config;
+
     auto fourierTensor = expoFourierFeatures(
-        pass, timestep, timestepFeaturesDim, timestepMinFreq, timestepMaxFreq, device);
+        pass, timestep, config.timestepFeaturesDim, config.timestepMinFreq, config.timestepMaxFreq, device);
 
     auto h = linear(
         pass, fourierTensor, weights.toTimestepEmbed0Weight, &weights.toTimestepEmbed0Bias, device);
@@ -82,13 +86,15 @@ Tensor globalConditioning(ComputePass& pass,
                           float secondsTotal,
                           Device& device)
 {
+    auto& config = weights.config;
+
     auto timestepEmbed = timestepEmbedding(pass, weights, timestep, device);
 
-    auto clamped = std::min(std::max(secondsTotal, secondsMinVal), secondsMaxVal);
-    auto normalizedSeconds = clamped / secondsMaxVal;
+    auto clamped = std::min(std::max(secondsTotal, config.secondsMinVal), config.secondsMaxVal);
+    auto normalizedSeconds = clamped / config.secondsMaxVal;
 
     auto secondsFourierTensor = expoFourierFeatures(
-        pass, normalizedSeconds, timestepFeaturesDim, timestepMinFreq, timestepMaxFreq, device);
+        pass, normalizedSeconds, config.timestepFeaturesDim, config.timestepMinFreq, config.timestepMaxFreq, device);
 
     auto secondsRaw = linear(
         pass, secondsFourierTensor, weights.secondsEmbedWeight, &weights.secondsEmbedBias, device);
@@ -107,7 +113,172 @@ Tensor globalConditioning(ComputePass& pass,
     return base;
 }
 
+namespace
+{
+Tensor selfAttentionOutput(ComputePass& pass,
+                          const DiTConfig& config,
+                          const LayerWeights& layer,
+                          const Tensor& xm,
+                          const Tensor& rotaryInvFreq,
+                          int seqLen,
+                          Device& device)
+{
+    auto embedDimC = config.embedDim;
+    auto qkv = linear(pass, xm, layer.selfAttnQKVWeight, nullptr, device);
+    auto q = sliceColumns(pass, qkv, 0 * embedDimC, embedDimC, device);
+    auto k = sliceColumns(pass, qkv, 1 * embedDimC, embedDimC, device);
+    auto v = sliceColumns(pass, qkv, 2 * embedDimC, embedDimC, device);
+
+    auto qn = rmsNormPerHead(
+        pass, q, layer.selfAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto kn = rmsNormPerHead(
+        pass, k, layer.selfAttnKNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+
+    auto qr = applyRoPE(pass, qn, rotaryInvFreq, config.numHeads, config.headDim, device);
+    auto kr = applyRoPE(pass, kn, rotaryInvFreq, config.numHeads, config.headDim, device);
+
+    auto mainAttn = attention(pass,
+                              qr,
+                              kr,
+                              v,
+                              config.numHeads,
+                              config.headDim,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              config.qkNormEpsilon,
+                              device);
+
+    if (!config.differential)
+        return mainAttn;
+
+    auto qDiff = sliceColumns(pass, qkv, 3 * embedDimC, embedDimC, device);
+    auto kDiff = sliceColumns(pass, qkv, 4 * embedDimC, embedDimC, device);
+
+    auto qDiffN = rmsNormPerHead(
+        pass, qDiff, layer.selfAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto kDiffN = rmsNormPerHead(
+        pass, kDiff, layer.selfAttnKNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+
+    auto qDiffR = applyRoPE(pass, qDiffN, rotaryInvFreq, config.numHeads, config.headDim, device);
+    auto kDiffR = applyRoPE(pass, kDiffN, rotaryInvFreq, config.numHeads, config.headDim, device);
+
+    auto diffAttn = attention(pass,
+                              qDiffR,
+                              kDiffR,
+                              v,
+                              config.numHeads,
+                              config.headDim,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              config.qkNormEpsilon,
+                              device);
+
+    return subtractTensors(pass, mainAttn, diffAttn, device);
+}
+
+Tensor crossAttentionOutput(ComputePass& pass,
+                           const DiTConfig& config,
+                           const LayerWeights& layer,
+                           const Tensor& xn2,
+                           const Tensor& crossAttnContext,
+                           int seqLen,
+                           int contextLen,
+                           Device& device)
+{
+    auto embedDimC = config.embedDim;
+
+    if (!config.differential)
+    {
+        auto q2 = linear(pass, xn2, layer.crossAttnQWeight, nullptr, device);
+        auto kv2 = linear(pass, crossAttnContext, layer.crossAttnKVWeight, nullptr, device);
+        auto k2 = sliceColumns(pass, kv2, 0 * embedDimC, embedDimC, device);
+        auto v2 = sliceColumns(pass, kv2, 1 * embedDimC, embedDimC, device);
+
+        auto q2n = rmsNormPerHead(
+            pass, q2, layer.crossAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+        auto k2n = rmsNormPerHead(pass,
+                                  k2,
+                                  layer.crossAttnKNormGamma,
+                                  contextLen,
+                                  config.numHeads,
+                                  config.headDim,
+                                  config.qkNormEpsilon,
+                                  device);
+
+        return attention(pass,
+                         q2n,
+                         k2n,
+                         v2,
+                         config.numHeads,
+                         config.headDim,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         config.qkNormEpsilon,
+                         device);
+    }
+
+    auto q2Full = linear(pass, xn2, layer.crossAttnQWeight, nullptr, device);
+    auto q2 = sliceColumns(pass, q2Full, 0 * embedDimC, embedDimC, device);
+    auto q2Diff = sliceColumns(pass, q2Full, 1 * embedDimC, embedDimC, device);
+
+    auto kv2Full = linear(pass, crossAttnContext, layer.crossAttnKVWeight, nullptr, device);
+    auto k2 = sliceColumns(pass, kv2Full, 0 * embedDimC, embedDimC, device);
+    auto k2Diff = sliceColumns(pass, kv2Full, 1 * embedDimC, embedDimC, device);
+    auto v2 = sliceColumns(pass, kv2Full, 2 * embedDimC, embedDimC, device);
+
+    auto q2n = rmsNormPerHead(
+        pass, q2, layer.crossAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto q2DiffN = rmsNormPerHead(
+        pass, q2Diff, layer.crossAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto k2n = rmsNormPerHead(pass,
+                              k2,
+                              layer.crossAttnKNormGamma,
+                              contextLen,
+                              config.numHeads,
+                              config.headDim,
+                              config.qkNormEpsilon,
+                              device);
+    auto k2DiffN = rmsNormPerHead(pass,
+                                  k2Diff,
+                                  layer.crossAttnKNormGamma,
+                                  contextLen,
+                                  config.numHeads,
+                                  config.headDim,
+                                  config.qkNormEpsilon,
+                                  device);
+
+    auto mainCross = attention(pass,
+                              q2n,
+                              k2n,
+                              v2,
+                              config.numHeads,
+                              config.headDim,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              config.qkNormEpsilon,
+                              device);
+    auto diffCross = attention(pass,
+                              q2DiffN,
+                              k2DiffN,
+                              v2,
+                              config.numHeads,
+                              config.headDim,
+                              nullptr,
+                              nullptr,
+                              nullptr,
+                              config.qkNormEpsilon,
+                              device);
+
+    return subtractTensors(pass, mainCross, diffCross, device);
+}
+}
+
 Tensor transformerBlock(ComputePass& pass,
+                        const DiTConfig& config,
                         const LayerWeights& layer,
                         const Tensor& x,
                         const Tensor& rotaryInvFreq,
@@ -116,71 +287,42 @@ Tensor transformerBlock(ComputePass& pass,
                         bool applyLocalConditioning,
                         Device& device)
 {
+    auto embedDimC = config.embedDim;
     auto seqLen = x.rows();
     auto contextLen = crossAttnContext.rows();
 
     auto modulation = addTensors(pass, globalCondBase, layer.toScaleShiftGate, device);
 
-    auto scaleSelf = sliceColumns(pass, modulation, 0 * embedDim, embedDim, device);
-    auto shiftSelf = sliceColumns(pass, modulation, 1 * embedDim, embedDim, device);
-    auto gateSelf = sliceColumns(pass, modulation, 2 * embedDim, embedDim, device);
-    auto scaleFf = sliceColumns(pass, modulation, 3 * embedDim, embedDim, device);
-    auto shiftFf = sliceColumns(pass, modulation, 4 * embedDim, embedDim, device);
-    auto gateFf = sliceColumns(pass, modulation, 5 * embedDim, embedDim, device);
+    auto scaleSelf = sliceColumns(pass, modulation, 0 * embedDimC, embedDimC, device);
+    auto shiftSelf = sliceColumns(pass, modulation, 1 * embedDimC, embedDimC, device);
+    auto gateSelf = sliceColumns(pass, modulation, 2 * embedDimC, embedDimC, device);
+    auto scaleFf = sliceColumns(pass, modulation, 3 * embedDimC, embedDimC, device);
+    auto shiftFf = sliceColumns(pass, modulation, 4 * embedDimC, embedDimC, device);
+    auto gateFf = sliceColumns(pass, modulation, 5 * embedDimC, embedDimC, device);
 
-    auto xn = rmsNorm(pass, x, layer.preNormGamma, rmsNormEpsilon, device);
+    auto xn = rmsNorm(pass, x, layer.preNormGamma, config.rmsNormEpsilon, device);
     auto xm = adaLNModulate(pass, xn, scaleSelf, shiftSelf, device);
 
-    auto qkv = linear(pass, xm, layer.selfAttnQKVWeight, nullptr, device);
-    auto q = sliceColumns(pass, qkv, 0 * embedDim, embedDim, device);
-    auto k = sliceColumns(pass, qkv, 1 * embedDim, embedDim, device);
-    auto v = sliceColumns(pass, qkv, 2 * embedDim, embedDim, device);
-
-    auto qn = rmsNormPerHead(
-        pass, q, layer.selfAttnQNormGamma, seqLen, numHeads, headDim, qkNormEpsilon, device);
-    auto kn = rmsNormPerHead(
-        pass, k, layer.selfAttnKNormGamma, seqLen, numHeads, headDim, qkNormEpsilon, device);
-
-    auto qr = applyRoPE(pass, qn, rotaryInvFreq, numHeads, headDim, device);
-    auto kr = applyRoPE(pass, kn, rotaryInvFreq, numHeads, headDim, device);
-
-    auto attnOut = attention(
-        pass, qr, kr, v, numHeads, headDim, nullptr, nullptr, nullptr, qkNormEpsilon, device);
-    auto attnFlat = reshapeFlat(std::move(attnOut), {seqLen, embedDim});
+    auto attnOut = selfAttentionOutput(pass, config, layer, xm, rotaryInvFreq, seqLen, device);
+    auto attnFlat = reshapeFlat(std::move(attnOut), {seqLen, embedDimC});
     auto attnProj = linear(pass, attnFlat, layer.selfAttnOutWeight, nullptr, device);
     auto gatedSelf = sigmoidGate(pass, attnProj, gateSelf, device);
 
     auto x1 = addTensors(pass, x, gatedSelf, device);
 
-    auto xn2 = rmsNorm(pass, x1, layer.crossAttendNormGamma, rmsNormEpsilon, device);
-    auto q2 = linear(pass, xn2, layer.crossAttnQWeight, nullptr, device);
-    auto kv2 = linear(pass, crossAttnContext, layer.crossAttnKVWeight, nullptr, device);
-    auto k2 = sliceColumns(pass, kv2, 0 * embedDim, embedDim, device);
-    auto v2 = sliceColumns(pass, kv2, 1 * embedDim, embedDim, device);
-
-    auto q2n = rmsNormPerHead(
-        pass, q2, layer.crossAttnQNormGamma, seqLen, numHeads, headDim, qkNormEpsilon, device);
-    auto k2n = rmsNormPerHead(pass,
-                              k2,
-                              layer.crossAttnKNormGamma,
-                              contextLen,
-                              numHeads,
-                              headDim,
-                              qkNormEpsilon,
-                              device);
-
-    auto crossOut = attention(
-        pass, q2n, k2n, v2, numHeads, headDim, nullptr, nullptr, nullptr, qkNormEpsilon, device);
-    auto crossFlat = reshapeFlat(std::move(crossOut), {seqLen, embedDim});
+    auto xn2 = rmsNorm(pass, x1, layer.crossAttendNormGamma, config.rmsNormEpsilon, device);
+    auto crossOut =
+        crossAttentionOutput(pass, config, layer, xn2, crossAttnContext, seqLen, contextLen, device);
+    auto crossFlat = reshapeFlat(std::move(crossOut), {seqLen, embedDimC});
     auto crossProj = linear(pass, crossFlat, layer.crossAttnOutWeight, nullptr, device);
 
     auto x2 = addTensors(pass, x1, crossProj, device);
 
     auto x3 = applyLocalConditioning
-                ? withLocalConditioning(pass, layer, std::move(x2), device)
+                ? withLocalConditioning(pass, config, layer, std::move(x2), device)
                 : std::move(x2);
 
-    auto xn3 = rmsNorm(pass, x3, layer.ffNormGamma, rmsNormEpsilon, device);
+    auto xn3 = rmsNorm(pass, x3, layer.ffNormGamma, config.rmsNormEpsilon, device);
     auto xm3 = adaLNModulate(pass, xn3, scaleFf, shiftFf, device);
     auto ffOut =
         swiGLU(pass, xm3, layer.ff0ProjWeight, layer.ff0ProjBias, layer.ff2Weight, layer.ff2Bias, device);
@@ -197,6 +339,7 @@ Tensor forward(ComputePass& pass,
               const Tensor& crossAttnContext,
               Device& device)
 {
+    auto& config = weights.config;
     auto latentLength = latent.rows();
 
     auto pre = linear(pass, latent, weights.preprocessConvWeight, nullptr, device);
@@ -214,6 +357,7 @@ Tensor forward(ComputePass& pass,
 
     for (auto& layer: weights.layers)
         seq = transformerBlock(pass,
+                               config,
                                layer,
                                seq,
                                weights.rotaryInvFreq,
@@ -222,7 +366,7 @@ Tensor forward(ComputePass& pass,
                                false,
                                device);
 
-    auto latentOut = sliceRows(pass, seq, numMemoryTokens, latentLength, device);
+    auto latentOut = sliceRows(pass, seq, config.numMemoryTokens, latentLength, device);
     auto projOut = linear(pass, latentOut, weights.projectOutWeight, nullptr, device);
     auto post = linear(pass, projOut, weights.postprocessConvWeight, nullptr, device);
     post = addTensors(pass, post, projOut, device);

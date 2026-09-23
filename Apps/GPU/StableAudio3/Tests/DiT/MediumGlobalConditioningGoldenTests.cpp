@@ -17,35 +17,36 @@ using namespace eacp::ML;
 using namespace eacp::SA3DiT;
 using namespace eacp::SA3DiT::TestSupport;
 
-auto tTimestepEmbeddingMatchesGolden =
-    test("SA3DiT/timestepEmbeddingMatchesPythonReference") = []
+auto tMediumGlobalConditioningMatchesGolden =
+    test("SA3DiT/mediumGlobalConditioningMatchesPythonReference") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
 
     if (!file.has_value())
         return;
 
-    auto weights = loadWeights(*file, DiTConfig::smallMusic(), device);
+    auto config = DiTConfig::medium();
+    auto weights = loadWeights(*file, config, device);
 
     auto commands = device.makeCommandBuffer();
-    auto embed = Tensor::uninitializedF32({1, embedDim}, device);
+    auto base = Tensor::uninitializedF32({1, config.embedDim * 6}, device);
 
     {
         auto pass = commands.beginCompute();
-        embed = timestepEmbedding(pass, weights, 0.5f, device);
+        base = globalConditioning(pass, weights, 0.5f, 20.f, device);
     }
 
     commands.commit();
 
-    auto actual = embed.toHostF32();
+    auto actual = base.toHostF32();
     auto expected = readGoldenFloats(
-        std::string(SA3_DIT_GOLDEN_DIR) + "/timestep_embed.bin", embedDim);
+        std::string(SA3_DIT_GOLDEN_DIR) + "/medium_global_cond_base.bin", config.embedDim * 6);
 
-    auto gap = maxAllcloseGap(actual, expected, 1.0e-3f, 1.0e-3f);
+    auto gap = maxAllcloseGap(actual, expected, 3.0e-3f, 3.0e-3f);
     check(gap <= 0.f);
 };

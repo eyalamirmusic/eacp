@@ -7,6 +7,50 @@ namespace eacp::SA3DiT
 using namespace eacp::GPU;
 using namespace eacp::ML;
 
+DiTConfig DiTConfig::smallMusic()
+{
+    return DiTConfig {
+        .embedDim = eacp::SA3DiT::embedDim,
+        .depth = eacp::SA3DiT::depth,
+        .numHeads = eacp::SA3DiT::numHeads,
+        .headDim = eacp::SA3DiT::headDim,
+        .condTokenDim = eacp::SA3DiT::condTokenDim,
+        .ioChannels = eacp::SA3DiT::ioChannels,
+        .numMemoryTokens = eacp::SA3DiT::numMemoryTokens,
+        .localAddCondDim = eacp::SA3DiT::localAddCondDim,
+        .timestepFeaturesDim = eacp::SA3DiT::timestepFeaturesDim,
+        .timestepMinFreq = eacp::SA3DiT::timestepMinFreq,
+        .timestepMaxFreq = eacp::SA3DiT::timestepMaxFreq,
+        .secondsMinVal = eacp::SA3DiT::secondsMinVal,
+        .secondsMaxVal = eacp::SA3DiT::secondsMaxVal,
+        .rmsNormEpsilon = eacp::SA3DiT::rmsNormEpsilon,
+        .qkNormEpsilon = eacp::SA3DiT::qkNormEpsilon,
+        .differential = false,
+    };
+}
+
+DiTConfig DiTConfig::medium()
+{
+    return DiTConfig {
+        .embedDim = 1536,
+        .depth = 24,
+        .numHeads = 24,
+        .headDim = eacp::SA3DiT::headDim,
+        .condTokenDim = eacp::SA3DiT::condTokenDim,
+        .ioChannels = eacp::SA3DiT::ioChannels,
+        .numMemoryTokens = eacp::SA3DiT::numMemoryTokens,
+        .localAddCondDim = eacp::SA3DiT::localAddCondDim,
+        .timestepFeaturesDim = eacp::SA3DiT::timestepFeaturesDim,
+        .timestepMinFreq = eacp::SA3DiT::timestepMinFreq,
+        .timestepMaxFreq = eacp::SA3DiT::timestepMaxFreq,
+        .secondsMinVal = eacp::SA3DiT::secondsMinVal,
+        .secondsMaxVal = eacp::SA3DiT::secondsMaxVal,
+        .rmsNormEpsilon = eacp::SA3DiT::rmsNormEpsilon,
+        .qkNormEpsilon = eacp::SA3DiT::qkNormEpsilon,
+        .differential = true,
+    };
+}
+
 namespace
 {
 std::string layerPrefix(int layer)
@@ -51,9 +95,10 @@ LayerWeights loadLayer(const SafetensorsFile& file, int layer, Device& device)
 }
 }
 
-Weights loadWeights(const SafetensorsFile& file, Device& device)
+Weights loadWeights(const SafetensorsFile& file, const DiTConfig& config, Device& device)
 {
     auto weights = Weights {
+        .config = config,
         .preprocessConvWeight = squeezeTrailingUnitDim(
             file.loadF32("model.model.preprocess_conv.weight", device)),
         .postprocessConvWeight = squeezeTrailingUnitDim(
@@ -95,9 +140,9 @@ Weights loadWeights(const SafetensorsFile& file, Device& device)
             "model.model.transformer.global_cond_embedder.2.bias", device),
     };
 
-    weights.layers.reserve(depth);
+    weights.layers.reserve((std::size_t) config.depth);
 
-    for (auto layer = 0; layer < depth; ++layer)
+    for (auto layer = 0; layer < config.depth; ++layer)
         weights.layers.push_back(loadLayer(file, layer, device));
 
     return weights;

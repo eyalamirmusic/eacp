@@ -24,6 +24,29 @@ constexpr auto secondsMaxVal = 384.0f;
 constexpr auto rmsNormEpsilon = 1e-5f;
 constexpr auto qkNormEpsilon = 1e-6f;
 
+struct DiTConfig
+{
+    int embedDim;
+    int depth;
+    int numHeads;
+    int headDim;
+    int condTokenDim;
+    int ioChannels;
+    int numMemoryTokens;
+    int localAddCondDim;
+    int timestepFeaturesDim;
+    float timestepMinFreq;
+    float timestepMaxFreq;
+    float secondsMinVal;
+    float secondsMaxVal;
+    float rmsNormEpsilon;
+    float qkNormEpsilon;
+    bool differential;
+
+    static DiTConfig smallMusic();
+    static DiTConfig medium();
+};
+
 struct LayerWeights
 {
     ML::Tensor preNormGamma;
@@ -51,6 +74,7 @@ struct LayerWeights
 
 struct Weights
 {
+    DiTConfig config;
     ML::Tensor preprocessConvWeight;
     ML::Tensor postprocessConvWeight;
     ML::Tensor toCondEmbed0Weight;
@@ -75,5 +99,6 @@ struct Weights
 };
 
 Weights loadWeights(const ML::SafetensorsFile& file,
+                    const DiTConfig& config = DiTConfig::smallMusic(),
                     GPU::Device& device = GPU::Device::shared());
 }

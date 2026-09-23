@@ -30,7 +30,7 @@ auto tGlobalConditioningMatchesGolden =
     if (!file.has_value())
         return;
 
-    auto weights = loadWeights(*file, device);
+    auto weights = loadWeights(*file, DiTConfig::smallMusic(), device);
 
     auto commands = device.makeCommandBuffer();
     auto base = Tensor::uninitializedF32({1, embedDim * 6}, device);

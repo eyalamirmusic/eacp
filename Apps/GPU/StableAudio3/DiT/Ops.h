@@ -22,6 +22,23 @@ private:
     void define() override;
 };
 
+class SubtractTensorsKernel final : public GPU::ComputeProgram
+{
+public:
+    SubtractTensorsKernel();
+
+    void dispatch(GPU::ComputePass& pass, int count);
+
+    GPU::Uniform<GPU::InputBuffer> a;
+    GPU::Uniform<GPU::InputBuffer> b;
+    GPU::Uniform<GPU::OutputBuffer> output;
+
+    EACP_SHADER(a, b, output)
+
+private:
+    void define() override;
+};
+
 class AddBroadcastRowKernel final : public GPU::ComputeProgram
 {
 public:
@@ -143,6 +160,11 @@ ML::Tensor addTensors(GPU::ComputePass& pass,
                       const ML::Tensor& a,
                       const ML::Tensor& b,
                       GPU::Device& device = GPU::Device::shared());
+
+ML::Tensor subtractTensors(GPU::ComputePass& pass,
+                           const ML::Tensor& a,
+                           const ML::Tensor& b,
+                           GPU::Device& device = GPU::Device::shared());
 
 ML::Tensor addBroadcastRow(GPU::ComputePass& pass,
                            const ML::Tensor& values,

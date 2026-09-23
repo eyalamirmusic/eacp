@@ -17,29 +17,34 @@ using namespace eacp::ML;
 using namespace eacp::SA3DiT;
 using namespace eacp::SA3DiT::TestSupport;
 
-auto tSingleLayerMatchesGolden = test("SA3DiT/singleLayerMatchesPythonReference") = []
+auto tMediumSingleLayerMatchesGolden =
+    test("SA3DiT/mediumSingleLayerMatchesPythonReference") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
 
     if (!file.has_value())
         return;
 
-    auto weights = loadWeights(*file, DiTConfig::smallMusic(), device);
+    auto config = DiTConfig::medium();
+    auto weights = loadWeights(*file, config, device);
+
+    check(config.differential);
 
     constexpr auto seqLen = 72;
     constexpr auto contextLen = 5;
+    auto embedDim = config.embedDim;
 
     auto dir = std::string(SA3_DIT_GOLDEN_DIR);
-    auto seqInput = readGoldenFloats(dir + "/layer0_input_seq.bin", seqLen * embedDim);
-    auto contextInput = readGoldenFloats(dir + "/cross_ctx_proj.bin", contextLen * embedDim);
+    auto seqInput = readGoldenFloats(dir + "/medium_layer0_input_seq.bin", seqLen * embedDim);
+    auto contextInput = readGoldenFloats(dir + "/medium_cross_ctx_proj.bin", contextLen * embedDim);
     auto globalCondInput =
-        readGoldenFloats(dir + "/global_cond_base.bin", embedDim * 6);
-    auto expected = readGoldenFloats(dir + "/layer0_out.bin", seqLen * embedDim);
+        readGoldenFloats(dir + "/medium_global_cond_base.bin", embedDim * 6);
+    auto expected = readGoldenFloats(dir + "/medium_layer0_out.bin", seqLen * embedDim);
 
     auto seqTensor = Tensor::fromHostF32(seqInput.data(), {seqLen, embedDim}, device);
     auto contextTensor =
@@ -53,7 +58,7 @@ auto tSingleLayerMatchesGolden = test("SA3DiT/singleLayerMatchesPythonReference"
     {
         auto pass = commands.beginCompute();
         out = transformerBlock(pass,
-                               weights.config,
+                               config,
                                weights.layers[0],
                                seqTensor,
                                weights.rotaryInvFreq,
@@ -66,6 +71,6 @@ auto tSingleLayerMatchesGolden = test("SA3DiT/singleLayerMatchesPythonReference"
     commands.commit();
 
     auto actual = out.toHostF32();
-    auto gap = maxAllcloseGap(actual, expected, 5.0e-3f, 5.0e-3f);
+    auto gap = maxAllcloseGap(actual, expected, 1.0e-2f, 1.0e-2f);
     check(gap <= 0.f);
 };
