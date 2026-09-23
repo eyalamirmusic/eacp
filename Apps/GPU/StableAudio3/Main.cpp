@@ -25,10 +25,15 @@ constexpr auto sampleRate = 44100;
 constexpr auto downsamplingRatio = 4096;
 constexpr auto samplerSteps = 8;
 
-constexpr auto checkpointRoot =
+constexpr auto smallMusicCheckpointRoot =
     "/Users/jamiepond/.cache/huggingface/hub/"
     "models--stabilityai--stable-audio-3-small-music/snapshots/"
     "0fef1392cd842149a2b6d445e181c97608faac06/";
+
+constexpr auto mediumCheckpointRoot =
+    "/Users/jamiepond/.cache/huggingface/hub/"
+    "models--stabilityai--stable-audio-3-medium/snapshots/"
+    "27b5a21b791b1b033d193a9e1e3ce78493f102f9/";
 
 struct Options
 {
@@ -36,6 +41,7 @@ struct Options
     float seconds = 8.f;
     std::string output = "stable-audio-3-output.wav";
     std::uint64_t seed = 42;
+    std::string model = "small";
 };
 
 Options parseOptions(int argc, char** argv)
@@ -55,6 +61,8 @@ Options parseOptions(int argc, char** argv)
             options.output = argv[++i];
         else if (flag == "--seed" && hasValue)
             options.seed = (std::uint64_t) std::stoull(argv[++i]);
+        else if (flag == "--model" && hasValue)
+            options.model = argv[++i];
     }
 
     return options;
@@ -78,6 +86,12 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    auto isMedium = options.model == "medium";
+    auto checkpointRoot = isMedium ? mediumCheckpointRoot : smallMusicCheckpointRoot;
+    auto ditConfig = isMedium ? SA3DiT::DiTConfig::medium() : SA3DiT::DiTConfig::smallMusic();
+    auto codecConfig =
+        isMedium ? SA3Codec::CodecConfig::sameL() : SA3Codec::CodecConfig::sameS();
+
     auto modelPath = std::string {checkpointRoot} + "model.safetensors";
     auto file = SafetensorsFile::open(FilePath {modelPath});
 
@@ -87,11 +101,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::printf("Loading DiT weights...\n");
-    auto weights = SA3DiT::loadWeights(*file, device);
+    std::printf("Loading DiT weights (%s)...\n", options.model.c_str());
+    auto weights = SA3DiT::loadWeights(*file, ditConfig, device);
 
     std::printf("Loading SAME codec...\n");
-    auto codec = SA3Codec::SameCodec::loadFromSafetensors(*file);
+    auto codec = SA3Codec::SameCodec::loadFromSafetensors(*file, codecConfig);
 
     std::printf("Loading T5Gemma text encoder...\n");
     auto textEncoder = SA3TextEncoder::SA3TextEncoderModel::load(
