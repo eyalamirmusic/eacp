@@ -1,41 +1,156 @@
-# eacp vs PyTorch: Stable Audio 3 inference benchmark
+# eacp vs PyTorch: Stable Audio 3 inference
 
-## Methodology
+Apple M5 Max (40-core GPU), 128 GB, macOS 26.5.1. eacp on Metal, PyTorch 2.7.1
+on MPS. 2026-09-23.
 
-- **Model**: `small-music` (433M DiT + SAME-S codec + T5Gemma text encoder), the only size benchmarked here. `medium` was deliberately skipped: this machine had a real OOM crash earlier from running two 8.6GB-checkpoint inference processes concurrently, and a fair medium benchmark would need eacp and PyTorch loaded at the same time (or careful sequential teardown) to compare load/generate phases without risking a repeat.
-- **Prompt**: `"lofi house loop"`, duration 12s, 8 sampling steps, seed 42, `cfg_scale=1.0` (no CFG) on both sides — matching the real `demo_steps=8`/`demo_cfg_scales=[1]` config from the actual checkpoint, used throughout this project.
-- **eacp**: `Apps/GPU/StableAudio3/StableAudio3 --model small --prompt "lofi house loop" --seconds 12 --seed 42`, timed externally (`time.perf_counter()` around the subprocess). eacp itself prints `Sampling took Xs`; `load_encode_decode_seconds` = total wall time minus that, i.e. weight loading + prompt tokenize/encode + codec decode + WAV write combined (eacp doesn't print a finer split than that today).
-- **PyTorch reference**: `stable_audio_3.model.StableAudioModel.from_pretrained("small-music", device=...)` (timed as "load") then `.generate(prompt=..., duration=12, steps=8, cfg_scale=1.0, seed=42, duration_padding_sec=0.0)` (timed as "generate" — this call does text encoding + diffusion sampling + codec decode all together, no finer split available without instrumenting the library). `duration_padding_sec=0.0` was passed explicitly (default is 6.0s of padding then truncation) so PyTorch generates the same latent length as eacp rather than a padded-then-cropped one.
-- Benchmarked both `cpu` and `mps` (Metal Performance Shaders) PyTorch backends — MPS is the fairer "real GPU" comparison; CPU is included for context, not as an equivalent baseline. No CUDA on this machine (Apple Silicon).
-- **Hardware**: Apple M1 Pro (14-core GPU, Metal 3), confirmed as the actual device eacp's `Device::shared()` selects (not a software fallback — verified separately via a standalone check printing the real `MTLDevice` name).
-- **GPU utilization evidence for eacp**: sampled the non-privileged `ioreg -r -c IOAccelerator -d 1` `"Device Utilization %"` counter every 0.5s in a background thread for the whole eacp subprocess lifetime (load, encode, sample, decode).
-- Ran the full comparison **twice** (two independent processes per config, not just repeated calls in one process) to check stability. Raw JSON for both runs is in `Outputs/raw_results.json` and `Outputs/raw_results_run2.json`.
+**Headline (medium, 30 s, Release build):** eacp is **5.9× slower** than
+PyTorch-MPS warm at generating (prompt encode + sampling + decode: 15.2 s vs
+2.6 s): **2.3× slower at sampling** (3.2 s vs 1.35 s) and **9.9× slower at
+decoding** (12.0 s vs 1.2 s). It is **7× faster at loading** (1.3 s vs 9.5 s),
+which is why it is only 1.5× slower end to end from a cold process (18.3 s vs
+PyTorch's 9.5 s load + 2.8 s first generate).
+
+Decoding is where eacp loses most of its time: ~10.7 s of the ~12.6 s gap to
+PyTorch's warm generate, with the GPU ~98% busy the whole time, so it is doing
+far more GPU work than PyTorch's decode, not waiting on the host.
 
 ## Results
 
-| Config | Load (s) | Generate/Sample (s) | Total (s) | Run |
+Medians of four runs per side (ranges in brackets). Seconds.
+
+### medium, 30 s, 8 steps, seed 7
+
+Prompt: "Pendulum style rock drum and bass, live drums, distorted bass, guitars,
+174 bpm, energetic".
+
+| Phase | eacp Release | PyTorch MPS cold | PyTorch MPS warm | eacp vs warm |
 |---|---|---|---|---|
-| **eacp (small)** | *(not split; see load_encode_decode)* | 7.82 (sampling only) | 23.23 | 1 |
-| **eacp (small)** | *(not split)* | 7.96 (sampling only) | 20.41 | 2 |
-| eacp — load+encode+decode (everything but sampling) | 15.41 | — | — | 1 |
-| eacp — load+encode+decode (everything but sampling) | 12.45 | — | — | 2 |
-| **PyTorch CPU** | 5.88 | 3.56 | 9.45 | 1 |
-| **PyTorch CPU** | 5.42 | 3.47 | 8.89 | 2 |
-| **PyTorch MPS** | 6.04 | 7.47 | 13.51 | 1 |
-| **PyTorch MPS** | 5.95 | 1.95 | 7.90 | 2 |
+| Load (weights, codec, text encoder) | 1.33 (1.20–11.6) | 9.51 (9.06–10.25) | — | 7.2× faster |
+| Prompt encoding | 0.05 (0.05–0.13) | 0.24 (0.20–0.25) | 0.02 | 2.5× slower |
+| Sampling (8 steps) | 3.17 (2.89–4.73) | 1.30 (1.22–1.40) | 1.35 (1.13–1.93) | 2.3× slower |
+| Decoding | 11.96 (11.21–16.32) | 1.30 (1.20–2.01) | 1.21 (1.03–1.59) | 9.9× slower |
+| Generate (encode + sample + decode) | 15.18 | 2.83 (2.64–3.61) | 2.57 (2.18–3.55) | 5.9× slower |
+| Process total | 18.34 (15.83–28.96) | 12.3 (load + cold generate) | — | 1.5× slower |
 
-**GPU utilization during eacp's run** (non-privileged `ioreg` counter, sampled every 0.5s): peak **100%**, average **38–43%** across the whole process lifetime (load/idle periods pull the average down; utilization sat at 90–100% specifically during the sampling window and dropped to 0% during weight loading and idle gaps, exactly as expected for a load→compute→load→compute pipeline). This confirms eacp's compute genuinely lands on the GPU, not just that a `MTLDevice` object exists.
+eacp's run with an 11.6 s load had its checkpoint evicted from the page cache
+by the PyTorch run before it; the other three loaded in 1.2–1.4 s.
 
-## Headline
+### small (small-music), 12 s, 8 steps, seed 42, "lofi house loop"
 
-- **eacp is slower end-to-end than PyTorch on this machine for `small-music`** at this size/duration — roughly 2–2.5x PyTorch-CPU's total time, and 1.5–3x PyTorch-MPS's total time (MPS varied a lot between runs — see caveats).
-- eacp's own sampling phase (~7.8–8.0s, stable across runs) is in the same ballpark as PyTorch-MPS's *combined* encode+sample+decode phase (1.95–7.47s) — i.e. eacp's per-step DiT/attention compute itself isn't wildly out of line with PyTorch's GPU backend, but eacp spends much more time than PyTorch does in the load/encode/decode phases surrounding it (12.4–15.4s vs PyTorch's ~6s load).
-- The most likely cause, already flagged earlier in this project (not something discovered by this benchmark): every eacp kernel is constructed and Metal-compiled **inline on each call site** rather than as a persistent, reused pipeline object — this was called out as a known, unaddressed performance gap in the original `eacp-ml` foundation work and never revisited. Given eacp's own sampling loop alone dispatches hundreds of kernel calls (20 DiT layers × 8 steps, plus codec/text-encoder kernels), repeated shader compilation is a very plausible explanation for the load/encode/decode-phase gap, though this benchmark did not isolate that specific cause with a controlled experiment — it's the most likely explanation given what's already known, not a proven root cause.
+| Phase | eacp Release | PyTorch MPS cold | PyTorch MPS warm | eacp vs warm |
+|---|---|---|---|---|
+| Load | 1.75 (1.37–2.64) | 4.54 (4.30–4.85) | — | 2.6× faster |
+| Prompt encoding | 0.07 (0.05–0.08) | 0.23 (0.21–0.26) | 0.02 | 3× slower |
+| Sampling | 1.07 (0.88–1.35) | 0.38 (0.36–0.40) | 0.22 (0.21–0.22) | 5.0× slower |
+| Decoding | 1.03 (0.86–1.76) | 0.17 (0.15–0.21) | 0.09 | 11× slower |
+| Generate | 2.17 | 0.79 (0.73–0.84) | 0.33 (0.32–0.33) | 6.6× slower |
+| Process total | 4.19 (3.51–5.04) | 5.3 (load + cold generate) | — | 1.3× faster |
+
+### Memory
+
+| | eacp medium | PyTorch medium | eacp small | PyTorch small |
+|---|---|---|---|---|
+| Peak RSS (GB) | 19.26 | 19.36 | 5.49 | 5.45 |
+| Peak memory footprint (GB) | 17.7–20.0 | 14.7 | 4.8 | 4.9 |
+| GPU "In use system memory", peak over idle (GB) | 12.6–13.2 | 11.5–12.7 | 3.1–3.8 | 3.3–3.8 |
+
+RSS is the same on both sides. eacp's footprint (which counts Metal
+allocations; RSS does not see all of them) runs 3–5 GB above PyTorch's on
+medium.
+
+### GPU utilization (ioreg "Device Utilization %", 0.25 s samples)
+
+| Phase | eacp medium | PyTorch medium warm | eacp small | PyTorch small warm |
+|---|---|---|---|---|
+| Sampling | 77–96% | 99–100% | 68–81% | 31–98%\* |
+| Decoding | 87–99% | 99%† | 29–55% | —\* |
+| Load | — | 0–5% | — | 0–2% |
+
+\* PyTorch's small warm phases last 0.1–0.2 s, one sample or none, so these
+are noise. † One medium run caught 9% in a 1 s decode window; the other three
+were 99%.
+
+eacp's small decode runs the GPU at roughly half utilization: at 12 s it is
+dispatch- or sync-bound, while at 30 s the GPU work itself dominates. eacp's
+medium sampling sits a little under PyTorch's saturation.
+
+### Other builds and backends (one quiet run each)
+
+| medium, 30 s | Load | Text encoder load | Sampling | Decoding | Total |
+|---|---|---|---|---|---|
+| eacp, `build/` (no `CMAKE_BUILD_TYPE`, no `-O`) | 4.63 | 3.59 | 6.60 | 15.55 | 27.10 |
+| eacp Release (median above) | 1.33 | ~0.37 | 3.17 | 11.96 | 18.34 |
+| PyTorch CPU, cold generate | 8.90 | — | 7.52 | 20.84 | 37.6 |
+
+| small, 12 s | Load | Sampling | Decoding | Total |
+|---|---|---|---|---|
+| eacp, `build/` (unoptimized) | 5.27 | 4.18 | 4.32 | 14.24 |
+| eacp Release (median above) | 1.75 | 1.07 | 1.03 | 4.19 |
+
+The unoptimized build is 1.5× (medium) to 3.4× (small) slower overall.
+Most of that is host code: the T5Gemma load goes from ~0.4 s to 3.6–4 s, and
+sampling doubles or worse, which points to per-dispatch CPU work. Use
+`build-release` for any number worth quoting. PyTorch on CPU finished medium in
+38 s, slower than eacp Release in every phase.
+
+## Methodology
+
+- `benchmark.py` runs eacp, then PyTorch, one after the other and never at the
+  same time. Each side runs as its own process under `/usr/bin/time -l`, which
+  gives "maximum resident set size" and "peak memory footprint". A background
+  thread polls `ioreg -r -c IOAccelerator -d 1` every 0.25 s for "Device
+  Utilization %" and "In use system memory"; memory is reported as the peak
+  minus the idle reading taken just before the run.
+- **eacp**: `build-release/Apps/GPU/StableAudio3/StableAudio3` (Release,
+  `EACP_UNITY_BUILD=OFF`). `Main.cpp` prints "`<phase> took Xs`" for DiT
+  weights, codec, text encoder, prompt encoding, sampling, decoding, WAV write
+  and total. `CommandBuffer::commit()` blocks until the GPU finishes, so each
+  phase's time includes its GPU work. "Load" is DiT + codec + text encoder.
+  Checkpoints come from the app's own HF cache (not re-downloaded). The CLI
+  loads fresh every time and has no warm path, so each eacp run is one cold
+  process (the OS Metal shader cache stays warm between runs).
+- **PyTorch**: Stability-AI/stable-audio-3 at
+  `779434a908193105335fd8d833418603625b2859`, `uv sync` (torch 2.7.1).
+  `StableAudioModel.from_pretrained(name, device="mps")` is timed as load.
+  Then `generate(prompt, duration, steps=8, cfg_scale=1.0, seed,
+  duration_padding_sec=0.0, truncate_output_to_duration=True)` runs twice in
+  the same process: the first call is "cold", the second "warm". The
+  `generate` signature at this commit still takes all of these. To split
+  generate into phases without editing the library, the child wraps
+  `model.model.conditioner.forward` (prompt encoding) and
+  `model.model.pretransform.decode` (decoding) with `torch.mps.synchronize()`
+  before and after. Sampling is generate minus those two, so it also includes
+  generate's setup (noise, masks, schedule). This split is coarser than eacp's.
+- **Checkpoints**: PyTorch downloads from `main`. It resolved small-music to
+  `0fef1392cd842149a2b6d445e181c97608faac06` and medium to
+  `27b5a21b791b1b033d193a9e1e3ce78493f102f9`, the same revisions eacp pins in
+  `Checkpoints.h`. Both sides run the same weights.
+- **Precision**: fp32 on both sides. `from_pretrained` forces
+  `model_half=False` whenever CUDA is unavailable, and the loaded DiT's dtype
+  is `torch.float32` on MPS and CPU.
+- **Outputs**: all runs produce real, non-silent audio of the right length
+  (eacp 30.00 s / 12.00 s, 16-bit; PyTorch float WAV). The waveforms differ
+  because the two sides draw their initial noise from different RNGs. Timing
+  depends on length, not content.
+- Raw JSON per run: `Outputs/{medium-30s,small-12s}-run{1..4}.json`,
+  `*-nobuildtype.json`, `medium-30s-cpu.json`.
 
 ## Caveats
 
-- **Numeric precision differs**: eacp stores/computes primarily in fp32 through its EDSL kernels; PyTorch's `small-music` checkpoint loads as fp32 by default here too (`model_half=False` forced when not on CUDA, confirmed from `model.py`'s `from_pretrained`), so precision is actually matched in this specific comparison — but this is incidental to *this* benchmark's device choice (no CUDA available), not a guarantee across all configurations.
-- **PyTorch-MPS timing was unstable between runs** (7.47s → 1.95s generate time) — very likely MPS kernel/graph warm-up (first invocation on a freshly loaded model pays Metal shader compilation cost the same way eacp's per-call approach does every time, but PyTorch/MPS appears to cache and reuse compiled kernels across calls within a process, which a single `generate()` call per process here didn't get to benefit from on the first run). A fairer MPS number would run several `generate()` calls in one warmed-up process; this benchmark did not do that.
-- **Only two runs per config** — real timing variance (especially MPS's 3.8x swing) means these numbers should be read as ballpark, not precise.
-- **eacp's timing isn't split as finely as PyTorch's** — eacp only exposes a "sampling took Xs" marker; PyTorch's "generate" number bundles text encoding + sampling + decode together, and eacp's "load_encode_decode" number likewise bundles weight loading + prompt encoding + codec decode + WAV write. The two phase-splits aren't perfectly apples-to-apples, only the totals are directly comparable.
-- **`medium` not benchmarked** — see Methodology.
+- **This machine was shared, and the first two passes were thrown away.** In
+  pass one, other processes (a running Tamber app and browser video) held the GPU
+  at ~40% busy. In pass two, a concurrent cold build and clangd used
+  1100–1300% CPU. Those passes ran up to 2–3× slower on both sides (eacp medium
+  decode 26–30 s, PyTorch warm sampling 2.7–4.6 s). The runs reported here
+  started only once the GPU read under 10% and no process used more than 150%
+  CPU. Even so, eacp's medium total ranges from 15.8 to 29 s, so read these as
+  ±20% numbers, not precise ones.
+- PyTorch's warm number is the fair comparison for a long-lived process such
+  as a plugin or a server. eacp has no warm path, so its sampling and decode
+  times are single-call numbers. They look stable across runs, which suggests
+  pipeline compilation is not what is slowing them down.
+- The ioreg utilization counter says the GPU was busy, not how efficiently it
+  was used. At 0.25 s sampling it can say little about PyTorch's sub-second
+  phases.
+- Load times depend on the page cache. Every quoted run had its checkpoint
+  cached except eacp medium run 1 (11.6 s load).

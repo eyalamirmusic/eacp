@@ -1,0 +1,72 @@
+{
+  "config": {
+    "side": "pytorch",
+    "model": "medium",
+    "seconds": "30.0",
+    "steps": "8",
+    "seed": "7",
+    "prompt": "Pendulum style rock drum and bass, live drums, distorted bass, guitars, 174 bpm, energetic",
+    "eacp_binary": "/Users/jamiepond/eacp/build-release/Apps/GPU/StableAudio3/StableAudio3",
+    "pytorch_repo": "/private/tmp/claude-501/-Users-jamiepond-eacp/57a6cfa1-d1ab-45a3-bcbd-6de22650a429/scratchpad/stable-audio-3",
+    "device": "cpu",
+    "warmup": "False",
+    "timeout": "900.0",
+    "label": "medium-30s-cpu"
+  },
+  "pytorch_cpu": {
+    "load_start": 1790207110.710115,
+    "load_end": 1790207119.61154,
+    "load_seconds": 8.901425123214722,
+    "dtype": "torch.float32",
+    "model_half": false,
+    "audio_shape": [
+      1,
+      2,
+      1323000
+    ],
+    "cold": {
+      "start": 1790207119.611553,
+      "end": 1790207148.263883,
+      "generate_seconds": 28.65233016014099,
+      "prompt_encoding_seconds": 0.2906348705291748,
+      "decoding_seconds": 20.838061809539795,
+      "sampling_seconds": 7.5236334800720215,
+      "sampling_window": [
+        1790207119.905112,
+        1790207127.425219
+      ],
+      "decoding_window": [
+        1790207127.425219,
+        1790207148.2632809
+      ],
+      "gpu_whole_generate": {
+        "samples": 104,
+        "gpu_utilization_avg": 0.2,
+        "gpu_utilization_peak": 5,
+        "gpu_in_use_memory_peak_delta_gb": -0.01
+      },
+      "gpu_sampling": {
+        "samples": 27,
+        "gpu_utilization_avg": 0.1,
+        "gpu_utilization_peak": 3,
+        "gpu_in_use_memory_peak_delta_gb": -0.12
+      },
+      "gpu_decoding": {
+        "samples": 76,
+        "gpu_utilization_avg": 0.3,
+        "gpu_utilization_peak": 5,
+        "gpu_in_use_memory_peak_delta_gb": -0.01
+      }
+    },
+    "gpu_load": {
+      "samples": 33,
+      "gpu_utilization_avg": 0.3,
+      "gpu_utilization_peak": 5,
+      "gpu_in_use_memory_peak_delta_gb": 0.29
+    },
+    "wall_seconds": 39.46965789794922,
+    "peak_rss_gb": 19.36,
+    "peak_footprint_gb": 11.95,
+    "output_path": "/Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/pytorch_cpu_medium-30s-cpu.wav"
+  }
+}
