@@ -120,15 +120,81 @@ SameCodec::SameCodec(ResamplingBlockWeights encoderBlockToUse,
 {
 }
 
+namespace
+{
+std::string joinedName(const std::string& prefix, const std::string& suffix)
+{
+    return prefix.empty() ? suffix : prefix + "." + suffix;
+}
+
+ResamplingBlockWeights loadDecoderBlock(const SafetensorsFile& file,
+                                        const CodecConfig& config,
+                                        const std::string& prefix,
+                                        Device& device)
+{
+    return loadResamplingBlock(file,
+                               joinedName(prefix, "decoder.layers.3"),
+                               false,
+                               config.transformerDim,
+                               config.patchChannels,
+                               config.decoderMappingKernelSize == 3,
+                               config,
+                               device);
+}
+
+SoftNormBottleneckWeights loadBottleneck(const SafetensorsFile& file,
+                                         const std::string& prefix,
+                                         Device& device)
+{
+    return SoftNormBottleneckWeights {
+        .scalingFactor =
+            file.loadF32(joinedName(prefix, "bottleneck.scaling_factor"), device),
+        .bias = file.loadF32(joinedName(prefix, "bottleneck.bias"), device),
+        .runningStd = file.loadScalar(joinedName(prefix, "bottleneck.running_std")),
+    };
+}
+
+StereoWaveform decodeLatent(const Tensor& latent,
+                            int sampleCount,
+                            const ResamplingBlockWeights& decoderBlock,
+                            const Tensor& decoderProjectionWeight,
+                            const Tensor& decoderProjectionBias,
+                            const SoftNormBottleneckWeights& bottleneck,
+                            Device& device)
+{
+    auto projected = std::optional<Tensor> {};
+
+    auto commands = device.makeCommandBuffer();
+    {
+        auto pass = commands.beginCompute();
+
+        auto denormalized =
+            softNormBottleneckDecode(pass, latent, bottleneck, device);
+        projected = linear(pass,
+                           denormalized,
+                           decoderProjectionWeight,
+                           &decoderProjectionBias,
+                           device);
+    }
+    commands.commit();
+
+    auto waveformTensor =
+        applyTransformerResamplingBlock(*projected, decoderBlock, device);
+
+    auto waveformHost = HostMatrix {
+        waveformTensor.toHostF32(), waveformTensor.rows(), waveformTensor.cols()};
+
+    return patchedPretransformDecode(waveformHost, sampleCount);
+}
+} // namespace
+
 SameCodec SameCodec::loadFromSafetensors(const SafetensorsFile& file,
                                          const CodecConfig& config,
                                          const std::string& prefix,
                                          Device& device)
 {
     auto join = [&prefix](const std::string& suffix)
-    {
-        return prefix.empty() ? suffix : prefix + "." + suffix;
-    };
+    { return joinedName(prefix, suffix); };
 
     auto encoderBlock = loadResamplingBlock(file,
                                             join("encoder.layers.0"),
@@ -139,20 +205,8 @@ SameCodec SameCodec::loadFromSafetensors(const SafetensorsFile& file,
                                             config,
                                             device);
 
-    auto decoderBlock = loadResamplingBlock(file,
-                                            join("decoder.layers.3"),
-                                            false,
-                                            config.transformerDim,
-                                            config.patchChannels,
-                                            config.decoderMappingKernelSize == 3,
-                                            config,
-                                            device);
-
-    auto bottleneck = SoftNormBottleneckWeights {
-        .scalingFactor = file.loadF32(join("bottleneck.scaling_factor"), device),
-        .bias = file.loadF32(join("bottleneck.bias"), device),
-        .runningStd = file.loadScalar(join("bottleneck.running_std")),
-    };
+    auto decoderBlock = loadDecoderBlock(file, config, prefix, device);
+    auto bottleneck = loadBottleneck(file, prefix, device);
 
     return SameCodec {std::move(encoderBlock),
                       file.loadF32(join("encoder.layers.2.weight"), device),
@@ -189,23 +243,42 @@ Tensor SameCodec::encode(const StereoWaveform& waveform, Device& device) const
 
 StereoWaveform SameCodec::decode(const Tensor& latent, int sampleCount, Device& device) const
 {
-    auto projected = std::optional<Tensor> {};
-
-    auto commands = device.makeCommandBuffer();
-    {
-        auto pass = commands.beginCompute();
-
-        auto denormalized = softNormBottleneckDecode(pass, latent, bottleneck, device);
-        projected =
-            linear(pass, denormalized, decoderProjectionWeight, &decoderProjectionBias, device);
-    }
-    commands.commit();
-
-    auto waveformTensor = applyTransformerResamplingBlock(*projected, decoderBlock, device);
-
-    auto waveformHost =
-        HostMatrix {waveformTensor.toHostF32(), waveformTensor.rows(), waveformTensor.cols()};
-
-    return patchedPretransformDecode(waveformHost, sampleCount);
+    return decodeLatent(latent,
+                        sampleCount,
+                        decoderBlock,
+                        decoderProjectionWeight,
+                        decoderProjectionBias,
+                        bottleneck,
+                        device);
 }
+
+SameDecoder SameDecoder::loadFromSafetensors(const SafetensorsFile& file,
+                                             const CodecConfig& config,
+                                             const std::string& prefix,
+                                             Device& device)
+{
+    auto join = [&prefix](const std::string& suffix)
+    { return joinedName(prefix, suffix); };
+
+    return SameDecoder {
+        .decoderBlock = loadDecoderBlock(file, config, prefix, device),
+        .decoderProjectionWeight =
+            file.loadF32(join("decoder.layers.1.weight"), device),
+        .decoderProjectionBias = file.loadF32(join("decoder.layers.1.bias"), device),
+        .bottleneck = loadBottleneck(file, prefix, device),
+    };
+}
+
+StereoWaveform
+    SameDecoder::decode(const Tensor& latent, int sampleCount, Device& device) const
+{
+    return decodeLatent(latent,
+                        sampleCount,
+                        decoderBlock,
+                        decoderProjectionWeight,
+                        decoderProjectionBias,
+                        bottleneck,
+                        device);
+}
+
 }

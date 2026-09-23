@@ -48,4 +48,25 @@ private:
              ML::Tensor decoderProjectionBiasToUse,
              SoftNormBottleneckWeights bottleneckToUse);
 };
+
+// SameCodec's decoding half on its own, for generation, which never encodes:
+// loading it leaves the encoder's weights on disk.
+struct SameDecoder
+{
+    static SameDecoder
+        loadFromSafetensors(const ML::SafetensorsFile& file,
+                            const CodecConfig& config = CodecConfig::sameS(),
+                            const std::string& prefix = "pretransform.model",
+                            GPU::Device& device = GPU::Device::shared());
+
+    StereoWaveform decode(const ML::Tensor& latent,
+                          int sampleCount,
+                          GPU::Device& device = GPU::Device::shared()) const;
+
+    ResamplingBlockWeights decoderBlock;
+    ML::Tensor decoderProjectionWeight;
+    ML::Tensor decoderProjectionBias;
+
+    SoftNormBottleneckWeights bottleneck;
+};
 }

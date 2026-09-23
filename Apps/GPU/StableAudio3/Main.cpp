@@ -118,23 +118,31 @@ int main(int argc, char** argv)
         isMedium ? SA3Codec::CodecConfig::sameL() : SA3Codec::CodecConfig::sameS();
 
     auto modelPath = modelFile.str();
-    auto file = SafetensorsFile::open(modelFile);
-
-    if (!file.has_value())
-    {
-        std::fprintf(stderr, "Could not open checkpoint at %s\n", modelPath.c_str());
-        return 1;
-    }
-
-    std::printf("Loading DiT weights (%s)...\n", options.model.c_str());
+    auto weights = std::optional<SA3DiT::Weights> {};
+    auto decoder = std::optional<SA3Codec::SameDecoder> {};
     auto start = Clock::now();
-    auto weights = SA3DiT::loadWeights(*file, ditConfig, device);
-    std::printf("DiT weights took %.2fs\n", secondsSince(start));
 
-    std::printf("Loading SAME codec...\n");
-    start = Clock::now();
-    auto codec = SA3Codec::SameCodec::loadFromSafetensors(*file, codecConfig);
-    std::printf("Codec took %.2fs\n", secondsSince(start));
+    {
+        auto file = SafetensorsFile::open(modelFile);
+
+        if (!file.has_value())
+        {
+            std::fprintf(
+                stderr, "Could not open checkpoint at %s\n", modelPath.c_str());
+            return 1;
+        }
+
+        std::printf("Loading DiT weights (%s)...\n", options.model.c_str());
+        start = Clock::now();
+        weights = SA3DiT::loadWeights(*file, ditConfig, device);
+        std::printf("DiT weights took %.2fs\n", secondsSince(start));
+
+        std::printf("Loading SAME decoder...\n");
+        start = Clock::now();
+        decoder = SA3Codec::SameDecoder::loadFromSafetensors(
+            *file, codecConfig, "pretransform.model", device);
+        std::printf("Decoder took %.2fs\n", secondsSince(start));
+    }
 
     std::printf("Loading T5Gemma text encoder...\n");
     start = Clock::now();
@@ -161,6 +169,7 @@ int main(int argc, char** argv)
     }
 
     promptCommands.commit();
+    textEncoder.reset();
     std::printf("Prompt encoding took %.2fs\n", secondsSince(start));
 
     auto sampleCount = (int) std::lround((double) options.seconds * sampleRate);
@@ -174,7 +183,7 @@ int main(int argc, char** argv)
     start = Clock::now();
 
     auto latent =
-        SA3Sampler::pingpongSample(weights,
+        SA3Sampler::pingpongSample(*weights,
                                    promptEncoding->embeddings,
                                    latentLength,
                                    options.seconds,
@@ -184,9 +193,12 @@ int main(int argc, char** argv)
 
     std::printf("Sampling took %.2fs\n", secondsSince(start));
 
+    weights.reset();
+    promptEncoding.reset();
+
     std::printf("Decoding audio...\n");
     start = Clock::now();
-    auto waveform = codec.decode(latent, sampleCount, device);
+    auto waveform = decoder->decode(latent, sampleCount, device);
     std::printf("Decoding took %.2fs\n", secondsSince(start));
 
     start = Clock::now();
