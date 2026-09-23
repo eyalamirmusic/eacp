@@ -10,8 +10,12 @@
 #include "../Timing/FrameTimer.h"
 
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <typeindex>
 
 namespace eacp::Graphics
 {
@@ -333,6 +337,23 @@ public:
     // real storage.
     void noteBufferCreated() { ++bufferCount; }
 
+    // One T per Device, made on first use and destroyed with the Device, before
+    // the backend device itself. For a module that keeps state which is only
+    // valid on this Device - compiled pipelines, say - and must not outlive it
+    // or be found again by a later Device at the same address. The lookup is
+    // safe from any thread; what T does with that is T's own business.
+    template <typename T>
+    T& attachment()
+    {
+        auto lock = std::scoped_lock {attachmentMutex};
+        auto& slot = attachments[std::type_index {typeid(T)}];
+
+        if (slot == nullptr)
+            slot = std::make_shared<T>();
+
+        return *static_cast<T*>(slot.get());
+    }
+
 private:
     // Makes this Device follow the main thread rather than the one that
     // constructed it. Private because Device::shared() is the only caller and
@@ -352,5 +373,8 @@ private:
 
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
+
+    std::mutex attachmentMutex;
+    std::map<std::type_index, std::shared_ptr<void>> attachments;
 };
 } // namespace eacp::GPU

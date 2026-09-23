@@ -2,6 +2,7 @@
 
 #include "Ops.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
 #include <eacp/ML/Kernels/Activation.h>
 #include <eacp/ML/Kernels/Attention.h>
@@ -49,12 +50,11 @@ Tensor rmsNormPerHead(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = RMSNormKernel {};
+    auto& kernel = GPU::cachedKernel<RMSNormKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.output = result.buffer();
     kernel.epsilon = epsilon;
-    kernel.prepare(device);
     kernel.dispatch(pass, rowCount * heads, headDimToUse);
 
     return result;
@@ -372,5 +372,25 @@ Tensor forward(ComputePass& pass,
     post = addTensors(pass, post, projOut, device);
 
     return post;
+}
+
+void addWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<LinearF32>();
+    warmup.add<AddBiasRows>();
+    warmup.add<RMSNormKernel>();
+    warmup.add<RoPEKernel>();
+    warmup.add<AttentionScoresKernel>();
+    warmup.add<AttentionRowStatsKernel>();
+    warmup.add<AttentionWeightedSumKernel>();
+    warmup.add<SwiGLUGateKernel>();
+    warmup.add<ActivationKernel>(ActivationKind::SiLU);
+    warmup.add<AddTensorsKernel>();
+    warmup.add<SubtractTensorsKernel>();
+    warmup.add<AdaLNModulateKernel>();
+    warmup.add<SigmoidGateKernel>();
+    warmup.add<CopyRowsKernel>();
+    warmup.add<SliceColumnsKernel>();
+    warmup.add<ExpoFourierFeaturesKernel>();
 }
 }

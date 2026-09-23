@@ -1,5 +1,6 @@
 #include "SwiGLU.h"
 
+#include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/Frame/ComputePass.h"
 #include "Linear.h"
 
@@ -46,10 +47,9 @@ Tensor swiGLU(ComputePass& pass,
     auto hidden = linear(pass, input, proj0Weight, &proj0Bias, device);
     auto gated = Tensor::uninitializedF32({rows, inner}, device);
 
-    auto gateKernel = SwiGLUGateKernel {};
+    auto& gateKernel = cachedKernel<SwiGLUGateKernel>(device);
     gateKernel.hidden = hidden.buffer();
     gateKernel.output = gated.buffer();
-    gateKernel.prepare(device);
     gateKernel.dispatch(pass, rows, inner);
 
     return linear(pass, gated, proj2Weight, &proj2Bias, device);

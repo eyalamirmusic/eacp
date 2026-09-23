@@ -3,6 +3,7 @@
 #include "../Device/Device.h"
 #include "../Frame/ComputePass.h"
 #include "../Pipeline/ComputePipeline.h"
+#include "../Pipeline/ComputePipelineCache.h"
 #include "ShaderProgram.h"
 
 #include <eacp/Core/Utils/Logging.h>
@@ -174,6 +175,11 @@ public:
     // on the Device whose passes will dispatch it. A pipeline belongs to the
     // device that compiled it, so a kernel a worker Device dispatches is
     // compiled on that Device rather than on the process-wide one.
+    //
+    // Only the first kernel with a given source compiles it: every later one,
+    // this program's type or another that emitted the same text, shares that
+    // library and pipeline (compileComputeCached). Safe to call from a thread
+    // other than the Device's, as compiling a kernel always has been.
     void prepare(Device& device)
     {
         reportThreadgroupMemoryOverBudget(device);
@@ -189,8 +195,7 @@ public:
             return;
         }
 
-        shaderLibrary.emplace(device, generated.source);
-        pipelineState.emplace(device, *shaderLibrary);
+        compiled = compileComputeCached(device, generated.source);
 
         reportSimdWidthMismatch();
     }
@@ -242,7 +247,7 @@ public:
                && (!needsBFloat16 || device.supportsBFloat16SimdMatrix());
     }
 
-    const ComputePipeline& pipeline() const { return *pipelineState; }
+    const ComputePipeline& pipeline() const { return compiled->pipeline; }
 
     // Whether prepare() left something dispatchable. False before prepare(), of
     // a refused build, and of a shader that would not compile - all three being
@@ -250,7 +255,7 @@ public:
     // would rather know than find out asks here.
     bool isValid() const
     {
-        return pipelineState.has_value() && pipelineState->isValid();
+        return compiled != nullptr && compiled->pipeline.isValid();
     }
 
     // Re-packs the current uniform values, appends the element count the
@@ -789,7 +794,7 @@ private:
         if (!graph().usesSimdReduction() && !graph().usesSimdGroups())
             return;
 
-        auto width = pipelineState->threadExecutionWidth();
+        auto width = compiled->pipeline.threadExecutionWidth();
 
         if (width <= 0 || width == ComputeProgram::simdWidth)
             return;
@@ -813,8 +818,7 @@ private:
     // complaint about a type.
     void buildRefusedPipeline(Device& device)
     {
-        shaderLibrary.emplace(device, ShaderSource {});
-        pipelineState.emplace(device, *shaderLibrary);
+        compiled = std::make_shared<const CompiledCompute>(device, ShaderSource {});
     }
 
     void reportUnsupportedPackedSimdMatrix(const Device& device) const
@@ -879,7 +883,6 @@ private:
     GeneratedShader generated;
     Vector<std::byte> uniformBytes;
 
-    std::optional<ShaderLibrary> shaderLibrary;
-    std::optional<ComputePipeline> pipelineState;
+    std::shared_ptr<const CompiledCompute> compiled;
 };
 } // namespace eacp::GPU

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/ML/Tensor/Tensor.h>
 
@@ -79,4 +80,6 @@ ML::Tensor conv1dUnfoldGpu(GPU::ComputePass& pass,
                            int inChannels,
                            int kernelSize,
                            GPU::Device& device = GPU::Device::shared());
+
+void addGpuOpsWarmupKernels(GPU::KernelWarmup& warmup);
 }

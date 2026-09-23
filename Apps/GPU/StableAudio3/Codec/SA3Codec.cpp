@@ -1,7 +1,9 @@
 #include "SA3Codec.h"
 
+#include "GpuOps.h"
 #include "HostMatrix.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Kernels/Linear.h>
 
@@ -281,4 +283,10 @@ StereoWaveform
                         device);
 }
 
+void addWarmupKernels(KernelWarmup& warmup)
+{
+    addGpuOpsWarmupKernels(warmup);
+    addCodecTransformerBlockWarmupKernels(warmup);
+    addSoftNormBottleneckWarmupKernels(warmup);
+}
 }

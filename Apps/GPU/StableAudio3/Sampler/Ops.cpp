@@ -1,5 +1,6 @@
 #include "Ops.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 
 namespace eacp::SA3Sampler
@@ -37,11 +38,10 @@ Tensor scaleAndAdd(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
-    auto kernel = ScaleAndAddKernel {};
+    auto& kernel = GPU::cachedKernel<ScaleAndAddKernel>(device);
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, a.count(), scaleA, scaleB);
 
     return result;

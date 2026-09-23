@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/ML/Tensor/Tensor.h>
 
@@ -22,4 +23,6 @@ ML::Tensor softNormBottleneckDecode(GPU::ComputePass& pass,
                                     const ML::Tensor& input,
                                     const SoftNormBottleneckWeights& weights,
                                     GPU::Device& device = GPU::Device::shared());
+
+void addSoftNormBottleneckWarmupKernels(GPU::KernelWarmup& warmup);
 }

@@ -41,10 +41,12 @@ target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
 
 target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
+        Codegen/KernelCache.cpp
         CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
         Frame/Frame.cpp
         Frame/RenderPass.cpp
+        Pipeline/ComputePipelineCache.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp)

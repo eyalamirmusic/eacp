@@ -6,6 +6,7 @@
 #include "TransformerResamplingBlock.h"
 
 #include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/ML/Loader/SafetensorsFile.h>
 #include <eacp/ML/Tensor/Tensor.h>
@@ -48,6 +49,10 @@ private:
              ML::Tensor decoderProjectionBiasToUse,
              SoftNormBottleneckWeights bottleneckToUse);
 };
+
+// Every kernel the codec dispatches, encoding and decoding, for a caller to
+// build ahead of its first use.
+void addWarmupKernels(GPU::KernelWarmup& warmup);
 
 // SameCodec's decoding half on its own, for generation, which never encodes:
 // loading it leaves the encoder's weights on disk.

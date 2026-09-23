@@ -3,6 +3,7 @@
 #include "Ops.h"
 #include "Weights.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Tensor/Tensor.h>
@@ -37,4 +38,8 @@ ML::Tensor forward(GPU::ComputePass& pass,
                    float secondsTotal,
                    const ML::Tensor& crossAttnContext,
                    GPU::Device& device = GPU::Device::shared());
+
+// Every kernel a forward pass dispatches, for a caller to build ahead of the
+// first step.
+void addWarmupKernels(GPU::KernelWarmup& warmup);
 }

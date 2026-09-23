@@ -1,5 +1,6 @@
 #include "GemmaAttention.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Kernels/Attention.h>
 
@@ -66,7 +67,7 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
-    auto scoresKernel = GemmaAttentionScoresKernel {};
+    auto& scoresKernel = GPU::cachedKernel<GemmaAttentionScoresKernel>(device);
     scoresKernel.query = query.buffer();
     scoresKernel.key = key.buffer();
     scoresKernel.additiveMask = additiveMask.buffer();
@@ -74,17 +75,15 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     scoresKernel.headDimension = (std::uint32_t) headDim;
     scoresKernel.scale = scale;
     scoresKernel.softcap = softcap;
-    scoresKernel.prepare(device);
     scoresKernel.dispatch(pass, rows, heads, cols);
 
-    auto statsKernel = AttentionRowStatsKernel {};
+    auto& statsKernel = GPU::cachedKernel<AttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
     statsKernel.rowMax = rowMax.buffer();
     statsKernel.rowSum = rowSum.buffer();
-    statsKernel.prepare(device);
     statsKernel.dispatch(pass, rows * heads, cols);
 
-    auto weightedSumKernel = AttentionWeightedSumKernel {};
+    auto& weightedSumKernel = GPU::cachedKernel<AttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();
     weightedSumKernel.scores = scores.buffer();
     weightedSumKernel.rowMax = rowMax.buffer();
@@ -92,7 +91,6 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     weightedSumKernel.output = output.buffer();
     weightedSumKernel.headDimension = (std::uint32_t) headDim;
     weightedSumKernel.columnCount = (std::uint32_t) cols;
-    weightedSumKernel.prepare(device);
     weightedSumKernel.dispatch(pass, rows, heads, headDim);
 
     return output;

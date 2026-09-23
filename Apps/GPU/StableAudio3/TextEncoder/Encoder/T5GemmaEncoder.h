@@ -1,5 +1,6 @@
 #pragma once
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/SafetensorsFile.h>
 #include <eacp/ML/Tensor/Tensor.h>
@@ -17,6 +18,8 @@ public:
     static constexpr int numLayers = 12;
     static constexpr int numHeads = 12;
     static constexpr int headDim = 64;
+
+    static void addWarmupKernels(GPU::KernelWarmup& warmup);
 
     static std::optional<T5GemmaEncoder> load(const std::string& safetensorsPath,
                                               GPU::Device& device = GPU::Device::shared());

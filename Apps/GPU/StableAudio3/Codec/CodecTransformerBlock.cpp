@@ -2,6 +2,7 @@
 
 #include "GpuOps.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Kernels/Attention.h>
 #include <eacp/ML/Kernels/Linear.h>
@@ -28,13 +29,12 @@ Tensor dynamicTanhPerHead(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = DynamicTanhKernel {};
+    auto& kernel = GPU::cachedKernel<DynamicTanhKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = norm.gamma.buffer();
     kernel.beta = norm.beta.buffer();
     kernel.output = result.buffer();
     kernel.alpha = norm.alpha;
-    kernel.prepare(device);
     kernel.dispatch(pass, rowCount * heads, headDim);
 
     return result;
@@ -89,10 +89,9 @@ Tensor sinGatedFeedForward(ComputePass& pass,
     auto hidden = linear(pass, input, proj0Weight, &proj0Bias, device);
     auto gated = Tensor::uninitializedF32({rows, inner}, device);
 
-    auto gateKernel = SinGateKernel {};
+    auto& gateKernel = GPU::cachedKernel<SinGateKernel>(device);
     gateKernel.hidden = hidden.buffer();
     gateKernel.output = gated.buffer();
-    gateKernel.prepare(device);
     gateKernel.dispatch(pass, rows, inner);
 
     return linear(pass, gated, proj2Weight, &proj2Bias, device);
@@ -192,5 +191,18 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                               device);
 
     return addTensorsGpu(pass, afterAttention, ffOutput, device);
+}
+
+void addCodecTransformerBlockWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<DynamicTanhKernel>();
+    warmup.add<SinGateKernel>();
+    warmup.add<LinearF32>();
+    warmup.add<AddBiasRows>();
+    warmup.add<RoPEKernel>();
+    warmup.add<AttentionScoresKernel>();
+    warmup.add<AttentionRowStatsKernel>();
+    warmup.add<AttentionWeightedSumKernel>();
+    warmup.add<SwiGLUGateKernel>();
 }
 }

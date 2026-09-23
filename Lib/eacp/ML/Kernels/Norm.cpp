@@ -1,5 +1,6 @@
 #include "Norm.h"
 
+#include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/Frame/ComputePass.h"
 
 namespace eacp::ML
@@ -194,12 +195,11 @@ Tensor rmsNorm(ComputePass& pass,
     auto dim = input.cols();
     auto result = Tensor::uninitializedF32({rows, dim}, device);
 
-    auto kernel = RMSNormKernel {};
+    auto& kernel = cachedKernel<RMSNormKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.output = result.buffer();
     kernel.epsilon = epsilon;
-    kernel.prepare(device);
     kernel.dispatch(pass, rows, dim);
 
     return result;
@@ -218,23 +218,21 @@ Tensor layerNorm(ComputePass& pass,
 
     if (beta != nullptr)
     {
-        auto kernel = LayerNormKernel {};
+        auto& kernel = cachedKernel<LayerNormKernel>(device);
         kernel.input = input.buffer();
         kernel.gamma = gamma.buffer();
         kernel.beta = beta->buffer();
         kernel.output = result.buffer();
         kernel.epsilon = epsilon;
-        kernel.prepare(device);
         kernel.dispatch(pass, rows, dim);
     }
     else
     {
-        auto kernel = LayerNormNoBiasKernel {};
+        auto& kernel = cachedKernel<LayerNormNoBiasKernel>(device);
         kernel.input = input.buffer();
         kernel.gamma = gamma.buffer();
         kernel.output = result.buffer();
         kernel.epsilon = epsilon;
-        kernel.prepare(device);
         kernel.dispatch(pass, rows, dim);
     }
 
@@ -252,13 +250,12 @@ Tensor dynamicTanh(ComputePass& pass,
     auto dim = input.cols();
     auto result = Tensor::uninitializedF32({rows, dim}, device);
 
-    auto kernel = DynamicTanhKernel {};
+    auto& kernel = cachedKernel<DynamicTanhKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.beta = beta.buffer();
     kernel.output = result.buffer();
     kernel.alpha = alpha;
-    kernel.prepare(device);
     kernel.dispatch(pass, rows, dim);
 
     return result;

@@ -1,5 +1,6 @@
 #include "Linear.h"
 
+#include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/CommandBuffer/CommandBuffer.h"
 #include "../../GPU/Frame/ComputePass.h"
 
@@ -293,29 +294,26 @@ Tensor linear(ComputePass& pass,
 
     if (weight.isPacked())
     {
-        auto kernel = LinearPackedHalf {};
+        auto& kernel = cachedKernel<LinearPackedHalf>(device);
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();
-        kernel.prepare(device);
         kernel.dispatch(pass, rows, columns, inner);
     }
     else
     {
-        auto kernel = LinearF32 {};
+        auto& kernel = cachedKernel<LinearF32>(device);
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();
-        kernel.prepare(device);
         kernel.dispatch(pass, rows, columns, inner);
     }
 
     if (bias != nullptr)
     {
-        auto biasKernel = AddBiasRows {};
+        auto& biasKernel = cachedKernel<AddBiasRows>(device);
         biasKernel.values = result.buffer();
         biasKernel.bias = bias->buffer();
-        biasKernel.prepare(device);
         biasKernel.dispatch(pass, rows, columns);
     }
 

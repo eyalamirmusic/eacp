@@ -1,6 +1,7 @@
 #pragma once
 
 #include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/ML/Tensor/Tensor.h>
 
@@ -36,4 +37,6 @@ ML::Tensor applyCodecTransformerBlock(GPU::ComputePass& pass,
                                       const CodecBlockWeights& weights,
                                       const ML::Tensor* attentionMask = nullptr,
                                       GPU::Device& device = GPU::Device::shared());
+
+void addCodecTransformerBlockWarmupKernels(GPU::KernelWarmup& warmup);
 }

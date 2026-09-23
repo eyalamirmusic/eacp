@@ -1,5 +1,6 @@
 #include "GpuOps.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 
 namespace eacp::SA3Codec
@@ -354,11 +355,10 @@ Tensor sliceRowsGpu(ComputePass& pass, const Tensor& input, int startRow, int ro
     auto columns = input.cols();
     auto result = Tensor::uninitializedF32({rowCount, columns}, device);
 
-    auto kernel = SliceRowsKernel {};
+    auto& kernel = GPU::cachedKernel<SliceRowsKernel>(device);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
     kernel.startRow = (std::uint32_t) startRow;
-    kernel.prepare(device);
     kernel.dispatch(pass, rowCount, columns);
 
     return result;
@@ -373,12 +373,11 @@ Tensor sliceColumnsGpu(ComputePass& pass,
     auto rows = input.rows();
     auto result = Tensor::uninitializedF32({rows, columnCount}, device);
 
-    auto kernel = SliceColumnsKernel {};
+    auto& kernel = GPU::cachedKernel<SliceColumnsKernel>(device);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
     kernel.inputColumnCount = (std::uint32_t) input.cols();
     kernel.startColumn = (std::uint32_t) startColumn;
-    kernel.prepare(device);
     kernel.dispatch(pass, rows, columnCount);
 
     return result;
@@ -390,11 +389,10 @@ void writeRowsIntoGpu(ComputePass& pass,
                       const Tensor& source,
                       Device& device)
 {
-    auto kernel = WriteRowsIntoKernel {};
+    auto& kernel = GPU::cachedKernel<WriteRowsIntoKernel>(device);
     kernel.source = source.buffer();
     kernel.destination = destination.buffer();
     kernel.destinationRowOffset = (std::uint32_t) destinationRowOffset;
-    kernel.prepare(device);
     kernel.dispatch(pass, source.rows(), source.cols());
 }
 
@@ -402,9 +400,8 @@ Tensor zerosGpu(ComputePass& pass, int rows, int columns, Device& device)
 {
     auto result = Tensor::uninitializedF32({rows, columns}, device);
 
-    auto kernel = FillZeroKernel {};
+    auto& kernel = GPU::cachedKernel<FillZeroKernel>(device);
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, rows * columns);
 
     return result;
@@ -438,11 +435,10 @@ Tensor addTensorsGpu(ComputePass& pass, const Tensor& a, const Tensor& b, Device
 {
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
-    auto kernel = ElementwiseAddKernel {};
+    auto& kernel = GPU::cachedKernel<ElementwiseAddKernel>(device);
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, a.count());
 
     return result;
@@ -452,11 +448,10 @@ Tensor subtractTensorsGpu(ComputePass& pass, const Tensor& a, const Tensor& b, D
 {
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
-    auto kernel = ElementwiseSubtractKernel {};
+    auto& kernel = GPU::cachedKernel<ElementwiseSubtractKernel>(device);
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, a.count());
 
     return result;
@@ -475,14 +470,13 @@ Tensor foldWithNewTokensGpu(ComputePass& pass,
 
     auto result = Tensor::uninitializedF32({numGroups * subChunkSize, columns}, device);
 
-    auto kernel = FoldWithNewTokensKernel {};
+    auto& kernel = GPU::cachedKernel<FoldWithNewTokensKernel>(device);
     kernel.input = input.buffer();
     kernel.newTokens = newTokens.buffer();
     kernel.output = result.buffer();
     kernel.inputSegSize = (std::uint32_t) inputSegSize;
     kernel.subChunkSize = (std::uint32_t) subChunkSize;
     kernel.inputRowCount = (std::uint32_t) input.rows();
-    kernel.prepare(device);
     kernel.dispatch(pass, numGroups * subChunkSize, columns);
 
     return result;
@@ -499,13 +493,12 @@ Tensor unfoldLastSegmentGpu(ComputePass& pass,
 
     auto result = Tensor::uninitializedF32({numGroups * outputSegSize, columns}, device);
 
-    auto kernel = UnfoldLastSegmentKernel {};
+    auto& kernel = GPU::cachedKernel<UnfoldLastSegmentKernel>(device);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
     kernel.subChunkSize = (std::uint32_t) subChunkSize;
     kernel.outputSegSize = (std::uint32_t) outputSegSize;
     kernel.startLocal = (std::uint32_t) (subChunkSize - outputSegSize);
-    kernel.prepare(device);
     kernel.dispatch(pass, numGroups * outputSegSize, columns);
 
     return result;
@@ -520,11 +513,10 @@ Tensor buildSlidingWindowMaskGpu(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32({rows, cols}, device);
 
-    auto kernel = SlidingWindowMaskKernel {};
+    auto& kernel = GPU::cachedKernel<SlidingWindowMaskKernel>(device);
     kernel.output = result.buffer();
     kernel.leftRadius = (std::uint32_t) leftRadius;
     kernel.rightRadius = (std::uint32_t) rightRadius;
-    kernel.prepare(device);
     kernel.dispatch(pass, rows, cols);
 
     return result;
@@ -535,13 +527,26 @@ Tensor conv1dUnfoldGpu(ComputePass& pass, const Tensor& input, int inChannels, i
     auto rows = input.rows();
     auto result = Tensor::uninitializedF32({rows, inChannels * kernelSize}, device);
 
-    auto kernel = Conv1dUnfoldKernel {};
+    auto& kernel = GPU::cachedKernel<Conv1dUnfoldKernel>(device);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
     kernel.padding = (std::uint32_t) ((kernelSize - 1) / 2);
-    kernel.prepare(device);
     kernel.dispatch(pass, rows, inChannels, kernelSize);
 
     return result;
+}
+
+void addGpuOpsWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<SliceRowsKernel>();
+    warmup.add<SliceColumnsKernel>();
+    warmup.add<WriteRowsIntoKernel>();
+    warmup.add<FillZeroKernel>();
+    warmup.add<ElementwiseAddKernel>();
+    warmup.add<ElementwiseSubtractKernel>();
+    warmup.add<FoldWithNewTokensKernel>();
+    warmup.add<UnfoldLastSegmentKernel>();
+    warmup.add<SlidingWindowMaskKernel>();
+    warmup.add<Conv1dUnfoldKernel>();
 }
 }

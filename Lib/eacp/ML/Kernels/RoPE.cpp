@@ -1,5 +1,6 @@
 #include "RoPE.h"
 
+#include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/Frame/ComputePass.h"
 
 namespace eacp::ML
@@ -60,12 +61,11 @@ Tensor applyRoPE(ComputePass& pass,
     auto rows = input.rows();
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = RoPEKernel {};
+    auto& kernel = cachedKernel<RoPEKernel>(device);
     kernel.input = input.buffer();
     kernel.invFreq = invFreq.buffer();
     kernel.output = result.buffer();
     kernel.halfRotaryDimension = (std::uint32_t) invFreq.count();
-    kernel.prepare(device);
     kernel.dispatch(pass, rows, heads, headDim);
 
     return result;

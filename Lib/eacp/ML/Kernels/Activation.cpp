@@ -1,5 +1,6 @@
 #include "Activation.h"
 
+#include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/Frame/ComputePass.h"
 
 namespace eacp::ML
@@ -65,10 +66,9 @@ Tensor applyActivation(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = ActivationKernel {kind};
+    auto& kernel = cachedKernel<ActivationKernel>(device, kind);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, input.count());
 
     return result;

@@ -2,6 +2,7 @@
 
 #include "Ops.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 
@@ -85,5 +86,10 @@ Tensor pingpongSample(const SA3DiT::Weights& weights,
 
     return pingpongSampleWithModel(
         model, latentLength, SA3DiT::ioChannels, steps, noiseSource, device);
+}
+
+void addWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<ScaleAndAddKernel>();
 }
 }

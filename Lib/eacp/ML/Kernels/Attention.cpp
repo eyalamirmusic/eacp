@@ -1,5 +1,6 @@
 #include "Attention.h"
 
+#include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/Frame/ComputePass.h"
 #include "Norm.h"
 
@@ -27,12 +28,11 @@ Tensor rmsNormPerHead(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = RMSNormKernel {};
+    auto& kernel = cachedKernel<RMSNormKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.output = result.buffer();
     kernel.epsilon = epsilon;
-    kernel.prepare(device);
     kernel.dispatch(pass, rowCount * heads, headDim);
 
     return result;
@@ -242,24 +242,22 @@ Tensor attention(ComputePass& pass,
     auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
-    auto scoresKernel = AttentionScoresKernel {};
+    auto& scoresKernel = cachedKernel<AttentionScoresKernel>(device);
     scoresKernel.query = normalizedQuery.buffer();
     scoresKernel.key = normalizedKey.buffer();
     scoresKernel.additiveMask = mask.buffer();
     scoresKernel.scores = scores.buffer();
     scoresKernel.headDimension = (std::uint32_t) headDim;
     scoresKernel.scale = 1.f / std::sqrt((float) headDim);
-    scoresKernel.prepare(device);
     scoresKernel.dispatch(pass, rows, heads, cols);
 
-    auto statsKernel = AttentionRowStatsKernel {};
+    auto& statsKernel = cachedKernel<AttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
     statsKernel.rowMax = rowMax.buffer();
     statsKernel.rowSum = rowSum.buffer();
-    statsKernel.prepare(device);
     statsKernel.dispatch(pass, rows * heads, cols);
 
-    auto weightedSumKernel = AttentionWeightedSumKernel {};
+    auto& weightedSumKernel = cachedKernel<AttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();
     weightedSumKernel.scores = scores.buffer();
     weightedSumKernel.rowMax = rowMax.buffer();
@@ -267,7 +265,6 @@ Tensor attention(ComputePass& pass,
     weightedSumKernel.output = output.buffer();
     weightedSumKernel.headDimension = (std::uint32_t) headDim;
     weightedSumKernel.columnCount = (std::uint32_t) cols;
-    weightedSumKernel.prepare(device);
     weightedSumKernel.dispatch(pass, rows, heads, headDim);
 
     return output;

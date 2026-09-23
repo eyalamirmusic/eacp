@@ -1,6 +1,7 @@
 #include "SA3TextEncoder.h"
 
 #include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/Json.h>
 
@@ -125,13 +126,18 @@ PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
     auto hiddenSize = T5GemmaEncoder::hiddenSize;
     auto result = Tensor::uninitializedF32({maxLength, hiddenSize}, device);
 
-    auto kernel = PadRowSelectKernel {};
+    auto& kernel = GPU::cachedKernel<PadRowSelectKernel>(device);
     kernel.encoded = encoded.buffer();
     kernel.paddingEmbedding = paddingEmbedding.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, maxLength, hiddenSize, tokenized.validLength);
 
     return PromptEncoding {std::move(result), tokenized.validLength};
+}
+
+void SA3TextEncoderModel::addWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<PadRowSelectKernel>();
+    T5GemmaEncoder::addWarmupKernels(warmup);
 }
 }

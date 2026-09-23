@@ -3,8 +3,10 @@
 #include "GemmaAttention.h"
 
 #include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Codegen/PackedVertex.h>
 #include <eacp/ML/Kernels/Activation.h>
+#include <eacp/ML/Kernels/Attention.h>
 #include <eacp/ML/Kernels/Linear.h>
 #include <eacp/ML/Kernels/Norm.h>
 #include <eacp/ML/Kernels/RoPE.h>
@@ -69,11 +71,10 @@ Tensor addElementwise(ComputePass& pass, const Tensor& left, const Tensor& right
 {
     auto result = Tensor::uninitializedF32(left.shape(), device);
 
-    auto kernel = BinaryOpKernel {BinaryOpKernel::Op::Add};
+    auto& kernel = GPU::cachedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Add);
     kernel.left = left.buffer();
     kernel.right = right.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, left.count());
 
     return result;
@@ -86,11 +87,11 @@ Tensor multiplyElementwise(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(left.shape(), device);
 
-    auto kernel = BinaryOpKernel {BinaryOpKernel::Op::Multiply};
+    auto& kernel =
+        GPU::cachedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Multiply);
     kernel.left = left.buffer();
     kernel.right = right.buffer();
     kernel.output = result.buffer();
-    kernel.prepare(device);
     kernel.dispatch(pass, left.count());
 
     return result;
@@ -344,5 +345,18 @@ Tensor T5GemmaEncoder::encodeTokens(ComputePass& pass,
     auto hidden = encodeTokensThroughLayer(pass, tokenIds, validLength, numLayers, device);
 
     return rmsNorm(pass, hidden, finalNormGamma, rmsEpsilon, device);
+}
+
+void T5GemmaEncoder::addWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<BinaryOpKernel>(BinaryOpKernel::Op::Add);
+    warmup.add<BinaryOpKernel>(BinaryOpKernel::Op::Multiply);
+    warmup.add<RMSNormKernel>();
+    warmup.add<LinearF32>();
+    warmup.add<RoPEKernel>();
+    warmup.add<GemmaAttentionScoresKernel>();
+    warmup.add<AttentionRowStatsKernel>();
+    warmup.add<AttentionWeightedSumKernel>();
+    warmup.add<ActivationKernel>(ActivationKind::GeluTanh);
 }
 }

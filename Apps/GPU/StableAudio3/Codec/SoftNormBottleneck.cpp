@@ -1,5 +1,6 @@
 #include "SoftNormBottleneck.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 
 namespace eacp::SA3Codec
@@ -80,13 +81,12 @@ Tensor softNormBottleneckEncode(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = SoftNormEncodeKernel {};
+    auto& kernel = GPU::cachedKernel<SoftNormEncodeKernel>(device);
     kernel.input = input.buffer();
     kernel.scalingFactor = weights.scalingFactor.buffer();
     kernel.bias = weights.bias.buffer();
     kernel.output = result.buffer();
     kernel.runningStd = weights.runningStd;
-    kernel.prepare(device);
     kernel.dispatch(pass, input.rows(), input.cols());
 
     return result;
@@ -99,13 +99,18 @@ Tensor softNormBottleneckDecode(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto kernel = SoftNormDecodeKernel {};
+    auto& kernel = GPU::cachedKernel<SoftNormDecodeKernel>(device);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
     kernel.runningStd = weights.runningStd;
-    kernel.prepare(device);
     kernel.dispatch(pass, input.count());
 
     return result;
+}
+
+void addSoftNormBottleneckWarmupKernels(KernelWarmup& warmup)
+{
+    warmup.add<SoftNormEncodeKernel>();
+    warmup.add<SoftNormDecodeKernel>();
 }
 }

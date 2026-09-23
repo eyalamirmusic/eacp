@@ -3,6 +3,7 @@
 #include "Encoder/T5GemmaEncoder.h"
 #include "Tokenizer/BpeTokenizer.h"
 
+#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Tensor/Tensor.h>
 
@@ -25,6 +26,8 @@ public:
         const std::string& t5gemmaSafetensorsPath,
         const std::string& conditionerSafetensorsPath,
         GPU::Device& device = GPU::Device::shared());
+
+    static void addWarmupKernels(GPU::KernelWarmup& warmup);
 
     PromptEncoding encodePrompt(GPU::ComputePass& pass,
                                 const std::string& text,
