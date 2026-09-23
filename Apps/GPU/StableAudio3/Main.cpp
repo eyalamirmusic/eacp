@@ -36,6 +36,13 @@ struct Options
     std::string model = "small";
 };
 
+using Clock = std::chrono::steady_clock;
+
+double secondsSince(Clock::time_point start)
+{
+    return std::chrono::duration<double> {Clock::now() - start}.count();
+}
+
 Options parseOptions(int argc, char** argv)
 {
     auto options = Options {};
@@ -69,6 +76,7 @@ int latentLengthFor(int sampleCount)
 int main(int argc, char** argv)
 {
     auto options = parseOptions(argc, argv);
+    auto totalStart = Clock::now();
 
     if (options.model != "small" && options.model != "medium")
     {
@@ -119,12 +127,17 @@ int main(int argc, char** argv)
     }
 
     std::printf("Loading DiT weights (%s)...\n", options.model.c_str());
+    auto start = Clock::now();
     auto weights = SA3DiT::loadWeights(*file, ditConfig, device);
+    std::printf("DiT weights took %.2fs\n", secondsSince(start));
 
     std::printf("Loading SAME codec...\n");
+    start = Clock::now();
     auto codec = SA3Codec::SameCodec::loadFromSafetensors(*file, codecConfig);
+    std::printf("Codec took %.2fs\n", secondsSince(start));
 
     std::printf("Loading T5Gemma text encoder...\n");
+    start = Clock::now();
     auto textEncoder = SA3TextEncoder::SA3TextEncoderModel::load(
         tokenizerFile.str(), textEncoderFile.str(), modelPath, device);
 
@@ -134,7 +147,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    std::printf("Text encoder took %.2fs\n", secondsSince(start));
+
     std::printf("Encoding prompt: \"%s\"\n", options.prompt.c_str());
+    start = Clock::now();
 
     auto promptCommands = device.makeCommandBuffer();
     auto promptEncoding = std::optional<SA3TextEncoder::PromptEncoding> {};
@@ -145,6 +161,7 @@ int main(int argc, char** argv)
     }
 
     promptCommands.commit();
+    std::printf("Prompt encoding took %.2fs\n", secondsSince(start));
 
     auto sampleCount = (int) std::lround((double) options.seconds * sampleRate);
     auto latentLength = latentLengthFor(sampleCount);
@@ -154,7 +171,7 @@ int main(int argc, char** argv)
                 latentLength,
                 options.seconds);
 
-    auto start = std::chrono::steady_clock::now();
+    start = Clock::now();
 
     auto latent =
         SA3Sampler::pingpongSample(weights,
@@ -165,12 +182,14 @@ int main(int argc, char** argv)
                                    SA3Sampler::randomNoiseSource(options.seed),
                                    device);
 
-    auto elapsed =
-        std::chrono::duration<double> {std::chrono::steady_clock::now() - start};
-    std::printf("Sampling took %.2fs\n", elapsed.count());
+    std::printf("Sampling took %.2fs\n", secondsSince(start));
 
     std::printf("Decoding audio...\n");
+    start = Clock::now();
     auto waveform = codec.decode(latent, sampleCount, device);
+    std::printf("Decoding took %.2fs\n", secondsSince(start));
+
+    start = Clock::now();
 
     if (!SA3Codec::writeWavFile(options.output, waveform, sampleRate))
     {
@@ -178,6 +197,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    std::printf("WAV write took %.2fs\n", secondsSince(start));
     std::printf("Wrote %s\n", options.output.c_str());
+    std::printf("Total took %.2fs\n", secondsSince(totalStart));
     return 0;
 }
