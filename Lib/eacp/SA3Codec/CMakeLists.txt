@@ -10,6 +10,7 @@ target_sources(eacp-sa3-codec PRIVATE
         SA3Codec.cpp
         SoftNormBottleneck.cpp
         TransformerResamplingBlock.cpp
+        WavFile.cpp
         WNConv1d.cpp)
 
 set_default_target_setting(eacp-sa3-codec)

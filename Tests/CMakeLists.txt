@@ -28,6 +28,7 @@ if (EACP_HAS_GPU AND NOT IOS)
     add_subdirectory(SA3TextEncoder)
     add_subdirectory(SA3Codec)
     add_subdirectory(SA3DiT)
+    add_subdirectory(SA3Sampler)
 endif ()
 
 if (EACP_HAS_TEXT AND NOT IOS)

@@ -5,6 +5,7 @@ add_subdirectory(TriangleGen)
 add_subdirectory(RotatingTriangle)
 add_subdirectory(Teapot)
 add_subdirectory(Compute)
+add_subdirectory(StableAudio3)
 
 # Compute feeding a draw on one frame: Frame::beginCompute, and a state buffer
 # the CPU never reads back.
