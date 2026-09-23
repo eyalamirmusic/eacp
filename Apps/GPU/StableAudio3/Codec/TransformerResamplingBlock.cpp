@@ -67,20 +67,17 @@ Tensor runSlidingWindowStack(const Tensor& input,
 {
     auto band = AttentionBand {leftRadius, rightRadius, input.rows()};
     auto x = std::optional<Tensor> {};
+    auto commands = device.makeCommandBuffer();
 
-    for (const auto& layer: layers)
     {
-        auto commands = device.makeCommandBuffer();
+        auto pass = commands.beginCompute();
 
-        {
-            auto pass = commands.beginCompute();
+        for (const auto& layer: layers)
             x = applyCodecTransformerBlock(
                 pass, x.has_value() ? *x : input, layer, band, device);
-        }
-
-        commands.commit();
     }
 
+    commands.commit();
     return std::move(*x);
 }
 
