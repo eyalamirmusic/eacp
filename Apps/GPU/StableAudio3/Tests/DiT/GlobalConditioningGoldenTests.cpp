@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include "GoldenIO.h"
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -25,7 +26,8 @@ auto tGlobalConditioningMatchesGolden =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
 
     if (!file.has_value())
         return;

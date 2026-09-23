@@ -22,7 +22,8 @@ constexpr auto latentColumns = 4;
 constexpr auto velocityGain = 0.5f;
 constexpr auto fixedNoiseValue = 2.f;
 
-double referenceFinalValue(float initialValue, int steps, float gain, float noiseValue)
+double
+    referenceFinalValue(float initialValue, int steps, float gain, float noiseValue)
 {
     auto x = (double) initialValue;
 
@@ -39,7 +40,7 @@ double referenceFinalValue(float initialValue, int steps, float gain, float nois
 
     return x;
 }
-}
+} // namespace
 
 auto tPingpongMatchesHandDerivedRecurrence =
     test("SA3Sampler/pingpongWithLinearModelMatchesHandDerivedRecurrence") = []
@@ -57,11 +58,12 @@ auto tPingpongMatchesHandDerivedRecurrence =
 
     constexpr auto steps = 3;
 
-    auto result =
-        pingpongSampleWithModel(model, 1, latentColumns, steps, constantNoise, device);
+    auto result = pingpongSampleWithModel(
+        model, 1, latentColumns, steps, constantNoise, device);
 
     auto actual = result.toHostF32();
-    auto expected = referenceFinalValue(fixedNoiseValue, steps, velocityGain, fixedNoiseValue);
+    auto expected =
+        referenceFinalValue(fixedNoiseValue, steps, velocityGain, fixedNoiseValue);
 
     auto worst = 0.f;
 
@@ -85,8 +87,8 @@ auto tPingpongLastStepEqualsDenoisedWithZeroTail =
     auto zeroVelocityModel = [&](ComputePass& pass, const Tensor& x, float)
     { return scaleAndAdd(pass, x, 0.f, x, 0.f, device); };
 
-    auto result =
-        pingpongSampleWithModel(zeroVelocityModel, 1, latentColumns, 1, constantNoise, device);
+    auto result = pingpongSampleWithModel(
+        zeroVelocityModel, 1, latentColumns, 1, constantNoise, device);
 
     auto actual = result.toHostF32();
 

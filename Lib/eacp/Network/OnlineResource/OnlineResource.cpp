@@ -195,6 +195,7 @@ HTTP::Request conditionalRequest(const FetchPlan& plan,
     auto request = HTTP::Request {plan.info.url};
     request.progress = &transfer;
     request.timeout = plan.info.timeout;
+    request.headers = plan.info.headers;
 
     if (plan.previous)
     {

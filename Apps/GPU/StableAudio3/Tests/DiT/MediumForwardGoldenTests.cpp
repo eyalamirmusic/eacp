@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include "GoldenIO.h"
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -17,14 +18,16 @@ using namespace eacp::ML;
 using namespace eacp::SA3DiT;
 using namespace eacp::SA3DiT::TestSupport;
 
-auto tMediumForwardMatchesGolden = test("SA3DiT/mediumFullForwardMatchesPythonReference") = []
+auto tMediumForwardMatchesGolden =
+    test("SA3DiT/mediumFullForwardMatchesPythonReference") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::medium) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -38,22 +41,25 @@ auto tMediumForwardMatchesGolden = test("SA3DiT/mediumFullForwardMatchesPythonRe
     auto condTokenDimC = config.condTokenDim;
 
     auto dir = std::string(SA3_DIT_GOLDEN_DIR);
-    auto latentInput = readGoldenFloats(dir + "/medium_latent.bin", latentLength * ioChannelsC);
-    auto contextInput =
-        readGoldenFloats(dir + "/medium_cross_ctx_raw.bin", contextLen * condTokenDimC);
-    auto expected = readGoldenFloats(dir + "/medium_full_out.bin", latentLength * ioChannelsC);
+    auto latentInput =
+        readGoldenFloats(dir + "/medium_latent.bin", latentLength * ioChannelsC);
+    auto contextInput = readGoldenFloats(dir + "/medium_cross_ctx_raw.bin",
+                                         contextLen * condTokenDimC);
+    auto expected =
+        readGoldenFloats(dir + "/medium_full_out.bin", latentLength * ioChannelsC);
 
     auto latentTensor =
         Tensor::fromHostF32(latentInput.data(), {latentLength, ioChannelsC}, device);
-    auto contextTensor =
-        Tensor::fromHostF32(contextInput.data(), {contextLen, condTokenDimC}, device);
+    auto contextTensor = Tensor::fromHostF32(
+        contextInput.data(), {contextLen, condTokenDimC}, device);
 
     auto commands = device.makeCommandBuffer();
     auto out = Tensor::uninitializedF32({latentLength, ioChannelsC}, device);
 
     {
         auto pass = commands.beginCompute();
-        out = forward(pass, weights, latentTensor, 0.5f, 20.f, contextTensor, device);
+        out =
+            forward(pass, weights, latentTensor, 0.5f, 20.f, contextTensor, device);
     }
 
     commands.commit();

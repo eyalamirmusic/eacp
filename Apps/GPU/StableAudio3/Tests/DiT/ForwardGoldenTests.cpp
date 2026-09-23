@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include "GoldenIO.h"
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -24,7 +25,8 @@ auto tForwardMatchesGolden = test("SA3DiT/fullForwardMatchesPythonReference") = 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -35,9 +37,12 @@ auto tForwardMatchesGolden = test("SA3DiT/fullForwardMatchesPythonReference") = 
     constexpr auto contextLen = 5;
 
     auto dir = std::string(SA3_DIT_GOLDEN_DIR);
-    auto latentInput = readGoldenFloats(dir + "/latent.bin", latentLength * ioChannels);
-    auto contextInput = readGoldenFloats(dir + "/cross_ctx_raw.bin", contextLen * condTokenDim);
-    auto expected = readGoldenFloats(dir + "/full_out.bin", latentLength * ioChannels);
+    auto latentInput =
+        readGoldenFloats(dir + "/latent.bin", latentLength * ioChannels);
+    auto contextInput =
+        readGoldenFloats(dir + "/cross_ctx_raw.bin", contextLen * condTokenDim);
+    auto expected =
+        readGoldenFloats(dir + "/full_out.bin", latentLength * ioChannels);
 
     auto latentTensor =
         Tensor::fromHostF32(latentInput.data(), {latentLength, ioChannels}, device);
@@ -49,7 +54,8 @@ auto tForwardMatchesGolden = test("SA3DiT/fullForwardMatchesPythonReference") = 
 
     {
         auto pass = commands.beginCompute();
-        out = forward(pass, weights, latentTensor, 0.5f, 20.f, contextTensor, device);
+        out =
+            forward(pass, weights, latentTensor, 0.5f, 20.f, contextTensor, device);
     }
 
     commands.commit();

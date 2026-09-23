@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -48,20 +49,22 @@ Tensor runBottleneck(Device& device,
                      const SoftNormBottleneckWeights& weights,
                      bool encode)
 {
-    auto inputTensor = Tensor::fromHostF32(input.data(), {latentFrames, latentDim}, device);
+    auto inputTensor =
+        Tensor::fromHostF32(input.data(), {latentFrames, latentDim}, device);
     auto result = std::optional<Tensor> {};
 
     auto commands = device.makeCommandBuffer();
     {
         auto pass = commands.beginCompute();
-        result = encode ? softNormBottleneckEncode(pass, inputTensor, weights, device)
-                        : softNormBottleneckDecode(pass, inputTensor, weights, device);
+        result = encode
+                     ? softNormBottleneckEncode(pass, inputTensor, weights, device)
+                     : softNormBottleneckDecode(pass, inputTensor, weights, device);
     }
     commands.commit();
 
     return std::move(*result);
 }
-}
+} // namespace
 
 auto tSoftNormBottleneckEncodeMatchesPython =
     test("SA3Codec/softNormBottleneckEncodeMatchesPythonReference") = []
@@ -71,16 +74,18 @@ auto tSoftNormBottleneckEncodeMatchesPython =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
-    auto encoderProjected = loadGoldenFloats("encoder_projected", latentFrames * latentDim);
+    auto encoderProjected =
+        loadGoldenFloats("encoder_projected", latentFrames * latentDim);
     auto latent = runBottleneck(device, encoderProjected, codec.bottleneck, true);
 
     auto expected = loadGoldenFloats("latent", latentFrames * latentDim);
@@ -96,14 +101,15 @@ auto tSoftNormBottleneckDecodeMatchesPython =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto latentGolden = loadGoldenFloats("latent", latentFrames * latentDim);
     auto decoded = runBottleneck(device, latentGolden, codec.bottleneck, false);

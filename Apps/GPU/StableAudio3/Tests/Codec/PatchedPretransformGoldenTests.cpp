@@ -33,7 +33,7 @@ float maxAbsDifference(const std::vector<float>& a, const std::vector<float>& b)
 
     return worst;
 }
-}
+} // namespace
 
 auto tPatchedPretransformEncodeMatchesPython =
     test("SA3Codec/patchedPretransformEncodeMatchesPythonReference") = []
@@ -56,10 +56,10 @@ auto tPatchedPretransformDecodeMatchesPythonOnRealDecoderOutput =
     constexpr auto decoderRawFrames = 128;
     constexpr auto decoderRawChannels = 512;
 
-    auto decoderRaw =
-        HostMatrix {loadGoldenFloats("decoder_raw", decoderRawFrames * decoderRawChannels),
-                   decoderRawFrames,
-                   decoderRawChannels};
+    auto decoderRaw = HostMatrix {
+        loadGoldenFloats("decoder_raw", decoderRawFrames * decoderRawChannels),
+        decoderRawFrames,
+        decoderRawChannels};
 
     auto decoded = patchedPretransformDecode(decoderRaw, sampleCount);
 

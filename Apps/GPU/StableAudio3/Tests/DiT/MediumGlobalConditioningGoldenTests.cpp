@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include "GoldenIO.h"
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -25,7 +26,8 @@ auto tMediumGlobalConditioningMatchesGolden =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::medium) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -44,8 +46,9 @@ auto tMediumGlobalConditioningMatchesGolden =
     commands.commit();
 
     auto actual = base.toHostF32();
-    auto expected = readGoldenFloats(
-        std::string(SA3_DIT_GOLDEN_DIR) + "/medium_global_cond_base.bin", config.embedDim * 6);
+    auto expected = readGoldenFloats(std::string(SA3_DIT_GOLDEN_DIR)
+                                         + "/medium_global_cond_base.bin",
+                                     config.embedDim * 6);
 
     auto gap = maxAllcloseGap(actual, expected, 3.0e-3f, 3.0e-3f);
     check(gap <= 0.f);

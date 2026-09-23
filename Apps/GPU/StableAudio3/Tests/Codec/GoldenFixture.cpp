@@ -18,13 +18,13 @@ std::vector<float> loadGoldenFloats(const std::string& name, int expectedCount)
     if (!stream)
         throw std::runtime_error("could not open golden fixture: " + path);
 
-    auto values = std::vector<float> ((std::size_t) expectedCount);
+    auto values = std::vector<float>((std::size_t) expectedCount);
     stream.read(reinterpret_cast<char*>(values.data()),
-               (std::streamsize) (values.size() * sizeof(float)));
+                (std::streamsize) (values.size() * sizeof(float)));
 
     if (!stream)
         throw std::runtime_error("golden fixture shorter than expected: " + path);
 
     return values;
 }
-}
+} // namespace eacp::SA3Codec::Test

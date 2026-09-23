@@ -1,6 +1,7 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/ML/Loader/Json.h>
 #include <TextEncoder/Tokenizer/BpeTokenizer.h>
+#include <Checkpoints.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -10,27 +11,28 @@ using namespace eacp::SA3TextEncoder;
 
 namespace
 {
-constexpr auto tokenizerJsonPath =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/t5gemma-b-b-ul2/tokenizer.json";
+std::string tokenizerJsonPath()
+{
+    return (eacp::SA3Checkpoints::directory(eacp::SA3Checkpoints::smallMusic)
+            / "t5gemma-b-b-ul2/tokenizer.json")
+        .str();
+}
 
 #ifndef SA3_TEXT_ENCODER_GOLDEN_DIR
-#    define SA3_TEXT_ENCODER_GOLDEN_DIR "."
+#define SA3_TEXT_ENCODER_GOLDEN_DIR "."
 #endif
-}
+} // namespace
 
 auto tTokenizerMatchesRealTokenizerOnGoldenPrompts =
     test("SA3TextEncoder/Tokenizer/matchesRealTokenizerOnGoldenPrompts") = []
 {
-    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath);
+    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
     check(tokenizer.has_value());
 
     if (!tokenizer.has_value())
         return;
 
-    auto goldenPath =
-        std::string {SA3_TEXT_ENCODER_GOLDEN_DIR} + "/golden.json";
+    auto goldenPath = std::string {SA3_TEXT_ENCODER_GOLDEN_DIR} + "/golden.json";
     auto goldenText = Files::readFile(FilePath {goldenPath});
     check(!goldenText.empty());
 

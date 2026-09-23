@@ -5,6 +5,7 @@
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/Json.h>
+#include <Checkpoints.h>
 #include <TextEncoder/Encoder/T5GemmaEncoder.h>
 #include <TextEncoder/SA3TextEncoder.h>
 
@@ -21,23 +22,29 @@ using namespace eacp::SA3TextEncoder;
 
 namespace
 {
-constexpr auto t5gemmaWeightsPath =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/t5gemma-b-b-ul2/model.safetensors";
+std::string t5gemmaWeightsPath()
+{
+    return (eacp::SA3Checkpoints::directory(eacp::SA3Checkpoints::smallMusic)
+            / "t5gemma-b-b-ul2/model.safetensors")
+        .str();
+}
 
-constexpr auto tokenizerJsonPath =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/t5gemma-b-b-ul2/tokenizer.json";
+std::string tokenizerJsonPath()
+{
+    return (eacp::SA3Checkpoints::directory(eacp::SA3Checkpoints::smallMusic)
+            / "t5gemma-b-b-ul2/tokenizer.json")
+        .str();
+}
 
-constexpr auto conditionerWeightsPath =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/model.safetensors";
+std::string conditionerWeightsPath()
+{
+    return (eacp::SA3Checkpoints::directory(eacp::SA3Checkpoints::smallMusic)
+            / "model.safetensors")
+        .str();
+}
 
 #ifndef SA3_TEXT_ENCODER_GOLDEN_DIR
-#    define SA3_TEXT_ENCODER_GOLDEN_DIR "."
+#define SA3_TEXT_ENCODER_GOLDEN_DIR "."
 #endif
 
 float maxAbsoluteDifference(const std::vector<float>& a, const std::vector<float>& b)
@@ -49,7 +56,7 @@ float maxAbsoluteDifference(const std::vector<float>& a, const std::vector<float
 
     return worst;
 }
-}
+} // namespace
 
 auto tFullEncoderMatchesGolden =
     test("SA3TextEncoder/Encoder/fullStackMatchesGoldenReference") = []
@@ -59,7 +66,7 @@ auto tFullEncoderMatchesGolden =
     if (!device.isValid())
         return;
 
-    auto encoder = T5GemmaEncoder::load(t5gemmaWeightsPath, device);
+    auto encoder = T5GemmaEncoder::load(t5gemmaWeightsPath(), device);
     check(encoder.has_value());
 
     if (!encoder.has_value())
@@ -94,10 +101,10 @@ auto tFullEncoderMatchesGolden =
         commands.commit();
 
         auto actual = result->toHostF32();
-        auto expected = Test::readBinaryFloats(
-            std::string {SA3_TEXT_ENCODER_GOLDEN_DIR} + "/final_" + std::to_string(index)
-                + ".bin",
-            actual.size());
+        auto expected =
+            Test::readBinaryFloats(std::string {SA3_TEXT_ENCODER_GOLDEN_DIR}
+                                       + "/final_" + std::to_string(index) + ".bin",
+                                   actual.size());
 
         auto worst = maxAbsoluteDifference(actual, expected);
         check(worst < 0.5f);
@@ -115,7 +122,7 @@ auto tPaddingEmbeddingSubstitutesPaddedRows =
         return;
 
     auto model = SA3TextEncoderModel::load(
-        tokenizerJsonPath, t5gemmaWeightsPath, conditionerWeightsPath, device);
+        tokenizerJsonPath(), t5gemmaWeightsPath(), conditionerWeightsPath(), device);
     check(model.has_value());
 
     if (!model.has_value())

@@ -26,7 +26,7 @@ void checkClose(const std::vector<float>& actual,
     for (auto i = std::size_t {}; i < expected.size(); ++i)
         check(std::abs(actual[i] - expected[i]) <= tolerance);
 }
-}
+} // namespace
 
 auto tExpoFourierFeaturesConstantFrequency =
     test("SA3DiT/expoFourierFeaturesMatchesReferenceAtConstantFrequency") = []
@@ -79,8 +79,10 @@ auto tAdaLNModulate = test("SA3DiT/adaLNModulateMatchesReference") = []
 
     auto x = Tensor::fromHostF32(
         std::vector<float> {1.f, 2.f, 3.f, 4.f}.data(), {2, 2}, device);
-    auto scale = Tensor::fromHostF32(std::vector<float> {0.f, 1.f}.data(), {2}, device);
-    auto shift = Tensor::fromHostF32(std::vector<float> {10.f, 0.f}.data(), {2}, device);
+    auto scale =
+        Tensor::fromHostF32(std::vector<float> {0.f, 1.f}.data(), {2}, device);
+    auto shift =
+        Tensor::fromHostF32(std::vector<float> {10.f, 0.f}.data(), {2}, device);
 
     auto commands = device.makeCommandBuffer();
     auto result = Tensor::uninitializedF32({2, 2}, device);
@@ -102,8 +104,10 @@ auto tSigmoidGate = test("SA3DiT/sigmoidGateMatchesReference") = []
     if (!device.isValid())
         return;
 
-    auto x = Tensor::fromHostF32(std::vector<float> {2.f, 4.f}.data(), {1, 2}, device);
-    auto gate = Tensor::fromHostF32(std::vector<float> {0.f, 100.f}.data(), {2}, device);
+    auto x =
+        Tensor::fromHostF32(std::vector<float> {2.f, 4.f}.data(), {1, 2}, device);
+    auto gate =
+        Tensor::fromHostF32(std::vector<float> {0.f, 100.f}.data(), {2}, device);
 
     auto commands = device.makeCommandBuffer();
     auto result = Tensor::uninitializedF32({1, 2}, device);
@@ -126,8 +130,10 @@ auto tAddTensors = test("SA3DiT/addTensorsMatchesReference") = []
     if (!device.isValid())
         return;
 
-    auto a = Tensor::fromHostF32(std::vector<float> {1.f, 2.f, 3.f}.data(), {3}, device);
-    auto b = Tensor::fromHostF32(std::vector<float> {10.f, 20.f, 30.f}.data(), {3}, device);
+    auto a =
+        Tensor::fromHostF32(std::vector<float> {1.f, 2.f, 3.f}.data(), {3}, device);
+    auto b = Tensor::fromHostF32(
+        std::vector<float> {10.f, 20.f, 30.f}.data(), {3}, device);
 
     auto commands = device.makeCommandBuffer();
     auto result = Tensor::uninitializedF32({3}, device);
@@ -151,7 +157,8 @@ auto tConcatAndSliceRows = test("SA3DiT/concatRowsThenSliceRowsRoundTrips") = []
 
     auto top = Tensor::fromHostF32(
         std::vector<float> {1.f, 2.f, 3.f, 4.f}.data(), {2, 2}, device);
-    auto bottom = Tensor::fromHostF32(std::vector<float> {5.f, 6.f}.data(), {1, 2}, device);
+    auto bottom =
+        Tensor::fromHostF32(std::vector<float> {5.f, 6.f}.data(), {1, 2}, device);
 
     auto commands = device.makeCommandBuffer();
     auto sliced = Tensor::uninitializedF32({1, 2}, device);
@@ -199,7 +206,8 @@ auto tAddBroadcastRow = test("SA3DiT/addBroadcastRowSkipsRowsBeforeStart") = []
 
     auto x = Tensor::fromHostF32(
         std::vector<float> {1.f, 1.f, 2.f, 2.f, 3.f, 3.f}.data(), {3, 2}, device);
-    auto addend = Tensor::fromHostF32(std::vector<float> {10.f, 20.f}.data(), {2}, device);
+    auto addend =
+        Tensor::fromHostF32(std::vector<float> {10.f, 20.f}.data(), {2}, device);
 
     auto commands = device.makeCommandBuffer();
     auto result = Tensor::uninitializedF32({3, 2}, device);
@@ -211,11 +219,11 @@ auto tAddBroadcastRow = test("SA3DiT/addBroadcastRowSkipsRowsBeforeStart") = []
 
     commands.commit();
 
-    checkClose(
-        result.toHostF32(), {1.f, 1.f, 12.f, 22.f, 13.f, 23.f}, 1.0e-5f);
+    checkClose(result.toHostF32(), {1.f, 1.f, 12.f, 22.f, 13.f, 23.f}, 1.0e-5f);
 };
 
-auto tSqueezeTrailingUnitDim = test("SA3DiT/squeezeTrailingUnitDimDropsKernelDim") = []
+auto tSqueezeTrailingUnitDim =
+    test("SA3DiT/squeezeTrailingUnitDimDropsKernelDim") = []
 {
     auto& device = Device::shared();
 

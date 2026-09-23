@@ -84,6 +84,9 @@ struct StaticFileServer
         if (request.hasHeader("If-None-Match"))
             ++conditionalRequests;
 
+        if (request.getHeader("Authorization") == "Bearer secret")
+            ++authorizedRequests;
+
         if (!etag.empty() && request.getHeader("If-None-Match") == etag)
         {
             auto response = Response();
@@ -110,6 +113,7 @@ struct StaticFileServer
     std::string etag;
     std::atomic<int> requests {0};
     std::atomic<int> conditionalRequests {0};
+    std::atomic<int> authorizedRequests {0};
 };
 
 OnlineResource::Result fetchNow(OnlineResource& resource)
@@ -163,6 +167,28 @@ auto tDownloadsAFile = test("OnlineResource/downloadsAndRecordsAFile") = []
     check(!exists(directory / "data.bin.part"));
     check(exists(directory / "data.bin.resource.json"));
     check(entriesIn(directory) == 2);
+};
+
+auto tSendsHeaders = test("OnlineResource/sendsInfoHeadersOnEveryRequest") = []
+{
+    auto server = StaticFileServer {"gated", "\"v1\""};
+    auto directory = scratchDirectory("headers");
+
+    auto info = OnlineResource::Info {};
+    info.url = server.url("gated.bin");
+    info.headers["Authorization"] = "Bearer secret";
+
+    auto first = OnlineResource {info, directory};
+    check(fetchNow(first).downloaded);
+
+    auto second = OnlineResource {info, directory};
+    auto result = fetchNow(second);
+    check(result.ok);
+    check(!result.downloaded);
+
+    check(server.requests == 2);
+    check(server.conditionalRequests == 1);
+    check(server.authorizedRequests == 2);
 };
 
 auto tUnpacksAZip = test("OnlineResource/unpacksAZipIntoAFolder") = []

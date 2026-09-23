@@ -5,6 +5,7 @@
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/Json.h>
+#include <Checkpoints.h>
 #include <TextEncoder/Encoder/T5GemmaEncoder.h>
 
 #include <NanoTest/NanoTest.h>
@@ -20,13 +21,15 @@ using namespace eacp::SA3TextEncoder;
 
 namespace
 {
-constexpr auto t5gemmaWeightsPath =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/t5gemma-b-b-ul2/model.safetensors";
+std::string t5gemmaWeightsPath()
+{
+    return (eacp::SA3Checkpoints::directory(eacp::SA3Checkpoints::smallMusic)
+            / "t5gemma-b-b-ul2/model.safetensors")
+        .str();
+}
 
 #ifndef SA3_TEXT_ENCODER_GOLDEN_DIR
-#    define SA3_TEXT_ENCODER_GOLDEN_DIR "."
+#define SA3_TEXT_ENCODER_GOLDEN_DIR "."
 #endif
 
 float maxAbsoluteDifference(const std::vector<float>& a, const std::vector<float>& b)
@@ -38,23 +41,23 @@ float maxAbsoluteDifference(const std::vector<float>& a, const std::vector<float
 
     return worst;
 }
-}
+} // namespace
 
-auto tLayer0MatchesGolden = test("SA3TextEncoder/Encoder/layer0MatchesGoldenReference") = []
+auto tLayer0MatchesGolden =
+    test("SA3TextEncoder/Encoder/layer0MatchesGoldenReference") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto encoder = T5GemmaEncoder::load(t5gemmaWeightsPath, device);
+    auto encoder = T5GemmaEncoder::load(t5gemmaWeightsPath(), device);
     check(encoder.has_value());
 
     if (!encoder.has_value())
         return;
 
-    auto goldenPath =
-        std::string {SA3_TEXT_ENCODER_GOLDEN_DIR} + "/golden.json";
+    auto goldenPath = std::string {SA3_TEXT_ENCODER_GOLDEN_DIR} + "/golden.json";
     auto goldenText = Files::readFile(FilePath {goldenPath});
     auto parsed = Json::parse(goldenText);
     check(parsed.has_value());
@@ -77,16 +80,17 @@ auto tLayer0MatchesGolden = test("SA3TextEncoder/Encoder/layer0MatchesGoldenRefe
 
         {
             auto pass = commands.beginCompute();
-            result = encoder->encodeTokensThroughLayer(pass, ids, validLength, 1, device);
+            result =
+                encoder->encodeTokensThroughLayer(pass, ids, validLength, 1, device);
         }
 
         commands.commit();
 
         auto actual = result->toHostF32();
-        auto expected = Test::readBinaryFloats(
-            std::string {SA3_TEXT_ENCODER_GOLDEN_DIR} + "/layer0_" + std::to_string(index)
-                + ".bin",
-            actual.size());
+        auto expected =
+            Test::readBinaryFloats(std::string {SA3_TEXT_ENCODER_GOLDEN_DIR}
+                                       + "/layer0_" + std::to_string(index) + ".bin",
+                                   actual.size());
 
         auto worst = maxAbsoluteDifference(actual, expected);
         check(worst < 0.25f);

@@ -37,14 +37,16 @@ HostMatrix rangeMatrix(int rows, int cols, float salt)
     return matrix;
 }
 
-HostMatrix runOnDevice(Device& device,
-                       const std::vector<HostMatrix>& inputs,
-                       std::function<Tensor(ComputePass&, const std::vector<Tensor>&)> body)
+HostMatrix
+    runOnDevice(Device& device,
+                const std::vector<HostMatrix>& inputs,
+                std::function<Tensor(ComputePass&, const std::vector<Tensor>&)> body)
 {
     auto inputTensors = std::vector<Tensor> {};
 
     for (const auto& input: inputs)
-        inputTensors.push_back(Tensor::fromHostF32(input.data.data(), {input.rows, input.cols}, device));
+        inputTensors.push_back(Tensor::fromHostF32(
+            input.data.data(), {input.rows, input.cols}, device));
 
     auto commands = device.makeCommandBuffer();
     auto result = std::optional<Tensor> {};
@@ -58,9 +60,10 @@ HostMatrix runOnDevice(Device& device,
 
     return HostMatrix {result->toHostF32(), result->rows(), result->cols()};
 }
-}
+} // namespace
 
-auto tZeroPadNoOpWhenAlreadyMultiple = test("SA3Codec/zeroPadRowsToMultipleIsNoOpWhenAligned") = []
+auto tZeroPadNoOpWhenAlreadyMultiple =
+    test("SA3Codec/zeroPadRowsToMultipleIsNoOpWhenAligned") = []
 {
     auto input = rangeMatrix(4, 3, 0.f);
     auto padded = zeroPadRowsToMultiple(input, 4);
@@ -87,7 +90,8 @@ auto tZeroPadAddsZeroRows = test("SA3Codec/zeroPadRowsToMultipleAddsZeroRows") =
             checkClose(padded.at(r, c), 0.f, 0.f);
 };
 
-auto tExtractAndWriteRowsRoundTrip = test("SA3Codec/extractAndWriteRowsRoundTrip") = []
+auto tExtractAndWriteRowsRoundTrip =
+    test("SA3Codec/extractAndWriteRowsRoundTrip") = []
 {
     auto input = rangeMatrix(6, 3, 10.f);
     auto middle = extractRows(input, 2, 3);
@@ -128,7 +132,8 @@ auto tAddAndSubtractMatricesAreInverse =
         checkClose(back.data[i], a.data[i], 1.0e-5f);
 };
 
-auto tSliceColumnsExtractsSubrange = test("SA3Codec/sliceColumnsExtractsSubrange") = []
+auto tSliceColumnsExtractsSubrange =
+    test("SA3Codec/sliceColumnsExtractsSubrange") = []
 {
     auto input = rangeMatrix(2, 6, 0.f);
     auto slice = sliceColumns(input, 2, 3);
@@ -152,12 +157,11 @@ auto tFoldWithNewTokensEncoderDirection =
     auto input = rangeMatrix(4, 2, 0.f);
     auto newTokens = HostMatrix {std::vector<float> {9.f, 9.f}, 1, 2};
 
-    auto folded = runOnDevice(device,
-                              {input, newTokens},
-                              [](ComputePass& pass, const std::vector<Tensor>& tensors)
-                              {
-                                  return foldWithNewTokens(pass, tensors[0], 2, 1, tensors[1]);
-                              });
+    auto folded = runOnDevice(
+        device,
+        {input, newTokens},
+        [](ComputePass& pass, const std::vector<Tensor>& tensors)
+        { return foldWithNewTokens(pass, tensors[0], 2, 1, tensors[1]); });
 
     check(folded.rows == 6);
     check(folded.cols == 2);
@@ -181,12 +185,11 @@ auto tFoldWithNewTokensDecoderDirection =
     auto input = rangeMatrix(2, 1, 0.f);
     auto newTokens = HostMatrix {std::vector<float> {7.f}, 1, 1};
 
-    auto folded = runOnDevice(device,
-                              {input, newTokens},
-                              [](ComputePass& pass, const std::vector<Tensor>& tensors)
-                              {
-                                  return foldWithNewTokens(pass, tensors[0], 1, 2, tensors[1]);
-                              });
+    auto folded = runOnDevice(
+        device,
+        {input, newTokens},
+        [](ComputePass& pass, const std::vector<Tensor>& tensors)
+        { return foldWithNewTokens(pass, tensors[0], 1, 2, tensors[1]); });
 
     check(folded.rows == 6);
 
@@ -208,10 +211,11 @@ auto tUnfoldLastSegmentEncoderDirection =
 
     auto input = rangeMatrix(6, 1, 0.f);
 
-    auto unfolded = runOnDevice(device,
-                               {input},
-                               [](ComputePass& pass, const std::vector<Tensor>& tensors)
-                               { return unfoldLastSegment(pass, tensors[0], 3, 1); });
+    auto unfolded =
+        runOnDevice(device,
+                    {input},
+                    [](ComputePass& pass, const std::vector<Tensor>& tensors)
+                    { return unfoldLastSegment(pass, tensors[0], 3, 1); });
 
     check(unfolded.rows == 2);
     checkClose(unfolded.at(0, 0), input.at(2, 0), 0.f);
@@ -228,10 +232,11 @@ auto tUnfoldLastSegmentDecoderDirection =
 
     auto input = rangeMatrix(6, 1, 0.f);
 
-    auto unfolded = runOnDevice(device,
-                               {input},
-                               [](ComputePass& pass, const std::vector<Tensor>& tensors)
-                               { return unfoldLastSegment(pass, tensors[0], 3, 2); });
+    auto unfolded =
+        runOnDevice(device,
+                    {input},
+                    [](ComputePass& pass, const std::vector<Tensor>& tensors)
+                    { return unfoldLastSegment(pass, tensors[0], 3, 2); });
 
     check(unfolded.rows == 4);
     checkClose(unfolded.at(0, 0), input.at(1, 0), 0.f);
@@ -251,13 +256,15 @@ auto tFoldThenUnfoldRoundTripsRealSegment =
     auto input = rangeMatrix(4, 2, 1.f);
     auto newTokens = HostMatrix {std::vector<float> {-1.f, -1.f}, 1, 2};
 
-    auto unfolded = runOnDevice(device,
-                               {input, newTokens},
-                               [](ComputePass& pass, const std::vector<Tensor>& tensors)
-                               {
-                                   auto folded = foldWithNewTokens(pass, tensors[0], 2, 1, tensors[1]);
-                                   return unfoldLastSegment(pass, folded, 3, 1);
-                               });
+    auto unfolded =
+        runOnDevice(device,
+                    {input, newTokens},
+                    [](ComputePass& pass, const std::vector<Tensor>& tensors)
+                    {
+                        auto folded =
+                            foldWithNewTokens(pass, tensors[0], 2, 1, tensors[1]);
+                        return unfoldLastSegment(pass, folded, 3, 1);
+                    });
 
     check(unfolded.rows == 2);
 
@@ -301,7 +308,8 @@ auto tApplyWNConv1dKernelOneActsAsPerTimestepLinear =
 
     auto weights = WNConv1dWeights {
         .flatWeight = Tensor::fromHostF32(flat.data(), {2, 2}, device),
-        .bias = Tensor::fromHostF32(std::vector<float> {0.5f, -0.5f}.data(), {2}, device),
+        .bias = Tensor::fromHostF32(
+            std::vector<float> {0.5f, -0.5f}.data(), {2}, device),
         .hasBias = true,
         .inChannels = 2,
         .outChannels = 2,
@@ -310,10 +318,11 @@ auto tApplyWNConv1dKernelOneActsAsPerTimestepLinear =
 
     auto input = HostMatrix {std::vector<float> {1.f, 2.f, 3.f, 4.f}, 2, 2};
 
-    auto output = runOnDevice(device,
-                             {input},
-                             [&](ComputePass& pass, const std::vector<Tensor>& tensors)
-                             { return applyWNConv1d(pass, tensors[0], weights, device); });
+    auto output =
+        runOnDevice(device,
+                    {input},
+                    [&](ComputePass& pass, const std::vector<Tensor>& tensors)
+                    { return applyWNConv1d(pass, tensors[0], weights, device); });
 
     check(output.rows == 2);
     check(output.cols == 2);
@@ -348,10 +357,11 @@ auto tApplyWNConv1dKernelThreeSumsNeighbours =
 
     auto input = HostMatrix {std::vector<float> {1.f, 2.f, 3.f, 4.f}, 4, 1};
 
-    auto output = runOnDevice(device,
-                             {input},
-                             [&](ComputePass& pass, const std::vector<Tensor>& tensors)
-                             { return applyWNConv1d(pass, tensors[0], weights, device); });
+    auto output =
+        runOnDevice(device,
+                    {input},
+                    [&](ComputePass& pass, const std::vector<Tensor>& tensors)
+                    { return applyWNConv1d(pass, tensors[0], weights, device); });
 
     check(output.rows == 4);
 
@@ -383,7 +393,8 @@ auto tDynamicTanhMatchesHandComputedFormula =
 
     {
         auto pass = commands.beginCompute();
-        resultTensor = dynamicTanh(pass, inputTensor, gammaTensor, betaTensor, alpha, device);
+        resultTensor =
+            dynamicTanh(pass, inputTensor, gammaTensor, betaTensor, alpha, device);
     }
 
     commands.commit();
@@ -392,9 +403,9 @@ auto tDynamicTanhMatchesHandComputedFormula =
 
     for (auto i = 0; i < 2; ++i)
     {
-        auto expected =
-            gammaValues[(std::size_t) i] * std::tanh(alpha * inputValues[(std::size_t) i])
-            + betaValues[(std::size_t) i];
+        auto expected = gammaValues[(std::size_t) i]
+                            * std::tanh(alpha * inputValues[(std::size_t) i])
+                        + betaValues[(std::size_t) i];
         checkClose(result[(std::size_t) i], expected, 1.0e-5f);
     }
 };

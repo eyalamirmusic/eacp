@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include <random>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -39,7 +40,7 @@ float maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
 
     return worst;
 }
-}
+} // namespace
 
 auto tMediumInputSensitivity = test("SA3DiT/mediumForwardVariesWithInput") = []
 {
@@ -48,7 +49,8 @@ auto tMediumInputSensitivity = test("SA3DiT/mediumForwardVariesWithInput") = []
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::medium) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -80,7 +82,8 @@ auto tMediumInputSensitivity = test("SA3DiT/mediumForwardVariesWithInput") = []
 
         {
             auto pass = commands.beginCompute();
-            out = forward(pass, weights, latentTensor, timestep, 20.f, contextTensor, device);
+            out = forward(
+                pass, weights, latentTensor, timestep, 20.f, contextTensor, device);
         }
 
         commands.commit();

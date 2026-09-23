@@ -1,3 +1,5 @@
+#include "Checkpoints.h"
+
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
@@ -24,16 +26,6 @@ namespace
 constexpr auto sampleRate = 44100;
 constexpr auto downsamplingRatio = 4096;
 constexpr auto samplerSteps = 8;
-
-constexpr auto smallMusicCheckpointRoot =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/";
-
-constexpr auto mediumCheckpointRoot =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-medium/snapshots/"
-    "27b5a21b791b1b033d193a9e1e3ce78493f102f9/";
 
 struct Options
 {
@@ -72,11 +64,37 @@ int latentLengthFor(int sampleCount)
 {
     return (sampleCount + downsamplingRatio - 1) / downsamplingRatio;
 }
-}
+} // namespace
 
 int main(int argc, char** argv)
 {
     auto options = parseOptions(argc, argv);
+
+    if (options.model != "small" && options.model != "medium")
+    {
+        std::fprintf(stderr, "--model must be small or medium.\n");
+        return 1;
+    }
+
+    auto isMedium = options.model == "medium";
+    auto& repo = isMedium ? SA3Checkpoints::medium : SA3Checkpoints::smallMusic;
+    auto modelFile = FilePath {};
+    auto tokenizerFile = FilePath {};
+    auto textEncoderFile = FilePath {};
+
+    try
+    {
+        modelFile = SA3Checkpoints::fetch(repo, "model.safetensors");
+        tokenizerFile =
+            SA3Checkpoints::fetch(repo, "t5gemma-b-b-ul2/tokenizer.json");
+        textEncoderFile =
+            SA3Checkpoints::fetch(repo, "t5gemma-b-b-ul2/model.safetensors");
+    }
+    catch (const std::exception& error)
+    {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
 
     auto& device = Device::shared();
 
@@ -86,14 +104,13 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    auto isMedium = options.model == "medium";
-    auto checkpointRoot = isMedium ? mediumCheckpointRoot : smallMusicCheckpointRoot;
-    auto ditConfig = isMedium ? SA3DiT::DiTConfig::medium() : SA3DiT::DiTConfig::smallMusic();
+    auto ditConfig =
+        isMedium ? SA3DiT::DiTConfig::medium() : SA3DiT::DiTConfig::smallMusic();
     auto codecConfig =
         isMedium ? SA3Codec::CodecConfig::sameL() : SA3Codec::CodecConfig::sameS();
 
-    auto modelPath = std::string {checkpointRoot} + "model.safetensors";
-    auto file = SafetensorsFile::open(FilePath {modelPath});
+    auto modelPath = modelFile.str();
+    auto file = SafetensorsFile::open(modelFile);
 
     if (!file.has_value())
     {
@@ -109,10 +126,7 @@ int main(int argc, char** argv)
 
     std::printf("Loading T5Gemma text encoder...\n");
     auto textEncoder = SA3TextEncoder::SA3TextEncoderModel::load(
-        std::string {checkpointRoot} + "t5gemma-b-b-ul2/tokenizer.json",
-        std::string {checkpointRoot} + "t5gemma-b-b-ul2/model.safetensors",
-        modelPath,
-        device);
+        tokenizerFile.str(), textEncoderFile.str(), modelPath, device);
 
     if (!textEncoder.has_value())
     {
@@ -136,21 +150,23 @@ int main(int argc, char** argv)
     auto latentLength = latentLengthFor(sampleCount);
 
     std::printf("Sampling %d steps over %d latent frames (%.2fs)...\n",
-               samplerSteps,
-               latentLength,
-               options.seconds);
+                samplerSteps,
+                latentLength,
+                options.seconds);
 
     auto start = std::chrono::steady_clock::now();
 
-    auto latent = SA3Sampler::pingpongSample(weights,
-                                             promptEncoding->embeddings,
-                                             latentLength,
-                                             options.seconds,
-                                             samplerSteps,
-                                             SA3Sampler::randomNoiseSource(options.seed),
-                                             device);
+    auto latent =
+        SA3Sampler::pingpongSample(weights,
+                                   promptEncoding->embeddings,
+                                   latentLength,
+                                   options.seconds,
+                                   samplerSteps,
+                                   SA3Sampler::randomNoiseSource(options.seed),
+                                   device);
 
-    auto elapsed = std::chrono::duration<double> {std::chrono::steady_clock::now() - start};
+    auto elapsed =
+        std::chrono::duration<double> {std::chrono::steady_clock::now() - start};
     std::printf("Sampling took %.2fs\n", elapsed.count());
 
     std::printf("Decoding audio...\n");

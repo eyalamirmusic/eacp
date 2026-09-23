@@ -15,6 +15,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -51,7 +52,7 @@ float maxAbsDifference(const std::vector<float>& a, const std::vector<float>& b)
 
     return worst;
 }
-}
+} // namespace
 
 auto tEncoderResamplingBlockMatchesPython =
     test("SA3Codec/encoderResamplingBlockRawOutputMatchesPythonReference") = []
@@ -61,14 +62,15 @@ auto tEncoderResamplingBlockMatchesPython =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);
@@ -77,14 +79,16 @@ auto tEncoderResamplingBlockMatchesPython =
     check(patched.rows == patchedFrames);
     check(patched.cols == patchedChannels);
 
-    auto patchedTensor = Tensor::fromHostF32(patched.data.data(), {patched.rows, patched.cols}, device);
+    auto patchedTensor = Tensor::fromHostF32(
+        patched.data.data(), {patched.rows, patched.cols}, device);
     auto blockOutput = std::optional<Tensor> {
         applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device)};
 
     check(blockOutput->rows() == encoderBlockFrames);
     check(blockOutput->cols() == encoderBlockDim);
 
-    auto expected = loadGoldenFloats("encoder_block_raw", encoderBlockFrames * encoderBlockDim);
+    auto expected =
+        loadGoldenFloats("encoder_block_raw", encoderBlockFrames * encoderBlockDim);
     auto worst = maxAbsDifference(blockOutput->toHostF32(), expected);
 
     check(worst < 5.0e-3f);
@@ -98,18 +102,20 @@ auto tDecoderResamplingBlockMatchesPython =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
-    auto bottleneckDecoded = loadGoldenFloats("bottleneck_decoded", latentFrames * latentDim);
-    auto bottleneckDecodedTensor =
-        Tensor::fromHostF32(bottleneckDecoded.data(), {latentFrames, latentDim}, device);
+    auto bottleneckDecoded =
+        loadGoldenFloats("bottleneck_decoded", latentFrames * latentDim);
+    auto bottleneckDecodedTensor = Tensor::fromHostF32(
+        bottleneckDecoded.data(), {latentFrames, latentDim}, device);
 
     auto projected = std::optional<Tensor> {};
 
@@ -118,10 +124,10 @@ auto tDecoderResamplingBlockMatchesPython =
         auto pass = commands.beginCompute();
 
         projected = linear(pass,
-                          bottleneckDecodedTensor,
-                          codec.decoderProjectionWeight,
-                          &codec.decoderProjectionBias,
-                          device);
+                           bottleneckDecodedTensor,
+                           codec.decoderProjectionWeight,
+                           &codec.decoderProjectionBias,
+                           device);
     }
     commands.commit();
 
@@ -131,7 +137,8 @@ auto tDecoderResamplingBlockMatchesPython =
     check(blockOutput->rows() == decoderRawFrames);
     check(blockOutput->cols() == decoderRawChannels);
 
-    auto expected = loadGoldenFloats("decoder_raw", decoderRawFrames * decoderRawChannels);
+    auto expected =
+        loadGoldenFloats("decoder_raw", decoderRawFrames * decoderRawChannels);
     auto worst = maxAbsDifference(blockOutput->toHostF32(), expected);
 
     auto toleranceAboveNonReproducibleBottleneckNoiseAmplifiedByTheDecoder = 2.0e-2f;

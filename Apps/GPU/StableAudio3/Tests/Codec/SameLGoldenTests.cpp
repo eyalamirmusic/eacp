@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <limits>
 #include <optional>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -74,12 +75,14 @@ float snrDb(const std::vector<float>& reference, const std::vector<float>& actua
 
 SameCodec loadSameL()
 {
-    auto file = SafetensorsFile::open(FilePath {SA3_SAMEL_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::sameL) / "model.safetensors");
     check(file.has_value());
 
-    return SameCodec::loadFromSafetensors(*file, CodecConfig::sameL(), "", Device::shared());
+    return SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameL(), "", Device::shared());
 }
-}
+} // namespace
 
 auto tSameLEncoderResamplingBlockMatchesPython =
     test("SA3Codec/sameLEncoderResamplingBlockRawOutputMatchesPythonReference") = []
@@ -91,8 +94,10 @@ auto tSameLEncoderResamplingBlockMatchesPython =
 
     auto codec = loadSameL();
 
-    auto patched = loadGoldenFloats("sameL_patched_input", patchedFrames * patchedChannels);
-    auto patchedTensor = Tensor::fromHostF32(patched.data(), {patchedFrames, patchedChannels}, device);
+    auto patched =
+        loadGoldenFloats("sameL_patched_input", patchedFrames * patchedChannels);
+    auto patchedTensor = Tensor::fromHostF32(
+        patched.data(), {patchedFrames, patchedChannels}, device);
 
     auto blockOutput = std::optional<Tensor> {
         applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device)};
@@ -100,7 +105,8 @@ auto tSameLEncoderResamplingBlockMatchesPython =
     check(blockOutput->rows() == encoderBlockFrames);
     check(blockOutput->cols() == encoderBlockDim);
 
-    auto expected = loadGoldenFloats("sameL_encoder_block_raw", encoderBlockFrames * encoderBlockDim);
+    auto expected = loadGoldenFloats("sameL_encoder_block_raw",
+                                     encoderBlockFrames * encoderBlockDim);
     auto worst = maxAbsDifference(blockOutput->toHostF32(), expected);
 
     check(worst < 5.0e-3f);
@@ -116,9 +122,10 @@ auto tSameLDecoderResamplingBlockMatchesPython =
 
     auto codec = loadSameL();
 
-    auto bottleneckDecoded = loadGoldenFloats("sameL_bottleneck_decoded", latentFrames * latentDim);
-    auto bottleneckDecodedTensor =
-        Tensor::fromHostF32(bottleneckDecoded.data(), {latentFrames, latentDim}, device);
+    auto bottleneckDecoded =
+        loadGoldenFloats("sameL_bottleneck_decoded", latentFrames * latentDim);
+    auto bottleneckDecodedTensor = Tensor::fromHostF32(
+        bottleneckDecoded.data(), {latentFrames, latentDim}, device);
 
     auto projected = std::optional<Tensor> {};
 
@@ -127,10 +134,10 @@ auto tSameLDecoderResamplingBlockMatchesPython =
         auto pass = commands.beginCompute();
 
         projected = linear(pass,
-                          bottleneckDecodedTensor,
-                          codec.decoderProjectionWeight,
-                          &codec.decoderProjectionBias,
-                          device);
+                           bottleneckDecodedTensor,
+                           codec.decoderProjectionWeight,
+                           &codec.decoderProjectionBias,
+                           device);
     }
     commands.commit();
 
@@ -140,7 +147,8 @@ auto tSameLDecoderResamplingBlockMatchesPython =
     check(blockOutput->rows() == decoderRawFrames);
     check(blockOutput->cols() == decoderRawChannels);
 
-    auto expected = loadGoldenFloats("sameL_decoder_raw", decoderRawFrames * decoderRawChannels);
+    auto expected =
+        loadGoldenFloats("sameL_decoder_raw", decoderRawFrames * decoderRawChannels);
     auto worst = maxAbsDifference(blockOutput->toHostF32(), expected);
 
     std::printf("sameLDecoderResamplingBlock worst=%f\n", worst);
@@ -159,15 +167,18 @@ auto tSameLBottleneckEncodeMatchesPython =
 
     auto codec = loadSameL();
 
-    auto projected = loadGoldenFloats("sameL_encoder_projected", latentFrames * latentDim);
-    auto projectedTensor = Tensor::fromHostF32(projected.data(), {latentFrames, latentDim}, device);
+    auto projected =
+        loadGoldenFloats("sameL_encoder_projected", latentFrames * latentDim);
+    auto projectedTensor =
+        Tensor::fromHostF32(projected.data(), {latentFrames, latentDim}, device);
 
     auto encoded = std::optional<Tensor> {};
 
     auto commands = device.makeCommandBuffer();
     {
         auto pass = commands.beginCompute();
-        encoded = softNormBottleneckEncode(pass, projectedTensor, codec.bottleneck, device);
+        encoded = softNormBottleneckEncode(
+            pass, projectedTensor, codec.bottleneck, device);
     }
     commands.commit();
 
@@ -177,7 +188,8 @@ auto tSameLBottleneckEncodeMatchesPython =
     check(worst < 1.0e-4f);
 };
 
-auto tSameLDecoderFoldAndLayer0Debug = test("SA3Codec/sameLDecoderFoldAndLayer0Debug") = []
+auto tSameLDecoderFoldAndLayer0Debug =
+    test("SA3Codec/sameLDecoderFoldAndLayer0Debug") = []
 {
     auto& device = Device::shared();
 
@@ -186,9 +198,10 @@ auto tSameLDecoderFoldAndLayer0Debug = test("SA3Codec/sameLDecoderFoldAndLayer0D
 
     auto codec = loadSameL();
 
-    auto bottleneckDecoded = loadGoldenFloats("sameL_bottleneck_decoded", latentFrames * latentDim);
-    auto bottleneckDecodedTensor =
-        Tensor::fromHostF32(bottleneckDecoded.data(), {latentFrames, latentDim}, device);
+    auto bottleneckDecoded =
+        loadGoldenFloats("sameL_bottleneck_decoded", latentFrames * latentDim);
+    auto bottleneckDecodedTensor = Tensor::fromHostF32(
+        bottleneckDecoded.data(), {latentFrames, latentDim}, device);
 
     auto folded = std::optional<Tensor> {};
     auto afterLayer0 = std::optional<Tensor> {};
@@ -203,10 +216,13 @@ auto tSameLDecoderFoldAndLayer0Debug = test("SA3Codec/sameLDecoderFoldAndLayer0D
                                 &codec.decoderProjectionBias,
                                 device);
 
-        folded = foldWithNewTokens(pass, projected, 1, 16, codec.decoderBlock.newTokens, device);
+        folded = foldWithNewTokens(
+            pass, projected, 1, 16, codec.decoderBlock.newTokens, device);
 
-        auto radius = codec.decoderBlock.slidingWindowRadiusChunks * (codec.decoderBlock.stride + 1);
-        auto mask = buildSlidingWindowMaskGpu(pass, folded->rows(), folded->rows(), radius, radius, device);
+        auto radius = codec.decoderBlock.slidingWindowRadiusChunks
+                      * (codec.decoderBlock.stride + 1);
+        auto mask = buildSlidingWindowMaskGpu(
+            pass, folded->rows(), folded->rows(), radius, radius, device);
 
         afterLayer0 = applyCodecTransformerBlock(
             pass, *folded, codec.decoderBlock.layers[0], &mask, device);
@@ -220,8 +236,10 @@ auto tSameLDecoderFoldAndLayer0Debug = test("SA3Codec/sameLDecoderFoldAndLayer0D
     auto foldedWorst = maxAbsDifference(folded->toHostF32(), expectedFolded);
     std::printf("sameLDecoderFold worst=%f\n", foldedWorst);
 
-    auto expectedAfterLayer0 = loadGoldenFloats("sameL_decoder_after_layer0", 136 * 1536);
-    auto layer0Worst = maxAbsDifference(afterLayer0->toHostF32(), expectedAfterLayer0);
+    auto expectedAfterLayer0 =
+        loadGoldenFloats("sameL_decoder_after_layer0", 136 * 1536);
+    auto layer0Worst =
+        maxAbsDifference(afterLayer0->toHostF32(), expectedAfterLayer0);
     std::printf("sameLDecoderAfterLayer0 worst=%f\n", layer0Worst);
 
     check(foldedWorst < 1.0e-3f);
@@ -238,10 +256,13 @@ auto tSameLRoundTripInPatchedDomainMatchesPython =
 
     auto codec = loadSameL();
 
-    auto patched = loadGoldenFloats("sameL_patched_input", patchedFrames * patchedChannels);
-    auto patchedTensor = Tensor::fromHostF32(patched.data(), {patchedFrames, patchedChannels}, device);
+    auto patched =
+        loadGoldenFloats("sameL_patched_input", patchedFrames * patchedChannels);
+    auto patchedTensor = Tensor::fromHostF32(
+        patched.data(), {patchedFrames, patchedChannels}, device);
 
-    auto folded = applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device);
+    auto folded =
+        applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device);
 
     auto decoderProjected = std::optional<Tensor> {};
 
@@ -249,22 +270,31 @@ auto tSameLRoundTripInPatchedDomainMatchesPython =
     {
         auto pass = commands.beginCompute();
 
-        auto projected =
-            linear(pass, folded, codec.encoderProjectionWeight, &codec.encoderProjectionBias, device);
-        auto latent = softNormBottleneckEncode(pass, projected, codec.bottleneck, device);
-        auto denormalized = softNormBottleneckDecode(pass, latent, codec.bottleneck, device);
-        decoderProjected = linear(
-            pass, denormalized, codec.decoderProjectionWeight, &codec.decoderProjectionBias, device);
+        auto projected = linear(pass,
+                                folded,
+                                codec.encoderProjectionWeight,
+                                &codec.encoderProjectionBias,
+                                device);
+        auto latent =
+            softNormBottleneckEncode(pass, projected, codec.bottleneck, device);
+        auto denormalized =
+            softNormBottleneckDecode(pass, latent, codec.bottleneck, device);
+        decoderProjected = linear(pass,
+                                  denormalized,
+                                  codec.decoderProjectionWeight,
+                                  &codec.decoderProjectionBias,
+                                  device);
     }
     commands.commit();
 
-    auto output = std::optional<Tensor> {
-        applyTransformerResamplingBlock(*decoderProjected, codec.decoderBlock, device)};
+    auto output = std::optional<Tensor> {applyTransformerResamplingBlock(
+        *decoderProjected, codec.decoderBlock, device)};
 
     check(output->rows() == decoderRawFrames);
     check(output->cols() == decoderRawChannels);
 
-    auto expected = loadGoldenFloats("sameL_full_output", decoderRawFrames * decoderRawChannels);
+    auto expected =
+        loadGoldenFloats("sameL_full_output", decoderRawFrames * decoderRawChannels);
     auto snr = snrDb(expected, output->toHostF32());
 
     std::printf("sameLRoundTrip snr=%f\n", snr);

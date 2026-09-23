@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -42,7 +43,8 @@ float maxAbsDifference(const std::vector<float>& a, const std::vector<float>& b)
     return worst;
 }
 
-float signalToNoiseRatioDb(const std::vector<float>& reference, const std::vector<float>& candidate)
+float signalToNoiseRatioDb(const std::vector<float>& reference,
+                           const std::vector<float>& candidate)
 {
     auto signalPower = 0.0;
     auto noisePower = 0.0;
@@ -60,7 +62,7 @@ float signalToNoiseRatioDb(const std::vector<float>& reference, const std::vecto
 
     return (float) (10.0 * std::log10(signalPower / noisePower));
 }
-}
+} // namespace
 
 auto tSameCodecEncodeMatchesPythonLatent =
     test("SA3Codec/sameCodecEncodeMatchesPythonFullLatent") = []
@@ -70,14 +72,15 @@ auto tSameCodecEncodeMatchesPythonLatent =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);
@@ -98,17 +101,19 @@ auto tSameCodecDecodeAloneMatchesPythonWaveform =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto fullLatent = loadGoldenFloats("full_latent", latentFrames * latentDim);
-    auto latentTensor = Tensor::fromHostF32(fullLatent.data(), {latentFrames, latentDim}, device);
+    auto latentTensor =
+        Tensor::fromHostF32(fullLatent.data(), {latentFrames, latentDim}, device);
 
     auto decoded = codec.decode(latentTensor, sampleCount, device);
 
@@ -118,7 +123,8 @@ auto tSameCodecDecodeAloneMatchesPythonWaveform =
     auto snrLeft = signalToNoiseRatioDb(expectedLeft, decoded.left);
     auto snrRight = signalToNoiseRatioDb(expectedRight, decoded.right);
 
-    std::printf("decodeAlone snrLeft=%g snrRight=%g\n", (double) snrLeft, (double) snrRight);
+    std::printf(
+        "decodeAlone snrLeft=%g snrRight=%g\n", (double) snrLeft, (double) snrRight);
 
     check(snrLeft > 20.f);
     check(snrRight > 20.f);
@@ -132,14 +138,15 @@ auto tSameCodecRoundTripMatchesPythonWaveform =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);
@@ -167,14 +174,15 @@ auto tSameCodecRoundTripPreservesInputSignal =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_CODEC_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
 
     if (!file.has_value())
         return;
 
-    auto codec =
-        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
+    auto codec = SameCodec::loadFromSafetensors(
+        *file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);

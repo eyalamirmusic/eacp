@@ -26,7 +26,7 @@ float maxAbsoluteDifference(const std::vector<float>& a, const std::vector<float
 
     return worst;
 }
-}
+} // namespace
 
 auto tScaleAndAddMatchesReference =
     test("SA3Sampler/scaleAndAddMatchesHandComputedFormula") = []

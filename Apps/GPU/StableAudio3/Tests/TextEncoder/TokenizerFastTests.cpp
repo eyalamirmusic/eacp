@@ -1,4 +1,5 @@
 #include <TextEncoder/Tokenizer/BpeTokenizer.h>
+#include <Checkpoints.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -7,10 +8,12 @@ using namespace eacp::SA3TextEncoder;
 
 namespace
 {
-constexpr auto tokenizerJsonPath =
-    "/Users/jamiepond/.cache/huggingface/hub/"
-    "models--stabilityai--stable-audio-3-small-music/snapshots/"
-    "0fef1392cd842149a2b6d445e181c97608faac06/t5gemma-b-b-ul2/tokenizer.json";
+std::string tokenizerJsonPath()
+{
+    return (eacp::SA3Checkpoints::directory(eacp::SA3Checkpoints::smallMusic)
+            / "t5gemma-b-b-ul2/tokenizer.json")
+        .str();
+}
 
 void checkEncoding(const BpeTokenizer& tokenizer,
                    const std::string& text,
@@ -28,17 +31,19 @@ void checkEncoding(const BpeTokenizer& tokenizer,
     for (auto i = expectedIds.size(); i < result.ids.size(); ++i)
         check(result.ids[i] == 0);
 }
-}
+} // namespace
 
-auto tTokenizerLoads = test("SA3TextEncoder/Tokenizer/loadsFromRealTokenizerJson") = []
+auto tTokenizerLoads =
+    test("SA3TextEncoder/Tokenizer/loadsFromRealTokenizerJson") = []
 {
-    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath);
+    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
     check(tokenizer.has_value());
 };
 
-auto tTokenizerSingleWord = test("SA3TextEncoder/Tokenizer/singleWordMatchesHardcodedIds") = []
+auto tTokenizerSingleWord =
+    test("SA3TextEncoder/Tokenizer/singleWordMatchesHardcodedIds") = []
 {
-    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath);
+    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
 
     if (!tokenizer.has_value())
         return;
@@ -46,9 +51,10 @@ auto tTokenizerSingleWord = test("SA3TextEncoder/Tokenizer/singleWordMatchesHard
     checkEncoding(*tokenizer, "hello", {17534}, 1);
 };
 
-auto tTokenizerShortPhrase = test("SA3TextEncoder/Tokenizer/shortPhraseMatchesHardcodedIds") = []
+auto tTokenizerShortPhrase =
+    test("SA3TextEncoder/Tokenizer/shortPhraseMatchesHardcodedIds") = []
 {
-    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath);
+    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
 
     if (!tokenizer.has_value())
         return;
@@ -56,9 +62,10 @@ auto tTokenizerShortPhrase = test("SA3TextEncoder/Tokenizer/shortPhraseMatchesHa
     checkEncoding(*tokenizer, "lofi house loop", {545, 2485, 3036, 10273}, 4);
 };
 
-auto tTokenizerPadsToMaxLength = test("SA3TextEncoder/Tokenizer/padsToExactlyMaxLength") = []
+auto tTokenizerPadsToMaxLength =
+    test("SA3TextEncoder/Tokenizer/padsToExactlyMaxLength") = []
 {
-    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath);
+    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
 
     if (!tokenizer.has_value())
         return;

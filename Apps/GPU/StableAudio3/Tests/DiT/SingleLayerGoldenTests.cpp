@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include "GoldenIO.h"
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -17,14 +18,16 @@ using namespace eacp::ML;
 using namespace eacp::SA3DiT;
 using namespace eacp::SA3DiT::TestSupport;
 
-auto tSingleLayerMatchesGolden = test("SA3DiT/singleLayerMatchesPythonReference") = []
+auto tSingleLayerMatchesGolden =
+    test("SA3DiT/singleLayerMatchesPythonReference") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -35,13 +38,16 @@ auto tSingleLayerMatchesGolden = test("SA3DiT/singleLayerMatchesPythonReference"
     constexpr auto contextLen = 5;
 
     auto dir = std::string(SA3_DIT_GOLDEN_DIR);
-    auto seqInput = readGoldenFloats(dir + "/layer0_input_seq.bin", seqLen * embedDim);
-    auto contextInput = readGoldenFloats(dir + "/cross_ctx_proj.bin", contextLen * embedDim);
+    auto seqInput =
+        readGoldenFloats(dir + "/layer0_input_seq.bin", seqLen * embedDim);
+    auto contextInput =
+        readGoldenFloats(dir + "/cross_ctx_proj.bin", contextLen * embedDim);
     auto globalCondInput =
         readGoldenFloats(dir + "/global_cond_base.bin", embedDim * 6);
     auto expected = readGoldenFloats(dir + "/layer0_out.bin", seqLen * embedDim);
 
-    auto seqTensor = Tensor::fromHostF32(seqInput.data(), {seqLen, embedDim}, device);
+    auto seqTensor =
+        Tensor::fromHostF32(seqInput.data(), {seqLen, embedDim}, device);
     auto contextTensor =
         Tensor::fromHostF32(contextInput.data(), {contextLen, embedDim}, device);
     auto globalCondTensor =

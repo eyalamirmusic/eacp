@@ -9,6 +9,7 @@
 #include <DiT/Weights.h>
 
 #include "GoldenIO.h"
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -25,7 +26,8 @@ auto tMediumTimestepEmbeddingMatchesGolden =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::medium) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -44,8 +46,9 @@ auto tMediumTimestepEmbeddingMatchesGolden =
     commands.commit();
 
     auto actual = embed.toHostF32();
-    auto expected = readGoldenFloats(
-        std::string(SA3_DIT_GOLDEN_DIR) + "/medium_timestep_embed.bin", config.embedDim);
+    auto expected = readGoldenFloats(std::string(SA3_DIT_GOLDEN_DIR)
+                                         + "/medium_timestep_embed.bin",
+                                     config.embedDim);
 
     auto gap = maxAllcloseGap(actual, expected, 1.0e-3f, 1.0e-3f);
     check(gap <= 0.f);

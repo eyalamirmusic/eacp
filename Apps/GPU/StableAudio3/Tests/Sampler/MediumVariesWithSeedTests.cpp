@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <random>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -37,7 +38,7 @@ float maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
 
     return worst;
 }
-}
+} // namespace
 
 auto tMediumVariesWithSeed = test("SA3Sampler/mediumFullLoopVariesWithSeed") = []
 {
@@ -46,7 +47,8 @@ auto tMediumVariesWithSeed = test("SA3Sampler/mediumFullLoopVariesWithSeed") = [
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_DIT_MEDIUM_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::medium) / "model.safetensors");
 
     if (!file.has_value())
         return;
@@ -60,18 +62,24 @@ auto tMediumVariesWithSeed = test("SA3Sampler/mediumFullLoopVariesWithSeed") = [
 
     auto rng = std::mt19937_64 {99};
     auto dist = std::normal_distribution<float> {0.f, 1.f};
-    auto contextValues = std::vector<float>((std::size_t) (contextLen * condTokenDimC));
+    auto contextValues =
+        std::vector<float>((std::size_t) (contextLen * condTokenDimC));
 
     for (auto& value: contextValues)
         value = dist(rng);
 
-    auto contextTensor =
-        Tensor::fromHostF32(contextValues.data(), {contextLen, condTokenDimC}, device);
+    auto contextTensor = Tensor::fromHostF32(
+        contextValues.data(), {contextLen, condTokenDimC}, device);
 
     auto runFullLoop = [&](std::uint64_t seed)
     {
-        return pingpongSample(
-                   weights, contextTensor, latentLength, 8.f, 8, randomNoiseSource(seed), device)
+        return pingpongSample(weights,
+                              contextTensor,
+                              latentLength,
+                              8.f,
+                              8,
+                              randomNoiseSource(seed),
+                              device)
             .toHostF32();
     };
 

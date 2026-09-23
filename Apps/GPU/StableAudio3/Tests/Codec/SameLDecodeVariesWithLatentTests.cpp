@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <random>
+#include <Checkpoints.h>
 
 using namespace nano;
 using namespace eacp;
@@ -54,8 +55,10 @@ void checkDecodeVariesAtLength(SameCodec& codec, Device& device, int latentLengt
     auto latentA = randomVector(latentLength * latentDim, 11);
     auto latentB = randomVector(latentLength * latentDim, 22);
 
-    auto latentTensorA = Tensor::fromHostF32(latentA.data(), {latentLength, latentDim}, device);
-    auto latentTensorB = Tensor::fromHostF32(latentB.data(), {latentLength, latentDim}, device);
+    auto latentTensorA =
+        Tensor::fromHostF32(latentA.data(), {latentLength, latentDim}, device);
+    auto latentTensorB =
+        Tensor::fromHostF32(latentB.data(), {latentLength, latentDim}, device);
 
     auto waveformA = codec.decode(latentTensorA, sampleCount, device);
     auto waveformB = codec.decode(latentTensorB, sampleCount, device);
@@ -63,21 +66,24 @@ void checkDecodeVariesAtLength(SameCodec& codec, Device& device, int latentLengt
     check(maxAbsDiff(waveformA.left, waveformB.left) > 1.0e-4f);
     check(maxAbsDiff(waveformA.right, waveformB.right) > 1.0e-4f);
 }
-}
+} // namespace
 
-auto tSameLDecodeVariesAtSmallScale = test("SA3Codec/sameLDecodeVariesWithLatentAtSmallScale") = []
+auto tSameLDecodeVariesAtSmallScale =
+    test("SA3Codec/sameLDecodeVariesWithLatentAtSmallScale") = []
 {
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_SAMEL_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::sameL) / "model.safetensors");
 
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, CodecConfig::sameL(), "", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameL(), "", device);
     checkDecodeVariesAtLength(codec, device, 8);
 };
 
@@ -89,11 +95,13 @@ auto tSameLDecodeVariesAtRealClipScale =
     if (!device.isValid())
         return;
 
-    auto file = SafetensorsFile::open(FilePath {SA3_SAMEL_CHECKPOINT_PATH});
+    auto file = SafetensorsFile::open(
+        SA3Checkpoints::directory(SA3Checkpoints::sameL) / "model.safetensors");
 
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, CodecConfig::sameL(), "", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameL(), "", device);
     checkDecodeVariesAtLength(codec, device, 130);
 };
