@@ -21,10 +21,6 @@ if (EACP_HAS_GPU)
     # Batched textured quads, also on eacp-gpu alone - no glyphs involved.
     add_subdirectory(Sprites)
     add_subdirectory(ML)
-    add_subdirectory(SA3TextEncoder)
-    add_subdirectory(SA3Codec)
-    add_subdirectory(SA3DiT)
-    add_subdirectory(SA3Sampler)
 endif ()
 
 if (EACP_HAS_TEXT)

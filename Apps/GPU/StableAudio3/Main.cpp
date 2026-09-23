@@ -2,12 +2,12 @@
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/SafetensorsFile.h>
-#include <eacp/SA3Codec/SA3Codec.h>
-#include <eacp/SA3Codec/WavFile.h>
-#include <eacp/SA3DiT/SA3DiT.h>
-#include <eacp/SA3DiT/Weights.h>
-#include <eacp/SA3Sampler/Sampler.h>
-#include <eacp/SA3TextEncoder/SA3TextEncoder.h>
+#include <Codec/SA3Codec.h>
+#include <Codec/WavFile.h>
+#include <DiT/SA3DiT.h>
+#include <DiT/Weights.h>
+#include <Sampler/Sampler.h>
+#include <TextEncoder/SA3TextEncoder.h>
 
 #include <chrono>
 #include <cmath>

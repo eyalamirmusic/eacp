@@ -1,3 +1,9 @@
+add_subdirectory(TextEncoder)
+add_subdirectory(Codec)
+add_subdirectory(DiT)
+add_subdirectory(Sampler)
+add_subdirectory(Tests)
+
 add_executable(StableAudio3 Main.cpp)
 
 target_link_libraries(StableAudio3 PRIVATE
