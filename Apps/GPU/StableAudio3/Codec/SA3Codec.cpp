@@ -169,13 +169,14 @@ Tensor SameCodec::encode(const StereoWaveform& waveform, Device& device) const
     auto patchedTensor =
         Tensor::fromHostF32(patched.data.data(), {patched.rows, patched.cols}, device);
 
+    auto folded = applyTransformerResamplingBlock(patchedTensor, encoderBlock, device);
+
     auto result = std::optional<Tensor> {};
 
     auto commands = device.makeCommandBuffer();
     {
         auto pass = commands.beginCompute();
 
-        auto folded = applyTransformerResamplingBlock(pass, patchedTensor, encoderBlock, device);
         auto projected =
             linear(pass, folded, encoderProjectionWeight, &encoderProjectionBias, device);
 
@@ -188,22 +189,22 @@ Tensor SameCodec::encode(const StereoWaveform& waveform, Device& device) const
 
 StereoWaveform SameCodec::decode(const Tensor& latent, int sampleCount, Device& device) const
 {
-    auto waveformTensor = std::optional<Tensor> {};
+    auto projected = std::optional<Tensor> {};
 
     auto commands = device.makeCommandBuffer();
     {
         auto pass = commands.beginCompute();
 
         auto denormalized = softNormBottleneckDecode(pass, latent, bottleneck, device);
-        auto projected =
+        projected =
             linear(pass, denormalized, decoderProjectionWeight, &decoderProjectionBias, device);
-
-        waveformTensor = applyTransformerResamplingBlock(pass, projected, decoderBlock, device);
     }
     commands.commit();
 
+    auto waveformTensor = applyTransformerResamplingBlock(*projected, decoderBlock, device);
+
     auto waveformHost =
-        HostMatrix {waveformTensor->toHostF32(), waveformTensor->rows(), waveformTensor->cols()};
+        HostMatrix {waveformTensor.toHostF32(), waveformTensor.rows(), waveformTensor.cols()};
 
     return patchedPretransformDecode(waveformHost, sampleCount);
 }

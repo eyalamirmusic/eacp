@@ -40,8 +40,7 @@ ML::Tensor unfoldLastSegment(GPU::ComputePass& pass,
                              int outputSegSize,
                              GPU::Device& device = GPU::Device::shared());
 
-ML::Tensor applyTransformerResamplingBlock(GPU::ComputePass& pass,
-                                          const ML::Tensor& input,
+ML::Tensor applyTransformerResamplingBlock(const ML::Tensor& input,
                                           const ResamplingBlockWeights& weights,
                                           GPU::Device& device = GPU::Device::shared());
 }

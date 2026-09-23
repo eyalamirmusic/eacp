@@ -55,19 +55,39 @@ Tensor runChunkedStack(ComputePass& pass,
     return output;
 }
 
-Tensor runSlidingWindowStack(ComputePass& pass,
-                             const Tensor& input,
+Tensor runSlidingWindowStack(const Tensor& input,
                              const std::vector<CodecBlockWeights>& layers,
                              int leftRadius,
                              int rightRadius,
                              Device& device)
 {
-    auto mask = buildSlidingWindowMaskGpu(pass, input.rows(), input.rows(), leftRadius, rightRadius, device);
+    auto mask = std::optional<Tensor> {};
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            mask = buildSlidingWindowMaskGpu(
+                pass, input.rows(), input.rows(), leftRadius, rightRadius, device);
+        }
+
+        commands.commit();
+    }
 
     auto x = std::optional<Tensor> {};
 
     for (const auto& layer: layers)
-        x = applyCodecTransformerBlock(pass, x.has_value() ? *x : input, layer, &mask, device);
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            x = applyCodecTransformerBlock(pass, x.has_value() ? *x : input, layer, &*mask, device);
+        }
+
+        commands.commit();
+    }
 
     return std::move(*x);
 }
@@ -94,53 +114,81 @@ Tensor applyChunkMidpointShift(ComputePass& pass,
 }
 }
 
-Tensor applyTransformerResamplingBlock(ComputePass& pass,
-                                      const Tensor& input,
+Tensor applyTransformerResamplingBlock(const Tensor& input,
                                       const ResamplingBlockWeights& weights,
                                       Device& device)
 {
-    auto x = std::optional<Tensor> {};
     auto inputSegSize = weights.isEncoder ? weights.stride : 1;
+    auto outputSegSize = weights.isEncoder ? 1 : weights.stride;
+    auto subChunkSize = weights.stride + 1;
 
     auto padModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
                        ? weights.chunkSize
                        : inputSegSize;
 
-    if (weights.isEncoder)
-    {
-        auto padded = zeroPadRowsGpu(pass, input, padModulo, device);
-        x = applyWNConv1d(pass, padded, weights.mapping, device);
-    }
-    else
-    {
-        auto decoderPadModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
-                                  ? weights.chunkSize / weights.stride
-                                  : inputSegSize;
-        x = zeroPadRowsGpu(pass, input, decoderPadModulo, device);
-    }
+    auto folded = std::optional<Tensor> {};
 
-    auto outputSegSize = weights.isEncoder ? 1 : weights.stride;
-    auto subChunkSize = weights.stride + 1;
+    {
+        auto commands = device.makeCommandBuffer();
 
-    auto folded = foldWithNewTokens(pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);
+        {
+            auto pass = commands.beginCompute();
+            auto x = std::optional<Tensor> {};
+
+            if (weights.isEncoder)
+            {
+                auto padded = zeroPadRowsGpu(pass, input, padModulo, device);
+                x = applyWNConv1d(pass, padded, weights.mapping, device);
+            }
+            else
+            {
+                auto decoderPadModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
+                                          ? weights.chunkSize / weights.stride
+                                          : inputSegSize;
+                x = zeroPadRowsGpu(pass, input, decoderPadModulo, device);
+            }
+
+            folded = foldWithNewTokens(pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);
+        }
+
+        commands.commit();
+    }
 
     auto stacked = std::optional<Tensor> {};
 
     if (weights.attentionMode == CodecAttentionMode::ChunkMidpointShift)
     {
-        stacked = applyChunkMidpointShift(pass, folded, weights, device);
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            stacked = applyChunkMidpointShift(pass, *folded, weights, device);
+        }
+
+        commands.commit();
     }
     else
     {
         auto radius = weights.slidingWindowRadiusChunks * subChunkSize;
-        stacked = runSlidingWindowStack(pass, folded, weights.layers, radius, radius, device);
+        stacked = runSlidingWindowStack(*folded, weights.layers, radius, radius, device);
     }
 
-    auto unfolded = unfoldLastSegment(pass, *stacked, subChunkSize, outputSegSize, device);
+    auto result = std::optional<Tensor> {};
 
-    if (weights.isEncoder)
-        return unfolded;
+    {
+        auto commands = device.makeCommandBuffer();
 
-    return applyWNConv1d(pass, unfolded, weights.mapping, device);
+        {
+            auto pass = commands.beginCompute();
+            auto unfolded = unfoldLastSegment(pass, *stacked, subChunkSize, outputSegSize, device);
+
+            result = weights.isEncoder ? std::move(unfolded)
+                                       : applyWNConv1d(pass, unfolded, weights.mapping, device);
+        }
+
+        commands.commit();
+    }
+
+    return std::move(*result);
 }
 }

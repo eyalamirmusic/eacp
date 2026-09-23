@@ -78,14 +78,8 @@ auto tEncoderResamplingBlockMatchesPython =
     check(patched.cols == patchedChannels);
 
     auto patchedTensor = Tensor::fromHostF32(patched.data.data(), {patched.rows, patched.cols}, device);
-    auto blockOutput = std::optional<Tensor> {};
-
-    auto commands = device.makeCommandBuffer();
-    {
-        auto pass = commands.beginCompute();
-        blockOutput = applyTransformerResamplingBlock(pass, patchedTensor, codec.encoderBlock, device);
-    }
-    commands.commit();
+    auto blockOutput = std::optional<Tensor> {
+        applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device)};
 
     check(blockOutput->rows() == encoderBlockFrames);
     check(blockOutput->cols() == encoderBlockDim);
@@ -117,21 +111,22 @@ auto tDecoderResamplingBlockMatchesPython =
     auto bottleneckDecodedTensor =
         Tensor::fromHostF32(bottleneckDecoded.data(), {latentFrames, latentDim}, device);
 
-    auto blockOutput = std::optional<Tensor> {};
+    auto projected = std::optional<Tensor> {};
 
     auto commands = device.makeCommandBuffer();
     {
         auto pass = commands.beginCompute();
 
-        auto projected = linear(pass,
-                                bottleneckDecodedTensor,
-                                codec.decoderProjectionWeight,
-                                &codec.decoderProjectionBias,
-                                device);
-
-        blockOutput = applyTransformerResamplingBlock(pass, projected, codec.decoderBlock, device);
+        projected = linear(pass,
+                          bottleneckDecodedTensor,
+                          codec.decoderProjectionWeight,
+                          &codec.decoderProjectionBias,
+                          device);
     }
     commands.commit();
+
+    auto blockOutput = std::optional<Tensor> {
+        applyTransformerResamplingBlock(*projected, codec.decoderBlock, device)};
 
     check(blockOutput->rows() == decoderRawFrames);
     check(blockOutput->cols() == decoderRawChannels);

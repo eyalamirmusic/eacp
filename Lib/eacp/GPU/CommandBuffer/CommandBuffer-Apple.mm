@@ -7,6 +7,7 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Logging.h>
 
 #include <cstring>
 
@@ -140,7 +141,12 @@ void CommandBuffer::wait()
     // waitUntilCompleted on a buffer that already finished returns at once, so
     // a wait after the work has landed costs nothing.
     if (auto buffer = impl->submitted())
+    {
         [buffer waitUntilCompleted];
+
+        if (buffer.status == MTLCommandBufferStatusError && buffer.error != nil)
+            LOG("GPU command buffer failed: ", [buffer.error.localizedDescription UTF8String]);
+    }
 }
 
 bool CommandBuffer::isComplete() const

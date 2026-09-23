@@ -35,3 +35,12 @@ nano_add_executable(SA3CodecSameLGoldenTests
 target_compile_definitions(SA3CodecSameLGoldenTests PRIVATE
         SA3_CODEC_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/GoldenData"
         SA3_SAMEL_CHECKPOINT_PATH="${sa3_samel_checkpoint_path}")
+
+nano_add_executable(SA3CodecSameLDecodeVariesWithLatentTests
+        SOURCES
+            SameLDecodeVariesWithLatentTests.cpp
+        TARGETS eacp-sa3-codec)
+
+target_compile_definitions(SA3CodecSameLDecodeVariesWithLatentTests PRIVATE
+        SA3_SAMEL_CHECKPOINT_PATH="${sa3_samel_checkpoint_path}")
+
