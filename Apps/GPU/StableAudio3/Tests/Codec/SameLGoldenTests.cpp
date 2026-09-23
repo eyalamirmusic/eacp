@@ -221,11 +221,10 @@ auto tSameLDecoderFoldAndLayer0Debug =
 
         auto radius = codec.decoderBlock.slidingWindowRadiusChunks
                       * (codec.decoderBlock.stride + 1);
-        auto mask = buildSlidingWindowMaskGpu(
-            pass, folded->rows(), folded->rows(), radius, radius, device);
+        auto band = AttentionBand {radius, radius, folded->rows()};
 
         afterLayer0 = applyCodecTransformerBlock(
-            pass, *folded, codec.decoderBlock.layers[0], &mask, device);
+            pass, *folded, codec.decoderBlock.layers[0], band, device);
     }
     commands.commit();
 

@@ -3,6 +3,7 @@
 #include <eacp/GPU/Codegen/ComputeProgram.h>
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
+#include <eacp/ML/Kernels/BandedAttention.h>
 #include <eacp/ML/Tensor/Tensor.h>
 
 namespace eacp::SA3Codec
@@ -35,7 +36,7 @@ struct CodecBlockWeights
 ML::Tensor applyCodecTransformerBlock(GPU::ComputePass& pass,
                                       const ML::Tensor& input,
                                       const CodecBlockWeights& weights,
-                                      const ML::Tensor* attentionMask = nullptr,
+                                      const ML::AttentionBand& band,
                                       GPU::Device& device = GPU::Device::shared());
 
 void addCodecTransformerBlockWarmupKernels(GPU::KernelWarmup& warmup);

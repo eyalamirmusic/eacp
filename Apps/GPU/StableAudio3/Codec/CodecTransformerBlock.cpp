@@ -4,13 +4,10 @@
 
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
-#include <eacp/ML/Kernels/Attention.h>
+#include <eacp/ML/Kernels/BandedAttention.h>
 #include <eacp/ML/Kernels/Linear.h>
 #include <eacp/ML/Kernels/Norm.h>
-#include <eacp/ML/Kernels/RoPE.h>
 #include <eacp/ML/Kernels/SwiGLU.h>
-
-#include <optional>
 
 namespace eacp::SA3Codec
 {
@@ -36,6 +33,89 @@ Tensor dynamicTanhPerHead(ComputePass& pass,
     kernel.output = result.buffer();
     kernel.alpha = norm.alpha;
     kernel.dispatch(pass, rowCount * heads, headDim);
+
+    return result;
+}
+
+class SegmentRoPEKernel final : public ComputeProgram
+{
+public:
+    SegmentRoPEKernel() { compile(); }
+
+    void dispatch(ComputePass& pass, int rows, int heads, int headDim)
+    {
+        headCount = (std::uint32_t) heads;
+        headDimension = (std::uint32_t) headDim;
+        pass.dispatch(*this, rows * heads * headDim);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<InputBuffer> invFreq;
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> headCount;
+    Uniform<UInt> headDimension;
+    Uniform<UInt> halfRotaryDimension;
+    Uniform<UInt> segmentRows;
+
+    EACP_SHADER(input,
+                invFreq,
+                output,
+                headCount,
+                headDimension,
+                halfRotaryDimension,
+                segmentRows)
+
+private:
+    void define() override
+    {
+        auto i = threadId();
+        auto d = i % headDimension;
+        auto rowHead = i / headDimension;
+        auto row = (rowHead / headCount) % segmentRows;
+
+        auto rotaryDimension = halfRotaryDimension * 2u;
+        auto base = rowHead * headDimension;
+
+        ifThen(
+            d < rotaryDimension,
+            [&]
+            {
+                auto isFirstHalf = d < halfRotaryDimension;
+                auto freqIndex = select(isFirstHalf, d, d - halfRotaryDimension);
+
+                auto angle = toFloat(row) * invFreq[freqIndex];
+                auto cosine = cos(angle);
+                auto sine = sin(angle);
+
+                auto x1 = input[base + freqIndex];
+                auto x2 = input[base + halfRotaryDimension + freqIndex];
+
+                auto rotated = select(
+                    isFirstHalf, x1 * cosine - x2 * sine, x2 * cosine + x1 * sine);
+
+                write(output, base + d, rotated);
+            },
+            [&] { write(output, base + d, input[base + d]); });
+    }
+};
+
+Tensor applySegmentRoPE(ComputePass& pass,
+                        const Tensor& input,
+                        const Tensor& invFreq,
+                        int heads,
+                        int headDim,
+                        int segmentRows,
+                        Device& device)
+{
+    auto result = Tensor::uninitializedF32(input.shape(), device);
+
+    auto& kernel = GPU::cachedKernel<SegmentRoPEKernel>(device);
+    kernel.input = input.buffer();
+    kernel.invFreq = invFreq.buffer();
+    kernel.output = result.buffer();
+    kernel.halfRotaryDimension = (std::uint32_t) invFreq.count();
+    kernel.segmentRows = (std::uint32_t) segmentRows;
+    kernel.dispatch(pass, input.rows(), heads, headDim);
 
     return result;
 }
@@ -101,7 +181,7 @@ Tensor sinGatedFeedForward(ComputePass& pass,
 Tensor applyCodecTransformerBlock(ComputePass& pass,
                                   const Tensor& input,
                                   const CodecBlockWeights& weights,
-                                  const Tensor* attentionMask,
+                                  const AttentionBand& band,
                                   Device& device)
 {
     auto dim = weights.heads * weights.headDim;
@@ -126,41 +206,46 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
     auto kDiffNormed = dynamicTanhPerHead(
         pass, kDiffTensor, weights.kNorm, rows, weights.heads, weights.headDim, device);
 
-    auto qRoped = applyRoPE(pass, qNormed, weights.invFreq, weights.heads, weights.headDim, device);
-    auto kRoped = applyRoPE(pass, kNormed, weights.invFreq, weights.heads, weights.headDim, device);
-    auto qDiffRoped =
-        applyRoPE(pass, qDiffNormed, weights.invFreq, weights.heads, weights.headDim, device);
-    auto kDiffRoped =
-        applyRoPE(pass, kDiffNormed, weights.invFreq, weights.heads, weights.headDim, device);
+    auto qRoped = applySegmentRoPE(pass,
+                                   qNormed,
+                                   weights.invFreq,
+                                   weights.heads,
+                                   weights.headDim,
+                                   band.segmentRows,
+                                   device);
+    auto kRoped = applySegmentRoPE(pass,
+                                   kNormed,
+                                   weights.invFreq,
+                                   weights.heads,
+                                   weights.headDim,
+                                   band.segmentRows,
+                                   device);
+    auto qDiffRoped = applySegmentRoPE(pass,
+                                       qDiffNormed,
+                                       weights.invFreq,
+                                       weights.heads,
+                                       weights.headDim,
+                                       band.segmentRows,
+                                       device);
+    auto kDiffRoped = applySegmentRoPE(pass,
+                                       kDiffNormed,
+                                       weights.invFreq,
+                                       weights.heads,
+                                       weights.headDim,
+                                       band.segmentRows,
+                                       device);
 
-    auto zeroMaskStorage = attentionMask == nullptr
-                              ? std::optional<Tensor> {buildZeroMask(rows, rows, device)}
-                              : std::nullopt;
-    const auto& mask = attentionMask != nullptr ? *attentionMask : *zeroMaskStorage;
+    auto primaryOut = bandedAttention(
+        pass, qRoped, kRoped, vTensor, weights.heads, weights.headDim, band, device);
 
-    auto primaryOut = attention(pass,
-                               qRoped,
-                               kRoped,
-                               vTensor,
-                               weights.heads,
-                               weights.headDim,
-                               &mask,
-                               nullptr,
-                               nullptr,
-                               1e-6f,
-                               device);
-
-    auto diffOut = attention(pass,
-                             qDiffRoped,
-                             kDiffRoped,
-                             vTensor,
-                             weights.heads,
-                             weights.headDim,
-                             &mask,
-                             nullptr,
-                             nullptr,
-                             1e-6f,
-                             device);
+    auto diffOut = bandedAttention(pass,
+                                   qDiffRoped,
+                                   kDiffRoped,
+                                   vTensor,
+                                   weights.heads,
+                                   weights.headDim,
+                                   band,
+                                   device);
 
     auto differential = subtractTensorsGpu(pass, primaryOut, diffOut, device);
     auto differentialFlat = reshapeFlat(std::move(differential), {rows, dim});
@@ -199,10 +284,10 @@ void addCodecTransformerBlockWarmupKernels(KernelWarmup& warmup)
     warmup.add<SinGateKernel>();
     warmup.add<LinearF32>();
     warmup.add<AddBiasRows>();
-    warmup.add<RoPEKernel>();
-    warmup.add<AttentionScoresKernel>();
-    warmup.add<AttentionRowStatsKernel>();
-    warmup.add<AttentionWeightedSumKernel>();
+    warmup.add<SegmentRoPEKernel>();
+    warmup.add<BandedAttentionScoresKernel>();
+    warmup.add<BandedAttentionRowStatsKernel>();
+    warmup.add<BandedAttentionWeightedSumKernel>();
     warmup.add<SwiGLUGateKernel>();
 }
 }

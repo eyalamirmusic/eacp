@@ -47,7 +47,11 @@ Tensor runChunkedStack(ComputePass& pass,
 
         for (auto layerIndex = layerStart; layerIndex < layerEnd; ++layerIndex)
             chunkInput = applyCodecTransformerBlock(
-                pass, chunkInput, layers[(std::size_t) layerIndex], nullptr, device);
+                pass,
+                chunkInput,
+                layers[(std::size_t) layerIndex],
+                {effectiveChunkSize, effectiveChunkSize, effectiveChunkSize},
+                device);
 
         writeRowsIntoGpu(pass, output, chunk * effectiveChunkSize, chunkInput, device);
     }
@@ -61,20 +65,7 @@ Tensor runSlidingWindowStack(const Tensor& input,
                              int rightRadius,
                              Device& device)
 {
-    auto mask = std::optional<Tensor> {};
-
-    {
-        auto commands = device.makeCommandBuffer();
-
-        {
-            auto pass = commands.beginCompute();
-            mask = buildSlidingWindowMaskGpu(
-                pass, input.rows(), input.rows(), leftRadius, rightRadius, device);
-        }
-
-        commands.commit();
-    }
-
+    auto band = AttentionBand {leftRadius, rightRadius, input.rows()};
     auto x = std::optional<Tensor> {};
 
     for (const auto& layer: layers)
@@ -83,7 +74,8 @@ Tensor runSlidingWindowStack(const Tensor& input,
 
         {
             auto pass = commands.beginCompute();
-            x = applyCodecTransformerBlock(pass, x.has_value() ? *x : input, layer, &*mask, device);
+            x = applyCodecTransformerBlock(
+                pass, x.has_value() ? *x : input, layer, band, device);
         }
 
         commands.commit();

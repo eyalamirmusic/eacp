@@ -11,6 +11,7 @@ target_sources(eacp-ml PRIVATE
         Kernels/Activation.cpp
         Kernels/RoPE.cpp
         Kernels/Attention.cpp
+        Kernels/BandedAttention.cpp
         Kernels/SwiGLU.cpp)
 
 set_default_target_setting(eacp-ml)
