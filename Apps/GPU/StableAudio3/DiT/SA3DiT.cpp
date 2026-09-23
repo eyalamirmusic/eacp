@@ -380,7 +380,7 @@ void addWarmupKernels(KernelWarmup& warmup)
     warmup.add<AddBiasRows>();
     warmup.add<RMSNormKernel>();
     warmup.add<RoPEKernel>();
-    warmup.add<AttentionScoresKernel>();
+    warmup.add<UnmaskedAttentionScoresKernel>();
     warmup.add<AttentionRowStatsKernel>();
     warmup.add<AttentionWeightedSumKernel>();
     warmup.add<SwiGLUGateKernel>();

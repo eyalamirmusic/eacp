@@ -76,6 +76,44 @@ void AttentionScoresKernel::define()
     write(scores, i, score);
 }
 
+UnmaskedAttentionScoresKernel::UnmaskedAttentionScoresKernel()
+{
+    compile();
+}
+
+void UnmaskedAttentionScoresKernel::dispatch(ComputePass& pass,
+                                             int rows,
+                                             int heads,
+                                             int cols)
+{
+    headCount = (std::uint32_t) heads;
+    columnCount = (std::uint32_t) cols;
+    pass.dispatch(*this, rows * heads * cols);
+}
+
+void UnmaskedAttentionScoresKernel::define()
+{
+    auto i = threadId();
+    auto col = i % columnCount;
+    auto rowHead = i / columnCount;
+
+    auto queryBase = rowHead * headDimension;
+    auto head = rowHead % headCount;
+    auto keyBase = (col * headCount + head) * headDimension;
+
+    auto dot = var(0.f);
+    auto d = var(0u);
+
+    loop(d.get() < headDimension,
+         [&]
+         {
+             dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
+             d = d.get() + 1u;
+         });
+
+    write(scores, i, dot.get() * scale);
+}
+
 AttentionRowStatsKernel::AttentionRowStatsKernel()
     : ComputeProgram({attentionGroupWidth, 1, 1})
 {
@@ -231,25 +269,33 @@ Tensor attention(ComputePass& pass,
     const auto& normalizedKey =
         normalizedKeyStorage.has_value() ? *normalizedKeyStorage : key;
 
-    auto zeroMask = additiveMask == nullptr
-                       ? std::optional<Tensor> {buildZeroMask(rows, cols, device)}
-                       : std::nullopt;
-
-    const auto& mask = additiveMask != nullptr ? *additiveMask : *zeroMask;
-
     auto scores = Tensor::uninitializedF32({rows, heads, cols}, device);
     auto rowMax = Tensor::uninitializedF32({rows * heads}, device);
     auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
+    auto scale = 1.f / std::sqrt((float) headDim);
 
-    auto& scoresKernel = cachedKernel<AttentionScoresKernel>(device);
-    scoresKernel.query = normalizedQuery.buffer();
-    scoresKernel.key = normalizedKey.buffer();
-    scoresKernel.additiveMask = mask.buffer();
-    scoresKernel.scores = scores.buffer();
-    scoresKernel.headDimension = (std::uint32_t) headDim;
-    scoresKernel.scale = 1.f / std::sqrt((float) headDim);
-    scoresKernel.dispatch(pass, rows, heads, cols);
+    if (additiveMask != nullptr)
+    {
+        auto& scoresKernel = cachedKernel<AttentionScoresKernel>(device);
+        scoresKernel.query = normalizedQuery.buffer();
+        scoresKernel.key = normalizedKey.buffer();
+        scoresKernel.additiveMask = additiveMask->buffer();
+        scoresKernel.scores = scores.buffer();
+        scoresKernel.headDimension = (std::uint32_t) headDim;
+        scoresKernel.scale = scale;
+        scoresKernel.dispatch(pass, rows, heads, cols);
+    }
+    else
+    {
+        auto& scoresKernel = cachedKernel<UnmaskedAttentionScoresKernel>(device);
+        scoresKernel.query = normalizedQuery.buffer();
+        scoresKernel.key = normalizedKey.buffer();
+        scoresKernel.scores = scores.buffer();
+        scoresKernel.headDimension = (std::uint32_t) headDim;
+        scoresKernel.scale = scale;
+        scoresKernel.dispatch(pass, rows, heads, cols);
+    }
 
     auto& statsKernel = cachedKernel<AttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();

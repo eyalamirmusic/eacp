@@ -34,6 +34,30 @@ private:
     void define() override;
 };
 
+// AttentionScoresKernel with no mask to add, for attention that sees every
+// key: the same scores, with no rows x cols buffer of zeros built on the host
+// and read back by every thread.
+class UnmaskedAttentionScoresKernel final : public GPU::ComputeProgram
+{
+public:
+    UnmaskedAttentionScoresKernel();
+
+    void dispatch(GPU::ComputePass& pass, int rows, int heads, int cols);
+
+    GPU::Uniform<GPU::InputBuffer> query;
+    GPU::Uniform<GPU::InputBuffer> key;
+    GPU::Uniform<GPU::OutputBuffer> scores;
+    GPU::Uniform<GPU::UInt> headCount;
+    GPU::Uniform<GPU::UInt> headDimension;
+    GPU::Uniform<GPU::UInt> columnCount;
+    GPU::Uniform<GPU::Float> scale;
+
+    EACP_SHADER(query, key, scores, headCount, headDimension, columnCount, scale)
+
+private:
+    void define() override;
+};
+
 class AttentionRowStatsKernel final : public GPU::ComputeProgram
 {
 public:
