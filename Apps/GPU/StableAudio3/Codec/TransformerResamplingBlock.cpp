@@ -38,24 +38,29 @@ Tensor runChunkedStack(ComputePass& pass,
                        int layerEnd,
                        Device& device)
 {
-    auto chunkCount = input.rows() / effectiveChunkSize;
+    auto chunkedRows = input.rows() / effectiveChunkSize * effectiveChunkSize;
+    auto band =
+        AttentionBand {effectiveChunkSize, effectiveChunkSize, effectiveChunkSize};
+
+    auto whole = chunkedRows == input.rows();
+    auto sliced = whole ? std::nullopt
+                        : std::optional<Tensor> {
+                              sliceRowsGpu(pass, input, 0, chunkedRows, device)};
+    const auto& source = whole ? input : *sliced;
+    auto x = std::optional<Tensor> {};
+
+    for (auto layerIndex = layerStart; layerIndex < layerEnd; ++layerIndex)
+        x = applyCodecTransformerBlock(pass,
+                                       x.has_value() ? *x : source,
+                                       layers[(std::size_t) layerIndex],
+                                       band,
+                                       device);
+
+    if (whole)
+        return std::move(*x);
+
     auto output = Tensor::uninitializedF32(input.shape(), device);
-
-    for (auto chunk = 0; chunk < chunkCount; ++chunk)
-    {
-        auto chunkInput = sliceRowsGpu(pass, input, chunk * effectiveChunkSize, effectiveChunkSize, device);
-
-        for (auto layerIndex = layerStart; layerIndex < layerEnd; ++layerIndex)
-            chunkInput = applyCodecTransformerBlock(
-                pass,
-                chunkInput,
-                layers[(std::size_t) layerIndex],
-                {effectiveChunkSize, effectiveChunkSize, effectiveChunkSize},
-                device);
-
-        writeRowsIntoGpu(pass, output, chunk * effectiveChunkSize, chunkInput, device);
-    }
-
+    writeRowsIntoGpu(pass, output, 0, *x, device);
     return output;
 }
 
