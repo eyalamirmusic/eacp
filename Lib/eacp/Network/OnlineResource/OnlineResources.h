@@ -108,8 +108,15 @@ public:
 private:
     friend class OnlineResource;
 
+    // Owns the live transfer behind fetch(), so it moves and never copies.
     struct Record
     {
+        Record() = default;
+        Record(Record&&) = default;
+        Record& operator=(Record&&) = default;
+        Record(const Record&) = delete;
+        Record& operator=(const Record&) = delete;
+
         Entry entry;
         std::function<OnlineResource::Progress()> liveProgress;
         std::function<void()> cancelLive;
