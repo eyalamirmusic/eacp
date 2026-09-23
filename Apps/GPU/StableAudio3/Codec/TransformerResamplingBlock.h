@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CodecConfig.h"
 #include "CodecTransformerBlock.h"
 #include "WNConv1d.h"
 
@@ -19,6 +20,8 @@ struct ResamplingBlockWeights
     int stride = 0;
     int chunkSize = 0;
     int transformerDepth = 0;
+    CodecAttentionMode attentionMode = CodecAttentionMode::ChunkMidpointShift;
+    int slidingWindowRadiusChunks = 1;
     WNConv1dWeights mapping;
     ML::Tensor newTokens;
     std::vector<CodecBlockWeights> layers;

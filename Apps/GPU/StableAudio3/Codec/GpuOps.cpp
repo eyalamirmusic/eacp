@@ -264,6 +264,39 @@ private:
     }
 };
 
+class SlidingWindowMaskKernel final : public ComputeProgram
+{
+public:
+    SlidingWindowMaskKernel()
+    {
+        compile();
+    }
+
+    void dispatch(ComputePass& pass, int rows, int cols)
+    {
+        columnCount = (std::uint32_t) cols;
+        pass.dispatch(*this, cols, rows);
+    }
+
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> columnCount;
+    Uniform<UInt> leftRadius;
+    Uniform<UInt> rightRadius;
+
+    EACP_SHADER(output, columnCount, leftRadius, rightRadius)
+
+private:
+    void define() override
+    {
+        auto position = threadPosition();
+        auto row = position.y;
+        auto col = position.x;
+
+        auto inBand = (col + leftRadius >= row) && (col <= row + rightRadius);
+        write(output, row * columnCount + col, select(inBand, 0.f, -1.0e9f));
+    }
+};
+
 class Conv1dUnfoldKernel final : public ComputeProgram
 {
 public:
@@ -474,6 +507,25 @@ Tensor unfoldLastSegmentGpu(ComputePass& pass,
     kernel.startLocal = (std::uint32_t) (subChunkSize - outputSegSize);
     kernel.prepare(device);
     kernel.dispatch(pass, numGroups * outputSegSize, columns);
+
+    return result;
+}
+
+Tensor buildSlidingWindowMaskGpu(ComputePass& pass,
+                                int rows,
+                                int cols,
+                                int leftRadius,
+                                int rightRadius,
+                                Device& device)
+{
+    auto result = Tensor::uninitializedF32({rows, cols}, device);
+
+    auto kernel = SlidingWindowMaskKernel {};
+    kernel.output = result.buffer();
+    kernel.leftRadius = (std::uint32_t) leftRadius;
+    kernel.rightRadius = (std::uint32_t) rightRadius;
+    kernel.prepare(device);
+    kernel.dispatch(pass, rows, cols);
 
     return result;
 }

@@ -46,40 +46,37 @@ Tensor runChunkedStack(ComputePass& pass,
         auto chunkInput = sliceRowsGpu(pass, input, chunk * effectiveChunkSize, effectiveChunkSize, device);
 
         for (auto layerIndex = layerStart; layerIndex < layerEnd; ++layerIndex)
-            chunkInput =
-                applyCodecTransformerBlock(pass, chunkInput, layers[(std::size_t) layerIndex], device);
+            chunkInput = applyCodecTransformerBlock(
+                pass, chunkInput, layers[(std::size_t) layerIndex], nullptr, device);
 
         writeRowsIntoGpu(pass, output, chunk * effectiveChunkSize, chunkInput, device);
     }
 
     return output;
 }
-}
 
-Tensor applyTransformerResamplingBlock(ComputePass& pass,
-                                      const Tensor& input,
-                                      const ResamplingBlockWeights& weights,
-                                      Device& device)
+Tensor runSlidingWindowStack(ComputePass& pass,
+                             const Tensor& input,
+                             const std::vector<CodecBlockWeights>& layers,
+                             int leftRadius,
+                             int rightRadius,
+                             Device& device)
 {
+    auto mask = buildSlidingWindowMaskGpu(pass, input.rows(), input.rows(), leftRadius, rightRadius, device);
+
     auto x = std::optional<Tensor> {};
 
-    if (weights.isEncoder)
-    {
-        auto padded = zeroPadRowsGpu(pass, input, weights.chunkSize, device);
-        x = applyWNConv1d(pass, padded, weights.mapping, device);
-    }
-    else
-    {
-        auto padModulo = weights.chunkSize / weights.stride;
-        x = zeroPadRowsGpu(pass, input, padModulo, device);
-    }
+    for (const auto& layer: layers)
+        x = applyCodecTransformerBlock(pass, x.has_value() ? *x : input, layer, &mask, device);
 
-    auto inputSegSize = weights.isEncoder ? weights.stride : 1;
-    auto outputSegSize = weights.isEncoder ? 1 : weights.stride;
-    auto subChunkSize = weights.stride + 1;
+    return std::move(*x);
+}
 
-    auto folded = foldWithNewTokens(pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);
-
+Tensor applyChunkMidpointShift(ComputePass& pass,
+                               const Tensor& folded,
+                               const ResamplingBlockWeights& weights,
+                               Device& device)
+{
     auto effectiveChunkSize = weights.chunkSize + weights.chunkSize / weights.stride;
     auto split = weights.transformerDepth / 2;
     auto shift = effectiveChunkSize / 2;
@@ -93,9 +90,53 @@ Tensor applyTransformerResamplingBlock(ComputePass& pass,
     auto secondOut = runChunkedStack(
         pass, padded, effectiveChunkSize, weights.layers, split, weights.transformerDepth, device);
 
-    auto sliced = sliceRowsGpu(pass, secondOut, shift, firstOut.rows(), device);
+    return sliceRowsGpu(pass, secondOut, shift, firstOut.rows(), device);
+}
+}
 
-    auto unfolded = unfoldLastSegment(pass, sliced, subChunkSize, outputSegSize, device);
+Tensor applyTransformerResamplingBlock(ComputePass& pass,
+                                      const Tensor& input,
+                                      const ResamplingBlockWeights& weights,
+                                      Device& device)
+{
+    auto x = std::optional<Tensor> {};
+    auto inputSegSize = weights.isEncoder ? weights.stride : 1;
+
+    auto padModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
+                       ? weights.chunkSize
+                       : inputSegSize;
+
+    if (weights.isEncoder)
+    {
+        auto padded = zeroPadRowsGpu(pass, input, padModulo, device);
+        x = applyWNConv1d(pass, padded, weights.mapping, device);
+    }
+    else
+    {
+        auto decoderPadModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
+                                  ? weights.chunkSize / weights.stride
+                                  : inputSegSize;
+        x = zeroPadRowsGpu(pass, input, decoderPadModulo, device);
+    }
+
+    auto outputSegSize = weights.isEncoder ? 1 : weights.stride;
+    auto subChunkSize = weights.stride + 1;
+
+    auto folded = foldWithNewTokens(pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);
+
+    auto stacked = std::optional<Tensor> {};
+
+    if (weights.attentionMode == CodecAttentionMode::ChunkMidpointShift)
+    {
+        stacked = applyChunkMidpointShift(pass, folded, weights, device);
+    }
+    else
+    {
+        auto radius = weights.slidingWindowRadiusChunks * subChunkSize;
+        stacked = runSlidingWindowStack(pass, folded, weights.layers, radius, radius, device);
+    }
+
+    auto unfolded = unfoldLastSegment(pass, *stacked, subChunkSize, outputSegSize, device);
 
     if (weights.isEncoder)
         return unfolded;

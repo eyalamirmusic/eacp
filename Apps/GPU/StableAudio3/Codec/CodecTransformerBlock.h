@@ -28,10 +28,12 @@ struct CodecBlockWeights
     ML::Tensor ff2Bias;
     int heads = 0;
     int headDim = 0;
+    bool useSinusoidalGate = false;
 };
 
 ML::Tensor applyCodecTransformerBlock(GPU::ComputePass& pass,
                                       const ML::Tensor& input,
                                       const CodecBlockWeights& weights,
+                                      const ML::Tensor* attentionMask = nullptr,
                                       GPU::Device& device = GPU::Device::shared());
 }

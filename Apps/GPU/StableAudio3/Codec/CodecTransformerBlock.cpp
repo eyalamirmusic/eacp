@@ -9,6 +9,8 @@
 #include <eacp/ML/Kernels/RoPE.h>
 #include <eacp/ML/Kernels/SwiGLU.h>
 
+#include <optional>
+
 namespace eacp::SA3Codec
 {
 using namespace eacp::GPU;
@@ -37,11 +39,70 @@ Tensor dynamicTanhPerHead(ComputePass& pass,
 
     return result;
 }
+
+class SinGateKernel final : public ComputeProgram
+{
+public:
+    SinGateKernel()
+    {
+        compile();
+    }
+
+    void dispatch(ComputePass& pass, int rows, int inner)
+    {
+        innerDimension = (std::uint32_t) inner;
+        pass.dispatch(*this, rows * inner);
+    }
+
+    Uniform<InputBuffer> hidden;
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> innerDimension;
+
+    EACP_SHADER(hidden, output, innerDimension)
+
+private:
+    void define() override
+    {
+        auto i = threadId();
+        auto col = i % innerDimension;
+        auto row = i / innerDimension;
+
+        auto base = row * innerDimension * 2u;
+        auto a = hidden[base + col];
+        auto b = hidden[base + innerDimension + col];
+
+        write(output, i, a * sin(b * 3.14159265359f));
+    }
+};
+
+Tensor sinGatedFeedForward(ComputePass& pass,
+                          const Tensor& input,
+                          const Tensor& proj0Weight,
+                          const Tensor& proj0Bias,
+                          const Tensor& proj2Weight,
+                          const Tensor& proj2Bias,
+                          Device& device)
+{
+    auto rows = input.rows();
+    auto inner = proj0Weight.dim(0) / 2;
+
+    auto hidden = linear(pass, input, proj0Weight, &proj0Bias, device);
+    auto gated = Tensor::uninitializedF32({rows, inner}, device);
+
+    auto gateKernel = SinGateKernel {};
+    gateKernel.hidden = hidden.buffer();
+    gateKernel.output = gated.buffer();
+    gateKernel.prepare(device);
+    gateKernel.dispatch(pass, rows, inner);
+
+    return linear(pass, gated, proj2Weight, &proj2Bias, device);
+}
 }
 
 Tensor applyCodecTransformerBlock(ComputePass& pass,
                                   const Tensor& input,
                                   const CodecBlockWeights& weights,
+                                  const Tensor* attentionMask,
                                   Device& device)
 {
     auto dim = weights.heads * weights.headDim;
@@ -73,7 +134,10 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
     auto kDiffRoped =
         applyRoPE(pass, kDiffNormed, weights.invFreq, weights.heads, weights.headDim, device);
 
-    auto zeroMask = buildZeroMask(rows, rows, device);
+    auto zeroMaskStorage = attentionMask == nullptr
+                              ? std::optional<Tensor> {buildZeroMask(rows, rows, device)}
+                              : std::nullopt;
+    const auto& mask = attentionMask != nullptr ? *attentionMask : *zeroMaskStorage;
 
     auto primaryOut = attention(pass,
                                qRoped,
@@ -81,7 +145,7 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                                vTensor,
                                weights.heads,
                                weights.headDim,
-                               &zeroMask,
+                               &mask,
                                nullptr,
                                nullptr,
                                1e-6f,
@@ -93,7 +157,7 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                              vTensor,
                              weights.heads,
                              weights.headDim,
-                             &zeroMask,
+                             &mask,
                              nullptr,
                              nullptr,
                              1e-6f,
@@ -111,8 +175,21 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                                weights.ffNorm.beta,
                                weights.ffNorm.alpha,
                                device);
-    auto ffOutput = swiGLU(
-        pass, ffNormed, weights.ff0Weight, weights.ff0Bias, weights.ff2Weight, weights.ff2Bias, device);
+    auto ffOutput = weights.useSinusoidalGate
+                      ? sinGatedFeedForward(pass,
+                                          ffNormed,
+                                          weights.ff0Weight,
+                                          weights.ff0Bias,
+                                          weights.ff2Weight,
+                                          weights.ff2Bias,
+                                          device)
+                      : swiGLU(pass,
+                              ffNormed,
+                              weights.ff0Weight,
+                              weights.ff0Bias,
+                              weights.ff2Weight,
+                              weights.ff2Bias,
+                              device);
 
     return addTensorsGpu(pass, afterAttention, ffOutput, device);
 }

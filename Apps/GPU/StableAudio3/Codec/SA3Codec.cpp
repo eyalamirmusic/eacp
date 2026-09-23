@@ -14,14 +14,6 @@ using namespace eacp::ML;
 
 namespace
 {
-constexpr auto codecHeads = 12;
-constexpr auto codecHeadDim = 64;
-constexpr auto codecTransformerDim = codecHeads * codecHeadDim;
-constexpr auto codecTransformerDepth = 6;
-constexpr auto codecChunkSize = 32;
-constexpr auto codecStride = 16;
-constexpr auto codecPatchChannels = 512;
-
 std::vector<float> readFloats(const SafetensorsFile& file, const std::string& name, int count)
 {
     auto pointer = reinterpret_cast<const float*>(file.rawBytes(name));
@@ -39,6 +31,9 @@ DynamicTanhWeights loadDynamicTanh(const SafetensorsFile& file,
 
 CodecBlockWeights loadCodecBlockWeights(const SafetensorsFile& file,
                                         const std::string& prefix,
+                                        int heads,
+                                        int headDim,
+                                        bool useSinusoidalGate,
                                         Device& device)
 {
     return CodecBlockWeights {
@@ -53,8 +48,9 @@ CodecBlockWeights loadCodecBlockWeights(const SafetensorsFile& file,
         .ff0Bias = file.loadF32(prefix + ".ff.ff.0.proj.bias", device),
         .ff2Weight = file.loadF32(prefix + ".ff.ff.2.weight", device),
         .ff2Bias = file.loadF32(prefix + ".ff.ff.2.bias", device),
-        .heads = codecHeads,
-        .headDim = codecHeadDim,
+        .heads = heads,
+        .headDim = headDim,
+        .useSinusoidalGate = useSinusoidalGate,
     };
 }
 
@@ -64,24 +60,36 @@ ResamplingBlockWeights loadResamplingBlock(const SafetensorsFile& file,
                                            int inChannels,
                                            int outChannels,
                                            bool mappingConvKernelThree,
+                                           const CodecConfig& config,
                                            Device& device)
 {
     auto layers = std::vector<CodecBlockWeights> {};
-    layers.reserve(codecTransformerDepth);
+    layers.reserve((std::size_t) config.transformerDepth);
 
-    for (auto i = 0; i < codecTransformerDepth; ++i)
-        layers.push_back(loadCodecBlockWeights(
-            file, prefix + ".transformers." + std::to_string(i), device));
+    for (auto i = 0; i < config.transformerDepth; ++i)
+    {
+        auto useSinusoidalGate = !isEncoder
+                                   && (config.transformerDepth - i) < config.decoderSinusoidalBlockCount;
 
-    auto newTokens = readFloats(file, prefix + ".new_tokens", codecTransformerDim);
+        layers.push_back(loadCodecBlockWeights(file,
+                                              prefix + ".transformers." + std::to_string(i),
+                                              config.heads(),
+                                              config.dimHeads,
+                                              useSinusoidalGate,
+                                              device));
+    }
+
+    auto newTokens = readFloats(file, prefix + ".new_tokens", config.transformerDim);
 
     return ResamplingBlockWeights {
         .isEncoder = isEncoder,
         .inChannels = inChannels,
         .outChannels = outChannels,
-        .stride = codecStride,
-        .chunkSize = codecChunkSize,
-        .transformerDepth = codecTransformerDepth,
+        .stride = config.stride,
+        .chunkSize = config.chunkSize,
+        .transformerDepth = config.transformerDepth,
+        .attentionMode = config.attentionMode,
+        .slidingWindowRadiusChunks = config.slidingWindowRadiusChunks,
         .mapping = loadWNConv1d(file,
                                 prefix + ".mapping",
                                 inChannels,
@@ -89,7 +97,7 @@ ResamplingBlockWeights loadResamplingBlock(const SafetensorsFile& file,
                                 mappingConvKernelThree ? 3 : 1,
                                 true,
                                 device),
-        .newTokens = Tensor::fromHostF32(newTokens.data(), {codecTransformerDim}, device),
+        .newTokens = Tensor::fromHostF32(newTokens.data(), {config.transformerDim}, device),
         .layers = std::move(layers),
     };
 }
@@ -113,37 +121,45 @@ SameCodec::SameCodec(ResamplingBlockWeights encoderBlockToUse,
 }
 
 SameCodec SameCodec::loadFromSafetensors(const SafetensorsFile& file,
+                                         const CodecConfig& config,
                                          const std::string& prefix,
                                          Device& device)
 {
+    auto join = [&prefix](const std::string& suffix)
+    {
+        return prefix.empty() ? suffix : prefix + "." + suffix;
+    };
+
     auto encoderBlock = loadResamplingBlock(file,
-                                            prefix + ".encoder.layers.0",
+                                            join("encoder.layers.0"),
                                             true,
-                                            codecPatchChannels,
-                                            codecTransformerDim,
+                                            config.patchChannels,
+                                            config.transformerDim,
                                             false,
+                                            config,
                                             device);
 
     auto decoderBlock = loadResamplingBlock(file,
-                                            prefix + ".decoder.layers.3",
+                                            join("decoder.layers.3"),
                                             false,
-                                            codecTransformerDim,
-                                            codecPatchChannels,
-                                            true,
+                                            config.transformerDim,
+                                            config.patchChannels,
+                                            config.decoderMappingKernelSize == 3,
+                                            config,
                                             device);
 
     auto bottleneck = SoftNormBottleneckWeights {
-        .scalingFactor = file.loadF32(prefix + ".bottleneck.scaling_factor", device),
-        .bias = file.loadF32(prefix + ".bottleneck.bias", device),
-        .runningStd = file.loadScalar(prefix + ".bottleneck.running_std"),
+        .scalingFactor = file.loadF32(join("bottleneck.scaling_factor"), device),
+        .bias = file.loadF32(join("bottleneck.bias"), device),
+        .runningStd = file.loadScalar(join("bottleneck.running_std")),
     };
 
     return SameCodec {std::move(encoderBlock),
-                      file.loadF32(prefix + ".encoder.layers.2.weight", device),
-                      file.loadF32(prefix + ".encoder.layers.2.bias", device),
+                      file.loadF32(join("encoder.layers.2.weight"), device),
+                      file.loadF32(join("encoder.layers.2.bias"), device),
                       std::move(decoderBlock),
-                      file.loadF32(prefix + ".decoder.layers.1.weight", device),
-                      file.loadF32(prefix + ".decoder.layers.1.bias", device),
+                      file.loadF32(join("decoder.layers.1.weight"), device),
+                      file.loadF32(join("decoder.layers.1.bias"), device),
                       std::move(bottleneck)};
 }
 

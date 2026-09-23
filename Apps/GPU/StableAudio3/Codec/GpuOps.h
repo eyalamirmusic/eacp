@@ -67,6 +67,13 @@ ML::Tensor unfoldLastSegmentGpu(GPU::ComputePass& pass,
                                 int outputSegSize,
                                 GPU::Device& device = GPU::Device::shared());
 
+ML::Tensor buildSlidingWindowMaskGpu(GPU::ComputePass& pass,
+                                     int rows,
+                                     int cols,
+                                     int leftRadius,
+                                     int rightRadius,
+                                     GPU::Device& device = GPU::Device::shared());
+
 ML::Tensor conv1dUnfoldGpu(GPU::ComputePass& pass,
                            const ML::Tensor& input,
                            int inChannels,

@@ -67,7 +67,8 @@ auto tEncoderResamplingBlockMatchesPython =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);
@@ -109,7 +110,8 @@ auto tDecoderResamplingBlockMatchesPython =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto bottleneckDecoded = loadGoldenFloats("bottleneck_decoded", latentFrames * latentDim);
     auto bottleneckDecodedTensor =

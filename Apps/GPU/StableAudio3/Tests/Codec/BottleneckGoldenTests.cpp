@@ -77,7 +77,8 @@ auto tSoftNormBottleneckEncodeMatchesPython =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto encoderProjected = loadGoldenFloats("encoder_projected", latentFrames * latentDim);
     auto latent = runBottleneck(device, encoderProjected, codec.bottleneck, true);
@@ -101,7 +102,8 @@ auto tSoftNormBottleneckDecodeMatchesPython =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto latentGolden = loadGoldenFloats("latent", latentFrames * latentDim);
     auto decoded = runBottleneck(device, latentGolden, codec.bottleneck, false);

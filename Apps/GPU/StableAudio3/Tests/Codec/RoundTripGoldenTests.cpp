@@ -76,7 +76,8 @@ auto tSameCodecEncodeMatchesPythonLatent =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);
@@ -103,7 +104,8 @@ auto tSameCodecDecodeAloneMatchesPythonWaveform =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto fullLatent = loadGoldenFloats("full_latent", latentFrames * latentDim);
     auto latentTensor = Tensor::fromHostF32(fullLatent.data(), {latentFrames, latentDim}, device);
@@ -136,7 +138,8 @@ auto tSameCodecRoundTripMatchesPythonWaveform =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);
@@ -170,7 +173,8 @@ auto tSameCodecRoundTripPreservesInputSignal =
     if (!file.has_value())
         return;
 
-    auto codec = SameCodec::loadFromSafetensors(*file, "pretransform.model", device);
+    auto codec =
+        SameCodec::loadFromSafetensors(*file, CodecConfig::sameS(), "pretransform.model", device);
 
     auto left = loadGoldenFloats("input_left", sampleCount);
     auto right = loadGoldenFloats("input_right", sampleCount);

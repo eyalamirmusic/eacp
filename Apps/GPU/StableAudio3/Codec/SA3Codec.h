@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CodecConfig.h"
 #include "PatchedPretransform.h"
 #include "SoftNormBottleneck.h"
 #include "TransformerResamplingBlock.h"
@@ -17,6 +18,7 @@ class SameCodec
 {
 public:
     static SameCodec loadFromSafetensors(const ML::SafetensorsFile& file,
+                                         const CodecConfig& config = CodecConfig::sameS(),
                                          const std::string& prefix = "pretransform.model",
                                          GPU::Device& device = GPU::Device::shared());
 
