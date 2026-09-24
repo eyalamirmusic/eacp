@@ -1,5 +1,9 @@
 #include "GoldenFixture.h"
 
+#include <eacp/Core/Utils/Environment.h>
+
+#include <optional>
+
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
@@ -73,11 +77,29 @@ float snrDb(const std::vector<float>& reference, const std::vector<float>& actua
     return (float) (10.0 * std::log10(signal / noise));
 }
 
-SameCodec loadSameL()
+// Nothing fetches the SAME-L checkpoint - the app never needs it, and the
+// README says to put it there by hand - so these tests run where someone has
+// and skip where nobody has, the way the font tests skip a family fontconfig
+// cannot resolve. EACP_REQUIRE_CHECKPOINTS=1 turns the skip into a failure,
+// which is what a machine that is supposed to have it should set.
+//
+// It returns an optional because it used to check() the open and then
+// dereference it anyway, which is an access violation rather than a skip: the
+// binary died before NanoTest printed a line, so a missing checkpoint looked
+// exactly like a suite that had passed silently.
+std::optional<SameCodec> loadSameL()
 {
     auto file = SafetensorsFile::open(
         SA3Checkpoints::directory(SA3Checkpoints::sameL) / "model.safetensors");
-    check(file.has_value());
+
+    if (!file.has_value())
+    {
+        check(getEnvValue("EACP_REQUIRE_CHECKPOINTS") != "1",
+              "EACP_REQUIRE_CHECKPOINTS=1 but the SAME-L checkpoint is not in "
+              "SA3Checkpoints::directory(SA3Checkpoints::sameL)");
+
+        return std::nullopt;
+    }
 
     return SameCodec::loadFromSafetensors(
         *file, CodecConfig::sameL(), "", Device::shared());
@@ -94,13 +116,16 @@ auto tSameLEncoderResamplingBlockMatchesPython =
 
     auto codec = loadSameL();
 
+    if (!codec.has_value())
+        return;
+
     auto patched =
         loadGoldenFloats("sameL_patched_input", patchedFrames * patchedChannels);
     auto patchedTensor = Tensor::fromHostF32(
         patched.data(), {patchedFrames, patchedChannels}, device);
 
     auto blockOutput = std::optional<Tensor> {
-        applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device)};
+        applyTransformerResamplingBlock(patchedTensor, codec->encoderBlock, device)};
 
     check(blockOutput->rows() == encoderBlockFrames);
     check(blockOutput->cols() == encoderBlockDim);
@@ -122,6 +147,9 @@ auto tSameLDecoderResamplingBlockMatchesPython =
 
     auto codec = loadSameL();
 
+    if (!codec.has_value())
+        return;
+
     auto bottleneckDecoded =
         loadGoldenFloats("sameL_bottleneck_decoded", latentFrames * latentDim);
     auto bottleneckDecodedTensor = Tensor::fromHostF32(
@@ -135,14 +163,14 @@ auto tSameLDecoderResamplingBlockMatchesPython =
 
         projected = linear(pass,
                            bottleneckDecodedTensor,
-                           codec.decoderProjectionWeight,
-                           &codec.decoderProjectionBias,
+                           codec->decoderProjectionWeight,
+                           &codec->decoderProjectionBias,
                            device);
     }
     commands.commit();
 
     auto blockOutput = std::optional<Tensor> {
-        applyTransformerResamplingBlock(*projected, codec.decoderBlock, device)};
+        applyTransformerResamplingBlock(*projected, codec->decoderBlock, device)};
 
     check(blockOutput->rows() == decoderRawFrames);
     check(blockOutput->cols() == decoderRawChannels);
@@ -167,6 +195,9 @@ auto tSameLBottleneckEncodeMatchesPython =
 
     auto codec = loadSameL();
 
+    if (!codec.has_value())
+        return;
+
     auto projected =
         loadGoldenFloats("sameL_encoder_projected", latentFrames * latentDim);
     auto projectedTensor =
@@ -178,7 +209,7 @@ auto tSameLBottleneckEncodeMatchesPython =
     {
         auto pass = commands.beginCompute();
         encoded = softNormBottleneckEncode(
-            pass, projectedTensor, codec.bottleneck, device);
+            pass, projectedTensor, codec->bottleneck, device);
     }
     commands.commit();
 
@@ -198,6 +229,9 @@ auto tSameLDecoderFoldAndLayer0Debug =
 
     auto codec = loadSameL();
 
+    if (!codec.has_value())
+        return;
+
     auto bottleneckDecoded =
         loadGoldenFloats("sameL_bottleneck_decoded", latentFrames * latentDim);
     auto bottleneckDecodedTensor = Tensor::fromHostF32(
@@ -212,19 +246,19 @@ auto tSameLDecoderFoldAndLayer0Debug =
 
         auto projected = linear(pass,
                                 bottleneckDecodedTensor,
-                                codec.decoderProjectionWeight,
-                                &codec.decoderProjectionBias,
+                                codec->decoderProjectionWeight,
+                                &codec->decoderProjectionBias,
                                 device);
 
         folded = foldWithNewTokens(
-            pass, projected, 1, 16, codec.decoderBlock.newTokens, device);
+            pass, projected, 1, 16, codec->decoderBlock.newTokens, device);
 
-        auto radius = codec.decoderBlock.slidingWindowRadiusChunks
-                      * (codec.decoderBlock.stride + 1);
+        auto radius = codec->decoderBlock.slidingWindowRadiusChunks
+                      * (codec->decoderBlock.stride + 1);
         auto band = AttentionBand {radius, radius, folded->rows()};
 
         afterLayer0 = applyCodecTransformerBlock(
-            pass, *folded, codec.decoderBlock.layers[0], band, device);
+            pass, *folded, codec->decoderBlock.layers[0], band, device);
     }
     commands.commit();
 
@@ -255,13 +289,16 @@ auto tSameLRoundTripInPatchedDomainMatchesPython =
 
     auto codec = loadSameL();
 
+    if (!codec.has_value())
+        return;
+
     auto patched =
         loadGoldenFloats("sameL_patched_input", patchedFrames * patchedChannels);
     auto patchedTensor = Tensor::fromHostF32(
         patched.data(), {patchedFrames, patchedChannels}, device);
 
     auto folded =
-        applyTransformerResamplingBlock(patchedTensor, codec.encoderBlock, device);
+        applyTransformerResamplingBlock(patchedTensor, codec->encoderBlock, device);
 
     auto decoderProjected = std::optional<Tensor> {};
 
@@ -271,23 +308,23 @@ auto tSameLRoundTripInPatchedDomainMatchesPython =
 
         auto projected = linear(pass,
                                 folded,
-                                codec.encoderProjectionWeight,
-                                &codec.encoderProjectionBias,
+                                codec->encoderProjectionWeight,
+                                &codec->encoderProjectionBias,
                                 device);
         auto latent =
-            softNormBottleneckEncode(pass, projected, codec.bottleneck, device);
+            softNormBottleneckEncode(pass, projected, codec->bottleneck, device);
         auto denormalized =
-            softNormBottleneckDecode(pass, latent, codec.bottleneck, device);
+            softNormBottleneckDecode(pass, latent, codec->bottleneck, device);
         decoderProjected = linear(pass,
                                   denormalized,
-                                  codec.decoderProjectionWeight,
-                                  &codec.decoderProjectionBias,
+                                  codec->decoderProjectionWeight,
+                                  &codec->decoderProjectionBias,
                                   device);
     }
     commands.commit();
 
     auto output = std::optional<Tensor> {applyTransformerResamplingBlock(
-        *decoderProjected, codec.decoderBlock, device)};
+        *decoderProjected, codec->decoderBlock, device)};
 
     check(output->rows() == decoderRawFrames);
     check(output->cols() == decoderRawChannels);
