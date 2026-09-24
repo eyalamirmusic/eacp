@@ -3,6 +3,7 @@
 nano_add_executable(GPUCodegenTests
         SOURCES
             AtomicCodegenTests.cpp
+            ComputeKernelCodegenTests.cpp
             GroupReductionCodegenTests.cpp
             ShaderCodegenTests.cpp
             SimdMatrixCodegenTests.cpp
