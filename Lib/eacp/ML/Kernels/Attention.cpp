@@ -267,8 +267,9 @@ void AttentionWeightedSumKernel::define()
     loop(col.get() < columnCount,
          [&]
          {
-             auto values = value.read4(
-                 ((col.get() * headCount + head) * headDimension + firstDepth) / 4u);
+             auto valueStart = col.get() * valueRowStride + valueColumnOffset
+                               + head * headDimension + firstDepth;
+             auto values = value.read4(valueStart / 4u);
 
              for (auto a = 0u; a < scoreBlock; ++a)
                  *sums[a] = sums[a]->get()
@@ -316,11 +317,13 @@ Tensor buildZeroMask(int rows, int cols, Device& device)
 
 Tensor attendWithScores(ComputePass& pass,
                         Tensor& scores,
-                        const Tensor& value,
+                        const TensorView& value,
                         int heads,
                         int headDim,
                         Device& device)
 {
+    assert(value.rowStride() % 4 == 0 && value.columnOffset() % 4 == 0);
+
     auto rows = scores.dim(0);
     auto cols = scores.dim(2);
 
@@ -339,6 +342,8 @@ Tensor attendWithScores(ComputePass& pass,
     weightedSumKernel.output = output.buffer();
     weightedSumKernel.headDimension = (std::uint32_t) headDim;
     weightedSumKernel.columnCount = (std::uint32_t) cols;
+    weightedSumKernel.valueRowStride = (std::uint32_t) value.rowStride();
+    weightedSumKernel.valueColumnOffset = (std::uint32_t) value.columnOffset();
     weightedSumKernel.dispatch(pass, rows, heads, headDim);
 
     return output;
@@ -347,7 +352,7 @@ Tensor attendWithScores(ComputePass& pass,
 Tensor attention(ComputePass& pass,
                  const Tensor& query,
                  const Tensor& key,
-                 const Tensor& value,
+                 const TensorView& value,
                  int heads,
                  int headDim,
                  const AttentionOptions& options,

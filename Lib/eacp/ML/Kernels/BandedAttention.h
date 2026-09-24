@@ -97,6 +97,8 @@ public:
     GPU::Uniform<GPU::UInt> segmentRows;
     GPU::Uniform<GPU::UInt> leftRadius;
     GPU::Uniform<GPU::UInt> rightRadius;
+    GPU::Uniform<GPU::UInt> valueRowStride;
+    GPU::Uniform<GPU::UInt> valueColumnOffset;
 
     EACP_SHADER(value,
                 probabilities,
@@ -107,7 +109,9 @@ public:
                 windowWidth,
                 segmentRows,
                 leftRadius,
-                rightRadius)
+                rightRadius,
+                valueRowStride,
+                valueColumnOffset)
 
 private:
     void define() override;
@@ -116,7 +120,7 @@ private:
 Tensor bandedAttention(GPU::ComputePass& pass,
                        const Tensor& query,
                        const Tensor& key,
-                       const Tensor& value,
+                       const TensorView& value,
                        int heads,
                        int headDim,
                        const AttentionBand& band,

@@ -20,7 +20,13 @@ struct PromptKeys
 {
     ML::Tensor keys;
     std::optional<ML::Tensor> diffKeys;
-    ML::Tensor values;
+    ML::Tensor keysAndValues;
+    int valueColumn = 0;
+
+    ML::TensorView values() const
+    {
+        return keysAndValues.columns(valueColumn, keys.cols());
+    }
 };
 
 struct Prompt

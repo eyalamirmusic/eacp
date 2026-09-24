@@ -82,6 +82,8 @@ public:
     GPU::Uniform<GPU::UInt> headDimension;
     GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> columnCount;
+    GPU::Uniform<GPU::UInt> valueRowStride;
+    GPU::Uniform<GPU::UInt> valueColumnOffset;
 
     EACP_SHADER(value,
                 probabilities,
@@ -90,7 +92,9 @@ public:
                 headCount,
                 headDimension,
                 rowCount,
-                columnCount)
+                columnCount,
+                valueRowStride,
+                valueColumnOffset)
 
 private:
     void define() override;
@@ -104,10 +108,11 @@ Tensor
 // The softmax and weighted sum of attention() over scores computed elsewhere,
 // for a score kernel of its own (a soft cap, a bias, a different scale).
 // scores is rows x heads x cols and is overwritten with the unnormalised
-// probabilities; the result is rows x heads x headDim.
+// probabilities; the result is rows x heads x headDim. value may be a view:
+// the values of a fused projection are read where they lie.
 Tensor attendWithScores(GPU::ComputePass& pass,
                         Tensor& scores,
-                        const Tensor& value,
+                        const TensorView& value,
                         int heads,
                         int headDim,
                         GPU::Device& device = GPU::Device::shared());
@@ -115,6 +120,9 @@ Tensor attendWithScores(GPU::ComputePass& pass,
 // What attention() does beyond the plain softmax(q kᵀ / √d) v: an additive
 // mask over rows x cols, and an RMS norm of each query and key head with its
 // own gamma before the product.
+//
+// value may be a view, so the v of a fused qkv projection needs no copy:
+//     auto out = attention(pass, q, k, qkv.columns(2 * dim, dim), heads, headDim);
 struct AttentionOptions
 {
     const Tensor* mask = nullptr;
@@ -126,7 +134,7 @@ struct AttentionOptions
 Tensor attention(GPU::ComputePass& pass,
                  const Tensor& query,
                  const Tensor& key,
-                 const Tensor& value,
+                 const TensorView& value,
                  int heads,
                  int headDim,
                  const AttentionOptions& options = {},

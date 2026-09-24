@@ -2,6 +2,8 @@
 
 #include "../../GPU/Codegen/PackedVertex.h"
 
+#include <cassert>
+
 namespace eacp::ML
 {
 int elementCountOf(const std::vector<int>& shape)
@@ -103,5 +105,29 @@ int Tensor::rows() const
 int Tensor::cols() const
 {
     return rank() == 0 ? 1 : shapeValue.back();
+}
+
+TensorView Tensor::columns(int firstColumn, int columnCount) const
+{
+    return {*this, firstColumn, columnCount};
+}
+
+TensorView::TensorView(const Tensor& tensor)
+    : bufferValue(&tensor.buffer())
+    , rowCount(tensor.rank() == 0 ? 1 : tensor.dim(0))
+    , columnCount(tensor.count() / rowCount)
+    , stride(columnCount)
+    , offset(0)
+{
+}
+
+TensorView::TensorView(const Tensor& tensor, int firstColumn, int columnCountToUse)
+    : bufferValue(&tensor.buffer())
+    , rowCount(tensor.rows())
+    , columnCount(columnCountToUse)
+    , stride(tensor.cols())
+    , offset(firstColumn)
+{
+    assert(firstColumn >= 0 && firstColumn + columnCountToUse <= tensor.cols());
 }
 }

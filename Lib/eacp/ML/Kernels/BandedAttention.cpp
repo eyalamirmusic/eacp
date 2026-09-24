@@ -184,7 +184,8 @@ void BandedAttentionWeightedSumKernel::define()
          [&]
          {
              auto probability = probabilities[probabilityBase + col.get()];
-             auto valueBase = (col.get() * headCount + head) * headDimension;
+             auto valueBase = col.get() * valueRowStride + valueColumnOffset
+                              + head * headDimension;
 
              accumulator = accumulator.get() + probability * value[valueBase + d];
 
@@ -197,7 +198,7 @@ void BandedAttentionWeightedSumKernel::define()
 Tensor bandedAttention(ComputePass& pass,
                        const Tensor& query,
                        const Tensor& key,
-                       const Tensor& value,
+                       const TensorView& value,
                        int heads,
                        int headDim,
                        const AttentionBand& band,
@@ -241,6 +242,8 @@ Tensor bandedAttention(ComputePass& pass,
     weightedSumKernel.segmentRows = segmentRows;
     weightedSumKernel.leftRadius = leftRadius;
     weightedSumKernel.rightRadius = rightRadius;
+    weightedSumKernel.valueRowStride = (std::uint32_t) value.rowStride();
+    weightedSumKernel.valueColumnOffset = (std::uint32_t) value.columnOffset();
     weightedSumKernel.dispatch(pass, rows, heads, headDim, window);
 
     return output;

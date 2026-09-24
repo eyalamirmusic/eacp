@@ -88,11 +88,11 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                               device);
     auto qkv = linear(pass, normed, weights.qkvWeight, nullptr, device);
 
-    auto qTensor = sliceColumns(pass, qkv, 0 * dim, dim, device);
-    auto kTensor = sliceColumns(pass, qkv, 1 * dim, dim, device);
-    auto vTensor = sliceColumns(pass, qkv, 2 * dim, dim, device);
-    auto qDiffTensor = sliceColumns(pass, qkv, 3 * dim, dim, device);
-    auto kDiffTensor = sliceColumns(pass, qkv, 4 * dim, dim, device);
+    auto qTensor = qkv.columns(0 * dim, dim);
+    auto kTensor = qkv.columns(1 * dim, dim);
+    auto vTensor = qkv.columns(2 * dim, dim);
+    auto qDiffTensor = qkv.columns(3 * dim, dim);
+    auto kDiffTensor = qkv.columns(4 * dim, dim);
 
     auto qNormed = dynamicTanhPerHead(pass,
                                       qTensor,

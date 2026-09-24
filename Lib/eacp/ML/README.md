@@ -39,6 +39,25 @@ with the same kernels and the input's shape back:
 auto q = rmsNormPerHead(pass, query, qNormGamma, headDim, epsilon);
 ```
 
+## Column views
+
+A fused projection puts q, k and v side by side in one `rows x 3·dim` tensor.
+`qkv.columns(first, count)` is a `TensorView` of some of those columns, read
+where they lie: `rmsNormPerHead`, `dynamicTanhPerHead` and the value of
+`attention`, `bandedAttention` and `attendWithScores` all take one, so
+splitting a projection costs no dispatch at all.
+
+```cpp
+auto qkv = linear(pass, x, qkvWeight);
+auto q = rmsNormPerHead(pass, qkv.columns(0, dim), qNorm, headDim, eps);
+auto k = rmsNormPerHead(pass, qkv.columns(dim, dim), kNorm, headDim, eps);
+auto out = attention(pass, q, k, qkv.columns(2 * dim, dim), heads, headDim);
+```
+
+A `Tensor` converts to a view of the whole of itself, so callers holding a
+tensor change nothing. The kernels only change where each value is read from;
+every sum runs in the order it did over a copy, and gives the same bits.
+
 ## RoPE over segments
 
 `applyRoPE` rotates each row by its position. Several independent sequences

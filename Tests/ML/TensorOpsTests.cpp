@@ -3,6 +3,9 @@
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
+#include <eacp/ML/Kernels/Attention.h>
+#include <eacp/ML/Kernels/BandedAttention.h>
+#include <eacp/ML/Kernels/Norm.h>
 #include <eacp/ML/Kernels/TensorOps.h>
 
 #include <cmath>
@@ -176,4 +179,67 @@ auto tReshapeKeepsValues = test("TensorOps/reshapeKeepsTheValues") = []
     check(flat.rows() == 3);
     check(flat.cols() == 2);
     checkClose(flat.toHostF32(), {1.f, 2.f, 3.f, 4.f, 5.f, 6.f}, 0.f);
+};
+
+namespace
+{
+Tensor scattered(int rows, int cols, int salt)
+{
+    auto values = std::vector<float> {};
+
+    for (auto i = 0; i < rows * cols; ++i)
+        values.push_back((float) (((i * 37 + salt * 11) % 23) - 11) * 0.125f);
+
+    return tensorOf(values, {rows, cols});
+}
+} // namespace
+
+auto tViewsReadWhatCopiesRead =
+    test("TensorView/columnViewsGiveTheBitsOfColumnCopies") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto rows = 6, heads = 2, headDim = 8, dim = heads * headDim;
+
+    auto qkv = scattered(rows, 3 * dim, 1);
+    auto gamma = scattered(1, headDim, 2);
+    auto beta = scattered(1, headDim, 3);
+    auto band = AttentionBand {.leftRadius = 2, .rightRadius = 1, .segmentRows = 3};
+
+    auto commands = device.makeCommandBuffer();
+    auto fromViews = std::vector<Tensor> {};
+    auto fromCopies = std::vector<Tensor> {};
+
+    {
+        auto pass = commands.beginCompute();
+
+        auto q = sliceColumns(pass, qkv, 0, dim);
+        auto k = sliceColumns(pass, qkv, dim, dim);
+        auto v = sliceColumns(pass, qkv, 2 * dim, dim);
+
+        fromViews.push_back(
+            rmsNormPerHead(pass, qkv.columns(dim, dim), gamma, headDim, 1e-6f));
+        fromCopies.push_back(rmsNormPerHead(pass, k, gamma, headDim, 1e-6f));
+
+        fromViews.push_back(dynamicTanhPerHead(
+            pass, qkv.columns(0, dim), gamma, beta, 0.5f, headDim));
+        fromCopies.push_back(
+            dynamicTanhPerHead(pass, q, gamma, beta, 0.5f, headDim));
+
+        fromViews.push_back(
+            attention(pass, q, k, qkv.columns(2 * dim, dim), heads, headDim));
+        fromCopies.push_back(attention(pass, q, k, v, heads, headDim));
+
+        fromViews.push_back(bandedAttention(
+            pass, q, k, qkv.columns(2 * dim, dim), heads, headDim, band));
+        fromCopies.push_back(bandedAttention(pass, q, k, v, heads, headDim, band));
+    }
+
+    commands.commit();
+
+    for (auto i = std::size_t {}; i < fromViews.size(); ++i)
+        check(fromViews[i].toHostF32() == fromCopies[i].toHostF32());
 };

@@ -106,9 +106,9 @@ Tensor selfAttentionOutput(ComputePass& pass,
 {
     auto embedDimC = config.embedDim;
     auto qkv = linear(pass, xm, layer.selfAttnQKVWeight, nullptr, device);
-    auto q = sliceColumns(pass, qkv, 0 * embedDimC, embedDimC, device);
-    auto k = sliceColumns(pass, qkv, 1 * embedDimC, embedDimC, device);
-    auto v = sliceColumns(pass, qkv, 2 * embedDimC, embedDimC, device);
+    auto q = qkv.columns(0 * embedDimC, embedDimC);
+    auto k = qkv.columns(1 * embedDimC, embedDimC);
+    auto v = qkv.columns(2 * embedDimC, embedDimC);
 
     auto qn = rmsNormPerHead(pass,
                              q,
@@ -132,8 +132,8 @@ Tensor selfAttentionOutput(ComputePass& pass,
     if (!config.differential)
         return mainAttn;
 
-    auto qDiff = sliceColumns(pass, qkv, 3 * embedDimC, embedDimC, device);
-    auto kDiff = sliceColumns(pass, qkv, 4 * embedDimC, embedDimC, device);
+    auto qDiff = qkv.columns(3 * embedDimC, embedDimC);
+    auto kDiff = qkv.columns(4 * embedDimC, embedDimC);
 
     auto qDiffN = rmsNormPerHead(pass,
                                  qDiff,
@@ -169,10 +169,8 @@ PromptKeys promptKeysFor(ComputePass& pass,
 
     auto normedKeys = [&](int slice)
     {
-        auto keys =
-            sliceColumns(pass, keysAndValues, slice * embedDimC, embedDimC, device);
         return rmsNormPerHead(pass,
-                              keys,
+                              keysAndValues.columns(slice * embedDimC, embedDimC),
                               layer.crossAttnKNormGamma,
                               config.headDim,
                               config.qkNormEpsilon,
@@ -183,15 +181,15 @@ PromptKeys promptKeysFor(ComputePass& pass,
         return PromptKeys {
             .keys = normedKeys(0),
             .diffKeys = std::nullopt,
-            .values =
-                sliceColumns(pass, keysAndValues, 1 * embedDimC, embedDimC, device),
+            .keysAndValues = std::move(keysAndValues),
+            .valueColumn = 1 * embedDimC,
         };
 
     return PromptKeys {
         .keys = normedKeys(0),
         .diffKeys = normedKeys(1),
-        .values =
-            sliceColumns(pass, keysAndValues, 2 * embedDimC, embedDimC, device),
+        .keysAndValues = std::move(keysAndValues),
+        .valueColumn = 2 * embedDimC,
     };
 }
 
@@ -228,7 +226,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
         return attention(pass,
                          q2n,
                          prompt.keys,
-                         prompt.values,
+                         prompt.values(),
                          config.numHeads,
                          config.headDim,
                          {},
@@ -236,8 +234,8 @@ Tensor crossAttentionOutput(ComputePass& pass,
     }
 
     auto q2Full = linear(pass, xn2, layer.crossAttnQWeight, nullptr, device);
-    auto q2 = sliceColumns(pass, q2Full, 0 * embedDimC, embedDimC, device);
-    auto q2Diff = sliceColumns(pass, q2Full, 1 * embedDimC, embedDimC, device);
+    auto q2 = q2Full.columns(0 * embedDimC, embedDimC);
+    auto q2Diff = q2Full.columns(1 * embedDimC, embedDimC);
 
     auto q2n = rmsNormPerHead(pass,
                               q2,
@@ -255,7 +253,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
     auto mainCross = attention(pass,
                                q2n,
                                prompt.keys,
-                               prompt.values,
+                               prompt.values(),
                                config.numHeads,
                                config.headDim,
                                {},
@@ -263,7 +261,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
     auto diffCross = attention(pass,
                                q2DiffN,
                                *prompt.diffKeys,
-                               prompt.values,
+                               prompt.values(),
                                config.numHeads,
                                config.headDim,
                                {},
