@@ -193,6 +193,7 @@ auto tSafetensorsLoadsInPlaceWhereItCan =
     check(counts.inPlace == (adopts ? 1 : 0));
     check(counts.copied == (adopts ? 1 : 2));
     check(counts.converted == 1);
+    check(file->segmentBufferCount() == (adopts ? 1 : 0));
 
     if (adopts)
         check(aligned.byteOffset() > 0 && aligned.byteOffset() % 8 == 0);

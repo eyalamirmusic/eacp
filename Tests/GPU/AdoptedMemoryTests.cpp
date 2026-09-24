@@ -229,6 +229,62 @@ auto tBufferDestroyedAtOnceReleases =
     }
 };
 
+// A checkpoint is adopted a range at a time, so the pages a buffer covers are
+// its own range of a larger block and may share a page with the next one:
+// every range is a buffer of its own, reads its own values through a kernel,
+// and releases on its own, each after its residency request.
+auto tOverlappingRangesAreBuffersOfTheirOwn =
+    test("AdoptedMemory/pageRangesOfOneBlockAreBuffersOfTheirOwn") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const auto page = Buffer::memoryPageSize();
+    const auto floatsPerPage = (int) (page / (std::int64_t) sizeof(float));
+    const auto source = ramp(floatsPerPage * 4);
+    const auto bytes = byteCountOf(source);
+
+    auto* pages = allocatePages(bytes);
+    std::memcpy(pages, source.data(), (std::size_t) bytes);
+
+    const auto firstPages = std::pair {0, 3};
+    const auto lastPages = std::pair {2, 4};
+    auto releases = 0;
+
+    {
+        auto bufferOver = [&](std::pair<int, int> range)
+        {
+            return device.makeBufferOverMemory({pages + range.first * page,
+                                                (range.second - range.first) * page,
+                                                [&] { ++releases; }},
+                                               BufferUsage::Storage);
+        };
+
+        auto first = bufferOver(firstPages);
+        auto last = bufferOver(lastPages);
+
+        check(first.isValid() && last.isValid());
+
+        for (auto [buffer, range]:
+             {std::pair {&first, firstPages}, std::pair {&last, lastPages}})
+        {
+            const auto count = (range.second - range.first) * floatsPerPage;
+            const auto doubled = doubledThrough(device, *buffer, count);
+            const auto base = range.first * floatsPerPage;
+
+            for (auto i = 0; i < count; ++i)
+                check(doubled[i] == source[base + i] * 2.0f);
+        }
+    }
+
+    check(releases == 2);
+
+    if (releases == 2)
+        freePages(pages);
+};
+
 // The whole reason for the feature query: where the memory was adopted, the
 // caller and the GPU are looking at the same bytes, in both directions.
 auto tAdoptedMemoryIsShared =
