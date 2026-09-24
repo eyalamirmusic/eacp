@@ -15,7 +15,6 @@ using namespace eacp::GPU;
 
 namespace
 {
-constexpr auto attentionGroupWidth = 256;
 constexpr auto maskedScore = -1.0e9f;
 // The side of the block of scores - and of rows in the weighted sum - one
 // thread computes.
@@ -27,9 +26,32 @@ int blocksOf(int extent, int block)
 }
 } // namespace
 
-AttentionScoresKernel::AttentionScoresKernel()
+AttentionScoresKernel::AttentionScoresKernel(AttentionMask maskToUse)
+    : mask(maskToUse)
 {
     compile();
+}
+
+std::string AttentionScoresKernel::name() const
+{
+    return mask == AttentionMask::None ? "UnmaskedAttentionScoresKernel"
+                                       : "AttentionScoresKernel";
+}
+
+void AttentionScoresKernel::reflectMembers(ShaderVisitor& visitor)
+{
+    visitor("query", query);
+    visitor("key", key);
+
+    if (mask == AttentionMask::Additive)
+        visitor("additiveMask", additiveMask);
+
+    visitor("scores", scores);
+    visitor("headCount", headCount);
+    visitor("headDimension", headDimension);
+    visitor("rowCount", rowCount);
+    visitor("columnCount", columnCount);
+    visitor("scale", scale);
 }
 
 void AttentionScoresKernel::dispatch(ComputePass& pass,
@@ -113,113 +135,13 @@ void AttentionScoresKernel::define()
              d = d.get() + 4u;
          });
 
-    for (auto a = 0u; a < scoreBlock; ++a)
+    auto scaledScore = [&](const Float& dot, const UInt& row, const UInt& column)
     {
-        auto sum = sums[a]->get();
-        Float dots[] = {sum.x(), sum.y(), sum.z(), sum.w()};
+        if (mask == AttentionMask::None)
+            return dot * scale;
 
-        for (auto b = 0u; b < scoreBlock; ++b)
-        {
-            auto row = firstRow + a;
-            auto column = firstColumn + b;
-
-            ifThen(row < rowCount && column < columnCount,
-                   [&]
-                   {
-                       auto score = dots[b] * scale
-                                    + additiveMask[row * columnCount + column];
-                       write(scores,
-                             (row * headCount + head) * columnCount + column,
-                             score);
-                   });
-        }
-    }
-}
-
-UnmaskedAttentionScoresKernel::UnmaskedAttentionScoresKernel()
-{
-    compile();
-}
-
-void UnmaskedAttentionScoresKernel::dispatch(ComputePass& pass,
-                                             int rows,
-                                             int heads,
-                                             int cols)
-{
-    assert(headDimension.value % 4 == 0);
-
-    headCount = (std::uint32_t) heads;
-    rowCount = (std::uint32_t) rows;
-    columnCount = (std::uint32_t) cols;
-
-    // Columns, rows and heads a grid dimension each, so none of them - and no
-    // product of them - meets a backend's per-dimension threadgroup ceiling.
-    pass.dispatch(*this,
-                  blocksOf(cols, (int) scoreBlock),
-                  blocksOf(rows, (int) scoreBlock),
-                  heads);
-}
-
-void UnmaskedAttentionScoresKernel::define()
-{
-    auto position = threadPosition3();
-    auto firstColumn = position.x * scoreBlock;
-    auto firstRow = position.y * scoreBlock;
-    auto head = position.z;
-
-    auto rowBase = [&](unsigned a)
-    {
-        auto row = min(firstRow + a, rowCount - 1u);
-        return (row * headCount + head) * headDimension;
+        return dot * scale + additiveMask[row * columnCount + column];
     };
-
-    auto columnBase = [&](unsigned b)
-    {
-        auto column = min(firstColumn + b, columnCount - 1u);
-        return (column * headCount + head) * headDimension;
-    };
-
-    // One accumulator per row of the block, over its four columns. Each score
-    // is the same running sum over d, in the same order, that one thread per
-    // score made - a block of them only shares the reads.
-    auto zero = float4(constant(0.f), 0.f, 0.f, 0.f);
-    auto sum0 = var(zero), sum1 = var(zero), sum2 = var(zero), sum3 = var(zero);
-    Var<Float4>* sums[] = {&sum0, &sum1, &sum2, &sum3};
-
-    auto d = var(0u);
-
-    loop(d.get() < headDimension,
-         [&]
-         {
-             Float4 queries[] = {query.read4((rowBase(0u) + d.get()) / 4u),
-                                 query.read4((rowBase(1u) + d.get()) / 4u),
-                                 query.read4((rowBase(2u) + d.get()) / 4u),
-                                 query.read4((rowBase(3u) + d.get()) / 4u)};
-
-             Float4 keys[] = {key.read4((columnBase(0u) + d.get()) / 4u),
-                              key.read4((columnBase(1u) + d.get()) / 4u),
-                              key.read4((columnBase(2u) + d.get()) / 4u),
-                              key.read4((columnBase(3u) + d.get()) / 4u)};
-
-             auto component = [](const Float4& v, int c)
-             {
-                 return c == 0 ? v.x() : c == 1 ? v.y() : c == 2 ? v.z() : v.w();
-             };
-
-             for (auto c = 0; c < 4; ++c)
-             {
-                 auto keyColumn = float4(component(keys[0], c),
-                                         component(keys[1], c),
-                                         component(keys[2], c),
-                                         component(keys[3], c));
-
-                 for (auto a = 0; a < 4; ++a)
-                     *sums[a] =
-                         sums[a]->get() + component(queries[a], c) * keyColumn;
-             }
-
-             d = d.get() + 4u;
-         });
 
     for (auto a = 0u; a < scoreBlock; ++a)
     {
@@ -234,7 +156,7 @@ void UnmaskedAttentionScoresKernel::define()
             ifThen(row < rowCount && column < columnCount,
                    [&]
                    {
-                       auto score = dots[b] * scale;
+                       auto score = scaledScore(dots[b], row, column);
                        write(scores,
                              (row * headCount + head) * columnCount + column,
                              score);
@@ -460,27 +382,20 @@ Tensor attention(ComputePass& pass,
     auto scores = Tensor::uninitializedF32({rows, heads, cols}, device);
     auto scale = 1.f / std::sqrt((float) headDim);
 
+    auto mask =
+        additiveMask != nullptr ? AttentionMask::Additive : AttentionMask::None;
+
+    auto& scoresKernel = sharedKernel<AttentionScoresKernel>(device, mask);
+    scoresKernel.query = normalizedQuery.buffer();
+    scoresKernel.key = normalizedKey.buffer();
+    scoresKernel.scores = scores.buffer();
+    scoresKernel.headDimension = (std::uint32_t) headDim;
+    scoresKernel.scale = scale;
+
     if (additiveMask != nullptr)
-    {
-        auto& scoresKernel = sharedKernel<AttentionScoresKernel>(device);
-        scoresKernel.query = normalizedQuery.buffer();
-        scoresKernel.key = normalizedKey.buffer();
         scoresKernel.additiveMask = additiveMask->buffer();
-        scoresKernel.scores = scores.buffer();
-        scoresKernel.headDimension = (std::uint32_t) headDim;
-        scoresKernel.scale = scale;
-        scoresKernel.dispatch(pass, rows, heads, cols);
-    }
-    else
-    {
-        auto& scoresKernel = sharedKernel<UnmaskedAttentionScoresKernel>(device);
-        scoresKernel.query = normalizedQuery.buffer();
-        scoresKernel.key = normalizedKey.buffer();
-        scoresKernel.scores = scores.buffer();
-        scoresKernel.headDimension = (std::uint32_t) headDim;
-        scoresKernel.scale = scale;
-        scoresKernel.dispatch(pass, rows, heads, cols);
-    }
+
+    scoresKernel.dispatch(pass, rows, heads, cols);
 
     return attendWithScores(pass, scores, value, heads, headDim, device);
 }

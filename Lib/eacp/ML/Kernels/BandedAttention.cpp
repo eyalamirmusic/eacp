@@ -1,5 +1,7 @@
 #include "BandedAttention.h"
 
+#include "Attention.h"
+
 #include "../../GPU/Codegen/KernelCache.h"
 #include "../../GPU/Frame/ComputePass.h"
 
@@ -12,8 +14,6 @@ using namespace eacp::GPU;
 
 namespace
 {
-constexpr auto attentionGroupWidth = 256;
-
 struct BandBounds
 {
     UInt segmentStart;

@@ -5,12 +5,27 @@
 
 namespace eacp::ML
 {
+// The width of the threadgroup that folds one (row, head) of scores: the row
+// stats here and in bandedAttention.
+constexpr auto attentionGroupWidth = 256;
+
+// Whether the scores add a rows x cols mask. Without one there is no buffer of
+// zeros built on the host and read back by every thread.
+enum class AttentionMask
+{
+    Additive,
+    None
+};
+
 class AttentionScoresKernel final : public GPU::ComputeProgram
 {
 public:
-    AttentionScoresKernel();
+    explicit AttentionScoresKernel(
+        AttentionMask maskToUse = AttentionMask::Additive);
 
     void dispatch(GPU::ComputePass& pass, int rows, int heads, int cols);
+
+    std::string name() const override;
 
     GPU::Uniform<GPU::InputBuffer> query;
     GPU::Uniform<GPU::InputBuffer> key;
@@ -22,44 +37,13 @@ public:
     GPU::Uniform<GPU::UInt> columnCount;
     GPU::Uniform<GPU::Float> scale;
 
-    EACP_SHADER(query,
-                key,
-                additiveMask,
-                scores,
-                headCount,
-                headDimension,
-                rowCount,
-                columnCount,
-                scale)
+    // EACP_SHADER written out, so the unmasked kernel declares no mask at all.
+    void reflectMembers(GPU::ShaderVisitor& visitor) override;
 
 private:
     void define() override;
-};
 
-// AttentionScoresKernel with no mask to add, for attention that sees every
-// key: the same scores, with no rows x cols buffer of zeros built on the host
-// and read back by every thread.
-class UnmaskedAttentionScoresKernel final : public GPU::ComputeProgram
-{
-public:
-    UnmaskedAttentionScoresKernel();
-
-    void dispatch(GPU::ComputePass& pass, int rows, int heads, int cols);
-
-    GPU::Uniform<GPU::InputBuffer> query;
-    GPU::Uniform<GPU::InputBuffer> key;
-    GPU::Uniform<GPU::OutputBuffer> scores;
-    GPU::Uniform<GPU::UInt> headCount;
-    GPU::Uniform<GPU::UInt> headDimension;
-    GPU::Uniform<GPU::UInt> rowCount;
-    GPU::Uniform<GPU::UInt> columnCount;
-    GPU::Uniform<GPU::Float> scale;
-
-    EACP_SHADER(
-        query, key, scores, headCount, headDimension, rowCount, columnCount, scale)
-
-private:
-    void define() override;
+    AttentionMask mask;
 };
 
 // Softmax over the scores of each (row, head), in two kernels. The row stats
