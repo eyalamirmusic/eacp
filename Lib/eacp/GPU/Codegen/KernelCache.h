@@ -28,9 +28,13 @@ ComputeProgram& findOrBuildKernel(Device& device,
 // otherwise redo on every call. Constructor arguments are part of what tells
 // two kernels apart, and so must be integers or enums.
 //
-// The instance is shared by every caller. A dispatch copies the uniforms and
-// binds the buffers there and then, so each caller sets every member it
-// declares before dispatching, and none may rely on a value a fresh kernel
+// The instance is shared by every caller, so each caller assigns every member
+// it declares before each dispatch. For the buffers and textures that is
+// enforced: the instance releases them once a dispatch has bound them, and a
+// dispatch with one left unassigned throws std::logic_error naming the kernel
+// and the member - never binding a range into a buffer an earlier caller has
+// since freed. Uniform values are copied into each dispatch and are kept, so a
+// forgotten one is the last caller's value, never the zero a fresh kernel
 // would have held. Use it from the Device's own thread.
 //
 // The first use on a Device builds the kernel; the shader compile under that is
@@ -45,6 +49,7 @@ Kernel& sharedKernel(Device& device, Args... args)
     auto build = [&]
     {
         auto kernel = std::make_unique<Kernel>(args...);
+        kernel->releaseBindingsAfterEachDispatch();
         kernel->prepare(device);
         return std::unique_ptr<ComputeProgram> {std::move(kernel)};
     };

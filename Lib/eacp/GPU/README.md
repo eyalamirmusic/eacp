@@ -613,10 +613,22 @@ Tensor scale(ComputePass& pass, const Tensor& input, float by, Device& device)
 
 The instance is shared by every caller, which is safe for the reason a kernel
 could always be dispatched twice: the dispatch copies the uniforms and binds the
-buffers there and then. What sharing does ask is that each call sets every
-member it declares — a value the last caller left behind is not the zero a fresh
-kernel would have held. Constructor arguments are part of what tells two
-kernels apart, so a kernel with variants is `sharedKernel<ActivationKernel>(device,
+buffers there and then. What sharing does ask is that each call assigns every
+member it declares, and for buffers and textures that is enforced. A shared
+instance lets go of its buffer and texture members once a dispatch has bound
+them, so the range a caller assigned never outlives the buffer it points into,
+and a dispatch that finds one unassigned throws `std::logic_error` naming the
+kernel and the member instead of binding what the last caller left. Uniform
+values are copied into each dispatch and kept: a forgotten one is the last
+caller's value, not the zero a fresh kernel would have held — a wrong answer
+rather than freed memory, and the reason each call still sets them all.
+
+Any kernel, shared or not, throws the same way when a buffer or texture member
+was never assigned at all. A kernel its owner holds keeps what was assigned to
+it across dispatches, which is how a kernel dispatched every frame over the same
+buffers is written; `releaseBindingsAfterEachDispatch()` gives it the shared
+rule. Constructor arguments are part of what tells two kernels apart, so a
+kernel with variants is `sharedKernel<ActivationKernel>(device,
 ActivationKind::SiLU)`; they must be integers or enums.
 
 The first use builds the kernel, and there is nothing to list ahead of time:

@@ -76,6 +76,7 @@ set(gpu_test_sources
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp
+        KernelCacheTests.cpp
         LargeBufferTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp
