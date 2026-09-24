@@ -347,11 +347,47 @@ def run_pytorch(args):
 
 
 def power_source():
+    """AC, Battery, or unknown - and a machine with no battery is on AC.
+
+    The guard exists because a laptop on battery caps its GPU clock and halves
+    every number. A desktop cannot do that, and answering "unknown" for one
+    would make it refuse to benchmark at all.
+    """
+    if sys.platform == "win32":
+        return windows_power_source()
+
     try:
         out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True).stdout
     except OSError:
         return "unknown"
     return "AC" if "AC Power" in out else "Battery" if "Battery" in out else "unknown"
+
+
+def windows_power_source():
+    """GetSystemPowerStatus: ACLineStatus 1 is mains, 0 is battery.
+
+    BatteryFlag 128 is "no system battery", which is every desktop, and is AC
+    whatever the line status claims.
+    """
+    import ctypes
+
+    class SystemPowerStatus(ctypes.Structure):
+        _fields_ = [("ACLineStatus", ctypes.c_ubyte),
+                    ("BatteryFlag", ctypes.c_ubyte),
+                    ("BatteryLifePercent", ctypes.c_ubyte),
+                    ("SystemStatusFlag", ctypes.c_ubyte),
+                    ("BatteryLifeTime", ctypes.c_ulong),
+                    ("BatteryFullLifeTime", ctypes.c_ulong)]
+
+    status = SystemPowerStatus()
+
+    if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+        return "unknown"
+
+    if status.BatteryFlag == 128 or status.ACLineStatus == 1:
+        return "AC"
+
+    return "Battery" if status.ACLineStatus == 0 else "unknown"
 
 
 def main():
