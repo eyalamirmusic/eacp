@@ -17,14 +17,13 @@ enum class LinearLoads
 
 LinearLoads linearLoadsFor(int inner);
 
-// How many rows of the output one LinearF32 threadgroup covers, 64 or 32.
-// Either gives the same bits. 32 wins twice over: the last tile of a batch
-// computes every one of its rows whether the batch has them or not, so a batch
-// of 387 pays for 448 rows in tiles of 64 and 416 in tiles of 32; and an output
-// too small to fill the GPU with tiles of 64 fills it better with twice as many
-// tiles. Elsewhere 64 is as fast or a little faster, its larger blocks reusing
-// each loaded fragment more.
-int linearTileRowsFor(int rows, int columns);
+// How many rows of the output one LinearF32 threadgroup covers, 64 or 32. The
+// last tile of a batch computes every one of its rows whether the batch has
+// them or not, so a batch of 387 pays for 448 rows in tiles of 64 and 416 in
+// tiles of 32. This picks 32 wherever it pads the batch to fewer rows, and 64,
+// whose larger blocks reuse each loaded fragment more, everywhere else. Either
+// gives the same bits.
+int linearTileRowsFor(int rows);
 
 // output = activations x weightᵀ in fp32 on SIMD-group matrices.
 class LinearF32 final : public GPU::ComputeProgram

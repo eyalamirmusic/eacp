@@ -96,13 +96,9 @@ LinearLoads linearLoadsFor(int inner)
     return inner % 4 == 0 ? LinearLoads::FourWide : LinearLoads::Scalar;
 }
 
-int linearTileRowsFor(int rows, int columns)
+int linearTileRowsFor(int rows)
 {
-    auto padsLess = tileCount(rows, 32) * 32 < tileCount(rows, 64) * 64;
-    auto fewGroups =
-        tileCount(rows, 64) * tileCount(columns, (int) f32TileColumns) < 512;
-
-    return padsLess || fewGroups ? 32 : 64;
+    return tileCount(rows, 32) * 32 < tileCount(rows, 64) * 64 ? 32 : 64;
 }
 
 LinearF32::LinearF32(LinearLoads loadsToUse, int tileRowsToUse)
@@ -496,7 +492,7 @@ Tensor linear(ComputePass& pass,
     else
     {
         auto& kernel = sharedKernel<LinearF32>(
-            device, linearLoadsFor(inner), linearTileRowsFor(rows, columns));
+            device, linearLoadsFor(inner), linearTileRowsFor(rows));
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();

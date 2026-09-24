@@ -263,7 +263,7 @@ std::vector<float> runLinearF32(Device& device,
     commands.commit();
     return result.toHostF32();
 }
-} // namespace
+}
 
 // Tiles 32 and 64 rows tall split the output differently among SIMD groups, but
 // every element is the same sequence of products, so the two agree to the bit.
@@ -289,24 +289,15 @@ auto tLinearTilingsGiveTheSameBits = test("Linear/tilingsGiveTheSameBits") = []
     auto short32 = runLinearF32(device, 32, input, weight);
 
     check(tall.size() == short32.size());
-    check(std::memcmp(tall.data(), short32.data(), tall.size() * sizeof(float))
-          == 0);
-    checkMatches(
-        tall, referenceLinear(x, w, nullptr, rows, inner, columns), 1.0e-3f);
+    check(std::memcmp(tall.data(), short32.data(), tall.size() * sizeof(float)) == 0);
+    checkMatches(tall, referenceLinear(x, w, nullptr, rows, inner, columns), 1.0e-3f);
 };
 
 auto tLinearTileRowsPadTheBatchLeast = test("Linear/tileRowsPadTheBatchLeast") = []
 {
-    check(linearTileRowsFor(387, 12288) == 32);
-    check(linearTileRowsFor(384, 12288) == 64);
-    check(linearTileRowsFor(5491, 1536) == 64);
-    check(linearTileRowsFor(1, 12288) == 32);
-    check(linearTileRowsFor(1024, 3072) == 64);
-};
-
-auto tLinearTileRowsFillTheGpu = test("Linear/tileRowsFillTheGpu") = []
-{
-    check(linearTileRowsFor(384, 1536) == 32);
-    check(linearTileRowsFor(256, 768) == 32);
-    check(linearTileRowsFor(384, 6144) == 64);
+    check(linearTileRowsFor(387) == 32);
+    check(linearTileRowsFor(384) == 64);
+    check(linearTileRowsFor(5491) == 64);
+    check(linearTileRowsFor(1) == 32);
+    check(linearTileRowsFor(100) == 64);
 };
