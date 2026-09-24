@@ -1173,9 +1173,10 @@ int simdMatrixScratchElements(const ShaderGraph& graph)
 // The scratch declared, under the storage qualifier the dialect gives
 // threadgroup memory, in a kernel that holds any fragment at all.
 std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
-                                         const std::string& qualifier)
+                                         const std::string& qualifier,
+                                         bool wanted)
 {
-    if (graph.simdMatrixCount() == 0)
+    if (graph.simdMatrixCount() == 0 || !wanted)
         return {};
 
     return qualifier + " float " + simdMatrixScratchName + "["
@@ -1184,10 +1185,10 @@ std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
 
 // Whether a kernel declares any threadgroup memory of its own or the
 // emitter's - what the blank line after those declarations is for.
-bool declaresGroupMemory(const ShaderGraph& graph)
+bool declaresGroupMemory(const ShaderGraph& graph, bool scratchWanted)
 {
     return graph.sharedArrays().size() > 0 || graph.usesGroupReduction()
-           || graph.simdMatrixCount() > 0;
+           || (graph.simdMatrixCount() > 0 && scratchWanted);
 }
 
 // What the fallback addresses a fragment by, declared once at the top of any
@@ -2155,6 +2156,10 @@ struct StageEmitter
 
     Vector<FragmentSource> fragmentSources;
 
+    // Whether any product had to stage its operands after all, which is the
+    // only thing the scratch is for.
+    bool stagedAProduct = false;
+
     const FragmentSource* fragmentSourceFor(int slot) const
     {
         if (slot < 0 || slot >= fragmentSources.size())
@@ -2754,6 +2759,8 @@ private:
                 return fused;
             }
         }
+
+        stagedAProduct = true;
 
         // Both operands staged whole, each lane putting down the pair it
         // holds; then, once every pair is there, each lane takes its row of
@@ -3665,6 +3672,19 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
               "groups - a multiple of ComputeProgram::simdWidth threads - or "
               "in one narrower than a single SIMD group.");
 
+    // The body first, because what it turns out to need decides what is
+    // declared above it: a kernel whose every product reads its operands where
+    // they lie stages nothing, and then the scratch is dead weight - and
+    // threadgroup memory a kernel does not use still costs it occupancy.
+    auto stageRoots = Vector<int> {};
+    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
+
+    auto stage = StageEmitter {graph, backend};
+    auto body = stage.declareArrays(stageRoots, "    ");
+    body += stage.emitBlock(ShaderGraph::rootBlock, "    ");
+
+    auto scratchWanted = stage.stagedAProduct;
+
     if (backend == Backend::Metal)
         source += "#include <metal_stdlib>\nusing namespace metal;\n\n";
 
@@ -3821,9 +3841,9 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + groupScratchName(elementType) + "["
                       + std::to_string(threadsPerGroup(graph)) + "];\n";
 
-        source += simdMatrixScratchDeclaration(graph, "shared");
+        source += simdMatrixScratchDeclaration(graph, "shared", scratchWanted);
 
-        if (declaresGroupMemory(graph))
+        if (declaresGroupMemory(graph, scratchWanted))
             source += "\n";
 
         const auto group = graph.threadGroupShape();
@@ -3909,9 +3929,9 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
                       + groupScratchName(elementType) + "["
                       + std::to_string(threadsPerGroup(graph)) + "];\n";
 
-        source += simdMatrixScratchDeclaration(graph, "groupshared");
+        source += simdMatrixScratchDeclaration(graph, "groupshared", scratchWanted);
 
-        if (declaresGroupMemory(graph))
+        if (declaresGroupMemory(graph, scratchWanted))
             source += "\n";
 
         const auto group = graph.threadGroupShape();
@@ -3965,14 +3985,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     // Stores ride the statement stream like everything else, so the body is
     // one block walk: a write records where it was made, inside whatever
     // loop or branch was open, and the emitter has no end-of-kernel step.
-    auto stageRoots = Vector<int> {};
-    collectStatementRoots(graph, ShaderGraph::rootBlock, stageRoots);
-
-    auto stage = StageEmitter {graph, backend};
-
-    source += stage.declareArrays(stageRoots, "    ");
-    source += stage.emitBlock(ShaderGraph::rootBlock, "    ");
-
+    source += body;
     source += "}\n";
     return source;
 }

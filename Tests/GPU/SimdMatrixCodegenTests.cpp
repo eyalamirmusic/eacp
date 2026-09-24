@@ -140,6 +140,10 @@ auto tSimdMatrixStagedProduct = test("SimdMatrix/aProductStagesWhatItCannotRead"
                   "sgmColumn];"));
     }
 
+    // Staging is what the scratch is for, so here it is declared.
+    check(has(hlsl, "groupshared float sgmScratch[512];"));
+    check(has(glsl, "shared float sgmScratch[512];"));
+
     // The kernel's two, and the two the exchange puts around itself.
     check(count(hlsl, "GroupMemoryBarrierWithGroupSync();") == 4);
     check(count(glsl, "barrier();") == 4);
@@ -194,19 +198,20 @@ auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
         check(has(source, "+ sgm0k * (8u) + sgmColumn];"));
         check(has(source, "sgm0.y += sgm0l * buffer0["));
         check(has(source, "+ sgm0k * (8u) + sgmColumn + 1u];"));
-        check(!has(source, "sgmScratch[sgmBase"));
+        check(!has(source, "sgmScratch"));
         check(has(source, "+ sgmColumn] = sgm0.x;"));
         check(has(source, "+ sgmColumn + 1u] = sgm0.y;"));
         check(!has(source, "% 32u == 0u"));
         check(!has(source, "simdgroup_multiply_accumulate"));
     }
 
-    // The two-vector each dialect spells a lane's pair as, and the scratch:
-    // 128 threads are four SIMD groups, each with two fragments of its own.
-    check(has(hlsl, "groupshared float sgmScratch[512];"));
+    // The two-vector each dialect spells a lane's pair as. No scratch is
+    // declared at all: nothing staged anything into it, and threadgroup
+    // memory a kernel does not use still costs it occupancy.
+    check(!has(hlsl, "sgmScratch"));
     check(has(hlsl, "float2 sgm0 = float2(0.0, 0.0);"));
     check(has(hlsl, "float2 sgm1 = float2(s0["));
-    check(has(glsl, "shared float sgmScratch[512];"));
+    check(!has(glsl, "sgmScratch"));
     check(has(glsl, "vec2 sgm0 = vec2(0.0, 0.0);"));
     check(has(glsl, "vec2 sgm1 = vec2(s0["));
 
