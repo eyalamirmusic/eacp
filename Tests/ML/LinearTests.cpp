@@ -128,6 +128,33 @@ auto tLinearMatchesReferenceAtRaggedShape = test("Linear/matchesReferenceRagged"
                 2.0e-4f * inner);
 };
 
+// An inner dimension that is a multiple of four, so the four-wide reads are
+// taken, but not of the slab, so the last slab runs past k; with rows and
+// columns that leave the last output fragments hanging off the edge.
+auto tLinearMatchesReferenceFourWideRagged =
+    test("Linear/matchesReferenceFourWideRagged") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto rows = 339;
+    constexpr auto inner = 36;
+    constexpr auto columns = 70;
+
+    auto x = scatteredValues(rows * inner, 5);
+    auto w = scatteredValues(columns * inner, 9);
+
+    auto input = Tensor::fromHostF32(x.data(), {rows, inner}, device);
+    auto weight = Tensor::fromHostF32(w.data(), {columns, inner}, device);
+    auto result = runLinear(device, input, weight, nullptr);
+
+    checkMatches(result.toHostF32(),
+                 referenceLinear(x, w, nullptr, rows, inner, columns),
+                 2.0e-4f * inner);
+};
+
 auto tLinearMatchesReferenceWithBias = test("Linear/matchesReferenceWithBias") = []
 {
     auto& device = Device::shared();

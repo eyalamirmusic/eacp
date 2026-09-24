@@ -352,7 +352,7 @@ void T5GemmaEncoder::addWarmupKernels(KernelWarmup& warmup)
     warmup.add<BinaryOpKernel>(BinaryOpKernel::Op::Add);
     warmup.add<BinaryOpKernel>(BinaryOpKernel::Op::Multiply);
     warmup.add<RMSNormKernel>();
-    warmup.add<LinearF32>();
+    warmup.add<LinearF32>(true);
     warmup.add<RoPEKernel>();
     warmup.add<GemmaAttentionScoresKernel>();
     warmup.add<AttentionRowStatsKernel>();

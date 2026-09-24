@@ -5,10 +5,13 @@
 
 namespace eacp::ML
 {
+// output = activations x weightᵀ in fp32 on SIMD-group matrices. vectorLoads
+// reads A and the weight four floats at a time, which needs the inner
+// dimension to be a multiple of four; linear() picks it whenever it is.
 class LinearF32 final : public GPU::ComputeProgram
 {
 public:
-    LinearF32();
+    explicit LinearF32(bool vectorLoads = true);
 
     void dispatch(GPU::ComputePass& pass, int rows, int columns, int inner);
 
@@ -23,6 +26,8 @@ public:
 
 private:
     void define() override;
+
+    bool vectorLoads = true;
 };
 
 class LinearPackedHalf final : public GPU::ComputeProgram

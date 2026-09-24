@@ -1571,6 +1571,37 @@ a 32-deep slab, clamped loads and a guarded copy-out — checked against a scala
 reference on whole tiles, on a ragged shape and at a transformer's own
 [1500, 384] × [384, 1536].
 
+#### Tiling a product that is fast
+
+`ML::LinearF32` is the product above grown up, and what moved it is worth
+knowing before writing another. On an M5 Max, measured on a transformer's own
+shapes ([339, 1536] against weights up to [12288, 1536]), each of these was
+kept only because it was measurably faster, and none of them changes a single
+bit of the result:
+
+- **Pad threadgroup rows by eight floats.** A fragment load reads eight rows
+  of eight. At a row stride that is a multiple of the 32 banks — a 32-deep slab,
+  a 64-wide tile — all eight rows land on the same eight banks; a stride eight
+  floats longer puts each row on the next eight, so the load takes the two
+  passes its 64 floats need and no more.
+- **A shallower slab.** 16 deep in k beats 32 and 8. It is more barriers for
+  the same products, but less threadgroup memory, and more threadgroups
+  resident on a core hide the global reads better than a deeper slab amortises
+  its barriers.
+- **Four-wide reads, the next slab's issued before this slab's products**, and
+  a 32 × 32 block per SIMD group so each fragment loaded feeds four products.
+- **Fragments stored straight to the buffer** wherever one lies wholly inside
+  the output, with only the ragged edge going back through threadgroup memory.
+
+Together that is 18% on those shapes: from 5.5 to 6.7 TFLOPS, against 14.4 for
+the SIMD-group product on its own with nothing to load, so there is headroom
+left for whoever comes next. The result stays bit for bit what it was because
+none of it touches the one thing that decides a sum's rounding: every output
+element is still the same sequence of 8 × 8 × 8 products, k in steps of eight
+from zero, into an accumulator that starts at zero. Which SIMD group computes
+an element, how the operands reached threadgroup memory and how deep a slab is
+do not enter into it.
+
 #### A weight read where it lies
 
 A checkpoint ships its weights in sixteen bits, and the product above wants
