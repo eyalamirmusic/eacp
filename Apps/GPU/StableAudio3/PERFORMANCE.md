@@ -27,36 +27,42 @@ times worse than it is. Full method and raw JSON: `Benchmark/`.
 
 ### Medium model, 30 s clip
 
-Machine A. Evidence, honestly: the eacp column is a single quiet run on mains
-(scratch log, 6ef2eb75), and the only medians `benchmark.py` has recorded since
-(`Benchmark/Outputs/r2-*.json`, 6ef2eb75) were taken with another process on
-the GPU and put eacp's generate at 2.5–2.7 s against PyTorch's 2.5 s — level,
-not ahead. Until a clean run of `benchmark.py` on mains replaces this table,
-read the "eacp is" column as the best single run, not a median.
+Machine A, 2026-09-24, medians of four `benchmark.py` runs with the spread in
+brackets (`Benchmark/Outputs/r4-medium-30s-run*.json`). The MacBook was on
+mains but charging from a low battery, and PyTorch ran slower than in its
+2026-09-23 mains session (warm generate 4.5 s here against 2.5 s then), so
+its column may understate it; eacp's settled runs match the day before.
 
 | Phase | eacp Metal | PyTorch MPS warm | eacp is |
 |---|---|---|---|
-| Load (DiT, codec, text encoder) | 1.3 s | 6–9 s | 5–7× faster |
-| Sampling, 8 steps | 1.1 s | 1.1–1.5 s | level to 1.3× faster |
-| Decode | 0.46 s | 1.1–1.4 s | 2.5× faster |
-| Generate (encode + sample + decode) | 1.6 s | 2.2–2.9 s | 1.5× faster |
-| Cold process to WAV on disk | 2.7 s | 12–17 s | ~5× faster |
-| Peak RSS (footprint) | 0.7 GB (4.6 GB) | 19 GB (14.7 GB) | |
+| Load (DiT, codec, text encoder) | 0.45 s (0.34–0.49) | 6.8 s (6.5–11.8) | 15× faster |
+| Sampling, 8 steps | 1.75 s (1.36–2.27) | 2.4 s (1.4–3.5) | 1.4× faster |
+| Decode | 0.78 s (0.47–1.87) | 2.35 s (2.0–2.9) | 3× faster |
+| Generate (encode + sample + decode) | 2.7 s (1.9–4.0) | 4.5 s (3.9–6.4) | 1.7× faster |
+| Cold process to WAV on disk | 3.2 s (2.5–4.5) | 16 s (15–25) | 5× faster |
+| Peak RSS (footprint) | 0.7 GB (4.6 GB) | 19.4 GB (14.7 GB) | |
 
-The weights are not counted in the eacp RSS because they are never copied: on
-Metal every checkpoint tensor is a range of one buffer over the file's own
-mapping (`SafetensorsFile::loadF32`), so they live in the page cache, wired for
-the GPU while the buffer lives. Before that the same run peaked at 15 GB RSS
-and 12.1 GB footprint.
+The two settled runs of the four (3 and 4) are the ones to read for eacp's
+steady state: sampling 1.36–1.41 s, decode 0.47–0.50 s, generate 1.9 s,
+total 2.5 s. The weights are not counted in the eacp RSS because they are
+never copied: on Metal every checkpoint tensor is a range of one buffer over
+the file's own mapping (`SafetensorsFile::loadF32`), so they live in the page
+cache, wired for the GPU while the buffer lives. Before that the same run
+peaked at 15 GB RSS and 12.1 GB footprint.
 
 ### Small model, 12 s clip
 
-Machine A.
+Machine A, 2026-09-24, medians of three runs
+(`Benchmark/Outputs/r4-small-12s-run*.json`).
 
 | Phase | eacp Metal | PyTorch MPS warm | eacp is |
 |---|---|---|---|
-| Generate | 0.36 s | 0.33 s | level |
-| Cold process to WAV | 0.9 s | 5–7 s | 6× faster |
+| Load | 0.29 s (0.25–0.46) | 3.5 s (3.5–4.3) | 12× faster |
+| Sampling | 0.20 s | 0.22 s | level |
+| Decode | 0.05 s | 0.10 s | 2× faster |
+| Generate | 0.31 s (0.30–0.31) | 0.34 s (0.32–0.35) | 1.1× faster |
+| Cold process to WAV | 0.63 s (0.58–0.80) | 6.0 s (5.9–7.1) | 9× faster |
+| Peak RSS | 0.7 GB | 5.4 GB | |
 
 ## Machine B (NVIDIA RTX 6000 Ada, Windows 11): eacp on D3D12 against PyTorch on CUDA
 

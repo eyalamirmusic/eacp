@@ -1,5 +1,10 @@
 # eacp vs PyTorch: Stable Audio 3 inference
 
+> Superseded on 2026-09-24 by `../PERFORMANCE.md`, which carries the
+> current medians (`Outputs/r4-*.json`, taken after zero-copy loading and
+> the rest of the optimisation work). What follows is the 2026-09-23
+> baseline measured before any of it.
+
 Apple M5 Max (40-core GPU), 128 GB, macOS 26.5.1. eacp on Metal, PyTorch 2.7.1
 on MPS. 2026-09-23.
 

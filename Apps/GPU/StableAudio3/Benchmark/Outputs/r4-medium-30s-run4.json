@@ -1,0 +1,145 @@
+{
+  "config": {
+    "side": "both",
+    "model": "medium",
+    "seconds": "30.0",
+    "steps": "8",
+    "seed": "7",
+    "prompt": "Pendulum style rock drum and bass, live drums, distorted bass, guitars, 174 bpm, energetic",
+    "eacp_binary": "/Users/jamiepond/eacp/build-release/Apps/GPU/StableAudio3/StableAudio3",
+    "pytorch_repo": "/private/tmp/claude-501/-Users-jamiepond-eacp/57a6cfa1-d1ab-45a3-bcbd-6de22650a429/scratchpad/stable-audio-3",
+    "device": "mps",
+    "warmup": "True",
+    "timeout": "None",
+    "label": "r4-medium-30s-run4",
+    "pytorch_half": "True",
+    "allow_battery": "False"
+  },
+  "power_source": "AC",
+  "eacp": {
+    "wall_seconds": 2.505652904510498,
+    "phases": {
+      "dit_weights": 0.0,
+      "codec": 0.0,
+      "text_encoder": 0.45,
+      "prompt_encoding": 0.08,
+      "sampling": 1.41,
+      "decoding": 0.47,
+      "wav_write": 0.02,
+      "total": 2.47
+    },
+    "load_seconds": 0.45,
+    "peak_rss_gb": 0.7,
+    "peak_footprint_gb": 4.62,
+    "gpu_whole_process": {
+      "samples": 10,
+      "gpu_utilization_avg": 68.4,
+      "gpu_utilization_peak": 99,
+      "gpu_in_use_memory_peak_delta_gb": 11.85
+    },
+    "gpu_sampling": {
+      "samples": 5,
+      "gpu_utilization_avg": 87.6,
+      "gpu_utilization_peak": 93,
+      "gpu_in_use_memory_peak_delta_gb": 11.85
+    },
+    "gpu_decoding": {
+      "samples": 2,
+      "gpu_utilization_avg": 97.5,
+      "gpu_utilization_peak": 99,
+      "gpu_in_use_memory_peak_delta_gb": 9.77
+    },
+    "output_path": "/Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_r4-medium-30s-run4.wav",
+    "stdout": "Loading DiT weights (medium)...\nDiT weights took 0.00s\nLoading SAME decoder...\nDecoder took 0.00s\nLoading T5Gemma text encoder...\nText encoder took 0.45s\nEncoding prompt: \"Pendulum style rock drum and bass, live drums, distorted bass, guitars, 174 bpm, energetic\"\nPrompt encoding took 0.08s\nSampling 8 steps over 323 latent frames (30.00s)...\nSampling took 1.41s\nDecoding audio...\nDecoding took 0.47s\nWAV write took 0.02s\nWrote /Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_r4-medium-30s-run4.wav\nTotal took 2.47s\n"
+  },
+  "pytorch_mps": {
+    "load_start": 1790281611.148853,
+    "load_end": 1790281617.610411,
+    "load_seconds": 6.461557865142822,
+    "dtype": "torch.float32",
+    "model_half": false,
+    "audio_shape": [
+      1,
+      2,
+      1323000
+    ],
+    "cold": {
+      "start": 1790281617.6104221,
+      "end": 1790281620.206191,
+      "generate_seconds": 2.595768928527832,
+      "prompt_encoding_seconds": 0.19319772720336914,
+      "decoding_seconds": 1.156977891921997,
+      "sampling_seconds": 1.2455933094024658,
+      "sampling_window": [
+        1790281617.8225348,
+        1790281619.043898
+      ],
+      "decoding_window": [
+        1790281619.043898,
+        1790281620.200876
+      ],
+      "gpu_whole_generate": {
+        "samples": 10,
+        "gpu_utilization_avg": 80.3,
+        "gpu_utilization_peak": 100,
+        "gpu_in_use_memory_peak_delta_gb": 12.23
+      },
+      "gpu_sampling": {
+        "samples": 5,
+        "gpu_utilization_avg": 83.6,
+        "gpu_utilization_peak": 100,
+        "gpu_in_use_memory_peak_delta_gb": 10.73
+      },
+      "gpu_decoding": {
+        "samples": 4,
+        "gpu_utilization_avg": 96.2,
+        "gpu_utilization_peak": 100,
+        "gpu_in_use_memory_peak_delta_gb": 12.23
+      }
+    },
+    "warm": {
+      "start": 1790281620.206205,
+      "end": 1790281624.14449,
+      "generate_seconds": 3.9382851123809814,
+      "prompt_encoding_seconds": 0.017144203186035156,
+      "decoding_seconds": 2.518764019012451,
+      "sampling_seconds": 1.4023768901824951,
+      "sampling_window": [
+        1790281620.2238982,
+        1790281621.6241632
+      ],
+      "decoding_window": [
+        1790281621.6241632,
+        1790281624.1429272
+      ],
+      "gpu_whole_generate": {
+        "samples": 13,
+        "gpu_utilization_avg": 99.5,
+        "gpu_utilization_peak": 100,
+        "gpu_in_use_memory_peak_delta_gb": 13.6
+      },
+      "gpu_sampling": {
+        "samples": 5,
+        "gpu_utilization_avg": 99.4,
+        "gpu_utilization_peak": 100,
+        "gpu_in_use_memory_peak_delta_gb": 11.71
+      },
+      "gpu_decoding": {
+        "samples": 8,
+        "gpu_utilization_avg": 99.5,
+        "gpu_utilization_peak": 100,
+        "gpu_in_use_memory_peak_delta_gb": 13.6
+      }
+    },
+    "gpu_load": {
+      "samples": 23,
+      "gpu_utilization_avg": 0.9,
+      "gpu_utilization_peak": 14,
+      "gpu_in_use_memory_peak_delta_gb": 7.02
+    },
+    "wall_seconds": 15.094462394714355,
+    "peak_rss_gb": 19.35,
+    "peak_footprint_gb": 14.66,
+    "output_path": "/Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/pytorch_mps_r4-medium-30s-run4.wav"
+  }
+}
