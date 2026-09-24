@@ -484,26 +484,26 @@ Tensor linear(ComputePass& pass,
     if (weight.isPacked())
     {
         auto& kernel = sharedKernel<LinearPackedHalf>(device);
-        kernel.activations = input.buffer();
-        kernel.weight = weight.buffer();
-        kernel.output = result.buffer();
+        kernel.activations = input;
+        kernel.weight = weight;
+        kernel.output = result;
         kernel.dispatch(pass, rows, columns, inner);
     }
     else
     {
         auto& kernel = sharedKernel<LinearF32>(
             device, linearLoadsFor(inner), linearTileRowsFor(rows));
-        kernel.activations = input.buffer();
-        kernel.weight = weight.buffer();
-        kernel.output = result.buffer();
+        kernel.activations = input;
+        kernel.weight = weight;
+        kernel.output = result;
         kernel.dispatch(pass, rows, columns, inner);
     }
 
     if (bias != nullptr)
     {
         auto& biasKernel = sharedKernel<AddBiasRows>(device);
-        biasKernel.values = result.buffer();
-        biasKernel.bias = bias->buffer();
+        biasKernel.values = result;
+        biasKernel.bias = *bias;
         biasKernel.dispatch(pass, rows, columns);
     }
 

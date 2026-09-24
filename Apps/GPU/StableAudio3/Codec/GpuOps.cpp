@@ -153,9 +153,9 @@ Tensor foldWithNewTokensGpu(ComputePass& pass,
     auto result = Tensor::uninitializedF32({numGroups * subChunkSize, columns}, device);
 
     auto& kernel = GPU::sharedKernel<FoldWithNewTokensKernel>(device);
-    kernel.input = input.buffer();
-    kernel.newTokens = newTokens.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.newTokens = newTokens;
+    kernel.output = result;
     kernel.inputSegSize = (std::uint32_t) inputSegSize;
     kernel.subChunkSize = (std::uint32_t) subChunkSize;
     kernel.inputRowCount = (std::uint32_t) input.rows();
@@ -176,8 +176,8 @@ Tensor unfoldLastSegmentGpu(ComputePass& pass,
     auto result = Tensor::uninitializedF32({numGroups * outputSegSize, columns}, device);
 
     auto& kernel = GPU::sharedKernel<UnfoldLastSegmentKernel>(device);
-    kernel.input = input.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.output = result;
     kernel.subChunkSize = (std::uint32_t) subChunkSize;
     kernel.outputSegSize = (std::uint32_t) outputSegSize;
     kernel.startLocal = (std::uint32_t) (subChunkSize - outputSegSize);
@@ -192,8 +192,8 @@ Tensor conv1dUnfoldGpu(ComputePass& pass, const Tensor& input, int inChannels, i
     auto result = Tensor::uninitializedF32({rows, inChannels * kernelSize}, device);
 
     auto& kernel = GPU::sharedKernel<Conv1dUnfoldKernel>(device);
-    kernel.input = input.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.output = result;
     kernel.padding = (std::uint32_t) ((kernelSize - 1) / 2);
     kernel.dispatch(pass, rows, inChannels, kernelSize);
 

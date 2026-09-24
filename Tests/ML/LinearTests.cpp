@@ -249,9 +249,9 @@ std::vector<float> runLinearF32(Device& device,
     kernel.prepare(device);
 
     auto result = Tensor::uninitializedF32({input.rows(), weight.dim(0)}, device);
-    kernel.activations = input.buffer();
-    kernel.weight = weight.buffer();
-    kernel.output = result.buffer();
+    kernel.activations = input;
+    kernel.weight = weight;
+    kernel.output = result;
 
     auto commands = device.makeCommandBuffer();
 

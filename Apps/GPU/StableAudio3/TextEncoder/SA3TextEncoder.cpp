@@ -137,9 +137,9 @@ PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
     auto result = Tensor::uninitializedF32({maxLength, hiddenSize}, device);
 
     auto& kernel = GPU::sharedKernel<PadRowSelectKernel>(device);
-    kernel.encoded = encoded.buffer();
-    kernel.paddingEmbedding = paddingEmbedding.buffer();
-    kernel.output = result.buffer();
+    kernel.encoded = encoded;
+    kernel.paddingEmbedding = paddingEmbedding;
+    kernel.output = result;
     kernel.dispatch(pass, maxLength, hiddenSize, tokenized.validLength);
 
     return PromptEncoding {std::move(result), tokenized.validLength};

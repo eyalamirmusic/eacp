@@ -136,9 +136,9 @@ Tensor elementwise(ComputePass& pass,
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
     auto& kernel = sharedKernel<ElementwiseKernel>(device, op);
-    kernel.a = a.buffer();
-    kernel.b = b.buffer();
-    kernel.output = result.buffer();
+    kernel.a = a;
+    kernel.b = b;
+    kernel.output = result;
     kernel.dispatch(pass, a.count());
 
     return result;
@@ -153,8 +153,8 @@ void copyRows(ComputePass& pass,
               Device& device)
 {
     auto& kernel = sharedKernel<CopyRowsKernel>(device);
-    kernel.source = source.buffer();
-    kernel.destination = destination.buffer();
+    kernel.source = source;
+    kernel.destination = destination;
     kernel.sourceRowStart = (std::uint32_t) sourceRow;
     kernel.destinationRowStart = (std::uint32_t) destinationRow;
     kernel.dispatch(pass, rowCount, source.cols());
@@ -186,9 +186,9 @@ Tensor scaleAndAdd(ComputePass& pass,
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
     auto& kernel = sharedKernel<ScaleAndAddKernel>(device);
-    kernel.a = a.buffer();
-    kernel.b = b.buffer();
-    kernel.output = result.buffer();
+    kernel.a = a;
+    kernel.b = b;
+    kernel.output = result;
     kernel.scaleA = scaleA;
     kernel.scaleB = scaleB;
     kernel.dispatch(pass, a.count());
@@ -201,7 +201,7 @@ Tensor fill(ComputePass& pass, std::vector<int> shape, float value, Device& devi
     auto result = Tensor::uninitializedF32(std::move(shape), device);
 
     auto& kernel = sharedKernel<FillKernel>(device);
-    kernel.output = result.buffer();
+    kernel.output = result;
     kernel.value = value;
     kernel.dispatch(pass, result.count());
 
@@ -215,8 +215,7 @@ Tensor zeros(ComputePass& pass, std::vector<int> shape, Device& device)
 
 Tensor reshape(Tensor tensor, std::vector<int> shape)
 {
-    auto dtype = tensor.dtype();
-    return Tensor {std::move(tensor.buffer()), std::move(shape), dtype};
+    return std::move(tensor).reshaped(std::move(shape));
 }
 
 Tensor sliceRows(ComputePass& pass,
@@ -239,8 +238,8 @@ Tensor sliceColumns(ComputePass& pass,
     auto result = Tensor::uninitializedF32({input.rows(), columnCount}, device);
 
     auto& kernel = sharedKernel<SliceColumnsKernel>(device);
-    kernel.source = input.buffer();
-    kernel.destination = result.buffer();
+    kernel.source = input;
+    kernel.destination = result;
     kernel.sourceColumnCount = (std::uint32_t) input.cols();
     kernel.columnStart = (std::uint32_t) firstColumn;
     kernel.dispatch(pass, input.rows(), columnCount);

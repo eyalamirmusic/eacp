@@ -68,10 +68,10 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     auto scores = Tensor::uninitializedF32({rows, heads, cols}, device);
 
     auto& scoresKernel = GPU::sharedKernel<GemmaAttentionScoresKernel>(device);
-    scoresKernel.query = query.buffer();
-    scoresKernel.key = key.buffer();
-    scoresKernel.additiveMask = additiveMask.buffer();
-    scoresKernel.scores = scores.buffer();
+    scoresKernel.query = query;
+    scoresKernel.key = key;
+    scoresKernel.additiveMask = additiveMask;
+    scoresKernel.scores = scores;
     scoresKernel.headDimension = (std::uint32_t) headDim;
     scoresKernel.scale = scale;
     scoresKernel.softcap = softcap;

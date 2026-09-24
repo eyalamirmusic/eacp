@@ -67,8 +67,8 @@ Tensor applyActivation(ComputePass& pass,
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
     auto& kernel = sharedKernel<ActivationKernel>(device, kind);
-    kernel.input = input.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.output = result;
     kernel.dispatch(pass, input.count());
 
     return result;

@@ -313,7 +313,8 @@ Tensor transformerBlock(ComputePass& pass,
     auto modulationPart = [&](int part)
     {
         auto bytes = (std::int64_t) embedDimC * (std::int64_t) sizeof(float);
-        return BufferRange {&modulation.buffer(), part * bytes, bytes};
+        auto whole = modulation.range();
+        return BufferRange {whole.buffer, whole.offset + part * bytes, bytes};
     };
 
     auto scaleSelf = modulationPart(0);

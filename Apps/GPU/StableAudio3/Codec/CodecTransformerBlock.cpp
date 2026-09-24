@@ -63,8 +63,8 @@ Tensor sinGatedFeedForward(ComputePass& pass,
     auto gated = Tensor::uninitializedF32({rows, inner}, device);
 
     auto& gateKernel = GPU::sharedKernel<SinGateKernel>(device);
-    gateKernel.hidden = hidden.buffer();
-    gateKernel.output = gated.buffer();
+    gateKernel.hidden = hidden;
+    gateKernel.output = gated;
     gateKernel.dispatch(pass, rows, inner);
 
     return linear(pass, gated, proj2Weight, &proj2Bias, device);

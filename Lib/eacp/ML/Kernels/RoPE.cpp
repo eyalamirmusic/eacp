@@ -75,9 +75,9 @@ Tensor applyRoPE(ComputePass& pass,
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
     auto& kernel = sharedKernel<RoPEKernel>(device);
-    kernel.input = input.buffer();
-    kernel.invFreq = invFreq.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.invFreq = invFreq;
+    kernel.output = result;
     kernel.halfRotaryDimension = (std::uint32_t) invFreq.count();
     kernel.dispatch(pass, rows, heads, headDim, segmentRows);
 

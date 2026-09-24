@@ -16,11 +16,26 @@ int elementCountOf(const std::vector<int>& shape)
     return total;
 }
 
-Tensor::Tensor(GPU::Buffer bufferToUse, std::vector<int> shapeToUse, DType dtypeToUse)
-    : bufferValue(std::move(bufferToUse))
+Tensor::Tensor(GPU::Buffer bufferToUse,
+               std::vector<int> shapeToUse,
+               DType dtypeToUse)
+    : storage(std::make_shared<const GPU::Buffer>(std::move(bufferToUse)))
     , shapeValue(std::move(shapeToUse))
     , dtypeValue(dtypeToUse)
 {
+}
+
+Tensor::Tensor(std::shared_ptr<const GPU::Buffer> sharedBuffer,
+               std::int64_t byteOffset,
+               std::vector<int> shapeToUse,
+               DType dtypeToUse)
+    : storage(std::move(sharedBuffer))
+    , offset(byteOffset)
+    , shapeValue(std::move(shapeToUse))
+    , dtypeValue(dtypeToUse)
+{
+    assert(storage != nullptr && offset >= 0
+           && offset + byteCount() <= storage->size());
 }
 
 Tensor Tensor::fromHostF32(const float* data,
@@ -28,8 +43,8 @@ Tensor Tensor::fromHostF32(const float* data,
                            GPU::Device& device)
 {
     auto count = elementCountOf(shape);
-    auto buffer =
-        device.makeBuffer(data, (std::int64_t) count * sizeof(float), GPU::BufferUsage::Storage);
+    auto buffer = device.makeBuffer(
+        data, (std::int64_t) count * sizeof(float), GPU::BufferUsage::Storage);
 
     return Tensor {std::move(buffer), std::move(shape), DType::F32};
 }
@@ -58,8 +73,8 @@ Tensor Tensor::fromHostPackedF16(const float* data,
 Tensor Tensor::uninitializedF32(std::vector<int> shape, GPU::Device& device)
 {
     auto count = elementCountOf(shape);
-    auto buffer =
-        device.makeBuffer((std::int64_t) count * sizeof(float), GPU::BufferUsage::Storage);
+    auto buffer = device.makeBuffer((std::int64_t) count * sizeof(float),
+                                    GPU::BufferUsage::Storage);
 
     return Tensor {std::move(buffer), std::move(shape), DType::F32};
 }
@@ -71,14 +86,13 @@ std::vector<float> Tensor::toHostF32() const
     if (dtypeValue == DType::F32)
     {
         auto values = std::vector<float>((std::size_t) total);
-        bufferValue.read(values.data(),
-                         (std::int64_t) values.size() * sizeof(float));
+        storage->read(values.data(), byteCount(), offset);
         return values;
     }
 
     auto wordCount = (total + 1) / 2;
     auto words = std::vector<std::uint32_t>((std::size_t) wordCount);
-    bufferValue.read(words.data(), (std::int64_t) words.size() * sizeof(std::uint32_t));
+    storage->read(words.data(), byteCount(), offset);
 
     auto values = std::vector<float>((std::size_t) total);
 
@@ -112,8 +126,22 @@ TensorView Tensor::columns(int firstColumn, int columnCount) const
     return {*this, firstColumn, columnCount};
 }
 
+Tensor Tensor::reshaped(std::vector<int> newShape) &&
+{
+    assert(elementCountOf(newShape) == count());
+    return {std::move(storage), offset, std::move(newShape), dtypeValue};
+}
+
+std::int64_t Tensor::byteCount() const
+{
+    auto elements = (std::int64_t) count();
+    auto words = dtypeValue == DType::F32 ? elements : (elements + 1) / 2;
+
+    return words * (std::int64_t) sizeof(float);
+}
+
 TensorView::TensorView(const Tensor& tensor)
-    : bufferValue(&tensor.buffer())
+    : tensorRange(tensor.range())
     , rowCount(tensor.rank() == 0 ? 1 : tensor.dim(0))
     , columnCount(tensor.count() / rowCount)
     , stride(columnCount)
@@ -122,7 +150,7 @@ TensorView::TensorView(const Tensor& tensor)
 }
 
 TensorView::TensorView(const Tensor& tensor, int firstColumn, int columnCountToUse)
-    : bufferValue(&tensor.buffer())
+    : tensorRange(tensor.range())
     , rowCount(tensor.rows())
     , columnCount(columnCountToUse)
     , stride(tensor.cols())
@@ -130,4 +158,4 @@ TensorView::TensorView(const Tensor& tensor, int firstColumn, int columnCountToU
 {
     assert(firstColumn >= 0 && firstColumn + columnCountToUse <= tensor.cols());
 }
-}
+} // namespace eacp::ML

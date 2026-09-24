@@ -57,7 +57,7 @@ void RMSNormKernel::dispatch(ComputePass& pass, int rows, int dim)
 
 void RMSNormKernel::read(const TensorView& view, int dim)
 {
-    input = view.buffer();
+    input = view.range();
     readRunsOf(runsPerRow, inputRowStride, inputColumnOffset, view, dim);
 }
 
@@ -221,7 +221,7 @@ void DynamicTanhKernel::dispatch(ComputePass& pass, int rows, int dim)
 
 void DynamicTanhKernel::read(const TensorView& view, int dim)
 {
-    input = view.buffer();
+    input = view.range();
     readRunsOf(runsPerRow, inputRowStride, inputColumnOffset, view, dim);
 }
 
@@ -250,9 +250,9 @@ Tensor rmsNorm(ComputePass& pass,
     auto result = Tensor::uninitializedF32({rows, dim}, device);
 
     auto& kernel = sharedKernel<RMSNormKernel>(device);
-    kernel.input = input.buffer();
-    kernel.gamma = gamma.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.gamma = gamma;
+    kernel.output = result;
     kernel.epsilon = epsilon;
     readWholeRows(
         kernel.runsPerRow, kernel.inputRowStride, kernel.inputColumnOffset, dim);
@@ -275,19 +275,19 @@ Tensor layerNorm(ComputePass& pass,
     if (beta != nullptr)
     {
         auto& kernel = sharedKernel<LayerNormKernel>(device);
-        kernel.input = input.buffer();
-        kernel.gamma = gamma.buffer();
-        kernel.beta = beta->buffer();
-        kernel.output = result.buffer();
+        kernel.input = input;
+        kernel.gamma = gamma;
+        kernel.beta = *beta;
+        kernel.output = result;
         kernel.epsilon = epsilon;
         kernel.dispatch(pass, rows, dim);
     }
     else
     {
         auto& kernel = sharedKernel<LayerNormNoBiasKernel>(device);
-        kernel.input = input.buffer();
-        kernel.gamma = gamma.buffer();
-        kernel.output = result.buffer();
+        kernel.input = input;
+        kernel.gamma = gamma;
+        kernel.output = result;
         kernel.epsilon = epsilon;
         kernel.dispatch(pass, rows, dim);
     }
@@ -307,10 +307,10 @@ Tensor dynamicTanh(ComputePass& pass,
     auto result = Tensor::uninitializedF32({rows, dim}, device);
 
     auto& kernel = sharedKernel<DynamicTanhKernel>(device);
-    kernel.input = input.buffer();
-    kernel.gamma = gamma.buffer();
-    kernel.beta = beta.buffer();
-    kernel.output = result.buffer();
+    kernel.input = input;
+    kernel.gamma = gamma;
+    kernel.beta = beta;
+    kernel.output = result;
     kernel.alpha = alpha;
     readWholeRows(
         kernel.runsPerRow, kernel.inputRowStride, kernel.inputColumnOffset, dim);
@@ -330,8 +330,8 @@ Tensor rmsNormPerHead(ComputePass& pass,
 
     auto& kernel = sharedKernel<RMSNormKernel>(device);
     kernel.read(input, headDim);
-    kernel.gamma = gamma.buffer();
-    kernel.output = result.buffer();
+    kernel.gamma = gamma;
+    kernel.output = result;
     kernel.epsilon = epsilon;
     kernel.dispatch(pass, input.count() / headDim, headDim);
 
@@ -350,9 +350,9 @@ Tensor dynamicTanhPerHead(ComputePass& pass,
 
     auto& kernel = sharedKernel<DynamicTanhKernel>(device);
     kernel.read(input, headDim);
-    kernel.gamma = gamma.buffer();
-    kernel.beta = beta.buffer();
-    kernel.output = result.buffer();
+    kernel.gamma = gamma;
+    kernel.beta = beta;
+    kernel.output = result;
     kernel.alpha = alpha;
     kernel.dispatch(pass, input.count() / headDim, headDim);
 

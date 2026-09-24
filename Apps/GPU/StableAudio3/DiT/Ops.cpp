@@ -119,7 +119,7 @@ Tensor expoFourierFeatures(ComputePass& pass,
     auto result = Tensor::uninitializedF32({1, dim}, device);
 
     auto& kernel = GPU::sharedKernel<ExpoFourierFeaturesKernel>(device);
-    kernel.output = result.buffer();
+    kernel.output = result;
     kernel.value = value;
     kernel.logMinFreq = std::log(minFreq);
     kernel.logMaxFreq = std::log(maxFreq);
@@ -139,24 +139,11 @@ Tensor addBroadcastRow(ComputePass& pass,
     copyRowsInto(pass, result, 0, values, device);
 
     auto& addKernel = GPU::sharedKernel<AddBroadcastRowKernel>(device);
-    addKernel.values = result.buffer();
-    addKernel.addend = addend.buffer();
+    addKernel.values = result;
+    addKernel.addend = addend;
     addKernel.dispatch(pass, rowStart, values.rows() - rowStart, values.cols());
 
     return result;
-}
-
-Tensor adaLNModulate(ComputePass& pass,
-                     const Tensor& input,
-                     const Tensor& scale,
-                     const Tensor& shift,
-                     Device& device)
-{
-    return adaLNModulate(pass,
-                         input,
-                         BufferRange::of(scale.buffer()),
-                         BufferRange::of(shift.buffer()),
-                         device);
 }
 
 Tensor adaLNModulate(ComputePass& pass,
@@ -168,21 +155,13 @@ Tensor adaLNModulate(ComputePass& pass,
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
     auto& kernel = GPU::sharedKernel<AdaLNModulateKernel>(device);
-    kernel.input = input.buffer();
+    kernel.input = input;
     kernel.scale = scale;
     kernel.shift = shift;
-    kernel.output = result.buffer();
+    kernel.output = result;
     kernel.dispatch(pass, input.rows(), input.cols());
 
     return result;
-}
-
-Tensor sigmoidGate(ComputePass& pass,
-                   const Tensor& input,
-                   const Tensor& gate,
-                   Device& device)
-{
-    return sigmoidGate(pass, input, BufferRange::of(gate.buffer()), device);
 }
 
 Tensor sigmoidGate(ComputePass& pass,
@@ -193,9 +172,9 @@ Tensor sigmoidGate(ComputePass& pass,
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
     auto& kernel = GPU::sharedKernel<SigmoidGateKernel>(device);
-    kernel.input = input.buffer();
+    kernel.input = input;
     kernel.gate = gate;
-    kernel.output = result.buffer();
+    kernel.output = result;
     kernel.dispatch(pass, input.rows(), input.cols());
 
     return result;

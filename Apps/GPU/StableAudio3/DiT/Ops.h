@@ -86,19 +86,8 @@ ML::Tensor addBroadcastRow(GPU::ComputePass& pass,
                            int rowStart,
                            GPU::Device& device = GPU::Device::shared());
 
-ML::Tensor adaLNModulate(GPU::ComputePass& pass,
-                         const ML::Tensor& input,
-                         const ML::Tensor& scale,
-                         const ML::Tensor& shift,
-                         GPU::Device& device = GPU::Device::shared());
-
-ML::Tensor sigmoidGate(GPU::ComputePass& pass,
-                       const ML::Tensor& input,
-                       const ML::Tensor& gate,
-                       GPU::Device& device = GPU::Device::shared());
-
-// The same two over a row of scale, shift or gate that is part of a larger
-// buffer - the adaLN modulation vector is six of them side by side - read where
+// scale, shift and gate are ranges, so a tensor binds whole and a row of a
+// larger one - the adaLN modulation vector is six side by side - is read where
 // it lies rather than copied out first.
 ML::Tensor adaLNModulate(GPU::ComputePass& pass,
                          const ML::Tensor& input,

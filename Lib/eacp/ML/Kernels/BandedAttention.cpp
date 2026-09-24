@@ -216,9 +216,9 @@ Tensor bandedAttention(ComputePass& pass,
     auto rightRadius = (std::uint32_t) band.rightRadius;
 
     auto& scoresKernel = sharedKernel<BandedAttentionScoresKernel>(device);
-    scoresKernel.query = query.buffer();
-    scoresKernel.key = key.buffer();
-    scoresKernel.scores = scores.buffer();
+    scoresKernel.query = query;
+    scoresKernel.key = key;
+    scoresKernel.scores = scores;
     scoresKernel.headDimension = (std::uint32_t) headDim;
     scoresKernel.segmentRows = segmentRows;
     scoresKernel.leftRadius = leftRadius;
@@ -227,18 +227,18 @@ Tensor bandedAttention(ComputePass& pass,
     scoresKernel.dispatch(pass, rows, heads, window);
 
     auto& statsKernel = sharedKernel<BandedAttentionRowStatsKernel>(device);
-    statsKernel.scores = scores.buffer();
-    statsKernel.rowSum = rowSum.buffer();
+    statsKernel.scores = scores;
+    statsKernel.rowSum = rowSum;
     statsKernel.segmentRows = segmentRows;
     statsKernel.leftRadius = leftRadius;
     statsKernel.rightRadius = rightRadius;
     statsKernel.dispatch(pass, rows, heads, window);
 
     auto& weightedSumKernel = sharedKernel<BandedAttentionWeightedSumKernel>(device);
-    weightedSumKernel.value = value.buffer();
-    weightedSumKernel.probabilities = scores.buffer();
-    weightedSumKernel.rowSum = rowSum.buffer();
-    weightedSumKernel.output = output.buffer();
+    weightedSumKernel.value = value.range();
+    weightedSumKernel.probabilities = scores;
+    weightedSumKernel.rowSum = rowSum;
+    weightedSumKernel.output = output;
     weightedSumKernel.segmentRows = segmentRows;
     weightedSumKernel.leftRadius = leftRadius;
     weightedSumKernel.rightRadius = rightRadius;

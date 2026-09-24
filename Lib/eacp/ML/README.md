@@ -9,6 +9,23 @@ binds the kernel from the device's cache and records the dispatch into the pass
 it is handed. Nothing commits: a whole layer, or a whole stack of them, goes
 into one command buffer.
 
+## Binding a tensor
+
+A `Tensor` is a shape and a dtype over bytes of a GPU buffer, and those bytes
+need not start at the buffer's beginning: `byteOffset()` says where they do,
+and several tensors can share one buffer (see "Weights from a safetensors
+file"). A kernel binds a tensor by its range, so assigning one to a buffer
+uniform binds exactly its bytes wherever they lie:
+
+```cpp
+kernel.input = input;      // input.range(): {buffer, byteOffset, byteCount}
+kernel.output = result;
+```
+
+There is no `buffer()` to bind instead, because binding the whole buffer is
+the one mistake an offset makes easy. A `TensorView`'s `range()` is the range
+of the tensor it views, and its `rowStride` and `columnOffset` count from there.
+
 ## Tensor ops
 
 `Kernels/TensorOps.h` is the arithmetic and plumbing between the layers, one

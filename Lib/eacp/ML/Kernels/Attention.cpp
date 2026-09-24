@@ -331,15 +331,15 @@ Tensor attendWithScores(ComputePass& pass,
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
     auto& statsKernel = sharedKernel<AttentionRowStatsKernel>(device);
-    statsKernel.scores = scores.buffer();
-    statsKernel.rowSum = rowSum.buffer();
+    statsKernel.scores = scores;
+    statsKernel.rowSum = rowSum;
     statsKernel.dispatch(pass, rows, heads, cols);
 
     auto& weightedSumKernel = sharedKernel<AttentionWeightedSumKernel>(device);
-    weightedSumKernel.value = value.buffer();
-    weightedSumKernel.probabilities = scores.buffer();
-    weightedSumKernel.rowSum = rowSum.buffer();
-    weightedSumKernel.output = output.buffer();
+    weightedSumKernel.value = value.range();
+    weightedSumKernel.probabilities = scores;
+    weightedSumKernel.rowSum = rowSum;
+    weightedSumKernel.output = output;
     weightedSumKernel.headDimension = (std::uint32_t) headDim;
     weightedSumKernel.columnCount = (std::uint32_t) cols;
     weightedSumKernel.valueRowStride = (std::uint32_t) value.rowStride();
@@ -391,14 +391,14 @@ Tensor attention(ComputePass& pass,
         additiveMask != nullptr ? AttentionMask::Additive : AttentionMask::None;
 
     auto& scoresKernel = sharedKernel<AttentionScoresKernel>(device, mask);
-    scoresKernel.query = normalizedQuery.buffer();
-    scoresKernel.key = normalizedKey.buffer();
-    scoresKernel.scores = scores.buffer();
+    scoresKernel.query = normalizedQuery;
+    scoresKernel.key = normalizedKey;
+    scoresKernel.scores = scores;
     scoresKernel.headDimension = (std::uint32_t) headDim;
     scoresKernel.scale = scale;
 
     if (additiveMask != nullptr)
-        scoresKernel.additiveMask = additiveMask->buffer();
+        scoresKernel.additiveMask = *additiveMask;
 
     scoresKernel.dispatch(pass, rows, heads, cols);
 

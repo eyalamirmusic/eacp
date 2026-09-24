@@ -5,10 +5,12 @@
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Kernels/Attention.h>
 #include <eacp/ML/Kernels/BandedAttention.h>
+#include <eacp/ML/Kernels/Linear.h>
 #include <eacp/ML/Kernels/Norm.h>
 #include <eacp/ML/Kernels/TensorOps.h>
 
 #include <cmath>
+#include <memory>
 #include <vector>
 
 using namespace nano;
@@ -242,4 +244,127 @@ auto tViewsReadWhatCopiesRead =
 
     for (auto i = std::size_t {}; i < fromViews.size(); ++i)
         check(fromViews[i].toHostF32() == fromCopies[i].toHostF32());
+};
+
+namespace
+{
+// Several tensors packed into one buffer, each starting one float past the
+// end of the last, so no offset but the first is a multiple of sixteen.
+struct SharedTensors
+{
+    std::vector<float> values;
+    std::vector<std::int64_t> offsets;
+
+    void add(const std::vector<float>& tensor)
+    {
+        values.push_back(-1.f);
+        offsets.push_back((std::int64_t) values.size()
+                          * (std::int64_t) sizeof(float));
+        values.insert(values.end(), tensor.begin(), tensor.end());
+    }
+
+    std::shared_ptr<const Buffer> upload(Device& device) const
+    {
+        return std::make_shared<const Buffer>(
+            device.makeBuffer(values.data(),
+                              (std::int64_t) values.size() * sizeof(float),
+                              BufferUsage::Storage));
+    }
+};
+
+std::vector<float> scatteredValues(int count, int salt)
+{
+    auto values = std::vector<float> {};
+
+    for (auto i = 0; i < count; ++i)
+        values.push_back((float) (((i * 37 + salt * 11) % 23) - 11) * 0.125f);
+
+    return values;
+}
+} // namespace
+
+auto tOffsetTensorsReadWhatOwnTensorsRead =
+    test("Tensor/tensorsAtAnOffsetGiveTheBitsOfTensorsOfTheirOwn") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto rows = 40, heads = 2, headDim = 32, dim = heads * headDim;
+    constexpr auto outputs = 96;
+
+    auto inputValues = scatteredValues(rows * dim, 1);
+    auto weightValues = scatteredValues(outputs * dim, 2);
+    auto biasValues = scatteredValues(outputs, 3);
+    auto gammaValues = scatteredValues(dim, 4);
+    auto qkvValues = scatteredValues(rows * 3 * dim, 5);
+
+    auto shared = SharedTensors {};
+    shared.add(inputValues);
+    shared.add(weightValues);
+    shared.add(biasValues);
+    shared.add(gammaValues);
+    shared.add(qkvValues);
+
+    auto buffer = shared.upload(device);
+    auto at = [&](int index, std::vector<int> shape)
+    {
+        return Tensor {buffer,
+                       shared.offsets[(std::size_t) index],
+                       std::move(shape),
+                       DType::F32};
+    };
+
+    auto input = at(0, {rows, dim});
+    auto weight = at(1, {outputs, dim});
+    auto bias = at(2, {outputs});
+    auto gamma = at(3, {dim});
+    auto qkv = at(4, {rows, 3 * dim});
+
+    check(input.byteOffset() == 4);
+    check(input.toHostF32() == inputValues);
+    check(bias.toHostF32() == biasValues);
+
+    auto ownInput = tensorOf(inputValues, {rows, dim});
+    auto ownWeight = tensorOf(weightValues, {outputs, dim});
+    auto ownBias = tensorOf(biasValues, {outputs});
+    auto ownGamma = tensorOf(gammaValues, {dim});
+    auto ownQkv = tensorOf(qkvValues, {rows, 3 * dim});
+
+    auto commands = device.makeCommandBuffer();
+    auto fromOffsets = std::vector<Tensor> {};
+    auto fromOwn = std::vector<Tensor> {};
+
+    {
+        auto pass = commands.beginCompute();
+
+        fromOffsets.push_back(linear(pass, input, weight, &bias));
+        fromOwn.push_back(linear(pass, ownInput, ownWeight, &ownBias));
+
+        fromOffsets.push_back(rmsNorm(pass, input, gamma, 1e-6f));
+        fromOwn.push_back(rmsNorm(pass, ownInput, ownGamma, 1e-6f));
+
+        fromOffsets.push_back(add(pass, input, input));
+        fromOwn.push_back(add(pass, ownInput, ownInput));
+
+        fromOffsets.push_back(
+            rmsNormPerHead(pass, qkv.columns(dim, dim), gamma, headDim, 1e-6f));
+        fromOwn.push_back(rmsNormPerHead(
+            pass, ownQkv.columns(dim, dim), ownGamma, headDim, 1e-6f));
+
+        fromOffsets.push_back(attention(
+            pass, input, input, qkv.columns(2 * dim, dim), heads, headDim));
+        fromOwn.push_back(attention(
+            pass, ownInput, ownInput, ownQkv.columns(2 * dim, dim), heads, headDim));
+    }
+
+    commands.commit();
+
+    for (auto i = std::size_t {}; i < fromOffsets.size(); ++i)
+        check(fromOffsets[i].toHostF32() == fromOwn[i].toHostF32());
+
+    auto flat = reshape(std::move(weight), {outputs * dim});
+    check(flat.byteOffset() == shared.offsets[1]);
+    check(flat.toHostF32() == weightValues);
 };
