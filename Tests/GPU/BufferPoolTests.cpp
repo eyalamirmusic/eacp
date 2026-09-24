@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <eacp/GPU/Buffer/BufferPool.h>
+
 #include <cstdint>
 
 // BufferPool - Device::makeBuffer(bytes) recycling the storage of buffers the
@@ -180,7 +182,7 @@ auto tUnusedStorageIsFreed = test("GPU/bufferPoolFreesUnusedStorage") = []
         commands.commit();
     }
 
-    for (auto i = 0; i < 6; ++i)
+    for (auto i = std::uint64_t {0}; i < BufferPool::submissionsKeptUnused + 2; ++i)
         submitSomethingElse(device);
 
     auto created = device.buffersCreated();

@@ -42,6 +42,17 @@ public:
 
     Buffer take(std::int64_t bytes, BufferUsage usage);
 
+    // How many submissions storage nobody asks for again is kept through
+    // before it is let go. Long enough to outlive one round of the work,
+    // which is the thing a pool exists to serve: a sampling step submits
+    // once, so two was enough for its temporaries to survive into the next
+    // step, but a codec decode submits four to six times, so with two every
+    // temporary it made was freed before the next decode asked for that size
+    // - 181 buffers and 1.5 GB re-created per decode, for no reuse at all.
+    // Peak memory is the same either way, measured: what the pool holds now
+    // is exactly what was being freed and allocated again a moment later.
+    static constexpr std::uint64_t submissionsKeptUnused = 64;
+
     // How many buffers the pool holds, waiting for the GPU or for reuse.
     int heldCount() const { return (int) (waiting.size() + available.size()); }
 
@@ -67,7 +78,6 @@ private:
     void promoteFinished();
     void freeUnused();
 
-    static constexpr std::uint64_t submissionsKeptUnused = 2;
 
     Device* device = nullptr;
     std::uint64_t lastTrimmed = 0;
