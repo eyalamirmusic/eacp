@@ -2230,6 +2230,51 @@ workaround by itself and an unknown driver with the same gap picks it up.
 `EACP_D3D12_QUIRKS=1` sets every flag without asking, which is how the
 fallback paths are run against WARP.
 
+## How big a grid is allowed to be
+
+Metal has no practical ceiling on a dispatch's threadgroup count. D3D12 has
+one, and Vulkan usually has the same one: **65535 threadgroups per dimension**
+(`D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION`,
+`maxComputeWorkGroupCount`). So a grid written on a Mac can be illegal on the
+other two, and the way it fails is worth knowing, because it is not an error.
+
+What an over-sized dimension actually does is the driver's business rather than
+the API's. On an NVIDIA Ada card, an **X** count far past the cap runs
+correctly — the hardware's own limit there is about 2^31 — while a **Y** count
+past it produces *nothing at all*: no error, no removed device, no validation
+message, just a dispatch that never happened and whatever the kernel would have
+written left as it was. A 30-second decode came out as a WAV of digital
+silence, and the only visible difference from a working run was the samples.
+
+The lesson is not "check the cap at every call site". It is that a dimension
+should be something the work actually has. Attention dispatched `rows * heads`
+as one dimension and crossed the cap at 161 latent frames; rows and heads are
+two different things, and given a dimension each neither comes near it at any
+clip length. `ComputePass` on D3D12 says when a grid is past the cap and names
+the dimensions — it neither clamps nor skips, because an X grid past the cap is
+out of spec and does run, and refusing it would break work that succeeds today.
+
+## Two functions that name things are one coin flip
+
+A code generator that hands out names while it walks is a state machine, and
+C++ will not sequence it for you. This emitted a different shader depending on
+what compiled the emitter:
+
+```cpp
+return define(operands, indent, uses, open)
+       + holdTheRecord(statement, indent, open);
+```
+
+Both calls hand out local names. The operands of `+` are unsequenced, so clang
+evaluated left to right and named the operands first, while MSVC evaluated
+right to left and named the record first — and the record then went unnamed and
+was printed into each component of its store instead of once into a local. The
+values were right either way, which is why it survived: it showed up only as a
+golden text mismatch, on Windows, against goldens written from a clang build.
+
+Sequence anything that names, allocates a slot or advances a counter into its
+own statement. One state-mutating call per expression.
+
 ## Reading pixels back
 
 `View::renderToImage` renders off-screen and hands back a `Graphics::Image`. It
