@@ -34,9 +34,12 @@ std::int64_t roundedUpToPage(std::int64_t bytes)
 class ResidencyRequests
 {
 public:
+    // Never destroyed: a timer from a burst already sent still fires up to
+    // 10 ms later, and one firing after exit ran the destructors would lock a
+    // destroyed mutex.
     static ResidencyRequests& shared()
     {
-        static auto requests = ResidencyRequests {};
+        static auto& requests = *new ResidencyRequests {};
         return requests;
     }
 

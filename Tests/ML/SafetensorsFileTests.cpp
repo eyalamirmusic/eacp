@@ -23,19 +23,18 @@ using namespace eacp::ML;
 
 namespace
 {
-std::filesystem::path writeSampleFile()
+std::filesystem::path writeSampleFile(const std::string& name)
 {
     auto header = std::string {
         "{\"weight\":{\"dtype\":\"F32\",\"shape\":[2,3],\"data_offsets\":[0,24]},"
         "\"bias\":{\"dtype\":\"F32\",\"shape\":[1],\"data_offsets\":[24,28]},"
         "\"__metadata__\":{\"format\":\"pt\"}}"};
 
-    auto weightValues =
-        std::vector<float> {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
+    auto weightValues = std::vector<float> {1.f, 2.f, 3.f, 4.f, 5.f, 6.f};
     auto biasValue = 7.5f;
 
     auto path = std::filesystem::temp_directory_path()
-              / "eacp-ml-safetensors-test.safetensors";
+                / ("eacp-ml-safetensors-" + name + ".safetensors");
 
     auto file = std::ofstream {path, std::ios::binary};
 
@@ -43,18 +42,18 @@ std::filesystem::path writeSampleFile()
     file.write(reinterpret_cast<const char*>(&headerLength), sizeof(headerLength));
     file.write(header.data(), (std::streamsize) header.size());
     file.write(reinterpret_cast<const char*>(weightValues.data()),
-              (std::streamsize) (weightValues.size() * sizeof(float)));
+               (std::streamsize) (weightValues.size() * sizeof(float)));
     file.write(reinterpret_cast<const char*>(&biasValue), sizeof(biasValue));
     file.close();
 
     return path;
 }
-}
+} // namespace
 
 auto tSafetensorsParsesHeaderAndShapes =
     test("SafetensorsFile/parsesHeaderAndShapes") = []
 {
-    auto path = writeSampleFile();
+    auto path = writeSampleFile("parse");
     auto file = SafetensorsFile::open(path.string());
 
     check(file.has_value());
@@ -79,7 +78,7 @@ auto tSafetensorsParsesHeaderAndShapes =
 auto tSafetensorsLoadsScalarAndTensor =
     test("SafetensorsFile/loadsScalarAndTensorValues") = []
 {
-    auto path = writeSampleFile();
+    auto path = writeSampleFile("scalar");
     auto file = SafetensorsFile::open(path.string());
 
     check(file.has_value());
@@ -126,7 +125,7 @@ void writeBytes(std::ofstream& file, const void* data, std::size_t bytes)
 
 // A header padded so the data starts on eight bytes, then an F32 tensor on the
 // grid, a BF16 one, and an F32 one two bytes off it - behind a lone BF16 value.
-std::filesystem::path writeMixedFile()
+std::filesystem::path writeMixedFile(const std::string& name)
 {
     auto header = std::string {
         "{\"aligned\":{\"dtype\":\"F32\",\"shape\":[2,2],\"data_offsets\":[0,16]},"
@@ -138,7 +137,7 @@ std::filesystem::path writeMixedFile()
         header += ' ';
 
     auto path = std::filesystem::temp_directory_path()
-                / "eacp-ml-safetensors-mixed.safetensors";
+                / ("eacp-ml-safetensors-mixed-" + name + ".safetensors");
     auto file = std::ofstream {path, std::ios::binary};
 
     auto headerLength = (std::uint64_t) header.size();
@@ -174,7 +173,7 @@ auto tSafetensorsLoadsInPlaceWhereItCan =
     if (!device.isValid())
         return;
 
-    auto path = writeMixedFile();
+    auto path = writeMixedFile("inplace");
     auto file = SafetensorsFile::open(path.string());
     check(file.has_value());
 
@@ -209,7 +208,7 @@ auto tSafetensorsTensorsOutliveTheFile =
     if (!device.isValid())
         return;
 
-    auto path = writeMixedFile();
+    auto path = writeMixedFile("outlive");
     auto aligned = std::optional<Tensor> {};
 
     {
