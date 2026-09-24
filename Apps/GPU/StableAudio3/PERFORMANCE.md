@@ -1,14 +1,35 @@
 # Stable Audio 3 in eacp: performance against PyTorch
 
-Apple M5 Max (40-core GPU), macOS 26.5.1, eacp on Metal in a Release build,
-PyTorch 2.7.1 on MPS. fp32 on both sides, the same pinned checkpoints, 8
-sampling steps, no classifier-free guidance. PyTorch "warm" is a second
-`generate()` in a loaded process, the fairest steady-state number; "cold" is
-what a command-line user gets. Full method and raw numbers: `Benchmark/`.
+Every number below is tied to one of these two machines. A figure without its
+machine is meaningless, so each table says which one it came from.
 
-## Medium model, 30 s clip
+| | Machine A: MacBook Pro | Machine B: tamby-windows |
+|---|---|---|
+| GPU | Apple M5 Max, 40-core GPU, Metal 4 | NVIDIA RTX 6000 Ada, 48 GB |
+| CPU / RAM | Apple M5 Max, 128 GB unified | see `Benchmark/WINDOWS.md` |
+| OS | macOS 26.5.1 | Windows 11, build 26200 |
+| eacp backend | Metal | Direct3D 12 (FXC, shader model 5; DXC opt-in) |
+| eacp build | Apple clang 21, `-DCMAKE_BUILD_TYPE=Release` | MSVC 19.51, Release |
+| PyTorch | 2.7.1 on MPS | 2.7.1+cu126 on CUDA 12.6, driver 528.49 |
+| Power | mains, High Power mode | mains |
+| Date | 2026-09-23 | 2026-09-23 |
 
-| Phase | eacp | PyTorch MPS warm | eacp is |
+fp32 on both sides unless a row says otherwise, the same pinned checkpoints
+(`stabilityai/stable-audio-3-medium` at 27b5a21b, `-small-music` at 0fef1392),
+8 sampling steps, no classifier-free guidance. "Warm" is a second generation
+in a process that has already loaded and generated once — PyTorch's second
+`generate()`, eacp's `--repeat` — the fair steady-state number. "Cold" is one
+process from launch to a WAV on disk, what a command-line user gets. Read cold
+against cold and warm against warm; mixing them is how decode once looked six
+times worse than it is. Full method and raw JSON: `Benchmark/`.
+
+## Machine A (Apple M5 Max, macOS 26.5.1): eacp on Metal against PyTorch on MPS
+
+### Medium model, 30 s clip
+
+Machine A. Single quiet runs for eacp; PyTorch ranges are three runs.
+
+| Phase | eacp Metal | PyTorch MPS warm | eacp is |
 |---|---|---|---|
 | Load (DiT, codec, text encoder) | 1.3 s | 6–9 s | 5–7× faster |
 | Sampling, 8 steps | 1.1 s | 1.1–1.5 s | level to 1.3× faster |
@@ -17,25 +38,27 @@ what a command-line user gets. Full method and raw numbers: `Benchmark/`.
 | Cold process to WAV on disk | 2.7 s | 12–17 s | ~5× faster |
 | Peak RSS | 15 GB | 19 GB | |
 
-## Small model, 12 s clip
+### Small model, 12 s clip
 
-| Phase | eacp | PyTorch MPS warm | eacp is |
+Machine A.
+
+| Phase | eacp Metal | PyTorch MPS warm | eacp is |
 |---|---|---|---|
 | Generate | 0.36 s | 0.33 s | level |
 | Cold process to WAV | 0.9 s | 5–7 s | 6× faster |
 
-## NVIDIA RTX 6000 Ada, D3D12 against CUDA
+## Machine B (NVIDIA RTX 6000 Ada, Windows 11): eacp on D3D12 against PyTorch on CUDA
 
-Windows 11, eacp on D3D12 in a Release build, PyTorch 2.7.1 on CUDA 12.6, same
-checkpoints, seed and steps. PyTorch's own default on a GPU is fp16, so both
-are given: the fp32 row is the like-for-like against eacp's precision, and on
-this card fp32 is the faster of the two for PyTorch. eacp "warm" is
-`--repeat N`, a second generation in the same process, matching how PyTorch's
-warm number is taken.
+PyTorch's own default on a CUDA GPU is fp16, so both are given: the fp32
+figure is the like-for-like against eacp's precision, and on this card fp32
+is the faster of the two for PyTorch. The GPU driver is 528.49 (January 2023),
+old for an Ada card; the numbers are worth retaking on a current one.
 
 ### Small model, 12 s clip
 
-| Phase | eacp | PyTorch CUDA | eacp is |
+Machine B.
+
+| Phase | eacp D3D12 | PyTorch CUDA | eacp is |
 |---|---|---|---|
 | **Generate, warm** | **0.40 s** | 0.48 s fp32, 0.56 s fp16 | **1.2–1.4× faster** |
 | Load | 1.25 s | 9.2 s | 7× faster |
@@ -45,18 +68,16 @@ warm number is taken.
 | Decode, warm | 0.02 s | 0.022 s | level |
 | **Cold process to WAV on disk** | **2.7 s** | 17.4 s fp32, 20.9 s fp16 | **6.3–7.6× faster** |
 
-Medium, 30 s: 7.0 s cold process to WAV.
+Medium, 30 s, Machine B: 7.0 s cold process to WAV.
 
-Read the cold rows against each other and the warm rows against each other.
-Comparing eacp cold to PyTorch warm is the mistake that made decode look six
-times worse than it is: most of what a first decode pays is one-time pipeline
-creation and a pool with nothing in it yet, which a warm PyTorch process paid
-for during its nine-second load.
+Most of what a first decode pays on Machine B is one-time pipeline creation
+and a buffer pool with nothing in it yet, which a warm PyTorch process paid for
+during its nine-second load.
 
 ## Where it started
 
-The same medium clip took 38.6 s end to end on the first measured run of
-this branch: 22 s of that was decode building a dense 5491×5491 attention
+On Machine A the same medium clip took 38.6 s end to end on the first
+measured run of this branch: 22 s of that was decode building a dense 5491×5491 attention
 for a ±17-row window, and the build had no optimisation flags. Everything
 between that and the table above is bit-exact — every commit was byte-compared
 against the original WAVs — and landed as library affordances in
@@ -71,7 +92,7 @@ generating, is `Benchmark/WINDOWS.md`.
 
 ## Examples
 
-Generated by this CLI on the M5 Max and encoded to MP3 at 192 kb/s;
+Generated by this CLI on Machine A and encoded to MP3 at 192 kb/s;
 `Examples/`:
 
 | File | Model | Seconds | Seed | Prompt |
@@ -87,7 +108,7 @@ build-release/Apps/GPU/StableAudio3/StableAudio3 --model medium --seconds 30 \
     --output pendulum.wav
 ```
 
-Numbers are single quiet runs on mains except where a range is given, which
-is the spread over three or four runs. A MacBook on battery runs in Low Power
-Mode and every number comes out about 2× slower; `Benchmark/benchmark.py`
-refuses to run there.
+A MacBook on battery runs in Low Power Mode and every number comes out about
+2× slower; `Benchmark/benchmark.py` refuses to run there and records the power
+source with each result. Nothing here was measured with anything else on the
+GPU.
