@@ -461,36 +461,43 @@ Suggested order: 1 → 3 (1–3) → 2 → 4 → 6 → 5 → 7 → 8, then profi
 are bit-exact with the care noted. Only 9-flash, 10-with-K-changes and 13 need
 the goldens' tolerance.
 
-## State on 2026-09-23, evening
+## State on 2026-09-24
 
-Every commit on `jp/stable-audio-infrence` is byte-compared against the
-pre-optimisation WAVs (medium 30 s seed 7, small 12 s seed 42) and green on all
-nine CI lanes. `../PERFORMANCE.md` has the Metal-vs-MPS table; `WINDOWS.md`
-the D3D12-vs-CUDA one.
+Head eae36dae. Every commit byte-compared against the pre-optimisation WAVs
+and green on macOS, iOS and the three Linux lanes; the four Windows lanes fail
+one test, `WebViewToggle/survivesRapidOpenCloseCycles`, a WebView2 teardown
+crash that only started running when the SA3 suites were registered with
+ctest (Windows side owns it). `../PERFORMANCE.md` carries medians with JSON
+behind them: Machine A medium 30 s generate 2.7 s against PyTorch-MPS warm
+4.5 s, cold process 3.2 s against 16 s, RSS 0.7 GB against 19.4 GB; small
+12 s generate 0.31 s against 0.34 s. Machine B (RTX 6000 Ada) small 12 s
+warm generate 0.40 s against PyTorch-CUDA 0.48 s fp32.
 
-Landed as library affordances: kernels compiled once per device and cached on
-disk (`ShaderBinaryCache`, no warm-up lists), `BufferPool` behind
-`Device::makeBuffer` with a submission window and a byte bound from
-`Device::memoryBudget()`, per-dispatch GPU timing (`TimingScope::EachDispatch`,
-`totalsByLabel()`), `CallCost` counters, banded and tiled attention, one
-attention score kernel with the mask as its variant, RoPE over segments,
-probabilities stored once, per-head norms, `LinearF32` retiled with its tile
-height from the batch, one set of tensor ops (`TensorOps`), `Tensor::columns()`
-views instead of copies, the emitter materialising a handle before a write,
-naming operands before their record, and fused operand reads for SIMD-group
-products off Metal; DXC/SM6 opt-in; the threadgroup-ceiling fix. The SA3
-suites now run under ctest and skip what is not cached.
+Since the 09-23 list: zero-copy weight loading (a `Tensor` is a range of a
+buffer it may share; `SafetensorsFile::loadF32` adopts the checkpoint a
+segment at a time on Metal and copies where a backend cannot adopt or an
+offset is off the device's binding grid; residency requested on a background
+queue, held briefly and sent serially), cross-attention prompt keys computed
+once per generation, adaLN modulation and q/k/v read through views, one set of
+tensor ops in ML, one attention score kernel, banded attention's last segment
+clamped to the last row, `LinearF32` tile height from the batch (fp32 matmul
+on Metal measured level with MPS and Metal 4 `matmul2d` at full precision),
+`Device::memoryBudget()` sizing the pool's byte bound, DXC/SM6 opt-in on
+D3D12 (not bit-exact against FXC), the hardening PR (pool weak link, shared
+kernels drop bindings after each dispatch and throw on an unassigned member,
+a golden corpus of every shipped shader, a CI job for the model goldens
+behind an `HF_TOKEN` secret), and the rule that two slot-allocating EDSL
+calls never share one expression.
 
-Measured and recorded rather than shipped: fp32 `LinearF32` on Metal is level
-with MPS and Metal 4 `matmul2d` at full precision; bigger blocks, split-k,
-double-buffered slabs and direct-from-device loads were flat or worse; the
-32-row-tiles-under-512-groups rule was an Apple occupancy floor and tripled
-sampling on an RTX 6000 (reverted); a process-exit fast path saves 1%; the
-per-head RMSNorm kernel is not bit-exact and is parked.
+Measured and not shipped: the 32-row-tiles-under-512-groups rule (an Apple
+occupancy floor; 3x slower on an RTX 6000), split-k and bigger SIMD-group
+blocks, a per-head RMSNorm kernel (not bit-exact), a process-exit fast path
+(1%), a cached compact tokenizer (hidden behind the weight load), persisted
+D3D12 pipelines (the driver already caches), bf16 weights kept in memory
+(the checkpoints are stored F32).
 
-Open, ranked: bf16 weights kept in memory and widened in the kernel (bit-exact,
-halves load bytes and RSS; Windows side); fewer dispatches per DiT step by
-bit-exact elementwise fusion as library epilogues (1,158 today); the D3D12
-`LinearF32` at ~8 of 39 TFLOPS against cuBLAS; `ID3D12PipelineLibrary` so first
-use of a kernel costs nothing on D3D12; the medium RSS (15 GB) via zero-copy
-loading; a definitive re-run of `benchmark.py` on mains for RESULTS.md.
+Open: the Windows WebView2 crash; D3D12 `LinearF32` at ~8 of 39 TFLOPS
+against cuBLAS and the >65535-group fold in ComputePass (Windows side); the
+`HF_TOKEN` secret so the goldens job runs; Machine B's CPU/RAM/build in
+PERFORMANCE.md; fewer dispatches per DiT step by bit-exact elementwise fusion
+(1,158 today); the tokenizer parse now on the load critical path (~0.25 s).
