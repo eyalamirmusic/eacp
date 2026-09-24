@@ -26,7 +26,8 @@ PYTORCH_MODEL_NAMES = {"small": "small-music", "medium": "medium"}
 
 EACP_PHASES = {
     "DiT weights": "dit_weights",
-    "Codec": "codec",
+    "Decoder": "codec",
+    "Waiting for kernels": "kernel_wait",
     "Text encoder": "text_encoder",
     "Prompt encoding": "prompt_encoding",
     "Sampling": "sampling",
