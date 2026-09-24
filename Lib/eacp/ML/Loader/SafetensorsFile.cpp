@@ -41,10 +41,11 @@ int bytesPerElement(SafetensorsDType dtype)
 }
 }
 
-SafetensorsFile::SafetensorsFile(MemoryMappedFile mappedFile,
-                                 std::uint64_t dataStart,
-                                 std::map<std::string, SafetensorsEntry> entriesToUse)
-    : mapped(std::move(mappedFile))
+SafetensorsFile::SafetensorsFile(
+    MemoryMappedFile mappedFile,
+    std::uint64_t dataStart,
+    std::map<std::string, SafetensorsEntry> entriesToUse)
+    : mapped(std::make_shared<const MemoryMappedFile>(std::move(mappedFile)))
     , dataSectionStart(dataStart)
     , entries(std::move(entriesToUse))
 {
@@ -129,16 +130,94 @@ const std::uint8_t* SafetensorsFile::rawBytes(const std::string& name) const
     if (entry == nullptr)
         return nullptr;
 
-    return mapped.bytes().data() + dataSectionStart + entry->byteOffset;
+    return mapped->bytes().data() + fileOffsetOf(*entry);
+}
+
+std::int64_t SafetensorsFile::fileOffsetOf(const SafetensorsEntry& entry) const
+{
+    return (std::int64_t) (dataSectionStart + entry.byteOffset);
+}
+
+// One buffer over the whole mapping, made on the first load for a device and
+// shared by every tensor after it. Null where the device copies instead, or
+// where it declined this mapping (a file past its largest buffer, say).
+std::shared_ptr<const GPU::Buffer>
+    SafetensorsFile::fileBufferFor(GPU::Device& device) const
+{
+    if (fileBufferDevice == &device)
+        return fileBuffer;
+
+    fileBufferDevice = &device;
+    fileBuffer = nullptr;
+
+    if (!GPU::Buffer::canAdoptMemory(device))
+        return nullptr;
+
+    auto memory =
+        GPU::ExternalMemory {const_cast<std::uint8_t*>(mapped->bytes().data()),
+                             (std::int64_t) mapped->bytes().getSize(),
+                             [keepMapped = mapped] {}};
+
+    auto buffer = device.makeBufferOverMemory(std::move(memory));
+
+    if (buffer.isValid())
+        fileBuffer = std::make_shared<const GPU::Buffer>(std::move(buffer));
+
+    return fileBuffer;
 }
 
 Tensor SafetensorsFile::loadF32(const std::string& name, GPU::Device& device) const
 {
     auto entry = find(name);
-    assert(entry != nullptr && entry->dtype == SafetensorsDType::F32);
+    assert(entry != nullptr && bytesPerElement(entry->dtype) > 0);
 
+    if (entry->dtype != SafetensorsDType::F32)
+    {
+        ++counts.converted;
+        auto values = readF32(name);
+        return Tensor::fromHostF32(values.data(), entry->shape, device);
+    }
+
+    auto offset = fileOffsetOf(*entry);
+    auto onGrid = offset % device.storageBufferOffsetAlignment() == 0;
+
+    if (auto buffer = fileBufferFor(device); buffer != nullptr && onGrid)
+    {
+        ++counts.inPlace;
+        return Tensor {std::move(buffer), offset, entry->shape, DType::F32};
+    }
+
+    ++counts.copied;
     auto data = reinterpret_cast<const float*>(rawBytes(name));
     return Tensor::fromHostF32(data, entry->shape, device);
+}
+
+std::vector<float> SafetensorsFile::readF32(const std::string& name) const
+{
+    auto entry = find(name);
+    assert(entry != nullptr && bytesPerElement(entry->dtype) > 0);
+
+    auto count = (std::size_t) elementCountOf(entry->shape);
+    auto bytes = rawBytes(name);
+    auto values = std::vector<float>(count);
+
+    if (entry->dtype == SafetensorsDType::F32)
+    {
+        std::memcpy(values.data(), bytes, count * sizeof(float));
+        return values;
+    }
+
+    for (auto i = std::size_t {}; i < count; ++i)
+    {
+        auto bits = std::uint16_t {};
+        std::memcpy(&bits, bytes + i * 2, sizeof(bits));
+
+        values[i] = entry->dtype == SafetensorsDType::BF16
+                        ? GPU::bfloat16ToFloat(bits)
+                        : GPU::halfToFloat(bits);
+    }
+
+    return values;
 }
 
 Tensor SafetensorsFile::loadPackedF16(const std::string& name,
@@ -153,20 +232,7 @@ Tensor SafetensorsFile::loadPackedF16(const std::string& name,
         return Tensor::fromHostPackedF16(data, entry->shape, device);
     }
 
-    auto count = elementCountOf(entry->shape);
-    auto values = std::vector<float> ((std::size_t) count);
-    auto bytes = rawBytes(name);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto bits = std::uint16_t {};
-        std::memcpy(&bits, bytes + i * 2, sizeof(bits));
-
-        values[(std::size_t) i] = entry->dtype == SafetensorsDType::BF16
-                                      ? GPU::bfloat16ToFloat(bits)
-                                      : GPU::halfToFloat(bits);
-    }
-
+    auto values = readF32(name);
     return Tensor::fromHostPackedF16(values.data(), entry->shape, device);
 }
 

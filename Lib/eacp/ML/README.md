@@ -26,6 +26,27 @@ There is no `buffer()` to bind instead, because binding the whole buffer is
 the one mistake an offset makes easy. A `TensorView`'s `range()` is the range
 of the tensor it views, and its `rowStride` and `columnOffset` count from there.
 
+## Weights from a safetensors file
+
+`SafetensorsFile::open` maps the file; `loadF32` is the one call per tensor:
+
+```cpp
+auto file = SafetensorsFile::open(path);
+auto weight = file->loadF32("layers.0.attn.to_qkv.weight");
+```
+
+On a device that can adopt host memory (Metal), the first load makes the whole
+mapping one GPU buffer and every F32 tensor after it is a range of that buffer.
+Nothing is copied, the pages come off the disk as they are needed, the buffer
+asks for residency in the background (see "A buffer over memory you already
+have" in `Lib/eacp/GPU/README.md`), and the buffer holds the mapping, so the
+tensors outlive the `SafetensorsFile` they came from. A tensor whose offset is
+off `Device::storageBufferOffsetAlignment()` is copied into a buffer of its own,
+as is every tensor on a device that cannot adopt memory, and F16 and BF16 are
+converted to F32 on the host - the caller writes the same line in every case.
+`loadCounts()` says how many of each there were. `readF32` is the host copy, in
+F32 whatever the storage, for weights a loader transforms before upload.
+
 ## Tensor ops
 
 `Kernels/TensorOps.h` is the arithmetic and plumbing between the layers, one
