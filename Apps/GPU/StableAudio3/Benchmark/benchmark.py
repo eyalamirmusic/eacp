@@ -241,7 +241,8 @@ def timed_method(owner, name, log):
     setattr(owner, name, wrapper)
 
 load_start = time.time()
-model = StableAudioModel.from_pretrained(config["model_name"], device=device)
+model = StableAudioModel.from_pretrained(config["model_name"], device=device,
+                                         model_half=config["model_half"])
 sync()
 load_end = time.time()
 
@@ -322,6 +323,7 @@ def run_pytorch(args):
     config = {
         "model_name": PYTORCH_MODEL_NAMES[args.model],
         "device": args.device,
+        "model_half": args.pytorch_half,
         "prompt": args.prompt,
         "seconds": args.seconds,
         "steps": args.steps,
@@ -420,6 +422,9 @@ def main():
     parser.add_argument("--timeout", type=float, default=None,
                         help="PyTorch: give up after this many seconds")
     parser.add_argument("--label", default=None)
+    parser.add_argument("--pytorch-fp32", dest="pytorch_half", action="store_false",
+                        help="PyTorch: fp32 weights, to match eacp's precision "
+                             "(its default on a GPU is fp16)")
     parser.add_argument("--allow-battery", action="store_true",
                         help="run even on battery power (Low Power Mode caps the GPU clock)")
     args = parser.parse_args()
@@ -447,7 +452,8 @@ def main():
 
     path = OUTPUT_DIR / f"{args.label}.json"
     path.write_text(json.dumps(results, indent=2))
-    print(json.dumps({k: {kk: vv for kk, vv in v.items() if kk != "stdout"}
+    print(json.dumps({k: ({kk: vv for kk, vv in v.items() if kk != "stdout"}
+                          if isinstance(v, dict) else v)
                       for k, v in results.items() if k != "config"}, indent=2))
     print(f"Raw results in {path}")
 

@@ -1,0 +1,52 @@
+{
+  "config": {
+    "side": "eacp",
+    "model": "small",
+    "seconds": "12.0",
+    "steps": "8",
+    "seed": "42",
+    "prompt": "lofi house loop",
+    "eacp_binary": "C:\\Users\\jamie\\projects\\jamie-eacp\\build-release\\Apps\\GPU\\StableAudio3\\StableAudio3.exe",
+    "pytorch_repo": "None",
+    "device": "cuda",
+    "warmup": "True",
+    "timeout": "None",
+    "label": "winsmoke"
+  },
+  "eacp": {
+    "wall_seconds": 2.8918399810791016,
+    "phases": {
+      "dit_weights": 0.93,
+      "codec": 0.13,
+      "text_encoder": 0.23,
+      "prompt_encoding": 0.19,
+      "sampling": 0.48,
+      "decoding": 0.28,
+      "wav_write": 0.03,
+      "total": 2.78
+    },
+    "load_seconds": 1.29,
+    "peak_rss_gb": null,
+    "peak_footprint_gb": null,
+    "gpu_whole_process": {
+      "samples": 10,
+      "gpu_utilization_avg": 11.9,
+      "gpu_utilization_peak": 27,
+      "gpu_in_use_memory_peak_delta_gb": 3.05
+    },
+    "gpu_sampling": {
+      "samples": 2,
+      "gpu_utilization_avg": 16.0,
+      "gpu_utilization_peak": 27,
+      "gpu_in_use_memory_peak_delta_gb": 3.05
+    },
+    "gpu_decoding": {
+      "samples": 1,
+      "gpu_utilization_avg": 24.0,
+      "gpu_utilization_peak": 24,
+      "gpu_in_use_memory_peak_delta_gb": 2.15
+    },
+    "output_path": "C:\\Users\\jamie\\projects\\jamie-eacp\\Apps\\GPU\\StableAudio3\\Benchmark\\Outputs\\eacp_winsmoke.wav",
+    "stdout": "Loading DiT weights (small)...\nDiT weights took 0.93s\nLoading SAME decoder...\nDecoder took 0.13s\nLoading T5Gemma text encoder...\nText encoder took 0.23s\nEncoding prompt: \"lofi house loop\"\nPrompt encoding took 0.19s\nSampling 8 steps over 130 latent frames (12.00s)...\nSampling took 0.48s\nDecoding audio...\n20:02:26.861 | eacp: a dispatch of 79560x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:02:26.874 | eacp: a dispatch of 79560x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:02:26.886 | eacp: a dispatch of 79560x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:02:26.903 | eacp: a dispatch of 80784x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:02:26.917 | eacp: a dispatch of 80784x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:02:26.932 | eacp: a dispatch of 80784x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\nDecoding took 0.28s\nWAV write took 0.03s\nWrote C:\\Users\\jamie\\projects\\jamie-eacp\\Apps\\GPU\\StableAudio3\\Benchmark\\Outputs\\eacp_winsmoke.wav\nTotal took 2.78s\nkernel builds: 35 calls, 0.05s\nshader compiles: 32 calls, 0.04s\n"
+  }
+}

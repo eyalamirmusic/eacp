@@ -1,0 +1,144 @@
+{
+  "config": {
+    "side": "both",
+    "model": "small",
+    "seconds": "12.0",
+    "steps": "8",
+    "seed": "42",
+    "prompt": "lofi house loop",
+    "eacp_binary": "C:\\Users\\jamie\\projects\\jamie-eacp\\build-release\\Apps\\GPU\\StableAudio3\\StableAudio3.exe",
+    "pytorch_repo": "C:\\Users\\jamie\\sa3-pytorch",
+    "device": "cuda",
+    "warmup": "True",
+    "timeout": "None",
+    "label": "cuda-small-1",
+    "allow_battery": "False"
+  },
+  "power_source": "AC",
+  "eacp": {
+    "wall_seconds": 2.932907819747925,
+    "phases": {
+      "dit_weights": 0.95,
+      "codec": 0.13,
+      "text_encoder": 0.23,
+      "prompt_encoding": 0.18,
+      "sampling": 0.5,
+      "decoding": 0.27,
+      "wav_write": 0.03,
+      "total": 2.82
+    },
+    "load_seconds": 1.31,
+    "peak_rss_gb": null,
+    "peak_footprint_gb": null,
+    "gpu_whole_process": {
+      "samples": 10,
+      "gpu_utilization_avg": 19.4,
+      "gpu_utilization_peak": 69,
+      "gpu_in_use_memory_peak_delta_gb": 3.05
+    },
+    "gpu_sampling": {
+      "samples": 2,
+      "gpu_utilization_avg": 27.0,
+      "gpu_utilization_peak": 41,
+      "gpu_in_use_memory_peak_delta_gb": 3.05
+    },
+    "gpu_decoding": {
+      "samples": 1,
+      "gpu_utilization_avg": 69.0,
+      "gpu_utilization_peak": 69,
+      "gpu_in_use_memory_peak_delta_gb": 2.67
+    },
+    "output_path": "C:\\Users\\jamie\\projects\\jamie-eacp\\Apps\\GPU\\StableAudio3\\Benchmark\\Outputs\\eacp_cuda-small-1.wav",
+    "stdout": "Loading DiT weights (small)...\nDiT weights took 0.95s\nLoading SAME decoder...\nDecoder took 0.13s\nLoading T5Gemma text encoder...\nText encoder took 0.23s\nEncoding prompt: \"lofi house loop\"\nPrompt encoding took 0.18s\nSampling 8 steps over 130 latent frames (12.00s)...\nSampling took 0.50s\nDecoding audio...\n20:10:28.503 | eacp: a dispatch of 79560x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:10:28.515 | eacp: a dispatch of 79560x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:10:28.527 | eacp: a dispatch of 79560x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:10:28.543 | eacp: a dispatch of 80784x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:10:28.557 | eacp: a dispatch of 80784x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\n20:10:28.571 | eacp: a dispatch of 80784x1x1 threadgroups is past D3D12's limit of 65535 per dimension. Whether it runs is up to the driver, and a Y or Z past the cap commonly runs as nothing at all. Reshape the grid so every dimension fits.\nDecoding took 0.27s\nWAV write took 0.03s\nWrote C:\\Users\\jamie\\projects\\jamie-eacp\\Apps\\GPU\\StableAudio3\\Benchmark\\Outputs\\eacp_cuda-small-1.wav\nTotal took 2.82s\nkernel builds: 35 calls, 0.05s\nshader compiles: 32 calls, 0.04s\n"
+  },
+  "pytorch_cuda": {
+    "load_start": 1790219434.3043633,
+    "load_end": 1790219444.6871743,
+    "load_seconds": 10.382811069488525,
+    "dtype": "torch.float16",
+    "model_half": true,
+    "audio_shape": [
+      1,
+      2,
+      529200
+    ],
+    "cold": {
+      "start": 1790219444.6871743,
+      "end": 1790219447.6747258,
+      "generate_seconds": 2.98755145072937,
+      "prompt_encoding_seconds": 1.537466287612915,
+      "decoding_seconds": 0.07265949249267578,
+      "sampling_seconds": 1.3774256706237793,
+      "sampling_window": [
+        1790219446.2246406,
+        1790219447.6020663
+      ],
+      "decoding_window": [
+        1790219447.6020663,
+        1790219447.6747258
+      ],
+      "gpu_whole_generate": {
+        "samples": 9,
+        "gpu_utilization_avg": 6.7,
+        "gpu_utilization_peak": 19,
+        "gpu_in_use_memory_peak_delta_gb": 4.35
+      },
+      "gpu_sampling": {
+        "samples": 4,
+        "gpu_utilization_avg": 5.2,
+        "gpu_utilization_peak": 14,
+        "gpu_in_use_memory_peak_delta_gb": 4.35
+      },
+      "gpu_decoding": {
+        "samples": 0,
+        "gpu_utilization_avg": null,
+        "gpu_utilization_peak": null,
+        "gpu_in_use_memory_peak_delta_gb": null
+      }
+    },
+    "warm": {
+      "start": 1790219447.6747258,
+      "end": 1790219448.2385764,
+      "generate_seconds": 0.5638506412506104,
+      "prompt_encoding_seconds": 0.026181936264038086,
+      "decoding_seconds": 0.03168964385986328,
+      "sampling_seconds": 0.505979061126709,
+      "sampling_window": [
+        1790219447.7009077,
+        1790219448.2068868
+      ],
+      "decoding_window": [
+        1790219448.2068868,
+        1790219448.2385764
+      ],
+      "gpu_whole_generate": {
+        "samples": 2,
+        "gpu_utilization_avg": 15.5,
+        "gpu_utilization_peak": 16,
+        "gpu_in_use_memory_peak_delta_gb": 4.35
+      },
+      "gpu_sampling": {
+        "samples": 1,
+        "gpu_utilization_avg": 16.0,
+        "gpu_utilization_peak": 16,
+        "gpu_in_use_memory_peak_delta_gb": 4.35
+      },
+      "gpu_decoding": {
+        "samples": 0,
+        "gpu_utilization_avg": null,
+        "gpu_utilization_peak": null,
+        "gpu_in_use_memory_peak_delta_gb": null
+      }
+    },
+    "gpu_load": {
+      "samples": 35,
+      "gpu_utilization_avg": 2.5,
+      "gpu_utilization_peak": 46,
+      "gpu_in_use_memory_peak_delta_gb": 3.42
+    },
+    "wall_seconds": 20.948257207870483,
+    "peak_rss_gb": null,
+    "peak_footprint_gb": null,
+    "output_path": "C:\\Users\\jamie\\projects\\jamie-eacp\\Apps\\GPU\\StableAudio3\\Benchmark\\Outputs\\pytorch_cuda_cuda-small-1.wav"
+  }
+}
