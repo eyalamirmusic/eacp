@@ -28,16 +28,16 @@ int tileCount(int extent, int tile)
 
 namespace
 {
-// LinearF32's tiling: a tile of the output per threadgroup, split into 32 x 32
-// blocks, one per SIMD group - sixteen accumulator fragments each, so every
-// fragment loaded from the slab feeds four products.
-constexpr auto f32TileRows = 64u;
+// LinearF32's tiling: a tile of the output per threadgroup, split into blocks
+// 32 rows tall, one per SIMD group, four SIMD groups to a threadgroup. A tile
+// 64 rows tall is four 32 x 32 blocks - sixteen accumulator fragments each, so
+// every fragment loaded from the slab feeds four products. A tile 32 rows tall
+// splits its 64 columns four ways into 32 x 16 blocks instead.
 constexpr auto f32TileColumns = 64u;
-constexpr auto f32Block = 32u;
-constexpr auto f32BlocksDown = f32TileRows / f32Block;
-constexpr auto f32SimdGroups = f32BlocksDown * (f32TileColumns / f32Block);
+constexpr auto f32BlockRows = 32u;
+constexpr auto f32SimdGroups = 4u;
 constexpr auto f32Threads = f32SimdGroups * 32u;
-constexpr auto f32Fragments = f32Block / 8u;
+constexpr auto f32FragmentsDown = f32BlockRows / 8u;
 
 // The slab is 16 deep in k. A shallower slab is more barriers for the same
 // products, but it is also less threadgroup memory, and on an M5 Max that is
@@ -47,12 +47,10 @@ constexpr auto f32Fragments = f32Block / 8u;
 // deep are both slower.
 constexpr auto f32Slab = 16u;
 constexpr auto f32QuadsPerRow = f32Slab / 4u;
-constexpr auto f32QuadsA = f32TileRows * f32QuadsPerRow / f32Threads;
 constexpr auto f32QuadsB = f32TileColumns * f32QuadsPerRow / f32Threads;
 
-static_assert(f32TileRows * f32QuadsPerRow % f32Threads == 0);
 static_assert(f32TileColumns * f32QuadsPerRow % f32Threads == 0);
-static_assert(f32QuadsA >= 1 && f32QuadsA <= 4 && f32QuadsB >= 1 && f32QuadsB <= 4);
+static_assert(f32QuadsB >= 1 && f32QuadsB <= 4);
 
 // Each row of the slab and of the output tile padded by eight floats. A
 // fragment load reads eight rows of eight, and at a stride that is a multiple
@@ -61,14 +59,36 @@ static_assert(f32QuadsA >= 1 && f32QuadsA <= 4 && f32QuadsB >= 1 && f32QuadsB <=
 // floats need and no more.
 constexpr auto f32SlabStride = f32Slab + 8u;
 constexpr auto f32ColumnStride = f32TileColumns + 8u;
-constexpr auto f32WeightBase = f32TileRows * f32SlabStride;
-constexpr auto f32SlabElements = f32WeightBase + f32Slab * f32ColumnStride;
 
 // Where a fragment that hangs off the edge of the output goes on its way out:
 // a patch of 64 floats per SIMD group, after the slab.
 constexpr auto f32PatchElements = 64u;
-constexpr auto f32SharedElements =
-    f32SlabElements + f32SimdGroups * f32PatchElements;
+
+struct F32Tiling
+{
+    unsigned tileRows;
+
+    unsigned blocksDown() const { return tileRows / f32BlockRows; }
+
+    unsigned blockColumns() const
+    {
+        return f32TileColumns * blocksDown() / f32SimdGroups;
+    }
+
+    unsigned fragmentsAcross() const { return blockColumns() / 8u; }
+    unsigned quadsA() const { return tileRows * f32QuadsPerRow / f32Threads; }
+    unsigned weightBase() const { return tileRows * f32SlabStride; }
+
+    unsigned slabElements() const
+    {
+        return weightBase() + f32Slab * f32ColumnStride;
+    }
+
+    unsigned sharedElements() const
+    {
+        return slabElements() + f32SimdGroups * f32PatchElements;
+    }
+};
 } // namespace
 
 LinearLoads linearLoadsFor(int inner)
@@ -76,9 +96,15 @@ LinearLoads linearLoadsFor(int inner)
     return inner % 4 == 0 ? LinearLoads::FourWide : LinearLoads::Scalar;
 }
 
-LinearF32::LinearF32(LinearLoads loadsToUse)
+int linearTileRowsFor(int rows)
+{
+    return tileCount(rows, 32) * 32 < tileCount(rows, 64) * 64 ? 32 : 64;
+}
+
+LinearF32::LinearF32(LinearLoads loadsToUse, int tileRowsToUse)
     : ComputeProgram({(int) f32Threads, 1, 1})
     , loads(loadsToUse)
+    , tileRows(tileRowsToUse)
 {
     compile();
 }
@@ -91,7 +117,7 @@ void LinearF32::dispatch(ComputePass& pass, int rows, int columns, int inner)
 
     pass.dispatch(*this,
                   tileCount(columns, (int) f32TileColumns) * (int) f32Threads,
-                  tileCount(rows, (int) f32TileRows));
+                  tileCount(rows, tileRows));
 }
 
 // Every output element is the same sequence of 8 x 8 x 8 products - k in
@@ -107,13 +133,18 @@ void LinearF32::define()
     auto group = groupPosition();
     auto simd = simdGroupIndex();
 
-    auto m0 = group.y * f32TileRows;
+    auto tiling = F32Tiling {(unsigned) tileRows};
+    auto quadsA = tiling.quadsA();
+    auto weightBase = tiling.weightBase();
+    auto fragmentsAcross = tiling.fragmentsAcross();
+
+    auto m0 = group.y * tiling.tileRows;
     auto n0 = group.x * f32TileColumns;
 
-    auto rowOffset = (simd % f32BlocksDown) * f32Block;
-    auto columnOffset = (simd / f32BlocksDown) * f32Block;
+    auto rowOffset = (simd % tiling.blocksDown()) * f32BlockRows;
+    auto columnOffset = (simd / tiling.blocksDown()) * tiling.blockColumns();
 
-    auto tile = shared<Float>(f32SharedElements);
+    auto tile = shared<Float>(tiling.sharedElements());
     auto slabStride = unsignedInteger(f32SlabStride);
     auto columnStride = unsignedInteger(f32ColumnStride);
 
@@ -162,7 +193,7 @@ void LinearF32::define()
 
     auto fetchSlab = [&](const UInt& k0)
     {
-        for (auto q = 0u; q < f32QuadsA; ++q)
+        for (auto q = 0u; q < quadsA; ++q)
         {
             auto row = min(m0 + quadRow(q), rowCount - 1u) * innerCount;
             *stagedA[q] = readFour(activations, row, k0 + quadDepth(q));
@@ -177,7 +208,7 @@ void LinearF32::define()
 
     auto storeSlab = [&]
     {
-        for (auto q = 0u; q < f32QuadsA; ++q)
+        for (auto q = 0u; q < quadsA; ++q)
         {
             auto a = stagedA[q]->get();
             auto at = quadRow(q) * f32SlabStride + quadDepth(q);
@@ -193,7 +224,7 @@ void LinearF32::define()
         for (auto q = 0u; q < f32QuadsB; ++q)
         {
             auto b = stagedB[q]->get();
-            auto at = f32WeightBase + quadDepth(q) * f32ColumnStride + quadRow(q);
+            auto at = weightBase + quadDepth(q) * f32ColumnStride + quadRow(q);
 
             write(tile, at, b.x());
             write(tile, at + f32ColumnStride, b.y());
@@ -202,10 +233,10 @@ void LinearF32::define()
         }
     };
 
-    SimdMatrix accumulators[f32Fragments * f32Fragments];
+    SimdMatrix accumulators[f32FragmentsDown * 4u];
 
-    for (auto& accumulator: accumulators)
-        accumulator = simdMatrix();
+    for (auto i = 0u; i < f32FragmentsDown * fragmentsAcross; ++i)
+        accumulators[i] = simdMatrix();
 
     fetchSlab(unsignedInteger(0u));
 
@@ -222,25 +253,26 @@ void LinearF32::define()
 
              for (auto kk = 0u; kk < f32Slab; kk += side)
              {
-                 SimdMatrix left[f32Fragments];
-                 SimdMatrix right[f32Fragments];
+                 SimdMatrix left[f32FragmentsDown];
+                 SimdMatrix right[4];
 
-                 for (auto i = 0u; i < f32Fragments; ++i)
+                 for (auto i = 0u; i < f32FragmentsDown; ++i)
                      left[i] =
                          simdMatrix(tile,
                                     (rowOffset + i * side) * f32SlabStride + kk,
                                     slabStride);
 
-                 for (auto j = 0u; j < f32Fragments; ++j)
+                 for (auto j = 0u; j < fragmentsAcross; ++j)
                      right[j] = simdMatrix(tile,
-                                           f32WeightBase + kk * f32ColumnStride
+                                           weightBase + kk * f32ColumnStride
                                                + columnOffset + j * side,
                                            columnStride);
 
-                 for (auto i = 0u; i < f32Fragments; ++i)
-                     for (auto j = 0u; j < f32Fragments; ++j)
-                         multiplyAccumulate(
-                             accumulators[i * f32Fragments + j], left[i], right[j]);
+                 for (auto i = 0u; i < f32FragmentsDown; ++i)
+                     for (auto j = 0u; j < fragmentsAcross; ++j)
+                         multiplyAccumulate(accumulators[i * fragmentsAcross + j],
+                                            left[i],
+                                            right[j]);
              }
 
              k0 += f32Slab;
@@ -249,13 +281,13 @@ void LinearF32::define()
     // Out through the fragments themselves wherever one lies wholly inside the
     // output, and through this SIMD group's patch where one hangs off its edge
     // - the last rows of a batch that is not a multiple of eight.
-    auto patch = f32SlabElements + simd * f32PatchElements;
+    auto patch = tiling.slabElements() + simd * f32PatchElements;
     auto patchStride = unsignedInteger(side);
 
-    for (auto i = 0u; i < f32Fragments; ++i)
-        for (auto j = 0u; j < f32Fragments; ++j)
+    for (auto i = 0u; i < f32FragmentsDown; ++i)
+        for (auto j = 0u; j < fragmentsAcross; ++j)
         {
-            const auto& accumulator = accumulators[i * f32Fragments + j];
+            const auto& accumulator = accumulators[i * fragmentsAcross + j];
             auto fragmentRow = m0 + rowOffset + i * side;
             auto fragmentColumn = n0 + columnOffset + j * side;
             auto whole = fragmentRow + side <= rowCount
@@ -459,7 +491,8 @@ Tensor linear(ComputePass& pass,
     }
     else
     {
-        auto& kernel = sharedKernel<LinearF32>(device, linearLoadsFor(inner));
+        auto& kernel = sharedKernel<LinearF32>(
+            device, linearLoadsFor(inner), linearTileRowsFor(rows));
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();

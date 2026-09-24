@@ -6,6 +6,7 @@
 #include <eacp/ML/Kernels/Linear.h>
 
 #include <cmath>
+#include <cstring>
 #include <optional>
 #include <vector>
 
@@ -225,4 +226,78 @@ auto tLinearPackedHalfWeightIsCloseToReference =
     checkMatches(result.toHostF32(),
                 referenceLinear(x, w, nullptr, rows, inner, columns),
                 5.0e-2f + 5.0e-3f * inner);
+};
+
+namespace
+{
+std::vector<float> roundingValues(int count, float salt)
+{
+    auto values = std::vector<float> {};
+
+    for (auto i = 0; i < count; ++i)
+        values.push_back(std::sin((float) i * 0.377f + salt) * 1.7f);
+
+    return values;
+}
+
+std::vector<float> runLinearF32(Device& device,
+                                int tileRows,
+                                const Tensor& input,
+                                const Tensor& weight)
+{
+    auto kernel = LinearF32 {LinearLoads::FourWide, tileRows};
+    kernel.prepare(device);
+
+    auto result = Tensor::uninitializedF32({input.rows(), weight.dim(0)}, device);
+    kernel.activations = input.buffer();
+    kernel.weight = weight.buffer();
+    kernel.output = result.buffer();
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        kernel.dispatch(pass, input.rows(), weight.dim(0), input.cols());
+    }
+
+    commands.commit();
+    return result.toHostF32();
+}
+}
+
+// Tiles 32 and 64 rows tall split the output differently among SIMD groups, but
+// every element is the same sequence of products, so the two agree to the bit.
+// The values round, so a different order of sums would show.
+auto tLinearTilingsGiveTheSameBits = test("Linear/tilingsGiveTheSameBits") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto rows = 99;
+    constexpr auto inner = 76;
+    constexpr auto columns = 136;
+
+    auto x = roundingValues(rows * inner, 0.3f);
+    auto w = roundingValues(columns * inner, 1.1f);
+
+    auto input = Tensor::fromHostF32(x.data(), {rows, inner}, device);
+    auto weight = Tensor::fromHostF32(w.data(), {columns, inner}, device);
+
+    auto tall = runLinearF32(device, 64, input, weight);
+    auto short32 = runLinearF32(device, 32, input, weight);
+
+    check(tall.size() == short32.size());
+    check(std::memcmp(tall.data(), short32.data(), tall.size() * sizeof(float)) == 0);
+    checkMatches(tall, referenceLinear(x, w, nullptr, rows, inner, columns), 1.0e-3f);
+};
+
+auto tLinearTileRowsPadTheBatchLeast = test("Linear/tileRowsPadTheBatchLeast") = []
+{
+    check(linearTileRowsFor(387) == 32);
+    check(linearTileRowsFor(384) == 64);
+    check(linearTileRowsFor(5491) == 64);
+    check(linearTileRowsFor(1) == 32);
+    check(linearTileRowsFor(100) == 64);
 };

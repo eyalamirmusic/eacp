@@ -1681,6 +1681,20 @@ from zero, into an accumulator that starts at zero. Which SIMD group computes
 an element, how the operands reached threadgroup memory and how deep a slab is
 do not enter into it.
 
+The tile's height is then a question about the batch, not the hardware. The
+last row of tiles computes every row it holds whether the batch has it or not,
+and a transformer's batch is whatever the sequence is: the DiT's 387 rows are
+six tiles of 64 and a seventh holding three, so 448 rows are computed for 387.
+Tiles of 32 compute 416. `linearTileRowsFor` picks whichever pads the batch to
+fewer rows, and 64 on a tie, since 32 × 32 blocks reuse a loaded fragment more
+than the 32 × 16 blocks a 32-row tile splits into. Both keep four SIMD groups
+and the same slab, so the choice is one constructor argument and the bits do
+not move (`Linear/tilingsGiveTheSameBits`). On the DiT's five shapes that is
+8–25% on `LinearF32` alone, most on the narrowest outputs (1536 columns),
+which have the fewest threadgroups to spread over 40 cores and gain from
+having twice as many; at 384 rows, where 64 wastes nothing, the two tilings
+measure the same.
+
 #### A weight read where it lies
 
 A checkpoint ships its weights in sixteen bits, and the product above wants
