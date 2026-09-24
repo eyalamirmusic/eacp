@@ -55,15 +55,32 @@ winrt::com_ptr<ID3D12Resource> makeDefaultBuffer(ID3D12Device* device,
     static auto creations = D3D12CostCounter {"buffers"};
     auto cost = ScopedD3D12Cost {creations, bytes};
 
-    auto buffer = winrt::com_ptr<ID3D12Resource>();
-    device->CreateCommittedResource(&heap,
-                                    D3D12_HEAP_FLAG_NONE,
-                                    &desc,
-                                    D3D12_RESOURCE_STATE_COMMON,
-                                    nullptr,
-                                    __uuidof(ID3D12Resource),
-                                    buffer.put_void());
-    return buffer;
+    // Not zeroed. A default-heap buffer is filled by the upload that follows
+    // it or written by the kernel that owns it, so the pages the driver would
+    // clear first are pages nothing reads before something overwrites them -
+    // and clearing them is most of what a large allocation costs: loading a
+    // medium checkpoint asks for 13 GB, and zeroing that is over a second of
+    // the load. The flag wants Windows 10 2004, so a device that refuses it
+    // gets the ordinary cleared heap instead of no buffer at all.
+    auto create = [&](D3D12_HEAP_FLAGS heapFlags)
+    {
+        auto buffer = winrt::com_ptr<ID3D12Resource>();
+
+        auto created = device->CreateCommittedResource(&heap,
+                                                       heapFlags,
+                                                       &desc,
+                                                       D3D12_RESOURCE_STATE_COMMON,
+                                                       nullptr,
+                                                       __uuidof(ID3D12Resource),
+                                                       buffer.put_void());
+
+        return SUCCEEDED(created) ? buffer : nullptr;
+    };
+
+    if (auto buffer = create(D3D12_HEAP_FLAG_CREATE_NOT_ZEROED))
+        return buffer;
+
+    return create(D3D12_HEAP_FLAG_NONE);
 }
 } // namespace
 
