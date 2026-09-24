@@ -71,9 +71,14 @@ constexpr auto f32SharedElements =
     f32SlabElements + f32SimdGroups * f32PatchElements;
 } // namespace
 
-LinearF32::LinearF32(bool vectorLoadsToUse)
+LinearLoads linearLoadsFor(int inner)
+{
+    return inner % 4 == 0 ? LinearLoads::FourWide : LinearLoads::Scalar;
+}
+
+LinearF32::LinearF32(LinearLoads loadsToUse)
     : ComputeProgram({(int) f32Threads, 1, 1})
-    , vectorLoads(vectorLoadsToUse)
+    , loads(loadsToUse)
 {
     compile();
 }
@@ -113,12 +118,12 @@ void LinearF32::define()
     auto columnStride = unsignedInteger(f32ColumnStride);
 
     // Four consecutive k of one row, zero past the end of k. innerCount is a
-    // multiple of four on the vector path, so four k are inside or outside
+    // multiple of four when the loads are four wide, so four k are inside or outside
     // together and the read is clamped whole to stay inside the buffer.
     auto readFour =
         [&](const InputBuffer& source, const UInt& rowBase, const UInt& k)
     {
-        if (vectorLoads)
+        if (loads == LinearLoads::FourWide)
         {
             auto inside = k < innerCount;
             auto at = min(k, innerCount - 4u);
@@ -454,7 +459,7 @@ Tensor linear(ComputePass& pass,
     }
     else
     {
-        auto& kernel = sharedKernel<LinearF32>(device, inner % 4 == 0);
+        auto& kernel = sharedKernel<LinearF32>(device, linearLoadsFor(inner));
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();

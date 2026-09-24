@@ -376,7 +376,7 @@ Tensor forward(ComputePass& pass,
 
 void addWarmupKernels(KernelWarmup& warmup)
 {
-    warmup.add<LinearF32>(true);
+    warmup.add<LinearF32>(LinearLoads::FourWide);
     warmup.add<AddBiasRows>();
     warmup.add<RMSNormKernel>();
     warmup.add<RoPEKernel>();

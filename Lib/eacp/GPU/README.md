@@ -602,7 +602,7 @@ weights, typically — instead of stalling the first command buffer:
 
 ```cpp
 auto warmup = KernelWarmup {};
-warmup.add<LinearF32>();
+warmup.add<LinearF32>(LinearLoads::FourWide);
 warmup.add<ActivationKernel>(ActivationKind::SiLU);
 warmup.start(device);
 

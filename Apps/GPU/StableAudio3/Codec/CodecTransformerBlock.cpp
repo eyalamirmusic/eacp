@@ -212,7 +212,7 @@ void addCodecTransformerBlockWarmupKernels(KernelWarmup& warmup)
 {
     warmup.add<DynamicTanhKernel>();
     warmup.add<SinGateKernel>();
-    warmup.add<LinearF32>(true);
+    warmup.add<LinearF32>(LinearLoads::FourWide);
     warmup.add<AddBiasRows>();
     warmup.add<RoPEKernel>();
     warmup.add<BandedAttentionScoresKernel>();

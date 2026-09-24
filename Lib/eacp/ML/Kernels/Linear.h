@@ -5,13 +5,23 @@
 
 namespace eacp::ML
 {
-// output = activations x weightᵀ in fp32 on SIMD-group matrices. vectorLoads
-// reads A and the weight four floats at a time, which needs the inner
-// dimension to be a multiple of four; linear() picks it whenever it is.
+// How LinearF32 reads its operands: four floats at a time, which needs the
+// inner dimension to be a multiple of four, or one at a time, which does not.
+// The two give the same bits; linearLoadsFor picks the wider one wherever the
+// shape allows it, and it is what linear() dispatches.
+enum class LinearLoads
+{
+    FourWide,
+    Scalar
+};
+
+LinearLoads linearLoadsFor(int inner);
+
+// output = activations x weightᵀ in fp32 on SIMD-group matrices.
 class LinearF32 final : public GPU::ComputeProgram
 {
 public:
-    explicit LinearF32(bool vectorLoads = true);
+    explicit LinearF32(LinearLoads loads);
 
     void dispatch(GPU::ComputePass& pass, int rows, int columns, int inner);
 
@@ -27,7 +37,7 @@ public:
 private:
     void define() override;
 
-    bool vectorLoads = true;
+    LinearLoads loads;
 };
 
 class LinearPackedHalf final : public GPU::ComputeProgram
