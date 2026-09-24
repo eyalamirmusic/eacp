@@ -2242,6 +2242,22 @@ workaround by itself and an unknown driver with the same gap picks it up.
 `EACP_D3D12_QUIRKS=1` sets every flag without asking, which is how the
 fallback paths are run against WARP.
 
+## How much memory a device wants you to keep
+
+`Device::memoryBudget()` is how many bytes of device-local memory the driver
+would rather a process kept resident — not how much exists and not how much is
+free, but the number it answers when asked what a well-behaved process should
+stay under. DXGI's `QueryVideoMemoryInfo` local budget on D3D12,
+`recommendedMaxWorkingSetSize` on Metal, the largest `DEVICE_LOCAL` heap on
+Vulkan, and zero from a backend that will not say. A discrete card answers its
+own memory; a unified one answers a share of the system's, and lavapipe answers
+host RAM, which is right because that is where its device memory comes from.
+
+It exists because anything holding storage of its own has to size itself against
+something. `BufferPool` is the first caller: it keeps at most a quarter of that,
+capped at what the work actually reuses. A caller's own allocator wants the same
+number.
+
 ## How big a grid is allowed to be
 
 Metal has no practical ceiling on a dispatch's threadgroup count. D3D12 has

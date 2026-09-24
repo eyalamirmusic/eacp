@@ -2,6 +2,8 @@
 
 #include "../Device/Device.h"
 
+#include <algorithm>
+
 namespace eacp::GPU
 {
 BufferPool& BufferPool::of(Device& device)
@@ -67,9 +69,28 @@ void BufferPool::promoteFinished()
 // The bound the submission rule cannot give: least recently returned first,
 // until what is held fits. Only storage nothing is waiting on is dropped, so
 // this never takes a buffer the GPU could still be reading.
+// A quarter of what the device recommends keeping resident, capped at what the
+// work reuses. The cap is what usually applies; the quarter is what stops a
+// small card being asked to hold a share of itself it has not got. A backend
+// that will not say answers zero, and then the cap is the whole rule.
+std::int64_t BufferPool::bytesKeptUnused() const
+{
+    if (device == nullptr)
+        return bytesKeptUnusedCeiling;
+
+    auto recommended = device->memoryBudget();
+
+    if (recommended <= 0)
+        return bytesKeptUnusedCeiling;
+
+    return std::min(bytesKeptUnusedCeiling, recommended / 4);
+}
+
 void BufferPool::freeOldestBeyondBudget()
 {
-    while (availableBytes > bytesKeptUnused && !available.empty())
+    auto budget = bytesKeptUnused();
+
+    while (availableBytes > budget && !available.empty())
     {
         auto oldest = available.begin();
 

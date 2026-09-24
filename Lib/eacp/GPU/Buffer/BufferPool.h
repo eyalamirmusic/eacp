@@ -57,11 +57,17 @@ public:
     // submissions say. The submission rule alone cannot bound a pool: nothing
     // frees storage except a later take(), so a process that does its work and
     // then sits idle - a plugin between renders, a UI between frames - holds
-    // whatever it last used for ever. Generating one medium clip leaves 6.0 GB
-    // in the pool on this measure, which is not memory an idle app should be
-    // keeping. Two gigabytes still covers a round of the largest work here
-    // (a decode reuses about 1.5 GB), so the reuse survives the bound.
-    static constexpr std::int64_t bytesKeptUnused = 2ll * 1024 * 1024 * 1024;
+    // whatever it last used for ever. Generating one medium clip left 6.0 GB
+    // in the pool before this, which is not memory an idle app should keep.
+    //
+    // Two gigabytes is what the work here actually reuses (a decode turns over
+    // about 1.5 GB), and holding more than it reuses buys nothing - so this is
+    // a ceiling and not a target. A device too small to spare that gets a
+    // quarter of what it recommends instead, which is the number that matters
+    // on a 4 GB card and never binds on a large one.
+    std::int64_t bytesKeptUnused() const;
+
+    static constexpr std::int64_t bytesKeptUnusedCeiling = 2ll * 1024 * 1024 * 1024;
 
     // How many buffers the pool holds, waiting for the GPU or for reuse.
     int heldCount() const { return (int) (waiting.size() + available.size()); }

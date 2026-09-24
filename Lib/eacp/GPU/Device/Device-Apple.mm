@@ -201,6 +201,19 @@ int Device::maxThreadgroupMemory() const
     return (int) metalDevice.maxThreadgroupMemoryLength;
 }
 
+// What Metal itself recommends staying under, which on a unified-memory Mac is
+// a share of system RAM rather than a card's own, and already accounts for what
+// else is resident. Zero from a device that will not say.
+std::int64_t Device::memoryBudget() const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil)
+        return 0;
+
+    return (std::int64_t) metalDevice.recommendedMaxWorkingSetSize;
+}
+
 // The family is the gate both packed fragment types share. MTLGPUFamilyApple7
 // is the first with the SIMD-group matrix instructions, and it is also where
 // the SIMD group is the 32 threads the EDSL's fragment layout is written

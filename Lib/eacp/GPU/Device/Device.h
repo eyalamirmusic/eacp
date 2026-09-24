@@ -223,6 +223,15 @@ public:
     // zero, and a check against zero stands down.
     int maxThreadgroupMemory() const;
 
+    // How many bytes of device-local memory this device would rather we kept
+    // resident, or zero where it will not say. Not how much exists and not how
+    // much is free: the number a driver answers when asked what a well-behaved
+    // process should stay under, which is what anything holding storage of its
+    // own - BufferPool here, a caller's allocator just as much - wants to size
+    // itself against. A discrete card answers its own memory; a unified one
+    // answers a share of the system's.
+    std::int64_t memoryBudget() const;
+
     // Whether this device loads an 8x8 SIMD-group matrix fragment out of a
     // buffer of packed sixteen-bit elements **natively** - one instruction, no
     // widening - which is what ComputeProgram::simdMatrixHalf and
