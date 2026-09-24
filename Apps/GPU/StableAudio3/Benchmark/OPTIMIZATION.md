@@ -460,3 +460,31 @@ Suggested order: 1 → 3 (1–3) → 2 → 4 → 6 → 5 → 7 → 8, then profi
 10 / 11. Items 1, 3, 4, 6, 7 and 8 are bit-exact by construction. 2, 5 and 11
 are bit-exact with the care noted. Only 9-flash, 10-with-K-changes and 13 need
 the goldens' tolerance.
+
+## State at the 2026-09-23 handoff
+
+The host was powered down mid-session. Where things stood:
+
+- `jp/stable-audio-infrence` head: every commit up to the round-2 benchmark
+  results is verified bit-exact against the pre-optimisation WAVs (medium 30 s
+  seed 7, small 12 s seed 42), with all SA3 suites, GPUTests, MLTests green on
+  Metal. Medium 30 s on an M5 Max: sampling 1.10 s, decode 0.46 s, total 2.73 s;
+  PyTorch-MPS warm generate 2.2–2.9 s. Round-2 medians were contended and need
+  a clean re-run before RESULTS.md is rewritten.
+- `wip/sa3-kv-reuse-norm-api` (77fe447b): three items squashed, UNVERIFIED —
+  cross-attention prompt keys once per generation, adaLN modulation read
+  through buffer views (−144 SliceColumns per step) plus a per-head RMSNorm
+  kernel (bit-exact on Metal; last-bit on D3D12/Vulkan, whose reduction is
+  emulated), and API cleanups (`Device::perDevice<T>`, `BufferPool::take`
+  without the Device, private timed `ComputePass` ctor, timing cap grows on
+  demand, `AttentionOptions`). Byte-compare and suites still to run; then
+  split into three commits as the message says.
+- Draft PR #5 on jamierpond/eacp runs every CI lane over the branch; only iOS
+  had reported (green). Windows lane failures belong to the Windows agent,
+  Linux ones to the Mac side. The Linux lanes were being run locally in the
+  CI Docker image; no fixes had been committed yet.
+- Remaining ranked items: the hand-written HLSL that bypasses the shader
+  cache; small-model per-dispatch overhead (small 12 s generate 0.36 s vs
+  PyTorch 0.33 s, on par not ahead); q/k/v slices read as strided views; the
+  duplicate tensor ops in Codec/GpuOps and DiT/Ops that belong in ML; the
+  warm-up-free first launch (~0.4 s of compiles now land in the first step).
