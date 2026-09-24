@@ -36,7 +36,13 @@ Machine A. Single quiet runs for eacp; PyTorch ranges are three runs.
 | Decode | 0.46 s | 1.1–1.4 s | 2.5× faster |
 | Generate (encode + sample + decode) | 1.6 s | 2.2–2.9 s | 1.5× faster |
 | Cold process to WAV on disk | 2.7 s | 12–17 s | ~5× faster |
-| Peak RSS | 15 GB | 19 GB | |
+| Peak RSS (footprint) | 0.7 GB (4.6 GB) | 19 GB (14.7 GB) | |
+
+The weights are not counted in the eacp RSS because they are never copied: on
+Metal every checkpoint tensor is a range of one buffer over the file's own
+mapping (`SafetensorsFile::loadF32`), so they live in the page cache, wired for
+the GPU while the buffer lives. Before that the same run peaked at 15 GB RSS
+and 12.1 GB footprint.
 
 ### Small model, 12 s clip
 
