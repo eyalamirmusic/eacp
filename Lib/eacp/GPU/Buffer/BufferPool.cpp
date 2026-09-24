@@ -24,7 +24,10 @@ Buffer BufferPool::take(std::int64_t bytes, BufferUsage usage)
                          : Buffer {*device, nullptr, bytes, usage};
 
     if (reused)
+    {
+        availableBytes -= found->first.first;
         available.erase(found);
+    }
 
     if (buffer.isValid())
     {
@@ -51,10 +54,31 @@ void BufferPool::promoteFinished()
     {
         auto& front = waiting.front();
 
+        availableBytes += front.key.first;
         available.emplace(front.key,
                           Available {.since = device->lastSubmission(),
                                      .buffer = std::move(front.buffer)});
         waiting.pop_front();
+    }
+
+    freeOldestBeyondBudget();
+}
+
+// The bound the submission rule cannot give: least recently returned first,
+// until what is held fits. Only storage nothing is waiting on is dropped, so
+// this never takes a buffer the GPU could still be reading.
+void BufferPool::freeOldestBeyondBudget()
+{
+    while (availableBytes > bytesKeptUnused && !available.empty())
+    {
+        auto oldest = available.begin();
+
+        for (auto it = available.begin(); it != available.end(); ++it)
+            if (it->second.since < oldest->second.since)
+                oldest = it;
+
+        availableBytes -= oldest->first.first;
+        available.erase(oldest);
     }
 }
 
@@ -68,7 +92,14 @@ void BufferPool::freeUnused()
     lastTrimmed = now;
 
     std::erase_if(available,
-                  [now](const auto& entry)
-                  { return entry.second.since + submissionsKeptUnused < now; });
+                  [this, now](const auto& entry)
+                  {
+                      auto stale = entry.second.since + submissionsKeptUnused < now;
+
+                      if (stale)
+                          availableBytes -= entry.first.first;
+
+                      return stale;
+                  });
 }
 } // namespace eacp::GPU

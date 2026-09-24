@@ -53,8 +53,31 @@ public:
     // is exactly what was being freed and allocated again a moment later.
     static constexpr std::uint64_t submissionsKeptUnused = 64;
 
+    // And no more than this much storage held unused, whatever the
+    // submissions say. The submission rule alone cannot bound a pool: nothing
+    // frees storage except a later take(), so a process that does its work and
+    // then sits idle - a plugin between renders, a UI between frames - holds
+    // whatever it last used for ever. Generating one medium clip leaves 6.0 GB
+    // in the pool on this measure, which is not memory an idle app should be
+    // keeping. Two gigabytes still covers a round of the largest work here
+    // (a decode reuses about 1.5 GB), so the reuse survives the bound.
+    static constexpr std::int64_t bytesKeptUnused = 2ll * 1024 * 1024 * 1024;
+
     // How many buffers the pool holds, waiting for the GPU or for reuse.
     int heldCount() const { return (int) (waiting.size() + available.size()); }
+
+    std::int64_t heldBytes() const
+    {
+        auto total = std::int64_t {0};
+
+        for (const auto& entry: waiting)
+            total += entry.key.first;
+
+        for (const auto& entry: available)
+            total += entry.first.first;
+
+        return total;
+    }
 
 private:
     friend class Buffer;
@@ -77,10 +100,12 @@ private:
     void give(Buffer storage, Key key);
     void promoteFinished();
     void freeUnused();
+    void freeOldestBeyondBudget();
 
 
     Device* device = nullptr;
     std::uint64_t lastTrimmed = 0;
+    std::int64_t availableBytes = 0;
     std::deque<Waiting> waiting;
     std::multimap<Key, Available> available;
 };
