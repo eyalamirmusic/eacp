@@ -10,14 +10,18 @@ RelWithDebInfo, `EACP_UNITY_BUILD=OFF`.
 All verified producing real audio, and bit-identical to the run before unless
 a line says otherwise.
 
-| | at `c8b78c38` | at `62123dee` |
+| | at `c8b78c38` | now |
 |---|---|---|
-| small 12 s, total | 11.30 s | 3.78 s |
-| — sampling | 3.48 s | 0.61 s |
+| small 12 s, total | 11.30 s | 2.86 s (2.75 s Release) |
+| — sampling | 3.48 s | 0.61 s (0.46 s Release) |
 | — decode | 4.72 s | 0.26 s |
-| medium 30 s, total | silent output | 9.27 s |
+| — text encoder load | 1.13 s | 0.32 s |
+| medium 30 s, total | silent output | 7.34 s |
 | `LinearF32`, one small DiT step | 39.97 ms | 14.24 ms |
 | `MLTests`, cold → warm shader cache | 4.11 s | 0.39 s |
+
+Release and RelWithDebInfo differ less than they look: the tokenizer parse is
+0.903 s against 0.900 s, identical. Sampling is the phase that gains.
 
 `LinearF32` is still the largest single item at ~70% of a small DiT step.
 
@@ -68,6 +72,47 @@ has not come back.
 - The disk shader cache matters far more here than on Metal, because FXC
   compiles from source every run and nothing underneath remembers. Delete
   `%LOCALAPPDATA%\<app>\Shaders` to get a genuine cold measurement.
+
+## Measured and rejected
+
+Four things that looked like wins and were not, kept here so nobody spends the
+afternoon twice.
+
+**bf16 weights.** Halving the weight bytes would halve the load, and bf16 to
+fp32 is exact, so it looked bit-exact by construction. It is not available:
+`model.safetensors` stores **F32**, 997 tensors and 9.22 GB on medium, 685 and
+2.27 GB on small. Only T5Gemma is BF16 (340 tensors, 1.18 GB), and its load is
+0.34 s and already overlapped. Converting the F32 weights down would be a real
+precision change, not a widening.
+
+**Merging a run of products into one loop.** With the barriers gone, a 4x4
+block of fragment products reads each operand element four times, so emitting
+the whole block as one loop with the reads named once should have cut
+threadgroup traffic fourfold. Measured: `LinearF32` 15.43 ms to 16.85-17.44 ms,
+consistently worse. FXC already shares those reads; the named temporaries only
+added register pressure. Reverted. The emitter should not try to out-guess the
+shader compiler on common subexpressions.
+
+**D3D12_HEAP_FLAG_CREATE_NOT_ZEROED.** Kept, but it is worth ~8% rather than
+the ~100% of the clearing cost the arithmetic suggests: Windows must clear a
+page the first time it hands it to a process whatever the flag says, so on a
+cold run it only saves re-clearing pages the process already owns.
+
+**A compact tokenizer cache.** Once the parse runs beside the weight load it is
+entirely hidden - 0.92 s of parse inside a 1.05 s load - so caching it would
+save real CPU and no wall clock. Worth doing only if the weight load ever gets
+fast enough to expose it.
+
+## Where the load time actually goes
+
+Medium asks for **2616 buffers and 13477 MB**, and 1.09-1.19 s of the load is
+inside `CreateCommittedResource` alone, about 11 GB/s, which is memory
+bandwidth for committing and clearing rather than per-call overhead - so fewer
+and larger allocations would not help. The remaining ~1.3 s is the CPU copy
+from the mapping into the upload arena. The lever nobody has pulled is
+`ID3D12Device3::OpenExistingHeapFromAddress` over the whole mapped file, which
+would let the GPU copy straight out of the page cache and remove that CPU copy
+entirely.
 
 ## Open, in the order I would take them
 
