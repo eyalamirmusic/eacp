@@ -248,8 +248,11 @@ Tensor SafetensorsFile::loadF32(const std::string& name, GPU::Device& device) co
         if (auto buffer = bufferFor(segment, device))
         {
             ++counts.inPlace;
-            return Tensor {
-                std::move(buffer), offset - segment.start, entry->shape, DType::F32};
+            return Tensor {std::move(buffer),
+                           offset - segment.start,
+                           entry->shape,
+                           DType::F32,
+                           device};
         }
     }
 

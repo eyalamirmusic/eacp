@@ -248,16 +248,21 @@ auto tViewsReadWhatCopiesRead =
 
 namespace
 {
-// Several tensors packed into one buffer, each starting one float past the
-// end of the last, so no offset but the first is a multiple of sixteen.
+// Several tensors packed into one buffer, each starting at the first offset
+// past the end of the last that the device lets a kernel bind: one float on
+// Metal and D3D12, so no offset there is a multiple of sixteen.
 struct SharedTensors
 {
+    std::int64_t alignment = 4;
     std::vector<float> values;
     std::vector<std::int64_t> offsets;
 
     void add(const std::vector<float>& tensor)
     {
-        values.push_back(-1.f);
+        do
+            values.push_back(-1.f);
+        while (((std::int64_t) values.size() * 4) % alignment != 0);
+
         offsets.push_back((std::int64_t) values.size()
                           * (std::int64_t) sizeof(float));
         values.insert(values.end(), tensor.begin(), tensor.end());
@@ -300,7 +305,7 @@ auto tOffsetTensorsReadWhatOwnTensorsRead =
     auto gammaValues = scatteredValues(dim, 4);
     auto qkvValues = scatteredValues(rows * 3 * dim, 5);
 
-    auto shared = SharedTensors {};
+    auto shared = SharedTensors {device.storageBufferOffsetAlignment()};
     shared.add(inputValues);
     shared.add(weightValues);
     shared.add(biasValues);
@@ -322,7 +327,7 @@ auto tOffsetTensorsReadWhatOwnTensorsRead =
     auto gamma = at(3, {dim});
     auto qkv = at(4, {rows, 3 * dim});
 
-    check(input.byteOffset() == 4);
+    check(input.byteOffset() == device.storageBufferOffsetAlignment());
     check(input.toHostF32() == inputValues);
     check(bias.toHostF32() == biasValues);
 
@@ -367,4 +372,10 @@ auto tOffsetTensorsReadWhatOwnTensorsRead =
     auto flat = reshape(std::move(weight), {outputs * dim});
     check(flat.byteOffset() == shared.offsets[1]);
     check(flat.toHostF32() == weightValues);
+
+    auto offGrid = Tensor {buffer, shared.offsets[0] + 4, {dim}, DType::F32};
+    check(offGrid.byteOffset() % device.storageBufferOffsetAlignment() == 0);
+    check(offGrid.toHostF32()
+          == std::vector<float>(inputValues.begin() + 1,
+                                inputValues.begin() + 1 + dim));
 };

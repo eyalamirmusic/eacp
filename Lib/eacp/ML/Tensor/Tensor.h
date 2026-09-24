@@ -34,10 +34,13 @@ public:
 
     // A tensor over bytes of a buffer other tensors may share, starting
     // byteOffset bytes in. The buffer lives as long as the last tensor over it.
+    // A kernel can bind only an offset on device.storageBufferOffsetAlignment(),
+    // so bytes off that grid are copied into a buffer of their own.
     Tensor(std::shared_ptr<const GPU::Buffer> sharedBuffer,
            std::int64_t byteOffset,
            std::vector<int> shapeToUse,
-           DType dtypeToUse);
+           DType dtypeToUse,
+           GPU::Device& device = GPU::Device::shared());
 
     Tensor(Tensor&&) noexcept = default;
     Tensor& operator=(Tensor&&) noexcept = default;

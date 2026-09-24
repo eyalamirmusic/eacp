@@ -25,10 +25,26 @@ Tensor::Tensor(GPU::Buffer bufferToUse,
 {
 }
 
+namespace
+{
+std::shared_ptr<const GPU::Buffer> copyOf(const GPU::Buffer& buffer,
+                                          std::int64_t offset,
+                                          std::int64_t bytes,
+                                          GPU::Device& device)
+{
+    auto words = std::vector<std::uint32_t>((std::size_t) bytes / 4);
+    buffer.read(words.data(), bytes, offset);
+
+    return std::make_shared<const GPU::Buffer>(
+        device.makeBuffer(words.data(), bytes, GPU::BufferUsage::Storage));
+}
+} // namespace
+
 Tensor::Tensor(std::shared_ptr<const GPU::Buffer> sharedBuffer,
                std::int64_t byteOffset,
                std::vector<int> shapeToUse,
-               DType dtypeToUse)
+               DType dtypeToUse,
+               GPU::Device& device)
     : storage(std::move(sharedBuffer))
     , offset(byteOffset)
     , shapeValue(std::move(shapeToUse))
@@ -36,6 +52,12 @@ Tensor::Tensor(std::shared_ptr<const GPU::Buffer> sharedBuffer,
 {
     assert(storage != nullptr && offset >= 0
            && offset + byteCount() <= storage->size());
+
+    if (offset % device.storageBufferOffsetAlignment() != 0)
+    {
+        storage = copyOf(*storage, offset, byteCount(), device);
+        offset = 0;
+    }
 }
 
 Tensor Tensor::fromHostF32(const float* data,
@@ -129,7 +151,9 @@ TensorView Tensor::columns(int firstColumn, int columnCount) const
 Tensor Tensor::reshaped(std::vector<int> newShape) &&
 {
     assert(elementCountOf(newShape) == count());
-    return {std::move(storage), offset, std::move(newShape), dtypeValue};
+    auto reshapedTensor = Tensor {std::move(*this)};
+    reshapedTensor.shapeValue = std::move(newShape);
+    return reshapedTensor;
 }
 
 std::int64_t Tensor::byteCount() const
