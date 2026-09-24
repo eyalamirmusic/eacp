@@ -1681,19 +1681,59 @@ from zero, into an accumulator that starts at zero. Which SIMD group computes
 an element, how the operands reached threadgroup memory and how deep a slab is
 do not enter into it.
 
-The tile's height is then a question about the batch, not the hardware. The
-last row of tiles computes every row it holds whether the batch has it or not,
-and a transformer's batch is whatever the sequence is: the DiT's 387 rows are
-six tiles of 64 and a seventh holding three, so 448 rows are computed for 387.
-Tiles of 32 compute 416. `linearTileRowsFor` picks whichever pads the batch to
-fewer rows, and 64 on a tie, since 32 × 32 blocks reuse a loaded fragment more
-than the 32 × 16 blocks a 32-row tile splits into. Both keep four SIMD groups
-and the same slab, so the choice is one constructor argument and the bits do
-not move (`Linear/tilingsGiveTheSameBits`). On the DiT's five shapes that is
-8–25% on `LinearF32` alone, most on the narrowest outputs (1536 columns),
-which have the fewest threadgroups to spread over 40 cores and gain from
-having twice as many; at 384 rows, where 64 wastes nothing, the two tilings
-measure the same.
+The tile's height is then a question about the shape, not the hardware, and
+`linearTileRowsFor` asks it twice:
+
+- **Does 32 pad the batch less?** The last row of tiles computes every row it
+  holds whether the batch has it or not, and a transformer's batch is whatever
+  the sequence is: the DiT's 387 rows are six tiles of 64 and a seventh holding
+  three, so 448 rows are computed for 387. Tiles of 32 compute 416.
+- **Is the output too small to fill the GPU?** Below 512 threadgroups of 64
+  rows — about a dozen per core on a 40-core M5 Max — twice as many
+  threadgroups of 32 hide each other's latency better: +8% on [384, 1536],
+  +38% on [256, 768], +5% on [384, 4608]. From about 600 up the two measure the
+  same, and on large grids 64 is up to a few percent faster, its 32 × 32 blocks
+  reusing a loaded fragment more than the 32 × 16 blocks a 32-row tile splits
+  into.
+
+Both tilings keep four SIMD groups and the same slab, so the choice is one
+constructor argument and the bits do not move
+(`Linear/tilingsGiveTheSameBits`). On the DiT's five shapes it is 8–25% on
+`LinearF32` alone, most on the narrowest outputs.
+
+What that leaves is worth knowing too, because it says where to stop. A
+kernel with this one's exact grid and loop but no loads at all — the same
+products on fragments that never change — is only 15–20% faster, so the slab,
+the barriers and the staging together cost that much and no more. Two
+references on the same machine, measured back to back with it: MPS's fp32
+`MPSMatrixMultiplication` and Metal 4's tensor-op `matmul2d`
+(MetalPerformancePrimitives, the way to the M5's per-core neural accelerators)
+at full precision land level with `LinearF32` on these shapes (within about 7%
+either way), not above it. The 14.4 TFLOPS the SIMD-group product reaches with
+nothing to load is a ceiling nobody's fp32 product reaches here. What does go faster is precision:
+`matmul2d` with `relaxed_precision` runs 1.3–2.7× faster, at an error of about
+one part in a thousand — a different kernel with different bits, and a choice
+for the caller, never a default.
+
+Tried and measured flat or worse, so not done:
+
+- **Larger blocks per SIMD group** (64 × 32, 32 × 64) and larger tiles
+  (128 × 64, 64 × 128, 128 × 128): 6–35% slower. More accumulators per SIMD
+  group cost registers, registers cost resident SIMD groups, and on these
+  shapes resident SIMD groups are what hides the latency — the same lesson as
+  the tile height, from the other side.
+- **Split-k** (2 or 4 ways, then a fixed-order sum of the partials): flat to
+  20% slower, and it changes the bits. At 387 × 1536 × 6144 — the shape it is
+  meant for — the grid already holds about 30 SIMD groups per core.
+- **Two slab buffers and one barrier per slab**: 1–11% slower; it doubles the
+  threadgroup memory and costs the residency the 16-deep slab bought.
+- **Rasterising column tiles first**, so all row tiles of one weight tile run
+  together and the 75 MB weight is read from memory once: flat. The row tiles
+  of a 387-row batch already share each weight tile through the system cache.
+- **Left operand straight from device memory** (`simdMatrix(buffer, ...)`,
+  staging only the weight): 2–9% slower.
+- **Dropping the bounds selects** on a shape whose inner dimension is a whole
+  number of slabs: within noise, so there is no second, unchecked kernel.
 
 #### A weight read where it lies
 
