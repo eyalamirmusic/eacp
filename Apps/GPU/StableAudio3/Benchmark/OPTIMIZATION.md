@@ -461,30 +461,36 @@ Suggested order: 1 → 3 (1–3) → 2 → 4 → 6 → 5 → 7 → 8, then profi
 are bit-exact with the care noted. Only 9-flash, 10-with-K-changes and 13 need
 the goldens' tolerance.
 
-## State at the 2026-09-23 handoff
+## State on 2026-09-23, evening
 
-The host was powered down mid-session. Where things stood:
+Every commit on `jp/stable-audio-infrence` is byte-compared against the
+pre-optimisation WAVs (medium 30 s seed 7, small 12 s seed 42) and green on all
+nine CI lanes. `../PERFORMANCE.md` has the Metal-vs-MPS table; `WINDOWS.md`
+the D3D12-vs-CUDA one.
 
-- `jp/stable-audio-infrence` head: every commit up to the round-2 benchmark
-  results is verified bit-exact against the pre-optimisation WAVs (medium 30 s
-  seed 7, small 12 s seed 42), with all SA3 suites, GPUTests, MLTests green on
-  Metal. Medium 30 s on an M5 Max: sampling 1.10 s, decode 0.46 s, total 2.73 s;
-  PyTorch-MPS warm generate 2.2–2.9 s. Round-2 medians were contended and need
-  a clean re-run before RESULTS.md is rewritten.
-- `wip/sa3-kv-reuse-norm-api` (77fe447b): three items squashed, UNVERIFIED —
-  cross-attention prompt keys once per generation, adaLN modulation read
-  through buffer views (−144 SliceColumns per step) plus a per-head RMSNorm
-  kernel (bit-exact on Metal; last-bit on D3D12/Vulkan, whose reduction is
-  emulated), and API cleanups (`Device::perDevice<T>`, `BufferPool::take`
-  without the Device, private timed `ComputePass` ctor, timing cap grows on
-  demand, `AttentionOptions`). Byte-compare and suites still to run; then
-  split into three commits as the message says.
-- Draft PR #5 on jamierpond/eacp runs every CI lane over the branch; only iOS
-  had reported (green). Windows lane failures belong to the Windows agent,
-  Linux ones to the Mac side. The Linux lanes were being run locally in the
-  CI Docker image; no fixes had been committed yet.
-- Remaining ranked items: the hand-written HLSL that bypasses the shader
-  cache; small-model per-dispatch overhead (small 12 s generate 0.36 s vs
-  PyTorch 0.33 s, on par not ahead); q/k/v slices read as strided views; the
-  duplicate tensor ops in Codec/GpuOps and DiT/Ops that belong in ML; the
-  warm-up-free first launch (~0.4 s of compiles now land in the first step).
+Landed as library affordances: kernels compiled once per device and cached on
+disk (`ShaderBinaryCache`, no warm-up lists), `BufferPool` behind
+`Device::makeBuffer` with a submission window and a byte bound from
+`Device::memoryBudget()`, per-dispatch GPU timing (`TimingScope::EachDispatch`,
+`totalsByLabel()`), `CallCost` counters, banded and tiled attention, one
+attention score kernel with the mask as its variant, RoPE over segments,
+probabilities stored once, per-head norms, `LinearF32` retiled with its tile
+height from the batch, one set of tensor ops (`TensorOps`), `Tensor::columns()`
+views instead of copies, the emitter materialising a handle before a write,
+naming operands before their record, and fused operand reads for SIMD-group
+products off Metal; DXC/SM6 opt-in; the threadgroup-ceiling fix. The SA3
+suites now run under ctest and skip what is not cached.
+
+Measured and recorded rather than shipped: fp32 `LinearF32` on Metal is level
+with MPS and Metal 4 `matmul2d` at full precision; bigger blocks, split-k,
+double-buffered slabs and direct-from-device loads were flat or worse; the
+32-row-tiles-under-512-groups rule was an Apple occupancy floor and tripled
+sampling on an RTX 6000 (reverted); a process-exit fast path saves 1%; the
+per-head RMSNorm kernel is not bit-exact and is parked.
+
+Open, ranked: bf16 weights kept in memory and widened in the kernel (bit-exact,
+halves load bytes and RSS; Windows side); fewer dispatches per DiT step by
+bit-exact elementwise fusion as library epilogues (1,158 today); the D3D12
+`LinearF32` at ~8 of 39 TFLOPS against cuBLAS; `ID3D12PipelineLibrary` so first
+use of a kernel costs nothing on D3D12; the medium RSS (15 GB) via zero-copy
+loading; a definitive re-run of `benchmark.py` on mains for RESULTS.md.
