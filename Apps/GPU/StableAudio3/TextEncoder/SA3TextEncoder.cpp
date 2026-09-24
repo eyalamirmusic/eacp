@@ -134,10 +134,4 @@ PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
 
     return PromptEncoding {std::move(result), tokenized.validLength};
 }
-
-void SA3TextEncoderModel::addWarmupKernels(KernelWarmup& warmup)
-{
-    warmup.add<PadRowSelectKernel>();
-    T5GemmaEncoder::addWarmupKernels(warmup);
-}
 }

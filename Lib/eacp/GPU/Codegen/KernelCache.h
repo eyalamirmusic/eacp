@@ -4,7 +4,6 @@
 
 #include <functional>
 #include <memory>
-#include <thread>
 #include <type_traits>
 #include <typeindex>
 #include <vector>
@@ -32,8 +31,11 @@ ComputeProgram& findOrBuildKernel(Device& device,
 // The instance is shared by every caller. A dispatch copies the uniforms and
 // binds the buffers there and then, so each caller sets every member it
 // declares before dispatching, and none may rely on a value a fresh kernel
-// would have held. Use it from the Device's own thread; KernelWarmup below is
-// the one exception, and it only builds.
+// would have held. Use it from the Device's own thread.
+//
+// The first use on a Device builds the kernel; the shader compile under that is
+// paid once per machine rather than once per launch, since compiled shaders are
+// cached on disk between runs (see compileComputeCached).
 template <typename Kernel, typename... Args>
 Kernel& sharedKernel(Device& device, Args... args)
 {
@@ -54,32 +56,4 @@ Kernel& sharedKernel(Device& device, Args... args)
 
     return static_cast<Kernel&>(kernel);
 }
-
-// Builds a set of kernels into the cache ahead of their first dispatch, on
-// worker threads, so the shader compiles overlap whatever the caller does
-// meanwhile - loading weights - instead of stalling the first command buffer.
-// A kernel still building when it is first dispatched is waited for, not built
-// twice.
-class KernelWarmup
-{
-public:
-    KernelWarmup() = default;
-    KernelWarmup(const KernelWarmup&) = delete;
-    KernelWarmup& operator=(const KernelWarmup&) = delete;
-    ~KernelWarmup();
-
-    template <typename Kernel, typename... Args>
-    void add(Args... args)
-    {
-        tasks.push_back([=](Device& device)
-                        { sharedKernel<Kernel>(device, args...); });
-    }
-
-    void start(Device& device);
-    void wait();
-
-private:
-    std::vector<std::function<void(Device&)>> tasks;
-    std::vector<std::thread> workers;
-};
 } // namespace eacp::GPU

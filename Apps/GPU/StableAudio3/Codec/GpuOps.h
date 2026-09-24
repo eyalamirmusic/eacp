@@ -74,5 +74,4 @@ ML::Tensor conv1dUnfoldGpu(GPU::ComputePass& pass,
                            int kernelSize,
                            GPU::Device& device = GPU::Device::shared());
 
-void addGpuOpsWarmupKernels(GPU::KernelWarmup& warmup);
 }

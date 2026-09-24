@@ -447,7 +447,8 @@ to either; mailbox or FIFO; frames in flight on the context timeline; rebuilt
 on resize and `OUT_OF_DATE`; continuous mode paced by whatever answered
 `requestFrameCallback` — the compositor on Wayland, the pacer on X11 — with
 `setMaxFps` skipping early ticks rather than running a timer), every pipeline
-built through one `VkPipelineCache` persisted under `$XDG_CACHE_HOME/eacp/`,
+built through one `VkPipelineCache` persisted in `FilePath::appCacheDirectory()`
+(with the SPIR-V glslang produced, kept by `ShaderBinaryCache` beside it),
 with the off-screen `renderNativeContent` path
 unchanged beside it. The GPU module knows the window system only as the
 `NativeSurfaceHandle` it branches on in `createSurface()` and neither links

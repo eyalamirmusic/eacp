@@ -1,6 +1,7 @@
 #include "ComputePipelineCache.h"
 
 #include "../Device/Device.h"
+#include "../Timing/CallCost.h"
 
 #include <map>
 #include <mutex>
@@ -64,9 +65,14 @@ std::shared_ptr<const CompiledCompute>
     auto& slot = device.singleton<CompiledComputeStore>().slotFor(
         compiledComputeKey(source));
 
-    std::call_once(
-        slot.built,
-        [&] { slot.compiled = std::make_shared<CompiledCompute>(device, source); });
+    std::call_once(slot.built,
+                   [&]
+                   {
+                       static auto compiles = CallCostCounter {"shader compiles"};
+                       auto cost = ScopedCallCost {compiles};
+                       slot.compiled =
+                           std::make_shared<CompiledCompute>(device, source);
+                   });
 
     return slot.compiled;
 }

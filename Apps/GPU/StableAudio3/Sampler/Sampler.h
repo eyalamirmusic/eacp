@@ -31,5 +31,4 @@ ML::Tensor pingpongSample(const SA3DiT::Weights& weights,
                           const NoiseSource& noiseSource,
                           GPU::Device& device = GPU::Device::shared());
 
-void addWarmupKernels(GPU::KernelWarmup& warmup);
 }

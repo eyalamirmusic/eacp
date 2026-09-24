@@ -107,10 +107,4 @@ Tensor softNormBottleneckDecode(ComputePass& pass,
 
     return result;
 }
-
-void addSoftNormBottleneckWarmupKernels(KernelWarmup& warmup)
-{
-    warmup.add<SoftNormEncodeKernel>();
-    warmup.add<SoftNormDecodeKernel>();
-}
 }

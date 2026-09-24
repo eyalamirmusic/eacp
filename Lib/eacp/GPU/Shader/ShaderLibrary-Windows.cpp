@@ -4,9 +4,14 @@
 
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
+#include "ShaderBinaryCache.h"
 #include "ShaderSource.h"
 
 #include <d3dcompiler.h>
+
+#include <cstring>
+#include <string>
+#include <string_view>
 
 #include <winrt/base.h>
 
@@ -15,15 +20,50 @@
 // creation, so no shader objects exist at this level. SM 5.0 DXBC remains
 // valid input for D3D12 pipelines, which keeps the hand-written HLSL in tests
 // and examples working unchanged.
+//
+// FXC is the slow half of building a pipeline, so what it produces is kept on
+// disk (ShaderBinaryCache) and a later launch reads the bytecode back instead of
+// compiling the same source again.
 
 namespace eacp::GPU
 {
 namespace
 {
+constexpr auto compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+
+std::string fxcIdentity()
+{
+    return "fxc-" + std::to_string(D3D_COMPILER_VERSION) + "-flags"
+           + std::to_string(compileFlags);
+}
+
+std::string
+    cacheKey(const std::string& source, const std::string& entry, const char* target)
+{
+    return entry + '\n' + target + '\n' + source;
+}
+
+winrt::com_ptr<ID3DBlob> blobHolding(const std::string& bytes)
+{
+    winrt::com_ptr<ID3DBlob> blob;
+
+    if (FAILED(D3DCreateBlob(bytes.size(), blob.put())))
+        return nullptr;
+
+    std::memcpy(blob->GetBufferPointer(), bytes.data(), bytes.size());
+    return blob;
+}
+
 winrt::com_ptr<ID3DBlob> compileStage(const std::string& source,
                                       const std::string& entry,
                                       const char* target)
 {
+    auto key = cacheKey(source, entry, target);
+
+    if (auto cached = ShaderBinaryCache::load(fxcIdentity(), key))
+        if (auto blob = blobHolding(*cached))
+            return blob;
+
     winrt::com_ptr<ID3DBlob> code;
     winrt::com_ptr<ID3DBlob> errors;
 
@@ -34,7 +74,7 @@ winrt::com_ptr<ID3DBlob> compileStage(const std::string& source,
                          nullptr,
                          entry.c_str(),
                          target,
-                         D3DCOMPILE_ENABLE_STRICTNESS,
+                         compileFlags,
                          0,
                          code.put(),
                          errors.put());
@@ -46,6 +86,12 @@ winrt::com_ptr<ID3DBlob> compileStage(const std::string& source,
 
         return nullptr;
     }
+
+    ShaderBinaryCache::store(
+        fxcIdentity(),
+        key,
+        std::string_view {static_cast<const char*>(code->GetBufferPointer()),
+                          code->GetBufferSize()});
 
     return code;
 }

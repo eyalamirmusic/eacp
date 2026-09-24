@@ -27,8 +27,6 @@ public:
         const std::string& conditionerSafetensorsPath,
         GPU::Device& device = GPU::Device::shared());
 
-    static void addWarmupKernels(GPU::KernelWarmup& warmup);
-
     PromptEncoding encodePrompt(GPU::ComputePass& pass,
                                 const std::string& text,
                                 GPU::Device& device = GPU::Device::shared()) const;

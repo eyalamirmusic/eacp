@@ -87,9 +87,4 @@ Tensor pingpongSample(const SA3DiT::Weights& weights,
     return pingpongSampleWithModel(
         model, latentLength, SA3DiT::ioChannels, steps, noiseSource, device);
 }
-
-void addWarmupKernels(KernelWarmup& warmup)
-{
-    warmup.add<ScaleAndAddKernel>();
-}
 }

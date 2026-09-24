@@ -484,17 +484,4 @@ Tensor conv1dUnfoldGpu(ComputePass& pass, const Tensor& input, int inChannels, i
 
     return result;
 }
-
-void addGpuOpsWarmupKernels(KernelWarmup& warmup)
-{
-    warmup.add<SliceRowsKernel>();
-    warmup.add<SliceColumnsKernel>();
-    warmup.add<WriteRowsIntoKernel>();
-    warmup.add<FillZeroKernel>();
-    warmup.add<ElementwiseAddKernel>();
-    warmup.add<ElementwiseSubtractKernel>();
-    warmup.add<FoldWithNewTokensKernel>();
-    warmup.add<UnfoldLastSegmentKernel>();
-    warmup.add<Conv1dUnfoldKernel>();
-}
 }

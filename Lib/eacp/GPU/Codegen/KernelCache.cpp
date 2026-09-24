@@ -1,7 +1,7 @@
 #include "KernelCache.h"
 
-#include <algorithm>
-#include <atomic>
+#include "../Timing/CallCost.h"
+
 #include <map>
 #include <mutex>
 #include <utility>
@@ -35,13 +35,6 @@ struct KernelCacheStore
     }
 };
 
-int warmupThreadCount(std::size_t taskCount)
-{
-    auto cores = (int) std::thread::hardware_concurrency();
-    auto wanted = std::clamp(cores / 2, 1, 8);
-
-    return std::min(wanted, (int) taskCount);
-}
 } // namespace
 
 ComputeProgram& Detail::findOrBuildKernel(Device& device,
@@ -52,36 +45,15 @@ ComputeProgram& Detail::findOrBuildKernel(Device& device,
     auto& slot =
         device.singleton<KernelCacheStore>().slotFor(type, std::move(variant));
 
-    std::call_once(slot.built, [&] { slot.kernel = build(); });
+    std::call_once(slot.built,
+                   [&]
+                   {
+                       static auto builds = CallCostCounter {"kernel builds"};
+                       auto cost = ScopedCallCost {builds};
+                       slot.kernel = build();
+                   });
 
     return *slot.kernel;
 }
 
-KernelWarmup::~KernelWarmup()
-{
-    wait();
-}
-
-void KernelWarmup::start(Device& device)
-{
-    auto next = std::make_shared<std::atomic<std::size_t>>(0);
-    auto count = warmupThreadCount(tasks.size());
-
-    for (auto i = 0; i < count; ++i)
-        workers.emplace_back(
-            [this, next, &device]
-            {
-                for (auto task = next->fetch_add(1); task < tasks.size();
-                     task = next->fetch_add(1))
-                    tasks[task](device);
-            });
-}
-
-void KernelWarmup::wait()
-{
-    for (auto& worker: workers)
-        worker.join();
-
-    workers.clear();
-}
 } // namespace eacp::GPU

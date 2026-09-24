@@ -282,11 +282,4 @@ StereoWaveform
                         bottleneck,
                         device);
 }
-
-void addWarmupKernels(KernelWarmup& warmup)
-{
-    addGpuOpsWarmupKernels(warmup);
-    addCodecTransformerBlockWarmupKernels(warmup);
-    addSoftNormBottleneckWarmupKernels(warmup);
-}
 }

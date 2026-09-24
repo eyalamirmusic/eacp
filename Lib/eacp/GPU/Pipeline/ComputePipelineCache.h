@@ -25,8 +25,13 @@ struct CompiledCompute
 // lives. Two sources are the same when everything the backend compiles from is
 // - backend, entry point, thread group, bindings and text - so a kernel
 // constructed a thousand times pays the shader compiler once: MSL through
-// newLibraryWithSource and a pipeline state on Metal, DXC and
+// newLibraryWithSource and a pipeline state on Metal, FXC and
 // CreateComputePipelineState on D3D12, glslang and a VkPipeline on Vulkan.
+//
+// And once per machine rather than once per launch: Metal keeps its own cache
+// of compiled libraries, the FXC bytecode and the SPIR-V are kept on disk by
+// ShaderBinaryCache, and the Vulkan driver's half by its VkPipelineCache. A
+// second run of the same kernels compiles nothing.
 //
 // Safe from any thread. Two threads asking for one source at once compile it
 // once, the second waiting for the first.

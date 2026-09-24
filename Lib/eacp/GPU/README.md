@@ -596,24 +596,25 @@ kernel would have held. Constructor arguments are part of what tells two
 kernels apart, so a kernel with variants is `sharedKernel<ActivationKernel>(device,
 ActivationKind::SiLU)`; they must be integers or enums.
 
-The first use still compiles. `KernelWarmup` does it ahead of time, on worker
-threads, so the compiles overlap whatever the caller does meanwhile — loading
-weights, typically — instead of stalling the first command buffer:
+The first use builds the kernel, and there is nothing to list ahead of time:
+**compiled shaders are cached on disk by default**, so a kernel pays the shader
+compiler once per machine rather than once per launch. Each backend keeps the
+half it would otherwise redo:
 
-```cpp
-auto warmup = KernelWarmup {};
-warmup.add<LinearF32>(LinearLoads::FourWide);
-warmup.add<ActivationKernel>(ActivationKind::SiLU);
-warmup.start(device);
+- **Metal** keeps its own cache of compiled libraries and pipelines, keyed by
+  the source it was handed, so nothing is added on top of it. Measured on an
+  M5 Max over the 32 kernels a Stable Audio medium run builds: 0.3–0.5 s of
+  compiling on a machine that had never seen them, 0.00 s on every run after.
+- **D3D12** keeps the bytecode FXC produced, and **Vulkan** the SPIR-V glslang
+  produced, in `FilePath::appCacheDirectory() / "Shaders"`
+  (`ShaderBinaryCache`), found by the compiler's version and everything the
+  compile read. The Vulkan driver's own half is the `VkPipelineCache` beside it
+  in the same folder.
 
-loadWeights();                // the compiles run beside this
-
-warmup.wait();                // usually already done
-```
-
-A kernel still building when it is first dispatched is waited for, not built
-twice. Compiling on another thread is what a `Device` has always allowed;
-dispatching a shared kernel is not, and belongs on the device's own thread.
+A newer compiler or a changed source is a miss and a fresh compile, never a
+stale binary, and a cache that cannot be read or written is simply a compile.
+`callCosts()` reports `"shader compiles"` and `"kernel builds"` — how many
+there were and what they cost — for a run that wants to see it.
 
 ### Waiting for one command buffer
 
@@ -2405,8 +2406,10 @@ Notes worth having:
   `VulkanShared`. A render shader only ever samples, so its set needs no such
   split.
 - **Pipelines are built through one `VkPipelineCache`** held by `VulkanShared`
-  and persisted to `$XDG_CACHE_HOME/eacp/pipelines-<pipelineCacheUUID>.bin`
-  (`$HOME/.cache/eacp/` when unset): loaded at device creation when its header
+  and persisted to `pipelines-<pipelineCacheUUID>.bin` in the app's
+  `FilePath::appCacheDirectory()` (under `$XDG_CACHE_HOME`, or
+  `$HOME/.cache` when unset), beside the SPIR-V `ShaderBinaryCache` keeps in its
+  `Shaders` folder: loaded at device creation when its header
   names this device, written back through a temp file and rename at teardown,
   and silently skipped on any failure. There is no hash cache above it, because
   a `RenderPipeline` or `ComputePipeline` is one object and one create call

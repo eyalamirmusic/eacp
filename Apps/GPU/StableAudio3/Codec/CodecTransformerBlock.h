@@ -39,5 +39,4 @@ ML::Tensor applyCodecTransformerBlock(GPU::ComputePass& pass,
                                       const ML::AttentionBand& band,
                                       GPU::Device& device = GPU::Device::shared());
 
-void addCodecTransformerBlockWarmupKernels(GPU::KernelWarmup& warmup);
 }

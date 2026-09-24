@@ -24,5 +24,4 @@ ML::Tensor softNormBottleneckDecode(GPU::ComputePass& pass,
                                     const SoftNormBottleneckWeights& weights,
                                     GPU::Device& device = GPU::Device::shared());
 
-void addSoftNormBottleneckWarmupKernels(GPU::KernelWarmup& warmup);
 }

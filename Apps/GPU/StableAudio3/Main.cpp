@@ -1,9 +1,9 @@
 #include "Checkpoints.h"
 
 #include <eacp/Core/Utils/FilePath.h>
-#include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
+#include <eacp/GPU/Timing/CallCost.h>
 #include <eacp/ML/Loader/SafetensorsFile.h>
 #include <Codec/SA3Codec.h>
 #include <Codec/WavFile.h>
@@ -176,13 +176,6 @@ int main(int argc, char** argv)
     auto codecConfig =
         isMedium ? SA3Codec::CodecConfig::sameL() : SA3Codec::CodecConfig::sameS();
 
-    auto kernelWarmup = GPU::KernelWarmup {};
-    SA3TextEncoder::SA3TextEncoderModel::addWarmupKernels(kernelWarmup);
-    SA3DiT::addWarmupKernels(kernelWarmup);
-    SA3Sampler::addWarmupKernels(kernelWarmup);
-    SA3Codec::addWarmupKernels(kernelWarmup);
-    kernelWarmup.start(device);
-
     auto modelPath = modelFile.str();
     auto weights = std::optional<SA3DiT::Weights> {};
     auto decoder = std::optional<SA3Codec::SameDecoder> {};
@@ -222,10 +215,6 @@ int main(int argc, char** argv)
     }
 
     std::printf("Text encoder took %.2fs\n", secondsSince(start));
-
-    start = Clock::now();
-    kernelWarmup.wait();
-    std::printf("Waiting for kernels took %.2fs\n", secondsSince(start));
 
     std::printf("Encoding prompt: \"%s\"\n", options.prompt.c_str());
     start = Clock::now();
@@ -290,5 +279,10 @@ int main(int argc, char** argv)
     std::printf("WAV write took %.2fs\n", secondsSince(start));
     std::printf("Wrote %s\n", options.output.c_str());
     std::printf("Total took %.2fs\n", secondsSince(totalStart));
+
+    for (const auto& cost: GPU::callCosts())
+        std::printf(
+            "%s: %d calls, %.2fs\n", cost.label.c_str(), cost.calls, cost.seconds);
+
     return 0;
 }

@@ -371,24 +371,4 @@ Tensor forward(ComputePass& pass,
 
     return post;
 }
-
-void addWarmupKernels(KernelWarmup& warmup)
-{
-    warmup.add<LinearF32>(LinearLoads::FourWide);
-    warmup.add<AddBiasRows>();
-    warmup.add<RMSNormKernel>();
-    warmup.add<RoPEKernel>();
-    warmup.add<UnmaskedAttentionScoresKernel>();
-    warmup.add<AttentionRowStatsKernel>();
-    warmup.add<AttentionWeightedSumKernel>();
-    warmup.add<SwiGLUGateKernel>();
-    warmup.add<ActivationKernel>(ActivationKind::SiLU);
-    warmup.add<AddTensorsKernel>();
-    warmup.add<SubtractTensorsKernel>();
-    warmup.add<AdaLNModulateKernel>();
-    warmup.add<SigmoidGateKernel>();
-    warmup.add<CopyRowsKernel>();
-    warmup.add<SliceColumnsKernel>();
-    warmup.add<ExpoFourierFeaturesKernel>();
-}
 }

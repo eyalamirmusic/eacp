@@ -196,17 +196,4 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
 
     return addTensorsGpu(pass, afterAttention, ffOutput, device);
 }
-
-void addCodecTransformerBlockWarmupKernels(KernelWarmup& warmup)
-{
-    warmup.add<DynamicTanhKernel>();
-    warmup.add<SinGateKernel>();
-    warmup.add<LinearF32>(LinearLoads::FourWide);
-    warmup.add<AddBiasRows>();
-    warmup.add<RoPEKernel>();
-    warmup.add<BandedAttentionScoresKernel>();
-    warmup.add<BandedAttentionRowStatsKernel>();
-    warmup.add<BandedAttentionWeightedSumKernel>();
-    warmup.add<SwiGLUGateKernel>();
-}
 } // namespace eacp::SA3Codec

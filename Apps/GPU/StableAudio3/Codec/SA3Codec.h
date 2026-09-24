@@ -52,7 +52,6 @@ private:
 
 // Every kernel the codec dispatches, encoding and decoding, for a caller to
 // build ahead of its first use.
-void addWarmupKernels(GPU::KernelWarmup& warmup);
 
 // SameCodec's decoding half on its own, for generation, which never encodes:
 // loading it leaves the encoder's weights on disk.

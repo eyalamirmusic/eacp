@@ -41,5 +41,4 @@ ML::Tensor forward(GPU::ComputePass& pass,
 
 // Every kernel a forward pass dispatches, for a caller to build ahead of the
 // first step.
-void addWarmupKernels(GPU::KernelWarmup& warmup);
 }
