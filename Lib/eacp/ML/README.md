@@ -9,6 +9,18 @@ binds the kernel from the device's cache and records the dispatch into the pass
 it is handed. Nothing commits: a whole layer, or a whole stack of them, goes
 into one command buffer.
 
+## Norms per head
+
+`rmsNorm`, `layerNorm` and `dynamicTanh` normalise each row. The QK norm a
+transformer applies before attention normalises each *head* instead — every
+`headDim` values of a `rows x (heads * headDim)` query or key, with one
+`headDim`-long gamma — and `rmsNormPerHead` and `dynamicTanhPerHead` are that,
+with the same kernels and the input's shape back:
+
+```cpp
+auto q = rmsNormPerHead(pass, query, qNormGamma, headDim, epsilon);
+```
+
 ## RoPE over segments
 
 `applyRoPE` rotates each row by its position. Several independent sequences

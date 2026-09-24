@@ -17,27 +17,6 @@ using namespace eacp::ML;
 
 namespace
 {
-Tensor dynamicTanhPerHead(ComputePass& pass,
-                          const Tensor& input,
-                          const DynamicTanhWeights& norm,
-                          int rowCount,
-                          int heads,
-                          int headDim,
-                          Device& device)
-{
-    auto result = Tensor::uninitializedF32(input.shape(), device);
-
-    auto& kernel = GPU::sharedKernel<DynamicTanhKernel>(device);
-    kernel.input = input.buffer();
-    kernel.gamma = norm.gamma.buffer();
-    kernel.beta = norm.beta.buffer();
-    kernel.output = result.buffer();
-    kernel.alpha = norm.alpha;
-    kernel.dispatch(pass, rowCount * heads, headDim);
-
-    return result;
-}
-
 class SinGateKernel final : public ComputeProgram
 {
 public:
@@ -116,22 +95,32 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
     auto qDiffTensor = sliceColumnsGpu(pass, qkv, 3 * dim, dim, device);
     auto kDiffTensor = sliceColumnsGpu(pass, qkv, 4 * dim, dim, device);
 
-    auto qNormed = dynamicTanhPerHead(
-        pass, qTensor, weights.qNorm, rows, weights.heads, weights.headDim, device);
-    auto kNormed = dynamicTanhPerHead(
-        pass, kTensor, weights.kNorm, rows, weights.heads, weights.headDim, device);
+    auto qNormed = dynamicTanhPerHead(pass,
+                                      qTensor,
+                                      weights.qNorm.gamma,
+                                      weights.qNorm.beta,
+                                      weights.qNorm.alpha,
+                                      weights.headDim,
+                                      device);
+    auto kNormed = dynamicTanhPerHead(pass,
+                                      kTensor,
+                                      weights.kNorm.gamma,
+                                      weights.kNorm.beta,
+                                      weights.kNorm.alpha,
+                                      weights.headDim,
+                                      device);
     auto qDiffNormed = dynamicTanhPerHead(pass,
                                           qDiffTensor,
-                                          weights.qNorm,
-                                          rows,
-                                          weights.heads,
+                                          weights.qNorm.gamma,
+                                          weights.qNorm.beta,
+                                          weights.qNorm.alpha,
                                           weights.headDim,
                                           device);
     auto kDiffNormed = dynamicTanhPerHead(pass,
                                           kDiffTensor,
-                                          weights.kNorm,
-                                          rows,
-                                          weights.heads,
+                                          weights.kNorm.gamma,
+                                          weights.kNorm.beta,
+                                          weights.kNorm.alpha,
                                           weights.headDim,
                                           device);
 

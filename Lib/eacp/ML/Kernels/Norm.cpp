@@ -260,4 +260,44 @@ Tensor dynamicTanh(ComputePass& pass,
 
     return result;
 }
+
+Tensor rmsNormPerHead(ComputePass& pass,
+                      const Tensor& input,
+                      const Tensor& gamma,
+                      int headDim,
+                      float epsilon,
+                      Device& device)
+{
+    auto result = Tensor::uninitializedF32(input.shape(), device);
+
+    auto& kernel = sharedKernel<RMSNormKernel>(device);
+    kernel.input = input.buffer();
+    kernel.gamma = gamma.buffer();
+    kernel.output = result.buffer();
+    kernel.epsilon = epsilon;
+    kernel.dispatch(pass, input.count() / headDim, headDim);
+
+    return result;
+}
+
+Tensor dynamicTanhPerHead(ComputePass& pass,
+                          const Tensor& input,
+                          const Tensor& gamma,
+                          const Tensor& beta,
+                          float alpha,
+                          int headDim,
+                          Device& device)
+{
+    auto result = Tensor::uninitializedF32(input.shape(), device);
+
+    auto& kernel = sharedKernel<DynamicTanhKernel>(device);
+    kernel.input = input.buffer();
+    kernel.gamma = gamma.buffer();
+    kernel.beta = beta.buffer();
+    kernel.output = result.buffer();
+    kernel.alpha = alpha;
+    kernel.dispatch(pass, input.count() / headDim, headDim);
+
+    return result;
+}
 }

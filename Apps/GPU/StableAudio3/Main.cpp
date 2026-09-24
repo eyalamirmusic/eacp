@@ -116,7 +116,7 @@ void printStepProfile(const SA3DiT::Weights& weights,
                 kernelTotal,
                 timings.milliseconds);
 
-    for (const auto& total: timings.byLabel())
+    for (const auto& total: timings.totalsByLabel())
         std::printf("  %-32s %8.2f ms  %5.1f%%  %5d dispatches\n",
                     total.label.c_str(),
                     total.milliseconds,

@@ -818,8 +818,8 @@ once a labelled pass has asked for it.
 
 A pass times as one region, which says how long a network step took and not
 where. `TimingScope::EachDispatch` makes every kernel the pass dispatches a
-region of its own, named after the kernel, and `byLabel()` folds them into a
-profile:
+region of its own, named after the kernel, and `totalsByLabel()` folds them into
+a profile:
 
 ```cpp
 {
@@ -830,7 +830,7 @@ profile:
 
 commands.commit();
 
-for (const auto& kernel: commands.timings().byLabel())
+for (const auto& kernel: commands.timings().totalsByLabel())
     log(kernel.label, kernel.milliseconds, kernel.count);
 ```
 
@@ -855,6 +855,27 @@ only where an encoder starts and ends, so on Metal each timed dispatch is an
 encoder of its own; consecutive encoders may overlap on the GPU, so the
 regions can sum to a little more than the command buffer's own time, and the
 dispatches of a `Concurrent` pass stop overlapping altogether.
+
+### What the CPU pays the driver
+
+Some of a backend's cost never reaches the GPU's clock: a D3D12
+`CreateCommittedResource` for every fresh buffer, a CPU block on a fence. Each is
+a fraction of a millisecond, spread across a run, and invisible in a phase
+timing. A `CallCostCounter` sums one kind of call, and `callCosts()` lists every
+counter alive, so an app prints them beside its other timings:
+
+```cpp
+static auto creations = CallCostCounter {"buffers"};
+auto cost = ScopedCallCost {creations, bytes};     // timed until scope end
+device->CreateCommittedResource(...);
+
+for (const auto& cost: callCosts())
+    log(cost.label, cost.calls, cost.seconds, cost.meanMicroseconds(), cost.bytes);
+```
+
+Nothing is printed on its own and nothing is switched on by the environment: a
+counter costs one clock read per call either way, and reading the totals is
+the caller's decision.
 
 
 ### Zeroing a buffer

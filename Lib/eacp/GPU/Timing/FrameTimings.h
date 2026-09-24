@@ -16,7 +16,7 @@ struct PassTiming
     double milliseconds = 0.0;
 
     // How many regions were timed under this label: 1 for a pass, the number
-    // of dispatches in a total from FrameTimings::byLabel().
+    // of dispatches in a total from FrameTimings::totalsByLabel().
     int count = 1;
 };
 
@@ -44,7 +44,7 @@ struct FrameTimings
 
     // The passes summed by label, largest first: what a pass timed with
     // TimingScope::EachDispatch reads as a per-kernel profile.
-    Vector<PassTiming> byLabel() const
+    Vector<PassTiming> totalsByLabel() const
     {
         auto totals = Vector<PassTiming> {};
 

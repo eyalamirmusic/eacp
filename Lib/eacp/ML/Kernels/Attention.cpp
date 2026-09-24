@@ -16,27 +16,6 @@ namespace
 {
 constexpr auto attentionGroupWidth = 256;
 constexpr auto maskedScore = -1.0e9f;
-
-Tensor rmsNormPerHead(ComputePass& pass,
-                      const Tensor& input,
-                      const Tensor& gamma,
-                      int rowCount,
-                      int heads,
-                      int headDim,
-                      float epsilon,
-                      Device& device)
-{
-    auto result = Tensor::uninitializedF32(input.shape(), device);
-
-    auto& kernel = sharedKernel<RMSNormKernel>(device);
-    kernel.input = input.buffer();
-    kernel.gamma = gamma.buffer();
-    kernel.output = result.buffer();
-    kernel.epsilon = epsilon;
-    kernel.dispatch(pass, rowCount * heads, headDim);
-
-    return result;
-}
 } // namespace
 
 AttentionScoresKernel::AttentionScoresKernel()
@@ -278,14 +257,8 @@ Tensor attention(ComputePass& pass,
 
     auto normalizedQueryStorage =
         queryNormGamma != nullptr
-            ? std::optional<Tensor> {rmsNormPerHead(pass,
-                                                    query,
-                                                    *queryNormGamma,
-                                                    rows,
-                                                    heads,
-                                                    headDim,
-                                                    qkNormEpsilon,
-                                                    device)}
+            ? std::optional<Tensor> {rmsNormPerHead(
+                  pass, query, *queryNormGamma, headDim, qkNormEpsilon, device)}
             : std::nullopt;
 
     const auto& normalizedQuery =
@@ -293,14 +266,8 @@ Tensor attention(ComputePass& pass,
 
     auto normalizedKeyStorage =
         keyNormGamma != nullptr
-            ? std::optional<Tensor> {rmsNormPerHead(pass,
-                                                    key,
-                                                    *keyNormGamma,
-                                                    cols,
-                                                    heads,
-                                                    headDim,
-                                                    qkNormEpsilon,
-                                                    device)}
+            ? std::optional<Tensor> {rmsNormPerHead(
+                  pass, key, *keyNormGamma, headDim, qkNormEpsilon, device)}
             : std::nullopt;
 
     const auto& normalizedKey =

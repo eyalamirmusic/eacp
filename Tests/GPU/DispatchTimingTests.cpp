@@ -121,9 +121,9 @@ auto tEachDispatchIsARegion = test("DispatchTiming/eachDispatchIsARegion") = []
         check(pass.milliseconds > 0.0);
 };
 
-// byLabel() folds the regions of one kernel into one line, largest first, with
+// totalsByLabel() folds the regions of one kernel into one line, largest first, with
 // how many dispatches it covers.
-auto tByLabelSumsAKernel = test("DispatchTiming/byLabelSumsAKernel") = []
+auto tTotalsByLabelSumsAKernel = test("DispatchTiming/totalsByLabelSumsAKernel") = []
 {
     auto& device = Device::shared();
 
@@ -158,7 +158,7 @@ auto tByLabelSumsAKernel = test("DispatchTiming/byLabelSumsAKernel") = []
         return;
 
     const auto& timings = commands.timings();
-    auto totals = timings.byLabel();
+    auto totals = timings.totalsByLabel();
 
     check(timings.passes.size() == 5);
     check(totals.size() == 2);

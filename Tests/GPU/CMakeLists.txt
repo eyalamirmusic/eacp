@@ -35,6 +35,7 @@ set(gpu_test_sources
         BufferFillTests.cpp
         BufferPoolTests.cpp
         BufferRangeTests.cpp
+        CallCostTests.cpp
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp
         CompressedTextureTests.cpp

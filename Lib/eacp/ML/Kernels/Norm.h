@@ -104,4 +104,23 @@ Tensor dynamicTanh(GPU::ComputePass& pass,
                    const Tensor& beta,
                    float alpha,
                    GPU::Device& device = GPU::Device::shared());
+
+// The two above over each head of a rows x (heads * headDim) tensor on its own
+// rather than over each row: every run of headDim values is normalised with the
+// one headDim-long gamma (and beta) - the QK norm a transformer applies to its
+// queries and keys before attention. The result has the input's shape.
+Tensor rmsNormPerHead(GPU::ComputePass& pass,
+                      const Tensor& input,
+                      const Tensor& gamma,
+                      int headDim,
+                      float epsilon,
+                      GPU::Device& device = GPU::Device::shared());
+
+Tensor dynamicTanhPerHead(GPU::ComputePass& pass,
+                          const Tensor& input,
+                          const Tensor& gamma,
+                          const Tensor& beta,
+                          float alpha,
+                          int headDim,
+                          GPU::Device& device = GPU::Device::shared());
 }

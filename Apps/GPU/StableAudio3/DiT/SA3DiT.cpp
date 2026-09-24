@@ -39,26 +39,6 @@ Tensor withLocalConditioning(ComputePass& pass,
     return addBroadcastRow(pass, x, localEmb, config.numMemoryTokens, device);
 }
 
-Tensor rmsNormPerHead(ComputePass& pass,
-                      const Tensor& input,
-                      const Tensor& gamma,
-                      int rowCount,
-                      int heads,
-                      int headDimToUse,
-                      float epsilon,
-                      Device& device)
-{
-    auto result = Tensor::uninitializedF32(input.shape(), device);
-
-    auto& kernel = GPU::sharedKernel<RMSNormKernel>(device);
-    kernel.input = input.buffer();
-    kernel.gamma = gamma.buffer();
-    kernel.output = result.buffer();
-    kernel.epsilon = epsilon;
-    kernel.dispatch(pass, rowCount * heads, headDimToUse);
-
-    return result;
-}
 }
 
 Tensor timestepEmbedding(ComputePass& pass,
@@ -120,7 +100,6 @@ Tensor selfAttentionOutput(ComputePass& pass,
                           const LayerWeights& layer,
                           const Tensor& xm,
                           const Tensor& rotaryInvFreq,
-                          int seqLen,
                           Device& device)
 {
     auto embedDimC = config.embedDim;
@@ -129,10 +108,18 @@ Tensor selfAttentionOutput(ComputePass& pass,
     auto k = sliceColumns(pass, qkv, 1 * embedDimC, embedDimC, device);
     auto v = sliceColumns(pass, qkv, 2 * embedDimC, embedDimC, device);
 
-    auto qn = rmsNormPerHead(
-        pass, q, layer.selfAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
-    auto kn = rmsNormPerHead(
-        pass, k, layer.selfAttnKNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto qn = rmsNormPerHead(pass,
+                             q,
+                             layer.selfAttnQNormGamma,
+                             config.headDim,
+                             config.qkNormEpsilon,
+                             device);
+    auto kn = rmsNormPerHead(pass,
+                             k,
+                             layer.selfAttnKNormGamma,
+                             config.headDim,
+                             config.qkNormEpsilon,
+                             device);
 
     auto qr = applyRoPE(pass, qn, rotaryInvFreq, config.numHeads, config.headDim, device);
     auto kr = applyRoPE(pass, kn, rotaryInvFreq, config.numHeads, config.headDim, device);
@@ -155,10 +142,18 @@ Tensor selfAttentionOutput(ComputePass& pass,
     auto qDiff = sliceColumns(pass, qkv, 3 * embedDimC, embedDimC, device);
     auto kDiff = sliceColumns(pass, qkv, 4 * embedDimC, embedDimC, device);
 
-    auto qDiffN = rmsNormPerHead(
-        pass, qDiff, layer.selfAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
-    auto kDiffN = rmsNormPerHead(
-        pass, kDiff, layer.selfAttnKNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto qDiffN = rmsNormPerHead(pass,
+                                 qDiff,
+                                 layer.selfAttnQNormGamma,
+                                 config.headDim,
+                                 config.qkNormEpsilon,
+                                 device);
+    auto kDiffN = rmsNormPerHead(pass,
+                                 kDiff,
+                                 layer.selfAttnKNormGamma,
+                                 config.headDim,
+                                 config.qkNormEpsilon,
+                                 device);
 
     auto qDiffR = applyRoPE(pass, qDiffN, rotaryInvFreq, config.numHeads, config.headDim, device);
     auto kDiffR = applyRoPE(pass, kDiffN, rotaryInvFreq, config.numHeads, config.headDim, device);
@@ -183,8 +178,6 @@ Tensor crossAttentionOutput(ComputePass& pass,
                            const LayerWeights& layer,
                            const Tensor& xn2,
                            const Tensor& crossAttnContext,
-                           int seqLen,
-                           int contextLen,
                            Device& device)
 {
     auto embedDimC = config.embedDim;
@@ -196,13 +189,15 @@ Tensor crossAttentionOutput(ComputePass& pass,
         auto k2 = sliceColumns(pass, kv2, 0 * embedDimC, embedDimC, device);
         auto v2 = sliceColumns(pass, kv2, 1 * embedDimC, embedDimC, device);
 
-        auto q2n = rmsNormPerHead(
-            pass, q2, layer.crossAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+        auto q2n = rmsNormPerHead(pass,
+                                  q2,
+                                  layer.crossAttnQNormGamma,
+                                  config.headDim,
+                                  config.qkNormEpsilon,
+                                  device);
         auto k2n = rmsNormPerHead(pass,
                                   k2,
                                   layer.crossAttnKNormGamma,
-                                  contextLen,
-                                  config.numHeads,
                                   config.headDim,
                                   config.qkNormEpsilon,
                                   device);
@@ -229,23 +224,27 @@ Tensor crossAttentionOutput(ComputePass& pass,
     auto k2Diff = sliceColumns(pass, kv2Full, 1 * embedDimC, embedDimC, device);
     auto v2 = sliceColumns(pass, kv2Full, 2 * embedDimC, embedDimC, device);
 
-    auto q2n = rmsNormPerHead(
-        pass, q2, layer.crossAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
-    auto q2DiffN = rmsNormPerHead(
-        pass, q2Diff, layer.crossAttnQNormGamma, seqLen, config.numHeads, config.headDim, config.qkNormEpsilon, device);
+    auto q2n = rmsNormPerHead(pass,
+                              q2,
+                              layer.crossAttnQNormGamma,
+                              config.headDim,
+                              config.qkNormEpsilon,
+                              device);
+    auto q2DiffN = rmsNormPerHead(pass,
+                                  q2Diff,
+                                  layer.crossAttnQNormGamma,
+                                  config.headDim,
+                                  config.qkNormEpsilon,
+                                  device);
     auto k2n = rmsNormPerHead(pass,
                               k2,
                               layer.crossAttnKNormGamma,
-                              contextLen,
-                              config.numHeads,
                               config.headDim,
                               config.qkNormEpsilon,
                               device);
     auto k2DiffN = rmsNormPerHead(pass,
                                   k2Diff,
                                   layer.crossAttnKNormGamma,
-                                  contextLen,
-                                  config.numHeads,
                                   config.headDim,
                                   config.qkNormEpsilon,
                                   device);
@@ -289,7 +288,6 @@ Tensor transformerBlock(ComputePass& pass,
 {
     auto embedDimC = config.embedDim;
     auto seqLen = x.rows();
-    auto contextLen = crossAttnContext.rows();
 
     auto modulation = addTensors(pass, globalCondBase, layer.toScaleShiftGate, device);
 
@@ -303,7 +301,7 @@ Tensor transformerBlock(ComputePass& pass,
     auto xn = rmsNorm(pass, x, layer.preNormGamma, config.rmsNormEpsilon, device);
     auto xm = adaLNModulate(pass, xn, scaleSelf, shiftSelf, device);
 
-    auto attnOut = selfAttentionOutput(pass, config, layer, xm, rotaryInvFreq, seqLen, device);
+    auto attnOut = selfAttentionOutput(pass, config, layer, xm, rotaryInvFreq, device);
     auto attnFlat = reshapeFlat(std::move(attnOut), {seqLen, embedDimC});
     auto attnProj = linear(pass, attnFlat, layer.selfAttnOutWeight, nullptr, device);
     auto gatedSelf = sigmoidGate(pass, attnProj, gateSelf, device);
@@ -312,7 +310,7 @@ Tensor transformerBlock(ComputePass& pass,
 
     auto xn2 = rmsNorm(pass, x1, layer.crossAttendNormGamma, config.rmsNormEpsilon, device);
     auto crossOut =
-        crossAttentionOutput(pass, config, layer, xn2, crossAttnContext, seqLen, contextLen, device);
+        crossAttentionOutput(pass, config, layer, xn2, crossAttnContext, device);
     auto crossFlat = reshapeFlat(std::move(crossOut), {seqLen, embedDimC});
     auto crossProj = linear(pass, crossFlat, layer.crossAttnOutWeight, nullptr, device);
 

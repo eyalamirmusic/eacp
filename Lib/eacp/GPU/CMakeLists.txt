@@ -50,6 +50,7 @@ target_sources(eacp-gpu PRIVATE
         Frame/Frame.cpp
         Frame/RenderPass.cpp
         Pipeline/ComputePipelineCache.cpp
+        Timing/CallCost.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp)
