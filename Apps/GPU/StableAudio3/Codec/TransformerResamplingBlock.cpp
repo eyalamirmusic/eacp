@@ -5,6 +5,7 @@
 #include <eacp/ML/Kernels/TensorOps.h>
 
 #include <optional>
+#include <stdexcept>
 
 namespace eacp::SA3Codec
 {
@@ -12,22 +13,31 @@ using namespace eacp::GPU;
 using namespace eacp::ML;
 
 Tensor foldWithNewTokens(ComputePass& pass,
-                        const Tensor& input,
-                        int inputSegSize,
-                        int outputSegSize,
-                        const Tensor& newTokens,
-                        Device& device)
+                         const Tensor& input,
+                         int inputSegSize,
+                         int outputSegSize,
+                         const Tensor& newTokens,
+                         Device& device)
 {
-    return foldWithNewTokensGpu(pass, input, inputSegSize, outputSegSize, newTokens, device);
+    return foldWithNewTokensGpu(
+        pass, input, inputSegSize, outputSegSize, newTokens, device);
 }
 
 Tensor unfoldLastSegment(ComputePass& pass,
-                        const Tensor& input,
-                        int subChunkSize,
-                        int outputSegSize,
-                        Device& device)
+                         const Tensor& input,
+                         int subChunkSize,
+                         int outputSegSize,
+                         Device& device)
 {
     return unfoldLastSegmentGpu(pass, input, subChunkSize, outputSegSize, device);
+}
+
+void checkChunkedRows(int rows, int effectiveChunkSize)
+{
+    if (effectiveChunkSize <= 0 || rows % effectiveChunkSize != 0)
+        throw std::invalid_argument(
+            "SA3Codec: a chunked transformer stack needs its rows to be a whole "
+            "number of chunks - pad the input to the chunk size first");
 }
 
 namespace
@@ -40,31 +50,20 @@ Tensor runChunkedStack(ComputePass& pass,
                        int layerEnd,
                        Device& device)
 {
-    auto chunkedRows = input.rows() / effectiveChunkSize * effectiveChunkSize;
+    checkChunkedRows(input.rows(), effectiveChunkSize);
+
     auto band =
         AttentionBand {effectiveChunkSize, effectiveChunkSize, effectiveChunkSize};
-
-    auto whole = chunkedRows == input.rows();
-    auto sliced =
-        whole
-            ? std::nullopt
-            : std::optional<Tensor> {sliceRows(pass, input, 0, chunkedRows, device)};
-    const auto& source = whole ? input : *sliced;
     auto x = std::optional<Tensor> {};
 
     for (auto layerIndex = layerStart; layerIndex < layerEnd; ++layerIndex)
         x = applyCodecTransformerBlock(pass,
-                                       x.has_value() ? *x : source,
+                                       x.has_value() ? *x : input,
                                        layers[(std::size_t) layerIndex],
                                        band,
                                        device);
 
-    if (whole)
-        return std::move(*x);
-
-    auto output = Tensor::uninitializedF32(input.shape(), device);
-    copyRowsInto(pass, output, 0, *x, device);
-    return output;
+    return std::move(*x);
 }
 
 Tensor runSlidingWindowStack(const Tensor& input,
@@ -106,30 +105,36 @@ Tensor applyChunkMidpointShift(ComputePass& pass,
     auto split = weights.transformerDepth / 2;
     auto shift = effectiveChunkSize / 2;
 
-    auto firstOut = runChunkedStack(pass, folded, effectiveChunkSize, weights.layers, 0, split, device);
+    auto firstOut = runChunkedStack(
+        pass, folded, effectiveChunkSize, weights.layers, 0, split, device);
 
     auto headPad = sliceRows(pass, firstOut, 0, shift, device);
     auto tailPad = sliceRows(pass, firstOut, firstOut.rows() - shift, shift, device);
     auto padded = ML::concatRows(pass, {headPad, firstOut, tailPad}, device);
 
-    auto secondOut = runChunkedStack(
-        pass, padded, effectiveChunkSize, weights.layers, split, weights.transformerDepth, device);
+    auto secondOut = runChunkedStack(pass,
+                                     padded,
+                                     effectiveChunkSize,
+                                     weights.layers,
+                                     split,
+                                     weights.transformerDepth,
+                                     device);
 
     return sliceRows(pass, secondOut, shift, firstOut.rows(), device);
 }
-}
+} // namespace
 
 Tensor applyTransformerResamplingBlock(const Tensor& input,
-                                      const ResamplingBlockWeights& weights,
-                                      Device& device)
+                                       const ResamplingBlockWeights& weights,
+                                       Device& device)
 {
     auto inputSegSize = weights.isEncoder ? weights.stride : 1;
     auto outputSegSize = weights.isEncoder ? 1 : weights.stride;
     auto subChunkSize = weights.stride + 1;
 
     auto padModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
-                       ? weights.chunkSize
-                       : inputSegSize;
+                         ? weights.chunkSize
+                         : inputSegSize;
 
     auto folded = std::optional<Tensor> {};
 
@@ -147,13 +152,15 @@ Tensor applyTransformerResamplingBlock(const Tensor& input,
             }
             else
             {
-                auto decoderPadModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
-                                          ? weights.chunkSize / weights.stride
-                                          : inputSegSize;
+                auto decoderPadModulo =
+                    weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
+                        ? weights.chunkSize / weights.stride
+                        : inputSegSize;
                 x = padRowsWithZeros(pass, input, decoderPadModulo, device);
             }
 
-            folded = foldWithNewTokens(pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);
+            folded = foldWithNewTokens(
+                pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);
         }
 
         commands.commit();
@@ -175,7 +182,8 @@ Tensor applyTransformerResamplingBlock(const Tensor& input,
     else
     {
         auto radius = weights.slidingWindowRadiusChunks * subChunkSize;
-        stacked = runSlidingWindowStack(*folded, weights.layers, radius, radius, device);
+        stacked =
+            runSlidingWindowStack(*folded, weights.layers, radius, radius, device);
     }
 
     auto result = std::optional<Tensor> {};
@@ -185,10 +193,12 @@ Tensor applyTransformerResamplingBlock(const Tensor& input,
 
         {
             auto pass = commands.beginCompute();
-            auto unfolded = unfoldLastSegment(pass, *stacked, subChunkSize, outputSegSize, device);
+            auto unfolded = unfoldLastSegment(
+                pass, *stacked, subChunkSize, outputSegSize, device);
 
-            result = weights.isEncoder ? std::move(unfolded)
-                                       : applyWNConv1d(pass, unfolded, weights.mapping, device);
+            result = weights.isEncoder
+                         ? std::move(unfolded)
+                         : applyWNConv1d(pass, unfolded, weights.mapping, device);
         }
 
         commands.commit();
@@ -196,4 +206,4 @@ Tensor applyTransformerResamplingBlock(const Tensor& input,
 
     return std::move(*result);
 }
-}
+} // namespace eacp::SA3Codec

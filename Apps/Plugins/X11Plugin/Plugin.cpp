@@ -88,7 +88,8 @@ struct SpinningView final : GPU::GPUView
                 {colors[corner][0], colors[corner][1], colors[corner][2]}};
         }
 
-        vertexBuffer.update(vertices, (int) sizeof(vertices));
+        // Unordered: rewritten once a frame, which is what this variant is for.
+        vertexBuffer.updateUnordered(vertices, (int) sizeof(vertices));
     }
 
     void render(GPU::Frame& frame) override

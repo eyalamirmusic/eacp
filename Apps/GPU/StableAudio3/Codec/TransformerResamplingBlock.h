@@ -40,7 +40,14 @@ ML::Tensor unfoldLastSegment(GPU::ComputePass& pass,
                              int outputSegSize,
                              GPU::Device& device = GPU::Device::shared());
 
-ML::Tensor applyTransformerResamplingBlock(const ML::Tensor& input,
-                                          const ResamplingBlockWeights& weights,
-                                          GPU::Device& device = GPU::Device::shared());
-}
+// The chunked stack attends within whole chunks and has no answer for a
+// partial one: the reference folds the rows with einops, which refuses a
+// length that is not a multiple, and pads upstream so it always is. This is
+// that refusal, thrown as std::invalid_argument before anything is dispatched.
+void checkChunkedRows(int rows, int effectiveChunkSize);
+
+ML::Tensor
+    applyTransformerResamplingBlock(const ML::Tensor& input,
+                                    const ResamplingBlockWeights& weights,
+                                    GPU::Device& device = GPU::Device::shared());
+} // namespace eacp::SA3Codec

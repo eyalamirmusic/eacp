@@ -12,6 +12,7 @@
 #include <cmath>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 
 using namespace nano;
 using namespace eacp;
@@ -408,4 +409,30 @@ auto tDynamicTanhMatchesHandComputedFormula =
                         + betaValues[(std::size_t) i];
         checkClose(result[(std::size_t) i], expected, 1.0e-5f);
     }
+};
+
+// The reference cannot fold a partial chunk and neither can this: a row count
+// off the chunk grid is refused rather than run with its tail never written.
+auto tChunkedStackRefusesPartialChunk =
+    test("SA3Codec/chunkedStackRefusesAPartialChunk") = []
+{
+    auto refuses = [](int rows, int chunk)
+    {
+        try
+        {
+            checkChunkedRows(rows, chunk);
+        }
+        catch (const std::invalid_argument&)
+        {
+            return true;
+        }
+
+        return false;
+    };
+
+    check(!refuses(68, 34));
+    check(!refuses(0, 34));
+    check(refuses(69, 34));
+    check(refuses(33, 34));
+    check(refuses(34, 0));
 };

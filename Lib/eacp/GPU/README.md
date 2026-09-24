@@ -1079,9 +1079,7 @@ that used to be a bare memcpy on Metal is a memcpy behind a wait for the newest
 submission. Code that was already right by construction gets its old cost back
 by asking for the unordered call by name — which is what `StreamingBuffers`,
 `GPUWidgets`' coverage batch and the `Apps/GPU` samples in this tree were
-changed to do. `Apps/Plugins`' `SpinningTriangle` was not, and rewrites its
-vertices through `update` on every timer tick, so on Metal it now waits for the
-newest submission each time.
+changed to do, along with the `Apps/Plugins` demos.
 
 `Buffer::updateUnordered` is that write with the wait given up, the caller
 saying instead that no work the GPU still has in hand touches those bytes. There
