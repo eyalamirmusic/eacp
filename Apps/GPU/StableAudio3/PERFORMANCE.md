@@ -24,6 +24,35 @@ what a command-line user gets. Full method and raw numbers: `Benchmark/`.
 | Generate | 0.36 s | 0.33 s | level |
 | Cold process to WAV | 0.9 s | 5–7 s | 6× faster |
 
+## NVIDIA RTX 6000 Ada, D3D12 against CUDA
+
+Windows 11, eacp on D3D12 in a Release build, PyTorch 2.7.1 on CUDA 12.6, same
+checkpoints, seed and steps. PyTorch's own default on a GPU is fp16, so both
+are given: the fp32 row is the like-for-like against eacp's precision, and on
+this card fp32 is the faster of the two for PyTorch. eacp "warm" is
+`--repeat N`, a second generation in the same process, matching how PyTorch's
+warm number is taken.
+
+### Small model, 12 s clip
+
+| Phase | eacp | PyTorch CUDA | eacp is |
+|---|---|---|---|
+| **Generate, warm** | **0.40 s** | 0.48 s fp32, 0.56 s fp16 | **1.2–1.4× faster** |
+| Load | 1.25 s | 9.2 s | 7× faster |
+| Prompt encoding, cold | 0.18 s | 1.26 s | 7× faster |
+| Sampling, cold | 0.36 s | 1.23 s | 3.4× faster |
+| Decode, cold | 0.17 s | 0.065 s | 2.6× slower |
+| Decode, warm | 0.02 s | 0.022 s | level |
+| **Cold process to WAV on disk** | **2.7 s** | 17.4 s fp32, 20.9 s fp16 | **6.3–7.6× faster** |
+
+Medium, 30 s: 7.0 s cold process to WAV.
+
+Read the cold rows against each other and the warm rows against each other.
+Comparing eacp cold to PyTorch warm is the mistake that made decode look six
+times worse than it is: most of what a first decode pays is one-time pipeline
+creation and a pool with nothing in it yet, which a warm PyTorch process paid
+for during its nine-second load.
+
 ## Where it started
 
 The same medium clip took 38.6 s end to end on the first measured run of
@@ -37,7 +66,8 @@ per-dispatch GPU timing, banded and tiled attention, a retiled matmul, tensor
 views instead of copies, and an emitter that no longer re-evaluates a value
 after a store. The ranked history is `Benchmark/OPTIMIZATION.md`; the D3D12
 half, where the same commits turned a broken Windows build into one that is
-6–7× faster than PyTorch on CUDA end to end, is `Benchmark/WINDOWS.md`.
+6–7× faster than PyTorch on CUDA end to end and faster warm-for-warm at
+generating, is `Benchmark/WINDOWS.md`.
 
 ## Examples
 

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <optional>
 #include <string>
@@ -38,6 +39,7 @@ struct Options
     std::uint64_t seed = 42;
     std::string model = "small";
     bool profile = false;
+    int repeat = 0;
 };
 
 using Clock = std::chrono::steady_clock;
@@ -68,6 +70,8 @@ Options parseOptions(int argc, char** argv)
             options.model = argv[++i];
         else if (flag == "--profile")
             options.profile = true;
+        else if (flag == "--repeat" && hasValue)
+            options.repeat = std::atoi(argv[++i]);
     }
 
     return options;
@@ -239,7 +243,8 @@ int main(int argc, char** argv)
     }
 
     promptCommands.commit();
-    textEncoder.reset();
+    if (options.repeat == 0)
+        textEncoder.reset();
     std::printf("Prompt encoding took %.2fs\n", secondsSince(start));
 
     auto sampleCount = (int) std::lround((double) options.seconds * sampleRate);
@@ -271,8 +276,11 @@ int main(int argc, char** argv)
                          options.seed,
                          device);
 
-    weights.reset();
-    promptEncoding.reset();
+    if (options.repeat == 0)
+    {
+        weights.reset();
+        promptEncoding.reset();
+    }
 
     std::printf("Decoding audio...\n");
     start = Clock::now();
@@ -288,6 +296,36 @@ int main(int argc, char** argv)
     }
 
     std::printf("WAV write took %.2fs\n", secondsSince(start));
+
+    // Generating again in the same process, which is what a server, a
+    // plugin or a UI does and what a one-shot run cannot show: the first
+    // time through pays for every pipeline the driver compiles and every
+    // buffer the pool has not got yet, and none of that is what the work
+    // costs once it is running. It is also the like-for-like against a
+    // PyTorch number taken from a second generate() in a loaded process.
+    for (auto again = 0; again < options.repeat; ++again)
+    {
+        auto repeatStart = Clock::now();
+        auto repeatCommands = device.makeCommandBuffer();
+        auto repeatEncoding = std::optional<SA3TextEncoder::PromptEncoding> {};
+
+        {
+            auto pass = repeatCommands.beginCompute();
+            repeatEncoding =
+                textEncoder->encodePrompt(pass, options.prompt, device);
+        }
+
+        repeatCommands.commit();
+
+        auto repeatLatent = SA3Sampler::pingpongSample(
+            *weights, repeatEncoding->embeddings, latentLength,
+            options.seconds, samplerSteps,
+            SA3Sampler::randomNoiseSource(options.seed), device);
+
+        auto repeatWaveform = decoder->decode(repeatLatent, sampleCount, device);
+        std::printf("Generating again took %.3fs\n",
+                    secondsSince(repeatStart));
+    }
     std::printf("Wrote %s\n", options.output.c_str());
     std::printf("Total took %.2fs\n", secondsSince(totalStart));
 
