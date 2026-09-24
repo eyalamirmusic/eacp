@@ -33,3 +33,4 @@ xcschememanagement.plist
 workspace.xml
 xcuserdata
 Tooling/
+make.sh

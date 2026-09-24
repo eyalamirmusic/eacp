@@ -9,7 +9,7 @@ build/Apps/GPU/StableAudio3/StableAudio3 --model small --prompt "lofi house loop
 ```
 
 Flags: `--model small|medium` (default `small`), `--prompt`, `--seconds`,
-`--seed`, `--output`.
+`--seed`, `--samplerSteps` (default 8), `--output`.
 
 ## Checkpoints
 

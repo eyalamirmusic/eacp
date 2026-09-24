@@ -29,7 +29,6 @@ namespace
 {
 constexpr auto sampleRate = 44100;
 constexpr auto downsamplingRatio = 4096;
-constexpr auto samplerSteps = 8;
 
 struct Options
 {
@@ -37,6 +36,7 @@ struct Options
     float seconds = 8.f;
     std::string output = "stable-audio-3-output.wav";
     std::uint64_t seed = 42;
+    int samplerSteps = 8;
     std::string model = "small";
     bool profile = false;
     int repeat = 0;
@@ -66,6 +66,8 @@ Options parseOptions(int argc, char** argv)
             options.output = argv[++i];
         else if (flag == "--seed" && hasValue)
             options.seed = (std::uint64_t) std::stoull(argv[++i]);
+        else if (flag == "--samplerSteps" && hasValue)
+            options.samplerSteps = std::atoi(argv[++i]);
         else if (flag == "--model" && hasValue)
             options.model = argv[++i];
         else if (flag == "--profile")
@@ -246,7 +248,7 @@ int main(int argc, char** argv)
     auto latentLength = latentLengthFor(sampleCount);
 
     std::printf("Sampling %d steps over %d latent frames (%.2fs)...\n",
-                samplerSteps,
+                options.samplerSteps,
                 latentLength,
                 options.seconds);
 
@@ -257,7 +259,7 @@ int main(int argc, char** argv)
                                    promptEncoding->embeddings,
                                    latentLength,
                                    options.seconds,
-                                   samplerSteps,
+                                   options.samplerSteps,
                                    SA3Sampler::randomNoiseSource(options.seed),
                                    device);
 
@@ -306,20 +308,22 @@ int main(int argc, char** argv)
 
         {
             auto pass = repeatCommands.beginCompute();
-            repeatEncoding =
-                textEncoder->encodePrompt(pass, options.prompt, device);
+            repeatEncoding = textEncoder->encodePrompt(pass, options.prompt, device);
         }
 
         repeatCommands.commit();
 
-        auto repeatLatent = SA3Sampler::pingpongSample(
-            *weights, repeatEncoding->embeddings, latentLength,
-            options.seconds, samplerSteps,
-            SA3Sampler::randomNoiseSource(options.seed), device);
+        auto repeatLatent =
+            SA3Sampler::pingpongSample(*weights,
+                                       repeatEncoding->embeddings,
+                                       latentLength,
+                                       options.seconds,
+                                       options.samplerSteps,
+                                       SA3Sampler::randomNoiseSource(options.seed),
+                                       device);
 
         auto repeatWaveform = decoder.decode(repeatLatent, sampleCount, device);
-        std::printf("Generating again took %.3fs\n",
-                    secondsSince(repeatStart));
+        std::printf("Generating again took %.3fs\n", secondsSince(repeatStart));
     }
     std::printf("Wrote %s\n", options.output.c_str());
     std::printf("Total took %.2fs\n", secondsSince(totalStart));
