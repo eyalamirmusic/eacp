@@ -13,6 +13,7 @@ target_compile_options(eacp-gpu-codegen PUBLIC
         $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
 
 target_sources(eacp-gpu-codegen PRIVATE
+        Codegen/KernelName.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderBuilder.cpp
         Codegen/ShaderEmitter.cpp

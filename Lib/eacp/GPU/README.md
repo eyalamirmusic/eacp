@@ -806,12 +806,56 @@ can break a buffer down by pass, as `Device::supportsPassTimings()` does for a
 frame.
 
 A frame or a command buffer times its first `GpuTimestamps::maxTimedPasses`
-labelled passes, which is 128 — enough to give every kernel of a net a label of
-its own. Past that a pass runs exactly as it would have and is simply not
-timed, so the tail is missing from the breakdown rather than the buffer being
-wrong. The ceiling is a fixed pool of two timestamps per pass, so it costs a
-slot 2 KB of samples on Metal and a 258-entry query heap with its readback
-buffer on D3D12 and Vulkan — paid only once a labelled pass has asked for it.
+labelled regions, which is 2,048. Past that a pass runs exactly as it would
+have and is simply not timed, so the tail is missing from the breakdown rather
+than the buffer being wrong. The ceiling is a fixed pool of two timestamps per
+region, so it costs a slot 32 KB of samples on Metal — the most one counter
+sample buffer holds, made for a slot only once it is first used — and a
+4,098-entry query heap with its readback buffer on D3D12 and Vulkan, paid only
+once a labelled pass has asked for it.
+
+### Timing each kernel
+
+A pass times as one region, which says how long a network step took and not
+where. `TimingScope::EachDispatch` makes every kernel the pass dispatches a
+region of its own, named after the kernel, and `byLabel()` folds them into a
+profile:
+
+```cpp
+{
+    auto pass = commands.beginCompute(
+        "step", DispatchOrder::Serial, TimingScope::EachDispatch);
+    forward(pass, weights, latent);             // hundreds of dispatches
+}
+
+commands.commit();
+
+for (const auto& kernel: commands.timings().byLabel())
+    log(kernel.label, kernel.milliseconds, kernel.count);
+```
+
+```
+step/LinearF32                      114.36 ms    181 dispatches
+step/UnmaskedAttentionScoresKernel   48.91 ms     96 dispatches
+step/AttentionWeightedSumKernel      42.11 ms     96 dispatches
+...
+```
+
+That is one Stable Audio medium DiT step, 1,542 dispatches, which is why the
+ceiling on timed regions is 2,048: every dispatch of a step fits. A region is
+named `pass/Kernel`, or `Kernel` for an unlabelled pass, where the kernel's name
+is its type's without namespaces; a `ComputeProgram` that builds variants of one
+type overrides `name()` to tell them apart. Only the program dispatches are
+regions — a raw `dispatch(count)` runs inside whichever region is open.
+
+It costs nothing unless asked for, and it is for finding where the time goes,
+not for shipping. On D3D12 and Vulkan a timed dispatch is a pair of timestamps
+written around it in the one command list. Apple silicon samples its counters
+only where an encoder starts and ends, so on Metal each timed dispatch is an
+encoder of its own; consecutive encoders may overlap on the GPU, so the
+regions can sum to a little more than the command buffer's own time, and the
+dispatches of a `Concurrent` pass stop overlapping altogether.
+
 
 ### Zeroing a buffer
 

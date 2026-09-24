@@ -270,6 +270,14 @@ pooled buffer can't go back to the pool while an *uncompleted earlier* command
 buffer still reads it. Either tag pool entries with the command buffer that
 last used them, or keep the pool per command buffer.
 
+**Decision: skipped.** Measured once the buffer pool (item 5) was in: a medium
+step spends ~1 ms encoding and ~0.4 ms making its noise, against ~215 ms of
+kernels. Overlapping steps could save at most ~1.5 ms a step, ~12 ms over 8
+steps, while keeping two steps' temporaries alive at once. The library already
+has the pieces for a caller that does need it — `CommandBuffer::submit()` and
+`wait()`, with a pipelined loop in the GPU README — so nothing is missing from
+eacp, and the sampler stays synchronous.
+
 ---
 
 ### 7. Hoist the constant cross-attention K/V out of the step loop

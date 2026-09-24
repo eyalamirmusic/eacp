@@ -35,6 +35,7 @@ struct Options
     std::string output = "stable-audio-3-output.wav";
     std::uint64_t seed = 42;
     std::string model = "small";
+    bool profile = false;
 };
 
 using Clock = std::chrono::steady_clock;
@@ -63,9 +64,66 @@ Options parseOptions(int argc, char** argv)
             options.seed = (std::uint64_t) std::stoull(argv[++i]);
         else if (flag == "--model" && hasValue)
             options.model = argv[++i];
+        else if (flag == "--profile")
+            options.profile = true;
     }
 
     return options;
+}
+
+// One more DiT step, on the noise the sampler would start from, with every
+// kernel it dispatches timed on its own - after sampling, so the audio is what
+// it would have been without the flag.
+void printStepProfile(const SA3DiT::Weights& weights,
+                      const Tensor& crossAttnContext,
+                      int latentLength,
+                      float secondsTotal,
+                      std::uint64_t seed,
+                      Device& device)
+{
+    auto noise =
+        SA3Sampler::randomNoiseSource(seed)(latentLength * SA3DiT::ioChannels);
+    auto latent = Tensor::fromHostF32(
+        noise.data(), {latentLength, SA3DiT::ioChannels}, device);
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute(
+            {}, DispatchOrder::Serial, TimingScope::EachDispatch);
+        auto velocity = SA3DiT::forward(
+            pass, weights, latent, 1.f, secondsTotal, crossAttnContext, device);
+    }
+
+    commands.commit();
+
+    const auto& timings = commands.timings();
+
+    if (timings.passes.empty())
+    {
+        std::printf("This device cannot time dispatches.\n");
+        return;
+    }
+
+    auto kernelTotal = 0.0;
+
+    for (const auto& pass: timings.passes)
+        kernelTotal += pass.milliseconds;
+
+    std::printf("\nOne DiT step, %d dispatches, %.1f ms in kernels (%.1f ms end to "
+                "end, timed one encoder per dispatch):\n",
+                (int) timings.passes.size(),
+                kernelTotal,
+                timings.milliseconds);
+
+    for (const auto& total: timings.byLabel())
+        std::printf("  %-32s %8.2f ms  %5.1f%%  %5d dispatches\n",
+                    total.label.c_str(),
+                    total.milliseconds,
+                    100.0 * total.milliseconds / kernelTotal,
+                    total.count);
+
+    std::printf("\n");
 }
 
 int latentLengthFor(int sampleCount)
@@ -204,6 +262,14 @@ int main(int argc, char** argv)
                                    device);
 
     std::printf("Sampling took %.2fs\n", secondsSince(start));
+
+    if (options.profile)
+        printStepProfile(*weights,
+                         promptEncoding->embeddings,
+                         latentLength,
+                         options.seconds,
+                         options.seed,
+                         device);
 
     weights.reset();
     promptEncoding.reset();

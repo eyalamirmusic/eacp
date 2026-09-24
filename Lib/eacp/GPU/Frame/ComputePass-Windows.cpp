@@ -295,6 +295,19 @@ void ComputePass::barrier()
 // A concurrent pass owes the rest of the recording what the per-dispatch
 // barriers owed it in a serial one, so the last dispatches are ordered here
 // against whatever the next pass or a readback copy does.
+void ComputePass::beginTimedDispatch(std::string_view label)
+{
+    if (impl->encoder)
+    {
+        if (impl->isConcurrent())
+            impl->recordBarrier();
+
+        endTimedPass(*impl->encoder);
+    }
+
+    impl->encoder.reset(static_cast<D3D12ComputeEncoder*>(openTimedEncoder(label)));
+}
+
 void ComputePass::end()
 {
     if (impl->encoder)

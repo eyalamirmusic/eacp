@@ -47,6 +47,7 @@ set(gpu_test_sources
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
+        DispatchTimingTests.cpp
         ExternalGeometryTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp

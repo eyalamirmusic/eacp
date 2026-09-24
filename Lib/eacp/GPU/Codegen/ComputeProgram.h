@@ -4,6 +4,7 @@
 #include "../Frame/ComputePass.h"
 #include "../Pipeline/ComputePipeline.h"
 #include "../Pipeline/ComputePipelineCache.h"
+#include "KernelName.h"
 #include "ShaderProgram.h"
 
 #include <eacp/Core/Utils/Logging.h>
@@ -166,6 +167,11 @@ public:
     ComputeProgram& operator=(const ComputeProgram&) = delete;
 
     const ShaderSource& source() const { return generated.source; }
+
+    // What a per-dispatch timing calls this kernel: its type's name without
+    // namespaces, "LinearF32". Override it to tell apart the variants one type
+    // builds.
+    virtual std::string name() const { return readableTypeName(typeid(*this)); }
 
     // The graph the body was recorded into, so either backend's text can be
     // emitted from the kernel that ships rather than from a copy of its body.
