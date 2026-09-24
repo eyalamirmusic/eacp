@@ -12,10 +12,12 @@ RoPEKernel::RoPEKernel()
     compile();
 }
 
-void RoPEKernel::dispatch(ComputePass& pass, int rows, int heads, int headDim)
+void RoPEKernel::dispatch(
+    ComputePass& pass, int rows, int heads, int headDim, int segmentRowCount)
 {
     headCount = (std::uint32_t) heads;
     headDimension = (std::uint32_t) headDim;
+    segmentRows = (std::uint32_t) (segmentRowCount > 0 ? segmentRowCount : rows);
     pass.dispatch(*this, rows * heads * headDim);
 }
 
@@ -24,7 +26,7 @@ void RoPEKernel::define()
     auto i = threadId();
     auto d = i % headDimension;
     auto rowHead = i / headDimension;
-    auto row = rowHead / headCount;
+    auto row = (rowHead / headCount) % segmentRows;
 
     auto rotaryDimension = halfRotaryDimension * 2u;
     auto base = rowHead * headDimension;
@@ -43,8 +45,8 @@ void RoPEKernel::define()
             auto x1 = input[base + freqIndex];
             auto x2 = input[base + halfRotaryDimension + freqIndex];
 
-            auto rotated =
-                select(isFirstHalf, x1 * cosine - x2 * sine, x2 * cosine + x1 * sine);
+            auto rotated = select(
+                isFirstHalf, x1 * cosine - x2 * sine, x2 * cosine + x1 * sine);
 
             write(output, base + d, rotated);
         },
@@ -58,6 +60,17 @@ Tensor applyRoPE(ComputePass& pass,
                  int headDim,
                  Device& device)
 {
+    return applyRoPE(pass, input, invFreq, heads, headDim, 0, device);
+}
+
+Tensor applyRoPE(ComputePass& pass,
+                 const Tensor& input,
+                 const Tensor& invFreq,
+                 int heads,
+                 int headDim,
+                 int segmentRows,
+                 Device& device)
+{
     auto rows = input.rows();
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
@@ -66,8 +79,8 @@ Tensor applyRoPE(ComputePass& pass,
     kernel.invFreq = invFreq.buffer();
     kernel.output = result.buffer();
     kernel.halfRotaryDimension = (std::uint32_t) invFreq.count();
-    kernel.dispatch(pass, rows, heads, headDim);
+    kernel.dispatch(pass, rows, heads, headDim, segmentRows);
 
     return result;
 }
-}
+} // namespace eacp::ML

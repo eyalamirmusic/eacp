@@ -61,7 +61,7 @@ std::vector<float> referenceRoPE(const std::vector<float>& x,
 
     return result;
 }
-}
+} // namespace
 
 auto tRoPEMatchesReferenceWithPartialRotary =
     test("RoPE/matchesReferenceWithPartialRotary") = []
@@ -144,4 +144,63 @@ auto tRoPELeavesTailUnchanged = test("RoPE/leavesTailUnchanged") = []
             auto index = (std::size_t) row * headDim + (std::size_t) d;
             check(values[index] == x[index]);
         }
+};
+
+auto tRoPESegmentsRotateAsSeparateSequences =
+    test("RoPE/segmentsRotateAsSeparateSequences") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto segments = 3;
+    constexpr auto segmentRows = 5;
+    constexpr auto rows = segments * segmentRows;
+    constexpr auto heads = 2;
+    constexpr auto headDim = 64;
+    constexpr auto halfRotary = 16;
+    constexpr auto segmentCount = segmentRows * heads * headDim;
+
+    auto x = scatteredValues(rows * heads * headDim, 5);
+    auto invFreqValues = std::vector<float> {};
+
+    for (auto i = 0; i < halfRotary; ++i)
+        invFreqValues.push_back(1.f / std::pow(10000.f, (float) i / halfRotary));
+
+    auto input = Tensor::fromHostF32(x.data(), {rows, heads * headDim}, device);
+    auto invFreq = Tensor::fromHostF32(invFreqValues.data(), {halfRotary}, device);
+
+    auto segmentInputs = std::vector<Tensor> {};
+
+    for (auto s = 0; s < segments; ++s)
+        segmentInputs.push_back(Tensor::fromHostF32(
+            x.data() + s * segmentCount, {segmentRows, heads * headDim}, device));
+
+    auto commands = device.makeCommandBuffer();
+    auto stacked = std::optional<Tensor> {};
+    auto separate = std::vector<Tensor> {};
+
+    {
+        auto pass = commands.beginCompute();
+        stacked =
+            applyRoPE(pass, input, invFreq, heads, headDim, segmentRows, device);
+
+        for (auto& segment: segmentInputs)
+            separate.push_back(
+                applyRoPE(pass, segment, invFreq, heads, headDim, device));
+    }
+
+    commands.commit();
+
+    auto values = stacked->toHostF32();
+
+    for (auto s = 0; s < segments; ++s)
+    {
+        auto expected = separate[(std::size_t) s].toHostF32();
+
+        for (auto i = 0; i < segmentCount; ++i)
+            check(values[(std::size_t) (s * segmentCount + i)]
+                  == expected[(std::size_t) i]);
+    }
 };
