@@ -194,6 +194,41 @@ auto tBufferOverPagesReadsThem =
         freePages(pages);
 };
 
+// An adopted buffer starts making its pages resident in the background the
+// moment it exists. Destroying it straight away has to wait for that rather
+// than leave the pages held by a request still in flight: the release is still
+// the caller's signal, and it still comes before the Buffer is gone.
+auto tBufferDestroyedAtOnceReleases =
+    test("AdoptedMemory/aBufferDestroyedAtOnceStillReleasesItsMemory") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    const auto bytes = std::int64_t {64} * 1024 * 1024;
+
+    for (auto attempt = 0; attempt < 4; ++attempt)
+    {
+        auto* pages = allocatePages(bytes);
+        std::memset(pages, attempt, (std::size_t) bytes);
+
+        auto released = false;
+
+        {
+            auto buffer = device.makeBufferOverMemory(
+                {pages, bytes, [&] { released = true; }}, BufferUsage::Storage);
+
+            check(buffer.isValid());
+        }
+
+        check(released);
+
+        if (released)
+            freePages(pages);
+    }
+};
+
 // The whole reason for the feature query: where the memory was adopted, the
 // caller and the GPU are looking at the same bytes, in both directions.
 auto tAdoptedMemoryIsShared =

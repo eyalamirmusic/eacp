@@ -91,8 +91,63 @@ struct Buffer::Native
         {
             length = 0;
             onReleased();
+
+            return;
+        }
+
+        requestResidencyInBackground(metalDevice);
+    }
+
+    // Metal wires a no-copy buffer's pages the first time a command buffer uses
+    // it, and for a mapped checkpoint that is half a second per nine gigabytes
+    // spent inside the first dispatch. A residency set asks for it now, on a
+    // background queue, so it overlaps whatever the caller does after loading
+    // rather than the first thing it runs - and reads the pages in from disk on
+    // the way when the file is not in the page cache. The set lives as long as
+    // the buffer and keeps its pages resident, as the first use would have.
+    void requestResidencyInBackground(id<MTLDevice> metalDevice)
+    {
+        if (@available(macOS 15.0, iOS 18.0, *))
+        {
+            auto descriptor = ObjC::Ptr<MTLResidencySetDescriptor> {};
+            descriptor = [MTLResidencySetDescriptor new];
+
+            id<MTLResidencySet> set =
+                [metalDevice newResidencySetWithDescriptor:descriptor.get()
+                                                     error:nil];
+
+            if (set == nil)
+                return;
+
+            residency = (NSObject*) set;
+
+            [set addAllocation:buffer.get()];
+            [set commit];
+
+            // Handed over unretained, so the set - and the buffer it holds -
+            // go when this Native does rather than when the block is disposed
+            // of; the destructor waits for the request instead.
+            auto* unretainedSet = (__bridge void*) set;
+            residencyRequest = dispatch_group_create();
+
+            dispatch_group_async(
+                residencyRequest,
+                dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                ^{ [(__bridge id<MTLResidencySet>) unretainedSet requestResidency]; });
         }
     }
+
+    ~Native()
+    {
+        if (residencyRequest == nullptr)
+            return;
+
+        dispatch_group_wait(residencyRequest, DISPATCH_TIME_FOREVER);
+        dispatch_release(residencyRequest);
+    }
+
+    Native(const Native&) = delete;
+    Native& operator=(const Native&) = delete;
 
     // The copy both update paths end in, so that each of them asserts the
     // owning thread once rather than once on the way through the other.
@@ -111,6 +166,8 @@ struct Buffer::Native
     }
 
     ObjC::Ptr<NSObject<MTLBuffer>> buffer;
+    ObjC::Ptr<NSObject> residency;
+    dispatch_group_t residencyRequest = nullptr;
     Device* device = nullptr;
     std::int64_t length = 0;
 };

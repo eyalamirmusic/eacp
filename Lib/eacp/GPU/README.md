@@ -1019,6 +1019,12 @@ underneath. `Buffer::isPageAligned` answers the contract before the call, and a
 descriptor that fails it makes an invalid `Buffer` rather than a quietly copied
 one on every backend — so a call site written on one is one the others take.
 
+Metal wires a no-copy buffer's pages the first time a command buffer uses it,
+which for a nine-gigabyte checkpoint is half a second inside the first dispatch.
+An adopted buffer asks for that at creation instead, through a residency set on
+a background queue (macOS 15 and later), so it overlaps whatever the caller does
+after loading, and reads the pages in on the way when the file is cold.
+
 `Buffer::canAdoptMemory(device)` says which of the two actually happened. True
 on Metal, where a shared-storage `MTLBuffer` is built straight over the host
 pages, so the caller and the GPU look at the same bytes in both directions and

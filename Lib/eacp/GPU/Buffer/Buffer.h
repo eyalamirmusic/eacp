@@ -127,6 +127,11 @@ public:
     // rather than copied where the backend can do that and copied where it
     // cannot. See ExternalMemory for the alignment contract and
     // canAdoptMemory for which of the two this device does.
+    //
+    // Where it is adopted, the pages are made resident for the GPU on a
+    // background queue from the moment the buffer exists (Metal on macOS 15 and
+    // later), so the cost of wiring a file the size of a model lands beside
+    // whatever the caller does next rather than inside its first dispatch.
     Buffer(Device& device,
            ExternalMemory memory,
            BufferUsage usage = BufferUsage::Storage);
