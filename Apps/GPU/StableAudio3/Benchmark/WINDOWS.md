@@ -73,6 +73,30 @@ has not come back.
   compiles from source every run and nothing underneath remembers. Delete
   `%LOCALAPPDATA%\<app>\Shaders` to get a genuine cold measurement.
 
+## The pool's retention window, and what it is and is not worth
+
+`BufferPool` freed storage nobody asked for again after two submissions.
+A sampling step submits once, so its temporaries survived into the next step
+and were reused. A codec decode submits four to six times, so every temporary
+it made was freed before the next decode asked for that size: **181 committed
+resources and 1.5 GB created per decode, every decode, for no reuse at all** -
+82 ms of a 140 ms decode on D3D12, where each one costs about 450 us. Sixty-four
+submissions outlives a round of anything here, and peak GPU memory is unchanged
+(12427 MB against 12422 MB over a medium 30 s run), because what the pool now
+holds is exactly what was being freed and reallocated a moment later.
+
+**What it is worth: a second decode in the same process goes 0.14 s to 0.02 s**,
+which is PyTorch-CUDA's 0.022 s. So what looked like a six-fold kernel gap in
+the codec was the pool and not the kernels.
+
+**What it is not worth: anything at all to a one-shot CLI run.** The app's own
+phase total falls (2.62 s to 2.51 s on small 12 s) and the wall clock does not
+move - 2.75-2.82 s before, 2.75-2.89 s after, measured three runs each way.
+The saving is spent releasing the buffers the pool held when the process exits.
+Quote the wall clock, not the phase total, for anything single-shot; the
+steady-state number is the one that matters to a server, a plugin or a UI that
+generates more than once.
+
 ## Measured and rejected
 
 Four things that looked like wins and were not, kept here so nobody spends the
