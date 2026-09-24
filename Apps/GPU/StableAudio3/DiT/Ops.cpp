@@ -255,12 +255,25 @@ Tensor adaLNModulate(ComputePass& pass,
                      const Tensor& shift,
                      Device& device)
 {
+    return adaLNModulate(pass,
+                         input,
+                         BufferRange::of(scale.buffer()),
+                         BufferRange::of(shift.buffer()),
+                         device);
+}
+
+Tensor adaLNModulate(ComputePass& pass,
+                     const Tensor& input,
+                     const BufferRange& scale,
+                     const BufferRange& shift,
+                     Device& device)
+{
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
     auto& kernel = GPU::sharedKernel<AdaLNModulateKernel>(device);
     kernel.input = input.buffer();
-    kernel.scale = scale.buffer();
-    kernel.shift = shift.buffer();
+    kernel.scale = scale;
+    kernel.shift = shift;
     kernel.output = result.buffer();
     kernel.dispatch(pass, input.rows(), input.cols());
 
@@ -272,11 +285,19 @@ Tensor sigmoidGate(ComputePass& pass,
                    const Tensor& gate,
                    Device& device)
 {
+    return sigmoidGate(pass, input, BufferRange::of(gate.buffer()), device);
+}
+
+Tensor sigmoidGate(ComputePass& pass,
+                   const Tensor& input,
+                   const BufferRange& gate,
+                   Device& device)
+{
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
     auto& kernel = GPU::sharedKernel<SigmoidGateKernel>(device);
     kernel.input = input.buffer();
-    kernel.gate = gate.buffer();
+    kernel.gate = gate;
     kernel.output = result.buffer();
     kernel.dispatch(pass, input.rows(), input.cols());
 

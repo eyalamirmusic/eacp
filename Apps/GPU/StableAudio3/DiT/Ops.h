@@ -183,6 +183,20 @@ ML::Tensor sigmoidGate(GPU::ComputePass& pass,
                        const ML::Tensor& gate,
                        GPU::Device& device = GPU::Device::shared());
 
+// The same two over a row of scale, shift or gate that is part of a larger
+// buffer - the adaLN modulation vector is six of them side by side - read where
+// it lies rather than copied out first.
+ML::Tensor adaLNModulate(GPU::ComputePass& pass,
+                         const ML::Tensor& input,
+                         const GPU::BufferRange& scale,
+                         const GPU::BufferRange& shift,
+                         GPU::Device& device = GPU::Device::shared());
+
+ML::Tensor sigmoidGate(GPU::ComputePass& pass,
+                       const ML::Tensor& input,
+                       const GPU::BufferRange& gate,
+                       GPU::Device& device = GPU::Device::shared());
+
 ML::Tensor concatRows(GPU::ComputePass& pass,
                       const ML::Tensor& top,
                       const ML::Tensor& bottom,

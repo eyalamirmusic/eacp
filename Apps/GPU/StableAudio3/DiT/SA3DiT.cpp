@@ -337,12 +337,19 @@ Tensor transformerBlock(ComputePass& pass,
 
     auto modulation = addTensors(pass, globalCondBase, layer.toScaleShiftGate, device);
 
-    auto scaleSelf = sliceColumns(pass, modulation, 0 * embedDimC, embedDimC, device);
-    auto shiftSelf = sliceColumns(pass, modulation, 1 * embedDimC, embedDimC, device);
-    auto gateSelf = sliceColumns(pass, modulation, 2 * embedDimC, embedDimC, device);
-    auto scaleFf = sliceColumns(pass, modulation, 3 * embedDimC, embedDimC, device);
-    auto shiftFf = sliceColumns(pass, modulation, 4 * embedDimC, embedDimC, device);
-    auto gateFf = sliceColumns(pass, modulation, 5 * embedDimC, embedDimC, device);
+    // The modulation is one row of six: each part is read where it lies.
+    auto modulationPart = [&](int part)
+    {
+        auto bytes = (std::int64_t) embedDimC * (std::int64_t) sizeof(float);
+        return BufferRange {&modulation.buffer(), part * bytes, bytes};
+    };
+
+    auto scaleSelf = modulationPart(0);
+    auto shiftSelf = modulationPart(1);
+    auto gateSelf = modulationPart(2);
+    auto scaleFf = modulationPart(3);
+    auto shiftFf = modulationPart(4);
+    auto gateFf = modulationPart(5);
 
     auto xn = rmsNorm(pass, x, layer.preNormGamma, config.rmsNormEpsilon, device);
     auto xm = adaLNModulate(pass, xn, scaleSelf, shiftSelf, device);
