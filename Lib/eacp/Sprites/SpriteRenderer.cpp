@@ -23,7 +23,9 @@ void SpriteShader::define()
     setPosition(float4(ndcX, ndcY, 0.0f, 1.0f));
 
     auto uv = uv0 + corner * (uv1 - uv0);
-    setFragment(sample(image, varying(uv)) * varying(tint));
+    auto fragmentUv = varying(uv);
+    auto fragmentTint = varying(tint);
+    setFragment(sample(image, fragmentUv) * fragmentTint);
 }
 
 void Nv12Shader::define()

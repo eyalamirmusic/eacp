@@ -2366,6 +2366,32 @@ golden text mismatch, on Windows, against goldens written from a clang build.
 Sequence anything that names, allocates a slot or advances a counter into its
 own statement. One state-mutating call per expression.
 
+The same holds for a shader written in the EDSL, because the calls that declare
+things are the same kind of state machine: `varying`, `vertexInput`,
+`instanceInput`, `var`, `shared`, the buffer and texture declarations and
+`atomicAdd` each take the next slot or append a statement. The sprite shader
+wrote
+
+```cpp
+setFragment(sample(image, varying(uv)) * varying(tint));
+```
+
+and clang gave `uv` varying 0 and `tint` varying 1 while GCC and MSVC gave them
+the other way round — a correct shader either way, and a golden mismatch on
+every lane but the one that wrote the goldens. Name each one in a local first,
+in the order the slots should come out:
+
+```cpp
+auto fragmentUv = varying(uv);
+auto fragmentTint = varying(tint);
+setFragment(sample(image, fragmentUv) * fragmentTint);
+```
+
+Arguments of one call are just as unsequenced as operands of `*`, so
+`float4(varying(a), varying(b))` is the same bug. Declarations separated by
+commas (`auto a = var(zero), b = var(zero);`) are fine: each initialiser is its
+own full-expression.
+
 ## Reading pixels back
 
 `View::renderToImage` renders off-screen and hands back a `Graphics::Image`. It
