@@ -110,7 +110,7 @@ Tensor applyChunkMidpointShift(ComputePass& pass,
 
     auto headPad = sliceRows(pass, firstOut, 0, shift, device);
     auto tailPad = sliceRows(pass, firstOut, firstOut.rows() - shift, shift, device);
-    auto padded = concatRows(pass, {headPad, firstOut, tailPad}, device);
+    auto padded = ML::concatRows(pass, {headPad, firstOut, tailPad}, device);
 
     auto secondOut = runChunkedStack(
         pass, padded, effectiveChunkSize, weights.layers, split, weights.transformerDepth, device);
