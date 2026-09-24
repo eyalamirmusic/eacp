@@ -2872,8 +2872,13 @@ private:
             if (operand >= 0)
                 operands.add(operand);
 
-        return define(operands, indent, uses, open)
-               + holdTheRecord(statement, indent, open);
+        // Sequenced: both name things, and which runs first decides which
+        // name they get. The operands of + are unsequenced, so left to the
+        // expression this came out of, one host compiler emitted one shader
+        // and another emitted a different one.
+        auto named = define(operands, indent, uses, open);
+
+        return named + holdTheRecord(statement, indent, open);
     }
 
     std::string freezeUnder(int node,
