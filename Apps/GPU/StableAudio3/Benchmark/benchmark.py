@@ -297,8 +297,21 @@ print("BENCHMARK_RESULT_JSON:" + json.dumps({
 
 
 def pytorch_python(repo):
+    """The interpreter to run the PyTorch child with.
+
+    SA3_PYTORCH_PYTHON names one outright. Otherwise `uv run --no-sync`, and
+    the --no-sync matters: the project pins torch to the CUDA index only for
+    Linux, so on Windows a sync installs the CPU wheel - and it will do that
+    over a CUDA one somebody installed on purpose, silently, leaving the
+    benchmark to report PyTorch running on the CPU as if it were the GPU.
+    """
+    named = os.environ.get("SA3_PYTORCH_PYTHON")
+
+    if named:
+        return named
+
     return subprocess.run(
-        ["uv", "run", "--project", str(repo), "python", "-c",
+        ["uv", "run", "--no-sync", "--project", str(repo), "python", "-c",
          "import sys; print(sys.executable)"],
         capture_output=True, text=True, cwd=str(repo), check=True,
     ).stdout.strip()
