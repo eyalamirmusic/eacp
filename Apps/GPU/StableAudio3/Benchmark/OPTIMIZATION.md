@@ -426,6 +426,24 @@ medium forward golden and a listening check.
 
 ---
 
+### 14. The SAME-L stack in one command buffer: reverted
+
+`dca635a2` recorded all twelve SAME-L decoder layers into one command buffer.
+It measured no speed gain, and it pushed the medium run's peak memory
+footprint from 12.4 GB to 21.6 GB: every temporary of every layer stays out of
+the buffer pool until the one command buffer has run, because storage
+destroyed mid-recording is only reusable once that recording's submission has
+finished. Back to a command buffer per layer, the pool hands layer n's
+temporaries to layer n + 1:
+
+| | One command buffer | One per layer |
+|---|---|---|
+| Peak footprint (medium, 30 s) | 21.64 GB | 12.66 GB |
+| Decode | 0.75 s | 0.60 s |
+
+Output identical to `500f3d34` either way. The GPU README says the same under
+"Temporaries are recycled": submit where the temporaries die.
+
 ## Rough end state
 
 The items don't add up exactly, but here is where things should land.

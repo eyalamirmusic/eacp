@@ -926,6 +926,17 @@ What changes for a caller is only what "uninitialised" always allowed: the
 contents of a new buffer are whatever was there. A kernel that needs zeros says
 so with `fill`.
 
+The command buffer is the unit of recycling, and that decides how long one
+should be. A temporary destroyed while its command buffer is still being
+recorded can only go back to work once that command buffer has run, so nothing
+a buffer's own dispatches free is available to its later ones. A network's
+layers recorded into one command buffer each get fresh storage for every
+temporary; recorded a layer to a command buffer, layer n + 1 runs in layer
+n's memory. On the Stable Audio SAME-L decoder that was the difference between
+a 21.6 GB peak footprint and a 12.7 GB one, for identical output and a slightly
+faster decode. Where the temporaries are large, submit at the boundary they
+die at.
+
 ### Part of a buffer
 
 A storage-buffer member takes a `BufferRange` as readily as a whole `Buffer`,

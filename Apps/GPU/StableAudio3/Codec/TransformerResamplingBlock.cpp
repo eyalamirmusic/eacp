@@ -72,17 +72,25 @@ Tensor runSlidingWindowStack(const Tensor& input,
 {
     auto band = AttentionBand {leftRadius, rightRadius, input.rows()};
     auto x = std::optional<Tensor> {};
-    auto commands = device.makeCommandBuffer();
 
+    // A command buffer per layer, not one for the stack: a layer's temporaries
+    // go back to the device's BufferPool as the layer ends, and the pool hands
+    // them to the next layer only once the GPU has finished the submission
+    // that used them. One buffer for all twelve keeps every temporary of every
+    // layer out of the pool until the whole stack is done.
+    for (const auto& layer: layers)
     {
-        auto pass = commands.beginCompute();
+        auto commands = device.makeCommandBuffer();
 
-        for (const auto& layer: layers)
+        {
+            auto pass = commands.beginCompute();
             x = applyCodecTransformerBlock(
                 pass, x.has_value() ? *x : input, layer, band, device);
+        }
+
+        commands.commit();
     }
 
-    commands.commit();
     return std::move(*x);
 }
 
