@@ -21,7 +21,9 @@ from pathlib import Path
 BENCHMARK_DIR = Path(__file__).resolve().parent
 EACP_REPO = BENCHMARK_DIR.parents[3]
 OUTPUT_DIR = BENCHMARK_DIR / "Outputs"
-DEFAULT_EACP_BINARY = EACP_REPO / "build-release/Apps/GPU/StableAudio3/StableAudio3"
+DEFAULT_EACP_BINARY = EACP_REPO / (
+    "build-release/Apps/GPU/StableAudio3/StableAudio3"
+    + (".exe" if sys.platform == "win32" else ""))
 PYTORCH_MODEL_NAMES = {"small": "small-music", "medium": "medium"}
 
 EACP_PHASES = {
@@ -38,7 +40,12 @@ EACP_PHASES = {
 
 
 class GpuSampler:
-    """Polls ioreg's IOAccelerator statistics in a background thread."""
+    """Polls the GPU's own utilisation counter in a background thread.
+
+    ioreg on macOS, nvidia-smi where there is an NVIDIA card. Both answer the
+    same two questions - how busy the GPU is, and how much of its memory is in
+    use - so the rest of the script does not care which one replied.
+    """
 
     def __init__(self, interval=0.25):
         self.interval = interval
@@ -56,6 +63,13 @@ class GpuSampler:
 
     @staticmethod
     def read():
+        if sys.platform == "darwin":
+            return GpuSampler.read_ioreg()
+
+        return GpuSampler.read_nvidia_smi()
+
+    @staticmethod
+    def read_ioreg():
         out = subprocess.run(
             ["ioreg", "-r", "-c", "IOAccelerator", "-d", "1"],
             capture_output=True,
@@ -68,6 +82,31 @@ class GpuSampler:
             int(utilization.group(1)) if utilization else None,
             int(in_use.group(1)) if in_use else None,
         )
+
+    @staticmethod
+    def read_nvidia_smi():
+        try:
+            out = subprocess.run(
+                ["nvidia-smi",
+                 "--query-gpu=utilization.gpu,memory.used",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            ).stdout.strip().splitlines()
+        except (OSError, subprocess.SubprocessError):
+            return (None, None)
+
+        if not out:
+            return (None, None)
+
+        fields = [field.strip() for field in out[0].split(",")]
+
+        if len(fields) < 2:
+            return (None, None)
+
+        # Megabytes, reported as bytes, so both readers answer in the same unit.
+        return (int(fields[0]), int(fields[1]) * 1024 * 1024)
 
     def run(self):
         while not self.stop_event.is_set():
@@ -95,9 +134,17 @@ class GpuSampler:
 
 
 def run_timed(command, cwd=None, timeout=None):
-    """Runs command under /usr/bin/time -l and returns (proc, rusage)."""
+    """Runs command and returns (proc, rusage).
+
+    /usr/bin/time -l is where the memory figures come from, and it is macOS's;
+    elsewhere the command is run directly and the memory keys come back None,
+    which every reader of them already handles. The timings are the script's
+    own either way.
+    """
+    measured = ["/usr/bin/time", "-l", *command] if sys.platform == "darwin"         else list(command)
+
     proc = subprocess.run(
-        ["/usr/bin/time", "-l", *command],
+        measured,
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -179,6 +226,8 @@ device = config["device"]
 def sync():
     if device == "mps":
         torch.mps.synchronize()
+    elif device == "cuda":
+        torch.cuda.synchronize()
 
 def timed_method(owner, name, log):
     original = getattr(owner, name)
@@ -315,7 +364,8 @@ def main():
     parser.add_argument("--prompt", default="lofi house loop")
     parser.add_argument("--eacp-binary", type=Path, default=DEFAULT_EACP_BINARY)
     parser.add_argument("--pytorch-repo", type=Path, default=os.environ.get("SA3_PYTORCH_REPO"))
-    parser.add_argument("--device", choices=["mps", "cpu"], default="mps")
+    parser.add_argument("--device", choices=["mps", "cuda", "cpu"],
+                        default="cuda" if sys.platform != "darwin" else "mps")
     parser.add_argument("--no-warmup", dest="warmup", action="store_false",
                         help="PyTorch: time only the first (cold) generate()")
     parser.add_argument("--timeout", type=float, default=None,
