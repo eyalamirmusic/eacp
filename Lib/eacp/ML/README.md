@@ -35,12 +35,18 @@ auto file = SafetensorsFile::open(path);
 auto weight = file->loadF32("layers.0.attn.to_qkv.weight");
 ```
 
-On a device that can adopt host memory (Metal), the first load makes the whole
-mapping one GPU buffer and every F32 tensor after it is a range of that buffer.
-Nothing is copied, the pages come off the disk as they are needed, the buffer
-asks for residency in the background (see "A buffer over memory you already
-have" in `Lib/eacp/GPU/README.md`), and the buffer holds the mapping, so the
-tensors outlive the `SafetensorsFile` they came from. A tensor whose offset is
+On a device that can adopt host memory (Metal), every F32 tensor is a range of
+a GPU buffer over the mapping. `open` cuts the file into segments of
+neighbouring tensors of up to 256 MB, and a segment becomes a buffer on the
+first load from it. Nothing is copied, each buffer asks for residency in the
+background (see "A buffer over memory you already have" in
+`Lib/eacp/GPU/README.md`), and the buffers hold the mapping, so the tensors
+outlive the `SafetensorsFile` they came from. Segments nobody loads from are
+never wired: Stable Audio 3 medium's codec encoder, the last 1.7 GB of its
+9.2 GB checkpoint, is never touched. And a command buffer that reads one small
+tensor waits for its own segment's residency rather than the whole file's, so
+the prompt encoder, which reads the conditioner's padding embedding, no longer
+waits half a second behind the DiT. A tensor whose offset is
 off `Device::storageBufferOffsetAlignment()` is copied into a buffer of its own,
 as is every tensor on a device that cannot adopt memory, and F16 and BF16 are
 converted to F32 on the host - the caller writes the same line in every case.

@@ -3,6 +3,7 @@
 #include "../../GPU/Codegen/PackedVertex.h"
 #include "Json.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 
@@ -39,7 +40,19 @@ int bytesPerElement(SafetensorsDType dtype)
 
     return 0;
 }
+
+// The most a segment spans when it holds more than one tensor. Small enough
+// that a checkpoint's unused tail is left out to within a fraction of it and
+// that the residency requests run side by side; large enough that a model's
+// weights are a few dozen buffers rather than thousands.
+constexpr auto segmentTargetBytes = std::int64_t {256} << 20;
+
+std::int64_t pageFloor(std::int64_t offset)
+{
+    const auto page = GPU::Buffer::memoryPageSize();
+    return offset / page * page;
 }
+} // namespace
 
 SafetensorsFile::SafetensorsFile(
     MemoryMappedFile mappedFile,
@@ -49,6 +62,27 @@ SafetensorsFile::SafetensorsFile(
     , dataSectionStart(dataStart)
     , entries(std::move(entriesToUse))
 {
+    auto spans = std::vector<std::pair<std::int64_t, std::int64_t>> {};
+
+    for (const auto& [name, entry]: entries)
+        if (entry.dtype == SafetensorsDType::F32 && entry.byteLength > 0)
+        {
+            auto offset = fileOffsetOf(entry);
+            spans.emplace_back(offset, offset + (std::int64_t) entry.byteLength);
+        }
+
+    std::sort(spans.begin(), spans.end());
+
+    for (const auto& [begin, end]: spans)
+    {
+        auto fits =
+            !segments.empty() && end - segments.back().start <= segmentTargetBytes;
+
+        if (fits)
+            segments.back().end = std::max(segments.back().end, end);
+        else
+            segments.push_back({begin, pageFloor(begin), end, nullptr, false});
+    }
 }
 
 std::optional<SafetensorsFile> SafetensorsFile::open(const FilePath& path)
@@ -69,9 +103,8 @@ std::optional<SafetensorsFile> SafetensorsFile::open(const FilePath& path)
     if (headerLength > bytes.getSize() - 8)
         return std::nullopt;
 
-    auto headerText =
-        std::string_view {reinterpret_cast<const char*>(bytes.data()) + 8,
-                          (std::size_t) headerLength};
+    auto headerText = std::string_view {
+        reinterpret_cast<const char*>(bytes.data()) + 8, (std::size_t) headerLength};
 
     auto parsed = Json::parse(headerText);
 
@@ -89,9 +122,8 @@ std::optional<SafetensorsFile> SafetensorsFile::open(const FilePath& path)
         auto entry = SafetensorsEntry {};
 
         auto dtypeField = value.find("dtype");
-        entry.dtype =
-            dtypeField != nullptr ? dtypeFromName(dtypeField->asString())
-                                  : SafetensorsDType::Unknown;
+        entry.dtype = dtypeField != nullptr ? dtypeFromName(dtypeField->asString())
+                                            : SafetensorsDType::Unknown;
 
         auto shapeField = value.find("shape");
 
@@ -138,32 +170,60 @@ std::int64_t SafetensorsFile::fileOffsetOf(const SafetensorsEntry& entry) const
     return (std::int64_t) (dataSectionStart + entry.byteOffset);
 }
 
-// One buffer over the whole mapping, made on the first load for a device and
-// shared by every tensor after it. Null where the device copies instead, or
-// where it declined this mapping (a file past its largest buffer, say).
-std::shared_ptr<const GPU::Buffer>
-    SafetensorsFile::fileBufferFor(GPU::Device& device) const
+SafetensorsFile::Segment&
+    SafetensorsFile::segmentHolding(std::int64_t fileOffset) const
 {
-    if (fileBufferDevice == &device)
-        return fileBuffer;
+    auto after = std::upper_bound(segments.begin(),
+                                  segments.end(),
+                                  fileOffset,
+                                  [](std::int64_t offset, const Segment& segment)
+                                  { return offset < segment.firstTensorOffset; });
 
-    fileBufferDevice = &device;
-    fileBuffer = nullptr;
+    assert(after != segments.begin());
+    return *std::prev(after);
+}
+
+// A segment's buffer, made on its first load for a device and shared by every
+// tensor in it after that. Null where the device copies instead, or where it
+// declined the memory.
+std::shared_ptr<const GPU::Buffer>
+    SafetensorsFile::bufferFor(Segment& segment, GPU::Device& device) const
+{
+    if (segmentDevice != &device)
+    {
+        segmentDevice = &device;
+
+        for (auto& each: segments)
+            each = {each.firstTensorOffset, each.start, each.end, nullptr, false};
+    }
+
+    if (segment.adopted)
+        return segment.buffer;
+
+    segment.adopted = true;
 
     if (!GPU::Buffer::canAdoptMemory(device))
         return nullptr;
 
-    auto memory =
-        GPU::ExternalMemory {const_cast<std::uint8_t*>(mapped->bytes().data()),
-                             (std::int64_t) mapped->bytes().getSize(),
-                             [keepMapped = mapped] {}};
+    auto memory = GPU::ExternalMemory {
+        const_cast<std::uint8_t*>(mapped->bytes().data() + segment.start),
+        segment.end - segment.start,
+        [keepMapped = mapped] {}};
 
     auto buffer = device.makeBufferOverMemory(std::move(memory));
 
     if (buffer.isValid())
-        fileBuffer = std::make_shared<const GPU::Buffer>(std::move(buffer));
+        segment.buffer = std::make_shared<const GPU::Buffer>(std::move(buffer));
 
-    return fileBuffer;
+    return segment.buffer;
+}
+
+int SafetensorsFile::segmentBufferCount() const
+{
+    return (int) std::count_if(segments.begin(),
+                               segments.end(),
+                               [](const Segment& segment)
+                               { return segment.buffer != nullptr; });
 }
 
 Tensor SafetensorsFile::loadF32(const std::string& name, GPU::Device& device) const
@@ -181,10 +241,16 @@ Tensor SafetensorsFile::loadF32(const std::string& name, GPU::Device& device) co
     auto offset = fileOffsetOf(*entry);
     auto onGrid = offset % device.storageBufferOffsetAlignment() == 0;
 
-    if (auto buffer = fileBufferFor(device); buffer != nullptr && onGrid)
+    if (onGrid && entry->byteLength > 0)
     {
-        ++counts.inPlace;
-        return Tensor {std::move(buffer), offset, entry->shape, DType::F32};
+        auto& segment = segmentHolding(offset);
+
+        if (auto buffer = bufferFor(segment, device))
+        {
+            ++counts.inPlace;
+            return Tensor {
+                std::move(buffer), offset - segment.start, entry->shape, DType::F32};
+        }
     }
 
     ++counts.copied;
@@ -252,6 +318,6 @@ float SafetensorsFile::loadScalar(const std::string& name) const
     std::memcpy(&bits, rawBytes(name), sizeof(bits));
 
     return entry->dtype == SafetensorsDType::BF16 ? GPU::bfloat16ToFloat(bits)
-                                                   : GPU::halfToFloat(bits);
+                                                  : GPU::halfToFloat(bits);
 }
-}
+} // namespace eacp::ML

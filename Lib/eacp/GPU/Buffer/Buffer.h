@@ -129,9 +129,12 @@ public:
     // canAdoptMemory for which of the two this device does.
     //
     // Where it is adopted, the pages are made resident for the GPU on a
-    // background queue from the moment the buffer exists (Metal on macOS 15 and
-    // later), so the cost of wiring a file the size of a model lands beside
-    // whatever the caller does next rather than inside its first dispatch.
+    // background queue (Metal on macOS 15 and later), so the cost of wiring a
+    // file the size of a model lands beside whatever the caller does next
+    // rather than inside its first dispatch. The request waits until nothing
+    // has been adopted for 10 ms, since a request in flight holds up the next
+    // adoption, and requests go one at a time in the order the buffers were
+    // made - so a model adopted a piece at a time is wired first-loaded first.
     Buffer(Device& device,
            ExternalMemory memory,
            BufferUsage usage = BufferUsage::Storage);

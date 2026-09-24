@@ -6,6 +6,9 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <mutex>
+#include <vector>
+
 #include <unistd.h>
 
 namespace eacp::GPU
@@ -21,6 +24,90 @@ std::int64_t roundedUpToPage(std::int64_t bytes)
 
     return ((bytes + page - 1) / page) * page;
 }
+
+// A residency request holds a lock that making the next no-copy buffer waits
+// on, so a loader adopting a model a piece at a time would make each piece
+// wait for the request of the one before it - a second of loading for what
+// is otherwise free. Requests are held here instead until no memory has been
+// adopted for a moment, and then all go at once; a loader that never pauses
+// sends them anyway once the oldest has waited long enough.
+class ResidencyRequests
+{
+public:
+    static ResidencyRequests& shared()
+    {
+        static auto requests = ResidencyRequests {};
+        return requests;
+    }
+
+    void add(void* set, dispatch_group_t group)
+    {
+        dispatch_retain(group);
+        dispatch_group_enter(group);
+
+        auto generation = std::uint64_t {};
+        auto now = dispatch_time(DISPATCH_TIME_NOW, 0);
+
+        {
+            auto lock = std::lock_guard {mutex};
+
+            if (pending.empty())
+                oldest = now;
+
+            pending.push_back({set, group});
+            generation = ++latest;
+        }
+
+        dispatch_after(dispatch_time(now, quietPeriod),
+                       queue,
+                       ^{ sendIfQuiet(generation); });
+    }
+
+private:
+    struct Pending
+    {
+        void* set = nullptr;
+        dispatch_group_t group = nullptr;
+    };
+
+    static constexpr auto quietPeriod = std::int64_t {10} * NSEC_PER_MSEC;
+    static constexpr auto longestWait = std::int64_t {100} * NSEC_PER_MSEC;
+
+    void sendIfQuiet(std::uint64_t generation)
+    {
+        auto ready = std::vector<Pending> {};
+
+        {
+            auto lock = std::lock_guard {mutex};
+            auto waitedLongEnough =
+                dispatch_time(oldest, longestWait) <= dispatch_time(DISPATCH_TIME_NOW, 0);
+
+            if (generation != latest && !waitedLongEnough)
+                return;
+
+            ready.swap(pending);
+        }
+
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                       ^{
+                           for (auto request: ready)
+                           {
+                               if (@available(macOS 15.0, iOS 18.0, *))
+                                   [(__bridge id<MTLResidencySet>) request.set
+                                       requestResidency];
+                               dispatch_group_leave(request.group);
+                               dispatch_release(request.group);
+                           }
+                       });
+    }
+
+    std::mutex mutex;
+    std::vector<Pending> pending;
+    std::uint64_t latest = 0;
+    dispatch_time_t oldest = 0;
+    dispatch_queue_t queue =
+        dispatch_queue_create("eacp.gpu.residency", DISPATCH_QUEUE_SERIAL);
+};
 } // namespace
 
 struct Buffer::Native
@@ -125,15 +212,10 @@ struct Buffer::Native
             [set commit];
 
             // Handed over unretained, so the set - and the buffer it holds -
-            // go when this Native does rather than when the block is disposed
-            // of; the destructor waits for the request instead.
-            auto* unretainedSet = (__bridge void*) set;
+            // go when this Native does rather than when the request is done
+            // with it; the destructor waits for the request instead.
             residencyRequest = dispatch_group_create();
-
-            dispatch_group_async(
-                residencyRequest,
-                dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
-                ^{ [(__bridge id<MTLResidencySet>) unretainedSet requestResidency]; });
+            ResidencyRequests::shared().add((__bridge void*) set, residencyRequest);
         }
     }
 

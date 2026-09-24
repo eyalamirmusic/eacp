@@ -1025,6 +1025,14 @@ An adopted buffer asks for that at creation instead, through a residency set on
 a background queue (macOS 15 and later), so it overlaps whatever the caller does
 after loading, and reads the pages in on the way when the file is cold.
 
+A request in flight holds a lock the next `newBufferWithBytesNoCopy` waits on,
+so a loader that adopts a file as thirty 256 MB pieces and requests each at
+once spends a second loading what is otherwise free. The requests are held
+until nothing has been adopted for 10 ms (or the oldest has waited 100 ms) and
+then sent one at a time, in the order the buffers were made. One at a time is
+measured, not assumed: thirty requests side by side took 1.0 s for 7.5 GB where
+one after another took 0.55 s, and slowed every CPU thread beside them.
+
 `Buffer::canAdoptMemory(device)` says which of the two actually happened. True
 on Metal, where a shared-storage `MTLBuffer` is built straight over the host
 pages, so the caller and the GPU look at the same bytes in both directions and

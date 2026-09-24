@@ -32,11 +32,15 @@ struct SafetensorsEntry
 //
 // loadF32 is the one call a model's loader makes per tensor, and it gives the
 // cheapest tensor the device allows. Where the device can adopt host memory
-// (Metal), the first load makes the whole mapping one GPU buffer and every F32
-// tensor is a range of it: nothing is copied, the pages come off the disk as
-// the GPU first reads them, and the OS can evict them again, since they are the
-// file's. That buffer holds the mapping, so the tensors outlive this object
-// safely. A tensor whose offset is off the device's storage-bind grid, and
+// (Metal), every F32 tensor is a range of a GPU buffer over the mapping itself:
+// nothing is copied, and the OS can evict the pages again, since they are the
+// file's. The mapping is cut into segments of neighbouring tensors at open,
+// and a segment becomes a buffer - which asks for its pages to be made
+// resident in the background - on the first load from it, so the parts of a
+// checkpoint a program never loads are never wired, and a command buffer that
+// reads one small tensor waits for that segment's residency rather than the
+// whole file's. The buffers hold the mapping, so the tensors outlive this
+// object safely. A tensor whose offset is off the device's storage-bind grid, and
 // every tensor on a device that cannot adopt memory, is copied into a buffer
 // of its own; F16 and BF16 are converted to F32 on the host. The caller writes
 // the same code either way.
@@ -48,7 +52,10 @@ class SafetensorsFile
 public:
     static std::optional<SafetensorsFile> open(const FilePath& path);
 
-    const std::map<std::string, SafetensorsEntry>& tensors() const { return entries; }
+    const std::map<std::string, SafetensorsEntry>& tensors() const
+    {
+        return entries;
+    }
     const SafetensorsEntry* find(const std::string& name) const;
 
     const std::uint8_t* rawBytes(const std::string& name) const;
@@ -77,20 +84,34 @@ public:
 
     LoadCounts loadCounts() const { return counts; }
 
+    // How many GPU buffers the in-place loads so far were served from.
+    int segmentBufferCount() const;
+
 private:
+    struct Segment
+    {
+        std::int64_t firstTensorOffset = 0;
+        std::int64_t start = 0;
+        std::int64_t end = 0;
+        std::shared_ptr<const GPU::Buffer> buffer;
+        bool adopted = false;
+    };
+
     SafetensorsFile(MemoryMappedFile mappedFile,
                     std::uint64_t dataStart,
                     std::map<std::string, SafetensorsEntry> entriesToUse);
 
-    std::shared_ptr<const GPU::Buffer> fileBufferFor(GPU::Device& device) const;
+    Segment& segmentHolding(std::int64_t fileOffset) const;
+    std::shared_ptr<const GPU::Buffer> bufferFor(Segment& segment,
+                                                 GPU::Device& device) const;
     std::int64_t fileOffsetOf(const SafetensorsEntry& entry) const;
 
     std::shared_ptr<const MemoryMappedFile> mapped;
     std::uint64_t dataSectionStart = 0;
     std::map<std::string, SafetensorsEntry> entries;
 
-    mutable std::shared_ptr<const GPU::Buffer> fileBuffer;
-    mutable const GPU::Device* fileBufferDevice = nullptr;
+    mutable std::vector<Segment> segments;
+    mutable const GPU::Device* segmentDevice = nullptr;
     mutable LoadCounts counts;
 };
-}
+} // namespace eacp::ML
