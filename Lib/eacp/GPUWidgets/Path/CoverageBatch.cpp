@@ -193,22 +193,26 @@ void CoverageBatch::buildTiles(GPU::ComputePass& pass)
     pass.dispatch(clear, std::max(cells, tiles + 1));
     ++dispatches;
 
-    auto& bin = sharedKernel<BinKernel>();
-    bin.segments = *segmentBuffer;
-    bin.records = *recordBuffer;
-    bin.pathStarts = *segmentStartBuffer;
-    bin.cells = *cellBuffer;
-    bin.tileCounts = *tileCountBuffer;
-    bin.tileOffsets = *tileOffsetBuffer;
-    bin.tileSegments = *entryBuffer;
-    bin.entryCapacity = (std::uint32_t) entries;
-    bin.pathCount = paths;
+    // Twice, counting and then filling, and assigned in full each time: a
+    // shared kernel lets go of its buffers after every dispatch.
+    auto dispatchBin = [&](unsigned mode)
+    {
+        auto& bin = sharedKernel<BinKernel>();
+        bin.segments = *segmentBuffer;
+        bin.records = *recordBuffer;
+        bin.pathStarts = *segmentStartBuffer;
+        bin.cells = *cellBuffer;
+        bin.tileCounts = *tileCountBuffer;
+        bin.tileOffsets = *tileOffsetBuffer;
+        bin.tileSegments = *entryBuffer;
+        bin.entryCapacity = (std::uint32_t) entries;
+        bin.pathCount = paths;
+        bin.mode = mode;
+        pass.dispatch(bin, segments.size() / 4);
+        ++dispatches;
+    };
 
-    auto segmentCount = segments.size() / 4;
-
-    bin.mode = BinKernel::countMode;
-    pass.dispatch(bin, segmentCount);
-    ++dispatches;
+    dispatchBin(BinKernel::countMode);
 
     // The backdrop's crossings landed in the cells on that pass, so this is all
     // that is left of it: the running sum along each pixel row.
@@ -225,9 +229,7 @@ void CoverageBatch::buildTiles(GPU::ComputePass& pass)
     tileSum.run(pass, *tileCountBuffer, *tileOffsetBuffer, tiles + 1);
     dispatches += tileSum.getDispatchCount();
 
-    bin.mode = BinKernel::fillMode;
-    pass.dispatch(bin, segmentCount);
-    ++dispatches;
+    dispatchBin(BinKernel::fillMode);
 }
 
 void CoverageBatch::dispatch(GPU::ComputePass& pass)

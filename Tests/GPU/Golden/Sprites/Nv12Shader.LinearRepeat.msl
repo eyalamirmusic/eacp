@@ -1,0 +1,48 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float2 a0 [[attribute(0)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+    float2 v0;
+};
+
+struct Uniforms
+{
+    float2 u0;
+    float2 u1;
+    float2 u2;
+    float2 u3;
+    float4 u4;
+    float4 u5;
+    float4 u6;
+};
+
+vertex VertexOut vertexMain(VertexIn input [[stage_in]], constant Uniforms& uniforms [[buffer(16)]])
+{
+    float2 t0 = ((uniforms.u1 + ((input.a0).x * uniforms.u2)) + ((input.a0).y * uniforms.u3));
+    VertexOut output;
+    output.position = float4(((((t0).x / (uniforms.u0).x) * 2.0) - 1.0), (1.0 - (((t0).y / (uniforms.u0).y) * 2.0)), 0.0, 1.0);
+    output.v0 = input.a0;
+    return output;
+}
+
+fragment float4 fragmentMain(VertexOut input [[stage_in]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    texture2d<float> texture0 [[texture(0)]],
+    sampler sampler0 [[sampler(0)]],
+    texture2d<float> texture1 [[texture(1)]],
+    sampler sampler1 [[sampler(1)]])
+{
+    float t0 = (((texture0.sample(sampler0, input.v0)).x - (uniforms.u5).x) * (uniforms.u5).y);
+    float4 t1 = texture1.sample(sampler1, input.v0);
+    float t2 = (((t1).y - (uniforms.u5).z) * (uniforms.u5).w);
+    float t3 = (((t1).x - (uniforms.u5).z) * (uniforms.u5).w);
+    float3 t4 = clamp(float3((t0 + ((uniforms.u6).x * t2)), ((t0 - ((uniforms.u6).y * t3)) - ((uniforms.u6).z * t2)), (t0 + ((uniforms.u6).w * t3))), 0.0, 1.0);
+    return (float4((t4).x, (t4).y, (t4).z, 1.0) * uniforms.u4);
+}

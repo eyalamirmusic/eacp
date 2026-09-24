@@ -11,6 +11,12 @@
 
 namespace eacp::GPU
 {
+bool Device::ThreadOwner::isCurrent() const
+{
+    return followsMainThread ? Threads::isMainThread()
+                             : std::this_thread::get_id() == id;
+}
+
 // The thread rule the class comment states, checked in one place for all three
 // backends. Out of line rather than inline so that <cassert> and the
 // main-thread query stay out of a header most of the module includes.
@@ -23,11 +29,7 @@ namespace eacp::GPU
 void Device::assertOwningThread() const
 {
 #ifndef NDEBUG
-    const auto onOwningThread = mainThreadOwned
-                                    ? Threads::isMainThread()
-                                    : std::this_thread::get_id() == owningThread;
-
-    assert(onOwningThread
+    assert(threadOwner().isCurrent()
            && "eacp: a GPU::Device and everything made from it belong to the "
               "thread that made it - give each thread its own");
 #endif

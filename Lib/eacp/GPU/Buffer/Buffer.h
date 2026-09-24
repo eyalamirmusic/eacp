@@ -3,10 +3,13 @@
 #include "../Common.h"
 
 #include <cstdint>
+#include <memory>
 
 namespace eacp::GPU
 {
 class Device;
+class BufferPool;
+struct BufferPoolLink;
 
 // What a buffer is bound as. A Vertex buffer feeds the vertex stage; an Index
 // buffer feeds drawIndexed; a Storage buffer is read/written by a compute
@@ -115,10 +118,26 @@ public:
            BufferUsage usage = BufferUsage::Vertex,
            BufferStorage storage = BufferStorage::Device);
 
+    // A Buffer that came from the device's BufferPool gives its storage back
+    // to it here, if the Device is still alive and this is its thread; any
+    // other frees it.
+    ~Buffer();
+
+    Buffer(Buffer&& other) noexcept;
+    Buffer& operator=(Buffer&& other) noexcept;
+
     // The zero-copy sibling: a buffer over memory the caller owns, adopted
     // rather than copied where the backend can do that and copied where it
     // cannot. See ExternalMemory for the alignment contract and
     // canAdoptMemory for which of the two this device does.
+    //
+    // Where it is adopted, the pages are made resident for the GPU on a
+    // background queue (Metal on macOS 15 and later), so the cost of wiring a
+    // file the size of a model lands beside whatever the caller does next
+    // rather than inside its first dispatch. The request waits until nothing
+    // has been adopted for 10 ms, since a request in flight holds up the next
+    // adoption, and requests go one at a time in the order the buffers were
+    // made - so a model adopted a piece at a time is wired first-loaded first.
     Buffer(Device& device,
            ExternalMemory memory,
            BufferUsage usage = BufferUsage::Storage);
@@ -240,8 +259,15 @@ public:
     void* nativeWriteView() const;
 
 private:
+    friend class BufferPool;
+
+    void giveBackToPool();
+
     struct Native;
     Pimpl<Native> impl;
+
+    std::weak_ptr<BufferPoolLink> pool;
+    BufferUsage pooledUsage = BufferUsage::Storage;
 };
 
 // A contiguous slice of one Buffer: where it starts and how long it is, in

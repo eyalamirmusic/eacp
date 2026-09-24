@@ -95,7 +95,9 @@ struct InstancedProgram final : ShaderProgram
         auto placed = position * (scale * time);
         setPosition(
             float4(placed.x() + center.x(), placed.y() + center.y(), 0.f, 1.f));
-        setFragment(float4(varying(color) * varying(uv).y(), 1.f));
+        auto fragmentColor = varying(color);
+        auto fragmentUv = varying(uv);
+        setFragment(float4(fragmentColor * fragmentUv.y(), 1.f));
     }
 };
 

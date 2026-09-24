@@ -1,0 +1,52 @@
+{
+  "config": {
+    "side": "eacp",
+    "model": "medium",
+    "seconds": "30.0",
+    "steps": "8",
+    "seed": "7",
+    "prompt": "Pendulum style rock drum and bass, live drums, distorted bass, guitars, 174 bpm, energetic",
+    "eacp_binary": "/Users/jamiepond/eacp/build/Apps/GPU/StableAudio3/StableAudio3",
+    "pytorch_repo": "/private/tmp/claude-501/-Users-jamiepond-eacp/57a6cfa1-d1ab-45a3-bcbd-6de22650a429/scratchpad/stable-audio-3",
+    "device": "mps",
+    "warmup": "True",
+    "timeout": "None",
+    "label": "medium-30s-nobuildtype"
+  },
+  "eacp": {
+    "wall_seconds": 27.271708011627197,
+    "phases": {
+      "dit_weights": 0.68,
+      "codec": 0.36,
+      "text_encoder": 3.59,
+      "prompt_encoding": 0.22,
+      "sampling": 6.6,
+      "decoding": 15.55,
+      "wav_write": 0.03,
+      "total": 27.1
+    },
+    "load_seconds": 4.63,
+    "peak_rss_gb": 19.26,
+    "peak_footprint_gb": 19.97,
+    "gpu_whole_process": {
+      "samples": 100,
+      "gpu_utilization_avg": 71.5,
+      "gpu_utilization_peak": 100,
+      "gpu_in_use_memory_peak_delta_gb": 22.08
+    },
+    "gpu_sampling": {
+      "samples": 24,
+      "gpu_utilization_avg": 59.2,
+      "gpu_utilization_peak": 100,
+      "gpu_in_use_memory_peak_delta_gb": 10.96
+    },
+    "gpu_decoding": {
+      "samples": 57,
+      "gpu_utilization_avg": 99.6,
+      "gpu_utilization_peak": 100,
+      "gpu_in_use_memory_peak_delta_gb": 22.08
+    },
+    "output_path": "/Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_medium-30s-nobuildtype.wav",
+    "stdout": "Loading DiT weights (medium)...\nDiT weights took 0.68s\nLoading SAME codec...\nCodec took 0.36s\nLoading T5Gemma text encoder...\nText encoder took 3.59s\nEncoding prompt: \"Pendulum style rock drum and bass, live drums, distorted bass, guitars, 174 bpm, energetic\"\nPrompt encoding took 0.22s\nSampling 8 steps over 323 latent frames (30.00s)...\nSampling took 6.60s\nDecoding audio...\nDecoding took 15.55s\nWAV write took 0.03s\nWrote /Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_medium-30s-nobuildtype.wav\nTotal took 27.10s\n"
+  }
+}

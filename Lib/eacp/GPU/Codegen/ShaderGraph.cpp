@@ -179,6 +179,7 @@ int ShaderGraph::add(Expr node)
     }
 
     pureFlags.add(pure ? (char) 1 : (char) 0);
+    nodeSequences.add(sequence);
     nodes.add(std::move(node));
     return id;
 }
@@ -916,6 +917,10 @@ int ShaderGraph::addAtomicLoad(int bufferSlot, int index)
 
 int ShaderGraph::addStatement(Statement newStatement)
 {
+    auto isCompound = newStatement.kind == StatementKind::If
+                      || newStatement.kind == StatementKind::Loop;
+    newStatement.sequence = isCompound ? blocks[newStatement.body].opened : sequence;
+    ++sequence;
     statementList.add(newStatement);
     auto index = statementList.size() - 1;
     blocks[openBlocks.back()].statements.add(index);
@@ -954,7 +959,9 @@ void ShaderGraph::assign(int slot, int value)
 
 int ShaderGraph::pushBlock()
 {
-    blocks.add(Block {});
+    auto opening = Block {};
+    opening.opened = sequence++;
+    blocks.add(opening);
     auto index = blocks.size() - 1;
     openBlocks.add(index);
     return index;
@@ -962,6 +969,7 @@ int ShaderGraph::pushBlock()
 
 void ShaderGraph::popBlock()
 {
+    ++sequence;
     openBlocks.pop_back();
 }
 

@@ -1,0 +1,61 @@
+{
+  "N": 32768,
+  "sample_rate": 44100,
+  "shapes": {
+    "input_left": [
+      32768
+    ],
+    "input_right": [
+      32768
+    ],
+    "patched": [
+      128,
+      512
+    ],
+    "encoder_block_raw": [
+      8,
+      768
+    ],
+    "encoder_projected": [
+      8,
+      256
+    ],
+    "latent": [
+      8,
+      256
+    ],
+    "bottleneck_decoded": [
+      8,
+      256
+    ],
+    "decoder_raw": [
+      128,
+      512
+    ],
+    "output_left": [
+      32768
+    ],
+    "output_right": [
+      32768
+    ],
+    "full_latent": [
+      8,
+      256
+    ],
+    "full_output_left": [
+      32768
+    ],
+    "full_output_right": [
+      32768
+    ],
+    "bottleneck_scaling_factor": [
+      256
+    ],
+    "bottleneck_bias": [
+      256
+    ],
+    "bottleneck_running_std": [
+      1
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float2 a0 [[attribute(0)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+    float2 v0;
+};
+
+struct Uniforms
+{
+    float2 u0;
+    float4 u1;
+    float4 u2;
+};
+
+vertex VertexOut vertexMain(VertexIn input [[stage_in]], constant Uniforms& uniforms [[buffer(16)]])
+{
+    VertexOut output;
+    output.position = float4(((((uniforms.u1).x + ((input.a0).x * (uniforms.u1).z)) / ((uniforms.u0).x * 0.5)) - 1.0), (1.0 - (((uniforms.u1).y + ((input.a0).y * (uniforms.u1).w)) / ((uniforms.u0).y * 0.5))), 0.0, 1.0);
+    output.v0 = input.a0;
+    return output;
+}
+
+fragment float4 fragmentMain(VertexOut input [[stage_in]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    texture2d<float> texture0 [[texture(0)]],
+    sampler sampler0 [[sampler(0)]])
+{
+    return float4((uniforms.u2).xyz, ((uniforms.u2).w * (texture0.sample(sampler0, input.v0)).x));
+}

@@ -1,0 +1,63 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float a0 [[attribute(0)]];
+    float2 a1 [[attribute(1)]];
+    float2 a2 [[attribute(2)]];
+    float2 a3 [[attribute(3)]];
+    float4 a4 [[attribute(4)]];
+    float4 a5 [[attribute(5)]];
+    float4 a6 [[attribute(6)]];
+    float4 a7 [[attribute(7)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+    float4 v0;
+    float v1;
+    float2 v2;
+    float4 v3;
+    float4 v4;
+    float v5;
+};
+
+struct Uniforms
+{
+    float2 u0;
+    float4 u1;
+    float4 u2;
+};
+
+vertex VertexOut vertexMain(VertexIn input [[stage_in]], constant Uniforms& uniforms [[buffer(16)]])
+{
+    float t0 = step(0.5, input.a0);
+    float t1 = step(1.5, input.a0);
+    float2 t2 = mix(mix(input.a1, input.a2, t0), input.a3, t1);
+    VertexOut output;
+    output.position = float4(((((t2).x / (uniforms.u0).x) * 2.0) - 1.0), (1.0 - (((t2).y / (uniforms.u0).y) * 2.0)), 0.0, 1.0);
+    output.v0 = input.a5;
+    output.v1 = mix(mix((input.a4).x, (input.a4).y, t0), (input.a4).z, t1);
+    output.v2 = t2;
+    output.v3 = input.a6;
+    output.v4 = input.a7;
+    output.v5 = (input.a4).w;
+    return output;
+}
+
+fragment float4 fragmentMain(VertexOut input [[stage_in]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    texture2d<float> texture0 [[texture(0)]],
+    sampler sampler0 [[sampler(0)]],
+    texture2d<float> texture1 [[texture(1)]],
+    sampler sampler1 [[sampler(1)]])
+{
+    float t0 = ((((input.v3).x * (input.v2).x) + ((input.v3).y * (input.v2).y)) + (input.v4).x);
+    float t1 = mix(t0, length(float2(t0, ((((input.v3).z * (input.v2).x) + ((input.v3).w * (input.v2).y)) + (input.v4).y))), step(1.5, input.v5));
+    float4 t2 = mix(input.v0, texture1.sample(sampler1, float2((0.00195312 + (mix(mix(clamp(t1, 0.0, 1.0), (1.0 - abs((1.0 - (t1 - (2.0 * floor((t1 / 2.0))))))), step(0.5, (input.v4).w)), (t1 - floor(t1)), step(1.5, (input.v4).w)) * 0.996094)), (input.v4).z)), step(0.5, input.v5));
+    float2 t3 = ((input.v2 - (uniforms.u1).xy) * (uniforms.u1).zw);
+    float2 t4 = abs((t3 - 0.5));
+    return float4((t2).x, (t2).y, (t2).z, ((t2).w * (input.v1 * ((step((t4).x, 0.5) * step((t4).y, 0.5)) * (texture0.sample(sampler0, ((uniforms.u2).xy + (t3 * (uniforms.u2).zw)))).x))));
+}

@@ -6,8 +6,13 @@
 #include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
 
+#include <functional>
+#include <string>
+#include <string_view>
+
 namespace eacp::GPU
 {
+class CommandBuffer;
 class ComputePipeline;
 
 // What an indirect dispatch reads out of a buffer: three threadgroup counts.
@@ -30,6 +35,15 @@ struct DispatchArguments
 // every pass is unless it asked otherwise: each dispatch sees the writes of
 // every dispatch recorded before it. Concurrent lets them overlap, and
 // ComputePass::barrier() is what orders one stage against the next.
+// What a timed pass breaks its GPU time down by: the pass as one region, or
+// every kernel it dispatches as a region of its own. See
+// CommandBuffer::beginCompute.
+enum class TimingScope
+{
+    Pass,
+    EachDispatch
+};
+
 enum class DispatchOrder
 {
     Serial,
@@ -51,6 +65,7 @@ class ComputePass
 {
 public:
     explicit ComputePass(void* encoder, DispatchOrder order = DispatchOrder::Serial);
+
     ~ComputePass();
 
     ComputePass(const ComputePass&) = delete;
@@ -128,6 +143,7 @@ public:
     template <typename Program>
     void dispatch(Program& program, int count)
     {
+        timeDispatchOf(program);
         setPipeline(program.pipeline());
         program.bindResources(*this);
 
@@ -143,6 +159,7 @@ public:
     template <typename Program>
     void dispatch(Program& program, int width, int height)
     {
+        timeDispatchOf(program);
         setPipeline(program.pipeline());
         program.bindResources(*this);
 
@@ -155,6 +172,7 @@ public:
     template <typename Program>
     void dispatch(Program& program, int width, int height, int depth)
     {
+        timeDispatchOf(program);
         setPipeline(program.pipeline());
         program.bindResources(*this);
 
@@ -184,6 +202,7 @@ public:
                           int guardCount,
                           std::int64_t offsetInBytes = 0)
     {
+        timeDispatchOf(program);
         setPipeline(program.pipeline());
         program.bindResources(*this);
 
@@ -236,6 +255,37 @@ public:
     static constexpr int textureRegisterBase = maxBufferSlots;
 
 private:
+    friend class CommandBuffer;
+
+    // A pass that times each kernel it dispatches: before every dispatch of a
+    // ComputeProgram the backend closes the region the last one was timed in and
+    // opens one named after this kernel - openTimedEncoder hands back the
+    // backend's encoder for it. The label is prefix/Kernel, or Kernel alone.
+    ComputePass(void* encoder,
+                DispatchOrder order,
+                std::function<void*(std::string_view)> openTimedEncoderToUse,
+                std::string timedPrefixToUse)
+        : ComputePass(encoder, order)
+    {
+        timesEachDispatch = true;
+        openTimedEncoder = std::move(openTimedEncoderToUse);
+        timedPrefix = std::move(timedPrefixToUse);
+    }
+
+    template <typename Program>
+    void timeDispatchOf(const Program& program)
+    {
+        if (!timesEachDispatch)
+            return;
+
+        auto name = program.name();
+        beginTimedDispatch(timedPrefix.empty() ? name : timedPrefix + "/" + name);
+    }
+
+    // Per backend: closes the region the previous dispatch was timed in and
+    // adopts the encoder openTimedEncoder makes for the next.
+    void beginTimedDispatch(std::string_view label);
+
     // The group each dispatch is encoded with: the bound pipeline's own, or the
     // stock shape for the dispatch's rank when it carried none.
     ThreadGroupShape groupFor1D() const
@@ -270,6 +320,11 @@ private:
     // False until something is bound, which makes a pass that dispatches
     // before it binds a no-op rather than whatever the encoder held.
     bool boundPipeline = false;
+
+    bool timesEachDispatch = false;
+    std::function<void*(std::string_view)> openTimedEncoder = [](std::string_view)
+    { return (void*) nullptr; };
+    std::string timedPrefix;
 
     struct Native;
     Pimpl<Native> impl;

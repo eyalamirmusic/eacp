@@ -1,0 +1,48 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    int u0;
+    uint count;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device atomic_uint* buffer1 [[buffer(1)]],
+    device const float* buffer2 [[buffer(2)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= uniforms.count)
+        return;
+    int v0 = 0;
+    int v1 = uniforms.u0;
+    while ((v0 < v1))
+    {
+        int t0 = ((v0 + v1) >> 1);
+        if ((buffer2[uint(t0)] <= float(gid)))
+        {
+            v0 = (t0 + 1);
+        }
+        else
+        {
+            v1 = t0;
+        }
+    }
+    uint t1 = uint((max(v0, 1) - 1));
+    uint t2 = ((t1 * 2u) * 4u);
+    float4 t3 = float4(*((device const packed_float4*) (buffer0 + t2)));
+    uint v2 = uint((t3).x);
+    uint v3 = uint((t3).z);
+    uint v4 = ((uint((t3).y) + 15u) / 16u);
+    uint v5 = (gid - uint(buffer2[t1]));
+    uint v6 = 0u;
+    uint v7 = 0u;
+    while ((v7 < v4))
+    {
+        uint t4 = ((v2 + (v7 * v3)) + v5);
+        v6 = (v6 + atomic_load_explicit(&buffer1[t4], memory_order_relaxed));
+        atomic_store_explicit(&buffer1[t4], v6, memory_order_relaxed);
+        v7 = (v7 + 1u);
+    }
+}

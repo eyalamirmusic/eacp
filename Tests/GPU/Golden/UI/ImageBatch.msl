@@ -1,0 +1,52 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float2 a0 [[attribute(0)]];
+    float2 a1 [[attribute(1)]];
+    float2 a2 [[attribute(2)]];
+    float2 a3 [[attribute(3)]];
+    float2 a4 [[attribute(4)]];
+    float2 a5 [[attribute(5)]];
+    float4 a6 [[attribute(6)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+    float2 v0;
+    float2 v1;
+    float4 v2;
+};
+
+struct Uniforms
+{
+    float2 u0;
+    float4 u1;
+    float4 u2;
+};
+
+vertex VertexOut vertexMain(VertexIn input [[stage_in]], constant Uniforms& uniforms [[buffer(16)]])
+{
+    float2 t0 = ((input.a1 + ((input.a0).x * input.a2)) + ((input.a0).y * input.a3));
+    VertexOut output;
+    output.position = float4(((((t0).x / (uniforms.u0).x) * 2.0) - 1.0), (1.0 - (((t0).y / (uniforms.u0).y) * 2.0)), 0.0, 1.0);
+    output.v0 = (input.a4 + (input.a0 * (input.a5 - input.a4)));
+    output.v1 = t0;
+    output.v2 = input.a6;
+    return output;
+}
+
+fragment float4 fragmentMain(VertexOut input [[stage_in]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    texture2d<float> texture0 [[texture(0)]],
+    sampler sampler0 [[sampler(0)]],
+    texture2d<float> texture1 [[texture(1)]],
+    sampler sampler1 [[sampler(1)]])
+{
+    float4 t0 = (texture0.sample(sampler0, input.v0) * input.v2);
+    float2 t1 = ((input.v1 - (uniforms.u1).xy) * (uniforms.u1).zw);
+    float2 t2 = abs((t1 - 0.5));
+    return float4((t0).x, (t0).y, (t0).z, ((t0).w * ((step((t2).x, 0.5) * step((t2).y, 0.5)) * (texture1.sample(sampler1, ((uniforms.u2).xy + (t1 * (uniforms.u2).zw)))).x)));
+}

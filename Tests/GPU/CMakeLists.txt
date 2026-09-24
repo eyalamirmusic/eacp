@@ -19,6 +19,21 @@ endfunction()
 
 eacp_enable_glsl_compile_checks(GPUCodegenTests)
 
+# Every shader the library ships, emitted in all three dialects and compared
+# with the text under Golden/. Still device-free, but it links the modules that
+# own the kernels, which exist where the whole graphics stack does.
+if (EACP_HAS_TEXT)
+    nano_add_executable(ShaderGoldenTests
+            SOURCES
+                ShaderGoldenTests.cpp
+            TARGETS eacp-ml eacp-gpuwidgets eacp-sprites eacp-ui eacp-text)
+
+    target_compile_definitions(ShaderGoldenTests PRIVATE
+            EACP_SHADER_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Golden")
+
+    eacp_enable_glsl_compile_checks(ShaderGoldenTests)
+endif ()
+
 if (NOT EACP_HAS_GPU)
     return ()
 endif ()
@@ -33,7 +48,10 @@ set(gpu_test_sources
         BlendStateTests.cpp
         BufferAccessTests.cpp
         BufferFillTests.cpp
+        BufferPoolTests.cpp
         BufferRangeTests.cpp
+        CallCostTests.cpp
+        ShaderBinaryCacheTests.cpp
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp
         CompressedTextureTests.cpp
@@ -46,6 +64,7 @@ set(gpu_test_sources
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
+        DispatchTimingTests.cpp
         ExternalGeometryTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp
@@ -57,6 +76,7 @@ set(gpu_test_sources
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp
+        KernelCacheTests.cpp
         LargeBufferTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp

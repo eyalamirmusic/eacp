@@ -7,6 +7,7 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Logging.h>
 
 #include <cstring>
 
@@ -43,6 +44,33 @@ struct CommandBuffer::Native
         return committed ? (id<MTLCommandBuffer>) commandBuffer.get() : nil;
     }
 
+    // A compute encoder on this command buffer, timed as a pass of its own
+    // when it has a label and the device has counters to time it with.
+    void* openEncoder(std::string_view label, DispatchOrder order)
+    {
+        auto buffer = (id<MTLCommandBuffer>) commandBuffer.get();
+        auto passDescriptor = [MTLComputePassDescriptor computePassDescriptor];
+
+        if (order == DispatchOrder::Concurrent)
+            passDescriptor.dispatchType = MTLDispatchTypeConcurrent;
+
+        const auto pass = timer.beginPass(label, *device, (__bridge void*) buffer);
+
+        if (pass >= 0)
+        {
+            if (auto samples = (__bridge id<MTLCounterSampleBuffer>) timer.nativeSamples())
+            {
+                auto attachment = passDescriptor.sampleBufferAttachments[0];
+
+                attachment.sampleBuffer = samples;
+                attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
+                attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
+            }
+        }
+
+        return (__bridge void*) [buffer computeCommandEncoderWithDescriptor:passDescriptor];
+    }
+
     ObjC::Ptr<NSObject<MTLCommandBuffer>> commandBuffer;
     Device* device = nullptr;
     CommandTimer timer;
@@ -54,39 +82,28 @@ CommandBuffer::CommandBuffer(Device& device)
 {
 }
 
-ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
+ComputePass CommandBuffer::beginCompute(std::string_view label,
+                                        DispatchOrder order,
+                                        TimingScope scope)
 {
     impl->device->assertOwningThread();
 
-    auto buffer = (id<MTLCommandBuffer>) impl->commandBuffer.get();
-
-    if (buffer == nil)
+    if (impl->commandBuffer.get() == nil)
         return ComputePass(nullptr, order);
 
-    auto passDescriptor = [MTLComputePassDescriptor computePassDescriptor];
+    if (scope == TimingScope::Pass)
+        return ComputePass(impl->openEncoder(label, order), order);
 
-    if (order == DispatchOrder::Concurrent)
-        passDescriptor.dispatchType = MTLDispatchTypeConcurrent;
+    // Apple silicon samples its counters only where an encoder starts and ends,
+    // so a dispatch timed on its own is an encoder of its own.
+    auto* native = impl.get();
 
-    const auto pass =
-        impl->timer.beginPass(label, *impl->device, (__bridge void*) buffer);
-
-    if (pass >= 0)
-    {
-        if (auto samples =
-                (__bridge id<MTLCounterSampleBuffer>) impl->timer.nativeSamples())
-        {
-            auto attachment = passDescriptor.sampleBufferAttachments[0];
-
-            attachment.sampleBuffer = samples;
-            attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
-            attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
-        }
-    }
-
-    return ComputePass((__bridge void*)
-                           [buffer computeCommandEncoderWithDescriptor:passDescriptor],
-                       order);
+    return ComputePass(
+        impl->openEncoder({}, order),
+        order,
+        [native, order](std::string_view dispatchLabel)
+        { return native->openEncoder(dispatchLabel, order); },
+        std::string {label});
 }
 
 void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)
@@ -140,7 +157,12 @@ void CommandBuffer::wait()
     // waitUntilCompleted on a buffer that already finished returns at once, so
     // a wait after the work has landed costs nothing.
     if (auto buffer = impl->submitted())
+    {
         [buffer waitUntilCompleted];
+
+        if (buffer.status == MTLCommandBufferStatusError && buffer.error != nil)
+            LOG("GPU command buffer failed: ", [buffer.error.localizedDescription UTF8String]);
+    }
 }
 
 bool CommandBuffer::isComplete() const

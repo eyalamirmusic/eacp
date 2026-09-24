@@ -1,0 +1,72 @@
+{
+  "eacp": {
+    "total_seconds": 20.40823679199991,
+    "sampling_seconds": 7.96,
+    "load_encode_decode_seconds": 12.44823679199991,
+    "gpu_utilization_samples": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      94,
+      89,
+      100,
+      91,
+      100,
+      94,
+      100,
+      96,
+      100,
+      97,
+      100,
+      97,
+      100,
+      98,
+      100,
+      98,
+      0,
+      0,
+      0,
+      0,
+      0,
+      7,
+      0,
+      0,
+      0,
+      0,
+      0,
+      100
+    ],
+    "gpu_utilization_peak": 100,
+    "gpu_utilization_avg": 42.58974358974359,
+    "stdout": "Loading DiT weights (small)...\nLoading SAME codec...\nLoading T5Gemma text encoder...\nEncoding prompt: \"lofi house loop\"\nSampling 8 steps over 130 latent frames (12.00s)...\nSampling took 7.96s\nDecoding audio...\nWrote /Users/jamiepond/projects/StableAudioEACP/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_small.wav\n",
+    "output_path": "/Users/jamiepond/projects/StableAudioEACP/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_small.wav"
+  },
+  "pytorch_cpu": {
+    "load_seconds": 5.41888962500002,
+    "generate_seconds": 3.4681711669998094,
+    "audio_shape": [
+      1,
+      2,
+      529200
+    ],
+    "total_seconds": 8.88706079199983
+  },
+  "pytorch_mps": {
+    "load_seconds": 5.945512957999881,
+    "generate_seconds": 1.9518619999998919,
+    "audio_shape": [
+      1,
+      2,
+      529200
+    ],
+    "total_seconds": 7.897374957999773
+  }
+}

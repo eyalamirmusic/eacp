@@ -13,13 +13,13 @@ namespace eacp::WebView::Test
 namespace
 {
 
-constexpr auto defaultTimeoutMs = 5000;
+constexpr auto defaultTimeoutMs = static_cast<int>(defaultCommandTimeout.count);
 
 // Budget for the page's first navigation. The first WebView2 launch on
 // a cold CI runner regularly blows past the per-command timeout
 // (runtime spin-up, profile creation, antivirus scans), so the wait
-// for the initial load gets its own generous budget; the regular 5s
-// default only governs commands once the page is up.
+// for the initial load gets its own generous budget; defaultCommandTimeout
+// only governs commands once the page is up.
 constexpr auto startupTimeoutMs = 30000;
 constexpr auto waitForPollMs = 50;
 constexpr auto defaultSnapshotSubdir = "test-results/snapshots";

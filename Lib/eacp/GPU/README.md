@@ -19,6 +19,13 @@ buffer, reading or updating one, beginning a frame, and submitting, waiting on
 or reading back a command buffer all call it. It is one thread-id compare behind
 an `assert`, so a release build pays for nothing but the call.
 
+This is new on Metal. D3D12 and Vulkan already asserted that the shared device
+stayed on the main thread; on Metal nothing checked, so code that drove
+`Device::shared()` from a worker — a background loader making buffers, a
+thread submitting its own command buffers — ran, racing the main thread's use
+of the same queue. It now stops at the assertion in a debug build. The fix is
+the one above: give the worker its own `Device`.
+
 ## The pieces
 
 | | |
@@ -286,6 +293,22 @@ compare in the fragment stage. An `Int` or `UInt` varying, signed or unsigned
 vectors included, crosses uninterpolated — the emitter writes `flat`,
 `nointerpolation` or `[[flat]]` for it on its own, since every dialect requires
 that of an integer.
+
+### The emitted text is checked in
+
+Every shader the library ships — each ML kernel in every variant its
+constructor takes, the GPUWidgets kernels and shaders, both sprite shaders in
+all four sampling configurations, and the UI and text renderers' programs — is
+emitted as MSL, HLSL and GLSL by `ShaderGoldenTests` and compared byte for byte
+with `Tests/GPU/Golden/<Module>/<Kernel>[.<variant>].{msl,hlsl,glsl}`;
+StableAudio3's own kernels do the same in `SA3ShaderGoldenTests` against
+`Apps/GPU/StableAudio3/Tests/ShaderGolden/`. A change to the emitter that moves
+any of that text fails with a diff of the first lines that moved. When the
+move is the point, run the suite with `EACP_UPDATE_GOLDENS=1` to rewrite the
+files (and delete any no kernel produces any more) and commit them with the
+change, so the review shows every kernel it touched. A new kernel is one line
+in the list in `Tests/GPU/ShaderGoldenTests.cpp`; a golden no line produces
+fails `ShaderGolden/noOrphans`.
 
 ## Pipeline state
 
@@ -555,6 +578,79 @@ Nothing about correctness changes between the two. `Buffer::read()` orders
 behind the submission itself, so a read before the `Async` resolves is still
 right — it just waits by hand for what the overlap was there to avoid.
 
+### A kernel built once
+
+Constructing a `ComputeProgram` records its graph and emits its source, and
+`prepare()` hands that source to the shader compiler — MSL through
+`newLibraryWithSource` and a pipeline state on Metal, DXC and
+`CreateComputePipelineState` on D3D12, glslang and a `VkPipeline` on Vulkan.
+Code that builds a kernel where it dispatches it pays all of that on every call,
+which for a layer of a network is thousands of times a step.
+
+Two things take that away, one of them without anything to write. `prepare()`
+keeps what it compiled on the `Device`, keyed by everything the backend compiles
+from — backend, entry point, thread group, bindings and the text itself — so a
+second kernel that emits the same source shares the first one's library and
+pipeline, whoever built it. The emission is still paid for, though: 221 µs for a
+tiled matrix product in a release build, 3 ms in a debug one. `sharedKernel`
+skips that as well, handing back the one prepared instance of a kernel type on a
+device:
+
+```cpp
+Tensor scale(ComputePass& pass, const Tensor& input, float by, Device& device)
+{
+    auto result = Tensor::uninitializedF32(input.shape(), device);
+
+    auto& kernel = sharedKernel<ScaleKernel>(device);   // built on first use
+    kernel.input = input.buffer();
+    kernel.output = result.buffer();
+    kernel.scale = by;
+    kernel.dispatch(pass, input.count());
+
+    return result;
+}
+```
+
+The instance is shared by every caller, which is safe for the reason a kernel
+could always be dispatched twice: the dispatch copies the uniforms and binds the
+buffers there and then. What sharing does ask is that each call assigns every
+member it declares, and for buffers and textures that is enforced. A shared
+instance lets go of its buffer and texture members once a dispatch has bound
+them, so the range a caller assigned never outlives the buffer it points into,
+and a dispatch that finds one unassigned throws `std::logic_error` naming the
+kernel and the member instead of binding what the last caller left. Uniform
+values are copied into each dispatch and kept: a forgotten one is the last
+caller's value, not the zero a fresh kernel would have held — a wrong answer
+rather than freed memory, and the reason each call still sets them all.
+
+Any kernel, shared or not, throws the same way when a buffer or texture member
+was never assigned at all. A kernel its owner holds keeps what was assigned to
+it across dispatches, which is how a kernel dispatched every frame over the same
+buffers is written; `releaseBindingsAfterEachDispatch()` gives it the shared
+rule. Constructor arguments are part of what tells two kernels apart, so a
+kernel with variants is `sharedKernel<ActivationKernel>(device,
+ActivationKind::SiLU)`; they must be integers or enums.
+
+The first use builds the kernel, and there is nothing to list ahead of time:
+**compiled shaders are cached on disk by default**, so a kernel pays the shader
+compiler once per machine rather than once per launch. Each backend keeps the
+half it would otherwise redo:
+
+- **Metal** keeps its own cache of compiled libraries and pipelines, keyed by
+  the source it was handed, so nothing is added on top of it. Measured on an
+  M5 Max over the 32 kernels a Stable Audio medium run builds: 0.3–0.5 s of
+  compiling on a machine that had never seen them, 0.00 s on every run after.
+- **D3D12** keeps the bytecode FXC produced, and **Vulkan** the SPIR-V glslang
+  produced, in `FilePath::appCacheDirectory() / "Shaders"`
+  (`ShaderBinaryCache`), found by the compiler's version and everything the
+  compile read. The Vulkan driver's own half is the `VkPipelineCache` beside it
+  in the same folder.
+
+A newer compiler or a changed source is a miss and a fresh compile, never a
+stale binary, and a cache that cannot be read or written is simply a compile.
+`callCosts()` reports `"shader compiles"` and `"kernel builds"` — how many
+there were and what they cost — for a run that wants to see it.
+
 ### Waiting for one command buffer
 
 What `Buffer::read()` waits for is the *newest* submission, and so for every
@@ -745,13 +841,76 @@ builds no timestamp resources; `supportsPassTimings()` says whether this device
 can break a buffer down by pass, as `Device::supportsPassTimings()` does for a
 frame.
 
-A frame or a command buffer times its first `GpuTimestamps::maxTimedPasses`
-labelled passes, which is 128 — enough to give every kernel of a net a label of
-its own. Past that a pass runs exactly as it would have and is simply not
-timed, so the tail is missing from the breakdown rather than the buffer being
-wrong. The ceiling is a fixed pool of two timestamps per pass, so it costs a
-slot 2 KB of samples on Metal and a 258-entry query heap with its readback
-buffer on D3D12 and Vulkan — paid only once a labelled pass has asked for it.
+A command buffer times every labelled region it is given. Its samples come in
+sets of `GpuTimestamps::maxTimedPasses` (2,048) regions — 32 KB of them on
+Metal, the most one counter sample buffer holds, and a 4,098-entry query heap
+with its readback buffer on D3D12 and Vulkan — and the 2,049th region takes a
+second set, paid only when a labelled pass asks. A frame times its first 2,048
+and runs the rest untimed, so a tail past that is missing from its breakdown
+rather than the frame being wrong.
+
+### Timing each kernel
+
+A pass times as one region, which says how long a network step took and not
+where. `TimingScope::EachDispatch` makes every kernel the pass dispatches a
+region of its own, named after the kernel, and `totalsByLabel()` folds them into
+a profile:
+
+```cpp
+{
+    auto pass = commands.beginCompute(
+        "step", DispatchOrder::Serial, TimingScope::EachDispatch);
+    forward(pass, weights, latent);             // hundreds of dispatches
+}
+
+commands.commit();
+
+for (const auto& kernel: commands.timings().totalsByLabel())
+    log(kernel.label, kernel.milliseconds, kernel.count);
+```
+
+```
+step/LinearF32                      114.36 ms    181 dispatches
+step/UnmaskedAttentionScoresKernel   48.91 ms     96 dispatches
+step/AttentionWeightedSumKernel      42.11 ms     96 dispatches
+...
+```
+
+That is one Stable Audio medium DiT step, 1,542 dispatches. A region is
+named `pass/Kernel`, or `Kernel` for an unlabelled pass, where the kernel's name
+is its type's without namespaces; a `ComputeProgram` that builds variants of one
+type overrides `name()` to tell them apart. Only the program dispatches are
+regions — a raw `dispatch(count)` runs inside whichever region is open.
+
+It costs nothing unless asked for, and it is for finding where the time goes,
+not for shipping. On D3D12 and Vulkan a timed dispatch is a pair of timestamps
+written around it in the one command list. Apple silicon samples its counters
+only where an encoder starts and ends, so on Metal each timed dispatch is an
+encoder of its own; consecutive encoders may overlap on the GPU, so the
+regions can sum to a little more than the command buffer's own time, and the
+dispatches of a `Concurrent` pass stop overlapping altogether.
+
+### What the CPU pays the driver
+
+Some of a backend's cost never reaches the GPU's clock: a D3D12
+`CreateCommittedResource` for every fresh buffer, a CPU block on a fence. Each is
+a fraction of a millisecond, spread across a run, and invisible in a phase
+timing. A `CallCostCounter` sums one kind of call, and `callCosts()` lists every
+counter alive, so an app prints them beside its other timings:
+
+```cpp
+static auto creations = CallCostCounter {"buffers"};
+auto cost = ScopedCallCost {creations, bytes};     // timed until scope end
+device->CreateCommittedResource(...);
+
+for (const auto& cost: callCosts())
+    log(cost.label, cost.calls, cost.seconds, cost.meanMicroseconds(), cost.bytes);
+```
+
+Nothing is printed on its own and nothing is switched on by the environment: a
+counter costs one clock read per call either way, and reading the totals is
+the caller's decision.
+
 
 ### Zeroing a buffer
 
@@ -767,6 +926,68 @@ dispatched after the fill reads what the fill wrote, and a fill after a kernel
 overwrites what the kernel wrote. The offset and the length must be multiples of
 4, and no pass may be open. Nothing reaches the host, which is the point — a
 cache re-zeroed between passes used to be an upload of zeros per pass.
+
+### Temporaries are recycled
+
+`Device::makeBuffer(bytes)` — the uninitialised buffer every compute
+temporary is — takes its storage from the device's `BufferPool`, and a buffer
+made that way hands its storage back when it is destroyed. Nothing to call, and
+nothing to hold on to: a loop that records the same work again and again, an
+inference step or a frame's compute, stops asking the device for fresh memory
+for every temporary each time round.
+
+That matters more than an allocation sounds. A fresh buffer's pages are zeroed
+and made resident before the command buffer that first uses it can run: 1,587
+temporaries a step cost a 290 ms Stable Audio DiT step 75 ms of it on an M5 Max,
+and recycling them brought the step to the 215 ms its kernels take. On D3D12
+each fresh buffer is a `CreateCommittedResource`.
+
+Storage is never handed out while the GPU may still use it. A buffer destroyed
+now can be named by everything already submitted and by the command buffer
+still being recorded, so its storage waits until the GPU has finished the next
+submission after it — which is what `Device::lastSubmission()` and
+`hasFinished()` are there to answer, on every backend without blocking. The one
+order that promise does not cover is two command buffers recorded at once and
+submitted out of order, the older after the newer, with a buffer destroyed
+between.
+
+Reuse is by exact size and usage, and storage no `makeBuffer` has asked for
+through a few submissions is freed, so the pool holds on to what the work still
+uses and not to what it has moved on from. Buffers made with data, and adopted
+memory, never come from it.
+
+What changes for a caller is only what "uninitialised" always allowed: the
+contents of a new buffer are whatever was there. A kernel that needs zeros says
+so with `fill`.
+
+In practice that is a change on Metal. There `makeBuffer(bytes)` used to be a
+fresh `newBufferWithLength`, whose pages the OS hands over zeroed, so code that
+accumulated into a new buffer, or read back a part no kernel wrote, got zeros
+without asking. It now gets whatever the last owner of that storage left. D3D12
+already recycled default-heap buffers and Vulkan never zeroed, so code that was
+right on those backends is unaffected. To migrate, `commands.fill(buffer)`
+before the first kernel that reads it, or build the buffer from data.
+
+A pooled buffer goes back to the pool only from its device's own thread and
+only while the device is alive. One destroyed on another thread, or after its
+`Device`, frees its storage instead. That makes a pooled buffer exactly as safe
+to outlive its device, or to die on another thread, as any other buffer: safe
+on Metal, and not on D3D12 or Vulkan. There every buffer still refers to its
+device's context, and freeing one goes through that context's deferred release
+lists (`recycleDefaultBuffer` and `deferRelease` on D3D12,
+`deferReleaseBuffer` on Vulkan), which are not locked. So on those two the
+owning-thread rule still holds for destroying any buffer, pooled or not.
+
+The command buffer is the unit of recycling, and that decides how long one
+should be. A temporary destroyed while its command buffer is still being
+recorded can only go back to work once that command buffer has run, so nothing
+a buffer's own dispatches free is available to its later ones. A network's
+layers recorded into one command buffer each get fresh storage for every
+temporary; recorded a layer to a command buffer, layer n + 1 runs in layer
+n's memory. On the Stable Audio SAME-L decoder that was the difference between
+a 21.6 GB peak footprint and a 12.7 GB one, for identical output and a slightly
+faster decode. Where the temporaries are large, submit at the boundary they
+die at.
 
 ### Part of a buffer
 
@@ -851,6 +1072,20 @@ underneath. `Buffer::isPageAligned` answers the contract before the call, and a
 descriptor that fails it makes an invalid `Buffer` rather than a quietly copied
 one on every backend — so a call site written on one is one the others take.
 
+Metal wires a no-copy buffer's pages the first time a command buffer uses it,
+which for a nine-gigabyte checkpoint is half a second inside the first dispatch.
+An adopted buffer asks for that at creation instead, through a residency set on
+a background queue (macOS 15 and later), so it overlaps whatever the caller does
+after loading, and reads the pages in on the way when the file is cold.
+
+A request in flight holds a lock the next `newBufferWithBytesNoCopy` waits on,
+so a loader that adopts a file as thirty 256 MB pieces and requests each at
+once spends a second loading what is otherwise free. The requests are held
+until nothing has been adopted for 10 ms (or the oldest has waited 100 ms) and
+then sent one at a time, in the order the buffers were made. One at a time is
+measured, not assumed: thirty requests side by side took 1.0 s for 7.5 GB where
+one after another took 0.55 s, and slowed every CPU thread beside them.
+
 `Buffer::canAdoptMemory(device)` says which of the two actually happened. True
 on Metal, where a shared-storage `MTLBuffer` is built straight over the host
 pages, so the caller and the GPU look at the same bytes in both directions and
@@ -876,7 +1111,7 @@ that used to be a bare memcpy on Metal is a memcpy behind a wait for the newest
 submission. Code that was already right by construction gets its old cost back
 by asking for the unordered call by name — which is what `StreamingBuffers`,
 `GPUWidgets`' coverage batch and the `Apps/GPU` samples in this tree were
-changed to do.
+changed to do, along with the `Apps/Plugins` demos.
 
 `Buffer::updateUnordered` is that write with the wait given up, the caller
 saying instead that no work the GPU still has in hand touches those bytes. There
@@ -1229,6 +1464,54 @@ is not shared at all: the index is a `var()` read, which makes the read impure,
 which is what keeps a row walk from collapsing into one load of the counter's
 first value. `Tests/GPU/HoistingTests.cpp` pins all four of these.
 
+### A handle is a value
+
+`auto p = f(x);` means what it means in C++: `f` is evaluated once, where the
+line is, and `p` is that value however often it is used and whatever runs
+after it. The in-place softmax a row pass is shows why that matters:
+
+```cpp
+auto probability = exp(scores[index] - peak);
+
+write(scores, index, probability);
+total += probability;
+```
+
+The sum adds the probability — the same one the store wrote — and `exp` runs
+once. A graph is a tree of expressions rather than of statements, though, and
+an expression printed at each use is evaluated at each use: printed into the
+sum, `scores[index]` would be read *after* the store and the sum would add
+`exp` of the probability.
+
+So the emitter orders a handle against the statements around it. Every node
+remembers where among the statements it was built; ahead of each statement that
+writes something — a variable, a buffer element, threadgroup memory, which
+includes a barrier — every expression built before it that reads what it
+writes, and that the statement or anything after it still evaluates, is named
+there: evaluated once, before the write, and read back by name afterwards. The
+same holds for a variable (`auto scaled = input[i] * scale; scale += 1.0f;` —
+`scaled` keeps the old factor) and for a tile behind a barrier (a handle read
+before it is what the tile held there; read the tile again after the barrier to
+see what the other threads published).
+
+The rule names the **outermost** stale expression — `exp(scores[index] - peak)`
+rather than `scores[index]` — so nothing is evaluated twice, and it names
+nothing that no write stands between. That is the trade-off it was chosen over
+the simpler one, naming every expression bound to a C++ variable: the graph
+cannot see a C++ variable (a handle is a node id, and a temporary is the same
+thing), and naming every subexpression would put a register on every
+intermediate a compiler would otherwise fuse. As it is, a kernel that never
+reads what it writes emits exactly the source it did before this rule existed,
+and one that does holds one value across the write rather than evaluating it
+again after it — one live register traded for the recomputation.
+
+The one handle that is not a value is a **loop's condition**. It is re-tested
+before every iteration by construction, so what it reads, and everything built
+on those reads, is evaluated where it is used — `limit = reach + 8u` tested in
+`loop(i < limit, ...)` over a body that raises `reach` sees the raised bound.
+`Tests/GPU/HoistingTests.cpp` and `GPU/codegenAnInPlaceExpIsEvaluatedOnce`
+pin both sides.
+
 ### Reducing over the group
 
 `groupSum`, `groupMax` and `groupMin` are the fold a shared tile was being
@@ -1433,6 +1716,51 @@ what keeps a kernel of any reasonable width under that budget.
 a 32-deep slab, clamped loads and a guarded copy-out — checked against a scalar
 reference on whole tiles, on a ragged shape and at a transformer's own
 [1500, 384] × [384, 1536].
+
+#### Tiling a product that is fast
+
+`ML::LinearF32` is the product above grown up, and what moved it is worth
+knowing before writing another. On an M5 Max, measured on a transformer's own
+shapes ([339, 1536] against weights up to [12288, 1536]), each of these was
+kept only because it was measurably faster, and none of them changes a single
+bit of the result:
+
+- **Pad threadgroup rows by eight floats.** A fragment load reads eight rows
+  of eight. At a row stride that is a multiple of the 32 banks — a 32-deep slab,
+  a 64-wide tile — all eight rows land on the same eight banks; a stride eight
+  floats longer puts each row on the next eight, so the load takes the two
+  passes its 64 floats need and no more.
+- **A shallower slab.** 16 deep in k beats 32 and 8. It is more barriers for
+  the same products, but less threadgroup memory, and more threadgroups
+  resident on a core hide the global reads better than a deeper slab amortises
+  its barriers.
+- **Four-wide reads, the next slab's issued before this slab's products**, and
+  a 32 × 32 block per SIMD group so each fragment loaded feeds four products.
+- **Fragments stored straight to the buffer** wherever one lies wholly inside
+  the output, with only the ragged edge going back through threadgroup memory.
+
+Together that is 18% on those shapes: from 5.5 to 6.7 TFLOPS, against 14.4 for
+the SIMD-group product on its own with nothing to load, so there is headroom
+left for whoever comes next. The result stays bit for bit what it was because
+none of it touches the one thing that decides a sum's rounding: every output
+element is still the same sequence of 8 × 8 × 8 products, k in steps of eight
+from zero, into an accumulator that starts at zero. Which SIMD group computes
+an element, how the operands reached threadgroup memory and how deep a slab is
+do not enter into it.
+
+The tile's height is then a question about the batch, not the hardware. The
+last row of tiles computes every row it holds whether the batch has it or not,
+and a transformer's batch is whatever the sequence is: the DiT's 387 rows are
+six tiles of 64 and a seventh holding three, so 448 rows are computed for 387.
+Tiles of 32 compute 416. `linearTileRowsFor` picks whichever pads the batch to
+fewer rows, and 64 on a tie, since 32 × 32 blocks reuse a loaded fragment more
+than the 32 × 16 blocks a 32-row tile splits into. Both keep four SIMD groups
+and the same slab, so the choice is one constructor argument and the bits do
+not move (`Linear/tilingsGiveTheSameBits`). On the DiT's five shapes that is
+8–25% on `LinearF32` alone, most on the narrowest outputs (1536 columns),
+which have the fewest threadgroups to spread over 40 cores and gain from
+having twice as many; at 384 rows, where 64 wastes nothing, the two tilings
+measure the same.
 
 #### A weight read where it lies
 
@@ -1981,6 +2309,93 @@ workaround by itself and an unknown driver with the same gap picks it up.
 `EACP_D3D12_QUIRKS=1` sets every flag without asking, which is how the
 fallback paths are run against WARP.
 
+## How much memory a device wants you to keep
+
+`Device::memoryBudget()` is how many bytes of device-local memory the driver
+would rather a process kept resident — not how much exists and not how much is
+free, but the number it answers when asked what a well-behaved process should
+stay under. DXGI's `QueryVideoMemoryInfo` local budget on D3D12,
+`recommendedMaxWorkingSetSize` on Metal, the largest `DEVICE_LOCAL` heap on
+Vulkan, and zero from a backend that will not say. A discrete card answers its
+own memory; a unified one answers a share of the system's, and lavapipe answers
+host RAM, which is right because that is where its device memory comes from.
+
+It exists because anything holding storage of its own has to size itself against
+something. `BufferPool` is the first caller: it keeps at most a quarter of that,
+capped at what the work actually reuses. A caller's own allocator wants the same
+number.
+
+## How big a grid is allowed to be
+
+Metal has no practical ceiling on a dispatch's threadgroup count. D3D12 has
+one, and Vulkan usually has the same one: **65535 threadgroups per dimension**
+(`D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION`,
+`maxComputeWorkGroupCount`). So a grid written on a Mac can be illegal on the
+other two, and the way it fails is worth knowing, because it is not an error.
+
+What an over-sized dimension actually does is the driver's business rather than
+the API's. On an NVIDIA Ada card, an **X** count far past the cap runs
+correctly — the hardware's own limit there is about 2^31 — while a **Y** count
+past it produces *nothing at all*: no error, no removed device, no validation
+message, just a dispatch that never happened and whatever the kernel would have
+written left as it was. A 30-second decode came out as a WAV of digital
+silence, and the only visible difference from a working run was the samples.
+
+The lesson is not "check the cap at every call site". It is that a dimension
+should be something the work actually has. Attention dispatched `rows * heads`
+as one dimension and crossed the cap at 161 latent frames; rows and heads are
+two different things, and given a dimension each neither comes near it at any
+clip length. `ComputePass` on D3D12 says when a grid is past the cap and names
+the dimensions — it neither clamps nor skips, because an X grid past the cap is
+out of spec and does run, and refusing it would break work that succeeds today.
+
+## Two functions that name things are one coin flip
+
+A code generator that hands out names while it walks is a state machine, and
+C++ will not sequence it for you. This emitted a different shader depending on
+what compiled the emitter:
+
+```cpp
+return define(operands, indent, uses, open)
+       + holdTheRecord(statement, indent, open);
+```
+
+Both calls hand out local names. The operands of `+` are unsequenced, so clang
+evaluated left to right and named the operands first, while MSVC evaluated
+right to left and named the record first — and the record then went unnamed and
+was printed into each component of its store instead of once into a local. The
+values were right either way, which is why it survived: it showed up only as a
+golden text mismatch, on Windows, against goldens written from a clang build.
+
+Sequence anything that names, allocates a slot or advances a counter into its
+own statement. One state-mutating call per expression.
+
+The same holds for a shader written in the EDSL, because the calls that declare
+things are the same kind of state machine: `varying`, `vertexInput`,
+`instanceInput`, `var`, `shared`, the buffer and texture declarations and
+`atomicAdd` each take the next slot or append a statement. The sprite shader
+wrote
+
+```cpp
+setFragment(sample(image, varying(uv)) * varying(tint));
+```
+
+and clang gave `uv` varying 0 and `tint` varying 1 while GCC and MSVC gave them
+the other way round — a correct shader either way, and a golden mismatch on
+every lane but the one that wrote the goldens. Name each one in a local first,
+in the order the slots should come out:
+
+```cpp
+auto fragmentUv = varying(uv);
+auto fragmentTint = varying(tint);
+setFragment(sample(image, fragmentUv) * fragmentTint);
+```
+
+Arguments of one call are just as unsequenced as operands of `*`, so
+`float4(varying(a), varying(b))` is the same bug. Declarations separated by
+commas (`auto a = var(zero), b = var(zero);`) are fine: each initialiser is its
+own full-expression.
+
 ## Reading pixels back
 
 `View::renderToImage` renders off-screen and hands back a `Graphics::Image`. It
@@ -2157,8 +2572,10 @@ Notes worth having:
   `VulkanShared`. A render shader only ever samples, so its set needs no such
   split.
 - **Pipelines are built through one `VkPipelineCache`** held by `VulkanShared`
-  and persisted to `$XDG_CACHE_HOME/eacp/pipelines-<pipelineCacheUUID>.bin`
-  (`$HOME/.cache/eacp/` when unset): loaded at device creation when its header
+  and persisted to `pipelines-<pipelineCacheUUID>.bin` in the app's
+  `FilePath::appCacheDirectory()` (under `$XDG_CACHE_HOME`, or
+  `$HOME/.cache` when unset), beside the SPIR-V `ShaderBinaryCache` keeps in its
+  `Shaders` folder: loaded at device creation when its header
   names this device, written back through a temp file and rename at teardown,
   and silently skipped on any failure. There is no hash cache above it, because
   a `RenderPipeline` or `ComputePipeline` is one object and one create call

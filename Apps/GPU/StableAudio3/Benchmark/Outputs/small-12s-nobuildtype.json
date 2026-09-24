@@ -1,0 +1,52 @@
+{
+  "config": {
+    "side": "eacp",
+    "model": "small",
+    "seconds": "12.0",
+    "steps": "8",
+    "seed": "42",
+    "prompt": "lofi house loop",
+    "eacp_binary": "/Users/jamiepond/eacp/build/Apps/GPU/StableAudio3/StableAudio3",
+    "pytorch_repo": "/private/tmp/claude-501/-Users-jamiepond-eacp/57a6cfa1-d1ab-45a3-bcbd-6de22650a429/scratchpad/stable-audio-3",
+    "device": "mps",
+    "warmup": "True",
+    "timeout": "None",
+    "label": "small-12s-nobuildtype"
+  },
+  "eacp": {
+    "wall_seconds": 14.311540126800537,
+    "phases": {
+      "dit_weights": 1.01,
+      "codec": 0.26,
+      "text_encoder": 4.0,
+      "prompt_encoding": 0.45,
+      "sampling": 4.18,
+      "decoding": 4.32,
+      "wav_write": 0.01,
+      "total": 14.24
+    },
+    "load_seconds": 5.27,
+    "peak_rss_gb": 5.49,
+    "peak_footprint_gb": 4.8,
+    "gpu_whole_process": {
+      "samples": 53,
+      "gpu_utilization_avg": 74.1,
+      "gpu_utilization_peak": 100,
+      "gpu_in_use_memory_peak_delta_gb": 0.93
+    },
+    "gpu_sampling": {
+      "samples": 15,
+      "gpu_utilization_avg": 98.3,
+      "gpu_utilization_peak": 100,
+      "gpu_in_use_memory_peak_delta_gb": 0.82
+    },
+    "gpu_decoding": {
+      "samples": 16,
+      "gpu_utilization_avg": 25.1,
+      "gpu_utilization_peak": 100,
+      "gpu_in_use_memory_peak_delta_gb": 0.07
+    },
+    "output_path": "/Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_small-12s-nobuildtype.wav",
+    "stdout": "Loading DiT weights (small)...\nDiT weights took 1.01s\nLoading SAME codec...\nCodec took 0.26s\nLoading T5Gemma text encoder...\nText encoder took 4.00s\nEncoding prompt: \"lofi house loop\"\nPrompt encoding took 0.45s\nSampling 8 steps over 130 latent frames (12.00s)...\nSampling took 4.18s\nDecoding audio...\nDecoding took 4.32s\nWAV write took 0.01s\nWrote /Users/jamiepond/eacp/Apps/GPU/StableAudio3/Benchmark/Outputs/eacp_small-12s-nobuildtype.wav\nTotal took 14.24s\n"
+  }
+}

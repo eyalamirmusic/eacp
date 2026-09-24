@@ -1,0 +1,109 @@
+{
+  "config": {
+    "side": "pytorch",
+    "model": "small",
+    "seconds": "12.0",
+    "steps": "8",
+    "seed": "42",
+    "prompt": "lofi house loop",
+    "eacp_binary": "C:\\Users\\jamie\\projects\\jamie-eacp\\build-release\\Apps\\GPU\\StableAudio3\\StableAudio3.exe",
+    "pytorch_repo": "C:\\Users\\jamie\\sa3-pytorch",
+    "device": "cuda",
+    "warmup": "True",
+    "timeout": "None",
+    "label": "cuda-small-fp32",
+    "pytorch_half": "False",
+    "allow_battery": "False"
+  },
+  "power_source": "AC",
+  "pytorch_cuda": {
+    "load_start": 1790219496.3864713,
+    "load_end": 1790219505.5827425,
+    "load_seconds": 9.196271181106567,
+    "dtype": "torch.float32",
+    "model_half": false,
+    "audio_shape": [
+      1,
+      2,
+      529200
+    ],
+    "cold": {
+      "start": 1790219505.5827425,
+      "end": 1790219508.1351476,
+      "generate_seconds": 2.5524051189422607,
+      "prompt_encoding_seconds": 1.2559890747070312,
+      "decoding_seconds": 0.06522107124328613,
+      "sampling_seconds": 1.2311949729919434,
+      "sampling_window": [
+        1790219506.8771558,
+        1790219508.0699265
+      ],
+      "decoding_window": [
+        1790219508.0699265,
+        1790219508.1351476
+      ],
+      "gpu_whole_generate": {
+        "samples": 9,
+        "gpu_utilization_avg": 12.8,
+        "gpu_utilization_peak": 42,
+        "gpu_in_use_memory_peak_delta_gb": 4.66
+      },
+      "gpu_sampling": {
+        "samples": 4,
+        "gpu_utilization_avg": 3.8,
+        "gpu_utilization_peak": 5,
+        "gpu_in_use_memory_peak_delta_gb": 4.47
+      },
+      "gpu_decoding": {
+        "samples": 1,
+        "gpu_utilization_avg": 30.0,
+        "gpu_utilization_peak": 30,
+        "gpu_in_use_memory_peak_delta_gb": 4.66
+      }
+    },
+    "warm": {
+      "start": 1790219508.1351476,
+      "end": 1790219508.613407,
+      "generate_seconds": 0.4782593250274658,
+      "prompt_encoding_seconds": 0.021527767181396484,
+      "decoding_seconds": 0.022458553314208984,
+      "sampling_seconds": 0.43427300453186035,
+      "sampling_window": [
+        1790219508.157692,
+        1790219508.5909483
+      ],
+      "decoding_window": [
+        1790219508.5909483,
+        1790219508.613407
+      ],
+      "gpu_whole_generate": {
+        "samples": 1,
+        "gpu_utilization_avg": 30.0,
+        "gpu_utilization_peak": 30,
+        "gpu_in_use_memory_peak_delta_gb": 4.66
+      },
+      "gpu_sampling": {
+        "samples": 1,
+        "gpu_utilization_avg": 30.0,
+        "gpu_utilization_peak": 30,
+        "gpu_in_use_memory_peak_delta_gb": 4.66
+      },
+      "gpu_decoding": {
+        "samples": 0,
+        "gpu_utilization_avg": null,
+        "gpu_utilization_peak": null,
+        "gpu_in_use_memory_peak_delta_gb": null
+      }
+    },
+    "gpu_load": {
+      "samples": 31,
+      "gpu_utilization_avg": 2.1,
+      "gpu_utilization_peak": 27,
+      "gpu_in_use_memory_peak_delta_gb": 2.53
+    },
+    "wall_seconds": 17.386494874954224,
+    "peak_rss_gb": null,
+    "peak_footprint_gb": null,
+    "output_path": "C:\\Users\\jamie\\projects\\jamie-eacp\\Apps\\GPU\\StableAudio3\\Benchmark\\Outputs\\pytorch_cuda_cuda-small-fp32.wav"
+  }
+}

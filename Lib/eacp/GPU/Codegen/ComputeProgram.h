@@ -3,9 +3,14 @@
 #include "../Device/Device.h"
 #include "../Frame/ComputePass.h"
 #include "../Pipeline/ComputePipeline.h"
+#include "../Pipeline/ComputePipelineCache.h"
+#include "KernelName.h"
 #include "ShaderProgram.h"
 
 #include <eacp/Core/Utils/Logging.h>
+
+#include <stdexcept>
+#include <string>
 
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
@@ -48,97 +53,150 @@ namespace eacp::GPU
 // compute pass at the slot its handle was declared with. One walk rather than
 // one per resource kind - the members are visited in declaration order either
 // way, and the slots are already carried by the handles.
+//
+// A member nothing was assigned to is recorded rather than skipped, so the
+// dispatch can refuse it: a kernel that runs with a slot left over from
+// whatever the pass bound last reads memory nobody meant it to. A member
+// assigned a buffer that never got storage is still skipped, as the pass's own
+// bind would skip it.
+//
+// With releasing on, every member is cleared once it is bound, so the pointer
+// it held into a buffer the caller is about to free does not outlive the
+// dispatch. That is what makes a shared kernel safe: see sharedKernel.
 class ComputeBindVisitor final : public ShaderVisitor
 {
 public:
-    explicit ComputeBindVisitor(ComputePass& passToUse)
+    ComputeBindVisitor(ComputePass& passToUse, bool releaseAfterBinding)
         : pass(passToUse)
+        , releasing(releaseAfterBinding)
     {
     }
+
+    // The first member the walk found with nothing assigned, or null.
+    const char* unassigned() const { return firstUnassigned; }
 
     void
         onUniform(const char*, ValueType, detail::ValueHandle&, const void*) override
     {
     }
 
-    void onInputBuffer(const char*,
+    void onInputBuffer(const char* name,
                        InputBuffer& handle,
                        const BufferRange& range) override
     {
-        if (range.isValid())
+        if (isAssigned(name, range.buffer) && range.isValid())
             pass.setInputBuffer(range, handle.slot);
+
+        release(handle);
     }
 
-    void onOutputBuffer(const char*,
+    void onOutputBuffer(const char* name,
                         OutputBuffer& handle,
                         const BufferRange& range) override
     {
-        if (range.isValid())
+        if (isAssigned(name, range.buffer) && range.isValid())
             pass.setOutputBuffer(range, handle.slot);
+
+        release(handle);
     }
 
     // The integer buffers bind through the same two calls the float ones do:
     // what the elements are is settled by the kernel's declaration, not by how
     // the pass hands the buffer over.
-    void onUIntInputBuffer(const char*,
+    void onUIntInputBuffer(const char* name,
                            UIntInputBuffer& handle,
                            const BufferRange& range) override
     {
-        if (range.isValid())
+        if (isAssigned(name, range.buffer) && range.isValid())
             pass.setInputBuffer(range, handle.slot);
+
+        release(handle);
     }
 
-    void onUIntOutputBuffer(const char*,
+    void onUIntOutputBuffer(const char* name,
                             UIntOutputBuffer& handle,
                             const BufferRange& range) override
     {
-        if (range.isValid())
+        if (isAssigned(name, range.buffer) && range.isValid())
             pass.setOutputBuffer(range, handle.slot);
+
+        release(handle);
     }
 
     // An atomic buffer binds exactly as an output does - a Metal device buffer,
     // a D3D UAV - since what makes it atomic is the type the kernel declares it
     // through and not how the pass hands it over.
-    void onAtomicBuffer(const char*,
+    void onAtomicBuffer(const char* name,
                         AtomicBuffer& handle,
                         const BufferRange& range) override
     {
-        if (range.isValid())
+        if (isAssigned(name, range.buffer) && range.isValid())
             pass.setOutputBuffer(range, handle.slot);
+
+        release(handle);
     }
 
-    void onTexture(const char*,
+    void onTexture(const char* name,
                    Texture2D& handle,
                    const Texture* texture,
                    TextureSampling sampling) override
     {
-        if (texture != nullptr)
+        if (isAssigned(name, texture))
             pass.setInputTexture(*texture, handle.slot, sampling);
+
+        release(handle);
     }
 
     // The same call the 2D one takes, for the reason the render bind visitor
     // gives: a cube is one texture on one slot of one index space on both
     // backends, and its dimensionality was settled when it was created and when
     // the kernel was compiled.
-    void onCubeTexture(const char*,
+    void onCubeTexture(const char* name,
                        TextureCube& handle,
                        const Texture* texture,
                        TextureSampling sampling) override
     {
-        if (texture != nullptr)
+        if (isAssigned(name, texture))
             pass.setInputTexture(*texture, handle.slot, sampling);
+
+        release(handle);
     }
 
-    void onWritableTexture(const char*,
+    void onWritableTexture(const char* name,
                            WritableTexture2D& handle,
                            const Texture* texture) override
     {
-        if (texture != nullptr)
+        if (isAssigned(name, texture))
             pass.setOutputTexture(*texture, handle.slot);
+
+        release(handle);
     }
 
 private:
+    bool isAssigned(const char* name, const void* resource)
+    {
+        if (resource != nullptr)
+            return true;
+
+        if (firstUnassigned == nullptr)
+            firstUnassigned = name;
+
+        return false;
+    }
+
+    // Every handle the walk is given is the base of the Uniform member that
+    // holds its binding - ShaderVisitor's operator() hands the member itself
+    // over - so the member is reached back through it.
+    template <typename Handle>
+    void release(Handle& handle)
+    {
+        if (releasing)
+            static_cast<Uniform<Handle>&>(handle).value = {};
+    }
+
     ComputePass& pass;
+    bool releasing = false;
+    const char* firstUnassigned = nullptr;
 };
 
 // Base for struct-authored compute kernels. Derive, declare uniform and buffer
@@ -166,6 +224,11 @@ public:
 
     const ShaderSource& source() const { return generated.source; }
 
+    // What a per-dispatch timing calls this kernel: its type's name without
+    // namespaces, "LinearF32". Override it to tell apart the variants one type
+    // builds.
+    virtual std::string name() const { return readableTypeName(typeid(*this)); }
+
     // The graph the body was recorded into, so either backend's text can be
     // emitted from the kernel that ships rather than from a copy of its body.
     const ShaderGraph& graph() const { return builder.graph(); }
@@ -174,6 +237,11 @@ public:
     // on the Device whose passes will dispatch it. A pipeline belongs to the
     // device that compiled it, so a kernel a worker Device dispatches is
     // compiled on that Device rather than on the process-wide one.
+    //
+    // Only the first kernel with a given source compiles it: every later one,
+    // this program's type or another that emitted the same text, shares that
+    // library and pipeline (compileComputeCached). Safe to call from a thread
+    // other than the Device's, as compiling a kernel always has been.
     void prepare(Device& device)
     {
         reportThreadgroupMemoryOverBudget(device);
@@ -189,8 +257,7 @@ public:
             return;
         }
 
-        shaderLibrary.emplace(device, generated.source);
-        pipelineState.emplace(device, *shaderLibrary);
+        compiled = compileComputeCached(device, generated.source);
 
         reportSimdWidthMismatch();
     }
@@ -242,7 +309,7 @@ public:
                && (!needsBFloat16 || device.supportsBFloat16SimdMatrix());
     }
 
-    const ComputePipeline& pipeline() const { return *pipelineState; }
+    const ComputePipeline& pipeline() const { return compiled->pipeline; }
 
     // Whether prepare() left something dispatchable. False before prepare(), of
     // a refused build, and of a shader that would not compile - all three being
@@ -250,7 +317,7 @@ public:
     // would rather know than find out asks here.
     bool isValid() const
     {
-        return pipelineState.has_value() && pipelineState->isValid();
+        return compiled != nullptr && compiled->pipeline.isValid();
     }
 
     // Re-packs the current uniform values, appends the element count the
@@ -315,13 +382,29 @@ public:
 
     int uniformByteSize() const { return uniformBytes.size(); }
 
-    // Binds every assigned buffer and texture member to the pass at its
-    // declared slot. ComputePass::dispatch(program, ...) calls this.
+    // Binds every buffer and texture member to the pass at its declared slot.
+    // ComputePass::dispatch(program, ...) calls this. A member nothing was
+    // assigned to throws std::logic_error naming the kernel and the member, so
+    // the dispatch never runs against a slot the kernel did not fill.
     void bindResources(ComputePass& pass)
     {
-        auto bindVisitor = ComputeBindVisitor {pass};
+        auto bindVisitor = ComputeBindVisitor {pass, releasesBindings};
         reflectMembers(bindVisitor);
+
+        if (bindVisitor.unassigned() != nullptr)
+            throwUnassigned(bindVisitor.unassigned());
     }
+
+    // Makes every dispatch clear the kernel's buffer and texture members once
+    // it has bound them, so each dispatch binds only what was assigned for it
+    // and a member left unassigned throws instead of reaching for a buffer an
+    // earlier caller has since freed. sharedKernel turns this on for the
+    // instances it hands out; a kernel its owner dispatches again and again
+    // with the same buffers leaves it off. Uniform values are copied into the
+    // dispatch and are kept either way.
+    void releaseBindingsAfterEachDispatch() { releasesBindings = true; }
+
+    bool releasesBindingsAfterEachDispatch() const { return releasesBindings; }
 
 protected:
     // Runs the member build walk (adopting uniform and buffer slots), the
@@ -789,7 +872,7 @@ private:
         if (!graph().usesSimdReduction() && !graph().usesSimdGroups())
             return;
 
-        auto width = pipelineState->threadExecutionWidth();
+        auto width = compiled->pipeline.threadExecutionWidth();
 
         if (width <= 0 || width == ComputeProgram::simdWidth)
             return;
@@ -813,8 +896,7 @@ private:
     // complaint about a type.
     void buildRefusedPipeline(Device& device)
     {
-        shaderLibrary.emplace(device, ShaderSource {});
-        pipelineState.emplace(device, *shaderLibrary);
+        compiled = std::make_shared<const CompiledCompute>(device, ShaderSource {});
     }
 
     void reportUnsupportedPackedSimdMatrix(const Device& device) const
@@ -855,6 +937,19 @@ private:
             ". Size its shared<> arrays against Device::maxThreadgroupMemory().");
     }
 
+    [[noreturn]] void throwUnassigned(const char* member) const
+    {
+        auto message = "eacp: " + name() + " was dispatched with nothing assigned "
+                       + "to its '" + member + "' member.";
+
+        if (releasesBindings)
+            message += " It is a shared kernel, which lets go of every buffer "
+                       "and texture after each dispatch, so each call assigns "
+                       "all of them.";
+
+        throw std::logic_error {message};
+    }
+
     const void* packWithExtents(const std::uint32_t* extents, int count)
     {
         uniformBytes.clear();
@@ -879,7 +974,7 @@ private:
     GeneratedShader generated;
     Vector<std::byte> uniformBytes;
 
-    std::optional<ShaderLibrary> shaderLibrary;
-    std::optional<ComputePipeline> pipelineState;
+    std::shared_ptr<const CompiledCompute> compiled;
+    bool releasesBindings = false;
 };
 } // namespace eacp::GPU

@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <string>
 
 #include "../DComp-Windows.h"
 
@@ -96,18 +97,38 @@ private:
     // no handler. Log it and leave the singleton uninitialised instead.
     DCompCompositor()
     {
-        if (auto hr = create(); FAILED(hr))
+        if (auto hr = createRenderingStack(); FAILED(hr))
         {
-            char code[16];
-            std::snprintf(
-                code, sizeof code, "0x%08lx", static_cast<unsigned long>(hr));
-            LOG("DCompCompositor: composition device init failed (hr=",
-                code,
-                "); GPU compositing unavailable. Expected on headless sessions "
-                "and plugin hosts without an accessible desktop compositor — "
-                "views degrade to no compositing instead of crashing the host.");
+            LOG("DCompCompositor: Direct2D init failed (hr=",
+                hexCode(hr),
+                "); there is no drawing of any kind on this device.");
 
             releaseAll();
+            return;
+        }
+
+        // The compositor is what puts a view on a screen, and it is the only
+        // part of this that needs a desktop to talk to: a session with none -
+        // a service, a CI runner, an ssh login, a plugin host without an
+        // accessible desktop - is refused it with E_ACCESSDENIED. Drawing does
+        // not need it. Rendering a view off-screen through
+        // View::renderToImage goes to Direct2D and never to the compositor, so
+        // throwing the whole stack away here (which is what this used to do)
+        // cost every off-screen render on any machine without a desktop, which
+        // is most of the machines that only ever render off-screen.
+        //
+        // So only the composition device goes. isInitialized() still answers
+        // for compositing, which is what its callers ask about; getD2DDevice()
+        // now answers with a device that works.
+        if (auto hr = createCompositionDevice(); FAILED(hr))
+        {
+            LOG("DCompCompositor: composition device init failed (hr=",
+                hexCode(hr),
+                "); GPU compositing unavailable, off-screen rendering still "
+                "works. Expected on headless sessions and plugin hosts "
+                "without an accessible desktop compositor.");
+
+            device.Reset();
             return;
         }
 
@@ -116,7 +137,17 @@ private:
 
     ~DCompCompositor() { releaseAll(); }
 
-    HRESULT create()
+    static std::string hexCode(HRESULT hr)
+    {
+        char code[16];
+        std::snprintf(code, sizeof code, "0x%08lx", (unsigned long) hr);
+
+        return code;
+    }
+
+    // Everything but the compositor: the two factories and the device the
+    // drawing itself goes through.
+    HRESULT createRenderingStack()
     {
         auto hr = DWriteCreateFactory(
             DWRITE_FACTORY_TYPE_SHARED,
@@ -130,11 +161,7 @@ private:
         if (FAILED(hr))
             return hr;
 
-        hr = createRenderingDevice();
-        if (FAILED(hr))
-            return hr;
-
-        return createCompositionDevice();
+        return createRenderingDevice();
     }
 
     // Creates (or re-creates, after device loss) the D3D + D2D device pair the

@@ -1,0 +1,241 @@
+#include "T5GemmaEncoder.h"
+
+#include "GemmaAttention.h"
+
+#include <eacp/GPU/Codegen/ComputeProgram.h>
+#include <eacp/GPU/Codegen/KernelCache.h>
+#include <eacp/GPU/Codegen/PackedVertex.h>
+#include <eacp/ML/Kernels/Activation.h>
+#include <eacp/ML/Kernels/Attention.h>
+#include <eacp/ML/Kernels/Linear.h>
+#include <eacp/ML/Kernels/Norm.h>
+#include <eacp/ML/Kernels/RoPE.h>
+#include <eacp/ML/Kernels/TensorOps.h>
+
+#include <cmath>
+#include <cstring>
+
+namespace eacp::SA3TextEncoder
+{
+using namespace eacp::GPU;
+using namespace eacp::ML;
+
+namespace
+{
+constexpr auto rmsEpsilon = 1e-6f;
+constexpr auto ropeTheta = 10000.f;
+constexpr auto attentionScale = 0.125f;
+constexpr auto attentionSoftcap = 50.f;
+constexpr auto maskedScore = -1.0e9f;
+
+Tensor loadGammaPlusOne(const SafetensorsFile& file, const std::string& name, Device& device)
+{
+    auto entry = file.find(name);
+    auto values = file.readF32(name);
+
+    for (auto& value: values)
+        value += 1.f;
+
+    return Tensor::fromHostF32(values.data(), entry->shape, device);
+}
+
+Tensor buildInvFreq(int headDimension, float theta, Device& device)
+{
+    auto half = headDimension / 2;
+    auto values = std::vector<float>((std::size_t) half);
+
+    for (auto i = 0; i < half; ++i)
+        values[(std::size_t) i] =
+            1.f / std::pow(theta, (float) (2 * i) / (float) headDimension);
+
+    return Tensor::fromHostF32(values.data(), {half}, device);
+}
+
+Tensor gatherEmbeddings(const SafetensorsFile& file,
+                       const std::vector<int>& tokenIds,
+                       int hiddenSize,
+                       Device& device)
+{
+    constexpr auto embedName = "model.encoder.embed_tokens.weight";
+    auto entry = file.find(embedName);
+    auto raw = file.rawBytes(embedName);
+    auto elementBytes = entry->dtype == SafetensorsDType::F32 ? 4 : 2;
+
+    auto values =
+        std::vector<float>((std::size_t) tokenIds.size() * (std::size_t) hiddenSize);
+
+    for (auto i = std::size_t {0}; i < tokenIds.size(); ++i)
+    {
+        auto rowBytes = raw
+                      + (std::size_t) tokenIds[i] * (std::size_t) hiddenSize
+                          * (std::size_t) elementBytes;
+        auto rowOut = values.data() + i * (std::size_t) hiddenSize;
+
+        if (entry->dtype == SafetensorsDType::F32)
+        {
+            std::memcpy(rowOut, rowBytes, (std::size_t) hiddenSize * sizeof(float));
+            continue;
+        }
+
+        for (auto d = 0; d < hiddenSize; ++d)
+        {
+            auto bits = std::uint16_t {};
+            std::memcpy(&bits, rowBytes + d * 2, sizeof(bits));
+
+            rowOut[d] = entry->dtype == SafetensorsDType::BF16 ? bfloat16ToFloat(bits)
+                                                               : halfToFloat(bits);
+        }
+    }
+
+    auto normalizer = std::sqrt((float) hiddenSize);
+
+    for (auto& value: values)
+        value *= normalizer;
+
+    return Tensor::fromHostF32(values.data(), {(int) tokenIds.size(), hiddenSize}, device);
+}
+
+Tensor buildPaddingMask(int rows, int cols, int validLength, Device& device)
+{
+    auto values = std::vector<float>((std::size_t) rows * (std::size_t) cols, 0.f);
+
+    for (auto row = 0; row < rows; ++row)
+        for (auto col = validLength; col < cols; ++col)
+            values[(std::size_t) row * (std::size_t) cols + (std::size_t) col] = maskedScore;
+
+    return Tensor::fromHostF32(values.data(), {rows, cols}, device);
+}
+}
+
+T5GemmaEncoder::T5GemmaEncoder(SafetensorsFile fileToUse,
+                              std::vector<Layer> layersToUse,
+                              Tensor finalNormGammaToUse,
+                              Tensor invFreqToUse)
+    : file(std::move(fileToUse))
+    , layers(std::move(layersToUse))
+    , finalNormGamma(std::move(finalNormGammaToUse))
+    , invFreq(std::move(invFreqToUse))
+{
+}
+
+std::optional<T5GemmaEncoder> T5GemmaEncoder::load(const std::string& safetensorsPath,
+                                                   Device& device)
+{
+    auto file = SafetensorsFile::open(FilePath {safetensorsPath});
+
+    if (!file.has_value())
+        return std::nullopt;
+
+    auto layers = std::vector<Layer> {};
+    layers.reserve((std::size_t) numLayers);
+
+    for (auto i = 0; i < numLayers; ++i)
+    {
+        auto prefix = "model.encoder.layers." + std::to_string(i) + ".";
+
+        auto layer = Layer {
+            .preSelfAttnNormGamma = loadGammaPlusOne(
+                *file, prefix + "pre_self_attn_layernorm.weight", device),
+            .postSelfAttnNormGamma = loadGammaPlusOne(
+                *file, prefix + "post_self_attn_layernorm.weight", device),
+            .preFeedforwardNormGamma = loadGammaPlusOne(
+                *file, prefix + "pre_feedforward_layernorm.weight", device),
+            .postFeedforwardNormGamma = loadGammaPlusOne(
+                *file, prefix + "post_feedforward_layernorm.weight", device),
+            .qWeight = file->loadF32(prefix + "self_attn.q_proj.weight", device),
+            .kWeight = file->loadF32(prefix + "self_attn.k_proj.weight", device),
+            .vWeight = file->loadF32(prefix + "self_attn.v_proj.weight", device),
+            .oWeight = file->loadF32(prefix + "self_attn.o_proj.weight", device),
+            .gateWeight = file->loadF32(prefix + "mlp.gate_proj.weight", device),
+            .upWeight = file->loadF32(prefix + "mlp.up_proj.weight", device),
+            .downWeight = file->loadF32(prefix + "mlp.down_proj.weight", device),
+        };
+
+        layers.push_back(std::move(layer));
+    }
+
+    auto finalNormGamma = loadGammaPlusOne(*file, "model.encoder.norm.weight", device);
+    auto invFreq = buildInvFreq(headDim, ropeTheta, device);
+
+    return T5GemmaEncoder {
+        std::move(*file), std::move(layers), std::move(finalNormGamma), std::move(invFreq)};
+}
+
+Tensor T5GemmaEncoder::runLayers(ComputePass& pass,
+                                Tensor hidden,
+                                const Tensor& mask,
+                                int layerCount,
+                                Device& device) const
+{
+    for (auto i = 0; i < layerCount; ++i)
+    {
+        const auto& layer = layers[(std::size_t) i];
+        auto rows = hidden.rows();
+
+        auto normed1 = rmsNorm(pass, hidden, layer.preSelfAttnNormGamma, rmsEpsilon, device);
+
+        auto q = linear(pass, normed1, layer.qWeight, nullptr, device);
+        auto k = linear(pass, normed1, layer.kWeight, nullptr, device);
+        auto v = linear(pass, normed1, layer.vWeight, nullptr, device);
+
+        auto qRope = applyRoPE(pass, q, invFreq, numHeads, headDim, device);
+        auto kRope = applyRoPE(pass, k, invFreq, numHeads, headDim, device);
+
+        auto attnOut = gemmaSelfAttention(pass,
+                                          qRope,
+                                          kRope,
+                                          v,
+                                          mask,
+                                          numHeads,
+                                          headDim,
+                                          attentionScale,
+                                          attentionSoftcap,
+                                          device);
+
+        auto attnFlat = reshape(std::move(attnOut), {rows, hiddenSize});
+        auto attnProjected = linear(pass, attnFlat, layer.oWeight, nullptr, device);
+        auto attnNormed =
+            rmsNorm(pass, attnProjected, layer.postSelfAttnNormGamma, rmsEpsilon, device);
+
+        hidden = add(pass, hidden, attnNormed, device);
+
+        auto normed2 =
+            rmsNorm(pass, hidden, layer.preFeedforwardNormGamma, rmsEpsilon, device);
+
+        auto gate = linear(pass, normed2, layer.gateWeight, nullptr, device);
+        auto gateActivated = applyActivation(pass, gate, ActivationKind::GeluTanh, device);
+        auto up = linear(pass, normed2, layer.upWeight, nullptr, device);
+        auto gated = multiply(pass, gateActivated, up, device);
+        auto mlpOut = linear(pass, gated, layer.downWeight, nullptr, device);
+        auto mlpNormed =
+            rmsNorm(pass, mlpOut, layer.postFeedforwardNormGamma, rmsEpsilon, device);
+
+        hidden = add(pass, hidden, mlpNormed, device);
+    }
+
+    return hidden;
+}
+
+Tensor T5GemmaEncoder::encodeTokensThroughLayer(ComputePass& pass,
+                                               const std::vector<int>& tokenIds,
+                                               int validLength,
+                                               int layerCount,
+                                               Device& device) const
+{
+    auto hidden = gatherEmbeddings(file, tokenIds, hiddenSize, device);
+    auto mask =
+        buildPaddingMask((int) tokenIds.size(), (int) tokenIds.size(), validLength, device);
+
+    return runLayers(pass, std::move(hidden), mask, layerCount, device);
+}
+
+Tensor T5GemmaEncoder::encodeTokens(ComputePass& pass,
+                                   const std::vector<int>& tokenIds,
+                                   int validLength,
+                                   Device& device) const
+{
+    auto hidden = encodeTokensThroughLayer(pass, tokenIds, validLength, numLayers, device);
+
+    return rmsNorm(pass, hidden, finalNormGamma, rmsEpsilon, device);
+}
+}

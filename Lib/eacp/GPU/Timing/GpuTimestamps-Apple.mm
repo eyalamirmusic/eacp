@@ -64,26 +64,36 @@ struct GpuTimestamps::Native
         if (set == nil)
             return;
 
-        auto descriptor = ObjC::makePtr<MTLCounterSampleBufferDescriptor>();
+        descriptor = ObjC::makePtr<MTLCounterSampleBufferDescriptor>();
         descriptor.get().counterSet = set;
         descriptor.get().storageMode = MTLStorageModeShared;
         descriptor.get().sampleCount = (NSUInteger) (maxTimedPasses * 2);
 
-        for (auto& slot : slots)
-        {
-            NSError* error = nil;
-            auto buffer = [metal newCounterSampleBufferWithDescriptor:descriptor.get()
-                                                                error:&error];
-
-            if (buffer == nil)
-                return;
-
-            slot.samples.set((NSObject<MTLCounterSampleBuffer>*) buffer);
-        }
+        // One slot's samples now, to learn whether the device will make them at
+        // all, and the rest as their slots are first used: a command buffer's
+        // timer only ever uses one, and each is 32 KB.
+        if (!ensureSamples(slots[0], metal))
+            return;
 
         [metal sampleTimestamps:&firstCpu gpuTimestamp:&firstGpu];
 
         supported = true;
+    }
+
+    bool ensureSamples(Slot& slot, id<MTLDevice> metal)
+    {
+        if (slot.samples.get() != nil)
+            return true;
+
+        NSError* error = nil;
+        auto buffer = [metal newCounterSampleBufferWithDescriptor:descriptor.get()
+                                                            error:&error];
+
+        if (buffer == nil)
+            return false;
+
+        slot.samples.set((NSObject<MTLCounterSampleBuffer>*) buffer);
+        return true;
     }
 
     // GPU ticks to milliseconds.
@@ -123,6 +133,7 @@ struct GpuTimestamps::Native
     }
 
     Array<Slot, slotCount> slots;
+    ObjC::Ptr<MTLCounterSampleBufferDescriptor> descriptor;
 
     MTLTimestamp firstCpu = 0;
     MTLTimestamp firstGpu = 0;
@@ -142,6 +153,11 @@ bool GpuTimestamps::isSupported() const
 void GpuTimestamps::beginSlot(int slot, Device& device)
 {
     impl->ensureCreated(device);
+
+    if (impl->supported
+        && !impl->ensureSamples(impl->slots[slot],
+                                (__bridge id<MTLDevice>) device.nativeDevice()))
+        impl->supported = false;
 
     // Unconditional, like endSlot's retain: a device with no counters still
     // times whole frames, so its slots still hold a command buffer.

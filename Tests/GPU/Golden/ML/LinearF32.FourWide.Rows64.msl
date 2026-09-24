@@ -1,0 +1,687 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint u1;
+    uint u2;
+    uint width;
+    uint height;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device const float* buffer1 [[buffer(1)]],
+    device float* buffer2 [[buffer(2)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint2 gid [[thread_position_in_grid]],
+    uint2 lid [[thread_position_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]],
+    uint simdLane [[thread_index_in_simdgroup]],
+    uint simdIndex [[simdgroup_index_in_threadgroup]],
+    uint simdCount [[simdgroups_per_threadgroup]])
+{
+    threadgroup float s0[2944];
+    float4 t0 = float4(0.0, 0.0, 0.0, 0.0);
+    float4 v0 = t0;
+    float4 v1 = t0;
+    float4 v2 = t0;
+    float4 v3 = t0;
+    float4 v4 = t0;
+    float4 v5 = t0;
+    float4 v6 = t0;
+    float4 v7 = t0;
+    simdgroup_float8x8 sgm0 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm1 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm2 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm3 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm4 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm5 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm6 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm7 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm8 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm9 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm10 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm11 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm12 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm13 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm14 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    simdgroup_float8x8 sgm15 = make_filled_simdgroup_matrix<float, 8, 8>(0.0);
+    uint t1 = (lid.x + 0u);
+    uint t2 = ((t1 % 4u) * 4u);
+    uint t3 = (0u + t2);
+    bool t4 = (t3 < uniforms.u2);
+    uint t5 = (tgid.y * 64u);
+    uint t6 = (t1 / 4u);
+    uint t7 = (t5 + t6);
+    uint t8 = (uniforms.u0 - 1u);
+    uint t9 = (uniforms.u2 - 4u);
+    uint t10 = ((((min(t7, t8) * uniforms.u2) + min(t3, t9)) / 4u) * 4u);
+    float4 t11 = float4(*((device const packed_float4*) (buffer0 + t10)));
+    v0 = float4((t4 ? (t11).x : 0.0), (t4 ? (t11).y : 0.0), (t4 ? (t11).z : 0.0), (t4 ? (t11).w : 0.0));
+    uint t12 = (lid.x + 128u);
+    uint t13 = ((t12 % 4u) * 4u);
+    uint t14 = (0u + t13);
+    bool t15 = (t14 < uniforms.u2);
+    uint t16 = (t12 / 4u);
+    uint t17 = (t5 + t16);
+    uint t18 = ((((min(t17, t8) * uniforms.u2) + min(t14, t9)) / 4u) * 4u);
+    float4 t19 = float4(*((device const packed_float4*) (buffer0 + t18)));
+    v1 = float4((t15 ? (t19).x : 0.0), (t15 ? (t19).y : 0.0), (t15 ? (t19).z : 0.0), (t15 ? (t19).w : 0.0));
+    bool t20 = (t3 < uniforms.u2);
+    uint t21 = (tgid.x * 64u);
+    uint t22 = (t21 + t6);
+    uint t23 = (uniforms.u1 - 1u);
+    uint t24 = ((((min(t22, t23) * uniforms.u2) + min(t3, t9)) / 4u) * 4u);
+    float4 t25 = float4(*((device const packed_float4*) (buffer1 + t24)));
+    v4 = float4((t20 ? (t25).x : 0.0), (t20 ? (t25).y : 0.0), (t20 ? (t25).z : 0.0), (t20 ? (t25).w : 0.0));
+    bool t26 = (t14 < uniforms.u2);
+    uint t27 = (t21 + t16);
+    uint t28 = ((((min(t27, t23) * uniforms.u2) + min(t14, t9)) / 4u) * 4u);
+    float4 t29 = float4(*((device const packed_float4*) (buffer1 + t28)));
+    v5 = float4((t26 ? (t29).x : 0.0), (t26 ? (t29).y : 0.0), (t26 ? (t29).z : 0.0), (t26 ? (t29).w : 0.0));
+    uint v8 = 0u;
+    while ((v8 < uniforms.u2))
+    {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint t30 = ((t6 * 24u) + t2);
+        s0[t30] = (v0).x;
+        s0[(t30 + 1u)] = (v0).y;
+        s0[(t30 + 2u)] = (v0).z;
+        s0[(t30 + 3u)] = (v0).w;
+        uint t31 = ((t16 * 24u) + t13);
+        s0[t31] = (v1).x;
+        s0[(t31 + 1u)] = (v1).y;
+        s0[(t31 + 2u)] = (v1).z;
+        s0[(t31 + 3u)] = (v1).w;
+        uint t32 = ((1536u + (t2 * 72u)) + t6);
+        s0[t32] = (v4).x;
+        s0[(t32 + 72u)] = (v4).y;
+        s0[(t32 + 144u)] = (v4).z;
+        s0[(t32 + 216u)] = (v4).w;
+        uint t33 = ((1536u + (t13 * 72u)) + t16);
+        s0[t33] = (v5).x;
+        s0[(t33 + 72u)] = (v5).y;
+        s0[(t33 + 144u)] = (v5).z;
+        s0[(t33 + 216u)] = (v5).w;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint t34 = (v8 + 16u);
+        uint t35 = (t34 + t2);
+        bool t36 = (t35 < uniforms.u2);
+        uint t37 = ((((min(t7, t8) * uniforms.u2) + min(t35, t9)) / 4u) * 4u);
+        float4 t38 = float4(*((device const packed_float4*) (buffer0 + t37)));
+        v0 = float4((t36 ? (t38).x : 0.0), (t36 ? (t38).y : 0.0), (t36 ? (t38).z : 0.0), (t36 ? (t38).w : 0.0));
+        uint t39 = (t34 + t13);
+        bool t40 = (t39 < uniforms.u2);
+        uint t41 = ((((min(t17, t8) * uniforms.u2) + min(t39, t9)) / 4u) * 4u);
+        float4 t42 = float4(*((device const packed_float4*) (buffer0 + t41)));
+        v1 = float4((t40 ? (t42).x : 0.0), (t40 ? (t42).y : 0.0), (t40 ? (t42).z : 0.0), (t40 ? (t42).w : 0.0));
+        uint t43 = (t34 + t2);
+        bool t44 = (t43 < uniforms.u2);
+        uint t45 = ((((min(t22, t23) * uniforms.u2) + min(t43, t9)) / 4u) * 4u);
+        float4 t46 = float4(*((device const packed_float4*) (buffer1 + t45)));
+        v4 = float4((t44 ? (t46).x : 0.0), (t44 ? (t46).y : 0.0), (t44 ? (t46).z : 0.0), (t44 ? (t46).w : 0.0));
+        uint t47 = (t34 + t13);
+        bool t48 = (t47 < uniforms.u2);
+        uint t49 = ((((min(t27, t23) * uniforms.u2) + min(t47, t9)) / 4u) * 4u);
+        float4 t50 = float4(*((device const packed_float4*) (buffer1 + t49)));
+        v5 = float4((t48 ? (t50).x : 0.0), (t48 ? (t50).y : 0.0), (t48 ? (t50).z : 0.0), (t48 ? (t50).w : 0.0));
+        uint t51 = ((simdIndex % 2u) * 32u);
+        uint t52 = ((t51 + 0u) * 24u);
+        simdgroup_float8x8 sgm16;
+        simdgroup_load(sgm16, s0 + ((t52 + 0u)), (24u));
+        uint t53 = ((t51 + 8u) * 24u);
+        simdgroup_float8x8 sgm17;
+        simdgroup_load(sgm17, s0 + ((t53 + 0u)), (24u));
+        uint t54 = ((t51 + 16u) * 24u);
+        simdgroup_float8x8 sgm18;
+        simdgroup_load(sgm18, s0 + ((t54 + 0u)), (24u));
+        uint t55 = ((t51 + 24u) * 24u);
+        simdgroup_float8x8 sgm19;
+        simdgroup_load(sgm19, s0 + ((t55 + 0u)), (24u));
+        uint t56 = ((simdIndex / 2u) * 32u);
+        uint t57 = (1536u + t56);
+        simdgroup_float8x8 sgm20;
+        simdgroup_load(sgm20, s0 + ((t57 + 0u)), (72u));
+        simdgroup_float8x8 sgm21;
+        simdgroup_load(sgm21, s0 + ((t57 + 8u)), (72u));
+        simdgroup_float8x8 sgm22;
+        simdgroup_load(sgm22, s0 + ((t57 + 16u)), (72u));
+        simdgroup_float8x8 sgm23;
+        simdgroup_load(sgm23, s0 + ((t57 + 24u)), (72u));
+        simdgroup_multiply_accumulate(sgm0, sgm16, sgm20, sgm0);
+        simdgroup_multiply_accumulate(sgm1, sgm16, sgm21, sgm1);
+        simdgroup_multiply_accumulate(sgm2, sgm16, sgm22, sgm2);
+        simdgroup_multiply_accumulate(sgm3, sgm16, sgm23, sgm3);
+        simdgroup_multiply_accumulate(sgm4, sgm17, sgm20, sgm4);
+        simdgroup_multiply_accumulate(sgm5, sgm17, sgm21, sgm5);
+        simdgroup_multiply_accumulate(sgm6, sgm17, sgm22, sgm6);
+        simdgroup_multiply_accumulate(sgm7, sgm17, sgm23, sgm7);
+        simdgroup_multiply_accumulate(sgm8, sgm18, sgm20, sgm8);
+        simdgroup_multiply_accumulate(sgm9, sgm18, sgm21, sgm9);
+        simdgroup_multiply_accumulate(sgm10, sgm18, sgm22, sgm10);
+        simdgroup_multiply_accumulate(sgm11, sgm18, sgm23, sgm11);
+        simdgroup_multiply_accumulate(sgm12, sgm19, sgm20, sgm12);
+        simdgroup_multiply_accumulate(sgm13, sgm19, sgm21, sgm13);
+        simdgroup_multiply_accumulate(sgm14, sgm19, sgm22, sgm14);
+        simdgroup_multiply_accumulate(sgm15, sgm19, sgm23, sgm15);
+        simdgroup_float8x8 sgm24;
+        simdgroup_load(sgm24, s0 + ((t52 + 8u)), (24u));
+        simdgroup_float8x8 sgm25;
+        simdgroup_load(sgm25, s0 + ((t53 + 8u)), (24u));
+        simdgroup_float8x8 sgm26;
+        simdgroup_load(sgm26, s0 + ((t54 + 8u)), (24u));
+        simdgroup_float8x8 sgm27;
+        simdgroup_load(sgm27, s0 + ((t55 + 8u)), (24u));
+        uint t58 = (2112u + t56);
+        simdgroup_float8x8 sgm28;
+        simdgroup_load(sgm28, s0 + ((t58 + 0u)), (72u));
+        simdgroup_float8x8 sgm29;
+        simdgroup_load(sgm29, s0 + ((t58 + 8u)), (72u));
+        simdgroup_float8x8 sgm30;
+        simdgroup_load(sgm30, s0 + ((t58 + 16u)), (72u));
+        simdgroup_float8x8 sgm31;
+        simdgroup_load(sgm31, s0 + ((t58 + 24u)), (72u));
+        simdgroup_multiply_accumulate(sgm0, sgm24, sgm28, sgm0);
+        simdgroup_multiply_accumulate(sgm1, sgm24, sgm29, sgm1);
+        simdgroup_multiply_accumulate(sgm2, sgm24, sgm30, sgm2);
+        simdgroup_multiply_accumulate(sgm3, sgm24, sgm31, sgm3);
+        simdgroup_multiply_accumulate(sgm4, sgm25, sgm28, sgm4);
+        simdgroup_multiply_accumulate(sgm5, sgm25, sgm29, sgm5);
+        simdgroup_multiply_accumulate(sgm6, sgm25, sgm30, sgm6);
+        simdgroup_multiply_accumulate(sgm7, sgm25, sgm31, sgm7);
+        simdgroup_multiply_accumulate(sgm8, sgm26, sgm28, sgm8);
+        simdgroup_multiply_accumulate(sgm9, sgm26, sgm29, sgm9);
+        simdgroup_multiply_accumulate(sgm10, sgm26, sgm30, sgm10);
+        simdgroup_multiply_accumulate(sgm11, sgm26, sgm31, sgm11);
+        simdgroup_multiply_accumulate(sgm12, sgm27, sgm28, sgm12);
+        simdgroup_multiply_accumulate(sgm13, sgm27, sgm29, sgm13);
+        simdgroup_multiply_accumulate(sgm14, sgm27, sgm30, sgm14);
+        simdgroup_multiply_accumulate(sgm15, sgm27, sgm31, sgm15);
+        v8 = (v8 + 16u);
+    }
+    uint t59 = ((simdIndex % 2u) * 32u);
+    uint t60 = (t5 + t59);
+    uint t61 = (t60 + 0u);
+    uint t62 = (t61 + 8u);
+    uint t63 = ((simdIndex / 2u) * 32u);
+    uint t64 = (t21 + t63);
+    uint t65 = (t64 + 0u);
+    uint t66 = (t65 + 8u);
+    bool t67 = ((t62 <= uniforms.u0) && (t66 <= uniforms.u1));
+    if (t67)
+    {
+        simdgroup_store(sgm0, buffer2 + (((t61 * uniforms.u1) + t65)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm0, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t67)))
+    {
+        uint t68 = (lid.x % 32u);
+        uint t69 = (t68 + 0u);
+        uint t70 = (t61 + (t69 / 8u));
+        uint t71 = (t65 + (t69 % 8u));
+        if (((t70 < uniforms.u0) && (t71 < uniforms.u1)))
+        {
+            buffer2[((t70 * uniforms.u1) + t71)] = s0[((2688u + (simdIndex * 64u)) + t69)];
+        }
+        uint t72 = (t68 + 32u);
+        uint t73 = (t61 + (t72 / 8u));
+        uint t74 = (t65 + (t72 % 8u));
+        if (((t73 < uniforms.u0) && (t74 < uniforms.u1)))
+        {
+            buffer2[((t73 * uniforms.u1) + t74)] = s0[((2688u + (simdIndex * 64u)) + t72)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint t75 = (t64 + 8u);
+    uint t76 = (t75 + 8u);
+    bool t77 = ((t62 <= uniforms.u0) && (t76 <= uniforms.u1));
+    if (t77)
+    {
+        simdgroup_store(sgm1, buffer2 + (((t61 * uniforms.u1) + t75)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm1, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t77)))
+    {
+        uint t78 = (lid.x % 32u);
+        uint t79 = (t78 + 0u);
+        uint t80 = (t61 + (t79 / 8u));
+        uint t81 = (t75 + (t79 % 8u));
+        if (((t80 < uniforms.u0) && (t81 < uniforms.u1)))
+        {
+            buffer2[((t80 * uniforms.u1) + t81)] = s0[((2688u + (simdIndex * 64u)) + t79)];
+        }
+        uint t82 = (t78 + 32u);
+        uint t83 = (t61 + (t82 / 8u));
+        uint t84 = (t75 + (t82 % 8u));
+        if (((t83 < uniforms.u0) && (t84 < uniforms.u1)))
+        {
+            buffer2[((t83 * uniforms.u1) + t84)] = s0[((2688u + (simdIndex * 64u)) + t82)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint t85 = (t64 + 16u);
+    uint t86 = (t85 + 8u);
+    bool t87 = ((t62 <= uniforms.u0) && (t86 <= uniforms.u1));
+    if (t87)
+    {
+        simdgroup_store(sgm2, buffer2 + (((t61 * uniforms.u1) + t85)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm2, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t87)))
+    {
+        uint t88 = (lid.x % 32u);
+        uint t89 = (t88 + 0u);
+        uint t90 = (t61 + (t89 / 8u));
+        uint t91 = (t85 + (t89 % 8u));
+        if (((t90 < uniforms.u0) && (t91 < uniforms.u1)))
+        {
+            buffer2[((t90 * uniforms.u1) + t91)] = s0[((2688u + (simdIndex * 64u)) + t89)];
+        }
+        uint t92 = (t88 + 32u);
+        uint t93 = (t61 + (t92 / 8u));
+        uint t94 = (t85 + (t92 % 8u));
+        if (((t93 < uniforms.u0) && (t94 < uniforms.u1)))
+        {
+            buffer2[((t93 * uniforms.u1) + t94)] = s0[((2688u + (simdIndex * 64u)) + t92)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint t95 = (t64 + 24u);
+    uint t96 = (t95 + 8u);
+    bool t97 = ((t62 <= uniforms.u0) && (t96 <= uniforms.u1));
+    if (t97)
+    {
+        simdgroup_store(sgm3, buffer2 + (((t61 * uniforms.u1) + t95)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm3, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t97)))
+    {
+        uint t98 = (lid.x % 32u);
+        uint t99 = (t98 + 0u);
+        uint t100 = (t61 + (t99 / 8u));
+        uint t101 = (t95 + (t99 % 8u));
+        if (((t100 < uniforms.u0) && (t101 < uniforms.u1)))
+        {
+            buffer2[((t100 * uniforms.u1) + t101)] = s0[((2688u + (simdIndex * 64u)) + t99)];
+        }
+        uint t102 = (t98 + 32u);
+        uint t103 = (t61 + (t102 / 8u));
+        uint t104 = (t95 + (t102 % 8u));
+        if (((t103 < uniforms.u0) && (t104 < uniforms.u1)))
+        {
+            buffer2[((t103 * uniforms.u1) + t104)] = s0[((2688u + (simdIndex * 64u)) + t102)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint t105 = (t60 + 8u);
+    uint t106 = (t105 + 8u);
+    bool t107 = ((t106 <= uniforms.u0) && (t66 <= uniforms.u1));
+    if (t107)
+    {
+        simdgroup_store(sgm4, buffer2 + (((t105 * uniforms.u1) + t65)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm4, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t107)))
+    {
+        uint t108 = (lid.x % 32u);
+        uint t109 = (t108 + 0u);
+        uint t110 = (t105 + (t109 / 8u));
+        uint t111 = (t65 + (t109 % 8u));
+        if (((t110 < uniforms.u0) && (t111 < uniforms.u1)))
+        {
+            buffer2[((t110 * uniforms.u1) + t111)] = s0[((2688u + (simdIndex * 64u)) + t109)];
+        }
+        uint t112 = (t108 + 32u);
+        uint t113 = (t105 + (t112 / 8u));
+        uint t114 = (t65 + (t112 % 8u));
+        if (((t113 < uniforms.u0) && (t114 < uniforms.u1)))
+        {
+            buffer2[((t113 * uniforms.u1) + t114)] = s0[((2688u + (simdIndex * 64u)) + t112)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t115 = ((t106 <= uniforms.u0) && (t76 <= uniforms.u1));
+    if (t115)
+    {
+        simdgroup_store(sgm5, buffer2 + (((t105 * uniforms.u1) + t75)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm5, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t115)))
+    {
+        uint t116 = (lid.x % 32u);
+        uint t117 = (t116 + 0u);
+        uint t118 = (t105 + (t117 / 8u));
+        uint t119 = (t75 + (t117 % 8u));
+        if (((t118 < uniforms.u0) && (t119 < uniforms.u1)))
+        {
+            buffer2[((t118 * uniforms.u1) + t119)] = s0[((2688u + (simdIndex * 64u)) + t117)];
+        }
+        uint t120 = (t116 + 32u);
+        uint t121 = (t105 + (t120 / 8u));
+        uint t122 = (t75 + (t120 % 8u));
+        if (((t121 < uniforms.u0) && (t122 < uniforms.u1)))
+        {
+            buffer2[((t121 * uniforms.u1) + t122)] = s0[((2688u + (simdIndex * 64u)) + t120)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t123 = ((t106 <= uniforms.u0) && (t86 <= uniforms.u1));
+    if (t123)
+    {
+        simdgroup_store(sgm6, buffer2 + (((t105 * uniforms.u1) + t85)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm6, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t123)))
+    {
+        uint t124 = (lid.x % 32u);
+        uint t125 = (t124 + 0u);
+        uint t126 = (t105 + (t125 / 8u));
+        uint t127 = (t85 + (t125 % 8u));
+        if (((t126 < uniforms.u0) && (t127 < uniforms.u1)))
+        {
+            buffer2[((t126 * uniforms.u1) + t127)] = s0[((2688u + (simdIndex * 64u)) + t125)];
+        }
+        uint t128 = (t124 + 32u);
+        uint t129 = (t105 + (t128 / 8u));
+        uint t130 = (t85 + (t128 % 8u));
+        if (((t129 < uniforms.u0) && (t130 < uniforms.u1)))
+        {
+            buffer2[((t129 * uniforms.u1) + t130)] = s0[((2688u + (simdIndex * 64u)) + t128)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t131 = ((t106 <= uniforms.u0) && (t96 <= uniforms.u1));
+    if (t131)
+    {
+        simdgroup_store(sgm7, buffer2 + (((t105 * uniforms.u1) + t95)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm7, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t131)))
+    {
+        uint t132 = (lid.x % 32u);
+        uint t133 = (t132 + 0u);
+        uint t134 = (t105 + (t133 / 8u));
+        uint t135 = (t95 + (t133 % 8u));
+        if (((t134 < uniforms.u0) && (t135 < uniforms.u1)))
+        {
+            buffer2[((t134 * uniforms.u1) + t135)] = s0[((2688u + (simdIndex * 64u)) + t133)];
+        }
+        uint t136 = (t132 + 32u);
+        uint t137 = (t105 + (t136 / 8u));
+        uint t138 = (t95 + (t136 % 8u));
+        if (((t137 < uniforms.u0) && (t138 < uniforms.u1)))
+        {
+            buffer2[((t137 * uniforms.u1) + t138)] = s0[((2688u + (simdIndex * 64u)) + t136)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint t139 = (t60 + 16u);
+    uint t140 = (t139 + 8u);
+    bool t141 = ((t140 <= uniforms.u0) && (t66 <= uniforms.u1));
+    if (t141)
+    {
+        simdgroup_store(sgm8, buffer2 + (((t139 * uniforms.u1) + t65)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm8, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t141)))
+    {
+        uint t142 = (lid.x % 32u);
+        uint t143 = (t142 + 0u);
+        uint t144 = (t139 + (t143 / 8u));
+        uint t145 = (t65 + (t143 % 8u));
+        if (((t144 < uniforms.u0) && (t145 < uniforms.u1)))
+        {
+            buffer2[((t144 * uniforms.u1) + t145)] = s0[((2688u + (simdIndex * 64u)) + t143)];
+        }
+        uint t146 = (t142 + 32u);
+        uint t147 = (t139 + (t146 / 8u));
+        uint t148 = (t65 + (t146 % 8u));
+        if (((t147 < uniforms.u0) && (t148 < uniforms.u1)))
+        {
+            buffer2[((t147 * uniforms.u1) + t148)] = s0[((2688u + (simdIndex * 64u)) + t146)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t149 = ((t140 <= uniforms.u0) && (t76 <= uniforms.u1));
+    if (t149)
+    {
+        simdgroup_store(sgm9, buffer2 + (((t139 * uniforms.u1) + t75)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm9, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t149)))
+    {
+        uint t150 = (lid.x % 32u);
+        uint t151 = (t150 + 0u);
+        uint t152 = (t139 + (t151 / 8u));
+        uint t153 = (t75 + (t151 % 8u));
+        if (((t152 < uniforms.u0) && (t153 < uniforms.u1)))
+        {
+            buffer2[((t152 * uniforms.u1) + t153)] = s0[((2688u + (simdIndex * 64u)) + t151)];
+        }
+        uint t154 = (t150 + 32u);
+        uint t155 = (t139 + (t154 / 8u));
+        uint t156 = (t75 + (t154 % 8u));
+        if (((t155 < uniforms.u0) && (t156 < uniforms.u1)))
+        {
+            buffer2[((t155 * uniforms.u1) + t156)] = s0[((2688u + (simdIndex * 64u)) + t154)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t157 = ((t140 <= uniforms.u0) && (t86 <= uniforms.u1));
+    if (t157)
+    {
+        simdgroup_store(sgm10, buffer2 + (((t139 * uniforms.u1) + t85)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm10, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t157)))
+    {
+        uint t158 = (lid.x % 32u);
+        uint t159 = (t158 + 0u);
+        uint t160 = (t139 + (t159 / 8u));
+        uint t161 = (t85 + (t159 % 8u));
+        if (((t160 < uniforms.u0) && (t161 < uniforms.u1)))
+        {
+            buffer2[((t160 * uniforms.u1) + t161)] = s0[((2688u + (simdIndex * 64u)) + t159)];
+        }
+        uint t162 = (t158 + 32u);
+        uint t163 = (t139 + (t162 / 8u));
+        uint t164 = (t85 + (t162 % 8u));
+        if (((t163 < uniforms.u0) && (t164 < uniforms.u1)))
+        {
+            buffer2[((t163 * uniforms.u1) + t164)] = s0[((2688u + (simdIndex * 64u)) + t162)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t165 = ((t140 <= uniforms.u0) && (t96 <= uniforms.u1));
+    if (t165)
+    {
+        simdgroup_store(sgm11, buffer2 + (((t139 * uniforms.u1) + t95)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm11, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t165)))
+    {
+        uint t166 = (lid.x % 32u);
+        uint t167 = (t166 + 0u);
+        uint t168 = (t139 + (t167 / 8u));
+        uint t169 = (t95 + (t167 % 8u));
+        if (((t168 < uniforms.u0) && (t169 < uniforms.u1)))
+        {
+            buffer2[((t168 * uniforms.u1) + t169)] = s0[((2688u + (simdIndex * 64u)) + t167)];
+        }
+        uint t170 = (t166 + 32u);
+        uint t171 = (t139 + (t170 / 8u));
+        uint t172 = (t95 + (t170 % 8u));
+        if (((t171 < uniforms.u0) && (t172 < uniforms.u1)))
+        {
+            buffer2[((t171 * uniforms.u1) + t172)] = s0[((2688u + (simdIndex * 64u)) + t170)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint t173 = (t60 + 24u);
+    uint t174 = (t173 + 8u);
+    bool t175 = ((t174 <= uniforms.u0) && (t66 <= uniforms.u1));
+    if (t175)
+    {
+        simdgroup_store(sgm12, buffer2 + (((t173 * uniforms.u1) + t65)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm12, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t175)))
+    {
+        uint t176 = (lid.x % 32u);
+        uint t177 = (t176 + 0u);
+        uint t178 = (t173 + (t177 / 8u));
+        uint t179 = (t65 + (t177 % 8u));
+        if (((t178 < uniforms.u0) && (t179 < uniforms.u1)))
+        {
+            buffer2[((t178 * uniforms.u1) + t179)] = s0[((2688u + (simdIndex * 64u)) + t177)];
+        }
+        uint t180 = (t176 + 32u);
+        uint t181 = (t173 + (t180 / 8u));
+        uint t182 = (t65 + (t180 % 8u));
+        if (((t181 < uniforms.u0) && (t182 < uniforms.u1)))
+        {
+            buffer2[((t181 * uniforms.u1) + t182)] = s0[((2688u + (simdIndex * 64u)) + t180)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t183 = ((t174 <= uniforms.u0) && (t76 <= uniforms.u1));
+    if (t183)
+    {
+        simdgroup_store(sgm13, buffer2 + (((t173 * uniforms.u1) + t75)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm13, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t183)))
+    {
+        uint t184 = (lid.x % 32u);
+        uint t185 = (t184 + 0u);
+        uint t186 = (t173 + (t185 / 8u));
+        uint t187 = (t75 + (t185 % 8u));
+        if (((t186 < uniforms.u0) && (t187 < uniforms.u1)))
+        {
+            buffer2[((t186 * uniforms.u1) + t187)] = s0[((2688u + (simdIndex * 64u)) + t185)];
+        }
+        uint t188 = (t184 + 32u);
+        uint t189 = (t173 + (t188 / 8u));
+        uint t190 = (t75 + (t188 % 8u));
+        if (((t189 < uniforms.u0) && (t190 < uniforms.u1)))
+        {
+            buffer2[((t189 * uniforms.u1) + t190)] = s0[((2688u + (simdIndex * 64u)) + t188)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t191 = ((t174 <= uniforms.u0) && (t86 <= uniforms.u1));
+    if (t191)
+    {
+        simdgroup_store(sgm14, buffer2 + (((t173 * uniforms.u1) + t85)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm14, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t191)))
+    {
+        uint t192 = (lid.x % 32u);
+        uint t193 = (t192 + 0u);
+        uint t194 = (t173 + (t193 / 8u));
+        uint t195 = (t85 + (t193 % 8u));
+        if (((t194 < uniforms.u0) && (t195 < uniforms.u1)))
+        {
+            buffer2[((t194 * uniforms.u1) + t195)] = s0[((2688u + (simdIndex * 64u)) + t193)];
+        }
+        uint t196 = (t192 + 32u);
+        uint t197 = (t173 + (t196 / 8u));
+        uint t198 = (t85 + (t196 % 8u));
+        if (((t197 < uniforms.u0) && (t198 < uniforms.u1)))
+        {
+            buffer2[((t197 * uniforms.u1) + t198)] = s0[((2688u + (simdIndex * 64u)) + t196)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool t199 = ((t174 <= uniforms.u0) && (t96 <= uniforms.u1));
+    if (t199)
+    {
+        simdgroup_store(sgm15, buffer2 + (((t173 * uniforms.u1) + t95)), (uniforms.u1));
+    }
+    else
+    {
+        simdgroup_store(sgm15, s0 + ((2688u + (simdIndex * 64u))), (8u));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((!(t199)))
+    {
+        uint t200 = (lid.x % 32u);
+        uint t201 = (t200 + 0u);
+        uint t202 = (t173 + (t201 / 8u));
+        uint t203 = (t95 + (t201 % 8u));
+        if (((t202 < uniforms.u0) && (t203 < uniforms.u1)))
+        {
+            buffer2[((t202 * uniforms.u1) + t203)] = s0[((2688u + (simdIndex * 64u)) + t201)];
+        }
+        uint t204 = (t200 + 32u);
+        uint t205 = (t173 + (t204 / 8u));
+        uint t206 = (t95 + (t204 % 8u));
+        if (((t205 < uniforms.u0) && (t206 < uniforms.u1)))
+        {
+            buffer2[((t205 * uniforms.u1) + t206)] = s0[((2688u + (simdIndex * 64u)) + t204)];
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+}
