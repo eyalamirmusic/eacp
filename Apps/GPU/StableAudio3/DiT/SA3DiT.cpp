@@ -50,7 +50,7 @@ Tensor rmsNormPerHead(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<RMSNormKernel>(device);
+    auto& kernel = GPU::sharedKernel<RMSNormKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.output = result.buffer();

@@ -38,7 +38,7 @@ Tensor scaleAndAdd(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<ScaleAndAddKernel>(device);
+    auto& kernel = GPU::sharedKernel<ScaleAndAddKernel>(device);
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();

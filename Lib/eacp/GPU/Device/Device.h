@@ -337,16 +337,17 @@ public:
     // real storage.
     void noteBufferCreated() { ++bufferCount; }
 
-    // One T per Device, made on first use and destroyed with the Device, before
-    // the backend device itself. For a module that keeps state which is only
-    // valid on this Device - compiled pipelines, say - and must not outlive it
-    // or be found again by a later Device at the same address. The lookup is
-    // safe from any thread; what T does with that is T's own business.
+    // Singleton<T>::get() scoped to this Device: one T, made on first use and
+    // destroyed with the Device, before the backend device itself. For state
+    // that is only valid on this Device - compiled pipelines, recycled buffers
+    // - and must neither outlive it nor be found again by a later Device at
+    // the same address. The lookup is safe from any thread; what T does with
+    // that is T's own business.
     template <typename T>
-    T& attachment()
+    T& singleton()
     {
-        auto lock = std::scoped_lock {attachmentMutex};
-        auto& slot = attachments[std::type_index {typeid(T)}];
+        auto lock = std::scoped_lock {singletonMutex};
+        auto& slot = singletons[std::type_index {typeid(T)}];
 
         if (slot == nullptr)
             slot = std::make_shared<T>();
@@ -374,7 +375,7 @@ private:
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
 
-    std::mutex attachmentMutex;
-    std::map<std::type_index, std::shared_ptr<void>> attachments;
+    std::mutex singletonMutex;
+    std::map<std::type_index, std::shared_ptr<void>> singletons;
 };
 } // namespace eacp::GPU

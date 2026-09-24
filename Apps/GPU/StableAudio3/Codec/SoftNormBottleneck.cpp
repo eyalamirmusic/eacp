@@ -81,7 +81,7 @@ Tensor softNormBottleneckEncode(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<SoftNormEncodeKernel>(device);
+    auto& kernel = GPU::sharedKernel<SoftNormEncodeKernel>(device);
     kernel.input = input.buffer();
     kernel.scalingFactor = weights.scalingFactor.buffer();
     kernel.bias = weights.bias.buffer();
@@ -99,7 +99,7 @@ Tensor softNormBottleneckDecode(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<SoftNormDecodeKernel>(device);
+    auto& kernel = GPU::sharedKernel<SoftNormDecodeKernel>(device);
     kernel.input = input.buffer();
     kernel.output = result.buffer();
     kernel.runningStd = weights.runningStd;

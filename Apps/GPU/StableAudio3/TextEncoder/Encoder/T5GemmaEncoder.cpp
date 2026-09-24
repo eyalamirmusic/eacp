@@ -71,7 +71,7 @@ Tensor addElementwise(ComputePass& pass, const Tensor& left, const Tensor& right
 {
     auto result = Tensor::uninitializedF32(left.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Add);
+    auto& kernel = GPU::sharedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Add);
     kernel.left = left.buffer();
     kernel.right = right.buffer();
     kernel.output = result.buffer();
@@ -88,7 +88,7 @@ Tensor multiplyElementwise(ComputePass& pass,
     auto result = Tensor::uninitializedF32(left.shape(), device);
 
     auto& kernel =
-        GPU::cachedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Multiply);
+        GPU::sharedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Multiply);
     kernel.left = left.buffer();
     kernel.right = right.buffer();
     kernel.output = result.buffer();

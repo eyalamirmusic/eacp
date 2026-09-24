@@ -126,7 +126,7 @@ PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
     auto hiddenSize = T5GemmaEncoder::hiddenSize;
     auto result = Tensor::uninitializedF32({maxLength, hiddenSize}, device);
 
-    auto& kernel = GPU::cachedKernel<PadRowSelectKernel>(device);
+    auto& kernel = GPU::sharedKernel<PadRowSelectKernel>(device);
     kernel.encoded = encoded.buffer();
     kernel.paddingEmbedding = paddingEmbedding.buffer();
     kernel.output = result.buffer();

@@ -196,7 +196,7 @@ weights also has to make them resident.
 
 **Fix.** A per-`Device` cache of prepared kernel instances keyed by kernel type,
 plus the specialisation for kernels whose source depends on constructor
-arguments. For example, `cachedKernel<LinearF32>(device)` returns a prepared
+arguments. For example, `sharedKernel<LinearF32>(device)` returns a prepared
 object that call sites set members on and dispatch. This is safe because
 `pass.dispatch` binds buffers and `setBytes` the uniforms at encode time. One
 thing to check: whether a bound `Uniform<InputBuffer>` member holds a `Buffer`

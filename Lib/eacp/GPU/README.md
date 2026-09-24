@@ -555,6 +555,66 @@ Nothing about correctness changes between the two. `Buffer::read()` orders
 behind the submission itself, so a read before the `Async` resolves is still
 right — it just waits by hand for what the overlap was there to avoid.
 
+### A kernel built once
+
+Constructing a `ComputeProgram` records its graph and emits its source, and
+`prepare()` hands that source to the shader compiler — MSL through
+`newLibraryWithSource` and a pipeline state on Metal, DXC and
+`CreateComputePipelineState` on D3D12, glslang and a `VkPipeline` on Vulkan.
+Code that builds a kernel where it dispatches it pays all of that on every call,
+which for a layer of a network is thousands of times a step.
+
+Two things take that away, one of them without anything to write. `prepare()`
+keeps what it compiled on the `Device`, keyed by everything the backend compiles
+from — backend, entry point, thread group, bindings and the text itself — so a
+second kernel that emits the same source shares the first one's library and
+pipeline, whoever built it. The emission is still paid for, though: 221 µs for a
+tiled matrix product in a release build, 3 ms in a debug one. `sharedKernel`
+skips that as well, handing back the one prepared instance of a kernel type on a
+device:
+
+```cpp
+Tensor scale(ComputePass& pass, const Tensor& input, float by, Device& device)
+{
+    auto result = Tensor::uninitializedF32(input.shape(), device);
+
+    auto& kernel = sharedKernel<ScaleKernel>(device);   // built on first use
+    kernel.input = input.buffer();
+    kernel.output = result.buffer();
+    kernel.scale = by;
+    kernel.dispatch(pass, input.count());
+
+    return result;
+}
+```
+
+The instance is shared by every caller, which is safe for the reason a kernel
+could always be dispatched twice: the dispatch copies the uniforms and binds the
+buffers there and then. What sharing does ask is that each call sets every
+member it declares — a value the last caller left behind is not the zero a fresh
+kernel would have held. Constructor arguments are part of what tells two
+kernels apart, so a kernel with variants is `sharedKernel<ActivationKernel>(device,
+ActivationKind::SiLU)`; they must be integers or enums.
+
+The first use still compiles. `KernelWarmup` does it ahead of time, on worker
+threads, so the compiles overlap whatever the caller does meanwhile — loading
+weights, typically — instead of stalling the first command buffer:
+
+```cpp
+auto warmup = KernelWarmup {};
+warmup.add<LinearF32>();
+warmup.add<ActivationKernel>(ActivationKind::SiLU);
+warmup.start(device);
+
+loadWeights();                // the compiles run beside this
+
+warmup.wait();                // usually already done
+```
+
+A kernel still building when it is first dispatched is waited for, not built
+twice. Compiling on another thread is what a `Device` has always allowed;
+dispatching a shared kernel is not, and belongs on the device's own thread.
+
 ### Waiting for one command buffer
 
 What `Buffer::read()` waits for is the *newest* submission, and so for every

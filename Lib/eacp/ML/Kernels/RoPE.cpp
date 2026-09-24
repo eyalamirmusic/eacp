@@ -61,7 +61,7 @@ Tensor applyRoPE(ComputePass& pass,
     auto rows = input.rows();
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = cachedKernel<RoPEKernel>(device);
+    auto& kernel = sharedKernel<RoPEKernel>(device);
     kernel.input = input.buffer();
     kernel.invFreq = invFreq.buffer();
     kernel.output = result.buffer();

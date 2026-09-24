@@ -28,7 +28,7 @@ Tensor rmsNormPerHead(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = cachedKernel<RMSNormKernel>(device);
+    auto& kernel = sharedKernel<RMSNormKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.output = result.buffer();
@@ -277,7 +277,7 @@ Tensor attention(ComputePass& pass,
 
     if (additiveMask != nullptr)
     {
-        auto& scoresKernel = cachedKernel<AttentionScoresKernel>(device);
+        auto& scoresKernel = sharedKernel<AttentionScoresKernel>(device);
         scoresKernel.query = normalizedQuery.buffer();
         scoresKernel.key = normalizedKey.buffer();
         scoresKernel.additiveMask = additiveMask->buffer();
@@ -288,7 +288,7 @@ Tensor attention(ComputePass& pass,
     }
     else
     {
-        auto& scoresKernel = cachedKernel<UnmaskedAttentionScoresKernel>(device);
+        auto& scoresKernel = sharedKernel<UnmaskedAttentionScoresKernel>(device);
         scoresKernel.query = normalizedQuery.buffer();
         scoresKernel.key = normalizedKey.buffer();
         scoresKernel.scores = scores.buffer();
@@ -297,13 +297,13 @@ Tensor attention(ComputePass& pass,
         scoresKernel.dispatch(pass, rows, heads, cols);
     }
 
-    auto& statsKernel = cachedKernel<AttentionRowStatsKernel>(device);
+    auto& statsKernel = sharedKernel<AttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
     statsKernel.rowMax = rowMax.buffer();
     statsKernel.rowSum = rowSum.buffer();
     statsKernel.dispatch(pass, rows * heads, cols);
 
-    auto& weightedSumKernel = cachedKernel<AttentionWeightedSumKernel>(device);
+    auto& weightedSumKernel = sharedKernel<AttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();
     weightedSumKernel.scores = scores.buffer();
     weightedSumKernel.rowMax = rowMax.buffer();

@@ -195,7 +195,7 @@ Tensor rmsNorm(ComputePass& pass,
     auto dim = input.cols();
     auto result = Tensor::uninitializedF32({rows, dim}, device);
 
-    auto& kernel = cachedKernel<RMSNormKernel>(device);
+    auto& kernel = sharedKernel<RMSNormKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.output = result.buffer();
@@ -218,7 +218,7 @@ Tensor layerNorm(ComputePass& pass,
 
     if (beta != nullptr)
     {
-        auto& kernel = cachedKernel<LayerNormKernel>(device);
+        auto& kernel = sharedKernel<LayerNormKernel>(device);
         kernel.input = input.buffer();
         kernel.gamma = gamma.buffer();
         kernel.beta = beta->buffer();
@@ -228,7 +228,7 @@ Tensor layerNorm(ComputePass& pass,
     }
     else
     {
-        auto& kernel = cachedKernel<LayerNormNoBiasKernel>(device);
+        auto& kernel = sharedKernel<LayerNormNoBiasKernel>(device);
         kernel.input = input.buffer();
         kernel.gamma = gamma.buffer();
         kernel.output = result.buffer();
@@ -250,7 +250,7 @@ Tensor dynamicTanh(ComputePass& pass,
     auto dim = input.cols();
     auto result = Tensor::uninitializedF32({rows, dim}, device);
 
-    auto& kernel = cachedKernel<DynamicTanhKernel>(device);
+    auto& kernel = sharedKernel<DynamicTanhKernel>(device);
     kernel.input = input.buffer();
     kernel.gamma = gamma.buffer();
     kernel.beta = beta.buffer();

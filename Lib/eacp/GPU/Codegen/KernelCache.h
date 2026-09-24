@@ -35,7 +35,7 @@ ComputeProgram& findOrBuildKernel(Device& device,
 // would have held. Use it from the Device's own thread; KernelWarmup below is
 // the one exception, and it only builds.
 template <typename Kernel, typename... Args>
-Kernel& cachedKernel(Device& device, Args... args)
+Kernel& sharedKernel(Device& device, Args... args)
 {
     static_assert(((std::is_integral_v<Args> || std::is_enum_v<Args>) && ...),
                   "kernel variants are keyed by integer or enum arguments");
@@ -72,7 +72,7 @@ public:
     void add(Args... args)
     {
         tasks.push_back([=](Device& device)
-                        { cachedKernel<Kernel>(device, args...); });
+                        { sharedKernel<Kernel>(device, args...); });
     }
 
     void start(Device& device);

@@ -61,7 +61,7 @@ CompiledCompute::CompiledCompute(Device& device, const ShaderSource& source)
 std::shared_ptr<const CompiledCompute>
     compileComputeCached(Device& device, const ShaderSource& source)
 {
-    auto& slot = device.attachment<CompiledComputeStore>().slotFor(
+    auto& slot = device.singleton<CompiledComputeStore>().slotFor(
         compiledComputeKey(source));
 
     std::call_once(

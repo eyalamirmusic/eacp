@@ -67,7 +67,7 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
-    auto& scoresKernel = GPU::cachedKernel<GemmaAttentionScoresKernel>(device);
+    auto& scoresKernel = GPU::sharedKernel<GemmaAttentionScoresKernel>(device);
     scoresKernel.query = query.buffer();
     scoresKernel.key = key.buffer();
     scoresKernel.additiveMask = additiveMask.buffer();
@@ -77,13 +77,13 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     scoresKernel.softcap = softcap;
     scoresKernel.dispatch(pass, rows, heads, cols);
 
-    auto& statsKernel = GPU::cachedKernel<AttentionRowStatsKernel>(device);
+    auto& statsKernel = GPU::sharedKernel<AttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
     statsKernel.rowMax = rowMax.buffer();
     statsKernel.rowSum = rowSum.buffer();
     statsKernel.dispatch(pass, rows * heads, cols);
 
-    auto& weightedSumKernel = GPU::cachedKernel<AttentionWeightedSumKernel>(device);
+    auto& weightedSumKernel = GPU::sharedKernel<AttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();
     weightedSumKernel.scores = scores.buffer();
     weightedSumKernel.rowMax = rowMax.buffer();

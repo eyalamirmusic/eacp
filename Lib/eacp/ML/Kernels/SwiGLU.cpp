@@ -47,7 +47,7 @@ Tensor swiGLU(ComputePass& pass,
     auto hidden = linear(pass, input, proj0Weight, &proj0Bias, device);
     auto gated = Tensor::uninitializedF32({rows, inner}, device);
 
-    auto& gateKernel = cachedKernel<SwiGLUGateKernel>(device);
+    auto& gateKernel = sharedKernel<SwiGLUGateKernel>(device);
     gateKernel.hidden = hidden.buffer();
     gateKernel.output = gated.buffer();
     gateKernel.dispatch(pass, rows, inner);

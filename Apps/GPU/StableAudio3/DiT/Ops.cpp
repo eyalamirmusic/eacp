@@ -190,7 +190,7 @@ Tensor expoFourierFeatures(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32({1, dim}, device);
 
-    auto& kernel = GPU::cachedKernel<ExpoFourierFeaturesKernel>(device);
+    auto& kernel = GPU::sharedKernel<ExpoFourierFeaturesKernel>(device);
     kernel.output = result.buffer();
     kernel.value = value;
     kernel.logMinFreq = std::log(minFreq);
@@ -204,7 +204,7 @@ Tensor addTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Device& d
 {
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<AddTensorsKernel>(device);
+    auto& kernel = GPU::sharedKernel<AddTensorsKernel>(device);
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();
@@ -217,7 +217,7 @@ Tensor subtractTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Devi
 {
     auto result = Tensor::uninitializedF32(a.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<SubtractTensorsKernel>(device);
+    auto& kernel = GPU::sharedKernel<SubtractTensorsKernel>(device);
     kernel.a = a.buffer();
     kernel.b = b.buffer();
     kernel.output = result.buffer();
@@ -234,14 +234,14 @@ Tensor addBroadcastRow(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(values.shape(), device);
 
-    auto& copyKernel = GPU::cachedKernel<CopyRowsKernel>(device);
+    auto& copyKernel = GPU::sharedKernel<CopyRowsKernel>(device);
     copyKernel.source = values.buffer();
     copyKernel.destination = result.buffer();
     copyKernel.sourceRowStart = 0u;
     copyKernel.destinationRowStart = 0u;
     copyKernel.dispatch(pass, values.rows(), values.cols());
 
-    auto& addKernel = GPU::cachedKernel<AddBroadcastRowKernel>(device);
+    auto& addKernel = GPU::sharedKernel<AddBroadcastRowKernel>(device);
     addKernel.values = result.buffer();
     addKernel.addend = addend.buffer();
     addKernel.dispatch(pass, rowStart, values.rows() - rowStart, values.cols());
@@ -257,7 +257,7 @@ Tensor adaLNModulate(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<AdaLNModulateKernel>(device);
+    auto& kernel = GPU::sharedKernel<AdaLNModulateKernel>(device);
     kernel.input = input.buffer();
     kernel.scale = scale.buffer();
     kernel.shift = shift.buffer();
@@ -274,7 +274,7 @@ Tensor sigmoidGate(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(input.shape(), device);
 
-    auto& kernel = GPU::cachedKernel<SigmoidGateKernel>(device);
+    auto& kernel = GPU::sharedKernel<SigmoidGateKernel>(device);
     kernel.input = input.buffer();
     kernel.gate = gate.buffer();
     kernel.output = result.buffer();
@@ -289,14 +289,14 @@ Tensor concatRows(ComputePass& pass, const Tensor& top, const Tensor& bottom, De
     auto totalRows = top.rows() + bottom.rows();
     auto result = Tensor::uninitializedF32({totalRows, columns}, device);
 
-    auto& topKernel = GPU::cachedKernel<CopyRowsKernel>(device);
+    auto& topKernel = GPU::sharedKernel<CopyRowsKernel>(device);
     topKernel.source = top.buffer();
     topKernel.destination = result.buffer();
     topKernel.sourceRowStart = 0u;
     topKernel.destinationRowStart = 0u;
     topKernel.dispatch(pass, top.rows(), columns);
 
-    auto& bottomKernel = GPU::cachedKernel<CopyRowsKernel>(device);
+    auto& bottomKernel = GPU::sharedKernel<CopyRowsKernel>(device);
     bottomKernel.source = bottom.buffer();
     bottomKernel.destination = result.buffer();
     bottomKernel.sourceRowStart = 0u;
@@ -314,7 +314,7 @@ Tensor sliceRows(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32({rowCount, input.cols()}, device);
 
-    auto& kernel = GPU::cachedKernel<CopyRowsKernel>(device);
+    auto& kernel = GPU::sharedKernel<CopyRowsKernel>(device);
     kernel.source = input.buffer();
     kernel.destination = result.buffer();
     kernel.sourceRowStart = (std::uint32_t) rowStart;
@@ -332,7 +332,7 @@ Tensor sliceColumns(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32({input.rows(), sliceWidth}, device);
 
-    auto& kernel = GPU::cachedKernel<SliceColumnsKernel>(device);
+    auto& kernel = GPU::sharedKernel<SliceColumnsKernel>(device);
     kernel.source = input.buffer();
     kernel.destination = result.buffer();
     kernel.sourceColumnCount = (std::uint32_t) input.cols();

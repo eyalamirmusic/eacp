@@ -294,7 +294,7 @@ Tensor linear(ComputePass& pass,
 
     if (weight.isPacked())
     {
-        auto& kernel = cachedKernel<LinearPackedHalf>(device);
+        auto& kernel = sharedKernel<LinearPackedHalf>(device);
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();
@@ -302,7 +302,7 @@ Tensor linear(ComputePass& pass,
     }
     else
     {
-        auto& kernel = cachedKernel<LinearF32>(device);
+        auto& kernel = sharedKernel<LinearF32>(device);
         kernel.activations = input.buffer();
         kernel.weight = weight.buffer();
         kernel.output = result.buffer();
@@ -311,7 +311,7 @@ Tensor linear(ComputePass& pass,
 
     if (bias != nullptr)
     {
-        auto& biasKernel = cachedKernel<AddBiasRows>(device);
+        auto& biasKernel = sharedKernel<AddBiasRows>(device);
         biasKernel.values = result.buffer();
         biasKernel.bias = bias->buffer();
         biasKernel.dispatch(pass, rows, columns);

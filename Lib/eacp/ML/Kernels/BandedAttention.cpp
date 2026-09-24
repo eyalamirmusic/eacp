@@ -213,7 +213,7 @@ Tensor bandedAttention(ComputePass& pass,
     auto leftRadius = (std::uint32_t) band.leftRadius;
     auto rightRadius = (std::uint32_t) band.rightRadius;
 
-    auto& scoresKernel = cachedKernel<BandedAttentionScoresKernel>(device);
+    auto& scoresKernel = sharedKernel<BandedAttentionScoresKernel>(device);
     scoresKernel.query = query.buffer();
     scoresKernel.key = key.buffer();
     scoresKernel.scores = scores.buffer();
@@ -224,7 +224,7 @@ Tensor bandedAttention(ComputePass& pass,
     scoresKernel.scale = 1.f / std::sqrt((float) headDim);
     scoresKernel.dispatch(pass, rows, heads, window);
 
-    auto& statsKernel = cachedKernel<BandedAttentionRowStatsKernel>(device);
+    auto& statsKernel = sharedKernel<BandedAttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
     statsKernel.rowMax = rowMax.buffer();
     statsKernel.rowSum = rowSum.buffer();
@@ -233,7 +233,7 @@ Tensor bandedAttention(ComputePass& pass,
     statsKernel.rightRadius = rightRadius;
     statsKernel.dispatch(pass, rows, heads, window);
 
-    auto& weightedSumKernel = cachedKernel<BandedAttentionWeightedSumKernel>(device);
+    auto& weightedSumKernel = sharedKernel<BandedAttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();
     weightedSumKernel.scores = scores.buffer();
     weightedSumKernel.rowMax = rowMax.buffer();
