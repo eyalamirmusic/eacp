@@ -94,8 +94,18 @@ std::optional<SA3TextEncoderModel> SA3TextEncoderModel::load(
     const std::string& conditionerSafetensorsPath,
     Device& device)
 {
-    auto tokenizer = BpeTokenizer::load(tokenizerJsonPath);
+    return load(BpeTokenizer::load(tokenizerJsonPath),
+                t5gemmaSafetensorsPath,
+                conditionerSafetensorsPath,
+                device);
+}
 
+std::optional<SA3TextEncoderModel> SA3TextEncoderModel::load(
+    std::optional<BpeTokenizer> tokenizer,
+    const std::string& t5gemmaSafetensorsPath,
+    const std::string& conditionerSafetensorsPath,
+    Device& device)
+{
     if (!tokenizer.has_value())
         return std::nullopt;
 

@@ -11,10 +11,12 @@
 #include <DiT/Weights.h>
 #include <Sampler/Sampler.h>
 #include <TextEncoder/SA3TextEncoder.h>
+#include <TextEncoder/Tokenizer/BpeTokenizer.h>
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <future>
 #include <optional>
 #include <string>
 
@@ -181,6 +183,14 @@ int main(int argc, char** argv)
     auto decoder = std::optional<SA3Codec::SameDecoder> {};
     auto start = Clock::now();
 
+    // Started before the weights rather than after them. Parsing the 33 MB
+    // vocabulary is the largest single piece of the text encoder's load and
+    // touches no device, so it runs on a thread of its own while the DiT
+    // weights come off the disk and onto the GPU, and is waited for below.
+    auto tokenizer = std::async(std::launch::async,
+                                [path = tokenizerFile.str()]
+                                { return SA3TextEncoder::BpeTokenizer::load(path); });
+
     {
         auto file = SafetensorsFile::open(modelFile);
 
@@ -206,7 +216,7 @@ int main(int argc, char** argv)
     std::printf("Loading T5Gemma text encoder...\n");
     start = Clock::now();
     auto textEncoder = SA3TextEncoder::SA3TextEncoderModel::load(
-        tokenizerFile.str(), textEncoderFile.str(), modelPath, device);
+        tokenizer.get(), textEncoderFile.str(), modelPath, device);
 
     if (!textEncoder.has_value())
     {
