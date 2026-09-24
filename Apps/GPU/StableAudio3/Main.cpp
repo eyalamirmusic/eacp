@@ -317,7 +317,7 @@ int main(int argc, char** argv)
             options.seconds, samplerSteps,
             SA3Sampler::randomNoiseSource(options.seed), device);
 
-        auto repeatWaveform = decoder->decode(repeatLatent, sampleCount, device);
+        auto repeatWaveform = decoder.decode(repeatLatent, sampleCount, device);
         std::printf("Generating again took %.3fs\n",
                     secondsSince(repeatStart));
     }
