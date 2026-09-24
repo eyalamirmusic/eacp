@@ -1,4 +1,5 @@
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
@@ -47,6 +48,10 @@ auto tMediumInputSensitivity = test("SA3DiT/mediumForwardVariesWithInput") = []
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::medium,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(

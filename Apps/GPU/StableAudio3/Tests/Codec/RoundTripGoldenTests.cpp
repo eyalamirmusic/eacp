@@ -6,6 +6,7 @@
 #include <Codec/SA3Codec.h>
 
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <algorithm>
 #include <cmath>
@@ -72,6 +73,10 @@ auto tSameCodecEncodeMatchesPythonLatent =
     if (!device.isValid())
         return;
 
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
+        return;
+
     auto file = SafetensorsFile::open(
         SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
@@ -99,6 +104,10 @@ auto tSameCodecDecodeAloneMatchesPythonWaveform =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(
@@ -138,6 +147,10 @@ auto tSameCodecRoundTripMatchesPythonWaveform =
     if (!device.isValid())
         return;
 
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
+        return;
+
     auto file = SafetensorsFile::open(
         SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
@@ -172,6 +185,10 @@ auto tSameCodecRoundTripPreservesInputSignal =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(

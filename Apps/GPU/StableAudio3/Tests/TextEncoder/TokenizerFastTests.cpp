@@ -2,8 +2,10 @@
 #include <Checkpoints.h>
 
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 using namespace nano;
+using namespace eacp;
 using namespace eacp::SA3TextEncoder;
 
 namespace
@@ -36,6 +38,10 @@ void checkEncoding(const BpeTokenizer& tokenizer,
 auto tTokenizerLoads =
     test("SA3TextEncoder/Tokenizer/loadsFromRealTokenizerJson") = []
 {
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/tokenizer.json"))
+        return;
+
     auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
     check(tokenizer.has_value());
 };
@@ -43,6 +49,10 @@ auto tTokenizerLoads =
 auto tTokenizerSingleWord =
     test("SA3TextEncoder/Tokenizer/singleWordMatchesHardcodedIds") = []
 {
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/tokenizer.json"))
+        return;
+
     auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
 
     if (!tokenizer.has_value())
@@ -54,6 +64,10 @@ auto tTokenizerSingleWord =
 auto tTokenizerShortPhrase =
     test("SA3TextEncoder/Tokenizer/shortPhraseMatchesHardcodedIds") = []
 {
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/tokenizer.json"))
+        return;
+
     auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
 
     if (!tokenizer.has_value())
@@ -65,6 +79,10 @@ auto tTokenizerShortPhrase =
 auto tTokenizerPadsToMaxLength =
     test("SA3TextEncoder/Tokenizer/padsToExactlyMaxLength") = []
 {
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/tokenizer.json"))
+        return;
+
     auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
 
     if (!tokenizer.has_value())

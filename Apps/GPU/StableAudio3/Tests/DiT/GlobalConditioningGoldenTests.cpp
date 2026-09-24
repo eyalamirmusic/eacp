@@ -1,4 +1,5 @@
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
@@ -24,6 +25,10 @@ auto tGlobalConditioningMatchesGolden =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(

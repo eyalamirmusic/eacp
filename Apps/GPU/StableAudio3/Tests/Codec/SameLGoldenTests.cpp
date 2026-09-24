@@ -1,6 +1,6 @@
 #include "GoldenFixture.h"
 
-#include <eacp/Core/Utils/Environment.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <optional>
 
@@ -89,17 +89,16 @@ float snrDb(const std::vector<float>& reference, const std::vector<float>& actua
 // exactly like a suite that had passed silently.
 std::optional<SameCodec> loadSameL()
 {
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::sameL,
+                                              "model.safetensors"))
+        return std::nullopt;
+
     auto file = SafetensorsFile::open(
         SA3Checkpoints::directory(SA3Checkpoints::sameL) / "model.safetensors");
+    check(file.has_value());
 
     if (!file.has_value())
-    {
-        check(getEnvValue("EACP_REQUIRE_CHECKPOINTS") != "1",
-              "EACP_REQUIRE_CHECKPOINTS=1 but the SAME-L checkpoint is not in "
-              "SA3Checkpoints::directory(SA3Checkpoints::sameL)");
-
         return std::nullopt;
-    }
 
     return SameCodec::loadFromSafetensors(
         *file, CodecConfig::sameL(), "", Device::shared());

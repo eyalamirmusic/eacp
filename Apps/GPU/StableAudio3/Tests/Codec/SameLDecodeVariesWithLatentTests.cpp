@@ -1,4 +1,5 @@
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/GPU/Device/Device.h>
@@ -76,6 +77,10 @@ auto tSameLDecodeVariesAtSmallScale =
     if (!device.isValid())
         return;
 
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::sameL,
+                                              "model.safetensors"))
+        return;
+
     auto file = SafetensorsFile::open(
         SA3Checkpoints::directory(SA3Checkpoints::sameL) / "model.safetensors");
 
@@ -93,6 +98,10 @@ auto tSameLDecodeVariesAtRealClipScale =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::sameL,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(

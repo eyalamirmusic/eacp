@@ -9,6 +9,7 @@
 #include <TextEncoder/Encoder/T5GemmaEncoder.h>
 
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <algorithm>
 #include <cmath>
@@ -49,6 +50,10 @@ auto tLayer0MatchesGolden =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/model.safetensors"))
         return;
 
     auto encoder = T5GemmaEncoder::load(t5gemmaWeightsPath(), device);

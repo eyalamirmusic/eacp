@@ -43,3 +43,11 @@ The SA3 test targets (`SA3Codec*`, `SA3DiT*`, `SA3Sampler*`,
 `SA3TextEncoder*`) read checkpoints from the same place and never download.
 Run the app once per model first; for the `SA3CodecSameL*` tests, put SAME-L's
 `model.safetensors` in `SA3Checkpoints::directory(SA3Checkpoints::sameL)`.
+
+They are registered with ctest like every other suite (`ctest --test-dir build
+-R SA3`), so CI runs them too. A case whose checkpoint is not cached prints
+`skipped: checkpoint not cached (<path>)` and passes; the suites that need no
+checkpoint (`SA3CodecFastTests`, `SA3CodecPatchedPretransformGoldenTests`,
+`SA3DiTUnitTests`, `SA3SamplerFastTests`) run everywhere.
+`EACP_REQUIRE_CHECKPOINTS=1` turns every skip into a failure, for a machine
+that is meant to have them.

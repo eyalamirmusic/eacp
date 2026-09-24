@@ -4,6 +4,7 @@
 #include <Checkpoints.h>
 
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 using namespace nano;
 using namespace eacp;
@@ -26,6 +27,10 @@ std::string tokenizerJsonPath()
 auto tTokenizerMatchesRealTokenizerOnGoldenPrompts =
     test("SA3TextEncoder/Tokenizer/matchesRealTokenizerOnGoldenPrompts") = []
 {
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/tokenizer.json"))
+        return;
+
     auto tokenizer = BpeTokenizer::load(tokenizerJsonPath());
     check(tokenizer.has_value());
 

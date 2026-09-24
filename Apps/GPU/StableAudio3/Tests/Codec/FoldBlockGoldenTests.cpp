@@ -10,6 +10,7 @@
 #include <Codec/TransformerResamplingBlock.h>
 
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <algorithm>
 #include <cmath>
@@ -62,6 +63,10 @@ auto tEncoderResamplingBlockMatchesPython =
     if (!device.isValid())
         return;
 
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
+        return;
+
     auto file = SafetensorsFile::open(
         SA3Checkpoints::directory(SA3Checkpoints::smallMusic) / "model.safetensors");
     check(file.has_value());
@@ -100,6 +105,10 @@ auto tDecoderResamplingBlockMatchesPython =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(

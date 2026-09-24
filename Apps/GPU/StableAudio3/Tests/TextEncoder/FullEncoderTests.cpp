@@ -10,6 +10,7 @@
 #include <TextEncoder/SA3TextEncoder.h>
 
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <algorithm>
 #include <cmath>
@@ -66,6 +67,10 @@ auto tFullEncoderMatchesGolden =
     if (!device.isValid())
         return;
 
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/model.safetensors"))
+        return;
+
     auto encoder = T5GemmaEncoder::load(t5gemmaWeightsPath(), device);
     check(encoder.has_value());
 
@@ -119,6 +124,14 @@ auto tPaddingEmbeddingSubstitutesPaddedRows =
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                              "t5gemma-b-b-ul2/tokenizer.json")
+        || SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                                 "t5gemma-b-b-ul2/model.safetensors")
+        || SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::smallMusic,
+                                                 "model.safetensors"))
         return;
 
     auto model = SA3TextEncoderModel::load(

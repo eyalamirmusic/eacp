@@ -1,4 +1,5 @@
 #include <NanoTest/NanoTest.h>
+#include <Tests/SkipWithoutCheckpoint.h>
 
 #include <eacp/Core/Utils/FilePath.h>
 #include <eacp/GPU/Device/Device.h>
@@ -45,6 +46,10 @@ auto tMediumVariesWithSeed = test("SA3Sampler/mediumFullLoopVariesWithSeed") = [
     auto& device = Device::shared();
 
     if (!device.isValid())
+        return;
+
+    if (SA3Checkpoints::skipWithoutCheckpoint(SA3Checkpoints::medium,
+                                              "model.safetensors"))
         return;
 
     auto file = SafetensorsFile::open(

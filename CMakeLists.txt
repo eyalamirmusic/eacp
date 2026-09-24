@@ -144,12 +144,17 @@ add_subdirectory(Lib)
 
 option(EACP_ENABLE_EXAMPLES "Enable Examples for EACP" ${PROJECT_IS_TOP_LEVEL})
 
+# Ahead of Apps: an app's own test suites (StableAudio3's) are registered from
+# its directory, and add_test() before enable_testing() registers nothing.
+if (EACP_ENABLE_TESTS)
+    enable_testing()
+endif ()
+
 if (EACP_ENABLE_EXAMPLES)
     add_subdirectory(Apps)
 endif ()
 
 if (EACP_ENABLE_TESTS)
-    enable_testing()
     add_subdirectory(Tests)
 endif ()
 
