@@ -27,7 +27,12 @@ times worse than it is. Full method and raw JSON: `Benchmark/`.
 
 ### Medium model, 30 s clip
 
-Machine A. Single quiet runs for eacp; PyTorch ranges are three runs.
+Machine A. Evidence, honestly: the eacp column is a single quiet run on mains
+(scratch log, 6ef2eb75), and the only medians `benchmark.py` has recorded since
+(`Benchmark/Outputs/r2-*.json`, 6ef2eb75) were taken with another process on
+the GPU and put eacp's generate at 2.5–2.7 s against PyTorch's 2.5 s — level,
+not ahead. Until a clean run of `benchmark.py` on mains replaces this table,
+read the "eacp is" column as the best single run, not a median.
 
 | Phase | eacp Metal | PyTorch MPS warm | eacp is |
 |---|---|---|---|
