@@ -183,4 +183,16 @@ void Device::waitForSubmittedWork()
 {
     impl->context.waitFor(impl->context.lastSubmitted());
 }
+
+// The queue's fence values are the serials: every submission signals the next
+// one, and the fence's completed value is how far the GPU has got.
+std::uint64_t Device::lastSubmission() const
+{
+    return impl->context.lastSubmitted();
+}
+
+bool Device::hasFinished(std::uint64_t submission) const
+{
+    return impl->context.hasCompleted(submission);
+}
 } // namespace eacp::GPU

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Buffer/Buffer.h"
+#include "../Buffer/BufferPool.h"
 #include "../CommandBuffer/CommandBuffer.h"
 #include "../Pipeline/ComputePipeline.h"
 #include "../Pipeline/RenderPipeline.h"
@@ -80,11 +81,14 @@ public:
     }
 
     // An uninitialised buffer of the given size, e.g. a compute output target.
+    // Its contents are whatever was there: the storage may be recycled from a
+    // buffer of the same size and usage that the GPU has finished with (see
+    // BufferPool), so a kernel that needs zeros writes them.
     Buffer makeBuffer(std::int64_t bytes, BufferUsage usage = BufferUsage::Storage)
     {
         assertOwningThread();
 
-        return {*this, nullptr, bytes, usage};
+        return BufferPool::of(*this).take(*this, bytes, usage);
     }
 
     // A buffer over memory the caller owns: shared with it where the backend
@@ -283,6 +287,15 @@ public:
     // to the fence.
     void trackSubmittedWork(void* nativeCommandBuffer);
     void waitForSubmittedWork();
+
+    // Every submission to this Device's queue - a CommandBuffer's, a Frame's -
+    // gets a serial, counting up from 1 in the order they were submitted. These
+    // two are what lets something the GPU may still be using be kept exactly as
+    // long as it has to be: note lastSubmission() when you are done with it,
+    // and it is free once hasFinished() says so for the next one. BufferPool is
+    // built on them. Neither blocks.
+    std::uint64_t lastSubmission() const;
+    bool hasFinished(std::uint64_t submission) const;
 
     // How many frames have begun on this device. StreamingBuffers picks which
     // of its pools to write into from this, so that a renderer streaming

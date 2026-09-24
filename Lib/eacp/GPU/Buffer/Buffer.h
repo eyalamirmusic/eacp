@@ -7,6 +7,7 @@
 namespace eacp::GPU
 {
 class Device;
+class BufferPool;
 
 // What a buffer is bound as. A Vertex buffer feeds the vertex stage; an Index
 // buffer feeds drawIndexed; a Storage buffer is read/written by a compute
@@ -114,6 +115,13 @@ public:
            std::int64_t bytes,
            BufferUsage usage = BufferUsage::Vertex,
            BufferStorage storage = BufferStorage::Device);
+
+    // A Buffer that came from the device's BufferPool gives its storage back
+    // to it here; any other frees it.
+    ~Buffer();
+
+    Buffer(Buffer&& other) noexcept;
+    Buffer& operator=(Buffer&& other) noexcept;
 
     // The zero-copy sibling: a buffer over memory the caller owns, adopted
     // rather than copied where the backend can do that and copied where it
@@ -240,8 +248,15 @@ public:
     void* nativeWriteView() const;
 
 private:
+    friend class BufferPool;
+
+    void giveBackToPool();
+
     struct Native;
     Pimpl<Native> impl;
+
+    BufferPool* pool = nullptr;
+    BufferUsage pooledUsage = BufferUsage::Storage;
 };
 
 // A contiguous slice of one Buffer: where it starts and how long it is, in

@@ -147,4 +147,16 @@ void Device::waitForSubmittedWork()
 {
     impl->context.waitIdle();
 }
+
+// The timeline semaphore's values are the serials: every submission signals
+// the next one, and its counter is how far the GPU has got.
+std::uint64_t Device::lastSubmission() const
+{
+    return impl->context.lastSubmitted();
+}
+
+bool Device::hasFinished(std::uint64_t submission) const
+{
+    return impl->context.hasCompleted(submission);
+}
 } // namespace eacp::GPU

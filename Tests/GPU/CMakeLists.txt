@@ -33,6 +33,7 @@ set(gpu_test_sources
         BlendStateTests.cpp
         BufferAccessTests.cpp
         BufferFillTests.cpp
+        BufferPoolTests.cpp
         BufferRangeTests.cpp
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp

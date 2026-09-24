@@ -828,6 +828,39 @@ overwrites what the kernel wrote. The offset and the length must be multiples of
 4, and no pass may be open. Nothing reaches the host, which is the point — a
 cache re-zeroed between passes used to be an upload of zeros per pass.
 
+### Temporaries are recycled
+
+`Device::makeBuffer(bytes)` — the uninitialised buffer every compute
+temporary is — takes its storage from the device's `BufferPool`, and a buffer
+made that way hands its storage back when it is destroyed. Nothing to call, and
+nothing to hold on to: a loop that records the same work again and again, an
+inference step or a frame's compute, stops asking the device for fresh memory
+for every temporary each time round.
+
+That matters more than an allocation sounds. A fresh buffer's pages are zeroed
+and made resident before the command buffer that first uses it can run: 1,587
+temporaries a step cost a 290 ms Stable Audio DiT step 75 ms of it on an M5 Max,
+and recycling them brought the step to the 215 ms its kernels take. On D3D12
+each fresh buffer is a `CreateCommittedResource`.
+
+Storage is never handed out while the GPU may still use it. A buffer destroyed
+now can be named by everything already submitted and by the command buffer
+still being recorded, so its storage waits until the GPU has finished the next
+submission after it — which is what `Device::lastSubmission()` and
+`hasFinished()` are there to answer, on every backend without blocking. The one
+order that promise does not cover is two command buffers recorded at once and
+submitted out of order, the older after the newer, with a buffer destroyed
+between.
+
+Reuse is by exact size and usage, and storage no `makeBuffer` has asked for
+through a few submissions is freed, so the pool holds on to what the work still
+uses and not to what it has moved on from. Buffers made with data, and adopted
+memory, never come from it.
+
+What changes for a caller is only what "uninitialised" always allowed: the
+contents of a new buffer are whatever was there. A kernel that needs zeros says
+so with `fill`.
+
 ### Part of a buffer
 
 A storage-buffer member takes a `BufferRange` as readily as a whole `Buffer`,

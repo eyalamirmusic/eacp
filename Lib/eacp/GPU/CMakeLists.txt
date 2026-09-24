@@ -40,6 +40,8 @@ add_library(eacp-gpu STATIC)
 target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
 
 target_sources(eacp-gpu PRIVATE
+        Buffer/Buffer.cpp
+        Buffer/BufferPool.cpp
         Buffer/StreamingBuffers.cpp
         Codegen/KernelCache.cpp
         CommandBuffer/CommandBuffer.cpp
