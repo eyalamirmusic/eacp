@@ -12,7 +12,7 @@ the current conversation.
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
 
 Platform coverage splits on whether a module draws, decided once in the
-top-level `CMakeLists.txt` by six capability variables that `Lib`, `Apps` and
+top-level `CMakeLists.txt` by seven capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`, `GPUWidgets`,
 `Sprites`, `Apps/GPU`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`, `Apps/UI` and the
@@ -21,17 +21,20 @@ GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the platform's own 2D tier �
 retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
 `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG`, `Apps/UI/SVGDocument`
 and the GPU examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
-`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS) and
-`EACP_HAS_WEBVIEW` (the native `WebView`). The first three are
+`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS),
+`EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
+the Core ML runner, `MLTests` and `Apps/ML`). The first three are
 `APPLE OR WIN32 OR LINUX` — everywhere graphics builds at all — and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
-set of modules and a new port reaches them one at a time. The other three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms all six
-are simply what `EACP_HAS_DRAW` alone used to decide. `Core`,
-`Network` and `SIMD` build everywhere, Linux included, and so do two device-free
-pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL and the
-MSL/HLSL/GLSL emitters (`GPUCodegenTests`), and `eacp-webview-bridge`, the page
-bridge over a `ScriptHost` (`ScriptHostTests`). `eacp-spirv` (`GPU/Spirv/`)
+set of modules and a new port reaches them one at a time. The next three hang off
+`EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
+are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
+off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
+`Core`, `Network` and `SIMD` build everywhere, Linux included, and so do three
+device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
+and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`), `eacp-webview-bridge`, the
+page bridge over a `ScriptHost` (`ScriptHostTests`), and `eacp-ml-graph`, the
+graph builder and the MIL/protobuf/blob writers (`MLGraphTests`). `eacp-spirv` (`GPU/Spirv/`)
 wraps glslang as a GLSL-to-SPIR-V compiler (`SpirvTests`); it is built on
 Linux only by default (`EACP_BUILD_SPIRV`), because only the Vulkan backend
 ships it, and macOS and Windows can opt in. Where it is built, every GLSL

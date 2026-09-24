@@ -7,3 +7,4 @@ target_link_libraries(MLSpike PRIVATE eacp-core
 target_compile_options(MLSpike PRIVATE -fobjc-arc -mmacosx-version-min=14.4)
 target_link_options(MLSpike PRIVATE -mmacosx-version-min=14.4)
 target_compile_definitions(MLSpike PRIVATE ACCELERATE_NEW_LAPACK)
+eacp_skip_pch(MLSpike)

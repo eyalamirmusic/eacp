@@ -85,6 +85,7 @@ one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland and Vulkan.
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
 | `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
 | `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
+| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — |
 
 † Linux has no platform 2D tier and no menus; what that costs is spelled out
 two paragraphs down.
@@ -126,12 +127,13 @@ window is built and never shown and every GPU test still runs on Mesa's
 lavapipe with no display server at all; the window and present tests run for
 real under a headless Weston.
 
-The top-level `CMakeLists.txt` decides this once, in six capability variables
+The top-level `CMakeLists.txt` decides this once, in seven capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
 The three drawing ones are on together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
-a new port reaches them one at a time; the other three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only:
+a new port reaches them one at a time; the next three hang off
+`EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
+`EACP_HAS_GPU` and is Apple-only:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
@@ -141,19 +143,23 @@ a new port reaches them one at a time; the other three hang off
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, `EmbeddedView`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/Plugins`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
+| `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
 
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
-caller reaching one fails to compile rather than to link.
+caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
+one on `eacp-ml` in the same way.
 
-Two pieces of the gated modules are portable and so sit outside all six: they
-are built and tested on every platform, Linux included, because neither touches
-a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
+Three pieces of the gated modules are portable and so sit outside all seven:
+they are built and tested on every platform, Linux included, because none
+touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
 `GPUCodegenTests`. And `eacp-webview-bridge` is the page bridge over a
-`ScriptHost` rather than over a web view, checked by `ScriptHostTests`.
+`ScriptHost` rather than over a web view, checked by `ScriptHostTests`. And
+`eacp-ml-graph` is the graph builder and the MIL, protobuf and blob writers —
+bytes in and bytes out, with no Core ML under it — checked by `MLGraphTests`.
 
-A third, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
+A fourth, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
 (`SpirvTests`) and is built on Linux only by default: the Vulkan backend is the
 one that ships it, and the two Linux lanes without a Vulkan device build it
 too, so the GLSL dialect is compiled for real there before any device is

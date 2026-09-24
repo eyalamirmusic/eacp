@@ -10,6 +10,10 @@ add_subdirectory(GPU)
 # a ScriptHost, and returns before eacp-webview when there is no web runtime.
 add_subdirectory(WebView)
 
+# Always added: it builds the graph builder and the MIL writers (eacp-ml-graph),
+# bytes in and bytes out, and returns before eacp-ml when there is no Core ML.
+add_subdirectory(ML)
+
 if (EACP_HAS_DRAW)
     add_subdirectory(Graphics)
 endif ()

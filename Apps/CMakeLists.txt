@@ -4,7 +4,7 @@ add_subdirectory(Console)
 add_subdirectory(Network)
 
 # Core ML is Apple's; the spike is a macOS console app.
-if (APPLE AND NOT IOS)
+if (EACP_HAS_COREML AND NOT IOS)
     add_subdirectory(ML)
 endif ()
 

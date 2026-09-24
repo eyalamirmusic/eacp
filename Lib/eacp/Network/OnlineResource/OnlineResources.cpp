@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/File.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
 
 #include <filesystem>
@@ -178,8 +179,7 @@ bool OnlineResources::clear()
         return false;
 
     auto folder = getDirectory();
-    auto ignored = std::error_code {};
-    std::filesystem::remove_all(toStdPath(folder), ignored);
+    Files::removeAll(folder);
 
     {
         auto lock = std::scoped_lock {mutex};
