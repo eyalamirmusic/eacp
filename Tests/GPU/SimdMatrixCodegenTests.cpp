@@ -85,7 +85,67 @@ ShaderBuilder packedKernel(SimdMatrixElement element)
 
     return builder;
 }
+// The same product with a barrier between the loads and it. Another lane may
+// have written that memory since, so the fragments are no longer what it
+// holds and the product has to stage them through the scratch.
+ShaderBuilder stagedProductKernel()
+{
+    auto builder = ShaderBuilder {};
+    builder.setThreadGroupShape({128});
+
+    auto a = builder.inputBuffer();
+    auto output = builder.outputBuffer();
+    auto tile = builder.shared<Float>(1024);
+    auto lane = builder.localId();
+    auto simd = builder.simdGroupIndex();
+
+    builder.write(tile, lane, a[lane]);
+    builder.barrier();
+
+    auto accumulator = builder.simdMatrix();
+    auto left = builder.simdMatrix(tile, simd * 64u, builder.unsignedInteger(8u));
+    auto right = builder.simdMatrix(a, simd * 64u, builder.unsignedInteger(8u));
+
+    builder.barrier();
+    builder.multiplyAccumulate(accumulator, left, right);
+    builder.write(output, simd * 64u, builder.unsignedInteger(8u), accumulator);
+
+    return builder;
+}
 } // namespace
+
+// The staged route, which is what a product falls back to when it cannot read
+// its operands where they lie. Both barriers come back with it, and so does
+// the scratch: a lane needs the row and columns other lanes hold, and the only
+// place off Metal to put them is threadgroup memory.
+auto tSimdMatrixStagedProduct = test("SimdMatrix/aProductStagesWhatItCannotRead") = []
+{
+    auto builder = stagedProductKernel();
+
+    const auto& graph = builder.graph();
+    auto hlsl = emitHlsl(graph);
+    auto glsl = emitGlsl(graph);
+
+    for (const auto& source: {hlsl, glsl})
+    {
+        check(
+            has(source, "sgmScratch[sgmBase + sgmRow * 8u + sgmColumn] = sgm1.x;"));
+        check(has(source,
+                  "sgmScratch[sgmBase + 64u + sgmRow * 8u + sgmColumn + 1u] = "
+                  "sgm2.y;"));
+        check(
+            has(source, "float sgm0l = sgmScratch[sgmBase + sgmRow * 8u + sgm0k];"));
+        check(has(source,
+                  "sgm0.x += sgm0l * sgmScratch[sgmBase + 64u + sgm0k * 8u + "
+                  "sgmColumn];"));
+    }
+
+    // The kernel's two, and the two the exchange puts around itself.
+    check(count(hlsl, "GroupMemoryBarrierWithGroupSync();") == 4);
+    check(count(glsl, "barrier();") == 4);
+
+    expectGlslCompiles(graph);
+};
 
 auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
 {
@@ -114,8 +174,10 @@ auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
     // it: a pair of elements of each thread's own, at the row and the two
     // columns its lane within the SIMD group picks. The fill, the load and
     // the store move that pair, every lane its own, so nothing guards a
-    // store; the product is the one operation that needs what other lanes
-    // hold, and stages both operands through a scratch between two barriers.
+    // store. The product is the one operation that needs what other lanes
+    // hold - but both its operands are still standing where they were read,
+    // so it takes their elements from there, k ascending, and needs neither
+    // the scratch nor a barrier.
     for (const auto& source: {hlsl, glsl})
     {
         check(has(source, "uint sgmRow = sgmLane / 4u;"));
@@ -125,20 +187,14 @@ auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
         check(has(source, "+ sgmRow * ("));
         check(has(source, "+ sgmColumn + 1u]);"));
         check(has(source, "(buffer0["));
-        check(
-            has(source, "sgmScratch[sgmBase + sgmRow * 8u + sgmColumn] = sgm1.x;"));
-        check(has(source,
-                  "sgmScratch[sgmBase + 64u + sgmRow * 8u + sgmColumn + 1u] = "
-                  "sgm2.y;"));
         check(has(source, "for (uint sgm0k = 0u; sgm0k < 8u; ++sgm0k)"));
-        check(
-            has(source, "float sgm0l = sgmScratch[sgmBase + sgmRow * 8u + sgm0k];"));
-        check(has(source,
-                  "sgm0.x += sgm0l * sgmScratch[sgmBase + 64u + sgm0k * 8u + "
-                  "sgmColumn];"));
-        check(has(source,
-                  "sgm0.y += sgm0l * sgmScratch[sgmBase + 64u + sgm0k * 8u + "
-                  "sgmColumn + 1u];"));
+        check(has(source, "float sgm0l = s0["));
+        check(has(source, "+ sgmRow * (8u) + sgm0k];"));
+        check(has(source, "sgm0.x += sgm0l * buffer0["));
+        check(has(source, "+ sgm0k * (8u) + sgmColumn];"));
+        check(has(source, "sgm0.y += sgm0l * buffer0["));
+        check(has(source, "+ sgm0k * (8u) + sgmColumn + 1u];"));
+        check(!has(source, "sgmScratch[sgmBase"));
         check(has(source, "+ sgmColumn] = sgm0.x;"));
         check(has(source, "+ sgmColumn + 1u] = sgm0.y;"));
         check(!has(source, "% 32u == 0u"));
@@ -154,9 +210,9 @@ auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
     check(has(glsl, "vec2 sgm0 = vec2(0.0, 0.0);"));
     check(has(glsl, "vec2 sgm1 = vec2(s0["));
 
-    // The kernel's own barrier and the two around the product's exchange.
-    check(count(hlsl, "GroupMemoryBarrierWithGroupSync();") == 3);
-    check(count(glsl, "barrier();") == 3);
+    // The kernel's own barrier, and no others: the product added none.
+    check(count(hlsl, "GroupMemoryBarrierWithGroupSync();") == 1);
+    check(count(glsl, "barrier();") == 1);
 
     // The lane within the SIMD group, and the SIMD group's index, which Metal
     // has a builtin for and the other two divide the flat local index for.

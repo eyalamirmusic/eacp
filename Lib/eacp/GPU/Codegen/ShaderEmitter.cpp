@@ -2039,6 +2039,8 @@ struct StageEmitter
         , searched(graphToUse.nodeCount())
     {
         locals.resize(graphToUse.nodeCount(), -1);
+        fragmentSources.resize(graphToUse.simdMatrixCount(),
+                                FragmentSource {});
         loopConditionReads.resize(graphToUse.nodeCount(), 0);
     }
 
@@ -2138,12 +2140,75 @@ struct StageEmitter
     // statement exactly as a later statement would.
     Vector<int> trailingRoots;
 
+    // Where a fragment came from, when it came straight out of memory and
+    // nothing has written that memory, moved a variable or crossed a barrier
+    // since. A product whose operands both still have one reads their elements
+    // where they lie, which is what lets it need neither the scratch nor the
+    // barriers around it.
+    struct FragmentSource
+    {
+        bool live = false;
+        std::string memory;
+        std::string offset;
+        std::string stride;
+    };
+
+    Vector<FragmentSource> fragmentSources;
+
+    const FragmentSource* fragmentSourceFor(int slot) const
+    {
+        if (slot < 0 || slot >= fragmentSources.size())
+            return nullptr;
+
+        return fragmentSources[slot].live ? &fragmentSources[slot] : nullptr;
+    }
+
+    void forgetFragmentSource(int slot)
+    {
+        if (slot >= 0 && slot < fragmentSources.size())
+            fragmentSources[slot].live = false;
+    }
+
+    void forgetFragmentSources()
+    {
+        for (auto& source: fragmentSources)
+            source.live = false;
+    }
+
+    void rememberFragmentSource(int slot,
+                                std::string memory,
+                                std::string offset,
+                                std::string stride)
+    {
+        if (slot < 0 || slot >= fragmentSources.size())
+            return;
+
+        fragmentSources[slot] = {
+            true, std::move(memory), std::move(offset), std::move(stride)};
+    }
+
+    // Which statements leave a remembered source standing: one that declares a
+    // name, and the fragment statements, which say for their own slot.
+    // Everything else - a write, a barrier, an assignment to a variable an
+    // offset was built from, any branch - could make the memory or the index
+    // disagree with what was read, so it forgets all of them.
+    static bool keepsFragmentSources(StatementKind kind)
+    {
+        return kind == StatementKind::Declare
+               || kind == StatementKind::SimdMatrixFill
+               || kind == StatementKind::SimdMatrixLoad
+               || kind == StatementKind::SimdMatrixMultiplyAdd;
+    }
+
     std::string emitStatement(const Statement& statement,
                               const std::string& indent,
                               const Vector<int>& uses,
                               Vector<int>& open)
     {
         auto inner = indent + "    ";
+
+        if (!keepsFragmentSources(statement.kind))
+            forgetFragmentSources();
 
         if (statement.kind == StatementKind::Loop)
         {
@@ -2347,6 +2412,7 @@ struct StageEmitter
             case StatementKind::SimdMatrixFill:
                 source = define({statement.value}, indent, uses, open);
                 source += simdMatrixFill(statement, indent);
+                forgetFragmentSource(statement.slot);
                 break;
 
             case StatementKind::SimdMatrixLoad:
@@ -2358,6 +2424,9 @@ struct StageEmitter
 
             case StatementKind::SimdMatrixMultiplyAdd:
                 source = simdMatrixMultiplyAdd(statement, indent);
+
+                // The accumulator is a register now, whatever it was read from.
+                forgetFragmentSource(statement.slot);
                 break;
 
             // GLSL's imageStore takes a *signed* coordinate; MSL takes the
@@ -2613,6 +2682,11 @@ private:
                                    backend, element, memory, offset, stride, 1)
                              : simdMatrixLaneElement(memory, offset, stride, 1);
 
+        // Standing where it was read, so a product that follows can take
+        // its elements from there instead of staging them.
+        if (loading && !packed)
+            rememberFragmentSource(statement.slot, memory, offset, stride);
+
         if (loading)
             return indent + simdMatrixDeclaration(statement.slot) + " = "
                    + simdMatrixLaneType(printer.backend) + "(" + first + ", "
@@ -2646,6 +2720,41 @@ private:
             return indent + "simdgroup_multiply_accumulate(" + accumulator + ", "
                    + left + ", " + right + ", " + accumulator + ");\n";
 
+        auto step = accumulator + "k";
+        auto term = accumulator + "l";
+        auto side = std::to_string(simdMatrixSize);
+
+        // Both operands still standing where they were read, so each lane
+        // takes its row of the left against its two columns of the right out
+        // of that memory directly. The same elements, the same k ascending and
+        // the same adds in the same order as the staged form below - with no
+        // scratch to put them in, and so no barriers to put them there behind.
+        if (const auto* leftMemory = fragmentSourceFor(statement.left))
+        {
+            if (const auto* rightMemory = fragmentSourceFor(statement.right))
+            {
+                auto rightAt = [&](const std::string& tail)
+                {
+                    return rightMemory->memory + "[" + rightMemory->offset + " + "
+                         + step + " * " + rightMemory->stride + " + sgmColumn"
+                         + tail + "]";
+                };
+
+                auto fused = indent + "for (uint " + step + " = 0u; " + step
+                           + " < " + side + "u; ++" + step + ")\n";
+                fused += indent + "{\n";
+                fused += indent + "    float " + term + " = " + leftMemory->memory
+                       + "[" + leftMemory->offset + " + sgmRow * "
+                       + leftMemory->stride + " + " + step + "];\n";
+                fused += indent + "    " + accumulator + ".x += " + term + " * "
+                       + rightAt("") + ";\n";
+                fused += indent + "    " + accumulator + ".y += " + term + " * "
+                       + rightAt(" + 1u") + ";\n";
+                fused += indent + "}\n";
+                return fused;
+            }
+        }
+
         // Both operands staged whole, each lane putting down the pair it
         // holds; then, once every pair is there, each lane takes its row of
         // the left against its two columns of the right. The accumulator is
@@ -2653,9 +2762,6 @@ private:
         // what is multiplied is the copy in the scratch, complete before
         // anything is added. The trailing barrier is what lets the next
         // product stage over this one.
-        auto step = accumulator + "k";
-        auto term = accumulator + "l";
-        auto side = std::to_string(simdMatrixSize);
         auto barrier = barrierStatement(printer.backend, indent);
         auto held = "sgmRow * " + side + "u + sgmColumn";
 
