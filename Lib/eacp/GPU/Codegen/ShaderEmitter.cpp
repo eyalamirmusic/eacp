@@ -2149,6 +2149,7 @@ struct StageEmitter
     struct FragmentSource
     {
         bool live = false;
+        SimdMatrixElement element = SimdMatrixElement::Float;
         std::string memory;
         std::string offset;
         std::string stride;
@@ -2181,6 +2182,7 @@ struct StageEmitter
     }
 
     void rememberFragmentSource(int slot,
+                                SimdMatrixElement element,
                                 std::string memory,
                                 std::string offset,
                                 std::string stride)
@@ -2188,8 +2190,11 @@ struct StageEmitter
         if (slot < 0 || slot >= fragmentSources.size())
             return;
 
-        fragmentSources[slot] = {
-            true, std::move(memory), std::move(offset), std::move(stride)};
+        fragmentSources[slot] = {true,
+                                 element,
+                                 std::move(memory),
+                                 std::move(offset),
+                                 std::move(stride)};
     }
 
     // Which statements leave a remembered source standing: one that declares a
@@ -2600,6 +2605,23 @@ private:
                + ");\n";
     }
 
+    // One element of a patch, at whatever index into it, and whatever the
+    // memory holds: a plain read where it is floats, and the widening helper
+    // where two elements share one - which is how a product reads a bf16 or
+    // fp16 weight and multiplies it as an fp32, exactly as an fp32 patch of
+    // the same values would have been multiplied.
+    std::string simdMatrixElementAt(SimdMatrixElement element,
+                                    const std::string& memory,
+                                    const std::string& index) const
+    {
+        if (element == SimdMatrixElement::Float)
+            return memory + "[" + index + "]";
+
+        return std::string(packedSimdMatrixHelper(element)) + "("
+             + bitsOfFloat(printer.backend) + "(" + memory + "[(" + index
+             + ") / 2u]), (" + index + ") % 2u)";
+    }
+
     // One of the two elements of a patch a lane holds, as the memory names it:
     // the lane's row at the first of its pair of columns or the one after.
     static std::string simdMatrixLaneElement(const std::string& memory,
@@ -2688,9 +2710,10 @@ private:
                              : simdMatrixLaneElement(memory, offset, stride, 1);
 
         // Standing where it was read, so a product that follows can take
-        // its elements from there instead of staging them.
-        if (loading && !packed)
-            rememberFragmentSource(statement.slot, memory, offset, stride);
+        // its elements from there instead of staging them - whether the patch
+        // is floats or two elements to a float.
+        if (loading)
+            rememberFragmentSource(statement.slot, element, memory, offset, stride);
 
         if (loading)
             return indent + simdMatrixDeclaration(statement.slot) + " = "
@@ -2738,19 +2761,25 @@ private:
         {
             if (const auto* rightMemory = fragmentSourceFor(statement.right))
             {
+                auto leftIndex = leftMemory->offset + " + sgmRow * "
+                               + leftMemory->stride + " + " + step;
+
                 auto rightAt = [&](const std::string& tail)
                 {
-                    return rightMemory->memory + "[" + rightMemory->offset + " + "
-                         + step + " * " + rightMemory->stride + " + sgmColumn"
-                         + tail + "]";
+                    auto index = rightMemory->offset + " + " + step + " * "
+                               + rightMemory->stride + " + sgmColumn" + tail;
+
+                    return simdMatrixElementAt(
+                        rightMemory->element, rightMemory->memory, index);
                 };
 
                 auto fused = indent + "for (uint " + step + " = 0u; " + step
                            + " < " + side + "u; ++" + step + ")\n";
                 fused += indent + "{\n";
-                fused += indent + "    float " + term + " = " + leftMemory->memory
-                       + "[" + leftMemory->offset + " + sgmRow * "
-                       + leftMemory->stride + " + " + step + "];\n";
+                fused += indent + "    float " + term + " = "
+                       + simdMatrixElementAt(
+                             leftMemory->element, leftMemory->memory, leftIndex)
+                       + ";\n";
                 fused += indent + "    " + accumulator + ".x += " + term + " * "
                        + rightAt("") + ";\n";
                 fused += indent + "    " + accumulator + ".y += " + term + " * "

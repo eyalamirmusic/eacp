@@ -324,13 +324,16 @@ auto tBFloat16Fragment = test("SimdMatrix/bfloat16LoadsWithoutStaging") = []
               "vec2 sgm2 = vec2(eacpReadBFloat16(floatBitsToUint(buffer0[((t0) "
               "+ sgmRow * (8u) + sgmColumn) / 2u])"));
 
-    // The product below it is the one the float pair always had: what a lane
-    // holds is two floats either way.
+    // And the product reads the weight where it lies, as a float operand
+    // does: the widening helper again, now at the product's own index, so a
+    // packed weight costs the scratch and its barriers no more than an
+    // unpacked one does. The fp32 multiply below it is the one an fp32 patch
+    // of the same values would have done.
     for (const auto& source: {hlsl, glsl})
     {
-        check(has(source,
-                  "sgmScratch[sgmBase + 64u + sgmRow * 8u + sgmColumn] = "
-                  "sgm2.x;"));
+        check(has(source, "for (uint sgm0k = 0u; sgm0k < 8u; ++sgm0k)"));
+        check(has(source, "sgm0.x += sgm0l * eacpReadBFloat16("));
+        check(!has(source, "sgmScratch"));
         check(!has(source, "bfloat"));
     }
 
