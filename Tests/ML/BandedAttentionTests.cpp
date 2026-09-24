@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 using namespace nano;
@@ -193,4 +194,38 @@ auto tBandedWholeSegments = test("BandedAttention/wholeSegmentsMatchReference") 
 {
     checkBandMatchesReference(12,
                               {.leftRadius = 2, .rightRadius = 1, .segmentRows = 4});
+};
+
+auto tBandedRefusesEmptySegments =
+    test("BandedAttention/refusesABandWithNoRowsPerSegment") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto rows = 4, heads = 1, headDim = 4;
+
+    auto values = scatteredValues(rows * heads * headDim, 1);
+    auto tensor = Tensor::fromHostF32(values.data(), {rows, heads * headDim});
+
+    auto refuses = [&](const AttentionBand& band)
+    {
+        auto commands = device.makeCommandBuffer();
+        auto pass = commands.beginCompute();
+
+        try
+        {
+            bandedAttention(pass, tensor, tensor, tensor, heads, headDim, band);
+        }
+        catch (const std::invalid_argument&)
+        {
+            return true;
+        }
+
+        return false;
+    };
+
+    check(refuses({.leftRadius = 1, .rightRadius = 1, .segmentRows = 0}));
+    check(refuses({.leftRadius = -1, .rightRadius = 1, .segmentRows = 4}));
 };

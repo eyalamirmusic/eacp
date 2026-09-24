@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace eacp::ML
 {
@@ -32,6 +33,15 @@ BandBounds bandBounds(const UInt& row,
     auto segmentEnd = min(segmentStart + segmentRows, rowCount);
     auto end = min(segmentEnd, row + rightRadius + 1u);
     return {segmentStart, first, end};
+}
+
+void checkBand(const AttentionBand& band)
+{
+    if (band.segmentRows <= 0)
+        throw std::invalid_argument("bandedAttention: segmentRows must be positive");
+
+    if (band.leftRadius < 0 || band.rightRadius < 0)
+        throw std::invalid_argument("bandedAttention: radii must not be negative");
 }
 
 int windowWidthFor(const AttentionBand& band)
@@ -206,6 +216,8 @@ Tensor bandedAttention(ComputePass& pass,
                        const AttentionBand& band,
                        Device& device)
 {
+    checkBand(band);
+
     auto rows = query.rows();
     auto window = windowWidthFor(band);
 

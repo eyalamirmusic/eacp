@@ -18,7 +18,8 @@ namespace eacp::ML
 // column's exp is exactly 0, the row-stats lanes still count columns from the
 // segment's start, and the weighted sum still adds columns in ascending order.
 // As there, the row stats store each probability over its score, so every exp
-// is evaluated once.
+// is evaluated once. A band with segmentRows below 1 or a negative radius
+// throws std::invalid_argument before anything is dispatched.
 struct AttentionBand
 {
     int leftRadius = 0;
