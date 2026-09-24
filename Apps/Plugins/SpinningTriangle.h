@@ -76,7 +76,8 @@ struct SpinningTriangleView final : GPU::GPUView
                 {colors[corner][0], colors[corner][1], colors[corner][2]}};
         }
 
-        // Unordered: rewritten once a frame, which is what this variant is for.
+        // Unordered, so a frame still in flight can read a torn triangle. A demo
+        // can live with that; a real per-frame writer wants StreamingBuffers.
         vertexBuffer.updateUnordered(vertices, (int) sizeof(vertices));
     }
 
