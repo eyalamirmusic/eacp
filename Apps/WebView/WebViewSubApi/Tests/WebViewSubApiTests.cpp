@@ -74,7 +74,7 @@ ProbeResult probe(const std::string& command)
 {
     return transport()
         .call<ProbeResult>("probeCommand", ProbeRequest {command})
-        .waitFor(eacp::Time::MS {5000});
+        .waitFor(defaultCommandTimeout);
 }
 } // namespace
 

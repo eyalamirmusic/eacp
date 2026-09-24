@@ -14,17 +14,23 @@ class WebView;
 namespace eacp::WebView::Test
 {
 
+// The budget for one command or page call once the page is up. It is there to
+// fail a hang, not to time the page: on the macOS CI runner a WebViewTodo case
+// that passes takes up to 17s end to end against 0.3s on a laptop, so this is
+// Tests/WebView's webViewResultTimeout, the budget that has held on that runner.
+inline constexpr auto defaultCommandTimeout = Time::MS {10000};
+
 struct CallOptions
 {
     // Per-call timeout override. Empty -> driver default; if that's
-    // also empty, defaultTimeoutMs constant below.
+    // also empty, defaultCommandTimeout.
     std::optional<int> timeoutMs;
 };
 
 struct AppDriverOptions
 {
-    // Default per-command timeout for this driver. Empty -> the
-    // built-in 5s applies.
+    // Default per-command timeout for this driver. Empty ->
+    // defaultCommandTimeout applies.
     std::optional<int> defaultTimeoutMs;
 
     // Directory snapshot() writes <name>.html + <name>.png into.

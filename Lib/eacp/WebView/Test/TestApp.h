@@ -116,7 +116,8 @@ TestApp<T>& createTestApp(std::string_view readySelector = {})
     return instance;
 }
 
-inline constexpr auto defaultTestTimeout = Time::MS {10000};
+// A coroutine body is several commands, each allowed defaultCommandTimeout.
+inline constexpr auto defaultTestTimeout = Time::MS {30000};
 
 // Drop-in nano::test replacement that fires all registered fixture
 // restarts before the body runs, and transparently handles both
