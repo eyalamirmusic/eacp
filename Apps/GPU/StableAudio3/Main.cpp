@@ -182,9 +182,6 @@ int main(int argc, char** argv)
     auto codecConfig =
         isMedium ? SA3Codec::CodecConfig::sameL() : SA3Codec::CodecConfig::sameS();
 
-    auto modelPath = modelFile.str();
-    auto weights = std::optional<SA3DiT::Weights> {};
-    auto decoder = std::optional<SA3Codec::SameDecoder> {};
     auto start = Clock::now();
 
     // Started before the weights rather than after them. Parsing the 33 MB
@@ -196,32 +193,30 @@ int main(int argc, char** argv)
                    [path = tokenizerFile.str()]
                    { return SA3TextEncoder::BpeTokenizer::load(path); });
 
+    auto file = SafetensorsFile::open(modelFile);
+
+    if (!file.has_value())
     {
-        auto file = SafetensorsFile::open(modelFile);
-
-        if (!file.has_value())
-        {
-            std::fprintf(
-                stderr, "Could not open checkpoint at %s\n", modelPath.c_str());
-            return 1;
-        }
-
-        std::printf("Loading DiT weights (%s)...\n", options.model.c_str());
-        start = Clock::now();
-        weights = SA3DiT::loadWeights(*file, ditConfig, device);
-        std::printf("DiT weights took %.2fs\n", secondsSince(start));
-
-        std::printf("Loading SAME decoder...\n");
-        start = Clock::now();
-        decoder = SA3Codec::SameDecoder::loadFromSafetensors(
-            *file, codecConfig, "pretransform.model", device);
-        std::printf("Decoder took %.2fs\n", secondsSince(start));
+        std::fprintf(
+            stderr, "Could not open checkpoint at %s\n", modelFile.str().c_str());
+        return 1;
     }
+
+    std::printf("Loading DiT weights (%s)...\n", options.model.c_str());
+    start = Clock::now();
+    auto weights = std::optional {SA3DiT::loadWeights(*file, ditConfig, device)};
+    std::printf("DiT weights took %.2fs\n", secondsSince(start));
+
+    std::printf("Loading SAME decoder...\n");
+    start = Clock::now();
+    auto decoder = SA3Codec::SameDecoder::loadFromSafetensors(
+        *file, codecConfig, "pretransform.model", device);
+    std::printf("Decoder took %.2fs\n", secondsSince(start));
 
     std::printf("Loading T5Gemma text encoder...\n");
     start = Clock::now();
     auto textEncoder = SA3TextEncoder::SA3TextEncoderModel::load(
-        tokenizer.get(), textEncoderFile.str(), modelPath, device);
+        tokenizer.get(), textEncoderFile.str(), *file, device);
 
     if (!textEncoder.has_value())
     {
@@ -284,7 +279,7 @@ int main(int argc, char** argv)
 
     std::printf("Decoding audio...\n");
     start = Clock::now();
-    auto waveform = decoder->decode(latent, sampleCount, device);
+    auto waveform = decoder.decode(latent, sampleCount, device);
     std::printf("Decoding took %.2fs\n", secondsSince(start));
 
     start = Clock::now();
@@ -330,11 +325,19 @@ int main(int argc, char** argv)
     std::printf("Total took %.2fs\n", secondsSince(totalStart));
 
     if (options.profile)
+    {
+        auto counts = file->loadCounts();
+        std::printf("Checkpoint tensors: %d in place, %d copied, %d converted\n",
+                    counts.inPlace,
+                    counts.copied,
+                    counts.converted);
+
         for (const auto& cost: GPU::callCosts())
             std::printf("%s: %d calls, %.2fs\n",
                         cost.label.c_str(),
                         cost.calls,
                         cost.seconds);
+    }
 
     return 0;
 }

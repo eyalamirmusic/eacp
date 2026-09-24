@@ -28,44 +28,10 @@ constexpr auto attentionScale = 0.125f;
 constexpr auto attentionSoftcap = 50.f;
 constexpr auto maskedScore = -1.0e9f;
 
-std::vector<float> readAsF32(const SafetensorsFile& file, const std::string& name)
-{
-    auto entry = file.find(name);
-    auto count = elementCountOf(entry->shape);
-    auto bytes = file.rawBytes(name);
-    auto values = std::vector<float>((std::size_t) count);
-
-    if (entry->dtype == SafetensorsDType::F32)
-    {
-        std::memcpy(values.data(), bytes, (std::size_t) count * sizeof(float));
-        return values;
-    }
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto bits = std::uint16_t {};
-        std::memcpy(&bits, bytes + i * 2, sizeof(bits));
-
-        values[(std::size_t) i] = entry->dtype == SafetensorsDType::BF16
-                                     ? bfloat16ToFloat(bits)
-                                     : halfToFloat(bits);
-    }
-
-    return values;
-}
-
-Tensor loadAsF32(const SafetensorsFile& file, const std::string& name, Device& device)
-{
-    auto entry = file.find(name);
-    auto values = readAsF32(file, name);
-
-    return Tensor::fromHostF32(values.data(), entry->shape, device);
-}
-
 Tensor loadGammaPlusOne(const SafetensorsFile& file, const std::string& name, Device& device)
 {
     auto entry = file.find(name);
-    auto values = readAsF32(file, name);
+    auto values = file.readF32(name);
 
     for (auto& value: values)
         value += 1.f;
@@ -168,21 +134,21 @@ std::optional<T5GemmaEncoder> T5GemmaEncoder::load(const std::string& safetensor
         auto prefix = "model.encoder.layers." + std::to_string(i) + ".";
 
         auto layer = Layer {
-            .preSelfAttnNormGamma =
-                loadGammaPlusOne(*file, prefix + "pre_self_attn_layernorm.weight", device),
-            .postSelfAttnNormGamma =
-                loadGammaPlusOne(*file, prefix + "post_self_attn_layernorm.weight", device),
-            .preFeedforwardNormGamma =
-                loadGammaPlusOne(*file, prefix + "pre_feedforward_layernorm.weight", device),
-            .postFeedforwardNormGamma =
-                loadGammaPlusOne(*file, prefix + "post_feedforward_layernorm.weight", device),
-            .qWeight = loadAsF32(*file, prefix + "self_attn.q_proj.weight", device),
-            .kWeight = loadAsF32(*file, prefix + "self_attn.k_proj.weight", device),
-            .vWeight = loadAsF32(*file, prefix + "self_attn.v_proj.weight", device),
-            .oWeight = loadAsF32(*file, prefix + "self_attn.o_proj.weight", device),
-            .gateWeight = loadAsF32(*file, prefix + "mlp.gate_proj.weight", device),
-            .upWeight = loadAsF32(*file, prefix + "mlp.up_proj.weight", device),
-            .downWeight = loadAsF32(*file, prefix + "mlp.down_proj.weight", device),
+            .preSelfAttnNormGamma = loadGammaPlusOne(
+                *file, prefix + "pre_self_attn_layernorm.weight", device),
+            .postSelfAttnNormGamma = loadGammaPlusOne(
+                *file, prefix + "post_self_attn_layernorm.weight", device),
+            .preFeedforwardNormGamma = loadGammaPlusOne(
+                *file, prefix + "pre_feedforward_layernorm.weight", device),
+            .postFeedforwardNormGamma = loadGammaPlusOne(
+                *file, prefix + "post_feedforward_layernorm.weight", device),
+            .qWeight = file->loadF32(prefix + "self_attn.q_proj.weight", device),
+            .kWeight = file->loadF32(prefix + "self_attn.k_proj.weight", device),
+            .vWeight = file->loadF32(prefix + "self_attn.v_proj.weight", device),
+            .oWeight = file->loadF32(prefix + "self_attn.o_proj.weight", device),
+            .gateWeight = file->loadF32(prefix + "mlp.gate_proj.weight", device),
+            .upWeight = file->loadF32(prefix + "mlp.up_proj.weight", device),
+            .downWeight = file->loadF32(prefix + "mlp.down_proj.weight", device),
         };
 
         layers.push_back(std::move(layer));

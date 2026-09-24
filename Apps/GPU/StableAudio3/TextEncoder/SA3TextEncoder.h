@@ -5,6 +5,7 @@
 
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
+#include <eacp/ML/Loader/SafetensorsFile.h>
 #include <eacp/ML/Tensor/Tensor.h>
 
 #include <optional>
@@ -27,15 +28,16 @@ public:
         const std::string& conditionerSafetensorsPath,
         GPU::Device& device = GPU::Device::shared());
 
-    // The same, for a caller that already has the tokenizer. Parsing the
+    // The same, for a caller that already has the tokenizer and the
+    // conditioner's checkpoint open. Parsing the
     // vocabulary is a 33 MB JSON read with no device in it, so a caller with
     // other loading to do can have it done on a thread of its own and hand the
     // result over here.
-    static std::optional<SA3TextEncoderModel> load(
-        std::optional<BpeTokenizer> tokenizer,
-        const std::string& t5gemmaSafetensorsPath,
-        const std::string& conditionerSafetensorsPath,
-        GPU::Device& device = GPU::Device::shared());
+    static std::optional<SA3TextEncoderModel>
+        load(std::optional<BpeTokenizer> tokenizer,
+             const std::string& t5gemmaSafetensorsPath,
+             const ML::SafetensorsFile& conditioner,
+             GPU::Device& device = GPU::Device::shared());
 
     PromptEncoding encodePrompt(GPU::ComputePass& pass,
                                 const std::string& text,

@@ -6,6 +6,7 @@
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Kernels/Linear.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 
 #include <optional>
 
@@ -16,12 +17,6 @@ using namespace eacp::ML;
 
 namespace
 {
-std::vector<float> readFloats(const SafetensorsFile& file, const std::string& name, int count)
-{
-    auto pointer = reinterpret_cast<const float*>(file.rawBytes(name));
-    return std::vector<float>(pointer, pointer + count);
-}
-
 DynamicTanhWeights loadDynamicTanh(const SafetensorsFile& file,
                                    const std::string& prefix,
                                    Device& device)
@@ -81,8 +76,6 @@ ResamplingBlockWeights loadResamplingBlock(const SafetensorsFile& file,
                                               device));
     }
 
-    auto newTokens = readFloats(file, prefix + ".new_tokens", config.transformerDim);
-
     return ResamplingBlockWeights {
         .isEncoder = isEncoder,
         .inChannels = inChannels,
@@ -99,7 +92,8 @@ ResamplingBlockWeights loadResamplingBlock(const SafetensorsFile& file,
                                 mappingConvKernelThree ? 3 : 1,
                                 true,
                                 device),
-        .newTokens = Tensor::fromHostF32(newTokens.data(), {config.transformerDim}, device),
+        .newTokens = reshape(file.loadF32(prefix + ".new_tokens", device),
+                             {config.transformerDim}),
         .layers = std::move(layers),
     };
 }

@@ -3,11 +3,8 @@
 #include <eacp/GPU/Codegen/ComputeProgram.h>
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
-#include <eacp/ML/Loader/Json.h>
 
 #include <cstdint>
-#include <cstring>
-#include <fstream>
 
 namespace eacp::SA3TextEncoder
 {
@@ -49,34 +46,6 @@ private:
         write(output, i, select(row < validRows, encoded[i], paddingEmbedding[col]));
     }
 };
-
-std::vector<float> readSingleF32TensorFromSafetensors(const std::string& path,
-                                                       const std::string& tensorName,
-                                                       int elementCount)
-{
-    auto file = std::ifstream {path, std::ios::binary};
-
-    auto headerLength = std::uint64_t {};
-    file.read(reinterpret_cast<char*>(&headerLength), sizeof(headerLength));
-
-    auto headerText = std::string((std::size_t) headerLength, '\0');
-    file.read(headerText.data(), (std::streamsize) headerLength);
-
-    auto parsed = Json::parse(headerText);
-    auto entry = parsed->find(tensorName);
-
-    const auto& offsets = entry->find("data_offsets")->asArray();
-    auto startOffset = (std::uint64_t) offsets[0].asNumber();
-
-    auto dataStart = std::uint64_t {8} + headerLength;
-    auto values = std::vector<float>((std::size_t) elementCount);
-
-    file.seekg((std::streamoff) (dataStart + startOffset));
-    file.read(reinterpret_cast<char*>(values.data()),
-             (std::streamsize) (values.size() * sizeof(float)));
-
-    return values;
-}
 }
 
 SA3TextEncoderModel::SA3TextEncoderModel(BpeTokenizer tokenizerToUse,
@@ -94,17 +63,22 @@ std::optional<SA3TextEncoderModel> SA3TextEncoderModel::load(
     const std::string& conditionerSafetensorsPath,
     Device& device)
 {
+    auto conditioner = SafetensorsFile::open(FilePath {conditionerSafetensorsPath});
+
+    if (!conditioner.has_value())
+        return std::nullopt;
+
     return load(BpeTokenizer::load(tokenizerJsonPath),
                 t5gemmaSafetensorsPath,
-                conditionerSafetensorsPath,
+                *conditioner,
                 device);
 }
 
-std::optional<SA3TextEncoderModel> SA3TextEncoderModel::load(
-    std::optional<BpeTokenizer> tokenizer,
-    const std::string& t5gemmaSafetensorsPath,
-    const std::string& conditionerSafetensorsPath,
-    Device& device)
+std::optional<SA3TextEncoderModel>
+    SA3TextEncoderModel::load(std::optional<BpeTokenizer> tokenizer,
+                              const std::string& t5gemmaSafetensorsPath,
+                              const SafetensorsFile& conditioner,
+                              Device& device)
 {
     if (!tokenizer.has_value())
         return std::nullopt;
@@ -114,13 +88,8 @@ std::optional<SA3TextEncoderModel> SA3TextEncoderModel::load(
     if (!encoder.has_value())
         return std::nullopt;
 
-    auto paddingEmbeddingHost = readSingleF32TensorFromSafetensors(
-        conditionerSafetensorsPath,
-        "conditioner.conditioners.prompt.padding_embedding",
-        T5GemmaEncoder::hiddenSize);
-
-    auto paddingEmbedding =
-        Tensor::fromHostF32(paddingEmbeddingHost.data(), {T5GemmaEncoder::hiddenSize}, device);
+    auto paddingEmbedding = conditioner.loadF32(
+        "conditioner.conditioners.prompt.padding_embedding", device);
 
     return SA3TextEncoderModel {
         std::move(*tokenizer), std::move(*encoder), std::move(paddingEmbedding)};

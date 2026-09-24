@@ -48,26 +48,20 @@ WNConv1dWeights loadWNConv1d(const SafetensorsFile& file,
                              bool hasBias,
                              Device& device)
 {
-    auto gainPointer = reinterpret_cast<const float*>(file.rawBytes(prefix + ".weight_g"));
-    auto directionPointer =
-        reinterpret_cast<const float*>(file.rawBytes(prefix + ".weight_v"));
+    auto gain = file.readF32(prefix + ".weight_g");
+    auto direction = file.readF32(prefix + ".weight_v");
 
     auto elementsPerOutput = inChannels * kernelSize;
-    auto flat =
-        computeWeightNormFlat(gainPointer, directionPointer, outChannels, elementsPerOutput);
+    auto flat = computeWeightNormFlat(
+        gain.data(), direction.data(), outChannels, elementsPerOutput);
 
     auto flatWeightTensor =
         Tensor::fromHostF32(flat.data(), {outChannels, elementsPerOutput}, device);
 
-    auto biasValues = std::vector<float>((std::size_t) outChannels, 0.f);
-
-    if (hasBias)
-    {
-        auto biasPointer = reinterpret_cast<const float*>(file.rawBytes(prefix + ".bias"));
-        biasValues.assign(biasPointer, biasPointer + outChannels);
-    }
-
-    auto biasTensor = Tensor::fromHostF32(biasValues.data(), {outChannels}, device);
+    auto zeros = std::vector<float>((std::size_t) outChannels, 0.f);
+    auto biasTensor = hasBias
+                          ? file.loadF32(prefix + ".bias", device)
+                          : Tensor::fromHostF32(zeros.data(), {outChannels}, device);
 
     return WNConv1dWeights {.flatWeight = std::move(flatWeightTensor),
                             .bias = std::move(biasTensor),
