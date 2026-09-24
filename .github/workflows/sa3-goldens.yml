@@ -42,7 +42,6 @@ jobs:
     timeout-minutes: 90
 
     env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
       CHECKPOINTS: ~/Library/Application Support/StableAudio3/Resources/huggingface/stabilityai--stable-audio-3-small-music
 
     steps:
@@ -70,7 +69,10 @@ jobs:
 
       # The app's own OnlineResource path. On a cache hit the files are
       # trusted as they are and the network is not touched.
+      # The only step that reaches Hugging Face, so the only one given the token.
       - name: Fetch checkpoints
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: build/Apps/GPU/StableAudio3/StableAudio3 --model small --fetch-only
 
       # Saved before the tests run, so a red run still keeps the download.
