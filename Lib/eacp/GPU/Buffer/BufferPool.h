@@ -40,7 +40,7 @@ class BufferPool
 public:
     static BufferPool& of(Device& device);
 
-    Buffer take(Device& device, std::int64_t bytes, BufferUsage usage);
+    Buffer take(std::int64_t bytes, BufferUsage usage);
 
     // How many buffers the pool holds, waiting for the GPU or for reuse.
     int heldCount() const { return (int) (waiting.size() + available.size()); }

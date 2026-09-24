@@ -6,12 +6,14 @@ namespace eacp::GPU
 {
 BufferPool& BufferPool::of(Device& device)
 {
-    return device.singleton<BufferPool>();
+    auto& pool = device.perDevice<BufferPool>();
+    pool.device = &device;
+
+    return pool;
 }
 
-Buffer BufferPool::take(Device& deviceToUse, std::int64_t bytes, BufferUsage usage)
+Buffer BufferPool::take(std::int64_t bytes, BufferUsage usage)
 {
-    device = &deviceToUse;
     promoteFinished();
     freeUnused();
 
@@ -19,7 +21,7 @@ Buffer BufferPool::take(Device& deviceToUse, std::int64_t bytes, BufferUsage usa
     auto reused = found != available.end();
 
     auto buffer = reused ? std::move(found->second.buffer)
-                         : Buffer {deviceToUse, nullptr, bytes, usage};
+                         : Buffer {*device, nullptr, bytes, usage};
 
     if (reused)
         available.erase(found);

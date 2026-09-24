@@ -128,15 +128,23 @@ Tensor attendWithScores(GPU::ComputePass& pass,
                         int headDim,
                         GPU::Device& device = GPU::Device::shared());
 
+// What attention() does beyond the plain softmax(q kᵀ / √d) v: an additive
+// mask over rows x cols, and an RMS norm of each query and key head with its
+// own gamma before the product.
+struct AttentionOptions
+{
+    const Tensor* mask = nullptr;
+    const Tensor* queryNorm = nullptr;
+    const Tensor* keyNorm = nullptr;
+    float normEpsilon = 1e-6f;
+};
+
 Tensor attention(GPU::ComputePass& pass,
                  const Tensor& query,
                  const Tensor& key,
                  const Tensor& value,
                  int heads,
                  int headDim,
-                 const Tensor* additiveMask = nullptr,
-                 const Tensor* queryNormGamma = nullptr,
-                 const Tensor* keyNormGamma = nullptr,
-                 float qkNormEpsilon = 1e-6f,
+                 const AttentionOptions& options = {},
                  GPU::Device& device = GPU::Device::shared());
 } // namespace eacp::ML

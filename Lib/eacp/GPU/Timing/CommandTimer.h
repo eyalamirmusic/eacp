@@ -3,7 +3,8 @@
 #include "FrameTimings.h"
 #include "GpuTimestamps.h"
 
-#include <optional>
+#include <memory>
+#include <vector>
 #include <string_view>
 
 namespace eacp::GPU
@@ -17,10 +18,11 @@ class Device;
 class CommandTimer
 {
 public:
-    // The pass's ordinal - its two samples are at 2 * ordinal and 2 * ordinal + 1
-    // - or -1 when the pass is not being timed, which is what an unlabelled pass,
-    // an unsupported device and a buffer already holding maxTimedPasses labelled
-    // passes all get.
+    // Where the pass's two samples go in nativeSamples() - 2 * the result and
+    // the one after - or -1 when the pass is not being timed, which is what an
+    // unlabelled pass and an unsupported device get. There is no ceiling: every
+    // maxTimedPasses passes take a fresh set of samples, so nativeSamples() is
+    // to be asked after beginPass, for the pass just begun.
     int beginPass(std::string_view label, Device& device, void* nativeCommandBuffer);
 
     // Where a timed pass writes its samples. Null when nothing is being timed.
@@ -43,7 +45,11 @@ private:
     // through.
     static constexpr int slot = 0;
 
-    std::optional<GpuTimestamps> timestamps;
+    int passesIn(int chunk) const;
+
+    // One set of samples per maxTimedPasses passes, made as the passes need
+    // them. The first also carries the buffer's own end-to-end time.
+    std::vector<std::unique_ptr<GpuTimestamps>> chunks;
 
     Vector<std::string> labels;
     FrameTimings latest;

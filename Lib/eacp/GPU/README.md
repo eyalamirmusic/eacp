@@ -806,14 +806,13 @@ builds no timestamp resources; `supportsPassTimings()` says whether this device
 can break a buffer down by pass, as `Device::supportsPassTimings()` does for a
 frame.
 
-A frame or a command buffer times its first `GpuTimestamps::maxTimedPasses`
-labelled regions, which is 2,048. Past that a pass runs exactly as it would
-have and is simply not timed, so the tail is missing from the breakdown rather
-than the buffer being wrong. The ceiling is a fixed pool of two timestamps per
-region, so it costs a slot 32 KB of samples on Metal — the most one counter
-sample buffer holds, made for a slot only once it is first used — and a
-4,098-entry query heap with its readback buffer on D3D12 and Vulkan, paid only
-once a labelled pass has asked for it.
+A command buffer times every labelled region it is given. Its samples come in
+sets of `GpuTimestamps::maxTimedPasses` (2,048) regions — 32 KB of them on
+Metal, the most one counter sample buffer holds, and a 4,098-entry query heap
+with its readback buffer on D3D12 and Vulkan — and the 2,049th region takes a
+second set, paid only when a labelled pass asks. A frame times its first 2,048
+and runs the rest untimed, so a tail past that is missing from its breakdown
+rather than the frame being wrong.
 
 ### Timing each kernel
 
@@ -842,8 +841,7 @@ step/AttentionWeightedSumKernel      42.11 ms     96 dispatches
 ...
 ```
 
-That is one Stable Audio medium DiT step, 1,542 dispatches, which is why the
-ceiling on timed regions is 2,048: every dispatch of a step fits. A region is
+That is one Stable Audio medium DiT step, 1,542 dispatches. A region is
 named `pass/Kernel`, or `Kernel` for an unlabelled pass, where the kernel's name
 is its type's without namespaces; a `ComputeProgram` that builds variants of one
 type overrides `name()` to tell them apart. Only the program dispatches are

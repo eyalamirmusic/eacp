@@ -125,17 +125,8 @@ Tensor selfAttentionOutput(ComputePass& pass,
     auto qr = applyRoPE(pass, qn, rotaryInvFreq, config.numHeads, config.headDim, device);
     auto kr = applyRoPE(pass, kn, rotaryInvFreq, config.numHeads, config.headDim, device);
 
-    auto mainAttn = attention(pass,
-                              qr,
-                              kr,
-                              v,
-                              config.numHeads,
-                              config.headDim,
-                              nullptr,
-                              nullptr,
-                              nullptr,
-                              config.qkNormEpsilon,
-                              device);
+    auto mainAttn =
+        attention(pass, qr, kr, v, config.numHeads, config.headDim, {}, device);
 
     if (!config.differential)
         return mainAttn;
@@ -159,17 +150,8 @@ Tensor selfAttentionOutput(ComputePass& pass,
     auto qDiffR = applyRoPE(pass, qDiffN, rotaryInvFreq, config.numHeads, config.headDim, device);
     auto kDiffR = applyRoPE(pass, kDiffN, rotaryInvFreq, config.numHeads, config.headDim, device);
 
-    auto diffAttn = attention(pass,
-                              qDiffR,
-                              kDiffR,
-                              v,
-                              config.numHeads,
-                              config.headDim,
-                              nullptr,
-                              nullptr,
-                              nullptr,
-                              config.qkNormEpsilon,
-                              device);
+    auto diffAttn = attention(
+        pass, qDiffR, kDiffR, v, config.numHeads, config.headDim, {}, device);
 
     return subtractTensors(pass, mainAttn, diffAttn, device);
 }
@@ -248,10 +230,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
                          prompt.values,
                          config.numHeads,
                          config.headDim,
-                         nullptr,
-                         nullptr,
-                         nullptr,
-                         config.qkNormEpsilon,
+                         {},
                          device);
     }
 
@@ -278,10 +257,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
                                prompt.values,
                                config.numHeads,
                                config.headDim,
-                               nullptr,
-                               nullptr,
-                               nullptr,
-                               config.qkNormEpsilon,
+                               {},
                                device);
     auto diffCross = attention(pass,
                                q2DiffN,
@@ -289,10 +265,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
                                prompt.values,
                                config.numHeads,
                                config.headDim,
-                               nullptr,
-                               nullptr,
-                               nullptr,
-                               config.qkNormEpsilon,
+                               {},
                                device);
 
     return subtractTensors(pass, mainCross, diffCross, device);

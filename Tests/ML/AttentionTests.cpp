@@ -210,7 +210,8 @@ auto tAttentionMatchesReferenceCausal = test("Attention/matchesReferenceCausal")
     {
         auto pass = commands.beginCompute();
 
-        result = attention(pass, qTensor, kTensor, vTensor, heads, headDim, &mask);
+        result = attention(
+            pass, qTensor, kTensor, vTensor, heads, headDim, {.mask = &mask});
     }
 
     commands.commit();
@@ -254,8 +255,8 @@ auto tAttentionMatchesReferenceWithAdditiveMask =
     {
         auto pass = commands.beginCompute();
 
-        result =
-            attention(pass, qTensor, kTensor, vTensor, heads, headDim, &maskTensor);
+        result = attention(
+            pass, qTensor, kTensor, vTensor, heads, headDim, {.mask = &maskTensor});
     }
 
     commands.commit();
@@ -304,10 +305,9 @@ auto tAttentionMatchesReferenceWithQKNorm =
                            vTensor,
                            heads,
                            headDim,
-                           nullptr,
-                           &qGammaTensor,
-                           &kGammaTensor,
-                           eps,
+                           {.queryNorm = &qGammaTensor,
+                            .keyNorm = &kGammaTensor,
+                            .normEpsilon = eps},
                            device);
     }
 

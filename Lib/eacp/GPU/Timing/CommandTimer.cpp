@@ -1,24 +1,27 @@
 #include "CommandTimer.h"
 
+#include <algorithm>
+
 namespace eacp::GPU
 {
 int CommandTimer::beginPass(std::string_view label,
                             Device& device,
                             void* nativeCommandBuffer)
 {
-    if (label.empty() || passCount >= GpuTimestamps::maxTimedPasses)
+    if (label.empty())
         return -1;
 
-    // The first labelled pass builds the resources, so a command buffer nobody
-    // asked to time creates none.
-    if (!timestamps.has_value())
+    // A command buffer nobody asked to time creates nothing; one that runs past
+    // a set of samples gets another.
+    if (passCount == (int) chunks.size() * GpuTimestamps::maxTimedPasses)
     {
-        timestamps.emplace();
-        timestamps->beginSlot(slot, device);
-        timestamps->beginRecording(slot, nativeCommandBuffer);
+        auto chunk = std::make_unique<GpuTimestamps>();
+        chunk->beginSlot(slot, device);
+        chunk->beginRecording(slot, nativeCommandBuffer);
+        chunks.push_back(std::move(chunk));
     }
 
-    if (!timestamps->isSupported())
+    if (!chunks.front()->isSupported())
         return -1;
 
     if (labels.size() <= passCount)
@@ -26,40 +29,62 @@ int CommandTimer::beginPass(std::string_view label,
 
     labels[passCount].assign(label);
 
-    return passCount++;
+    return passCount++ % GpuTimestamps::maxTimedPasses;
 }
 
 void* CommandTimer::nativeSamples() const
 {
-    return timestamps.has_value() ? timestamps->nativeSamples(slot) : nullptr;
+    return chunks.empty() ? nullptr : chunks.back()->nativeSamples(slot);
 }
 
 void CommandTimer::endRecording(void* nativeCommandBuffer)
 {
-    if (timestamps.has_value())
-        pending = timestamps->endSlot(slot, passCount, nativeCommandBuffer);
+    for (auto chunk = 0; chunk < (int) chunks.size(); ++chunk)
+        pending = chunks[(std::size_t) chunk]->endSlot(
+                      slot, passesIn(chunk), nativeCommandBuffer)
+                  || pending;
 }
 
 void CommandTimer::noteSubmitted(std::uint64_t fenceValue)
 {
-    if (timestamps.has_value())
-        timestamps->noteSubmitted(slot, fenceValue);
+    for (auto& chunk: chunks)
+        chunk->noteSubmitted(slot, fenceValue);
+}
+
+int CommandTimer::passesIn(int chunk) const
+{
+    auto before = chunk * GpuTimestamps::maxTimedPasses;
+    return std::min(GpuTimestamps::maxTimedPasses, passCount - before);
 }
 
 const FrameTimings& CommandTimer::timings(const Device& device)
 {
-    if (!pending || !timestamps->isSlotComplete(slot, device))
+    if (!pending)
         return latest;
 
-    double milliseconds[GpuTimestamps::maxTimedPasses] = {};
+    for (const auto& chunk: chunks)
+        if (!chunk->isSlotComplete(slot, device))
+            return latest;
 
-    latest.milliseconds = timestamps->resolveSlot(slot, passCount, milliseconds);
+    auto milliseconds =
+        std::vector<double>((std::size_t) GpuTimestamps::maxTimedPasses);
     latest.passes.resize(passCount);
 
-    for (auto pass = 0; pass < passCount; ++pass)
+    for (auto chunk = 0; chunk < (int) chunks.size(); ++chunk)
     {
-        latest.passes[pass].label = labels[pass];
-        latest.passes[pass].milliseconds = milliseconds[pass];
+        auto count = passesIn(chunk);
+        auto total = chunks[(std::size_t) chunk]->resolveSlot(
+            slot, count, milliseconds.data());
+
+        if (chunk == 0)
+            latest.milliseconds = total;
+
+        for (auto pass = 0; pass < count; ++pass)
+        {
+            auto index = chunk * GpuTimestamps::maxTimedPasses + pass;
+            latest.passes[index].label = labels[index];
+            latest.passes[index].milliseconds = milliseconds[(std::size_t) pass];
+        }
     }
 
     pending = false;
@@ -69,6 +94,6 @@ const FrameTimings& CommandTimer::timings(const Device& device)
 
 bool CommandTimer::isSupported() const
 {
-    return timestamps.has_value() && timestamps->isSupported();
+    return !chunks.empty() && chunks.front()->isSupported();
 }
 } // namespace eacp::GPU

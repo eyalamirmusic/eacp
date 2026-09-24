@@ -12,6 +12,7 @@
 
 namespace eacp::GPU
 {
+class CommandBuffer;
 class ComputePipeline;
 
 // What an indirect dispatch reads out of a buffer: three threadgroup counts.
@@ -64,21 +65,6 @@ class ComputePass
 {
 public:
     explicit ComputePass(void* encoder, DispatchOrder order = DispatchOrder::Serial);
-
-    // A pass that times each kernel it dispatches: before every dispatch of a
-    // ComputeProgram the backend closes the region the last one was timed in and
-    // opens one named after this kernel - openTimedEncoder hands back the
-    // backend's encoder for it. The label is prefix/Kernel, or Kernel alone.
-    ComputePass(void* encoder,
-                DispatchOrder order,
-                std::function<void*(std::string_view)> openTimedEncoderToUse,
-                std::string timedPrefixToUse)
-        : ComputePass(encoder, order)
-    {
-        timesEachDispatch = true;
-        openTimedEncoder = std::move(openTimedEncoderToUse);
-        timedPrefix = std::move(timedPrefixToUse);
-    }
 
     ~ComputePass();
 
@@ -269,6 +255,23 @@ public:
     static constexpr int textureRegisterBase = maxBufferSlots;
 
 private:
+    friend class CommandBuffer;
+
+    // A pass that times each kernel it dispatches: before every dispatch of a
+    // ComputeProgram the backend closes the region the last one was timed in and
+    // opens one named after this kernel - openTimedEncoder hands back the
+    // backend's encoder for it. The label is prefix/Kernel, or Kernel alone.
+    ComputePass(void* encoder,
+                DispatchOrder order,
+                std::function<void*(std::string_view)> openTimedEncoderToUse,
+                std::string timedPrefixToUse)
+        : ComputePass(encoder, order)
+    {
+        timesEachDispatch = true;
+        openTimedEncoder = std::move(openTimedEncoderToUse);
+        timedPrefix = std::move(timedPrefixToUse);
+    }
+
     template <typename Program>
     void timeDispatchOf(const Program& program)
     {

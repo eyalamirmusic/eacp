@@ -208,3 +208,47 @@ auto tAPassIsStillOneRegion = test("DispatchTiming/aPassIsStillOneRegion") = []
 
     check(commands.timings().passes.size() == 1);
 };
+
+// Past one set of samples a command buffer takes another: every dispatch comes
+// back, however many there are.
+auto tManyDispatchesAllComeBack =
+    test("DispatchTiming/manyDispatchesAllComeBack") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto output = makeOutput();
+
+    auto ramp = RampKernel {};
+    ramp.output = output;
+    ramp.prepare();
+
+    constexpr auto dispatches = GpuTimestamps::maxTimedPasses + 100;
+
+    auto commands = device.makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute(
+            "many", DispatchOrder::Serial, TimingScope::EachDispatch);
+
+        for (auto i = 0; i < dispatches; ++i)
+            pass.dispatch(ramp, 64);
+    }
+
+    commands.commit();
+
+    if (!commands.supportsPassTimings())
+        return;
+
+    const auto& timings = commands.timings();
+    check(timings.passes.size() == dispatches);
+
+    if (timings.passes.size() != dispatches)
+        return;
+
+    check(timings.passes.back().label == "many/RampKernel");
+    check(timings.passes.back().milliseconds > 0.0);
+    check(timings.milliseconds > 0.0);
+};

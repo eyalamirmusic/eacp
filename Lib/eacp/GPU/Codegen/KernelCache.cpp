@@ -43,7 +43,7 @@ ComputeProgram& Detail::findOrBuildKernel(Device& device,
                                           const KernelFactory& build)
 {
     auto& slot =
-        device.singleton<KernelCacheStore>().slotFor(type, std::move(variant));
+        device.perDevice<KernelCacheStore>().slotFor(type, std::move(variant));
 
     std::call_once(slot.built,
                    [&]

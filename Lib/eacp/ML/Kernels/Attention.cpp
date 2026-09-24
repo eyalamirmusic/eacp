@@ -428,12 +428,14 @@ Tensor attention(ComputePass& pass,
                  const Tensor& value,
                  int heads,
                  int headDim,
-                 const Tensor* additiveMask,
-                 const Tensor* queryNormGamma,
-                 const Tensor* keyNormGamma,
-                 float qkNormEpsilon,
+                 const AttentionOptions& options,
                  Device& device)
 {
+    const auto* additiveMask = options.mask;
+    const auto* queryNormGamma = options.queryNorm;
+    const auto* keyNormGamma = options.keyNorm;
+    auto qkNormEpsilon = options.normEpsilon;
+
     auto rows = query.rows();
     auto cols = key.rows();
 

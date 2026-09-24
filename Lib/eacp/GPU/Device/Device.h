@@ -88,7 +88,7 @@ public:
     {
         assertOwningThread();
 
-        return BufferPool::of(*this).take(*this, bytes, usage);
+        return BufferPool::of(*this).take(bytes, usage);
     }
 
     // A buffer over memory the caller owns: shared with it where the backend
@@ -350,17 +350,17 @@ public:
     // real storage.
     void noteBufferCreated() { ++bufferCount; }
 
-    // Singleton<T>::get() scoped to this Device: one T, made on first use and
+    // This Device's own T: one, made on first use and
     // destroyed with the Device, before the backend device itself. For state
     // that is only valid on this Device - compiled pipelines, recycled buffers
     // - and must neither outlive it nor be found again by a later Device at
     // the same address. The lookup is safe from any thread; what T does with
     // that is T's own business.
     template <typename T>
-    T& singleton()
+    T& perDevice()
     {
-        auto lock = std::scoped_lock {singletonMutex};
-        auto& slot = singletons[std::type_index {typeid(T)}];
+        auto lock = std::scoped_lock {perDeviceMutex};
+        auto& slot = perDeviceObjects[std::type_index {typeid(T)}];
 
         if (slot == nullptr)
             slot = std::make_shared<T>();
@@ -388,7 +388,7 @@ private:
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
 
-    std::mutex singletonMutex;
-    std::map<std::type_index, std::shared_ptr<void>> singletons;
+    std::mutex perDeviceMutex;
+    std::map<std::type_index, std::shared_ptr<void>> perDeviceObjects;
 };
 } // namespace eacp::GPU
