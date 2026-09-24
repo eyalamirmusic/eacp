@@ -1366,6 +1366,54 @@ is not shared at all: the index is a `var()` read, which makes the read impure,
 which is what keeps a row walk from collapsing into one load of the counter's
 first value. `Tests/GPU/HoistingTests.cpp` pins all four of these.
 
+### A handle is a value
+
+`auto p = f(x);` means what it means in C++: `f` is evaluated once, where the
+line is, and `p` is that value however often it is used and whatever runs
+after it. The in-place softmax a row pass is shows why that matters:
+
+```cpp
+auto probability = exp(scores[index] - peak);
+
+write(scores, index, probability);
+total += probability;
+```
+
+The sum adds the probability — the same one the store wrote — and `exp` runs
+once. A graph is a tree of expressions rather than of statements, though, and
+an expression printed at each use is evaluated at each use: printed into the
+sum, `scores[index]` would be read *after* the store and the sum would add
+`exp` of the probability.
+
+So the emitter orders a handle against the statements around it. Every node
+remembers where among the statements it was built; ahead of each statement that
+writes something — a variable, a buffer element, threadgroup memory, which
+includes a barrier — every expression built before it that reads what it
+writes, and that the statement or anything after it still evaluates, is named
+there: evaluated once, before the write, and read back by name afterwards. The
+same holds for a variable (`auto scaled = input[i] * scale; scale += 1.0f;` —
+`scaled` keeps the old factor) and for a tile behind a barrier (a handle read
+before it is what the tile held there; read the tile again after the barrier to
+see what the other threads published).
+
+The rule names the **outermost** stale expression — `exp(scores[index] - peak)`
+rather than `scores[index]` — so nothing is evaluated twice, and it names
+nothing that no write stands between. That is the trade-off it was chosen over
+the simpler one, naming every expression bound to a C++ variable: the graph
+cannot see a C++ variable (a handle is a node id, and a temporary is the same
+thing), and naming every subexpression would put a register on every
+intermediate a compiler would otherwise fuse. As it is, a kernel that never
+reads what it writes emits exactly the source it did before this rule existed,
+and one that does holds one value across the write rather than evaluating it
+again after it — one live register traded for the recomputation.
+
+The one handle that is not a value is a **loop's condition**. It is re-tested
+before every iteration by construction, so what it reads, and everything built
+on those reads, is evaluated where it is used — `limit = reach + 8u` tested in
+`loop(i < limit, ...)` over a body that raises `reach` sees the raised bound.
+`Tests/GPU/HoistingTests.cpp` and `GPU/codegenAnInPlaceExpIsEvaluatedOnce`
+pin both sides.
+
 ### Reducing over the group
 
 `groupSum`, `groupMax` and `groupMin` are the fold a shared tile was being

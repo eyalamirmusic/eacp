@@ -154,9 +154,9 @@ void AttentionRowStatsKernel::define()
          [&]
          {
              auto index = base + col.get();
-             auto probability = var(exp(scores[index] - peak));
-             write(scores, index, probability.get());
-             localSum = localSum.get() + probability.get();
+             auto probability = exp(scores[index] - peak);
+             write(scores, index, probability);
+             localSum = localSum.get() + probability;
              col = col.get() + (unsigned) attentionGroupWidth;
          });
 

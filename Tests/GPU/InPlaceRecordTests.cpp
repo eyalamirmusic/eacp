@@ -148,7 +148,8 @@ struct SwizzleRotateKernel final : ComputeProgram
 };
 
 // The same shape written as two element writes rather than one record write.
-// Two writes are two statements, so the second observes the first.
+// x is the element before either write, as a record's components are; a read
+// made after the first write is what observes it.
 struct ScalarCarryKernel final : ComputeProgram
 {
     ScalarCarryKernel() { compile(); }
@@ -159,7 +160,7 @@ struct ScalarCarryKernel final : ComputeProgram
         auto x = output[i];
 
         write(output, i, x + 1.0f);
-        write(output, i + 1u, x);
+        write(output, i + 1u, x + output[i]);
     }
 
     Uniform<OutputBuffer> output;
@@ -422,10 +423,9 @@ auto tSwizzleRotateRunsInPlace =
 };
 
 // Where the swap above is one record write, this is two element writes, and
-// the line between them is what the record fix rests on: a record's components
-// take what the buffer held before the first of them, while a statement of its
-// own reads the element as it stands - the contract BufferAccess pins and the
-// README's In place section states.
+// they agree with it: a handle read before the first write is the element as it
+// was, however many writes follow, while a read made after a write sees it - the
+// contract BufferAccess pins and the README's In place section states.
 auto tTwoWritesAreTwoStatements =
     test("InPlaceRecord/twoElementWritesAreTwoStatements") = []
 {
@@ -451,6 +451,6 @@ auto tTwoWritesAreTwoStatements =
     for (auto pair = 0; pair < pairs; ++pair)
     {
         check(values[pair * 2] == source[pair * 2] + 1.0f);
-        check(values[pair * 2 + 1] == source[pair * 2] + 1.0f);
+        check(values[pair * 2 + 1] == source[pair * 2] * 2.0f + 1.0f);
     }
 };

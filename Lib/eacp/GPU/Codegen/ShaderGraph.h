@@ -290,6 +290,10 @@ struct Statement
     // it
     SimdMatrixElement element = SimdMatrixElement::Float; // SimdMatrixLoad:
     // what the patch's elements are in memory, and so what the fragment is
+    int sequence = -1; // where the statement begins among the graph's
+    // sequence points: a node whose sequenceOf is at most this was built
+    // before the statement ran. For an if or a loop it is where the first
+    // body opened, which is after the condition was built.
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -297,6 +301,7 @@ struct Statement
 struct Block
 {
     Vector<int> statements; // indices into the graph's statement store
+    int opened = -1; // the sequence point the block was opened at
 };
 
 // A constant array the shader subscripts: the palette a procedural shader picks
@@ -590,6 +595,13 @@ public:
     }
 
     const Expr& expr(int node) const { return nodes[node]; }
+
+    // Where a node was built among the statements: the number of sequence
+    // points - statements recorded, blocks opened and closed - before it. A
+    // node built before a statement stands for the value it had there, which
+    // is how the emitter keeps `auto p = f(buffer[i]); write(buffer, i, p);`
+    // meaning one evaluation of f however often p is used afterwards.
+    int sequenceOf(int node) const { return nodeSequences[node]; }
     int nodeCount() const { return nodes.size(); }
     const Vector<ValueType>& inputs() const { return inputTypes; }
     const Vector<StepRate>& inputStepRates() const { return inputRates; }
@@ -773,6 +785,8 @@ private:
     std::map<BinaryKey, int> binaryCache;
     std::map<ReadKey, int> readCache;
     Vector<char> pureFlags; // parallel to nodes
+    Vector<int> nodeSequences; // parallel to nodes
+    int sequence = 0;
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;

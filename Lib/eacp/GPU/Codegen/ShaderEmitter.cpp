@@ -1928,15 +1928,21 @@ struct VisitSet
 
 // Whether the value under node no longer stands for itself after a statement:
 // it read a variable that statement wrote, an element of a storage buffer the
-// statement stored to, or threadgroup memory the statement may have moved.
+// statement stored to, or threadgroup memory the statement may have moved. A
+// node already holding one of the names in `names` is a value, not a read, and
+// stands for itself whatever runs after it.
 bool readsStale(const ShaderGraph& graph,
                 int node,
                 const Vector<char>& written,
                 const Vector<char>& buffersWritten,
                 bool sharedMoved,
-                VisitSet& seen)
+                VisitSet& seen,
+                const Vector<int>* names = nullptr)
 {
     if (node < 0 || !seen.visit(node))
+        return false;
+
+    if (names != nullptr && (*names)[node] >= 0)
         return false;
 
     const auto& expr = graph.expr(node);
@@ -1955,7 +1961,8 @@ bool readsStale(const ShaderGraph& graph,
         return true;
 
     for (auto argument: expr.args)
-        if (readsStale(graph, argument, written, buffersWritten, sharedMoved, seen))
+        if (readsStale(
+                graph, argument, written, buffersWritten, sharedMoved, seen, names))
             return true;
 
     return false;
@@ -1963,25 +1970,39 @@ bool readsStale(const ShaderGraph& graph,
 
 // Every expression the statements of a block reach, its nested bodies included.
 // A loop's condition is left out: the header takes no name of its own.
+void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots);
+
+void collectStatementRoots(const ShaderGraph& graph,
+                           const Statement& statement,
+                           Vector<int>& roots)
+{
+    if (statement.kind != StatementKind::Loop)
+        roots.add(statement.value);
+
+    roots.add(statement.index);
+    roots.add(statement.indexY);
+    roots.add(statement.stride);
+
+    if (statement.body >= 0)
+        collectUseRoots(graph, statement.body, roots);
+
+    if (statement.elseBody >= 0)
+        collectUseRoots(graph, statement.elseBody, roots);
+}
+
 void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
 {
     for (auto index: graph.block(block).statements)
-    {
-        const auto& statement = graph.statement(index);
+        collectStatementRoots(graph, graph.statement(index), roots);
+}
 
-        if (statement.kind != StatementKind::Loop)
-            roots.add(statement.value);
-
-        roots.add(statement.index);
-        roots.add(statement.indexY);
-        roots.add(statement.stride);
-
-        if (statement.body >= 0)
-            collectUseRoots(graph, statement.body, roots);
-
-        if (statement.elseBody >= 0)
-            collectUseRoots(graph, statement.elseBody, roots);
-    }
+// The reads whose value a statement can change: a variable, an element of a
+// storage buffer or of threadgroup memory, an atomic counter.
+bool dependsOnState(ExprKind kind)
+{
+    return kind == ExprKind::VarRead || kind == ExprKind::BufferRead
+           || kind == ExprKind::BufferVectorRead || kind == ExprKind::AtomicLoad
+           || kind == ExprKind::SharedRead;
 }
 
 // Emits one stage: its statements, then the expressions its outputs are.
@@ -1991,15 +2012,18 @@ void collectUseRoots(const ShaderGraph& graph, int block, Vector<int>& roots)
 // use. Control flow is what bounds that sharing, and the two rules it imposes
 // are the whole of what makes this different from printing an expression tree:
 //
-// A name is given up the moment a statement writes a variable the value behind
-// it read - which is what stops `d` computed before an `if` from standing for
-// the same thing after a body that moved what it was computed from. A name
-// neither body moves stays usable inside them both.
+// A handle is the value it had where it was built, as a C++ value is. Ahead of
+// a statement that writes what a handle built before it read - a variable, a
+// buffer element, threadgroup memory - the handle is named if anything after
+// the write still evaluates it (see freezeBefore), so `d` computed before an
+// `if` stands for the same thing after a body that moved what it was computed
+// from, and `p = exp(scores[i])` stored back over scores[i] is still p after.
 //
 // A loop condition takes no name at all. It is printed into the while header,
 // so binding it to a local ahead of the loop would test a value that never
-// changes again; the names the body can invalidate are given up there too,
-// since the header is re-evaluated after the body has run.
+// changes again. It is the one place a handle is re-evaluated: what the
+// condition reads, and anything built on those reads, is printed where it is
+// used, and a name for it is given up wherever the body moves what it read.
 //
 // A record write is what the rules answer to rather than bound by: its N
 // element stores are one write, so its value takes a name whatever its use
@@ -2011,8 +2035,11 @@ struct StageEmitter
                  Vector<int> attributeVaryings = {})
         : printer {graphToUse, backend, locals, std::move(attributeVaryings)}
         , visited(graphToUse.nodeCount())
+        , walked(graphToUse.nodeCount())
+        , searched(graphToUse.nodeCount())
     {
         locals.resize(graphToUse.nodeCount(), -1);
+        loopConditionReads.resize(graphToUse.nodeCount(), 0);
     }
 
     const ShaderGraph& graph() const { return printer.graph; }
@@ -2085,13 +2112,31 @@ struct StageEmitter
         auto uses = blockUses(block);
         auto open = Vector<int> {};
         auto source = std::string {};
+        const auto& statements = graph().block(block).statements;
 
-        for (auto index: graph().block(block).statements)
-            source += emitStatement(graph().statement(index), indent, uses, open);
+        for (auto position = 0; position < statements.size(); ++position)
+        {
+            const auto& statement = graph().statement(statements[position]);
+            auto isLoop = statement.kind == StatementKind::Loop;
+
+            if (isLoop)
+                markConditionReads(statement.value, 1);
+
+            source += freezeBefore(block, position, indent, uses, open);
+            source += emitStatement(statement, indent, uses, open);
+
+            if (isLoop)
+                markConditionReads(statement.value, -1);
+        }
 
         retire(open);
         return source;
     }
+
+    // The expressions the stage evaluates after its statements have all run -
+    // a fragment's colour and discard - which read a value built before a
+    // statement exactly as a later statement would.
+    Vector<int> trailingRoots;
 
     std::string emitStatement(const Statement& statement,
                               const std::string& indent,
@@ -2130,10 +2175,12 @@ struct StageEmitter
             }
 
             // The condition is evaluated before either body runs, so it is
-            // printed while every name still stands; the ones a body moves on
-            // from are given up between it and them. An assignment needs no
-            // such pass first: its right-hand side is what the variable held
-            // before it, which is what the open names still stand for.
+            // printed while every name still stands. The only names a body can
+            // move on from are those built on an enclosing loop condition's
+            // reads, and they are given up between it and them; every other
+            // name is a value no body moves. An assignment needs no such pass
+            // first: its right-hand side is what the variable held before it,
+            // which is what the open names still stand for.
             case StatementKind::If:
             {
                 source = define({statement.value}, indent, uses, open);
@@ -2276,10 +2323,10 @@ struct StageEmitter
                           + "] = " + printer.ref(statement.value) + ";\n";
                 break;
 
-            // The synchronisation point itself. The names it invalidates -
-            // anything computed from shared memory - are given up by the
-            // dropStale below, the same pass an assignment retires its
-            // variable's readers through.
+            // The synchronisation point itself. A handle read out of shared
+            // memory before it is still what the tile held there - named ahead
+            // of it by freezeBefore if it is used after - so a kernel that
+            // wants what the other threads published reads the tile again.
             // GLSL says it in two calls: the memory barrier publishes what
             // was written, the execution barrier is where the group meets.
             case StatementKind::Barrier:
@@ -2347,7 +2394,8 @@ struct StageEmitter
         }
 
         // Afterwards either way, for the names this statement's own expressions
-        // introduced: a value read out of the variable it then wrote.
+        // introduced over a loop condition's reads: a value read out of the
+        // variable it then wrote, which the header has to read afresh.
         dropStale(statement, open);
         return source;
     }
@@ -2636,6 +2684,166 @@ private:
         return source + barrier;
     }
 
+    // A handle is the value it had where it was built. The statements that
+    // could make a later evaluation disagree are the ones that write what it
+    // read - a variable, a buffer element, threadgroup memory - so ahead of
+    // each such statement, every expression built before it that reads what it
+    // writes, and that is still to be evaluated by it or by what follows, is
+    // named here: evaluated once, before the write, and read back by name.
+    //
+    // Only the outermost such expression is named - `f(buffer[i])`, not
+    // `buffer[i]` - so f runs once rather than once per use. Nothing is named
+    // that no write stands between, so a kernel that never reads what it
+    // writes emits exactly what it did before.
+    //
+    // The exception is a loop's condition. It is evaluated again before every
+    // iteration by construction, so the reads it makes, and everything built
+    // on them, stay what they were: evaluated where they are used.
+    std::string freezeBefore(int block,
+                             int position,
+                             const std::string& indent,
+                             const Vector<int>& uses,
+                             Vector<int>& open)
+    {
+        const auto& statements = graph().block(block).statements;
+        const auto& statement = graph().statement(statements[position]);
+
+        auto sharedMoved = touchesShared(graph(), statement);
+
+        written.assign(graph().variables().size(), 0);
+        collectWrites(graph(), statement, written);
+
+        buffersWritten.assign(graph().storageBuffers().size(), 0);
+        collectBufferWrites(graph(), statement, buffersWritten);
+
+        if (!written.contains(1) && !buffersWritten.contains(1) && !sharedMoved)
+            return {};
+
+        auto roots = Vector<int> {};
+
+        if (statement.body >= 0)
+            collectUseRoots(graph(), statement.body, roots);
+
+        if (statement.elseBody >= 0)
+            collectUseRoots(graph(), statement.elseBody, roots);
+
+        for (auto later = position + 1; later < statements.size(); ++later)
+            collectStatementRoots(
+                graph(), graph().statement(statements[later]), roots);
+
+        if (block == ShaderGraph::rootBlock)
+            for (auto root: trailingRoots)
+                roots.add(root);
+
+        auto source = nameOperandsFirst(statement, indent, uses, open);
+        walked.restart();
+
+        for (auto root: roots)
+            source +=
+                freezeUnder(root, statement.sequence, sharedMoved, indent, open);
+
+        return source;
+    }
+
+    // The statement's own operands, named first and in the order the statement
+    // itself names them, so that what is frozen after them is spelled over
+    // those names rather than beside them. A record store names its record here
+    // too: the later components are built before the first store, and with the
+    // record named each of them is a swizzle of that name rather than a copy of
+    // the whole read.
+    std::string nameOperandsFirst(const Statement& statement,
+                                  const std::string& indent,
+                                  const Vector<int>& uses,
+                                  Vector<int>& open)
+    {
+        if (statement.kind == StatementKind::Loop)
+            return {};
+
+        auto operands = Vector<int> {};
+
+        for (auto operand:
+             {statement.index, statement.indexY, statement.stride, statement.value})
+            if (operand >= 0)
+                operands.add(operand);
+
+        return define(operands, indent, uses, open)
+               + holdTheRecord(statement, indent, open);
+    }
+
+    std::string freezeUnder(int node,
+                            int sequence,
+                            bool sharedMoved,
+                            const std::string& indent,
+                            Vector<int>& open)
+    {
+        if (node < 0 || locals[node] >= 0 || !walked.visit(node))
+            return {};
+
+        auto builtBefore = graph().sequenceOf(node) <= sequence;
+
+        if (builtBefore && !readsLoopCondition(node))
+        {
+            visited.restart();
+
+            if (!readsStale(graph(),
+                            node,
+                            written,
+                            buffersWritten,
+                            sharedMoved,
+                            visited,
+                            &locals))
+                return {};
+
+            return bind(node, indent, open);
+        }
+
+        auto source = std::string {};
+
+        for (auto argument: graph().expr(node).args)
+            source += freezeUnder(argument, sequence, sharedMoved, indent, open);
+
+        return source;
+    }
+
+    void markConditionReads(int node, int change)
+    {
+        searched.restart();
+        markReads(node, change);
+    }
+
+    void markReads(int node, int change)
+    {
+        if (node < 0 || !searched.visit(node))
+            return;
+
+        if (dependsOnState(graph().expr(node).kind))
+            loopConditionReads[node] += change;
+
+        for (auto argument: graph().expr(node).args)
+            markReads(argument, change);
+    }
+
+    bool readsLoopCondition(int node)
+    {
+        searched.restart();
+        return reachesConditionRead(node);
+    }
+
+    bool reachesConditionRead(int node)
+    {
+        if (node < 0 || !searched.visit(node))
+            return false;
+
+        if (loopConditionReads[node] > 0)
+            return true;
+
+        for (auto argument: graph().expr(node).args)
+            if (reachesConditionRead(argument))
+                return true;
+
+        return false;
+    }
+
     Vector<int> countUsesOver(const Vector<int>& roots) const
     {
         auto count = graph().nodeCount();
@@ -2794,7 +3002,7 @@ private:
         {
             visited.restart();
 
-            if (node != heldRecord
+            if (node != heldRecord && readsLoopCondition(node)
                 && readsStale(
                     graph(), node, written, buffersWritten, sharedMoved, visited))
                 locals[node] = -1;
@@ -2814,8 +3022,13 @@ private:
     // Held by the emitter rather than by the walk, so that naming a stage costs
     // one buffer instead of one per name per statement.
     VisitSet visited;
+    VisitSet walked;
+    VisitSet searched;
     Vector<char> written;
     Vector<char> buffersWritten;
+
+    // Per node, how many enclosing loops read it in their condition.
+    Vector<int> loopConditionReads;
 };
 
 // Whether the expression tree under node reads a uniform. A Varying read is the
@@ -3892,6 +4105,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     auto fragmentStage = StageEmitter {graph, backend, promoted.varyingOf};
 
     source += fragmentStage.declareArrays(stageRoots, "    ");
+    fragmentStage.trailingRoots = fragmentRoots;
     source += fragmentStage.emitBlock(ShaderGraph::rootBlock, "    ");
     source += fragmentStage.defineFor(fragmentRoots, "    ");
 

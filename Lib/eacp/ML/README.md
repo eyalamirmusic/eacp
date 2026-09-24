@@ -51,9 +51,8 @@ auto output = attendWithScores(pass, scores, value, heads, headDim);
 `scores` comes back holding the unnormalised probabilities; the output is
 `rows x heads x headDim`.
 
-A value an EDSL kernel uses more than once is an expression, not a register:
-each use is emitted where it is used. The row stats write the probability and
-then add it to the sum, and written as `auto p = exp(scores[i] - peak)` the
-add re-reads `scores[i]` — already overwritten with `p` — and takes the `exp`
-of the probability. `auto p = var(exp(scores[i] - peak))` evaluates it once
-into a local, and both uses read that.
+The row stats write the probability and then add it to the sum, and they are
+written the way the C++ would be — `auto p = exp(scores[i] - peak);`, stored,
+then added. That `p` is one value, evaluated once before the store, is the
+EDSL's rule rather than this kernel's care: see "A handle is a value" in
+`Lib/eacp/GPU/README.md`.

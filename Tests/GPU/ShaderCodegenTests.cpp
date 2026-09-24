@@ -1303,10 +1303,12 @@ auto tCodegenSharedAcrossStatements = test("GPU/codegenSharedAcrossStatements") 
     expectGlslCompiles(builder.graph());
 };
 
-// ...and a name is given up the moment a statement writes a variable the value
-// behind it was computed from, which is the one thing sharing across statements
-// can get wrong. Pure string generation.
-auto tCodegenStaleLocalsAreDropped = test("GPU/codegenStaleLocalsAreDropped") = []
+// ...and a handle keeps the value it was built with after a statement writes a
+// variable it was computed from: `scaled` is sin of the total before the
+// increment, so it is named ahead of the increment and read back by name after
+// it, exactly as a C++ float would be. Pure string generation.
+auto tCodegenStaleLocalsAreDropped =
+    test("GPU/codegenAHandleOutlivesAWriteToItsVariable") = []
 {
     auto builder = ShaderBuilder {};
 
@@ -1328,12 +1330,10 @@ auto tCodegenStaleLocalsAreDropped = test("GPU/codegenStaleLocalsAreDropped") = 
 
     auto metal = emitMetal(builder.graph());
 
-    // Two names for the one expression: what stands for sin(v0) before v0 moves
-    // cannot stand for it afterwards.
-    check(countOccurrences(metal, "sin(v0)") == 2);
+    check(countOccurrences(metal, "sin(v0)") == 1);
     check(contains(metal, "float t0 = sin(v0);"));
-    check(contains(metal, "float t1 = sin(v0);"));
-    check(metal.find("v0 = (v0 + 1.0);") < metal.find("float t1 = sin(v0);"));
+    check(metal.find("float t0 = sin(v0);") < metal.find("v0 = (v0 + 1.0);"));
+    check(contains(metal, "v1 = ((t0 * 2.0) + t0);"));
 
     expectGlslCompiles(builder.graph());
 };
@@ -2998,12 +2998,13 @@ auto tCodegenComputeSharedReduction = test("GPU/codegenComputeSharedReduction") 
     expectGlslCompiles(builder.graph());
 };
 
-// A name computed from shared memory does not survive a barrier: what the
-// tile held before other threads' stores were published is not what it holds
-// after, so the emitter re-reads rather than reusing the local - the same
-// rule an assignment imposes on the names that read its variable.
+// A handle read out of shared memory is the value the tile held where it was
+// read, barrier or no barrier: `sum` is named once, and the use after the
+// second barrier reads that name rather than the tile again - what a C++ float
+// read out of an array would do. A kernel that wants what the other threads
+// published reads the tile again after the barrier.
 auto tCodegenComputeSharedNamesRetire =
-    test("GPU/codegenComputeSharedNamesRetire") = []
+    test("GPU/codegenComputeSharedHandlesOutliveABarrier") = []
 {
     auto builder = ShaderBuilder {};
 
@@ -3015,22 +3016,65 @@ auto tCodegenComputeSharedNamesRetire =
     builder.write(tile, lid, toFloat(gid));
     builder.barrier();
 
-    // Used twice, so it takes a name.
     auto sum = tile[lid] + 1.0f;
     builder.write(output, gid, sum * sum);
 
     builder.barrier();
 
-    // The same handle used twice again: the pre-barrier name is gone, so the
-    // element is read - and named - afresh.
     builder.write(output, gid + 1u, sum * sum);
 
     auto metal = emitMetal(builder.graph());
-    check(countOccurrences(metal, "s0[lid] + 1.0") == 2);
+    check(countOccurrences(metal, "s0[lid] + 1.0") == 1);
     check(contains(metal, "float t0 = (s0[lid] + 1.0);"));
-    check(contains(metal, "float t1 = (s0[lid] + 1.0);"));
     check(contains(metal, "buffer0[gid] = (t0 * t0);"));
-    check(contains(metal, "buffer0[(gid + 1u)] = (t1 * t1);"));
+    check(contains(metal, "buffer0[(gid + 1u)] = (t0 * t0);"));
+
+    expectGlslCompiles(builder.graph());
+};
+
+// The in-place softmax an attention kernel's row pass is: each probability is
+// written back over the score it came from and then added to the row's sum.
+// `probability` is one value however often it is used, so exp runs once per
+// column - before the store, named, and read back by name for the sum. Printed
+// at each use instead, the sum's copy would re-read the element after the store
+// and take the exp of the probability.
+auto tCodegenInPlaceExpIsEvaluatedOnce =
+    test("GPU/codegenAnInPlaceExpIsEvaluatedOnce") = []
+{
+    auto builder = ShaderBuilder {};
+
+    auto scores = builder.outputBuffer();
+    auto peaks = builder.inputBuffer();
+    auto sums = builder.outputBuffer();
+
+    auto row = builder.threadId();
+    auto base = row * 8u;
+    auto peak = peaks[row];
+    auto total = builder.var(0.0f);
+    auto column = builder.var(0u);
+
+    builder.loop(column < 8u,
+                 [&]
+                 {
+                     auto index = base + column;
+                     auto probability = exp(scores[index] - peak);
+
+                     builder.write(scores, index, probability);
+                     total += probability;
+                     column += 1u;
+                 });
+
+    builder.write(sums, row, total);
+
+    for (const auto& source: {emitMetal(builder.graph()),
+                              emitHlsl(builder.graph()),
+                              emitGlsl(builder.graph())})
+    {
+        check(countOccurrences(source, "exp(") == 1);
+        check(contains(source, " t1 = exp((buffer0[t0] - buffer1[gid]));"));
+        check(contains(source, "buffer0[t0] = t1;"));
+        check(contains(source, "v0 = (v0 + t1);"));
+    }
 
     expectGlslCompiles(builder.graph());
 };
