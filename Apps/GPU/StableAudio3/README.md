@@ -9,7 +9,8 @@ build/Apps/GPU/StableAudio3/StableAudio3 --model small --prompt "lofi house loop
 ```
 
 Flags: `--model small|medium` (default `small`), `--prompt`, `--seconds`,
-`--seed`, `--samplerSteps` (default 8), `--output`.
+`--seed`, `--samplerSteps` (default 8), `--output`, and `--fetch-only`, which
+fetches the model's checkpoints and exits.
 
 ## Checkpoints
 
@@ -51,3 +52,18 @@ checkpoint (`SA3CodecFastTests`, `SA3CodecPatchedPretransformGoldenTests`,
 `SA3DiTUnitTests`, `SA3SamplerFastTests`) run everywhere.
 `EACP_REQUIRE_CHECKPOINTS=1` turns every skip into a failure, for a machine
 that is meant to have them.
+
+### In CI
+
+`.github/workflows/sa3-goldens.yml` is the one lane that has checkpoints. On a
+macOS runner it builds the app and its suites, fetches the small model's three
+files (`StableAudio3 --model small --fetch-only`, the app's own fetch) into an
+`actions/cache` entry keyed on `Checkpoints.h`, generates four seconds as a
+check that the runner has a Metal device (the WAV is not compared: the
+bit-exactness in `PERFORMANCE.md` is between commits on one machine, not across
+GPUs), and runs every `SA3` case but the medium and SAME-L ones with
+`EACP_REQUIRE_CHECKPOINTS=1`. To turn it on, a maintainer accepts the terms on
+`stabilityai/stable-audio-3-small-music` with a Hugging Face account and adds
+that account's read token as the repository secret `HF_TOKEN` (Settings →
+Secrets and variables → Actions). Without the secret, as on a fork, the job is
+skipped.

@@ -1,0 +1,103 @@
+name: SA3 goldens
+
+# StableAudio3's model-level goldens against the real small checkpoint on
+# Metal. Every lane in build.yml runs these suites too, but with no checkpoint
+# cached each case skips, so they cover none of the paths the goldens exist
+# for. The checkpoint repo is gated, so this needs a Hugging Face read token
+# in the HF_TOKEN repository secret; without one (a fork, or a repository that
+# never set it) the job is skipped rather than failed.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Secrets cannot be read in a job-level `if`, so a job that can see the
+  # secret says whether it is there and the real job keys on its answer. This
+  # costs a few seconds of a Linux runner instead of a macOS one.
+  token:
+    name: HF_TOKEN present
+    runs-on: ubuntu-latest
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -n "$HF_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HF_TOKEN is not set; the SA3 golden job is skipped."
+          fi
+
+  sa3-goldens:
+    name: SA3 goldens (small, Metal)
+    needs: token
+    if: needs.token.outputs.present == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      CHECKPOINTS: ~/Library/Application Support/StableAudio3/Resources/huggingface/stabilityai--stable-audio-3-small-music
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # The same configuration build.yml uses, but only the app and its test
+      # suites are built.
+      - name: Configure
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+
+      - name: Build
+        run: cmake --build build --target Apps/GPU/StableAudio3/all
+
+      # The small model's three files, about 3.5 GB: model.safetensors (the
+      # DiT and its codec) and t5gemma-b-b-ul2's model and tokenizer. The
+      # revision is pinned in Checkpoints.h, so the key moves with that file.
+      # Neither the medium model nor SAME-L is fetched; their suites are left
+      # out of the test step below.
+      - name: Restore checkpoints
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CHECKPOINTS }}
+          key: sa3-small-music-${{ hashFiles('Apps/GPU/StableAudio3/Checkpoints.h') }}
+
+      # The app's own OnlineResource path. On a cache hit the files are
+      # trusted as they are and the network is not touched.
+      - name: Fetch checkpoints
+        run: build/Apps/GPU/StableAudio3/StableAudio3 --model small --fetch-only
+
+      # Saved before the tests run, so a red run still keeps the download.
+      - name: Save checkpoints
+        if: steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CHECKPOINTS }}
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+      # The golden suites return early and green when there is no device, so
+      # this is what fails if the runner has no Metal device. The WAV is not
+      # compared with anything: bit-exactness is promised across commits on
+      # one machine (PERFORMANCE.md), not between an M5 Max and a runner's
+      # paravirtual GPU, and the tree holds no reference WAV to compare with.
+      - name: Generate
+        run: >
+          build/Apps/GPU/StableAudio3/StableAudio3 --model small --seconds 4
+          --seed 42 --prompt "lofi house loop" --output "$RUNNER_TEMP/small.wav"
+
+      # EACP_REQUIRE_CHECKPOINTS turns every checkpoint skip into a failure,
+      # so a missing file is red rather than a silent green. The medium and
+      # SAME-L suites need checkpoints this job does not fetch.
+      - name: Test
+        env:
+          EACP_REQUIRE_CHECKPOINTS: '1'
+        run: >
+          ctest --test-dir build --output-on-failure -j 2
+          -R '^SA3'
+          -E '^SA3(DiT|Sampler)/medium|^SA3Codec/sameL'

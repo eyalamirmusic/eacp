@@ -40,6 +40,7 @@ struct Options
     std::string model = "small";
     bool profile = false;
     int repeat = 0;
+    bool fetchOnly = false;
 };
 
 using Clock = std::chrono::steady_clock;
@@ -74,6 +75,8 @@ Options parseOptions(int argc, char** argv)
             options.profile = true;
         else if (flag == "--repeat" && hasValue)
             options.repeat = std::atoi(argv[++i]);
+        else if (flag == "--fetch-only")
+            options.fetchOnly = true;
     }
 
     return options;
@@ -170,6 +173,9 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
+
+    if (options.fetchOnly)
+        return 0;
 
     auto& device = Device::shared();
 
