@@ -64,6 +64,19 @@ public:
     // an app may call it at the top of its own, on the same terms.
     void assertOwningThread() const;
 
+    // The owning thread as a value, for state that has to answer the same
+    // question after the Device is gone - BufferPool's link, which a Buffer
+    // can outlive. Asked in every build, unlike the assertion.
+    struct ThreadOwner
+    {
+        std::thread::id id;
+        bool followsMainThread = false;
+
+        bool isCurrent() const;
+    };
+
+    ThreadOwner threadOwner() const { return {owningThread, mainThreadOwned}; }
+
     Buffer makeBuffer(const void* data,
                       std::int64_t bytes,
                       BufferUsage usage = BufferUsage::Vertex,

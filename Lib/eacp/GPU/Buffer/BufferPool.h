@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <utility>
 
 namespace eacp::GPU
@@ -34,7 +35,10 @@ class Device;
 // and not to what it has moved on from. Buffers made with data, and adopted
 // memory, never come from here.
 //
-// One per Device, used from the Device's own thread.
+// One per Device, used from the Device's own thread. A Buffer reaches its pool
+// through a BufferPoolLink it holds weakly, so a Buffer that outlives its
+// Device finds the link expired and frees its storage, and one destroyed on
+// any thread but the Device's frees it too rather than touching the pool.
 class BufferPool
 {
 public:
@@ -103,11 +107,13 @@ private:
         Buffer buffer;
     };
 
+    static void
+        giveBack(const std::weak_ptr<BufferPoolLink>& link, Buffer storage, Key key);
+
     void give(Buffer storage, Key key);
     void promoteFinished();
     void freeUnused();
     void freeOldestBeyondBudget();
-
 
     Device* device = nullptr;
     std::uint64_t lastTrimmed = 0;
@@ -115,5 +121,8 @@ private:
     mutable std::int64_t bound = 0;
     std::deque<Waiting> waiting;
     std::multimap<Key, Available> available;
+
+    // Last, so it expires before the storage above is freed.
+    std::shared_ptr<BufferPoolLink> link;
 };
 } // namespace eacp::GPU

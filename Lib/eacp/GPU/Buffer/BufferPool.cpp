@@ -6,12 +6,40 @@
 
 namespace eacp::GPU
 {
+// What a pooled Buffer holds instead of the pool: who may give storage back,
+// and where to. Only the pool owns it, so it expires with the pool, and the
+// owner is a copy so a thread holding the link a moment can ask it safely
+// while the pool goes on the Device's thread.
+struct BufferPoolLink
+{
+    Device::ThreadOwner owner;
+    BufferPool* pool = nullptr;
+};
+
 BufferPool& BufferPool::of(Device& device)
 {
     auto& pool = device.perDevice<BufferPool>();
     pool.device = &device;
 
+    if (pool.link == nullptr)
+        pool.link = std::make_shared<BufferPoolLink>(
+            BufferPoolLink {.owner = device.threadOwner(), .pool = &pool});
+
     return pool;
+}
+
+// Storage that cannot go back is freed as it leaves here: the Device is gone,
+// or this is not its thread and the pool is not ours to push onto.
+void BufferPool::giveBack(const std::weak_ptr<BufferPoolLink>& link,
+                          Buffer storage,
+                          Key key)
+{
+    auto live = link.lock();
+
+    if (live == nullptr || !live->owner.isCurrent())
+        return;
+
+    live->pool->give(std::move(storage), key);
 }
 
 Buffer BufferPool::take(std::int64_t bytes, BufferUsage usage)
@@ -33,7 +61,7 @@ Buffer BufferPool::take(std::int64_t bytes, BufferUsage usage)
 
     if (buffer.isValid())
     {
-        buffer.pool = this;
+        buffer.pool = link;
         buffer.pooledUsage = usage;
     }
 
@@ -82,9 +110,8 @@ std::int64_t BufferPool::bytesKeptUnused() const
     {
         auto recommended = device != nullptr ? device->memoryBudget() : 0;
 
-        bound = recommended > 0
-                  ? std::min(bytesKeptUnusedCeiling, recommended / 4)
-                  : bytesKeptUnusedCeiling;
+        bound = recommended > 0 ? std::min(bytesKeptUnusedCeiling, recommended / 4)
+                                : bytesKeptUnusedCeiling;
     }
 
     return bound;

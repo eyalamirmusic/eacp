@@ -3,11 +3,13 @@
 #include "../Common.h"
 
 #include <cstdint>
+#include <memory>
 
 namespace eacp::GPU
 {
 class Device;
 class BufferPool;
+struct BufferPoolLink;
 
 // What a buffer is bound as. A Vertex buffer feeds the vertex stage; an Index
 // buffer feeds drawIndexed; a Storage buffer is read/written by a compute
@@ -117,7 +119,8 @@ public:
            BufferStorage storage = BufferStorage::Device);
 
     // A Buffer that came from the device's BufferPool gives its storage back
-    // to it here; any other frees it.
+    // to it here, if the Device is still alive and this is its thread; any
+    // other frees it.
     ~Buffer();
 
     Buffer(Buffer&& other) noexcept;
@@ -263,7 +266,7 @@ private:
     struct Native;
     Pimpl<Native> impl;
 
-    BufferPool* pool = nullptr;
+    std::weak_ptr<BufferPoolLink> pool;
     BufferUsage pooledUsage = BufferUsage::Storage;
 };
 

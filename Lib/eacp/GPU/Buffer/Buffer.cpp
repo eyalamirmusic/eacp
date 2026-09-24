@@ -13,7 +13,7 @@ Buffer::~Buffer()
 
 Buffer::Buffer(Buffer&& other) noexcept
     : impl(std::move(other.impl))
-    , pool(std::exchange(other.pool, nullptr))
+    , pool(std::exchange(other.pool, {}))
     , pooledUsage(other.pooledUsage)
 {
 }
@@ -26,7 +26,7 @@ Buffer& Buffer::operator=(Buffer&& other) noexcept
     giveBackToPool();
 
     impl = std::move(other.impl);
-    pool = std::exchange(other.pool, nullptr);
+    pool = std::exchange(other.pool, {});
     pooledUsage = other.pooledUsage;
 
     return *this;
@@ -34,12 +34,12 @@ Buffer& Buffer::operator=(Buffer&& other) noexcept
 
 void Buffer::giveBackToPool()
 {
-    auto* owner = std::exchange(pool, nullptr);
+    auto link = std::exchange(pool, {});
 
-    if (owner == nullptr || impl.get() == nullptr)
+    if (link.expired() || impl.get() == nullptr)
         return;
 
     auto key = BufferPool::Key {size(), pooledUsage};
-    owner->give(std::move(*this), key);
+    BufferPool::giveBack(link, std::move(*this), key);
 }
 } // namespace eacp::GPU

@@ -3,6 +3,8 @@
 #include <eacp/GPU/Buffer/BufferPool.h>
 
 #include <cstdint>
+#include <optional>
+#include <thread>
 
 // BufferPool - Device::makeBuffer(bytes) recycling the storage of buffers the
 // GPU has finished with, and never the storage of one it may still be using.
@@ -190,4 +192,58 @@ auto tUnusedStorageIsFreed = test("GPU/bufferPoolFreesUnusedStorage") = []
 
     check(again.isValid());
     check(device.buffersCreated() == created + 1);
+};
+
+// A pooled Buffer that outlives its Device finds the pool gone with it and
+// frees its storage instead of pushing onto freed memory. Metal only: a D3D12
+// or Vulkan Buffer of any kind keeps a reference to its Device's context, so
+// outliving the Device is not something a Buffer there survives at all.
+auto tPooledBufferOutlivesItsDevice =
+    test("GPU/bufferPoolBufferOutlivesItsDevice") = []
+{
+    if constexpr (!Platform::isApple())
+        return;
+
+    auto survivor = std::optional<Buffer> {};
+
+    {
+        auto device = Device();
+
+        if (!device.isValid())
+            return;
+
+        survivor.emplace(device.makeBuffer(sizeFor(6)));
+        check(survivor->isValid());
+    }
+
+    survivor.reset();
+    check(!survivor.has_value());
+};
+
+// Destroyed on a thread that does not own the Device: freed there rather than
+// pushed onto a pool only the owning thread may touch. Destroyed on the owning
+// thread, the same storage goes back as usual.
+auto tForeignThreadFreesRatherThanPools =
+    test("GPU/bufferPoolForeignThreadFreesRatherThanPools") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto& pool = BufferPool::of(device);
+    auto buffer = device.makeBuffer(sizeFor(7));
+    auto held = pool.heldCount();
+
+    std::thread([moved = std::move(buffer)]() mutable
+                { auto destroyedHere = std::move(moved); })
+        .join();
+
+    check(pool.heldCount() == held);
+
+    {
+        auto kept = device.makeBuffer(sizeFor(7));
+    }
+
+    check(pool.heldCount() == held + 1);
 };
