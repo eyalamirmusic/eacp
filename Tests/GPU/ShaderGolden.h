@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <set>
 #include <sstream>
 #include <string>
@@ -36,7 +37,7 @@ using GraphWalk = std::function<void(const GPU::ShaderGraphVisitor&)>;
 struct Entry
 {
     std::string name;
-    Emit emit;
+    Emit emit = [] { return Emitted {}; };
 };
 
 struct Dialect
@@ -197,7 +198,10 @@ inline void expectMatchesGolden(const std::filesystem::path& path,
     if (isUpdating())
     {
         if (!exists || readFile(path) != emitted)
+        {
             writeFile(path, emitted);
+            std::cout << (exists ? "rewrote " : "wrote ") << path.string() << "\n";
+        }
 
         return;
     }
@@ -273,7 +277,10 @@ inline void expectNoOrphans(const std::filesystem::path& directory,
             continue;
 
         if (isUpdating())
+        {
             std::filesystem::remove(directory / file);
+            std::cout << "deleted " << (directory / file).string() << "\n";
+        }
         else
             nano::check(false,
                         "golden " + file
