@@ -3,6 +3,7 @@
 #include "Buffer.h"
 
 #include "../Device/Device.h"
+#include "../Windows/D3D12Cost-Windows.h"
 #include "../Windows/D3D12Types.h"
 
 // Windows/D3D12 backend. A BufferStorage::Device buffer is a default-heap
@@ -50,6 +51,9 @@ winrt::com_ptr<ID3D12Resource> makeDefaultBuffer(ID3D12Device* device,
     desc.SampleDesc.Count = 1;
     desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     desc.Flags = flags;
+
+    static auto creations = D3D12CostCounter {"buffers"};
+    auto cost = ScopedD3D12Cost {creations, bytes};
 
     auto buffer = winrt::com_ptr<ID3D12Resource>();
     device->CreateCommittedResource(&heap,

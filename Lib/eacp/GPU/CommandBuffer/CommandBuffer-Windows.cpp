@@ -4,6 +4,7 @@
 
 #include "../Device/Device.h"
 #include "../Timing/CommandTimer.h"
+#include "../Windows/D3D12Cost-Windows.h"
 #include "../Windows/D3D12Types.h"
 
 #include <cstring>
@@ -221,7 +222,12 @@ void CommandBuffer::wait()
     impl->device->assertOwningThread();
 
     if (impl->committed)
+    {
+        static auto blocked = D3D12CostCounter {"waits"};
+        auto cost = ScopedD3D12Cost {blocked};
+
         impl->context.waitFor(impl->completionValue);
+    }
 }
 
 bool CommandBuffer::isComplete() const
