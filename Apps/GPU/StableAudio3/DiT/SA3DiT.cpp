@@ -10,6 +10,7 @@
 #include <eacp/ML/Kernels/Norm.h>
 #include <eacp/ML/Kernels/RoPE.h>
 #include <eacp/ML/Kernels/SwiGLU.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 
 #include <algorithm>
 #include <optional>
@@ -84,7 +85,7 @@ Tensor globalConditioning(ComputePass& pass,
     globalEmbed = applyActivation(pass, globalEmbed, ActivationKind::SiLU, device);
     globalEmbed = linear(pass, globalEmbed, weights.toGlobalEmbed2Weight, nullptr, device);
 
-    globalEmbed = addTensors(pass, globalEmbed, timestepEmbed, device);
+    globalEmbed = add(pass, globalEmbed, timestepEmbed, device);
 
     auto base =
         linear(pass, globalEmbed, weights.globalCondEmbedder0Weight, &weights.globalCondEmbedder0Bias, device);
@@ -153,7 +154,7 @@ Tensor selfAttentionOutput(ComputePass& pass,
     auto diffAttn = attention(
         pass, qDiffR, kDiffR, v, config.numHeads, config.headDim, {}, device);
 
-    return subtractTensors(pass, mainAttn, diffAttn, device);
+    return subtract(pass, mainAttn, diffAttn, device);
 }
 
 PromptKeys promptKeysFor(ComputePass& pass,
@@ -268,7 +269,7 @@ Tensor crossAttentionOutput(ComputePass& pass,
                                {},
                                device);
 
-    return subtractTensors(pass, mainCross, diffCross, device);
+    return subtract(pass, mainCross, diffCross, device);
 }
 }
 
@@ -308,7 +309,7 @@ Tensor transformerBlock(ComputePass& pass,
     auto embedDimC = config.embedDim;
     auto seqLen = x.rows();
 
-    auto modulation = addTensors(pass, globalCondBase, layer.toScaleShiftGate, device);
+    auto modulation = add(pass, globalCondBase, layer.toScaleShiftGate, device);
 
     // The modulation is one row of six: each part is read where it lies.
     auto modulationPart = [&](int part)
@@ -328,18 +329,18 @@ Tensor transformerBlock(ComputePass& pass,
     auto xm = adaLNModulate(pass, xn, scaleSelf, shiftSelf, device);
 
     auto attnOut = selfAttentionOutput(pass, config, layer, xm, rotaryInvFreq, device);
-    auto attnFlat = reshapeFlat(std::move(attnOut), {seqLen, embedDimC});
+    auto attnFlat = reshape(std::move(attnOut), {seqLen, embedDimC});
     auto attnProj = linear(pass, attnFlat, layer.selfAttnOutWeight, nullptr, device);
     auto gatedSelf = sigmoidGate(pass, attnProj, gateSelf, device);
 
-    auto x1 = addTensors(pass, x, gatedSelf, device);
+    auto x1 = add(pass, x, gatedSelf, device);
 
     auto xn2 = rmsNorm(pass, x1, layer.crossAttendNormGamma, config.rmsNormEpsilon, device);
     auto crossOut = crossAttentionOutput(pass, config, layer, xn2, prompt, device);
-    auto crossFlat = reshapeFlat(std::move(crossOut), {seqLen, embedDimC});
+    auto crossFlat = reshape(std::move(crossOut), {seqLen, embedDimC});
     auto crossProj = linear(pass, crossFlat, layer.crossAttnOutWeight, nullptr, device);
 
-    auto x2 = addTensors(pass, x1, crossProj, device);
+    auto x2 = add(pass, x1, crossProj, device);
 
     auto x3 = applyLocalConditioning
                 ? withLocalConditioning(pass, config, layer, std::move(x2), device)
@@ -351,7 +352,7 @@ Tensor transformerBlock(ComputePass& pass,
         swiGLU(pass, xm3, layer.ff0ProjWeight, layer.ff0ProjBias, layer.ff2Weight, layer.ff2Bias, device);
     auto gatedFf = sigmoidGate(pass, ffOut, gateFf, device);
 
-    return addTensors(pass, x3, gatedFf, device);
+    return add(pass, x3, gatedFf, device);
 }
 
 Prompt preparePrompt(ComputePass& pass,
@@ -398,11 +399,11 @@ Tensor forward(ComputePass& pass,
     auto latentLength = latent.rows();
 
     auto pre = linear(pass, latent, weights.preprocessConvWeight, nullptr, device);
-    pre = addTensors(pass, pre, latent, device);
+    pre = add(pass, pre, latent, device);
 
     auto x0 = linear(pass, pre, weights.projectInWeight, nullptr, device);
 
-    auto seq = concatRows(pass, weights.memoryTokens, x0, device);
+    auto seq = concatRows(pass, {weights.memoryTokens, x0}, device);
 
     auto globalCondBase = globalConditioning(pass, weights, timestep, secondsTotal, device);
 
@@ -420,7 +421,7 @@ Tensor forward(ComputePass& pass,
     auto latentOut = sliceRows(pass, seq, config.numMemoryTokens, latentLength, device);
     auto projOut = linear(pass, latentOut, weights.projectOutWeight, nullptr, device);
     auto post = linear(pass, projOut, weights.postprocessConvWeight, nullptr, device);
-    post = addTensors(pass, post, projOut, device);
+    post = add(pass, post, projOut, device);
 
     return post;
 }

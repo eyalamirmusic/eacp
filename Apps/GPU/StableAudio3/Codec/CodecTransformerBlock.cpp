@@ -1,7 +1,5 @@
 #include "CodecTransformerBlock.h"
 
-#include "GpuOps.h"
-
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Kernels/BandedAttention.h>
@@ -9,6 +7,7 @@
 #include <eacp/ML/Kernels/Norm.h>
 #include <eacp/ML/Kernels/RoPE.h>
 #include <eacp/ML/Kernels/SwiGLU.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 
 namespace eacp::SA3Codec
 {
@@ -89,11 +88,11 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                               device);
     auto qkv = linear(pass, normed, weights.qkvWeight, nullptr, device);
 
-    auto qTensor = sliceColumnsGpu(pass, qkv, 0 * dim, dim, device);
-    auto kTensor = sliceColumnsGpu(pass, qkv, 1 * dim, dim, device);
-    auto vTensor = sliceColumnsGpu(pass, qkv, 2 * dim, dim, device);
-    auto qDiffTensor = sliceColumnsGpu(pass, qkv, 3 * dim, dim, device);
-    auto kDiffTensor = sliceColumnsGpu(pass, qkv, 4 * dim, dim, device);
+    auto qTensor = sliceColumns(pass, qkv, 0 * dim, dim, device);
+    auto kTensor = sliceColumns(pass, qkv, 1 * dim, dim, device);
+    auto vTensor = sliceColumns(pass, qkv, 2 * dim, dim, device);
+    auto qDiffTensor = sliceColumns(pass, qkv, 3 * dim, dim, device);
+    auto kDiffTensor = sliceColumns(pass, qkv, 4 * dim, dim, device);
 
     auto qNormed = dynamicTanhPerHead(pass,
                                       qTensor,
@@ -165,12 +164,12 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                                    band,
                                    device);
 
-    auto differential = subtractTensorsGpu(pass, primaryOut, diffOut, device);
-    auto differentialFlat = reshapeFlat(std::move(differential), {rows, dim});
+    auto differential = subtract(pass, primaryOut, diffOut, device);
+    auto differentialFlat = reshape(std::move(differential), {rows, dim});
 
     auto attnProjected =
         linear(pass, differentialFlat, weights.toOutWeight, nullptr, device);
-    auto afterAttention = addTensorsGpu(pass, input, attnProjected, device);
+    auto afterAttention = add(pass, input, attnProjected, device);
 
     auto ffNormed = dynamicTanh(pass,
                                 afterAttention,
@@ -194,6 +193,6 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
                                  weights.ff2Bias,
                                  device);
 
-    return addTensorsGpu(pass, afterAttention, ffOutput, device);
+    return add(pass, afterAttention, ffOutput, device);
 }
 } // namespace eacp::SA3Codec

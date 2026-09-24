@@ -5,7 +5,6 @@ target_include_directories(eacp-sa3-sampler PUBLIC ${CMAKE_CURRENT_LIST_DIR}/..)
 target_link_libraries(eacp-sa3-sampler PUBLIC eacp-sa3-dit)
 
 target_sources(eacp-sa3-sampler PRIVATE
-        Ops.cpp
         Sampler.cpp)
 
 set_default_target_setting(eacp-sa3-sampler)

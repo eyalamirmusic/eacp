@@ -1,8 +1,8 @@
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 #include <eacp/ML/Tensor/Tensor.h>
-#include <Sampler/Ops.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -13,7 +13,6 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::ML;
-using namespace eacp::SA3Sampler;
 
 namespace
 {

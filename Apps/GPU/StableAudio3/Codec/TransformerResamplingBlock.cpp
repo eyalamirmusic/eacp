@@ -2,6 +2,8 @@
 
 #include "GpuOps.h"
 
+#include <eacp/ML/Kernels/TensorOps.h>
+
 #include <optional>
 
 namespace eacp::SA3Codec
@@ -43,9 +45,10 @@ Tensor runChunkedStack(ComputePass& pass,
         AttentionBand {effectiveChunkSize, effectiveChunkSize, effectiveChunkSize};
 
     auto whole = chunkedRows == input.rows();
-    auto sliced = whole ? std::nullopt
-                        : std::optional<Tensor> {
-                              sliceRowsGpu(pass, input, 0, chunkedRows, device)};
+    auto sliced =
+        whole
+            ? std::nullopt
+            : std::optional<Tensor> {sliceRows(pass, input, 0, chunkedRows, device)};
     const auto& source = whole ? input : *sliced;
     auto x = std::optional<Tensor> {};
 
@@ -60,7 +63,7 @@ Tensor runChunkedStack(ComputePass& pass,
         return std::move(*x);
 
     auto output = Tensor::uninitializedF32(input.shape(), device);
-    writeRowsIntoGpu(pass, output, 0, *x, device);
+    copyRowsInto(pass, output, 0, *x, device);
     return output;
 }
 
@@ -105,14 +108,14 @@ Tensor applyChunkMidpointShift(ComputePass& pass,
 
     auto firstOut = runChunkedStack(pass, folded, effectiveChunkSize, weights.layers, 0, split, device);
 
-    auto headPad = sliceRowsGpu(pass, firstOut, 0, shift, device);
-    auto tailPad = sliceRowsGpu(pass, firstOut, firstOut.rows() - shift, shift, device);
-    auto padded = concatRowsGpu(pass, headPad, firstOut, tailPad, device);
+    auto headPad = sliceRows(pass, firstOut, 0, shift, device);
+    auto tailPad = sliceRows(pass, firstOut, firstOut.rows() - shift, shift, device);
+    auto padded = concatRows(pass, {headPad, firstOut, tailPad}, device);
 
     auto secondOut = runChunkedStack(
         pass, padded, effectiveChunkSize, weights.layers, split, weights.transformerDepth, device);
 
-    return sliceRowsGpu(pass, secondOut, shift, firstOut.rows(), device);
+    return sliceRows(pass, secondOut, shift, firstOut.rows(), device);
 }
 }
 
@@ -139,7 +142,7 @@ Tensor applyTransformerResamplingBlock(const Tensor& input,
 
             if (weights.isEncoder)
             {
-                auto padded = zeroPadRowsGpu(pass, input, padModulo, device);
+                auto padded = padRowsWithZeros(pass, input, padModulo, device);
                 x = applyWNConv1d(pass, padded, weights.mapping, device);
             }
             else
@@ -147,7 +150,7 @@ Tensor applyTransformerResamplingBlock(const Tensor& input,
                 auto decoderPadModulo = weights.attentionMode == CodecAttentionMode::ChunkMidpointShift
                                           ? weights.chunkSize / weights.stride
                                           : inputSegSize;
-                x = zeroPadRowsGpu(pass, input, decoderPadModulo, device);
+                x = padRowsWithZeros(pass, input, decoderPadModulo, device);
             }
 
             folded = foldWithNewTokens(pass, *x, inputSegSize, outputSegSize, weights.newTokens, device);

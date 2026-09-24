@@ -2,7 +2,7 @@
 #include <eacp/GPU/Device/Device.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Tensor/Tensor.h>
-#include <Sampler/Ops.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 #include <Sampler/Sampler.h>
 
 #include <NanoTest/NanoTest.h>

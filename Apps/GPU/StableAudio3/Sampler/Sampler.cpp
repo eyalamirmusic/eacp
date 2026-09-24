@@ -1,10 +1,9 @@
 #include "Sampler.h"
 
-#include "Ops.h"
-
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/CommandBuffer/CommandBuffer.h>
 #include <eacp/GPU/Frame/ComputePass.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 
 #include <memory>
 #include <random>

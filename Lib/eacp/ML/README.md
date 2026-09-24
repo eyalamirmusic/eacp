@@ -9,6 +9,24 @@ binds the kernel from the device's cache and records the dispatch into the pass
 it is handed. Nothing commits: a whole layer, or a whole stack of them, goes
 into one command buffer.
 
+## Tensor ops
+
+`Kernels/TensorOps.h` is the arithmetic and plumbing between the layers, one
+function each, so a model's own files hold only what is its own:
+
+```cpp
+auto x1 = add(pass, x, attentionOut);
+auto step = scaleAndAdd(pass, x, 1.f, velocity, -t);
+auto seq = concatRows(pass, {memoryTokens, x});
+auto tail = sliceRows(pass, seq, memoryTokens.rows(), latentRows);
+auto flat = reshape(std::move(attentionOut), {rows, heads * headDim});
+```
+
+`add`, `subtract`, `multiply` and `scaleAndAdd` are element by element;
+`zeros`, `fill`, `sliceRows`, `sliceColumns`, `concatRows`, `copyRowsInto` and
+`padRowsWithZeros` move rows and columns about; `reshape` hands the same buffer
+back under another shape without a dispatch.
+
 ## Norms per head
 
 `rmsNorm`, `layerNorm` and `dynamicTanh` normalise each row. The QK norm a

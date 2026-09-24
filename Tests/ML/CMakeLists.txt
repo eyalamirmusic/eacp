@@ -7,5 +7,6 @@ nano_add_executable(MLTests
             RoPETests.cpp
             SafetensorsFileTests.cpp
             SwiGLUTests.cpp
+            TensorOpsTests.cpp
             TensorTests.cpp
         TARGETS eacp-ml)

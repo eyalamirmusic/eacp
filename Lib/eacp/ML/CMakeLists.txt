@@ -12,7 +12,8 @@ target_sources(eacp-ml PRIVATE
         Kernels/RoPE.cpp
         Kernels/Attention.cpp
         Kernels/BandedAttention.cpp
-        Kernels/SwiGLU.cpp)
+        Kernels/SwiGLU.cpp
+        Kernels/TensorOps.cpp)
 
 set_default_target_setting(eacp-ml)
 eacp_enable_unity_build(eacp-ml)

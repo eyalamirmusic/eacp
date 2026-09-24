@@ -2,6 +2,7 @@
 
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 
 #include <algorithm>
 #include <cmath>
@@ -19,38 +20,6 @@ Float sigmoidOf(const Float& x)
 }
 
 constexpr auto twoPi = 6.283185307179586f;
-}
-
-AddTensorsKernel::AddTensorsKernel()
-{
-    compile();
-}
-
-void AddTensorsKernel::dispatch(ComputePass& pass, int count)
-{
-    pass.dispatch(*this, count);
-}
-
-void AddTensorsKernel::define()
-{
-    auto i = threadId();
-    write(output, i, a[i] + b[i]);
-}
-
-SubtractTensorsKernel::SubtractTensorsKernel()
-{
-    compile();
-}
-
-void SubtractTensorsKernel::dispatch(ComputePass& pass, int count)
-{
-    pass.dispatch(*this, count);
-}
-
-void SubtractTensorsKernel::define()
-{
-    auto i = threadId();
-    write(output, i, a[i] - b[i]);
 }
 
 AddBroadcastRowKernel::AddBroadcastRowKernel()
@@ -117,47 +86,6 @@ void SigmoidGateKernel::define()
     write(output, index, input[index] * sigmoidOf(1.f - gate[position.x]));
 }
 
-CopyRowsKernel::CopyRowsKernel()
-{
-    compile();
-}
-
-void CopyRowsKernel::dispatch(ComputePass& pass, int rowCount, int columns)
-{
-    columnCount = (std::uint32_t) columns;
-    pass.dispatch(*this, columns, rowCount);
-}
-
-void CopyRowsKernel::define()
-{
-    auto position = threadPosition();
-    auto sourceIndex = (sourceRowStart + position.y) * columnCount + position.x;
-    auto destinationIndex =
-        (destinationRowStart + position.y) * columnCount + position.x;
-
-    write(destination, destinationIndex, source[sourceIndex]);
-}
-
-SliceColumnsKernel::SliceColumnsKernel()
-{
-    compile();
-}
-
-void SliceColumnsKernel::dispatch(ComputePass& pass, int rows, int sliceWidth)
-{
-    destinationColumnCount = (std::uint32_t) sliceWidth;
-    pass.dispatch(*this, sliceWidth, rows);
-}
-
-void SliceColumnsKernel::define()
-{
-    auto position = threadPosition();
-    auto sourceIndex = position.y * sourceColumnCount + columnStart + position.x;
-    auto destinationIndex = position.y * destinationColumnCount + position.x;
-
-    write(destination, destinationIndex, source[sourceIndex]);
-}
-
 ExpoFourierFeaturesKernel::ExpoFourierFeaturesKernel()
 {
     compile();
@@ -200,32 +128,6 @@ Tensor expoFourierFeatures(ComputePass& pass,
     return result;
 }
 
-Tensor addTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Device& device)
-{
-    auto result = Tensor::uninitializedF32(a.shape(), device);
-
-    auto& kernel = GPU::sharedKernel<AddTensorsKernel>(device);
-    kernel.a = a.buffer();
-    kernel.b = b.buffer();
-    kernel.output = result.buffer();
-    kernel.dispatch(pass, a.count());
-
-    return result;
-}
-
-Tensor subtractTensors(ComputePass& pass, const Tensor& a, const Tensor& b, Device& device)
-{
-    auto result = Tensor::uninitializedF32(a.shape(), device);
-
-    auto& kernel = GPU::sharedKernel<SubtractTensorsKernel>(device);
-    kernel.a = a.buffer();
-    kernel.b = b.buffer();
-    kernel.output = result.buffer();
-    kernel.dispatch(pass, a.count());
-
-    return result;
-}
-
 Tensor addBroadcastRow(ComputePass& pass,
                        const Tensor& values,
                        const Tensor& addend,
@@ -234,12 +136,7 @@ Tensor addBroadcastRow(ComputePass& pass,
 {
     auto result = Tensor::uninitializedF32(values.shape(), device);
 
-    auto& copyKernel = GPU::sharedKernel<CopyRowsKernel>(device);
-    copyKernel.source = values.buffer();
-    copyKernel.destination = result.buffer();
-    copyKernel.sourceRowStart = 0u;
-    copyKernel.destinationRowStart = 0u;
-    copyKernel.dispatch(pass, values.rows(), values.cols());
+    copyRowsInto(pass, result, 0, values, device);
 
     auto& addKernel = GPU::sharedKernel<AddBroadcastRowKernel>(device);
     addKernel.values = result.buffer();
@@ -304,65 +201,6 @@ Tensor sigmoidGate(ComputePass& pass,
     return result;
 }
 
-Tensor concatRows(ComputePass& pass, const Tensor& top, const Tensor& bottom, Device& device)
-{
-    auto columns = top.cols();
-    auto totalRows = top.rows() + bottom.rows();
-    auto result = Tensor::uninitializedF32({totalRows, columns}, device);
-
-    auto& topKernel = GPU::sharedKernel<CopyRowsKernel>(device);
-    topKernel.source = top.buffer();
-    topKernel.destination = result.buffer();
-    topKernel.sourceRowStart = 0u;
-    topKernel.destinationRowStart = 0u;
-    topKernel.dispatch(pass, top.rows(), columns);
-
-    auto& bottomKernel = GPU::sharedKernel<CopyRowsKernel>(device);
-    bottomKernel.source = bottom.buffer();
-    bottomKernel.destination = result.buffer();
-    bottomKernel.sourceRowStart = 0u;
-    bottomKernel.destinationRowStart = (std::uint32_t) top.rows();
-    bottomKernel.dispatch(pass, bottom.rows(), columns);
-
-    return result;
-}
-
-Tensor sliceRows(ComputePass& pass,
-                 const Tensor& input,
-                 int rowStart,
-                 int rowCount,
-                 Device& device)
-{
-    auto result = Tensor::uninitializedF32({rowCount, input.cols()}, device);
-
-    auto& kernel = GPU::sharedKernel<CopyRowsKernel>(device);
-    kernel.source = input.buffer();
-    kernel.destination = result.buffer();
-    kernel.sourceRowStart = (std::uint32_t) rowStart;
-    kernel.destinationRowStart = 0u;
-    kernel.dispatch(pass, rowCount, input.cols());
-
-    return result;
-}
-
-Tensor sliceColumns(ComputePass& pass,
-                    const Tensor& input,
-                    int columnStart,
-                    int sliceWidth,
-                    Device& device)
-{
-    auto result = Tensor::uninitializedF32({input.rows(), sliceWidth}, device);
-
-    auto& kernel = GPU::sharedKernel<SliceColumnsKernel>(device);
-    kernel.source = input.buffer();
-    kernel.destination = result.buffer();
-    kernel.sourceColumnCount = (std::uint32_t) input.cols();
-    kernel.columnStart = (std::uint32_t) columnStart;
-    kernel.dispatch(pass, input.rows(), sliceWidth);
-
-    return result;
-}
-
 Tensor squeezeTrailingUnitDim(Tensor input)
 {
     auto shape = input.shape();
@@ -370,14 +208,9 @@ Tensor squeezeTrailingUnitDim(Tensor input)
     if (shape.size() > 2 && shape.back() == 1)
     {
         shape.pop_back();
-        return Tensor(std::move(input.buffer()), shape, input.dtype());
+        return reshape(std::move(input), shape);
     }
 
     return input;
-}
-
-Tensor reshapeFlat(Tensor input, std::vector<int> newShape)
-{
-    return Tensor(std::move(input.buffer()), std::move(newShape), input.dtype());
 }
 }

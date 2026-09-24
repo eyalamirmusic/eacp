@@ -10,6 +10,7 @@
 #include <eacp/ML/Kernels/Linear.h>
 #include <eacp/ML/Kernels/Norm.h>
 #include <eacp/ML/Kernels/RoPE.h>
+#include <eacp/ML/Kernels/TensorOps.h>
 
 #include <cmath>
 #include <cstring>
@@ -26,81 +27,6 @@ constexpr auto ropeTheta = 10000.f;
 constexpr auto attentionScale = 0.125f;
 constexpr auto attentionSoftcap = 50.f;
 constexpr auto maskedScore = -1.0e9f;
-
-class BinaryOpKernel final : public ComputeProgram
-{
-public:
-    enum class Op
-    {
-        Add,
-        Multiply
-    };
-
-    explicit BinaryOpKernel(Op opToUse)
-        : op(opToUse)
-    {
-        compile();
-    }
-
-    void dispatch(ComputePass& pass, int count)
-    {
-        pass.dispatch(*this, count);
-    }
-
-    Uniform<InputBuffer> left;
-    Uniform<InputBuffer> right;
-    Uniform<OutputBuffer> output;
-
-    EACP_SHADER(left, right, output)
-
-private:
-    void define() override
-    {
-        auto i = threadId();
-
-        if (op == Op::Add)
-            write(output, i, left[i] + right[i]);
-        else
-            write(output, i, left[i] * right[i]);
-    }
-
-    Op op;
-};
-
-Tensor addElementwise(ComputePass& pass, const Tensor& left, const Tensor& right, Device& device)
-{
-    auto result = Tensor::uninitializedF32(left.shape(), device);
-
-    auto& kernel = GPU::sharedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Add);
-    kernel.left = left.buffer();
-    kernel.right = right.buffer();
-    kernel.output = result.buffer();
-    kernel.dispatch(pass, left.count());
-
-    return result;
-}
-
-Tensor multiplyElementwise(ComputePass& pass,
-                          const Tensor& left,
-                          const Tensor& right,
-                          Device& device)
-{
-    auto result = Tensor::uninitializedF32(left.shape(), device);
-
-    auto& kernel =
-        GPU::sharedKernel<BinaryOpKernel>(device, BinaryOpKernel::Op::Multiply);
-    kernel.left = left.buffer();
-    kernel.right = right.buffer();
-    kernel.output = result.buffer();
-    kernel.dispatch(pass, left.count());
-
-    return result;
-}
-
-Tensor flattenHeads(Tensor&& tensor, int rows, int hiddenSize)
-{
-    return Tensor {std::move(tensor.buffer()), {rows, hiddenSize}, tensor.dtype()};
-}
 
 std::vector<float> readAsF32(const SafetensorsFile& file, const std::string& name)
 {
@@ -300,12 +226,12 @@ Tensor T5GemmaEncoder::runLayers(ComputePass& pass,
                                           attentionSoftcap,
                                           device);
 
-        auto attnFlat = flattenHeads(std::move(attnOut), rows, hiddenSize);
+        auto attnFlat = reshape(std::move(attnOut), {rows, hiddenSize});
         auto attnProjected = linear(pass, attnFlat, layer.oWeight, nullptr, device);
         auto attnNormed =
             rmsNorm(pass, attnProjected, layer.postSelfAttnNormGamma, rmsEpsilon, device);
 
-        hidden = addElementwise(pass, hidden, attnNormed, device);
+        hidden = add(pass, hidden, attnNormed, device);
 
         auto normed2 =
             rmsNorm(pass, hidden, layer.preFeedforwardNormGamma, rmsEpsilon, device);
@@ -313,12 +239,12 @@ Tensor T5GemmaEncoder::runLayers(ComputePass& pass,
         auto gate = linear(pass, normed2, layer.gateWeight, nullptr, device);
         auto gateActivated = applyActivation(pass, gate, ActivationKind::GeluTanh, device);
         auto up = linear(pass, normed2, layer.upWeight, nullptr, device);
-        auto gated = multiplyElementwise(pass, gateActivated, up, device);
+        auto gated = multiply(pass, gateActivated, up, device);
         auto mlpOut = linear(pass, gated, layer.downWeight, nullptr, device);
         auto mlpNormed =
             rmsNorm(pass, mlpOut, layer.postFeedforwardNormGamma, rmsEpsilon, device);
 
-        hidden = addElementwise(pass, hidden, mlpNormed, device);
+        hidden = add(pass, hidden, mlpNormed, device);
     }
 
     return hidden;
