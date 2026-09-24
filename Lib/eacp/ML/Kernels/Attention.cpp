@@ -37,14 +37,17 @@ Tensor rmsNormPerHead(ComputePass& pass,
 
     return result;
 }
-}
+} // namespace
 
 AttentionScoresKernel::AttentionScoresKernel()
 {
     compile();
 }
 
-void AttentionScoresKernel::dispatch(ComputePass& pass, int rows, int heads, int cols)
+void AttentionScoresKernel::dispatch(ComputePass& pass,
+                                     int rows,
+                                     int heads,
+                                     int cols)
 {
     headCount = (std::uint32_t) heads;
     columnCount = (std::uint32_t) cols;
@@ -66,11 +69,11 @@ void AttentionScoresKernel::define()
     auto d = var(0u);
 
     loop(d.get() < headDimension,
-        [&]
-        {
-            dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
-            d = d.get() + 1u;
-        });
+         [&]
+         {
+             dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
+             d = d.get() + 1u;
+         });
 
     auto score = dot.get() * scale + additiveMask[row * columnCount + col];
     write(scores, i, score);
@@ -136,11 +139,11 @@ void AttentionRowStatsKernel::define()
     auto col = var(lane);
 
     loop(col.get() < columnCount,
-        [&]
-        {
-            localMax = max(localMax.get(), scores[base + col.get()]);
-            col = col.get() + (unsigned) attentionGroupWidth;
-        });
+         [&]
+         {
+             localMax = max(localMax.get(), scores[base + col.get()]);
+             col = col.get() + (unsigned) attentionGroupWidth;
+         });
 
     auto peak = groupMax(localMax.get());
 
@@ -148,20 +151,18 @@ void AttentionRowStatsKernel::define()
     col = lane;
 
     loop(col.get() < columnCount,
-        [&]
-        {
-            localSum = localSum.get() + exp(scores[base + col.get()] - peak);
-            col = col.get() + (unsigned) attentionGroupWidth;
-        });
+         [&]
+         {
+             auto index = base + col.get();
+             auto probability = var(exp(scores[index] - peak));
+             write(scores, index, probability.get());
+             localSum = localSum.get() + probability.get();
+             col = col.get() + (unsigned) attentionGroupWidth;
+         });
 
     auto total = groupSum(localSum.get());
 
-    ifThen(lane == 0u,
-          [&]
-          {
-              write(rowMax, rowGroup, peak);
-              write(rowSum, rowGroup, total);
-          });
+    ifThen(lane == 0u, [&] { write(rowSum, rowGroup, total); });
 }
 
 AttentionWeightedSumKernel::AttentionWeightedSumKernel()
@@ -185,24 +186,22 @@ void AttentionWeightedSumKernel::define()
     auto rowHead = i / headDimension;
     auto head = rowHead % headCount;
 
-    auto scoreBase = rowHead * columnCount;
-    auto peak = rowMax[rowHead];
+    auto probabilityBase = rowHead * columnCount;
     auto total = rowSum[rowHead];
 
     auto accumulator = var(0.f);
     auto col = var(0u);
 
     loop(col.get() < columnCount,
-        [&]
-        {
-            auto probability = exp(scores[scoreBase + col.get()] - peak);
-            auto valueBase = (col.get() * headCount + head) * headDimension;
+         [&]
+         {
+             auto probability = probabilities[probabilityBase + col.get()];
+             auto valueBase = (col.get() * headCount + head) * headDimension;
 
-            accumulator =
-                accumulator.get() + probability * value[valueBase + d];
+             accumulator = accumulator.get() + probability * value[valueBase + d];
 
-            col = col.get() + 1u;
-        });
+             col = col.get() + 1u;
+         });
 
     write(output, rowHead * headDimension + d, accumulator.get() / total);
 }
@@ -222,6 +221,36 @@ Tensor buildZeroMask(int rows, int cols, Device& device)
 {
     auto values = std::vector<float>((std::size_t) rows * cols, 0.f);
     return Tensor::fromHostF32(values.data(), {rows, cols}, device);
+}
+
+Tensor attendWithScores(ComputePass& pass,
+                        Tensor& scores,
+                        const Tensor& value,
+                        int heads,
+                        int headDim,
+                        Device& device)
+{
+    auto rows = scores.dim(0);
+    auto cols = scores.dim(2);
+
+    auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
+    auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
+
+    auto& statsKernel = sharedKernel<AttentionRowStatsKernel>(device);
+    statsKernel.scores = scores.buffer();
+    statsKernel.rowSum = rowSum.buffer();
+    statsKernel.dispatch(pass, rows * heads, cols);
+
+    auto& weightedSumKernel = sharedKernel<AttentionWeightedSumKernel>(device);
+    weightedSumKernel.value = value.buffer();
+    weightedSumKernel.probabilities = scores.buffer();
+    weightedSumKernel.rowSum = rowSum.buffer();
+    weightedSumKernel.output = output.buffer();
+    weightedSumKernel.headDimension = (std::uint32_t) headDim;
+    weightedSumKernel.columnCount = (std::uint32_t) cols;
+    weightedSumKernel.dispatch(pass, rows, heads, headDim);
+
+    return output;
 }
 
 Tensor attention(ComputePass& pass,
@@ -270,9 +299,6 @@ Tensor attention(ComputePass& pass,
         normalizedKeyStorage.has_value() ? *normalizedKeyStorage : key;
 
     auto scores = Tensor::uninitializedF32({rows, heads, cols}, device);
-    auto rowMax = Tensor::uninitializedF32({rows * heads}, device);
-    auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
-    auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
     auto scale = 1.f / std::sqrt((float) headDim);
 
     if (additiveMask != nullptr)
@@ -297,22 +323,6 @@ Tensor attention(ComputePass& pass,
         scoresKernel.dispatch(pass, rows, heads, cols);
     }
 
-    auto& statsKernel = sharedKernel<AttentionRowStatsKernel>(device);
-    statsKernel.scores = scores.buffer();
-    statsKernel.rowMax = rowMax.buffer();
-    statsKernel.rowSum = rowSum.buffer();
-    statsKernel.dispatch(pass, rows * heads, cols);
-
-    auto& weightedSumKernel = sharedKernel<AttentionWeightedSumKernel>(device);
-    weightedSumKernel.value = value.buffer();
-    weightedSumKernel.scores = scores.buffer();
-    weightedSumKernel.rowMax = rowMax.buffer();
-    weightedSumKernel.rowSum = rowSum.buffer();
-    weightedSumKernel.output = output.buffer();
-    weightedSumKernel.headDimension = (std::uint32_t) headDim;
-    weightedSumKernel.columnCount = (std::uint32_t) cols;
-    weightedSumKernel.dispatch(pass, rows, heads, headDim);
-
-    return output;
+    return attendWithScores(pass, scores, value, heads, headDim, device);
 }
-}
+} // namespace eacp::ML

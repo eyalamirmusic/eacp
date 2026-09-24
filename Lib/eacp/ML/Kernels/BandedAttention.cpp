@@ -134,18 +134,16 @@ void BandedAttentionRowStatsKernel::define()
     loop(col.get() < bounds.end,
          [&]
          {
-             localSum = localSum.get() + exp(scores[base + col.get()] - peak);
+             auto index = base + col.get();
+             auto probability = var(exp(scores[index] - peak));
+             write(scores, index, probability.get());
+             localSum = localSum.get() + probability.get();
              col = col.get() + width;
          });
 
     auto total = groupSum(localSum.get());
 
-    ifThen(lane == 0u,
-           [&]
-           {
-               write(rowMax, rowHead, peak);
-               write(rowSum, rowHead, total);
-           });
+    ifThen(lane == 0u, [&] { write(rowSum, rowHead, total); });
 }
 
 BandedAttentionWeightedSumKernel::BandedAttentionWeightedSumKernel()
@@ -171,8 +169,7 @@ void BandedAttentionWeightedSumKernel::define()
     auto row = rowHead / headCount;
 
     auto bounds = bandBounds(row, segmentRows, leftRadius, rightRadius);
-    auto scoreBase = rowHead * windowWidth - bounds.first;
-    auto peak = rowMax[rowHead];
+    auto probabilityBase = rowHead * windowWidth - bounds.first;
     auto total = rowSum[rowHead];
 
     auto accumulator = var(0.f);
@@ -181,7 +178,7 @@ void BandedAttentionWeightedSumKernel::define()
     loop(col.get() < bounds.end,
          [&]
          {
-             auto probability = exp(scores[scoreBase + col.get()] - peak);
+             auto probability = probabilities[probabilityBase + col.get()];
              auto valueBase = (col.get() * headCount + head) * headDimension;
 
              accumulator = accumulator.get() + probability * value[valueBase + d];
@@ -205,7 +202,6 @@ Tensor bandedAttention(ComputePass& pass,
     auto window = windowWidthFor(band);
 
     auto scores = Tensor::uninitializedF32({rows, heads, window}, device);
-    auto rowMax = Tensor::uninitializedF32({rows * heads}, device);
     auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
@@ -226,7 +222,6 @@ Tensor bandedAttention(ComputePass& pass,
 
     auto& statsKernel = sharedKernel<BandedAttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
-    statsKernel.rowMax = rowMax.buffer();
     statsKernel.rowSum = rowSum.buffer();
     statsKernel.segmentRows = segmentRows;
     statsKernel.leftRadius = leftRadius;
@@ -235,8 +230,7 @@ Tensor bandedAttention(ComputePass& pass,
 
     auto& weightedSumKernel = sharedKernel<BandedAttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();
-    weightedSumKernel.scores = scores.buffer();
-    weightedSumKernel.rowMax = rowMax.buffer();
+    weightedSumKernel.probabilities = scores.buffer();
     weightedSumKernel.rowSum = rowSum.buffer();
     weightedSumKernel.output = output.buffer();
     weightedSumKernel.segmentRows = segmentRows;

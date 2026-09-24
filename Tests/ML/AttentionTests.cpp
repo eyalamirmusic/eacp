@@ -52,7 +52,7 @@ std::vector<float> rmsNormalizeHeads(const std::vector<float>& x,
         for (auto d = 0; d < headDim; ++d)
             result[base + (std::size_t) d] =
                 (float) ((double) x[base + (std::size_t) d] * scale
-                        * (double) gamma[(std::size_t) d]);
+                         * (double) gamma[(std::size_t) d]);
     }
 
     return result;
@@ -85,7 +85,7 @@ std::vector<float> referenceAttention(const std::vector<float>& q,
 
                 for (auto d = 0; d < headDim; ++d)
                     dot += (double) q[qBase + (std::size_t) d]
-                         * (double) k[kBase + (std::size_t) d];
+                           * (double) k[kBase + (std::size_t) d];
 
                 auto score = (float) dot * scale;
 
@@ -119,11 +119,11 @@ std::vector<float> referenceAttention(const std::vector<float>& q,
                 {
                     auto vBase = (std::size_t) (col * heads + head) * headDim;
                     accumulator += (double) scores[(std::size_t) col]
-                                 * (double) v[vBase + (std::size_t) d];
+                                   * (double) v[vBase + (std::size_t) d];
                 }
 
-                auto index = (std::size_t) (row * heads + head) * headDim
-                           + (std::size_t) d;
+                auto index =
+                    (std::size_t) (row * heads + head) * headDim + (std::size_t) d;
 
                 output[index] = (float) (accumulator / total);
             }
@@ -145,7 +145,7 @@ void checkMatches(const std::vector<float>& values,
 
     check(worst <= tolerance);
 }
-}
+} // namespace
 
 auto tAttentionMatchesReferencePlain = test("Attention/matchesReferencePlain") = []
 {
@@ -177,10 +177,10 @@ auto tAttentionMatchesReferencePlain = test("Attention/matchesReferencePlain") =
 
     commands.commit();
 
-    checkMatches(result->toHostF32(),
-                referenceAttention(
-                    q, k, v, rows, cols, heads, headDim, nullptr, false),
-                2.0e-4f * cols);
+    checkMatches(
+        result->toHostF32(),
+        referenceAttention(q, k, v, rows, cols, heads, headDim, nullptr, false),
+        2.0e-4f * cols);
 };
 
 auto tAttentionMatchesReferenceCausal = test("Attention/matchesReferenceCausal") = []
@@ -210,15 +210,15 @@ auto tAttentionMatchesReferenceCausal = test("Attention/matchesReferenceCausal")
     {
         auto pass = commands.beginCompute();
 
-        result = attention(
-            pass, qTensor, kTensor, vTensor, heads, headDim, &mask);
+        result = attention(pass, qTensor, kTensor, vTensor, heads, headDim, &mask);
     }
 
     commands.commit();
 
-    checkMatches(result->toHostF32(),
-                referenceAttention(q, k, v, rows, cols, heads, headDim, nullptr, true),
-                2.0e-4f * cols);
+    checkMatches(
+        result->toHostF32(),
+        referenceAttention(q, k, v, rows, cols, heads, headDim, nullptr, true),
+        2.0e-4f * cols);
 };
 
 auto tAttentionMatchesReferenceWithAdditiveMask =
@@ -254,8 +254,8 @@ auto tAttentionMatchesReferenceWithAdditiveMask =
     {
         auto pass = commands.beginCompute();
 
-        result = attention(
-            pass, qTensor, kTensor, vTensor, heads, headDim, &maskTensor);
+        result =
+            attention(pass, qTensor, kTensor, vTensor, heads, headDim, &maskTensor);
     }
 
     commands.commit();
@@ -299,16 +299,16 @@ auto tAttentionMatchesReferenceWithQKNorm =
         auto pass = commands.beginCompute();
 
         result = attention(pass,
-                          qTensor,
-                          kTensor,
-                          vTensor,
-                          heads,
-                          headDim,
-                          nullptr,
-                          &qGammaTensor,
-                          &kGammaTensor,
-                          eps,
-                          device);
+                           qTensor,
+                           kTensor,
+                           vTensor,
+                           heads,
+                           headDim,
+                           nullptr,
+                           &qGammaTensor,
+                           &kGammaTensor,
+                           eps,
+                           device);
     }
 
     commands.commit();
@@ -316,15 +316,81 @@ auto tAttentionMatchesReferenceWithQKNorm =
     auto normalizedQ = rmsNormalizeHeads(q, qGamma, rows, heads, headDim, eps);
     auto normalizedK = rmsNormalizeHeads(k, kGamma, cols, heads, headDim, eps);
 
-    checkMatches(result->toHostF32(),
-                referenceAttention(normalizedQ,
-                                  normalizedK,
-                                  v,
-                                  rows,
-                                  cols,
-                                  heads,
-                                  headDim,
-                                  nullptr,
-                                  false),
-                2.0e-4f * cols);
+    checkMatches(
+        result->toHostF32(),
+        referenceAttention(
+            normalizedQ, normalizedK, v, rows, cols, heads, headDim, nullptr, false),
+        2.0e-4f * cols);
+};
+
+auto tAttendWithScoresLeavesProbabilitiesBehind =
+    test("Attention/attendWithScoresLeavesProbabilitiesBehind") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto rows = 5;
+    constexpr auto cols = 300;
+    constexpr auto heads = 2;
+    constexpr auto headDim = 8;
+
+    auto scoreValues = scatteredValues(rows * heads * cols, 4);
+    auto valueValues = scatteredValues(cols * heads * headDim, 6);
+
+    auto scores =
+        Tensor::fromHostF32(scoreValues.data(), {rows, heads, cols}, device);
+    auto value =
+        Tensor::fromHostF32(valueValues.data(), {cols, heads * headDim}, device);
+
+    auto commands = device.makeCommandBuffer();
+    auto result = std::optional<Tensor> {};
+
+    {
+        auto pass = commands.beginCompute();
+        result = attendWithScores(pass, scores, value, heads, headDim, device);
+    }
+
+    commands.commit();
+
+    auto probabilities = scores.toHostF32();
+    auto expectedProbabilities = std::vector<float> {};
+    auto expectedOutput = std::vector<float> {};
+
+    for (auto rowHead = 0; rowHead < rows * heads; ++rowHead)
+    {
+        auto base = (std::size_t) rowHead * cols;
+        auto peak = scoreValues[base];
+
+        for (auto col = 0; col < cols; ++col)
+            peak = std::max(peak, scoreValues[base + (std::size_t) col]);
+
+        auto total = 0.0;
+
+        for (auto col = 0; col < cols; ++col)
+        {
+            auto p = std::exp(scoreValues[base + (std::size_t) col] - peak);
+            expectedProbabilities.push_back(p);
+            total += (double) p;
+        }
+
+        auto head = rowHead % heads;
+
+        for (auto d = 0; d < headDim; ++d)
+        {
+            auto accumulator = 0.0;
+
+            for (auto col = 0; col < cols; ++col)
+                accumulator +=
+                    (double) expectedProbabilities[base + (std::size_t) col]
+                    * (double) valueValues[(
+                        std::size_t) ((col * heads + head) * headDim + d)];
+
+            expectedOutput.push_back((float) (accumulator / total));
+        }
+    }
+
+    checkMatches(probabilities, expectedProbabilities, 1.0e-5f);
+    checkMatches(result->toHostF32(), expectedOutput, 1.0e-4f);
 };

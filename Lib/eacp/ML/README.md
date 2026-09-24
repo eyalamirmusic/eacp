@@ -25,3 +25,35 @@ dispatch and comes out bit for bit as it would have alone. A segment length of
 0 is the whole tensor, which is the overload without one. It pairs with
 `bandedAttention`'s `AttentionBand::segmentRows`: the same number keeps the
 chunks from seeing each other.
+
+## Attention, and each probability computed once
+
+`attention` is three kernels: the scores, the row stats, the weighted sum. The
+row stats find each (row, head)'s peak, then turn its scores into
+probabilities *in place* — `exp(score - peak)`, written back over the score it
+came from — and sum them. The weighted sum reads those probabilities back. Each
+`exp` is evaluated once, where it used to be evaluated again by every one of
+the `headDim` threads that weigh a value by it: 65 per score before, 1 now.
+
+It gives the same bits as recomputing: the one `exp` has the same input the
+weighted sum's used to, and the weighted sum still adds columns in ascending
+order. `bandedAttention` does the same over its window.
+
+The softmax and weighted sum are also a function of their own, for a model
+whose scores are not `attention`'s — a soft cap, a bias, another scale:
+
+```cpp
+auto scores = Tensor::uninitializedF32({rows, heads, cols});
+// ... a score kernel of the model's own writes them ...
+auto output = attendWithScores(pass, scores, value, heads, headDim);
+```
+
+`scores` comes back holding the unnormalised probabilities; the output is
+`rows x heads x headDim`.
+
+A value an EDSL kernel uses more than once is an expression, not a register:
+each use is emitted where it is used. The row stats write the probability and
+then add it to the sum, and written as `auto p = exp(scores[i] - peak)` the
+add re-reads `scores[i]` — already overwritten with `p` — and takes the `exp`
+of the probability. `auto p = var(exp(scores[i] - peak))` evaluates it once
+into a local, and both uses read that.

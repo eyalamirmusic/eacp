@@ -15,6 +15,8 @@ namespace eacp::ML
 // (0 inside, -1e9 outside; per segment, for a block-diagonal one): a masked
 // column's exp is exactly 0, the row-stats lanes still count columns from the
 // segment's start, and the weighted sum still adds columns in ascending order.
+// As there, the row stats store each probability over its score, so every exp
+// is evaluated once.
 struct AttentionBand
 {
     int leftRadius = 0;
@@ -62,8 +64,7 @@ public:
 
     void dispatch(GPU::ComputePass& pass, int rows, int heads, int window);
 
-    GPU::Uniform<GPU::InputBuffer> scores;
-    GPU::Uniform<GPU::OutputBuffer> rowMax;
+    GPU::Uniform<GPU::OutputBuffer> scores;
     GPU::Uniform<GPU::OutputBuffer> rowSum;
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> windowWidth;
@@ -71,14 +72,8 @@ public:
     GPU::Uniform<GPU::UInt> leftRadius;
     GPU::Uniform<GPU::UInt> rightRadius;
 
-    EACP_SHADER(scores,
-                rowMax,
-                rowSum,
-                headCount,
-                windowWidth,
-                segmentRows,
-                leftRadius,
-                rightRadius)
+    EACP_SHADER(
+        scores, rowSum, headCount, windowWidth, segmentRows, leftRadius, rightRadius)
 
 private:
     void define() override;
@@ -93,8 +88,7 @@ public:
         GPU::ComputePass& pass, int rows, int heads, int headDim, int window);
 
     GPU::Uniform<GPU::InputBuffer> value;
-    GPU::Uniform<GPU::InputBuffer> scores;
-    GPU::Uniform<GPU::InputBuffer> rowMax;
+    GPU::Uniform<GPU::InputBuffer> probabilities;
     GPU::Uniform<GPU::InputBuffer> rowSum;
     GPU::Uniform<GPU::OutputBuffer> output;
     GPU::Uniform<GPU::UInt> headCount;
@@ -105,8 +99,7 @@ public:
     GPU::Uniform<GPU::UInt> rightRadius;
 
     EACP_SHADER(value,
-                scores,
-                rowMax,
+                probabilities,
                 rowSum,
                 output,
                 headCount,

@@ -14,7 +14,10 @@ GemmaAttentionScoresKernel::GemmaAttentionScoresKernel()
     compile();
 }
 
-void GemmaAttentionScoresKernel::dispatch(ComputePass& pass, int rows, int heads, int cols)
+void GemmaAttentionScoresKernel::dispatch(ComputePass& pass,
+                                          int rows,
+                                          int heads,
+                                          int cols)
 {
     headCount = (std::uint32_t) heads;
     columnCount = (std::uint32_t) cols;
@@ -36,11 +39,11 @@ void GemmaAttentionScoresKernel::define()
     auto d = var(0u);
 
     loop(d.get() < headDimension,
-        [&]
-        {
-            dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
-            d = d.get() + 1u;
-        });
+         [&]
+         {
+             dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
+             d = d.get() + 1u;
+         });
 
     auto scaled = dot.get() * scale;
     auto capped = softcap * tanh(scaled / softcap);
@@ -63,9 +66,6 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     auto cols = key.rows();
 
     auto scores = Tensor::uninitializedF32({rows, heads, cols}, device);
-    auto rowMax = Tensor::uninitializedF32({rows * heads}, device);
-    auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
-    auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
     auto& scoresKernel = GPU::sharedKernel<GemmaAttentionScoresKernel>(device);
     scoresKernel.query = query.buffer();
@@ -77,22 +77,6 @@ ML::Tensor gemmaSelfAttention(ComputePass& pass,
     scoresKernel.softcap = softcap;
     scoresKernel.dispatch(pass, rows, heads, cols);
 
-    auto& statsKernel = GPU::sharedKernel<AttentionRowStatsKernel>(device);
-    statsKernel.scores = scores.buffer();
-    statsKernel.rowMax = rowMax.buffer();
-    statsKernel.rowSum = rowSum.buffer();
-    statsKernel.dispatch(pass, rows * heads, cols);
-
-    auto& weightedSumKernel = GPU::sharedKernel<AttentionWeightedSumKernel>(device);
-    weightedSumKernel.value = value.buffer();
-    weightedSumKernel.scores = scores.buffer();
-    weightedSumKernel.rowMax = rowMax.buffer();
-    weightedSumKernel.rowSum = rowSum.buffer();
-    weightedSumKernel.output = output.buffer();
-    weightedSumKernel.headDimension = (std::uint32_t) headDim;
-    weightedSumKernel.columnCount = (std::uint32_t) cols;
-    weightedSumKernel.dispatch(pass, rows, heads, headDim);
-
-    return output;
+    return attendWithScores(pass, scores, value, heads, headDim, device);
 }
-}
+} // namespace eacp::SA3TextEncoder
