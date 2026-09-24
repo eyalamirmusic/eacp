@@ -22,13 +22,15 @@ struct BandBounds
 };
 
 BandBounds bandBounds(const UInt& row,
+                      const UInt& rowCount,
                       const UInt& segmentRows,
                       const UInt& leftRadius,
                       const UInt& rightRadius)
 {
     auto segmentStart = (row / segmentRows) * segmentRows;
     auto first = max(row, segmentStart + leftRadius) - leftRadius;
-    auto end = min(segmentStart + segmentRows, row + rightRadius + 1u);
+    auto segmentEnd = min(segmentStart + segmentRows, rowCount);
+    auto end = min(segmentEnd, row + rightRadius + 1u);
     return {segmentStart, first, end};
 }
 
@@ -61,7 +63,7 @@ void BandedAttentionScoresKernel::define()
     auto row = rowHead / headCount;
     auto head = rowHead % headCount;
 
-    auto bounds = bandBounds(row, segmentRows, leftRadius, rightRadius);
+    auto bounds = bandBounds(row, rowCount, segmentRows, leftRadius, rightRadius);
     auto col = bounds.first + slot;
 
     ifThen(col < bounds.end,
@@ -112,7 +114,7 @@ void BandedAttentionRowStatsKernel::define()
     auto row = position.y;
     auto rowHead = row * headCount + position.z;
 
-    auto bounds = bandBounds(row, segmentRows, leftRadius, rightRadius);
+    auto bounds = bandBounds(row, rowCount, segmentRows, leftRadius, rightRadius);
     auto base = rowHead * windowWidth - bounds.first;
 
     auto width = (unsigned) attentionGroupWidth;
@@ -173,7 +175,7 @@ void BandedAttentionWeightedSumKernel::define()
     auto head = rowHead % headCount;
     auto row = rowHead / headCount;
 
-    auto bounds = bandBounds(row, segmentRows, leftRadius, rightRadius);
+    auto bounds = bandBounds(row, rowCount, segmentRows, leftRadius, rightRadius);
     auto probabilityBase = rowHead * windowWidth - bounds.first;
     auto total = rowSum[rowHead];
 
@@ -211,6 +213,7 @@ Tensor bandedAttention(ComputePass& pass,
     auto rowSum = Tensor::uninitializedF32({rows * heads}, device);
     auto output = Tensor::uninitializedF32({rows, heads, headDim}, device);
 
+    auto rowCount = (std::uint32_t) rows;
     auto segmentRows = (std::uint32_t) band.segmentRows;
     auto leftRadius = (std::uint32_t) band.leftRadius;
     auto rightRadius = (std::uint32_t) band.rightRadius;
@@ -220,6 +223,7 @@ Tensor bandedAttention(ComputePass& pass,
     scoresKernel.key = key;
     scoresKernel.scores = scores;
     scoresKernel.headDimension = (std::uint32_t) headDim;
+    scoresKernel.rowCount = rowCount;
     scoresKernel.segmentRows = segmentRows;
     scoresKernel.leftRadius = leftRadius;
     scoresKernel.rightRadius = rightRadius;
@@ -229,6 +233,7 @@ Tensor bandedAttention(ComputePass& pass,
     auto& statsKernel = sharedKernel<BandedAttentionRowStatsKernel>(device);
     statsKernel.scores = scores;
     statsKernel.rowSum = rowSum;
+    statsKernel.rowCount = rowCount;
     statsKernel.segmentRows = segmentRows;
     statsKernel.leftRadius = leftRadius;
     statsKernel.rightRadius = rightRadius;
@@ -239,6 +244,7 @@ Tensor bandedAttention(ComputePass& pass,
     weightedSumKernel.probabilities = scores;
     weightedSumKernel.rowSum = rowSum;
     weightedSumKernel.output = output;
+    weightedSumKernel.rowCount = rowCount;
     weightedSumKernel.segmentRows = segmentRows;
     weightedSumKernel.leftRadius = leftRadius;
     weightedSumKernel.rightRadius = rightRadius;

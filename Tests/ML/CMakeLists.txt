@@ -2,6 +2,7 @@ nano_add_executable(MLTests
         SOURCES
             ActivationTests.cpp
             AttentionTests.cpp
+            BandedAttentionTests.cpp
             LinearTests.cpp
             NormTests.cpp
             RoPETests.cpp

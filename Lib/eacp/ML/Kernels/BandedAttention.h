@@ -8,6 +8,8 @@ namespace eacp::ML
 // Self-attention where row r sees only the columns
 // [max(segmentStart, r - leftRadius), min(segmentEnd, r + rightRadius + 1)),
 // with rows grouped into segments of segmentRows that never see each other.
+// The last segment ends at the last row when the rows are not a multiple of
+// segmentRows.
 // One segment spanning every row is a sliding window; radii covering a whole
 // segment make it block-diagonal. Scores are kept for the window only.
 //
@@ -37,6 +39,7 @@ public:
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> headDimension;
     GPU::Uniform<GPU::UInt> windowWidth;
+    GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> segmentRows;
     GPU::Uniform<GPU::UInt> leftRadius;
     GPU::Uniform<GPU::UInt> rightRadius;
@@ -48,6 +51,7 @@ public:
                 headCount,
                 headDimension,
                 windowWidth,
+                rowCount,
                 segmentRows,
                 leftRadius,
                 rightRadius,
@@ -68,12 +72,19 @@ public:
     GPU::Uniform<GPU::OutputBuffer> rowSum;
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> windowWidth;
+    GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> segmentRows;
     GPU::Uniform<GPU::UInt> leftRadius;
     GPU::Uniform<GPU::UInt> rightRadius;
 
-    EACP_SHADER(
-        scores, rowSum, headCount, windowWidth, segmentRows, leftRadius, rightRadius)
+    EACP_SHADER(scores,
+                rowSum,
+                headCount,
+                windowWidth,
+                rowCount,
+                segmentRows,
+                leftRadius,
+                rightRadius)
 
 private:
     void define() override;
@@ -94,6 +105,7 @@ public:
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> headDimension;
     GPU::Uniform<GPU::UInt> windowWidth;
+    GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> segmentRows;
     GPU::Uniform<GPU::UInt> leftRadius;
     GPU::Uniform<GPU::UInt> rightRadius;
@@ -107,6 +119,7 @@ public:
                 headCount,
                 headDimension,
                 windowWidth,
+                rowCount,
                 segmentRows,
                 leftRadius,
                 rightRadius,
