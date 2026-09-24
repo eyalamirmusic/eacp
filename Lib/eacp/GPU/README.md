@@ -971,8 +971,12 @@ before the first kernel that reads it, or build the buffer from data.
 A pooled buffer goes back to the pool only from its device's own thread and
 only while the device is alive. One destroyed on another thread, or after its
 `Device`, frees its storage instead. That makes a pooled buffer exactly as safe
-to outlive its device as any other buffer: safe on Metal, and not on D3D12 or
-Vulkan, where every buffer still refers to its device's context.
+to outlive its device, or to die on another thread, as any other buffer: safe
+on Metal, and not on D3D12 or Vulkan. There every buffer still refers to its
+device's context, and freeing one goes through that context's deferred release
+lists (`recycleDefaultBuffer` and `deferRelease` on D3D12,
+`deferReleaseBuffer` on Vulkan), which are not locked. So on those two the
+owning-thread rule still holds for destroying any buffer, pooled or not.
 
 The command buffer is the unit of recycling, and that decides how long one
 should be. A temporary destroyed while its command buffer is still being

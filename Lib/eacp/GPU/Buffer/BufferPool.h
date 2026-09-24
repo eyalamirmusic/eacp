@@ -39,6 +39,10 @@ class Device;
 // through a BufferPoolLink it holds weakly, so a Buffer that outlives its
 // Device finds the link expired and frees its storage, and one destroyed on
 // any thread but the Device's frees it too rather than touching the pool.
+// Only on Metal does that make destroying one off the Device's thread safe:
+// on D3D12 and Vulkan freeing any Buffer goes through its context's deferred
+// release lists, which are not locked, so there every Buffer, pooled or not,
+// is still destroyed on the Device's thread.
 class BufferPool
 {
 public:
