@@ -79,9 +79,12 @@ Tensor pingpongSample(const SA3DiT::Weights& weights,
                       const NoiseSource& noiseSource,
                       Device& device)
 {
+    auto prompt = SA3DiT::preparePrompt(weights, crossAttnContext, device);
+
     auto model = [&](ComputePass& pass, const Tensor& x, float timestep)
     {
-        return SA3DiT::forward(pass, weights, x, timestep, secondsTotal, crossAttnContext, device);
+        return SA3DiT::forward(
+            pass, weights, x, timestep, secondsTotal, prompt, device);
     };
 
     return pingpongSampleWithModel(
