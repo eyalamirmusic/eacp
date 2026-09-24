@@ -75,15 +75,19 @@ void BufferPool::promoteFinished()
 // that will not say answers zero, and then the cap is the whole rule.
 std::int64_t BufferPool::bytesKeptUnused() const
 {
-    if (device == nullptr)
-        return bytesKeptUnusedCeiling;
+    // Asked once. Every take() checks the bound, and on D3D12 the answer costs
+    // a DXGI factory and an adapter enumeration - which, asked per allocation,
+    // is far more than the allocation it is there to save.
+    if (bound == 0)
+    {
+        auto recommended = device != nullptr ? device->memoryBudget() : 0;
 
-    auto recommended = device->memoryBudget();
+        bound = recommended > 0
+                  ? std::min(bytesKeptUnusedCeiling, recommended / 4)
+                  : bytesKeptUnusedCeiling;
+    }
 
-    if (recommended <= 0)
-        return bytesKeptUnusedCeiling;
-
-    return std::min(bytesKeptUnusedCeiling, recommended / 4);
+    return bound;
 }
 
 void BufferPool::freeOldestBeyondBudget()

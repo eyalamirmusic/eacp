@@ -112,6 +112,7 @@ private:
     Device* device = nullptr;
     std::uint64_t lastTrimmed = 0;
     std::int64_t availableBytes = 0;
+    mutable std::int64_t bound = 0;
     std::deque<Waiting> waiting;
     std::multimap<Key, Available> available;
 };
