@@ -297,6 +297,14 @@ def run_pytorch(args):
     return result
 
 
+def power_source():
+    try:
+        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True).stdout
+    except OSError:
+        return "unknown"
+    return "AC" if "AC Power" in out else "Battery" if "Battery" in out else "unknown"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--side", choices=["eacp", "pytorch", "both"], default="both")
@@ -313,7 +321,14 @@ def main():
     parser.add_argument("--timeout", type=float, default=None,
                         help="PyTorch: give up after this many seconds")
     parser.add_argument("--label", default=None)
+    parser.add_argument("--allow-battery", action="store_true",
+                        help="run even on battery power (Low Power Mode caps the GPU clock)")
     args = parser.parse_args()
+
+    power = power_source()
+    if power != "AC" and not args.allow_battery:
+        parser.error(f"on {power}: Low Power Mode caps the GPU clock and halves every "
+                     "number; plug in, or pass --allow-battery")
 
     if args.steps != 8:
         print("note: the eacp binary always samples 8 steps", file=sys.stderr)
@@ -322,7 +337,8 @@ def main():
     args.label = args.label or f"{args.model}_{int(args.seconds)}s"
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    results = {"config": {k: str(v) for k, v in vars(args).items()}}
+    results = {"config": {k: str(v) for k, v in vars(args).items()},
+               "power_source": power}
     if args.side in ("eacp", "both"):
         print(f"=== eacp ({args.model}) ===", flush=True)
         results["eacp"] = run_eacp(args)
