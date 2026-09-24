@@ -55,6 +55,8 @@ public:
                                     std::vector<int> shape,
                                     GPU::Device& device = GPU::Device::shared());
 
+    // Storage from GPU::BufferPool, so its contents are whatever the last
+    // owner left, not zeros. ML::zeros (TensorOps.h) is the one that does.
     static Tensor uninitializedF32(std::vector<int> shape,
                                    GPU::Device& device = GPU::Device::shared());
 

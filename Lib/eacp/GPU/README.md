@@ -19,6 +19,13 @@ buffer, reading or updating one, beginning a frame, and submitting, waiting on
 or reading back a command buffer all call it. It is one thread-id compare behind
 an `assert`, so a release build pays for nothing but the call.
 
+This is new on Metal. D3D12 and Vulkan already asserted that the shared device
+stayed on the main thread; on Metal nothing checked, so code that drove
+`Device::shared()` from a worker — a background loader making buffers, a
+thread submitting its own command buffers — ran, racing the main thread's use
+of the same queue. It now stops at the assertion in a debug build. The fix is
+the one above: give the worker its own `Device`.
+
 ## The pieces
 
 | | |
@@ -925,6 +932,20 @@ What changes for a caller is only what "uninitialised" always allowed: the
 contents of a new buffer are whatever was there. A kernel that needs zeros says
 so with `fill`.
 
+In practice that is a change on Metal. There `makeBuffer(bytes)` used to be a
+fresh `newBufferWithLength`, whose pages the OS hands over zeroed, so code that
+accumulated into a new buffer, or read back a part no kernel wrote, got zeros
+without asking. It now gets whatever the last owner of that storage left. D3D12
+already recycled default-heap buffers and Vulkan never zeroed, so code that was
+right on those backends is unaffected. To migrate, `commands.fill(buffer)`
+before the first kernel that reads it, or build the buffer from data.
+
+A pooled buffer goes back to the pool only from its device's own thread and
+only while the device is alive. One destroyed on another thread, or after its
+`Device`, frees its storage instead. That makes a pooled buffer exactly as safe
+to outlive its device as any other buffer: safe on Metal, and not on D3D12 or
+Vulkan, where every buffer still refers to its device's context.
+
 The command buffer is the unit of recycling, and that decides how long one
 should be. A temporary destroyed while its command buffer is still being
 recorded can only go back to work once that command buffer has run, so nothing
@@ -1058,7 +1079,9 @@ that used to be a bare memcpy on Metal is a memcpy behind a wait for the newest
 submission. Code that was already right by construction gets its old cost back
 by asking for the unordered call by name — which is what `StreamingBuffers`,
 `GPUWidgets`' coverage batch and the `Apps/GPU` samples in this tree were
-changed to do.
+changed to do. `Apps/Plugins`' `SpinningTriangle` was not, and rewrites its
+vertices through `update` on every timer tick, so on Metal it now waits for the
+newest submission each time.
 
 `Buffer::updateUnordered` is that write with the wait given up, the caller
 saying instead that no work the GPU still has in hand touches those bytes. There
