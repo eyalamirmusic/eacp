@@ -67,7 +67,7 @@ class AttentionRowStatsKernel final : public GPU::ComputeProgram
 public:
     AttentionRowStatsKernel();
 
-    void dispatch(GPU::ComputePass& pass, int rowGroups, int cols);
+    void dispatch(GPU::ComputePass& pass, int rows, int heads, int cols);
 
     GPU::Uniform<GPU::OutputBuffer> scores;
     GPU::Uniform<GPU::OutputBuffer> rowSum;

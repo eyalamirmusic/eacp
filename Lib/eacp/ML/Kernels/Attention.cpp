@@ -123,16 +123,24 @@ AttentionRowStatsKernel::AttentionRowStatsKernel()
     compile();
 }
 
-void AttentionRowStatsKernel::dispatch(ComputePass& pass, int rowGroups, int cols)
+void AttentionRowStatsKernel::dispatch(ComputePass& pass,
+                                       int rows,
+                                       int heads,
+                                       int cols)
 {
     columnCount = (std::uint32_t) cols;
-    pass.dispatch(*this, attentionGroupWidth, rowGroups);
+
+    // Rows and heads take a dimension each rather than one multiplied
+    // together: the product is what runs past a backend's threadgroup ceiling
+    // at real sequence lengths. See ComputePass::dispatch.
+    pass.dispatch(*this, attentionGroupWidth, rows, heads);
 }
 
 void AttentionRowStatsKernel::define()
 {
-    auto lane = threadPosition().x;
-    auto rowGroup = threadPosition().y;
+    auto position = threadPosition3();
+    auto lane = position.x;
+    auto rowGroup = position.y * gridDepth() + position.z;
     auto base = rowGroup * columnCount;
 
     auto localMax = var(-3.0e38f);
@@ -239,7 +247,7 @@ Tensor attendWithScores(ComputePass& pass,
     auto& statsKernel = sharedKernel<AttentionRowStatsKernel>(device);
     statsKernel.scores = scores.buffer();
     statsKernel.rowSum = rowSum.buffer();
-    statsKernel.dispatch(pass, rows * heads, cols);
+    statsKernel.dispatch(pass, rows, heads, cols);
 
     auto& weightedSumKernel = sharedKernel<AttentionWeightedSumKernel>(device);
     weightedSumKernel.value = value.buffer();

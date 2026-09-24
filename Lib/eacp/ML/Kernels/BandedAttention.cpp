@@ -98,14 +98,19 @@ void BandedAttentionRowStatsKernel::dispatch(ComputePass& pass,
 {
     headCount = (std::uint32_t) heads;
     windowWidth = (std::uint32_t) window;
-    pass.dispatch(*this, attentionGroupWidth, rows * heads);
+
+    // Rows and heads take a dimension each rather than one multiplied
+    // together: the product is what runs past a backend's threadgroup ceiling
+    // at real clip lengths. See ComputePass::dispatch.
+    pass.dispatch(*this, attentionGroupWidth, rows, heads);
 }
 
 void BandedAttentionRowStatsKernel::define()
 {
-    auto lane = threadPosition().x;
-    auto rowHead = threadPosition().y;
-    auto row = rowHead / headCount;
+    auto position = threadPosition3();
+    auto lane = position.x;
+    auto row = position.y;
+    auto rowHead = row * headCount + position.z;
 
     auto bounds = bandBounds(row, segmentRows, leftRadius, rightRadius);
     auto base = rowHead * windowWidth - bounds.first;
