@@ -41,4 +41,4 @@ ML::Tensor applyCodecTransformerBlock(GPU::ComputePass& pass,
 
 // Every kernel this file builds, handed over for the shader golden corpus.
 void forEachTransformerBlockShaderGraph(const GPU::ShaderGraphVisitor& visit);
-}
+} // namespace eacp::SA3Codec

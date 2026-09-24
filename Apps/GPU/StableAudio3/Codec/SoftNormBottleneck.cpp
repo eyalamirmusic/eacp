@@ -13,10 +13,7 @@ namespace
 class SoftNormEncodeKernel final : public ComputeProgram
 {
 public:
-    SoftNormEncodeKernel()
-    {
-        compile();
-    }
+    SoftNormEncodeKernel() { compile(); }
 
     void dispatch(ComputePass& pass, int rows, int columns)
     {
@@ -39,8 +36,8 @@ private:
         auto position = threadPosition();
         auto index = position.y * columnCount + position.x;
 
-        auto value =
-            (input[index] * scalingFactor[position.x] + bias[position.x]) / runningStd;
+        auto value = (input[index] * scalingFactor[position.x] + bias[position.x])
+                     / runningStd;
 
         write(output, index, value);
     }
@@ -49,15 +46,9 @@ private:
 class SoftNormDecodeKernel final : public ComputeProgram
 {
 public:
-    SoftNormDecodeKernel()
-    {
-        compile();
-    }
+    SoftNormDecodeKernel() { compile(); }
 
-    void dispatch(ComputePass& pass, int count)
-    {
-        pass.dispatch(*this, count);
-    }
+    void dispatch(ComputePass& pass, int count) { pass.dispatch(*this, count); }
 
     Uniform<InputBuffer> input;
     Uniform<OutputBuffer> output;
@@ -72,7 +63,7 @@ private:
         write(output, i, input[i] * runningStd);
     }
 };
-}
+} // namespace
 
 Tensor softNormBottleneckEncode(ComputePass& pass,
                                 const Tensor& input,
@@ -113,4 +104,4 @@ void forEachBottleneckShaderGraph(const GPU::ShaderGraphVisitor& visit)
     visit(SoftNormEncodeKernel {}.graph());
     visit(SoftNormDecodeKernel {}.graph());
 }
-}
+} // namespace eacp::SA3Codec

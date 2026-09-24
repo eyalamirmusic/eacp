@@ -16,10 +16,7 @@ namespace
 class PadRowSelectKernel final : public ComputeProgram
 {
 public:
-    PadRowSelectKernel()
-    {
-        compile();
-    }
+    PadRowSelectKernel() { compile(); }
 
     void dispatch(ComputePass& pass, int rows, int dim, int validRowCount)
     {
@@ -46,22 +43,22 @@ private:
         write(output, i, select(row < validRows, encoded[i], paddingEmbedding[col]));
     }
 };
-}
+} // namespace
 
 SA3TextEncoderModel::SA3TextEncoderModel(BpeTokenizer tokenizerToUse,
-                                        T5GemmaEncoder encoderToUse,
-                                        Tensor paddingEmbeddingToUse)
+                                         T5GemmaEncoder encoderToUse,
+                                         Tensor paddingEmbeddingToUse)
     : tokenizer(std::move(tokenizerToUse))
     , encoder(std::move(encoderToUse))
     , paddingEmbedding(std::move(paddingEmbeddingToUse))
 {
 }
 
-std::optional<SA3TextEncoderModel> SA3TextEncoderModel::load(
-    const std::string& tokenizerJsonPath,
-    const std::string& t5gemmaSafetensorsPath,
-    const std::string& conditionerSafetensorsPath,
-    Device& device)
+std::optional<SA3TextEncoderModel>
+    SA3TextEncoderModel::load(const std::string& tokenizerJsonPath,
+                              const std::string& t5gemmaSafetensorsPath,
+                              const std::string& conditionerSafetensorsPath,
+                              Device& device)
 {
     auto conditioner = SafetensorsFile::open(FilePath {conditionerSafetensorsPath});
 
@@ -96,11 +93,12 @@ std::optional<SA3TextEncoderModel>
 }
 
 PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
-                                                const std::string& text,
-                                                Device& device) const
+                                                 const std::string& text,
+                                                 Device& device) const
 {
     auto tokenized = tokenizer.encode(text, maxLength);
-    auto encoded = encoder.encodeTokens(pass, tokenized.ids, tokenized.validLength, device);
+    auto encoded =
+        encoder.encodeTokens(pass, tokenized.ids, tokenized.validLength, device);
 
     auto hiddenSize = T5GemmaEncoder::hiddenSize;
     auto result = Tensor::uninitializedF32({maxLength, hiddenSize}, device);
@@ -118,4 +116,4 @@ void forEachTextEncoderShaderGraph(const GPU::ShaderGraphVisitor& visit)
 {
     visit(PadRowSelectKernel {}.graph());
 }
-}
+} // namespace eacp::SA3TextEncoder

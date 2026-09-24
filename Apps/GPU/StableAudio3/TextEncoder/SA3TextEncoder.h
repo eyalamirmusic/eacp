@@ -23,11 +23,11 @@ struct PromptEncoding
 class SA3TextEncoderModel
 {
 public:
-    static std::optional<SA3TextEncoderModel> load(
-        const std::string& tokenizerJsonPath,
-        const std::string& t5gemmaSafetensorsPath,
-        const std::string& conditionerSafetensorsPath,
-        GPU::Device& device = GPU::Device::shared());
+    static std::optional<SA3TextEncoderModel>
+        load(const std::string& tokenizerJsonPath,
+             const std::string& t5gemmaSafetensorsPath,
+             const std::string& conditionerSafetensorsPath,
+             GPU::Device& device = GPU::Device::shared());
 
     // The same, for a caller that already has the tokenizer and the
     // conditioner's checkpoint open. Parsing the
@@ -48,8 +48,8 @@ public:
 
 private:
     SA3TextEncoderModel(BpeTokenizer tokenizerToUse,
-                       T5GemmaEncoder encoderToUse,
-                       ML::Tensor paddingEmbeddingToUse);
+                        T5GemmaEncoder encoderToUse,
+                        ML::Tensor paddingEmbeddingToUse);
 
     BpeTokenizer tokenizer;
     T5GemmaEncoder encoder;
@@ -58,4 +58,4 @@ private:
 
 // Every kernel this file builds, handed over for the shader golden corpus.
 void forEachTextEncoderShaderGraph(const GPU::ShaderGraphVisitor& visit);
-}
+} // namespace eacp::SA3TextEncoder

@@ -30,4 +30,4 @@ ML::Tensor conv1dUnfoldGpu(GPU::ComputePass& pass,
 
 // Every kernel this file builds, handed over for the shader golden corpus.
 void forEachGpuOpsShaderGraph(const GPU::ShaderGraphVisitor& visit);
-}
+} // namespace eacp::SA3Codec

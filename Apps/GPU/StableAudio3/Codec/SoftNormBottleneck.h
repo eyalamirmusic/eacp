@@ -26,4 +26,4 @@ ML::Tensor softNormBottleneckDecode(GPU::ComputePass& pass,
 
 // Every kernel this file builds, handed over for the shader golden corpus.
 void forEachBottleneckShaderGraph(const GPU::ShaderGraphVisitor& visit);
-}
+} // namespace eacp::SA3Codec

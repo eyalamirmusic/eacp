@@ -13,10 +13,7 @@ namespace
 class FoldWithNewTokensKernel final : public ComputeProgram
 {
 public:
-    FoldWithNewTokensKernel()
-    {
-        compile();
-    }
+    FoldWithNewTokensKernel() { compile(); }
 
     void dispatch(ComputePass& pass, int outputRows, int columns)
     {
@@ -32,7 +29,13 @@ public:
     Uniform<UInt> subChunkSize;
     Uniform<UInt> inputRowCount;
 
-    EACP_SHADER(input, newTokens, output, columnCount, inputSegSize, subChunkSize, inputRowCount)
+    EACP_SHADER(input,
+                newTokens,
+                output,
+                columnCount,
+                inputSegSize,
+                subChunkSize,
+                inputRowCount)
 
 private:
     void define() override
@@ -51,17 +54,16 @@ private:
         auto realValue = input[inputRowClamped * columnCount + c];
         auto tokenValue = newTokens[c];
 
-        write(output, outputRow * columnCount + c, select(isReal, realValue, tokenValue));
+        write(output,
+              outputRow * columnCount + c,
+              select(isReal, realValue, tokenValue));
     }
 };
 
 class UnfoldLastSegmentKernel final : public ComputeProgram
 {
 public:
-    UnfoldLastSegmentKernel()
-    {
-        compile();
-    }
+    UnfoldLastSegmentKernel() { compile(); }
 
     void dispatch(ComputePass& pass, int outputRows, int columns)
     {
@@ -89,17 +91,15 @@ private:
         auto local = outputRow % outputSegSize;
         auto inputRow = group * subChunkSize + startLocal + local;
 
-        write(output, outputRow * columnCount + c, input[inputRow * columnCount + c]);
+        write(
+            output, outputRow * columnCount + c, input[inputRow * columnCount + c]);
     }
 };
 
 class Conv1dUnfoldKernel final : public ComputeProgram
 {
 public:
-    Conv1dUnfoldKernel()
-    {
-        compile();
-    }
+    Conv1dUnfoldKernel() { compile(); }
 
     void dispatch(ComputePass& pass, int rows, int channels, int kernel)
     {
@@ -137,7 +137,7 @@ private:
         write(output, row * (channelCount * kernelSize) + col, value);
     }
 };
-}
+} // namespace
 
 Tensor foldWithNewTokensGpu(ComputePass& pass,
                             const Tensor& input,
@@ -150,7 +150,8 @@ Tensor foldWithNewTokensGpu(ComputePass& pass,
     auto numGroups = input.rows() / inputSegSize;
     auto columns = input.cols();
 
-    auto result = Tensor::uninitializedF32({numGroups * subChunkSize, columns}, device);
+    auto result =
+        Tensor::uninitializedF32({numGroups * subChunkSize, columns}, device);
 
     auto& kernel = GPU::sharedKernel<FoldWithNewTokensKernel>(device);
     kernel.input = input;
@@ -165,15 +166,16 @@ Tensor foldWithNewTokensGpu(ComputePass& pass,
 }
 
 Tensor unfoldLastSegmentGpu(ComputePass& pass,
-                           const Tensor& input,
-                           int subChunkSize,
-                           int outputSegSize,
-                           Device& device)
+                            const Tensor& input,
+                            int subChunkSize,
+                            int outputSegSize,
+                            Device& device)
 {
     auto numGroups = input.rows() / subChunkSize;
     auto columns = input.cols();
 
-    auto result = Tensor::uninitializedF32({numGroups * outputSegSize, columns}, device);
+    auto result =
+        Tensor::uninitializedF32({numGroups * outputSegSize, columns}, device);
 
     auto& kernel = GPU::sharedKernel<UnfoldLastSegmentKernel>(device);
     kernel.input = input;
@@ -186,7 +188,11 @@ Tensor unfoldLastSegmentGpu(ComputePass& pass,
     return result;
 }
 
-Tensor conv1dUnfoldGpu(ComputePass& pass, const Tensor& input, int inChannels, int kernelSize, Device& device)
+Tensor conv1dUnfoldGpu(ComputePass& pass,
+                       const Tensor& input,
+                       int inChannels,
+                       int kernelSize,
+                       Device& device)
 {
     auto rows = input.rows();
     auto result = Tensor::uninitializedF32({rows, inChannels * kernelSize}, device);
@@ -206,4 +212,4 @@ void forEachGpuOpsShaderGraph(const GPU::ShaderGraphVisitor& visit)
     visit(UnfoldLastSegmentKernel {}.graph());
     visit(Conv1dUnfoldKernel {}.graph());
 }
-}
+} // namespace eacp::SA3Codec
