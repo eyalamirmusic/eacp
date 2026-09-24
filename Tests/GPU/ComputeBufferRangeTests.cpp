@@ -1,13 +1,17 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
+#include <span>
+
 // Binding a compute buffer part-way into its resource: element zero of the
-// kernel's buffer is the element at the range's offset.
+// kernel's buffer is the element at the range's offset. The cases bound by hand
+// on the GPU are bound by hand on the CPU too, as a subspan of a host array.
 
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -61,7 +65,7 @@ struct BumpKernel final : ComputeProgram
 constexpr auto floatBytes = (int) sizeof(float);
 constexpr auto uintBytes = (int) sizeof(std::uint32_t);
 
-Buffer makeRamp(int elements)
+Vector<float> rampValues(int elements)
 {
     auto values = Vector<float> {};
     values.resize(elements);
@@ -69,10 +73,24 @@ Buffer makeRamp(int elements)
     for (auto i = 0; i < elements; ++i)
         values[i] = (float) i;
 
+    return values;
+}
+
+Buffer makeRamp(int elements)
+{
+    auto values = rampValues(elements);
+
     return Buffer {Device::shared(),
                    values.data(),
                    floatBytes * elements,
                    BufferUsage::Storage};
+}
+
+// The CPU's BufferRange: count elements of a host array from first on.
+std::span<float> hostElements(Vector<float>& values, int first, int count)
+{
+    return std::span<float> {values.data(), (std::size_t) values.size()}.subspan(
+        (std::size_t) first, (std::size_t) count);
 }
 
 Buffer makeFilled(int elements, float value)
@@ -138,13 +156,27 @@ int rowElements(int elementBytes)
 // the second half of it.
 auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
 {
+    const auto count = 8;
+    const auto first = rowElements(floatBytes);
+
+    {
+        auto input = rampValues(first + count);
+        auto output = filled(count, -1.0f);
+
+        auto kernel = CopyKernel {};
+        auto bindings = CpuCompute::Bindings {};
+        check(bindings.set(kernel.input, hostElements(input, first, count)));
+        check(bindings.set(kernel.output, output));
+        dispatchOnCpu(kernel, bindings, count);
+
+        for (auto i = 0; i < count; ++i)
+            check(output[i] == (float) (first + i), "cpu");
+    }
+
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
-
-    const auto count = 8;
-    const auto first = rowElements(floatBytes);
 
     auto input = makeRamp(first + count);
     auto output = makeFilled(count, -1.0f);
@@ -177,14 +209,28 @@ auto tInputBoundAtOffset = test("GPU/computeInputBoundAtOffset") = []
 auto tVectorReadFromAnOffsetRange =
     test("GPU/computeVectorReadFromAnOffsetRange") = []
 {
+    const auto records = 6;
+    const auto count = records * 4;
+    const auto first = rowElements(floatBytes);
+
+    {
+        auto input = rampValues(first + count);
+        auto output = filled(count, -1.0f);
+
+        auto kernel = RecordCopyKernel {};
+        auto bindings = CpuCompute::Bindings {};
+        check(bindings.set(kernel.input, hostElements(input, first, count)));
+        check(bindings.set(kernel.output, output));
+        dispatchOnCpu(kernel, bindings, records);
+
+        for (auto i = 0; i < count; ++i)
+            check(output[i] == (float) (first + i), "cpu");
+    }
+
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
-
-    const auto records = 6;
-    const auto count = records * 4;
-    const auto first = rowElements(floatBytes);
 
     auto input = makeRamp(first + count);
     auto output = makeFilled(count, -1.0f);
@@ -214,14 +260,31 @@ auto tVectorReadFromAnOffsetRange =
 // were.
 auto tOutputBoundAtOffset = test("GPU/computeOutputBoundAtOffset") = []
 {
+    const auto count = 4;
+    const auto row = rowElements(floatBytes);
+    const auto capacity = row + 2 * count;
+
+    {
+        auto input = rampValues(count);
+        auto output = filled(capacity, -1.0f);
+
+        auto kernel = CopyKernel {};
+        auto bindings = CpuCompute::Bindings {};
+        check(bindings.set(kernel.input, input));
+        check(bindings.set(kernel.output, hostElements(output, row, count)));
+        dispatchOnCpu(kernel, bindings, count);
+
+        for (auto i = 0; i < capacity; ++i)
+        {
+            auto written = i >= row && i < row + count;
+            check(output[i] == (written ? (float) (i - row) : -1.0f), "cpu");
+        }
+    }
+
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
-
-    const auto count = 4;
-    const auto row = rowElements(floatBytes);
-    const auto capacity = row + 2 * count;
 
     auto input = makeRamp(count);
     auto output = makeFilled(capacity, -1.0f);
@@ -253,40 +316,30 @@ auto tOutputBoundAtOffset = test("GPU/computeOutputBoundAtOffset") = []
 // The same two binds through program members assigned a BufferRange.
 auto tProgramMembersTakeRanges = test("GPU/computeProgramMembersTakeRanges") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     const auto count = 4;
     const auto destRow = rowElements(floatBytes);
     const auto sourceRow = 2 * destRow;
     const auto capacity = sourceRow + 2 * count;
 
-    auto input = makeRamp(capacity);
-    auto output = makeFilled(capacity, -1.0f);
-
     auto kernel = CopyKernel {};
-    kernel.input = elements(input, sourceRow, count);
-    kernel.output = elements(output, destRow, count);
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, rampValues(capacity), sourceRow, count)
+        .output(kernel.output, filled(capacity, -1.0f), destRow, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.floats(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    auto values = readFloats(output, capacity);
-
-    for (auto i = 0; i < capacity; ++i)
-    {
-        auto written = i >= destRow && i < destRow + count;
-        check(values[i] == (written ? (float) (sourceRow + i - destRow) : -1.0f));
-    }
+                 for (auto i = 0; i < capacity; ++i)
+                 {
+                     auto written = i >= destRow && i < destRow + count;
+                     check(values[i]
+                               == (written ? (float) (sourceRow + i - destRow)
+                                           : -1.0f),
+                           readback.name());
+                 }
+             });
 };
 
 // The regression the range overloads have to leave alone: a member assigned a
@@ -294,34 +347,21 @@ auto tProgramMembersTakeRanges = test("GPU/computeProgramMembersTakeRanges") = [
 auto tWholeBufferStillBindsFromZero =
     test("GPU/computeWholeBufferBindsFromZero") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto count = 8;
 
-    auto input = makeRamp(count);
-    auto output = makeFilled(count, -1.0f);
-
     auto kernel = CopyKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, rampValues(count))
+        .output(kernel.output, count, -1.0f)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.floats(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    auto values = readFloats(output, count);
-
-    for (auto i = 0; i < count; ++i)
-        check(values[i] == (float) i);
+                 for (auto i = 0; i < count; ++i)
+                     check(values[i] == (float) i, readback.name());
+             });
 };
 
 // An atomic buffer bound at an offset: thread i's add lands on counter
@@ -364,14 +404,39 @@ auto tAtomicBoundAtOffset = test("GPU/computeAtomicBoundAtOffset") = []
 // A range that names nothing, one starting before its buffer and one starting
 // at or past its end all bind nothing. A legal buffer is bound at each slot
 // first, since reading an unbound slot is undefined on both backends.
+//
+// The CPU's range past the end is an empty span, which is bound rather than
+// ignored: a read through it is zero and a store through it goes nowhere.
 auto tOutOfRangeBindsNothing = test("GPU/computeOutOfRangeRangeBindsNothing") = []
 {
+    constexpr auto count = 4;
+
+    {
+        auto input = rampValues(count);
+        auto scratch = filled(count, -2.0f);
+        auto output = filled(count, -1.0f);
+
+        auto kernel = CopyKernel {};
+        auto bindings = CpuCompute::Bindings {};
+        check(bindings.set(kernel.input, hostElements(input, count, 0)));
+        check(bindings.set(kernel.output, scratch));
+        dispatchOnCpu(kernel, bindings, count);
+
+        check(bindings.set(kernel.input, input));
+        check(bindings.set(kernel.output, hostElements(output, count, 0)));
+        dispatchOnCpu(kernel, bindings, count);
+
+        for (auto i = 0; i < count; ++i)
+        {
+            check(scratch[i] == 0.0f, "cpu");
+            check(output[i] == -1.0f, "cpu");
+        }
+    }
+
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
-
-    constexpr auto count = 4;
 
     auto input = makeRamp(count);
     auto scratch = makeFilled(count, 0.0f);

@@ -25,7 +25,8 @@ if (NOT EACP_HAS_GPU)
 endif ()
 
 # Everything here runs on every backend, drawing included: a scissor or a blend
-# mode has no CPU-side observable. Every case self-skips without a device.
+# mode has no CPU-side observable. Every case self-skips without a device,
+# except for the CPU half of a compute cross-check (CpuCrossCheck.h).
 set(gpu_test_sources
         AdoptedMemoryTests.cpp
         AtomicTests.cpp
@@ -114,11 +115,13 @@ endif ()
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests
 # rides the same path to pin what the renderer's batching may not reorder.
+# eacp-cpu-compute is the other half of CpuCrossCheck.h: the compute suites
+# run each kernel on the CPU too, with or without a device.
 nano_add_executable(GPUTests
         NO_MAIN
         SOURCES
             ${gpu_test_sources}
-        TARGETS eacp-sprites eacp-gpu)
+        TARGETS eacp-sprites eacp-gpu eacp-cpu-compute)
 
 eacp_enable_glsl_compile_checks(GPUTests)
 

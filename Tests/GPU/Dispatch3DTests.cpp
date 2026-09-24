@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <string>
 #include <vector>
@@ -6,6 +6,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -84,48 +85,34 @@ struct GroupIdVolumeKernel final : ComputeProgram
     EACP_SHADER(ids, extents)
 };
 
-std::vector<float> filledWithSentinel(int count)
-{
-    return std::vector<float>((std::size_t) count, sentinel);
-}
-
 void checkVolumeFill(int width, int height, int depth)
 {
-    auto& device = Device::shared();
     auto cells = width * height * depth;
-    auto initial = filledWithSentinel(cells + padding);
-    auto bytes = (int) (initial.size() * sizeof(float));
-
-    auto output = device.makeBuffer(initial.data(), bytes, BufferUsage::Storage);
 
     auto kernel = VolumeKernel {};
-    kernel.output = output;
     kernel.width = (std::uint32_t) width;
     kernel.height = (std::uint32_t) height;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, cells + padding, sentinel)
+        .run(width,
+             height,
+             depth,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, width, height, depth);
-        }
+                 for (auto z = 0; z < depth; ++z)
+                     for (auto y = 0; y < height; ++y)
+                         for (auto x = 0; x < width; ++x)
+                             check(result[(z * height + y) * width + x]
+                                       == expectedAt(x, y, z),
+                                   name);
 
-        commands.commit();
-    }
-
-    auto result = filledWithSentinel(cells + padding);
-    output.read(result.data(), bytes);
-
-    for (auto z = 0; z < depth; ++z)
-        for (auto y = 0; y < height; ++y)
-            for (auto x = 0; x < width; ++x)
-                check(result[(std::size_t) ((z * height + y) * width + x)]
-                      == expectedAt(x, y, z));
-
-    for (auto i = cells; i < cells + padding; ++i)
-        check(result[(std::size_t) i] == sentinel);
+                 for (auto i = cells; i < cells + padding; ++i)
+                     check(result[i] == sentinel, name);
+             });
 }
 } // namespace
 
@@ -219,20 +206,12 @@ auto tCodegenCompute3DGroupIds = test("GPU/codegenCompute3DGroupIds") = []
 // visible to land.
 auto tVolumeDispatchCoversTheVolume =
     test("Dispatch3D/volumeDispatchCoversTheVolume") = []
-{
-    if (!Device::shared().isValid())
-        return;
-
-    checkVolumeFill(5, 6, 7);
-};
+{ checkVolumeFill(5, 6, 7); };
 
 // The same, with one axis of 1 in turn: a rank is not a shape, so a flat
 // volume is still dispatched as one.
 auto tVolumeDispatchWithFlatAxis = test("Dispatch3D/volumeDispatchWithFlatAxis") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     checkVolumeFill(5, 6, 1);
     checkVolumeFill(5, 1, 7);
     checkVolumeFill(1, 6, 7);
@@ -285,7 +264,7 @@ auto tGroupAndLocalPositionsAgree =
         {
             for (auto x = 0; x < width; ++x)
             {
-                auto cell = (std::size_t) ((z * height + y) * width + x);
+                auto cell = ((std::size_t) z * height + y) * width + x;
 
                 check(fromIds[cell] == expectedAt(x, y, z));
                 check(fromExtents[cell * 3] == (float) width);

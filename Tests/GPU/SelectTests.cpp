@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <string>
 
@@ -10,6 +10,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -118,11 +119,6 @@ auto tBoolSelectIsNamedAsABool = test("Select/aBoolSelectIsNamedAsABool") = []
 
 auto tUIntSelectRunsExactly = test("Select/picksTheUnsignedValueAsked") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto left = Vector<float> {};
     auto right = Vector<float> {};
 
@@ -133,36 +129,26 @@ auto tUIntSelectRunsExactly = test("Select/picksTheUnsignedValueAsked") = []
     }
 
     auto count = left.size();
-    auto bytes = count * (int) sizeof(float);
-
-    auto leftBuffer = device.makeBuffer(left.data(), bytes, BufferUsage::Storage);
-    auto rightBuffer = device.makeBuffer(right.data(), bytes, BufferUsage::Storage);
-    auto output = device.makeBuffer(bytes * 2);
 
     auto kernel = UIntSelectKernel {};
-    kernel.left = leftBuffer;
-    kernel.right = rightBuffer;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.left, left)
+        .input(kernel.right, right)
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto a = (unsigned) i;
+                     auto b = (unsigned) (63 - i);
 
-    commands.commit();
-
-    auto result = Vector<float>(count * 2);
-    output.read(result.data(), bytes * 2);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto a = (unsigned) i;
-        auto b = (unsigned) (63 - i);
-
-        check(result[i] == (float) (a > b ? a : b));
-        check(result[count + i] == (float) (a > b ? 100u : b));
-    }
+                     check(result[i] == (float) (a > b ? a : b), readback.name());
+                     check(result[count + i] == (float) (a > b ? 100u : b),
+                           readback.name());
+                 }
+             });
 };

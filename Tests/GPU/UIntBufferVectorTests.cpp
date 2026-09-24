@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
@@ -13,6 +13,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -32,29 +33,6 @@ int occurrences(const std::string& text, const std::string& needle)
         ++found;
 
     return found;
-}
-
-Buffer makeUInts(const Vector<std::uint32_t>& values)
-{
-    return Buffer {Device::shared(),
-                   values.data(),
-                   uintBytes * values.size(),
-                   BufferUsage::Storage};
-}
-
-Buffer makeFilledUInts(int elements, std::uint32_t value)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.assign(elements, value);
-    return makeUInts(values);
-}
-
-Vector<std::uint32_t> readUInts(const Buffer& buffer, int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.resize(elements);
-    buffer.read(values.data(), uintBytes * elements);
-    return values;
 }
 
 // Values a float cannot hold: past the mantissa, and up against 2^32.
@@ -263,11 +241,6 @@ auto tARecordStoreStalesTheSlot =
 auto tPairsComputeAndStoreExactly =
     test("UIntBufferVector/pairsRoundTripThroughAKernel") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 256;
     constexpr auto inputElements = threads * 2;
     constexpr auto outputElements = threads * pairsPerThread * 2;
@@ -277,49 +250,37 @@ auto tPairsComputeAndStoreExactly =
     for (auto element = 0; element < inputElements; ++element)
         source.add(sourceValue(element));
 
-    auto input = makeUInts(source);
-    auto output = makeFilledUInts(outputElements, 0u);
-
     auto kernel = PairKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, source)
+        .output(kernel.output, outputElements, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 const auto* name = readback.name();
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     auto x = source[thread * 2];
+                     auto y = source[thread * 2 + 1];
+                     auto at = thread * pairsPerThread * 2;
 
-    commands.commit();
-
-    auto values = readUInts(output, outputElements);
-
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        auto x = source[thread * 2];
-        auto y = source[thread * 2 + 1];
-        auto at = thread * pairsPerThread * 2;
-
-        check(values[at + 0] == y);
-        check(values[at + 1] == x);
-        check(values[at + 2] == x + y);
-        check(values[at + 3] == y + x);
-        check(values[at + 4] == (x & 65535u));
-        check(values[at + 5] == (y & 65535u));
-    }
+                     check(values[at + 0] == y, name);
+                     check(values[at + 1] == x, name);
+                     check(values[at + 2] == x + y, name);
+                     check(values[at + 3] == y + x, name);
+                     check(values[at + 4] == (x & 65535u), name);
+                     check(values[at + 5] == (y & 65535u), name);
+                 }
+             });
 };
 
 // Records of four, over values past 2^24 and up against 2^32: a sum that wraps
 // and a pair of shifts, exact in every lane.
 auto tQuadsKeepEveryBit = test("UIntBufferVector/quadsKeepBitsAFloatLoses") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 128;
     constexpr auto inputElements = threads * 4;
     constexpr auto outputElements = threads * quadsPerThread * 4;
@@ -329,51 +290,47 @@ auto tQuadsKeepEveryBit = test("UIntBufferVector/quadsKeepBitsAFloatLoses") = []
     for (auto element = 0; element < inputElements; ++element)
         source.add(sourceValue(element));
 
-    auto input = makeUInts(source);
-    auto output = makeFilledUInts(outputElements, 0u);
-
     auto kernel = QuadKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, source)
+        .output(kernel.output, outputElements, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 const auto* name = readback.name();
+                 auto beyondAFloat = 0;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     std::uint32_t quad[4];
+                     std::uint32_t rotated[4];
 
-    commands.commit();
+                     for (auto lane = 0; lane < 4; ++lane)
+                         quad[lane] = source[thread * 4 + lane];
 
-    auto values = readUInts(output, outputElements);
-    auto beyondAFloat = 0;
+                     for (auto lane = 0; lane < 4; ++lane)
+                         rotated[lane] = quad[(lane + 1) % 4];
 
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        std::uint32_t quad[4];
-        std::uint32_t rotated[4];
+                     auto at = thread * quadsPerThread * 4;
 
-        for (auto lane = 0; lane < 4; ++lane)
-            quad[lane] = source[thread * 4 + lane];
+                     for (auto lane = 0; lane < 4; ++lane)
+                     {
+                         check(values[at + lane]
+                                   == (std::uint32_t) (quad[lane] + rotated[lane]),
+                               name);
+                         check(values[at + 4 + lane]
+                                   == ((quad[lane] >> 16) | (rotated[lane] << 16)),
+                               name);
 
-        for (auto lane = 0; lane < 4; ++lane)
-            rotated[lane] = quad[(lane + 1) % 4];
+                         if ((std::uint32_t) (float) quad[lane] != quad[lane])
+                             ++beyondAFloat;
+                     }
+                 }
 
-        auto at = thread * quadsPerThread * 4;
-
-        for (auto lane = 0; lane < 4; ++lane)
-        {
-            check(values[at + lane] == (std::uint32_t) (quad[lane] + rotated[lane]));
-            check(values[at + 4 + lane]
-                  == ((quad[lane] >> 16) | (rotated[lane] << 16)));
-
-            if ((std::uint32_t) (float) quad[lane] != quad[lane])
-                ++beyondAFloat;
-        }
-    }
-
-    check(beyondAFloat > 0);
+                 check(beyondAFloat > 0, name);
+             });
 };
 
 // A record written and read back inside one thread, run through Metal: the sum
@@ -381,49 +338,37 @@ auto tQuadsKeepEveryBit = test("UIntBufferVector/quadsKeepBitsAFloatLoses") = []
 auto tARecordReadsBackWhatItStored =
     test("UIntBufferVector/aRecordReadsBackWhatItStored") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 64;
 
-    auto output = makeFilledUInts(threads * 4, 7u);
-    auto sums = makeFilledUInts(threads, 0u);
-
     auto kernel = RecordRereadKernel {};
-    kernel.output = output;
-    kernel.sums = sums;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads * 4, 7u)
+        .output(kernel.sums, threads, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& stored = readback.uints(kernel.output);
+                 const auto& totals = readback.uints(kernel.sums);
+                 const auto* name = readback.name();
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     auto i = (std::uint32_t) thread;
+                     const std::uint32_t record[] = {
+                         i * 3u, i + 1000000u, 4294967295u - i, i * 65537u};
 
-    commands.commit();
+                     auto total = std::uint32_t {0};
 
-    auto stored = readUInts(output, threads * 4);
-    auto totals = readUInts(sums, threads);
+                     for (auto lane = 0; lane < 4; ++lane)
+                     {
+                         check(stored[thread * 4 + lane] == record[lane], name);
+                         total += record[lane];
+                     }
 
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        auto i = (std::uint32_t) thread;
-        const std::uint32_t record[] = {
-            i * 3u, i + 1000000u, 4294967295u - i, i * 65537u};
-
-        auto total = std::uint32_t {0};
-
-        for (auto lane = 0; lane < 4; ++lane)
-        {
-            check(stored[thread * 4 + lane] == record[lane]);
-            total += record[lane];
-        }
-
-        check(totals[thread] == total);
-    }
+                     check(totals[thread] == total, name);
+                 }
+             });
 };
 
 // Records through ranges bound part-way in: record zero of the kernel's buffer
@@ -436,12 +381,7 @@ auto tARecordReadsBackWhatItStored =
 auto tRecordsReadThroughARangeStartAtItsOffset =
     test("UIntBufferVector/aRangeStartsAtItsOwnRecord") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    const auto row = device.storageBufferOffsetAlignment() / uintBytes;
+    const auto row = Device::shared().storageBufferOffsetAlignment() / uintBytes;
     const auto rowElement = row;
     const auto firstElement = 2 * row;
     const auto records = 4;
@@ -453,31 +393,25 @@ auto tRecordsReadThroughARangeStartAtItsOffset =
     for (auto element = 0; element < capacity; ++element)
         source.add(sourceValue(element));
 
-    auto input = makeUInts(source);
-    auto output = makeFilledUInts(capacity, 0u);
-
     auto kernel = ScalePairKernel {};
-    kernel.input = BufferRange {&input, firstElement * uintBytes, span * uintBytes};
-    kernel.output = BufferRange {&output, rowElement * uintBytes, span * uintBytes};
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, source, firstElement, span)
+        .output(kernel.output, filled(capacity, 0u), rowElement, span)
+        .run(records,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, records);
-    }
+                 for (auto element = 0; element < capacity; ++element)
+                 {
+                     auto written =
+                         element >= rowElement && element < rowElement + span;
+                     auto expected =
+                         written ? source[firstElement + element - rowElement] * 10u
+                                 : 0u;
 
-    commands.commit();
-
-    auto values = readUInts(output, capacity);
-
-    for (auto element = 0; element < capacity; ++element)
-    {
-        auto written = element >= rowElement && element < rowElement + span;
-        auto expected =
-            written ? source[firstElement + element - rowElement] * 10u : 0u;
-
-        check(values[element] == expected);
-    }
+                     check(values[element] == expected, readback.name());
+                 }
+             });
 };

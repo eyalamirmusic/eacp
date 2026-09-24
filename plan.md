@@ -12,8 +12,8 @@ kernels in `GPUWidgets`. Line counts are estimates, not commitments.
 
 | Stage | State | Notes |
 | --- | --- | --- |
-| 0 — the device-free seam | not started | |
-| 1 — tier one: streams, control flow, 1D/2D/3D | not started | |
+| 0 — the device-free seam | built, macOS green | macOS: `GPUCodegenTests` 104, `GPUTests` 478, `GPUWidgetsTests` 57, `UITests` 183, all passing — the baseline plus the one new case. Linux lanes not yet run (no Docker on the dev machine) — awaits CI |
+| 1 — tier one: streams, control flow, 1D/2D/3D | built, macOS green | macOS: `CpuComputeTests` 69 (63 `Executor/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves inside 36 existing cases across 13 suites, `GPUCodegenTests` 104, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 2 — tier two: the threadgroup | not started | |
 | 3 — tier three: packed helpers and the SIMD-group matrix | not started | |
 | 4 — performance | not started | |
@@ -296,7 +296,14 @@ runs on the calling thread. The split is two objects, not one: an immutable
 workspace per worker over one plan; v1's `Executor` bundles one of each. In v1
 every node gets its own scratch slot: 500 nodes × 64 lanes × 4 components × 4
 bytes is 512 KB, acceptable for a kernel of that size. Reusing slots by
-liveness is stage 4's.
+liveness is stage 4's. *As built:* `Plan`/`Workspace` with `Executor`
+bundling one of each, as planned, plus an internal `Interpreter.h` — the
+`Context`/`SlotView`/mask-frame seam between the source files. `laneStride` is
+the lane count rounded up to 16; `footprintBytes()` for the one-line gain
+kernel at 64 lanes is 2432 bytes (4 nodes × 64 words, the mask,
+local-coordinate and real-lane rows, 16 uniform words and 64 bytes of
+alignment slack). A dispatch of the wrong rank returns false rather than
+asserting.
 
 **D4 — Statements in order, expressions by epoch.** The executor walks the
 blocks; each statement evaluates the expression trees it names recursively,
@@ -317,7 +324,17 @@ changes. Hoisting a pure node across statements — what `countUses`/
 and so is evaluating lane-invariant nodes (a constant, a uniform, a
 `GridExtent`, a `GroupId` and arithmetic over only those) once per group or
 per dispatch instead of per lane; v1 splats constants and uniforms once per
-dispatch and nothing more.
+dispatch and nothing more. *As built:* no epochs and no recursion. The plan
+computes a post-order schedule per statement — a flat, deduplicated node list
+for the value and index of a store, an `If`'s condition, a `Loop`'s condition
+per evaluation — and a statement runs its list as a flat loop: fresh every
+statement, shared within one, the same semantics. The record pin is plan-time
+too: the first component's schedule includes the record node, the following
+components' treat it as a leaf. `VarRead` has no scratch of its own and reads
+the variable's storage, which is safe because a statement commits after it
+evaluates. Array constants are evaluated at group start, after the guard, in
+slot order, into array storage. Stage 1 did not need `isPure`; it stays public
+for stage 4's hoisting.
 
 **D5 — Auto-vectorised lane loops first, intrinsics only where measured.** The
 lane operations are a small internal layer (`CpuCompute/Lanes.h`): templated
@@ -353,11 +370,24 @@ machinery moves the same way: `Uniform<T>`, `ShaderVisitor`,
 `memberOffset` and the `EACP_SHADER`/`EACP_SHADER_VALUE` macros go from
 `ShaderProgram.h` into `Codegen/ShaderMembers.h`, which `ShaderProgram.h`
 includes, so every existing include keeps compiling (`Texture` is only ever a
-pointer there and is forward-declared). Every one of the 158 kernel structs
+pointer there and is forward-declared). *As built:* `ShaderMembers.h` also
+carries `ShaderValueIs`; `toVertexFormat`, `VertexFormatOf`,
+`expectedAttributeBytes`, `ShaderTextureBindVisitor`,
+`ShaderBufferBindVisitor` and `ShaderGraphVisitor` stay in `ShaderProgram.h`,
+since they need `RenderPass` or vertex input; no `Texture` forward declaration
+was needed — `ShaderTypes.h` already includes `Texture/Texture.h` — and
+`ShaderMembers.h` includes `Buffer/Buffer.h`, since `BufferRange` is held by
+value. `packWithExtents` stays private on `ComputeKernel`, and
+`ComputeProgram::prepare()` reads `source()` rather than the now-private
+`generated`. Every one of the 158 kernel structs
 keeps deriving from `ComputeProgram` and is untouched; a kernel meant to link
 without `eacp-gpu` — `CpuComputeTests`', a CPU-only product's — derives from
 `ComputeKernel` and is otherwise written identically. `ComputePass`'s
-`dispatch(Program&, …)` templates are unaffected.
+`dispatch(Program&, …)` templates are unaffected. *As built (stage 1):*
+`ComputeKernel` gained a public `visitMembers(ShaderVisitor&)` forwarding to
+the protected `reflectMembers`, which is what the executor walks. It has no
+`array()` — only `ShaderProgram` and `ShaderBuilder` do — so the array-constant
+tests record on a bare builder.
 
 Rejected: *making `ComputeProgram` itself link-inert* by holding the GPU state
 behind a type-erased holder created in `prepare()`. It works, and it would let
@@ -413,6 +443,9 @@ GPU leaves undefined, the CPU defines, and the README documents:
 | shared or constant array index out of bounds | undefined everywhere | reads 0, store dropped |
 | integer `/` or `%` by zero | Metal/Vulkan undefined; D3D gives all-ones | 0 |
 | `INT_MIN / -1` | undefined | `INT_MIN` |
+| `INT_MIN % -1` (*as built*) | undefined | 0 |
+| `toInt`/`toFloat` of a `Bool` (*as built*) | 1 / 1.0 for true | 1 and 1.0f for true, 0 for false |
+| `fract` (*as built*) | Metal: `min(x - floor(x), 0x1.fffffep-1f)` | Metal's formula |
 | shift by ≥ 32 | amount masked on the hardware | amount `& 31` |
 | float → int/uint out of range, NaN | saturates on the hardware | saturates; NaN → 0 (C++ leaves this UB, so it is spelled out) |
 | `Barrier` under divergent control flow | undefined | no-op |
@@ -422,7 +455,15 @@ GPU leaves undefined, the CPU defines, and the README documents:
 
 Reads returning 0 follow the two backends that define the case, which is also
 what makes D2's "compute on every lane" safe. A UInt constant's `index` is
-read back as `uint32_t`.
+read back as `uint32_t`. *As built:* `round` is `std::round`; `round` at an
+exact half is away from zero (`std::round`, Metal's rule); D3D12 and Vulkan
+round to even, so a cross-checked kernel must avoid exact halves or use
+`floor(x + 0.5)`. `sign(NaN)` is
+0; a partly out-of-range `VectorStore` or `read2/3/4` is checked per element.
+A slot the kernel reads or writes that is never bound refuses the dispatch
+(false); a slot bound to an empty span runs, reading 0 and dropping stores.
+`count <= 0` returns true and does nothing. A store to an `Atomic` slot is
+accepted as a plain store.
 
 **D8 — Serial over groups in v1, atomics ready for more.** Groups run in
 order, x fastest, on the caller's thread. `AtomicAdd` and `AtomicLoad` go
@@ -463,6 +504,14 @@ and `-DEACP_BUILD_GRAPHICS=OFF` included. Tests:
   the case's reference. The CPU half never self-skips, so the two Linux lanes
   without a driver run every kernel in the listed suites numerically.
 
+*As built:* `CpuComputeTests` needs `-ffp-contract=off` on the test target
+too — Clang contracts the multiply-adds in the tests' inline C++ references
+even in Debug, and the exact checks against the executor then fail. `GPUTests`
+does not: its exact float cases have nothing contractable. There is no
+environment switch that disables the Metal device, so "never self-skips" was
+proven by forcing the GPU half off temporarily (478/478) and by corrupting the
+CPU result (exactly the 36 cross-check cases failed, each naming `cpu`).
+
 **D10 — Dispatch mirrors `ComputePass`.** `Executor::dispatch(bindings,
 count)`, `(bindings, width, height)` and `(bindings, width, height, depth)`
 take threads, round up to groups of the kernel's `groupShape()` and assert
@@ -474,7 +523,8 @@ offset past the span's end dispatches nothing, as on the GPU. The 1D id comes
 from the group's x alone, so groups in y and z repeat the x range, as a 1D
 kernel's `gid` does on every backend. Every dispatch returns whether it ran
 (false for an invalid plan or a slot left unbound that the kernel reads —
-checked, not logged).
+checked, not logged). *As built:* unchanged, except that a wrong rank returns
+false rather than asserting.
 
 **D11 — Out of scope for v1.** Textures: `Sample`, `Fetch`, `TextureStore`
 and `WritableTexture2D` members (stage 3 may add a float4 image — a span of
@@ -488,36 +538,37 @@ fragments first.
 
 | File | Change | Lines |
 | --- | --- | --- |
-| `Lib/eacp/GPU/Codegen/ShaderMembers.h` | new: `Uniform<T>` and specialisations, `ShaderVisitor`, `ShaderBuildVisitor`, `ShaderUploadVisitor`, `CpuValueOf`, `ShaderValueOf`, `EACP_SHADER` macros — moved from `ShaderProgram.h` | ~620 moved |
-| `Lib/eacp/GPU/Codegen/ShaderProgram.h` | includes `ShaderMembers.h`; loses the moved half | −620 |
-| `Lib/eacp/GPU/Codegen/ComputeKernel.h` | new: the device-free base (D6) | ~680, mostly moved |
-| `Lib/eacp/GPU/Codegen/ComputeProgram.h` | `ComputeProgram : ComputeKernel`, GPU half only | −600 |
+| `Lib/eacp/GPU/Codegen/ShaderMembers.h` | new: `Uniform<T>` and specialisations, `ShaderVisitor`, `ShaderBuildVisitor`, `ShaderUploadVisitor`, `CpuValueOf`, `ShaderValueOf`, `EACP_SHADER` macros — moved from `ShaderProgram.h`. *As built:* plus `ShaderValueIs`; the render-only visitors and vertex-format helpers stay behind | ~620 moved; *as built:* 718, ~695 moved |
+| `Lib/eacp/GPU/Codegen/ShaderProgram.h` | includes `ShaderMembers.h`; loses the moved half | −620; *as built:* −695 |
+| `Lib/eacp/GPU/Codegen/ComputeKernel.h` | new: the device-free base (D6) | ~680, mostly moved; *as built:* 591 |
+| `Lib/eacp/GPU/Codegen/ComputeProgram.h` | `ComputeProgram : ComputeKernel`, GPU half only | −600; *as built:* 885 → 336 |
 | `Lib/eacp/GPU/Codegen/ShaderGraph.h` | `isPure` public | ~5 |
 | `Lib/eacp/GPU/Codegen/Codegen.h` | include `ComputeKernel.h` | ~1 |
-| `Lib/eacp/GPU/CMakeLists.txt` | `add_subdirectory(CpuCompute)` before the GPU return | ~3 |
-| `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35 |
-| `CpuCompute/CpuCompute.h` | umbrella | ~10 |
-| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400 |
-| `CpuCompute/Bindings.h` | the slot table and typed setters | ~120 |
-| `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70 |
-| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation | ~650 |
-| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs | ~200 |
-| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900 |
-| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550 |
-| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550 |
-| `CpuCompute/Lanes.h` | lane-array primitives (D5) | ~300 |
+| `Lib/eacp/GPU/CMakeLists.txt` | `add_subdirectory(CpuCompute)` before the GPU return. *As built:* stage 0 needed no edit here — `add_ide_sources` globs headers | ~3 |
+| `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35; *as built:* 33 |
+| `CpuCompute/CpuCompute.h` | umbrella | ~10; *as built:* 11 |
+| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263 |
+| `CpuCompute/Bindings.h` | the slot table and typed setters | ~120; *as built:* 118 |
+| `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70; *as built:* 48 |
+| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488 |
+| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60 |
+| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67 |
+| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537 |
+| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198 |
+| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667 |
+| `CpuCompute/Lanes.h` | lane-array primitives (D5) | ~300; *as built:* 172 |
 | `CpuCompute/Helpers.{h,cpp}` | C++ twins of the 17 `eacp*` helpers (stage 3) | ~350 |
 | `CpuCompute/SimdMatrix.cpp` | fragments per SIMD group (stage 3) | ~200 |
 | `Tests/CMakeLists.txt` | `add_subdirectory(CpuCompute)` | ~3 |
-| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30 |
-| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600 |
-| `Tests/CpuCompute/KernelTests.cpp` | `Apps/GPU` kernels as `ComputeKernel`s vs references | ~350 |
+| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17 |
+| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin |
+| `Tests/CpuCompute/KernelTests.cpp` | `Apps/GPU` kernels as `ComputeKernel`s vs references | ~350; *as built:* 415 |
 | `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450 |
 | `Tests/CpuCompute/HelperTests.cpp` | stage 3: helpers, fragments | ~350 |
 | `Tests/CpuCompute/CpuComputeBench.cpp` | stage 4 | ~300 |
-| `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4 |
-| `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180 |
-| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each |
+| `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4; *as built (stage 1, `GPUTests` only):* +5/−2 |
+| `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180; *as built:* 348 |
+| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181 |
 | `Tests/GPU/*CodegenTests.cpp` | numeric checks on the recorded graphs | ~+200 |
 | `Tests/GPUWidgets/…` | path kernels cross-checked (stage 2) | ~150 |
 | `Apps/GPU/CpuCompute/` | stage 5 example | ~200 |
@@ -536,7 +587,12 @@ records a kernel), and by one new `GPUCodegenTests` case that derives a
 struct from `ComputeKernel`, constructs it, and checks its `emitMetal(graph())`
 against the same body written on a bare `ShaderBuilder` — which only links if
 the seam holds, since `GPUCodegenTests` has no `eacp-gpu`. Done when that
-case is green on the Linux GCC lane. ~40 lines new, ~1,300 moved.
+case is green on the Linux GCC lane. ~40 lines new, ~1,300 moved. *As
+built:* the case is `ComputeKernel/recordsTheBodyABareBuilderDoes` in
+`Tests/GPU/ComputeKernelCodegenTests.cpp` (58 lines), checking `emitMetal`,
+`emitHlsl`, `emitGlsl`, `source().source` and `dispatchRank()` against the bare
+builder, plus `expectGlslCompiles` where `eacp-spirv` is built; 5 tracked files
+changed (+23/−1263) beside the three new ones.
 
 **Stage 1 — tier one.** D1–D5, D7 (minus helpers), D9, D10 for the direct
 forms: `eacp-cpu-compute` with `Constant`, `Uniform`, `Construct`, `Swizzle`,
@@ -569,7 +625,30 @@ is invalid with a reason. Verified by:
 
 Done when all of those are green everywhere, including the two Linux lanes
 with no device, which is the first time they check a kernel's numbers.
-~3,800 lines, ~1,500 of them tests.
+~3,800 lines, ~1,500 of them tests. *As built:* `InPlaceComputeTests` is
+entirely stage 3 — its only kernel calls `erf` — and `IntrinsicTests`'
+`SaturatingTanh`, `ErrorFunction` and `VectorIntrinsic`,
+`UIntBufferTests::BinKernel`, `ComputeBufferRangeTests::BumpKernel`,
+`UIntVectorTests::SharedPairKernel`, `Dispatch3DTests::GroupIdVolumeKernel`
+and `ThreadIndexVectorTests::RebuiltPairKernel` wait for stages 2 and 3. The
+five example kernels match their references *exactly*: the same `std::`
+transcendentals, the same order of operations, no contraction. The
+zero-allocation case replaces all 20 global `operator new`/`delete` forms in
+its translation unit, so no other `CpuComputeTests` source may. `CpuCrossCheck`
+is namespace `eacp::GPU::CrossChecks`: `CrossCheck {kernel}` with chainable
+`.input(member, values, first = 0, count = -1)` and `.output(member, initial)`
+or `.output(member, elements, fill)`, then `.run(count | w, h | w, h, d,
+verify)` taking a trailing `std::source_location`; `Readback::name()` is
+`"cpu"` or `"gpu"`; a free `dispatchOnCpu(kernel, bindings, extents...)` serves
+the hand-bound cases. The planned `inOut` became `output(member, initial)`.
+A post-implementation review added: caller buffers moved through
+`std::memcpy` on a `std::byte*` view rather than aliased as `uint32_t`;
+plan-time refusals for a store into a read-only slot or of the wrong family, a
+`Declare`/`Assign` of the wrong type, an out-of-range or twice-reached block,
+an out-of-range `ThreadId` axis, and a group above 2^20 lanes or a scratch
+above `INT32_MAX` words (`ShaderGraph` gained `statementCount()`/`blockCount()`
+for it); operand and output pointers hoisted out of the matrix and geometric
+lane loops.
 
 **Stage 2 — tier two: the threadgroup.** `LocalId`, `GroupId`, `SharedRead`,
 `SharedStore`, `Barrier`, `GroupReduce` (both scopes, the fallback's fold
@@ -683,6 +762,11 @@ driverless Linux box.
   ordering look sequential. A kernel can therefore pass on the CPU and fail on
   the GPU; the cross-check exists to catch that, and the README says the CPU
   is not a race detector.
+- **Aliased bindings.** The same memory bound to an input slot and an output
+  slot diverges from the GPU: the GPU keeps a read hoisted across a store
+  (`InPlace/aReadIsNotRefreshedByAnotherSlotsStore`), where the CPU re-reads
+  per statement. The README (stage 5) documents such a binding as unsupported
+  on both.
 - **`GPUCodegenTests` growing a numeric side.** Linking `eacp-cpu-compute`
   there (D9) keeps it device-free, and turns its recorded graphs into value
   checks on every lane; the cost is that a codegen test can now fail for an

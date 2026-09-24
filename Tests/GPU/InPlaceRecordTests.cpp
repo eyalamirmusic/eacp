@@ -1,9 +1,10 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
 #include <cstdint>
 #include <string>
+#include <type_traits>
 
 // Reading a record out of an output buffer and storing a rearrangement of it
 // back into the same record.
@@ -17,12 +18,10 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-constexpr auto uintBytes = (int) sizeof(std::uint32_t);
-constexpr auto floatBytes = (int) sizeof(float);
-
 bool contains(const std::string& text, const char* needle)
 {
     return text.find(needle) != std::string::npos;
@@ -37,38 +36,6 @@ int occurrences(const std::string& text, const std::string& needle)
         ++found;
 
     return found;
-}
-
-Buffer makeUInts(const Vector<std::uint32_t>& values)
-{
-    return Buffer {Device::shared(),
-                   values.data(),
-                   uintBytes * values.size(),
-                   BufferUsage::Storage};
-}
-
-Vector<std::uint32_t> readUInts(const Buffer& buffer, int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.resize(elements);
-    buffer.read(values.data(), uintBytes * elements);
-    return values;
-}
-
-Buffer makeFloats(const Vector<float>& values)
-{
-    return Buffer {Device::shared(),
-                   values.data(),
-                   floatBytes * values.size(),
-                   BufferUsage::Storage};
-}
-
-Vector<float> readFloats(const Buffer& buffer, int elements)
-{
-    auto values = Vector<float> {};
-    values.resize(elements);
-    buffer.read(values.data(), floatBytes * elements);
-    return values;
 }
 
 // Values a float cannot hold, so a uint record that came back through one
@@ -203,20 +170,21 @@ void recordScaleInPlace(ShaderBuilder& builder)
     builder.write(output, i, output.read2(i) * 2.0f);
 }
 
-template <typename Kernel>
-void runOver(Kernel& kernel, const Buffer& buffer, int threads)
+// The kernel over its one output, starting as `source`, on the CPU and then the
+// GPU; verify is handed what each left behind and the backend's name.
+template <typename Kernel, typename T, typename Verify>
+void runOver(Kernel& kernel, const Vector<T>& source, int threads, Verify verify)
 {
-    kernel.output = buffer;
-    kernel.prepare();
-
-    auto commands = Device::shared().makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
-
-    commands.commit();
+    CrossCheck {kernel}
+        .output(kernel.output, source)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 if constexpr (std::is_same_v<T, float>)
+                     verify(readback.floats(kernel.output), readback.name());
+                 else
+                     verify(readback.uints(kernel.output), readback.name());
+             });
 }
 } // namespace
 
@@ -308,11 +276,6 @@ auto tAScaledRecordStaysInline =
 // Records of two unsigned integers, swapped where they lie.
 auto tUIntPairSwapsInPlace = test("InPlaceRecord/aUIntPairSwapsWhereItLies") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto records = 128;
 
     auto source = Vector<std::uint32_t> {};
@@ -320,28 +283,24 @@ auto tUIntPairSwapsInPlace = test("InPlaceRecord/aUIntPairSwapsWhereItLies") = [
     for (auto element = 0; element < records * 2; ++element)
         source.add(sourceValue(element));
 
-    auto buffer = makeUInts(source);
     auto kernel = UIntSwapKernel {};
 
-    runOver(kernel, buffer, records);
-
-    auto values = readUInts(buffer, records * 2);
-
-    for (auto record = 0; record < records; ++record)
-    {
-        check(values[record * 2] == source[record * 2 + 1]);
-        check(values[record * 2 + 1] == source[record * 2]);
-    }
+    runOver(kernel,
+            source,
+            records,
+            [&](const Vector<std::uint32_t>& values, const char* name)
+            {
+                for (auto record = 0; record < records; ++record)
+                {
+                    check(values[record * 2] == source[record * 2 + 1], name);
+                    check(values[record * 2 + 1] == source[record * 2], name);
+                }
+            });
 };
 
 // The same pair on a float output.
 auto tFloatPairSwapsInPlace = test("InPlaceRecord/aFloatPairSwapsWhereItLies") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto records = 128;
 
     auto source = Vector<float> {};
@@ -349,18 +308,19 @@ auto tFloatPairSwapsInPlace = test("InPlaceRecord/aFloatPairSwapsWhereItLies") =
     for (auto element = 0; element < records * 2; ++element)
         source.add((float) element + 0.5f);
 
-    auto buffer = makeFloats(source);
     auto kernel = FloatSwapKernel {};
 
-    runOver(kernel, buffer, records);
-
-    auto values = readFloats(buffer, records * 2);
-
-    for (auto record = 0; record < records; ++record)
-    {
-        check(values[record * 2] == source[record * 2 + 1]);
-        check(values[record * 2 + 1] == source[record * 2]);
-    }
+    runOver(kernel,
+            source,
+            records,
+            [&](const Vector<float>& values, const char* name)
+            {
+                for (auto record = 0; record < records; ++record)
+                {
+                    check(values[record * 2] == source[record * 2 + 1], name);
+                    check(values[record * 2 + 1] == source[record * 2], name);
+                }
+            });
 };
 
 // Four components rotated one place, which needs all four to survive the first
@@ -368,11 +328,6 @@ auto tFloatPairSwapsInPlace = test("InPlaceRecord/aFloatPairSwapsWhereItLies") =
 auto tFloatQuadRotatesInPlace =
     test("InPlaceRecord/aFloatQuadRotatesWhereItLies") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto records = 64;
 
     auto source = Vector<float> {};
@@ -380,16 +335,19 @@ auto tFloatQuadRotatesInPlace =
     for (auto element = 0; element < records * 4; ++element)
         source.add((float) element + 0.25f);
 
-    auto buffer = makeFloats(source);
     auto kernel = FloatRotateKernel {};
 
-    runOver(kernel, buffer, records);
-
-    auto values = readFloats(buffer, records * 4);
-
-    for (auto record = 0; record < records; ++record)
-        for (auto lane = 0; lane < 4; ++lane)
-            check(values[record * 4 + lane] == source[record * 4 + (lane + 1) % 4]);
+    runOver(kernel,
+            source,
+            records,
+            [&](const Vector<float>& values, const char* name)
+            {
+                for (auto record = 0; record < records; ++record)
+                    for (auto lane = 0; lane < 4; ++lane)
+                        check(values[record * 4 + lane]
+                                  == source[record * 4 + (lane + 1) % 4],
+                              name);
+            });
 };
 
 // The swizzled rotate through Metal, where the four components have to survive
@@ -397,11 +355,6 @@ auto tFloatQuadRotatesInPlace =
 auto tSwizzleRotateRunsInPlace =
     test("InPlaceRecord/aSwizzledQuadRotatesWhereItLies") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto records = 64;
 
     auto source = Vector<float> {};
@@ -409,16 +362,19 @@ auto tSwizzleRotateRunsInPlace =
     for (auto element = 0; element < records * 4; ++element)
         source.add((float) element + 0.75f);
 
-    auto buffer = makeFloats(source);
     auto kernel = SwizzleRotateKernel {};
 
-    runOver(kernel, buffer, records);
-
-    auto values = readFloats(buffer, records * 4);
-
-    for (auto record = 0; record < records; ++record)
-        for (auto lane = 0; lane < 4; ++lane)
-            check(values[record * 4 + lane] == source[record * 4 + (lane + 1) % 4]);
+    runOver(kernel,
+            source,
+            records,
+            [&](const Vector<float>& values, const char* name)
+            {
+                for (auto record = 0; record < records; ++record)
+                    for (auto lane = 0; lane < 4; ++lane)
+                        check(values[record * 4 + lane]
+                                  == source[record * 4 + (lane + 1) % 4],
+                              name);
+            });
 };
 
 // Where the swap above is one record write, this is two element writes, and
@@ -429,11 +385,6 @@ auto tSwizzleRotateRunsInPlace =
 auto tTwoWritesAreTwoStatements =
     test("InPlaceRecord/twoElementWritesAreTwoStatements") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto pairs = 128;
 
     auto source = Vector<float> {};
@@ -441,16 +392,17 @@ auto tTwoWritesAreTwoStatements =
     for (auto element = 0; element < pairs * 2; ++element)
         source.add((float) element * 0.5f);
 
-    auto buffer = makeFloats(source);
     auto kernel = ScalarCarryKernel {};
 
-    runOver(kernel, buffer, pairs);
-
-    auto values = readFloats(buffer, pairs * 2);
-
-    for (auto pair = 0; pair < pairs; ++pair)
-    {
-        check(values[pair * 2] == source[pair * 2] + 1.0f);
-        check(values[pair * 2 + 1] == source[pair * 2] + 1.0f);
-    }
+    runOver(kernel,
+            source,
+            pairs,
+            [&](const Vector<float>& values, const char* name)
+            {
+                for (auto pair = 0; pair < pairs; ++pair)
+                {
+                    check(values[pair * 2] == source[pair * 2] + 1.0f, name);
+                    check(values[pair * 2 + 1] == source[pair * 2] + 1.0f, name);
+                }
+            });
 };

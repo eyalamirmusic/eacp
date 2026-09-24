@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +23,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -349,11 +350,6 @@ auto tHelpersAreNotAlwaysEmitted =
 
 auto tHyperbolics = test("Intrinsics/computesTheHyperbolics") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     for (auto i = -60; i <= 60; ++i)
@@ -361,30 +357,40 @@ auto tHyperbolics = test("Intrinsics/computesTheHyperbolics") = []
 
     auto count = values.size();
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto output = device.makeBuffer(count * 3 * (int) sizeof(float));
-
     auto kernel = HyperbolicKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto result = runKernel(kernel, output, count, 3);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count * 3)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-    for (auto i = 0; i < count; ++i)
-    {
-        auto x = (double) values[i];
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto x = (double) values[i];
 
-        // sinh and cosh reach 200 at the end of the sweep, so what is held
-        // fixed there is the relative error rather than the absolute one.
-        auto tolerance = [](double reference)
-        { return 1.0e-6 + 1.0e-6 * std::fabs(reference); };
+                     // sinh and cosh reach 200 at the end of the sweep, so
+                     // what is held fixed there is the relative error rather
+                     // than the absolute one.
+                     auto tolerance = [](double reference)
+                     { return 1.0e-6 + 1.0e-6 * std::fabs(reference); };
 
-        check(near(result[i * 3], std::tanh(x), tolerance(std::tanh(x))));
-        check(near(result[i * 3 + 1], std::sinh(x), tolerance(std::sinh(x))));
-        check(near(result[i * 3 + 2], std::cosh(x), tolerance(std::cosh(x))));
-    }
+                     check(
+                         near(result[i * 3], std::tanh(x), tolerance(std::tanh(x))),
+                         name);
+                     check(near(result[i * 3 + 1],
+                                std::sinh(x),
+                                tolerance(std::sinh(x))),
+                           name);
+                     check(near(result[i * 3 + 2],
+                                std::cosh(x),
+                                tolerance(std::cosh(x))),
+                           name);
+                 }
+             });
 };
 
 // The saturating tanh, swept from the origin out past where a fast-math tanh
@@ -450,11 +456,6 @@ auto tSaturatingTanh = test("Intrinsics/saturatingTanhAnswersTheTails") = []
 
 auto tLog10 = test("Intrinsics/computesLog10") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     // Twenty decades, which is where a mel front-end's clamped magnitudes sit
     // and where a base change by multiplication would show its error.
     auto values = Vector<float> {};
@@ -465,27 +466,31 @@ auto tLog10 = test("Intrinsics/computesLog10") = []
 
     auto count = values.size();
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto output = device.makeBuffer(count * (int) sizeof(float));
-
     auto kernel = Log10Kernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto result = runKernel(kernel, output, count, 1);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    for (auto i = 0; i < count; ++i)
-    {
-        auto reference = std::log10((double) values[i]);
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto reference = std::log10((double) values[i]);
 
-        // Metal's logarithm is specified to about 14 ulp, and a log10 of 1e-10
-        // is ten whole units, so the error that buys is four orders larger than
-        // the one near log10(1). The tolerance tracks the result's magnitude
-        // for that reason rather than being loosened everywhere.
-        check(near(result[i], reference, 1.0e-6 + 1.0e-5 * std::fabs(reference)));
-    }
+                     // Metal's logarithm is specified to about 14 ulp, and a
+                     // log10 of 1e-10 is ten whole units, so the error that
+                     // buys is four orders larger than the one near log10(1).
+                     // The tolerance tracks the result's magnitude for that
+                     // reason rather than being loosened everywhere.
+                     check(near(result[i],
+                                reference,
+                                1.0e-6 + 1.0e-5 * std::fabs(reference)),
+                           readback.name());
+                 }
+             });
 };
 
 auto tErrorFunction = test("Intrinsics/computesErfAndErfc") = []

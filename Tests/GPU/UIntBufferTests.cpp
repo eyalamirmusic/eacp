@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
@@ -17,6 +17,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -239,11 +240,6 @@ int occurrences(const std::string& text, const std::string& needle)
 // and no rounding to lose the large ones.
 auto tGatherReadsIdsAsIntegers = test("UIntBuffer/aGatherIndexesWithReadIds") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto idCount = (int) std::size(gatheredIds);
     constexpr auto threads = idCount * (int) rowWidth;
 
@@ -260,31 +256,23 @@ auto tGatherReadsIdsAsIntegers = test("UIntBuffer/aGatherIndexesWithReadIds") = 
     for (auto id: gatheredIds)
         ids.add(id);
 
-    auto idBuffer = makeUInts(ids);
-    auto table = makeFloats(rows);
-    auto output = makeFilledFloats(threads, -1.0f);
-
     auto kernel = GatherKernel {};
-    kernel.ids = idBuffer;
-    kernel.table = table;
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.ids, ids)
+        .input(kernel.table, rows)
+        .output(kernel.output, threads, -1.0f)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.floats(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
-
-    commands.commit();
-
-    auto values = readFloats(output, threads);
-
-    for (auto i = 0; i < threads; ++i)
-        check(values[i]
-              == tableValue(gatheredIds[i / (int) rowWidth],
-                            (std::uint32_t) i % rowWidth));
+                 for (auto i = 0; i < threads; ++i)
+                     check(values[i]
+                               == tableValue(gatheredIds[i / (int) rowWidth],
+                                             (std::uint32_t) i % rowWidth),
+                           readback.name());
+             });
 };
 
 // The squares of the thread indices, read back as uint32. Past 2^24 a float
@@ -292,59 +280,73 @@ auto tGatherReadsIdsAsIntegers = test("UIntBuffer/aGatherIndexesWithReadIds") = 
 // integers all the way through.
 auto tUIntOutputKeepsEveryBit = test("UIntBuffer/anOutputKeepsBitsAFloatLoses") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 6000;
 
-    auto output = makeFilledUInts(threads, 0u);
-
     auto kernel = SquareKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 auto beyondAFloat = 0;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto i = 0; i < threads; ++i)
+                 {
+                     auto square = (std::uint32_t) i * (std::uint32_t) i;
+                     check(values[i] == square, readback.name());
 
-    commands.commit();
+                     if ((std::uint32_t) (float) square != square)
+                         ++beyondAFloat;
+                 }
 
-    auto values = readUInts(output, threads);
-    auto beyondAFloat = 0;
-
-    for (auto i = 0; i < threads; ++i)
-    {
-        auto square = (std::uint32_t) i * (std::uint32_t) i;
-        check(values[i] == square);
-
-        if ((std::uint32_t) (float) square != square)
-            ++beyondAFloat;
-    }
-
-    check(beyondAFloat > 0);
+                 check(beyondAFloat > 0, readback.name());
+             });
 };
 
 // One kernel's uint output is the next kernel's uint input, inside a single
-// command buffer: the ids never reach the CPU.
+// command buffer: the ids never reach the CPU. On the CPU the two kernels
+// share one host array instead, which is the same handoff.
 auto tOneKernelHandsIdsToTheNext =
     test("UIntBuffer/idsCrossBetweenKernelsOnTheDevice") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 64;
 
     auto rows = Vector<float> {};
 
     for (auto i = 0; i < threads; ++i)
         rows.add((float) i * 0.5f);
+
+    auto expectGathered = [&](const Vector<float>& values, const char* backend)
+    {
+        for (auto i = 0; i < threads; ++i)
+            check(values[i] == rows[(i * 7 + 3) % 64], backend);
+    };
+
+    {
+        auto ids = filled(threads, 0u);
+        auto output = filled(threads, -1.0f);
+
+        auto write = IdKernel {};
+        auto writeBindings = CpuCompute::Bindings {};
+        check(writeBindings.set(write.ids, ids));
+        dispatchOnCpu(write, writeBindings, threads);
+
+        auto gather = SmallGatherKernel {};
+        auto gatherBindings = CpuCompute::Bindings {};
+        check(gatherBindings.set(gather.ids, ids));
+        check(gatherBindings.set(gather.table, rows));
+        check(gatherBindings.set(gather.output, output));
+        dispatchOnCpu(gather, gatherBindings, threads);
+
+        expectGathered(output, "cpu");
+    }
+
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
 
     auto ids = makeFilledUInts(threads, 0u);
     auto table = makeFloats(rows);
@@ -374,10 +376,7 @@ auto tOneKernelHandsIdsToTheNext =
 
     commands.commit();
 
-    auto values = readFloats(output, threads);
-
-    for (auto i = 0; i < threads; ++i)
-        check(values[i] == rows[(i * 7 + 3) % 64]);
+    expectGathered(readFloats(output, threads), "gpu");
 };
 
 // The counters an atomic kernel left behind, read by a later kernel as plain
@@ -434,12 +433,7 @@ auto tAtomicStorageReadsBackAsUInts =
 auto tUIntRangesBindAtTheirOffset =
     test("UIntBuffer/aRangeStartsAtItsOwnOffset") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    const auto row = device.storageBufferOffsetAlignment() / uintBytes;
+    const auto row = Device::shared().storageBufferOffsetAlignment() / uintBytes;
     const auto first = 2 * row;
     const auto count = 3;
     const auto capacity = first + count;
@@ -449,30 +443,24 @@ auto tUIntRangesBindAtTheirOffset =
     for (auto i = 0; i < capacity; ++i)
         source.add((std::uint32_t) i + 1u);
 
-    auto input = makeUInts(source);
-    auto output = makeFilledUInts(capacity, 0u);
-
     auto kernel = ScaleUIntKernel {};
-    kernel.input = BufferRange {&input, first * uintBytes, count * uintBytes};
-    kernel.output = BufferRange {&output, row * uintBytes, count * uintBytes};
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, source, first, count)
+        .output(kernel.output, filled(capacity, 0u), row, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    auto values = readUInts(output, capacity);
-
-    for (auto i = 0; i < capacity; ++i)
-    {
-        auto written = i >= row && i < row + count;
-        check(values[i] == (written ? source[first + i - row] * 10u : 0u));
-    }
+                 for (auto i = 0; i < capacity; ++i)
+                 {
+                     auto written = i >= row && i < row + count;
+                     check(values[i]
+                               == (written ? source[first + i - row] * 10u : 0u),
+                           readback.name());
+                 }
+             });
 };
 
 // A store retires the name a read of the same slot was hoisted under, so the
@@ -505,32 +493,20 @@ auto tAStoreStalesAUIntRead = test("UIntBuffer/aStoreStalesAnEarlierRead") = []
 // is two, and a stale name would give either the wrong one.
 auto tTheRereadSeesTheStore = test("UIntBuffer/aRereadSeesWhatWasStored") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 8;
 
-    auto output = makeFilledUInts(threads, 1u);
-
     auto kernel = RereadKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads, 1u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
-
-    commands.commit();
-
-    auto values = readUInts(output, threads);
-
-    for (auto i = 0; i < threads; ++i)
-        check(values[i] == 4u);
+                 for (auto i = 0; i < threads; ++i)
+                     check(values[i] == 4u, readback.name());
+             });
 };
 
 // What each backend declares a uint buffer as, beside the float pair it is a

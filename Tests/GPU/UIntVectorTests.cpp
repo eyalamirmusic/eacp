@@ -1,8 +1,9 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <string>
 
@@ -18,6 +19,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -580,127 +582,95 @@ auto tUIntVectorUniformPacking = test("UIntVector/aTripleUniformPadsOnlyOnHlsl")
 
 auto tUIntVectorArithmeticRuns = test("UIntVector/wrapsAndMasksExactly") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 128;
 
-    auto output = makeFilledUInts(threads * perThread, 0u);
-
     auto kernel = VectorArithmeticKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads * perThread, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 auto wrapped = 0;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     std::uint32_t expected[perThread] = {};
+                     expectedRecord((std::uint32_t) thread, expected);
 
-    commands.commit();
+                     for (auto slot = 0; slot < perThread; ++slot)
+                         check(values[thread * perThread + slot] == expected[slot],
+                               readback.name());
 
-    auto values = readUInts(output, threads * perThread);
-    auto wrapped = 0;
+                     if (expected[1] < 4294967280u + (std::uint32_t) thread)
+                         ++wrapped;
+                 }
 
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        std::uint32_t expected[perThread] = {};
-        expectedRecord((std::uint32_t) thread, expected);
-
-        for (auto slot = 0; slot < perThread; ++slot)
-            check(values[thread * perThread + slot] == expected[slot]);
-
-        if (expected[1] < 4294967280u + (std::uint32_t) thread)
-            ++wrapped;
-    }
-
-    // And the wraparound past 2^32 is genuinely exercised rather than assumed.
-    check(wrapped > 0);
+                 // And the wraparound past 2^32 is genuinely exercised rather
+                 // than assumed.
+                 check(wrapped > 0, readback.name());
+             });
 };
 
 auto tUIntVectorUniformsRun = test("UIntVector/uniformPairsArriveAsSent") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 32;
-
-    auto output = makeFilledUInts(threads * 5, 0u);
 
     auto kernel = UniformPairKernel {};
     kernel.origin = {4000000000u, 17u};
     kernel.step = {3u, 5u, 7u};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads * 5, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 const auto* name = readback.name();
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     auto i = (std::uint32_t) thread;
 
-    commands.commit();
-
-    auto values = readUInts(output, threads * 5);
-
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        auto i = (std::uint32_t) thread;
-
-        check(values[thread * 5 + 0] == 4000000000u + i);
-        check(values[thread * 5 + 1] == 17u + i * 2u);
-        check(values[thread * 5 + 2] == 3u * i);
-        check(values[thread * 5 + 3] == 5u * i);
-        check(values[thread * 5 + 4] == 7u * i);
-    }
+                     check(values[thread * 5 + 0] == 4000000000u + i, name);
+                     check(values[thread * 5 + 1] == 17u + i * 2u, name);
+                     check(values[thread * 5 + 2] == 3u * i, name);
+                     check(values[thread * 5 + 3] == 5u * i, name);
+                     check(values[thread * 5 + 4] == 7u * i, name);
+                 }
+             });
 };
 
 auto tUIntVectorVarRuns = test("UIntVector/aPairAdvancesThroughALoop") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 64;
 
-    auto output = makeFilledUInts(threads * 2, 0u);
-
     auto kernel = VarLoopKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads * 2, 0u)
+        .run(
+            threads,
+            [&](const Readback& readback)
+            {
+                const auto& values = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                for (auto thread = 0; thread < threads; ++thread)
+                {
+                    auto i = (std::uint32_t) thread;
+                    std::uint32_t accumulated[] = {i, i + 1u};
 
-    commands.commit();
+                    for (auto turn = 0u; turn < 3u; ++turn)
+                    {
+                        accumulated[0] = accumulated[0] * 2u + turn;
+                        accumulated[1] = accumulated[1] * 2u + 1u;
+                    }
 
-    auto values = readUInts(output, threads * 2);
-
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        auto i = (std::uint32_t) thread;
-        std::uint32_t accumulated[] = {i, i + 1u};
-
-        for (auto turn = 0u; turn < 3u; ++turn)
-        {
-            accumulated[0] = accumulated[0] * 2u + turn;
-            accumulated[1] = accumulated[1] * 2u + 1u;
-        }
-
-        check(values[thread * 2 + 0] == accumulated[0]);
-        check(values[thread * 2 + 1] == accumulated[1]);
-    }
+                    check(values[thread * 2 + 0] == accumulated[0], readback.name());
+                    check(values[thread * 2 + 1] == accumulated[1], readback.name());
+                }
+            });
 };
 
 auto tUIntVectorSharedRuns = test("UIntVector/sharedPairsCrossLanes") = []
@@ -746,11 +716,6 @@ auto tUIntVectorSharedRuns = test("UIntVector/sharedPairsCrossLanes") = []
 // themselves.
 auto tUIntVectorWideBitcastsRun = test("UIntVector/aQuadBitcastKeepsEveryBit") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr std::uint32_t patterns[] = {0x00000000u,
                                           0x80000000u,
                                           0x3f800000u,
@@ -771,45 +736,38 @@ auto tUIntVectorWideBitcastsRun = test("UIntVector/aQuadBitcastKeepsEveryBit") =
     constexpr auto elements = (int) std::size(patterns);
     constexpr auto threads = elements / 4;
 
-    auto values =
-        Buffer {device, patterns, uintBytes * elements, BufferUsage::Storage};
-    auto output = makeFilledUInts(threads * 8, 0u);
+    auto values = Vector<float> {};
+    values.resize(elements);
+    std::memcpy(values.data(), patterns, sizeof(patterns));
 
     auto kernel = WideBitcastKernel {};
-    kernel.values = values;
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.values, values)
+        .output(kernel.output, threads * 8, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& read = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto element = 0; element < elements; ++element)
+                 {
+                     auto record = element / 4;
+                     auto lane = element % 4;
 
-    commands.commit();
-
-    auto read = readUInts(output, threads * 8);
-
-    for (auto element = 0; element < elements; ++element)
-    {
-        auto record = element / 4;
-        auto lane = element % 4;
-
-        check(read[record * 8 + lane] == patterns[element]);
-        check(read[record * 8 + 4 + lane] == (patterns[element] ^ 0x80000000u));
-    }
+                     check(read[record * 8 + lane] == patterns[element],
+                           readback.name());
+                     check(read[record * 8 + 4 + lane]
+                               == (patterns[element] ^ 0x80000000u),
+                           readback.name());
+                 }
+             });
 };
 
 // The integer wide store lays its record down where the record write would
 // have, at the index UIntInputBuffer::read2/3/4 counts in.
 auto tUIntVectorWideStoreRuns = test("UIntVector/aWideStoreLaysTheRecordDown") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 8;
     constexpr auto quadCount = threads * 4;
     constexpr auto pairCount = threads * 2;
@@ -819,36 +777,28 @@ auto tUIntVectorWideStoreRuns = test("UIntVector/aWideStoreLaysTheRecordDown") =
     for (auto i = 0; i < quadCount; ++i)
         seed.add((std::uint32_t) i * 7u + 1u);
 
-    auto source =
-        Buffer {device, seed.data(), uintBytes * quadCount, BufferUsage::Storage};
-
-    auto quads = makeFilledUInts(quadCount, 0u);
-    auto pairs = makeFilledUInts(pairCount, 0u);
-
     auto kernel = WideUIntStoreKernel {};
-    kernel.source = source;
-    kernel.quads = quads;
-    kernel.pairs = pairs;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.source, seed)
+        .output(kernel.quads, quadCount, 0u)
+        .output(kernel.pairs, pairCount, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& wide = readback.uints(kernel.quads);
+                 const auto& two = readback.uints(kernel.pairs);
+                 const auto* name = readback.name();
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     for (auto lane = 0; lane < 4; ++lane)
+                         check(wide[thread * 4 + lane]
+                                   == seed[thread * 4 + lane] + 1u,
+                               name);
 
-    commands.commit();
-
-    auto wide = readUInts(quads, quadCount);
-    auto two = readUInts(pairs, pairCount);
-
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        for (auto lane = 0; lane < 4; ++lane)
-            check(wide[thread * 4 + lane] == seed[thread * 4 + lane] + 1u);
-
-        check(two[thread * 2 + 0] == (std::uint32_t) thread);
-        check(two[thread * 2 + 1] == (std::uint32_t) thread * 3u);
-    }
+                     check(two[thread * 2 + 0] == (std::uint32_t) thread, name);
+                     check(two[thread * 2 + 1] == (std::uint32_t) thread * 3u, name);
+                 }
+             });
 };
