@@ -187,9 +187,10 @@ int main(int argc, char** argv)
     // vocabulary is the largest single piece of the text encoder's load and
     // touches no device, so it runs on a thread of its own while the DiT
     // weights come off the disk and onto the GPU, and is waited for below.
-    auto tokenizer = std::async(std::launch::async,
-                                [path = tokenizerFile.str()]
-                                { return SA3TextEncoder::BpeTokenizer::load(path); });
+    auto tokenizer =
+        std::async(std::launch::async,
+                   [path = tokenizerFile.str()]
+                   { return SA3TextEncoder::BpeTokenizer::load(path); });
 
     {
         auto file = SafetensorsFile::open(modelFile);
@@ -290,9 +291,12 @@ int main(int argc, char** argv)
     std::printf("Wrote %s\n", options.output.c_str());
     std::printf("Total took %.2fs\n", secondsSince(totalStart));
 
-    for (const auto& cost: GPU::callCosts())
-        std::printf(
-            "%s: %d calls, %.2fs\n", cost.label.c_str(), cost.calls, cost.seconds);
+    if (options.profile)
+        for (const auto& cost: GPU::callCosts())
+            std::printf("%s: %d calls, %.2fs\n",
+                        cost.label.c_str(),
+                        cost.calls,
+                        cost.seconds);
 
     return 0;
 }
