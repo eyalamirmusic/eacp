@@ -1,0 +1,104 @@
+# StableAudio3 on Windows / D3D12
+
+State of the Windows half of the perf work: what moved, what was wrong and why
+those bugs are the reusable part, and what is left. Numbers are
+an RTX 6000 Ada (48 GB, driver 528.49), Windows 11 26200, MSVC 19.51,
+RelWithDebInfo, `EACP_UNITY_BUILD=OFF`.
+
+## Where it got to
+
+All verified producing real audio, and bit-identical to the run before unless
+a line says otherwise.
+
+| | at `c8b78c38` | at `62123dee` |
+|---|---|---|
+| small 12 s, total | 11.30 s | 3.78 s |
+| — sampling | 3.48 s | 0.61 s |
+| — decode | 4.72 s | 0.26 s |
+| medium 30 s, total | silent output | 9.27 s |
+| `LinearF32`, one small DiT step | 39.97 ms | 14.24 ms |
+| `MLTests`, cold → warm shader cache | 4.11 s | 0.39 s |
+
+`LinearF32` is still the largest single item at ~70% of a small DiT step.
+
+## Four things that were wrong, and are the reusable part
+
+**A dispatch dimension has a ceiling off Metal.** D3D12 and Vulkan cap
+threadgroups at 65535 per dimension; Metal does not. Worse, what an over-sized
+dimension does is the driver's business: this NVIDIA one runs an X grid far
+past the cap and produces *nothing at all* for a Y past it — no error, no
+removed device. Medium above ~15 s decoded to digital silence because
+`rows * heads` was one dimension and crossed 65535 at 161 latent frames. Rows
+and heads now take a dimension each. See `Lib/eacp/GPU/README.md`.
+
+**Two naming calls either side of a `+` is a coin flip.** `nameOperandsFirst`
+returned `define(...) + holdTheRecord(...)`; both hand out local names, and the
+operands of `+` are unsequenced, so clang and MSVC emitted *different shaders
+from the same graph*. Windows had been emitting redundant buffer reads, and CI
+could not catch it because the Windows lanes build the emitter with MSVC while
+the goldens were written from a clang build.
+
+**Off Metal, a SIMD-group matrix product was barrier-bound.** Metal has the
+instruction; everything else staged both operands through threadgroup scratch —
+two whole-group barriers and 28 shared accesses per 8×8×8 product. `LinearF32`
+paid over a hundred barriers per K-slab and ran at ~3% of this card's fp32
+peak. It now reads operands where they already lie when nothing has moved them,
+which is bit-exact and 2.6× faster.
+
+**A committed D3D12 resource costs ~246 µs**, against single-digit microseconds
+for a Metal buffer, and the ML layer allocated one per intermediate tensor —
+5527 buffers and 1.36 s of pure allocator time in one codec round trip. Fixed
+upstream by the shared buffer pool. `EACP_BUFFER_STATS=1` still counts buffer
+creations and fence waits and prints totals at exit; it is how to check this
+has not come back.
+
+## Environment notes
+
+- **`GPUTests` fails 94 cases on this machine**, identically on `main` and on
+  this branch, and identically on hardware and under `EACP_D3D12_WARP=1`. All
+  render/texture suites (Stencil, Scissor, TextureRegion, CubeTexture,
+  MultisampledTarget…) that SA3 never touches. CI is green on a GitHub runner,
+  so this is the box, not the code. Parked deliberately — do not read a
+  non-zero failure count here as a regression without diffing the suite names.
+- **The driver is 528.49 (Jan 2023)**, old for an Ada card. It is not the cause
+  of anything above — every failure reproduced identically on WARP — but the
+  headline numbers are worth retaking on a current driver.
+- `--profile` prints per-kernel GPU time for one DiT step; it is the fastest way
+  to see where a step goes.
+- The disk shader cache matters far more here than on Metal, because FXC
+  compiles from source every run and nothing underneath remembers. Delete
+  `%LOCALAPPDATA%\<app>\Shaders` to get a genuine cold measurement.
+
+## Open, in the order I would take them
+
+1. **Hand-written HLSL that bypasses `ShaderLibrary`** does not go through the
+   disk cache. `GPUTests` creates no cache directory at all for that reason.
+   Route those paths through the same cached compile.
+2. **`LinearF32` itself**, still ~70% of a step. The barriers are gone, so what
+   is left is the memory system: vectorised loads with the bounds clamp hoisted
+   to edge tiles, double-buffered slabs, bias fused into the epilogue.
+3. **The dead `float2`** a fused operand still loads. Deliberately not built: it
+   needs a two-pass emit to know every use was fused, and there is no evidence
+   yet it costs anything — the shader compiler can see it is dead. Measure
+   before building.
+4. **PyTorch-CUDA vs eacp-D3D12** on this card, the way `RESULTS.md` has Metal
+   vs MPS. `benchmark.py` takes `--model/--seconds/--steps/--seed/--prompt/
+   --eacp-binary` and `SA3_PYTORCH_REPO`; it needs a venv with torch cu126.
+   Never run here.
+5. **DXC/SM6** is in, behind `EACP_D3D12_DXC=1`, deliberately opt-in: it is not
+   bit-exact against FXC (up to 29/32768 on a sample) and gating it on whether
+   a DLL is installed would make one binary produce different audio on two
+   machines. Worth ~5% today; the reason to keep it is that wave intrinsics and
+   16-bit types are unreachable from `cs_5_0`. If it ever becomes the default,
+   re-bless the goldens from a DXC build first.
+
+## Building here
+
+```bash
+cmake -G Ninja -B build-rel -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_UNITY_BUILD=OFF
+cmake --build build-rel --target StableAudio3
+```
+
+from a shell with `vcvars64.bat` sourced. Checkpoints land under
+`%APPDATA%\StableAudio3\Resources\huggingface`, and the HF token is read from
+`%USERPROFILE%\.cache\huggingface\token`.
