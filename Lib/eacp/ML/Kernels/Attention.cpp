@@ -4,6 +4,7 @@
 #include "../../GPU/Frame/ComputePass.h"
 #include "Norm.h"
 
+#include <cassert>
 #include <cmath>
 #include <optional>
 #include <vector>
@@ -16,6 +17,14 @@ namespace
 {
 constexpr auto attentionGroupWidth = 256;
 constexpr auto maskedScore = -1.0e9f;
+// The side of the block of scores - and of rows in the weighted sum - one
+// thread computes.
+constexpr auto scoreBlock = 4u;
+
+int blocksOf(int extent, int block)
+{
+    return (extent + block - 1) / block;
+}
 } // namespace
 
 AttentionScoresKernel::AttentionScoresKernel()
@@ -28,34 +37,103 @@ void AttentionScoresKernel::dispatch(ComputePass& pass,
                                      int heads,
                                      int cols)
 {
+    assert(headDimension.value % 4 == 0);
+
     headCount = (std::uint32_t) heads;
+    rowCount = (std::uint32_t) rows;
     columnCount = (std::uint32_t) cols;
-    pass.dispatch(*this, rows * heads * cols);
+
+    // Columns, rows and heads a grid dimension each, so none of them - and no
+    // product of them - meets a backend's per-dimension threadgroup ceiling.
+    pass.dispatch(*this,
+                  blocksOf(cols, (int) scoreBlock),
+                  blocksOf(rows, (int) scoreBlock),
+                  heads);
 }
 
+// A block of 4 x 4 scores of one head per thread.
 void AttentionScoresKernel::define()
 {
-    auto i = threadId();
-    auto col = i % columnCount;
-    auto rowHead = i / columnCount;
-    auto row = rowHead / headCount;
+    auto position = threadPosition3();
+    auto firstColumn = position.x * scoreBlock;
+    auto firstRow = position.y * scoreBlock;
+    auto head = position.z;
 
-    auto queryBase = rowHead * headDimension;
-    auto head = rowHead % headCount;
-    auto keyBase = (col * headCount + head) * headDimension;
+    auto rowBase = [&](unsigned a)
+    {
+        auto row = min(firstRow + a, rowCount - 1u);
+        return (row * headCount + head) * headDimension;
+    };
 
-    auto dot = var(0.f);
+    auto columnBase = [&](unsigned b)
+    {
+        auto column = min(firstColumn + b, columnCount - 1u);
+        return (column * headCount + head) * headDimension;
+    };
+
+    // One accumulator per row of the block, over its four columns. Each score
+    // is the same running sum over d, in the same order, that one thread per
+    // score made - a block of them only shares the reads.
+    auto zero = float4(constant(0.f), 0.f, 0.f, 0.f);
+    auto sum0 = var(zero), sum1 = var(zero), sum2 = var(zero), sum3 = var(zero);
+    Var<Float4>* sums[] = {&sum0, &sum1, &sum2, &sum3};
+
     auto d = var(0u);
 
     loop(d.get() < headDimension,
          [&]
          {
-             dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
-             d = d.get() + 1u;
+             Float4 queries[] = {query.read4((rowBase(0u) + d.get()) / 4u),
+                                 query.read4((rowBase(1u) + d.get()) / 4u),
+                                 query.read4((rowBase(2u) + d.get()) / 4u),
+                                 query.read4((rowBase(3u) + d.get()) / 4u)};
+
+             Float4 keys[] = {key.read4((columnBase(0u) + d.get()) / 4u),
+                              key.read4((columnBase(1u) + d.get()) / 4u),
+                              key.read4((columnBase(2u) + d.get()) / 4u),
+                              key.read4((columnBase(3u) + d.get()) / 4u)};
+
+             auto component = [](const Float4& v, int c)
+             {
+                 return c == 0 ? v.x() : c == 1 ? v.y() : c == 2 ? v.z() : v.w();
+             };
+
+             for (auto c = 0; c < 4; ++c)
+             {
+                 auto keyColumn = float4(component(keys[0], c),
+                                         component(keys[1], c),
+                                         component(keys[2], c),
+                                         component(keys[3], c));
+
+                 for (auto a = 0; a < 4; ++a)
+                     *sums[a] =
+                         sums[a]->get() + component(queries[a], c) * keyColumn;
+             }
+
+             d = d.get() + 4u;
          });
 
-    auto score = dot.get() * scale + additiveMask[row * columnCount + col];
-    write(scores, i, score);
+    for (auto a = 0u; a < scoreBlock; ++a)
+    {
+        auto sum = sums[a]->get();
+        Float dots[] = {sum.x(), sum.y(), sum.z(), sum.w()};
+
+        for (auto b = 0u; b < scoreBlock; ++b)
+        {
+            auto row = firstRow + a;
+            auto column = firstColumn + b;
+
+            ifThen(row < rowCount && column < columnCount,
+                   [&]
+                   {
+                       auto score = dots[b] * scale
+                                    + additiveMask[row * columnCount + column];
+                       write(scores,
+                             (row * headCount + head) * columnCount + column,
+                             score);
+                   });
+        }
+    }
 }
 
 UnmaskedAttentionScoresKernel::UnmaskedAttentionScoresKernel()
@@ -68,32 +146,101 @@ void UnmaskedAttentionScoresKernel::dispatch(ComputePass& pass,
                                              int heads,
                                              int cols)
 {
+    assert(headDimension.value % 4 == 0);
+
     headCount = (std::uint32_t) heads;
+    rowCount = (std::uint32_t) rows;
     columnCount = (std::uint32_t) cols;
-    pass.dispatch(*this, rows * heads * cols);
+
+    // Columns, rows and heads a grid dimension each, so none of them - and no
+    // product of them - meets a backend's per-dimension threadgroup ceiling.
+    pass.dispatch(*this,
+                  blocksOf(cols, (int) scoreBlock),
+                  blocksOf(rows, (int) scoreBlock),
+                  heads);
 }
 
 void UnmaskedAttentionScoresKernel::define()
 {
-    auto i = threadId();
-    auto col = i % columnCount;
-    auto rowHead = i / columnCount;
+    auto position = threadPosition3();
+    auto firstColumn = position.x * scoreBlock;
+    auto firstRow = position.y * scoreBlock;
+    auto head = position.z;
 
-    auto queryBase = rowHead * headDimension;
-    auto head = rowHead % headCount;
-    auto keyBase = (col * headCount + head) * headDimension;
+    auto rowBase = [&](unsigned a)
+    {
+        auto row = min(firstRow + a, rowCount - 1u);
+        return (row * headCount + head) * headDimension;
+    };
 
-    auto dot = var(0.f);
+    auto columnBase = [&](unsigned b)
+    {
+        auto column = min(firstColumn + b, columnCount - 1u);
+        return (column * headCount + head) * headDimension;
+    };
+
+    // One accumulator per row of the block, over its four columns. Each score
+    // is the same running sum over d, in the same order, that one thread per
+    // score made - a block of them only shares the reads.
+    auto zero = float4(constant(0.f), 0.f, 0.f, 0.f);
+    auto sum0 = var(zero), sum1 = var(zero), sum2 = var(zero), sum3 = var(zero);
+    Var<Float4>* sums[] = {&sum0, &sum1, &sum2, &sum3};
+
     auto d = var(0u);
 
     loop(d.get() < headDimension,
          [&]
          {
-             dot = dot.get() + query[queryBase + d.get()] * key[keyBase + d.get()];
-             d = d.get() + 1u;
+             Float4 queries[] = {query.read4((rowBase(0u) + d.get()) / 4u),
+                                 query.read4((rowBase(1u) + d.get()) / 4u),
+                                 query.read4((rowBase(2u) + d.get()) / 4u),
+                                 query.read4((rowBase(3u) + d.get()) / 4u)};
+
+             Float4 keys[] = {key.read4((columnBase(0u) + d.get()) / 4u),
+                              key.read4((columnBase(1u) + d.get()) / 4u),
+                              key.read4((columnBase(2u) + d.get()) / 4u),
+                              key.read4((columnBase(3u) + d.get()) / 4u)};
+
+             auto component = [](const Float4& v, int c)
+             {
+                 return c == 0 ? v.x() : c == 1 ? v.y() : c == 2 ? v.z() : v.w();
+             };
+
+             for (auto c = 0; c < 4; ++c)
+             {
+                 auto keyColumn = float4(component(keys[0], c),
+                                         component(keys[1], c),
+                                         component(keys[2], c),
+                                         component(keys[3], c));
+
+                 for (auto a = 0; a < 4; ++a)
+                     *sums[a] =
+                         sums[a]->get() + component(queries[a], c) * keyColumn;
+             }
+
+             d = d.get() + 4u;
          });
 
-    write(scores, i, dot.get() * scale);
+    for (auto a = 0u; a < scoreBlock; ++a)
+    {
+        auto sum = sums[a]->get();
+        Float dots[] = {sum.x(), sum.y(), sum.z(), sum.w()};
+
+        for (auto b = 0u; b < scoreBlock; ++b)
+        {
+            auto row = firstRow + a;
+            auto column = firstColumn + b;
+
+            ifThen(row < rowCount && column < columnCount,
+                   [&]
+                   {
+                       auto score = dots[b] * scale;
+                       write(scores,
+                             (row * headCount + head) * columnCount + column,
+                             score);
+                   });
+        }
+    }
 }
 
 AttentionRowStatsKernel::AttentionRowStatsKernel()
@@ -162,35 +309,70 @@ void AttentionWeightedSumKernel::dispatch(ComputePass& pass,
                                           int heads,
                                           int headDim)
 {
+    assert(headDim % 4 == 0);
+
     headCount = (std::uint32_t) heads;
-    pass.dispatch(*this, rows * heads * headDim);
+    rowCount = (std::uint32_t) rows;
+
+    // Four of d, four rows and a head per thread, and each of the three a grid
+    // dimension of its own - rows x heads x headDim as one count is what ran
+    // past a backend's threadgroup ceiling on a long SAME-L decode.
+    pass.dispatch(*this, headDim / 4, blocksOf(rows, (int) scoreBlock), heads);
 }
 
+// Four rows by four of d per thread, over one head. Each output is the same
+// running sum over the columns, in ascending order, that one thread per output
+// made; the block shares the value read across its four rows.
 void AttentionWeightedSumKernel::define()
 {
-    auto i = threadId();
-    auto d = i % headDimension;
-    auto rowHead = i / headDimension;
-    auto head = rowHead % headCount;
+    auto position = threadPosition3();
+    auto firstDepth = position.x * 4u;
+    auto firstRow = position.y * scoreBlock;
+    auto head = position.z;
 
-    auto probabilityBase = rowHead * columnCount;
-    auto total = rowSum[rowHead];
+    auto probabilityBase = [&](unsigned a)
+    {
+        auto row = min(firstRow + a, rowCount - 1u);
+        return (row * headCount + head) * columnCount;
+    };
 
-    auto accumulator = var(0.f);
+    auto zero = float4(constant(0.f), 0.f, 0.f, 0.f);
+    auto sum0 = var(zero), sum1 = var(zero), sum2 = var(zero), sum3 = var(zero);
+    Var<Float4>* sums[] = {&sum0, &sum1, &sum2, &sum3};
+
     auto col = var(0u);
 
     loop(col.get() < columnCount,
          [&]
          {
-             auto probability = probabilities[probabilityBase + col.get()];
-             auto valueBase = (col.get() * headCount + head) * headDimension;
+             auto values = value.read4(
+                 ((col.get() * headCount + head) * headDimension + firstDepth) / 4u);
 
-             accumulator = accumulator.get() + probability * value[valueBase + d];
+             for (auto a = 0u; a < scoreBlock; ++a)
+                 *sums[a] = sums[a]->get()
+                            + probabilities[probabilityBase(a) + col.get()] * values;
 
              col = col.get() + 1u;
          });
 
-    write(output, rowHead * headDimension + d, accumulator.get() / total);
+    for (auto a = 0u; a < scoreBlock; ++a)
+    {
+        auto row = firstRow + a;
+
+        ifThen(row < rowCount,
+               [&]
+               {
+                   auto rowHead = row * headCount + head;
+                   auto total = rowSum[rowHead];
+                   auto sum = sums[a]->get();
+                   auto at = rowHead * headDimension + firstDepth;
+
+                   write(output, at, sum.x() / total);
+                   write(output, at + 1u, sum.y() / total);
+                   write(output, at + 2u, sum.z() / total);
+                   write(output, at + 3u, sum.w() / total);
+               });
+    }
 }
 
 Tensor buildCausalMask(int rows, int cols, Device& device)

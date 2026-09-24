@@ -18,6 +18,7 @@ public:
     GPU::Uniform<GPU::OutputBuffer> scores;
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> headDimension;
+    GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> columnCount;
     GPU::Uniform<GPU::Float> scale;
 
@@ -27,6 +28,7 @@ public:
                 scores,
                 headCount,
                 headDimension,
+                rowCount,
                 columnCount,
                 scale)
 
@@ -49,10 +51,12 @@ public:
     GPU::Uniform<GPU::OutputBuffer> scores;
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> headDimension;
+    GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> columnCount;
     GPU::Uniform<GPU::Float> scale;
 
-    EACP_SHADER(query, key, scores, headCount, headDimension, columnCount, scale)
+    EACP_SHADER(
+        query, key, scores, headCount, headDimension, rowCount, columnCount, scale)
 
 private:
     void define() override;
@@ -92,10 +96,17 @@ public:
     GPU::Uniform<GPU::OutputBuffer> output;
     GPU::Uniform<GPU::UInt> headCount;
     GPU::Uniform<GPU::UInt> headDimension;
+    GPU::Uniform<GPU::UInt> rowCount;
     GPU::Uniform<GPU::UInt> columnCount;
 
-    EACP_SHADER(
-        value, probabilities, rowSum, output, headCount, headDimension, columnCount)
+    EACP_SHADER(value,
+                probabilities,
+                rowSum,
+                output,
+                headCount,
+                headDimension,
+                rowCount,
+                columnCount)
 
 private:
     void define() override;
