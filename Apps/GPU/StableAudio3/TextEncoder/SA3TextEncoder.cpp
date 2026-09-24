@@ -113,4 +113,9 @@ PromptEncoding SA3TextEncoderModel::encodePrompt(ComputePass& pass,
 
     return PromptEncoding {std::move(result), tokenized.validLength};
 }
+
+void forEachTextEncoderShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(PadRowSelectKernel {}.graph());
+}
 }

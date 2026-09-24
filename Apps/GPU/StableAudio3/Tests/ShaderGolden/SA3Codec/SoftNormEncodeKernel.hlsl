@@ -1,0 +1,27 @@
+struct Uniforms
+{
+    uint u0;
+    float u1;
+    uint width;
+    uint height;
+};
+
+cbuffer UniformsCB : register(b0)
+{
+    Uniforms uniforms;
+};
+
+StructuredBuffer<float> buffer0 : register(t0);
+StructuredBuffer<float> buffer1 : register(t1);
+StructuredBuffer<float> buffer2 : register(t2);
+RWStructuredBuffer<float> buffer3 : register(u3);
+
+[numthreads(8, 8, 1)]
+void computeMain(uint3 threadId : SV_DispatchThreadID)
+{
+    uint2 gid = threadId.xy;
+    if (gid.x >= uniforms.width || gid.y >= uniforms.height)
+        return;
+    uint t0 = ((gid.y * uniforms.u0) + gid.x);
+    buffer3[t0] = (((buffer0[t0] * buffer1[gid.x]) + buffer2[gid.x]) / uniforms.u1);
+}

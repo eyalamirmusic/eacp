@@ -199,4 +199,11 @@ Tensor conv1dUnfoldGpu(ComputePass& pass, const Tensor& input, int inChannels, i
 
     return result;
 }
+
+void forEachGpuOpsShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(FoldWithNewTokensKernel {}.graph());
+    visit(UnfoldLastSegmentKernel {}.graph());
+    visit(Conv1dUnfoldKernel {}.graph());
+}
 }

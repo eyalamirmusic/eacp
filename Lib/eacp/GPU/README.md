@@ -294,6 +294,22 @@ vectors included, crosses uninterpolated — the emitter writes `flat`,
 `nointerpolation` or `[[flat]]` for it on its own, since every dialect requires
 that of an integer.
 
+### The emitted text is checked in
+
+Every shader the library ships — each ML kernel in every variant its
+constructor takes, the GPUWidgets kernels and shaders, both sprite shaders in
+all four sampling configurations, and the UI and text renderers' programs — is
+emitted as MSL, HLSL and GLSL by `ShaderGoldenTests` and compared byte for byte
+with `Tests/GPU/Golden/<Module>/<Kernel>[.<variant>].{msl,hlsl,glsl}`;
+StableAudio3's own kernels do the same in `SA3ShaderGoldenTests` against
+`Apps/GPU/StableAudio3/Tests/ShaderGolden/`. A change to the emitter that moves
+any of that text fails with a diff of the first lines that moved. When the
+move is the point, run the suite with `EACP_UPDATE_GOLDENS=1` to rewrite the
+files (and delete any no kernel produces any more) and commit them with the
+change, so the review shows every kernel it touched. A new kernel is one line
+in the list in `Tests/GPU/ShaderGoldenTests.cpp`; a golden no line produces
+fails `ShaderGolden/noOrphans`.
+
 ## Pipeline state
 
 `prepare(sampleCount)` covers the common settings positionally. Everything else

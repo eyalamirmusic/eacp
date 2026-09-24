@@ -195,4 +195,9 @@ Tensor applyCodecTransformerBlock(ComputePass& pass,
 
     return add(pass, afterAttention, ffOutput, device);
 }
+
+void forEachTransformerBlockShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(SinGateKernel {}.graph());
+}
 } // namespace eacp::SA3Codec

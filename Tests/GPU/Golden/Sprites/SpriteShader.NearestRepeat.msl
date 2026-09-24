@@ -1,0 +1,42 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float2 a0 [[attribute(0)]];
+    float2 a1 [[attribute(1)]];
+    float2 a2 [[attribute(2)]];
+    float2 a3 [[attribute(3)]];
+    float2 a4 [[attribute(4)]];
+    float2 a5 [[attribute(5)]];
+    float4 a6 [[attribute(6)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+    float2 v0;
+    float4 v1;
+};
+
+struct Uniforms
+{
+    float2 u0;
+};
+
+vertex VertexOut vertexMain(VertexIn input [[stage_in]], constant Uniforms& uniforms [[buffer(16)]])
+{
+    float2 t0 = ((input.a1 + ((input.a0).x * input.a2)) + ((input.a0).y * input.a3));
+    VertexOut output;
+    output.position = float4(((((t0).x / (uniforms.u0).x) * 2.0) - 1.0), (1.0 - (((t0).y / (uniforms.u0).y) * 2.0)), 0.0, 1.0);
+    output.v0 = (input.a4 + (input.a0 * (input.a5 - input.a4)));
+    output.v1 = input.a6;
+    return output;
+}
+
+fragment float4 fragmentMain(VertexOut input [[stage_in]],
+    texture2d<float> texture0 [[texture(0)]],
+    sampler sampler0 [[sampler(0)]])
+{
+    return (texture0.sample(sampler0, input.v0) * input.v1);
+}

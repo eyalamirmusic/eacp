@@ -1,0 +1,47 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    float u1;
+    uint u2;
+    uint u3;
+    uint u4;
+    uint width;
+    uint height;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device const float* buffer1 [[buffer(1)]],
+    device float* buffer2 [[buffer(2)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint2 gid [[thread_position_in_grid]],
+    uint simdLane [[thread_index_in_simdgroup]],
+    uint simdIndex [[simdgroup_index_in_threadgroup]],
+    uint simdCount [[simdgroups_per_threadgroup]])
+{
+    threadgroup float groupScratch[256];
+    float v0 = 0.0;
+    uint v1 = gid.x;
+    while ((v1 < uniforms.u0))
+    {
+        float t0 = buffer0[(((((gid.y / uniforms.u2) * uniforms.u3) + uniforms.u4) + ((gid.y % uniforms.u2) * uniforms.u0)) + v1)];
+        v0 = (v0 + (t0 * t0));
+        v1 = (v1 + 256u);
+    }
+    float v2 = simd_sum(v0);
+    if (simdLane == 0u)
+        groupScratch[simdIndex] = v2;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    v2 = groupScratch[0];
+    for (uint gr2 = 1u; gr2 < simdCount; ++gr2)
+        v2 = v2 + groupScratch[gr2];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    v1 = gid.x;
+    while ((v1 < uniforms.u0))
+    {
+        buffer2[((gid.y * uniforms.u0) + v1)] = ((buffer0[(((((gid.y / uniforms.u2) * uniforms.u3) + uniforms.u4) + ((gid.y % uniforms.u2) * uniforms.u0)) + v1)] * rsqrt(((v2 / float(uniforms.u0)) + uniforms.u1))) * buffer1[v1]);
+        v1 = (v1 + 256u);
+    }
+}

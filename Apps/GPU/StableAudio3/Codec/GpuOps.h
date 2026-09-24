@@ -27,4 +27,7 @@ ML::Tensor conv1dUnfoldGpu(GPU::ComputePass& pass,
                            int inChannels,
                            int kernelSize,
                            GPU::Device& device = GPU::Device::shared());
+
+// Every kernel this file builds, handed over for the shader golden corpus.
+void forEachGpuOpsShaderGraph(const GPU::ShaderGraphVisitor& visit);
 }

@@ -24,4 +24,6 @@ ML::Tensor softNormBottleneckDecode(GPU::ComputePass& pass,
                                     const SoftNormBottleneckWeights& weights,
                                     GPU::Device& device = GPU::Device::shared());
 
+// Every kernel this file builds, handed over for the shader golden corpus.
+void forEachBottleneckShaderGraph(const GPU::ShaderGraphVisitor& visit);
 }

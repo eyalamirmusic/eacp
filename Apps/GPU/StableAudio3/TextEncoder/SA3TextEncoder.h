@@ -3,6 +3,7 @@
 #include "Encoder/T5GemmaEncoder.h"
 #include "Tokenizer/BpeTokenizer.h"
 
+#include <eacp/GPU/Codegen/ComputeProgram.h>
 #include <eacp/GPU/Codegen/KernelCache.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/ML/Loader/SafetensorsFile.h>
@@ -54,4 +55,7 @@ private:
     T5GemmaEncoder encoder;
     ML::Tensor paddingEmbedding;
 };
+
+// Every kernel this file builds, handed over for the shader golden corpus.
+void forEachTextEncoderShaderGraph(const GPU::ShaderGraphVisitor& visit);
 }

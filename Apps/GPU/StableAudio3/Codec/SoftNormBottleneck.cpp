@@ -107,4 +107,10 @@ Tensor softNormBottleneckDecode(ComputePass& pass,
 
     return result;
 }
+
+void forEachBottleneckShaderGraph(const GPU::ShaderGraphVisitor& visit)
+{
+    visit(SoftNormEncodeKernel {}.graph());
+    visit(SoftNormDecodeKernel {}.graph());
+}
 }

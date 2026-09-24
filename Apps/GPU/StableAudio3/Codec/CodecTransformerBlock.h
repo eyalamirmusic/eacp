@@ -39,4 +39,6 @@ ML::Tensor applyCodecTransformerBlock(GPU::ComputePass& pass,
                                       const ML::AttentionBand& band,
                                       GPU::Device& device = GPU::Device::shared());
 
+// Every kernel this file builds, handed over for the shader golden corpus.
+void forEachTransformerBlockShaderGraph(const GPU::ShaderGraphVisitor& visit);
 }

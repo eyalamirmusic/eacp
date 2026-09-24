@@ -1,0 +1,67 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint u1;
+    uint u2;
+    uint u3;
+    uint u4;
+    uint u5;
+    uint width;
+    uint height;
+    uint depth;
+};
+
+kernel void computeMain(device float* buffer0 [[buffer(0)]],
+    device float* buffer1 [[buffer(1)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint3 gid [[thread_position_in_grid]],
+    uint simdLane [[thread_index_in_simdgroup]],
+    uint simdIndex [[simdgroup_index_in_threadgroup]],
+    uint simdCount [[simdgroups_per_threadgroup]])
+{
+    threadgroup float groupScratch[256];
+    float v0 = -3e+38;
+    uint t0 = ((gid.y / uniforms.u3) * uniforms.u3);
+    uint t1 = (max(gid.y, (t0 + uniforms.u4)) - uniforms.u4);
+    uint t2 = (t1 - t0);
+    uint t3 = ((t0 + gid.x) + (((t2 > gid.x) ? (((t2 - gid.x) + 255u) / 256u) : 0u) * 256u));
+    uint v1 = t3;
+    while ((v1 < min(min((t0 + uniforms.u3), uniforms.u2), ((gid.y + uniforms.u5) + 1u))))
+    {
+        v0 = max(v0, buffer0[(((((gid.y * uniforms.u0) + gid.z) * uniforms.u1) - t1) + v1)]);
+        v1 = (v1 + 256u);
+    }
+    float v2 = simd_max(v0);
+    if (simdLane == 0u)
+        groupScratch[simdIndex] = v2;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    v2 = groupScratch[0];
+    for (uint gr2 = 1u; gr2 < simdCount; ++gr2)
+        v2 = max(v2, groupScratch[gr2]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float v3 = 0.0;
+    v1 = t3;
+    while ((v1 < min(min((t0 + uniforms.u3), uniforms.u2), ((gid.y + uniforms.u5) + 1u))))
+    {
+        uint t4 = (((((gid.y * uniforms.u0) + gid.z) * uniforms.u1) - t1) + v1);
+        float t5 = exp((buffer0[t4] - v2));
+        buffer0[t4] = t5;
+        v3 = (v3 + t5);
+        v1 = (v1 + 256u);
+    }
+    float v4 = simd_sum(v3);
+    if (simdLane == 0u)
+        groupScratch[simdIndex] = v4;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    v4 = groupScratch[0];
+    for (uint gr4 = 1u; gr4 < simdCount; ++gr4)
+        v4 = v4 + groupScratch[gr4];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((gid.x == 0u))
+    {
+        buffer1[((gid.y * uniforms.u0) + gid.z)] = v4;
+    }
+}

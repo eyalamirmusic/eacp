@@ -1,0 +1,34 @@
+#version 450
+
+layout(std140, set = 0, binding = 16) uniform Uniforms
+{
+    uint u0;
+    uint u1;
+    uint count;
+} uniforms;
+
+layout(std430, set = 0, binding = 0) buffer Buffer0
+{
+    uint buffer0[];
+};
+layout(std430, set = 0, binding = 1) buffer Buffer1
+{
+    uint buffer1[];
+};
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= uniforms.count)
+        return;
+    if ((gid < uniforms.u0))
+    {
+        buffer0[gid] = 0u;
+    }
+    if ((gid < uniforms.u1))
+    {
+        buffer1[gid] = 0u;
+    }
+}

@@ -1,0 +1,58 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint width;
+    uint height;
+    uint depth;
+};
+
+kernel void computeMain(device float* buffer0 [[buffer(0)]],
+    device float* buffer1 [[buffer(1)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint3 gid [[thread_position_in_grid]],
+    uint simdLane [[thread_index_in_simdgroup]],
+    uint simdIndex [[simdgroup_index_in_threadgroup]],
+    uint simdCount [[simdgroups_per_threadgroup]])
+{
+    threadgroup float groupScratch[256];
+    float v0 = -3e+38;
+    uint v1 = gid.x;
+    while ((v1 < uniforms.u0))
+    {
+        v0 = max(v0, buffer0[((((gid.y * uniforms.depth) + gid.z) * uniforms.u0) + v1)]);
+        v1 = (v1 + 256u);
+    }
+    float v2 = simd_max(v0);
+    if (simdLane == 0u)
+        groupScratch[simdIndex] = v2;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    v2 = groupScratch[0];
+    for (uint gr2 = 1u; gr2 < simdCount; ++gr2)
+        v2 = max(v2, groupScratch[gr2]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float v3 = 0.0;
+    v1 = gid.x;
+    while ((v1 < uniforms.u0))
+    {
+        uint t0 = ((((gid.y * uniforms.depth) + gid.z) * uniforms.u0) + v1);
+        float t1 = exp((buffer0[t0] - v2));
+        buffer0[t0] = t1;
+        v3 = (v3 + t1);
+        v1 = (v1 + 256u);
+    }
+    float v4 = simd_sum(v3);
+    if (simdLane == 0u)
+        groupScratch[simdIndex] = v4;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    v4 = groupScratch[0];
+    for (uint gr4 = 1u; gr4 < simdCount; ++gr4)
+        v4 = v4 + groupScratch[gr4];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((gid.x == 0u))
+    {
+        buffer1[((gid.y * uniforms.depth) + gid.z)] = v4;
+    }
+}
