@@ -51,6 +51,8 @@ enum class Op : std::uint8_t
     BufferRead,
     BufferVectorRead,
     ArrayRead,
+    SharedRead,
+    AtomicLoad,
     UnaryMath,
     AbsS,
     MinF,
@@ -148,11 +150,15 @@ public:
         int value = -1;
         int index = -1;
         int slot = -1;
+        int buffer = -1;
         int body = -1;
         int elseBody = -1;
         int scheduleBegin = 0;
         int scheduleEnd = 0;
         bool bodiesJumpOut = false;
+        GroupReduction reduction = GroupReduction::Sum;
+        ReductionScope scope = ReductionScope::Group;
+        ValueType type = ValueType::Float;
     };
 
     struct BlockRange
@@ -179,6 +185,15 @@ public:
 
     struct Variable
     {
+        int components = 1;
+        std::uint32_t storage = 0;
+    };
+
+    // Element e, component c of a shared array is the word at
+    // storage + e * components + c: one copy per group, not per lane.
+    struct SharedLayout
+    {
+        int elements = 0;
         int components = 1;
         std::uint32_t storage = 0;
     };
@@ -240,6 +255,14 @@ public:
     const Vector<LeafNode>& uniformNodes() const { return uniformLeaves; }
     const Vector<LeafNode>& extentNodes() const { return extentLeaves; }
     const Vector<LeafNode>& threadIdNodes() const { return threadIdLeaves; }
+    const Vector<LeafNode>& groupIdNodes() const { return groupIdLeaves; }
+    const Vector<int>& simdGroupIndexNodes() const { return simdGroupLeaves; }
+
+    const Vector<SharedLayout>& sharedArrays() const { return sharedLayouts; }
+    std::uint32_t sharedWords() const { return sharedOffset; }
+    int sharedWordCount() const { return sharedCount; }
+
+    std::uint32_t reductionScratch() const { return reductionOffset; }
 
     int maskFrameCount() const { return 1 + 2 * nesting; }
     std::uint32_t maskFrame(int frame) const
@@ -284,8 +307,14 @@ private:
     Vector<LeafNode> uniformLeaves;
     Vector<LeafNode> extentLeaves;
     Vector<LeafNode> threadIdLeaves;
+    Vector<LeafNode> groupIdLeaves;
+    Vector<int> simdGroupLeaves;
+    Vector<SharedLayout> sharedLayouts;
 
     int nesting = 0;
+    int sharedCount = 0;
+    std::uint32_t sharedOffset = 0;
+    std::uint32_t reductionOffset = 0;
     std::uint32_t maskOffset = 0;
     std::uint32_t localOffset = 0;
     std::uint32_t realLaneOffset = 0;

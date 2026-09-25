@@ -399,6 +399,45 @@ void evaluateArrayRead(const Context& context, const Plan::Node& node)
     }
 }
 
+void evaluateSharedRead(const Context& context, const Plan::Node& node)
+{
+    const auto& shared = context.plan.sharedArrays()[node.immediate];
+    const auto* indices = context.operand(node, 0, 0);
+    const auto* storage = context.lanes(shared.storage);
+    auto elements = static_cast<Word>(shared.elements);
+    auto components = static_cast<Word>(shared.components);
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* out = context.lanes(node, component);
+
+        if (elements == 0)
+        {
+            fill(out, 0u, context.stride);
+            continue;
+        }
+
+        for (auto lane = 0; lane < context.stride; ++lane)
+        {
+            auto inRange = indices[lane] < elements;
+            auto element = inRange ? indices[lane] : 0u;
+            auto value =
+                storage[element * components + static_cast<Word>(component)];
+            out[lane] = inRange ? value : 0u;
+        }
+    }
+}
+
+void evaluateAtomicLoad(const Context& context, const Plan::Node& node)
+{
+    const auto& view = context.slots[static_cast<std::size_t>(node.immediate)];
+    const auto* indices = context.operand(node, 0, 0);
+    auto* out = context.lanes(node);
+
+    for (auto lane = 0; lane < context.stride; ++lane)
+        out[lane] = indices[lane] < view.count ? view.atomicLoad(indices[lane]) : 0u;
+}
+
 void evaluateNode(const Context& context, const Plan::Node& node)
 {
     switch (node.op)
@@ -540,6 +579,14 @@ void evaluateNode(const Context& context, const Plan::Node& node)
 
         case Op::ArrayRead:
             evaluateArrayRead(context, node);
+            return;
+
+        case Op::SharedRead:
+            evaluateSharedRead(context, node);
+            return;
+
+        case Op::AtomicLoad:
+            evaluateAtomicLoad(context, node);
             return;
 
         default:

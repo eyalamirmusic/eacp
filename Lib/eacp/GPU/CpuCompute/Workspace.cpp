@@ -13,7 +13,8 @@ Word* alignedWords(Word* start)
     auto address = reinterpret_cast<std::uintptr_t>(start);
     auto alignment = workspaceAlignmentWords * sizeof(Word);
     auto aligned = (address + alignment - 1) / alignment * alignment;
-    return start + (aligned - address) / sizeof(Word);
+    auto paddingWords = (aligned - address) / sizeof(Word);
+    return start + paddingWords;
 }
 
 void fillWorkspaceConstants(const Plan& plan, Workspace& workspace)
@@ -43,6 +44,17 @@ void fillWorkspaceLocalCoordinates(const Plan& plan, Workspace& workspace)
         real[lane] = Lanes::maskOf(isReal);
     }
 }
+
+void fillWorkspaceSimdGroupIndices(const Plan& plan, Workspace& workspace)
+{
+    for (auto node: plan.simdGroupIndexNodes())
+    {
+        auto* out = workspace.at(plan.node(node).scratch);
+
+        for (auto lane = 0; lane < plan.laneStride(); ++lane)
+            out[lane] = static_cast<Word>(lane / simdGroupWidth);
+    }
+}
 } // namespace
 
 Workspace::Workspace(const Plan& plan)
@@ -56,5 +68,6 @@ Workspace::Workspace(const Plan& plan)
 
     fillWorkspaceConstants(plan, *this);
     fillWorkspaceLocalCoordinates(plan, *this);
+    fillWorkspaceSimdGroupIndices(plan, *this);
 }
 } // namespace eacp::GPU::CpuCompute

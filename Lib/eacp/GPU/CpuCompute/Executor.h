@@ -7,10 +7,12 @@
 #include <eacp/GPU/Codegen/ComputeKernel.h>
 
 #include <array>
+#include <cstdint>
+#include <span>
 #include <string>
 
 // Runs a compute kernel on the calling thread: one plan, one workspace, and
-// the three dispatch forms ComputePass has. Everything is allocated by the
+// the dispatch forms ComputePass has, indirect included. Everything is allocated by the
 // constructor; a dispatch takes no lock, makes no system call and allocates
 // nothing, so it can run on an audio thread.
 
@@ -50,10 +52,23 @@ public:
     bool dispatch(const Bindings& bindings, int width, int height);
     bool dispatch(const Bindings& bindings, int width, int height, int depth);
 
+    // ComputePass::dispatchIndirect for a 1D kernel: the thread group counts
+    // are the DispatchArguments at arguments[offsetInElements] - groups, not
+    // threads - and guardCount is the extent the bounds guard and gridCount()
+    // read. Groups in y and z repeat the x range, as on the GPU. Arguments
+    // that do not hold a whole DispatchArguments at the offset, or a count of
+    // zero on any axis, run nothing; like the direct forms, false means only
+    // an invalid plan, a kernel of another rank or a slot left unbound.
+    bool dispatchIndirect(const Bindings& bindings,
+                          std::span<const std::uint32_t> arguments,
+                          int guardCount,
+                          int offsetInElements = 0);
+
 private:
     using GridSize = std::array<int, 3>;
 
     bool run(const Bindings& bindings, DispatchRank rank, GridSize extents);
+    void readUniforms(const std::array<std::uint32_t, 3>& extents);
 
     Plan executionPlan;
     Workspace scratch;

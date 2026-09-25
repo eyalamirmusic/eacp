@@ -90,6 +90,14 @@ public:
     // kernel counts in.
     int getSegmentCount() const { return segments.size() / 4; }
 
+    // Those segments, four floats each in coverage pixel space: what a batch
+    // uploads, and what a test runs the binning stages over on the CPU.
+    const Vector<float>& getSegments() const { return segments; }
+
+    // Tiles across the coverage, which is what a batch adds up to size the count
+    // and offset arrays the binning kernels work in.
+    int getTileCount() const { return tilesWide * tilesHigh; }
+
     // What this path's backdrop costs a batch in cells - one integer per tile
     // column per pixel row. This is the only thing a batch allocates that grows
     // with *area*, so it is the only one that can reach a ceiling.
@@ -150,10 +158,6 @@ private:
     // Where the coverage goes: the texture a slot was taken in, or the one this
     // owns. Null until a dispatch has settled which.
     const GPU::Texture* getTargetTexture() const;
-
-    // Tiles across the coverage, which is what a batch adds up to size the count
-    // and offset arrays the binning kernels work in.
-    int getTileCount() const { return tilesWide * tilesHigh; }
 
     void ensureOwnTexture();
     void countTiles() const;

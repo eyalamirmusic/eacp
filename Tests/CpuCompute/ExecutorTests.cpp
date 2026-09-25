@@ -384,19 +384,19 @@ auto tLargeConstant = test("Executor/uintConstantAboveIntMax") = []
         check(output[i] == 3000000000u + (std::uint32_t) i);
 };
 
-auto tInvalid = test("Executor/barrierMakesThePlanInvalid") = []
+auto tBarrierGuard = test("Executor/aBarrierDropsTheGuardAndStoresStayInBounds") = []
 {
     auto kernel = BarrierKernel {};
     auto executor = Executor {kernel};
-    check(!executor.isValid());
-    check(!executor.reason().empty());
-    check(executor.reason().find("Barrier") != std::string::npos);
+    check(executor.isValid(), executor.reason());
 
     auto output = makeFloats(4, sentinel);
     auto bindings = Bindings {};
     bindings.set(kernel.output, output);
-    check(!executor.dispatch(bindings, 4));
-    check(output[0] == sentinel);
+    check(executor.dispatch(bindings, 4));
+
+    for (auto i = 0; i < 4; ++i)
+        check(output[i] == (float) i);
 };
 
 // ---------------------------------------------------------------------------
@@ -2416,53 +2416,6 @@ auto tGainChanges = test("Executor/aUniformChangedBetweenDispatchesIsSeen") = []
 
 namespace
 {
-struct AtomicKernel final : ComputeKernel
-{
-    AtomicKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        atomicAdd(counts, i % 4u, 1u);
-    }
-
-    Uniform<AtomicBuffer> counts;
-
-    EACP_SHADER(counts)
-};
-
-struct LocalIdKernel final : ComputeKernel
-{
-    LocalIdKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        write(output, i, toFloat(localId()));
-    }
-
-    Uniform<OutputBuffer> output;
-
-    EACP_SHADER(output)
-};
-
-struct SharedKernel final : ComputeKernel
-{
-    SharedKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        auto tile = shared<Float>(64);
-        write(tile, i % 64u, toFloat(i));
-        write(output, i, tile[(i + 1u) % 64u]);
-    }
-
-    Uniform<OutputBuffer> output;
-
-    EACP_SHADER(output)
-};
-
 struct ImageKernel final : ComputeKernel
 {
     ImageKernel() { compile(); }
@@ -2491,22 +2444,6 @@ struct ErfKernel final : ComputeKernel
     {
         auto i = threadId();
         write(output, i, erf(input[i]));
-    }
-
-    Uniform<InputBuffer> input;
-    Uniform<OutputBuffer> output;
-
-    EACP_SHADER(input, output)
-};
-
-struct GroupSumKernel final : ComputeKernel
-{
-    GroupSumKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        write(output, i, groupSum(input[i]));
     }
 
     Uniform<InputBuffer> input;
@@ -2666,19 +2603,11 @@ auto tEmptyDispatch =
 
 auto tOutOfTier = test("Executor/everyOutOfTierConstructIsRefusedByName") = []
 {
-    auto atomic = AtomicKernel {};
-    auto localIds = LocalIdKernel {};
-    auto sharedMemory = SharedKernel {};
     auto image = ImageKernel {};
     auto errorFunction = ErfKernel {};
-    auto reduction = GroupSumKernel {};
 
-    check(refusedNaming(Executor {atomic}, "AtomicAdd"));
-    check(refusedNaming(Executor {localIds}, "LocalId"));
-    check(refusedNaming(Executor {sharedMemory}, "Shared"));
     check(refusedNaming(Executor {image}, "TextureStore"));
     check(refusedNaming(Executor {errorFunction}, "eacpErf"));
-    check(refusedNaming(Executor {reduction}, "GroupReduce"));
 
     auto builder = ShaderBuilder {};
     auto output = builder.outputBuffer();
@@ -2955,6 +2884,126 @@ auto tNoAllocation = test("Executor/aDispatchAfterTheFirstAllocatesNothing") = [
         check(output[i * 4 + 2] == 0.25f);
         check(output[i * 4 + 3] == input[i]);
     }
+};
+
+namespace
+{
+constexpr auto realtimeGroupWidth = 96;
+
+struct RealtimeGroupKernel final : ComputeKernel
+{
+    RealtimeGroupKernel()
+        : ComputeKernel({realtimeGroupWidth})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto lane = localId();
+        auto i = threadId();
+        auto width = (unsigned) realtimeGroupWidth;
+        auto tile = shared<Float>(realtimeGroupWidth);
+
+        write(tile, lane, input[i]);
+        barrier();
+
+        auto total = groupSum(tile[(lane + 1u) % width]);
+        auto peak = simdMax(tile[lane]);
+        auto ticket = atomicAdd(counter, 0u, 1u);
+        auto place = groupId() * 10u + simdGroupIndex();
+
+        ifThen(i < gridCount(),
+               [&]
+               {
+                   write(output,
+                         i,
+                         float4(total, peak, toFloat(place), toFloat(ticket)));
+               });
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+    Uniform<AtomicBuffer> counter;
+
+    EACP_SHADER(input, output, counter)
+};
+
+bool matchesRealtimeGroups(const Vector<float>& input, const Vector<float>& output)
+{
+    auto count = input.size();
+    auto valueAt = [&](int i) { return i < count ? input[i] : 0.f; };
+    auto matches = true;
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto group = i / realtimeGroupWidth;
+        auto block = i / simdGroupWidth;
+        auto total = 0.f;
+        auto peak = 0.f;
+
+        for (auto k = 0; k < realtimeGroupWidth; ++k)
+            total += valueAt(group * realtimeGroupWidth + k);
+
+        for (auto k = 0; k < simdGroupWidth; ++k)
+            peak = std::max(peak, valueAt(block * simdGroupWidth + k));
+
+        auto simdGroup = (i % realtimeGroupWidth) / simdGroupWidth;
+
+        matches = matches && output[i * 4 + 0] == total && output[i * 4 + 1] == peak
+                  && output[i * 4 + 2] == (float) (group * 10 + simdGroup)
+                  && output[i * 4 + 3] == (float) i;
+    }
+
+    return matches;
+}
+} // namespace
+
+auto tNoGroupAllocation =
+    test("Executor/aGroupDispatchAfterTheFirstAllocatesNothing") = []
+{
+    constexpr auto count = 150;
+
+    auto kernel = RealtimeGroupKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    auto input = ramp(count);
+    auto output = makeFloats(count * 4, sentinel);
+    auto counter = makeUInts(1, 0u);
+    auto arguments = std::array<std::uint32_t, 3> {2u, 1u, 1u};
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.output, output);
+    bindings.set(kernel.counter, counter);
+
+    auto warmedUp = executor.dispatch(bindings, count);
+    counter[0] = 0u;
+
+    allocationsCounted = 0;
+    releasesCounted = 0;
+    countingHeap = true;
+    auto ran = executor.dispatch(bindings, count);
+    countingHeap = false;
+
+    auto direct = matchesRealtimeGroups(input, output);
+    output = makeFloats(count * 4, sentinel);
+    counter[0] = 0u;
+    bindings.set(kernel.output, output);
+
+    countingHeap = true;
+    auto ranIndirect = executor.dispatchIndirect(bindings, arguments, count);
+    countingHeap = false;
+
+    check(warmedUp);
+    check(ran);
+    check(ranIndirect);
+    check(allocationsCounted.load() == 0);
+    check(releasesCounted.load() == 0);
+    check(direct);
+    check(matchesRealtimeGroups(input, output));
+    check(counter[0] == 2u * realtimeGroupWidth);
 };
 
 namespace

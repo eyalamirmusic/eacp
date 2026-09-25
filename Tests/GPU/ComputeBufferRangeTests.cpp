@@ -104,28 +104,11 @@ Buffer makeFilled(int elements, float value)
                    BufferUsage::Storage};
 }
 
-Buffer makeZeroedCounters(int elements)
-{
-    auto zeros = Vector<std::uint32_t> {};
-    zeros.assign(elements, 0u);
-
-    return Buffer {
-        Device::shared(), zeros.data(), uintBytes * elements, BufferUsage::Storage};
-}
-
 Vector<float> readFloats(const Buffer& buffer, int elements)
 {
     auto values = Vector<float> {};
     values.resize(elements);
     buffer.read(values.data(), floatBytes * elements);
-    return values;
-}
-
-Vector<std::uint32_t> readCounters(const Buffer& buffer, int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.resize(elements);
-    buffer.read(values.data(), uintBytes * elements);
     return values;
 }
 
@@ -368,37 +351,26 @@ auto tWholeBufferStillBindsFromZero =
 // offset + i, and the counters below the offset stay zero.
 auto tAtomicBoundAtOffset = test("GPU/computeAtomicBoundAtOffset") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     const auto count = 3;
     const auto first = 2 * rowElements(uintBytes);
     const auto capacity = first + count + 1;
 
-    auto counters = makeZeroedCounters(capacity);
-
     auto kernel = BumpKernel {};
-    kernel.counters = BufferRange {&counters, first * uintBytes, count * uintBytes};
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.counters, filled(capacity, 0u), first, count)
+        .agreeing()
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.counters);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    auto values = readCounters(counters, capacity);
-
-    for (auto i = 0; i < capacity; ++i)
-    {
-        auto bumped = i >= first && i < first + count;
-        check(values[i] == (bumped ? 1u : 0u));
-    }
+                 for (auto i = 0; i < capacity; ++i)
+                 {
+                     auto bumped = i >= first && i < first + count;
+                     check(values[i] == (bumped ? 1u : 0u), readback.name());
+                 }
+             });
 };
 
 // A range that names nothing, one starting before its buffer and one starting

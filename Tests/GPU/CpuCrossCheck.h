@@ -5,7 +5,9 @@
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
 #include <cstdint>
+#include <cmath>
 #include <functional>
+#include <optional>
 #include <source_location>
 #include <span>
 #include <string>
@@ -35,6 +37,33 @@ Vector<T> filled(int elements, T value)
     auto values = Vector<T> {};
     values.assign(elements, value);
     return values;
+}
+
+// The two backends' copies of one array, element for element: floats within
+// `tolerance`, integers exactly.
+inline void expectAgreement(
+    const Vector<float>& cpu,
+    const Vector<float>& gpu,
+    float tolerance = 0.f,
+    const std::source_location& where = std::source_location::current())
+{
+    nano::check(cpu.size() == gpu.size(), "gpu vs cpu: the sizes", where);
+
+    auto agreeing = 0;
+
+    for (auto i = 0; i < cpu.size() && i < gpu.size(); ++i)
+        if (cpu[i] == gpu[i] || std::abs(cpu[i] - gpu[i]) <= tolerance)
+            ++agreeing;
+
+    nano::check(agreeing == cpu.size(), "gpu vs cpu: every element", where);
+}
+
+inline void expectAgreement(
+    const Vector<std::uint32_t>& cpu,
+    const Vector<std::uint32_t>& gpu,
+    const std::source_location& where = std::source_location::current())
+{
+    nano::check(cpu == gpu, "gpu vs cpu: every element", where);
 }
 
 struct HostArray
@@ -86,6 +115,11 @@ public:
     }
 
     const Vector<std::uint32_t>& uints(const UIntOutputBuffer& member) const
+    {
+        return find(member.slot).uints;
+    }
+
+    const Vector<std::uint32_t>& uints(const AtomicBuffer& member) const
     {
         return find(member.slot).uints;
     }
@@ -169,6 +203,33 @@ public:
         return *this;
     }
 
+    CrossCheck& output(Uniform<AtomicBuffer>& member,
+                       const Vector<std::uint32_t>& initial,
+                       int first = 0,
+                       int count = -1)
+    {
+        auto& array = add(member.slot, initial, first, count);
+        array.bindOnCpu = [&member](CpuCompute::Bindings& bindings, HostArray& host)
+        { nano::check(bindings.set(member, host.uintRange())); };
+        array.bindOnGpu = [&member](const BufferRange& range) { member = range; };
+        return *this;
+    }
+
+    CrossCheck&
+        output(Uniform<AtomicBuffer>& member, int elements, std::uint32_t fill = 0u)
+    {
+        return output(member, filled(elements, fill));
+    }
+
+    // After both halves have run, every array the GPU read back is compared
+    // with the CPU's, element for element. Not for a kernel whose result
+    // depends on the order threads ran in, such as atomic tickets.
+    CrossCheck& agreeing(float tolerance = 0.f)
+    {
+        agreement = tolerance;
+        return *this;
+    }
+
     CrossCheck& output(Uniform<OutputBuffer>& member, int elements, float fill = 0.f)
     {
         return output(member, filled(elements, fill));
@@ -223,6 +284,42 @@ public:
                 where);
     }
 
+    // An indirect 1D dispatch whose DispatchArguments sit at
+    // arguments[offsetInElements]; on the GPU the same words are a Buffer
+    // read at offsetInElements * 4 bytes.
+    void runIndirect(
+        const Vector<std::uint32_t>& arguments,
+        int guardCount,
+        int offsetInElements,
+        const Verify& verify,
+        const std::source_location& where = std::source_location::current())
+    {
+        auto buffer = std::optional<Buffer> {};
+
+        if (Device::shared().isValid())
+            buffer.emplace(
+                Device::shared().makeBuffer(arguments.data(),
+                                            elementBytes * arguments.size(),
+                                            BufferUsage::Storage));
+
+        auto words = std::span<const std::uint32_t> {arguments.data(),
+                                                     (std::size_t) arguments.size()};
+
+        runBoth(
+            [=](CpuCompute::Executor& executor, const CpuCompute::Bindings& bindings)
+            {
+                return executor.dispatchIndirect(
+                    bindings, words, guardCount, offsetInElements);
+            },
+            [&](ComputePass& pass, ComputeProgram& program)
+            {
+                pass.dispatchIndirect(
+                    program, *buffer, guardCount, elementBytes * offsetInElements);
+            },
+            verify,
+            where);
+    }
+
 private:
     using CpuDispatch =
         std::function<bool(CpuCompute::Executor&, const CpuCompute::Bindings&)>;
@@ -275,6 +372,26 @@ private:
 
         nano::check(dispatch(executor, bindings), "cpu: the dispatch ran", where);
         verify(Readback {Backend::Cpu, host});
+        cpuResult = std::move(host);
+    }
+
+    void expectBackendsAgree(const Vector<HostArray>& gpuResult,
+                             const std::source_location& where) const
+    {
+        if (!agreement || cpuResult.size() != gpuResult.size())
+            return;
+
+        for (auto index = 0; index < gpuResult.size(); ++index)
+        {
+            if (gpuResult[index].isUInt)
+                expectAgreement(
+                    cpuResult[index].uints, gpuResult[index].uints, where);
+            else
+                expectAgreement(cpuResult[index].floats,
+                                gpuResult[index].floats,
+                                *agreement,
+                                where);
+        }
     }
 
     void runOnGpu(const GpuDispatch& dispatch,
@@ -321,10 +438,13 @@ private:
         }
 
         verify(Readback {Backend::Gpu, host});
+        expectBackendsAgree(host, where);
     }
 
     ComputeProgram& kernel;
     Vector<HostArray> arrays;
+    Vector<HostArray> cpuResult;
+    std::optional<float> agreement;
 };
 
 // A kernel run on the CPU by hand, for the cases whose bindings a CrossCheck
@@ -342,6 +462,26 @@ bool dispatchOnCpu(ComputeKernel& kernel,
         return false;
 
     auto ran = executor.dispatch(bindings, extents...);
+    nano::check(ran, "cpu: the dispatch ran");
+    return ran;
+}
+
+// The indirect twin: the arguments are host words another CPU dispatch may
+// have written, read at offsetInElements.
+inline bool dispatchIndirectOnCpu(ComputeKernel& kernel,
+                                  const CpuCompute::Bindings& bindings,
+                                  std::span<const std::uint32_t> arguments,
+                                  int guardCount,
+                                  int offsetInElements = 0)
+{
+    auto executor = CpuCompute::Executor {kernel};
+    nano::check(executor.isValid(), "cpu: " + executor.reason());
+
+    if (!executor.isValid())
+        return false;
+
+    auto ran =
+        executor.dispatchIndirect(bindings, arguments, guardCount, offsetInElements);
     nano::check(ran, "cpu: the dispatch ran");
     return ran;
 }

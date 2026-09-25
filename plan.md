@@ -14,7 +14,7 @@ kernels in `GPUWidgets`. Line counts are estimates, not commitments.
 | --- | --- | --- |
 | 0 — the device-free seam | built, macOS green | macOS: `GPUCodegenTests` 104, `GPUTests` 478, `GPUWidgetsTests` 57, `UITests` 183, all passing — the baseline plus the one new case. Linux lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 1 — tier one: streams, control flow, 1D/2D/3D | built, macOS green | macOS: `CpuComputeTests` 69 (63 `Executor/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves inside 36 existing cases across 13 suites, `GPUCodegenTests` 104, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 2 — tier two: the threadgroup | not started | |
+| 2 — tier two: the threadgroup | built, macOS green | macOS: `CpuComputeTests` 91 (64 `Executor/`, 21 `Group/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the stage-2 suites and the five stage-1 deferrals, `GPUCodegenTests` 115 (ten `…/runs` and one emitter guard new), `GPUWidgetsTests` 65 (8 new), `UITests` 183, all passing. Found and fixed an emitter bug (stage 2, *as built*). Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 3 — tier three: packed helpers and the SIMD-group matrix | not started | |
 | 4 — performance | not started | |
 | 5 — integration | not started | |
@@ -281,6 +281,24 @@ barrier sits inside a loop — `GroupReductionTests`' `RowSumKernel` folds with
 loop is a C++ `for`, unrolled as the graph is recorded, for exactly this
 reason.)
 
+*As built (stage 2):* `LocalId` has no scratch of its own — its node points at
+the workspace's local-coordinate rows; `GroupId` is filled once per group and
+`SimdGroupIndex` once per workspace. The shared arrays sit in one block, each
+one run of words per group, element-major (`storage + e * components + c`),
+zeroed at group start after the guard; shared indices are unsigned, so a
+negative one is out of range. Shared memory is capped only by the existing
+`INT32_MAX`-word scratch limit (`SharedMemoryTests`' 1M-float array is 4 MB
+here). `GroupReduce` stages into one reduction row, allocated only when the
+kernel reduces, and folds it with the fallback's bounded halving tree; `Simd`
+blocks are `min(threads, 32)` wide and a partial last block folds only the
+lanes it has. Only `Float`, `UInt` and `Int` fold — anything else is refused —
+and D7's identity for an inactive lane is `-0.0f` for a float sum, `-inf`/
+`+inf` for a float max/min (which fold through `fmax`/`fmin`), 0 for an
+integer sum, 0 / `UINT32_MAX` for a uint max/min and `INT32_MIN`/`INT32_MAX`
+for an int max/min. With a barrier dropping the guard, the lanes of a last group past the
+extent run, read 0, fold, and store wherever the output has room;
+`GPUCodegenTests` pins both sides of that.
+
 **D3 — Plan once, execute without allocating.** Construction is the plan: it
 decodes the graph into a flat op list — each `Call` name, `Compare` text and
 shift text resolved to an enum, each operand to a scratch slot, every `Expr`
@@ -473,7 +491,14 @@ in ascending order, each lane getting the pre-add value, so stage 4's parallel
 groups change nothing in the executor. Core has no pool and this plan does not
 add one: stage 4 exposes `dispatchGroups(first, count, Workspace&)` and lets
 the caller's own threads — an audio host's worker pool, a render thread —
-run disjoint ranges.
+run disjoint ranges. *As built (stage 2):* as planned; the pre-add value lands
+in the variable of active lanes only, and an atomic op on a non-`Atomic` slot
+is refused at plan time. The ordering is observable and the tests use it:
+each statement finishes across the whole group before the next, so every
+lane's `load` after an add returns its group's final count exactly
+(`AtomicCodegenTests`' run case) — which no GPU guarantees, so the
+`GPUTests` ticket cases check each backend for a permutation of `0..n-1` and
+never compare tickets across backends.
 
 **D9 — `Lib/eacp/GPU/CpuCompute/`, target `eacp-cpu-compute`, namespace
 `eacp::GPU::CpuCompute`.** The `Spirv` precedent exactly: a subdirectory of
@@ -511,6 +536,19 @@ does not: its exact float cases have nothing contractable. There is no
 environment switch that disables the Metal device, so "never self-skips" was
 proven by forcing the GPU half off temporarily (478/478) and by corrupting the
 CPU result (exactly the 36 cross-check cases failed, each naming `cpu`).
+*As built (stage 2):* `GPUCodegenTests`' `TARGETS eacp-gpu-codegen
+eacp-cpu-compute` is unguarded — both targets sit above the `EACP_HAS_GPU`
+return — so its `…/runs` cases run on every lane, driverless Linux included.
+Each suite records one graph for its emit and run cases, in a small struct
+holding a `ShaderBuilder` and its buffer handles (neither copyable nor
+movable, since the handles point into the builder); a bare graph runs through
+`Executor {graph}`. The reduction references are a local copy of the fallback
+tree over non-dyadic inputs, compared with `==`, copied rather than shared
+with `GroupTests.cpp` because the two binaries share no header.
+`GPUWidgetsTests` links `eacp-cpu-compute` too. Multi-kernel handoffs
+(the indirect pipelines, the histogram, `BinKernel` → `CopyUIntKernel`) are
+bound by hand over one host array on the CPU and compared with the GPU's
+buffer; a case with two float tolerances compares the backends at the looser.
 
 **D10 — Dispatch mirrors `ComputePass`.** `Executor::dispatch(bindings,
 count)`, `(bindings, width, height)` and `(bindings, width, height, depth)`
@@ -524,7 +562,13 @@ from the group's x alone, so groups in y and z repeat the x range, as a 1D
 kernel's `gid` does on every backend. Every dispatch returns whether it ran
 (false for an invalid plan or a slot left unbound that the kernel reads —
 checked, not logged). *As built:* unchanged, except that a wrong rank returns
-false rather than asserting.
+false rather than asserting. *As built (stage 2):* `dispatchIndirect` as
+planned. An offset that leaves no whole `DispatchArguments`, a negative
+offset or a zero group count runs nothing and returns true, like
+`dispatch(0)`; false still means an invalid plan, a wrong rank or a bad slot.
+A negative `guardCount` is 0 — and a kernel with barriers, having no guard,
+still runs every lane then, as on the GPU. `GroupId.x` in y and z is the x
+group.
 
 **D11 — Out of scope for v1.** Textures: `Sample`, `Fetch`, `TextureStore`
 and `WritableTexture2D` members (stage 3 may add a float4 image — a span of
@@ -544,33 +588,35 @@ fragments first.
 | `Lib/eacp/GPU/Codegen/ComputeProgram.h` | `ComputeProgram : ComputeKernel`, GPU half only | −600; *as built:* 885 → 336 |
 | `Lib/eacp/GPU/Codegen/ShaderGraph.h` | `isPure` public | ~5 |
 | `Lib/eacp/GPU/Codegen/Codegen.h` | include `ComputeKernel.h` | ~1 |
+| `Lib/eacp/GPU/Codegen/ShaderEmitter.cpp` | *as built (stage 2):* `floatLiteral` writes the shortest `%g` that reads back exactly | +18/−3 |
 | `Lib/eacp/GPU/CMakeLists.txt` | `add_subdirectory(CpuCompute)` before the GPU return. *As built:* stage 0 needed no edit here — `add_ide_sources` globs headers | ~3 |
 | `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35; *as built:* 33 |
 | `CpuCompute/CpuCompute.h` | umbrella | ~10; *as built:* 11 |
-| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263 |
+| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263; *stage 2:* 77 + 348 |
 | `CpuCompute/Bindings.h` | the slot table and typed setters | ~120; *as built:* 118 |
 | `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70; *as built:* 48 |
-| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488 |
-| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60 |
-| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67 |
-| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537 |
-| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198 |
+| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488; *stage 2:* 324 + 1829 |
+| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60; *stage 2:* 35 + 73 |
+| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67; *stage 2:* 102 |
+| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537; *stage 2:* 606 |
+| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198; *stage 2:* 396 |
 | `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667 |
 | `CpuCompute/Lanes.h` | lane-array primitives (D5) | ~300; *as built:* 172 |
 | `CpuCompute/Helpers.{h,cpp}` | C++ twins of the 17 `eacp*` helpers (stage 3) | ~350 |
 | `CpuCompute/SimdMatrix.cpp` | fragments per SIMD group (stage 3) | ~200 |
 | `Tests/CMakeLists.txt` | `add_subdirectory(CpuCompute)` | ~3 |
-| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17 |
-| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin |
+| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17; *stage 2:* +1/−1 |
+| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin; *stage 2:* 3174 |
 | `Tests/CpuCompute/KernelTests.cpp` | `Apps/GPU` kernels as `ComputeKernel`s vs references | ~350; *as built:* 415 |
-| `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450 |
+| `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450; *as built:* 1517 |
 | `Tests/CpuCompute/HelperTests.cpp` | stage 3: helpers, fragments | ~350 |
 | `Tests/CpuCompute/CpuComputeBench.cpp` | stage 4 | ~300 |
-| `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4; *as built (stage 1, `GPUTests` only):* +5/−2 |
-| `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180; *as built:* 348 |
-| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181 |
-| `Tests/GPU/*CodegenTests.cpp` | numeric checks on the recorded graphs | ~+200 |
-| `Tests/GPUWidgets/…` | path kernels cross-checked (stage 2) | ~150 |
+| `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4; *as built (stage 1, `GPUTests` only):* +5/−2; *stage 2 (`GPUCodegenTests`):* +1/−1 |
+| `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180; *as built:* 348; *stage 2:* 488 — atomic outputs, `agreeing`, `runIndirect`, `expectAgreement`, `dispatchIndirectOnCpu` |
+| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181; *stage 2 (10 files):* +700/−993 |
+| `Tests/GPU/*CodegenTests.cpp`, `CodegenCommon.h` | numeric checks on the recorded graphs | ~+200; *as built (stage 2, 4 files):* +524/−107 |
+| `Tests/GPUWidgets/…` | path kernels cross-checked (stage 2) | ~150; *as built:* `PathKernelCpuTests.cpp` 678, `CpuPathKernels.h` 190, `PathShapes.h` 50 (moved out of `CoverageBatchTests.cpp`), `PrefixSumTests.cpp` +203 |
+| `Lib/eacp/GPUWidgets/Path/PathRasterizer.h` | *as built (stage 2):* `getSegments()`, `getTileCount()` public, so a test can gather a batch's inputs | +8/−4 |
 | `Apps/GPU/CpuCompute/` | stage 5 example | ~200 |
 | `Lib/eacp/GPU/README.md`, `CLAUDE.md`, `README.md` table | stage 5 | ~150 |
 
@@ -626,11 +672,12 @@ is invalid with a reason. Verified by:
 Done when all of those are green everywhere, including the two Linux lanes
 with no device, which is the first time they check a kernel's numbers.
 ~3,800 lines, ~1,500 of them tests. *As built:* `InPlaceComputeTests` is
-entirely stage 3 — its only kernel calls `erf` — and `IntrinsicTests`'
-`SaturatingTanh`, `ErrorFunction` and `VectorIntrinsic`,
-`UIntBufferTests::BinKernel`, `ComputeBufferRangeTests::BumpKernel`,
-`UIntVectorTests::SharedPairKernel`, `Dispatch3DTests::GroupIdVolumeKernel`
-and `ThreadIndexVectorTests::RebuiltPairKernel` wait for stages 2 and 3. The
+entirely stage 3 — its only kernel calls `erf` — and so are `IntrinsicTests`'
+`SaturatingTanh`, `ErrorFunction` and `VectorIntrinsic`; the five kernels
+that needed the threadgroup tier (`UIntBufferTests::BinKernel`,
+`ComputeBufferRangeTests::BumpKernel`, `UIntVectorTests::SharedPairKernel`,
+`Dispatch3DTests::GroupIdVolumeKernel`,
+`ThreadIndexVectorTests::RebuiltPairKernel`) got their CPU halves in stage 2. The
 five example kernels match their references *exactly*: the same `std::`
 transcendentals, the same order of operations, no contraction. The
 zero-allocation case replaces all 20 global `operator new`/`delete` forms in
@@ -666,6 +713,47 @@ dispatch wrote); by CPU halves in `SharedMemoryTests`,
 device (`CoverageKernel` minus its texture write waits for stage 3). Done when
 the path pipeline's bins and backdrops agree to the element with the GPU on
 macOS and on lavapipe. ~1,500 lines, ~800 of them tests.
+
+*As built:* everything listed plans and runs; nothing in the stage-2 suites,
+the codegen graphs or the five path kernels was refused. The library grew
++669/−32 across 9 files; the tests +4,138/−1,221, the deletions being
+duplication the shared cross-check helpers folded away. `Executor/barrierMakesThePlanInvalid`
+became `Executor/aBarrierDropsTheGuardAndStoresStayInBounds`, and the stage-2
+rows of `everyOutOfTierConstructIsRefusedByName` moved to
+`Group/malformedGroupStatementsAreRefusedByName`.
+`Executor/aGroupDispatchAfterTheFirstAllocatesNothing` extends D3's
+zero-allocation check to shared memory, a barrier, `groupSum`, `simdMax`,
+atomics and the indirect form. `GPUTests` stays at 478: the CPU halves went
+into existing cases — `SharedMemory` `everyThreadReadsAnotherLane`, five of
+`ThreadGroupSize`, all nine of `GroupReduction`, `Atomic`'s ticket and bucket
+cases, all four of `IndirectDispatch` (three run Count → Prepare → indirect
+Consume on the CPU; the offset case at 4, −4, 8, 16 and 64 bytes) — plus the
+five stage-1 deferrals. `SharedMemoryTests`' `BudgetedKernel`,
+`WideElementKernel` and `OverBudgetKernel` are never dispatched and have no CPU
+half. `GPUCodegenTests` gained ten `…/runs` cases over `AtomicCodegenTests`'
+and `GroupReductionCodegenTests`' graphs. `GPUWidgetsTests` gained
+`PathKernelCpuTests.cpp` (5 cases over the mixed, very-different-backdrops and
+24-star batches) and three `PrefixSumTests` cases; the chain runs clear →
+count → backdrop → sum → fill, each stage its own command buffer, every buffer
+compared after each with 5 sentinels past every array. Integer buffers match
+exactly; fill-mode entries are compared per tile as sorted sets, since slot
+order inside a tile follows the GPU's atomic cursor. The backdrop scan is also
+run over the GPU's own crossings, and the CPU's crossings and backdrops are
+held to a plain C++ reference on every lane.
+
+That cross-check caught the first real bug of the plan, and it was in the
+emitter, not the executor: `floatLiteral` printed `%g`, six significant
+digits, so `backdropFixedScale` = 2^20 reached every dialect as `1.04858e+06`
+= 1048580 and the GPU's crossings drifted 1 to 4 units (1737 of 14882 cells in
+the mixed scene) — a C++ single-precision copy matched the executor at 2^20
+and the GPU at 1048580. It now writes the shortest `%g` (6 to 9 digits) that
+`strtof` reads back exactly; a value exact at six digits keeps its spelling,
+so no golden string changed, and 2^20 is `1048576.0`.
+`GPU/codegenFloatLiteralRoundTrips` guards it (the 115th codegen case), and
+`PathKernelCpuTests`' crossing and whole-chain backdrop comparisons, gated
+while the bug stood, now run unconditionally and match Metal to the element.
+Not yet done:
+the lavapipe half of "done when", which waits for CI.
 
 **Stage 3 — tier three: packed data and the SIMD-group matrix.**
 `CpuCompute/Helpers.{h,cpp}`: the 17 `eacp*` helpers in C++ (half with

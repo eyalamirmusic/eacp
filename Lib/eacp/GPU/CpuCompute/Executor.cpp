@@ -158,7 +158,36 @@ void executorEvaluateArrays(const Context& context)
     }
 }
 
-void executorRunGroup(const Context& context, Extents origin, Extents extents)
+void executorFillGroupIds(const Context& context, Extents group)
+{
+    const auto& plan = context.plan;
+
+    for (const auto& groupId: plan.groupIdNodes())
+    {
+        const auto& node = plan.node(groupId.node);
+
+        for (auto component = 0; component < node.components; ++component)
+        {
+            auto axis = groupId.index == allComponents ? component : groupId.index;
+            Lanes::fill(context.lanes(node, component),
+                        group[static_cast<std::size_t>(axis)],
+                        context.stride);
+        }
+    }
+}
+
+void executorClearShared(const Context& context)
+{
+    const auto& plan = context.plan;
+
+    if (plan.sharedWordCount() > 0)
+        Lanes::fill(context.lanes(plan.sharedWords()), 0u, plan.sharedWordCount());
+}
+
+void executorRunGroup(const Context& context,
+                      Extents group,
+                      Extents origin,
+                      Extents extents)
 {
     executorFillThreadIds(context, origin);
 
@@ -167,8 +196,26 @@ void executorRunGroup(const Context& context, Extents origin, Extents extents)
     if (!executorGuardGroup(context, root.mask, origin, extents))
         return;
 
+    executorFillGroupIds(context, group);
+    executorClearShared(context);
     executorEvaluateArrays(context);
     runBlock(context, context.plan.rootBlock(), root, 0, nullptr);
+}
+
+void executorRunGroups(const Context& context, Extents groups, Extents extents)
+{
+    auto shape = context.plan.groupShape();
+    auto sizes = Extents {static_cast<Word>(shape.x),
+                          static_cast<Word>(shape.y),
+                          static_cast<Word>(shape.z)};
+
+    for (auto z = 0u; z < groups[2]; ++z)
+        for (auto y = 0u; y < groups[1]; ++y)
+            for (auto x = 0u; x < groups[0]; ++x)
+                executorRunGroup(context,
+                                 {x, y, z},
+                                 {x * sizes[0], y * sizes[1], z * sizes[2]},
+                                 extents);
 }
 
 Word executorGroupsFor(int extent, int size)
@@ -238,6 +285,56 @@ bool Executor::run(const Bindings& bindings, DispatchRank rank, GridSize extents
         if (extent <= 0)
             return true;
 
+    auto words = executorWords(extents[0], extents[1], extents[2]);
+    readUniforms(words);
+
+    auto shape = executionPlan.groupShape();
+    auto axes = executorAxes(rank);
+
+    auto groups = Extents {executorGroupsFor(extents[0], shape.x),
+                           axes >= 2 ? executorGroupsFor(extents[1], shape.y) : 1u,
+                           axes >= 3 ? executorGroupsFor(extents[2], shape.z) : 1u};
+
+    executorRunGroups(context, groups, words);
+    return true;
+}
+
+bool Executor::dispatchIndirect(const Bindings& bindings,
+                                std::span<const std::uint32_t> arguments,
+                                int guardCount,
+                                int offsetInElements)
+{
+    if (!isValid() || executionPlan.rank() != DispatchRank::OneD)
+        return false;
+
+    auto context =
+        Context {executionPlan, scratch.words(), executionPlan.laneStride()};
+
+    if (!executorResolveSlots(executionPlan, bindings, context.slots))
+        return false;
+
+    constexpr auto argumentWords = sizeof(DispatchArguments) / sizeof(Word);
+    auto offset = static_cast<std::size_t>(offsetInElements);
+
+    if (offsetInElements < 0 || arguments.size() < argumentWords
+        || offset > arguments.size() - argumentWords)
+        return true;
+
+    auto groups =
+        Extents {arguments[offset], arguments[offset + 1], arguments[offset + 2]};
+
+    for (auto count: groups)
+        if (count == 0)
+            return true;
+
+    auto extents = executorWords(guardCount > 0 ? guardCount : 0, 1, 1);
+    readUniforms(extents);
+    executorRunGroups(context, groups, extents);
+    return true;
+}
+
+void Executor::readUniforms(const std::array<std::uint32_t, 3>& extents)
+{
     if (kernel != nullptr)
     {
         auto visitor = CpuUniformVisitor {kernel->graph(),
@@ -245,25 +342,7 @@ bool Executor::run(const Bindings& bindings, DispatchRank rank, GridSize extents
         kernel->visitMembers(visitor);
     }
 
-    auto words = executorWords(extents[0], extents[1], extents[2]);
-
     executorSplatUniforms(executionPlan, scratch);
-    executorSplatExtents(executionPlan, scratch, words);
-
-    auto shape = executionPlan.groupShape();
-    auto sizes = executorWords(shape.x, shape.y, shape.z);
-    auto axes = executorAxes(rank);
-
-    auto groupsX = executorGroupsFor(extents[0], shape.x);
-    auto groupsY = axes >= 2 ? executorGroupsFor(extents[1], shape.y) : 1u;
-    auto groupsZ = axes >= 3 ? executorGroupsFor(extents[2], shape.z) : 1u;
-
-    for (auto z = 0u; z < groupsZ; ++z)
-        for (auto y = 0u; y < groupsY; ++y)
-            for (auto x = 0u; x < groupsX; ++x)
-                executorRunGroup(
-                    context, {x * sizes[0], y * sizes[1], z * sizes[2]}, words);
-
-    return true;
+    executorSplatExtents(executionPlan, scratch, extents);
 }
 } // namespace eacp::GPU::CpuCompute

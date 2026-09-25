@@ -3,6 +3,7 @@
 #include "Workspace.h"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 
@@ -10,6 +11,9 @@
 
 namespace eacp::GPU::CpuCompute
 {
+static_assert(std::atomic_ref<Word>::is_always_lock_free);
+static_assert(std::atomic_ref<Word>::required_alignment == alignof(Word));
+
 struct SlotView
 {
     Word load(Word element) const
@@ -22,6 +26,25 @@ struct SlotView
     void store(Word element, Word word) const
     {
         std::memcpy(data + sizeof(Word) * element, &word, sizeof(Word));
+    }
+
+    // Only an Atomic slot takes these, and it is bound from a span of
+    // uint32_t, so the words are real, aligned uint32_t objects.
+    Word atomicLoad(Word element) const
+    {
+        return std::atomic_ref<Word>(atomicWord(element))
+            .load(std::memory_order_relaxed);
+    }
+
+    Word atomicAdd(Word element, Word value) const
+    {
+        return std::atomic_ref<Word>(atomicWord(element))
+            .fetch_add(value, std::memory_order_relaxed);
+    }
+
+    Word& atomicWord(Word element) const
+    {
+        return reinterpret_cast<Word*>(data)[element];
     }
 
     std::byte* data = nullptr;

@@ -7,7 +7,7 @@ nano_add_executable(GPUCodegenTests
             GroupReductionCodegenTests.cpp
             ShaderCodegenTests.cpp
             SimdMatrixCodegenTests.cpp
-        TARGETS eacp-gpu-codegen)
+        TARGETS eacp-gpu-codegen eacp-cpu-compute)
 
 # With eacp-spirv around, every emitted GLSL source is compiled by glslang too;
 # without it the checks compile to nothing and the string assertions stand alone.

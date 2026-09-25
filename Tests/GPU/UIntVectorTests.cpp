@@ -23,7 +23,6 @@ using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-constexpr auto uintBytes = (int) sizeof(std::uint32_t);
 constexpr auto groupSize = ComputePass::threadGroupWidth;
 constexpr auto groups = 4;
 constexpr auto sharedThreads = groupSize * groups;
@@ -31,25 +30,6 @@ constexpr auto sharedThreads = groupSize * groups;
 bool contains(const std::string& text, const char* needle)
 {
     return text.find(needle) != std::string::npos;
-}
-
-Buffer makeFilledUInts(int elements, std::uint32_t value)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.assign(elements, value);
-
-    return Buffer {Device::shared(),
-                   values.data(),
-                   uintBytes * values.size(),
-                   BufferUsage::Storage};
-}
-
-Vector<std::uint32_t> readUInts(const Buffer& buffer, int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.resize(elements);
-    buffer.read(values.data(), uintBytes * elements);
-    return values;
 }
 
 // Everything a uint2 and a uint4 can be asked componentwise, one thread's worth
@@ -675,39 +655,31 @@ auto tUIntVectorVarRuns = test("UIntVector/aPairAdvancesThroughALoop") = []
 
 auto tUIntVectorSharedRuns = test("UIntVector/sharedPairsCrossLanes") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto output = makeFilledUInts(sharedThreads * 2, 0u);
-
     auto kernel = SharedPairKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, sharedThreads * 2, 0u)
+        .agreeing()
+        .run(sharedThreads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, sharedThreads);
-    }
+                 for (auto thread = 0; thread < sharedThreads; ++thread)
+                 {
+                     auto base = (thread / groupSize) * groupSize;
+                     auto opposite =
+                         (std::uint32_t) (base + groupSize - 1 - thread % groupSize);
 
-    commands.commit();
+                     check(values[thread * 2 + 0] == opposite, readback.name());
+                     check(values[thread * 2 + 1] == opposite * 3u + 1u,
+                           readback.name());
+                 }
 
-    auto values = readUInts(output, sharedThreads * 2);
-
-    for (auto thread = 0; thread < sharedThreads; ++thread)
-    {
-        auto base = (thread / groupSize) * groupSize;
-        auto opposite = (std::uint32_t) (base + groupSize - 1 - thread % groupSize);
-
-        check(values[thread * 2 + 0] == opposite);
-        check(values[thread * 2 + 1] == opposite * 3u + 1u);
-    }
-
-    // A reversal rather than the identity, which unshared scratch would give.
-    check(values[0] != 0u);
+                 // A reversal rather than the identity, which unshared scratch
+                 // would give.
+                 check(values[0] != 0u, readback.name());
+             });
 };
 
 // The patterns a bitcast has to carry unchanged are exactly the ones a

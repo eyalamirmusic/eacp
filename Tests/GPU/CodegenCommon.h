@@ -1,11 +1,13 @@
 #pragma once
 
-// Device-free, so GPUCodegenTests links eacp-gpu-codegen alone.
+// Device-free: GPUCodegenTests links eacp-gpu-codegen, and eacp-cpu-compute to
+// run the graphs it emits.
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/GPU/Codegen/ShaderBindings.h>
 #include <eacp/GPU/Codegen/ShaderBuilder.h>
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 #include <eacp/GPU/Codegen/UniformLayout.h>
+#include <eacp/GPU/CpuCompute/CpuCompute.h>
 #include <eacp/GPU/Frame/ComputePass.h>
 #include <eacp/GPU/Frame/RenderPass.h>
 
@@ -58,4 +60,21 @@ inline void expectGlslCompiles(
     const std::source_location& location = std::source_location::current())
 {
     expectGlslCompiles(eacp::GPU::emitGlsl(graph), graph.isCompute(), location);
+}
+
+// The `.../runs` cases dispatch the same graph on the CPU executor.
+
+template <typename T>
+eacp::Vector<T> filledWith(int count, T value)
+{
+    auto values = eacp::Vector<T> {};
+    values.resize(count, value);
+    return values;
+}
+
+inline void expectPlans(
+    const eacp::GPU::CpuCompute::Executor& executor,
+    const std::source_location& location = std::source_location::current())
+{
+    nano::check(executor.isValid(), executor.reason(), location);
 }

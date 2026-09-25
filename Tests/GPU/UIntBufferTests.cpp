@@ -384,13 +384,39 @@ auto tOneKernelHandsIdsToTheNext =
 auto tAtomicStorageReadsBackAsUInts =
     test("UIntBuffer/atomicCountsAreReadableAsIntegers") = []
 {
+    constexpr auto threads = 400;
+    constexpr auto bins = 4;
+
+    auto expectEvenBins =
+        [&](const Vector<std::uint32_t>& values, const char* backend)
+    {
+        for (auto i = 0; i < bins; ++i)
+            check(values[i] == (std::uint32_t) (threads / bins), backend);
+    };
+
+    auto onCpu = filled(bins, 0u);
+
+    {
+        auto counts = filled(bins, 0u);
+
+        auto bin = BinKernel {};
+        auto binBindings = CpuCompute::Bindings {};
+        check(binBindings.set(bin.counts, counts));
+        dispatchOnCpu(bin, binBindings, threads);
+
+        auto copy = CopyUIntKernel {};
+        auto copyBindings = CpuCompute::Bindings {};
+        check(copyBindings.set(copy.input, counts));
+        check(copyBindings.set(copy.output, onCpu));
+        dispatchOnCpu(copy, copyBindings, bins);
+
+        expectEvenBins(onCpu, "cpu");
+    }
+
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
-
-    constexpr auto threads = 400;
-    constexpr auto bins = 4;
 
     auto counts = makeFilledUInts(bins, 0u);
     auto output = makeFilledUInts(bins, 0u);
@@ -418,10 +444,10 @@ auto tAtomicStorageReadsBackAsUInts =
 
     commands.commit();
 
-    auto values = readUInts(output, bins);
+    auto onGpu = readUInts(output, bins);
 
-    for (auto i = 0; i < bins; ++i)
-        check(values[i] == (std::uint32_t) (threads / bins));
+    expectEvenBins(onGpu, "gpu");
+    expectAgreement(onCpu, onGpu);
 };
 
 // A uint buffer bound part-way in: element zero of the kernel's buffer is the

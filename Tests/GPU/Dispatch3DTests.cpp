@@ -1,7 +1,6 @@
 #include "CpuCrossCheck.h"
 
 #include <string>
-#include <vector>
 
 using namespace nano;
 using namespace eacp;
@@ -223,54 +222,41 @@ auto tVolumeDispatchWithFlatAxis = test("Dispatch3D/volumeDispatchWithFlatAxis")
 auto tGroupAndLocalPositionsAgree =
     test("Dispatch3D/groupAndLocalPositionsAgree") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto width = 5;
     constexpr auto height = 6;
     constexpr auto depth = 7;
     constexpr auto cells = width * height * depth;
 
-    auto ids = device.makeBuffer((int) sizeof(float) * cells, BufferUsage::Storage);
-    auto extents =
-        device.makeBuffer((int) sizeof(float) * cells * 3, BufferUsage::Storage);
-
     auto kernel = GroupIdVolumeKernel {};
-    kernel.ids = ids;
-    kernel.extents = extents;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.ids, cells, sentinel)
+        .output(kernel.extents, cells * 3, sentinel)
+        .agreeing()
+        .run(width,
+             height,
+             depth,
+             [&](const Readback& readback)
+             {
+                 const auto& fromIds = readback.floats(kernel.ids);
+                 const auto& fromExtents = readback.floats(kernel.extents);
+                 auto name = readback.name();
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, width, height, depth);
-        }
+                 for (auto z = 0; z < depth; ++z)
+                 {
+                     for (auto y = 0; y < height; ++y)
+                     {
+                         for (auto x = 0; x < width; ++x)
+                         {
+                             auto cell = (z * height + y) * width + x;
 
-        commands.commit();
-    }
-
-    auto fromIds = std::vector<float>((std::size_t) cells);
-    auto fromExtents = std::vector<float>((std::size_t) cells * 3);
-    ids.read(fromIds.data(), (int) (fromIds.size() * sizeof(float)));
-    extents.read(fromExtents.data(), (int) (fromExtents.size() * sizeof(float)));
-
-    for (auto z = 0; z < depth; ++z)
-    {
-        for (auto y = 0; y < height; ++y)
-        {
-            for (auto x = 0; x < width; ++x)
-            {
-                auto cell = ((std::size_t) z * height + y) * width + x;
-
-                check(fromIds[cell] == expectedAt(x, y, z));
-                check(fromExtents[cell * 3] == (float) width);
-                check(fromExtents[cell * 3 + 1] == (float) height);
-                check(fromExtents[cell * 3 + 2] == (float) depth);
-            }
-        }
-    }
+                             check(fromIds[cell] == expectedAt(x, y, z), name);
+                             check(fromExtents[cell * 3] == (float) width, name);
+                             check(fromExtents[cell * 3 + 1] == (float) height,
+                                   name);
+                             check(fromExtents[cell * 3 + 2] == (float) depth, name);
+                         }
+                     }
+                 }
+             });
 };

@@ -326,6 +326,15 @@ private:
             return false;
         }
 
+        for (const auto& shared: graph.sharedArrays())
+        {
+            if (shared.elements < 0)
+            {
+                fail("a shared array has a negative size");
+                return false;
+            }
+        }
+
         plan.laneCount = static_cast<int>(lanes);
         plan.stride =
             static_cast<int>(planRoundUp(plan.laneCount, planLaneAlignment));
@@ -522,13 +531,38 @@ private:
                     return result;
 
                 case StatementKind::SharedStore:
+                    if (!checkSharedStore(statement))
+                        return result;
+
+                    schedule.roots[0] = statement.index;
+                    schedule.roots[1] = statement.value;
+                    pinned = -1;
+                    break;
+
                 case StatementKind::Barrier:
+                    pinned = -1;
+                    break;
+
                 case StatementKind::GroupReduce:
+                    if (!checkReduction(statement))
+                        return result;
+
+                    step.reduction = statement.reduction;
+                    step.scope = statement.scope;
+                    step.type = graph.variables()[statement.slot];
+                    schedule.roots[0] = statement.value;
+                    pinned = -1;
+                    break;
+
                 case StatementKind::AtomicAdd:
-                    fail(std::string("statement ")
-                         + planStatementName(statement.kind)
-                         + " is not supported yet (stage 2)");
-                    return result;
+                    if (!checkAtomicAdd(statement))
+                        return result;
+
+                    step.buffer = statement.bufferSlot;
+                    schedule.roots[0] = statement.index;
+                    schedule.roots[1] = statement.value;
+                    pinned = -1;
+                    break;
 
                 case StatementKind::SimdMatrixFill:
                 case StatementKind::SimdMatrixLoad:
@@ -653,6 +687,92 @@ private:
                  + " stores a value of type " + typeName(valueType)
                  + " into storage slot " + std::to_string(statement.slot) + " of "
                  + typeName(element));
+            return false;
+        }
+
+        return true;
+    }
+
+    bool checkIndex(const Statement& statement)
+    {
+        auto type = graph.expr(statement.index).type;
+
+        if (componentCount(type) == 1 && isIntegerFamily(type))
+            return true;
+
+        fail(std::string("a ") + planStatementName(statement.kind)
+             + " has an index that is not a scalar integer");
+        return false;
+    }
+
+    bool checkSharedSlot(int slot)
+    {
+        if (slot >= 0 && slot < graph.sharedArrays().size())
+            return true;
+
+        fail("shared array " + std::to_string(slot) + " does not exist");
+        return false;
+    }
+
+    bool checkSharedStore(const Statement& statement)
+    {
+        if (!checkSharedSlot(statement.slot) || !checkNode(statement.index)
+            || !checkNode(statement.value) || !checkIndex(statement))
+            return false;
+
+        auto elementType = graph.sharedArrays()[statement.slot].elementType;
+        auto valueType = graph.expr(statement.value).type;
+
+        if (valueType == elementType)
+            return true;
+
+        fail("a SharedStore gives shared array " + std::to_string(statement.slot)
+             + " of " + typeName(elementType) + " a value of type "
+             + typeName(valueType));
+        return false;
+    }
+
+    static bool isReducible(ValueType type)
+    {
+        return type == ValueType::Float || type == ValueType::UInt
+               || type == ValueType::Int;
+    }
+
+    bool checkReduction(const Statement& statement)
+    {
+        if (!checkVariable(statement.slot) || !checkNode(statement.value)
+            || !checkVariableValue(statement))
+            return false;
+
+        auto type = graph.variables()[statement.slot];
+
+        if (isReducible(type))
+            return true;
+
+        fail(std::string("a GroupReduce folds a value of type ") + typeName(type)
+             + "; only Float, UInt and Int fold");
+        return false;
+    }
+
+    bool checkAtomicAdd(const Statement& statement)
+    {
+        if (!checkVariable(statement.slot) || !checkSlot(statement.bufferSlot)
+            || !checkNode(statement.index) || !checkNode(statement.value)
+            || !checkIndex(statement))
+            return false;
+
+        if (plan.slotAccess[static_cast<std::size_t>(statement.bufferSlot)]
+            != BufferAccess::Atomic)
+        {
+            fail("an AtomicAdd names storage slot "
+                 + std::to_string(statement.bufferSlot) + ", which is not atomic");
+            return false;
+        }
+
+        if (graph.variables()[statement.slot] != ValueType::UInt
+            || graph.expr(statement.value).type != ValueType::UInt)
+        {
+            fail("an AtomicAdd adds or returns a value that is not a UInt");
             return false;
         }
 
@@ -790,11 +910,31 @@ private:
                 return;
 
             case ExprKind::AtomicLoad:
+                decodeAtomicLoad(id, node, expr);
+                return;
+
             case ExprKind::LocalId:
+                if (!isThreadIdShape(expr.index, node.components))
+                    rejectNode(id, "names no axis of the local id");
+
+                return;
+
             case ExprKind::GroupId:
+                if (!isThreadIdShape(expr.index, node.components))
+                {
+                    rejectNode(id, "names no axis of the group id");
+                    return;
+                }
+
+                plan.groupIdLeaves.add({id, expr.index});
+                return;
+
             case ExprKind::SharedRead:
+                decodeSharedRead(id, node, expr);
+                return;
+
             case ExprKind::SimdGroupIndex:
-                rejectNode(id, "not supported yet (stage 2)");
+                plan.simdGroupLeaves.add(id);
                 return;
 
             case ExprKind::Uniform:
@@ -910,6 +1050,56 @@ private:
         }
     }
 
+    bool requireScalarIndex(int id, const Expr& expr)
+    {
+        auto type = argumentType(expr, 0);
+
+        if (componentCount(type) == 1 && isIntegerFamily(type))
+            return true;
+
+        rejectNode(id, "the index is not a scalar integer");
+        return false;
+    }
+
+    void decodeAtomicLoad(int id, Plan::Node& node, const Expr& expr)
+    {
+        if (!requireArguments(id, 1) || !checkSlot(expr.index)
+            || !requireScalarIndex(id, expr))
+            return;
+
+        if (plan.slotAccess[static_cast<std::size_t>(expr.index)]
+                != BufferAccess::Atomic
+            || expr.type != ValueType::UInt)
+        {
+            rejectNode(id, "reads a slot that is not atomic");
+            return;
+        }
+
+        node.op = Op::AtomicLoad;
+        node.immediate = expr.index;
+    }
+
+    void decodeSharedRead(int id, Plan::Node& node, const Expr& expr)
+    {
+        if (!requireArguments(id, 1) || !requireScalarIndex(id, expr))
+            return;
+
+        if (expr.index < 0 || expr.index >= graph.sharedArrays().size())
+        {
+            rejectNode(id, "names a shared array that does not exist");
+            return;
+        }
+
+        if (graph.sharedArrays()[expr.index].elementType != expr.type)
+        {
+            rejectNode(id, "the element type does not match the shared array");
+            return;
+        }
+
+        node.op = Op::SharedRead;
+        node.immediate = expr.index;
+    }
+
     static Word constantWord(const Expr& expr)
     {
         switch (expr.type)
@@ -986,9 +1176,8 @@ private:
             node.op = Op::NegF;
         else if (expr.op == '-' && isSignedInteger(type))
             node.op = Op::NegI;
-        else if (expr.op == '!' && isBoolean(type))
-            node.op = Op::BitNot;
-        else if (expr.op == '~' && isIntegerFamily(type))
+        else if ((expr.op == '!' && isBoolean(type))
+                 || (expr.op == '~' && isIntegerFamily(type)))
             node.op = Op::BitNot;
         else
             rejectNode(id,
@@ -1416,13 +1605,37 @@ private:
         return static_cast<std::uint32_t>(offset);
     }
 
+    static bool ownsScratch(ExprKind kind)
+    {
+        return kind != ExprKind::VarRead && kind != ExprKind::LocalId;
+    }
+
+    void layOutShared()
+    {
+        plan.sharedOffset = static_cast<std::uint32_t>(cursor);
+
+        for (const auto& shared: graph.sharedArrays())
+        {
+            auto layout = Plan::SharedLayout {};
+            layout.elements = shared.elements;
+            layout.components = componentCount(shared.elementType);
+            layout.storage = static_cast<std::uint32_t>(cursor);
+            cursor += static_cast<std::size_t>(layout.elements)
+                      * static_cast<std::size_t>(layout.components);
+            plan.sharedLayouts.add(layout);
+        }
+
+        auto words = cursor - plan.sharedOffset;
+        plan.sharedCount = words <= planMaxWords ? static_cast<int>(words) : 0;
+    }
+
     void layOut()
     {
         for (auto id = 0; id < graph.nodeCount(); ++id)
         {
             auto& node = plan.nodes[id];
 
-            if (node.used && graph.expr(id).kind != ExprKind::VarRead)
+            if (node.used && ownsScratch(graph.expr(id).kind))
                 node.scratch = allocate(node.components);
         }
 
@@ -1461,9 +1674,24 @@ private:
             plan.arrayLayouts.add(layout);
         }
 
+        layOutShared();
+
+        if (graph.usesGroupReduction())
+            plan.reductionOffset = allocate(1);
+
         plan.maskOffset = allocate(plan.maskFrameCount());
         plan.localOffset = allocate(3);
         plan.realLaneOffset = allocate(1);
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+        {
+            const auto& expr = graph.expr(id);
+
+            if (plan.nodes[id].used && expr.kind == ExprKind::LocalId)
+                plan.nodes[id].scratch = plan.localCoordinates(
+                    expr.index == allComponents ? 0 : expr.index);
+        }
+
         plan.uniformOffset = static_cast<std::uint32_t>(cursor);
         cursor += static_cast<std::size_t>(Plan::uniformWordsPerSlot)
                   * static_cast<std::size_t>(plan.uniformTypes.size());
