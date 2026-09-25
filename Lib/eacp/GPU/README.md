@@ -1843,6 +1843,218 @@ are per word, and that is all the wide reads need: a record is a run of
 consecutive words, so a buffer packed one word at a time reads back through
 `readInt8x16` in the order it was written.
 
+## Running a kernel on the CPU
+
+`eacp-cpu-compute` (`CpuCompute/`, namespace `eacp::GPU::CpuCompute`) runs a
+compute kernel on the calling thread, over plain arrays, with no device at all.
+It is an interpreter over the graph the kernel already recorded — the one the
+emitters print — so the kernel the GPU runs and the kernel the CPU runs are one
+source and cannot drift. Two things want it. An audio plugin or a DSP process
+whose filter bank is a `ComputeProgram` wants that same kernel inside its audio
+callback, synchronously and without allocating, and on a machine where no
+device came up — a Linux box with no Vulkan driver, where `ComputePass` drops
+the work. And every numeric check of the emitters used to need a device; the
+interpreter is a second oracle that runs on every CI lane and, where a device
+exists, is cross-checked against the GPU's readback of the very same kernel. It
+is not a replacement for the GPU on throughput.
+
+The target links `eacp-gpu-codegen` and nothing device-related, so it builds
+everywhere, a driverless Linux box and `-DEACP_BUILD_GRAPHICS=OFF` included. It
+is optimised in every configuration, Debug too — `eacp_force_optimization`'s
+`-O3 -ffp-contract=off` plus `-fno-math-errno` — since an interpreter at `-O0`
+is of no use to an audio thread.
+
+### The kernel, without the device
+
+`ComputeProgram` is two classes. `ComputeKernel` (`Codegen/ComputeKernel.h`) is
+everything that is not a device: the members, `define()` and its whole
+vocabulary, `compile()`, `graph()`, `source()`, `groupShape()` — and it links
+against `eacp-gpu-codegen` alone. `ComputeProgram` derives from it and adds
+`prepare()`, the pipeline and the bind. So every existing kernel already *is* a
+`ComputeKernel`, the executor takes it as it stands, and nothing about writing
+or dispatching one on the GPU changed. A product that never touches a GPU
+derives from `ComputeKernel` instead, writes the struct identically, and links
+no `eacp-gpu`.
+
+```cpp
+struct GainKernel final : ComputeKernel     // or ComputeProgram: the same
+{
+    GainKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, input[i] * gain);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+    Uniform<Float> gain;
+    EACP_SHADER(input, output, gain)
+};
+
+// Once, off the audio thread: the plan and every word of its scratch.
+auto kernel = GainKernel {};
+auto executor = CpuCompute::Executor {kernel};
+auto bindings = CpuCompute::Bindings {};
+
+// Every block, on the audio thread: nothing here allocates.
+bindings.set(kernel.input, std::span {in, frames});
+bindings.set(kernel.output, std::span {out, frames});
+kernel.gain = level;
+executor.dispatch(bindings, static_cast<int>(frames));
+```
+
+### Binding and dispatching
+
+`Bindings` is a fixed table of `ComputePass::maxBufferSlots` slots — eight, the
+GPU's limit, kept so a kernel that runs here also runs there — filled by typed
+`set` overloads that take the kernel's own member, so the slot comes from its
+handle: a `std::span<const float>` for an `InputBuffer`, `std::span<float>` for
+an `OutputBuffer`, and `std::uint32_t` spans for `UIntInputBuffer`,
+`UIntOutputBuffer` and `AtomicBuffer`. A `set` stores a pointer and a count and
+nothing else, so a callback rebinds every block for free; the memory stays the
+caller's and must outlive the dispatch. The handles `ShaderBuilder` hands back
+take the same overloads, so a bare graph binds the same way. The check is at
+dispatch, not at `set`: a slot the kernel reads or writes that is unbound, or
+bound with the wrong element type or access, refuses the dispatch. A slot bound
+to an empty span runs, reading 0 and dropping stores.
+
+`Executor {kernel}` is the plan plus one workspace. The constructor decodes the
+graph once, refuses what it cannot run, and allocates every word a dispatch
+touches. A refusal is `isValid()` false with a `reason()` naming the construct,
+logged once, there — and every dispatch then returns false. It refuses
+textures (`Sample`, `Fetch`, a `WritableTexture2D` store), a render graph, more
+than eight storage buffers, uniforms over 4 KB (`Plan::maxUniformWords`,
+Metal's `setBytes` limit), a group over 2^20 threads, a SIMD-group matrix in a
+group that is not a whole number of 32-lane SIMD groups, and a store into a
+read-only slot. `Executor {graph}` takes a bare `ShaderGraph` instead, with its
+uniforms set by slot through `setUniform`. The kernel must outlive the
+executor, which is neither copyable nor movable.
+
+The dispatch forms are `ComputePass`'s: `dispatch(bindings, count)`, `(bindings,
+width, height)` and `(bindings, width, height, depth)` in threads, rounded up to
+whole groups of `groupShape()` behind the same bounds guard, and
+`dispatchIndirect(bindings, arguments, guardCount, offsetInElements)` for a 1D
+kernel, reading `DispatchArguments` group counts from a `std::span<const
+std::uint32_t>` another CPU dispatch may have written. Each returns whether it
+ran: false only for an invalid plan, a kernel of another rank or a bad slot. An
+extent of zero, or arguments holding no whole `DispatchArguments` at the
+offset, run nothing and return true. Uniforms are read at dispatch: the executor
+walks the kernel's members every time, so `kernel.gain = …` a moment before is
+what it sees.
+
+A dispatch can be split over threads of the caller's. `prepareDispatch` (and
+`prepareDispatchIndirect`) takes the same arguments, resolves the bindings,
+sizes the grid and copies the uniforms into a `PreparedDispatch` — a plain
+value whose `groupCount()` groups are numbered x fastest — and `dispatchGroups
+(prepared, first, count, workspace)`, which is `const`, runs any range of them.
+The range is clamped to `[0, groupCount())`, so equal shares with a short last
+one need no arithmetic at the edge. Each thread brings a `Workspace` of its own,
+made from `executor.plan()` ahead of time. A workspace made from another plan
+or a dispatch prepared by another executor is refused — false, nothing run —
+since each plan carries a serial both record. There is no pool: the threads are
+the host's workers or a render thread. `dispatch` itself is one prepare plus
+`dispatchGroups` over the whole range in the executor's own workspace.
+
+### What each construct becomes
+
+A thread group runs in lockstep: every value is an array over the group's
+lanes, each statement runs for all of them before the next, and `if` and
+`loop` narrow an execution mask. Arithmetic runs on every lane, masked or not —
+which is why every operation below is total — and only stores, atomics and
+assignments are masked.
+
+| Construct | On the CPU |
+| --- | --- |
+| `threadId`, `localId`, `groupId` | lane `l` is the flat local index, x fastest, as the emitter's `lane` is |
+| the bounds guard | lanes past the extent start inactive; a kernel with a barrier has no guard and every lane of a partial group runs, as on the GPU |
+| `shared<T>` | one array per group, zero-filled at group start |
+| `barrier()` | nothing: statement order already is the barrier |
+| `groupSum`, `simdSum`, `simdMax`, … | a fold over the group or each 32-lane block in the fallback's halving order, so a float sum rounds as it does on D3D12 and Vulkan |
+| `atomicAdd`, atomic loads | `std::atomic_ref`, relaxed, lanes in ascending order; each lane gets the pre-add value |
+| `simdGroupIndex()` | `lane / 32` |
+| the SIMD-group matrix | a dense 8×8 per SIMD group; the product is the accumulator plus the terms in ascending `k`, unfused; packed half and bf16 loads widen as they load |
+| `eacpErf`, the packed reads, … | the public C++ twins in `CpuCompute/Helpers.h` (`errorFunction`, `readHalf`, `packHalf2`, …), which the tests' references use too |
+| the math set | the `std::` function per lane, IEEE single precision, never contracted |
+
+What the GPU leaves undefined, the CPU defines:
+
+| Case | GPU | CPU |
+| --- | --- | --- |
+| buffer read out of bounds, or from an empty span | Metal undefined; D3D12/Vulkan read 0 | 0 |
+| buffer store or atomic out of bounds | Metal undefined; D3D12/Vulkan drop it | dropped; the atomic yields 0 |
+| shared or constant array out of bounds | undefined | reads 0, store dropped |
+| integer `/` or `%` by zero | undefined, or all-ones on D3D | 0 |
+| `INT_MIN / -1`, `INT_MIN % -1` | undefined | `INT_MIN`, 0 |
+| shift by 32 or more | masked by the hardware | amount `& 31` |
+| float to int out of range, NaN | saturates | saturates; NaN is 0 |
+| `round` at an exact half | Metal away from zero; D3D12/Vulkan to even | away from zero |
+| a barrier under divergent control flow | undefined | nothing |
+| a reduction under divergence | undefined | inactive lanes give the fold's identity; only active ones receive it |
+| a SIMD-matrix op under divergence | undefined | the whole fragment, with the first active lane's operands, if any lane is active |
+| threadgroup memory and fragments at group start | uninitialised | zero |
+
+### The realtime contract
+
+Constructing an `Executor`, a `Plan` or a `Workspace` allocates, and so does
+the kernel's own constructor, which records the graph; all of it belongs off
+the audio thread. `Bindings::set`, `setUniform`, every `dispatch` form,
+`prepareDispatch` and `dispatchGroups` allocate nothing, take no lock, log
+nothing and make no system call —
+`Executor/aDispatchAfterTheFirstAllocatesNothing` and its siblings replace the
+global `operator new` to prove it. What breaks the contract is making a
+workspace per call rather than per thread, sharing one executor's `dispatch`
+between threads (only `dispatchGroups` is `const`), and a denormal-heavy signal
+on x86: the executor leaves the thread's flush-to-zero state as the host set
+it.
+
+`plan().footprintBytes()` is exactly what one workspace costs. Scratch is
+shared between nodes whose lifetimes do not overlap, and a kernel with no
+group-scope feature — no barrier, shared array, reduction, SIMD group or
+atomic — runs several consecutive groups as one batch of about
+`PlanOptions::targetBatchLanes` lanes, 1024 by default, which is most of the
+interpreter's speed on a stream and multiplies its footprint by up to sixteen:
+the benchmark's tone generator is 68 KB at the default and 3.9 KB at one group
+per batch. `PlanOptions::maxBatchBytes` (192 KB) halves the batch until it
+fits. A plugin holding many kernels should pass
+`CpuCompute::Executor {kernel, CpuCompute::PlanOptions {1}}`, one group per
+batch. Measured on Apple silicon, Release, over a million elements, the
+interpreter takes 0.97–1.1× the time of a hand-written C++ loop for a tone or
+a mix and 3.7–5.1× for a crossfade or a smoothing filter, and 8–12× for path
+binning over a large scene, whose lanes diverge.
+
+### What it will not tell you
+
+It is not bit-exact with the GPU and does not try to be: Metal compiles with
+fast math, which may assume no NaN and flushes denormals, while the CPU is IEEE
+with no contraction, so cross-checks compare within each suite's tolerance.
+Binding the same memory to an input slot and an output slot is unsupported on
+both — the GPU keeps a read hoisted across another slot's store
+(`InPlace/aReadIsNotRefreshedByAnotherSlotsStore`), the CPU re-reads it per
+statement. The CPU is not a race detector either: lockstep with every
+statement evaluated before it commits turns a race inside a group into a
+defined answer, the last lane winning. Across groups, serial groups look
+sequential, a wide batch interleaves its groups by statement — so a different
+`targetBatchLanes` can change a racy kernel's answer — and `dispatchGroups` on
+several threads makes the order as real and as nondeterministic as a GPU's. A
+race-free kernel gives the same bits every way. A barrier under divergent
+control flow does nothing here; a kernel that relies on it doing more is
+already broken on the GPU. And the uniforms are read on whichever thread
+dispatches, unsynchronised, like any plain member: set them on one thread and
+dispatch on another, and the synchronisation is yours.
+
+`CpuComputeTests` (`Tests/CpuCompute/`) checks the executor's semantics, every
+row above and the no-allocation cases; `CpuComputeBench` beside it times the
+interpreter against hand-written loops. `GPUCodegenTests`' `…/runs` cases run
+the graphs its string tests record, on every lane, and `GPUTests` carries a
+CPU half in its compute suites through `Tests/GPU/CpuCrossCheck.h`, which runs
+one kernel over plain arrays and, where a device exists, over buffers holding
+the same data — the CPU half never self-skips, so the Linux lanes without a
+driver check every kernel's numbers. `Apps/GPU/CpuCompute` dispatches one
+kernel on both, compares and times them, and runs the CPU path alone where no
+device came up.
+
 ## Mipmaps
 
 ```cpp

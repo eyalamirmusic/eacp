@@ -17,7 +17,7 @@ kernels in `GPUWidgets`. Line counts are estimates, not commitments.
 | 2 — tier two: the threadgroup | built, macOS green | macOS: `CpuComputeTests` 91 (64 `Executor/`, 21 `Group/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the stage-2 suites and the five stage-1 deferrals, `GPUCodegenTests` 115 (ten `…/runs` and one emitter guard new), `GPUWidgetsTests` 65 (8 new), `UITests` 183, all passing. Found and fixed an emitter bug (stage 2, *as built*). Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 3 — tier three: packed helpers and the SIMD-group matrix | built, macOS green | macOS: `CpuComputeTests` 121 (71 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the packed, intrinsic and SIMD-matrix suites and the stage-1 helper deferrals, `GPUCodegenTests` 119 (four `SimdMatrix/…/runs` new), `GPUWidgetsTests` 65, `UITests` 183, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 4 — performance | built, macOS green | macOS (Apple silicon, Apple clang, Release and Debug): `CpuComputeTests` 155 (85 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`, 12 `Batch/`, 8 `DispatchGroups/`), `GPUCodegenTests` 119, `GPUTests` 478, `GPUWidgetsTests` 65, `UITests` 183, all passing. `CpuComputeBench`, Release, interpreter over hand-written loop: Tone 0.97x, Mix 1.11x, Crossfade 5.1x, Smooth 3.7x against the 3x stream target; `BinKernel` over the PathBench scene, count 8.0–8.7x on the 100k-segment and all-eight batches (10x target met), fill 11.6–11.8x (not met), the small paths (72–846 segments) 15–37x. Through `dispatchGroups` on 18 threads, against the single-threaded hand loop: Tone 0.12x, Mix 0.10–0.14x, Crossfade 0.9–1.2x, Smooth 0.57x. Linux and Windows lanes not yet run — awaits CI |
-| 5 — integration | not started | |
+| 5 — integration | built, macOS green | macOS (Apple silicon, Metal, Release and Debug): `Apps/GPU/CpuCompute` (`Main.cpp` 240, `CMakeLists.txt` 12, +4 in `Apps/GPU/CMakeLists.txt`) over 2^20 elements, 20 timed runs: CPU one thread 0.597 ms per dispatch, CPU 18 threads through `prepareDispatch`/`dispatchGroups` 0.205 ms (thread start included), GPU commit-and-wait 0.204 ms; GPU against CPU max \|difference\| 1.19e-07 (tolerance 1e-5), threads against one thread 0; exit 0, and 0 again under `--cpu-only`. Docs: `Lib/eacp/GPU/README.md` "Running a kernel on the CPU" (212 lines), `CLAUDE.md` +27 (the three device-free pieces, a "CPU compute" Architecture subsection), `README.md` +17/−8 (a platform-table row, the "three pieces" paragraph). CI unchanged: `CpuComputeTests` cases are registered with ctest one by one and no lane's `-E`/`-R` filter excludes them; no `EACP_CPU_CROSSCHECK`. macOS Debug: `CpuComputeTests` 155, `GPUTests` 478, all passing. Windows, the Linux lanes and a real driverless run not yet done — awaits CI |
 
 Where the code differs from the sketches below, the code wins; each such
 point gets marked *as built* in place, as the last plan did.
@@ -470,7 +470,10 @@ output, std::span<float>)`, and the `uint32_t` forms for `UIntInputBuffer`,
 `UIntOutputBuffer` and `AtomicBuffer`. The spans are the caller's memory; the
 executor checks each span's element type against `storageElementType(slot)`
 and its access against `storageBuffers()[slot]` at bind time, which is cheap
-and allocation-free. Rejected: *a visitor mapping each member's `BufferRange`
+and allocation-free. *As built:* `Bindings::set` only records the span,
+failing only for a slot out of range; the element type and access are checked
+at dispatch, in `Executor::resolveSlots`, which is just as cheap and
+allocation-free. Rejected: *a visitor mapping each member's `BufferRange`
 to a span through a user callback* — it presupposes a `GPU::Buffer`, which a
 CPU-only caller cannot make without a device, and `Buffer` has no persistent
 CPU pointer to map to anyway; *adding a span beside the `BufferRange` inside
@@ -1111,6 +1114,17 @@ dispatched on both, the results compared and timed, and the CPU path alone
 where no device came up. Done when the example runs on macOS, Windows and a
 driverless Linux box.
 
+*As built:* the example's kernel is a crossfade — mix, soft clip, gain — over
+two inputs, run on the GPU, on the CPU on one thread, and on the CPU split
+through `prepareDispatch`/`dispatchGroups` over `hardware_concurrency()`
+threads, all three compared. A `--cpu-only` flag takes the no-device path, the
+same code `Device::shared().isValid()` false takes, because no environment
+variable forces the Metal device away and the path still had to be run on the
+dev machine. `EACP_CPU_CROSSCHECK=0` was not added: no lane needed it. The
+README section came out at 212 lines rather than ~150, being two tables — the
+constructs and D7 — and a bind-and-dispatch snippet beside the prose. Windows,
+the Linux lanes and a real driverless run await CI.
+
 ## 5. Risks and open questions
 
 - **Interpreter overhead and masked-lane waste.** A 64-lane batch amortises
@@ -1155,7 +1169,9 @@ driverless Linux box.
   kernel: Tone is 68K and Mix 72K. `PlanOptions::targetBatchLanes` is the
   knob, and a plugin holding many kernels should set it low — 64 gives one
   group per batch and the 3–4K footprints, at the stream kernels' 64-lane
-  speed. `footprintBytes()` reports either exactly.
+  speed. `footprintBytes()` reports either exactly. *As built (stage 5):* the
+  README documents `PlanOptions {1}` for this, which `Plan.h` names as one
+  group per batch and is the same single group as 64 for a 64-lane kernel.
 - **The stage-0 refactor.** 54 files name `ComputeProgram` and 158 structs
   derive from it; D6 is designed so none of them changes, and the moved code
   is header-only. What could still bite is a translation unit that relied on
@@ -1195,3 +1211,58 @@ driverless Linux box.
   from whatever thread dispatches, so a caller setting uniforms on one thread
   and dispatching on another needs its own synchronisation, exactly as with
   any plain member.
+
+## 6. What remains
+
+Written 2026-09-25, after stage 5. Every stage is built; none is done by the
+plan's own measure, which is green on macOS, Windows (x64 and ARM64, MSVC and
+clang-cl) and the three Linux lanes. What is recorded above as open, deferred
+or not built, in one place:
+
+1. **CI has run no stage.** Every Progress row says "macOS green" and nothing
+   more: the dev machine has no Docker, so neither the Linux lanes nor Windows
+   have built a line of `eacp-cpu-compute`. Stage 5's own criterion — the
+   example running on Windows and on a driverless Linux box — is unverified
+   as well. The pull request from `cpu-compute-backend` into `develop` is the
+   first run of all six stages at once. Where it may bite, from what the code
+   uses: the `-fno-math-errno` branch in `CpuCompute/CMakeLists.txt`
+   (`/clang:-fno-math-errno` under clang-cl, nothing under cl, so cl's
+   inlining of `sqrt` and friends is untested); `std::atomic_ref<Word>` with
+   its `is_always_lock_free` and `required_alignment` static asserts in
+   `Interpreter.h`, on MSVC's and libstdc++'s implementations; `std::bit_cast`
+   in `Helpers.cpp`; and the lane loops' vectorisation, which stage 4 only
+   measured under Apple clang — GCC and MSVC may vectorise less, or, as Apple
+   clang 21 did (stage 4), miscompile a loop, which the bit-exact tests would
+   show as a failure rather than a slowdown.
+2. **Stage 4 targets missed.** Crossfade 5.1x and Smooth 3.7x against the 3x
+   stream target; `BinKernel` fill 11.6–11.8x and the small scenes (72–846
+   segments) 15–37x against 10x. The recorded causes: one full-width scratch
+   pass per node, which only fusing chains of nodes would remove; Smooth's
+   two `%` per lane; and, for `BinKernel`, masked-lane waste in the lock-step
+   loop nests plus a fixed per-dispatch cost. The named next step is
+   compacting live lanes between iterations — its own design, not started
+   (Risks, "Interpreter overhead and masked-lane waste"). Node fusion has no
+   design either.
+3. **Hand intrinsics (D5, item 5): measured, deliberately not built.** The
+   gather mattered only when contiguous, which went in as ramps; a general
+   gather has no baseline-ISA form; the masked blend already vectorises; and a
+   vector `sin`/`exp` would change bits against the `std::` references while
+   speeding the hand loop, which calls the same libm, alike. Nothing folded
+   into `eacp-simd`.
+4. **No ThreadSanitizer run** over `dispatchGroups` on threads
+   (`DispatchGroups/`, the atomic tickets). The threaded cases agree bit for
+   bit with one dispatch on macOS; that is not a race check.
+5. **Open: FTZ/DAZ for the length of a dispatch** (Risks, "NaN, infinity and
+   denormals"). Undecided. The executor touches no floating-point state, so a
+   dispatch runs under whatever the host thread set: IEEE denormals unless an
+   audio host flushed them, against Metal, which flushes.
+6. **The float4 image binding for `WritableTexture2D`** (stage 3, not done):
+   `CoverageKernel` and `ComputeImage`'s `PaintPlasma` still wait, and
+   neither runs whole on the CPU.
+7. **The multiple-of-32 rule** for SIMD-group matrix kernels is refused by
+   the CPU plan but still only a Debug assertion in the emitter (D2); a
+   Release build emits such a kernel for the GPU unchecked.
+8. **Kept as they are, to reconsider on demand:** `maxBufferSlots = 8` on the
+   CPU (unless a CPU-only user asks), `Bindings` beside rather than inside
+   `Uniform<InputBuffer>`, and the `EACP_CPU_CROSSCHECK=0` escape, not added
+   because no lane needed it — which, per item 1, no lane has yet been asked.
