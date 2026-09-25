@@ -3,6 +3,7 @@ nano_add_executable(MLGraphTests
             GraphApplyTests.cpp
             GraphBlobTests.cpp
             GraphCoreMLTests.cpp
+            GraphDecoderStepTests.cpp
             GraphEncoderTests.cpp
             GraphPackageTests.cpp
             GraphProtobufTests.cpp
@@ -24,6 +25,8 @@ nano_add_executable(MLTests
             MultiArrayTests.cpp
             AsyncTests.cpp
             CacheTests.cpp
+            DecoderStepReference.cpp
+            DecoderStepTests.cpp
             EncoderReference.cpp
             EncoderTests.cpp
             PlacementTests.cpp
@@ -31,4 +34,5 @@ nano_add_executable(MLTests
             TestMain.cpp
         TARGETS eacp-ml)
 
-set_source_files_properties(EncoderReference.cpp PROPERTIES COMPILE_OPTIONS -O2)
+set_source_files_properties(EncoderReference.cpp DecoderStepReference.cpp
+        PROPERTIES COMPILE_OPTIONS -O2)

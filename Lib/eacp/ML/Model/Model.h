@@ -49,9 +49,18 @@ struct FeatureInfo
 // A prediction's outcome and every output it produced: the arrays the caller
 // bound, which it already shares, and one the runner allocated for each
 // output it did not.
+//
+// The timings are taken on the model's queue, so they leave out the hop back
+// to the main thread. queueWaitSeconds runs from the predictAsync() call to
+// the moment the job had the model to itself, behind earlier jobs and any
+// blocking predict(); predictSeconds is the Core ML prediction call alone.
+// Seconds as a double, because a small prediction runs in well under the
+// millisecond Time::MS counts in.
 struct Prediction : Result
 {
     Outputs outputs;
+    double queueWaitSeconds = 0.0;
+    double predictSeconds = 0.0;
 };
 
 // A Core ML model compiled from an ML Program package and loaded for one set

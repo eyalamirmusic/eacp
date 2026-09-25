@@ -751,6 +751,13 @@ ComputePlan readPlan(const Loaded& loaded) API_AVAILABLE(macos(14.4), ios(17.4))
     return result;
 }
 
+using Clock = std::chrono::steady_clock;
+
+double secondsSince(Clock::time_point start)
+{
+    return std::chrono::duration<double>(Clock::now() - start).count();
+}
+
 Prediction runPrediction(Loaded& loaded, const Inputs& inputs, const Outputs& bound)
 {
     auto pool = ObjC::AutoReleasePool {};
@@ -786,15 +793,19 @@ Prediction runPrediction(Loaded& loaded, const Inputs& inputs, const Outputs& bo
         if (backings.count > 0)
             options.get().outputBackings = backings;
 
+    auto started = Clock::now();
     auto result = [loaded.model.get() predictionFromFeatures:provider.get()
                                                      options:options.get()
                                                        error:&error];
+    auto predictSeconds = secondsSince(started);
+
     if (result == nil)
         return {Result::failure("Core ML prediction failed: "
                                 + Strings::toStdString(error)),
                 {}};
 
     auto prediction = Prediction {Result::success(), {}};
+    prediction.predictSeconds = predictSeconds;
 
     for (const auto& output: loaded.outputs)
     {
@@ -846,7 +857,9 @@ struct Shared
         return install(loadFromSource(source, options));
     }
 
-    Prediction predict(const Inputs& inputs, const Outputs& bound)
+    Prediction predict(const Inputs& inputs,
+                       const Outputs& bound,
+                       Clock::time_point queued)
     {
         auto model = current();
 
@@ -854,7 +867,10 @@ struct Shared
             return {Result::failure("No model is loaded"), {}};
 
         auto guard = std::lock_guard {predicting};
-        return runPrediction(*model, inputs, bound);
+        auto queueWaitSeconds = secondsSince(queued);
+        auto prediction = runPrediction(*model, inputs, bound);
+        prediction.queueWaitSeconds = queueWaitSeconds;
+        return prediction;
     }
 
     mutable std::mutex lock;
@@ -1036,7 +1052,7 @@ Vector<FeatureInfo> Model::outputs() const
 
 Result Model::predict(const Inputs& inputs, Outputs& outputs)
 {
-    auto prediction = impl->shared->predict(inputs, outputs);
+    auto prediction = impl->shared->predict(inputs, outputs, Clock::now());
 
     for (auto& output: prediction.outputs)
         if (outputs.getValue(output.first) == nullptr)
@@ -1049,9 +1065,10 @@ Threads::Async<Prediction> Model::predictAsync(const Inputs& inputs,
                                                const Outputs& outputs)
 {
     auto shared = impl->shared;
+    auto queued = Clock::now();
 
-    auto predictOnQueue = [shared, inputs, outputs]
-    { return shared->predict(inputs, outputs); };
+    auto predictOnQueue = [shared, inputs, outputs, queued]
+    { return shared->predict(inputs, outputs, queued); };
 
     return impl->runOnQueueResolvingOnMain<Prediction>(predictOnQueue);
 }

@@ -72,6 +72,11 @@ struct Weights
 class WeightMaker
 {
 public:
+    explicit WeightMaker(unsigned firstSeed = 2026u)
+        : seed(firstSeed)
+    {
+    }
+
     Projection projection(int out, int in, bool withBias = true)
     {
         auto spread = 1.0f / std::sqrt(static_cast<float>(in));
@@ -104,7 +109,7 @@ public:
 private:
     unsigned nextSeed() { return seed++; }
 
-    unsigned seed = 2026u;
+    unsigned seed;
 };
 
 inline Weights makeWeights()

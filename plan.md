@@ -282,8 +282,11 @@ linked in when the target is there as `eacp-spirv` is for GLSL.
   `loadAsync` returns `Async<Result>` and `predictAsync` an
   `Async<Prediction>`, a `Result` with the `Outputs` in it, because an output
   the caller did not bind is allocated by the runner and has to travel back in
-  the result. The jobs run in order on one serial dispatch queue per model,
-  resolve on the main thread through `Threads::callAsync`, and are abandoned
+  the result, together with how long the job waited on the queue
+  (`queueWaitSeconds`) and how long Core ML's prediction call ran
+  (`predictSeconds`), both measured on the queue so neither includes the hop
+  back to the main thread. The jobs run in order on one serial dispatch
+  queue per model, resolve on the main thread through `Threads::callAsync`, and are abandoned
   when the model is destroyed, which may happen on any thread: the
   abandonment is handed to the main thread when it is not already there. The
   blocking forms run on the caller's thread and pump no loop, since
@@ -688,8 +691,9 @@ matches on the test audio, the row-by-row tolerance is measured and written
 down, and the benchmark shows the encoder's wall time on the engine beside its
 Metal time, with the GPU idle during it.
 
-Status as of 2026-09-24: done on a Mac, uncommitted in both trees, eacp on
-this branch and WhisperEACP on its `EDSL-CoreML` on top of `ec0b7c0`. eacp came
+Status as of 2026-09-24: done on a Mac, committed in both trees, eacp as
+`5e7849c5` on this branch and WhisperEACP as `13711f7` on its `EDSL-CoreML`,
+on top of `ec0b7c0`. eacp came
 first, and WhisperEACP then needed nothing further from it. In eacp, G1 to G5
 under "Gaps for eacp" closed in `ML/Graph` and `ML/Model`, and `Tests/ML` holds
 the ground truth: `WhisperEncoder.h` builds the tiny.en encoder at its real
@@ -988,6 +992,115 @@ decode step to win. Stateful model with `MLState` for the KV cache, fixed
 `maxPositions` with a mask, the argmax inside the model, the token carried as
 state. Not planned in detail until phase 3 reports.
 
+Status as of 2026-09-24: the measurement this phase was gated on is taken, and
+nothing of the phase itself is built. `Tests/ML/WhisperDecoderStep.h` builds
+one tiny.en decode step at its real sizes over seeded weights (width 384, six
+heads, four layers, fc 1536, the 51864-token vocabulary, 448 positions,
+structure read off WhisperEACP's `recordDecoderStep`): the token and its
+position embedded by two `gather`s of int32 inputs; per layer the
+self-attention norm, the query, key (no bias) and value projections, the key
+and value rows concatenated after the layer's `[448, 384]` slice of the cache,
+`matmul`, the scale and an additive mask in one `apply`, `softmax`, `matmul`
+and the output projection; the cross-attention norm, the query projection
+and the fused, unmasked `scaledDotProductAttention` over the layer's
+`[1500, 384]` keys and values; the MLP norm, fc1, `gelu` and fc2; then the
+final norm and the logits as a bias-free `linear` against the token embedding
+itself, one blob tensor feeding both the gather and the logits as
+`logitsWeight()` ties them. It is stateless: the inputs are the token, the
+position, a `[1, 448]` fp16 mask (0 for a valid cache row, -10000 for the
+rest) that a constant 0 for the step's own key extends to 449 keys, the
+self-attention caches as `[4, 448, 384]` and the cross keys and values as
+`[4, 1500, 384]`, all fp16, 12 MB a prediction; the outputs are the fp16
+logits row and the `[4, 384]` key and value rows the step would append. The
+self-attention is spelled with `matmul` and `softmax` because
+`scaledDotProductAttention` takes only a causal flag, and a causal mask over
+one query row masks nothing; the mask is an ordinary add before an ordinary
+softmax, not the fused op's `attn_mask`, so the float mask Core ML's fp16
+attention ignores (under "Decisions taken now") does not come into it, and the
+reference agrees at a prefix of 1, where an ignored mask would attend to 447
+rows of noise. The program is 196 ops, specification 9 for the cross-attention,
+over a blob of about 57 MB, 40 of it the embedding. A second program is the
+same step with the four caches baked into the blob, so that only the token,
+the position and the mask cross into a prediction: a bound on what a stateful
+step, whose caches never leave Core ML, could cost. It computes the step for
+the suite's one set of caches only. `MLGraphTests` builds and compiles the
+first (`MLGraph/DecoderStep`); `MLTests`' `MLDecoderStep` suite runs both
+under every setting against an fp32 scalar reference of the same step
+(`DecoderStepReference.cpp`, built from the encoder reference's pieces, 27-39
+ms a step), reads the first one's plan, and times them. `MLGraphTests` runs
+83 tests and `MLTests` 44, all passing with and without `EACP_REQUIRE_ANE=1`.
+
+Release, on the phase 1 machine (M5 Max, macOS 27.0), the blocking
+`predict()` with every output bound, median and minimum of 25 predictions
+after five warm-up ones, the range over seven runs of the suite (five for the
+resident caches, six for `predictAsync`); max abs error
+over prefixes 1 and 447, the logits and the appended rows. The machine was
+under load throughout, `mediaanalysisd` at about 220% CPU,
+`spotlightknowledged` at about 140% and another agent's benchmark beside
+them, the load average 8 to 23:
+
+| setting | placed | max abs, logits / rows | predict at prefix 1, median / min | at prefix 447 | caches resident, prefix 1 / 447 median | `predictAsync` to its resolve, median / min |
+| --- | --- | --- | --- | --- | --- | --- |
+| CPU | CPU | 7.9e-2 / 3.0e-2 | 0.63-0.68 / 0.59-0.63 ms | 0.63-0.66 / 0.58-0.62 ms | 0.63-0.67 / 0.62-0.65 ms | 1.6-2.9 / 0.91-0.95 ms |
+| CPU and GPU | GPU | 8.5e-3 / 3.4e-3 | 2.57-2.63 / 2.48-2.57 ms | 1.85-2.69 / 1.47-2.43 ms | 1.10-1.59 / 1.07-1.20 ms | 5.2-6.0 / 3.1-3.4 ms |
+| CPU and engine | engine, but the two `gather`s on the CPU | 2.8e-2 / 1.3e-2 | 0.76-1.18 / 0.74-0.93 ms | 0.76-1.15 / 0.74-0.93 ms | 0.76-0.77 / 0.77 ms | 1.9-2.4 / 1.0-2.0 ms |
+| all | GPU | as CPU and GPU | 1.48-1.94 / 1.28-1.47 ms | 1.13-1.29 / 1.06-1.16 ms | 1.05-1.07 / 1.04-1.06 ms | 4.4-5.7 / 2.9-3.4 ms |
+| phase 3, for comparison | | | Metal decode step, all in: 332-409 us | | | seam copies 0.13-0.18 ms, mel 0.36-0.41 ms |
+
+The tolerances sit at about three times these: 0.25 on the CPU, 0.03 on the
+GPU, 0.09 under the two engine settings, which are held to the CPU's bound
+unless `EACP_REQUIRE_ANE=1`, as the encoder's are. The first prediction after
+a load was 2.3-2.5 ms on the CPU, 1.6-2.5 ms on the engine and 27-39 ms on the
+GPU. Each run starts from an empty cache directory, so its first load compiled
+the package, in 0.13-0.52 s; the first load under CPU and engine in a run, a
+cache hit, took 0.55-0.67 s, the engine compile, and 28-48 ms after that; the
+other hits took 17-170 ms, and the plan read 0.05-0.8 s.
+
+Phase 4 findings:
+
+- **No setting fits a decode step in the Metal step's time.** The fastest
+  prediction, the CPU's, has a median of 0.63-0.68 ms and never went below
+  0.58 ms, 1.5 to 2 times a whole Metal step (332-409 us) before any hop or
+  copy; the engine's median is 0.76-1.18 ms, two to three times; Core ML on
+  the GPU 1.1-2.7 ms. The hop back to the main thread
+  and phase 3's seam copies only add to that. On this phase's own criterion,
+  a Core ML decode step fitting its prediction, its hop and its copies in
+  332-409 us, a stateless step does not fit on this machine under any
+  setting, and the resident-cache bound says a stateful one would not either:
+  the CPU is unchanged at 0.62-0.67 ms, the engine steady at 0.76-0.77 ms.
+- **The 12 MB of caches costs the GPU and not the others.** With the caches
+  resident the GPU settings drop from 1.1-2.7 ms to 1.04-1.59 ms, the engine
+  loses its spread (0.76-1.18 to 0.76-0.77 ms) and the CPU does not move. So
+  what `MLState` could save is at most the difference between those columns;
+  what is left is the program's own compute and Core ML's per-prediction cost,
+  which phase 1 put at 0.14-0.23 ms for a lone projection.
+- **The mask costs nothing.** On the CPU and the engine the prefix-1 and
+  prefix-447 times are within run-to-run noise, as they should be for a fixed
+  program. On the GPU settings prefix 447 was the faster in nearly every run,
+  the resident program's too, where no cache crosses at all; it is timed
+  second, after a first prediction of 27-39 ms, so this reads as the
+  GPU still settling after five warm-up predictions rather than as the mask.
+- **The engine takes the step but not its `gather`s.** Under CPU and engine
+  every op lands on the engine but the two embedding lookups, which stay on
+  the CPU, so every prediction starts on the CPU and hands over; under `all`
+  everything goes to the GPU, as the encoder does. The plan of this fixed
+  program reads in under a second, as phase 3 found for fixed programs.
+- **The hop, as measured here, is one to four milliseconds.** From
+  `predictAsync()` to its continuation on the main thread took 0.7-1.6 ms more
+  than the blocking prediction at the median on the engine, 1.0-2.3 ms on the
+  CPU and 2.5-4 ms on the GPU settings, though the loop here sits idle for
+  16.7 ms between predictions, which may leave the devices clocked down, so
+  it overstates a decoder that keeps them busy. `Async::waitFor` returned
+  16.66 ms after every call, whatever the setting, where the continuation had
+  run 1-6 ms in: the nested pump on macOS exits a frame after the resolve,
+  not on it (G11).
+- **The error is of the seeded encoder's order.** The engine's max abs on
+  the logits is 2.8e-2 against the seeded encoder's 2.2e-2, the GPU's
+  8.5e-3 against 6.4e-3 and the CPU's 7.9e-2 against 4.9e-2. Whether it moves
+  an argmax is not tested here: the seeded weights make no meaningful token,
+  and phase 3 found tiny.en's own weights ten times the seeded error on the
+  engine.
+
 ## Decisions taken now
 
 - **Precision.** The Neural Engine is fp16 end to end. The Core ML encoder
@@ -1139,6 +1252,39 @@ WhisperEACP's side of phase 3 surfaced two more:
 - G7: `CoreMLEncoder`, and so `Whisper::transcribeAsync`, cannot time the
   prediction on its own once it goes through `predictAsync`: the Async gives
   the result, not how long the queue waited or the prediction ran, so an
-  async encode's time includes the hop back to the loop. A `Prediction` that
-  carried its own start and end on the queue would let the live path report
-  the engine time. Still open.
+  async encode's time includes the hop back to the loop. Closed in this
+  phase: `Prediction::queueWaitSeconds`, from the `predictAsync()` call to the
+  moment the job has the model to itself, and `Prediction::predictSeconds`,
+  the `predictionFromFeatures:` call alone, both taken on the model's queue
+  as `double` seconds, since `Time::MS` counts whole milliseconds and a small
+  prediction runs in less. The blocking `predict()` still returns a `Result`:
+  its caller is on the thread that runs it and can time it with no hop to
+  leave out.
+
+Phase 4's measurement surfaced these, for a phase 4 that goes ahead:
+
+- G8: `Graph` has no argmax, so a step's output is the whole logits row,
+  51864 fp16 values in a padded 103744-byte row, read back and reduced on the
+  host every token, where the kernel path's argmax stays on the device. MIL's
+  `reduce_argmax` is the op, with an int32 output. Still open.
+- G9: `scaledDotProductAttention` takes only a causal flag, so attention over
+  a fixed cache with a run-time valid prefix has no fused spelling; the step
+  builds it from `matmul`, an additive mask in `apply`, `softmax` and
+  `matmul`. A form taking a mask tensor, lowered to a bool `attn_mask` the way
+  the causal one is (since Core ML's fp16 attention ignores a float one),
+  would give the engine the fused op; whether Core ML honours a bool mask
+  computed from an input rather than a constant is unmeasured. Still open.
+- G10: nothing in eacp is stateful. `Graph` has no state input (MIL's
+  `read_state`, `coreml_update_state`, specification 9), and `Model` no
+  `MLState` handle to make per sequence and pass to a prediction (macOS 15,
+  iOS 18), so the KV cache can only cross as inputs, 12 MB a step for
+  tiny.en. The resident-cache program bounds what that would buy (the table
+  above). Still open.
+- G11: `Async::waitFor` on macOS returned 16.66 ms after every
+  `predictAsync()` in the step suite, whatever the setting, where the
+  continuation the test chained had run 1-6 ms in. `EventLoop::runFor` waits
+  in `nextEventMatchingMask:untilDate:` and `EventLoop::quit` sets its flag
+  and posts a wake event, yet the nested pump exits a frame after the resolve
+  rather than on it; the cause is not traced. A caller that waits on each of
+  a run of short Asyncs, as a decoder driven through `predictAsync` and
+  `waitFor` would, pays a frame per wait. Still open.

@@ -1,5 +1,6 @@
 #include "ModelTestCommon.h"
 
+#include <chrono>
 #include <memory>
 
 using namespace nano;
@@ -113,6 +114,45 @@ auto tQueuedPredictionFollowsItsLoad =
     if (y != nullptr)
         check(compare(y->toFloats(), TestPrograms::elementwiseReference(x)).maxAbs
               <= 2e-3);
+};
+
+auto tPredictionTimesItselfOnTheQueue =
+    test("MLAsync/aPredictionReportsItsQueueWaitAndItsRunTime") = []
+{
+    if (!isSupported())
+        return;
+
+    using Clock = std::chrono::steady_clock;
+
+    auto model = Model {};
+    auto loaded =
+        model.load(TestPrograms::elementwiseChain(rows, columns),
+                   optionsFor(ComputeUnits::cpu, freshCacheDirectory("async-time")));
+    check(loaded.ok, loaded.error);
+
+    auto x = TestPrograms::seededValues(rows * columns, 17u, 1.0f);
+    auto called = Clock::now();
+    auto resolved = called;
+    auto noteResolve = [&resolved](const Prediction&) { resolved = Clock::now(); };
+
+    auto first = model.predictAsync(inputsFor(x));
+    first.then(noteResolve);
+    auto second = model.predictAsync(inputsFor(x));
+
+    auto firstPrediction = first.waitFor(timeout);
+    auto secondPrediction = second.waitFor(timeout);
+    check(firstPrediction.ok, firstPrediction.error);
+    check(secondPrediction.ok, secondPrediction.error);
+
+    auto wallSeconds = std::chrono::duration<double>(resolved - called).count();
+    check(firstPrediction.predictSeconds > 0.0);
+    check(firstPrediction.predictSeconds <= wallSeconds);
+    check(firstPrediction.queueWaitSeconds >= 0.0);
+    check(firstPrediction.queueWaitSeconds + firstPrediction.predictSeconds
+          <= wallSeconds);
+    check(secondPrediction.predictSeconds > 0.0);
+    check(secondPrediction.queueWaitSeconds >= firstPrediction.predictSeconds,
+          "the second waited behind the first");
 };
 
 auto tDestroyedModelAbandonsItsAsyncs =

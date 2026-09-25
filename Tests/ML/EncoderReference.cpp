@@ -5,25 +5,10 @@
 
 namespace WhisperEncoder
 {
+namespace Reference
+{
 namespace
 {
-struct Rows
-{
-    Rows(int countToUse, int widthToUse)
-        : count(countToUse)
-        , width(widthToUse)
-    {
-        values.resize(count * width, 0.0f);
-    }
-
-    float* row(int index) { return values.data() + index * width; }
-    const float* row(int index) const { return values.data() + index * width; }
-
-    int count = 0;
-    int width = 0;
-    Vector<float> values;
-};
-
 Vector<float> transposed(const Vector<float>& matrix, int rows, int columns)
 {
     auto result = Vector<float> {};
@@ -35,6 +20,7 @@ Vector<float> transposed(const Vector<float>& matrix, int rows, int columns)
 
     return result;
 }
+} // namespace
 
 Rows linear(const Rows& x, const Projection& projection, int out)
 {
@@ -103,6 +89,26 @@ void addInto(Rows& stream, const Rows& other)
         stream.values[index] += other.values[index];
 }
 
+void softmax(Vector<float>& scores)
+{
+    auto top = *std::max_element(scores.begin(), scores.end());
+    auto total = 0.0;
+
+    for (auto& score: scores)
+    {
+        score = std::exp(score - top);
+        total += score;
+    }
+
+    for (auto& score: scores)
+        score = (float) (score / total);
+}
+} // namespace Reference
+
+namespace
+{
+using namespace Reference;
+
 // A kernel-3, padding-1 convolution's input windows as rows, so that the
 // convolution is a linear over them: the window of output t holds input
 // frame t * stride + k - 1 of channel c at c * kernel + k, the order of the
@@ -124,21 +130,6 @@ Rows windows(const Rows& frames, int stride, int outLength)
         }
 
     return unfolded;
-}
-
-void softmax(Vector<float>& scores)
-{
-    auto top = *std::max_element(scores.begin(), scores.end());
-    auto total = 0.0;
-
-    for (auto& score: scores)
-    {
-        score = std::exp(score - top);
-        total += score;
-    }
-
-    for (auto& score: scores)
-        score = (float) (score / total);
 }
 
 Rows attention(const Rows& q, const Rows& k, const Rows& v)
