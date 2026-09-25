@@ -35,4 +35,4 @@ nano_add_executable(MLTests
         TARGETS eacp-ml)
 
 set_source_files_properties(EncoderReference.cpp DecoderStepReference.cpp
-        PROPERTIES COMPILE_OPTIONS -O2)
+        PROPERTIES COMPILE_OPTIONS -O2 SKIP_PRECOMPILE_HEADERS ON)
