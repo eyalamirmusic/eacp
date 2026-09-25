@@ -16,8 +16,11 @@ namespace eacp::GPU::CpuCompute
 class CpuUniformVisitor final : public ShaderVisitor
 {
 public:
-    CpuUniformVisitor(const ShaderGraph& graphToRead, Word* uniformWordsToFill)
+    CpuUniformVisitor(const ShaderGraph& graphToRead,
+                      const Plan& planToFollow,
+                      Word* uniformWordsToFill)
         : graph(graphToRead)
+        , plan(planToFollow)
         , words(uniformWordsToFill)
     {
     }
@@ -32,17 +35,19 @@ protected:
             return;
 
         auto slot = graph.expr(handle.node).index;
-        auto bytes = static_cast<std::size_t>(byteSize(type));
 
-        if (slot < 0 || slot >= graph.uniforms().size()
-            || bytes > sizeof(Word) * Plan::uniformWordsPerSlot)
+        if (slot < 0 || slot >= plan.uniformCount()
+            || byteSize(type) != byteSize(plan.uniformType(slot)))
             return;
 
-        std::memcpy(words + slot * Plan::uniformWordsPerSlot, data, bytes);
+        std::memcpy(words + plan.uniformOffset(slot),
+                    data,
+                    static_cast<std::size_t>(byteSize(type)));
     }
 
 private:
     const ShaderGraph& graph;
+    const Plan& plan;
     Word* words;
 };
 } // namespace eacp::GPU::CpuCompute

@@ -79,6 +79,92 @@ struct Context
     }
 };
 
+// The lanes of a ramp whose element is in range, with the element of the first
+// one; within a run the element grows by the ramp's scale and never wraps.
+struct LaneRun
+{
+    int begin = 0;
+    int end = 0;
+    Word element = 0;
+};
+
+struct LaneRuns
+{
+    std::array<LaneRun, 2> runs {};
+    int count = 0;
+};
+
+// Element start + lane * scale, taken wide so the one wrap a ramp spanning less
+// than 2^32 can make is a second run rather than a jump inside one.
+class RampBounds
+{
+public:
+    RampBounds(Word startToUse, Word scaleToUse, int lanesToUse)
+        : start(startToUse)
+        , scale(scaleToUse)
+        , lanes(lanesToUse)
+    {
+    }
+
+    LaneRuns inRange(Word size) const
+    {
+        constexpr auto wrap = std::uint64_t {1} << 32;
+        auto result = LaneRuns {};
+        addRun(result, 0, size);
+        addRun(result, wrap, wrap + size);
+        return result;
+    }
+
+private:
+    int firstLaneReaching(std::uint64_t element) const
+    {
+        if (start >= element)
+            return 0;
+
+        if (scale == 0)
+            return lanes;
+
+        auto lane = (element - start + scale - 1) / scale;
+        return lane < static_cast<std::uint64_t>(lanes) ? static_cast<int>(lane)
+                                                        : lanes;
+    }
+
+    void addRun(LaneRuns& result, std::uint64_t low, std::uint64_t high) const
+    {
+        auto begin = firstLaneReaching(low);
+        auto end = firstLaneReaching(high);
+
+        if (begin >= end)
+            return;
+
+        auto element = start + static_cast<std::uint64_t>(begin) * scale;
+        result.runs[static_cast<std::size_t>(result.count++)] = {
+            begin, end, static_cast<Word>(element)};
+    }
+
+    std::uint64_t start = 0;
+    std::uint64_t scale = 0;
+    int lanes = 0;
+};
+
+// Whether an index row the plan could not prove a ramp is one anyway, as
+// (i + 1) % length is on every group but the one that wraps.
+inline bool isContiguousRow(const Word* indices, int lanes)
+{
+    auto first = indices[0];
+    auto last = lanes - 1;
+
+    if (indices[last] != first + static_cast<Word>(last))
+        return false;
+
+    auto differs = Word {0};
+
+    for (auto lane = 0; lane < lanes; ++lane)
+        differs |= indices[lane] ^ (first + static_cast<Word>(lane));
+
+    return differs == 0;
+}
+
 struct MaskFrame
 {
     Word* mask = nullptr;

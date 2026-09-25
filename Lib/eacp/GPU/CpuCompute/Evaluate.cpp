@@ -245,6 +245,60 @@ std::int32_t remainderSigned(std::int32_t a, std::int32_t b)
     return a == INT_MIN && b == -1 ? 0 : a % b;
 }
 
+// a / d through d's reciprocal in double: for any 32-bit a the product is within
+// a / d * 2^-52 of the quotient, less than the 1 / d that separates it from the
+// next integer, so truncating it is the quotient or, at an exact multiple, one
+// below - which the remainder shows and one step corrects.
+struct InvariantDivisor
+{
+    explicit InvariantDivisor(Word divisorToUse)
+        : divisor(divisorToUse)
+        , reciprocal(1.0 / static_cast<double>(divisorToUse))
+    {
+    }
+
+    Word quotient(Word a, Word& remainder) const
+    {
+        auto estimate = static_cast<Word>(static_cast<double>(a) * reciprocal);
+        auto rest = a - estimate * divisor;
+        auto isShort = rest >= divisor;
+        remainder = isShort ? rest - divisor : rest;
+        return isShort ? estimate + 1u : estimate;
+    }
+
+    Word divisor;
+    double reciprocal;
+};
+
+void evaluateInvariantDivision(const Context& context,
+                               const Plan::Node& node,
+                               bool wantsRemainder)
+{
+    auto stride = context.stride;
+    auto divisor = context.operand(node, 1, 0)[0];
+
+    for (auto component = 0; component < node.components; ++component)
+    {
+        auto* out = context.lanes(node, component);
+
+        if (divisor == 0)
+        {
+            fill(out, 0u, stride);
+            continue;
+        }
+
+        const auto* a = context.operand(node, 0, component);
+        auto division = InvariantDivisor(divisor);
+
+        for (auto lane = 0; lane < stride; ++lane)
+        {
+            auto remainder = Word {};
+            auto quotient = division.quotient(a[lane], remainder);
+            out[lane] = wantsRemainder ? remainder : quotient;
+        }
+    }
+}
+
 using OperandLanes = std::array<const Word*, 16>;
 
 OperandLanes operandLanes(const Context& context,
@@ -266,12 +320,13 @@ void evaluateMatrixVector(const Context& context, const Plan::Node& node)
     auto order = static_cast<int>(node.order);
     auto matrix = operandLanes(context, node, 0, order * order);
     auto vector = operandLanes(context, node, 1, order);
+    auto stride = context.stride;
 
     for (auto row = 0; row < order; ++row)
     {
         auto* out = context.lanes(node, row);
 
-        for (auto lane = 0; lane < context.stride; ++lane)
+        for (auto lane = 0; lane < stride; ++lane)
         {
             auto sum = 0.f;
 
@@ -292,12 +347,13 @@ void evaluateVectorMatrix(const Context& context, const Plan::Node& node)
     auto order = static_cast<int>(node.order);
     auto vector = operandLanes(context, node, 0, order);
     auto matrix = operandLanes(context, node, 1, order * order);
+    auto stride = context.stride;
 
     for (auto column = 0; column < order; ++column)
     {
         auto* out = context.lanes(node, column);
 
-        for (auto lane = 0; lane < context.stride; ++lane)
+        for (auto lane = 0; lane < stride; ++lane)
         {
             auto sum = 0.f;
 
@@ -318,6 +374,7 @@ void evaluateMatrixMatrix(const Context& context, const Plan::Node& node)
     auto order = static_cast<int>(node.order);
     auto leftMatrix = operandLanes(context, node, 0, order * order);
     auto rightMatrix = operandLanes(context, node, 1, order * order);
+    auto stride = context.stride;
 
     for (auto column = 0; column < order; ++column)
     {
@@ -325,7 +382,7 @@ void evaluateMatrixMatrix(const Context& context, const Plan::Node& node)
         {
             auto* out = context.lanes(node, column * order + row);
 
-            for (auto lane = 0; lane < context.stride; ++lane)
+            for (auto lane = 0; lane < stride; ++lane)
             {
                 auto sum = 0.f;
 
@@ -362,17 +419,82 @@ void readElements(
     }
 }
 
+template <int FixedScale>
+void copyStrided(Word* out, const std::byte* first, int count, Word scale)
+{
+    auto step =
+        static_cast<std::size_t>(FixedScale > 0 ? FixedScale : scale) * sizeof(Word);
+
+    for (auto lane = 0; lane < count; ++lane)
+        std::memcpy(
+            out + lane, first + static_cast<std::size_t>(lane) * step, sizeof(Word));
+}
+
+void copyRun(Word* out, const SlotView& view, const LaneRun& run, Word scale)
+{
+    const auto* first = view.data + sizeof(Word) * run.element;
+    auto count = run.end - run.begin;
+    out += run.begin;
+
+    switch (scale)
+    {
+        case 0:
+            Lanes::fill(out, view.load(run.element), count);
+            return;
+        case 1:
+            copyStrided<1>(out, first, count, scale);
+            return;
+        case 2:
+            copyStrided<2>(out, first, count, scale);
+            return;
+        case 3:
+            copyStrided<3>(out, first, count, scale);
+            return;
+        case 4:
+            copyStrided<4>(out, first, count, scale);
+            return;
+        default:
+            copyStrided<0>(out, first, count, scale);
+            return;
+    }
+}
+
+void readRamp(Word* out, Word start, Word scale, const SlotView& view, int lanes)
+{
+    auto runs = RampBounds(start, scale, lanes).inRange(view.count);
+    auto zeroFrom = 0;
+
+    for (auto which = 0; which < runs.count; ++which)
+    {
+        const auto& run = runs.runs[static_cast<std::size_t>(which)];
+        Lanes::fill(out + zeroFrom, 0u, run.begin - zeroFrom);
+        copyRun(out, view, run, scale);
+        zeroFrom = run.end;
+    }
+
+    Lanes::fill(out + zeroFrom, 0u, lanes - zeroFrom);
+}
+
 void evaluateBufferRead(const Context& context, const Plan::Node& node)
 {
     const auto& view = context.slots[static_cast<std::size_t>(node.immediate)];
     const auto* indices = context.operand(node, 0, 0);
+    auto lanes = context.plan.batchLanes();
+    auto isRamp = node.ramp || isContiguousRow(indices, lanes);
+    auto scale = node.ramp ? node.rampScale : 1u;
+    auto rampLanes = isRamp ? lanes : 0;
+    auto padding = context.stride - rampLanes;
 
     for (auto component = 0; component < node.components; ++component)
-        readElements(context.lanes(node, component),
-                     indices,
-                     static_cast<Word>(component),
-                     view,
-                     context.stride);
+    {
+        auto* out = context.lanes(node, component);
+        auto offset = static_cast<Word>(component);
+
+        if (isRamp)
+            readRamp(out, indices[0] + offset, scale, view, rampLanes);
+
+        readElements(out + rampLanes, indices + rampLanes, offset, view, padding);
+    }
 }
 
 void evaluateArrayRead(const Context& context, const Plan::Node& node)
@@ -406,6 +528,7 @@ void evaluateSharedRead(const Context& context, const Plan::Node& node)
     const auto* storage = context.lanes(shared.storage);
     auto elements = static_cast<Word>(shared.elements);
     auto components = static_cast<Word>(shared.components);
+    auto stride = context.stride;
 
     for (auto component = 0; component < node.components; ++component)
     {
@@ -413,11 +536,11 @@ void evaluateSharedRead(const Context& context, const Plan::Node& node)
 
         if (elements == 0)
         {
-            fill(out, 0u, context.stride);
+            fill(out, 0u, stride);
             continue;
         }
 
-        for (auto lane = 0; lane < context.stride; ++lane)
+        for (auto lane = 0; lane < stride; ++lane)
         {
             auto inRange = indices[lane] < elements;
             auto element = inRange ? indices[lane] : 0u;
@@ -433,8 +556,9 @@ void evaluateAtomicLoad(const Context& context, const Plan::Node& node)
     const auto& view = context.slots[static_cast<std::size_t>(node.immediate)];
     const auto* indices = context.operand(node, 0, 0);
     auto* out = context.lanes(node);
+    auto stride = context.stride;
 
-    for (auto lane = 0; lane < context.stride; ++lane)
+    for (auto lane = 0; lane < stride; ++lane)
         out[lane] = indices[lane] < view.count ? view.atomicLoad(indices[lane]) : 0u;
 }
 
@@ -498,13 +622,21 @@ void evaluateNode(const Context& context, const Plan::Node& node)
             return;
 
         case Op::DivU:
-            evaluateZipWords(
-                context, node, [](Word a, Word b) { return b != 0 ? a / b : 0u; });
+            if (node.invariantDivisor)
+                evaluateInvariantDivision(context, node, false);
+            else
+                evaluateZipWords(context,
+                                 node,
+                                 [](Word a, Word b) { return b != 0 ? a / b : 0u; });
             return;
 
         case Op::RemU:
-            evaluateZipWords(
-                context, node, [](Word a, Word b) { return b != 0 ? a % b : 0u; });
+            if (node.invariantDivisor)
+                evaluateInvariantDivision(context, node, true);
+            else
+                evaluateZipWords(context,
+                                 node,
+                                 [](Word a, Word b) { return b != 0 ? a % b : 0u; });
             return;
 
         case Op::DivS:

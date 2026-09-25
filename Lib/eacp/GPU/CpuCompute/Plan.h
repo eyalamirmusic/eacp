@@ -147,11 +147,27 @@ enum class MathFunction : std::uint8_t
     Abs
 };
 
+// A kernel with no group-scope feature runs several consecutive x groups as
+// one batch of about targetBatchLanes lanes; 1 keeps a group per batch. A
+// batch whose workspace would pass maxBatchBytes is halved until it fits or
+// is one group, since every per-lane row - array constants included - grows
+// with it.
+struct PlanOptions
+{
+    static constexpr int defaultBatchLanes = 1024;
+    static constexpr std::size_t defaultBatchBytes = 192 * 1024;
+
+    int targetBatchLanes = defaultBatchLanes;
+    std::size_t maxBatchBytes = defaultBatchBytes;
+};
+
 class Plan
 {
 public:
     static constexpr int maxSlots = ComputePass::maxBufferSlots;
-    static constexpr int uniformWordsPerSlot = 16;
+
+    // Metal's setBytes limit: the uniforms tightly packed, a word per scalar.
+    static constexpr int maxUniformWords = 1024;
 
     struct Node
     {
@@ -165,6 +181,14 @@ public:
         int immediate = -1;
         std::uint32_t scratch = 0;
         bool used = false;
+
+        // A buffer read whose index is lane 0's plus lane * rampScale on every
+        // real lane, wrapping, with the batch spanning less than 2^32 elements.
+        bool ramp = false;
+        Word rampScale = 0;
+
+        // An unsigned / or % whose scalar divisor is the same on every lane.
+        bool invariantDivisor = false;
     };
 
     struct Step
@@ -187,6 +211,11 @@ public:
         int right = -1;
         SimdMatrixMemory memory = SimdMatrixMemory::Shared;
         SimdMatrixElement element = SimdMatrixElement::Float;
+
+        // A store whose index is a ramp (as Node::ramp) that never gives two
+        // (lane, component) pairs the same element.
+        bool ramp = false;
+        Word rampScale = 0;
     };
 
     struct BlockRange
@@ -238,14 +267,24 @@ public:
         Word word = 0;
     };
 
-    explicit Plan(const ShaderGraph& graph);
+    using Options = PlanOptions;
+
+    explicit Plan(const ShaderGraph& graph, Options options = {});
 
     bool isValid() const { return failure.empty(); }
     const std::string& reason() const { return failure; }
 
+    // Unique to each plan built, and shared by its copies, which have its
+    // layout: what a Workspace or a PreparedDispatch is checked against.
+    std::uint64_t serial() const { return planSerial; }
+
     DispatchRank rank() const { return dispatchRank; }
     ThreadGroupShape groupShape() const { return shape; }
+
+    // One group's lanes, and a batch's: groupsPerBatch() groups back to back.
     int lanes() const { return laneCount; }
+    int groupsPerBatch() const { return groupsInBatch; }
+    int batchLanes() const { return laneCount * groupsInBatch; }
     int laneStride() const { return stride; }
     bool guardsBounds() const { return boundsGuard; }
 
@@ -257,6 +296,11 @@ public:
     int uniformCount() const { return uniformTypes.size(); }
     ValueType uniformType(int slot) const;
 
+    // Uniform slot s is the byteSize words at uniformOffset(s) of a block of
+    // uniformBlockWords(), packed in slot order.
+    int uniformOffset(int slot) const { return uniformOffsets[slot]; }
+    int uniformBlockWords() const { return uniformWordCount; }
+
     std::size_t footprintBytes() const;
     std::size_t totalWords() const { return wordCount; }
 
@@ -267,6 +311,13 @@ public:
     }
 
     const Vector<int>& schedule() const { return scheduleList; }
+
+    // The nodes every lane of a dispatch, or of a group, computes alike: run
+    // once after the uniforms are read, and once per group after its ids.
+    const Range& dispatchSchedule() const { return dispatchRange; }
+    const Range& groupSchedule() const { return groupRange; }
+
+    int stepCount() const { return steps.size(); }
     const Step& step(int id) const { return steps[id]; }
     const BlockRange& block(int id) const { return blocks[id]; }
     int blockStep(int position) const { return blockSteps[position]; }
@@ -323,15 +374,25 @@ public:
     }
 
     std::uint32_t realLanes() const { return realLaneOffset; }
-    std::uint32_t uniformWords() const { return uniformOffset; }
+
+    // Per lane of a batch: which of its groups the lane is in, and its x
+    // offset from the batch's first thread (groupInBatch * shape.x + local x).
+    std::uint32_t groupInBatch() const { return groupInBatchOffset; }
+    std::uint32_t batchX() const { return batchXOffset; }
 
 private:
     friend class PlanBuilder;
 
+    Plan() = default;
+
+    bool fitsBatchBudget(const Options& options) const;
+
     std::string failure;
+    std::uint64_t planSerial = 0;
     DispatchRank dispatchRank = DispatchRank::OneD;
     ThreadGroupShape shape;
     int laneCount = 0;
+    int groupsInBatch = 1;
     int stride = 0;
     bool boundsGuard = true;
 
@@ -340,10 +401,14 @@ private:
     std::array<ValueType, maxSlots> slotElement {};
     std::array<bool, maxSlots> slotReferenced {};
     Vector<ValueType> uniformTypes;
+    Vector<int> uniformOffsets;
+    int uniformWordCount = 0;
 
     Vector<Node> nodes;
     Vector<int> arguments;
     Vector<int> scheduleList;
+    Range dispatchRange;
+    Range groupRange;
     Vector<Step> steps;
     Vector<BlockRange> blocks;
     Vector<int> blockSteps;
@@ -367,7 +432,8 @@ private:
     std::uint32_t maskOffset = 0;
     std::uint32_t localOffset = 0;
     std::uint32_t realLaneOffset = 0;
-    std::uint32_t uniformOffset = 0;
+    std::uint32_t groupInBatchOffset = 0;
+    std::uint32_t batchXOffset = 0;
     std::size_t wordCount = 0;
 };
 } // namespace eacp::GPU::CpuCompute

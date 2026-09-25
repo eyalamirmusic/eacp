@@ -1,6 +1,7 @@
 #include "Workspace.h"
 
 #include <cstdint>
+#include <utility>
 
 namespace eacp::GPU::CpuCompute
 {
@@ -37,11 +38,30 @@ void fillWorkspaceLocalCoordinates(const Plan& plan, Workspace& workspace)
 
     for (auto lane = 0; lane < stride; ++lane)
     {
-        auto isReal = lane < plan.lanes();
-        x[lane] = isReal ? static_cast<Word>(lane % shape.x) : 0u;
-        y[lane] = isReal ? static_cast<Word>((lane / shape.x) % shape.y) : 0u;
-        z[lane] = isReal ? static_cast<Word>(lane / (shape.x * shape.y)) : 0u;
+        auto isReal = lane < plan.batchLanes();
+        auto local = lane % plan.lanes();
+        x[lane] = isReal ? static_cast<Word>(local % shape.x) : 0u;
+        y[lane] = isReal ? static_cast<Word>((local / shape.x) % shape.y) : 0u;
+        z[lane] = isReal ? static_cast<Word>(local / (shape.x * shape.y)) : 0u;
         real[lane] = Lanes::maskOf(isReal);
+    }
+}
+
+void fillWorkspaceBatchCoordinates(const Plan& plan, Workspace& workspace)
+{
+    if (plan.groupsPerBatch() == 1)
+        return;
+
+    auto width = static_cast<Word>(plan.groupShape().x);
+    const auto* x = workspace.at(plan.localCoordinates(0));
+    auto* group = workspace.at(plan.groupInBatch());
+    auto* batchX = workspace.at(plan.batchX());
+
+    for (auto lane = 0; lane < plan.laneStride(); ++lane)
+    {
+        auto isReal = lane < plan.batchLanes();
+        group[lane] = isReal ? static_cast<Word>(lane / plan.lanes()) : 0u;
+        batchX[lane] = group[lane] * width + x[lane];
     }
 }
 
@@ -58,6 +78,7 @@ void fillWorkspaceSimdGroupIndices(const Plan& plan, Workspace& workspace)
 } // namespace
 
 Workspace::Workspace(const Plan& plan)
+    : serial(plan.serial())
 {
     if (!plan.isValid())
         return;
@@ -68,6 +89,22 @@ Workspace::Workspace(const Plan& plan)
 
     fillWorkspaceConstants(plan, *this);
     fillWorkspaceLocalCoordinates(plan, *this);
+    fillWorkspaceBatchCoordinates(plan, *this);
     fillWorkspaceSimdGroupIndices(plan, *this);
+}
+
+Workspace::Workspace(Workspace&& other) noexcept
+    : storage(std::move(other.storage))
+    , base(std::exchange(other.base, nullptr))
+    , serial(std::exchange(other.serial, 0))
+{
+}
+
+Workspace& Workspace::operator=(Workspace&& other) noexcept
+{
+    storage = std::move(other.storage);
+    base = std::exchange(other.base, nullptr);
+    serial = std::exchange(other.serial, 0);
+    return *this;
 }
 } // namespace eacp::GPU::CpuCompute

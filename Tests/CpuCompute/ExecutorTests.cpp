@@ -17,6 +17,9 @@
 
 #if defined(_WIN32)
 #include <malloc.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 using namespace nano;
@@ -2767,6 +2770,992 @@ auto tHugeGroup = test("Executor/aGroupTooLargeToAddressIsInvalid") = []
 };
 
 // ---------------------------------------------------------------------------
+// Ramps: a load or store whose index is the thread id times a constant plus
+// anything lane-invariant is one run of the buffer, copied rather than gathered.
+// The results must be the per-lane path's to the bit, out of range included.
+
+namespace
+{
+struct RampOffsetKernel final : ComputeKernel
+{
+    RampOffsetKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, input[i + 5u] * 2.f + input[i - 3u]);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+struct RampRecordKernel final : ComputeKernel
+{
+    RampRecordKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write4(wide, i, input.read4(i) + input.read4(i + 1u) * 10.f);
+        write(records, i, input.read4(i));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> wide;
+    Uniform<OutputBuffer> records;
+
+    EACP_SHADER(input, wide, records)
+};
+
+struct MaskedRampStoreKernel final : ComputeKernel
+{
+    MaskedRampStoreKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+
+        ifThen(i % 3u == 1u,
+               [&]
+               {
+                   write(output, i + 2u, toFloat(i));
+                   write4(wide, i, float4(toFloat(i), 1.f, 2.f, 3.f));
+               });
+    }
+
+    Uniform<OutputBuffer> output;
+    Uniform<OutputBuffer> wide;
+
+    EACP_SHADER(output, wide)
+};
+
+struct NotARampKernel final : ComputeKernel
+{
+    NotARampKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto next = (i + 1u) % length;
+        write(output, i, input[last - i] + input[next] * 100.f);
+        write(moved, next, toFloat(i));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+    Uniform<OutputBuffer> moved;
+    Uniform<UInt> last;
+    Uniform<UInt> length;
+
+    EACP_SHADER(input, output, moved, last, length)
+};
+
+struct InvariantDivisorKernel final : ComputeKernel
+{
+    InvariantDivisorKernel() { compile(); }
+
+    void define() override
+    {
+        auto a = threadId() * multiplier + bias;
+        write(quotients, threadId(), a / divisor);
+        write(remainders, threadId(), a % divisor);
+    }
+
+    Uniform<UIntOutputBuffer> quotients;
+    Uniform<UIntOutputBuffer> remainders;
+    Uniform<UInt> multiplier;
+    Uniform<UInt> bias;
+    Uniform<UInt> divisor;
+
+    EACP_SHADER(quotients, remainders, multiplier, bias, divisor)
+};
+
+bool isBufferRead(const Plan::Node& node)
+{
+    return node.op == Op::BufferRead || node.op == Op::BufferVectorRead;
+}
+
+int countBufferReads(const Plan& plan, bool ramp)
+{
+    auto seen = Vector<int> {};
+    auto count = 0;
+
+    for (auto id: plan.schedule())
+    {
+        const auto& node = plan.node(id);
+
+        if (!isBufferRead(node)
+            || std::find(seen.begin(), seen.end(), id) != seen.end())
+            continue;
+
+        seen.add(id);
+        count += node.ramp == ramp ? 1 : 0;
+    }
+
+    return count;
+}
+
+void collectStores(const Plan& plan, int block, Vector<Plan::Step>& stores)
+{
+    const auto& range = plan.block(block);
+
+    for (auto position = range.begin; position < range.end; ++position)
+    {
+        const auto& step = plan.step(plan.blockStep(position));
+
+        if (step.kind == StatementKind::Store
+            || step.kind == StatementKind::VectorStore)
+            stores.add(step);
+
+        if (step.body >= 0)
+            collectStores(plan, step.body, stores);
+
+        if (step.elseBody >= 0)
+            collectStores(plan, step.elseBody, stores);
+    }
+}
+
+int countStores(const Plan& plan, bool ramp)
+{
+    auto stores = Vector<Plan::Step> {};
+    collectStores(plan, plan.rootBlock(), stores);
+
+    auto count = 0;
+
+    for (const auto& step: stores)
+        count += step.ramp == ramp ? 1 : 0;
+
+    return count;
+}
+
+int countInvariantDivisions(const Plan& plan)
+{
+    auto seen = Vector<int> {};
+
+    for (auto id: plan.schedule())
+    {
+        const auto& node = plan.node(id);
+
+        if (node.invariantDivisor
+            && std::find(seen.begin(), seen.end(), id) == seen.end())
+            seen.add(id);
+    }
+
+    return seen.size();
+}
+
+float rampOffsetTwin(const Vector<float>& input, std::uint32_t i)
+{
+    return elementOr(input, i + 5u) * 2.f + elementOr(input, i - 3u);
+}
+} // namespace
+
+auto tRampOffsets = test("Executor/aRampReadIsZeroOutOfRangeAtBothEnds") = []
+{
+    auto kernel = RampOffsetKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+    check(countBufferReads(executor.plan(), true) == 2);
+    check(countBufferReads(executor.plan(), false) == 0);
+    check(countStores(executor.plan(), true) == 1);
+
+    auto input = ramp(50);
+
+    for (auto count: {70, 64, 3})
+    {
+        auto output = makeFloats(72, sentinel);
+
+        auto bindings = Bindings {};
+        bindings.set(kernel.input, input);
+        bindings.set(kernel.output, output);
+        check(executor.dispatch(bindings, count));
+
+        for (auto i = 0; i < count; ++i)
+            check(output[i] == rampOffsetTwin(input, (std::uint32_t) i));
+
+        for (auto i = count; i < output.size(); ++i)
+            check(output[i] == sentinel);
+    }
+};
+
+auto tRampRecords = test("Executor/aRampOfRecordsSplitsAtTheBufferEnd") = []
+{
+    constexpr auto count = 70;
+
+    auto kernel = RampRecordKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+    check(countBufferReads(executor.plan(), true) == 2);
+    check(countBufferReads(executor.plan(), false) == 0);
+    check(countStores(executor.plan(), true) == 5);
+    check(countStores(executor.plan(), false) == 0);
+
+    auto input = ramp(4 * count - 6);
+    auto wide = makeFloats(4 * count - 3, sentinel);
+    auto records = makeFloats(4 * count - 2, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.wide, wide);
+    bindings.set(kernel.records, records);
+    check(executor.dispatch(bindings, count));
+
+    for (auto e = 0u; e < (std::uint32_t) wide.size(); ++e)
+        check(wide[(int) e]
+              == elementOr(input, e) + elementOr(input, e + 4u) * 10.f);
+
+    for (auto e = 0u; e < (std::uint32_t) records.size(); ++e)
+        check(records[(int) e] == elementOr(input, e));
+
+    check(records[4 * 68 + 1] == (float) (4 * 68 + 2));
+    check(records[4 * 68 + 2] == 0.f);
+};
+
+auto tMaskedRampStore =
+    test("Executor/aRampStoreUnderADivergentMaskKeepsTheRest") = []
+{
+    constexpr auto count = 70;
+    constexpr auto size = 75;
+
+    auto kernel = MaskedRampStoreKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+    check(countStores(executor.plan(), true) == 2);
+
+    auto output = makeFloats(size, sentinel);
+    auto wide = makeFloats(4 * count + 2, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.output, output);
+    bindings.set(kernel.wide, wide);
+    check(executor.dispatch(bindings, count));
+
+    auto expected = makeFloats(size, sentinel);
+    auto expectedWide = makeFloats(4 * count + 2, sentinel);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        if (i % 3 != 1)
+            continue;
+
+        if (i + 2 < size)
+            expected[i + 2] = (float) i;
+
+        auto record = std::array<float, 4> {(float) i, 1.f, 2.f, 3.f};
+
+        for (auto c = 0; c < 4; ++c)
+            expectedWide[4 * i + c] = record[(std::size_t) c];
+    }
+
+    for (auto e = 0; e < size; ++e)
+        check(output[e] == expected[e]);
+
+    for (auto e = 0; e < wide.size(); ++e)
+        check(wide[e] == expectedWide[e]);
+};
+
+auto tNotARamp = test("Executor/aReversedOrWrappingIndexTakesTheGeneralPath") = []
+{
+    constexpr auto count = 70;
+    constexpr auto movedSize = 100;
+
+    auto kernel = NotARampKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+    check(countBufferReads(executor.plan(), true) == 0);
+    check(countBufferReads(executor.plan(), false) == 2);
+    check(countStores(executor.plan(), false) == 1);
+
+    auto input = ramp(60);
+    kernel.last = 65u;
+
+    for (auto length: {200u, 50u, 64u})
+    {
+        kernel.length = length;
+
+        auto output = makeFloats(count, sentinel);
+        auto moved = makeFloats(movedSize, sentinel);
+        auto expectedMoved = makeFloats(movedSize, sentinel);
+
+        auto bindings = Bindings {};
+        bindings.set(kernel.input, input);
+        bindings.set(kernel.output, output);
+        bindings.set(kernel.moved, moved);
+        check(executor.dispatch(bindings, count));
+
+        for (auto i = 0u; i < (std::uint32_t) count; ++i)
+        {
+            auto next = (i + 1u) % length;
+            auto value = elementOr(input, 65u - i) + elementOr(input, next) * 100.f;
+            check(output[(int) i] == value);
+
+            if (next < (std::uint32_t) movedSize)
+                expectedMoved[(int) next] = (float) i;
+        }
+
+        for (auto e = 0; e < movedSize; ++e)
+            check(moved[e] == expectedMoved[e]);
+    }
+};
+
+auto tInvariantDivisor = test("Executor/aLaneInvariantDivisorDividesExactly") = []
+{
+    constexpr auto count = 200;
+
+    auto kernel = InvariantDivisorKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+    check(countInvariantDivisions(executor.plan()) == 2);
+
+    auto quotients = makeUInts(count, sentinelBits);
+    auto remainders = makeUInts(count, sentinelBits);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.quotients, quotients);
+    bindings.set(kernel.remainders, remainders);
+
+    for (auto multiplier: {1u, 0x9e3779b1u, 0x01000193u})
+    {
+        for (auto bias: {0u, 0xffffff00u, 12345u})
+        {
+            for (auto divisor: {1u,
+                                2u,
+                                3u,
+                                7u,
+                                10u,
+                                49u,
+                                641u,
+                                0x80000000u,
+                                0xfffffffbu,
+                                0xffffffffu,
+                                0u})
+            {
+                kernel.multiplier = multiplier;
+                kernel.bias = bias;
+                kernel.divisor = divisor;
+                check(executor.dispatch(bindings, count));
+
+                for (auto i = 0u; i < (std::uint32_t) count; ++i)
+                {
+                    auto a = i * multiplier + bias;
+                    check(quotients[(int) i] == (divisor != 0 ? a / divisor : 0u));
+                    check(remainders[(int) i] == (divisor != 0 ? a % divisor : 0u));
+                }
+            }
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Where the plan evaluates a node: once per dispatch or per group when every
+// lane computes it alike, once per kernel run when two statements share it,
+// and into scratch that nodes whose lifetimes do not meet share.
+
+namespace
+{
+struct InvariantProductKernel final : ComputeKernel
+{
+    InvariantProductKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, input[i] * (gain * 3.f));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+    Uniform<Float> gain;
+
+    EACP_SHADER(input, output, gain)
+};
+
+struct GroupOffsetKernel final : ComputeKernel
+{
+    GroupOffsetKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        write(output, i, input[i] + toFloat(groupId() * 3u + 1u));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+constexpr auto sharedKeyBuckets = 8u;
+
+std::uint32_t sharedKeyTwin(std::uint32_t i)
+{
+    return (i * 7u + 3u) % sharedKeyBuckets;
+}
+
+struct SharedKeyKernel final : ComputeKernel
+{
+    SharedKeyKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto key = (i * 7u + 3u) % sharedKeyBuckets;
+        atomicAdd(counts, key, 1u);
+        write(keys, i, key * 2u);
+    }
+
+    Uniform<AtomicBuffer> counts;
+    Uniform<UIntOutputBuffer> keys;
+
+    EACP_SHADER(counts, keys)
+};
+
+struct HoistAcrossIfKernel final : ComputeKernel
+{
+    HoistAcrossIfKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto value = input[i] * 3.f + 1.f;
+        auto result = var(0.f);
+
+        ifThen(i % 2u == 0u, [&] { result = value; });
+
+        write(output, i, result.get() + value);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+float hoistAcrossIfTwin(float input, std::uint32_t i)
+{
+    auto value = input * 3.f + 1.f;
+    auto result = i % 2u == 0u ? value : 0.f;
+    return result + value;
+}
+
+struct HoistIntoLoopKernel final : ComputeKernel
+{
+    HoistIntoLoopKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto limit = i % 5u + 1u;
+        auto n = var(0u);
+        auto sum = var(0u);
+
+        loop(n < limit,
+             [&]
+             {
+                 sum += limit * 2u;
+                 n += 1u;
+             });
+
+        write(output, i, sum);
+    }
+
+    Uniform<UIntOutputBuffer> output;
+
+    EACP_SHADER(output)
+};
+
+std::uint32_t hoistIntoLoopTwin(std::uint32_t i)
+{
+    auto limit = i % 5u + 1u;
+    auto sum = 0u;
+
+    for (auto n = 0u; n < limit; ++n)
+        sum += limit * 2u;
+
+    return sum;
+}
+
+struct ManyStatementKernel final : ComputeKernel
+{
+    ManyStatementKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto x = input[i];
+        write(first, i, x * 2.f + 1.f);
+        write(second, i, x * x - 3.f);
+        write(third, i, (x + 5.f) * (x - 5.f));
+        write(fourth, i, abs(x) / (x * x + 1.f));
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> first;
+    Uniform<OutputBuffer> second;
+    Uniform<OutputBuffer> third;
+    Uniform<OutputBuffer> fourth;
+
+    EACP_SHADER(input, first, second, third, fourth)
+};
+
+struct LoopCarriedKernel final : ComputeKernel
+{
+    LoopCarriedKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto base = input[i] * 2.f + 0.25f;
+        write(first, i, base);
+
+        auto n = var(0u);
+        auto total = var(0.f);
+
+        loop(n < 4u,
+             [&]
+             {
+                 total += base;
+                 total = total * 0.5f + toFloat(n) * 3.f - 1.f;
+                 n += 1u;
+             });
+
+        write(second, i, total);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> first;
+    Uniform<OutputBuffer> second;
+
+    EACP_SHADER(input, first, second)
+};
+
+float loopCarriedTwin(float input)
+{
+    auto base = input * 2.f + 0.25f;
+    auto total = 0.f;
+
+    for (auto n = 0u; n < 4u; ++n)
+    {
+        total = total + base;
+        total = total * 0.5f + (float) n * 3.f - 1.f;
+    }
+
+    return total;
+}
+
+struct GuardedStoreKernel final : ComputeKernel
+{
+    GuardedStoreKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        ifThen(i < limit, [&] { write(output, i, toFloat(i) + 0.5f); });
+    }
+
+    Uniform<OutputBuffer> output;
+    Uniform<UInt> limit;
+
+    EACP_SHADER(output, limit)
+};
+
+bool rangeHolds(const Plan& plan, Plan::Range range, int id)
+{
+    const auto& schedule = plan.schedule();
+
+    for (auto position = range.begin; position < range.end; ++position)
+        if (schedule[position] == id)
+            return true;
+
+    return false;
+}
+
+Plan::Range stepRange(const Plan& plan, int stepId)
+{
+    const auto& step = plan.step(stepId);
+    return {step.scheduleBegin, step.scheduleEnd};
+}
+
+bool anyStepHolds(const Plan& plan, int id)
+{
+    for (auto stepId = 0; stepId < plan.stepCount(); ++stepId)
+        if (rangeHolds(plan, stepRange(plan, stepId), id))
+            return true;
+
+    return false;
+}
+
+int timesScheduled(const Plan& plan, int id)
+{
+    return (int) std::count(plan.schedule().begin(), plan.schedule().end(), id);
+}
+
+Vector<int> nodesOf(const Plan& plan, Plan::Range range, Op op)
+{
+    auto found = Vector<int> {};
+    const auto& schedule = plan.schedule();
+
+    for (auto position = range.begin; position < range.end; ++position)
+        if (plan.node(schedule[position]).op == op)
+            found.add(schedule[position]);
+
+    return found;
+}
+
+int firstStepOf(const Plan& plan, StatementKind kind)
+{
+    for (auto stepId = 0; stepId < plan.stepCount(); ++stepId)
+        if (plan.step(stepId).kind == kind)
+            return stepId;
+
+    return -1;
+}
+
+int onlyStepOf(const Plan& plan, int block)
+{
+    const auto& range = plan.block(block);
+    return range.end - range.begin == 1 ? plan.blockStep(range.begin) : -1;
+}
+} // namespace
+
+auto tDispatchInvariant =
+    test("Executor/aUniformTimesAConstantIsEvaluatedOncePerDispatch") = []
+{
+    constexpr auto count = 150;
+
+    auto kernel = InvariantProductKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto invariant = nodesOf(plan, plan.dispatchSchedule(), Op::MulF);
+    check(invariant.size() == 1);
+    check(plan.groupSchedule().begin == plan.groupSchedule().end);
+
+    if (invariant.size() == 1)
+    {
+        check(!anyStepHolds(plan, invariant[0]));
+        check(timesScheduled(plan, invariant[0]) == 1);
+    }
+
+    check(nodesOf(plan, stepRange(plan, 0), Op::MulF).size() == 1);
+
+    auto input = ramp(count);
+    auto output = makeFloats(count, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.output, output);
+
+    for (auto gain: {0.7f, -2.25f})
+    {
+        kernel.gain = gain;
+        check(executor.dispatch(bindings, count));
+
+        for (auto i = 0; i < count; ++i)
+            check(output[i] == input[i] * (gain * 3.f));
+    }
+};
+
+auto tGroupInvariant =
+    test("Executor/aGroupIdExpressionIsEvaluatedOncePerGroup") = []
+{
+    constexpr auto count = 300;
+
+    auto kernel = GroupOffsetKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto converted = nodesOf(plan, plan.groupSchedule(), Op::FloatFromU);
+    check(converted.size() == 1);
+    check(nodesOf(plan, plan.groupSchedule(), Op::MulI).size() == 1);
+    check(nodesOf(plan, plan.groupSchedule(), Op::AddI).size() == 1);
+
+    if (converted.size() == 1)
+        check(!anyStepHolds(plan, converted[0]));
+
+    auto input = ramp(count);
+    auto output = makeFloats(count, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.output, output);
+    check(executor.dispatch(bindings, count));
+
+    auto width = (std::uint32_t) plan.groupShape().x;
+
+    for (auto i = 0u; i < (std::uint32_t) count; ++i)
+        check(output[(int) i] == input[(int) i] + (float) (i / width * 3u + 1u));
+};
+
+auto tSharedAcrossStatements =
+    test("Executor/aPureNodeTwoStatementsShareIsEvaluatedOnce") = []
+{
+    constexpr auto count = 200;
+
+    auto kernel = SharedKeyKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto atomic = firstStepOf(plan, StatementKind::AtomicAdd);
+    auto store = firstStepOf(plan, StatementKind::Store);
+    check(atomic >= 0 && store >= 0);
+
+    auto keys = nodesOf(plan, {0, plan.schedule().size()}, Op::RemU);
+    check(keys.size() == 1);
+
+    if (keys.size() == 1 && atomic >= 0 && store >= 0)
+    {
+        check(rangeHolds(plan, stepRange(plan, atomic), keys[0]));
+        check(!rangeHolds(plan, stepRange(plan, store), keys[0]));
+    }
+
+    auto counts = makeUInts((int) sharedKeyBuckets, 0u);
+    auto output = makeUInts(count, sentinelBits);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.counts, counts);
+    bindings.set(kernel.keys, output);
+    check(executor.dispatch(bindings, count));
+
+    auto expected = makeUInts((int) sharedKeyBuckets, 0u);
+
+    for (auto i = 0u; i < (std::uint32_t) count; ++i)
+    {
+        check(output[(int) i] == sharedKeyTwin(i) * 2u);
+        ++expected[(int) sharedKeyTwin(i)];
+    }
+
+    for (auto b = 0; b < (int) sharedKeyBuckets; ++b)
+        check(counts[b] == expected[b]);
+};
+
+auto tHoistAcrossIf = test("Executor/aNodeUsedInAnIfBodyAndAfterItIsHoisted") = []
+{
+    constexpr auto count = 130;
+
+    auto kernel = HoistAcrossIfKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto branch = firstStepOf(plan, StatementKind::If);
+    check(branch >= 0);
+
+    if (branch >= 0)
+    {
+        auto hoisted = nodesOf(plan, stepRange(plan, branch), Op::AddF);
+        check(hoisted.size() == 1);
+
+        if (hoisted.size() == 1)
+            check(timesScheduled(plan, hoisted[0]) == 1);
+
+        auto assign = onlyStepOf(plan, plan.step(branch).body);
+        check(assign >= 0);
+
+        if (assign >= 0)
+            check(plan.step(assign).scheduleBegin == plan.step(assign).scheduleEnd);
+    }
+
+    auto input = ramp(count);
+    auto output = makeFloats(count, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.output, output);
+    check(executor.dispatch(bindings, count));
+
+    for (auto i = 0u; i < (std::uint32_t) count; ++i)
+        check(output[(int) i] == hoistAcrossIfTwin(input[(int) i], i));
+};
+
+auto tHoistIntoLoop =
+    test("Executor/aNodeTheLoopConditionAndBodyShareIsHoistedToTheCondition") = []
+{
+    constexpr auto count = 90;
+
+    auto kernel = HoistIntoLoopKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto loopStep = firstStepOf(plan, StatementKind::Loop);
+    check(loopStep >= 0);
+
+    if (loopStep >= 0)
+    {
+        auto limits = nodesOf(plan, stepRange(plan, loopStep), Op::AddI);
+        check(limits.size() == 1);
+
+        if (limits.size() == 1)
+            check(timesScheduled(plan, limits[0]) == 1);
+    }
+
+    auto output = makeUInts(count, sentinelBits);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.output, output);
+    check(executor.dispatch(bindings, count));
+
+    for (auto i = 0u; i < (std::uint32_t) count; ++i)
+        check(output[(int) i] == hoistIntoLoopTwin(i));
+};
+
+auto tScratchReuse =
+    test("Executor/statementsWhoseNodesDoNotMeetShareTheirScratch") = []
+{
+    constexpr auto count = 140;
+
+    auto kernel = ManyStatementKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto nodes = Vector<int> {};
+    auto slots = Vector<std::uint32_t> {};
+
+    for (auto stepId = 0; stepId < plan.stepCount(); ++stepId)
+    {
+        auto range = stepRange(plan, stepId);
+
+        for (auto position = range.begin; position < range.end; ++position)
+        {
+            auto id = plan.schedule()[position];
+
+            if (!nodes.contains(id))
+                nodes.add(id);
+
+            if (!slots.contains(plan.node(id).scratch))
+                slots.add(plan.node(id).scratch);
+        }
+    }
+
+    auto rowBytes = (std::size_t) plan.laneStride() * sizeof(std::uint32_t);
+    auto reused = (std::size_t) (nodes.size() - slots.size()) * rowBytes;
+    auto batchRows = plan.groupsPerBatch() > 1 ? 2u : 0u;
+    check(nodes.size() == 11);
+    check(slots.size() == 5);
+    check(plan.footprintBytes() == 64 + (15 + batchRows) * rowBytes);
+    check(plan.footprintBytes() + reused == 64 + (21 + batchRows) * rowBytes);
+
+    auto input = ramp(count);
+    auto first = makeFloats(count, sentinel);
+    auto second = makeFloats(count, sentinel);
+    auto third = makeFloats(count, sentinel);
+    auto fourth = makeFloats(count, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.first, first);
+    bindings.set(kernel.second, second);
+    bindings.set(kernel.third, third);
+    bindings.set(kernel.fourth, fourth);
+    check(executor.dispatch(bindings, count));
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto x = input[i];
+        check(first[i] == x * 2.f + 1.f);
+        check(second[i] == x * x - 3.f);
+        check(third[i] == (x + 5.f) * (x - 5.f));
+        check(fourth[i] == std::fabs(x) / (x * x + 1.f));
+    }
+};
+
+auto tLoopCarried =
+    test("Executor/aNodeHoistedAboveALoopKeepsItsScratchThroughEveryIteration") = []
+{
+    constexpr auto count = 100;
+
+    auto kernel = LoopCarriedKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    const auto& plan = executor.plan();
+    auto loopStep = firstStepOf(plan, StatementKind::Loop);
+    auto base = nodesOf(plan, stepRange(plan, 0), Op::AddF);
+    check(base.size() == 1);
+
+    if (base.size() == 1 && loopStep >= 0)
+    {
+        check(timesScheduled(plan, base[0]) == 1);
+
+        const auto& body = plan.block(plan.step(loopStep).body);
+
+        for (auto position = body.begin; position < body.end; ++position)
+        {
+            auto range = stepRange(plan, plan.blockStep(position));
+
+            for (auto at = range.begin; at < range.end; ++at)
+                check(plan.node(plan.schedule()[at]).scratch
+                      != plan.node(base[0]).scratch);
+        }
+    }
+
+    auto input = ramp(count);
+    auto first = makeFloats(count, sentinel);
+    auto second = makeFloats(count, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.first, first);
+    bindings.set(kernel.second, second);
+    check(executor.dispatch(bindings, count));
+
+    for (auto i = 0; i < count; ++i)
+    {
+        check(first[i] == input[i] * 2.f + 0.25f);
+        check(second[i] == loopCarriedTwin(input[i]));
+    }
+};
+
+#if !defined(_WIN32)
+// The elements past the limit sit on a read-only page, so a store that wrote
+// anything into a masked-out lane's element - even the word it read - faults.
+auto tNoPhantomWrite =
+    test("Executor/aRampStoreNeverWritesAMaskedOutLanesElement") = []
+{
+    constexpr auto count = 128;
+    constexpr auto limit = 40;
+
+    auto kernel = GuardedStoreKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+    check(countStores(executor.plan(), true) == 1);
+
+    auto page = (std::size_t) sysconf(_SC_PAGESIZE);
+    auto* mapping = mmap(
+        nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    check(mapping != MAP_FAILED);
+
+    if (mapping == MAP_FAILED)
+        return;
+
+    auto* elements = reinterpret_cast<float*>(static_cast<std::byte*>(mapping) + page
+                                              - limit * sizeof(float));
+    std::fill(elements, elements + count, sentinel);
+    check(mprotect(static_cast<std::byte*>(mapping) + page, page, PROT_READ) == 0);
+
+    kernel.limit = (std::uint32_t) limit;
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.output, std::span<float> {elements, (std::size_t) count});
+    check(executor.dispatch(bindings, count));
+
+    for (auto i = 0; i < count; ++i)
+        check(elements[i] == (i < limit ? (float) i + 0.5f : sentinel));
+
+    munmap(mapping, 2 * page);
+};
+#endif
+
+// ---------------------------------------------------------------------------
 // The realtime contract: a dispatch after the first allocates nothing. Global
 // operator new and delete are replaced at the bottom of this file with forms
 // that count while `countingHeap` is set, which is why this must stay the only
@@ -2820,6 +3809,7 @@ auto tNoAllocation = test("Executor/aDispatchAfterTheFirstAllocatesNothing") = [
 
     auto executor = Executor {kernel};
     check(executor.isValid(), executor.reason());
+    check(executor.plan().groupsPerBatch() > 1);
 
     auto input = ramp(count);
     auto output = makeFloats(count * 4, sentinel);
@@ -2850,6 +3840,63 @@ auto tNoAllocation = test("Executor/aDispatchAfterTheFirstAllocatesNothing") = [
     check(counterWorks);
     check(warmedUp);
     check(ran);
+    check(allocationsCounted.load() == 0);
+    check(releasesCounted.load() == 0);
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto turns = 3 + (i & 1);
+        auto accumulated = 0.f;
+
+        for (auto turn = 0; turn < turns; ++turn)
+            accumulated += input[i] * 0.25f;
+
+        check(output[i * 4 + 0] == accumulated);
+        check(output[i * 4 + 1] == (float) turns);
+        check(output[i * 4 + 2] == 0.25f);
+        check(output[i * 4 + 3] == input[i]);
+    }
+};
+
+auto tSplitNoAllocation =
+    test("Executor/aPreparedDispatchSplitAfterTheFirstAllocatesNothing") = []
+{
+    constexpr auto count = 5000;
+
+    auto kernel = RealtimeKernel {};
+    kernel.gain = 0.5f;
+    kernel.limit = 3u;
+
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    auto input = ramp(count);
+    auto output = makeFloats(count * 4, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.output, output);
+
+    auto workspace = Workspace {executor.plan()};
+    auto warmup = executor.prepareDispatch(bindings, count);
+    auto warmedUp =
+        executor.dispatchGroups(warmup, 0, warmup.groupCount(), workspace);
+
+    kernel.gain = 0.25f;
+
+    allocationsCounted = 0;
+    releasesCounted = 0;
+    countingHeap = true;
+    auto prepared = executor.prepareDispatch(bindings, count);
+    auto half = prepared.groupCount() / 2 + 1;
+    auto ranFirst = executor.dispatchGroups(prepared, half, half, workspace);
+    auto ranSecond = executor.dispatchGroups(prepared, 0, half, workspace);
+    countingHeap = false;
+
+    check(warmedUp);
+    check(prepared.isValid());
+    check(ranFirst);
+    check(ranSecond);
     check(allocationsCounted.load() == 0);
     check(releasesCounted.load() == 0);
 

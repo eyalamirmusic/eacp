@@ -2,7 +2,11 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <initializer_list>
+#include <limits>
 #include <string_view>
 
 namespace eacp::GPU::CpuCompute
@@ -320,14 +324,62 @@ std::uint32_t planRoundUp(int value, int multiple)
 {
     return static_cast<std::uint32_t>((value + multiple - 1) / multiple * multiple);
 }
+
+// How far a node's value is shared: by every lane of the dispatch, by every
+// lane of a group, or by none. Ordered, so the join of two is the larger.
+enum class PlanLevel : std::uint8_t
+{
+    Dispatch,
+    Group,
+    Lane
+};
+
+PlanLevel planJoin(PlanLevel a, PlanLevel b)
+{
+    return a < b ? b : a;
+}
+
+PlanLevel planLeafLevel(ExprKind kind)
+{
+    switch (kind)
+    {
+        case ExprKind::Constant:
+        case ExprKind::Uniform:
+        case ExprKind::GridExtent:
+            return PlanLevel::Dispatch;
+        case ExprKind::GroupId:
+            return PlanLevel::Group;
+        default:
+            return PlanLevel::Lane;
+    }
+}
+
+// Where a node is evaluated: a step's id, or one of these.
+constexpr int planArraySite = -1;
+constexpr int planDispatchSite = -2;
+constexpr int planGroupSite = -3;
+constexpr int planUnhoisted = -4;
+
+PlanLevel planSiteLevel(int site)
+{
+    if (site == planDispatchSite)
+        return PlanLevel::Dispatch;
+
+    return site == planGroupSite ? PlanLevel::Group : PlanLevel::Lane;
+}
 } // namespace
 
 class PlanBuilder
 {
 public:
-    PlanBuilder(Plan& planToFill, const ShaderGraph& graphToRead)
+    PlanBuilder(Plan& planToFill,
+                const ShaderGraph& graphToRead,
+                Plan::Options optionsToUse,
+                int mostGroupsPerBatch)
         : plan(planToFill)
         , graph(graphToRead)
+        , options(optionsToUse)
+        , groupLimit(mostGroupsPerBatch)
     {
     }
 
@@ -358,12 +410,10 @@ public:
         if (failed())
             return;
 
-        layOut();
-
-        if (failed())
-            return;
-
+        chooseBatchWidth();
+        markRamps();
         buildSchedules();
+        layOut();
     }
 
 private:
@@ -445,11 +495,29 @@ private:
         }
 
         plan.laneCount = static_cast<int>(lanes);
-        plan.stride =
-            static_cast<int>(planRoundUp(plan.laneCount, planLaneAlignment));
         plan.boundsGuard = !graph.usesBarrier();
+        return packUniforms();
+    }
+
+    bool packUniforms()
+    {
         plan.uniformTypes = graph.uniforms();
-        return true;
+
+        for (auto type: plan.uniformTypes)
+        {
+            plan.uniformOffsets.add(plan.uniformWordCount);
+            plan.uniformWordCount += byteSize(type) / static_cast<int>(sizeof(Word));
+        }
+
+        if (plan.uniformWordCount <= Plan::maxUniformWords)
+            return true;
+
+        fail("the kernel's uniforms take "
+             + std::to_string(plan.uniformWordCount * sizeof(Word))
+             + " bytes; at most "
+             + std::to_string(Plan::maxUniformWords * sizeof(Word))
+             + " are supported");
+        return false;
     }
 
     struct BlockResult
@@ -1917,6 +1985,250 @@ private:
             node.op = Op::CopyBits;
     }
 
+    // A scalar integer node whose value on real lane l is its value on lane 0
+    // plus l * scale, mod 2^32; constant also knows lane 0's value.
+    struct LaneForm
+    {
+        bool linear = false;
+        bool constant = false;
+        Word scale = 0;
+        Word value = 0;
+    };
+
+    static LaneForm laneInvariant() { return {true, false, 0u, 0u}; }
+
+    static LaneForm constantForm(Word value) { return {true, true, 0u, value}; }
+
+    static bool isXAxis(int index) { return index == 0 || index == allComponents; }
+
+    // A batch is a run of x groups within one (y, z) row, so the thread id's x
+    // stays lane-linear across it while the local and group ids' x do not.
+    LaneForm idForm(ExprKind kind, int index) const
+    {
+        if (plan.shape.y != 1 || plan.shape.z != 1)
+            return {};
+
+        if (!isXAxis(index))
+            return laneInvariant();
+
+        if (kind == ExprKind::LocalId && plan.groupsInBatch > 1)
+            return {};
+
+        return {true, false, 1u, 0u};
+    }
+
+    LaneForm groupIdForm(int index) const
+    {
+        if (plan.groupsInBatch > 1 && isXAxis(index))
+            return {};
+
+        return laneInvariant();
+    }
+
+    LaneForm leafForm(const Expr& expr) const
+    {
+        switch (expr.kind)
+        {
+            case ExprKind::Constant:
+                return constantForm(constantWord(expr));
+            case ExprKind::Uniform:
+            case ExprKind::GridExtent:
+                return laneInvariant();
+            case ExprKind::GroupId:
+                return groupIdForm(expr.index);
+            case ExprKind::ThreadId:
+            case ExprKind::LocalId:
+                return idForm(expr.kind, expr.index);
+            default:
+                return {};
+        }
+    }
+
+    static LaneForm sumForm(const LaneForm& a, const LaneForm& b, Word sign)
+    {
+        if (!a.linear || !b.linear)
+            return {};
+
+        return {true,
+                a.constant && b.constant,
+                a.scale + sign * b.scale,
+                a.value + sign * b.value};
+    }
+
+    static LaneForm productForm(const LaneForm& a, const LaneForm& b)
+    {
+        if (a.constant && b.constant)
+            return constantForm(a.value * b.value);
+
+        if (a.linear && b.constant)
+            return {true, false, a.scale * b.value, 0u};
+
+        if (b.linear && a.constant)
+            return {true, false, b.scale * a.value, 0u};
+
+        return {};
+    }
+
+    static LaneForm shiftForm(const LaneForm& a, const LaneForm& amount)
+    {
+        if (!a.linear || !amount.constant)
+            return {};
+
+        auto shift = amount.value & 31u;
+        return {true, a.constant, a.scale << shift, a.value << shift};
+    }
+
+    LaneForm argumentForm(int id, const Plan::Node& node, int which) const
+    {
+        auto argument = plan.argument(node, which);
+        return argument < id ? forms[argument] : LaneForm {};
+    }
+
+    LaneForm nodeForm(int id) const
+    {
+        const auto& node = plan.nodes[id];
+
+        if (!node.used || node.components != 1)
+            return {};
+
+        if (node.op == Op::Leaf)
+            return leafForm(graph.expr(id));
+
+        for (auto which = 0; which < node.argCount; ++which)
+            if (plan.nodes[plan.argument(node, which)].components != 1)
+                return {};
+
+        switch (node.op)
+        {
+            case Op::CopyBits:
+                return argumentForm(id, node, 0);
+            case Op::AddI:
+                return sumForm(
+                    argumentForm(id, node, 0), argumentForm(id, node, 1), 1u);
+            case Op::SubI:
+                return sumForm(
+                    argumentForm(id, node, 0), argumentForm(id, node, 1), ~0u);
+            case Op::MulI:
+                return productForm(argumentForm(id, node, 0),
+                                   argumentForm(id, node, 1));
+            case Op::Shl:
+                return shiftForm(argumentForm(id, node, 0),
+                                 argumentForm(id, node, 1));
+            default:
+                return {};
+        }
+    }
+
+    // The last real lane's element less lane 0's, before any wrap.
+    std::uint64_t rampSpan(Word scale) const
+    {
+        return static_cast<std::uint64_t>(plan.batchLanes() - 1) * scale;
+    }
+
+    static constexpr std::uint64_t wordRange = std::uint64_t {1} << 32;
+
+    void markRampRead(Plan::Node& node, int id)
+    {
+        if (node.op != Op::BufferRead && node.op != Op::BufferVectorRead)
+            return;
+
+        const auto& index = forms[plan.argument(node, 0)];
+
+        if (plan.argument(node, 0) < id && index.linear
+            && rampSpan(index.scale) < wordRange)
+        {
+            node.ramp = true;
+            node.rampScale = index.scale;
+        }
+    }
+
+    void markInvariantDivisor(Plan::Node& node, int id)
+    {
+        if (node.op != Op::DivU && node.op != Op::RemU)
+            return;
+
+        auto divisor = plan.argument(node, 1);
+        const auto& form = forms[divisor];
+        node.invariantDivisor = divisor < id && form.linear && form.scale == 0;
+    }
+
+    void markRampStore(Plan::Step& step)
+    {
+        if (step.kind != StatementKind::Store
+            && step.kind != StatementKind::VectorStore)
+            return;
+
+        const auto& index = forms[step.index];
+        auto width = static_cast<Word>(plan.nodes[step.value].components);
+
+        if (index.linear && index.scale >= width
+            && rampSpan(index.scale) + width <= wordRange)
+        {
+            step.ramp = true;
+            step.rampScale = index.scale;
+        }
+    }
+
+    bool usesAtomics() const
+    {
+        for (const auto& step: plan.steps)
+            if (step.kind == StatementKind::AtomicAdd)
+                return true;
+
+        for (const auto& node: plan.nodes)
+            if (node.used && node.op == Op::AtomicLoad)
+                return true;
+
+        return false;
+    }
+
+    // Atomics included: each statement finishing across the batch before the
+    // next is observable through them, and a batch of one group keeps it so.
+    bool needsGroupPerBatch() const
+    {
+        return graph.usesBarrier() || graph.sharedArrays().size() > 0
+               || graph.usesGroupReduction() || graph.usesSimdReduction()
+               || graph.usesSimdGroups() || usesAtomics();
+    }
+
+    void chooseBatchWidth()
+    {
+        auto groups = std::int64_t {1};
+
+        if (!needsGroupPerBatch())
+            groups = std::clamp<std::int64_t>(
+                std::int64_t {options.targetBatchLanes} / plan.laneCount,
+                1,
+                std::max<std::int64_t>(
+                    1,
+                    std::min<std::int64_t>(planMaxLanes / plan.laneCount,
+                                           groupLimit)));
+
+        plan.groupsInBatch = static_cast<int>(groups);
+        plan.stride =
+            static_cast<int>(planRoundUp(plan.batchLanes(), planLaneAlignment));
+    }
+
+    void markRamps()
+    {
+        forms.resize(graph.nodeCount(), LaneForm {});
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+            forms[id] = nodeForm(id);
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+        {
+            if (plan.nodes[id].used)
+            {
+                markRampRead(plan.nodes[id], id);
+                markInvariantDivisor(plan.nodes[id], id);
+            }
+        }
+
+        for (auto& step: plan.steps)
+            markRampStore(step);
+    }
+
     std::uint32_t allocate(int components)
     {
         auto offset = cursor;
@@ -1967,9 +2279,11 @@ private:
         {
             auto& node = plan.nodes[id];
 
-            if (node.used && ownsScratch(graph.expr(id).kind))
+            if (node.used && ownsScratch(graph.expr(id).kind) && !isPooled(id))
                 node.scratch = allocate(node.components);
         }
+
+        colourPooledNodes();
 
         for (auto type: graph.variables())
         {
@@ -1987,24 +2301,9 @@ private:
                 plan.nodes[id].scratch = plan.variableLayouts[expr.index].storage;
         }
 
-        for (auto slot = 0; slot < graph.arrays().size(); ++slot)
-        {
-            const auto& array = graph.arrays()[slot];
-            auto layout = Plan::ArrayLayout {};
-            layout.components = componentCount(array.elementType);
-            layout.elementBegin = plan.arrayElements.size();
-            layout.elementCount = array.elements.size();
-
-            for (auto element: array.elements)
-                plan.arrayElements.add(element);
-
-            layout.used = arrayUsed[slot] != 0;
-
+        for (auto& layout: plan.arrayLayouts)
             if (layout.used)
                 layout.storage = allocate(layout.components * layout.elementCount);
-
-            plan.arrayLayouts.add(layout);
-        }
 
         layOutShared();
         layOutFragments();
@@ -2015,6 +2314,13 @@ private:
         plan.maskOffset = allocate(plan.maskFrameCount());
         plan.localOffset = allocate(3);
         plan.realLaneOffset = allocate(1);
+        plan.batchXOffset = plan.localCoordinates(0);
+
+        if (plan.groupsInBatch > 1)
+        {
+            plan.groupInBatchOffset = allocate(1);
+            plan.batchXOffset = allocate(1);
+        }
 
         for (auto id = 0; id < graph.nodeCount(); ++id)
         {
@@ -2025,9 +2331,6 @@ private:
                     expr.index == allComponents ? 0 : expr.index);
         }
 
-        plan.uniformOffset = static_cast<std::uint32_t>(cursor);
-        cursor += static_cast<std::size_t>(Plan::uniformWordsPerSlot)
-                  * static_cast<std::size_t>(plan.uniformTypes.size());
         plan.wordCount = cursor;
 
         if (cursor > planMaxWords)
@@ -2036,14 +2339,187 @@ private:
                  + std::to_string(planMaxWords));
     }
 
-    bool isScheduleLeaf(int id, int pinned) const
+    // A node evaluated in a statement's schedule, whose scratch is free again
+    // once its last use has read it.
+    bool isPooled(int id) const
     {
-        return id == pinned || plan.nodes[id].op == Op::Leaf;
+        const auto& node = plan.nodes[id];
+        return node.used && node.op != Op::Leaf && levels[id] == PlanLevel::Lane
+               && ownsScratch(graph.expr(id).kind);
     }
 
-    void visit(int root, int pinned)
+    // Times: schedule position p is 2p, and a step's commit, which reads its
+    // roots after its schedule and before any body, is the odd time after its
+    // last position.
+    static int commitTime(int scheduleEnd) { return 2 * scheduleEnd - 1; }
+
+    int regionEnd(int loopStep) const
     {
-        if (root < 0 || marks[root] == stamp || isScheduleLeaf(root, pinned))
+        return commitTime(plan.steps[subtreeLasts[loopStep]].scheduleEnd);
+    }
+
+    // A value defined outside a loop and read inside it is read again on the
+    // next iteration, so it lives to the end of every loop between the two.
+    int loopExtent(int site, int definedAt) const
+    {
+        if (site < 0 || definedAt == planUnhoisted)
+            return -1;
+
+        auto end = -1;
+
+        if (plan.steps[site].kind == StatementKind::Loop)
+            end = regionEnd(site);
+
+        auto definedIn = definedAt >= 0 ? stepBlocks[definedAt] : plan.rootBlock();
+
+        for (auto block = stepBlocks[site]; block != definedIn;)
+        {
+            auto owner = blockOwners[block];
+
+            if (owner < 0 || owner == definedAt)
+                break;
+
+            if (plan.steps[owner].kind == StatementKind::Loop)
+                end = std::max(end, regionEnd(owner));
+
+            block = stepBlocks[owner];
+        }
+
+        return end;
+    }
+
+    void notePooledUse(int id, int time, int site)
+    {
+        if (id < 0 || !isPooled(id))
+            return;
+
+        auto end = time;
+
+        if (lastDefinitions[id] != site)
+            end = std::max(end, loopExtent(site, lastDefinitions[id]));
+
+        lastUses[id] = std::max(lastUses[id], end);
+    }
+
+    void noteScheduled(int site, int begin, int end)
+    {
+        for (auto position = begin; position < end; ++position)
+        {
+            auto id = plan.scheduleList[position];
+            const auto& node = plan.nodes[id];
+            auto time = 2 * position;
+
+            for (auto which = 0; which < node.argCount; ++which)
+                notePooledUse(plan.argument(node, which), time, site);
+
+            if (!isPooled(id))
+                continue;
+
+            if (definitions[id] < 0)
+                definitions[id] = time;
+
+            lastUses[id] = std::max(lastUses[id], time);
+            lastDefinitions[id] = site;
+        }
+    }
+
+    void noteLiveRanges()
+    {
+        definitions.resize(graph.nodeCount(), -1);
+        lastUses.resize(graph.nodeCount(), -1);
+        lastDefinitions.resize(graph.nodeCount(), planUnhoisted);
+
+        for (const auto& layout: plan.arrayLayouts)
+        {
+            if (!layout.used)
+                continue;
+
+            noteScheduled(planArraySite, layout.schedule.begin, layout.schedule.end);
+
+            for (auto element = 0; element < layout.elementCount; ++element)
+                notePooledUse(plan.arrayElement(layout, element),
+                              commitTime(layout.schedule.end),
+                              planArraySite);
+        }
+
+        for (auto stepId = 0; stepId < plan.steps.size(); ++stepId)
+        {
+            const auto& step = plan.steps[stepId];
+            noteScheduled(stepId, step.scheduleBegin, step.scheduleEnd);
+
+            for (auto root: pending[stepId].roots)
+                notePooledUse(root, commitTime(step.scheduleEnd), stepId);
+        }
+    }
+
+    // Greedy interval colouring in definition order. A slot is freed only
+    // once a later definition begins, so no node ever writes over an operand
+    // it is still reading, even one whose last use it is.
+    void colourPooledNodes()
+    {
+        noteLiveRanges();
+
+        auto byDefinition = Vector<int> {};
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+            if (isPooled(id) && definitions[id] >= 0)
+                byDefinition.add(id);
+
+        auto byLastUse = byDefinition;
+
+        std::sort(byDefinition.begin(),
+                  byDefinition.end(),
+                  [this](int a, int b) { return definitions[a] < definitions[b]; });
+
+        std::stable_sort(byLastUse.begin(),
+                         byLastUse.end(),
+                         [this](int a, int b) { return lastUses[a] < lastUses[b]; });
+
+        auto freeSlots = std::array<Vector<std::uint32_t>, 17> {};
+        auto released = 0;
+
+        for (auto id: byDefinition)
+        {
+            while (released < byLastUse.size()
+                   && lastUses[byLastUse[released]] < definitions[id])
+            {
+                const auto& freed = plan.nodes[byLastUse[released++]];
+                freeSlots[freed.components].add(freed.scratch);
+            }
+
+            auto& node = plan.nodes[id];
+            auto& slots = freeSlots[node.components];
+
+            if (slots.empty())
+            {
+                node.scratch = allocate(node.components);
+                continue;
+            }
+
+            node.scratch = slots.back();
+            slots.pop_back();
+        }
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+            if (isPooled(id) && definitions[id] < 0)
+                plan.nodes[id].scratch = allocate(plan.nodes[id].components);
+    }
+
+    bool isScheduleLeaf(int id, int site, int pinned) const
+    {
+        if (id == pinned || plan.nodes[id].op == Op::Leaf)
+            return true;
+
+        if (levels[id] != PlanLevel::Lane)
+            return levels[id] != planSiteLevel(site);
+
+        return hoistSites[id] != planUnhoisted && hoistSites[id] != site;
+    }
+
+    template <typename Emit>
+    void visit(int root, int site, int pinned, Emit emit)
+    {
+        if (root < 0 || marks[root] == stamp || isScheduleLeaf(root, site, pinned))
             return;
 
         marks[root] = stamp;
@@ -2059,7 +2535,7 @@ private:
             {
                 auto child = plan.argument(node, top.next++);
 
-                if (marks[child] != stamp && !isScheduleLeaf(child, pinned))
+                if (marks[child] != stamp && !isScheduleLeaf(child, site, pinned))
                 {
                     marks[child] = stamp;
                     walk.add({child, 0});
@@ -2068,40 +2544,280 @@ private:
                 continue;
             }
 
-            plan.scheduleList.add(top.node);
+            emit(top.node);
             walk.pop_back();
         }
     }
 
-    void buildSchedules()
+    void describeArrays()
+    {
+        for (auto slot = 0; slot < graph.arrays().size(); ++slot)
+        {
+            const auto& array = graph.arrays()[slot];
+            auto layout = Plan::ArrayLayout {};
+            layout.components = componentCount(array.elementType);
+            layout.elementBegin = plan.arrayElements.size();
+            layout.elementCount = array.elements.size();
+            layout.used = arrayUsed[slot] != 0;
+
+            for (auto element: array.elements)
+                plan.arrayElements.add(element);
+
+            plan.arrayLayouts.add(layout);
+        }
+    }
+
+    // Returns the last step of the block's subtree, or -1 when it has none.
+    // Step ids run in program order, a compound step's before its bodies'.
+    int mapBlock(int block, int depth)
+    {
+        blockDepths[block] = depth;
+        auto last = -1;
+        const auto& range = plan.blocks[block];
+
+        for (auto position = range.begin; position < range.end; ++position)
+        {
+            auto stepId = plan.blockSteps[position];
+            const auto& step = plan.steps[stepId];
+            auto subtreeLast = stepId;
+            stepBlocks[stepId] = block;
+
+            for (auto body: {step.body, step.elseBody})
+            {
+                if (body < 0)
+                    continue;
+
+                blockOwners[body] = stepId;
+                subtreeLast = std::max(subtreeLast, mapBlock(body, depth + 1));
+            }
+
+            subtreeLasts[stepId] = subtreeLast;
+            last = std::max(last, subtreeLast);
+        }
+
+        return last;
+    }
+
+    void mapBlocks()
+    {
+        stepBlocks.resize(plan.steps.size(), plan.rootBlock());
+        subtreeLasts.resize(plan.steps.size(), 0);
+        blockOwners.resize(plan.blocks.size(), -1);
+        blockDepths.resize(plan.blocks.size(), 0);
+        mapBlock(plan.rootBlock(), 0);
+    }
+
+    int commonBlock(int a, int b) const
+    {
+        while (a != b)
+        {
+            if (blockDepths[a] >= blockDepths[b])
+                a = stepBlocks[blockOwners[a]];
+            else
+                b = stepBlocks[blockOwners[b]];
+        }
+
+        return a;
+    }
+
+    PlanLevel nodeLevel(int id) const
+    {
+        const auto& node = plan.nodes[id];
+
+        if (!node.used || !graph.isPure(id))
+            return PlanLevel::Lane;
+
+        if (node.op == Op::Leaf)
+            return planLeafLevel(graph.expr(id).kind);
+
+        switch (node.op)
+        {
+            case Op::BufferRead:
+            case Op::BufferVectorRead:
+                if (plan.access(node.immediate) != BufferAccess::Read)
+                    return PlanLevel::Lane;
+
+                break;
+
+            case Op::ArrayRead:
+            case Op::SharedRead:
+            case Op::AtomicLoad:
+                return PlanLevel::Lane;
+
+            default:
+                break;
+        }
+
+        auto level = PlanLevel::Dispatch;
+
+        for (auto which = 0; which < node.argCount; ++which)
+        {
+            auto argument = plan.argument(node, which);
+
+            if (argument >= id)
+                return PlanLevel::Lane;
+
+            level = planJoin(level, levels[argument]);
+        }
+
+        return level;
+    }
+
+    void computeLevels()
+    {
+        levels.resize(graph.nodeCount(), PlanLevel::Lane);
+        hoistSites.resize(graph.nodeCount(), planUnhoisted);
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+            levels[id] = nodeLevel(id);
+    }
+
+    void countUse(int id, int site)
+    {
+        if (levels[id] != PlanLevel::Lane || !graph.isPure(id))
+            return;
+
+        auto block = site >= 0 ? stepBlocks[site] : plan.rootBlock();
+
+        if (useCounts[id]++ == 0)
+        {
+            firstUses[id] = site;
+            useBlocks[id] = block;
+            return;
+        }
+
+        useBlocks[id] = commonBlock(useBlocks[id], block);
+    }
+
+    // The sites each pure node would be evaluated at were every site to
+    // evaluate its own tree; sites are counted in program order, arrays first.
+    void collectUses()
+    {
+        useCounts.resize(graph.nodeCount(), 0);
+        firstUses.resize(graph.nodeCount(), planUnhoisted);
+        useBlocks.resize(graph.nodeCount(), plan.rootBlock());
+
+        auto countAt = [this](int site)
+        { return [this, site](int id) { countUse(id, site); }; };
+
+        ++stamp;
+
+        for (const auto& layout: plan.arrayLayouts)
+            if (layout.used)
+                for (auto element = 0; element < layout.elementCount; ++element)
+                    visit(plan.arrayElement(layout, element),
+                          planArraySite,
+                          -1,
+                          countAt(planArraySite));
+
+        for (auto stepId = 0; stepId < plan.steps.size(); ++stepId)
+        {
+            ++stamp;
+
+            for (auto root: pending[stepId].roots)
+                visit(root, stepId, pending[stepId].pinned, countAt(stepId));
+        }
+    }
+
+    // The step of the block that holds the site, or the site itself.
+    int siteWithin(int site, int block) const
+    {
+        if (site < 0)
+            return site;
+
+        while (stepBlocks[site] != block)
+            site = blockOwners[stepBlocks[site]];
+
+        return site;
+    }
+
+    // A pure node two sites evaluate is evaluated once, at the first step of
+    // the innermost block holding every use that holds one: that step runs
+    // before every use, and a body that may run zero times holds none of them
+    // unless it holds all of them.
+    void chooseHoistSites()
+    {
+        hoistedAt.resize(plan.steps.size());
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+        {
+            if (useCounts[id] < 2)
+                continue;
+
+            auto site = siteWithin(firstUses[id], useBlocks[id]);
+            hoistSites[id] = site;
+
+            if (site >= 0)
+                hoistedAt[site].add(id);
+        }
+    }
+
+    void appendToSchedule(int id) { plan.scheduleList.add(id); }
+
+    void scheduleLevel(PlanLevel level, int site, Plan::Range& range)
+    {
+        ++stamp;
+        range.begin = plan.scheduleList.size();
+
+        for (auto id = 0; id < graph.nodeCount(); ++id)
+            if (plan.nodes[id].used && levels[id] == level)
+                visit(id, site, -1, [this](int node) { appendToSchedule(node); });
+
+        range.end = plan.scheduleList.size();
+    }
+
+    void scheduleArrays()
+    {
+        ++stamp;
+
+        for (auto& layout: plan.arrayLayouts)
+        {
+            layout.schedule.begin = plan.scheduleList.size();
+
+            if (layout.used)
+                for (auto element = 0; element < layout.elementCount; ++element)
+                    visit(plan.arrayElement(layout, element),
+                          planArraySite,
+                          -1,
+                          [this](int node) { appendToSchedule(node); });
+
+            layout.schedule.end = plan.scheduleList.size();
+        }
+    }
+
+    void scheduleSteps()
     {
         for (auto stepId = 0; stepId < plan.steps.size(); ++stepId)
         {
             const auto& roots = pending[stepId];
+            auto append = [this](int node) { appendToSchedule(node); };
             ++stamp;
 
             auto& step = plan.steps[stepId];
             step.scheduleBegin = plan.scheduleList.size();
 
             for (auto root: roots.roots)
-                visit(root, roots.pinned);
+                visit(root, stepId, roots.pinned, append);
+
+            for (auto hoisted: hoistedAt[stepId])
+                visit(hoisted, stepId, roots.pinned, append);
 
             step.scheduleEnd = plan.scheduleList.size();
         }
+    }
 
-        ++stamp;
+    void buildSchedules()
+    {
+        describeArrays();
+        mapBlocks();
+        computeLevels();
+        collectUses();
+        chooseHoistSites();
 
-        for (auto slot = 0; slot < plan.arrayLayouts.size(); ++slot)
-        {
-            auto& layout = plan.arrayLayouts[slot];
-            layout.schedule.begin = plan.scheduleList.size();
-
-            if (arrayUsed[slot] != 0)
-                for (auto element: graph.arrays()[slot].elements)
-                    visit(element, -1);
-
-            layout.schedule.end = plan.scheduleList.size();
-        }
+        scheduleLevel(PlanLevel::Dispatch, planDispatchSite, plan.dispatchRange);
+        scheduleLevel(PlanLevel::Group, planGroupSite, plan.groupRange);
+        scheduleArrays();
+        scheduleSteps();
     }
 
     struct WalkEntry
@@ -2112,19 +2828,56 @@ private:
 
     Plan& plan;
     const ShaderGraph& graph;
+    Plan::Options options;
+    int groupLimit = 1;
     Vector<PendingSchedule> pending;
     Vector<int> marks;
+    Vector<LaneForm> forms;
     Vector<char> arrayUsed;
     Vector<char> blockReached;
     Vector<WalkEntry> walk;
+    Vector<PlanLevel> levels;
+    Vector<int> hoistSites;
+    Vector<Vector<int>> hoistedAt;
+    Vector<int> stepBlocks;
+    Vector<int> blockOwners;
+    Vector<int> blockDepths;
+    Vector<int> subtreeLasts;
+    Vector<int> useCounts;
+    Vector<int> firstUses;
+    Vector<int> useBlocks;
+    Vector<int> definitions;
+    Vector<int> lastUses;
+    Vector<int> lastDefinitions;
     int stamp = 0;
     std::size_t cursor = 0;
 };
 
-Plan::Plan(const ShaderGraph& graph)
+namespace
 {
-    auto builder = PlanBuilder {*this, graph};
-    builder.build();
+std::uint64_t nextPlanSerial()
+{
+    static auto counter = std::atomic<std::uint64_t> {0};
+    return counter.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+} // namespace
+
+Plan::Plan(const ShaderGraph& graph, Options options)
+{
+    auto groupLimit = std::numeric_limits<int>::max();
+
+    while (true)
+    {
+        *this = Plan {};
+        PlanBuilder {*this, graph, options, groupLimit}.build();
+
+        if (groupsInBatch == 1 || fitsBatchBudget(options))
+            break;
+
+        groupLimit = groupsInBatch / 2;
+    }
+
+    planSerial = nextPlanSerial();
 
     if (!isValid())
         LOG("eacp: the CPU executor cannot run this kernel: ", failure);
@@ -2158,5 +2911,10 @@ ValueType Plan::uniformType(int slot) const
 std::size_t Plan::footprintBytes() const
 {
     return wordCount * sizeof(Word) + 64;
+}
+
+bool Plan::fitsBatchBudget(const Options& options) const
+{
+    return wordCount <= planMaxWords && footprintBytes() <= options.maxBatchBytes;
 }
 } // namespace eacp::GPU::CpuCompute

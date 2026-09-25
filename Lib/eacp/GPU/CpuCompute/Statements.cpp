@@ -5,7 +5,8 @@
 #include <limits>
 
 // Each statement evaluates all lanes, then commits only under the frame's mask.
-// The group runs in lockstep, so statement order already is a barrier.
+// The batch runs in lockstep, so statement order already is a barrier; a batch
+// holds more than one group only when the kernel has nothing group-scoped.
 
 namespace eacp::GPU::CpuCompute
 {
@@ -39,6 +40,123 @@ void assignVariable(const Context& context,
             context.stride);
 }
 
+// The active lanes gathered first without a branch, then visited in ascending
+// order, so a divergent mask costs no mispredicted branch per lane.
+template <typename Visit>
+void forEachActiveLane(const Word* mask, int lanes, Visit visit)
+{
+    constexpr auto chunk = 64;
+    auto active = std::array<int, chunk> {};
+
+    for (auto first = 0; first < lanes; first += chunk)
+    {
+        auto end = first + chunk < lanes ? first + chunk : lanes;
+        auto count = 0;
+
+        for (auto lane = first; lane < end; ++lane)
+        {
+            active[static_cast<std::size_t>(count)] = lane;
+            count += mask[lane] != 0 ? 1 : 0;
+        }
+
+        for (auto which = 0; which < count; ++which)
+            visit(active[static_cast<std::size_t>(which)]);
+    }
+}
+
+bool isWholeRun(const Word* mask, int count)
+{
+    auto all = ~Word {0};
+
+    for (auto lane = 0; lane < count; ++lane)
+        all &= mask[lane];
+
+    return all != 0;
+}
+
+template <int FixedScale>
+void storeStrided(
+    std::byte* first, const Word* value, const Word* mask, int count, Word scale)
+{
+    auto step =
+        static_cast<std::size_t>(FixedScale > 0 ? FixedScale : scale) * sizeof(Word);
+
+    auto storeLane = [&](int lane)
+    {
+        std::memcpy(first + static_cast<std::size_t>(lane) * step,
+                    value + lane,
+                    sizeof(Word));
+    };
+
+    if (!isWholeRun(mask, count))
+    {
+        forEachActiveLane(mask, count, storeLane);
+        return;
+    }
+
+    for (auto lane = 0; lane < count; ++lane)
+        storeLane(lane);
+}
+
+void storeRun(const SlotView& view,
+              const LaneRun& run,
+              const Word* value,
+              const Word* mask,
+              Word scale)
+{
+    auto* first = view.data + sizeof(Word) * run.element;
+    auto count = run.end - run.begin;
+    value += run.begin;
+    mask += run.begin;
+
+    switch (scale)
+    {
+        case 1:
+            storeStrided<1>(first, value, mask, count, scale);
+            return;
+        case 2:
+            storeStrided<2>(first, value, mask, count, scale);
+            return;
+        case 3:
+            storeStrided<3>(first, value, mask, count, scale);
+            return;
+        case 4:
+            storeStrided<4>(first, value, mask, count, scale);
+            return;
+        default:
+            storeStrided<0>(first, value, mask, count, scale);
+            return;
+    }
+}
+
+// Every (lane, component) of a ramp store has its own element, so the order the
+// lanes commit in cannot show. A masked-out lane's element is never touched:
+// another thread may be writing it.
+void storeRamp(const Context& context,
+               const Plan::Step& step,
+               const MaskFrame& frame,
+               int width,
+               Word scale)
+{
+    const auto& view = context.slots[static_cast<std::size_t>(step.slot)];
+    const auto* indices = context.lanes(context.plan.node(step.index));
+    const auto& value = context.plan.node(step.value);
+
+    for (auto component = 0; component < width; ++component)
+    {
+        auto start = indices[0] + static_cast<Word>(component);
+        auto runs =
+            RampBounds(start, scale, context.plan.batchLanes()).inRange(view.count);
+
+        for (auto which = 0; which < runs.count; ++which)
+            storeRun(view,
+                     runs.runs[static_cast<std::size_t>(which)],
+                     context.lanes(value, component),
+                     frame.mask,
+                     scale);
+    }
+}
+
 void storeElements(const Context& context,
                    const Plan::Step& step,
                    const MaskFrame& frame,
@@ -51,24 +169,34 @@ void storeElements(const Context& context,
     if (view.count == 0)
         return;
 
+    if (step.ramp)
+    {
+        storeRamp(context, step, frame, width, step.rampScale);
+        return;
+    }
+
     const auto* indices = context.lanes(context.plan.node(step.index));
     const auto& value = context.plan.node(step.value);
-    const auto* mask = frame.mask;
-    auto lanes = context.plan.lanes();
 
-    for (auto lane = 0; lane < lanes; ++lane)
+    if (width == 1 && isContiguousRow(indices, context.plan.batchLanes()))
     {
-        if (mask[lane] == 0)
-            continue;
-
-        for (auto component = 0; component < width; ++component)
-        {
-            auto element = indices[lane] + static_cast<Word>(component);
-
-            if (element < view.count)
-                view.store(element, context.lanes(value, component)[lane]);
-        }
+        storeRamp(context, step, frame, width, 1u);
+        return;
     }
+
+    forEachActiveLane(
+        frame.mask,
+        context.plan.batchLanes(),
+        [&](int lane)
+        {
+            for (auto component = 0; component < width; ++component)
+            {
+                auto element = indices[lane] + static_cast<Word>(component);
+
+                if (element < view.count)
+                    view.store(element, context.lanes(value, component)[lane]);
+            }
+        });
 }
 
 void storeShared(const Context& context,
@@ -83,18 +211,20 @@ void storeShared(const Context& context,
     auto* storage = context.lanes(shared.storage);
     auto elements = static_cast<Word>(shared.elements);
     auto components = shared.components;
-    auto lanes = context.plan.lanes();
 
-    for (auto lane = 0; lane < lanes; ++lane)
-    {
-        if (frame.mask[lane] == 0 || indices[lane] >= elements)
-            continue;
+    forEachActiveLane(
+        frame.mask,
+        context.plan.lanes(),
+        [&](int lane)
+        {
+            if (indices[lane] >= elements)
+                return;
 
-        auto* element = storage + indices[lane] * static_cast<Word>(components);
+            auto* element = storage + indices[lane] * static_cast<Word>(components);
 
-        for (auto component = 0; component < components; ++component)
-            element[component] = context.lanes(value, component)[lane];
-    }
+            for (auto component = 0; component < components; ++component)
+                element[component] = context.lanes(value, component)[lane];
+        });
 }
 
 void addAtomically(const Context& context,
@@ -107,17 +237,17 @@ void addAtomically(const Context& context,
     const auto* indices = context.lanes(context.plan.node(step.index));
     const auto* values = context.lanes(context.plan.node(step.value));
     auto* previous = context.lanes(context.plan.variables()[step.slot].storage);
-    auto lanes = context.plan.lanes();
 
-    for (auto lane = 0; lane < lanes; ++lane)
-    {
-        if (frame.mask[lane] == 0)
-            continue;
-
-        auto element = indices[lane];
-        previous[lane] =
-            element < view.count ? view.atomicAdd(element, values[lane]) : 0u;
-    }
+    forEachActiveLane(frame.mask,
+                      context.plan.lanes(),
+                      [&](int lane)
+                      {
+                          auto element = indices[lane];
+                          previous[lane] =
+                              element < view.count
+                                  ? view.atomicAdd(element, values[lane])
+                                  : 0u;
+                      });
 }
 
 template <typename Fold>
@@ -251,8 +381,11 @@ void reduceGroup(const Context& context,
     foldScratch(scratch, lanes, width, step);
 
     for (auto lane = 0; lane < lanes; ++lane)
-        if (frame.mask[lane] != 0)
-            result[lane] = scratch[lane / width * width];
+    {
+        auto mask = frame.mask[lane];
+        auto folded = scratch[lane / width * width];
+        result[lane] = (folded & mask) | (result[lane] & ~mask);
+    }
 }
 
 void leaveLoop(MaskFrame& frame, const LoopFrame* loop, bool breaking, int stride)

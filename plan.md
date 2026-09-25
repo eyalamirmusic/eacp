@@ -16,7 +16,7 @@ kernels in `GPUWidgets`. Line counts are estimates, not commitments.
 | 1 — tier one: streams, control flow, 1D/2D/3D | built, macOS green | macOS: `CpuComputeTests` 69 (63 `Executor/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves inside 36 existing cases across 13 suites, `GPUCodegenTests` 104, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 2 — tier two: the threadgroup | built, macOS green | macOS: `CpuComputeTests` 91 (64 `Executor/`, 21 `Group/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the stage-2 suites and the five stage-1 deferrals, `GPUCodegenTests` 115 (ten `…/runs` and one emitter guard new), `GPUWidgetsTests` 65 (8 new), `UITests` 183, all passing. Found and fixed an emitter bug (stage 2, *as built*). Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 3 — tier three: packed helpers and the SIMD-group matrix | built, macOS green | macOS: `CpuComputeTests` 121 (71 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the packed, intrinsic and SIMD-matrix suites and the stage-1 helper deferrals, `GPUCodegenTests` 119 (four `SimdMatrix/…/runs` new), `GPUWidgetsTests` 65, `UITests` 183, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 4 — performance | not started | |
+| 4 — performance | built, macOS green | macOS (Apple silicon, Apple clang, Release and Debug): `CpuComputeTests` 155 (85 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`, 12 `Batch/`, 8 `DispatchGroups/`), `GPUCodegenTests` 119, `GPUTests` 478, `GPUWidgetsTests` 65, `UITests` 183, all passing. `CpuComputeBench`, Release, interpreter over hand-written loop: Tone 0.97x, Mix 1.11x, Crossfade 5.1x, Smooth 3.7x against the 3x stream target; `BinKernel` over the PathBench scene, count 8.0–8.7x on the 100k-segment and all-eight batches (10x target met), fill 11.6–11.8x (not met), the small paths (72–846 segments) 15–37x. Through `dispatchGroups` on 18 threads, against the single-threaded hand loop: Tone 0.12x, Mix 0.10–0.14x, Crossfade 0.9–1.2x, Smooth 0.57x. Linux and Windows lanes not yet run — awaits CI |
 | 5 — integration | not started | |
 
 Where the code differs from the sketches below, the code wins; each such
@@ -347,7 +347,15 @@ asserting. *As built (stage 3):* the `eacp*` calls decode to one
 `eacpSaturatingTanh`) take any float width, the scalar applied per
 component; the 14 packed ones are held to their one signature, argument and
 result types checked; an unknown `eacp*` name is refused by name.
-`Evaluate.cpp` is unchanged — a helper is one more `Call`.
+`Evaluate.cpp` is unchanged — a helper is one more `Call`. *As built
+(stage 4):* slots are reused by liveness and the batch can be several
+groups wide (stage 4, items 4 and 5); the `Plan`/`Workspace` split carried
+the threads as planned, with the uniforms moved out of the workspace and
+into each `PreparedDispatch` (D8). They are packed now, `byteSize` words a
+slot at `Plan::uniformOffset(slot)` rather than 16 words each, and a kernel
+whose uniforms pass `Plan::maxUniformWords` (1024 words, Metal's 4 KB
+`setBytes` limit, which the tight packing never exceeds where MSL's padded
+one fits) is refused.
 
 **D4 — Statements in order, expressions by epoch.** The executor walks the
 blocks; each statement evaluates the expression trees it names recursively,
@@ -378,7 +386,10 @@ components' treat it as a leaf. `VarRead` has no scratch of its own and reads
 the variable's storage, which is safe because a statement commits after it
 evaluates. Array constants are evaluated at group start, after the guard, in
 slot order, into array storage. Stage 1 did not need `isPure`; it stays public
-for stage 4's hoisting.
+for stage 4's hoisting. *As built (stage 4):* the lane-invariant evaluation
+and the cross-statement hoisting are one mechanism, a per-node level and a
+per-node site (stage 4, item 3); the per-statement schedules stay, and a
+hoisted node is simply scheduled at an earlier step or in a prologue.
 
 **D5 — Auto-vectorised lane loops first, intrinsics only where measured.** The
 lane operations are a small internal layer (`CpuCompute/Lanes.h`): templated
@@ -393,7 +404,17 @@ image kernels that own it, not a side effect of this plan. Transcendentals are
 `std::` calls per lane in v1. Hand intrinsics come in stage 4 and only where a
 benchmark says so — the likely three are the gather under a dynamic
 `BufferRead`, masked select/blend, and a vector `sin`/`exp` — and if they are
-general they fold into `eacp-simd` then.
+general they fold into `eacp-simd` then. *As built (stage 4):* no hand
+intrinsics; every lane loop is still plain C++ the compiler vectorises. The
+benchmark said the gather mattered only in its contiguous case, and that went
+in as a ramp — a read or store whose index is lane 0's plus lane × a
+plan-time scale, copied as a run with strided loops the compiler vectorises
+(stage 4, item 2) — which is the ISA-free half of the item. A general gather
+has no baseline-ISA form (AVX2 on x86, none on arm64); the masked blend
+already vectorises as written; and a vector `sin`/`exp` would change bits
+against the `std::` calls the tests' references make, while the hand loop it
+is measured against calls the same scalar libm, so it would speed both sides
+alike. Nothing folded into `eacp-simd`.
 
 **D6 — The device-free seam: `ComputeKernel` under `ComputeProgram`.** A new
 base class in `eacp-gpu-codegen`, `Codegen/ComputeKernel.h`, takes everything
@@ -543,6 +564,44 @@ lane's `load` after an add returns its group's final count exactly
 `GPUTests` ticket cases check each backend for a permutation of `0..n-1` and
 never compare tickets across backends.
 
+*As built (stage 4):* as planned, still with no pool.
+`Executor::prepareDispatch(bindings, count | width, height | width, height,
+depth)` and `prepareDispatchIndirect(bindings, arguments, guardCount,
+offsetInElements)` resolve the bindings, size the grid and read the uniforms
+once, on the calling thread, into a `PreparedDispatch`: trivially copyable —
+slot views, a copy of the uniform words, extents, groups per axis, the total,
+the plan's serial and a validity bit — with
+`isValid()`, `groupCount()` (an `int64_t`, x fastest) and `groups()`. `bool
+dispatchGroups(const PreparedDispatch&, int64_t first, int64_t count,
+Workspace&) const` runs any range of it; the range is clamped to `[0,
+groupCount())`, so a caller splits the count into equal shares and lets the
+last run short, and a batch never crosses a row or the range's end. It is
+const, allocates, locks, logs and makes no syscall, and touches only the
+plan, the `PreparedDispatch`, its own workspace and the bound buffers, so
+each thread brings a `Workspace` made from `plan()` (`Workspace` is
+move-only). There is no helper that splits the work into shares: the caller
+computes its ranges. `dispatch` and `dispatchIndirect` are a prepare plus
+`dispatchGroups(0, groupCount(), scratch)`. The uniforms left the workspace
+(`Plan::uniformWords()` and `Workspace::uniformWords()` are gone, 64 bytes
+per uniform off every workspace): `setUniform` and the member walk fill
+`Executor::uniformBlock`, and each prepare copies it into the
+`PreparedDispatch`, a fixed `std::array` of `Plan::maxUniformWords` words
+(4 KB), so a later `setUniform`, member change, prepare or dispatch on the
+executor cannot reach a prepared dispatch or race with the threads running
+it. Each `Plan` takes a serial from a process-wide counter as it is built —
+its copies share it, and share its layout — and `Workspace` and
+`PreparedDispatch` record it, so `dispatchGroups` returns false, running
+nothing, for a workspace made from another plan (one smaller would have
+been written out of bounds) or a dispatch prepared by another executor; a
+moved-from workspace has serial 0 and matches nothing. `Executor` is
+neither copyable nor movable, so the address would have served as well, but
+not for a bare `Plan`. Atomics go through
+`atomic_ref` as they did, and `atomicTicketsAcrossThreadsAreAPermutation`
+checks the tickets across threads are a permutation — the same thing the
+`GPUTests` ticket cases ask of a device. Threads also make cross-group order
+real where serial groups hid it (Risks, "Races made deterministic"). No
+ThreadSanitizer run yet.
+
 **D9 — `Lib/eacp/GPU/CpuCompute/`, target `eacp-cpu-compute`, namespace
 `eacp::GPU::CpuCompute`.** The `Spirv` precedent exactly: a subdirectory of
 `GPU` with its own `CMakeLists.txt` (`eacp-spirv`, namespace
@@ -636,26 +695,28 @@ image is not, so textures stay out.
 | `Lib/eacp/GPU/CMakeLists.txt` | `add_subdirectory(CpuCompute)` before the GPU return. *As built:* stage 0 needed no edit here — `add_ide_sources` globs headers | ~3 |
 | `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35; *as built:* 33; *stage 3:* +2 (`Helpers.cpp`, `SimdMatrix.cpp`) |
 | `CpuCompute/CpuCompute.h` | umbrella | ~10; *as built:* 11; *stage 3:* 12 (`Helpers.h`) |
-| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263; *stage 2:* 77 + 348; *stage 3:* `Executor.cpp` +6/−2 (`executorClearGroupMemory` zeroes the fragments too) |
+| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263; *stage 2:* 77 + 348; *stage 3:* `Executor.cpp` +6/−2 (`executorClearGroupMemory` zeroes the fragments too); *stage 4:* 149 + 529 (+76/−4, +270/−93) — `PreparedDispatch` with its own uniform words and plan serial, the prepare forms, `dispatchGroups` and its serial checks, the uniform block, `PlanOptions` on both constructors, batch iteration |
 | `CpuCompute/Bindings.h` | the slot table and typed setters | ~120; *as built:* 118 |
-| `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70; *as built:* 48 |
-| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488; *stage 2:* 324 + 1829; *stage 3:* 373 + 2162 (+50/−1, +338/−5) — `Op::Helper`, `HelperFunction`, the fragment `Step` fields and layout, the statement checks |
-| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60; *stage 2:* 35 + 73 |
-| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67; *stage 2:* 102; *stage 3:* +15 |
-| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537; *stage 2:* 606 |
-| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198; *stage 2:* 396; *stage 3:* +16 — the four fragment statements |
-| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667; *stage 3:* +127 — `builtinHelper` |
+| `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70; *as built:* 48; *stage 4:* 53 (+10/−5) — the packed uniform offsets |
+| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488; *stage 2:* 324 + 1829; *stage 3:* 373 + 2162 (+50/−1, +338/−5) — `Op::Helper`, `HelperFunction`, the fragment `Step` fields and layout, the statement checks; *stage 4:* 439 + 2920 (+70/−4, +808/−50) — `markRamps`, `PlanLevel` and the hoisting sites, the dispatch and group schedules, liveness layout, `PlanOptions` and the batch width with its byte-budget back-off, the packed uniforms, `serial()` |
+| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60; *stage 2:* 35 + 73; *stage 4:* 40 + 110 (+13/−9, +41/−4) — move-only, a moved-from one matching no plan, no uniform words, the batch rows, `planSerial()` |
+| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67; *stage 2:* 102; *stage 3:* +15; *stage 4:* 203 (+86) — `RampBounds`, `isContiguousRow`, the hoisted `stride` |
+| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537; *stage 2:* 606; *stage 4:* 738 (+147/−15) — ramp reads, the invariant-divisor `/` and `%` |
+| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198; *stage 2:* 396; *stage 3:* +16 — the four fragment statements; *stage 4:* 545 (+166/−33) — `storeRun`/`storeStrided`, the branch-free active-lane scatter |
+| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667; *stage 3:* +127 — `builtinHelper`; *stage 4:* 821 (+13/−7) — `Context::stride` read into a local ahead of each lane loop, so the loops vectorise |
 | `CpuCompute/Lanes.h` | lane-array primitives (D5) | ~300; *as built:* 172 |
 | `CpuCompute/Helpers.{h,cpp}` | C++ twins of the 17 `eacp*` helpers (stage 3) | ~350; *as built:* 64 + 219 |
 | `CpuCompute/SimdMatrix.cpp` | fragments per SIMD group (stage 3). *As built:* plus the packed loads' widening | ~200; *as built:* 249 |
 | `Tests/CMakeLists.txt` | `add_subdirectory(CpuCompute)` | ~3 |
-| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17; *stage 2:* +1/−1; *stage 3:* +2/−1 |
-| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin; *stage 2:* 3174; *stage 3:* 3258 |
+| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17; *stage 2:* +1/−1; *stage 3:* +2/−1; *stage 4:* 50 (+34/−2) — the two new sources, `CpuComputeBench` |
+| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin; *stage 2:* 3174; *stage 3:* 3258; *stage 4:* 4305 (+1095/−48) — 14 cases on ramps, hoisting, invariant levels, the divisor, liveness and a split dispatch's allocations |
+| `Tests/CpuCompute/BatchTests.cpp` | *as built (stage 4):* new — wide batches against one group per batch at every width, and the byte-budget back-off | 942 |
+| `Tests/CpuCompute/DispatchGroupsTests.cpp` | *as built (stage 4):* new — split dispatches against one dispatch, on threads; held uniforms; mismatched workspaces and dispatches refused | 682 |
 | `Tests/CpuCompute/KernelTests.cpp` | `Apps/GPU` kernels as `ComputeKernel`s vs references | ~350; *as built:* 415 |
 | `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450; *as built:* 1517; *stage 3:* 1545 |
 | `Tests/CpuCompute/HelperTests.cpp` | stage 3: helpers, fragments. *As built:* helpers only | ~350; *as built:* 1004 |
 | `Tests/CpuCompute/SimdMatrixTests.cpp` | *as built (stage 3):* new — fragments, packed loads, the multiple-of-32 refusal | 820 |
-| `Tests/CpuCompute/CpuComputeBench.cpp` | stage 4 | ~300 |
+| `Tests/CpuCompute/CpuComputeBench.cpp` | stage 4. *As built:* the four stream kernels, `BinKernel` count and fill, `--sweep` (with no byte budget), the threaded rows | ~300; *as built:* 1087 |
 | `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4; *as built (stage 1, `GPUTests` only):* +5/−2; *stage 2 (`GPUCodegenTests`):* +1/−1 |
 | `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180; *as built:* 348; *stage 2:* 488 — atomic outputs, `agreeing`, `runIndirect`, `expectAgreement`, `dispatchIndirectOnCpu` |
 | `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181; *stage 2 (10 files):* +700/−993; *stage 3 (6 files):* +833/−1266 |
@@ -885,6 +946,158 @@ reached. Verified by the benchmark's numbers in the Progress table and by
 every earlier suite still green (the optimisations must not change a result
 bit: same order of operations, no contraction).
 
+*As built:* built on macOS (Apple silicon, Apple clang, Release in
+`build-release`, Debug in `build`), in the order the benchmark gave rather
+than the order listed above. The library grew +1,700/−224 across 11 tracked
+files; the tests +1,129/−50 across 2 tracked files plus `BatchTests.cpp`
+(942), `DispatchGroupsTests.cpp` (682) and `CpuComputeBench.cpp` (1087).
+Every earlier suite matches its stage-3 count; `CpuComputeTests` grew from
+121 to 155 — 14 `Executor/`, 12 `Batch/`, 8 `DispatchGroups/`.
+
+1. *The benchmark.* `Tests/CpuCompute/CpuComputeBench.cpp`, target
+   `CpuComputeBench`, force-optimised outside Debug as `SimdBench` is, with
+   `-ffp-contract=off -fno-math-errno` in every configuration so the hand
+   loops take the executor's flags. It links `eacp-gpuwidgets` and defines
+   `EACP_BENCH_PATHS=1` where that target exists; elsewhere the `BinKernel`
+   half prints that it was skipped. The four stream kernels (`Tone`, `Mix`,
+   `Crossfade`, `Smooth`) run over 1,048,576 elements and are checked bitwise
+   against their hand loops; `BinKernel`'s count and fill passes run over the
+   eight PathBench paths at scale 2, each alone and all eight as one batch,
+   with cells and counts compared exactly and fill entries per tile as a
+   sorted set. Each figure is the median of as many runs as fill ~300 ms.
+   `--sweep` sweeps the batch width, and each stream kernel gets an
+   `x<threads>` row through `dispatchGroups` on a crew of
+   `hardware_concurrency()` threads woken by atomic wait/notify. The first
+   diagnosis: a fixed 2–4 ns per element from per-node dispatch and scratch
+   traffic, and per-lane scalar loads and stores; not the transcendentals,
+   since both sides call the same scalar libm.
+2. *Ramp loads and stores* — the ISA-free half of D5's intrinsics item.
+   `markRamps()` in `Plan.cpp` decides for each scalar integer node whether
+   its value is lane 0's plus lane × a scale, mod 2^32: `Constant`,
+   `Uniform`, `GridExtent` and `GroupId` have scale 0, `ThreadId` x scale 1
+   in a row-shaped group, and the scale carries through `AddI`, `SubI`,
+   `CopyBits`, `MulI` by a constant and `Shl` by a constant (`Node::ramp`,
+   `Node::rampScale`; `Step::ramp` for stores). A read is a ramp when the
+   batch wraps at most once, a store when the scale is at least the width, so
+   no two (lane, component) pairs share an element. `RampBounds` and
+   `isContiguousRow` are in `Interpreter.h`; the second is a runtime check,
+   which catches `(i + 1) % length` on every group but the one that wraps. A
+   ramp read zero-fills its out-of-range lanes exactly as the per-lane path
+   does and copies each run with strided loops, vectorised for scales 1 to 4.
+   A ramp store is `storeRun`/`storeStrided` in `Statements.cpp`: a fully
+   active run is a straight copy, a partly active one writes only its active
+   lanes — a masked-out lane's element is never stored to, not even with its
+   own value, which threads need. The scatters that remain gather the active
+   lane numbers branch-free and then visit them in order. Unsigned `/` and
+   `%` by a lane-invariant divisor (`Node::invariantDivisor`) use a double
+   reciprocal plus one correction, checked exhaustively over all 2^32
+   dividends for 15 divisors. Reading `Context::stride` — an `int`, which a
+   store through `uint32_t*` may alias — into a local ahead of each loop let
+   the matrix products, the determinant and the thread-id fill vectorise.
+   Crossfade went from 21x to 10x, Smooth from 13x to 6x.
+3. *Dispatch and group prologues, and cross-statement hoisting* — the
+   planned items 2 and 3, built as one mechanism. Each node gets a level in a
+   `PlanLevel` lattice, Dispatch < Group < Lane: `Constant`, `Uniform` and
+   `GridExtent` are Dispatch, `GroupId` Group; `ThreadId`, `LocalId` and
+   `SimdGroupIndex` are Lane, and so are `VarRead`, `SharedRead`,
+   `AtomicLoad` and a read of a `Write` or `Atomic` slot; a read of a `Read`
+   slot at an invariant index takes the index's level; `ArrayRead` is always
+   Lane, since arrays are filled per group after the group schedule; a pure
+   combinator is the join of its operands. Each node then gets a site — the
+   dispatch prologue, the group prologue, the array phase, or a step.
+   `collectUses()` and `chooseHoistSites()` move a pure node used by two or
+   more sites to the step, in the innermost block holding all its uses, that
+   holds its first use. `Plan::dispatchSchedule()` runs once per
+   `dispatchGroups` call, after the uniforms and extents are filled;
+   `Plan::groupSchedule()` once per batch, after the guard and the group ids.
+   On the benchmark kernels it changes nothing measurable — nothing in them
+   is lane-invariant, and `BinKernel` pins nearly everything into variables —
+   so what it bought here is footprint.
+4. *Scratch reuse by liveness* — the planned item 1. `build()` now runs
+   `markRamps()`, `buildSchedules()`, `layOut()` in that order. A node lives
+   from its definition to its last use over the flat schedule — position `p`
+   is time `2p`, a step's commit `2·end − 1` — stretched to the end of every
+   `Loop` that lies between a definition and a use in another step. Slots are
+   coloured greedily in definition order from LIFO free lists per component
+   count, and a slot is freed only once a later definition starts, so an
+   output never aliases an operand. Persistent, never reused: scratch-owning
+   leaves, dispatch- and group-level nodes, variables, arrays, shared memory,
+   fragments, the reduction row, the masks and the coordinate rows. The
+   footprint fell 25–60%: at 64 lanes Tone, Crossfade, Smooth, Mix and
+   `BinKernel` went from 6.2K, 4.2K, 5.1K, 6.7K and 53K to 3.9K, 3.2K, 3.1K,
+   4.2K and 21.5K. `footprintBytes()` stays exact.
+5. *Wide batches* — the planned item 4. `PlanOptions {targetBatchLanes =
+   1024}` sits at namespace scope and is taken by `Plan(graph, options)` and
+   both `Executor` constructors. `Plan::groupsPerBatch()` is 1 when the
+   kernel uses a barrier, a shared array, a group or SIMD reduction, SIMD
+   groups, or any `AtomicAdd` or `AtomicLoad` — the last to keep D8's
+   observable statement order for atomics — and otherwise `clamp(target /
+   lanes, 1, 2^20 / lanes)`. `batchLanes()` sits beside `lanes()`, which is
+   still one group. The per-lane `groupInBatch` and `batchX` rows are
+   allocated only when a batch is wide. A batch is a run of consecutive x
+   groups within one (y, z) row, and a short last batch masks the lanes of
+   the groups it lacks. In a wide batch `LocalId` x and `GroupId` x are
+   neither ramps nor lane-invariant; `ThreadId` x still is a ramp. The sweep,
+   64 → 256 → 512 → 1024 → 2048 → 4096 lanes: Crossfade 10.9x → 6.6x → 5.5x
+   → 5.1x → 5.0x → 6.2x, Smooth 5.9x → 4.4x → 4.0x → 3.7x → 3.6x → 4.0x;
+   1024 is the knee, and 4096 falls out of L1. Tone went from 1.24x to
+   0.98x, Mix 1.38x to 1.11x, Crossfade 10.7x to 5.1x, Smooth 6.4x to 3.7x;
+   `BinKernel` is unchanged, having atomics. Footprints at the 1024-lane
+   default: Tone 68K, Crossfade 56K, Smooth 56K, Mix 72K, `BinKernel` 21.5K
+   (one group per batch). One change is observable: the groups of one batch
+   interleave by statement, so a kernel racy *across* groups can answer
+   differently than serial groups did. A race-free kernel is unaffected, and
+   within one statement the last lane still wins, matching serial order.
+   The width backs off by footprint: every per-lane row grows with the
+   batch, array-constant storage (`components × elements × stride`)
+   included, so a 256-entry `Float4` table would take 10 MB per workspace at
+   1024 lanes. `PlanOptions::maxBatchBytes` (default 192 KB, between the
+   2048-lane stream footprints of 112–144 KB that ran as fast as 1024 and
+   the 4096-lane ones of 224 KB and up that fell out of L1) bounds
+   `footprintBytes()`: the `Plan` constructor builds, and while the plan is
+   over the budget or over `planMaxWords` with more than one group per
+   batch it builds again at half the groups — the whole build, since ramps,
+   levels and liveness all depend on the width — refusing only at one
+   group. The stream kernels keep 1024 lanes (56–72K); the 256-entry table
+   plans at one group, 637K, and a 16-entry one at 4 groups, 176K
+   (`Batch/aLargeArrayConstantBacksOffToOneGroupPerBatch`,
+   `Batch/aBatchOverTheBudgetIsHalvedUntilItFits`). The `--sweep` rows and
+   the `Batch/` width checks pass an unlimited budget, so they still measure
+   the width asked for.
+6. *`dispatchGroups`* — the planned item 6; see D8 *as built*.
+   `Executor/aPreparedDispatchSplitAfterTheFirstAllocatesNothing` extends
+   D3's zero-allocation check to it, and `DispatchGroups/` checks split
+   streams, grids, volumes and indirect dispatches on threads against one
+   dispatch, the clamping of a range, that a prepared dispatch holds its own
+   uniforms, and that a workspace or a prepared dispatch from another
+   executor is refused. With 18 threads the stream kernels run at Tone 0.12x, Mix
+   0.10–0.14x, Crossfade 0.9–1.2x and Smooth 0.57x of the single-threaded
+   hand loop. No ThreadSanitizer run yet.
+7. *Hand intrinsics* — the rest of D5's item 5: measured and not built (D5
+   *as built*).
+
+Reached: Tone 0.97x, Mix 1.11x, Crossfade 5.1x, Smooth 3.7x against 3x;
+`BinKernel` count 8.0–8.7x on the 100k-segment and all-eight batches against
+10x, fill 11.6–11.8x, and the small paths (72 to 846 segments) 15–37x, where
+a fixed per-dispatch cost dominates a hand time of a few µs. What stays open:
+Crossfade and Smooth are the rest of the way to 3x as one full-width scratch
+pass per node, which only fusing chains of nodes would remove, plus Smooth's
+two `%` per lane; `BinKernel` fill and the small scenes are masked-lane waste
+in the lock-step loop nests (Risks, "Interpreter overhead and masked-lane
+waste") and the fixed per-dispatch cost. Nothing here changed a result bit.
+The byte budget, the held uniforms and the plan serials (item 5, D8) left
+the interpreter's times where they were, measured alternately against a
+build without the last two: Tone 5.16 ms, Mix 5.0, Crossfade 0.59, Smooth
+1.20, `BinKernel` count 9.5 and fill 6.0 on the 100k-segment path, 14.3 and
+8.6–8.7 on all eight. The `BinKernel` hand loop, which none of it touches,
+moves between 0.43 and 0.50 ms from one binary to the other with code
+layout, which is all the fill ratio's swing between 11.7x and 13.3–14x is.
+One compiler note worth keeping: Apple clang 21.0.0 at `-O3` miscompiles
+`for (i < 1000) t[i / 100] = (float) i;` in its vectoriser, storing out of
+order, so `Batch/aStoreManyThreadsShareKeepsTheLastThread`'s twin writes the
+closed form instead. Not done: the Linux and Windows lanes, which wait for
+CI, and a ThreadSanitizer run over `DispatchGroups/`.
+
 **Stage 5 — integration.** The cross-check on in CI: nothing to switch, since
 the CPU halves always run and the GPU halves run wherever a device is (the
 lavapipe lane, which is the only one `build.yml` sets `EACP_REQUIRE_GPU` on,
@@ -905,7 +1118,11 @@ driverless Linux box.
   `BinKernel` and `CoverageKernel`, whose inner loops run per-lane trip counts:
   the batch runs as long as its longest lane with the rest masked. If stage 4
   shows it, compacting live lanes between iterations is the next step, and is
-  its own design.
+  its own design. *Measured (stage 4):* it did — `BinKernel` fill stays at
+  11.6–11.8x and the small scenes at 15–37x after everything else went in,
+  the lock-step loop nests running masked lanes plus a fixed per-dispatch
+  cost. Wide batches cannot help it: its atomics keep one group per batch.
+  Compaction is still its own design, not started.
 - **Barriers in nested, divergent control flow.** Lockstep is exact while
   every lane of the group reaches each barrier together, which is the only
   case the GPU defines. Under divergence the CPU treats the barrier as a no-op
@@ -924,12 +1141,21 @@ driverless Linux box.
   better and costs two register writes.
 - **Precision of vectorised transcendentals** (stage 4). A vector `sin`/`exp`
   is only acceptable within the tolerances the GPU tests already grant the
-  GPU's own; anything looser stays `std::`.
+  GPU's own; anything looser stays `std::`. *As built (stage 4):* not built,
+  so the question did not arise — the transcendentals are the same scalar
+  libm on both sides of the benchmark, and a vector form would change bits
+  against the tests' references (D5 *as built*).
 - **Scratch footprint.** One slot per node is 512 KB at 500 nodes × 64 lanes
   × 4 components; a 256-thread group with `Float4x4` nodes is sixteen times
   that. Fine for tests and most kernels, heavy for an audio plugin with many
   kernels; liveness reuse in stage 4 is the answer, and the plan reports its
-  footprint so a caller can see it.
+  footprint so a caller can see it. *As built (stage 4):* liveness is in and
+  took 25–60% off (`BinKernel` 53K → 21.5K at 64 lanes), but the 1024-lane
+  default batch multiplies what remains by up to sixteen for a 64-lane
+  kernel: Tone is 68K and Mix 72K. `PlanOptions::targetBatchLanes` is the
+  knob, and a plugin holding many kernels should set it low — 64 gives one
+  group per batch and the 3–4K footprints, at the stream kernels' 64-lane
+  speed. `footprintBytes()` reports either exactly.
 - **The stage-0 refactor.** 54 files name `ComputeProgram` and 158 structs
   derive from it; D6 is designed so none of them changes, and the moved code
   is header-only. What could still bite is a translation unit that relied on
@@ -947,7 +1173,13 @@ driverless Linux box.
   intra-group race into a defined result, and serial groups make cross-group
   ordering look sequential. A kernel can therefore pass on the CPU and fail on
   the GPU; the cross-check exists to catch that, and the README says the CPU
-  is not a race detector.
+  is not a race detector. *As built (stage 4):* both halves moved. A wide
+  batch interleaves its groups by statement, so a kernel racy across groups
+  can answer differently than serial groups did, and a different
+  `targetBatchLanes` can change the answer again; `dispatchGroups` on several
+  threads makes cross-group order real and nondeterministic, as on a GPU.
+  Within one statement the last lane still wins in serial order, and a
+  race-free kernel gives the same bits every way.
 - **Aliased bindings.** The same memory bound to an input slot and an output
   slot diverges from the GPU: the GPU keeps a read hoisted across a store
   (`InPlace/aReadIsNotRefreshedByAnotherSlotsStore`), where the CPU re-reads

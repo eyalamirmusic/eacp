@@ -515,8 +515,9 @@ void builtinDeterminant(const Context& context, const Plan::Node& node)
         matrix.element[index] = context.operand(node, 0, index);
 
     auto* out = context.lanes(node, 0);
+    auto stride = context.stride;
 
-    for (auto lane = 0; lane < context.stride; ++lane)
+    for (auto lane = 0; lane < stride; ++lane)
         out[lane] = toWord(builtinDeterminantAt(matrix, lane));
 }
 
@@ -526,8 +527,9 @@ void builtinUnpack(const Context& context, const Plan::Node& node, Function func
     auto width = static_cast<int>(node.components);
     auto out = builtinOutput(context, node, width);
     const auto* bits = context.operand(node, 0, 0);
+    auto stride = context.stride;
 
-    for (auto lane = 0; lane < context.stride; ++lane)
+    for (auto lane = 0; lane < stride; ++lane)
     {
         auto values = function(bits[lane]);
 
@@ -554,8 +556,9 @@ void builtinPackFloat2(const Context& context,
 {
     auto values = builtinVector(context, node, 0, 2);
     auto* out = context.lanes(node, 0);
+    auto stride = context.stride;
 
-    for (auto lane = 0; lane < context.stride; ++lane)
+    for (auto lane = 0; lane < stride; ++lane)
         out[lane] = function(HelperFloat2 {toFloat(values.component[0][lane]),
                                            toFloat(values.component[1][lane])});
 }
@@ -564,8 +567,9 @@ void builtinPackInt8x4(const Context& context, const Plan::Node& node)
 {
     auto values = builtinVector(context, node, 0, 4);
     auto* out = context.lanes(node, 0);
+    auto stride = context.stride;
 
-    for (auto lane = 0; lane < context.stride; ++lane)
+    for (auto lane = 0; lane < stride; ++lane)
         out[lane] = packInt8x4(HelperInt4 {toSigned(values.component[0][lane]),
                                            toSigned(values.component[1][lane]),
                                            toSigned(values.component[2][lane]),
@@ -576,8 +580,9 @@ void builtinPackUInt8x4(const Context& context, const Plan::Node& node)
 {
     auto values = builtinVector(context, node, 0, 4);
     auto* out = context.lanes(node, 0);
+    auto stride = context.stride;
 
-    for (auto lane = 0; lane < context.stride; ++lane)
+    for (auto lane = 0; lane < stride; ++lane)
         out[lane] = packUInt8x4(HelperUInt4 {values.component[0][lane],
                                              values.component[1][lane],
                                              values.component[2][lane],
@@ -645,13 +650,14 @@ void builtinHelper(const Context& context, const Plan::Node& node)
 void builtinReduceMask(const Context& context, const Plan::Node& node, bool all)
 {
     auto* out = context.lanes(node, 0);
-    Lanes::copy(out, context.operand(node, 0, 0), context.stride);
+    auto stride = context.stride;
+    Lanes::copy(out, context.operand(node, 0, 0), stride);
 
     for (auto component = 1; component < static_cast<int>(node.order); ++component)
     {
         const auto* mask = context.operand(node, 0, component);
 
-        for (auto lane = 0; lane < context.stride; ++lane)
+        for (auto lane = 0; lane < stride; ++lane)
             out[lane] = all ? out[lane] & mask[lane] : out[lane] | mask[lane];
     }
 }
