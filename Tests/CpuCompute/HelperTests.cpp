@@ -302,7 +302,9 @@ auto tHalfRounding = test("Helpers/narrowingToHalfRoundsToNearestEven") = []
     }
 };
 
-#if defined(__FLT16_MANT_DIG__)
+// clang-cl on x64 has the type but links no compiler-rt, so the conversion's
+// __truncsfhf2 libcall is left unresolved; ARM64 converts in an instruction.
+#if defined(__FLT16_MANT_DIG__) && !(defined(_MSC_VER) && defined(_M_X64))
 // A second reference where the compiler has one: its own float -> _Float16
 // conversion, round-to-nearest-even per IEEE, over a stride through every
 // float bit pattern.

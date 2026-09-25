@@ -386,6 +386,15 @@ float strictProduct(float a, float b)
     return product;
 }
 
+// BinKernel::xAt: the end of the segment as itself, anywhere else interpolated.
+float xAt(const float* segment, float y, float slope)
+{
+    if (y == segment[3])
+        return segment[2];
+
+    return segment[0] + strictProduct(y - segment[1], slope);
+}
+
 // BinKernel's count mode, crossings only, in plain C++ single precision: what
 // the executor's cells are held to on every lane, device or none.
 UInts referenceCrossings(const Scene& scene, UInts cells)
@@ -408,8 +417,6 @@ UInts referenceCrossings(const Scene& scene, UInts cells)
         for (auto segment = first; segment < last; ++segment)
         {
             const auto* at = scene.segments.data() + segment * 4;
-            auto fromX = at[0];
-            auto fromY = at[1];
             auto topY = std::min(at[1], at[3]);
             auto bottomY = std::max(at[1], at[3]);
             auto slope = (at[2] - at[0]) / (at[3] - at[1]);
@@ -428,8 +435,8 @@ UInts referenceCrossings(const Scene& scene, UInts cells)
                 if (!(bandBottom > bandTop))
                     continue;
 
-                auto enters = fromX + strictProduct(bandTop - fromY, slope);
-                auto leaves = fromX + strictProduct(bandBottom - fromY, slope);
+                auto enters = xAt(at, bandTop, slope);
+                auto leaves = xAt(at, bandBottom, slope);
                 auto column = std::max(
                     (int) std::ceil(std::max(enters, leaves) * (1.f / tile)), 0);
 

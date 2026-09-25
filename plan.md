@@ -1234,6 +1234,24 @@ or not built, in one place:
    measured under Apple clang — GCC and MSVC may vectorise less, or, as Apple
    clang 21 did (stage 4), miscompile a loop, which the bit-exact tests would
    show as a failure rather than a slowdown.
+
+   *As built (after the first CI run).* The first run (PR #63, 2026-09-25)
+   had seven lanes green — iOS Simulator, the three Linux lanes including
+   lavapipe, Windows MSVC x64 and ARM64, and Windows Clang ARM64 — so the
+   interpreter itself is portable. Two failed. On macOS four
+   `PathKernels/*OnTheCpuMatchesTheGpu` cases disagreed with the runner's
+   Metal GPU: `BinKernel` computed the x where a segment leaves a tile band as
+   `fromX + (y - fromY) * slope`, which under Metal's fast math lands an ulp
+   either side of the segment's own end, so an end exactly on a tile edge was
+   listed in the next column; `xAt` now returns the end's x itself when the
+   band edge is that end, in the kernel, in `PathRasterizer::countTiles` and
+   in the test reference — a real defect in the stage 2 kernel. On Windows
+   Clang x64 `CpuComputeTests` failed to link on `__truncsfhf2`: the
+   compiler-`_Float16` secondary reference in `HelperTests.cpp` needs a
+   compiler-rt libcall on x64 without F16C, and clang-cl links no
+   compiler-rt, so that one test is guarded off under `_MSC_VER && _M_X64`
+   while the bit-exact `narrowToHalf` tests still run everywhere. The second
+   run is pending.
 2. **Stage 4 targets missed.** Crossfade 5.1x and Smooth 3.7x against the 3x
    stream target; `BinKernel` fill 11.6–11.8x and the small scenes (72–846
    segments) 15–37x against 10x. The recorded causes: one full-width scratch
