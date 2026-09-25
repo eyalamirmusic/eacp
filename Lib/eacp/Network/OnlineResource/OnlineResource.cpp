@@ -101,25 +101,12 @@ void writeSidecar(const FilePath& target, const Sidecar& sidecar)
     Files::writeFileAtomically(sidecarPathFor(target), bytes);
 }
 
-void removeQuietly(const FilePath& path)
-{
-    auto ignored = std::error_code {};
-    std::filesystem::remove_all(toStdPath(path), ignored);
-}
-
 bool renameOver(const FilePath& from, const FilePath& to)
 {
-    removeQuietly(to);
+    Files::removeAll(to);
 
     auto error = std::error_code {};
     std::filesystem::rename(toStdPath(from), toStdPath(to), error);
-    return !error;
-}
-
-bool createDirectory(const FilePath& directory)
-{
-    auto error = std::error_code {};
-    std::filesystem::create_directories(toStdPath(directory), error);
     return !error;
 }
 } // namespace
@@ -177,8 +164,8 @@ FilePath extractingPath(const FetchPlan& plan)
 
 void discardLeftovers(const FetchPlan& plan)
 {
-    removeQuietly(partialPath(plan));
-    removeQuietly(extractingPath(plan));
+    Files::removeAll(partialPath(plan));
+    Files::removeAll(extractingPath(plan));
 }
 
 std::string describeFailure(const HTTP::Response& response)
@@ -220,10 +207,10 @@ bool install(const FetchPlan& plan, const HTTP::Response& response)
     {
         auto reader = Zip::Reader {partial};
         auto extracting = extractingPath(plan);
-        removeQuietly(extracting);
+        Files::removeAll(extracting);
 
         auto extracted = reader.isValid() && reader.extractAll(extracting);
-        removeQuietly(partial);
+        Files::removeAll(partial);
 
         if (!extracted || !renameOver(extracting, plan.target))
             return false;
@@ -269,7 +256,7 @@ OnlineResource::Result
         return result;
     }
 
-    if (!createDirectory(plan.directory))
+    if (!Files::createDirectories(plan.directory))
     {
         result.error = "Could not create " + plan.directory.str();
         return result;
@@ -393,8 +380,8 @@ bool OnlineResource::remove()
         return false;
 
     auto target = path();
-    removeQuietly(target);
-    removeQuietly(sidecarPathFor(target));
+    Files::removeAll(target);
+    Files::removeAll(sidecarPathFor(target));
     OnlineResources::get().reportRemoved(target);
     return true;
 }

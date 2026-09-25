@@ -1,1286 +1,1352 @@
-# CPU execution of compute kernels — plan
-
-Written 2026-09-24 against `80b93a9a` (branch `cpu-compute-backend`), from a
-read of the shader EDSL in `Lib/eacp/GPU/Codegen/` (the graph, the
-three-dialect emitter, the builder and value handles, `ComputeProgram` and the
-member reflection in `ShaderProgram.h`), `ComputePass`, `Buffer`, the
-`eacp-simd` module and `eacp_force_optimization`, the GPU test suites and
-their CMake, the compute examples under `Apps/GPU` and the path-coverage
-kernels in `GPUWidgets`. Line counts are estimates, not commitments.
-
-## Progress
-
-| Stage | State | Notes |
-| --- | --- | --- |
-| 0 — the device-free seam | built, macOS green | macOS: `GPUCodegenTests` 104, `GPUTests` 478, `GPUWidgetsTests` 57, `UITests` 183, all passing — the baseline plus the one new case. Linux lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 1 — tier one: streams, control flow, 1D/2D/3D | built, macOS green | macOS: `CpuComputeTests` 69 (63 `Executor/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves inside 36 existing cases across 13 suites, `GPUCodegenTests` 104, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 2 — tier two: the threadgroup | built, macOS green | macOS: `CpuComputeTests` 91 (64 `Executor/`, 21 `Group/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the stage-2 suites and the five stage-1 deferrals, `GPUCodegenTests` 115 (ten `…/runs` and one emitter guard new), `GPUWidgetsTests` 65 (8 new), `UITests` 183, all passing. Found and fixed an emitter bug (stage 2, *as built*). Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 3 — tier three: packed helpers and the SIMD-group matrix | built, macOS green | macOS: `CpuComputeTests` 121 (71 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the packed, intrinsic and SIMD-matrix suites and the stage-1 helper deferrals, `GPUCodegenTests` 119 (four `SimdMatrix/…/runs` new), `GPUWidgetsTests` 65, `UITests` 183, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 4 — performance | built, macOS green | macOS (Apple silicon, Apple clang, Release and Debug): `CpuComputeTests` 155 (85 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`, 12 `Batch/`, 8 `DispatchGroups/`), `GPUCodegenTests` 119, `GPUTests` 478, `GPUWidgetsTests` 65, `UITests` 183, all passing. `CpuComputeBench`, Release, interpreter over hand-written loop: Tone 0.97x, Mix 1.11x, Crossfade 5.1x, Smooth 3.7x against the 3x stream target; `BinKernel` over the PathBench scene, count 8.0–8.7x on the 100k-segment and all-eight batches (10x target met), fill 11.6–11.8x (not met), the small paths (72–846 segments) 15–37x. Through `dispatchGroups` on 18 threads, against the single-threaded hand loop: Tone 0.12x, Mix 0.10–0.14x, Crossfade 0.9–1.2x, Smooth 0.57x. Linux and Windows lanes not yet run — awaits CI |
-| 5 — integration | built, macOS green | macOS (Apple silicon, Metal, Release and Debug): `Apps/GPU/CpuCompute` (`Main.cpp` 240, `CMakeLists.txt` 12, +4 in `Apps/GPU/CMakeLists.txt`) over 2^20 elements, 20 timed runs: CPU one thread 0.597 ms per dispatch, CPU 18 threads through `prepareDispatch`/`dispatchGroups` 0.205 ms (thread start included), GPU commit-and-wait 0.204 ms; GPU against CPU max \|difference\| 1.19e-07 (tolerance 1e-5), threads against one thread 0; exit 0, and 0 again under `--cpu-only`. Docs: `Lib/eacp/GPU/README.md` "Running a kernel on the CPU" (212 lines), `CLAUDE.md` +27 (the three device-free pieces, a "CPU compute" Architecture subsection), `README.md` +17/−8 (a platform-table row, the "three pieces" paragraph). CI unchanged: `CpuComputeTests` cases are registered with ctest one by one and no lane's `-E`/`-R` filter excludes them; no `EACP_CPU_CROSSCHECK`. macOS Debug: `CpuComputeTests` 155, `GPUTests` 478, all passing. Windows, the Linux lanes and a real driverless run not yet done — awaits CI |
-
-Where the code differs from the sketches below, the code wins; each such
-point gets marked *as built* in place, as the last plan did.
-
-## 0. Why
-
-**Realtime.** An app that already runs a kernel on the GPU — an audio plugin
-rendering a filter bank, a DSP process doing a convolution, a tool whose
-analysis pass is a `ComputeProgram` — wants to run *the same kernel* on the
-CPU: synchronously, on the calling thread, inside an audio callback, with no
-allocation, no lock and no syscall while it runs, and on a machine or a
-platform where no device came up. Today there is no such path. On a Linux box
-with no Vulkan driver `Device::isValid()` is false, `ComputeProgram::prepare`
-builds nothing, `isValid()` answers false and `ComputePass::dispatch` drops the
-work; the only fallback is a second, hand-written C++ copy of the kernel,
-which drifts from the first the day someone edits one of them. And even where
-a device exists, a round trip through a command buffer is the wrong shape for
-a 64-sample block due back in a millisecond.
-
-**Correctness.** Every numeric check of the codegen needs a device.
-`GPUCodegenTests` compares emitted strings and, where `eacp-spirv` is built,
-compiles the GLSL through glslang; that proves the text is well formed, not
-that it computes the right thing. The numeric suites are in `GPUTests`, and
-every case there self-skips without a device — so of the three Linux CI lanes,
-the two without lavapipe (GCC and Clang) prove only that GLSL compiles. An
-executor that runs the graph itself is a second oracle that needs nothing,
-runs on every lane, and, where a device exists, can be cross-checked against
-the GPU's readback of the very same `ComputeProgram`. Three readings of one
-graph — the emitter's, the interpreter's and the test's inline reference —
-also localise a disagreement: two against one names the culprit.
-
-This is not a replacement for the GPU on throughput, and it is not a general
-C++ back end for the EDSL. It is the kernel the app already wrote, run where
-the GPU cannot or should not run it, at a cost that is a small multiple of the
-hand-written loop.
-
-## 1. What is there and what is missing
-
-**The graph** (`Codegen/ShaderGraph.{h,cpp}`, 818 + 994 lines). A kernel
-records into a fully materialised, index-based expression DAG plus a
-structured statement tree, and nothing about it is tied to a device. A node is
-`Expr {kind, type, index, value, op, text, args}`: 25 `ExprKind`s, of which
-`Input` and `Varying` are render-only and `Sample`/`Fetch` read textures; the
-other 21 are what a compute body is made of (`Constant`, `Uniform`,
-`Construct`, `Swizzle`, `Call`, `Unary`, `Binary`, `Compare`, `Select`,
-`VarRead`, `Mul`, `ThreadId`, `BufferRead`, `BufferVectorRead`, `AtomicLoad`,
-`ArrayRead`, `LocalId`, `GroupId`, `GridExtent`, `SharedRead`,
-`SimdGroupIndex`). A Float constant is in `value`; a UInt, Int or Bool one is
-in `index`, and `addUIntConstant` stores `(int) value`, so a UInt above
-`INT_MAX` reads back negative and has to be reinterpreted as `uint32_t`.
-`Binary` carries its operator in the `op` char except for the two shifts,
-which are in `text`; `Compare` carries it in `text`; `Call` names the builtin
-in MSL spelling — the math set (`sin` … `tanh`, `atan2`, `rsqrt`, `fract`,
-`mix`, `step`, `smoothstep`, `clamp`, `pow`, `dot`, `cross`, `length`,
-`normalize`, `distance`, `reflect`, `refract`, `faceforward`, `determinant`,
-`transpose`, `all`, `any`, `sign`, `trunc`, `round`, `log10`, …), a
-constructor-style conversion under the target type's name (`float`, `uint2`),
-a bitcast as `as_type<…>`, and the seventeen `eacp*` helpers. Mixed widths are
-left to the target language: `Float3 * Float` is one `Binary` with a
-one-component operand, and `clamp(v, 0.f, 1.f)` one `Call` with two
-(`ShaderValue.h`, "broadcast across vectors"). The 17 `StatementKind`s are
-`Declare`, `Assign`, `If`, `Loop`, `Break`, `Continue`, `Store`,
-`VectorStore`, `TextureStore`, `SharedStore`, `Barrier`, `GroupReduce`,
-`SimdMatrixFill`, `SimdMatrixLoad`, `SimdMatrixStore`, `SimdMatrixMultiplyAdd`
-and `AtomicAdd`, held in `Block`s by index, with `rootBlock = 0` the body. The
-side tables are `storageBuffers()` with `storageElementType(slot)`,
-`uniforms()`, `variables()`, `sharedArrays()`, `arrays()`,
-`groupReductionTypes()`, `simdMatrixCount()`/`simdMatrixElement()`,
-`dispatchRank()`, `threadGroupShape()`, `usesBarrier()`, `usesLocalId()`,
-`usesGroupId()` and `usesSimdGroups()`; `simdGroupWidth = 32` and
-`simdMatrixSize = 8` are constants beside them.
-
-Two properties of the graph decide how it has to be executed. First, sharing:
-constants, pure binaries and reads of `BufferAccess::Read` slots are
-hash-consed (`findShared`, keyed by `constantKeyFor`/`binaryKeyFor`/
-`readKeyFor`), so one node can feed statements far apart. Purity is
-`purityOf`: not one of the kinds in `dependsOnMutableState` (`VarRead`,
-`BufferRead`, `BufferVectorRead`, `AtomicLoad`, `Sample`, `Fetch`,
-`SharedRead`) unless `readsImmutableStorage`, and every argument pure — but
-`isPure(int)` is private. An impure node's value is the one it has *where the
-statement using it runs*, which the emitter enforces with `readsStale` (a
-`VarRead` of a variable just written, a read of a buffer just stored to, a
-`SharedRead` after shared memory moved). Second, record stores:
-`addRecordStore` lays down one `Store` per component with `record` naming the
-record's node and `recordComponentsLeft` counting down, and every component
-takes the value the record had before the first of them ran — the emitter's
-`holdTheRecord` binds the record once for that reason
-(`InPlaceRecordTests` pins it).
-
-**The emitter** (`Codegen/ShaderEmitter.cpp`, 3945 lines). All three dialects
-are one walker branching on a private `enum class Backend {Metal, DirectX,
-Vulkan}`; `callName` renames the MSL builtins per dialect, `ExprPrinter`
-prints a node, `countUses`/`orderLocals` hoist a node used more than once
-into a local, `StageEmitter` walks the blocks and drops a local that
-`readsStale` says a statement invalidated, and `emitCompute` writes the entry
-point with the `boundsGuard(rank)` early return — omitted when
-`usesBarrier()`, since a return ahead of a barrier the rest of the group waits
-at is undefined; such a kernel bounds its own stores against `GridExtent`. The
-helpers exist only as source text in the `shaderHelpers` table (18 entries:
-the 17 `eacp*` — `eacpErf`, `eacpErfc`, `eacpSaturatingTanh`, the half,
-bf16, int8 and int4 pack/unpack/read family — plus a GLSL-only `log10`). What
-the two fallback dialects do in place of Metal's SIMD-group intrinsics is
-already a precise statement of lane semantics: `groupReduction` stages every
-lane's contribution in scratch and folds by halving strides
-(`reductionStride(width)`), narrowed to 32-lane blocks for `ReductionScope::
-Simd`; a SIMD-group matrix is spread over the lanes of its SIMD group, lane
-`l` holding elements `2l` and `2l + 1` of the row-major 8x8
-(`simdMatrixPreamble`, the comment at line 1140).
-
-**The kernel type** (`Codegen/ComputeProgram.h`, 885 lines). `ComputeProgram`
-owns a `ShaderBuilder`, the `GeneratedShader`, the uniform bytes, and
-`std::optional<ShaderLibrary>`/`std::optional<ComputePipeline>`. `compile()`
-runs the `ShaderBuildVisitor` walk, `define()` and `builder.build()` —
-device-free already — and `graph()` hands the recorded graph back afterwards,
-which `Tests/GPU/ProgramGraphTests.cpp` already uses as a third consumer. What
-ties the type to `eacp-gpu` is linking, not including: `ShaderLibrary` and
-`ComputePipeline` are `Pimpl` types whose destructors live in `eacp-gpu`, so
-any kernel struct needs `eacp-gpu` at link time. The includes are harmless on
-their own — `Tests/GPU/CodegenCommon.h` already pulls `Frame/ComputePass.h`
-and `Frame/RenderPass.h` into the device-free `GPUCodegenTests`. The same holds
-one level down: `Uniform<T>`, `ShaderVisitor`, `ShaderBuildVisitor`,
-`ShaderUploadVisitor`, `CpuValueOf`/`ShaderValueOf` and the `EACP_SHADER`
-macro engine all sit in `ShaderProgram.h` (1560 lines) beside the render
-`ShaderProgram`, which includes `Device.h`, `RenderPass.h` and
-`StreamingBuffers.h`. `grep -rl ComputeProgram` finds 54 files; 158 structs
-derive from it directly (147 in `Tests`, 6 in `Apps`, 5 in `Lib`, one of those
-the doc comment in `ComputeProgram.h`) and three more through `GPUWidgets`'
-`PathIndexedKernel` (`BinKernel`, `CoverageKernel`, `BackdropScanKernel` in
-`Path/BackdropKernels.h`).
-
-**Buffers and uniforms.** A storage buffer is a flat array of `float` or
-`uint32_t` (`storageElementType`); `read2/3/4` and `write2/3/4` are tight
-N-stride records of consecutive elements, and there are no struct layouts.
-`Uniform<InputBuffer>` and its four siblings hold a `BufferRange {const
-Buffer*, offset, bytes}`, which has no CPU pointer: `Buffer` offers `read`
-and `update` copies and, on Metal only, adoption of caller memory through
-`ExternalMemory` (`canAdoptMemory`), but no persistent mapping. A value
-uniform is CPU-visible as `Uniform<T>::value` (column-major `Array<float, 16>`
-for a `Float4x4`), and `ShaderVisitor::onUniform(name, type, handle, data)`
-hands out its type, its handle (whose `node` is the graph's `Uniform` node,
-`index` the slot) and a pointer to the value. `ShaderUploadVisitor` packs
-those into MSL layout (`uniformAlignment`, `uniformSlotStride`) and
-`packWithExtents` appends the grid extents; a CPU reader wants the typed
-values, not the packed block.
-
-**Dispatch** (`Frame/ComputePass.h`). `dispatch(count)`, `(width, height)`,
-`(width, height, depth)` in threads, rounded up to groups of the pipeline's
-own shape or the stock one — `threadGroupWidth = 64`, `threadGroupSize2D = 8`
-squared, `threadGroupSize3D = 4` cubed; `maxBufferSlots = 8`.
-`dispatchIndirect(Program&, const Buffer&, int guardCount, offset)` is 1D
-only: it reads `DispatchArguments {groupsX, groupsY, groupsZ}` — group counts,
-not thread counts — and takes the guard's extent as a *capacity* the caller
-passes.
-
-**SIMD and threads.** `eacp-simd` (`Lib/eacp/SIMD/`) has `simd::F32` in
-`Vector.h` with `zero`, `broadcast`, `load`, `loadBroadcast`, `store`, `+`,
-`-`, `*`, `min`, `max`, `fma` and `reduceAdd` — no masks, no integers, no
-compare, divide, sqrt or transcendentals — and `Tu/ArrayOps.cpp`, plain loops
-the compiler auto-vectorises. The module is built with
-`eacp_force_optimization` (`CMake/TargetSetup.cmake`: `-O3
--ffp-contract=off` in every configuration, `/clang:` forms under clang-cl,
-`/O2` under cl), which on MSVC strips `/RTC1` and `/Od` from the
-*directory-scoped* Debug flags — so a force-optimised target wants a directory
-of its own. `Core/Threads/` has `Timer`, `Async`, `callAfter`, the event loop
-and `TaskSemaphore`; there is no thread pool and no `parallelFor` anywhere.
-
-**Tests** (`Tests/GPU/CMakeLists.txt`). `GPUCodegenTests` (four sources,
-`TARGETS eacp-gpu-codegen`) is built before the `if (NOT EACP_HAS_GPU)
-return ()`; `GPUTests` (`NO_MAIN`, ~70 sources, `TARGETS eacp-sprites
-eacp-gpu`) after it. Tolerances are per suite (`IntrinsicTests`' `near(gpu,
-reference, tolerance)`, `1.0e-6 + 1.0e-5 * |reference|` for the transcendental
-set). Metal compiles with its default math mode — fast math; nothing in
-`ShaderLibrary-Apple.mm` sets one.
-
-**What is missing.** No interpreter or software path of any kind; a kernel
-type that cannot be linked without `eacp-gpu`; no way to bind CPU memory to a
-kernel's buffer slots; no C++ twin of any `eacp*` helper (each test that needs
-a reference writes its own); no masked, integer or transcendental lane
-arithmetic; no pool to parallelise over.
-
-## 2. Decisions
-
-**D1 — An interpreter over `ShaderGraph`.** The executor walks the graph the
-kernel already recorded, decoded once into a flat op list. Rejected:
-
-- *`emitCpp` plus a build-time compile.* A kernel is a runtime object built in
-  a constructor, often parameterised by what the constructor was handed (a
-  group shape, a tile size, a mode), and the build has no step that could run
-  a constructor and compile what it emitted. A fourth dialect in
-  `ShaderEmitter.cpp` would be easy; getting its output into the binary is
-  not.
-- *A JIT.* No LLVM, no assembler, nothing of the kind in the tree, and code
-  generation at runtime is exactly what a realtime thread and an iOS build
-  cannot have.
-- *Re-templating the front end* so a kernel's body compiles to C++ directly.
-  The handles in `ShaderValue.h` (4027 lines) are runtime `{graph, node}`
-  pairs by design, and so is everything above them; the rewrite would be the
-  EDSL twice.
-
-**D2 — One batch is one threadgroup, all lanes in lockstep under an execution
-mask.** Every node's value is a lane array, SoA: `components × lanes` 32-bit
-words, component-major (all lanes of `.x`, then all of `.y`), so each
-component operation is one dense loop over lanes. Floats are `float`,
-`UInt`/`Int` are both stored as `uint32_t`, `Bool` is an all-ones/all-zeros
-mask word so `Select` and masking are bitwise; a matrix is its columns'
-components in MSL's column-major order. Only `+`, `-`, `*`, the bitwise
-operators and `<<` are sign-blind, and those run on the unsigned lanes, so
-C++ wraparound stays defined. Every operation whose result depends on the sign
-reads the lanes as `int32_t` when the node's operand type satisfies
-`isSignedInteger` (`ShaderTypes.h`): `/` and `%` (truncating, C++ semantics,
-with D7's rows for zero and `INT_MIN / -1`); `Compare` `<`, `<=`, `>`, `>=`;
-`>>`, arithmetic for `Int` and logical for `UInt` — the emitter prints `>>`
-unchanged on both, and MSL, HLSL and GLSL all sign-extend a signed right
-shift, which C++20 now guarantees too; `abs`, `sign`, `min`, `max`, `clamp`;
-`Unary -`; `toFloat` of an `Int` (through `int32_t`); float → `Int`
-(saturating, D7); and `toInt`/`toUInt` between the two integer types, a
-bit-preserving reinterpretation as on the GPU. Storage stays `uint32_t`
-throughout; only those operations cast. The batch width is the group's
-`threadCount()`: 64 for the stock 1D shape, 8x8 and 4x4x4 for the other
-two, whatever `ComputeProgram({256})` or `({16, 16})` asked for otherwise; lane `l` is the flat local index, x fastest,
-which is what the emitter's `lane` is. Consequences, each one a place where
-lockstep makes a GPU mechanism trivial:
-
-- `Barrier` is a no-op: statement order already is the barrier.
-- A `SharedArray` is one array per group; `SharedRead`/`SharedStore` index it
-  per lane.
-- `GroupReduce` is a horizontal fold over the batch; `ReductionScope::Simd`
-  folds each 32-lane block (`simdGroupWidth`) separately. The fold follows the
-  fallback's halving tree exactly, so a float sum rounds as it does on D3D12
-  and Vulkan.
-- `SimdGroupIndex` is `lane / 32`.
-- A SIMD-group fragment is held whole, as a dense 8x8 per SIMD group, not
-  spread over lanes: the lane distribution of the emitter's emulation is
-  unobservable (a fill takes only a constant — `ShaderBuilder::simdMatrix
-  (float)` — and fragments leave only through `SimdMatrixStore`), so
-  `SimdMatrixMultiplyAdd` is an 8x8 matrix product per SIMD group. A
-  load/store whose offset or stride differs across the lanes of one SIMD group
-  (Metal requires them uniform) takes the first active lane's. *As built
-  (stage 3):* fragment `f` of SIMD group `g` is 64 row-major words at
-  `fragmentOffset + (f·simdGroups + g)·64`, `simdGroups = ceil(lanes/32)`,
-  laid out after the shared arrays and zeroed with them at group start. Each
-  statement acts on a SIMD group's whole fragment when any of its lanes is
-  active, taking the first active lane's fill value, offset and stride, and is
-  skipped otherwise. Element `(r, c)` is at `offset + r·stride + c` in wrapping
-  `uint32`; out of range reads 0 and a store there is dropped. The product is
-  D = C + Σ_k L[r][k]·R[k][c], the accumulator first and k ascending, unfused,
-  into a stack copy, so the accumulator may be an operand. A packed half or
-  bf16 load counts in sixteen-bit elements as the fallback does: element `i`
-  is half `i % 2` of word `i / 2`, widened as it loads through `readHalf`/
-  `readBFloat16` (`Helpers.h`), so every fragment holds floats; a word out of
-  range reads 0. A group whose `threadCount()` is not a multiple of 32 with
-  any `SimdMatrix*` statement is refused at plan time, naming the count: Metal
-  needs whole SIMD groups, and the fallback's `sgmScratch[threads / 32 * 128]`
-  is too small for a partial one (48 threads get one SIMD group's scratch,
-  16 get none). The emitter only asserts it (`emitCompute`, Debug only), for
-  any kernel that `usesSimdGroups()`; `ShaderBuilder` and `ComputeKernel`
-  refuse nothing.
-- `If` computes `then = active & cond`, `else = active & ~cond`, and skips a
-  body whose mask is empty. `Loop` runs while any lane is live: the condition
-  is re-evaluated for the loop's lanes each iteration and clears the ones it
-  fails, `Break` clears lanes from the loop mask, `Continue` from the
-  iteration mask until the body's end. The mask stack's depth is the graph's
-  deepest `If`/`Loop` nesting, known at plan time.
-- The bounds guard follows `emitCompute`: in a kernel that does not
-  `usesBarrier()`, lanes whose global id is at or past the extent start
-  inactive; in one that does, every lane of a partial group runs, as it does
-  on the GPU, and the kernel's own `GridExtent` checks bound its stores.
-
-Arithmetic runs on *every* lane, masked or not, and only side effects are
-masked: a store, an atomic, a shared store, and an assignment (a blend of new
-and old under the mask). That keeps every arithmetic loop branch-free and
-vectorisable, and it is safe because D7 makes every operation total — a read
-at a garbage index reads 0, a division by zero yields 0. Rejected: *one thread
-at a time*, which gives up SIMD entirely and needs a coroutine or a fiber per
-thread to suspend at each barrier; *phase-splitting at barriers* (run every
-thread to the barrier, then every thread past it), which breaks as soon as a
-barrier sits inside a loop — `GroupReductionTests`' `RowSumKernel` folds with
-`groupSum` inside a recorded `loop`, and `SimdMatrixTests` stages tiles with
-`barrier()` inside one. (`ScanBlockKernel`'s barriers are not: its doubling
-loop is a C++ `for`, unrolled as the graph is recorded, for exactly this
-reason.)
-
-*As built (stage 2):* `LocalId` has no scratch of its own — its node points at
-the workspace's local-coordinate rows; `GroupId` is filled once per group and
-`SimdGroupIndex` once per workspace. The shared arrays sit in one block, each
-one run of words per group, element-major (`storage + e * components + c`),
-zeroed at group start after the guard; shared indices are unsigned, so a
-negative one is out of range. Shared memory is capped only by the existing
-`INT32_MAX`-word scratch limit (`SharedMemoryTests`' 1M-float array is 4 MB
-here). `GroupReduce` stages into one reduction row, allocated only when the
-kernel reduces, and folds it with the fallback's bounded halving tree; `Simd`
-blocks are `min(threads, 32)` wide and a partial last block folds only the
-lanes it has. Only `Float`, `UInt` and `Int` fold — anything else is refused —
-and D7's identity for an inactive lane is `-0.0f` for a float sum, `-inf`/
-`+inf` for a float max/min (which fold through `fmax`/`fmin`), 0 for an
-integer sum, 0 / `UINT32_MAX` for a uint max/min and `INT32_MIN`/`INT32_MAX`
-for an int max/min. With a barrier dropping the guard, the lanes of a last group past the
-extent run, read 0, fold, and store wherever the output has room;
-`GPUCodegenTests` pins both sides of that.
-
-**D3 — Plan once, execute without allocating.** Construction is the plan: it
-decodes the graph into a flat op list — each `Call` name, `Compare` text and
-shift text resolved to an enum, each operand to a scratch slot, every `Expr`
-string left behind — rejects what the executor does not support (D11) with
-`isValid()` false and a reason, and allocates everything execution touches:
-per-node lane scratch, variable storage, shared arrays, array constants,
-SIMD fragments, the mask stack, the epoch stamps, the per-slot uniform words
-and the binding table. Logging happens here and only here. Execution takes
-spans and uniform values, never allocates, locks, logs or makes a syscall, and
-runs on the calling thread. The split is two objects, not one: an immutable
-`Plan` (the decoded program and the layout of the scratch) and a mutable
-`Workspace` (the scratch itself), so stage 4's parallel groups are one
-workspace per worker over one plan; v1's `Executor` bundles one of each. In v1
-every node gets its own scratch slot: 500 nodes × 64 lanes × 4 components × 4
-bytes is 512 KB, acceptable for a kernel of that size. Reusing slots by
-liveness is stage 4's. *As built:* `Plan`/`Workspace` with `Executor`
-bundling one of each, as planned, plus an internal `Interpreter.h` — the
-`Context`/`SlotView`/mask-frame seam between the source files. `laneStride` is
-the lane count rounded up to 16; `footprintBytes()` for the one-line gain
-kernel at 64 lanes is 2432 bytes (4 nodes × 64 words, the mask,
-local-coordinate and real-lane rows, 16 uniform words and 64 bytes of
-alignment slack). A dispatch of the wrong rank returns false rather than
-asserting. *As built (stage 3):* the `eacp*` calls decode to one
-`Op::Helper`, appended to the `Op` enum, with a `HelperFunction` in
-`Node::sub` (`decodeHelper` in `Plan.cpp`, run by `builtinHelper` in
-`Builtins.cpp`). The 3 componentwise helpers (`eacpErf`, `eacpErfc`,
-`eacpSaturatingTanh`) take any float width, the scalar applied per
-component; the 14 packed ones are held to their one signature, argument and
-result types checked; an unknown `eacp*` name is refused by name.
-`Evaluate.cpp` is unchanged — a helper is one more `Call`. *As built
-(stage 4):* slots are reused by liveness and the batch can be several
-groups wide (stage 4, items 4 and 5); the `Plan`/`Workspace` split carried
-the threads as planned, with the uniforms moved out of the workspace and
-into each `PreparedDispatch` (D8). They are packed now, `byteSize` words a
-slot at `Plan::uniformOffset(slot)` rather than 16 words each, and a kernel
-whose uniforms pass `Plan::maxUniformWords` (1024 words, Metal's 4 KB
-`setBytes` limit, which the tight packing never exceeds where MSL's padded
-one fits) is refused.
-
-**D4 — Statements in order, expressions by epoch.** The executor walks the
-blocks; each statement evaluates the expression trees it names recursively,
-stamping each node with the current epoch. A pure node already stamped this
-epoch is not recomputed; an impure one always is. The epoch advances per
-statement execution, so a loop condition re-read each iteration and a
-`VarRead` after an `Assign` are both fresh — the staleness rule `readsStale`
-enforces in the emitter, reached here by never carrying an impure value
-across a statement at all. A statement evaluates everything for all lanes
-first and commits afterwards (stores in ascending lane order, so the last lane
-wins a conflicting store — a race on the GPU, deterministic here). A record
-store pins its `record` node at the first component statement and keeps it
-through `recordComponentsLeft == 0`, as `holdTheRecord` does. Array constants
-are evaluated once per group, before the body, as the emitter declares them.
-`ShaderGraph::isPure` becomes public for the plan; nothing else in the graph
-changes. Hoisting a pure node across statements — what `countUses`/
-`orderLocals` do — is a stage-4 optimisation keyed on the same purity bit,
-and so is evaluating lane-invariant nodes (a constant, a uniform, a
-`GridExtent`, a `GroupId` and arithmetic over only those) once per group or
-per dispatch instead of per lane; v1 splats constants and uniforms once per
-dispatch and nothing more. *As built:* no epochs and no recursion. The plan
-computes a post-order schedule per statement — a flat, deduplicated node list
-for the value and index of a store, an `If`'s condition, a `Loop`'s condition
-per evaluation — and a statement runs its list as a flat loop: fresh every
-statement, shared within one, the same semantics. The record pin is plan-time
-too: the first component's schedule includes the record node, the following
-components' treat it as a leaf. `VarRead` has no scratch of its own and reads
-the variable's storage, which is safe because a statement commits after it
-evaluates. Array constants are evaluated at group start, after the guard, in
-slot order, into array storage. Stage 1 did not need `isPure`; it stays public
-for stage 4's hoisting. *As built (stage 4):* the lane-invariant evaluation
-and the cross-statement hoisting are one mechanism, a per-node level and a
-per-node site (stage 4, item 3); the per-statement schedules stay, and a
-hoisted node is simply scheduled at an earlier step or in a prologue.
-
-**D5 — Auto-vectorised lane loops first, intrinsics only where measured.** The
-lane operations are a small internal layer (`CpuCompute/Lanes.h`): templated
-loops over `const float*`/`uint32_t*` of the batch width, written like
-`Tu/ArrayOps.cpp`, in a target built with `eacp_force_optimization` so it is
-`-O3 -ffp-contract=off` in every configuration, Debug included — an audio
-thread cannot run an interpreter at `-O0` — plus `-fno-math-errno` so `sqrt`
-and friends inline (IEEE semantics unchanged; nothing reads `errno`). Not an
-extension of `simd::F32` in v1: `F32` has no masks, integers, compares,
-division or transcendentals, and growing it is a design question for the
-image kernels that own it, not a side effect of this plan. Transcendentals are
-`std::` calls per lane in v1. Hand intrinsics come in stage 4 and only where a
-benchmark says so — the likely three are the gather under a dynamic
-`BufferRead`, masked select/blend, and a vector `sin`/`exp` — and if they are
-general they fold into `eacp-simd` then. *As built (stage 4):* no hand
-intrinsics; every lane loop is still plain C++ the compiler vectorises. The
-benchmark said the gather mattered only in its contiguous case, and that went
-in as a ramp — a read or store whose index is lane 0's plus lane × a
-plan-time scale, copied as a run with strided loops the compiler vectorises
-(stage 4, item 2) — which is the ISA-free half of the item. A general gather
-has no baseline-ISA form (AVX2 on x86, none on arm64); the masked blend
-already vectorises as written; and a vector `sin`/`exp` would change bits
-against the `std::` calls the tests' references make, while the hand loop it
-is measured against calls the same scalar libm, so it would speed both sides
-alike. Nothing folded into `eacp-simd`.
-
-**D6 — The device-free seam: `ComputeKernel` under `ComputeProgram`.** A new
-base class in `eacp-gpu-codegen`, `Codegen/ComputeKernel.h`, takes everything
-of `ComputeProgram` that is not a device: the `ShaderBuilder`, the
-`GeneratedShader`, `compile()`, `graph()`, `source()`, the pure virtuals
-`reflectMembers` and `define`, the whole `define()` vocabulary (`threadId`
-through `write`), `packedUniforms`/`packWithExtents`, `dispatchRank()`,
-`groupShape()`, `threadgroupMemoryBytes()`, `uniformByteSize()` and the
-`groupWidth`/`groupSize2D`/`groupSize3D`/`simdWidth`/`simdMatrixWidth`
-constants (it includes `Frame/ComputePass.h` for them, header-only, as
-`CodegenCommon.h` already does). `ComputeProgram : public ComputeKernel` keeps
-`prepare(Device&)`, `prepare()`, `pipeline()`, `isValid()`,
-`bindResources(ComputePass&)`, `fitsThreadgroupMemory`,
-`fitsPackedSimdMatrix`, the three `report*` functions,
-`buildRefusedPipeline`, `ComputeBindVisitor` and the two optionals. The member
-machinery moves the same way: `Uniform<T>`, `ShaderVisitor`,
-`ShaderBuildVisitor`, `ShaderUploadVisitor`, `CpuValueOf`, `ShaderValueOf`,
-`memberOffset` and the `EACP_SHADER`/`EACP_SHADER_VALUE` macros go from
-`ShaderProgram.h` into `Codegen/ShaderMembers.h`, which `ShaderProgram.h`
-includes, so every existing include keeps compiling (`Texture` is only ever a
-pointer there and is forward-declared). *As built:* `ShaderMembers.h` also
-carries `ShaderValueIs`; `toVertexFormat`, `VertexFormatOf`,
-`expectedAttributeBytes`, `ShaderTextureBindVisitor`,
-`ShaderBufferBindVisitor` and `ShaderGraphVisitor` stay in `ShaderProgram.h`,
-since they need `RenderPass` or vertex input; no `Texture` forward declaration
-was needed — `ShaderTypes.h` already includes `Texture/Texture.h` — and
-`ShaderMembers.h` includes `Buffer/Buffer.h`, since `BufferRange` is held by
-value. `packWithExtents` stays private on `ComputeKernel`, and
-`ComputeProgram::prepare()` reads `source()` rather than the now-private
-`generated`. Every one of the 158 kernel structs
-keeps deriving from `ComputeProgram` and is untouched; a kernel meant to link
-without `eacp-gpu` — `CpuComputeTests`', a CPU-only product's — derives from
-`ComputeKernel` and is otherwise written identically. `ComputePass`'s
-`dispatch(Program&, …)` templates are unaffected. *As built (stage 1):*
-`ComputeKernel` gained a public `visitMembers(ShaderVisitor&)` forwarding to
-the protected `reflectMembers`, which is what the executor walks. It has no
-`array()` — only `ShaderProgram` and `ShaderBuilder` do — so the array-constant
-tests record on a bare builder.
-
-Rejected: *making `ComputeProgram` itself link-inert* by holding the GPU state
-behind a type-erased holder created in `prepare()`. It works, and it would let
-a device-free binary instantiate an unchanged kernel, but it hides a link
-dependency behind a trick every future member would have to respect, where the
-split states it in the type. *Moving the GPU half out into a wrapper*
-(`GpuKernel<T>`) instead of a derived class: it changes every `prepare()` and
-`pass.dispatch(kernel, …)` call site in the tree.
-
-Binding, on the CPU side, is a separate object, not a second field on the
-member: `CpuCompute::Bindings`, a fixed table indexed by slot, filled through
-typed setters that take the kernel's own member so the slot comes from its
-handle — `bindings.set(kernel.input, std::span<const float>)`, `set(kernel.
-output, std::span<float>)`, and the `uint32_t` forms for `UIntInputBuffer`,
-`UIntOutputBuffer` and `AtomicBuffer`. The spans are the caller's memory; the
-executor checks each span's element type against `storageElementType(slot)`
-and its access against `storageBuffers()[slot]` at bind time, which is cheap
-and allocation-free. *As built:* `Bindings::set` only records the span,
-failing only for a slot out of range; the element type and access are checked
-at dispatch, in `Executor::resolveSlots`, which is just as cheap and
-allocation-free. Rejected: *a visitor mapping each member's `BufferRange`
-to a span through a user callback* — it presupposes a `GPU::Buffer`, which a
-CPU-only caller cannot make without a device, and `Buffer` has no persistent
-CPU pointer to map to anyway; *adding a span beside the `BufferRange` inside
-`Uniform<InputBuffer>`* — it makes one kernel object hold two bindings that
-have to be kept consistent, and ties the CPU binding's lifetime to the
-kernel's. The separate table also lets one kernel run on the GPU over its
-buffers and on the CPU over plain arrays at once, which is exactly what the
-cross-check does.
-
-Uniform values are read through a fourth visitor beside `ShaderBuildVisitor`,
-`ShaderUploadVisitor` and `ComputeBindVisitor`: `CpuUniformVisitor`, whose
-`onUniform` copies `byteSize(type)` bytes from `data` into the plan's
-preallocated words for the slot `graph.expr(handle.node).index` — typed
-values, no MSL packing. `reflectMembers` is a virtual call on a stack visitor
-with no allocation, so it runs inside `execute` on every dispatch and picks up
-`kernel.gain = …` set a moment earlier on the same thread. The implicit
-`GridExtent` values come from the dispatch call, as they do on the GPU. A bare
-graph (a `GPUCodegenTests` case recorded on a `ShaderBuilder`) is executed
-through the same plan with the uniform words set by slot.
-
-**D7 — Numerics: IEEE on the CPU, tolerances in the tests, every undefined
-case defined.** The CPU is not bit-exact with the GPU and does not try to be:
-Metal compiles with fast math, the others with whatever their compilers
-contract. The executor is IEEE single precision with no contraction; the
-cross-checks use each suite's existing tolerances. Every `eacp*` helper gets a
-C++ implementation (`CpuCompute/Helpers.{h,cpp}`, public) that is the single
-source of truth for the executor and for the tests' references, replacing the
-per-test copies as those tests are touched. `log10` is `std::log10`. What the
-GPU leaves undefined, the CPU defines, and the README documents:
-
-| Case | GPU | CPU |
-| --- | --- | --- |
-| buffer read out of bounds (or unbound slot) | Metal undefined; D3D12/Vulkan robust access reads 0 | reads 0 |
-| buffer store / atomic out of bounds | Metal undefined; D3D12/Vulkan drop it | dropped; the atomic yields 0 |
-| shared or constant array index out of bounds | undefined everywhere | reads 0, store dropped |
-| integer `/` or `%` by zero | Metal/Vulkan undefined; D3D gives all-ones | 0 |
-| `INT_MIN / -1` | undefined | `INT_MIN` |
-| `INT_MIN % -1` (*as built*) | undefined | 0 |
-| `toInt`/`toFloat` of a `Bool` (*as built*) | 1 / 1.0 for true | 1 and 1.0f for true, 0 for false |
-| `fract` (*as built*) | Metal: `min(x - floor(x), 0x1.fffffep-1f)` | Metal's formula |
-| shift by ≥ 32 | amount masked on the hardware | amount `& 31` |
-| float → int/uint out of range, NaN | saturates on the hardware | saturates; NaN → 0 (C++ leaves this UB, so it is spelled out) |
-| `Barrier` under divergent control flow | undefined | no-op |
-| `GroupReduce` under divergence | undefined | inactive lanes contribute the fold's identity; only active lanes receive the result |
-| SIMD-group matrix op under divergence (*as built*) | undefined | acts on the whole fragment if any lane of the SIMD group is active, with the first active lane's operands; skipped otherwise |
-| integer overflow | mod 2^32 | mod 2^32; `+`, `-`, `*` run on the unsigned lanes, the sign-sensitive operations of D2 on `int32_t` |
-| threadgroup memory at group start, and SIMD-group fragments (*as built*) | uninitialised | zero-filled |
-
-Reads returning 0 follow the two backends that define the case, which is also
-what makes D2's "compute on every lane" safe. A UInt constant's `index` is
-read back as `uint32_t`. *As built:* `round` is `std::round`; `round` at an
-exact half is away from zero (`std::round`, Metal's rule); D3D12 and Vulkan
-round to even, so a cross-checked kernel must avoid exact halves or use
-`floor(x + 0.5)`. `sign(NaN)` is
-0; a partly out-of-range `VectorStore` or `read2/3/4` is checked per element.
-A slot the kernel reads or writes that is never bound refuses the dispatch
-(false); a slot bound to an empty span runs, reading 0 and dropping stores.
-`count <= 0` returns true and does nothing. A store to an `Atomic` slot is
-accepted as a plain store.
-
-*As built (stage 3):* `Helpers.{h,cpp}` is public, as planned, with two
-naming deviations: `errorFunction`/`complementaryErrorFunction`, because an
-unqualified `erf` under a using-directive is ambiguous with `::erf(float)`,
-and `widenHalf`/`narrowToHalf`, because `GPU::halfToFloat` already exists in
-`PackedVertex.h`; the rest are the shader names without `eacp`
-(`packHalf2`, `readBFloat16`, `unpackInt4x4`, …). `packHalf2` follows Metal:
-nearest-even including subnormal ties, overflow to infinity — unlike
-`GPU::halfFromFloat` in `PackedVertex.cpp`, which rounds subnormal ties away
-from zero through `lround`. A NaN narrows to `sign | 0x7e00 | (mantissa >>
-13)`. Parity and byte-index shifts are `& 31`, as the hardware masks them.
-`errorFunction`, `complementaryErrorFunction` and `saturatingTanh` are the
-shader's operations in float with no fused multiply-adds, so CPU against GPU
-is within tolerance, not identical. D3D's `f32tof16` rounds toward zero and
-saturates and GLSL's `packHalf2x16` rounds as the driver does; the twin is
-Metal's.
-
-**D8 — Serial over groups in v1, atomics ready for more.** Groups run in
-order, x fastest, on the caller's thread. `AtomicAdd` and `AtomicLoad` go
-through `std::atomic_ref<uint32_t>` with relaxed order from the first commit
-(`static_assert(std::atomic_ref<std::uint32_t>::is_always_lock_free)`), lanes
-in ascending order, each lane getting the pre-add value, so stage 4's parallel
-groups change nothing in the executor. Core has no pool and this plan does not
-add one: stage 4 exposes `dispatchGroups(first, count, Workspace&)` and lets
-the caller's own threads — an audio host's worker pool, a render thread —
-run disjoint ranges. *As built (stage 2):* as planned; the pre-add value lands
-in the variable of active lanes only, and an atomic op on a non-`Atomic` slot
-is refused at plan time. The ordering is observable and the tests use it:
-each statement finishes across the whole group before the next, so every
-lane's `load` after an add returns its group's final count exactly
-(`AtomicCodegenTests`' run case) — which no GPU guarantees, so the
-`GPUTests` ticket cases check each backend for a permutation of `0..n-1` and
-never compare tickets across backends.
-
-*As built (stage 4):* as planned, still with no pool.
-`Executor::prepareDispatch(bindings, count | width, height | width, height,
-depth)` and `prepareDispatchIndirect(bindings, arguments, guardCount,
-offsetInElements)` resolve the bindings, size the grid and read the uniforms
-once, on the calling thread, into a `PreparedDispatch`: trivially copyable —
-slot views, a copy of the uniform words, extents, groups per axis, the total,
-the plan's serial and a validity bit — with
-`isValid()`, `groupCount()` (an `int64_t`, x fastest) and `groups()`. `bool
-dispatchGroups(const PreparedDispatch&, int64_t first, int64_t count,
-Workspace&) const` runs any range of it; the range is clamped to `[0,
-groupCount())`, so a caller splits the count into equal shares and lets the
-last run short, and a batch never crosses a row or the range's end. It is
-const, allocates, locks, logs and makes no syscall, and touches only the
-plan, the `PreparedDispatch`, its own workspace and the bound buffers, so
-each thread brings a `Workspace` made from `plan()` (`Workspace` is
-move-only). There is no helper that splits the work into shares: the caller
-computes its ranges. `dispatch` and `dispatchIndirect` are a prepare plus
-`dispatchGroups(0, groupCount(), scratch)`. The uniforms left the workspace
-(`Plan::uniformWords()` and `Workspace::uniformWords()` are gone, 64 bytes
-per uniform off every workspace): `setUniform` and the member walk fill
-`Executor::uniformBlock`, and each prepare copies it into the
-`PreparedDispatch`, a fixed `std::array` of `Plan::maxUniformWords` words
-(4 KB), so a later `setUniform`, member change, prepare or dispatch on the
-executor cannot reach a prepared dispatch or race with the threads running
-it. Each `Plan` takes a serial from a process-wide counter as it is built —
-its copies share it, and share its layout — and `Workspace` and
-`PreparedDispatch` record it, so `dispatchGroups` returns false, running
-nothing, for a workspace made from another plan (one smaller would have
-been written out of bounds) or a dispatch prepared by another executor; a
-moved-from workspace has serial 0 and matches nothing. `Executor` is
-neither copyable nor movable, so the address would have served as well, but
-not for a bare `Plan`. Atomics go through
-`atomic_ref` as they did, and `atomicTicketsAcrossThreadsAreAPermutation`
-checks the tickets across threads are a permutation — the same thing the
-`GPUTests` ticket cases ask of a device. Threads also make cross-group order
-real where serial groups hid it (Risks, "Races made deterministic"). No
-ThreadSanitizer run yet.
-
-**D9 — `Lib/eacp/GPU/CpuCompute/`, target `eacp-cpu-compute`, namespace
-`eacp::GPU::CpuCompute`.** The `Spirv` precedent exactly: a subdirectory of
-`GPU` with its own `CMakeLists.txt` (`eacp-spirv`, namespace
-`eacp::GPU::Spirv`), which is also what `eacp_force_optimization`'s
-directory-scoped flag edit requires. It is entered from
-`Lib/eacp/GPU/CMakeLists.txt` right after `eacp-gpu-codegen` and before the
-`if (NOT EACP_HAS_GPU) return ()`, links `eacp-gpu-codegen` PUBLIC and nothing
-device-related, and so builds on every platform, a Linux box with no driver
-and `-DEACP_BUILD_GRAPHICS=OFF` included. Tests:
-
-- `CpuComputeTests` — a device-free NanoTest binary in a new `Tests/CpuCompute/`
-  (`TARGETS eacp-cpu-compute`), added in `Tests/CMakeLists.txt` beside
-  `add_subdirectory(GPU)` under the same `NOT IOS`. Its own directory rather
-  than beside `GPUCodegenTests` in `Tests/GPU/CMakeLists.txt`, because the
-  benchmark that lives with it (stage 4) is force-optimised the way
-  `Tests/SIMD/CMakeLists.txt` does `SimdBench`, and on MSVC that edits the
-  directory's Debug flags for `GPUCodegenTests` and `GPUTests` too. It checks
-  the executor's own semantics (masks, loops, record stores, every row of D7)
-  and whole kernels against inline references.
-- `GPUCodegenTests` gains `eacp-cpu-compute` in its `TARGETS` (stage 2), so
-  the graphs its string tests already build are also run and checked for
-  value — the atomic, reduction and SIMD-matrix codegen cases first.
-- `GPUTests` gains `eacp-cpu-compute` in its `TARGETS` and a
-  `Tests/GPU/CpuCrossCheck.h` beside `Common.h`: a helper that runs a
-  `ComputeProgram` on the CPU over plain arrays and, where a device exists,
-  on the GPU over buffers holding the same data, and compares both against
-  the case's reference. The CPU half never self-skips, so the two Linux lanes
-  without a driver run every kernel in the listed suites numerically.
-
-*As built:* `CpuComputeTests` needs `-ffp-contract=off` on the test target
-too — Clang contracts the multiply-adds in the tests' inline C++ references
-even in Debug, and the exact checks against the executor then fail. `GPUTests`
-does not: its exact float cases have nothing contractable. There is no
-environment switch that disables the Metal device, so "never self-skips" was
-proven by forcing the GPU half off temporarily (478/478) and by corrupting the
-CPU result (exactly the 36 cross-check cases failed, each naming `cpu`).
-*As built (stage 2):* `GPUCodegenTests`' `TARGETS eacp-gpu-codegen
-eacp-cpu-compute` is unguarded — both targets sit above the `EACP_HAS_GPU`
-return — so its `…/runs` cases run on every lane, driverless Linux included.
-Each suite records one graph for its emit and run cases, in a small struct
-holding a `ShaderBuilder` and its buffer handles (neither copyable nor
-movable, since the handles point into the builder); a bare graph runs through
-`Executor {graph}`. The reduction references are a local copy of the fallback
-tree over non-dyadic inputs, compared with `==`, copied rather than shared
-with `GroupTests.cpp` because the two binaries share no header.
-`GPUWidgetsTests` links `eacp-cpu-compute` too. Multi-kernel handoffs
-(the indirect pipelines, the histogram, `BinKernel` → `CopyUIntKernel`) are
-bound by hand over one host array on the CPU and compared with the GPU's
-buffer; a case with two float tolerances compares the backends at the looser.
-
-**D10 — Dispatch mirrors `ComputePass`.** `Executor::dispatch(bindings,
-count)`, `(bindings, width, height)` and `(bindings, width, height, depth)`
-take threads, round up to groups of the kernel's `groupShape()` and assert
-the rank as `packedUniforms` does. `dispatchIndirect(bindings, std::span<const
-std::uint32_t> arguments, int guardCount, int offsetInElements = 0)` mirrors
-`ComputePass::dispatchIndirect(Program&, …)`: 1D only, `DispatchArguments`
-group counts read from the span, `guardCount` the capacity the guard reads; an
-offset past the span's end dispatches nothing, as on the GPU. The 1D id comes
-from the group's x alone, so groups in y and z repeat the x range, as a 1D
-kernel's `gid` does on every backend. Every dispatch returns whether it ran
-(false for an invalid plan or a slot left unbound that the kernel reads —
-checked, not logged). *As built:* unchanged, except that a wrong rank returns
-false rather than asserting. *As built (stage 2):* `dispatchIndirect` as
-planned. An offset that leaves no whole `DispatchArguments`, a negative
-offset or a zero group count runs nothing and returns true, like
-`dispatch(0)`; false still means an invalid plan, a wrong rank or a bad slot.
-A negative `guardCount` is 0 — and a kernel with barriers, having no guard,
-still runs every lane then, as on the GPU. `GroupId.x` in y and z is the x
-group.
-
-**D11 — Out of scope for v1.** Textures: `Sample`, `Fetch`, `TextureStore`
-and `WritableTexture2D` members (stage 3 may add a float4 image — a span of
-`width × height × 4` floats — so `CoverageKernel` and `PaintPlasma` run whole;
-until then a plan that meets one is invalid). Render graphs (`Input`,
-`Varying`, position/fragment) and `dfdx`/`dfdy`/`fwidth`. Packed half/bf16
-`SimdMatrixLoad` until stage 3 brings the helpers that widen them; float
-fragments first. *As built (stage 3):* the packed loads are in; the float4
-image is not, so textures stay out.
-
-## 3. Files
-
-| File | Change | Lines |
-| --- | --- | --- |
-| `Lib/eacp/GPU/Codegen/ShaderMembers.h` | new: `Uniform<T>` and specialisations, `ShaderVisitor`, `ShaderBuildVisitor`, `ShaderUploadVisitor`, `CpuValueOf`, `ShaderValueOf`, `EACP_SHADER` macros — moved from `ShaderProgram.h`. *As built:* plus `ShaderValueIs`; the render-only visitors and vertex-format helpers stay behind | ~620 moved; *as built:* 718, ~695 moved |
-| `Lib/eacp/GPU/Codegen/ShaderProgram.h` | includes `ShaderMembers.h`; loses the moved half | −620; *as built:* −695 |
-| `Lib/eacp/GPU/Codegen/ComputeKernel.h` | new: the device-free base (D6) | ~680, mostly moved; *as built:* 591 |
-| `Lib/eacp/GPU/Codegen/ComputeProgram.h` | `ComputeProgram : ComputeKernel`, GPU half only | −600; *as built:* 885 → 336 |
-| `Lib/eacp/GPU/Codegen/ShaderGraph.h` | `isPure` public | ~5 |
-| `Lib/eacp/GPU/Codegen/Codegen.h` | include `ComputeKernel.h` | ~1 |
-| `Lib/eacp/GPU/Codegen/ShaderEmitter.cpp` | *as built (stage 2):* `floatLiteral` writes the shortest `%g` that reads back exactly | +18/−3 |
-| `Lib/eacp/GPU/CMakeLists.txt` | `add_subdirectory(CpuCompute)` before the GPU return. *As built:* stage 0 needed no edit here — `add_ide_sources` globs headers | ~3 |
-| `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35; *as built:* 33; *stage 3:* +2 (`Helpers.cpp`, `SimdMatrix.cpp`) |
-| `CpuCompute/CpuCompute.h` | umbrella | ~10; *as built:* 11; *stage 3:* 12 (`Helpers.h`) |
-| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263; *stage 2:* 77 + 348; *stage 3:* `Executor.cpp` +6/−2 (`executorClearGroupMemory` zeroes the fragments too); *stage 4:* 149 + 529 (+76/−4, +270/−93) — `PreparedDispatch` with its own uniform words and plan serial, the prepare forms, `dispatchGroups` and its serial checks, the uniform block, `PlanOptions` on both constructors, batch iteration |
-| `CpuCompute/Bindings.h` | the slot table and typed setters | ~120; *as built:* 118 |
-| `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70; *as built:* 48; *stage 4:* 53 (+10/−5) — the packed uniform offsets |
-| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488; *stage 2:* 324 + 1829; *stage 3:* 373 + 2162 (+50/−1, +338/−5) — `Op::Helper`, `HelperFunction`, the fragment `Step` fields and layout, the statement checks; *stage 4:* 439 + 2920 (+70/−4, +808/−50) — `markRamps`, `PlanLevel` and the hoisting sites, the dispatch and group schedules, liveness layout, `PlanOptions` and the batch width with its byte-budget back-off, the packed uniforms, `serial()` |
-| `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60; *stage 2:* 35 + 73; *stage 4:* 40 + 110 (+13/−9, +41/−4) — move-only, a moved-from one matching no plan, no uniform words, the batch rows, `planSerial()` |
-| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67; *stage 2:* 102; *stage 3:* +15; *stage 4:* 203 (+86) — `RampBounds`, `isContiguousRow`, the hoisted `stride` |
-| `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537; *stage 2:* 606; *stage 4:* 738 (+147/−15) — ramp reads, the invariant-divisor `/` and `%` |
-| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198; *stage 2:* 396; *stage 3:* +16 — the four fragment statements; *stage 4:* 545 (+166/−33) — `storeRun`/`storeStrided`, the branch-free active-lane scatter |
-| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667; *stage 3:* +127 — `builtinHelper`; *stage 4:* 821 (+13/−7) — `Context::stride` read into a local ahead of each lane loop, so the loops vectorise |
-| `CpuCompute/Lanes.h` | lane-array primitives (D5) | ~300; *as built:* 172 |
-| `CpuCompute/Helpers.{h,cpp}` | C++ twins of the 17 `eacp*` helpers (stage 3) | ~350; *as built:* 64 + 219 |
-| `CpuCompute/SimdMatrix.cpp` | fragments per SIMD group (stage 3). *As built:* plus the packed loads' widening | ~200; *as built:* 249 |
-| `Tests/CMakeLists.txt` | `add_subdirectory(CpuCompute)` | ~3 |
-| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17; *stage 2:* +1/−1; *stage 3:* +2/−1; *stage 4:* 50 (+34/−2) — the two new sources, `CpuComputeBench` |
-| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin; *stage 2:* 3174; *stage 3:* 3258; *stage 4:* 4305 (+1095/−48) — 14 cases on ramps, hoisting, invariant levels, the divisor, liveness and a split dispatch's allocations |
-| `Tests/CpuCompute/BatchTests.cpp` | *as built (stage 4):* new — wide batches against one group per batch at every width, and the byte-budget back-off | 942 |
-| `Tests/CpuCompute/DispatchGroupsTests.cpp` | *as built (stage 4):* new — split dispatches against one dispatch, on threads; held uniforms; mismatched workspaces and dispatches refused | 682 |
-| `Tests/CpuCompute/KernelTests.cpp` | `Apps/GPU` kernels as `ComputeKernel`s vs references | ~350; *as built:* 415 |
-| `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450; *as built:* 1517; *stage 3:* 1545 |
-| `Tests/CpuCompute/HelperTests.cpp` | stage 3: helpers, fragments. *As built:* helpers only | ~350; *as built:* 1004 |
-| `Tests/CpuCompute/SimdMatrixTests.cpp` | *as built (stage 3):* new — fragments, packed loads, the multiple-of-32 refusal | 820 |
-| `Tests/CpuCompute/CpuComputeBench.cpp` | stage 4. *As built:* the four stream kernels, `BinKernel` count and fill, `--sweep` (with no byte budget), the threaded rows | ~300; *as built:* 1087 |
-| `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4; *as built (stage 1, `GPUTests` only):* +5/−2; *stage 2 (`GPUCodegenTests`):* +1/−1 |
-| `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180; *as built:* 348; *stage 2:* 488 — atomic outputs, `agreeing`, `runIndirect`, `expectAgreement`, `dispatchIndirectOnCpu` |
-| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181; *stage 2 (10 files):* +700/−993; *stage 3 (6 files):* +833/−1266 |
-| `Tests/GPU/*CodegenTests.cpp`, `CodegenCommon.h` | numeric checks on the recorded graphs | ~+200; *as built (stage 2, 4 files):* +524/−107; *stage 3 (`SimdMatrixCodegenTests.cpp`):* +300/−56 |
-| `Tests/GPUWidgets/…` | path kernels cross-checked (stage 2) | ~150; *as built:* `PathKernelCpuTests.cpp` 678, `CpuPathKernels.h` 190, `PathShapes.h` 50 (moved out of `CoverageBatchTests.cpp`), `PrefixSumTests.cpp` +203 |
-| `Lib/eacp/GPUWidgets/Path/PathRasterizer.h` | *as built (stage 2):* `getSegments()`, `getTileCount()` public, so a test can gather a batch's inputs | +8/−4 |
-| `Apps/GPU/CpuCompute/` | stage 5 example | ~200 |
-| `Lib/eacp/GPU/README.md`, `CLAUDE.md`, `README.md` table | stage 5 | ~150 |
-
-## 4. Stages
-
-Each stage is one merge, green on macOS, Windows and all three Linux lanes.
-
-**Stage 0 — the device-free seam.** D6 and nothing else: `ShaderMembers.h`
-out of `ShaderProgram.h`, `ComputeKernel.h` out of `ComputeProgram.h`,
-`isPure` public. No behaviour change and no kernel struct edited. Verified by
-every existing suite matching its baseline on macOS and on the Linux lanes
-(`GPUCodegenTests`, `GPUTests`, `GPUWidgetsTests`, `UITests` — anything that
-records a kernel), and by one new `GPUCodegenTests` case that derives a
-struct from `ComputeKernel`, constructs it, and checks its `emitMetal(graph())`
-against the same body written on a bare `ShaderBuilder` — which only links if
-the seam holds, since `GPUCodegenTests` has no `eacp-gpu`. Done when that
-case is green on the Linux GCC lane. ~40 lines new, ~1,300 moved. *As
-built:* the case is `ComputeKernel/recordsTheBodyABareBuilderDoes` in
-`Tests/GPU/ComputeKernelCodegenTests.cpp` (58 lines), checking `emitMetal`,
-`emitHlsl`, `emitGlsl`, `source().source` and `dispatchRank()` against the bare
-builder, plus `expectGlslCompiles` where `eacp-spirv` is built; 5 tracked files
-changed (+23/−1263) beside the three new ones.
-
-**Stage 1 — tier one.** D1–D5, D7 (minus helpers), D9, D10 for the direct
-forms: `eacp-cpu-compute` with `Constant`, `Uniform`, `Construct`, `Swizzle`,
-`Call` (the full math set, conversions and bitcasts), `Unary`, `Binary`,
-`Compare`, `Select`, `VarRead`, `Mul`, `ThreadId`, `BufferRead`,
-`BufferVectorRead`, `ArrayRead`, `GridExtent`; statements `Declare`, `Assign`,
-`If`, `Loop`, `Break`, `Continue`, `Store` (with record stores),
-`VectorStore`; the bounds guard; 1D, 2D and 3D. A plan meeting anything else
-is invalid with a reason. Verified by:
-
-- `CpuComputeTests`: the executor's semantics case by case — divergent `If`,
-  loops with per-lane trip counts, `Break`/`Continue` in nested loops, a
-  record store that reads its own destination, every D7 row, a UInt constant
-  above `INT_MAX`, a partial last group in each rank, a case per
-  sign-sensitive operation of D2 with negative operands so `Int` is never
-  silently treated as `UInt` — and the three kernels
-  of `Apps/GPU/Compute` (`ToneKernel`, `CrossfadeKernel`, `SmoothKernel`),
-  `AsyncCompute`'s `MixKernel` and `ComputeParticles`' `IntegrateParticles`,
-  re-declared as `ComputeKernel`s with identical bodies, against inline
-  references. One case replaces global `operator new`/`delete` in the binary
-  with counting ones and asserts that a dispatch after the first performs
-  zero allocations.
-- `GPUTests`: a CPU half for the kernels of `GPUSmokeTests`, `IntrinsicTests`,
-  `SelectTests`, `UIntBufferTests`, `UIntBufferVectorTests`,
-  `UIntScalarTests`, `UIntVectorTests`, `Dispatch3DTests`,
-  `ThreadIndexVectorTests`, `HoistingTests`, `InPlaceRecordTests`,
-  `StorePlacementTests`, `InPlaceComputeTests` and `ComputeBufferRangeTests`
-  through `CpuCrossCheck.h`, against the same references and tolerances as the
-  GPU half. The CPU half runs on every lane; the GPU half where a device is.
-
-Done when all of those are green everywhere, including the two Linux lanes
-with no device, which is the first time they check a kernel's numbers.
-~3,800 lines, ~1,500 of them tests. *As built:* `InPlaceComputeTests` is
-entirely stage 3 — its only kernel calls `erf` — and so are `IntrinsicTests`'
-`SaturatingTanh`, `ErrorFunction` and `VectorIntrinsic`; the five kernels
-that needed the threadgroup tier (`UIntBufferTests::BinKernel`,
-`ComputeBufferRangeTests::BumpKernel`, `UIntVectorTests::SharedPairKernel`,
-`Dispatch3DTests::GroupIdVolumeKernel`,
-`ThreadIndexVectorTests::RebuiltPairKernel`) got their CPU halves in stage 2,
-and the helper deferrals — `InPlaceComputeTests` and `IntrinsicTests`'
-three — in stage 3. The
-five example kernels match their references *exactly*: the same `std::`
-transcendentals, the same order of operations, no contraction. The
-zero-allocation case replaces all 20 global `operator new`/`delete` forms in
-its translation unit, so no other `CpuComputeTests` source may. `CpuCrossCheck`
-is namespace `eacp::GPU::CrossChecks`: `CrossCheck {kernel}` with chainable
-`.input(member, values, first = 0, count = -1)` and `.output(member, initial)`
-or `.output(member, elements, fill)`, then `.run(count | w, h | w, h, d,
-verify)` taking a trailing `std::source_location`; `Readback::name()` is
-`"cpu"` or `"gpu"`; a free `dispatchOnCpu(kernel, bindings, extents...)` serves
-the hand-bound cases. The planned `inOut` became `output(member, initial)`.
-A post-implementation review added: caller buffers moved through
-`std::memcpy` on a `std::byte*` view rather than aliased as `uint32_t`;
-plan-time refusals for a store into a read-only slot or of the wrong family, a
-`Declare`/`Assign` of the wrong type, an out-of-range or twice-reached block,
-an out-of-range `ThreadId` axis, and a group above 2^20 lanes or a scratch
-above `INT32_MAX` words (`ShaderGraph` gained `statementCount()`/`blockCount()`
-for it); operand and output pointers hoisted out of the matrix and geometric
-lane loops.
-
-**Stage 2 — tier two: the threadgroup.** `LocalId`, `GroupId`, `SharedRead`,
-`SharedStore`, `Barrier`, `GroupReduce` (both scopes, the fallback's fold
-order), `AtomicAdd`, `AtomicLoad`, `SimdGroupIndex`; custom group shapes of
-any size; `dispatchIndirect`. Verified by `CpuComputeTests`' `GroupTests.cpp`
-(a barrier inside a loop, a reduction under divergence per D7, atomics
-returning distinct slots, an indirect dispatch whose arguments another CPU
-dispatch wrote); by CPU halves in `SharedMemoryTests`,
-`ThreadGroupSizeTests`, `GroupReductionTests`, `AtomicTests` and
-`IndirectDispatchTests`; by `GPUCodegenTests` running the graphs of
-`AtomicCodegenTests` and `GroupReductionCodegenTests`; and by the
-`GPUWidgets/Path` kernels — `ScanBlockKernel`, `ScanAddKernel`, `ClearKernel`,
-`BinKernel`, `BackdropScanKernel` — run on the CPU over the inputs
-`GPUWidgetsTests` already builds and compared against the GPU's buffers on a
-device (`CoverageKernel` minus its texture write waits for stage 3). Done when
-the path pipeline's bins and backdrops agree to the element with the GPU on
-macOS and on lavapipe. ~1,500 lines, ~800 of them tests.
-
-*As built:* everything listed plans and runs; nothing in the stage-2 suites,
-the codegen graphs or the five path kernels was refused. The library grew
-+669/−32 across 9 files; the tests +4,138/−1,221, the deletions being
-duplication the shared cross-check helpers folded away. `Executor/barrierMakesThePlanInvalid`
-became `Executor/aBarrierDropsTheGuardAndStoresStayInBounds`, and the stage-2
-rows of `everyOutOfTierConstructIsRefusedByName` moved to
-`Group/malformedGroupStatementsAreRefusedByName`.
-`Executor/aGroupDispatchAfterTheFirstAllocatesNothing` extends D3's
-zero-allocation check to shared memory, a barrier, `groupSum`, `simdMax`,
-atomics and the indirect form. `GPUTests` stays at 478: the CPU halves went
-into existing cases — `SharedMemory` `everyThreadReadsAnotherLane`, five of
-`ThreadGroupSize`, all nine of `GroupReduction`, `Atomic`'s ticket and bucket
-cases, all four of `IndirectDispatch` (three run Count → Prepare → indirect
-Consume on the CPU; the offset case at 4, −4, 8, 16 and 64 bytes) — plus the
-five stage-1 deferrals. `SharedMemoryTests`' `BudgetedKernel`,
-`WideElementKernel` and `OverBudgetKernel` are never dispatched and have no CPU
-half. `GPUCodegenTests` gained ten `…/runs` cases over `AtomicCodegenTests`'
-and `GroupReductionCodegenTests`' graphs. `GPUWidgetsTests` gained
-`PathKernelCpuTests.cpp` (5 cases over the mixed, very-different-backdrops and
-24-star batches) and three `PrefixSumTests` cases; the chain runs clear →
-count → backdrop → sum → fill, each stage its own command buffer, every buffer
-compared after each with 5 sentinels past every array. Integer buffers match
-exactly; fill-mode entries are compared per tile as sorted sets, since slot
-order inside a tile follows the GPU's atomic cursor. The backdrop scan is also
-run over the GPU's own crossings, and the CPU's crossings and backdrops are
-held to a plain C++ reference on every lane.
-
-That cross-check caught the first real bug of the plan, and it was in the
-emitter, not the executor: `floatLiteral` printed `%g`, six significant
-digits, so `backdropFixedScale` = 2^20 reached every dialect as `1.04858e+06`
-= 1048580 and the GPU's crossings drifted 1 to 4 units (1737 of 14882 cells in
-the mixed scene) — a C++ single-precision copy matched the executor at 2^20
-and the GPU at 1048580. It now writes the shortest `%g` (6 to 9 digits) that
-`strtof` reads back exactly; a value exact at six digits keeps its spelling,
-so no golden string changed, and 2^20 is `1048576.0`.
-`GPU/codegenFloatLiteralRoundTrips` guards it (the 115th codegen case), and
-`PathKernelCpuTests`' crossing and whole-chain backdrop comparisons, gated
-while the bug stood, now run unconditionally and match Metal to the element.
-Not yet done:
-the lavapipe half of "done when", which waits for CI.
-
-**Stage 3 — tier three: packed data and the SIMD-group matrix.**
-`CpuCompute/Helpers.{h,cpp}`: the 17 `eacp*` helpers in C++ (half with
-round-to-nearest-even and the denormal and infinity cases, bf16, int8/uint8,
-int4/uint4 unpack, the int8/uint8 packs, `eacpErf`/`eacpErfc` as the same
-approximation the shader source spells, `eacpSaturatingTanh`), used by the
-executor and by the tests. `SimdMatrixFill`, `SimdMatrixLoad`,
-`SimdMatrixStore`, `SimdMatrixMultiplyAdd` in float, then the packed half and
-bf16 loads through the helpers. Optionally a float4 image binding for
-`WritableTexture2D` so `CoverageKernel` and `ComputeImage`'s `PaintPlasma` run
-whole. Verified by CPU halves in `PackedHalfTests`, `PackedBFloat16Tests`,
-`PackedQuantizedTests` and `SimdMatrixTests`, by `GPUCodegenTests` running
-`SimdMatrixCodegenTests`' graphs, and by `HelperTests.cpp` checking each
-helper exhaustively where the domain allows it (all 65,536 halves and bf16s,
-all 256 bytes) against a double-precision reference. Done when those suites'
-CPU halves pass on every lane and their GPU halves still pass. ~1,200 lines.
-
-*As built:* everything listed but the optional image binding. The library
-grew +557/−9 across 9 tracked files plus `Helpers.{h,cpp}` (64 + 219) and
-`SimdMatrix.cpp` (249); the tests +1,273/−1,349 across 10 tracked files plus
-`HelperTests.cpp` (1004) and `SimdMatrixTests.cpp` (820), the deletions being
-the per-test helper copies. The helpers (D3, D7) and the fragments (D2) were
-built in parallel and merged; the fragments' tests went to
-`Tests/CpuCompute/SimdMatrixTests.cpp` rather than `HelperTests.cpp`, and the
-zero-allocation fragment case, `Executor/aFragmentDispatchAfterTheFirstAllocatesNothing`,
-to `ExecutorTests.cpp`, because that file owns global `operator new`.
-`HelperTests.cpp` checks every half and bf16 pattern and every byte and
-nibble, and runs each helper through the executor on scalar and vector lanes.
-`Executor/everyOutOfTierConstructIsRefusedByName` lost its `eacpErf` row to
-`Executor/aMalformedHelperCallIsRefusedByName`, and
-`Group/malformedGroupStatementsAreRefusedByName`'s `SimdMatrixFill` row
-became three raw-graph refusals. `SimdMatrix/aGroupOfPartialSimdGroupsIsRefused`
-pins D2's multiple-of-32 refusal at 48 and 16 threads.
-
-`GPUTests` stays at 478: the CPU halves went into existing cases —
-`PackedHalfTests`, `PackedBFloat16Tests`, `PackedQuantizedTests`, the three
-helper cases of `IntrinsicTests`, `InPlaceComputeTests`, and every
-`SimdMatrixTests` case that dispatches a kernel: the four float ones through
-`CrossCheck`, the two packed products and
-`aMixedProductDoesNotNarrowTheFloatOperand` bound by hand through
-`dispatchOnCpu`, since their GPU halves still skip unless the device holds the
-packed type natively and the CPU half must not. The packed operand is bound as
-the float array holding its words. `aPackedLoadIsRefusedWhereTheDeviceSaysNo`
-and `aRefusedKernelDispatchesNothing` have no CPU half: they check the
-device's answer and `ComputePass` dropping a dispatch, and the executor asks
-the device nothing — the packed products' CPU halves already run where it says
-no. `IntrinsicTests`, `PackedHalfTests` and `PackedBFloat16Tests` replaced
-their helper copies with `Helpers.h`; `PackedQuantizedTests` keeps its own
-layout references, independent of the twins. `TiledProduct::dispatch` became
-`setShape`/`gridWidth`/`gridHeight` so one kernel serves both backends, and
-the encoder-shape case, ~900M multiply-adds, runs on the CPU in under a
-second. `GPUCodegenTests` gained four `…/runs` cases over
-`SimdMatrixCodegenTests`' graphs: `eachBackendSpellsItsOwnWay/runs`,
-`aFragmentTakesTheBoundsGuardAway/runs`, and `bfloat16LoadsWithoutStaging/runs`
-and `halfLoadsWithoutStaging/runs` against a reference through the helpers
-(`packedKernel` became a `PackedKernel` struct for its handles). Two of those
-graphs read tile memory nothing wrote — undefined on a GPU — and the cases say
-they rely on the CPU's zero fill.
-
-Verified by breaking the executor on purpose: `Op::Helper` computing nothing
-failed exactly 39 `GPUTests` cases, all on the CPU half; the product's right
-operand transposed failed all 9 product cases across the three binaries; the
-packed parity swapped failed exactly the 5 packed-load cases (1
-`CpuComputeTests`, 2 `GPUCodegenTests`, 2 `GPUTests`). Not done: the float4
-image binding for `WritableTexture2D`, so `CoverageKernel` and `PaintPlasma`
-still wait; the emitter's multiple-of-32 rule (D2) is still a Debug-only
-assertion.
-
-**Stage 4 — performance.** `CpuComputeBench` beside the tests, force-optimised
-outside Debug as `SimdBench` is, timing the interpreter against hand-written
-C++ loops compiled with the same flags: the three `Compute` kernels and
-`MixKernel` over 1M elements, `BinKernel` over the `PathBench` scene. Then, in
-order of what the benchmark says: scratch-slot reuse by liveness;
-lane-invariant nodes evaluated once per group or dispatch; cross-statement
-hoisting of pure nodes; wide batches (several groups per batch for a kernel
-with no group-scope feature, so a 64-lane group stops bounding the loop
-length); intrinsics for the gather, the masked blend and the transcendentals
-(D5); `dispatchGroups` for caller-supplied threads (D8). The target is within
-3x of the hand-written loop on the stream kernels and within 10x on
-`BinKernel`; both are targets, not promises, and the stage records what it
-reached. Verified by the benchmark's numbers in the Progress table and by
-every earlier suite still green (the optimisations must not change a result
-bit: same order of operations, no contraction).
-
-*As built:* built on macOS (Apple silicon, Apple clang, Release in
-`build-release`, Debug in `build`), in the order the benchmark gave rather
-than the order listed above. The library grew +1,700/−224 across 11 tracked
-files; the tests +1,129/−50 across 2 tracked files plus `BatchTests.cpp`
-(942), `DispatchGroupsTests.cpp` (682) and `CpuComputeBench.cpp` (1087).
-Every earlier suite matches its stage-3 count; `CpuComputeTests` grew from
-121 to 155 — 14 `Executor/`, 12 `Batch/`, 8 `DispatchGroups/`.
-
-1. *The benchmark.* `Tests/CpuCompute/CpuComputeBench.cpp`, target
-   `CpuComputeBench`, force-optimised outside Debug as `SimdBench` is, with
-   `-ffp-contract=off -fno-math-errno` in every configuration so the hand
-   loops take the executor's flags. It links `eacp-gpuwidgets` and defines
-   `EACP_BENCH_PATHS=1` where that target exists; elsewhere the `BinKernel`
-   half prints that it was skipped. The four stream kernels (`Tone`, `Mix`,
-   `Crossfade`, `Smooth`) run over 1,048,576 elements and are checked bitwise
-   against their hand loops; `BinKernel`'s count and fill passes run over the
-   eight PathBench paths at scale 2, each alone and all eight as one batch,
-   with cells and counts compared exactly and fill entries per tile as a
-   sorted set. Each figure is the median of as many runs as fill ~300 ms.
-   `--sweep` sweeps the batch width, and each stream kernel gets an
-   `x<threads>` row through `dispatchGroups` on a crew of
-   `hardware_concurrency()` threads woken by atomic wait/notify. The first
-   diagnosis: a fixed 2–4 ns per element from per-node dispatch and scratch
-   traffic, and per-lane scalar loads and stores; not the transcendentals,
-   since both sides call the same scalar libm.
-2. *Ramp loads and stores* — the ISA-free half of D5's intrinsics item.
-   `markRamps()` in `Plan.cpp` decides for each scalar integer node whether
-   its value is lane 0's plus lane × a scale, mod 2^32: `Constant`,
-   `Uniform`, `GridExtent` and `GroupId` have scale 0, `ThreadId` x scale 1
-   in a row-shaped group, and the scale carries through `AddI`, `SubI`,
-   `CopyBits`, `MulI` by a constant and `Shl` by a constant (`Node::ramp`,
-   `Node::rampScale`; `Step::ramp` for stores). A read is a ramp when the
-   batch wraps at most once, a store when the scale is at least the width, so
-   no two (lane, component) pairs share an element. `RampBounds` and
-   `isContiguousRow` are in `Interpreter.h`; the second is a runtime check,
-   which catches `(i + 1) % length` on every group but the one that wraps. A
-   ramp read zero-fills its out-of-range lanes exactly as the per-lane path
-   does and copies each run with strided loops, vectorised for scales 1 to 4.
-   A ramp store is `storeRun`/`storeStrided` in `Statements.cpp`: a fully
-   active run is a straight copy, a partly active one writes only its active
-   lanes — a masked-out lane's element is never stored to, not even with its
-   own value, which threads need. The scatters that remain gather the active
-   lane numbers branch-free and then visit them in order. Unsigned `/` and
-   `%` by a lane-invariant divisor (`Node::invariantDivisor`) use a double
-   reciprocal plus one correction, checked exhaustively over all 2^32
-   dividends for 15 divisors. Reading `Context::stride` — an `int`, which a
-   store through `uint32_t*` may alias — into a local ahead of each loop let
-   the matrix products, the determinant and the thread-id fill vectorise.
-   Crossfade went from 21x to 10x, Smooth from 13x to 6x.
-3. *Dispatch and group prologues, and cross-statement hoisting* — the
-   planned items 2 and 3, built as one mechanism. Each node gets a level in a
-   `PlanLevel` lattice, Dispatch < Group < Lane: `Constant`, `Uniform` and
-   `GridExtent` are Dispatch, `GroupId` Group; `ThreadId`, `LocalId` and
-   `SimdGroupIndex` are Lane, and so are `VarRead`, `SharedRead`,
-   `AtomicLoad` and a read of a `Write` or `Atomic` slot; a read of a `Read`
-   slot at an invariant index takes the index's level; `ArrayRead` is always
-   Lane, since arrays are filled per group after the group schedule; a pure
-   combinator is the join of its operands. Each node then gets a site — the
-   dispatch prologue, the group prologue, the array phase, or a step.
-   `collectUses()` and `chooseHoistSites()` move a pure node used by two or
-   more sites to the step, in the innermost block holding all its uses, that
-   holds its first use. `Plan::dispatchSchedule()` runs once per
-   `dispatchGroups` call, after the uniforms and extents are filled;
-   `Plan::groupSchedule()` once per batch, after the guard and the group ids.
-   On the benchmark kernels it changes nothing measurable — nothing in them
-   is lane-invariant, and `BinKernel` pins nearly everything into variables —
-   so what it bought here is footprint.
-4. *Scratch reuse by liveness* — the planned item 1. `build()` now runs
-   `markRamps()`, `buildSchedules()`, `layOut()` in that order. A node lives
-   from its definition to its last use over the flat schedule — position `p`
-   is time `2p`, a step's commit `2·end − 1` — stretched to the end of every
-   `Loop` that lies between a definition and a use in another step. Slots are
-   coloured greedily in definition order from LIFO free lists per component
-   count, and a slot is freed only once a later definition starts, so an
-   output never aliases an operand. Persistent, never reused: scratch-owning
-   leaves, dispatch- and group-level nodes, variables, arrays, shared memory,
-   fragments, the reduction row, the masks and the coordinate rows. The
-   footprint fell 25–60%: at 64 lanes Tone, Crossfade, Smooth, Mix and
-   `BinKernel` went from 6.2K, 4.2K, 5.1K, 6.7K and 53K to 3.9K, 3.2K, 3.1K,
-   4.2K and 21.5K. `footprintBytes()` stays exact.
-5. *Wide batches* — the planned item 4. `PlanOptions {targetBatchLanes =
-   1024}` sits at namespace scope and is taken by `Plan(graph, options)` and
-   both `Executor` constructors. `Plan::groupsPerBatch()` is 1 when the
-   kernel uses a barrier, a shared array, a group or SIMD reduction, SIMD
-   groups, or any `AtomicAdd` or `AtomicLoad` — the last to keep D8's
-   observable statement order for atomics — and otherwise `clamp(target /
-   lanes, 1, 2^20 / lanes)`. `batchLanes()` sits beside `lanes()`, which is
-   still one group. The per-lane `groupInBatch` and `batchX` rows are
-   allocated only when a batch is wide. A batch is a run of consecutive x
-   groups within one (y, z) row, and a short last batch masks the lanes of
-   the groups it lacks. In a wide batch `LocalId` x and `GroupId` x are
-   neither ramps nor lane-invariant; `ThreadId` x still is a ramp. The sweep,
-   64 → 256 → 512 → 1024 → 2048 → 4096 lanes: Crossfade 10.9x → 6.6x → 5.5x
-   → 5.1x → 5.0x → 6.2x, Smooth 5.9x → 4.4x → 4.0x → 3.7x → 3.6x → 4.0x;
-   1024 is the knee, and 4096 falls out of L1. Tone went from 1.24x to
-   0.98x, Mix 1.38x to 1.11x, Crossfade 10.7x to 5.1x, Smooth 6.4x to 3.7x;
-   `BinKernel` is unchanged, having atomics. Footprints at the 1024-lane
-   default: Tone 68K, Crossfade 56K, Smooth 56K, Mix 72K, `BinKernel` 21.5K
-   (one group per batch). One change is observable: the groups of one batch
-   interleave by statement, so a kernel racy *across* groups can answer
-   differently than serial groups did. A race-free kernel is unaffected, and
-   within one statement the last lane still wins, matching serial order.
-   The width backs off by footprint: every per-lane row grows with the
-   batch, array-constant storage (`components × elements × stride`)
-   included, so a 256-entry `Float4` table would take 10 MB per workspace at
-   1024 lanes. `PlanOptions::maxBatchBytes` (default 192 KB, between the
-   2048-lane stream footprints of 112–144 KB that ran as fast as 1024 and
-   the 4096-lane ones of 224 KB and up that fell out of L1) bounds
-   `footprintBytes()`: the `Plan` constructor builds, and while the plan is
-   over the budget or over `planMaxWords` with more than one group per
-   batch it builds again at half the groups — the whole build, since ramps,
-   levels and liveness all depend on the width — refusing only at one
-   group. The stream kernels keep 1024 lanes (56–72K); the 256-entry table
-   plans at one group, 637K, and a 16-entry one at 4 groups, 176K
-   (`Batch/aLargeArrayConstantBacksOffToOneGroupPerBatch`,
-   `Batch/aBatchOverTheBudgetIsHalvedUntilItFits`). The `--sweep` rows and
-   the `Batch/` width checks pass an unlimited budget, so they still measure
-   the width asked for.
-6. *`dispatchGroups`* — the planned item 6; see D8 *as built*.
-   `Executor/aPreparedDispatchSplitAfterTheFirstAllocatesNothing` extends
-   D3's zero-allocation check to it, and `DispatchGroups/` checks split
-   streams, grids, volumes and indirect dispatches on threads against one
-   dispatch, the clamping of a range, that a prepared dispatch holds its own
-   uniforms, and that a workspace or a prepared dispatch from another
-   executor is refused. With 18 threads the stream kernels run at Tone 0.12x, Mix
-   0.10–0.14x, Crossfade 0.9–1.2x and Smooth 0.57x of the single-threaded
-   hand loop. No ThreadSanitizer run yet.
-7. *Hand intrinsics* — the rest of D5's item 5: measured and not built (D5
-   *as built*).
-
-Reached: Tone 0.97x, Mix 1.11x, Crossfade 5.1x, Smooth 3.7x against 3x;
-`BinKernel` count 8.0–8.7x on the 100k-segment and all-eight batches against
-10x, fill 11.6–11.8x, and the small paths (72 to 846 segments) 15–37x, where
-a fixed per-dispatch cost dominates a hand time of a few µs. What stays open:
-Crossfade and Smooth are the rest of the way to 3x as one full-width scratch
-pass per node, which only fusing chains of nodes would remove, plus Smooth's
-two `%` per lane; `BinKernel` fill and the small scenes are masked-lane waste
-in the lock-step loop nests (Risks, "Interpreter overhead and masked-lane
-waste") and the fixed per-dispatch cost. Nothing here changed a result bit.
-The byte budget, the held uniforms and the plan serials (item 5, D8) left
-the interpreter's times where they were, measured alternately against a
-build without the last two: Tone 5.16 ms, Mix 5.0, Crossfade 0.59, Smooth
-1.20, `BinKernel` count 9.5 and fill 6.0 on the 100k-segment path, 14.3 and
-8.6–8.7 on all eight. The `BinKernel` hand loop, which none of it touches,
-moves between 0.43 and 0.50 ms from one binary to the other with code
-layout, which is all the fill ratio's swing between 11.7x and 13.3–14x is.
-One compiler note worth keeping: Apple clang 21.0.0 at `-O3` miscompiles
-`for (i < 1000) t[i / 100] = (float) i;` in its vectoriser, storing out of
-order, so `Batch/aStoreManyThreadsShareKeepsTheLastThread`'s twin writes the
-closed form instead. Not done: the Linux and Windows lanes, which wait for
-CI, and a ThreadSanitizer run over `DispatchGroups/`.
-
-**Stage 5 — integration.** The cross-check on in CI: nothing to switch, since
-the CPU halves always run and the GPU halves run wherever a device is (the
-lavapipe lane, which is the only one `build.yml` sets `EACP_REQUIRE_GPU` on,
-and macOS and Windows wherever the runner has one, as `GPUTests` does today);
-an `EACP_CPU_CROSSCHECK=0` escape only if a lane needs it. `Lib/eacp/GPU/README.md` gets a "Running a kernel on the CPU"
-section after the compute sections (the `ComputeKernel`/`ComputeProgram`
-split, `Bindings`, the dispatch forms, the D7 table, the realtime contract and
-what breaks it); `CLAUDE.md` a paragraph beside `eacp-gpu-codegen`'s; the
-platform table in `README.md` a row. `Apps/GPU/CpuCompute`: one kernel
-dispatched on both, the results compared and timed, and the CPU path alone
-where no device came up. Done when the example runs on macOS, Windows and a
-driverless Linux box.
-
-*As built:* the example's kernel is a crossfade — mix, soft clip, gain — over
-two inputs, run on the GPU, on the CPU on one thread, and on the CPU split
-through `prepareDispatch`/`dispatchGroups` over `hardware_concurrency()`
-threads, all three compared. A `--cpu-only` flag takes the no-device path, the
-same code `Device::shared().isValid()` false takes, because no environment
-variable forces the Metal device away and the path still had to be run on the
-dev machine. `EACP_CPU_CROSSCHECK=0` was not added: no lane needed it. The
-README section came out at 212 lines rather than ~150, being two tables — the
-constructs and D7 — and a bind-and-dispatch snippet beside the prose. Windows,
-the Linux lanes and a real driverless run await CI.
-
-## 5. Risks and open questions
-
-- **Interpreter overhead and masked-lane waste.** A 64-lane batch amortises
-  one dispatch per node over 64 lanes, which is fine for streams and poor for
-  `BinKernel` and `CoverageKernel`, whose inner loops run per-lane trip counts:
-  the batch runs as long as its longest lane with the rest masked. If stage 4
-  shows it, compacting live lanes between iterations is the next step, and is
-  its own design. *Measured (stage 4):* it did — `BinKernel` fill stays at
-  11.6–11.8x and the small scenes at 15–37x after everything else went in,
-  the lock-step loop nests running masked lanes plus a fixed per-dispatch
-  cost. Wide batches cannot help it: its atomics keep one group per batch.
-  Compaction is still its own design, not started.
-- **Barriers in nested, divergent control flow.** Lockstep is exact while
-  every lane of the group reaches each barrier together, which is the only
-  case the GPU defines. Under divergence the CPU treats the barrier as a no-op
-  (D7) and the README says so; a kernel that relies on anything else is
-  already broken on the GPU.
-- **Broadcast in `Binary` and `Call`.** The emitter leaves scalar/vector
-  mixing to the target language; the plan must apply the language's rule
-  (a one-component operand broadcasts) per operand of every `Binary`,
-  `Compare`, `Select` and multi-argument `Call`. A missed case is a silent
-  wrong answer, which is what the per-kind tests in stage 1 are for.
-- **NaN, infinity and denormals.** Metal's fast math may assume no NaN and
-  flushes denormals; the CPU is IEEE. Tests avoid inputs where that matters.
-  Denormals are also a speed hazard on x86 in an audio thread; whether the
-  executor sets FTZ/DAZ for the length of a dispatch (restoring them after,
-  since an audio host has its own opinion) is open — it matches the GPU
-  better and costs two register writes.
-- **Precision of vectorised transcendentals** (stage 4). A vector `sin`/`exp`
-  is only acceptable within the tolerances the GPU tests already grant the
-  GPU's own; anything looser stays `std::`. *As built (stage 4):* not built,
-  so the question did not arise — the transcendentals are the same scalar
-  libm on both sides of the benchmark, and a vector form would change bits
-  against the tests' references (D5 *as built*).
-- **Scratch footprint.** One slot per node is 512 KB at 500 nodes × 64 lanes
-  × 4 components; a 256-thread group with `Float4x4` nodes is sixteen times
-  that. Fine for tests and most kernels, heavy for an audio plugin with many
-  kernels; liveness reuse in stage 4 is the answer, and the plan reports its
-  footprint so a caller can see it. *As built (stage 4):* liveness is in and
-  took 25–60% off (`BinKernel` 53K → 21.5K at 64 lanes), but the 1024-lane
-  default batch multiplies what remains by up to sixteen for a 64-lane
-  kernel: Tone is 68K and Mix 72K. `PlanOptions::targetBatchLanes` is the
-  knob, and a plugin holding many kernels should set it low — 64 gives one
-  group per batch and the 3–4K footprints, at the stream kernels' 64-lane
-  speed. `footprintBytes()` reports either exactly. *As built (stage 5):* the
-  README documents `PlanOptions {1}` for this, which `Plan.h` names as one
-  group per batch and is the same single group as 64 for a 64-lane kernel.
-- **The stage-0 refactor.** 54 files name `ComputeProgram` and 158 structs
-  derive from it; D6 is designed so none of them changes, and the moved code
-  is header-only. What could still bite is a translation unit that relied on
-  `ShaderProgram.h` pulling in `Device.h` transitively for something
-  unrelated — the compiler will say so, and the fix is an include.
-- **`maxBufferSlots = 8`.** `Bindings` is a fixed table so binding never
-  allocates. The CPU has no reason for the limit, but a kernel that exceeds it
-  cannot run on the GPU, and matching `ComputePass` keeps a kernel honest.
-  Keep it unless a CPU-only user asks.
-- **Binding object versus a span in `Uniform<InputBuffer>`.** D6 picks the
-  separate `Bindings`. If kernels end up always bound both ways at once,
-  carrying both in the member is the convenience to reconsider; it is
-  additive and does not change the executor.
-- **Races made deterministic.** Lockstep with commit-after-evaluate turns an
-  intra-group race into a defined result, and serial groups make cross-group
-  ordering look sequential. A kernel can therefore pass on the CPU and fail on
-  the GPU; the cross-check exists to catch that, and the README says the CPU
-  is not a race detector. *As built (stage 4):* both halves moved. A wide
-  batch interleaves its groups by statement, so a kernel racy across groups
-  can answer differently than serial groups did, and a different
-  `targetBatchLanes` can change the answer again; `dispatchGroups` on several
-  threads makes cross-group order real and nondeterministic, as on a GPU.
-  Within one statement the last lane still wins in serial order, and a
-  race-free kernel gives the same bits every way.
-- **Aliased bindings.** The same memory bound to an input slot and an output
-  slot diverges from the GPU: the GPU keeps a read hoisted across a store
-  (`InPlace/aReadIsNotRefreshedByAnotherSlotsStore`), where the CPU re-reads
-  per statement. The README (stage 5) documents such a binding as unsupported
-  on both.
-- **`GPUCodegenTests` growing a numeric side.** Linking `eacp-cpu-compute`
-  there (D9) keeps it device-free, and turns its recorded graphs into value
-  checks on every lane; the cost is that a codegen test can now fail for an
-  interpreter bug. Its numeric cases are named `…/runs` so which half failed
-  is visible in the name.
-- **Uniform read-in on every dispatch.** Walking `reflectMembers` per dispatch
-  is a handful of virtual calls — negligible — but it reads `Uniform::value`
-  from whatever thread dispatches, so a caller setting uniforms on one thread
-  and dispatching on another needs its own synchronisation, exactly as with
-  any plain member.
-
-## 6. What remains
-
-Written 2026-09-25, after stage 5. Every stage is built; none is done by the
-plan's own measure, which is green on macOS, Windows (x64 and ARM64, MSVC and
-clang-cl) and the three Linux lanes. What is recorded above as open, deferred
-or not built, in one place:
-
-1. **CI has run no stage.** Every Progress row says "macOS green" and nothing
-   more: the dev machine has no Docker, so neither the Linux lanes nor Windows
-   have built a line of `eacp-cpu-compute`. Stage 5's own criterion — the
-   example running on Windows and on a driverless Linux box — is unverified
-   as well. The pull request from `cpu-compute-backend` into `develop` is the
-   first run of all six stages at once. Where it may bite, from what the code
-   uses: the `-fno-math-errno` branch in `CpuCompute/CMakeLists.txt`
-   (`/clang:-fno-math-errno` under clang-cl, nothing under cl, so cl's
-   inlining of `sqrt` and friends is untested); `std::atomic_ref<Word>` with
-   its `is_always_lock_free` and `required_alignment` static asserts in
-   `Interpreter.h`, on MSVC's and libstdc++'s implementations; `std::bit_cast`
-   in `Helpers.cpp`; and the lane loops' vectorisation, which stage 4 only
-   measured under Apple clang — GCC and MSVC may vectorise less, or, as Apple
-   clang 21 did (stage 4), miscompile a loop, which the bit-exact tests would
-   show as a failure rather than a slowdown.
-
-   *As built (after the first CI run).* The first run (PR #63, 2026-09-25)
-   had seven lanes green — iOS Simulator, the three Linux lanes including
-   lavapipe, Windows MSVC x64 and ARM64, and Windows Clang ARM64 — so the
-   interpreter itself is portable. Two failed. On macOS four
-   `PathKernels/*OnTheCpuMatchesTheGpu` cases disagreed with the runner's
-   Metal GPU: `BinKernel` computed the x where a segment leaves a tile band as
-   `fromX + (y - fromY) * slope`, which under Metal's fast math lands an ulp
-   either side of the segment's own end, so an end exactly on a tile edge was
-   listed in the next column; `xAt` now returns the end's x itself when the
-   band edge is that end, in the kernel, in `PathRasterizer::countTiles` and
-   in the test reference — a real defect in the stage 2 kernel. On Windows
-   Clang x64 `CpuComputeTests` failed to link on `__truncsfhf2`: the
-   compiler-`_Float16` secondary reference in `HelperTests.cpp` needs a
-   compiler-rt libcall on x64 without F16C, and clang-cl links no
-   compiler-rt, so that one test is guarded off under `_MSC_VER && _M_X64`
-   while the bit-exact `narrowToHalf` tests still run everywhere. The second
-   run is pending.
-2. **Stage 4 targets missed.** Crossfade 5.1x and Smooth 3.7x against the 3x
-   stream target; `BinKernel` fill 11.6–11.8x and the small scenes (72–846
-   segments) 15–37x against 10x. The recorded causes: one full-width scratch
-   pass per node, which only fusing chains of nodes would remove; Smooth's
-   two `%` per lane; and, for `BinKernel`, masked-lane waste in the lock-step
-   loop nests plus a fixed per-dispatch cost. The named next step is
-   compacting live lanes between iterations — its own design, not started
-   (Risks, "Interpreter overhead and masked-lane waste"). Node fusion has no
-   design either.
-3. **Hand intrinsics (D5, item 5): measured, deliberately not built.** The
-   gather mattered only when contiguous, which went in as ramps; a general
-   gather has no baseline-ISA form; the masked blend already vectorises; and a
-   vector `sin`/`exp` would change bits against the `std::` references while
-   speeding the hand loop, which calls the same libm, alike. Nothing folded
-   into `eacp-simd`.
-4. **No ThreadSanitizer run** over `dispatchGroups` on threads
-   (`DispatchGroups/`, the atomic tickets). The threaded cases agree bit for
-   bit with one dispatch on macOS; that is not a race check.
-5. **Open: FTZ/DAZ for the length of a dispatch** (Risks, "NaN, infinity and
-   denormals"). Undecided. The executor touches no floating-point state, so a
-   dispatch runs under whatever the host thread set: IEEE denormals unless an
-   audio host flushed them, against Metal, which flushes.
-6. **The float4 image binding for `WritableTexture2D`** (stage 3, not done):
-   `CoverageKernel` and `ComputeImage`'s `PaintPlasma` still wait, and
-   neither runs whole on the CPU.
-7. **The multiple-of-32 rule** for SIMD-group matrix kernels is refused by
-   the CPU plan but still only a Debug assertion in the emitter (D2); a
-   Release build emits such a kernel for the GPU unchecked.
-8. **Kept as they are, to reconsider on demand:** `maxBufferSlots = 8` on the
-   CPU (unless a CPU-only user asks), `Bindings` beside rather than inside
-   `Uniform<InputBuffer>`, and the `EACP_CPU_CROSSCHECK=0` escape, not added
-   because no lane needed it — which, per item 1, no lane has yet been asked.
+# Plan: EDSL-CoreML
+
+A Core ML backend for the compute the shader EDSL already expresses at the
+tensor level, so a net written once against eacp runs on Metal, D3D12 and
+Vulkan through the compute kernels it runs on today, and on the Apple Neural
+Engine through Core ML. The net that proves it is
+[WhisperEACP](https://github.com/eyalamirmusic/WhisperEACP): its encoder is
+the first thing to run both ways, its test suite is what says the two ways
+agree, and its benchmark is what says the second way was worth having.
+
+## What this is not
+
+It is not a fourth backend of `GPU::ComputePass`. A `ComputeProgram` body is
+one thread's view: `threadId()`, `shared<>`, `barrier()`, `atomicAdd`,
+`simdMatrix`, a `loop` with a data-dependent exit, a `write` at a computed
+index. Core ML has no thread. It runs a fixed graph of whole-tensor ops that
+someone compiled ahead of time, on whichever of the CPU, GPU and Neural Engine
+it decides to. The kernels WhisperEACP is written out of stay exactly what
+they are and keep serving every platform; nothing lifts them.
+
+It is not Core AI either. Core AI (WWDC26, the 27 OSes) only consumes
+`.aimodel` bundles, only the Python packages produce those, and the API is
+Swift only. Nothing authored on the device at run time can reach it, and
+WhisperEACP fetches its model at run time and builds everything from the
+safetensors on the machine. Core ML's ML Program format is a public protobuf
+that an ObjC++ process can write and compile, which is the whole reason it is
+the target. If Core AI ever ingests a MIL program, the builder below gains a
+second consumer behind the same seam.
+
+## Where the sharing happens
+
+The shared code is the net, not the kernels. `Encoder::encode` in WhisperEACP
+already reads as a tensor program once the dispatch details are taken out of
+it: unfold, a linear with GELU on the store, add the positional embedding,
+then per layer a layer norm, three projections, scores, apply, the out
+projection with the residual, a layer norm, fc1 with GELU, fc2 with the
+residual. That sequence is op for op what a MIL program of the encoder holds.
+
+What is backend-specific in that file is which kernel serves each op and how
+it is dispatched: the tiled against the split projection, the packed-half
+twins, the zero-bias buffer, the tile maxima that fold the softmax into the
+apply, the split counts. Those move out into a backend. The sequence stays
+behind, written once against this seam:
+
+```cpp
+enum class Activation { none, gelu };
+enum class DType { float32, float16, int32 };
+
+using Weight = TensorBuffer; // the safetensors tensor, its shape included
+
+class Shape; // up to rank 4, outermost first
+
+struct Binding { GPU::BufferRange range; Shape capacity; };
+struct Cache { int id = -1; int rows = 0; void clear(); };
+
+class Tensor; // a ref-counted handle into one recording
+
+class Net
+{
+public:
+    virtual Tensor input(const Binding& source, const Shape& shape, DType type) = 0;
+    virtual void output(const Tensor& value, const Binding& target) = 0;
+
+    virtual Tensor rows(const Weight& table, int first, int count) = 0;
+    virtual Tensor transpose(const Tensor& matrix) = 0;
+    virtual Tensor cached(const Cache& cache) = 0;
+
+    virtual Tensor conv1d(const Tensor& frames, const Weight& weight,
+                          const Weight& bias, int stride, int padding,
+                          Activation activation) = 0;
+    virtual Tensor linear(const Tensor& input, const Weight& weight,
+                          const Weight* bias, Activation activation) = 0;
+    virtual Tensor linearAdd(const Tensor& input, const Weight& weight,
+                             const Weight* bias, const Tensor& stream) = 0;
+    virtual Tensor add(const Tensor& stream, const Tensor& addend) = 0;
+    virtual Tensor layerNorm(const Tensor& input, const Weight& weight,
+                             const Weight& bias) = 0;
+    virtual Tensor attention(const Tensor& queries, const Tensor& keys,
+                             const Tensor& values, int heads, bool causal) = 0;
+
+    virtual Tensor embed(const Tensor& tokens, const Weight& tokenTable,
+                         const Weight& positionTable, int firstPosition) = 0;
+    virtual Tensor appendLinear(Cache& cache, const Tensor& input,
+                                const Weight& weight, const Weight* bias) = 0;
+    virtual Cache makeCache(int capacityRows, int width) = 0;
+};
+```
+
+Each op answers a call the code makes today. `input` and `output` are the
+outside buffers: the mel, the encoder rows, the logits, the token slots and the
+masks, bound ranges on the kernel backend and the model's features on Core ML;
+a `Binding` carries the capacity of what it points at, which can be more than
+the shape a run reads. `rows` is the positional prefix the encoder adds, and
+`transpose` the band-major mel turned into the frames conv1 reads; on the
+kernel backend both are views with no dispatch, the first a byte offset into
+the table and the second a stride swap `Unfold` already takes. `conv1d` carries
+its padding. A bias is a pointer because `k_proj` and the tied logits have
+none. `linearAdd` is the residual, and it names the stream it adds into,
+because the kernel path's residual is a store into `hidden` in place, not a sum
+of two tensors; on Core ML it is a `linear` and an `add`. `add` is the same
+shape: it consumes its stream and returns the sum, which on the kernel backend
+is the stream's own buffer. `embed` gathers the token and the position table in
+one store from a first position, as `Kernels/Embed.h` does. `appendLinear` is a
+K/V projection written straight into the rows the cache holds next, today's
+`BufferRange` bind, since a separate append would cost a copy dispatch per
+projection per layer per step, and it returns the cache with them in it; the
+cross K/V go through it after a reset in `beginSequence`. `makeCache` sizes a
+cache once and `cached` reads one back as a tensor. The argmax is not a `Net`
+op: it takes the logits row it reads (the prompt's last) and the token slot the
+next `embed` reads on the device, it is dispatched from `Whisper`, not from the
+decoder body, and it only joins the net in phase 4, where the model would hold
+it. There is no `softmax`: the encoder folds it into the apply and the decoder
+runs it only inside attention, so nothing at this level calls one.
+
+The ops sit at that level, above matmul and softmax, on purpose. The kernel
+backend fuses the softmax into the apply and the GELU into the store; the Core
+ML backend lowers `attention` to the fused `scaled_dot_product_attention` op
+the Neural Engine handles as one. Ops at the matmul level would take that
+freedom from both. The list is counted rather than guessed: the encoder is 46
+dispatches, a decode step 61 and the prompt step 81, and the encoder's 42
+compute calls against this seam come out on the kernel backend as those 46 in
+today's order: the two `conv1d` four, `rows` and `transpose` none, the `add`
+one, the nine calls of each of the four layers 40, since `attention` is two
+there (the scores, then the apply with the softmax folded in), and the final
+`layerNorm` one. Phase 2 confirmed it (below).
+
+Two backends:
+
+- **The kernel backend** (`KernelNet`) is today's code moved one file over. A
+  `Tensor` is a ref-counted handle whose liveness places it: while a copy of
+  it is alive it holds a scratch buffer reserved at prepare, and the buffer is
+  free again when the last copy goes. `linear` picks the tiled or split
+  program by row count and weight storage, and barriers are derived from
+  per-buffer read and write tracking, which puts back exactly the ones there
+  are today, the barrier-free q/k/v trio included. The three GPU platforms keep
+  working unchanged and the tests keep their bit-exact references.
+- **The Core ML backend** records the same calls into a MIL program at
+  prepare time, writes the weights into the model's blob, compiles it once
+  through Core ML, caches the compiled model, and at run time makes one
+  prediction. A `Tensor` there is a MIL variable.
+
+Against the kernel backend `encode()` runs per window, as now. Against the Core
+ML backend it runs once at prepare and its result is a model.
+
+## Encoder first; the decoder stays on the GPU
+
+The same split whisper.cpp made for its Core ML support, for the same reasons:
+
+- The encoder is one fixed-shape graph, 1500 x 384 for tiny.en, dominated by
+  matmuls. That is the Neural Engine's best case and nothing in it falls back.
+- A decode step is one token through ninety small ops, and the GPU path is
+  already tuned for exactly that: device-side argmax, the sampled token fed to
+  the next step through a buffer slot with the host nowhere in between, steps
+  in flight. Every Core ML prediction is a host round trip, the prediction's
+  own floor plus the call and the copies, so for tiny.en the engine loses that
+  race. A KV cache on Core ML is possible, with `MLState` (macOS 15) and a
+  fixed cache length behind a mask, which is how WhisperKit does it. It is
+  phase 4, and only if phase 3's numbers say so.
+- The seam between the two halves is one buffer of encoder rows, which the
+  decoder already takes as a `Buffer`. The Core ML encoder's output is copied
+  into one: a copy into shared storage on Metal, widened from fp16 on the way,
+  2.3 MB per window.
+
+The mel front end stays on the GPU too. It is kernels, it is cheap, and its
+output crosses the same seam the other way: the first 2n frames of each band,
+after the mel pass has been committed and waited on, where today it shares the
+encoder's pass.
+
+The payoff is specific to the live transcriber: the encoder runs on the Neural
+Engine while the GPU decodes the previous window and draws the UI. Today the
+three contend for one device.
+
+## What lands in eacp
+
+A new module, `Lib/eacp/ML`, split the way `GPU` is. `eacp-ml-graph` is the
+graph builder and the MIL, protobuf and blob writers: bytes in and bytes out,
+linking `eacp-core` and `eacp-gpu-codegen` and nothing with a device, so it
+builds everywhere as `eacp-gpu-codegen` does and its tests run on every CI
+lane. `eacp-ml` is the Core ML runner, Apple only, behind a seventh capability
+variable `EACP_HAS_COREML` beside the six in the top-level `CMakeLists.txt`, on
+where `EACP_HAS_GPU` is and the platform is Apple, and a PUBLIC define on
+`eacp-ml` the way `EACP_HAS_CONTEXT` is one on `eacp-graphics`. Everything Core
+ML stays inside the runner: no header an app includes names an `MLModel`.
+
+### `ML/Graph` - the program builder
+
+The tensor-level EDSL. A `Tensor` is a bare index into its `Graph`, with a
+`Shape` (outermost first, `Shape::unknown` where an input enumerates more than
+one size) and a `DType` of `float16`, `float32` or `int32`; it carries no
+operators of its own, and every op is a `Graph` member: `input`, `output`,
+`constant` (raw bytes, to the blob), `halfConstant` (fp32 values narrowed to
+an fp16 blob tensor), `scalar` (inline), `linear` (with a bias, or without
+one, when a zero bias of x's type goes into the blob with it), `matmul`,
+`transpose`, `reshape`, `softmax(axis)`, `sum(axis)`, `max(axis)`,
+`layerNorm`, `conv`, `gather`, `concat`, `slice`, `sliceLike` (x from its
+start to another tensor's extents: a plain slice where the reference is
+fixed, MIL's `shape` feeding `slice_by_index`'s `end` where it enumerates, so
+the positional table is cut to the rows a context has at run time),
+`scaledDotProductAttention`, `gelu`, `cast`, and `apply`. Misuse is recorded rather than asserted or thrown: the op returns an
+invalid `Tensor`, ops given one return another without a second error,
+`isValid()` and `errors()` say what went wrong first, and `build()` of an
+invalid graph is an empty `Package`.
+
+The value layer is shared rather than duplicated. `eacp-gpu-codegen` already
+builds without `eacp-graphics`, so nothing moves: a graph holds one
+`GPU::ShaderBuilder`, and `apply` takes one to three tensors (or a `Vector` of
+them) and a body over `GPU::Float` values, so the operators of `ShaderValue.h`
+record the elementwise expression into the builder and the expression becomes
+one "apply per element" op. What lowers is `Input` (an operand tensor),
+`Constant` (a broadcast scalar), `Binary` (`add`, `sub`, `mul`, `real_div`),
+unary minus, `Call` (`exp`, `log`, `tanh`, `sqrt`, `rsqrt`, `abs`, `floor`,
+`erf`, `maximum`, `minimum`, `pow`, `clip`), `Compare` and `Select`; any other
+kind, any statement, any non-scalar type and any value from outside the apply
+is refused when the apply is recorded. Exact GELU is a named op all the same,
+lowering to MIL's `gelu` in `EXACT` mode: the EDSL's `erf` is a polynomial
+helper written for the GPU, and the engine runs `gelu` as one op. Shapes are
+fixed where `input` declares them; an input may declare a list of enumerated
+shapes, and no more than that (see shapes, below).
+
+The Whisper `Net` ops are not here. They belong to the net that has them.
+What is here is what those ops lower to.
+
+### `ML/MIL` - the emitter
+
+A writer for Core ML's ML Program format: `Model.proto` and `MIL.proto` from
+coremltools' `mlmodel/format`, encoded by a small hand-rolled protobuf writer
+so the runtime pulls in no protobuf library, and the `.mlpackage` directory
+around it (`Manifest.json`, `Data/com.apple.CoreML/model.mlmodel`,
+`Data/com.apple.CoreML/weights/weight.bin`). Every tensor constant that reaches
+an output goes into the blob in the layout the spike verified, fp16 through
+`appendHalf`/`halfBytes` in `MIL/Half.h`, and only scalars go inline. The
+manifest's identifiers are fixed, so a package's bytes are deterministic: a
+golden test pins the proto fields and the blob layout, and the cache key is
+stable. `toText()` renders a graph as readable MIL for the tests to assert on,
+the part `emitMetal` plays for the shader tests, and `specification()` hands
+over the structure `build()` encodes. A `Package` is the three as bytes, the
+model, `weight.bin` and the manifest, with `write(dir)`, which deletes what is
+at the path first and so refuses an existing path that does not end in
+`.mlpackage`. It carries no hash of its own: the runner's cache key is the one
+hash of a package. The opset is `CoreML7` (specification 8), or `CoreML8`
+(specification 9) when the program holds `scaled_dot_product_attention`, an
+iOS 18 op. Only ops that reach an output are emitted, each named
+`<op>_<index>` unless it is an output; a constant that reaches none takes no
+index, so an unused weight neither enters the blob nor shifts a generated
+name.
+
+An emitter regression is caught the way the GLSL ones are: every program the
+tests write is compiled by Core ML inside the suite wherever `eacp-ml` exists,
+linked in when the target is there as `eacp-spirv` is for GLSL.
+
+### `ML/Model` - the runner
+
+- Compiling, through `MLModel compileModelAtURL:`, into
+  `Options::cacheDirectory`, by default `ML::defaultCacheDirectory()`,
+  `FilePath::appCacheDirectory() / "CoreML"`, as `<hash>.mlmodelc`, the hash
+  SHA-256 cut to 32 hex digits over a format tag (`eacp-ml-cache-2`), each
+  package file's path and bytes, the weights' identity (`Options::weightsName`
+  and `weightsVersion` when the caller gives a name, in which case the blob is
+  not hashed at all, else the blob itself) and the OS build
+  (`kern.osversion`), the way the Vulkan pipeline cache names its producer. A
+  `Package` is written to `<hash>.<pid>-<n>.mlpackage` beside the target and
+  deleted after the compile; Core ML's output is moved to
+  `<hash>.mlmodelc.<pid>-<n>.tmp` and renamed onto the target with
+  `renamex_np(RENAME_EXCL)`, so one that loses a race to another process
+  deletes its own copy and loads the winner's. A miss first sweeps the
+  directory of `.mlpackage`, `.tmp` and `.trash` entries under a cache key
+  older than an hour, what a process that died mid-compile leaves. A hit is
+  loaded where it lies and never recompiled or replaced, because the spike
+  found Core ML's engine cache keyed on that compiled model on disk; the one
+  exception is a hit that fails to load twice running, which is renamed
+  atomically to `<hash>.mlmodelc.<pid>-<n>.trash`, removed and recompiled.
+  It takes two failures because Core ML reports every load failure alike
+  (below). An `.mlpackage` directory goes through the same cache, keyed by
+  every regular, non-hidden file under it, read through `MemoryMappedFile`,
+  and an `.mlmodelc` is loaded in place.
+- `ComputeUnits` as an option: all, CPU and Neural Engine, CPU and GPU, CPU.
+  Default all.
+- `load`/`loadAsync` and `predict`/`predictAsync`, named after
+  `Processes::run`/`runAsync`, each returning a `Result` (`ok` and an `error`
+  string, as `OnlineResource::Result` has). A `Model` holds a `Pimpl` and
+  cannot be copied, so there is no `Async<Model>`: the object owns its state,
+  `loadAsync` returns `Async<Result>` and `predictAsync` an
+  `Async<Prediction>`, a `Result` with the `Outputs` in it, because an output
+  the caller did not bind is allocated by the runner and has to travel back in
+  the result, together with how long the job waited on the queue
+  (`queueWaitSeconds`) and how long Core ML's prediction call ran
+  (`predictSeconds`), both measured on the queue so neither includes the hop
+  back to the main thread. The jobs run in order on one serial dispatch
+  queue per model, resolve on the main thread through `Threads::callAsync`, and are abandoned
+  when the model is destroyed, which may happen on any thread: the
+  abandonment is handed to the main thread when it is not already there. The
+  blocking forms run on the caller's thread and pump no loop, since
+  WhisperEACP calls them from a worker and a console app has none; a mutex
+  keeps a blocking and a queued prediction on one model from running at
+  once. `inputs()` and `outputs()` read the model description back,
+  enumerated shapes included, and `wasCacheHit()` and `compiledPath()` say
+  what the load did.
+- Inputs and outputs as `ML::MultiArray`, keyed by feature name in `ML::Inputs` and
+  `ML::Outputs` (both `EA::MapVector<std::string, MultiArray>`); an array bound in
+  `Outputs` is passed as that output's backing and written in place. It is
+  `MultiArray` rather than `Array` because the shorter name shadowed
+  `eacp::Array`, EA's fixed-size container, inside the namespace, as the MIL
+  writer's `StringList` keeps clear of `eacp::Strings`. A
+  `MultiArray` is a shared handle: fp16 is an IOSurface-backed `OneComponent16Half`
+  pixel buffer with padded rows under an `MLMultiArray`, since that is the one
+  form the Neural Engine reads and writes without a copy, and fp32 and int32
+  are a plain `MLMultiArray` (`initWithShape:dataType:error:`). An fp16 array
+  falls back to a plain `MLMultiArray` when the IOSurface cannot be made,
+  though no width up to 16,777,216 columns failed to make one on the phase 1
+  machine; the Whisper logits row, 51865 columns, gets a stride of 103744
+  bytes. `create` refuses an empty, negative or unknown shape. There is no
+  public `data()`: `toFloats` and `fromFloats` are the host path and
+  `copyTo(GPU::Buffer&, bufferType)` and `copyFrom` the seam to the kernel
+  path, and each holds the pixel buffer's base-address lock for its
+  duration. `GPU::Buffer` has no public
+  contents pointer, so they go through its `update()` and `read()`, whose wait
+  on submitted work is the ordering the seam needs; they convert between the
+  array's fp16 and the buffer's type, and copy row by row where an IOSurface's
+  row padding rules out a single memcpy. Each also takes a byte offset into
+  the buffer and a row stride in bytes, the buffer's rows longer than the
+  array's and the bytes between them left alone, which is the mel binding:
+  `[80, 3000]` band-major, of which a context of N reads the first 2N frames
+  of each band. The packed forms are those at offset 0 with a stride of one
+  row, and a stride shorter than a row or a last row past the buffer's end
+  copies nothing. They take the buffer and an offset rather than a
+  `GPU::BufferRange`, whose `const Buffer*` a write cannot go through.
+- `computePlan()`, `MLComputePlan` (macOS 14.4) read back as one entry per op
+  with its MIL type, the device it landed on, the devices it could have, and
+  its cost estimate, so a test can assert an encoder went to the Neural Engine
+  rather than silently to the GPU, and so WhisperEACP's `DeviceInfo` can print
+  it (eacp has no such app; `Apps/ML` is its print). `ML::hasNeuralEngine()`
+  asks `MLAllComputeDevices()` (macOS 14, iOS 17) whether there is an engine
+  to place on at all.
+
+The deployment target stays where eacp has it, macOS 11 and iOS 14: a library
+that raised it would put a linker warning into every app that links it. The
+runner guards with `@available` instead, and `ML::isSupported()` (macOS 13,
+iOS 16, for the engine-only compute units and output backings) and
+`ML::hasComputePlan()` (14.4, 17.4) say what the running OS has; the tests
+self-skip on false, and `MLState` for phase 4 wants 15.
+`ML::supportsSpecification(version)` says whether the OS loads a program of
+the specification version `specification()` reports: 8, the `CoreML7`
+opset, wants macOS 14 and iOS 17, and 9, which `scaledDotProductAttention`
+forces, macOS 15 and iOS 18, so a caller on an older OS builds the
+attention from `matmul` and `softmax` instead; a version above 9 is false. That floor is not
+eacp's alone to keep: the Xcode 27 on the phase 1 machine refuses
+`IPHONEOS_DEPLOYMENT_TARGET` 14.0 for the simulator, whose floor there is
+15.0, so the whole project's iOS target moves the day CI's Xcode does, this
+module or not. `CMake/AppleSetup.cmake` forces `CMAKE_OSX_DEPLOYMENT_TARGET`
+to 14.0 for iOS, so a `-DCMAKE_OSX_DEPLOYMENT_TARGET` on the command line does
+not take there; the local simulator build passed 15.0 to `xcodebuild` as a
+build setting instead. iOS gets the same
+module; the simulator runs CPU only and the tests self-skip there as the GPU
+ones do. Library `.mm` files are compiled without ARC, as every eacp target
+is, so the spike's ARC code is ported onto `ObjC::Ptr` and `AutoReleasePool`
+rather than copied.
+
+### `Tests/ML`
+
+Two suites in one directory, as `Tests/GPU` has. `MLGraphTests` links
+`eacp-ml-graph` alone and runs everywhere: shape inference and refused ops,
+the apply lowering, protobuf and blob bytes against golden values, the MIL
+text per op and the package layout, with every package compiled by Core ML
+where `eacp-ml` exists. `MLTests` is the device half: a handful of small
+programs (elementwise chain, matmul, softmax over an axis, layer norm, one
+attention block) run on the CPU and the Neural Engine and checked against an
+fp32 scalar reference at a tolerance measured per compute-unit setting, and
+the cache, the async forms and the buffer seam. Both write under one scratch
+directory per run, `<temp>/eacp-ml-tests-<pid>`, deleted at exit.
+`EACP_REQUIRE_ANE=1` makes the
+engine-placement assertions fail rather than skip, as `EACP_REQUIRE_GPU=1` does
+for the device suites. The macOS CI lane cannot set it: GitHub's arm64 macOS
+runners are virtual machines, and phase 1's CI run found the `macos-26-arm64`
+runner placing every op on the CPU under every setting, so it has no engine
+and `build.yml` must not set the variable.
+
+### `Apps/ML`
+
+`Spike` stays as the phase 0 record, and `Projection` (`MLProjection`), one
+console app on the module beside it, is the worked example: it builds the
+spike's projection and softmax at run time, loads it (saying whether the
+compile was a cache hit), prints the compute plan and times prediction at 448,
+1024 and 1500 rows under the `--units` it is given. The directory's gate is
+`EACP_HAS_COREML AND NOT IOS`. `MLSpike` calls `eacp_skip_pch`, because its
+own macOS 14.4 floor clashes with the shared PCH under `EACP_CI_BUILD`, which
+would have failed the macOS CI job from the phase 0 commit on.
+
+## What lands in WhisperEACP
+
+On a branch of the same name, `EDSL-CoreML`, configured against this tree with
+`-DCPM_eacp_SOURCE=$HOME/Code/eacp` until the eacp side is pushed and
+`develop` carries it. Its `CLAUDE.md` says that override is for exactly this
+case: an eacp change made alongside the WhisperEACP change that needs it.
+
+- `Lib/WhisperEACP/Net/`: the `Net` seam, the kernel backend (`KernelNet`)
+  extracted from `Encoder.cpp` and `Decoder.cpp`, and the Core ML backend over
+  `eacp::ML`. `Encoder::encode` and the decoder's two recording calls become
+  the shared bodies, behind the same classes. The backend choice, kernels or
+  Core ML for the encoder, arrives with phase 3, when there is a second backend
+  to choose, and it is `Whisper::setEncoderBackend` before `prepare` rather
+  than a `prepare` parameter: the `setPacksWeights` pattern, a setting read
+  where the weights are built, with a call after `prepare` a `logic_error` and
+  a backend the machine cannot run a `ModelError` out of `prepare` itself.
+- `Tests/Net`: the encoder run both ways over the same mel, compared row by
+  row at the tolerance phase 3 measures; the compute plan asserted to have
+  placed the encoder on the Neural Engine under `EACP_REQUIRE_ANE=1`.
+- `Tests/Oracle`: the transcript oracle gains the Core ML encoder as a second
+  contestant. Same tokens on jfk.wav is the bar.
+- `Benchmark`: a fourth column, `WhisperEACP ANE`, the encoder on Core ML and
+  the decoder on Metal, beside the existing three, and a `--live` row for it.
+  The header names which compute units the model was compiled for and what
+  the plan reports.
+- `Apps/Console/DeviceInfo` prints whether a Neural Engine is present and what
+  the plan says of the encoder.
+
+Every phase below ends with WhisperEACP's full suite green on Metal and on
+Windows, since nothing in the kernel path is allowed to change behaviour, and
+with the benchmark rerun so a regression on the GPU side is caught the day it
+lands rather than after.
+
+## Phases
+
+### Phase 0 - the spike
+
+One `.mm` file, no library yet. Hand-write a MIL program for a
+`[1500, 384] x [384, 384]` matmul followed by a softmax over rows, weights in
+the blob, compile it at run time, predict, read the compute plan.
+
+Done when these numbers are written down in this file, on an M-series Mac:
+
+| question | answer |
+| --- | --- |
+| time to write and compile the package, first and second time | write 4.2 / 4.4 ms (Debug, 296 KB blob); compile 20 / 14 ms; first engine load 95 ms, then 5 ms |
+| prediction latency at that shape, CPU-and-engine versus all | median 0.33 / 0.34 ms plain, 0.30 / 0.30 IOSurface in, 0.23 / 0.24 IOSurface in and out |
+| did the two ops land on the Neural Engine | as `linear` + `softmax`, both, under both settings; as `matmul` + `softmax`, neither: CPU under every setting |
+| max abs and rel error against an fp32 CPU reference | engine 3.3e-4 / 5.7e-3, GPU 1.7e-4 / 2.0e-3, CPU 1.5e-3 / 3.2e-2 (rel where the reference is at least 1e-4) |
+| blob weights against inline constants: does either matter | not to prediction; inline costs 24 against 4 ms to write, 29 against 20 ms to compile and 30 ms on every load |
+
+Measured on an M4 Max, macOS 26.6, by `Apps/ML/Spike` (`MLSpike` with no
+arguments writes every variant through `MILWriter.h` and measures it;
+`--op matmul` keeps the CPU-placement finding reproducible). The weights are a
+seeded fp16 `[384, 384]`, the input a seeded fp16 `[1500, 384]`, 20 timed runs
+after 3 warm ones.
+
+Spike findings:
+
+- **`linear`, not `matmul`.** A `matmul` against a constant weight is placed on
+  the CPU by the compute plan under every compute-unit setting, at rank 2 and
+  rank 3, and drags the `softmax` after it there too, although the plan lists
+  the engine as supported for both. The same computation as a `linear` op
+  (weight `[out, in]`, bias always present, zeros when the net has none, which
+  is what coremltools emits) puts both ops on the Neural Engine. So the Graph
+  lowers a projection against a weight to `linear`, never to `matmul`, and the
+  `Net::linear` op maps onto it directly. `[out, in]` is the order the
+  safetensors already store, so the weight goes into the blob untransposed.
+  `matmul` stays for two activations, the attention scores and apply.
+- **The engine cache is keyed on the compiled model on disk.** A first load
+  onto the engine costs 75-95 ms at this size and the plan read as much again;
+  a second load of the same `.mlmodelc`, in the same process or a new one,
+  costs 5-9 ms. A recompile or a copy pays the full cost again, even a
+  recompile of a byte-identical package moved onto the same path. For
+  `ML/Model` that means the cache compiles once to a stable path under the
+  cache directory, keyed by a hash of the package's bytes, and never
+  recompiles a package whose key it already holds; replacing the directory
+  under a hit throws the engine cache away with it.
+- **The per-prediction floor is about a tenth of a millisecond.** 448 rows on
+  the engine take 0.14 ms median, 1500 rows 0.23 ms, with IOSurface input and
+  an output backing. The IOSurface input saves 0.03 ms against a plain
+  `MLMultiArray`; the output backing saves another 0.07 ms on the engine and
+  halves the GPU's time (0.66 to 0.28 ms), so `ML::MultiArray` passes both. At a
+  single projection this small the CPU is as fast as the engine (0.16 ms): the
+  engine's case is the whole encoder, and the decoder's is still phase 4's to
+  measure.
+- **fp16 accuracy differs by device.** The engine and the GPU agree with the
+  fp32 reference to a few units in the last fp16 place (max abs 3.3e-4 and
+  1.7e-4); the CPU's fp16 path is the least accurate, max abs 1.5e-3 and max
+  relative 3.2e-2. A tolerance measured on the engine does not transfer to a
+  CPU-only run, so the tests measure it per compute-unit setting.
+- **Enumerated shapes stay on the engine.** An input enumerated over 448, 512,
+  1024 and 1500 rows (1500 the default) keeps `linear` and `softmax` on the
+  Neural Engine, runs at 448 and 1500 rows with the fixed model's latency and
+  error, and costs one engine program per shape at load: 238 ms cold against
+  95 ms for the fixed shape, 6 ms warm. The shapes decision below stands; the
+  cold-load cost grows with the size of the set, which is one more reason the
+  compiled model is kept. The finding is about the enumerated set as such, not
+  about every member size: phase 1 found a fixed 448-row model of the same two
+  ops placed on the CPU under every setting (below).
+- **Weights go in the blob.** Inline constants changed neither placement nor
+  latency, and cost at every step that is not a prediction: write 24 against
+  4 ms, compile 29 against 20 ms, and every load, cold or warm, 30 ms more,
+  since the program is parsed with the weights in it. Every tensor constant
+  goes to `weight.bin`; only scalars (axes, flags) go inline, as coremltools
+  does. The blob layout Core ML accepts is `MILBlob` storage version 2, a
+  64-byte header, each entry a 64-byte metadata record on a 64-byte boundary
+  with the data right after it, and the program's `BlobFileValue.offset`
+  pointing at the record, not the data.
+
+The spike also settles the two format questions that documentation does not:
+the exact blob layout Core ML accepts, and whether an enumerated-shape input
+keeps a matmul on the engine.
+
+### Phase 1 - the eacp module
+
+`eacp-ml-graph` with the op set the Whisper encoder needs and no more,
+`eacp-ml`, `Tests/ML`, `Apps/ML`, the capability variable, and the docs it
+owes: a module row and a capability row in README.md's tables, "six" capability
+variables becoming seven there and in CLAUDE.md, and README's "Two pieces of
+the gated modules are portable" (CLAUDE.md's "two device-free pieces") becoming
+three. Done when `MLGraphTests` passes on every CI lane, `MLTests` passes with
+`EACP_REQUIRE_ANE=1` on a Mac with an engine and self-skips cleanly on one
+without, and the module builds for iOS.
+
+Status as of 2026-09-24: the half a Mac can show is done. On this machine, an
+M5 Max on macOS 27.0, the whole project builds and every suite passes;
+`MLGraphTests` runs 73 tests (71 in a build without `eacp-ml`, the two that
+run a package through Core ML left out) and `MLTests` 32, all passing with
+and without `EACP_REQUIRE_ANE=1`, and `CoreTests` gained
+`Files/createAndRemoveDirectories`. The ML targets build under
+`EACP_CI_BUILD=ON`, and the module builds for the iOS simulator at a 15.0
+floor (see the deployment target above). A branch push does not trigger
+`build.yml`, which runs on pushes to main and develop, on pull requests and on
+`workflow_dispatch`, so the one CI run was a manual dispatch. Linux ran 71
+`MLGraphTests` green on all three lanes. Windows ran 71 with one failure, the
+package-layout test reading `model.mlmodel` back through the text-mode
+`Files::readFile`, which folds CR LF there; it now reads the bytes back through
+`MemoryMappedFile`. The iOS job built the module at CI's 14.0 floor with no
+warning, but builds no ML tests or apps, since `Tests` and `Apps` gate them on
+`NOT IOS`. macOS ran 73 and 32 with two tolerance failures, both programs held
+to the bound of the requested setting while every op ran on the CPU; the bound
+now follows the compute plan, the CPU's wherever every op landed there or no
+plan is available, except that under `EACP_REQUIRE_ANE=1` the engine settings
+keep the engine's. That run also answered the question left open: the
+`macos-26-arm64` runner places every op on the CPU under every setting, so it
+has no engine, `build.yml` must not set `EACP_REQUIRE_ANE`, and engine placement
+is asserted only on a developer's Mac; `build.yml` is unchanged.
+
+What the module is, where it differs from the text above, is written back into
+that text. `MLTests` runs nano from `Tests/ML/TestMain.cpp` inside
+`eacp::Apps::run`, so the async tests have a message loop to resolve on.
+Measured by `MLTests`' program suite, fp16 in and out against an fp32 scalar
+reference, `[1500, 384]` unless stated, max abs error (and max rel where
+recorded), with the device Core ML chose:
+
+| program | CPU | CPU and GPU | CPU and engine, and all |
+| --- | --- | --- | --- |
+| linear + softmax | 1.4e-3 / 3.2e-2, CPU | 1.9e-4 / 1.7e-3, GPU | 3.1e-4 / 5.8e-3, engine |
+| linear, then layer norm | 3.7e-2, CPU | 5.0e-3, GPU | 9.4e-3, engine |
+| elementwise `tanh(x * 0.5 + 0.25)` | 9.5e-4, CPU | the same, CPU | the same, CPU |
+| layer norm alone | 3.1e-3, CPU | the same, CPU | the same, CPU |
+| attention, `[1, 128, 64]` | 4.8e-3, CPU | the same, CPU | the same, CPU |
+
+The first row reproduces the spike's. The tests' tolerances sit at about three
+times these, per compute-unit setting, except the CPU's linear then layer norm,
+held at 5e-2.
+
+Phase 1 findings:
+
+- **Placement depends on the problem's size and its op mix.** A fixed 448-row
+  `linear` and `softmax` stays on the CPU under every setting; only the
+  1500-row one went to the engine. A lone `layer_norm`, a lone
+  `scaled_dot_product_attention`, causal or not (with the `greater` that
+  builds its mask), and an elementwise-only program stay on the CPU too; a
+  layer norm behind a `linear` follows it to the GPU or the engine. So
+  `computePlan()` is necessary rather than a diagnostic, and a small test
+  program says nothing about where the encoder will go.
+- **fp16 attention ignores a float mask.** Core ML's fp16
+  `scaled_dot_product_attention` ignores an additive float `attn_mask`, `-inf`
+  or `-1e4`, from 32 positions up on every compute unit, though it honours one
+  in fp32 and at 4 and 16 positions; a bool mask is honoured everywhere. The
+  graph emits the causal mask as a 0/1 blob constant turned bool by `greater`,
+  since a bool tensor cannot go in the blob, and
+  `MLGraph/CoreML/causalAttentionMasksInHalfPrecision` holds it at 64.
+- **`log` and `rsqrt` need an explicit `epsilon`.** Core ML rejects a program
+  without one, although coremltools documents it as optional; the apply
+  lowering passes coremltools' defaults, 1e-45 and 1e-12.
+- **A '.' in a MIL identifier crashes the process.** Core ML dereferences null
+  in `makeProgramWithMemoryLayout` instead of returning an error, so one
+  malformed package takes a whole test process down. `input` and `output`
+  refuse a name that is not an identifier, since the runner addresses features
+  by it, and a constant's name is made one (`blocks.0.attn_ln.weight` becomes
+  `blocks_0_attn_ln_weight`).
+- **A damaged compiled model cannot be told from any other load failure.**
+  Core ML reports every load failure as domain `com.apple.CoreML`, code 0. A
+  damaged `coremldata.bin` shows only as underlying code 3, "not a valid
+  .mlmodelc", and a truncated `weight.bin` as "Failed to build the model
+  execution plan ... -14"; a damaged `model.mil` crashes the process inside
+  `makeProgramWithMemoryLayout`, the same crash a '.' in a name causes, and
+  nothing in the runner can guard against that one. Hence the cache retries a
+  failed hit once before it discards and recompiles it.
+- **An interrupted compile leaves its directories behind.** A process that
+  dies between writing `<hash>.<pid>-<n>.mlpackage` or staging `.tmp` and the
+  rename leaves them in the cache directory, so a miss sweeps any such entry,
+  and any `.trash`, older than an hour.
+
+### Phase 2 - the seam, with no behaviour change
+
+In WhisperEACP: `Net`, the kernel backend, the encoder and decoder rewritten
+against it. Done when every existing test passes unchanged, the encoder and
+decoder outputs are bit identical to before (the oracle tests are the check),
+and the benchmark's `WhisperEACP` column is within noise of the number before
+the refactor. No test today holds a pre-refactor output, so bit identity is
+shown one of two ways: a one-off dump of the encoder rows and the logits taken
+before the refactor and compared after it, or dispatches unchanged by
+construction, the encoder's compute calls mapping one to one onto today's
+dispatches with today's uniforms in today's order. `Encoder` and `Decoder`
+stay as public facades that own a kernel `Net`, because the tests and the
+decoder oracle drive `Encoder::encode`, `beginSequence` and `step` directly
+and build their weights from `SafeTensors`. The op list above is where this
+phase starts, and writing both bodies against it is what confirms it.
+
+Status as of 2026-09-24: done on a Mac, committed on WhisperEACP's
+`EDSL-CoreML` as `ec0b7c0`, branched from `FP16Work` and configured against this tree with
+`-DCPM_eacp_SOURCE`. WhisperEACP pins eacp's `develop`, and this branch is
+based on `main` and lacks three `develop` commits; it configured all the same,
+built without a warning and passed everything. The seam is
+`Lib/WhisperEACP/Net` (`whisper-net`): `Net.h` and `Net.cpp` are the interface
+above, `KernelNet` the kernel backend. `Encoder::encode` records through
+`recordEncoder`, and the decoder's two recording calls through
+`recordSequenceStart` and `recordDecoderStep`, each written once against `Net`,
+behind the same two facade classes with their public APIs unchanged.
+`Whisper::prepare` takes no backend choice yet: with one backend it would be a
+parameter with one value, so it comes with phase 3. The suite ran 316 of 316
+before and after, the whisper.cpp oracle included.
+
+Bit identity is shown both ways. A one-off tool, kept outside the tree because
+it reaches into eacp's Metal internals, dumped the encoder rows and every
+greedy step's logits for jfk.wav, with packed and with float weights, at the
+full window and at 576 positions: 18 files, all `cmp`-equal before and after.
+The same tool recorded every call the Metal backend makes on the compute
+encoder (pipeline, buffer and offset, uniform bytes, grid, barrier) through a
+stand-in `MTLComputeCommandEncoder`, and the traces before and after are
+identical, so the dispatches are unchanged by construction. The trace caught
+one real bug on the first run after the refactor, a `pass.dispatch` where
+`AttentionApply::dispatch` pads the grid height, fixed before the final runs.
+It also counts them: the encoder is 46 dispatches and 37 barriers,
+`beginSequence` 8 and none, a prompt step 71 and 62, a single step 59 and 50.
+With `Argmax`'s two the steps are the 81 and 61 above, which count whole
+command buffers with the argmax in.
+
+The benchmark, Release, 30 runs, took a transcribe median of 14.23 and
+14.28 ms before and 14.31 and 14.39 after, so it was run again as A B B A
+twice against an untouched pre-refactor tree built from `git archive`: before
+14.12, 14.31, 14.39 and 14.37 ms (mean 14.30), after 14.20, 14.31, 14.20 and
+14.42 (mean 14.28). Encode was 4.97 to 4.99 ms on both and a step 358 to
+369 us on both. That is noise. Windows waits on CI; the `Net` code has no
+platform branch.
+
+A review pass followed. It dropped the default argument on the virtual
+`linear`, since no virtual in eacp or WhisperEACP has one; grouped
+`KernelNet`'s parallel vectors into small structs; fixed `prepare()` not
+clearing the column buffer on a re-prepare; and made the flush-before-allocate
+ordering structural rather than a convention: an op is dispatched before the
+next one takes a scratch slot, which is what makes reusing a slot safe.
+
+Phase 2 findings:
+
+- **A weight has to know its shape.** A `Net` op reads a weight's extents
+  rather than being told them, so `TensorBuffer` gained the shape the
+  safetensors header gives it, and `Weight` is `TensorBuffer`. The graph
+  backend wants the same shape for the blob.
+- **The op list moved in five places.** `rows` and `transpose` are both views
+  on the kernel backend, a byte offset and a stride swap with no dispatch;
+  `add` consumes its stream as
+  `linearAdd` does; `appendLinear` returns the cache it appended to, beside a
+  new `cached` that reads one back and `makeCache` that sizes one; `argmax`
+  left the seam, since `Whisper` dispatches it and the net does not; and
+  `linear` lost its default activation.
+- **A `Tensor` is a ref-counted handle, and liveness places it.** A value
+  takes the lowest-numbered free scratch buffer of exactly its capacity,
+  reserved at prepare, and gives it back when its last copy goes, so a body
+  scopes its intermediates like any other value and a recording allocates
+  nothing. A `Binding` carries the capacity of what it points at, the mel's
+  3000 frames or the token slots' 448, so a value derived from it is sized for
+  the largest run rather than this one.
+- **`output()` costs no copy.** An op is dispatched when the next one is
+  recorded, not when it is called, so `output()` can still point the op that
+  made a value at the caller's buffer: the encoder's last layer norm lands in
+  the encoder rows, and the logits in the caller's logits buffer.
+- **The barriers are derived.** A dispatch that reads a buffer written since
+  the last barrier, or writes one read or written since it, is preceded by
+  one. That reproduces the hand-placed set exactly, the three barrier-free
+  q/k/v projections and `beginSequence`'s none included.
+
+### Phase 3 - the Core ML encoder
+
+The Core ML `Net` backend, the encoder built through it at prepare, the
+enumerated audio-context shapes, the backend's own layout transposes, the seam
+copies, `Tests/Net`, the oracle contestant, the benchmark column, the live
+transcriber running the encoder on the engine. Done when the transcript
+matches on the test audio, the row-by-row tolerance is measured and written
+down, and the benchmark shows the encoder's wall time on the engine beside its
+Metal time, with the GPU idle during it.
+
+Status as of 2026-09-24: done on a Mac, committed in both trees, eacp as
+`5e7849c5` on this branch and WhisperEACP as `13711f7` on its `EDSL-CoreML`,
+on top of `ec0b7c0`. eacp came
+first, and WhisperEACP then needed nothing further from it. In eacp, G1 to G5
+under "Gaps for eacp" closed in `ML/Graph` and `ML/Model`, and `Tests/ML` holds
+the ground truth: `WhisperEncoder.h` builds the tiny.en encoder at its real
+sizes over seeded weights (80 bands, width 384, fc 1536, six heads, four
+layers, the eighteen contexts with 1500 the default, the key projection without
+a bias, the positional add through `sliceLike`, fused attention, fp16 rows
+out), `MLGraphTests` builds and compiles it enumerated and fixed at 448, and
+`MLTests`' `MLEncoder` suite runs it against an fp32 scalar reference of the
+same graph (`EncoderReference.cpp`) at 1500, 448 and 576 rows under every
+setting, times it and reads its plan; `MLGraphTests` runs 82 tests and
+`MLTests` 38, all passing with and without `EACP_REQUIRE_ANE=1`, `MLTests` in a
+minute rather than eight seconds, three engine compiles being most of it. In
+WhisperEACP, `CoreMLNet` (`Lib/WhisperEACP/Net`, in `whisper-net`, which now
+links `eacp-ml-graph` and so builds on every platform) records
+`recordEncoder`'s calls into a `Graph`: the mel as an fp16 `[1, 80, 2n]` input
+enumerated over the eighteen contexts, the one transpose a relabelling, the
+convolutions' channels-first output turned into `[?, 384]` rows before anything
+else reads it, `rows` a lazy prefix that `add` lowers to `sliceLike`, attention
+split into `[6, ?, 64]` heads around the fused op (or two `matmul`s and a
+`softmax` where the OS stops at specification 8), and every weight a blob
+constant named after its key in the safetensors file, which `TensorBuffer` now
+carries. The cache keys the weights by eacp's own SHA-256 over the blob
+(`weightsName` left empty), so a fine-tuned checkpoint with tiny.en's header to
+the byte, and an F32 and an F16 file that narrow to the same blob, key as their
+bytes say. `CoreMLEncoder` (`Lib/WhisperEACP/Encoder`, Apple only, behind
+`if (TARGET eacp-ml)`) records, builds and loads that model and runs it
+blocking or through `encodeAsync`, the mel copied in through the strided
+`copyFrom` and the rows widened out through the packed `copyTo`. `Whisper`
+chooses it before `prepare` with `setEncoderBackend(coreML)` (supported where
+the build has `EACP_HAS_COREML`, `isSupported()` holds and specification 8
+loads), `setEncoderComputeUnits` (`cpuAndNeuralEngine` by default) and
+`setEncoderCacheDirectory`, and reports it through `encoderWasCacheHit`,
+`encoderLoadSeconds`, `lastEncoderPredictSeconds`, `lastEncoderMelSeconds` and
+`encoderComputePlan`; under it `prepare` builds host weights and compiles and
+allocates nothing of the kernel encoder, and an encode commits the mel alone,
+waits and predicts. `transcribeAsync(samples)` returns
+`Threads::Async<Vector<TokenId>>`: under Core ML it commits the mel on the
+calling thread, calls `encodeAsync` and decodes in that Async's resolve on the
+main thread; on the kernels it is `transcribe()`, resolved before it returns,
+and `transcribe()` is the same body split into `beginRun`, the encode and
+`decodeTranscript`, with the dispatches unchanged. A run in flight
+(`isTranscribing()`) makes `transcribe`, `transcribeAsync`, `setAudioContext`
+and `prepare` a `logic_error`. `LiveTranscriber` runs through it: while a run
+is out `update()` starts nothing and takes no audio, the resolve applies the
+result where the blocking call did, a failure throws from the next `update()`,
+`flush()` waits through `Async::waitFor`, `clear()` drops a late result by
+generation, and a weak token keeps a result off a destroyed transcriber;
+`LiveStats` gained `runInFlight` and `runsThatChangedTheText`. `Benchmark`
+gained its `WhisperEACP ANE` column with `--units=` and `--plan`, and `--live`
+streams on both backends; `DeviceInfo` prints what Core ML offers and, with
+`--plan`, where it places the bundled model's encoder; `Apps/Demo/LiveTranscribe`
+gained `--coreml`. The suite went from 316 at phase 2 to 355 in Debug, all
+passing, and `NetTests`, `WhisperTests` and `OracleTests` pass under
+`EACP_REQUIRE_ANE=1` as well. The oracle's bar holds: on the engine, with the
+fused attention, the tokens are whisper.cpp's exactly on jfk.wav, 24 at the
+full window and 23 at 576, and the kernel path's; under `cpu`, the placement
+the macOS CI runner gives every setting, they are whisper.cpp's exactly as
+well.
+
+A review pass followed. It made a `prepare` that fails leave the `Whisper`
+unprepared, where a failed re-prepare had left the earlier decoder beside no
+encoder, and made `prepare` with a run in flight a `logic_error`; declared the
+Core ML encoder after the buffers its pending run writes and the decoder that
+reads them, so that its destruction, which abandons the run, comes first; made
+the compute-unit mapping a named function; added `setEncoderCacheDirectory`,
+so that `NetTests`, `WhisperTests` and `OracleTests` share one fixed cache,
+`<temp>/whisper-eacp-tests/CoreML`, where each had compiled the same model
+into its own; resolved `transcribeAsync` outside the decode's `try`, so a
+caller's continuation that throws is not taken for a failed decode; and made
+`LiveTranscriber::flush()` report a timeout as one, leaving that run in flight
+to land on a later `update()`, and stop throwing for a failed run that
+`clear()` had already dropped.
+
+The seeded encoder in `MLTests`, on the phase 1 machine: max abs error at
+1500 / 448 / 576 rows (max rel is left out: an encoder row is mostly values
+near zero, and it runs to 10 and more everywhere), the device the plan
+reports, and the median of nine predictions after the first:
+
+| setting | placed | max abs error | 1500 rows | 448 rows |
+| --- | --- | --- | --- | --- |
+| CPU | CPU | 4.9e-2 / 3.2e-2 / 3.5e-2 | 18.6-19.0 ms | 4.5-4.6 ms |
+| CPU and GPU | GPU | 6.4e-3 / 5.8e-3 / 6.5e-3 | 3.1-5.1 ms | 1.6-2.2 ms |
+| CPU and engine | engine | 2.2e-2 / 2.3e-2 / 2.3e-2 | 11.3-11.4 ms | 1.4-1.5 ms |
+| all | GPU | as CPU and GPU | 2.4-6.2 ms | 1.8-2.9 ms |
+
+The tolerances sit at about three times these: 0.15 on the CPU, 0.02 on the
+GPU, 0.07 under the two engine settings, which are held to the CPU's bound
+unless `EACP_REQUIRE_ANE=1`, because reading an engine plan costs a compile.
+
+With tiny.en's own weights, measured by `NetTests` in a Debug build on the
+phase 1 machine, over jfk.wav's mel, against the kernel encoder's fp32 rows at 1500 / 576 / 448 positions,
+with the warm prediction (the second of two at that context, over several
+runs) beside it:
+
+| setting | max abs | 99.9th percentile | mean abs | predict |
+| --- | --- | --- | --- | --- |
+| CPU and engine | 0.26 / 0.21 / 1.10 | 0.056 / 0.069 / 0.072 | 0.0076 / 0.0091 / 0.0090 | 11.3-11.5 / 2.5-2.7 / 1.6 ms |
+| all (GPU) | 0.031 / 0.055 / 0.15 | 0.0084 / 0.011 / 0.010 | 0.0011 / 0.0015 / 0.0014 | 5.5-6.5 / 3.2-3.7 / 3.2-3.9 ms |
+| CPU | 0.42 / 0.20 / 2.60 | 0.14 / 0.070 / 0.098 | 0.018 / 0.010 / 0.010 | 18.3-19.4 / 6.2-6.7 / 4.4-4.8 ms |
+
+The tests hold each column at about three times its worst: 3.5, 0.22 and 0.03
+on the engine, 0.5, 0.035 and 0.005 on the GPU, 8, 0.45 and 0.06 on the CPU;
+every setting is held to the CPU's unless `EACP_REQUIRE_ANE=1`, since CI
+places everything on the CPU. The same encoder cut after 0 to 4 layers, one
+fixed program per depth, puts the engine's max abs at 0.064, 0.15, 0.21, 0.24
+and 0.26 at 1500 positions, and the GPU's at 0.0069, 0.024, 0.028, 0.023 and
+0.031. In Debug, `CoreMLEncoder::encode`, the two seam copies and the
+prediction, took 27-29 ms warm at 1500, 11-13 at 576 and 9-11 at 448, the
+unoptimised copies being most of it. The compute plan placed all 39 of the
+encoder's `conv`, `linear`, `layer_norm` and `scaled_dot_product_attention`
+ops on the engine under CPU and engine.
+
+The benchmark splits the Core ML column's encode three ways: `mel on the GPU`
+(`Whisper::lastEncoderMelSeconds()`, the mel's own command buffer, committed
+and waited on), `predict`, and `seam copies`, the encode less the other two.
+
+Release, on the phase 1 machine (M5 Max), jfk.wav, 30 timed runs after one
+warm-up, the encoder on the engine under CPU and engine unless the column
+says `all`; the plan put all 90 of the program's ops on the engine (and all
+90 on the GPU under `all`), and the transcript was the reference's at every
+context but 448, where all four columns loop, since jfk.wav's 11 s does not
+fit 448 positions (8.96 s):
+
+| context | Metal transcribe | ANE transcribe | Metal encode | ANE encode | mel / predict / seam | Metal decode | ANE decode |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1500 | 14.18 ms | 21.45 ms | 4.99 ms | 11.84 ms | 0.39 / 11.26 / 0.16 ms | 9.00 ms | 9.48 ms |
+| 1500, `all` (GPU) | 14.22 ms | 11.28 ms | 4.98 ms | 2.07 ms | 0.38 / 1.51 / 0.18 ms | 9.04 ms | 9.04 ms |
+| 704 (`audio`) | 11.09 ms | 12.60 ms | 2.39 ms | 3.61 ms | 0.36 / 3.11 / 0.13 ms | 8.50 ms | 8.84 ms |
+| 576 | 10.32 ms | 11.50 ms | 2.17 ms | 2.93 ms | 0.37 / 2.43 / 0.13 ms | 7.97 ms | 8.41 ms |
+| 448 | - | - | 1.99 ms | 2.12 ms | 0.41 / 1.57 / 0.14 ms | 409 us/step | 409 us/step |
+
+whisper.cpp at 1500 was 30.54 ms on Metal and 99.21 ms on the CPU, encode
+4.88 and 72.17 ms. The engine load was a cache hit at 0.03-0.04 s, a whole
+`prepare` 0.14-0.16 s; the first load of the session, after the key changed,
+compiled in 13.55 s. The same build ten minutes earlier gave the same
+numbers to within 0.1 ms.
+
+The live figures, `Benchmark --live`: jfk.wav on repeat with a 1.5 s gap,
+33 ms ticks. The one quiet-machine figure is a 15 s stream at the whole
+window, 25 runs a side: 21.3 ms a run on the kernels (encode 14.9, decode 6.1)
+and 26.6 ms on the engine (encode 14.2, decode 12.3). **The 30 s table below
+was taken under load**, with `mediaanalysisd` and `spotlightknowledged` holding
+about 180% CPU each and the load average near 20, and on four repeats its
+engine column ranged 61-106 ms a run; it says what the engine does on a busy
+machine, not what it costs on a quiet one. The load average was still 10 to
+30 through the final pass, so the table was not retaken:
+
+| | kernels, window | engine, window | kernels, `audio` | engine, `audio` |
+| --- | --- | --- | --- | --- |
+| runs (changed the text) | 49 (39) | 41 (37) | 49 (41) | 43 (35) |
+| per run, mean / longest | 22.9 / 37.4 ms | 106.3 / 333.2 ms | 18.3 / 29.6 ms | 89.1 / 652.2 ms |
+| encode / decode, mean | 15.6 / 6.8 ms | 54.9 / 37.4 ms | 10.0 / 7.8 ms | 46.7 / 22.0 ms |
+| duty | 3.7% | 14.5% | 3.0% | 12.8% |
+| segments committed | 2 | 2 | 2 | 2 |
+
+On the engine a run is its start to its result, loop turns included, so its
+`per run` and `duty` are latency, not main-thread or GPU time.
+
+The "done when", clause by clause. The transcript matches on the test audio:
+yes, on the engine, on the GPU and on the CPU; the oracle's tokens are
+whisper.cpp's under CPU and engine and under `cpu`, `Tests/Net` and the four
+live twins hold the engine's to the kernels', and the benchmark prints `same`
+under `all` as under CPU and engine. The row-by-row tolerance is measured and
+written down: yes, in the second table above, and `Tests/Net` holds it. The
+benchmark shows the encoder's wall time on the engine beside its Metal time,
+with the GPU idle during it: yes, and the idle GPU is shown by construction
+rather than by a counter, since on the Core ML path the mel row is the only
+GPU work in an encode, its own command buffer committed and waited on before
+the prediction starts, `--plan` puts all 90 ops on the engine, and the
+decoder's first step is not recorded until the rows are back. Phase 3 is done.
+
+What the numbers say about the engine is not what the plan expected: it is
+slower than the Metal kernels at every context, and what it buys is an idle GPU
+and an idle main thread for the length of the prediction. The compute-unit
+default, `cpuAndNeuralEngine`, is a decision these numbers now put in question,
+and it is left to the author.
+
+Phase 3 findings:
+
+- **`all` puts the encoder on the GPU, so the default is CPU and engine.** On
+  this machine, enumerated or fixed at 448 or 1500, every op of the encoder
+  lands on the GPU under `ComputeUnits::all`, as under CPU and GPU; only
+  `cpuAndNeuralEngine` reaches the engine, where every op lands, `shape` and
+  `slice_by_index` included, so nothing falls back to the CPU. Phase 1's
+  1500-row `linear` and `softmax` went to the engine under `all`; the encoder's
+  op mix does not. So `CoreMLEncoderOptions` and `Whisper` default to
+  `cpuAndNeuralEngine`, the only setting that leaves the GPU idle, and the
+  placement test asserts the engine under it and only logs `all`.
+- **The engine is slower than the Metal kernels at every context.** Its
+  prediction alone against the kernels' whole encode, the mel included, in
+  Release: 11.26 against 4.99 ms at 1500, 3.11 against 2.39 at 704, 2.43
+  against 2.17 at 576, and level at 448 (1.57 plus a 0.41 ms mel against 1.99).
+  The plan's premise, that the engine would lose the full window and win the
+  short live contexts, did not hold: it scales with the context more steeply
+  than the kernels (7.2 times from 448 to 1500, against 2.5), eightfold for 3.3
+  times the rows, which points at the 1500 by 1500 attention scores, so any
+  crossover is at or below 448, the floor. What the engine buys is an idle GPU
+  and an idle main thread for the length of the prediction, not wall time.
+- **Core ML on the GPU is the fastest encoder here.** Under `all` it predicts
+  the full window in 1.51 ms, and its encode is 2.07 ms against the kernels'
+  4.99 ms, 11.28 ms a transcribe against 14.22, with the same tokens: Apple's
+  own GPU lowering of the same program is about three times faster than our
+  Metal kernels. That is a target for the kernels (the attention and the
+  projections at 1500 rows), and a reason `EncoderComputeUnits::all` is worth
+  exposing as a setting rather than as a diagnostic.
+- **The engine compile is 13.5 s, once per cache directory.** A cold load of
+  the enumerated model under CPU and engine took 13.5 to 14.1 s, the engine
+  compiling all eighteen members; a warm one 12.6 to 13.1 ms in eacp's tests
+  and 30 to 165 ms through `CoreMLEncoder`, recording and building the program
+  not included (recording tiny.en is 0.53 s in Debug), and a whole warm
+  `prepare` on Core ML is 0.14 to 0.16 s in Release. Under `all` it is 0.75 to
+  0.8 s cold and 20 ms warm. The compile to `.mlmodelc` itself is under 0.1 s.
+  The cache key is the program, the weights and the OS, not the units, so the
+  compile is paid once per model whichever setting asks first; but it is paid
+  once per cache directory, and with the default, `appCacheDirectory() /
+  "CoreML"`, `DeviceInfo`, the benchmark, each test binary and the demo each
+  paid it for the same model until the tests were pointed at one directory. A
+  program fixed at one context compiles for the engine in 0.63 s at 448 and
+  1.02 s at 1500, so the risk's fallback, one model per context compiled on
+  first use, is about a second at each context's first use against fourteen up
+  front.
+- **The compute plan read costs the compile again, the first time.** Reading
+  it under CPU and engine took 13.2 to 14.7 s the first time in a session,
+  however warm the cache, and 0.0 s right after another read of the same
+  compiled model (0.8 s and 0.1 s under `all`): the OS appears to keep the
+  compile it did for the plan for a while. A program fixed at one context
+  reads its plan in about a second. The benchmark and `DeviceInfo` read it
+  only under `--plan`.
+- **The compute plan is the program's, not a member's.** `MLComputePlan` is
+  loaded from the compiled model and takes no shape, and the enumerated
+  model's plan lists the `shape` op a member fixed at its size would not hold:
+  it places the program as written, once. The probe per member is a program
+  fixed at that context (G4): at 448 and at 1500 every op lands on the engine
+  under CPU and engine, and the enumerated model's 448 member runs at the fixed
+  program's speed, 1.42 ms against 1.41. The op mix placed phase 1's lone
+  448-row `linear` and `softmax` elsewhere, not the size alone.
+- **The fp16 error is arithmetic throughout, not layer norm drifting.** Against
+  tiny.en's own weights the engine's max abs at the full window is 0.26, ten
+  times the seeded encoder's 2.2e-2, where the GPU through Core ML stays near
+  its seeded number (0.031). Cut by depth, the gap is there before the first
+  layer: the convolutions, the positional add and the final norm alone are
+  0.064 on the engine against 0.0069 on the GPU, the first layer doubles it,
+  and it grows little after (0.15, 0.21, 0.24, 0.26). The oracle's tokens are
+  unchanged by it.
+- **The maximum is a handful of elements.** At 448 positions the engine's max
+  abs is 1.1 and the CPU's 2.6, where the 99.9th percentile is 0.072 and 0.098
+  and the mean 0.009 and 0.010; it appears only after the fourth layer, and on
+  the GPU too (0.15), so it is the model amplifying one element rather than a
+  device fault. A tolerance on the maximum alone would either be loose or
+  fail, so `Tests/Net` holds the tail and the mean as well.
+- **The engine is shared with the system.** With `mediaanalysisd` and
+  `spotlightknowledged` busy, the back-to-back benchmark held its numbers
+  (11.26 ms), but the live stream's engine runs went from 26.6 ms to 61-106 ms,
+  with a longest of 0.3 to 0.65 s, while the kernel column moved by 1-2 ms. A
+  run that waits for the engine waits for whatever else the OS has queued on
+  it, and the live path, which idles it between runs, sees that most.
+- **The decode after an engine encode is slower.** Back to back it is about 5%
+  slower (9.48 ms against 9.00 at the window, 8.41 against 7.97 at 576), in
+  the quiet live stream twice as slow (12.3 ms against 6.1 for the same steps),
+  and three to five times under load. With the engine the GPU sees a 0.4 ms mel
+  and then nothing for the length of the prediction, where the kernels' encode
+  keeps it busy up to the first step; that is consistent with the GPU clocking
+  down in between, though nothing here measures the clock.
+- **A member's first prediction is slow.** The enumerated model's first
+  prediction at 448 rows took 10.7 to 11.8 ms on the engine and 42 ms on the
+  GPU, the ones after it 1.4 and 1.8 to 2.9; a fixed 448 program's first is
+  1.6 ms. `LiveTranscriber` primes nothing, so the first run at each new
+  context pays it.
+- **Core ML refuses an output that folds away.** An output that is an input
+  cut to its own shape fails the load with "Failed to build the model
+  execution plan ... error code: -6", so `sliceLike(x, x)` is `x`; a program
+  whose outputs were the enumerated cut and a constant table cut to a fixed
+  input nothing else read failed the same way, and passes once each cut is
+  added to its input, as the encoder's is.
+- **The reference is cheap enough to keep in the suite.** The fp32 encoder,
+  written as rows times transposed weights so the inner loops vectorize and
+  compiled at `-O2` in a Debug build, takes 1.5 s at 1500 rows and 0.33 s at
+  448.
+- **In Release the seam is noise.** The copies cost 0.13-0.18 ms and the mel's
+  own command buffer 0.36-0.41 ms at every context, so an encode on Core ML is
+  its prediction plus about half a millisecond. In Debug the unoptimised
+  copies were most of a 27 ms encode around an 11.4 ms prediction, which was a
+  cost of the build, not of the seam.
+
+### Phase 4 - the decoder, if the numbers say so
+
+Phase 3 measured the per-prediction overhead as the encode less the
+prediction, 0.5-0.6 ms (the mel's command buffer 0.36-0.41 ms and the seam
+copies 0.13-0.18 ms, Release, at every context), on top of a smallest engine
+prediction of 1.57 ms (the whole encoder at 448), against a Metal decode step
+of 332-409 us all in; a Core ML decode step would have to fit its
+prediction, its hop and its copies in that.
+
+Only if phase 3's per-prediction overhead, measured, leaves room for a
+decode step to win. Stateful model with `MLState` for the KV cache, fixed
+`maxPositions` with a mask, the argmax inside the model, the token carried as
+state. Not planned in detail until phase 3 reports.
+
+Status as of 2026-09-24: the measurement this phase was gated on is taken, and
+nothing of the phase itself is built. `Tests/ML/WhisperDecoderStep.h` builds
+one tiny.en decode step at its real sizes over seeded weights (width 384, six
+heads, four layers, fc 1536, the 51864-token vocabulary, 448 positions,
+structure read off WhisperEACP's `recordDecoderStep`): the token and its
+position embedded by two `gather`s of int32 inputs; per layer the
+self-attention norm, the query, key (no bias) and value projections, the key
+and value rows concatenated after the layer's `[448, 384]` slice of the cache,
+`matmul`, the scale and an additive mask in one `apply`, `softmax`, `matmul`
+and the output projection; the cross-attention norm, the query projection
+and the fused, unmasked `scaledDotProductAttention` over the layer's
+`[1500, 384]` keys and values; the MLP norm, fc1, `gelu` and fc2; then the
+final norm and the logits as a bias-free `linear` against the token embedding
+itself, one blob tensor feeding both the gather and the logits as
+`logitsWeight()` ties them. It is stateless: the inputs are the token, the
+position, a `[1, 448]` fp16 mask (0 for a valid cache row, -10000 for the
+rest) that a constant 0 for the step's own key extends to 449 keys, the
+self-attention caches as `[4, 448, 384]` and the cross keys and values as
+`[4, 1500, 384]`, all fp16, 12 MB a prediction; the outputs are the fp16
+logits row and the `[4, 384]` key and value rows the step would append. The
+self-attention is spelled with `matmul` and `softmax` because
+`scaledDotProductAttention` takes only a causal flag, and a causal mask over
+one query row masks nothing; the mask is an ordinary add before an ordinary
+softmax, not the fused op's `attn_mask`, so the float mask Core ML's fp16
+attention ignores (under "Decisions taken now") does not come into it, and the
+reference agrees at a prefix of 1, where an ignored mask would attend to 447
+rows of noise. The program is 196 ops, specification 9 for the cross-attention,
+over a blob of about 57 MB, 40 of it the embedding. A second program is the
+same step with the four caches baked into the blob, so that only the token,
+the position and the mask cross into a prediction: a bound on what a stateful
+step, whose caches never leave Core ML, could cost. It computes the step for
+the suite's one set of caches only. `MLGraphTests` builds and compiles the
+first (`MLGraph/DecoderStep`); `MLTests`' `MLDecoderStep` suite runs both
+under every setting against an fp32 scalar reference of the same step
+(`DecoderStepReference.cpp`, built from the encoder reference's pieces, 27-39
+ms a step), reads the first one's plan, and times them. `MLGraphTests` runs
+83 tests and `MLTests` 44, all passing with and without `EACP_REQUIRE_ANE=1`.
+
+Decision, 2026-09-25: phase 4 is not built. The criterion is the plan's own,
+and the table below answers it: no setting fits a decode step in the Metal
+step's time before its hop and its copies, and the resident-cache bound says
+state would not change that. G8 to G10 stay open as what a phase 4 would need,
+should a machine or an OS move the numbers; `Tests/ML/DecoderStepTests.cpp` is
+the measurement to rerun then. G11, which the measurement surfaced, was an eacp
+bug in its own right and is closed under the gaps.
+
+Release, on the phase 1 machine (M5 Max, macOS 27.0), the blocking
+`predict()` with every output bound, median and minimum of 25 predictions
+after five warm-up ones, the range over seven runs of the suite (five for the
+resident caches, six for `predictAsync`); max abs error
+over prefixes 1 and 447, the logits and the appended rows. The machine was
+under load throughout, `mediaanalysisd` at about 220% CPU,
+`spotlightknowledged` at about 140% and another agent's benchmark beside
+them, the load average 8 to 23:
+
+| setting | placed | max abs, logits / rows | predict at prefix 1, median / min | at prefix 447 | caches resident, prefix 1 / 447 median | `predictAsync` to its resolve, median / min |
+| --- | --- | --- | --- | --- | --- | --- |
+| CPU | CPU | 7.9e-2 / 3.0e-2 | 0.63-0.68 / 0.59-0.63 ms | 0.63-0.66 / 0.58-0.62 ms | 0.63-0.67 / 0.62-0.65 ms | 1.6-2.9 / 0.91-0.95 ms |
+| CPU and GPU | GPU | 8.5e-3 / 3.4e-3 | 2.57-2.63 / 2.48-2.57 ms | 1.85-2.69 / 1.47-2.43 ms | 1.10-1.59 / 1.07-1.20 ms | 5.2-6.0 / 3.1-3.4 ms |
+| CPU and engine | engine, but the two `gather`s on the CPU | 2.8e-2 / 1.3e-2 | 0.76-1.18 / 0.74-0.93 ms | 0.76-1.15 / 0.74-0.93 ms | 0.76-0.77 / 0.77 ms | 1.9-2.4 / 1.0-2.0 ms |
+| all | GPU | as CPU and GPU | 1.48-1.94 / 1.28-1.47 ms | 1.13-1.29 / 1.06-1.16 ms | 1.05-1.07 / 1.04-1.06 ms | 4.4-5.7 / 2.9-3.4 ms |
+| phase 3, for comparison | | | Metal decode step, all in: 332-409 us | | | seam copies 0.13-0.18 ms, mel 0.36-0.41 ms |
+
+The tolerances sit at about three times these: 0.25 on the CPU, 0.03 on the
+GPU, 0.09 under the two engine settings, which are held to the CPU's bound
+unless `EACP_REQUIRE_ANE=1`, as the encoder's are. The first prediction after
+a load was 2.3-2.5 ms on the CPU, 1.6-2.5 ms on the engine and 27-39 ms on the
+GPU. Each run starts from an empty cache directory, so its first load compiled
+the package, in 0.13-0.52 s; the first load under CPU and engine in a run, a
+cache hit, took 0.55-0.67 s, the engine compile, and 28-48 ms after that; the
+other hits took 17-170 ms, and the plan read 0.05-0.8 s.
+
+Phase 4 findings:
+
+- **No setting fits a decode step in the Metal step's time.** The fastest
+  prediction, the CPU's, has a median of 0.63-0.68 ms and never went below
+  0.58 ms, 1.5 to 2 times a whole Metal step (332-409 us) before any hop or
+  copy; the engine's median is 0.76-1.18 ms, two to three times; Core ML on
+  the GPU 1.1-2.7 ms. The hop back to the main thread
+  and phase 3's seam copies only add to that. On this phase's own criterion,
+  a Core ML decode step fitting its prediction, its hop and its copies in
+  332-409 us, a stateless step does not fit on this machine under any
+  setting, and the resident-cache bound says a stateful one would not either:
+  the CPU is unchanged at 0.62-0.67 ms, the engine steady at 0.76-0.77 ms.
+- **The 12 MB of caches costs the GPU and not the others.** With the caches
+  resident the GPU settings drop from 1.1-2.7 ms to 1.04-1.59 ms, the engine
+  loses its spread (0.76-1.18 to 0.76-0.77 ms) and the CPU does not move. So
+  what `MLState` could save is at most the difference between those columns;
+  what is left is the program's own compute and Core ML's per-prediction cost,
+  which phase 1 put at 0.14-0.23 ms for a lone projection.
+- **The mask costs nothing.** On the CPU and the engine the prefix-1 and
+  prefix-447 times are within run-to-run noise, as they should be for a fixed
+  program. On the GPU settings prefix 447 was the faster in nearly every run,
+  the resident program's too, where no cache crosses at all; it is timed
+  second, after a first prediction of 27-39 ms, so this reads as the
+  GPU still settling after five warm-up predictions rather than as the mask.
+- **The engine takes the step but not its `gather`s.** Under CPU and engine
+  every op lands on the engine but the two embedding lookups, which stay on
+  the CPU, so every prediction starts on the CPU and hands over; under `all`
+  everything goes to the GPU, as the encoder does. The plan of this fixed
+  program reads in under a second, as phase 3 found for fixed programs.
+- **The hop, as measured here, is one to four milliseconds.** From
+  `predictAsync()` to its continuation on the main thread took 0.7-1.6 ms more
+  than the blocking prediction at the median on the engine, 1.0-2.3 ms on the
+  CPU and 2.5-4 ms on the GPU settings, though the loop here sits idle for
+  16.7 ms between predictions, which may leave the devices clocked down, so
+  it overstates a decoder that keeps them busy. `Async::waitFor` returned
+  16.66 ms after every call, whatever the setting, where the continuation had
+  run 1-6 ms in: the nested pump on macOS exits a frame after the resolve,
+  not on it (G11). With G11 fixed the hop was remeasured, in a Debug build,
+  on an idler machine: `predictAsync()` to its resolve took a median of 0.70
+  ms against the blocking prediction's 0.66 ms on the CPU, 1.19 against 1.18
+  ms under CPU and GPU, 0.81 against 0.79 ms under CPU and engine and 1.15
+  against 1.23 ms under `all`, so the hop is now within the noise of the
+  prediction, and `waitFor` returned 5-15 us after the resolve.
+- **The error is of the seeded encoder's order.** The engine's max abs on
+  the logits is 2.8e-2 against the seeded encoder's 2.2e-2, the GPU's
+  8.5e-3 against 6.4e-3 and the CPU's 7.9e-2 against 4.9e-2. Whether it moves
+  an argmax is not tested here: the seeded weights make no meaningful token,
+  and phase 3 found tiny.en's own weights ten times the seeded error on the
+  engine.
+
+## Decisions taken now
+
+- **Precision.** The Neural Engine is fp16 end to end. The Core ML encoder
+  will not match the fp32 kernel path bit for bit, and the tests do not
+  pretend it will: they compare at a tolerance phase 3 measures, and the
+  transcript oracle is the acceptance test. Layer norm is where fp16 encoders
+  drift first, so the tolerance is measured per stage, not once at the end.
+- **Shapes.** The engine wants static shapes. The live path runs the encoder
+  over fewer than 1500 positions (`Whisper::audioContextForSamples`, multiples
+  of 64 from a floor of 448, clamped to 1500), which is eighteen contexts: 448
+  to 1472 in steps of 64, and 1500. The program declares those as enumerated
+  shapes, one compiled program per member. A context outside the set cannot be
+  served by a larger member and trimmed, because attention sees every position
+  it is given: 640 positions cut to 576 is a different answer from 576, and
+  the oracle already asserts that the 576 transcript differs from the
+  window's. A context rounded up to a member is therefore the effective
+  context for the encoder and the decoder alike, since `beginSequence` takes
+  the same count. `audioContextForSamples` only yields members;
+  `setAudioContext`, which takes any count up to 1500, is validated against
+  the set on the Core ML path. Phase 1 put a 448-row projection on the CPU, so
+  the engine is not assumed for the small members: phase 3 reads the plan per
+  member, and a member the engine refuses is a finding for the benchmark, not
+  a silent CPU run.
+- **Layout.** The encoder is frame-major throughout: conv1's store does the
+  permute, and everything after it, the decoder included, reads
+  `[positions, width]` rows. The only transpose the net asks for is of the
+  band-major mel at its input. The engine wants channels on the second axis,
+  and getting into and out of that is the Core ML backend's own business,
+  below the seam: its program ends by turning back to frame-major rows, so the
+  copy across the seam is a straight copy.
+- **Weights.** Every tiny.en tensor ships as F32 and every value in them is
+  exactly representable in fp16, which WhisperEACP's
+  `Model/TinyEn/weightsAreExactlyHalves` asserts over the whole file, so the
+  blob is fp16 with no weight error at half the size. `nn.Linear`'s
+  `[out, in]` and the convolutions' `[out, in, k]` are MIL's `linear` and
+  `conv` weight layouts as they stand, so each tensor goes from the safetensors
+  bytes into the blob with nothing reordered. The kernel path keeps its own
+  upload, and the Core ML path skips the GPU upload of the encoder's weights.
+  A model is therefore built and compiled once per machine per model version,
+  and the cache key says so.
+- **Threads.** Core ML predictions run on their own queue; `predictAsync()`
+  resolves on the message thread through `Threads::callAsync` like every
+  other Async in eacp. The blocking `predict()` runs on the caller's thread,
+  and a mutex serialises it against the queue, so one model runs one
+  prediction at a time whichever form asked. A `Model` may be destroyed on any
+  thread; what it handed out is abandoned on the main thread. The live
+  transcriber's encoder call becomes an Async rather than a commit-and-wait.
+- **Placement is asserted, not assumed.** A test that wants the engine reads
+  the plan. A build that cannot get it fails under `EACP_REQUIRE_ANE=1` and
+  skips otherwise. Phase 1 showed why it cannot be assumed: Core ML places by
+  size and op mix, and a lone layer norm, attention or elementwise program
+  stays on the CPU however the compute units are set.
+- **Causal attention takes a bool mask.** Core ML's fp16 attention ignores a
+  float additive mask from 32 positions up, so the Graph's causal
+  `scaledDotProductAttention` builds a bool one, and the Core ML `Net`'s
+  decoder, if phase 4 comes, does the same.
+
+## Risks
+
+- The ML Program spec is read out of coremltools' protos rather than a
+  document. The spike settled the blob and the ops it used byte for byte; each
+  op the encoder adds is a fresh chance of a field Core ML reads otherwise,
+  which is why every package the tests write is compiled in the suite. Phase 1
+  found two such fields (the required `epsilon`, the ignored float mask) and
+  two ways to crash Core ML outright (a '.' in a name, a damaged `model.mil`
+  in a compiled model), so a malformed package can end a test process rather
+  than fail a test.
+- Enumerated shapes are the behaviour Apple documents least. The spike kept a
+  small set on the engine; eighteen members cost more at a cold load, and if
+  that grows past what a first run tolerates, the fallback, one model per
+  context compiled on first use, is a cache-size cost and nothing else.
+- The per-prediction floor is fine for a 30 s window, and with the host round
+  trip around it, it is what rules the decoder out until measured.
+- The macOS CI lane has no Neural Engine to place on: the `macos-26-arm64`
+  runner placed every op on the CPU under every setting in phase 1's CI run.
+  So placement is asserted only on a developer's Mac, a change that moves the
+  encoder off the engine is caught by the benchmark rather than by CI, and
+  `build.yml` must not set `EACP_REQUIRE_ANE`. The lane's CPU path on macOS
+  26 traps on the enumerated encoder (G12).
+- Core AI may become the only way to reach new engine features. The seam is
+  the insurance: nothing above `Net` knows which Apple framework is under it.
+
+## Gaps for eacp, as they surface
+
+The section WhisperEACP's own plan keeps, kept here for the same reason: a gap
+belongs in eacp, not in a workaround downstream. Phase 1 surfaced these inside
+eacp itself:
+
+- `eacp-core` had no way to create or remove a directory tree, so the
+  package writer and the cache went through `toStdPath` and
+  `std::filesystem`. Filled in this phase: `Files::createDirectories` and
+  `Files::removeAll` (`Core/Utils/Files.h`), which `OnlineResource` now uses
+  too; only the cache's directory walks still use `std::filesystem`.
+- EA's `Span` refuses a temporary `Vector`, so
+  `fromFloats(Vector<float> {...})` does not compile and the caller names the
+  vector first. Still open.
+- The iOS deployment target of 14.0 is refused by Xcode 27's simulator, whose
+  floor is 15.0, and `CMake/AppleSetup.cmake` forces 14.0 over a command-line
+  override; the whole project moves when CI's Xcode does. Still open.
+- Nothing swept the `<hash>.<pid>-<n>.mlpackage` and `.tmp` directories a
+  process that dies mid-compile leaves in the Core ML cache. Closed in this
+  phase: a miss sweeps them, and `.trash`, once older than an hour.
+
+Phase 2 surfaced one more:
+
+- `GPU::ComputePass` has no way to observe what it recorded, so the check that
+  phase 2 left the dispatches and barriers unchanged had to fake a Metal
+  compute encoder. A recording or counting hook on the pass would let a
+  portable test pin dispatch and barrier counts on every backend. Still open.
+
+Phase 3 surfaced these, in eacp before WhisperEACP was touched:
+
+- G1: the positional add over an enumerated context had no spelling. `slice`
+  refused a fixed axis with an unknown end, and `apply` a `[1500, 384]` table
+  against `[?, 384]` rows. Closed in this phase: `sliceLike(x, reference)`,
+  lowered to `shape` and `slice_by_index` where the reference enumerates,
+  which Core ML places on the engine with the rest.
+- G2: `linear` took a bias tensor always, so Whisper's bias-less key
+  projection meant a named zero constant per layer. Closed in this phase:
+  `linear(x, weight)` supplies an unnamed zero blob constant, which reaches
+  the blob only when the linear reaches an output.
+- G3: the seam copies were packed from offset 0, and the mel binding is
+  `[80, 3000]` read 2N frames a band. Closed in this phase: `copyTo` and
+  `copyFrom` take a byte offset and a row stride in bytes.
+- G4: `computePlan()` describes the compiled program, not a member, and under
+  the engine settings reading it costs the engine compile again. Not
+  closable in eacp, since `MLComputePlan` takes no shape; the probe is a
+  program fixed at each context, in `Tests/ML/EncoderTests.cpp` rather than
+  the library, and it found 448 and 1500 wholly on the engine. Still open as
+  a Core ML limit.
+- G5: `isSupported()` checks macOS 13, but every program the graph writes is
+  specification 8 (macOS 14) or, with `scaledDotProductAttention`, 9 (macOS
+  15), so it answered yes on OSes that load none of them. Closed in this
+  phase: `supportsSpecification(version)`, asked with what
+  `specification()` reports.
+
+WhisperEACP's side of phase 3 surfaced two more:
+
+- G6: the default compiled-model cache is per app
+  (`appCacheDirectory() / "CoreML"`), so every binary of one product compiled
+  the same model for the engine, about 13.5 s each. What the callers wanted
+  was a shared directory, and `Options::cacheDirectory` already allows one:
+  WhisperEACP passes it through `CoreMLEncoderOptions::cacheDirectory` and
+  `Whisper::setEncoderCacheDirectory`, and its three Core ML test suites now
+  share one fixed directory under the temp directory and compile once per
+  machine. What remains open is smaller: the default has no level above the
+  app, so a product's binaries share only if each names the directory, and
+  nothing evicts a compiled model once no program or weights key to it, so a
+  long-lived shared directory only grows.
+- G7: `CoreMLEncoder`, and so `Whisper::transcribeAsync`, cannot time the
+  prediction on its own once it goes through `predictAsync`: the Async gives
+  the result, not how long the queue waited or the prediction ran, so an
+  async encode's time includes the hop back to the loop. Closed in this
+  phase: `Prediction::queueWaitSeconds`, from the `predictAsync()` call to the
+  moment the job has the model to itself, and `Prediction::predictSeconds`,
+  the `predictionFromFeatures:` call alone, both taken on the model's queue
+  as `double` seconds, since `Time::MS` counts whole milliseconds and a small
+  prediction runs in less. The blocking `predict()` still returns a `Result`:
+  its caller is on the thread that runs it and can time it with no hop to
+  leave out.
+
+Phase 4's measurement surfaced these, G8 to G10 for a phase 4 that goes ahead
+and G11 for eacp itself; G12, which CI surfaced after it, is Apple's:
+
+- G8: `Graph` has no argmax, so a step's output is the whole logits row,
+  51864 fp16 values in a padded 103744-byte row, read back and reduced on the
+  host every token, where the kernel path's argmax stays on the device. MIL's
+  `reduce_argmax` is the op, with an int32 output. Still open.
+- G9: `scaledDotProductAttention` takes only a causal flag, so attention over
+  a fixed cache with a run-time valid prefix has no fused spelling; the step
+  builds it from `matmul`, an additive mask in `apply`, `softmax` and
+  `matmul`. A form taking a mask tensor, lowered to a bool `attn_mask` the way
+  the causal one is (since Core ML's fp16 attention ignores a float one),
+  would give the engine the fused op; whether Core ML honours a bool mask
+  computed from an input rather than a constant is unmeasured. Still open.
+- G10: nothing in eacp is stateful. `Graph` has no state input (MIL's
+  `read_state`, `coreml_update_state`, specification 9), and `Model` no
+  `MLState` handle to make per sequence and pass to a prediction (macOS 15,
+  iOS 18), so the KV cache can only cross as inputs, 12 MB a step for
+  tiny.en. The resident-cache program bounds what that would buy (the table
+  above). Still open.
+- G11: `Async::waitFor` on macOS returned 16.66 ms after every
+  `predictAsync()` in the step suite, whatever the setting, where the
+  continuation the test chained had run 1-6 ms in. `EventLoop::runFor` waits
+  in `nextEventMatchingMask:untilDate:` and `EventLoop::quit` sets its flag
+  and posts a wake event, yet the nested pump exits a frame after the resolve
+  rather than on it. A caller that waits on each of a run of short Asyncs, as
+  a decoder driven through `predictAsync` and `waitFor` would, pays a frame
+  per wait. Closed after the phase 4 measurement. The cause: once
+  `[NSApp run]` is live, `nextEventMatchingMask:untilDate:` does not hand back
+  an event posted with `postEvent:atStart:` until the next display refresh,
+  so the nested pump woke a frame late, 16.66 ms on that day's display and
+  8.33 ms when remeasured at 120 Hz; the resolve itself, delivered through the
+  same wait, was late too, its median 1.0-3.6 ms against 0.70-1.19 ms after
+  the fix. The fix: `EventLoop::runFor` on macOS now drains the pending events
+  with a `distantPast` date, checks the quit flag and the deadline, and blocks
+  in `CFRunLoopRunInMode`, which the wake event `quit()` posts returns from;
+  `quit()` is unchanged, and iOS, whose `runFor` never waited in
+  `nextEventMatchingMask`, needed nothing. `waitFor` now returns 5-15 us after
+  the resolve, and the step suite's median to `waitFor`'s return went from
+  8.33 ms at every setting to 0.71 ms on the CPU, 1.20 ms under CPU and GPU,
+  0.81 ms under CPU and engine and 1.16 ms under `all`.
+  `EventLoop/waitFor/returnsOnResolveNotAFrameLater` in `GraphicsTests`
+  resolves from a worker ten times and requires `waitFor` back within 2 ms of
+  the resolve; it failed at 4.1-4.6 ms before the fix. It lives there rather
+  than beside the other `waitFor` tests in `CoreTests` because `CoreTests`
+  runs on nano's default main, outside `[NSApp run]`, where the wait was never
+  late.
+- G12: on GitHub's macOS runner (macOS 26.6.2, build 25G83, an arm64 VM with
+  no Neural Engine, so Core ML places everything on the CPU), the first
+  prediction of the enumerated tiny.en encoder under `cpu`, at 1500, dies of a
+  SIGTRAP in libBNNS, a `brk` under `BNNSGraphContextExecute_v2`, reached from
+  Espresso's `BnnsCpuInferenceOperation` and `MLE5Engine
+  predictionFromFeatures:`. It is fatal and cannot be caught, so the library
+  cannot guard it at run time. The same tests pass on macOS 27.0 under every
+  setting, `cpu` included, and on the runner every fixed-shape prediction
+  passes, the 196-op decoder step with its fused cross-attention over
+  [1500, 384] among them. Done: `whisperTinyMatchesTheReferenceOnEveryDevice`
+  and `whisperTinyLoadAndPredictionTimes` skip their enumerated predictions
+  before macOS 27 and log why; `TestMain`'s backtrace on a fatal signal and
+  the crash-report artifact in `build.yml` stay. Measured on the next run
+  (PR #64, 2026-09-25, all 2269 tests green on every lane): the encoder fixed
+  at 1500 does not trap. On the same 26.6.2 runner,
+  `MLEncoder/whisperTinyFixedAt1500PredictsOnTheCpu`, not gated on the OS,
+  loaded it under `cpu`, predicted, and matched the fp32 reference within the
+  CPU tolerance, in 14.1 s with the compile and the reference; the two gated
+  tests logged their skips and passed on their loads alone. So the trap is
+  the enumerated program's, and what sets it apart is the enumerated input
+  and the positional add through `sliceLike`, `shape` and `slice_by_index`
+  (G1); which of the two it is remains unmeasured. Open: on a macOS 26
+  machine whose plan lands the encoder on the CPU, WhisperEACP's
+  `CoreMLEncoder` traps on the enumerated model with nothing to catch it,
+  while one program fixed per context, the fallback under "Risks" at about a
+  second to compile at each context's first use, runs there. The encoder
+  should take that fallback, or refuse the backend, before macOS 27 when the
+  plan reports the CPU; neither is built.

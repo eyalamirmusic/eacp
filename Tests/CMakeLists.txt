@@ -23,6 +23,12 @@ if (NOT IOS)
     add_subdirectory(CpuCompute)
 endif ()
 
+# Always added: the graph and MIL writer tests are bytes in and bytes out, and
+# the directory returns before the Core ML suite unless EACP_HAS_COREML.
+if (NOT IOS)
+    add_subdirectory(ML)
+endif ()
+
 if (EACP_HAS_GPU AND NOT IOS)
     add_subdirectory(GPUWidgets)
 endif ()

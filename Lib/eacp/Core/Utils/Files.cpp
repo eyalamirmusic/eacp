@@ -148,6 +148,20 @@ void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes)
         throw abandon("cannot replace");
 }
 
+bool createDirectories(const FilePath& directory)
+{
+    auto error = std::error_code {};
+    std::filesystem::create_directories(toStdPath(directory), error);
+    return !error;
+}
+
+bool removeAll(const FilePath& path)
+{
+    auto error = std::error_code {};
+    std::filesystem::remove_all(toStdPath(path), error);
+    return !error;
+}
+
 std::string getBundleResourcePath(const std::string& filename)
 {
     if (auto fromBundle = Detail::bundleResourcePath(filename); !fromBundle.empty())

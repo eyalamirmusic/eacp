@@ -194,6 +194,25 @@ auto tModificationTimeMissing = test("File/modificationTimeMissing") = []
     std::filesystem::remove_all(dir);
 };
 
+auto tCreateAndRemoveDirectories = test("Files/createAndRemoveDirectories") = []
+{
+    auto dir = scratchDirectory("tree");
+    auto nested = FilePath {dir / "a" / "b" / "c"};
+
+    check(eacp::Files::createDirectories(nested));
+    check(eacp::Files::createDirectories(nested));
+    check(File {nested}.exists());
+
+    write(dir / "a" / "b" / "file.txt", "contents");
+
+    auto top = FilePath {dir / "a"};
+    check(eacp::Files::removeAll(top));
+    check(!File {top}.exists());
+    check(eacp::Files::removeAll(top));
+
+    std::filesystem::remove_all(dir);
+};
+
 // --- reading ----------------------------------------------------------------
 //
 // Everything above uses readFile as a helper for checking what a write produced,
