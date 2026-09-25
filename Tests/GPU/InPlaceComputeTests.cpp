@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <cmath>
 #include <string>
@@ -17,6 +17,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -66,38 +67,26 @@ double geluReference(double x)
 auto tInPlaceGeluRewritesItsOwnBuffer =
     test("InPlace/aKernelRewritesTheBufferItWasHanded") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     for (auto i = 0; i < elementCount; ++i)
         values.add(((float) i - 128.f) / 32.f);
 
-    auto bytes = elementCount * (int) sizeof(float);
-    auto buffer = device.makeBuffer(values.data(), bytes, BufferUsage::Storage);
-
     auto kernel = InPlaceGeluKernel {};
-    kernel.output = buffer;
-    kernel.prepare(device);
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, values)
+        .run(elementCount,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, elementCount);
-    }
-
-    commands.commit();
-
-    auto result = Vector<float>(elementCount);
-    buffer.read(result.data(), bytes);
-
-    for (auto i = 0; i < elementCount; ++i)
-        check(std::fabs((double) result[i] - geluReference((double) values[i]))
-              <= 1.0e-5);
+                 for (auto i = 0; i < elementCount; ++i)
+                     check(std::fabs((double) result[i]
+                                     - geluReference((double) values[i]))
+                               <= 1.0e-5,
+                           readback.name());
+             });
 };
 
 // The read is emitted as a statement ahead of the store, on both backends, so

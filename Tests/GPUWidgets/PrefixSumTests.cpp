@@ -1,3 +1,5 @@
+#include "CpuPathKernels.h"
+
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
 #include <NanoTest/NanoTest.h>
@@ -139,3 +141,204 @@ auto tAcrossGroups = test("PrefixSum/acrossGroups") = []
 // is four hundred thousand tiles and lands here.
 auto tThreeLevels = test("PrefixSum/pastTheSquareOfAGroup") = []
 { expectScans(perGroup * perGroup + 17); };
+
+// ---------------------------------------------------------------------------
+// The same kernels on the CPU executor, held to the GPU's buffers element for
+// element. The CPU half always runs and is held to the running sum as well, so
+// a lane with no device still checks it.
+
+namespace
+{
+const auto everySize = std::initializer_list<int> {1,
+                                                   2,
+                                                   63,
+                                                   64,
+                                                   65,
+                                                   255,
+                                                   perGroup - 1,
+                                                   perGroup,
+                                                   perGroup + 1,
+                                                   perGroup * 2,
+                                                   perGroup * 7 + 3,
+                                                   perGroup * perGroup + 17};
+
+bool hasDevice()
+{
+    return GPU::Device::shared().isValid();
+}
+
+// One level of the block scan, on its own: the offsets within each group, the
+// counts left zeroed and the total per group.
+struct BlockResult
+{
+    cpu::UInts counts;
+    cpu::UInts offsets;
+    cpu::UInts totals;
+};
+
+constexpr auto untouched = 0xdeadbeefu;
+
+BlockResult scanBlockOnCpu(const cpu::UInts& counts)
+{
+    auto count = counts.size();
+    auto groups = cpu::scanGroupsFor(count);
+    auto result = BlockResult {
+        counts, cpu::uintsOf(count, untouched), cpu::uintsOf(groups, untouched)};
+
+    auto kernel = ScanBlockKernel {};
+    auto bindings = GPU::CpuCompute::Bindings {};
+    bindings.set(kernel.counts, result.counts);
+    bindings.set(kernel.offsets, result.offsets);
+    bindings.set(kernel.groupTotals, result.totals);
+    kernel.elementCount = (std::uint32_t) count;
+
+    cpu::dispatch(kernel, bindings, groups * ScanBlockKernel::lanes, "ScanBlock");
+    return result;
+}
+
+BlockResult scanBlockOnGpu(const cpu::UInts& counts)
+{
+    auto count = counts.size();
+    auto groups = cpu::scanGroupsFor(count);
+
+    auto source = cpu::bufferOf(counts);
+    auto offsets = cpu::bufferOf(cpu::uintsOf(count, untouched));
+    auto totals = cpu::bufferOf(cpu::uintsOf(groups, untouched));
+
+    auto& kernel = sharedKernel<ScanBlockKernel>();
+    kernel.counts = source;
+    kernel.offsets = offsets;
+    kernel.groupTotals = totals;
+    kernel.elementCount = (std::uint32_t) count;
+
+    auto commands = GPU::Device::shared().makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, groups * ScanBlockKernel::lanes);
+    }
+
+    commands.commit();
+
+    return {cpu::readBack<std::uint32_t>(source, count),
+            cpu::readBack<std::uint32_t>(offsets, count),
+            cpu::readBack<std::uint32_t>(totals, groups)};
+}
+
+cpu::UInts scanAddOnCpu(const cpu::UInts& offsets, const cpu::UInts& groupOffsets)
+{
+    auto result = offsets;
+    auto groups = groupOffsets;
+
+    auto kernel = ScanAddKernel {};
+    auto bindings = GPU::CpuCompute::Bindings {};
+    bindings.set(kernel.offsets, result);
+    bindings.set(kernel.groupOffsets, groups);
+
+    cpu::dispatch(kernel, bindings, offsets.size(), "ScanAdd");
+    return result;
+}
+
+cpu::UInts scanAddOnGpu(const cpu::UInts& offsets, const cpu::UInts& groupOffsets)
+{
+    auto destination = cpu::bufferOf(offsets);
+    auto groups = cpu::bufferOf(groupOffsets);
+
+    auto& kernel = sharedKernel<ScanAddKernel>();
+    kernel.offsets = destination;
+    kernel.groupOffsets = groups;
+
+    auto commands = GPU::Device::shared().makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(kernel, offsets.size());
+    }
+
+    commands.commit();
+    return cpu::readBack<std::uint32_t>(destination, offsets.size());
+}
+} // namespace
+
+auto tScanBlockOnCpu = test("PrefixSum/scanBlockOnTheCpuMatchesTheGpu") = []
+{
+    for (auto count: everySize)
+    {
+        auto counts = countsOfLength(count);
+        auto onCpu = scanBlockOnCpu(counts);
+        auto size = " at " + std::to_string(count);
+
+        check(onCpu.counts == cpu::uintsOf(count, 0u), "cpu counts zeroed" + size);
+
+        if (!hasDevice())
+            continue;
+
+        auto onGpu = scanBlockOnGpu(counts);
+
+        cpu::expectSame(onCpu.offsets, onGpu.offsets, "offsets" + size);
+        cpu::expectSame(onCpu.counts, onGpu.counts, "counts" + size);
+        cpu::expectSame(onCpu.totals, onGpu.totals, "group totals" + size);
+    }
+};
+
+// Offsets and group offsets with a shape to them rather than a scan's output,
+// so an add that took the wrong group's offset is a different number.
+auto tScanAddOnCpu = test("PrefixSum/scanAddOnTheCpuMatchesTheGpu") = []
+{
+    for (auto count: everySize)
+    {
+        auto offsets = countsOfLength(count);
+        auto groupOffsets = countsOfLength(cpu::scanGroupsFor(count) + 3);
+
+        for (auto& value: groupOffsets)
+            value *= 1000u;
+
+        auto onCpu = scanAddOnCpu(offsets, groupOffsets);
+        auto size = " at " + std::to_string(count);
+
+        for (auto i = 0; i < count; ++i)
+            offsets[i] += groupOffsets[i / perGroup];
+
+        check(onCpu == offsets, "cpu adds its group's offset" + size);
+
+        if (!hasDevice())
+            continue;
+
+        auto onGpu = scanAddOnGpu(countsOfLength(count), groupOffsets);
+        cpu::expectSame(onCpu, onGpu, "offsets" + size);
+    }
+};
+
+// The whole of PrefixSum - every level up and every level down - on the CPU,
+// against the library's own GPU run over the same counts.
+auto tWholeSumOnCpu = test("PrefixSum/theWholeSumOnTheCpuMatchesTheGpu") = []
+{
+    for (auto count: everySize)
+    {
+        auto counts = countsOfLength(count);
+        auto source = counts;
+        auto offsets = cpu::uintsOf(count, untouched);
+        auto size = " at " + std::to_string(count);
+
+        check(cpu::prefixSum(source, offsets, count), "cpu sum ran" + size);
+
+        auto running = std::uint32_t {0};
+        auto expected = cpu::uintsOf(count, 0u);
+
+        for (auto i = 0; i < count; ++i)
+        {
+            expected[i] = running;
+            running += counts[i];
+        }
+
+        check(offsets == expected, "cpu offsets are the running sum" + size);
+        check(source == cpu::uintsOf(count, 0u), "cpu counts zeroed" + size);
+
+        if (!hasDevice())
+            continue;
+
+        auto onGpu = scanOnGpu(counts);
+        cpu::expectSame(offsets, onGpu.offsets, "offsets" + size);
+        cpu::expectSame(source, onGpu.source, "counts" + size);
+    }
+};

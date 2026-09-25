@@ -60,8 +60,6 @@ struct BinKernel final : PathIndexedKernel
         // which holds its tile offsets the same way and for the same reason.
         auto segment = var(segments.read4(item));
 
-        auto fromX = var(segment.get().x());
-        auto fromY = var(segment.get().y());
         auto topY = var(min(segment.get().y(), segment.get().w()));
         auto bottomY = var(max(segment.get().y(), segment.get().w()));
         auto slope = var((segment.get().z() - segment.get().x())
@@ -89,11 +87,10 @@ struct BinKernel final : PathIndexedKernel
                      bandBottom.get() > bandTop.get(),
                      [&]
                      {
-                         auto enters = fromX.get()
-                                       + (bandTop.get() - fromY.get()) * slope.get();
+                         auto enters =
+                             xAt(segment.get(), bandTop.get(), slope.get());
                          auto leaves =
-                             fromX.get()
-                             + (bandBottom.get() - fromY.get()) * slope.get();
+                             xAt(segment.get(), bandBottom.get(), slope.get());
 
                          // The first column entirely to the right of the
                          // segment within this band. Everything from there on
@@ -182,6 +179,20 @@ private:
     static GPU::Int tileAfter(const GPU::Float& coordinate)
     {
         return toInt(ceil(coordinate * (1.f / tileEdge)));
+    }
+
+    // Where the segment is at a height, with both ends exact. The start is
+    // exact already - its offset is a zero - but the end is interpolated back
+    // through the slope, and a division under fast math or a contracted
+    // multiply-add lands an ulp either side of it. An end on a tile edge then
+    // lists the segment in the next column and moves its crossing there, and
+    // which way it lands is the device's business - so the end is taken as
+    // itself rather than as a product.
+    static GPU::Float
+        xAt(const GPU::Float4& segment, const GPU::Float& y, const GPU::Float& slope)
+    {
+        return select(
+            y == segment.w(), segment.z(), segment.x() + (y - segment.y()) * slope);
     }
 
     // One crossing of the outline into one tile column, added to every pixel row

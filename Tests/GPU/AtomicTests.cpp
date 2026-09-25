@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
@@ -18,6 +18,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -114,63 +115,95 @@ Vector<float> readFloats(const Buffer& buffer, int elements)
 // rather than checking a total that a broken build would merely undershoot.
 auto tTicketsArePermutation = test("Atomic/everyThreadGetsADistinctTicket") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    auto counter = makeZeroed(1);
-    auto tickets = Buffer {Device::shared(),
-                           nullptr,
-                           sizeof(float) * threadCount,
-                           BufferUsage::Storage};
-
     auto kernel = TicketKernel {};
-    kernel.counter = counter;
-    kernel.tickets = tickets;
-    kernel.prepare();
 
-    auto commands = Device::shared().makeCommandBuffer();
+    // Which thread holds which ticket is the order they ran in, which the two
+    // backends need not share, so each is checked for the permutation alone.
+    CrossCheck {kernel}
+        .output(kernel.counter, 1, 0u)
+        .output(kernel.tickets, threadCount, -1.f)
+        .run(threadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.floats(kernel.tickets);
+                 auto seen = Vector<char> {};
+                 seen.assign(threadCount, 0);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threadCount);
-    }
+                 auto inRange = true;
 
-    commands.commit();
+                 for (auto value: values)
+                 {
+                     auto ticket = (int) value;
 
-    auto values = readFloats(tickets, threadCount);
-    auto seen = Vector<char> {};
-    seen.assign(threadCount, 0);
+                     if (ticket < 0 || ticket >= threadCount)
+                     {
+                         inRange = false;
+                         continue;
+                     }
 
-    auto inRange = true;
+                     seen[ticket] += 1;
+                 }
 
-    for (auto value: values)
-    {
-        auto ticket = (int) value;
+                 check(inRange, readback.name());
 
-        if (ticket < 0 || ticket >= threadCount)
-        {
-            inRange = false;
-            continue;
-        }
+                 auto distinct = 0;
 
-        seen[ticket] += 1;
-    }
+                 for (auto count: seen)
+                     if (count == 1)
+                         ++distinct;
 
-    check(inRange);
-
-    auto distinct = 0;
-
-    for (auto count: seen)
-        if (count == 1)
-            ++distinct;
-
-    check(distinct == threadCount);
+                 check(distinct == threadCount, readback.name());
+                 check(readback.uints(kernel.counter)[0]
+                           == (std::uint32_t) threadCount,
+                       readback.name());
+             });
 };
 
 // The counter is left holding exactly the number of threads that touched it -
 // the total the tickets were drawn from - and load() is what reads it.
 auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
 {
+    auto expectHeights = [](const Vector<float>& values, const char* backend)
+    {
+        auto total = 0;
+        auto matched = 0;
+
+        for (auto bucket = 0; bucket < bucketCount; ++bucket)
+        {
+            // Thread i lands in bucket i % bucketCount, so the bucket's height
+            // is how many of 0..threadCount-1 have that residue.
+            auto expected = threadCount / bucketCount
+                            + (bucket < threadCount % bucketCount ? 1 : 0);
+
+            if ((int) values[bucket] == expected)
+                ++matched;
+
+            total += (int) values[bucket];
+        }
+
+        check(matched == bucketCount, backend);
+        check(total == threadCount, backend);
+    };
+
+    auto onCpu = filled(bucketCount, -1.f);
+
+    {
+        auto counts = filled(bucketCount, 0u);
+
+        auto histogram = HistogramKernel {};
+        auto histogramBindings = CpuCompute::Bindings {};
+        check(histogramBindings.set(histogram.counts, counts));
+        dispatchOnCpu(histogram, histogramBindings, threadCount);
+
+        auto reader = CountReadKernel {};
+        auto readerBindings = CpuCompute::Bindings {};
+        check(readerBindings.set(reader.counts, counts));
+        check(readerBindings.set(reader.output, onCpu));
+        dispatchOnCpu(reader, readerBindings, bucketCount);
+
+        expectHeights(onCpu, "cpu");
+    }
+
     if (!Device::shared().isValid())
         return;
 
@@ -206,23 +239,8 @@ auto tHistogramTotalsAreExact = test("Atomic/bucketCountsAreExact") = []
 
     commands.commit();
 
-    auto values = readFloats(output, bucketCount);
-    auto total = 0;
-    auto matched = 0;
+    auto onGpu = readFloats(output, bucketCount);
 
-    for (auto bucket = 0; bucket < bucketCount; ++bucket)
-    {
-        // Thread i lands in bucket i % bucketCount, so the bucket's height is
-        // how many of 0..threadCount-1 have that residue.
-        auto expected =
-            threadCount / bucketCount + (bucket < threadCount % bucketCount ? 1 : 0);
-
-        if ((int) values[bucket] == expected)
-            ++matched;
-
-        total += (int) values[bucket];
-    }
-
-    check(matched == bucketCount);
-    check(total == threadCount);
+    expectHeights(onGpu, "gpu");
+    expectAgreement(onCpu, onGpu);
 };

@@ -3741,3 +3741,29 @@ auto tCodegenGlslScalarLeftShift = test("GPU/codegenGlslScalarLeftShift") = []
 
     expectGlslCompiles(builder.graph());
 };
+
+// A literal that six significant digits cannot hold is written with enough to
+// read back the same float, while one that fits keeps its short spelling.
+auto tCodegenFloatLiteralRoundTrips = test("GPU/codegenFloatLiteralRoundTrips") = []
+{
+    auto compute = ShaderBuilder {};
+
+    auto output = compute.outputBuffer();
+    auto p = compute.threadPosition();
+
+    compute.write(output, p.x, toFloat(p.y) * 1048576.0f + 0.1f);
+    compute.write(output, p.y, toFloat(p.x) * 16777215.0f - 0.3f);
+
+    for (const auto& dialect: everyDialect(compute.graph()))
+    {
+        check(contains(dialect.source, "1048576.0"));
+        check(contains(dialect.source, "16777215.0"));
+        check(contains(dialect.source, "0.1"));
+        check(contains(dialect.source, "0.3"));
+        check(!contains(dialect.source, "1.04858e+06"));
+        check(!contains(dialect.source, "1.67772e+07"));
+        check(!contains(dialect.source, "0.100000"));
+    }
+
+    expectGlslCompiles(compute.graph());
+};

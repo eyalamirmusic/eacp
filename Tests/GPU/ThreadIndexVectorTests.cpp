@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
@@ -12,10 +12,10 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-constexpr auto uintBytes = (int) sizeof(std::uint32_t);
 constexpr auto sentinel = 0xdeadbeefu;
 
 // Elements past the grid, kept as sentinel: a dispatch rounds up to whole
@@ -29,25 +29,6 @@ constexpr auto cells = columns * rows;
 bool contains(const std::string& text, const char* needle)
 {
     return text.find(needle) != std::string::npos;
-}
-
-Buffer makeSentinelBuffer(int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.assign(elements, sentinel);
-
-    return Buffer {Device::shared(),
-                   values.data(),
-                   uintBytes * values.size(),
-                   BufferUsage::Storage};
-}
-
-Vector<std::uint32_t> readUInts(const Buffer& buffer, int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.resize(elements);
-    buffer.read(values.data(), uintBytes * elements);
-    return values;
 }
 
 std::uint32_t expectedAt(int x, int y, int z = 0)
@@ -239,115 +220,83 @@ auto tGroupAndLocalTriplesAreWhole =
 // once, addressed through the pair, and nothing past it writes at all.
 auto tPairAddressesTheGrid = test("ThreadIndexVector/aPairAddressesTheGrid") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto output = makeSentinelBuffer(cells + padding);
-
     auto kernel = GridPairKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, cells + padding, sentinel)
+        .run(columns,
+             rows,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 const auto* name = readback.name();
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, columns, rows);
-        }
+                 for (auto y = 0; y < rows; ++y)
+                     for (auto x = 0; x < columns; ++x)
+                         check(values[y * columns + x] == expectedAt(x, y), name);
 
-        commands.commit();
-    }
-
-    auto values = readUInts(output, cells + padding);
-
-    for (auto y = 0; y < rows; ++y)
-        for (auto x = 0; x < columns; ++x)
-            check(values[y * columns + x] == expectedAt(x, y));
-
-    for (auto i = cells; i < cells + padding; ++i)
-        check(values[i] == sentinel);
+                 for (auto i = cells; i < cells + padding; ++i)
+                     check(values[i] == sentinel, name);
+             });
 };
 
 auto tTripleAddressesTheVolume =
     test("ThreadIndexVector/aTripleAddressesTheVolume") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto width = 5;
     constexpr auto height = 6;
     constexpr auto depth = 7;
     constexpr auto volume = width * height * depth;
 
-    auto output = makeSentinelBuffer(volume + padding);
-
     auto kernel = VolumeTripleKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, volume + padding, sentinel)
+        .run(width,
+             height,
+             depth,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 const auto* name = readback.name();
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, width, height, depth);
-        }
+                 for (auto z = 0; z < depth; ++z)
+                     for (auto y = 0; y < height; ++y)
+                         for (auto x = 0; x < width; ++x)
+                             check(values[(z * height + y) * width + x]
+                                       == expectedAt(x, y, z),
+                                   name);
 
-        commands.commit();
-    }
-
-    auto values = readUInts(output, volume + padding);
-
-    for (auto z = 0; z < depth; ++z)
-        for (auto y = 0; y < height; ++y)
-            for (auto x = 0; x < width; ++x)
-                check(values[(z * height + y) * width + x] == expectedAt(x, y, z));
-
-    for (auto i = volume; i < volume + padding; ++i)
-        check(values[i] == sentinel);
+                 for (auto i = volume; i < volume + padding; ++i)
+                     check(values[i] == sentinel, name);
+             });
 };
 
 // groupId2() * groupSize2D + localId2() is threadId2(), on both lanes.
 auto tRebuiltPairIsTheThreadId =
     test("ThreadIndexVector/groupTimesSizePlusLocalIsThePair") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto output = makeSentinelBuffer(cells * 2);
-
     auto kernel = RebuiltPairKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, cells * 2, sentinel)
+        .agreeing()
+        .run(columns,
+             rows,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, columns, rows);
-        }
+                 for (auto y = 0; y < rows; ++y)
+                 {
+                     for (auto x = 0; x < columns; ++x)
+                     {
+                         auto record = (y * columns + x) * 2;
 
-        commands.commit();
-    }
-
-    auto values = readUInts(output, cells * 2);
-
-    for (auto y = 0; y < rows; ++y)
-    {
-        for (auto x = 0; x < columns; ++x)
-        {
-            auto record = (y * columns + x) * 2;
-
-            check(values[record] == (std::uint32_t) x);
-            check(values[record + 1] == (std::uint32_t) y);
-        }
-    }
+                         check(values[record] == (std::uint32_t) x, readback.name());
+                         check(values[record + 1] == (std::uint32_t) y,
+                               readback.name());
+                     }
+                 }
+             });
 };

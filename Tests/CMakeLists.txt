@@ -20,6 +20,7 @@ endif ()
 # directory returns before the device suites unless EACP_HAS_GPU.
 if (NOT IOS)
     add_subdirectory(GPU)
+    add_subdirectory(CpuCompute)
 endif ()
 
 if (EACP_HAS_GPU AND NOT IOS)

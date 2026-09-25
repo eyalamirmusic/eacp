@@ -1,5 +1,6 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -24,10 +25,14 @@
 //      backends. That is the one thing the fp16 family cannot promise, and it
 //      is why packBFloat16x2 does its rounding in integer arithmetic rather
 //      than through an instruction.
+//
+// Every kernel runs on the CPU executor too, through the helpers' C++ twins in
+// CpuCompute/Helpers.h, which are also the references below.
 
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -52,12 +57,24 @@ std::uint32_t bitsOf(float value)
     return word;
 }
 
-// The CPU reference. Written out rather than called through bfloat16ToFloat
+// The reference: the shader helper's C++ twin rather than bfloat16ToFloat,
 // because the host helper is under test beside the shader, and a reference that
-// is the thing it checks proves nothing.
+// is the thing it checks proves nothing. HelperTests holds the twin to a
+// double-precision decoding of all 65536 patterns.
 float widened(std::uint16_t bits)
 {
-    return assembled((std::uint32_t) bits << 16);
+    return CpuCompute::readBFloat16(bits, 0u);
+}
+
+// The words as the float slots the kernels read them through, bit for bit.
+Vector<float> asFloats(const Vector<std::uint32_t>& words)
+{
+    auto floats = Vector<float> {};
+
+    for (auto word: words)
+        floats.add(std::bit_cast<float>(word));
+
+    return floats;
 }
 
 // Every bf16 class, and deliberately including the two magnitudes fp16 gets
@@ -284,15 +301,10 @@ struct NarrowKernel final : ComputeProgram
 // The narrowing reference, and the whole reason this family exists: one rule,
 // not one per backend. Round to nearest even in integer arithmetic, a NaN
 // quieted rather than rounded so it cannot carry into the exponent and come
-// back as an infinity.
+// back as an infinity - which is the helper's twin, applied to one value.
 std::uint16_t narrowed(float value)
 {
-    auto bits = bitsOf(value);
-
-    if ((bits & 0x7fffffffu) > 0x7f800000u)
-        return (std::uint16_t) ((bits | 0x00400000u) >> 16);
-
-    return (std::uint16_t) ((bits + 0x7fffu + ((bits >> 16) & 1u)) >> 16);
+    return (std::uint16_t) CpuCompute::packBFloat16x2({value, 0.0f});
 }
 
 bool isBFloat16NaN(std::uint16_t bits)
@@ -346,41 +358,39 @@ const auto narrowingValues = Array<float, 20> {
     -std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::quiet_NaN()};
 
-void runKernel(Device& device, ComputeProgram& kernel, int threads)
+// Both halves of every word, widened, against the output of a kernel that
+// wrote them side by side.
+void checkWidenedPairs(const Vector<float>& result,
+                       const Vector<std::uint32_t>& words,
+                       const char* name)
 {
-    auto commands = device.makeCommandBuffer();
-
+    for (auto i = 0; i < words.size(); ++i)
     {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
+        auto low = (std::uint16_t) (words[i] & 0xffffu);
+        auto high = (std::uint16_t) (words[i] >> 16);
+
+        check(matches(result[i * 2], widened(low)), name);
+        check(matches(result[i * 2 + 1], widened(high)), name);
     }
-
-    commands.commit();
 }
 
-Vector<float> floatsOf(const Buffer& buffer)
+// Every word of a packed store holding the pattern it was read from.
+void checkRoundTrip(const Vector<float>& result,
+                    const Vector<std::uint32_t>& words,
+                    const char* name)
 {
-    auto values =
-        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
-    buffer.read(values.data(), buffer.size());
-    return values;
-}
+    for (auto i = 0; i < words.size(); ++i)
+    {
+        auto word = bitsOf(result[i]);
 
-// The same bytes read as the words they are, for the tests whose subject is a
-// bit pattern rather than a value.
-Vector<std::uint32_t> wordsOf(const Buffer& buffer)
-{
-    auto words = Vector<std::uint32_t>(
-        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
-    buffer.read(words.data(), buffer.size());
-    return words;
-}
+        check(bfloat16Matches((std::uint16_t) (word & 0xffffu),
+                              (std::uint16_t) (words[i] & 0xffffu)),
+              name);
 
-Buffer storageOf(Device& device, const Vector<std::uint32_t>& words)
-{
-    return device.makeBuffer(words.data(),
-                             words.size() * (int) sizeof(std::uint32_t),
-                             BufferUsage::Storage);
+        check(bfloat16Matches((std::uint16_t) (word >> 16),
+                              (std::uint16_t) (words[i] >> 16)),
+              name);
+    }
 }
 
 bool contains(const std::string& text, const char* needle)
@@ -440,167 +450,133 @@ auto tHostHelpers = test("PackedBFloat16/hostHelpersAreTheSameEncoding") = []
 
 auto tUnpack = test("PackedBFloat16/unpacksEveryBFloat16Class") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = UnpackKernel {};
-    kernel.words = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto low = (std::uint16_t) (words[i] & 0xffffu);
-        auto high = (std::uint16_t) (words[i] >> 16);
-
-        check(matches(result[i * 2], widened(low)));
-        check(matches(result[i * 2 + 1], widened(high)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.words, asFloats(words))
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkWidenedPairs(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 auto tReadBFloat16 = test("PackedBFloat16/readsEachElementByIndex") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ReadBFloat16Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count * 2);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto low = (std::uint16_t) (words[i] & 0xffffu);
-        auto high = (std::uint16_t) (words[i] >> 16);
-
-        check(matches(result[i * 2], widened(low)));
-        check(matches(result[i * 2 + 1], widened(high)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count * 2)
+        .run(count * 2,
+             [&](const Readback& readback)
+             {
+                 checkWidenedPairs(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 auto tReadLiteral = test("PackedBFloat16/readsElementsAtLiteralIndices") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(4 * (int) sizeof(float));
-
     auto kernel = LiteralBFloat16Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, 1);
-    auto result = floatsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, 4)
+        .run(1,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    for (auto i = 0; i < 4; ++i)
-    {
-        auto word = words[i / 2];
-        auto element = (std::uint16_t) (i % 2 == 0 ? word & 0xffffu : word >> 16);
+                 for (auto i = 0; i < 4; ++i)
+                 {
+                     auto word = words[i / 2];
+                     auto element =
+                         (std::uint16_t) (i % 2 == 0 ? word & 0xffffu : word >> 16);
 
-        check(matches(result[i], widened(element)));
-    }
+                     check(matches(result[i], widened(element)), readback.name());
+                 }
+             });
 };
 
 auto tReadPair = test("PackedBFloat16/readBFloat16x2ReadsBothHalvesOfAWord") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ReadBFloat16x2Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(matches(result[i * 2], widened((std::uint16_t) (words[i] & 0xffffu))));
-        check(matches(result[i * 2 + 1], widened((std::uint16_t) (words[i] >> 16))));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkWidenedPairs(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // Four elements across two words, in the order readBFloat16 walks them: the low
 // half of the first word, its high half, then the second word's two.
 auto tReadQuad = test("PackedBFloat16/readBFloat16x4ReadsFourAcrossTwoWords") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto records = words.size() / 2;
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(records * 4 * (int) sizeof(float));
-
     auto kernel = ReadBFloat16x4Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, records);
-    auto result = floatsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, records * 4)
+        .run(records,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-    for (auto i = 0; i < records; ++i)
-    {
-        auto low = words[i * 2];
-        auto high = words[i * 2 + 1];
+                 for (auto i = 0; i < records; ++i)
+                 {
+                     auto low = words[i * 2];
+                     auto high = words[i * 2 + 1];
 
-        check(matches(result[i * 4], widened((std::uint16_t) (low & 0xffffu))));
-        check(matches(result[i * 4 + 1], widened((std::uint16_t) (low >> 16))));
-        check(matches(result[i * 4 + 2], widened((std::uint16_t) (high & 0xffffu))));
-        check(matches(result[i * 4 + 3], widened((std::uint16_t) (high >> 16))));
-    }
+                     check(matches(result[i * 4],
+                                   widened((std::uint16_t) (low & 0xffffu))),
+                           name);
+                     check(matches(result[i * 4 + 1],
+                                   widened((std::uint16_t) (low >> 16))),
+                           name);
+                     check(matches(result[i * 4 + 2],
+                                   widened((std::uint16_t) (high & 0xffffu))),
+                           name);
+                     check(matches(result[i * 4 + 3],
+                                   widened((std::uint16_t) (high >> 16))),
+                           name);
+                 }
 
-    // And element by element it is the same walk readBFloat16 makes, which is
-    // what says the two spellings address one layout.
-    for (auto element = 0; element < records * 4; ++element)
-    {
-        auto word = words[element / 2];
-        auto half = (element % 2) == 0 ? (std::uint16_t) (word & 0xffffu)
-                                       : (std::uint16_t) (word >> 16);
+                 // And element by element it is the same walk readBFloat16
+                 // makes, which is what says the two spellings address one
+                 // layout.
+                 for (auto element = 0; element < records * 4; ++element)
+                 {
+                     auto word = words[element / 2];
+                     auto half = (element % 2) == 0
+                                     ? (std::uint16_t) (word & 0xffffu)
+                                     : (std::uint16_t) (word >> 16);
 
-        check(matches(result[element], widened(half)));
-    }
+                     check(matches(result[element], widened(half)), name);
+                 }
+             });
 };
 
 // Widening and narrowing back is exact for everything bf16 can hold, which is
@@ -608,33 +584,20 @@ auto tReadQuad = test("PackedBFloat16/readBFloat16x4ReadsFourAcrossTwoWords") = 
 // so nothing is rounded on either leg.
 auto tRoundTrip = test("PackedBFloat16/packRoundTripsEveryPattern") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
     auto kernel = RoundTripKernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(bfloat16Matches((std::uint16_t) (result[i] & 0xffffu),
-                              (std::uint16_t) (words[i] & 0xffffu)));
-
-        check(bfloat16Matches((std::uint16_t) (result[i] >> 16),
-                              (std::uint16_t) (words[i] >> 16)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkRoundTrip(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // writeBFloat16x2 is the store the round trip spells out by hand, so the two
@@ -646,43 +609,24 @@ auto tWritePair = test("PackedBFloat16/writeBFloat16x2IsThePackedStore") = []
 
     check(spelledOut.source().source == shorthand.source().source);
 
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
-    shorthand.weights = input;
-    shorthand.output = output;
-    shorthand.prepare(device);
-
-    runKernel(device, shorthand, count);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(bfloat16Matches((std::uint16_t) (result[i] & 0xffffu),
-                              (std::uint16_t) (words[i] & 0xffffu)));
-
-        check(bfloat16Matches((std::uint16_t) (result[i] >> 16),
-                              (std::uint16_t) (words[i] >> 16)));
-    }
+    CrossCheck {shorthand}
+        .input(shorthand.weights, asFloats(words))
+        .output(shorthand.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkRoundTrip(
+                     readback.floats(shorthand.output), words, readback.name());
+             });
 };
 
 // writeBFloat16x4 is readBFloat16x4 run backwards, at the index that read
 // counts in: two words out and the same two words back, put there by one store.
 auto tWriteWide = test("PackedBFloat16/writeBFloat16x4IsTheWidePackedStore") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
 
     // The wide store addresses two words at a time, so an odd count would leave
@@ -692,25 +636,17 @@ auto tWriteWide = test("PackedBFloat16/writeBFloat16x4IsTheWidePackedStore") = [
 
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
     auto kernel = WriteBFloat16x4Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count / 2);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(bfloat16Matches((std::uint16_t) (result[i] & 0xffffu),
-                              (std::uint16_t) (words[i] & 0xffffu)));
-
-        check(bfloat16Matches((std::uint16_t) (result[i] >> 16),
-                              (std::uint16_t) (words[i] >> 16)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count)
+        .run(count / 2,
+             [&](const Readback& readback)
+             {
+                 checkRoundTrip(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // The narrowing itself, against one reference rather than one per backend -
@@ -719,11 +655,6 @@ auto tWriteWide = test("PackedBFloat16/writeBFloat16x4IsTheWidePackedStore") = [
 // language defines its own way.
 auto tBFloat16Narrowing = test("PackedBFloat16/narrowsToNearestEvenEverywhere") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     // The table has to actually contain a tie, or this would pass on data that
     // never makes a rounding decision at all.
     auto ties = 0;
@@ -734,30 +665,36 @@ auto tBFloat16Narrowing = test("PackedBFloat16/narrowsToNearestEvenEverywhere") 
 
     check(ties > 0);
 
-    auto count = narrowingValues.size() / 2;
+    auto values = Vector<float> {};
 
-    auto input = device.makeBuffer(narrowingValues.data(),
-                                   narrowingValues.size() * (int) sizeof(float),
-                                   BufferUsage::Storage);
+    for (auto value: narrowingValues)
+        values.add(value);
 
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+    auto count = values.size() / 2;
 
     auto kernel = NarrowKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = wordsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    for (auto i = 0; i < count; ++i)
-    {
-        check(bfloat16Matches((std::uint16_t) (result[i] & 0xffffu),
-                              narrowed(narrowingValues[i * 2])));
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto word = bitsOf(result[i]);
 
-        check(bfloat16Matches((std::uint16_t) (result[i] >> 16),
-                              narrowed(narrowingValues[i * 2 + 1])));
-    }
+                     check(bfloat16Matches((std::uint16_t) (word & 0xffffu),
+                                           narrowed(values[i * 2])),
+                           readback.name());
+
+                     check(bfloat16Matches((std::uint16_t) (word >> 16),
+                                           narrowed(values[i * 2 + 1])),
+                           readback.name());
+                 }
+             });
 };
 
 // The reason the bf16 family exists rather than the fp16 one serving: the

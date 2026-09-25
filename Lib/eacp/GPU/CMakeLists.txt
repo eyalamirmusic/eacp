@@ -31,6 +31,10 @@ set_default_target_setting(eacp-gpu-codegen)
 eacp_enable_unity_build(eacp-gpu-codegen)
 add_ide_sources(eacp-gpu-codegen)
 
+# The CPU executor, device-free like the codegen it links, so it builds wherever
+# that does.
+add_subdirectory(CpuCompute)
+
 if (NOT EACP_HAS_GPU)
     return ()
 endif ()

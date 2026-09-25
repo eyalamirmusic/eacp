@@ -1,8 +1,9 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -460,88 +461,57 @@ auto tComputeRunsKernel = test("GPU/computeRunsKernel") = []
 
 // Runs the struct-authored EDSL kernel end to end: dispatch(kernel, count)
 // binds the pipeline, the buffer members and the uniform block (with the
-// implicit element count) in one call. Self-skips without a GPU device.
+// implicit element count) in one call. The CPU half runs everywhere; the GPU
+// half self-skips without a device.
 auto tComputeProgramRunsKernel = test("GPU/computeProgramRunsKernel") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    const float input[] = {1.f, 2.f, 3.f, 4.f};
-    constexpr auto count = (int) (sizeof(input) / sizeof(input[0]));
-
-    auto inputBuffer = device.makeBuffer(input, BufferUsage::Storage);
-    auto outputBuffer = device.makeBuffer(sizeof(input), BufferUsage::Storage);
-    check(inputBuffer.isValid());
-    check(outputBuffer.isValid());
+    const auto input = Vector<float> {1.f, 2.f, 3.f, 4.f};
+    const auto count = input.size();
 
     auto kernel = ScaleKernel {};
-    kernel.input = inputBuffer;
-    kernel.output = outputBuffer;
     kernel.scale = 3.f;
-    kernel.prepare();
-    check(kernel.pipeline().isValid());
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, input)
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    float result[count] = {};
-    outputBuffer.read(result, sizeof(result));
-
-    for (auto i = 0; i < count; ++i)
-        check(result[i] == input[i] * 3.f);
+                 for (auto i = 0; i < count; ++i)
+                     check(result[i] == input[i] * 3.f, readback.name());
+             });
 };
 
 // Runs the index-arithmetic kernel end to end and checks the wrap-around
-// neighbour average against the same expression on the CPU. Self-skips
-// without a GPU device.
+// neighbour average against the same expression on the CPU. The CPU half runs
+// everywhere; the GPU half self-skips without a device.
 auto tComputeProgramIndexArithmetic = test("GPU/computeProgramIndexArithmetic") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    const float input[] = {1.f, 2.f, 4.f, 8.f};
-    constexpr auto count = (int) (sizeof(input) / sizeof(input[0]));
-
-    auto inputBuffer = device.makeBuffer(input, BufferUsage::Storage);
-    auto outputBuffer = device.makeBuffer(sizeof(input), BufferUsage::Storage);
+    const auto input = Vector<float> {1.f, 2.f, 4.f, 8.f};
+    const auto count = input.size();
 
     auto kernel = WrapAverageKernel {};
-    kernel.input = inputBuffer;
-    kernel.output = outputBuffer;
-    kernel.length = count;
-    kernel.prepare();
-    check(kernel.pipeline().isValid());
-
-    auto commands = device.makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    float result[count] = {};
-    outputBuffer.read(result, sizeof(result));
+    kernel.length = (std::uint32_t) count;
 
     // The platform shader compiler may turn the division into a reciprocal
     // multiply (Metal compiles fast-math by default), so compare within a ULP
     // budget rather than exactly.
-    for (auto i = 0; i < count; ++i)
-    {
-        auto expected =
-            (input[(i + count - 1) % count] + input[i] + input[(i + 1) % count])
-            / 3.f;
-        check(std::abs(result[i] - expected) < 1e-5f);
-    }
+    CrossCheck {kernel}
+        .input(kernel.input, input)
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto expected = (input[(i + count - 1) % count] + input[i]
+                                      + input[(i + 1) % count])
+                                     / 3.f;
+                     check(std::abs(result[i] - expected) < 1e-5f, readback.name());
+                 }
+             });
 };

@@ -1,5 +1,6 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -22,10 +23,15 @@
 //
 // The second is why this test exists at all, and why the table below is built
 // out of bit patterns rather than out of values.
+//
+// Every kernel runs on the CPU executor too, whose half widening and narrowing
+// are CpuCompute/Helpers.h - the same functions the references below call, and
+// which HelperTests checks against every pattern there is.
 
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -36,48 +42,27 @@ std::uint32_t packed(std::uint16_t low, std::uint16_t high)
     return (std::uint32_t) low | ((std::uint32_t) high << 16);
 }
 
-// The CPU reference: an fp16 bit pattern widened to float. Written out rather
-// than taken from a library because it is the thing under test, and because
-// the subnormal branch is where a widening usually goes wrong - its exponent
-// is one less than the naive shift suggests.
+// The reference: an fp16 bit pattern widened to float, by the C++ twin of the
+// helper, which HelperTests holds to a double-precision decoding of all 65536.
 float widened(std::uint16_t bits)
 {
-    auto sign = (std::uint32_t) (bits & 0x8000u) << 16;
-    auto exponent = (std::uint32_t) (bits >> 10) & 0x1fu;
-    auto mantissa = (std::uint32_t) bits & 0x3ffu;
+    return CpuCompute::widenHalf(bits);
+}
 
-    auto assemble = [](std::uint32_t word)
-    {
-        auto value = 0.0f;
-        std::memcpy(&value, &word, sizeof(value));
-        return value;
-    };
+// The words as the float slots the kernels read them through, bit for bit.
+Vector<float> asFloats(const Vector<std::uint32_t>& words)
+{
+    auto floats = Vector<float> {};
 
-    if (exponent == 0)
-    {
-        if (mantissa == 0)
-            return assemble(sign);
+    for (auto word: words)
+        floats.add(std::bit_cast<float>(word));
 
-        // Subnormal: normalise it by hand. The leading one is not stored, so
-        // shift until it appears and take the exponent down for each step.
-        auto shift = 0u;
+    return floats;
+}
 
-        while ((mantissa & 0x400u) == 0)
-        {
-            mantissa <<= 1;
-            ++shift;
-        }
-
-        mantissa &= 0x3ffu;
-        auto exponent32 = 127u - 15u - shift + 1u;
-
-        return assemble(sign | (exponent32 << 23) | (mantissa << 13));
-    }
-
-    if (exponent == 0x1fu)
-        return assemble(sign | 0x7f800000u | (mantissa << 13));
-
-    return assemble(sign | ((exponent + 127u - 15u) << 23) | (mantissa << 13));
+std::uint32_t wordOf(float value)
+{
+    return std::bit_cast<std::uint32_t>(value);
 }
 
 // Every fp16 class, and deliberately paired so that several of the packed
@@ -330,11 +315,16 @@ enum class Rounding
     TowardZero
 };
 
-// Written out for the same reason widened() is: it is the thing under test.
-// The two places a narrowing goes wrong are the fp16 subnormal range, where
-// fewer mantissa bits are kept than the exponent suggests, and the tie.
+// Round-to-nearest-even is the helper's C++ twin, which is Metal's rule and the
+// CPU executor's. Round-toward-zero is D3D's and nothing else's, so it is
+// written out here. The two places a narrowing goes wrong are the fp16
+// subnormal range, where fewer mantissa bits are kept than the exponent
+// suggests, and the tie.
 std::uint16_t narrowed(float value, Rounding rounding)
 {
+    if (rounding == Rounding::NearestEven)
+        return CpuCompute::narrowToHalf(value);
+
     auto bits = std::uint32_t {};
     std::memcpy(&bits, &value, sizeof(bits));
 
@@ -361,30 +351,12 @@ std::uint16_t narrowed(float value, Rounding rounding)
         return sign;
 
     auto kept = significand >> shift;
-    auto remainder = significand & ((1u << shift) - 1u);
-    auto halfway = 1u << (shift - 1);
 
-    auto roundsUp =
-        remainder > halfway || (remainder == halfway && (kept & 1u) != 0);
-
-    if (rounding == Rounding::NearestEven && roundsUp)
-        ++kept;
-
-    // A subnormal that carried into bit 10 is the smallest normal, which this
-    // layout spells for free.
     if (unbiased < -14)
         return (std::uint16_t) (sign | kept);
 
-    if (kept >= 0x800u)
-    {
-        kept >>= 1;
-        ++unbiased;
-    }
-
     if (unbiased > 15)
-        return (std::uint16_t) (sign
-                                | (rounding == Rounding::NearestEven ? 0x7c00u
-                                                                     : 0x7bffu));
+        return (std::uint16_t) (sign | 0x7bffu);
 
     return (std::uint16_t) (sign | ((std::uint32_t) (unbiased + 15) << 10)
                             | (kept & 0x3ffu));
@@ -452,77 +424,59 @@ const auto narrowingValues = Array<float, 20> {
     -std::numeric_limits<float>::infinity(),
     std::numeric_limits<float>::quiet_NaN()};
 
-void runKernel(Device& device, ComputeProgram& kernel, int threads)
+// Both halves of every word, widened, against the output of a kernel that
+// wrote them side by side.
+void checkWidenedPairs(const Vector<float>& result,
+                       const Vector<std::uint32_t>& words,
+                       const char* name)
 {
-    auto commands = device.makeCommandBuffer();
-
+    for (auto i = 0; i < words.size(); ++i)
     {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
+        auto low = (std::uint16_t) (words[i] & 0xffffu);
+        auto high = (std::uint16_t) (words[i] >> 16);
+
+        check(matches(result[i * 2], widened(low)), name);
+        check(matches(result[i * 2 + 1], widened(high)), name);
     }
-
-    commands.commit();
 }
 
-Vector<float> floatsOf(const Buffer& buffer)
+// Every word of a packed store holding the pattern it was read from: the fp16
+// round trip, which neither backend has a rounding decision to make in.
+void checkRoundTrip(const Vector<float>& result,
+                    const Vector<std::uint32_t>& words,
+                    const char* name)
 {
-    auto values =
-        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
-    buffer.read(values.data(), buffer.size());
-    return values;
-}
+    for (auto i = 0; i < words.size(); ++i)
+    {
+        auto word = wordOf(result[i]);
 
-// The same bytes read as the words they are, for the tests whose subject is a
-// bit pattern rather than a value.
-Vector<std::uint32_t> wordsOf(const Buffer& buffer)
-{
-    auto words = Vector<std::uint32_t>(
-        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
-    buffer.read(words.data(), buffer.size());
-    return words;
+        check(halfMatches((std::uint16_t) (word & 0xffffu),
+                          (std::uint16_t) (words[i] & 0xffffu)),
+              name);
+
+        check(halfMatches((std::uint16_t) (word >> 16),
+                          (std::uint16_t) (words[i] >> 16)),
+              name);
+    }
 }
 } // namespace
 
 auto tUnpackHalf2 = test("PackedHalf/unpacksEveryFloat16Class") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = UnpackKernel {};
-    kernel.words = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto commands = device.makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    auto result = Vector<float>(count * 2);
-    output.read(result.data(), result.size() * (int) sizeof(float));
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto low = (std::uint16_t) (words[i] & 0xffffu);
-        auto high = (std::uint16_t) (words[i] >> 16);
-
-        check(matches(result[i * 2], widened(low)));
-        check(matches(result[i * 2 + 1], widened(high)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.words, asFloats(words))
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkWidenedPairs(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // The helper is emitted only into shaders that call it, so a kernel doing
@@ -545,164 +499,116 @@ auto tHelperIsNotAlwaysEmitted = test("PackedHalf/emitsTheHelperOnlyWhenUsed") =
 
 auto tReadHalf = test("PackedHalf/readsEachHalfElementByIndex") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ReadHalfKernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count * 2);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto low = (std::uint16_t) (words[i] & 0xffffu);
-        auto high = (std::uint16_t) (words[i] >> 16);
-
-        check(matches(result[i * 2], widened(low)));
-        check(matches(result[i * 2 + 1], widened(high)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count * 2)
+        .run(count * 2,
+             [&](const Readback& readback)
+             {
+                 checkWidenedPairs(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 auto tReadHalfLiteral = test("PackedHalf/readsHalfElementsAtLiteralIndices") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
 
-    auto input = device.makeBuffer(words.data(),
-                                   words.size() * (int) sizeof(std::uint32_t),
-                                   BufferUsage::Storage);
-
-    auto output = device.makeBuffer(4 * (int) sizeof(float));
-
     auto kernel = LiteralHalfKernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, 1);
-    auto result = floatsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, 4)
+        .run(1,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    for (auto i = 0; i < 4; ++i)
-    {
-        auto word = words[i / 2];
-        auto half = (std::uint16_t) (i % 2 == 0 ? word & 0xffffu : word >> 16);
+                 for (auto i = 0; i < 4; ++i)
+                 {
+                     auto word = words[i / 2];
+                     auto half =
+                         (std::uint16_t) (i % 2 == 0 ? word & 0xffffu : word >> 16);
 
-        check(matches(result[i], widened(half)));
-    }
+                     check(matches(result[i], widened(half)), readback.name());
+                 }
+             });
 };
 
 auto tReadHalf2 = test("PackedHalf/readHalf2ReadsBothHalvesOfAWord") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ReadHalf2Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(matches(result[i * 2], widened((std::uint16_t) (words[i] & 0xffffu))));
-        check(matches(result[i * 2 + 1], widened((std::uint16_t) (words[i] >> 16))));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkWidenedPairs(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // Four halves across two words, in the order readHalf walks them: the low half
 // of the first word, its high half, then the second word's two.
 auto tReadHalf4 = test("PackedHalf/readHalf4ReadsFourAcrossTwoWords") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto records = words.size() / 2;
 
-    auto input = device.makeBuffer(words.data(),
-                                   words.size() * (int) sizeof(std::uint32_t),
-                                   BufferUsage::Storage);
-
-    auto output = device.makeBuffer(records * 4 * (int) sizeof(float));
-
     auto kernel = ReadHalf4Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, records);
-    auto result = floatsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, records * 4)
+        .run(records,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    // Element by element it is the same walk readHalf makes, which is what says
-    // the two spellings address one layout.
-    for (auto element = 0; element < records * 4; ++element)
-    {
-        auto word = words[element / 2];
-        auto half = (element % 2) == 0 ? (std::uint16_t) (word & 0xffffu)
-                                       : (std::uint16_t) (word >> 16);
+                 // Element by element it is the same walk readHalf makes, which
+                 // is what says the two spellings address one layout.
+                 for (auto element = 0; element < records * 4; ++element)
+                 {
+                     auto word = words[element / 2];
+                     auto half = (element % 2) == 0
+                                     ? (std::uint16_t) (word & 0xffffu)
+                                     : (std::uint16_t) (word >> 16);
 
-        check(matches(result[element], widened(half)));
-    }
+                     check(matches(result[element], widened(half)), readback.name());
+                 }
+             });
 };
 
 // asFloat is asUInt run backwards, so the pair is the identity on bits - and
 // on these bits in particular, most of which are denormal floats.
 auto tBitcastRoundTrip = test("PackedHalf/asFloatUndoesAsUInt") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
     auto kernel = BitcastKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = wordsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.input, asFloats(words))
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-    for (auto i = 0; i < count; ++i)
-        check(result[i] == words[i]);
+                 for (auto i = 0; i < count; ++i)
+                     check(wordOf(result[i]) == words[i], readback.name());
+             });
 };
 
 // Widening and narrowing back is exact for everything fp16 can hold, which is
@@ -713,35 +619,20 @@ auto tBitcastRoundTrip = test("PackedHalf/asFloatUndoesAsUInt") = []
 // being what neither language pins.
 auto tPackRoundTrip = test("PackedHalf/packHalf2RoundTripsEveryPattern") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
     auto kernel = RoundTripKernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(halfMatches((std::uint16_t) (result[i] & 0xffffu),
-                          (std::uint16_t) (words[i] & 0xffffu)));
-
-        check(halfMatches((std::uint16_t) (result[i] >> 16),
-                          (std::uint16_t) (words[i] >> 16)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkRoundTrip(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // writeHalf2 is the store the round trip spells out by hand, so the two
@@ -753,45 +644,24 @@ auto tWriteHalf2 = test("PackedHalf/writeHalf2IsThePackedStore") = []
 
     check(spelledOut.source().source == shorthand.source().source);
 
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
-    shorthand.weights = input;
-    shorthand.output = output;
-    shorthand.prepare(device);
-
-    runKernel(device, shorthand, count);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(halfMatches((std::uint16_t) (result[i] & 0xffffu),
-                          (std::uint16_t) (words[i] & 0xffffu)));
-
-        check(halfMatches((std::uint16_t) (result[i] >> 16),
-                          (std::uint16_t) (words[i] >> 16)));
-    }
+    CrossCheck {shorthand}
+        .input(shorthand.weights, asFloats(words))
+        .output(shorthand.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 checkRoundTrip(
+                     readback.floats(shorthand.output), words, readback.name());
+             });
 };
 
 // writeHalf4 is readHalf4 run backwards, at the index readHalf4 counts in: two
 // words out and the same two words back, put there by one store.
 auto tWriteHalf4 = test("PackedHalf/writeHalf4IsTheWidePackedStore") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto words = everyPackedPair();
 
     // The wide store addresses two words at a time, so an odd count would leave
@@ -801,40 +671,26 @@ auto tWriteHalf4 = test("PackedHalf/writeHalf4IsTheWidePackedStore") = []
 
     auto count = words.size();
 
-    auto input = device.makeBuffer(
-        words.data(), count * (int) sizeof(std::uint32_t), BufferUsage::Storage);
-
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
     auto kernel = WriteHalf4Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count / 2);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(halfMatches((std::uint16_t) (result[i] & 0xffffu),
-                          (std::uint16_t) (words[i] & 0xffffu)));
-
-        check(halfMatches((std::uint16_t) (result[i] >> 16),
-                          (std::uint16_t) (words[i] >> 16)));
-    }
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, count)
+        .run(count / 2,
+             [&](const Readback& readback)
+             {
+                 checkRoundTrip(
+                     readback.floats(kernel.output), words, readback.name());
+             });
 };
 
 // The narrowing itself, against values fp16 cannot hold exactly: the ties, the
 // overflow boundary, and the subnormal range where a half loses mantissa bits
 // one at a time. Each has to land on what one of the two rounding rules gives,
-// which for the values fp16 does hold is a single answer on both backends.
+// which for the values fp16 does hold is a single answer on both backends. The
+// CPU follows Metal, so its answer is the nearest-even one, exactly.
 auto tNarrowing = test("PackedHalf/packHalf2NarrowsAsItsBackendRounds") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     // The table has to actually contain the disagreement, or this test would
     // pass on data that never exercises a rounding decision at all.
     auto rounded = 0;
@@ -846,30 +702,46 @@ auto tNarrowing = test("PackedHalf/packHalf2NarrowsAsItsBackendRounds") = []
 
     check(rounded > 0);
 
-    auto count = narrowingValues.size() / 2;
+    auto values = Vector<float> {};
 
-    auto input = device.makeBuffer(narrowingValues.data(),
-                                   narrowingValues.size() * (int) sizeof(float),
-                                   BufferUsage::Storage);
+    for (auto value: narrowingValues)
+        values.add(value);
 
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+    auto count = values.size() / 2;
 
     auto kernel = NarrowKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, count);
-    auto result = wordsOf(output);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-    for (auto i = 0; i < count; ++i)
-    {
-        check(narrowsCorrectly((std::uint16_t) (result[i] & 0xffffu),
-                               narrowingValues[i * 2]));
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto word = wordOf(result[i]);
+                     auto low = (std::uint16_t) (word & 0xffffu);
+                     auto high = (std::uint16_t) (word >> 16);
 
-        check(narrowsCorrectly((std::uint16_t) (result[i] >> 16),
-                               narrowingValues[i * 2 + 1]));
-    }
+                     check(narrowsCorrectly(low, values[i * 2]), name);
+                     check(narrowsCorrectly(high, values[i * 2 + 1]), name);
+
+                     if (readback.backend == Backend::Cpu)
+                     {
+                         check(halfMatches(
+                                   low,
+                                   narrowed(values[i * 2], Rounding::NearestEven)),
+                               name);
+                         check(halfMatches(high,
+                                           narrowed(values[i * 2 + 1],
+                                                    Rounding::NearestEven)),
+                               name);
+                     }
+                 }
+             });
 };
 
 // Both backends' source, generated on whichever host runs the suite - the

@@ -1,8 +1,14 @@
 #include "CodegenCommon.h"
 
+#include <array>
+#include <bit>
+#include <cstdint>
+
 // One 8x8 fragment, three dialects: MSL's own type and its three intrinsics on
 // Metal, and a pair of elements per lane exchanged through threadgroup memory
-// on the two backends with no wave matrix operation to lower to.
+// on the two backends with no wave matrix operation to lower to. The `…/runs`
+// cases run the same graphs on the CPU executor, which holds a fragment whole
+// per SIMD group and widens a packed one as it loads.
 
 using namespace nano;
 using namespace eacp;
@@ -29,69 +35,177 @@ int count(const std::string& source, std::string_view text)
 // The whole vocabulary in one kernel: a fragment filled, one loaded out of a
 // threadgroup tile and one out of a buffer, the product of the two accumulated
 // into the first, and the result written back both ways.
-ShaderBuilder productKernel()
+struct ProductKernel
 {
-    auto builder = ShaderBuilder {};
-    builder.setThreadGroupShape({128});
+    static constexpr auto threads = 128;
 
-    auto a = builder.inputBuffer();
-    auto output = builder.outputBuffer();
-    auto tile = builder.shared<Float>(1024);
-    auto lane = builder.localId();
-    auto simd = builder.simdGroupIndex();
+    ProductKernel()
+    {
+        builder.setThreadGroupShape({threads});
 
-    builder.write(tile, lane, a[lane]);
-    builder.barrier();
+        a = builder.inputBuffer();
+        output = builder.outputBuffer();
+        auto tile = builder.shared<Float>(1024);
+        auto lane = builder.localId();
+        auto simd = builder.simdGroupIndex();
 
-    auto accumulator = builder.simdMatrix();
-    auto left = builder.simdMatrix(tile, simd * 64u, builder.unsignedInteger(8u));
-    auto right = builder.simdMatrix(a, simd * 64u, builder.unsignedInteger(8u));
+        builder.write(tile, lane, a[lane]);
+        builder.barrier();
 
-    builder.multiplyAccumulate(accumulator, left, right);
+        auto accumulator = builder.simdMatrix();
+        auto left =
+            builder.simdMatrix(tile, simd * 64u, builder.unsignedInteger(8u));
+        auto right = builder.simdMatrix(a, simd * 64u, builder.unsignedInteger(8u));
 
-    builder.write(tile, simd * 64u, builder.unsignedInteger(8u), accumulator);
-    builder.write(output, simd * 64u, builder.unsignedInteger(8u), accumulator);
+        builder.multiplyAccumulate(accumulator, left, right);
 
-    return builder;
+        builder.write(tile, simd * 64u, builder.unsignedInteger(8u), accumulator);
+        builder.write(output, simd * 64u, builder.unsignedInteger(8u), accumulator);
+    }
+
+    ProductKernel(const ProductKernel&) = delete;
+    ProductKernel& operator=(const ProductKernel&) = delete;
+
+    const ShaderGraph& graph() const { return builder.graph(); }
+
+    ShaderBuilder builder;
+    InputBuffer a;
+    OutputBuffer output;
+};
+
+// A kernel whose only fragment work is a zero squared into itself, beside an
+// element copy: what it shows is the guard a fragment takes away.
+struct UnguardedKernel
+{
+    UnguardedKernel()
+    {
+        builder.setThreadGroupShape({64});
+
+        a = builder.inputBuffer();
+        output = builder.outputBuffer();
+        auto id = builder.threadId();
+        auto accumulator = builder.simdMatrix();
+
+        builder.multiplyAccumulate(accumulator, accumulator, accumulator);
+        builder.write(output, id, a[id]);
+    }
+
+    UnguardedKernel(const UnguardedKernel&) = delete;
+    UnguardedKernel& operator=(const UnguardedKernel&) = delete;
+
+    const ShaderGraph& graph() const { return builder.graph(); }
+
+    ShaderBuilder builder;
+    InputBuffer a;
+    OutputBuffer output;
+};
+
+using Fragment = std::array<float, 64>;
+
+float scattered(int index)
+{
+    return (float) (((index * 37 + 5) % 23) - 11) * 0.1f;
+}
+
+// An 8x8 patch at `offset`, row stride 8, reading 0 past the end of `values`.
+Fragment patchOf(const eacp::Vector<float>& values, int offset)
+{
+    auto patch = Fragment {};
+
+    for (auto at = 0; at < 64; ++at)
+        patch[at] = offset + at < values.size() ? values[offset + at] : 0.f;
+
+    return patch;
+}
+
+// C + A * B, summed as the fallback sums it: the accumulator first, then k = 0
+// to 7, one rounding per term.
+Fragment multiplyAdd(const Fragment& accumulator,
+                     const Fragment& left,
+                     const Fragment& right)
+{
+    auto result = Fragment {};
+
+    for (auto row = 0; row < 8; ++row)
+        for (auto column = 0; column < 8; ++column)
+        {
+            auto sum = accumulator[row * 8 + column];
+
+            for (auto k = 0; k < 8; ++k)
+            {
+                auto term = left[row * 8 + k] * right[k * 8 + column];
+                sum += term;
+            }
+
+            result[row * 8 + column] = sum;
+        }
+
+    return result;
 }
 
 // A weight read where it lies: the activation staged as floats in a threadgroup
 // tile, the weight loaded straight out of the buffer that holds it packed, and
 // the two multiplied into a float accumulator with nothing widened in between.
-ShaderBuilder packedKernel(SimdMatrixElement element)
+struct PackedKernel
 {
-    auto builder = ShaderBuilder {};
-    builder.setThreadGroupShape({64});
+    static constexpr auto threads = 64;
 
-    auto weights = builder.inputBuffer();
-    auto output = builder.outputBuffer();
-    auto tile = builder.shared<Float>(64);
-    auto lane = builder.localId();
-    auto simd = builder.simdGroupIndex();
-    auto stride = builder.unsignedInteger(8u);
+    explicit PackedKernel(SimdMatrixElement element)
+    {
+        builder.setThreadGroupShape({threads});
 
-    builder.write(tile, lane, weights[lane]);
-    builder.barrier();
+        weights = builder.inputBuffer();
+        output = builder.outputBuffer();
+        auto tile = builder.shared<Float>(64);
+        auto lane = builder.localId();
+        auto simd = builder.simdGroupIndex();
+        auto stride = builder.unsignedInteger(8u);
 
-    auto accumulator = builder.simdMatrix();
-    auto left = builder.simdMatrix(tile, simd * 64u, stride);
+        builder.write(tile, lane, weights[lane]);
+        builder.barrier();
 
-    auto right = element == SimdMatrixElement::Half
-                     ? builder.simdMatrixHalf(weights, simd * 64u, stride)
-                     : builder.simdMatrixBFloat16(weights, simd * 64u, stride);
+        auto accumulator = builder.simdMatrix();
+        auto left = builder.simdMatrix(tile, simd * 64u, stride);
 
-    builder.multiplyAccumulate(accumulator, left, right);
-    builder.write(output, simd * 64u, stride, accumulator);
+        auto right = element == SimdMatrixElement::Half
+                         ? builder.simdMatrixHalf(weights, simd * 64u, stride)
+                         : builder.simdMatrixBFloat16(weights, simd * 64u, stride);
 
-    return builder;
+        builder.multiplyAccumulate(accumulator, left, right);
+        builder.write(output, simd * 64u, stride, accumulator);
+    }
+
+    PackedKernel(const PackedKernel&) = delete;
+    PackedKernel& operator=(const PackedKernel&) = delete;
+
+    const ShaderGraph& graph() const { return builder.graph(); }
+
+    ShaderBuilder builder;
+    InputBuffer weights;
+    OutputBuffer output;
+};
+
+// Packed element `index` of `words` as the fallback reads it: half `index % 2`
+// of word `index / 2`, widened through the helper the shader's own
+// eacpReadHalf or eacpReadBFloat16 is the twin of.
+float widenedElement(SimdMatrixElement element,
+                     const eacp::Vector<float>& words,
+                     int index)
+{
+    auto bits = std::bit_cast<std::uint32_t>(words[index / 2]);
+    auto parity = (std::uint32_t) (index % 2);
+
+    return element == SimdMatrixElement::Half
+               ? CpuCompute::readHalf(bits, parity)
+               : CpuCompute::readBFloat16(bits, parity);
 }
 } // namespace
 
 auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
 {
-    auto builder = productKernel();
+    auto kernel = ProductKernel {};
 
-    const auto& graph = builder.graph();
+    const auto& graph = kernel.graph();
     auto metal = emitMetal(graph);
     auto hlsl = emitHlsl(graph);
     auto glsl = emitGlsl(graph);
@@ -171,29 +285,96 @@ auto tSimdMatrixSource = test("SimdMatrix/eachBackendSpellsItsOwnWay") = []
     expectGlslCompiles(graph);
 };
 
+// Four SIMD groups, each its own 8x8 product. The first two multiply the patch
+// they staged by the same patch read from the buffer; the last two load their
+// left operand from the part of the tile no lane wrote - undefined on a GPU,
+// zeroed at group start on the CPU (D7) - so their product is 0. The case
+// relies on that zero fill, which is why the graph runs only here. Nothing past
+// the four patches is touched.
+auto tSimdMatrixRuns = test("SimdMatrix/eachBackendSpellsItsOwnWay/runs") = []
+{
+    constexpr auto simdGroups = ProductKernel::threads / 32;
+    constexpr auto written = simdGroups * 64;
+
+    auto kernel = ProductKernel {};
+    auto executor = CpuCompute::Executor {kernel.graph()};
+    expectPlans(executor);
+
+    auto a = eacp::Vector<float> {};
+
+    for (auto i = 0; i < written; ++i)
+        a.add(scattered(i));
+
+    auto output = filledWith(written + 8, -1.f);
+
+    auto bindings = CpuCompute::Bindings {};
+    bindings.set(kernel.a, a);
+    bindings.set(kernel.output, output);
+    check(executor.dispatch(bindings, ProductKernel::threads));
+
+    for (auto simd = 0; simd < simdGroups; ++simd)
+    {
+        auto staged = ProductKernel::threads;
+        auto offset = simd * 64;
+        auto left = offset < staged ? patchOf(a, offset) : Fragment {};
+        auto expected = multiplyAdd(Fragment {}, left, patchOf(a, offset));
+        auto matching = 0;
+
+        for (auto at = 0; at < 64; ++at)
+            matching += output[offset + at] == expected[at] ? 1 : 0;
+
+        check(matching == 64, std::to_string(simd));
+    }
+
+    for (auto i = written; i < written + 8; ++i)
+        check(output[i] == -1.f);
+};
+
 // A kernel that holds a fragment is a kernel that barriers, whatever else it
 // does: an operation collective over a SIMD group cannot run where some of its
 // lanes returned early, so the early-return bounds guard is not emitted and the
 // kernel bounds its own stores.
 auto tSimdMatrixHasNoGuard = test("SimdMatrix/aFragmentTakesTheBoundsGuardAway") = []
 {
-    auto builder = ShaderBuilder {};
-    builder.setThreadGroupShape({64});
+    auto kernel = UnguardedKernel {};
 
-    auto a = builder.inputBuffer();
-    auto output = builder.outputBuffer();
-    auto id = builder.threadId();
-    auto accumulator = builder.simdMatrix();
-
-    builder.multiplyAccumulate(accumulator, accumulator, accumulator);
-    builder.write(output, id, a[id]);
-
-    const auto& graph = builder.graph();
+    const auto& graph = kernel.graph();
 
     check(!has(emitMetal(graph), "if (gid >= uniforms.count)"));
     check(!has(emitHlsl(graph), "if (threadId.x >= uniforms.count)"));
 
     expectGlslCompiles(graph);
+};
+
+// With no guard every lane of the last group runs: the ones past the extent
+// read 0 and store it wherever the output has room, and nowhere else.
+auto tSimdMatrixHasNoGuardRuns =
+    test("SimdMatrix/aFragmentTakesTheBoundsGuardAway/runs") = []
+{
+    constexpr auto count = 100;
+    constexpr auto room = 128;
+
+    auto kernel = UnguardedKernel {};
+    auto executor = CpuCompute::Executor {kernel.graph()};
+    expectPlans(executor);
+
+    auto a = eacp::Vector<float> {};
+
+    for (auto i = 0; i < count; ++i)
+        a.add(scattered(i));
+
+    auto output = filledWith(room + 8, -1.f);
+
+    auto bindings = CpuCompute::Bindings {};
+    bindings.set(kernel.a, a);
+    bindings.set(kernel.output, output);
+    check(executor.dispatch(bindings, count));
+
+    for (auto i = 0; i < room + 8; ++i)
+    {
+        auto expected = i < count ? a[i] : i < room ? 0.f : -1.f;
+        check(output[i] == expected, std::to_string(i));
+    }
 };
 
 // The vocabulary belongs to the kernels that ask for it: one that never names a
@@ -225,9 +406,9 @@ auto tNoFragmentNoScaffolding =
 // is what a packed load is for, since staging is the whole cost it removes.
 auto tBFloat16Fragment = test("SimdMatrix/bfloat16LoadsWithoutStaging") = []
 {
-    auto builder = packedKernel(SimdMatrixElement::BFloat16);
+    auto kernel = PackedKernel {SimdMatrixElement::BFloat16};
 
-    const auto& graph = builder.graph();
+    const auto& graph = kernel.graph();
     auto metal = emitMetal(graph);
     auto hlsl = emitHlsl(graph);
     auto glsl = emitGlsl(graph);
@@ -280,9 +461,9 @@ auto tBFloat16Fragment = test("SimdMatrix/bfloat16LoadsWithoutStaging") = []
 // the one of the pair that is on eacp's macOS floor rather than above it.
 auto tHalfFragment = test("SimdMatrix/halfLoadsWithoutStaging") = []
 {
-    auto builder = packedKernel(SimdMatrixElement::Half);
+    auto kernel = PackedKernel {SimdMatrixElement::Half};
 
-    const auto& graph = builder.graph();
+    const auto& graph = kernel.graph();
     auto metal = emitMetal(graph);
     auto hlsl = emitHlsl(graph);
 
@@ -299,6 +480,69 @@ auto tHalfFragment = test("SimdMatrix/halfLoadsWithoutStaging") = []
 
     expectGlslCompiles(graph);
 };
+
+// The packed graphs on the CPU, which widens each element as it loads, through
+// the twin of the helper the fallback calls. The weights are 128 packed values
+// in 64 words; the tile stages those words as the floats their bits are, so the
+// first SIMD group multiplies that float view by the packed patch. The second
+// reads its left operand from past the end of the 64-element tile - undefined
+// on a GPU, 0 on the CPU (D7) - so its product is 0; this relies on that.
+namespace
+{
+void checkPackedRuns(SimdMatrixElement element)
+{
+    constexpr auto words = PackedKernel::threads;
+
+    auto kernel = PackedKernel {element};
+    auto executor = CpuCompute::Executor {kernel.graph()};
+    expectPlans(executor);
+
+    auto weights = eacp::Vector<float> {};
+
+    for (auto word = 0; word < words; ++word)
+    {
+        auto low = scattered(2 * word);
+        auto high = scattered(2 * word + 1);
+        auto bits = element == SimdMatrixElement::Half
+                        ? CpuCompute::packHalf2({low, high})
+                        : CpuCompute::packBFloat16x2({low, high});
+        weights.add(std::bit_cast<float>(bits));
+    }
+
+    auto output = filledWith(2 * 64 + 8, -1.f);
+
+    auto bindings = CpuCompute::Bindings {};
+    bindings.set(kernel.weights, weights);
+    bindings.set(kernel.output, output);
+    check(executor.dispatch(bindings, PackedKernel::threads));
+
+    for (auto simd = 0; simd < 2; ++simd)
+    {
+        auto right = Fragment {};
+
+        for (auto at = 0; at < 64; ++at)
+            right[at] = widenedElement(element, weights, simd * 64 + at);
+
+        auto left = simd == 0 ? patchOf(weights, 0) : Fragment {};
+        auto expected = multiplyAdd(Fragment {}, left, right);
+        auto matching = 0;
+
+        for (auto at = 0; at < 64; ++at)
+            matching += output[simd * 64 + at] == expected[at] ? 1 : 0;
+
+        check(matching == 64, std::to_string(simd));
+    }
+
+    for (auto i = 2 * 64; i < 2 * 64 + 8; ++i)
+        check(output[i] == -1.f);
+}
+} // namespace
+
+auto tBFloat16FragmentRuns = test("SimdMatrix/bfloat16LoadsWithoutStaging/runs") = []
+{ checkPackedRuns(SimdMatrixElement::BFloat16); };
+
+auto tHalfFragmentRuns = test("SimdMatrix/halfLoadsWithoutStaging/runs") = []
+{ checkPackedRuns(SimdMatrixElement::Half); };
 
 // The packed element is the fragment's, not the kernel's: a kernel holding both
 // kinds declares each as what it is, and carries only the widening its own
@@ -348,9 +592,9 @@ auto tPackedElementIsPerFragment =
 auto tPlainFragmentNeedsNothing =
     test("SimdMatrix/aFloatFragmentAsksForNothing") = []
 {
-    auto builder = productKernel();
+    auto kernel = ProductKernel {};
 
-    const auto& graph = builder.graph();
+    const auto& graph = kernel.graph();
 
     check(!graph.usesPackedSimdMatrix(SimdMatrixElement::Half));
     check(!graph.usesPackedSimdMatrix(SimdMatrixElement::BFloat16));
