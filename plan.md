@@ -15,7 +15,7 @@ kernels in `GPUWidgets`. Line counts are estimates, not commitments.
 | 0 — the device-free seam | built, macOS green | macOS: `GPUCodegenTests` 104, `GPUTests` 478, `GPUWidgetsTests` 57, `UITests` 183, all passing — the baseline plus the one new case. Linux lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 1 — tier one: streams, control flow, 1D/2D/3D | built, macOS green | macOS: `CpuComputeTests` 69 (63 `Executor/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves inside 36 existing cases across 13 suites, `GPUCodegenTests` 104, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 2 — tier two: the threadgroup | built, macOS green | macOS: `CpuComputeTests` 91 (64 `Executor/`, 21 `Group/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the stage-2 suites and the five stage-1 deferrals, `GPUCodegenTests` 115 (ten `…/runs` and one emitter guard new), `GPUWidgetsTests` 65 (8 new), `UITests` 183, all passing. Found and fixed an emitter bug (stage 2, *as built*). Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
-| 3 — tier three: packed helpers and the SIMD-group matrix | not started | |
+| 3 — tier three: packed helpers and the SIMD-group matrix | built, macOS green | macOS: `CpuComputeTests` 121 (71 `Executor/`, 21 `Group/`, 14 `Helpers/`, 9 `SimdMatrix/`, 6 `Kernel/`), `GPUTests` 478 with CPU halves in the packed, intrinsic and SIMD-matrix suites and the stage-1 helper deferrals, `GPUCodegenTests` 119 (four `SimdMatrix/…/runs` new), `GPUWidgetsTests` 65, `UITests` 183, all passing. Linux and Windows lanes not yet run (no Docker on the dev machine) — awaits CI |
 | 4 — performance | not started | |
 | 5 — integration | not started | |
 
@@ -255,7 +255,26 @@ lockstep makes a GPU mechanism trivial:
   (float)` — and fragments leave only through `SimdMatrixStore`), so
   `SimdMatrixMultiplyAdd` is an 8x8 matrix product per SIMD group. A
   load/store whose offset or stride differs across the lanes of one SIMD group
-  (Metal requires them uniform) takes the first active lane's.
+  (Metal requires them uniform) takes the first active lane's. *As built
+  (stage 3):* fragment `f` of SIMD group `g` is 64 row-major words at
+  `fragmentOffset + (f·simdGroups + g)·64`, `simdGroups = ceil(lanes/32)`,
+  laid out after the shared arrays and zeroed with them at group start. Each
+  statement acts on a SIMD group's whole fragment when any of its lanes is
+  active, taking the first active lane's fill value, offset and stride, and is
+  skipped otherwise. Element `(r, c)` is at `offset + r·stride + c` in wrapping
+  `uint32`; out of range reads 0 and a store there is dropped. The product is
+  D = C + Σ_k L[r][k]·R[k][c], the accumulator first and k ascending, unfused,
+  into a stack copy, so the accumulator may be an operand. A packed half or
+  bf16 load counts in sixteen-bit elements as the fallback does: element `i`
+  is half `i % 2` of word `i / 2`, widened as it loads through `readHalf`/
+  `readBFloat16` (`Helpers.h`), so every fragment holds floats; a word out of
+  range reads 0. A group whose `threadCount()` is not a multiple of 32 with
+  any `SimdMatrix*` statement is refused at plan time, naming the count: Metal
+  needs whole SIMD groups, and the fallback's `sgmScratch[threads / 32 * 128]`
+  is too small for a partial one (48 threads get one SIMD group's scratch,
+  16 get none). The emitter only asserts it (`emitCompute`, Debug only), for
+  any kernel that `usesSimdGroups()`; `ShaderBuilder` and `ComputeKernel`
+  refuse nothing.
 - `If` computes `then = active & cond`, `else = active & ~cond`, and skips a
   body whose mask is empty. `Loop` runs while any lane is live: the condition
   is re-evaluated for the loop's lanes each iteration and clears the ones it
@@ -321,7 +340,14 @@ the lane count rounded up to 16; `footprintBytes()` for the one-line gain
 kernel at 64 lanes is 2432 bytes (4 nodes × 64 words, the mask,
 local-coordinate and real-lane rows, 16 uniform words and 64 bytes of
 alignment slack). A dispatch of the wrong rank returns false rather than
-asserting.
+asserting. *As built (stage 3):* the `eacp*` calls decode to one
+`Op::Helper`, appended to the `Op` enum, with a `HelperFunction` in
+`Node::sub` (`decodeHelper` in `Plan.cpp`, run by `builtinHelper` in
+`Builtins.cpp`). The 3 componentwise helpers (`eacpErf`, `eacpErfc`,
+`eacpSaturatingTanh`) take any float width, the scalar applied per
+component; the 14 packed ones are held to their one signature, argument and
+result types checked; an unknown `eacp*` name is refused by name.
+`Evaluate.cpp` is unchanged — a helper is one more `Call`.
 
 **D4 — Statements in order, expressions by epoch.** The executor walks the
 blocks; each statement evaluates the expression trees it names recursively,
@@ -468,8 +494,9 @@ GPU leaves undefined, the CPU defines, and the README documents:
 | float → int/uint out of range, NaN | saturates on the hardware | saturates; NaN → 0 (C++ leaves this UB, so it is spelled out) |
 | `Barrier` under divergent control flow | undefined | no-op |
 | `GroupReduce` under divergence | undefined | inactive lanes contribute the fold's identity; only active lanes receive the result |
+| SIMD-group matrix op under divergence (*as built*) | undefined | acts on the whole fragment if any lane of the SIMD group is active, with the first active lane's operands; skipped otherwise |
 | integer overflow | mod 2^32 | mod 2^32; `+`, `-`, `*` run on the unsigned lanes, the sign-sensitive operations of D2 on `int32_t` |
-| threadgroup memory at group start | uninitialised | zero-filled |
+| threadgroup memory at group start, and SIMD-group fragments (*as built*) | uninitialised | zero-filled |
 
 Reads returning 0 follow the two backends that define the case, which is also
 what makes D2's "compute on every lane" safe. A UInt constant's `index` is
@@ -482,6 +509,22 @@ A slot the kernel reads or writes that is never bound refuses the dispatch
 (false); a slot bound to an empty span runs, reading 0 and dropping stores.
 `count <= 0` returns true and does nothing. A store to an `Atomic` slot is
 accepted as a plain store.
+
+*As built (stage 3):* `Helpers.{h,cpp}` is public, as planned, with two
+naming deviations: `errorFunction`/`complementaryErrorFunction`, because an
+unqualified `erf` under a using-directive is ambiguous with `::erf(float)`,
+and `widenHalf`/`narrowToHalf`, because `GPU::halfToFloat` already exists in
+`PackedVertex.h`; the rest are the shader names without `eacp`
+(`packHalf2`, `readBFloat16`, `unpackInt4x4`, …). `packHalf2` follows Metal:
+nearest-even including subnormal ties, overflow to infinity — unlike
+`GPU::halfFromFloat` in `PackedVertex.cpp`, which rounds subnormal ties away
+from zero through `lround`. A NaN narrows to `sign | 0x7e00 | (mantissa >>
+13)`. Parity and byte-index shifts are `& 31`, as the hardware masks them.
+`errorFunction`, `complementaryErrorFunction` and `saturatingTanh` are the
+shader's operations in float with no fused multiply-adds, so CPU against GPU
+is within tolerance, not identical. D3D's `f32tof16` rounds toward zero and
+saturates and GLSL's `packHalf2x16` rounds as the driver does; the twin is
+Metal's.
 
 **D8 — Serial over groups in v1, atomics ready for more.** Groups run in
 order, x fastest, on the caller's thread. `AtomicAdd` and `AtomicLoad` go
@@ -576,7 +619,8 @@ and `WritableTexture2D` members (stage 3 may add a float4 image — a span of
 until then a plan that meets one is invalid). Render graphs (`Input`,
 `Varying`, position/fragment) and `dfdx`/`dfdy`/`fwidth`. Packed half/bf16
 `SimdMatrixLoad` until stage 3 brings the helpers that widen them; float
-fragments first.
+fragments first. *As built (stage 3):* the packed loads are in; the float4
+image is not, so textures stay out.
 
 ## 3. Files
 
@@ -590,31 +634,32 @@ fragments first.
 | `Lib/eacp/GPU/Codegen/Codegen.h` | include `ComputeKernel.h` | ~1 |
 | `Lib/eacp/GPU/Codegen/ShaderEmitter.cpp` | *as built (stage 2):* `floatLiteral` writes the shortest `%g` that reads back exactly | +18/−3 |
 | `Lib/eacp/GPU/CMakeLists.txt` | `add_subdirectory(CpuCompute)` before the GPU return. *As built:* stage 0 needed no edit here — `add_ide_sources` globs headers | ~3 |
-| `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35; *as built:* 33 |
-| `CpuCompute/CpuCompute.h` | umbrella | ~10; *as built:* 11 |
-| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263; *stage 2:* 77 + 348 |
+| `Lib/eacp/GPU/CpuCompute/CMakeLists.txt` | `eacp-cpu-compute`, force-optimised, `-fno-math-errno` | ~35; *as built:* 33; *stage 3:* +2 (`Helpers.cpp`, `SimdMatrix.cpp`) |
+| `CpuCompute/CpuCompute.h` | umbrella | ~10; *as built:* 11; *stage 3:* 12 (`Helpers.h`) |
+| `CpuCompute/Executor.{h,cpp}` | the public object: plan + workspace, dispatch forms, group iteration, uniform read-in | ~400; *as built:* 61 + 263; *stage 2:* 77 + 348; *stage 3:* `Executor.cpp` +6/−2 (`executorClearGroupMemory` zeroes the fragments too) |
 | `CpuCompute/Bindings.h` | the slot table and typed setters | ~120; *as built:* 118 |
 | `CpuCompute/CpuUniformVisitor.h` | the fourth visitor | ~70; *as built:* 48 |
-| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488; *stage 2:* 324 + 1829 |
+| `CpuCompute/Plan.{h,cpp}` | graph → decoded ops, scratch layout, nesting depth, validation. *As built:* plus the per-statement schedules (D4) | ~650; *as built:* 299 + 1488; *stage 2:* 324 + 1829; *stage 3:* 373 + 2162 (+50/−1, +338/−5) — `Op::Helper`, `HelperFunction`, the fragment `Step` fields and layout, the statement checks |
 | `CpuCompute/Workspace.{h,cpp}` | scratch, variables, shared, arrays, fragments, masks, epochs. *As built:* no epochs | ~200; *as built:* 34 + 60; *stage 2:* 35 + 73 |
-| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67; *stage 2:* 102 |
+| `CpuCompute/Interpreter.h` | *as built:* new, internal — `Context`, `SlotView`, mask frames | 67; *stage 2:* 102; *stage 3:* +15 |
 | `CpuCompute/Evaluate.cpp` | the expression kinds over lane arrays, broadcast rules | ~900; *as built:* 537; *stage 2:* 606 |
-| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198; *stage 2:* 396 |
-| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667 |
+| `CpuCompute/Statements.cpp` | block walk, masks, stores, records, atomics, reductions | ~550; *as built:* 198; *stage 2:* 396; *stage 3:* +16 — the four fragment statements |
+| `CpuCompute/Builtins.cpp` | the `Call` set, conversions, bitcasts | ~550; *as built:* 667; *stage 3:* +127 — `builtinHelper` |
 | `CpuCompute/Lanes.h` | lane-array primitives (D5) | ~300; *as built:* 172 |
-| `CpuCompute/Helpers.{h,cpp}` | C++ twins of the 17 `eacp*` helpers (stage 3) | ~350 |
-| `CpuCompute/SimdMatrix.cpp` | fragments per SIMD group (stage 3) | ~200 |
+| `CpuCompute/Helpers.{h,cpp}` | C++ twins of the 17 `eacp*` helpers (stage 3) | ~350; *as built:* 64 + 219 |
+| `CpuCompute/SimdMatrix.cpp` | fragments per SIMD group (stage 3). *As built:* plus the packed loads' widening | ~200; *as built:* 249 |
 | `Tests/CMakeLists.txt` | `add_subdirectory(CpuCompute)` | ~3 |
-| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17; *stage 2:* +1/−1 |
-| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin; *stage 2:* 3174 |
+| `Tests/CpuCompute/CMakeLists.txt` | `CpuComputeTests`, `CpuComputeBench` | ~30; *as built (tests only):* 17; *stage 2:* +1/−1; *stage 3:* +2/−1 |
+| `Tests/CpuCompute/ExecutorTests.cpp` | semantics: masks, loops, records, D7 rows, no-allocation | ~600; *as built:* ~2960 — every case carries an explicit C++ twin; *stage 2:* 3174; *stage 3:* 3258 |
 | `Tests/CpuCompute/KernelTests.cpp` | `Apps/GPU` kernels as `ComputeKernel`s vs references | ~350; *as built:* 415 |
-| `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450; *as built:* 1517 |
-| `Tests/CpuCompute/HelperTests.cpp` | stage 3: helpers, fragments | ~350 |
+| `Tests/CpuCompute/GroupTests.cpp` | stage 2: shared, reductions, atomics, indirect | ~450; *as built:* 1517; *stage 3:* 1545 |
+| `Tests/CpuCompute/HelperTests.cpp` | stage 3: helpers, fragments. *As built:* helpers only | ~350; *as built:* 1004 |
+| `Tests/CpuCompute/SimdMatrixTests.cpp` | *as built (stage 3):* new — fragments, packed loads, the multiple-of-32 refusal | 820 |
 | `Tests/CpuCompute/CpuComputeBench.cpp` | stage 4 | ~300 |
 | `Tests/GPU/CMakeLists.txt` | `eacp-cpu-compute` on `GPUCodegenTests` and `GPUTests` | ~4; *as built (stage 1, `GPUTests` only):* +5/−2; *stage 2 (`GPUCodegenTests`):* +1/−1 |
 | `Tests/GPU/CpuCrossCheck.h` | run-both-and-compare helper | ~180; *as built:* 348; *stage 2:* 488 — atomic outputs, `agreeing`, `runIndirect`, `expectAgreement`, `dispatchIndirectOnCpu` |
-| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181; *stage 2 (10 files):* +700/−993 |
-| `Tests/GPU/*CodegenTests.cpp`, `CodegenCommon.h` | numeric checks on the recorded graphs | ~+200; *as built (stage 2, 4 files):* +524/−107 |
+| `Tests/GPU/*Tests.cpp` (the suites in stages 1–3, ~22 files) | a CPU half per kernel | ~+40 each; *as built (stage 1, 13 files):* +859/−1181; *stage 2 (10 files):* +700/−993; *stage 3 (6 files):* +833/−1266 |
+| `Tests/GPU/*CodegenTests.cpp`, `CodegenCommon.h` | numeric checks on the recorded graphs | ~+200; *as built (stage 2, 4 files):* +524/−107; *stage 3 (`SimdMatrixCodegenTests.cpp`):* +300/−56 |
 | `Tests/GPUWidgets/…` | path kernels cross-checked (stage 2) | ~150; *as built:* `PathKernelCpuTests.cpp` 678, `CpuPathKernels.h` 190, `PathShapes.h` 50 (moved out of `CoverageBatchTests.cpp`), `PrefixSumTests.cpp` +203 |
 | `Lib/eacp/GPUWidgets/Path/PathRasterizer.h` | *as built (stage 2):* `getSegments()`, `getTileCount()` public, so a test can gather a batch's inputs | +8/−4 |
 | `Apps/GPU/CpuCompute/` | stage 5 example | ~200 |
@@ -677,7 +722,9 @@ entirely stage 3 — its only kernel calls `erf` — and so are `IntrinsicTests`
 that needed the threadgroup tier (`UIntBufferTests::BinKernel`,
 `ComputeBufferRangeTests::BumpKernel`, `UIntVectorTests::SharedPairKernel`,
 `Dispatch3DTests::GroupIdVolumeKernel`,
-`ThreadIndexVectorTests::RebuiltPairKernel`) got their CPU halves in stage 2. The
+`ThreadIndexVectorTests::RebuiltPairKernel`) got their CPU halves in stage 2,
+and the helper deferrals — `InPlaceComputeTests` and `IntrinsicTests`'
+three — in stage 3. The
 five example kernels match their references *exactly*: the same `std::`
 transcendentals, the same order of operations, no contraction. The
 zero-allocation case replaces all 20 global `operator new`/`delete` forms in
@@ -770,6 +817,57 @@ whole. Verified by CPU halves in `PackedHalfTests`, `PackedBFloat16Tests`,
 helper exhaustively where the domain allows it (all 65,536 halves and bf16s,
 all 256 bytes) against a double-precision reference. Done when those suites'
 CPU halves pass on every lane and their GPU halves still pass. ~1,200 lines.
+
+*As built:* everything listed but the optional image binding. The library
+grew +557/−9 across 9 tracked files plus `Helpers.{h,cpp}` (64 + 219) and
+`SimdMatrix.cpp` (249); the tests +1,273/−1,349 across 10 tracked files plus
+`HelperTests.cpp` (1004) and `SimdMatrixTests.cpp` (820), the deletions being
+the per-test helper copies. The helpers (D3, D7) and the fragments (D2) were
+built in parallel and merged; the fragments' tests went to
+`Tests/CpuCompute/SimdMatrixTests.cpp` rather than `HelperTests.cpp`, and the
+zero-allocation fragment case, `Executor/aFragmentDispatchAfterTheFirstAllocatesNothing`,
+to `ExecutorTests.cpp`, because that file owns global `operator new`.
+`HelperTests.cpp` checks every half and bf16 pattern and every byte and
+nibble, and runs each helper through the executor on scalar and vector lanes.
+`Executor/everyOutOfTierConstructIsRefusedByName` lost its `eacpErf` row to
+`Executor/aMalformedHelperCallIsRefusedByName`, and
+`Group/malformedGroupStatementsAreRefusedByName`'s `SimdMatrixFill` row
+became three raw-graph refusals. `SimdMatrix/aGroupOfPartialSimdGroupsIsRefused`
+pins D2's multiple-of-32 refusal at 48 and 16 threads.
+
+`GPUTests` stays at 478: the CPU halves went into existing cases —
+`PackedHalfTests`, `PackedBFloat16Tests`, `PackedQuantizedTests`, the three
+helper cases of `IntrinsicTests`, `InPlaceComputeTests`, and every
+`SimdMatrixTests` case that dispatches a kernel: the four float ones through
+`CrossCheck`, the two packed products and
+`aMixedProductDoesNotNarrowTheFloatOperand` bound by hand through
+`dispatchOnCpu`, since their GPU halves still skip unless the device holds the
+packed type natively and the CPU half must not. The packed operand is bound as
+the float array holding its words. `aPackedLoadIsRefusedWhereTheDeviceSaysNo`
+and `aRefusedKernelDispatchesNothing` have no CPU half: they check the
+device's answer and `ComputePass` dropping a dispatch, and the executor asks
+the device nothing — the packed products' CPU halves already run where it says
+no. `IntrinsicTests`, `PackedHalfTests` and `PackedBFloat16Tests` replaced
+their helper copies with `Helpers.h`; `PackedQuantizedTests` keeps its own
+layout references, independent of the twins. `TiledProduct::dispatch` became
+`setShape`/`gridWidth`/`gridHeight` so one kernel serves both backends, and
+the encoder-shape case, ~900M multiply-adds, runs on the CPU in under a
+second. `GPUCodegenTests` gained four `…/runs` cases over
+`SimdMatrixCodegenTests`' graphs: `eachBackendSpellsItsOwnWay/runs`,
+`aFragmentTakesTheBoundsGuardAway/runs`, and `bfloat16LoadsWithoutStaging/runs`
+and `halfLoadsWithoutStaging/runs` against a reference through the helpers
+(`packedKernel` became a `PackedKernel` struct for its handles). Two of those
+graphs read tile memory nothing wrote — undefined on a GPU — and the cases say
+they rely on the CPU's zero fill.
+
+Verified by breaking the executor on purpose: `Op::Helper` computing nothing
+failed exactly 39 `GPUTests` cases, all on the CPU half; the product's right
+operand transposed failed all 9 product cases across the three binaries; the
+packed parity swapped failed exactly the 5 packed-load cases (1
+`CpuComputeTests`, 2 `GPUCodegenTests`, 2 `GPUTests`). Not done: the float4
+image binding for `WritableTexture2D`, so `CoverageKernel` and `PaintPlasma`
+still wait; the emitter's multiple-of-32 rule (D2) is still a Debug-only
+assertion.
 
 **Stage 4 — performance.** `CpuComputeBench` beside the tests, force-optimised
 outside Debug as `SimdBench` is, timing the interpreter against hand-written

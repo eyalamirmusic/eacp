@@ -2436,22 +2436,6 @@ struct ImageKernel final : ComputeKernel
     EACP_SHADER(output, image)
 };
 
-struct ErfKernel final : ComputeKernel
-{
-    ErfKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        write(output, i, erf(input[i]));
-    }
-
-    Uniform<InputBuffer> input;
-    Uniform<OutputBuffer> output;
-
-    EACP_SHADER(input, output)
-};
-
 bool refusedNaming(const Executor& executor, const char* name)
 {
     return !executor.isValid() && executor.reason().find(name) != std::string::npos;
@@ -2604,10 +2588,8 @@ auto tEmptyDispatch =
 auto tOutOfTier = test("Executor/everyOutOfTierConstructIsRefusedByName") = []
 {
     auto image = ImageKernel {};
-    auto errorFunction = ErfKernel {};
 
     check(refusedNaming(Executor {image}, "TextureStore"));
-    check(refusedNaming(Executor {errorFunction}, "eacpErf"));
 
     auto builder = ShaderBuilder {};
     auto output = builder.outputBuffer();
@@ -3004,6 +2986,108 @@ auto tNoGroupAllocation =
     check(direct);
     check(matchesRealtimeGroups(input, output));
     check(counter[0] == 2u * realtimeGroupWidth);
+};
+
+namespace
+{
+constexpr auto realtimeFragmentSide = simdMatrixSize;
+constexpr auto realtimeFragmentElements =
+    realtimeFragmentSide * realtimeFragmentSide;
+constexpr auto realtimeFragmentWidth = 2 * simdGroupWidth;
+
+struct RealtimeFragmentKernel final : ComputeKernel
+{
+    RealtimeFragmentKernel()
+        : ComputeKernel({realtimeFragmentWidth})
+    {
+        compile();
+    }
+
+    void define() override
+    {
+        auto within = localId() % (unsigned) simdGroupWidth;
+        auto tileBase = simdGroupIndex() * (unsigned) realtimeFragmentElements;
+        auto block =
+            groupId() * (unsigned) (2 * realtimeFragmentElements) + tileBase;
+        auto stride = unsignedInteger((unsigned) realtimeFragmentSide);
+        auto tile = shared<Float>(2 * realtimeFragmentElements);
+        auto half = (unsigned) simdGroupWidth;
+
+        write(tile, tileBase + within, input[block + within]);
+        write(tile, tileBase + within + half, input[block + within + half]);
+        barrier();
+
+        auto accumulator = simdMatrix(0.5f);
+        auto staged = simdMatrix(tile, tileBase, stride);
+        multiplyAccumulate(accumulator, staged, simdMatrix(input, block, stride));
+        write(output, block, stride, accumulator);
+    }
+
+    Uniform<InputBuffer> input;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(input, output)
+};
+
+bool matchesRealtimeFragments(const Vector<float>& input,
+                              const Vector<float>& output)
+{
+    constexpr auto side = realtimeFragmentSide;
+    auto matches = true;
+
+    for (auto block = 0; block * realtimeFragmentElements < output.size(); ++block)
+    {
+        auto base = block * realtimeFragmentElements;
+
+        for (auto m = 0; m < side; ++m)
+            for (auto n = 0; n < side; ++n)
+            {
+                auto sum = 0.5f;
+
+                for (auto k = 0; k < side; ++k)
+                    sum += input[base + m * side + k] * input[base + k * side + n];
+
+                matches = matches && output[base + m * side + n] == sum;
+            }
+    }
+
+    return matches;
+}
+} // namespace
+
+auto tNoFragmentAllocation =
+    test("Executor/aFragmentDispatchAfterTheFirstAllocatesNothing") = []
+{
+    constexpr auto groups = 3;
+    constexpr auto count = groups * realtimeFragmentWidth;
+    constexpr auto values = groups * 2 * realtimeFragmentElements;
+
+    auto kernel = RealtimeFragmentKernel {};
+    auto executor = Executor {kernel};
+    check(executor.isValid(), executor.reason());
+
+    auto input = ramp(values);
+    auto output = makeFloats(values, sentinel);
+
+    auto bindings = Bindings {};
+    bindings.set(kernel.input, input);
+    bindings.set(kernel.output, output);
+
+    auto warmedUp = executor.dispatch(bindings, count);
+    output = makeFloats(values, sentinel);
+    bindings.set(kernel.output, output);
+
+    allocationsCounted = 0;
+    releasesCounted = 0;
+    countingHeap = true;
+    auto ran = executor.dispatch(bindings, count);
+    countingHeap = false;
+
+    check(warmedUp);
+    check(ran);
+    check(allocationsCounted.load() == 0);
+    check(releasesCounted.load() == 0);
+    check(matchesRealtimeFragments(input, output));
 };
 
 namespace

@@ -84,7 +84,30 @@ enum class Op : std::uint8_t
     FloatFromMask,
     IntFromF,
     UIntFromF,
-    IntFromMask
+    IntFromMask,
+    Helper
+};
+
+// The eacp* shader helpers, run through Helpers.h.
+enum class HelperFunction : std::uint8_t
+{
+    Erf,
+    Erfc,
+    SaturatingTanh,
+    UnpackHalf2,
+    PackHalf2,
+    ReadHalf,
+    UnpackBFloat16x2,
+    PackBFloat16x2,
+    ReadBFloat16,
+    ReadInt8,
+    ReadUInt8,
+    UnpackInt8x4,
+    UnpackUInt8x4,
+    UnpackInt4x4,
+    UnpackUInt4x4,
+    PackInt8x4,
+    PackUInt8x4
 };
 
 enum class Relation : std::uint8_t
@@ -159,6 +182,11 @@ public:
         GroupReduction reduction = GroupReduction::Sum;
         ReductionScope scope = ReductionScope::Group;
         ValueType type = ValueType::Float;
+        int stride = -1;
+        int left = -1;
+        int right = -1;
+        SimdMatrixMemory memory = SimdMatrixMemory::Shared;
+        SimdMatrixElement element = SimdMatrixElement::Float;
     };
 
     struct BlockRange
@@ -264,6 +292,25 @@ public:
 
     std::uint32_t reductionScratch() const { return reductionOffset; }
 
+    // Fragment f of SIMD group g is a dense row-major 8x8 at
+    // fragment(f, g): held whole per SIMD group, not spread over its lanes.
+    static constexpr int fragmentElements = simdMatrixSize * simdMatrixSize;
+
+    int simdGroupCount() const
+    {
+        return (laneCount + simdGroupWidth - 1) / simdGroupWidth;
+    }
+
+    std::uint32_t fragment(int which, int simdGroup) const
+    {
+        return fragmentOffset
+               + static_cast<std::uint32_t>((which * simdGroupCount() + simdGroup)
+                                            * fragmentElements);
+    }
+
+    std::uint32_t fragmentWords() const { return fragmentOffset; }
+    int fragmentWordCount() const { return fragmentCount; }
+
     int maskFrameCount() const { return 1 + 2 * nesting; }
     std::uint32_t maskFrame(int frame) const
     {
@@ -315,6 +362,8 @@ private:
     int sharedCount = 0;
     std::uint32_t sharedOffset = 0;
     std::uint32_t reductionOffset = 0;
+    std::uint32_t fragmentOffset = 0;
+    int fragmentCount = 0;
     std::uint32_t maskOffset = 0;
     std::uint32_t localOffset = 0;
     std::uint32_t realLaneOffset = 0;

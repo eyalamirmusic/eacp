@@ -1505,13 +1505,41 @@ auto tGroupRefusals = test("Group/malformedGroupStatementsAreRefusedByName") = [
     }
 
     {
-        auto builder = ShaderBuilder {};
-        auto output = builder.outputBuffer();
-        auto fragment = builder.simdMatrix(1.f);
-        builder.write(output,
-                      builder.unsignedInteger(0u),
-                      builder.unsignedInteger(8u),
-                      fragment);
-        check(refusedNaming(Executor {builder.graph()}, "SimdMatrixFill"));
+        auto graph = ShaderGraph {};
+        auto input = graph.addStorageBuffer(BufferAccess::Read, ValueType::Float);
+        auto zero = graph.addUIntConstant(0u);
+        auto eight = graph.addUIntConstant(8u);
+        auto fragment =
+            graph.addSimdMatrixLoad(SimdMatrixMemory::Buffer, input, zero, eight);
+        graph.addSimdMatrixStore(
+            fragment, SimdMatrixMemory::Buffer, input, zero, eight);
+        check(
+            refusedNaming(Executor {graph}, "SimdMatrixStore writes storage slot"));
+    }
+
+    {
+        auto graph = ShaderGraph {};
+        auto words = graph.addStorageBuffer(BufferAccess::Write, ValueType::UInt);
+        auto zero = graph.addUIntConstant(0u);
+        auto eight = graph.addUIntConstant(8u);
+        auto fragment =
+            graph.addSimdMatrixLoad(SimdMatrixMemory::Buffer, words, zero, eight);
+        graph.addSimdMatrixStore(
+            fragment, SimdMatrixMemory::Buffer, words, zero, eight);
+        check(refusedNaming(Executor {graph}, "does not hold Float"));
+    }
+
+    {
+        auto graph = ShaderGraph {};
+        auto output = graph.addStorageBuffer(BufferAccess::Write, ValueType::Float);
+        auto eight = graph.addUIntConstant(8u);
+        auto fragment = graph.addSimdMatrixFill(graph.addConstant(1.f));
+        graph.addSimdMatrixStore(fragment,
+                                 SimdMatrixMemory::Buffer,
+                                 output,
+                                 graph.addConstant(0.f),
+                                 eight);
+        check(
+            refusedNaming(Executor {graph}, "offset that is not a scalar integer"));
     }
 };

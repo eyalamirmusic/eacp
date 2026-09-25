@@ -1,7 +1,8 @@
 # The CPU executor's own suite: device-free, so it runs on every lane, a Linux
 # box with no driver included.
 nano_add_executable(CpuComputeTests
-        SOURCES ExecutorTests.cpp GroupTests.cpp KernelTests.cpp
+        SOURCES ExecutorTests.cpp GroupTests.cpp HelperTests.cpp KernelTests.cpp
+                SimdMatrixTests.cpp
         TARGETS eacp-cpu-compute)
 
 # The executor never contracts a multiply-add, so the inline C++ references the

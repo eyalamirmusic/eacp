@@ -176,12 +176,16 @@ void executorFillGroupIds(const Context& context, Extents group)
     }
 }
 
-void executorClearShared(const Context& context)
+void executorClearGroupMemory(const Context& context)
 {
     const auto& plan = context.plan;
 
     if (plan.sharedWordCount() > 0)
         Lanes::fill(context.lanes(plan.sharedWords()), 0u, plan.sharedWordCount());
+
+    if (plan.fragmentWordCount() > 0)
+        Lanes::fill(
+            context.lanes(plan.fragmentWords()), 0u, plan.fragmentWordCount());
 }
 
 void executorRunGroup(const Context& context,
@@ -197,7 +201,7 @@ void executorRunGroup(const Context& context,
         return;
 
     executorFillGroupIds(context, group);
-    executorClearShared(context);
+    executorClearGroupMemory(context);
     executorEvaluateArrays(context);
     runBlock(context, context.plan.rootBlock(), root, 0, nullptr);
 }

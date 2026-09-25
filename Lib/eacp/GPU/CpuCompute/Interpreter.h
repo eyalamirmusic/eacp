@@ -94,6 +94,21 @@ struct LoopFrame
 void evaluateRange(const Context& context, int begin, int end);
 void evaluateCall(const Context& context, const Plan::Node& node);
 
+// A SIMD group acts whole, taking its first active lane's operands, when any
+// of its lanes is active under the mask, and not at all when none is.
+void fillSimdMatrix(const Context& context,
+                    const Plan::Step& step,
+                    const MaskFrame& frame);
+void loadSimdMatrix(const Context& context,
+                    const Plan::Step& step,
+                    const MaskFrame& frame);
+void storeSimdMatrix(const Context& context,
+                     const Plan::Step& step,
+                     const MaskFrame& frame);
+void multiplyAddSimdMatrix(const Context& context,
+                           const Plan::Step& step,
+                           const MaskFrame& frame);
+
 void runBlock(const Context& context,
               int block,
               MaskFrame& frame,

@@ -7,7 +7,9 @@ target_sources(eacp-cpu-compute PRIVATE
         Builtins.cpp
         Evaluate.cpp
         Executor.cpp
+        Helpers.cpp
         Plan.cpp
+        SimdMatrix.cpp
         Statements.cpp
         Workspace.cpp)
 

@@ -3,7 +3,8 @@
 #include "Plan.h"
 
 // Every word a run writes: the lanes of each node, the variables, the arrays,
-// the shared arrays and the reduction scratch, the mask frames, the local
+// the shared arrays, the SIMD-group fragments and the reduction scratch, the
+// mask frames, the local
 // coordinates and the uniform words. Allocated once,
 // to the plan's layout, and never resized; a plan can have any number of these.
 

@@ -16,9 +16,11 @@
 // this project rather than of the driver.
 //
 // The polynomial runs here through Metal like any other kernel, but the HLSL
-// copy of it cannot - there is no D3D on a Mac - so it is written out a second
-// time in C++ and swept against std::erf. Both sides emit the same text, which
-// is what makes that sweep say something about the Windows build.
+// copy of it cannot - there is no D3D on a Mac - so its C++ twin in
+// CpuCompute/Helpers.h, the same operations in the same order, is swept against
+// std::erf. Both sides emit the same text, which is what makes that sweep say
+// something about the Windows build. Every kernel here also runs on the CPU
+// executor, which evaluates the helpers through that twin.
 
 using namespace nano;
 using namespace eacp;
@@ -37,34 +39,12 @@ bool contains(const std::string& text, const char* needle)
 // not a tidier rewriting of it.
 float polynomialErfc(float x)
 {
-    auto a = std::fabs(x);
-    auto t = 1.0f / (1.0f + 0.3275911f * a);
-    auto e =
-        t
-        * (0.254829592f
-           + t
-                 * (-0.284496736f
-                    + t * (1.421413741f + t * (-1.453152027f + t * 1.061405429f))))
-        * std::exp(-a * a);
-
-    return a == 0.0f ? 1.0f : (x < 0.0f ? 2.0f - e : e);
+    return CpuCompute::complementaryErrorFunction(x);
 }
 
 float polynomialErf(float x)
 {
-    auto a = std::fabs(x);
-    auto t = 1.0f / (1.0f + 0.3275911f * a);
-    auto e = 1.0f
-             - t
-                   * (0.254829592f
-                      + t
-                            * (-0.284496736f
-                               + t
-                                     * (1.421413741f
-                                        + t * (-1.453152027f + t * 1.061405429f))))
-                   * std::exp(-a * a);
-
-    return a == 0.0f ? x : (x < 0.0f ? -e : e);
+    return CpuCompute::errorFunction(x);
 }
 
 std::uint32_t bits(float value)
@@ -208,26 +188,6 @@ struct PlainIntrinsicKernel final : ComputeProgram
 
     EACP_SHADER(input, output)
 };
-
-Vector<float> runKernel(ComputeProgram& kernel,
-                        Buffer& output,
-                        int count,
-                        int outputsPerThread)
-{
-    auto& device = Device::shared();
-    auto commands = device.makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
-
-    commands.commit();
-
-    auto result = Vector<float>(count * outputsPerThread);
-    output.read(result.data(), result.size() * (int) sizeof(float));
-    return result;
-}
 
 bool near(float gpu, double reference, double tolerance)
 {
@@ -399,11 +359,6 @@ auto tHyperbolics = test("Intrinsics/computesTheHyperbolics") = []
 // on this backend does not agree with either, this one still does.
 auto tSaturatingTanh = test("Intrinsics/saturatingTanhAnswersTheTails") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     // The small end first, the origin and its negative zero included, then the
@@ -424,34 +379,37 @@ auto tSaturatingTanh = test("Intrinsics/saturatingTanhAnswersTheTails") = []
 
     auto count = values.size();
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto output = device.makeBuffer(count * (int) sizeof(float));
-
     auto kernel = SaturatingTanhKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto result = runKernel(kernel, output, count, 1);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-    for (auto i = 0; i < count; ++i)
-    {
-        auto x = values[i];
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto x = values[i];
 
-        check(std::isfinite(result[i]));
-        check(near(result[i], std::tanh((double) x), 1.0e-6));
+                     check(std::isfinite(result[i]), name);
+                     check(near(result[i], std::tanh((double) x), 1.0e-6), name);
 
-        // And exactly, not nearly, from the threshold outward - ten itself
-        // included, since the helper compares inclusively so that the value it
-        // documents as the threshold is one it answers. Between 9.011 and ten
-        // the function has already rounded to one in float32 and the native
-        // builtin is what returns it, which is a claim about the driver's tanh
-        // rather than about this - so the tolerance above covers that stretch
-        // and this covers the constant.
-        if (std::fabs(x) >= 10.0f)
-            check(result[i] == (x > 0.0f ? 1.0f : -1.0f));
-    }
+                     // And exactly, not nearly, from the threshold outward -
+                     // ten itself included, since the helper compares
+                     // inclusively so that the value it documents as the
+                     // threshold is one it answers. Between 9.011 and ten the
+                     // function has already rounded to one in float32 and the
+                     // native builtin is what returns it, which is a claim
+                     // about the driver's tanh rather than about this - so the
+                     // tolerance above covers that stretch and this covers the
+                     // constant.
+                     if (std::fabs(x) >= 10.0f)
+                         check(result[i] == (x > 0.0f ? 1.0f : -1.0f), name);
+                 }
+             });
 };
 
 auto tLog10 = test("Intrinsics/computesLog10") = []
@@ -495,11 +453,6 @@ auto tLog10 = test("Intrinsics/computesLog10") = []
 
 auto tErrorFunction = test("Intrinsics/computesErfAndErfc") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     for (auto i = -60; i <= 60; ++i)
@@ -511,40 +464,46 @@ auto tErrorFunction = test("Intrinsics/computesErfAndErfc") = []
 
     auto count = values.size();
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ErrorFunctionKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    auto result = runKernel(kernel, output, count, 2);
 
     // What the GPU runs is an approximation, so this is the approximation's own
     // float32 budget (under 6e-7, pinned below) with room for the driver's exp
     // on top - not the tolerance a native builtin would deserve. Metal comes in
     // at 1.7e-7, better than the same expression does in C++, since it contracts
-    // the Horner chain into fused multiply-adds.
-    for (auto i = 0; i < count; ++i)
-    {
-        auto x = (double) values[i];
+    // the Horner chain into fused multiply-adds. The CPU runs the helper's C++
+    // twin and matches it exactly.
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-        check(near(result[i * 2], std::erf(x), 2.0e-6));
-        check(near(result[i * 2 + 1], std::erfc(x), 2.0e-6));
-    }
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto x = (double) values[i];
+
+                     check(near(result[i * 2], std::erf(x), 2.0e-6), name);
+                     check(near(result[i * 2 + 1], std::erfc(x), 2.0e-6), name);
+
+                     if (readback.backend == Backend::Cpu)
+                     {
+                         check(bits(result[i * 2]) == bits(polynomialErf(values[i])),
+                               name);
+                         check(bits(result[i * 2 + 1])
+                                   == bits(polynomialErfc(values[i])),
+                               name);
+                     }
+                 }
+             });
 };
 
 // The same two intrinsics over a Float4 record, which is the width the HLSL
 // helper needs an overload for and the native MSL call gets for free.
 auto tVectorIntrinsics = test("Intrinsics/appliesComponentwiseToAVector") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     for (auto i = -24; i <= 24; ++i)
@@ -553,39 +512,27 @@ auto tVectorIntrinsics = test("Intrinsics/appliesComponentwiseToAVector") = []
     auto records = values.size() / 4;
     auto count = records * 4;
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto hyperbolic = device.makeBuffer(count * (int) sizeof(float));
-    auto errorFunction = device.makeBuffer(count * (int) sizeof(float));
-
     auto kernel = VectorIntrinsicKernel {};
-    kernel.input = input;
-    kernel.hyperbolic = hyperbolic;
-    kernel.errorFunction = errorFunction;
-    kernel.prepare(device);
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values, 0, count)
+        .output(kernel.hyperbolic, count)
+        .output(kernel.errorFunction, count)
+        .run(records,
+             [&](const Readback& readback)
+             {
+                 const auto& tanhResult = readback.floats(kernel.hyperbolic);
+                 const auto& erfResult = readback.floats(kernel.errorFunction);
+                 const auto* name = readback.name();
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, records);
-    }
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     auto x = (double) values[i];
 
-    commands.commit();
-
-    auto tanhResult = Vector<float>(count);
-    hyperbolic.read(tanhResult.data(), count * (int) sizeof(float));
-
-    auto erfResult = Vector<float>(count);
-    errorFunction.read(erfResult.data(), count * (int) sizeof(float));
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto x = (double) values[i];
-
-        check(near(tanhResult[i], std::tanh(x), 1.0e-6));
-        check(near(erfResult[i], std::erf(x), 2.0e-6));
-    }
+                     check(near(tanhResult[i], std::tanh(x), 1.0e-6), name);
+                     check(near(erfResult[i], std::erf(x), 2.0e-6), name);
+                 }
+             });
 };
 
 // A GPU sweep says what one driver's arithmetic does with the polynomial; this
@@ -640,11 +587,6 @@ auto tPolynomialAccuracy =
 auto tErrorFunctionIsOddAboutZero =
     test("Intrinsics/errorFunctionIsOddAboutZero") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     for (auto x: {0.0f, 1.0e-20f, 1.0f, 3.0f})
@@ -655,22 +597,25 @@ auto tErrorFunctionIsOddAboutZero =
 
     auto count = values.size();
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ErrorFunctionKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto result = runKernel(kernel, output, count, 2);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-    check(bits(result[0]) == bits(0.0f));
-    check(bits(result[2]) == bits(-0.0f));
+                 check(bits(result[0]) == bits(0.0f), name);
+                 check(bits(result[2]) == bits(-0.0f), name);
 
-    for (auto i = 0; i < count; i += 2)
-        check(bits(result[(i + 1) * 2]) == (bits(result[i * 2]) ^ signBit));
+                 for (auto i = 0; i < count; i += 2)
+                     check(bits(result[(i + 1) * 2])
+                               == (bits(result[i * 2]) ^ signBit),
+                           name);
+             });
 };
 
 // The complement has the same defect at the origin, and it is the one that
@@ -678,11 +623,6 @@ auto tErrorFunctionIsOddAboutZero =
 auto tComplementIsExactlyOneAtZero =
     test("Intrinsics/complementIsExactlyOneAtZero") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto values = Vector<float> {};
 
     values.add(0.0f);
@@ -690,22 +630,23 @@ auto tComplementIsExactlyOneAtZero =
 
     auto count = values.size();
 
-    auto input = device.makeBuffer(
-        values.data(), count * (int) sizeof(float), BufferUsage::Storage);
-    auto output = device.makeBuffer(count * 2 * (int) sizeof(float));
-
     auto kernel = ErrorFunctionKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    auto result = runKernel(kernel, output, count, 2);
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count * 2)
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 const auto* name = readback.name();
 
-    for (auto i = 0; i < count; ++i)
-    {
-        check(result[i * 2 + 1] == 1.0f);
-        check(result[i * 2] + result[i * 2 + 1] == 1.0f);
-    }
+                 for (auto i = 0; i < count; ++i)
+                 {
+                     check(result[i * 2 + 1] == 1.0f, name);
+                     check(result[i * 2] + result[i * 2 + 1] == 1.0f, name);
+                 }
+             });
 };
 
 // What carries both signs of zero through is returning the argument itself, and

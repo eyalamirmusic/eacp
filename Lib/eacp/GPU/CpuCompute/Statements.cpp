@@ -387,6 +387,22 @@ void runBlock(const Context& context,
                 addAtomically(context, step, frame);
                 break;
 
+            case StatementKind::SimdMatrixFill:
+                fillSimdMatrix(context, step, frame);
+                break;
+
+            case StatementKind::SimdMatrixLoad:
+                loadSimdMatrix(context, step, frame);
+                break;
+
+            case StatementKind::SimdMatrixStore:
+                storeSimdMatrix(context, step, frame);
+                break;
+
+            case StatementKind::SimdMatrixMultiplyAdd:
+                multiplyAddSimdMatrix(context, step, frame);
+                break;
+
             case StatementKind::Barrier:
             default:
                 break;

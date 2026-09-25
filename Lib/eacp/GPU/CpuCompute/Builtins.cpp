@@ -1,3 +1,4 @@
+#include "Helpers.h"
 #include "Interpreter.h"
 
 #include <climits>
@@ -519,6 +520,128 @@ void builtinDeterminant(const Context& context, const Plan::Node& node)
         out[lane] = toWord(builtinDeterminantAt(matrix, lane));
 }
 
+template <typename Function>
+void builtinUnpack(const Context& context, const Plan::Node& node, Function function)
+{
+    auto width = static_cast<int>(node.components);
+    auto out = builtinOutput(context, node, width);
+    const auto* bits = context.operand(node, 0, 0);
+
+    for (auto lane = 0; lane < context.stride; ++lane)
+    {
+        auto values = function(bits[lane]);
+
+        for (auto component = 0; component < width; ++component)
+            out.component[component][lane] = toWord(values[component]);
+    }
+}
+
+template <typename Function>
+void builtinRead(const Context& context, const Plan::Node& node, Function function)
+{
+    Lanes::zipWords(context.lanes(node, 0),
+                    context.operand(node, 0, 0),
+                    context.operand(node, 1, 0),
+                    context.stride,
+                    [function](Word bits, Word position)
+                    { return toWord(function(bits, position)); });
+}
+
+template <typename Function>
+void builtinPackFloat2(const Context& context,
+                       const Plan::Node& node,
+                       Function function)
+{
+    auto values = builtinVector(context, node, 0, 2);
+    auto* out = context.lanes(node, 0);
+
+    for (auto lane = 0; lane < context.stride; ++lane)
+        out[lane] = function(HelperFloat2 {toFloat(values.component[0][lane]),
+                                           toFloat(values.component[1][lane])});
+}
+
+void builtinPackInt8x4(const Context& context, const Plan::Node& node)
+{
+    auto values = builtinVector(context, node, 0, 4);
+    auto* out = context.lanes(node, 0);
+
+    for (auto lane = 0; lane < context.stride; ++lane)
+        out[lane] = packInt8x4(HelperInt4 {toSigned(values.component[0][lane]),
+                                           toSigned(values.component[1][lane]),
+                                           toSigned(values.component[2][lane]),
+                                           toSigned(values.component[3][lane])});
+}
+
+void builtinPackUInt8x4(const Context& context, const Plan::Node& node)
+{
+    auto values = builtinVector(context, node, 0, 4);
+    auto* out = context.lanes(node, 0);
+
+    for (auto lane = 0; lane < context.stride; ++lane)
+        out[lane] = packUInt8x4(HelperUInt4 {values.component[0][lane],
+                                             values.component[1][lane],
+                                             values.component[2][lane],
+                                             values.component[3][lane]});
+}
+
+void builtinHelper(const Context& context, const Plan::Node& node)
+{
+    switch ((HelperFunction) node.sub)
+    {
+        case HelperFunction::Erf:
+            builtinMap(context, node, errorFunction);
+            return;
+        case HelperFunction::Erfc:
+            builtinMap(context, node, complementaryErrorFunction);
+            return;
+        case HelperFunction::SaturatingTanh:
+            builtinMap(context, node, saturatingTanh);
+            return;
+        case HelperFunction::UnpackHalf2:
+            builtinUnpack(context, node, unpackHalf2);
+            return;
+        case HelperFunction::PackHalf2:
+            builtinPackFloat2(context, node, packHalf2);
+            return;
+        case HelperFunction::ReadHalf:
+            builtinRead(context, node, readHalf);
+            return;
+        case HelperFunction::UnpackBFloat16x2:
+            builtinUnpack(context, node, unpackBFloat16x2);
+            return;
+        case HelperFunction::PackBFloat16x2:
+            builtinPackFloat2(context, node, packBFloat16x2);
+            return;
+        case HelperFunction::ReadBFloat16:
+            builtinRead(context, node, readBFloat16);
+            return;
+        case HelperFunction::ReadInt8:
+            builtinRead(context, node, readInt8);
+            return;
+        case HelperFunction::ReadUInt8:
+            builtinRead(context, node, readUInt8);
+            return;
+        case HelperFunction::UnpackInt8x4:
+            builtinUnpack(context, node, unpackInt8x4);
+            return;
+        case HelperFunction::UnpackUInt8x4:
+            builtinUnpack(context, node, unpackUInt8x4);
+            return;
+        case HelperFunction::UnpackInt4x4:
+            builtinUnpack(context, node, unpackInt4x4);
+            return;
+        case HelperFunction::UnpackUInt4x4:
+            builtinUnpack(context, node, unpackUInt4x4);
+            return;
+        case HelperFunction::PackInt8x4:
+            builtinPackInt8x4(context, node);
+            return;
+        case HelperFunction::PackUInt8x4:
+            builtinPackUInt8x4(context, node);
+            return;
+    }
+}
+
 void builtinReduceMask(const Context& context, const Plan::Node& node, bool all)
 {
     auto* out = context.lanes(node, 0);
@@ -679,6 +802,10 @@ void evaluateCall(const Context& context, const Plan::Node& node)
 
         case Op::IntFromMask:
             builtinWords(context, node, [](Word a) { return a & 1u; });
+            return;
+
+        case Op::Helper:
+            builtinHelper(context, node);
             return;
 
         default:

@@ -7,5 +7,6 @@
 #include "Bindings.h"
 #include "CpuUniformVisitor.h"
 #include "Executor.h"
+#include "Helpers.h"
 #include "Plan.h"
 #include "Workspace.h"

@@ -186,6 +186,115 @@ constexpr BroadcastName planBroadcastNames[] = {{"pow", Op::Pow, 2},
                                                 {"mix", Op::Mix, 3},
                                                 {"smoothstep", Op::Smoothstep, 3}};
 
+// The helpers applied per component, at any float width.
+struct ComponentHelperName
+{
+    std::string_view name;
+    HelperFunction function;
+};
+
+constexpr ComponentHelperName planComponentHelperNames[] = {
+    {"eacpErf", HelperFunction::Erf},
+    {"eacpErfc", HelperFunction::Erfc},
+    {"eacpSaturatingTanh", HelperFunction::SaturatingTanh}};
+
+// The packed-data helpers, each with the one signature the shader defines.
+struct PackedHelperName
+{
+    std::string_view name;
+    HelperFunction function;
+    ValueType result;
+    int arguments;
+    ValueType first;
+    ValueType second;
+};
+
+constexpr PackedHelperName planPackedHelperNames[] = {
+    {"eacpUnpackHalf2",
+     HelperFunction::UnpackHalf2,
+     ValueType::Float2,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpPackHalf2",
+     HelperFunction::PackHalf2,
+     ValueType::UInt,
+     1,
+     ValueType::Float2,
+     ValueType::UInt},
+    {"eacpReadHalf",
+     HelperFunction::ReadHalf,
+     ValueType::Float,
+     2,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackBFloat16x2",
+     HelperFunction::UnpackBFloat16x2,
+     ValueType::Float2,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpPackBFloat16x2",
+     HelperFunction::PackBFloat16x2,
+     ValueType::UInt,
+     1,
+     ValueType::Float2,
+     ValueType::UInt},
+    {"eacpReadBFloat16",
+     HelperFunction::ReadBFloat16,
+     ValueType::Float,
+     2,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpReadInt8",
+     HelperFunction::ReadInt8,
+     ValueType::Float,
+     2,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpReadUInt8",
+     HelperFunction::ReadUInt8,
+     ValueType::Float,
+     2,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackInt8x4",
+     HelperFunction::UnpackInt8x4,
+     ValueType::Float4,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackUInt8x4",
+     HelperFunction::UnpackUInt8x4,
+     ValueType::Float4,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackInt4x4",
+     HelperFunction::UnpackInt4x4,
+     ValueType::Float4,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpUnpackUInt4x4",
+     HelperFunction::UnpackUInt4x4,
+     ValueType::Float4,
+     1,
+     ValueType::UInt,
+     ValueType::UInt},
+    {"eacpPackInt8x4",
+     HelperFunction::PackInt8x4,
+     ValueType::UInt,
+     1,
+     ValueType::Int4,
+     ValueType::UInt},
+    {"eacpPackUInt8x4",
+     HelperFunction::PackUInt8x4,
+     ValueType::UInt,
+     1,
+     ValueType::UInt4,
+     ValueType::UInt}};
+
 bool isConversionName(std::string_view name)
 {
     for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)
@@ -565,13 +674,35 @@ private:
                     break;
 
                 case StatementKind::SimdMatrixFill:
+                    if (!checkSimdMatrixFill(statement))
+                        return result;
+
+                    schedule.roots[0] = statement.value;
+                    pinned = -1;
+                    break;
+
                 case StatementKind::SimdMatrixLoad:
                 case StatementKind::SimdMatrixStore:
+                    if (!checkSimdMatrixTransfer(statement))
+                        return result;
+
+                    step.buffer = statement.bufferSlot;
+                    step.stride = statement.stride;
+                    step.memory = statement.memory;
+                    step.element = graph.simdMatrixElement(statement.slot);
+                    schedule.roots[0] = statement.index;
+                    schedule.roots[1] = statement.stride;
+                    pinned = -1;
+                    break;
+
                 case StatementKind::SimdMatrixMultiplyAdd:
-                    fail(std::string("statement ")
-                         + planStatementName(statement.kind)
-                         + " is not supported yet (stage 3)");
-                    return result;
+                    if (!checkSimdMatrixMultiplyAdd(statement))
+                        return result;
+
+                    step.left = statement.left;
+                    step.right = statement.right;
+                    pinned = -1;
+                    break;
             }
 
             plan.steps[stepId] = step;
@@ -777,6 +908,146 @@ private:
         }
 
         return true;
+    }
+
+    bool checkFragment(const Statement& statement, int fragment, const char* role)
+    {
+        if (fragment >= 0 && fragment < graph.simdMatrixCount())
+            return true;
+
+        fail(std::string("a ") + planStatementName(statement.kind) + " names " + role
+             + " fragment " + std::to_string(fragment) + ", which does not exist");
+        return false;
+    }
+
+    bool checkFloatFragment(const Statement& statement, int fragment)
+    {
+        if (!checkFragment(statement, fragment, "the"))
+            return false;
+
+        if (graph.simdMatrixElement(fragment) == SimdMatrixElement::Float)
+            return true;
+
+        fail(std::string("a ") + planStatementName(statement.kind)
+             + " writes or stores packed fragment " + std::to_string(fragment)
+             + "; only a float fragment is filled, stored or accumulated into");
+        return false;
+    }
+
+    // A fragment belongs to a whole SIMD group: Metal requires full ones, and
+    // the fallback's scratch holds threads / 32 SIMD groups' worth, so a
+    // partial one indexes past it. The emitter only asserts this.
+    bool checkWholeSimdGroups(const Statement& statement)
+    {
+        auto threads = graph.threadGroupShape().threadCount();
+
+        if (threads % simdGroupWidth == 0)
+            return true;
+
+        fail(std::string("a ") + planStatementName(statement.kind)
+             + " needs a threadgroup of whole SIMD groups, a multiple of "
+             + std::to_string(simdGroupWidth) + " threads, and this one has "
+             + std::to_string(threads));
+        return false;
+    }
+
+    bool checkScalarInteger(const Statement& statement, int node, const char* role)
+    {
+        if (!checkNode(node))
+            return false;
+
+        auto type = graph.expr(node).type;
+
+        if (componentCount(type) == 1 && isIntegerFamily(type))
+            return true;
+
+        fail(std::string("a ") + planStatementName(statement.kind) + " has " + role
+             + " that is not a scalar integer");
+        return false;
+    }
+
+    bool checkSimdMatrixFill(const Statement& statement)
+    {
+        if (!checkWholeSimdGroups(statement)
+            || !checkFloatFragment(statement, statement.slot)
+            || !checkNode(statement.value))
+            return false;
+
+        if (graph.expr(statement.value).type == ValueType::Float)
+            return true;
+
+        fail("a SimdMatrixFill fills a fragment with a value that is not a "
+             "scalar Float");
+        return false;
+    }
+
+    // A load takes any fragment - a Half or BFloat16 one is widened as it is
+    // read, in SimdMatrix.cpp (Step::element says which) - and a store only a
+    // float one.
+    bool checkSimdMatrixElement(const Statement& statement)
+    {
+        if (statement.kind == StatementKind::SimdMatrixStore)
+            return checkFloatFragment(statement, statement.slot);
+
+        return checkFragment(statement, statement.slot, "the");
+    }
+
+    bool checkSimdMatrixMemory(const Statement& statement)
+    {
+        auto storing = statement.kind == StatementKind::SimdMatrixStore;
+
+        if (statement.memory == SimdMatrixMemory::Shared)
+        {
+            if (!checkSharedSlot(statement.bufferSlot))
+                return false;
+
+            if (graph.sharedArrays()[statement.bufferSlot].elementType
+                == ValueType::Float)
+                return true;
+
+            fail(std::string("a ") + planStatementName(statement.kind)
+                 + " reaches shared array " + std::to_string(statement.bufferSlot)
+                 + ", which does not hold Float");
+            return false;
+        }
+
+        if (!checkSlot(statement.bufferSlot))
+            return false;
+
+        auto slot = static_cast<std::size_t>(statement.bufferSlot);
+
+        if (plan.slotElement[slot] != ValueType::Float)
+        {
+            fail(std::string("a ") + planStatementName(statement.kind)
+                 + " reaches storage slot " + std::to_string(statement.bufferSlot)
+                 + ", which does not hold Float");
+            return false;
+        }
+
+        if (storing && plan.slotAccess[slot] == BufferAccess::Read)
+        {
+            fail("a SimdMatrixStore writes storage slot "
+                 + std::to_string(statement.bufferSlot) + ", which is read-only");
+            return false;
+        }
+
+        return true;
+    }
+
+    bool checkSimdMatrixTransfer(const Statement& statement)
+    {
+        return checkWholeSimdGroups(statement) && checkSimdMatrixElement(statement)
+               && checkSimdMatrixMemory(statement)
+               && checkScalarInteger(statement, statement.index, "an offset")
+               && checkScalarInteger(statement, statement.stride, "a row stride");
+    }
+
+    bool checkSimdMatrixMultiplyAdd(const Statement& statement)
+    {
+        return checkWholeSimdGroups(statement)
+               && checkFloatFragment(statement, statement.slot)
+               && checkFragment(statement, statement.left, "a left")
+               && checkFragment(statement, statement.right, "a right");
     }
 
     void markReachable()
@@ -1381,7 +1652,7 @@ private:
 
         if (name.starts_with("eacp"))
         {
-            rejectNode(id, "a stage-3 helper, not supported yet");
+            decodeHelper(id, node, expr);
             return;
         }
 
@@ -1527,6 +1798,55 @@ private:
         rejectNode(id, "unknown builtin");
     }
 
+    void decodeHelper(int id, Plan::Node& node, const Expr& expr)
+    {
+        const auto& name = expr.text;
+        auto type = expr.type;
+
+        for (const auto& helper: planComponentHelperNames)
+        {
+            if (name != helper.name)
+                continue;
+
+            if (!requireArguments(id, 1) || !isFloatFamily(type) || isMatrix(type)
+                || argumentType(expr, 0) != type)
+            {
+                rejectNode(id, "defined on the float vectors only");
+                return;
+            }
+
+            node.op = Op::Helper;
+            node.sub = static_cast<std::uint8_t>(helper.function);
+            return;
+        }
+
+        for (const auto& helper: planPackedHelperNames)
+        {
+            if (name != helper.name)
+                continue;
+
+            if (!requireArguments(id, helper.arguments))
+                return;
+
+            auto matches =
+                type == helper.result && argumentType(expr, 0) == helper.first
+                && (helper.arguments == 1 || argumentType(expr, 1) == helper.second);
+
+            if (!matches)
+            {
+                rejectNode(id,
+                           "its argument or result types differ from the helper's");
+                return;
+            }
+
+            node.op = Op::Helper;
+            node.sub = static_cast<std::uint8_t>(helper.function);
+            return;
+        }
+
+        rejectNode(id, "unknown helper");
+    }
+
     void decodeGeometric(int id, Plan::Node& node, const Expr& expr, Op op)
     {
         auto operand = argumentType(expr, 0);
@@ -1629,6 +1949,18 @@ private:
         plan.sharedCount = words <= planMaxWords ? static_cast<int>(words) : 0;
     }
 
+    void layOutFragments()
+    {
+        plan.fragmentOffset = static_cast<std::uint32_t>(cursor);
+
+        auto words = static_cast<std::size_t>(graph.simdMatrixCount())
+                     * static_cast<std::size_t>(plan.simdGroupCount())
+                     * static_cast<std::size_t>(Plan::fragmentElements);
+
+        cursor += words;
+        plan.fragmentCount = words <= planMaxWords ? static_cast<int>(words) : 0;
+    }
+
     void layOut()
     {
         for (auto id = 0; id < graph.nodeCount(); ++id)
@@ -1675,6 +2007,7 @@ private:
         }
 
         layOutShared();
+        layOutFragments();
 
         if (graph.usesGroupReduction())
             plan.reductionOffset = allocate(1);
