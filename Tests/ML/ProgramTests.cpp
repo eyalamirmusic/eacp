@@ -61,6 +61,36 @@ bool isSupportedAttention()
     return isSupported() && osVersion().atLeast(isIOS() ? 18 : 15, 0);
 }
 
+bool isHeldToTheEngine(ComputeUnits units)
+{
+    return isAneRequired()
+           && (units == ComputeUnits::cpuAndNeuralEngine
+               || units == ComputeUnits::all);
+}
+
+bool ranOnTheCpu(const Model& model)
+{
+    auto plan = model.computePlan();
+    return plan.isEmpty() || plan.allOn(ComputePlan::Device::cpu);
+}
+
+double cpuBoundOf(const Tolerances& tolerances)
+{
+    auto isCpu = [](const Tolerance& entry)
+    { return entry.units == ComputeUnits::cpu; };
+    return tolerances.findIf(isCpu)->maxAbs;
+}
+
+Tolerance toleranceWhereItRan(const Tolerances& tolerances,
+                              const Tolerance& requested,
+                              const Model& model)
+{
+    if (isHeldToTheEngine(requested.units) || !ranOnTheCpu(model))
+        return requested;
+
+    return {requested.units, cpuBoundOf(tolerances)};
+}
+
 void checkWithin(const std::string& what,
                  const Tolerance& tolerance,
                  const Model& model,
@@ -191,7 +221,10 @@ auto tLinearSoftmaxMatchesReference =
             return;
 
         auto actual = predictOnce(model, {net.rows, net.width}, x);
-        checkWithin("linear+softmax", tolerance, model, compare(actual, expected));
+        checkWithin("linear+softmax",
+                    toleranceWhereItRan(linearSoftmaxTolerances, tolerance, model),
+                    model,
+                    compare(actual, expected));
     }
 };
 
@@ -248,8 +281,10 @@ auto tLinearLayerNormMatchesReference =
             return;
 
         auto actual = predictOnce(model, {norm.rows, norm.width}, x);
-        checkWithin(
-            "linear+layer norm", tolerance, model, compare(actual, expected));
+        checkWithin("linear+layer norm",
+                    toleranceWhereItRan(linearLayerNormTolerances, tolerance, model),
+                    model,
+                    compare(actual, expected));
     }
 };
 

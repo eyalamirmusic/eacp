@@ -34,11 +34,11 @@ bool exists(const FilePath& path)
 
 Bytes readBytes(const FilePath& path)
 {
-    auto text = Files::readFile(path);
+    auto file = MemoryMappedFile {path};
     auto bytes = Bytes {};
 
-    for (auto character: text)
-        bytes.add(static_cast<std::uint8_t>(character));
+    for (auto byte: file.bytes())
+        bytes.add(byte);
 
     return bytes;
 }

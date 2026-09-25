@@ -44,53 +44,73 @@ behind, written once against this seam:
 
 ```cpp
 enum class Activation { none, gelu };
+enum class DType { float32, float16, int32 };
 
-struct Net
+using Weight = TensorBuffer; // the safetensors tensor, its shape included
+
+class Shape; // up to rank 4, outermost first
+
+struct Binding { GPU::BufferRange range; Shape capacity; };
+struct Cache { int id = -1; int rows = 0; void clear(); };
+
+class Tensor; // a ref-counted handle into one recording
+
+class Net
 {
-    virtual Tensor input(const Binding& source, Shape shape, DType type) = 0;
-    virtual void output(Tensor value, const Binding& target) = 0;
+public:
+    virtual Tensor input(const Binding& source, const Shape& shape, DType type) = 0;
+    virtual void output(const Tensor& value, const Binding& target) = 0;
+
     virtual Tensor rows(const Weight& table, int first, int count) = 0;
-    virtual Tensor transpose(Tensor matrix) = 0;
+    virtual Tensor transpose(const Tensor& matrix) = 0;
+    virtual Tensor cached(const Cache& cache) = 0;
 
-    virtual Tensor conv1d(Tensor frames, const Weight& weight, const Weight& bias,
-                          int stride, int padding, Activation activation) = 0;
-    virtual Tensor linear(Tensor input, const Weight& weight, const Weight* bias,
-                          Activation activation = Activation::none) = 0;
-    virtual Tensor linearAdd(Tensor input, const Weight& weight,
-                             const Weight* bias, Tensor stream) = 0;
-    virtual Tensor add(Tensor a, Tensor b) = 0;
-    virtual Tensor layerNorm(Tensor input, const Weight& weight,
+    virtual Tensor conv1d(const Tensor& frames, const Weight& weight,
+                          const Weight& bias, int stride, int padding,
+                          Activation activation) = 0;
+    virtual Tensor linear(const Tensor& input, const Weight& weight,
+                          const Weight* bias, Activation activation) = 0;
+    virtual Tensor linearAdd(const Tensor& input, const Weight& weight,
+                             const Weight* bias, const Tensor& stream) = 0;
+    virtual Tensor add(const Tensor& stream, const Tensor& addend) = 0;
+    virtual Tensor layerNorm(const Tensor& input, const Weight& weight,
                              const Weight& bias) = 0;
-    virtual Tensor attention(Tensor queries, Tensor keys, Tensor values,
-                             int heads, bool causal) = 0;
+    virtual Tensor attention(const Tensor& queries, const Tensor& keys,
+                             const Tensor& values, int heads, bool causal) = 0;
 
-    virtual Tensor embed(Tensor tokens, const Weight& tokenTable,
+    virtual Tensor embed(const Tensor& tokens, const Weight& tokenTable,
                          const Weight& positionTable, int firstPosition) = 0;
-    virtual Tensor appendLinear(Cache& cache, Tensor input, const Weight& weight,
-                                const Weight* bias) = 0;
-    virtual void argmax(Tensor logits, int row, Tensor mask, Tensor slot) = 0;
+    virtual Tensor appendLinear(Cache& cache, const Tensor& input,
+                                const Weight& weight, const Weight* bias) = 0;
+    virtual Cache makeCache(int capacityRows, int width) = 0;
 };
 ```
 
 Each op answers a call the code makes today. `input` and `output` are the
 outside buffers: the mel, the encoder rows, the logits, the token slots and the
-masks, bound ranges on the kernel backend and the model's features on Core ML.
-`rows` is the positional prefix the encoder adds, a view with no dispatch.
-`transpose` is the band-major mel turned into the frames conv1 reads, which on
-the kernel backend is a stride swap `Unfold` already takes. `conv1d` carries
+masks, bound ranges on the kernel backend and the model's features on Core ML;
+a `Binding` carries the capacity of what it points at, which can be more than
+the shape a run reads. `rows` is the positional prefix the encoder adds, and
+`transpose` the band-major mel turned into the frames conv1 reads; on the
+kernel backend both are views with no dispatch, the first a byte offset into
+the table and the second a stride swap `Unfold` already takes. `conv1d` carries
 its padding. A bias is a pointer because `k_proj` and the tied logits have
 none. `linearAdd` is the residual, and it names the stream it adds into,
 because the kernel path's residual is a store into `hidden` in place, not a sum
-of two tensors; on Core ML it is a `linear` and an `add`. `embed` gathers the
-token and the position table in one store from a first position, as
-`Kernels/Embed.h` does. `appendLinear` is a K/V projection written straight
-into the cache rows the step owns, today's `BufferRange` bind, since a separate
-append would cost a copy dispatch per projection per layer per step; the cross
-K/V go through it after a reset in `beginSequence`. `argmax` takes the logits
-row it reads (the prompt's last) and the token slot the next `embed` reads on
-the device, and it is called from `Whisper`, not from the decoder body. There
-is no `softmax`: the encoder folds it into the apply and the decoder runs it
-only inside attention, so nothing at this level calls one.
+of two tensors; on Core ML it is a `linear` and an `add`. `add` is the same
+shape: it consumes its stream and returns the sum, which on the kernel backend
+is the stream's own buffer. `embed` gathers the token and the position table in
+one store from a first position, as `Kernels/Embed.h` does. `appendLinear` is a
+K/V projection written straight into the rows the cache holds next, today's
+`BufferRange` bind, since a separate append would cost a copy dispatch per
+projection per layer per step, and it returns the cache with them in it; the
+cross K/V go through it after a reset in `beginSequence`. `makeCache` sizes a
+cache once and `cached` reads one back as a tensor. The argmax is not a `Net`
+op: it takes the logits row it reads (the prompt's last) and the token slot the
+next `embed` reads on the device, it is dispatched from `Whisper`, not from the
+decoder body, and it only joins the net in phase 4, where the model would hold
+it. There is no `softmax`: the encoder folds it into the apply and the decoder
+runs it only inside attention, so nothing at this level calls one.
 
 The ops sit at that level, above matmul and softmax, on purpose. The kernel
 backend fuses the softmax into the apply and the GELU into the store; the Core
@@ -99,17 +119,20 @@ the Neural Engine handles as one. Ops at the matmul level would take that
 freedom from both. The list is counted rather than guessed: the encoder is 46
 dispatches, a decode step 61 and the prompt step 81, and the encoder's 42
 compute calls against this seam come out on the kernel backend as those 46 in
-today's order (a `conv1d` is two, `rows` and `transpose` none, the rest one
-each). Phase 2 is still where it is confirmed, since writing both bodies
-against it is what shows nothing was missed.
+today's order: the two `conv1d` four, `rows` and `transpose` none, the `add`
+one, the nine calls of each of the four layers 40, since `attention` is two
+there (the scores, then the apply with the softmax folded in), and the final
+`layerNorm` one. Phase 2 confirmed it (below).
 
 Two backends:
 
-- **The kernel backend** is today's code moved one file over. A `Tensor` is a
-  `GPU::Buffer` plus a shape, `linear` picks the tiled or split program by row
-  count and weight storage, and barriers go in by read-after-write and
-  write-after-read on buffers, which puts back exactly the ones there are
-  today, the barrier-free q/k/v trio included. The three GPU platforms keep
+- **The kernel backend** (`KernelNet`) is today's code moved one file over. A
+  `Tensor` is a ref-counted handle whose liveness places it: while a copy of
+  it is alive it holds a scratch buffer reserved at prepare, and the buffer is
+  free again when the last copy goes. `linear` picks the tiled or split
+  program by row count and weight storage, and barriers are derived from
+  per-buffer read and write tracking, which puts back exactly the ones there
+  are today, the barrier-free q/k/v trio included. The three GPU platforms keep
   working unchanged and the tests keep their bit-exact references.
 - **The Core ML backend** records the same calls into a MIL program at
   prepare time, writes the weights into the model's blob, compiles it once
@@ -327,9 +350,10 @@ the cache, the async forms and the buffer seam. Both write under one scratch
 directory per run, `<temp>/eacp-ml-tests-<pid>`, deleted at exit.
 `EACP_REQUIRE_ANE=1` makes the
 engine-placement assertions fail rather than skip, as `EACP_REQUIRE_GPU=1` does
-for the device suites. Whether the macOS CI lane can set it is unverified:
-GitHub's arm64 macOS runners are virtual machines, so `build.yml` gains the
-variable only once `MLAllComputeDevices()` has been read on one.
+for the device suites. The macOS CI lane cannot set it: GitHub's arm64 macOS
+runners are virtual machines, and phase 1's CI run found the `macos-26-arm64`
+runner placing every op on the CPU under every setting, so it has no engine
+and `build.yml` must not set the variable.
 
 ### `Apps/ML`
 
@@ -349,11 +373,12 @@ On a branch of the same name, `EDSL-CoreML`, configured against this tree with
 `develop` carries it. Its `CLAUDE.md` says that override is for exactly this
 case: an eacp change made alongside the WhisperEACP change that needs it.
 
-- `Lib/WhisperEACP/Net/`: the `Net` seam, the kernel backend extracted from
-  `Encoder.cpp` and `Decoder.cpp`, and the Core ML backend over `eacp::ML`.
-  `Encoder::encode` and the decoder's two recording calls become the shared
-  bodies, behind the same classes. `Whisper::prepare` takes a backend choice:
-  kernels, or Core ML for the encoder.
+- `Lib/WhisperEACP/Net/`: the `Net` seam, the kernel backend (`KernelNet`)
+  extracted from `Encoder.cpp` and `Decoder.cpp`, and the Core ML backend over
+  `eacp::ML`. `Encoder::encode` and the decoder's two recording calls become
+  the shared bodies, behind the same classes. `Whisper::prepare` takes a
+  backend choice, kernels or Core ML for the encoder, from phase 3, when there
+  is a second backend to choose.
 - `Tests/Net`: the encoder run both ways over the same mel, compared row by
   row at the tolerance phase 3 measures; the compute plan asserted to have
   placed the encoder on the Neural Engine under `EACP_REQUIRE_ANE=1`.
@@ -470,9 +495,22 @@ run a package through Core ML left out) and `MLTests` 32, all passing with
 and without `EACP_REQUIRE_ANE=1`, and `CoreTests` gained
 `Files/createAndRemoveDirectories`. The ML targets build under
 `EACP_CI_BUILD=ON`, and the module builds for the iOS simulator at a 15.0
-floor (see the deployment target above). The CI lanes are pending: Linux,
-Windows, the iOS job at CI's own floor, and whether the macOS runner has an
-engine at all; `build.yml` is unchanged.
+floor (see the deployment target above). A branch push does not trigger
+`build.yml`, which runs on pushes to main and develop, on pull requests and on
+`workflow_dispatch`, so the one CI run was a manual dispatch. Linux ran 71
+`MLGraphTests` green on all three lanes. Windows ran 71 with one failure, the
+package-layout test reading `model.mlmodel` back through the text-mode
+`Files::readFile`, which folds CR LF there; it now reads the bytes back through
+`MemoryMappedFile`. The iOS job built the module at CI's 14.0 floor with no
+warning, but builds no ML tests or apps, since `Tests` and `Apps` gate them on
+`NOT IOS`. macOS ran 73 and 32 with two tolerance failures, both programs held
+to the bound of the requested setting while every op ran on the CPU; the bound
+now follows the compute plan, the CPU's wherever every op landed there or no
+plan is available, except that under `EACP_REQUIRE_ANE=1` the engine settings
+keep the engine's. That run also answered the question left open: the
+`macos-26-arm64` runner places every op on the CPU under every setting, so it
+has no engine, `build.yml` must not set `EACP_REQUIRE_ANE`, and engine placement
+is asserted only on a developer's Mac; `build.yml` is unchanged.
 
 What the module is, where it differs from the text above, is written back into
 that text. `MLTests` runs nano from `Tests/ML/TestMain.cpp` inside
@@ -547,6 +585,79 @@ stay as public facades that own a kernel `Net`, because the tests and the
 decoder oracle drive `Encoder::encode`, `beginSequence` and `step` directly
 and build their weights from `SafeTensors`. The op list above is where this
 phase starts, and writing both bodies against it is what confirms it.
+
+Status as of 2026-09-24: done on a Mac, uncommitted on WhisperEACP's
+`EDSL-CoreML`, branched from `FP16Work` and configured against this tree with
+`-DCPM_eacp_SOURCE`. WhisperEACP pins eacp's `develop`, and this branch is
+based on `main` and lacks three `develop` commits; it configured all the same,
+built without a warning and passed everything. The seam is
+`Lib/WhisperEACP/Net` (`whisper-net`): `Net.h` and `Net.cpp` are the interface
+above, `KernelNet` the kernel backend. `Encoder::encode` records through
+`recordEncoder`, and the decoder's two recording calls through
+`recordSequenceStart` and `recordDecoderStep`, each written once against `Net`,
+behind the same two facade classes with their public APIs unchanged.
+`Whisper::prepare` takes no backend choice yet: with one backend it would be a
+parameter with one value, so it comes with phase 3. The suite ran 316 of 316
+before and after, the whisper.cpp oracle included.
+
+Bit identity is shown both ways. A one-off tool, kept outside the tree because
+it reaches into eacp's Metal internals, dumped the encoder rows and every
+greedy step's logits for jfk.wav, with packed and with float weights, at the
+full window and at 576 positions: 18 files, all `cmp`-equal before and after.
+The same tool recorded every call the Metal backend makes on the compute
+encoder (pipeline, buffer and offset, uniform bytes, grid, barrier) through a
+stand-in `MTLComputeCommandEncoder`, and the traces before and after are
+identical, so the dispatches are unchanged by construction. The trace caught
+one real bug on the first run after the refactor, a `pass.dispatch` where
+`AttentionApply::dispatch` pads the grid height, fixed before the final runs.
+It also counts them: the encoder is 46 dispatches and 37 barriers,
+`beginSequence` 8 and none, a prompt step 71 and 62, a single step 59 and 50.
+With `Argmax`'s two the steps are the 81 and 61 above, which count whole
+command buffers with the argmax in.
+
+The benchmark, Release, 30 runs, took a transcribe median of 14.23 and
+14.28 ms before and 14.31 and 14.39 after, so it was run again as A B B A
+twice against an untouched pre-refactor tree built from `git archive`: before
+14.12, 14.31, 14.39 and 14.37 ms (mean 14.30), after 14.20, 14.31, 14.20 and
+14.42 (mean 14.28). Encode was 4.97 to 4.99 ms on both and a step 358 to
+369 us on both. That is noise. Windows waits on CI; the `Net` code has no
+platform branch.
+
+A review pass followed. It dropped the default argument on the virtual
+`linear`, since no virtual in eacp or WhisperEACP has one; grouped
+`KernelNet`'s parallel vectors into small structs; fixed `prepare()` not
+clearing the column buffer on a re-prepare; and made the flush-before-allocate
+ordering structural rather than a convention: an op is dispatched before the
+next one takes a scratch slot, which is what makes reusing a slot safe.
+
+Phase 2 findings:
+
+- **A weight has to know its shape.** A `Net` op reads a weight's extents
+  rather than being told them, so `TensorBuffer` gained the shape the
+  safetensors header gives it, and `Weight` is `TensorBuffer`. The graph
+  backend wants the same shape for the blob.
+- **The op list moved in five places.** `rows` and `transpose` are both views
+  on the kernel backend, a byte offset and a stride swap with no dispatch;
+  `add` consumes its stream as
+  `linearAdd` does; `appendLinear` returns the cache it appended to, beside a
+  new `cached` that reads one back and `makeCache` that sizes one; `argmax`
+  left the seam, since `Whisper` dispatches it and the net does not; and
+  `linear` lost its default activation.
+- **A `Tensor` is a ref-counted handle, and liveness places it.** A value
+  takes the lowest-numbered free scratch buffer of exactly its capacity,
+  reserved at prepare, and gives it back when its last copy goes, so a body
+  scopes its intermediates like any other value and a recording allocates
+  nothing. A `Binding` carries the capacity of what it points at, the mel's
+  3000 frames or the token slots' 448, so a value derived from it is sized for
+  the largest run rather than this one.
+- **`output()` costs no copy.** An op is dispatched when the next one is
+  recorded, not when it is called, so `output()` can still point the op that
+  made a value at the caller's buffer: the encoder's last layer norm lands in
+  the encoder rows, and the logits in the caller's logits buffer.
+- **The barriers are derived.** A dispatch that reads a buffer written since
+  the last barrier, or writes one read or written since it, is preceded by
+  one. That reproduces the hand-placed set exactly, the three barrier-free
+  q/k/v projections and `beginSequence`'s none included.
 
 ### Phase 3 - the Core ML encoder
 
@@ -638,12 +749,11 @@ state. Not planned in detail until phase 3 reports.
   context compiled on first use, is a cache-size cost and nothing else.
 - The per-prediction floor is fine for a 30 s window, and with the host round
   trip around it, it is what rules the decoder out until measured.
-- The macOS CI lane may have no Neural Engine to place on. If it has none,
-  placement is asserted only on a developer's Mac, and a change that moves the
-  encoder off the engine is caught by the benchmark rather than by CI. Still
-  open after phase 1: `ML::hasNeuralEngine()` is the question to ask on the
-  runner, and `build.yml` does not set `EACP_REQUIRE_ANE` until it has been
-  asked.
+- The macOS CI lane has no Neural Engine to place on: the `macos-26-arm64`
+  runner placed every op on the CPU under every setting in phase 1's CI run.
+  So placement is asserted only on a developer's Mac, a change that moves the
+  encoder off the engine is caught by the benchmark rather than by CI, and
+  `build.yml` must not set `EACP_REQUIRE_ANE`.
 - Core AI may become the only way to reach new engine features. The seam is
   the insurance: nothing above `Net` knows which Apple framework is under it.
 
@@ -667,3 +777,10 @@ eacp itself:
 - Nothing swept the `<hash>.<pid>-<n>.mlpackage` and `.tmp` directories a
   process that dies mid-compile leaves in the Core ML cache. Closed in this
   phase: a miss sweeps them, and `.trash`, once older than an hour.
+
+Phase 2 surfaced one more:
+
+- `GPU::ComputePass` has no way to observe what it recorded, so the check that
+  phase 2 left the dispatches and barriers unchanged had to fake a Metal
+  compute encoder. A recording or counting hook on the pass would let a
+  portable test pin dispatch and barrier counts on every backend. Still open.
