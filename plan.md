@@ -1331,15 +1331,22 @@ and G11 for eacp itself; G12, which CI surfaced after it, is Apple's:
   cannot guard it at run time. The same tests pass on macOS 27.0 under every
   setting, `cpu` included, and on the runner every fixed-shape prediction
   passes, the 196-op decoder step with its fused cross-attention over
-  [1500, 384] among them. What sets the enumerated program apart is the
-  enumerated input and the positional add spelled through `sliceLike` (G1).
-  Done: `whisperTinyMatchesTheReferenceOnEveryDevice` and
-  `whisperTinyLoadAndPredictionTimes` skip their enumerated predictions
+  [1500, 384] among them. Done: `whisperTinyMatchesTheReferenceOnEveryDevice`
+  and `whisperTinyLoadAndPredictionTimes` skip their enumerated predictions
   before macOS 27 and log why; `TestMain`'s backtrace on a fatal signal and
-  the crash-report artifact in `build.yml` stay. Open: whether a program
-  fixed at 1500 traps on 26 too, which
+  the crash-report artifact in `build.yml` stay. Measured on the next run
+  (PR #64, 2026-09-25, all 2269 tests green on every lane): the encoder fixed
+  at 1500 does not trap. On the same 26.6.2 runner,
   `MLEncoder/whisperTinyFixedAt1500PredictsOnTheCpu`, not gated on the OS,
-  measures on the next run; and what it means for WhisperEACP's
-  `CoreMLEncoder` on a macOS 26 machine whose plan lands on the CPU, which
-  should refuse or fall back rather than trap once the shape of the bug is
-  known.
+  loaded it under `cpu`, predicted, and matched the fp32 reference within the
+  CPU tolerance, in 14.1 s with the compile and the reference; the two gated
+  tests logged their skips and passed on their loads alone. So the trap is
+  the enumerated program's, and what sets it apart is the enumerated input
+  and the positional add through `sliceLike`, `shape` and `slice_by_index`
+  (G1); which of the two it is remains unmeasured. Open: on a macOS 26
+  machine whose plan lands the encoder on the CPU, WhisperEACP's
+  `CoreMLEncoder` traps on the enumerated model with nothing to catch it,
+  while one program fixed per context, the fallback under "Risks" at about a
+  second to compile at each context's first use, runs there. The encoder
+  should take that fallback, or refuse the backend, before macOS 27 when the
+  plan reports the CPU; neither is built.
