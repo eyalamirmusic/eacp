@@ -822,7 +822,18 @@ Prediction runPrediction(Loaded& loaded, const Inputs& inputs, const Outputs& bo
         auto boundArray = *array;
 
         if (value != nil && value != nativeArray(boundArray))
+        {
+            auto returnedShape = toShape(value.shape);
+
+            if (returnedShape.count() != boundArray.shape().count())
+                return {Result::failure("Core ML returned " + output.name + " as "
+                                        + returnedShape.toString()
+                                        + ", not the bound "
+                                        + boundArray.shape().toString()),
+                        {}};
+
             boundArray.copyFrom(adoptOutput(value));
+        }
 
         prediction.outputs[output.name] = boundArray;
     }

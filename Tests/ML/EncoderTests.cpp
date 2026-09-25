@@ -99,7 +99,33 @@ struct Encoded
     double milliseconds = 0.0;
 };
 
-Encoded encode(Model& model, const Member& member)
+int memberCount(const Model& model)
+{
+    auto inputs = model.inputs();
+    return inputs.empty() ? 0 : std::max(1, inputs[0].enumeratedShapes.size());
+}
+
+std::string describe(const MultiArray& array)
+{
+    return array.shape().toString() + ", " + std::to_string(array.byteCount())
+           + " bytes, row stride " + std::to_string(array.rowStride())
+           + (array.isSurfaceBacked() ? ", surface" : ", plain");
+}
+
+bool hasRowsShape(const MultiArray& rows, int context)
+{
+    auto expected = Shape {context, width};
+    auto matches = rows.isValid() && rows.shape() == expected
+                   && rows.elementCount() == expected.count()
+                   && rows.rowStride() >= (size_t) width * sizeof(std::uint16_t);
+
+    check(matches,
+          "encoder rows at " + std::to_string(context) + ": expected "
+              + expected.toString() + ", got " + describe(rows));
+    return matches;
+}
+
+Encoded encode(Model& model, const Member& member, const std::string& traceAs = {})
 {
     auto inputs = Inputs {};
     inputs["mel"] = arrayOf(member.mel, melShape(member.context), DType::float16);
@@ -107,12 +133,39 @@ Encoded encode(Model& model, const Member& member)
     auto outputs = Outputs {};
     outputs["rows"] = MultiArray::create({member.context, width}, DType::float16);
 
+    if (!traceAs.empty())
+        LOG("predicting ",
+            traceAs,
+            " at ",
+            member.context,
+            ", ",
+            memberCount(model),
+            " members, mel ",
+            describe(inputs["mel"]));
+
     auto start = Clock::now();
     auto result = model.predict(inputs, outputs);
     auto elapsed = millisecondsSince(start);
+    auto& rows = outputs["rows"];
+
+    if (!traceAs.empty())
+        LOG("predicted ",
+            traceAs,
+            " at ",
+            member.context,
+            " in ",
+            elapsed,
+            " ms, ok ",
+            result.ok,
+            ", rows ",
+            describe(rows));
+
     check(result.ok, result.error);
 
-    return {outputs["rows"].toFloats(), elapsed};
+    if (!result.ok || !hasRowsShape(rows, member.context))
+        return {{}, elapsed};
+
+    return {rows.toFloats(), elapsed};
 }
 
 double timedLoad(Model& model,
@@ -253,7 +306,7 @@ void logLoad(const std::string& what, double milliseconds, const Model& model)
 void logTimes(const std::string& what, Model& model, int context)
 {
     auto& member = memberAt(context);
-    auto first = encode(model, member).milliseconds;
+    auto first = encode(model, member, what).milliseconds;
     auto typical = medianPrediction(model, member, 9);
 
     LOG(what,
@@ -290,7 +343,7 @@ auto tEncoderMatchesReference =
 
         for (const auto& member: checkedMembers())
         {
-            auto encoded = encode(model, member);
+            auto encoded = encode(model, member, "encoder [" + units + "]");
             auto errors = compare(encoded.rows, member.expected);
 
             LOG("encoder at ",
