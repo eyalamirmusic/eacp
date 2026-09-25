@@ -93,6 +93,18 @@ bool isSupportedEncoder()
     return supportsSpecification(9);
 }
 
+bool canPredictEnumerated(const std::string& what)
+{
+    if (isIOS() || osVersion().atLeast(27, 0))
+        return true;
+
+    LOG("skipped: ",
+        what,
+        " predictions, since BNNS traps on macOS 26's CPU path"
+        " (the run of 2026-09-25)");
+    return false;
+}
+
 struct Encoded
 {
     Vector<float> rows;
@@ -323,7 +335,7 @@ void logTimes(const std::string& what, Model& model, int context)
 auto tEncoderMatchesReference =
     test("MLEncoder/whisperTinyMatchesTheReferenceOnEveryDevice") = []
 {
-    if (!isSupportedEncoder())
+    if (!isSupportedEncoder() || !canPredictEnumerated("enumerated encoder"))
         return;
 
     auto& package = enumeratedPackage();
@@ -382,6 +394,9 @@ auto tEncoderTimes = test("MLEncoder/whisperTinyLoadAndPredictionTimes") = []
         logLoad(what + " warm", timedLoad(warm, package, units, cache), warm);
         check(warm.wasCacheHit());
     }
+
+    if (!canPredictEnumerated("enumerated encoder timed"))
+        return;
 
     for (auto units: {ComputeUnits::cpuAndNeuralEngine,
                       ComputeUnits::all,
@@ -456,4 +471,28 @@ auto tEncoderMembersPlaced = test("MLEncoder/eachContextFixedIsPlacedOnItsOwn") 
                 LOG(what, " placed: ", placementSummary(model.computePlan()));
         }
     }
+};
+
+auto tEncoderFixedOnTheCpu =
+    test("MLEncoder/whisperTinyFixedAt1500PredictsOnTheCpu") = []
+{
+    if (!isSupportedEncoder())
+        return;
+
+    auto package = WhisperEncoder::fixedEncoderGraph(1500).build();
+    auto model = Model {};
+    auto what = std::string {"encoder fixed at 1500 [cpu]"};
+    auto loadTime = timedLoad(model, package, ComputeUnits::cpu, encoderCache());
+    logLoad(what, loadTime, model);
+
+    if (!model.isLoaded())
+        return;
+
+    auto& member = memberAt(1500);
+    auto errors = compare(encode(model, member, what).rows, member.expected);
+    LOG(what, ": maxAbs ", errors.maxAbs, " maxRel ", errors.maxRel);
+
+    check(errors.maxAbs <= cpuTolerance,
+          what + ": max abs error " + std::to_string(errors.maxAbs) + " exceeds "
+              + std::to_string(cpuTolerance));
 };

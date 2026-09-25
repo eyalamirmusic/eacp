@@ -1191,7 +1191,8 @@ Phase 4 findings:
   runner placed every op on the CPU under every setting in phase 1's CI run.
   So placement is asserted only on a developer's Mac, a change that moves the
   encoder off the engine is caught by the benchmark rather than by CI, and
-  `build.yml` must not set `EACP_REQUIRE_ANE`.
+  `build.yml` must not set `EACP_REQUIRE_ANE`. The lane's CPU path on macOS
+  26 traps on the enumerated encoder (G12).
 - Core AI may become the only way to reach new engine features. The seam is
   the insurance: nothing above `Net` knows which Apple framework is under it.
 
@@ -1275,7 +1276,7 @@ WhisperEACP's side of phase 3 surfaced two more:
   leave out.
 
 Phase 4's measurement surfaced these, G8 to G10 for a phase 4 that goes ahead
-and G11 for eacp itself:
+and G11 for eacp itself; G12, which CI surfaced after it, is Apple's:
 
 - G8: `Graph` has no argmax, so a step's output is the whole logits row,
   51864 fp16 values in a padded 103744-byte row, read back and reduced on the
@@ -1321,3 +1322,24 @@ and G11 for eacp itself:
   than beside the other `waitFor` tests in `CoreTests` because `CoreTests`
   runs on nano's default main, outside `[NSApp run]`, where the wait was never
   late.
+- G12: on GitHub's macOS runner (macOS 26.6.2, build 25G83, an arm64 VM with
+  no Neural Engine, so Core ML places everything on the CPU), the first
+  prediction of the enumerated tiny.en encoder under `cpu`, at 1500, dies of a
+  SIGTRAP in libBNNS, a `brk` under `BNNSGraphContextExecute_v2`, reached from
+  Espresso's `BnnsCpuInferenceOperation` and `MLE5Engine
+  predictionFromFeatures:`. It is fatal and cannot be caught, so the library
+  cannot guard it at run time. The same tests pass on macOS 27.0 under every
+  setting, `cpu` included, and on the runner every fixed-shape prediction
+  passes, the 196-op decoder step with its fused cross-attention over
+  [1500, 384] among them. What sets the enumerated program apart is the
+  enumerated input and the positional add spelled through `sliceLike` (G1).
+  Done: `whisperTinyMatchesTheReferenceOnEveryDevice` and
+  `whisperTinyLoadAndPredictionTimes` skip their enumerated predictions
+  before macOS 27 and log why; `TestMain`'s backtrace on a fatal signal and
+  the crash-report artifact in `build.yml` stay. Open: whether a program
+  fixed at 1500 traps on 26 too, which
+  `MLEncoder/whisperTinyFixedAt1500PredictsOnTheCpu`, not gated on the OS,
+  measures on the next run; and what it means for WhisperEACP's
+  `CoreMLEncoder` on a macOS 26 machine whose plan lands on the CPU, which
+  should refuse or fall back rather than trap once the shape of the bug is
+  known.
