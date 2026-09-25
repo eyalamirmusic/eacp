@@ -1030,6 +1030,14 @@ under every setting against an fp32 scalar reference of the same step
 ms a step), reads the first one's plan, and times them. `MLGraphTests` runs
 83 tests and `MLTests` 44, all passing with and without `EACP_REQUIRE_ANE=1`.
 
+Decision, 2026-09-25: phase 4 is not built. The criterion is the plan's own,
+and the table below answers it: no setting fits a decode step in the Metal
+step's time before its hop and its copies, and the resident-cache bound says
+state would not change that. G8 to G10 stay open as what a phase 4 would need,
+should a machine or an OS move the numbers; `Tests/ML/DecoderStepTests.cpp` is
+the measurement to rerun then. G11, which the measurement surfaced, was an eacp
+bug in its own right and is closed under the gaps.
+
 Release, on the phase 1 machine (M5 Max, macOS 27.0), the blocking
 `predict()` with every output bound, median and minimum of 25 predictions
 after five warm-up ones, the range over seven runs of the suite (five for the
@@ -1093,7 +1101,12 @@ Phase 4 findings:
   it overstates a decoder that keeps them busy. `Async::waitFor` returned
   16.66 ms after every call, whatever the setting, where the continuation had
   run 1-6 ms in: the nested pump on macOS exits a frame after the resolve,
-  not on it (G11).
+  not on it (G11). With G11 fixed the hop was remeasured, in a Debug build,
+  on an idler machine: `predictAsync()` to its resolve took a median of 0.70
+  ms against the blocking prediction's 0.66 ms on the CPU, 1.19 against 1.18
+  ms under CPU and GPU, 0.81 against 0.79 ms under CPU and engine and 1.15
+  against 1.23 ms under `all`, so the hop is now within the noise of the
+  prediction, and `waitFor` returned 5-15 us after the resolve.
 - **The error is of the seeded encoder's order.** The engine's max abs on
   the logits is 2.8e-2 against the seeded encoder's 2.2e-2, the GPU's
   8.5e-3 against 6.4e-3 and the CPU's 7.9e-2 against 4.9e-2. Whether it moves
@@ -1261,7 +1274,8 @@ WhisperEACP's side of phase 3 surfaced two more:
   its caller is on the thread that runs it and can time it with no hop to
   leave out.
 
-Phase 4's measurement surfaced these, for a phase 4 that goes ahead:
+Phase 4's measurement surfaced these, G8 to G10 for a phase 4 that goes ahead
+and G11 for eacp itself:
 
 - G8: `Graph` has no argmax, so a step's output is the whole logits row,
   51864 fp16 values in a padded 103744-byte row, read back and reduced on the
@@ -1285,6 +1299,25 @@ Phase 4's measurement surfaced these, for a phase 4 that goes ahead:
   continuation the test chained had run 1-6 ms in. `EventLoop::runFor` waits
   in `nextEventMatchingMask:untilDate:` and `EventLoop::quit` sets its flag
   and posts a wake event, yet the nested pump exits a frame after the resolve
-  rather than on it; the cause is not traced. A caller that waits on each of
-  a run of short Asyncs, as a decoder driven through `predictAsync` and
-  `waitFor` would, pays a frame per wait. Still open.
+  rather than on it. A caller that waits on each of a run of short Asyncs, as
+  a decoder driven through `predictAsync` and `waitFor` would, pays a frame
+  per wait. Closed after the phase 4 measurement. The cause: once
+  `[NSApp run]` is live, `nextEventMatchingMask:untilDate:` does not hand back
+  an event posted with `postEvent:atStart:` until the next display refresh,
+  so the nested pump woke a frame late, 16.66 ms on that day's display and
+  8.33 ms when remeasured at 120 Hz; the resolve itself, delivered through the
+  same wait, was late too, its median 1.0-3.6 ms against 0.70-1.19 ms after
+  the fix. The fix: `EventLoop::runFor` on macOS now drains the pending events
+  with a `distantPast` date, checks the quit flag and the deadline, and blocks
+  in `CFRunLoopRunInMode`, which the wake event `quit()` posts returns from;
+  `quit()` is unchanged, and iOS, whose `runFor` never waited in
+  `nextEventMatchingMask`, needed nothing. `waitFor` now returns 5-15 us after
+  the resolve, and the step suite's median to `waitFor`'s return went from
+  8.33 ms at every setting to 0.71 ms on the CPU, 1.20 ms under CPU and GPU,
+  0.81 ms under CPU and engine and 1.16 ms under `all`.
+  `EventLoop/waitFor/returnsOnResolveNotAFrameLater` in `GraphicsTests`
+  resolves from a worker ten times and requires `waitFor` back within 2 ms of
+  the resolve; it failed at 4.1-4.6 ms before the fix. It lives there rather
+  than beside the other `waitFor` tests in `CoreTests` because `CoreTests`
+  runs on nano's default main, outside `[NSApp run]`, where the wait was never
+  late.

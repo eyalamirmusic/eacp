@@ -21,6 +21,7 @@ set(graphics_test_sources
         ColorTests.cpp
         CursorTests.cpp
         DisplayTests.cpp
+        EventLoopTests.cpp
         ImageOpsTests.cpp
         KeyCodeTests.cpp
         MenuCommandsTests.cpp

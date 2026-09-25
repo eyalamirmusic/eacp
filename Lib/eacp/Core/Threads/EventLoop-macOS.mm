@@ -147,6 +147,24 @@ NSEvent* makeWakeEvent()
                                  data1:0
                                  data2:0];
 }
+
+// Waiting inside nextEventMatchingMask:untilDate: under a live [NSApp run]
+// returns a posted event only on the next display-refresh wake, a frame
+// late; runFor blocks in CFRunLoopRunInMode instead and only drains here.
+void dispatchPendingEvents()
+{
+    while (! s_quitRequested)
+    {
+        auto* event = [getApp() nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:[NSDate distantPast]
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES];
+        if (! event)
+            return;
+
+        [getApp() sendEvent:event];
+    }
+}
 } // namespace
 
 void EventLoop::run()
@@ -169,15 +187,13 @@ bool EventLoop::runFor(Time::MS timeout)
             return false;
         }
 
-        auto remainingSecs = (double) deadline.remaining().count / 1000.0;
-        auto* date = [NSDate dateWithTimeIntervalSinceNow:remainingSecs];
+        dispatchPendingEvents();
 
-        auto* event = [getApp() nextEventMatchingMask:NSEventMaskAny
-                                            untilDate:date
-                                               inMode:NSDefaultRunLoopMode
-                                              dequeue:YES];
-        if (event)
-            [getApp() sendEvent:event];
+        if (s_quitRequested || deadline.expired())
+            continue;
+
+        auto remainingSecs = (double) deadline.remaining().count / 1000.0;
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, remainingSecs, true);
     }
 
     s_quitRequested = false;
