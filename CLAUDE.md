@@ -31,11 +31,17 @@ set of modules and a new port reaches them one at a time. The next three hang of
 `EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
 are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-`Core`, `Network` and `SIMD` build everywhere, Linux included, and so do three
+`Core`, `Network` and `SIMD` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
-and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`), `eacp-webview-bridge`, the
-page bridge over a `ScriptHost` (`ScriptHostTests`), and `eacp-ml-graph`, the
-graph builder and the MIL/protobuf/blob writers (`MLGraphTests`). `eacp-spirv` (`GPU/Spirv/`)
+and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
+interpreter that runs the same compute kernels on the CPU with no device
+(`CpuComputeTests`, `CpuComputeBench`), which `GPUCodegenTests` and `GPUTests`
+also link so their compute cases carry a CPU half that never self-skips —
+every lane, the driverless Linux ones included, checks a kernel's numbers, and
+one with a device cross-checks the emitted kernel against the interpreter;
+`eacp-webview-bridge`, the page bridge over a `ScriptHost` (`ScriptHostTests`);
+and `eacp-ml-graph`, the graph builder and the MIL/protobuf/blob writers
+(`MLGraphTests`). `eacp-spirv` (`GPU/Spirv/`)
 wraps glslang as a GLSL-to-SPIR-V compiler (`SpirvTests`); it is built on
 Linux only by default (`EACP_BUILD_SPIRV`), because only the Vulkan backend
 ships it, and macOS and Windows can opt in. Where it is built, every GLSL
@@ -707,6 +713,22 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`
   and `Files::writeFile`, so UTF-8 paths take the same route as everything
   else. `Apps/Console/Zip` is the worked example.
+
+### CPU compute (`Lib/eacp/GPU/CpuCompute`)
+
+`eacp-cpu-compute` (namespace `eacp::GPU::CpuCompute`, force-optimised in
+every configuration) interprets the `ShaderGraph` a compute kernel records, on
+the calling thread over plain arrays, linking `eacp-gpu-codegen` alone. It rests
+on `ComputeKernel` (`Codegen/ComputeKernel.h`), the device-free half that
+`ComputeProgram` derives from, so every existing kernel runs unchanged and a
+CPU-only one derives from `ComputeKernel`. `Bindings` is a fixed table of
+`ComputePass::maxBufferSlots` spans set through the kernel's own members;
+`Executor` is a `Plan` plus a `Workspace`, allocated and validated at
+construction (`isValid()`/`reason()`), with `ComputePass`'s dispatch forms and
+`prepareDispatch`/`dispatchGroups` for the caller's threads. No dispatch
+allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
+and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
+CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
 ### Key Design Patterns
 

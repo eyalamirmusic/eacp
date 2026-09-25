@@ -26,7 +26,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
   handed it.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
-  struct rather than a string literal per backend. See
+  struct rather than a string literal per backend. The same compute kernel also
+  runs on the CPU, on the calling thread and without allocating, where no
+  device came up or an audio callback needs it now. See
   [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md).
 - **Widgets & menus** — native text inputs, menus, and embedded views.
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
@@ -80,6 +82,7 @@ one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
 | `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
+| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ |
 | `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
 | `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † |
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
@@ -183,16 +186,20 @@ a new port reaches them one at a time; the next three hang off
 caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
 one on `eacp-ml` in the same way.
 
-Three pieces of the gated modules are portable and so sit outside all seven:
+Four pieces of the gated modules are portable and so sit outside all seven:
 they are built and tested on every platform, Linux included, because none
 touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
-`GPUCodegenTests`. And `eacp-webview-bridge` is the page bridge over a
+`GPUCodegenTests`. `eacp-cpu-compute` runs the kernels that EDSL records on the
+CPU, checked by `CpuComputeTests` and timed by `CpuComputeBench`; it is also
+what gives `GPUCodegenTests` and `GPUTests` a numeric half that runs with no
+device, so the Linux lanes without a driver check what a kernel computes, not
+only that its GLSL compiles. `eacp-webview-bridge` is the page bridge over a
 `ScriptHost` rather than over a web view, checked by `ScriptHostTests`. And
 `eacp-ml-graph` is the graph builder and the MIL, protobuf and blob writers —
 bytes in and bytes out, with no Core ML under it — checked by `MLGraphTests`.
 
-A fourth, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
+A fifth, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
 (`SpirvTests`) and is built on Linux only by default: the Vulkan backend is the
 one that ships it, and the two Linux lanes without a Vulkan device build it
 too, so the GLSL dialect is compiled for real there before any device is
