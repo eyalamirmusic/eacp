@@ -1,6 +1,7 @@
 #include "ModuleInfo.h"
 
 #include <dlfcn.h>
+#include <filesystem>
 
 namespace eacp::Plugins
 {
@@ -8,11 +9,14 @@ FilePath getCurrentModulePath()
 {
     auto info = Dl_info {};
 
-    if (dladdr((const void*) &getCurrentModulePath, &info) != 0
-        && info.dli_fname != nullptr)
-        return FilePath {info.dli_fname};
+    if (dladdr((const void*) &getCurrentModulePath, &info) == 0
+        || info.dli_fname == nullptr)
+        return {};
 
-    return {};
+    auto ec = std::error_code();
+    auto canonical = std::filesystem::weakly_canonical(info.dli_fname, ec);
+
+    return FilePath {ec ? std::filesystem::path {info.dli_fname} : canonical};
 }
 
 std::string getModuleIdentitySuffix()

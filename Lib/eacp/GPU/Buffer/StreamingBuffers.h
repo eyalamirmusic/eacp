@@ -79,7 +79,7 @@ public:
     // A write of zero bytes takes no room and comes back as an empty range at
     // the arena's current position, so a caller that binds whatever it wrote
     // still binds something real.
-    BufferRange write(const void* data, int bytes);
+    BufferRange write(const void* data, std::int64_t bytes);
 
     // How many GPU buffers exist across every pool. framesInFlight once each
     // pool is warm, and more only during a frame that outgrew its arena - the
@@ -95,7 +95,7 @@ public:
 
     // The bytes those buffers reserve, across every pool. Grows to the largest
     // frame any pool has seen and stays there.
-    int bytesReserved() const;
+    std::int64_t bytesReserved() const;
 
     // Matches the deepest pipeline either backend runs: Metal's default
     // drawable pool is three, DXGI's present queue is two. GPUView can be set
@@ -131,13 +131,13 @@ private:
     {
         OwnedVector<Buffer> arenas;
         std::uint64_t frame = 0;
-        int used = 0;
-        int streamed = 0;
-        int highWater = 0;
+        std::int64_t used = 0;
+        std::int64_t streamed = 0;
+        std::int64_t highWater = 0;
     };
 
     void beginFrame(Pool& pool, std::uint64_t frame);
-    Buffer& arenaFor(Pool& pool, int bytes);
+    Buffer& arenaFor(Pool& pool, std::int64_t bytes);
 
     BufferUsage usage;
     Pool pools[framesInFlight];

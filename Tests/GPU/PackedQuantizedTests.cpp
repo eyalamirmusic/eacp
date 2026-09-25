@@ -458,6 +458,93 @@ struct WriteUInt8x4Kernel final : ComputeProgram
     EACP_SHADER(weights, output)
 };
 
+// The wide round trips: eight and sixteen bytes read as one record and written
+// back as one store, at the index each read counts in. The values go back as
+// integer vectors rather than as the Float4Pair and Float4Quad they arrived in,
+// because the rounding back down is the caller's decision on exactly the terms
+// writeInt8x4 sets.
+struct WriteInt8x8Kernel final : ComputeProgram
+{
+    WriteInt8x8Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto values = weights.readInt8x8(i);
+
+        writeInt8x8(output, i, toInt(values.low), toInt(values.high));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
+struct WriteUInt8x8Kernel final : ComputeProgram
+{
+    WriteUInt8x8Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto values = weights.readUInt8x8(i);
+
+        writeUInt8x8(output, i, toUInt(values.low), toUInt(values.high));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
+struct WriteInt8x16Kernel final : ComputeProgram
+{
+    WriteInt8x16Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto values = weights.readInt8x16(i);
+
+        writeInt8x16(output,
+                     i,
+                     toInt(values.a),
+                     toInt(values.b),
+                     toInt(values.c),
+                     toInt(values.d));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
+struct WriteUInt8x16Kernel final : ComputeProgram
+{
+    WriteUInt8x16Kernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto values = weights.readUInt8x16(i);
+
+        writeUInt8x16(output,
+                      i,
+                      toUInt(values.a),
+                      toUInt(values.b),
+                      toUInt(values.c),
+                      toUInt(values.d));
+    }
+
+    Uniform<InputBuffer> weights;
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(weights, output)
+};
+
 // The same eight and sixteen bytes as plain floats, which is what the wide
 // reads have to cost: one record read of that width, whatever the backend
 // spells that as.
@@ -524,14 +611,16 @@ void runKernel(Device& device, ComputeProgram& kernel, int threads)
 
 Vector<float> floatsOf(const Buffer& buffer)
 {
-    auto values = Vector<float>(buffer.size() / (int) sizeof(float));
+    auto values =
+        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
     buffer.read(values.data(), buffer.size());
     return values;
 }
 
 Vector<std::uint32_t> wordsOf(const Buffer& buffer)
 {
-    auto words = Vector<std::uint32_t>(buffer.size() / (int) sizeof(std::uint32_t));
+    auto words = Vector<std::uint32_t>(
+        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
     buffer.read(words.data(), buffer.size());
     return words;
 }
@@ -1127,6 +1216,57 @@ auto tWriteIsTheStore = test("PackedQuantized/writeInt8x4IsThePackedStore") = []
 
     for (auto i = 0; i < count; ++i)
         check(result[i] == words[i]);
+};
+
+// The wide stores, each against the read it mirrors: a run of bytes read as one
+// record and written back as one store has to leave the buffer holding the
+// bytes it started with, to the bit. The unsigned twin runs beside each,
+// because the widening they undo is the half of this that differs.
+auto tWideByteStores = test("PackedQuantized/theWideStoresAreTheWideReads") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto patterns = everyBytePattern();
+    auto words = wordsOfBytes(patterns);
+
+    // Sixteen bytes is four words, so the widest store here addresses records
+    // of four and a partial one at the end would be a record nothing writes.
+    while (words.size() % 4 != 0)
+        words.add(0u);
+
+    auto count = words.size();
+    auto input = storageOf(device, words);
+
+    auto checkRoundTrip =
+        [&](ComputeProgram& kernel, auto& weights, auto& out, int wordsPerRecord)
+    {
+        auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+
+        weights = input;
+        out = output;
+        kernel.prepare(device);
+
+        runKernel(device, kernel, count / wordsPerRecord);
+        auto result = wordsOf(output);
+
+        for (auto i = 0; i < count; ++i)
+            check(result[i] == words[i]);
+    };
+
+    auto signedPair = WriteInt8x8Kernel {};
+    checkRoundTrip(signedPair, signedPair.weights, signedPair.output, 2);
+
+    auto unsignedPair = WriteUInt8x8Kernel {};
+    checkRoundTrip(unsignedPair, unsignedPair.weights, unsignedPair.output, 2);
+
+    auto signedQuad = WriteInt8x16Kernel {};
+    checkRoundTrip(signedQuad, signedQuad.weights, signedQuad.output, 4);
+
+    auto unsignedQuad = WriteUInt8x16Kernel {};
+    checkRoundTrip(unsignedQuad, unsignedQuad.weights, unsignedQuad.output, 4);
 };
 
 // A buffer packed by the host helpers, read back by the shader: the two sides

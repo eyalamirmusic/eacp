@@ -7,6 +7,18 @@ Everything here is main-thread only, like the rest of eacp, and every public
 type hides its backend behind a `Pimpl`, so nothing Metal or D3D leaks into a
 header an app includes.
 
+More precisely: everything belongs to the thread that made the `Device` it came
+from, and `Device::shared()` belongs to the main thread whichever thread asked
+for it first — every `GPUView` and every `Frame` drives that one from there. A
+worker that wants the GPU without queueing behind the main thread makes a
+`Device` of its own (`auto worker = GPU::Device();`) and keeps the whole chain —
+buffers, pipelines, command buffers — on that thread; reaching `Device::shared()`
+from there to compile a kernel is allowed and does not move its ownership.
+`Device::assertOwningThread()` is the rule as a debug assertion, and creating a
+buffer, reading or updating one, beginning a frame, and submitting, waiting on
+or reading back a command buffer all call it. It is one thread-id compare behind
+an `assert`, so a release build pays for nothing but the call.
+
 ## The pieces
 
 | | |
@@ -791,6 +803,110 @@ device's alignment like a kernel's slot — the latter being what a
 `Uniform<InputBuffer>` on a `ShaderProgram` binds through. A draw handed an
 unbindable index range draws nothing.
 
+### Byte counts are 64-bit
+
+Every byte count and offset on the buffer API is a `std::int64_t` —
+`Buffer::size()`, the constructor's count, `read` and `update`, `BufferRange`'s
+`offset` and `bytes`, `Device::makeBuffer`, `CommandBuffer::read`,
+`ComputePass::setBytes` and the indirect-dispatch offset. A single buffer is
+routinely past what an `int` holds: a language model's weight shard is
+gigabytes, and a batch of logits reaches two of them at a few thousand rows, at
+which point an `int` count wrapped silently and allocated something small and
+negative instead of failing.
+
+Signed rather than `std::size_t`, so a negative offset arriving from a caller's
+own arithmetic stays negative and the guards that reject it keep working, and so
+that mixing a count with the `int` element counts the rest of the API uses needs
+no cast in either direction. Shader-side indexing is untouched and stays 32-bit:
+what is wide is the host's description of the allocation, not the index a thread
+computes.
+
+Most call sites need no change — a `sizeof` or an `int` widens on its own. What
+does need one is a count read back *out*: `int bytes = buffer.size();` narrows
+where `auto` does not.
+
+### A buffer over memory you already have
+
+`Device::makeBufferOverMemory` takes an `ExternalMemory` — a pointer, a length
+and a callback — and makes a buffer over those bytes rather than a copy of them:
+
+```cpp
+auto mapped = std::make_shared<MemoryMappedFile>(FilePath {weightsFile});
+
+auto weights = device.makeBufferOverMemory(
+    {const_cast<std::uint8_t*>(mapped->bytes().data()),
+     (std::int64_t) mapped->size(),
+     [mapped] {}},                       // holds the mapping open
+    BufferUsage::Storage);
+
+kernel.layer = BufferRange {&weights, tensor.offset, tensor.bytes};
+```
+
+That is what it is for: one mapping of a large file becomes one buffer, every
+tensor in it a `BufferRange`, and the pages arrive from the page cache as the
+GPU first touches them. The address must sit on `Buffer::memoryPageSize()`,
+which a mapping of a whole file already does; the length may be anything, and
+`size()` reports the count given rather than the page it is rounded up to
+underneath. `Buffer::isPageAligned` answers the contract before the call, and a
+descriptor that fails it makes an invalid `Buffer` rather than a quietly copied
+one on every backend — so a call site written on one is one the others take.
+
+`Buffer::canAdoptMemory(device)` says which of the two actually happened. True
+on Metal, where a shared-storage `MTLBuffer` is built straight over the host
+pages, so the caller and the GPU look at the same bytes in both directions and
+nothing is copied; the callback then runs when the buffer is destroyed. False on
+D3D12 and Vulkan, whose device heaps are not host memory: the same call copies,
+and the callback runs as soon as the copy has been taken. Worth asking before
+mapping a file the size of a model, since where it is false the bytes are paid
+for twice.
+
+### Writing a buffer the GPU may be reading
+
+`Buffer::update` is ordered after everything submitted to the device before the
+call, the same way `read` is: a kernel still writing those bytes has finished
+before the host's arrive, and the host's are the ones that stay. The wait is
+paid only where the write is a bare memcpy into memory the GPU can see — on
+Metal, whose buffers are all shared storage, and on a host-mapped
+`BufferStorage::Streaming` buffer anywhere. A device-storage write on D3D12 and
+Vulkan is a copy recorded into the command stream, which the stream itself
+orders, and waits for nothing.
+
+**That wait is new**, and it is a cost every existing caller now pays: an update
+that used to be a bare memcpy on Metal is a memcpy behind a wait for the newest
+submission. Code that was already right by construction gets its old cost back
+by asking for the unordered call by name — which is what `StreamingBuffers`,
+`GPUWidgets`' coverage batch and the `Apps/GPU` samples in this tree were
+changed to do.
+
+`Buffer::updateUnordered` is that write with the wait given up, the caller
+saying instead that no work the GPU still has in hand touches those bytes. There
+are two ways to be able to say it. One is the frame loop: a renderer rewriting
+its geometry every tick cannot stop in the middle of a frame to wait for the
+newest submission — that is the CPU and the GPU taking turns rather than
+overlapping — so it buys the ordering another way. `StreamingBuffers` is that
+other way, and never hands out bytes from an arena a frame still in flight was
+drawn from, which is why its own writes go through the unordered call. The other
+is a caller that has ordered by hand and knows more than a `Buffer` can: it
+waited on the command buffer that wrote those bytes, or read them back, or is a
+step-by-step loop where the writer finished long ago and only a later, unrelated
+submission is still running.
+
+`CommandBuffer::update` is that second case with the wait built in and scoped to
+one command buffer — `Buffer::update`'s sibling exactly as `CommandBuffer::read`
+is `Buffer::read`'s. It waits for *this* command buffer and then writes, so a
+loop keeping two in flight can overwrite step k's buffer without draining step
+k+1:
+
+```cpp
+commands.submit();                             // step k
+trailing.submit();                             // step k+1, still running
+
+commands.update(state, patch.data(), bytes);   // waits for step k alone
+```
+
+Where the writer is known, that is the better call than either of the two on
+`Buffer`.
+
 ### Buffers of integers
 
 `Uniform<UIntInputBuffer>` and `Uniform<UIntOutputBuffer>` are the pair above
@@ -991,10 +1107,26 @@ auto particle = state.read4(index);           // position.xy, velocity.xy
 write(next, index, float4(newPosition, newVelocity));
 ```
 
-Underneath, the buffer is still a run of floats and the *store* is still N
-scalar accesses over it, deliberately: a retyped `float4` binding would buy one
-wide store and cost the CPU-side element size that makes those same bytes
-bindable as a per-instance vertex stream.
+Underneath, the `write` overloads are N scalar accesses over a buffer that is
+still a run of floats. `write2`/`write3`/`write4` lay the same bytes down as
+**one** store, at the same record index:
+
+```cpp
+write4(next, index, float4(newPosition, newVelocity));   // one store on Metal
+```
+
+The two coexist because the wide store is not the trade it was once taken for.
+It does not retype the binding — it reinterprets the *address being written*,
+which is the same pointer cast `read4` makes at the address being read — so an
+output written wide is still a run of floats, still bindable as a per-instance
+vertex stream with no CPU-side element size to agree on. The alignment contract
+is `read4`'s too: the pointer is a `packed_float4`, wanting four-byte alignment
+and not sixteen, so any offset `Device::storageBufferOffsetAlignment()` lets a
+`BufferRange` start at is one a wide store can write to. On HLSL and GLSL, which
+have nothing to reinterpret, `write4` prints the four subscripts `write` already
+prints — over a value named once first, so the whole record is evaluated before
+any part of it reaches memory and `write4(out, i, f(out.read4(i)))` means what it
+says.
 
 The *read* of a read-only buffer is one load where the dialect has a spelling
 for one. On Metal `input.read4(i)` is the sixteen bytes fetched through a
@@ -1063,6 +1195,39 @@ worth stating because it was not always true — stores used to be collected and
 emitted after the body, so a guarded write ran unconditionally and a looped one
 ran once afterwards on the counter's final value. Both compiled and neither
 complained; `Tests/GPU/StorePlacementTests.cpp` is what now says otherwise.
+
+### What the graph shares, and what it will not move
+
+Two calls that build the same value get the same node, so the emitter prints it
+once and names it. Three kinds take that: **constants**, **pure binaries** — the
+write's `gid * 4u` and the read's are one node — and **reads of read-only
+buffers**. That last one is what makes two `readHalf(scale, i)` calls at one
+index a single load rather than two, however far apart in a kernel they were
+written, and it is what a hand-unrolled inner loop that fetches the same scale
+per lane depends on.
+
+An **output's** reads are never shared, and that is not an omission. An output
+may hold what this very thread stored a statement ago — the whole point of
+`output[i]` — so two reads of one element with a store between them are two
+different values and stay two loads. The slot's declared access is what decides:
+an `InputBuffer` cannot be stored to by anything the EDSL can express, so what
+its elements hold is fixed for the dispatch.
+
+Which is why **one `GPU::Buffer` must not be bound to an input slot and an
+output slot of the same kernel** — a rule `InputBuffer` already states, and one
+this sharing now has teeth behind: the emitter orders a read against the stores
+to *its slot*, so two reads of an input either side of a store through an output
+slot that happens to name the same buffer are merged into one load above that
+store. A kernel that computes in place declares one `OutputBuffer` and reads it.
+
+Sharing a node is **not** licence to move it. A node's name is handed out where
+the statement being emitted evaluates it anyway, so a read used only inside a
+`loop` body or an `ifThen` is named inside that body and issued there — a
+loop-invariant read written inside a loop stays inside it, and a read written
+under a guard stays under the guard. And a read subscripted by a mutable local
+is not shared at all: the index is a `var()` read, which makes the read impure,
+which is what keeps a row walk from collapsing into one load of the counter's
+first value. `Tests/GPU/HoistingTests.cpp` pins all four of these.
 
 ### Reducing over the group
 
@@ -1200,7 +1365,7 @@ struct Product final : ComputeProgram
 };
 ```
 
-Six calls, and they are the whole vocabulary:
+Eight calls, and they are the whole vocabulary:
 
 | call | what it is |
 | --- | --- |
@@ -1208,6 +1373,8 @@ Six calls, and they are the whole vocabulary:
 | `simdMatrix(fill)` | a fragment every element of which is that value — the zero an accumulator starts from. `fill` is a literal, not an expression |
 | `simdMatrix(tile, offset, rowStride)` | a fragment read from an 8×8 patch of a threadgroup array: element (r, c) at `offset + r * rowStride + c` |
 | `simdMatrix(buffer, offset, rowStride)` | the same out of a storage buffer, input or output |
+| `simdMatrixHalf(buffer, offset, rowStride)` | a fragment read straight out of a buffer of packed fp16, the offset and the stride counting in halves. An operand only |
+| `simdMatrixBFloat16(buffer, offset, rowStride)` | the same for packed bf16 |
 | `multiplyAccumulate(acc, left, right)` | `acc += left * right`, over the three fragments |
 | `write(buffer, offset, rowStride, fragment)` | the patch written back, addressed the way the load addresses one. `write(tile, ...)` is its threadgroup sibling |
 
@@ -1266,6 +1433,89 @@ what keeps a kernel of any reasonable width under that budget.
 a 32-deep slab, clamped loads and a guarded copy-out — checked against a scalar
 reference on whole tiles, on a ragged shape and at a transformer's own
 [1500, 384] × [384, 1536].
+
+#### A weight read where it lies
+
+A checkpoint ships its weights in sixteen bits, and the product above wants
+floats, so a tiled kernel widens a tile of them into threadgroup memory before
+it can load a fragment: twice the memory the weights occupy, and two barriers
+around the staging. `simdMatrixHalf` and `simdMatrixBFloat16` remove all three.
+They read the 8×8 patch out of the packed buffer directly, and the offset and
+the row stride count in those sixteen-bit elements — a bf16 weight matrix's row
+stride is the number of columns it has, not half of it, which is the convention
+`readHalf` and `readBFloat16` already set. The buffer is an ordinary
+`InputBuffer`; what is packed is its contents, not its declared type.
+
+On Metal the patch becomes a `simdgroup_half8x8` or a `simdgroup_bfloat8x8`,
+loaded through the buffer's pointer reinterpreted, and it stays that type
+through the product: MSL's `simdgroup_multiply_accumulate` takes mixed operands
+into a float accumulator, so there is no widening step between the load and the
+multiply. That is what makes it free — a staged activation against a packed
+weight is one instruction.
+
+```cpp
+auto accumulator = simdMatrix();
+auto activations = simdMatrix(tile, tileOffset, slabStride);
+auto weights = simdMatrixBFloat16(weightBuffer, row * columns, columns);
+
+multiplyAccumulate(accumulator, activations, weights);
+```
+
+A packed fragment is an **operand and nothing else**. It cannot be an
+accumulator — sixteen bits would lose what the sum is being accumulated in —
+and it cannot be written back, there being no instruction that stores one.
+Both are asserts, not compile errors the shader compiler reports.
+
+**The native path is Metal's alone.** `simdgroup_half8x8` is Metal 2.3 and lands
+on the macOS 11 floor eacp builds against; `simdgroup_bfloat8x8` is Metal 3.1
+and needs macOS 14 or iOS 17. So there are two queries and not one:
+
+```cpp
+if (Device::shared().supportsBFloat16SimdMatrix())
+    // build the kernel that loads the weight packed
+else
+    // build the kernel that stages it into a shared<Float> tile
+```
+
+Both are false on D3D12 and Vulkan, which have no wave matrix operation to
+lower to. **Both calls still build there and still compute the right thing**:
+a packed load becomes each lane widening the two elements it holds, through the
+same helper a scalar `readBFloat16` goes through, and the fragment is the float
+pair the fallback always was. What the query answers is whether the load is
+*native* — one instruction, nothing widened — and so whether it is worth
+shaping a kernel around. It is not the question of whether the kernel compiles.
+
+Those are two questions and eacp keeps them apart.
+`ComputeProgram::fitsPackedSimdMatrix` is the second one, and it is false only
+where the shader would genuinely not compile: on Metal, when the device says
+no. On the other two backends it is true regardless.
+
+The choice belongs **outside** the kernel, at the point where it is built, and
+never inside one as a branch. The staging path carries barriers that the packed
+path does not, and a barrier some threads in a group reach and others do not is
+undefined — the two cannot be the arms of one `if`. A Metal kernel built
+against the wrong answer is refused by `ComputeProgram::prepare()`, which names
+the query and leaves an invalid pipeline, rather than handed to a shader
+compiler that would complain about a type instead. A refused program reports
+`ComputeProgram::isValid() == false`, and dispatching one is a no-op rather than
+a crash — `ComputePass` drops a dispatch whose pipeline never bound.
+
+`EACP_NO_PACKED_SIMD_MATRIX=1` makes both queries answer no on a device that
+would have said yes. It is how the staged path stays exercised on hardware that
+never takes it, and how a kernel's two shapes can be run against each other on
+one machine.
+
+**The float operand is not narrowed** — measured, not promised. A mixed
+`simdgroup_multiply_accumulate` could in principle bring both operands to the
+packed one's format before multiplying, which would quietly cost the
+*activation* eight significand bits and give back more than the staging ever
+saved. On an M5 Max under macOS 26 it does not: a left operand of 1 + 2⁻¹²
+against eight packed ones accumulates to 8.001953125, where narrowing would
+have given a flat 8. `Tests/GPU/SimdMatrixTests.cpp` asserts this for both
+formats, so a device or a driver that behaves otherwise fails the suite rather
+than silently losing precision. It is a measurement on the hardware to hand and
+nothing in the Metal specification requires it, so treat a new part as unmeasured
+until the suite has run on it.
 
 ### Textures a kernel writes
 
@@ -1379,7 +1629,8 @@ These are the way in and out of that:
 | `unpackHalf2(bits)` | the same, from a `UInt` already in hand |
 | `packHalf2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeHalf2(out, i, pair)` | that word stored at `i` — `readHalf2` reads it back |
-| `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways |
+| `writeHalf4(out, i, quad)` | four halves narrowed into two words and laid down in one store at the index `readHalf4` counts in |
+| `asUInt(f)` / `asFloat(u)` | a value's bits rather than its value, both ways — componentwise over a `Float2/3/4` and a `UInt2/3/4` as well as over the scalars |
 
 Size the buffer in whole words: `readHalf` fetches the word at `i / 2`, so an
 odd count of halves reads past its last byte on the final element. `readHalf4`
@@ -1432,6 +1683,7 @@ void define() override
 | `unpackBFloat16x2(bits)` | the same, from a `UInt` already in hand |
 | `packBFloat16x2(pair)` | two floats narrowed and packed into a `UInt` |
 | `writeBFloat16x2(out, i, pair)` | that word stored at `i` — `readBFloat16x2` reads it back |
+| `writeBFloat16x4(out, i, quad)` | four bfloat16s narrowed into two words and laid down in one store at the index `readBFloat16x4` counts in |
 
 **Do not reach a bf16 weight through the fp16 path.** The two are not
 interchangeable storage: with five exponent bits, fp16 flushes 1e-6 to a
@@ -1479,6 +1731,14 @@ void define() override
 | `packInt8x4(values)` | four `Int4` components packed into a `UInt`, `.x` in the low eight bits |
 | `packUInt8x4(values)` | the same from a `UInt4` |
 | `writeInt8x4(out, i, values)` / `writeUInt8x4(out, i, values)` | that word stored at `i` — `readInt8x4` reads it back |
+| `writeInt8x8(out, i, low, high)` / `writeUInt8x8(out, i, low, high)` | eight bytes packed into two words and laid down in one store at the index `readInt8x8` counts in |
+| `writeInt8x16(out, i, a, b, c, d)` / `writeUInt8x16(out, i, a, b, c, d)` | sixteen bytes packed into four words and laid down in one store at the index `readInt8x16` counts in |
+
+The wide byte stores take integer vectors rather than the `Float4Pair` and
+`Float4Quad` their reads hand back, and they carry the read's own component
+names — `low`/`high`, `a`/`b`/`c`/`d`. It is the same reason `writeInt8x4` takes
+an `Int4`: rounding a float back down to a byte is the caller's decision, and a
+store that took floats would make it silently.
 
 Signed values are two's complement: a byte over `[-128, 127]`, a nibble over
 `[-8, 7]`. Size the buffer in whole words — `readInt8` fetches the word at
@@ -1511,10 +1771,12 @@ and the widening is register arithmetic over the value it brought back.
 `readInt8x16` is the sixteen-byte load `read4` already lowers to, holding
 sixteen weights instead of four.
 
-This is not something to leave to the shader compiler: the graph shares
-constants and pure binaries and **not reads**, so four subscripts of the same
-address stay four loads. One record read is one node, and the emitter names any
-node it evaluates more than once, which is what puts the load in a local with
+This is not something to leave to the shader compiler. The graph does share
+reads of read-only buffers (see below), so four subscripts of *one* address are
+one load — but four subscripts of four consecutive addresses are four different
+values and stay four loads, which is exactly what walking a row byte by byte
+does. One record read is one node instead, and the emitter names any node it
+evaluates more than once, which is what puts the whole record in a local with
 the four words as swizzles of it. `GPU/codegenWideInt8Reads` asserts the emitted
 MSL has exactly one buffer subscript for a `readInt8x16`, and
 `PackedQuantized/aWideReadCostsOneRecordRead` asserts on the real
@@ -1524,8 +1786,9 @@ costs.
 `Float4Pair` is what an eight-wide read hands back, and `Float4Quad` a
 sixteen-wide one, because no dialect has a float8 and inventing one in the EDSL
 would leave nothing to emit it into. They are single structs rather than a
-`readInt4x8Low` beside a `readInt4x8High` for the sharing reason above — two
-calls would be two loads of the same words. One read, unpacked in registers:
+`readInt4x8Low` beside a `readInt4x8High` because one fetch should read as one
+call — the sharing below would now collapse the two loads either way, but a call
+site that fetches once should say so. One read, unpacked in registers:
 
 ```cpp
 auto w = quantized.readInt4x8(block);
@@ -1792,10 +2055,12 @@ constructors are real. `GPUView::renderNativeContent` renders into an off-screen
 target and reads it back — the path every pixel-comparison test rides — so all
 of `Tests/GPU` (bar the Metal-only `TextureInteropTests.mm`) and
 `Tests/GPUWidgets` run on lavapipe with no display at all; and a `GPUView` in a
-`Graphics::Window` presents through a `VK_KHR_swapchain` over a Wayland surface.
-It is built on every Linux build, exactly as the Metal and D3D12 backends
-are on theirs; `-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it
-out.
+`Graphics::Window` presents through a `VK_KHR_swapchain` over whichever window
+system that window came up on, Wayland or X11 — as does one in an
+`EmbeddedView`, whose surface is an X11 child of a window a host owns, and which
+is the same code path from `createSurface()` down. The backend is built on every
+Linux build, exactly as the Metal and D3D12 backends are on theirs;
+`-DEACP_BUILD_GRAPHICS=OFF` is the only thing that leaves it out.
 
 Notes worth having:
 
@@ -1918,16 +2183,25 @@ Notes worth having:
 
 `GPUView` asks `Graphics::requestViewSurface` for a `ViewSurface`
 (`Graphics/View/View-Linux.h`) and creates a `VkSurfaceKHR` over the
-`wl_display` and `wl_surface` the window backend reports on it. That record —
-two opaque pointers, a pixel size, a scale and five hooks — is the whole of what
-`eacp-gpu` knows about Wayland: it neither links nor includes libwayland, and
-`VK_USE_PLATFORM_WAYLAND_KHR` (`CMake/FindVulkanBackend.cmake`, `PUBLIC` so
-`volk.c` sees it too) is what makes `vkCreateWaylandSurfaceKHR` reachable.
-`VK_KHR_surface` + `VK_KHR_wayland_surface` on the instance and
-`VK_KHR_swapchain` on the device are enabled only where they are offered, and
-`VulkanShared::supportsPresentation()` says whether they were — a headless ICD,
-or a loader with no WSI, leaves a `GPUView` rendering off-screen exactly as it
-did before there was a swapchain.
+`NativeSurfaceHandle` the window backend reports on it — a kind tag, a
+connection, a `wl_surface*` or an X11 window id. That record — the handle, a
+pixel size, a scale and five hooks — is the whole of what `eacp-gpu` knows
+about the window system: `createSurface()` switches on the kind between
+`vkCreateWaylandSurfaceKHR` and `vkCreateXcbSurfaceKHR`, and everything below
+it is shared. It neither links nor includes libwayland or xcb beyond what
+`vulkan_wayland.h` and `vulkan_xcb.h` pull in, and `VK_USE_PLATFORM_WAYLAND_KHR`
+with `VK_USE_PLATFORM_XCB_KHR` (`CMake/FindVulkanBackend.cmake`, `PUBLIC` so
+`volk.c` sees them too) is what makes the two creators reachable.
+`VK_KHR_surface` with `VK_KHR_wayland_surface` and `VK_KHR_xcb_surface` on the
+instance and `VK_KHR_swapchain` on the device are enabled only where they are
+offered — the two window systems independently, since a driver may carry either,
+which is why each creator is null-checked before it is called: volk leaves the
+pointer null for an extension that was not enabled.
+`VulkanShared::supportsPresentation()` says whether any of it was — a headless
+ICD, or a loader with no WSI, leaves a `GPUView` rendering off-screen exactly as
+it did before there was a swapchain. lavapipe presents to an Xvfb over
+`VK_KHR_xcb_surface` with no help, which is how the `Present` cases run on the
+CI lane's second test step.
 
 - **A swapchain image is a `VulkanTextureData` with one flag set.**
   `presentable` makes `restingUse()` answer `PRESENT_SRC_KHR`, so the image
@@ -1953,12 +2227,16 @@ did before there was a swapchain.
   handed out again until the value its last frame submitted has passed. Nothing
   waits per frame beyond that, and `vkDeviceWaitIdle` happens only on a
   swapchain rebuild and on teardown.
-- **Frames are paced by the compositor, not by a clock.** There is no
-  `DisplayLink` here. Continuous mode renders, asks for a `wl_surface.frame`
-  callback (before the present, which is the commit that carries the request),
-  and renders again when `ViewSurface::onFrameDone` says the compositor took the
-  last frame — so a hidden or occluded window, which gets no callbacks, renders
-  nothing, and the main thread never blocks inside `vkAcquireNextImageKHR`. The
+- **Frames are paced by the window system, not by a clock.** There is no
+  `DisplayLink` here. Continuous mode renders, asks for a frame callback
+  (before the present, which is the commit that carries the request on
+  Wayland), and renders again when `ViewSurface::onFrameDone` says the last
+  frame was taken — so a hidden or occluded window, which gets no callbacks,
+  renders nothing, and the main thread never blocks inside
+  `vkAcquireNextImageKHR`. On Wayland that callback is `wl_surface.frame`; X11
+  has no equivalent, so the backend answers from a timer at the RandR mode's
+  rate — rebuilt at the new rate when a RandR change moves it — and this loop
+  does not know the difference. The
   acquire is given a 100 ms timeout rather than `UINT64_MAX` for the same
   reason. `setMaxFps` uses the divider `DisplayLink::setMaxFps` documents: a
   tick that arrives too early presents nothing and asks for the next callback
@@ -1973,15 +2251,17 @@ did before there was a swapchain.
   `OPAQUE` else the first offered; `minImageCount + 1` images clamped to
   `maxImageCount`; `preTransform` taken as the surface's own. Wayland reports
   `currentExtent` as `0xFFFFFFFF` — there is no server-side surface size — so the
-  extent comes from the record's `pixelWidth`/`pixelHeight`.
+  extent comes from the record's `pixelWidth`/`pixelHeight`; X11 reports the
+  child window's real size and that is taken as it stands.
 - **Rebuilds** are marked and done at the next frame, so a live resize that
   reports twenty sizes builds one swapchain: `onResized`, and `OUT_OF_DATE` or
   `SUBOPTIMAL` from either the acquire or the present. A `SUBOPTIMAL` acquire is
   drawn and presented first — it handed over an image and signalled the
   semaphore, and dropping it would leave that semaphore signalled. `onLost`
   destroys the swapchain, the semaphores, the companions and the `VkSurfaceKHR`
-  synchronously, before the `wl_surface` goes: a swapchain outliving its surface
-  is a use-after-free inside the driver, not an error code.
+  synchronously, before the `wl_surface` or the child window goes: a swapchain
+  outliving its surface is a use-after-free inside the driver, not an error
+  code.
 - **`VK_ERROR_DEVICE_LOST` stops the view and does not restart it.** It is
   logged once, the swapchain and surface are torn down, and `onDeviceRestored`
   never fires — rebuilding the `VkDevice` would mean rebuilding every `Buffer`,
@@ -2004,7 +2284,7 @@ EACP_REQUIRE_GPU=1 EACP_VK_SOFTWARE=1 ctest --test-dir build
 | `EACP_VK_SOFTWARE=1` | Prefers a `PHYSICAL_DEVICE_TYPE_CPU` device — Mesa's lavapipe. The mirror of `EACP_D3D12_WARP`, and for the same reason: a conformant reference implementation is how you tell your bug from the driver's. It inverts the preference order rather than filtering, so a machine whose only device is a real GPU still gets one. |
 | `EACP_REQUIRE_GPU=1` | Makes `GPUTests` fail when no device came up. Every other GPU test self-skips without one and ctest scores that as a pass, so a lane whose driver was never installed reports a full green suite that ran nothing; `DevicePresenceTests` is the one case that does not skip, and it prints the device's name either way. |
 | `EACP_VK_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs warnings and errors through `LOG`. Off by default — the layer costs several times the driver's own time per call. |
-| `EACP_REQUIRE_DISPLAY=1` | The swapchain's sibling of `EACP_REQUIRE_GPU`. `Tests/GPU/PresentTests-Linux.cpp` needs a compositor, and every case in it self-skips without one — which ctest scores as a pass. This makes those cases fail instead, so a lane whose Weston session did not come up says so. Set it wherever the suite is run under a compositor; leave it unset everywhere else. |
+| `EACP_REQUIRE_DISPLAY=1` | The swapchain's sibling of `EACP_REQUIRE_GPU`. `Tests/GPU/PresentTests-Linux.cpp` needs a display server — a compositor, or an X server where `EACP_WINDOW_SYSTEM=x11` — and every case in it self-skips without one, which ctest scores as a pass. This makes those cases fail instead, so a lane whose Weston or Xvfb session did not come up says so. Set it wherever the suite is run under a display server; leave it unset everywhere else. |
 | `EACP_HEADLESS=1` | Not Vulkan's, but it belongs here: it is what tells the window backend to build no surface, and therefore what the present tests read to decide there is nothing to present to. |
 
 CI runs the suite on lavapipe with `EACP_VK_SOFTWARE`, `EACP_REQUIRE_GPU` and
@@ -2013,12 +2293,20 @@ named per architecture (`lvp_icd.x86_64.json` on an x86-64 runner,
 `lvp_icd.json` in an arm64 container), so nothing sets `VK_DRIVER_FILES` — the
 loader finds it from the ICD directory.
 
-The present tests need a compositor, which the CI container gets from Weston's
-headless backend — `with-weston <command>` in the `Dockerfile` runs a command
-inside one:
+The present tests need a display server, and they run against both: Weston's
+headless backend for Wayland and an Xvfb for X11 — `with-weston <command>` and
+`with-xvfb <command>` in the `Dockerfile` run a command inside one each, the
+second exporting `EACP_WINDOW_SYSTEM=x11` so the same cases come up on the
+other backend:
 
 ```bash
 docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
     -e EACP_REQUIRE_DISPLAY=1 -v "$PWD":/workspace eacp-ci-linux \
-    with-weston ctest --test-dir build-ci-linux --output-on-failure
+    with-weston ctest --test-dir build-ci-linux --output-on-failure \
+    -E '^(X11|EmbeddedView)/'
+
+docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
+    -e EACP_REQUIRE_DISPLAY=1 -v "$PWD":/workspace eacp-ci-linux \
+    with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
+    -R '^(X11|EmbeddedView|Present)/'
 ```

@@ -41,7 +41,9 @@ void ComputePass::setPipeline(const ComputePipeline& pipeline)
     auto activeEncoder = impl->encoder.get();
     auto state = (__bridge id<MTLComputePipelineState>) pipeline.nativeState();
 
-    if (activeEncoder != nil && state != nil)
+    boundPipeline = activeEncoder != nil && state != nil;
+
+    if (boundPipeline)
         [activeEncoder setComputePipelineState:state];
 }
 
@@ -114,7 +116,7 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
 }
 
-void ComputePass::setBytes(const void* data, int bytes, int slot)
+void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder setBytes:data
@@ -126,7 +128,7 @@ void ComputePass::dispatch(int count)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || count <= 0)
+    if (activeEncoder == nil || !boundPipeline || count <= 0)
         return;
 
     auto group = groupFor1D();
@@ -144,7 +146,7 @@ void ComputePass::dispatch(int width, int height)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || width <= 0 || height <= 0)
+    if (activeEncoder == nil || !boundPipeline || width <= 0 || height <= 0)
         return;
 
     auto group = groupFor2D();
@@ -162,7 +164,8 @@ void ComputePass::dispatch(int width, int height, int depth)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || width <= 0 || height <= 0 || depth <= 0)
+    if (activeEncoder == nil || !boundPipeline || width <= 0 || height <= 0
+        || depth <= 0)
         return;
 
     auto group = groupFor3D();
@@ -180,13 +183,16 @@ void ComputePass::dispatch(int width, int height, int depth)
 // The threadgroup size still comes from here - only the *count* is in the
 // buffer. Metal reads three uint32s at the offset, which is what
 // DispatchArguments is, so no conversion happens on the way.
-void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+void ComputePass::dispatchIndirect(const Buffer& arguments,
+                                   std::int64_t offsetInBytes)
 {
     auto activeEncoder = impl->encoder.get();
     auto metalBuffer = (__bridge id<MTLBuffer>) arguments.nativeBuffer();
 
-    if (activeEncoder == nil || metalBuffer == nil || offsetInBytes < 0
-        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
+    if (activeEncoder == nil || !boundPipeline || metalBuffer == nil
+        || offsetInBytes < 0
+        || offsetInBytes
+               > arguments.size() - (std::int64_t) sizeof(DispatchArguments))
         return;
 
     auto group = groupFor1D();

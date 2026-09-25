@@ -708,15 +708,24 @@ bool VulkanShared::createInstance()
             extensions.add(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
-    // Asked for rather than required: a headless ICD offers neither.
-    const auto surfaceOffered =
-        hasInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME)
-        && hasInstanceExtension(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    // Asked for rather than required: a headless ICD offers none of them. The
+    // two window systems are independent - a driver may carry either.
+    const auto waylandOffered =
+        hasInstanceExtension(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+    const auto xcbOffered = hasInstanceExtension(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+
+    const auto surfaceOffered = hasInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME)
+                                && (waylandOffered || xcbOffered);
 
     if (surfaceOffered)
     {
         extensions.add(VK_KHR_SURFACE_EXTENSION_NAME);
-        extensions.add(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+
+        if (waylandOffered)
+            extensions.add(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
+
+        if (xcbOffered)
+            extensions.add(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
     }
 
     VkInstanceCreateInfo info = {};

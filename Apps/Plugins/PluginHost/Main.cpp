@@ -1,24 +1,13 @@
+#include "../SpinningTriangle.h"
+
 #include <eacp/Graphics/Graphics.h>
 
-struct HostView final : eacp::Graphics::View
+#include <utility>
+
+using namespace eacp;
+
+namespace
 {
-    HostView()
-    {
-        layer->setFillColor({0.2f, 0.4f, 0.8f});
-        addChildren({layer});
-    }
-
-    void resized() override
-    {
-        auto path = eacp::Graphics::Path();
-        path.addRoundedRect(getLocalBounds(), 12.f);
-        layer->setPath(path);
-        scaleToFit({layer});
-    }
-
-    eacp::Graphics::ShapeLayerView layer;
-};
-
 struct App
 {
     App()
@@ -27,13 +16,13 @@ struct App
 
         if (!library.isOpen())
         {
-            eacp::LOG("Host: failed to load ", DEMO_PLUGIN_PATH);
-            eacp::Apps::quit();
+            LOG("Host: failed to load ", DEMO_PLUGIN_PATH);
+            Apps::quit();
             return;
         }
 
         if (auto getName = library.findFunction<const char* (*) ()>("demo_get_name"))
-            eacp::LOG("Host: loaded '", getName(), "'");
+            LOG("Host: loaded '", getName(), "'");
 
         if (auto openWindow = library.findFunction<void (*)()>("demo_open_window"))
             openWindow();
@@ -44,21 +33,38 @@ struct App
 
     void update()
     {
-        if (auto closeWindow = library.findFunction<void (*)()>("demo_close_window"))
-            closeWindow();
+        auto closeWindow = library.findFunction<void (*)()>("demo_close_window");
 
-        library.close();
-        eacp::LOG("Host: plugin unloaded, quitting");
-        eacp::Apps::quit();
+        // The documented teardown: the plugin destroys its window first, and
+        // the image is unmapped a loop turn later, once anything the close
+        // queued has run. The quit rides the same queue behind it.
+        Plugins::unload(std::move(library),
+                        [closeWindow]
+                        {
+                            if (closeWindow != nullptr)
+                                closeWindow();
+                        });
+
+        Threads::callAsync(
+            [this]
+            {
+                LOG("Host: plugin unloaded, quitting (host frames drawn: ",
+                    view.framesRendered,
+                    ")");
+                Apps::quit();
+            });
     }
 
-    eacp::Plugins::DynamicLibrary library {DEMO_PLUGIN_PATH};
-    HostView view;
-    eacp::Graphics::Window window {view};
-    eacp::Threads::Timer timer {[&] { update(); }, 1};
+    // Blue to the plugin's orange, and standing still: the host copy has
+    // nothing animating it.
+    PluginDemo::SpinningTriangleView view {{0.2f, 0.4f, 0.8f}};
+    Plugins::DynamicLibrary library {DEMO_PLUGIN_PATH};
+    Graphics::Window window {view};
+    Threads::Timer timer {[&] { update(); }, 1};
 };
+} // namespace
 
 int main()
 {
-    return eacp::Apps::run<App>();
+    return Apps::run<App>();
 }

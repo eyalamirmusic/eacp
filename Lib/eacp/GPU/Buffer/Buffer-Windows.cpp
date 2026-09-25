@@ -67,10 +67,11 @@ struct Buffer::Native
 {
     Native(Device& device,
            const void* data,
-           int byteCount,
+           std::int64_t byteCount,
            BufferUsage usage,
            BufferStorage storage)
         : context(getD3D12Context(device))
+        , owner(&device)
     {
         const auto bytes = (std::size_t) (byteCount > 0 ? byteCount : 0);
 
@@ -247,6 +248,45 @@ struct Buffer::Native
     // against, and a buffer never moves between Devices.
     D3D12Context& context;
 
+    // The copy both update paths end in, so that each of them asserts the
+    // owning thread once rather than once on the way through the other.
+    void write(const void* data, std::int64_t byteCount, std::int64_t byteOffset)
+    {
+        if (bufferData.resource == nullptr || data == nullptr || byteCount <= 0
+            || byteOffset < 0 || (std::size_t) byteOffset >= bufferData.size)
+            return;
+
+        if (!context.isValid())
+            return;
+
+        const auto offset = (std::size_t) byteOffset;
+        const auto bytes = (std::size_t) byteCount;
+
+        const auto available = bufferData.size - offset;
+        const auto count = bytes < available ? bytes : available;
+
+        // The whole of a streamed write. No recording is touched, so nothing
+        // orders it against the draws already on the list and nothing needs to:
+        // what makes it safe is that the caller does not write bytes an
+        // in-flight frame is still reading, which is the contract
+        // BufferStorage::Streaming states and StreamingBuffers keeps.
+        if (mapped != nullptr)
+        {
+            std::memcpy(mapped + offset, data, count);
+            return;
+        }
+
+        // The same path the initial data takes, rather than a pooled staging
+        // resource of its own: an update that lands while a frame is recording
+        // goes onto that recording, in order ahead of the work that reads it,
+        // instead of acquiring and submitting a list per call.
+        stage(context, data, count, offset);
+    }
+
+    // The Device beside it, for the thread rule alone - see
+    // Device::assertOwningThread.
+    Device* owner = nullptr;
+
     // Mutable because the state tracking advances inside the const read():
     // the copy to the readback buffer is a use like any other.
     mutable D3D12BufferData bufferData;
@@ -265,7 +305,7 @@ struct Buffer::Native
 
 Buffer::Buffer(Device& device,
                const void* data,
-               int bytes,
+               std::int64_t bytes,
                BufferUsage usage,
                BufferStorage storage)
     : impl(device, data, bytes, usage, storage)
@@ -276,9 +316,39 @@ Buffer::Buffer(Device& device,
         device.noteBufferCreated();
 }
 
-int Buffer::size() const
+// D3D12 has no buffer over host pages: a default-heap resource is device memory
+// and an upload-heap one is memory the runtime allocated, so the memory the
+// caller owns is copied into a buffer of our own. The copy is taken by the
+// constructor this delegates to, which is why the release runs the moment it
+// returns rather than when this Buffer dies - see ExternalMemory.
+//
+// A descriptor off the page grid is refused here as it is on Metal, so that a
+// call site written against this backend is one Metal will also take.
+Buffer::Buffer(Device& device, ExternalMemory memory, BufferUsage usage)
+    : Buffer(device,
+             isPageAligned(memory) ? memory.bytes : nullptr,
+             isPageAligned(memory) ? memory.byteCount : 0,
+             usage)
 {
-    return (int) impl->bufferData.size;
+    memory.onReleased();
+}
+
+bool Buffer::canAdoptMemory(const Device&)
+{
+    return false;
+}
+
+std::int64_t Buffer::memoryPageSize()
+{
+    SYSTEM_INFO info = {};
+    GetSystemInfo(&info);
+
+    return (std::int64_t) info.dwPageSize;
+}
+
+std::int64_t Buffer::size() const
+{
+    return (std::int64_t) impl->bufferData.size;
 }
 
 bool Buffer::isValid() const
@@ -286,8 +356,11 @@ bool Buffer::isValid() const
     return impl->bufferData.resource != nullptr;
 }
 
-void Buffer::read(void* dst, int byteCount, int byteOffset) const
+void Buffer::read(void* dst, std::int64_t byteCount, std::int64_t byteOffset) const
 {
+    if (impl->owner != nullptr)
+        impl->owner->assertOwningThread();
+
     auto* source = impl->bufferData.resource.get();
 
     if (source == nullptr || byteCount <= 0 || byteOffset < 0
@@ -348,39 +421,30 @@ void Buffer::read(void* dst, int byteCount, int byteOffset) const
     }
 }
 
-void Buffer::update(const void* data, int byteCount, int byteOffset)
+void Buffer::update(const void* data,
+                    std::int64_t byteCount,
+                    std::int64_t byteOffset)
 {
-    if (impl->bufferData.resource == nullptr || data == nullptr || byteCount <= 0
-        || byteOffset < 0 || (std::size_t) byteOffset >= impl->bufferData.size)
-        return;
+    if (impl->owner != nullptr)
+        impl->owner->assertOwningThread();
 
-    auto& context = impl->context;
+    // Only the host-mapped shape needs the wait. A device-storage write below
+    // is a CopyBufferRegion recorded into the command stream, and the stream is
+    // already the ordering - see the rule on Buffer::update.
+    if (impl->mapped != nullptr && impl->context.isValid())
+        impl->context.waitFor(impl->context.lastSubmitted());
 
-    if (!context.isValid())
-        return;
+    impl->write(data, byteCount, byteOffset);
+}
 
-    const auto offset = (std::size_t) byteOffset;
-    const auto bytes = (std::size_t) byteCount;
+void Buffer::updateUnordered(const void* data,
+                             std::int64_t byteCount,
+                             std::int64_t byteOffset)
+{
+    if (impl->owner != nullptr)
+        impl->owner->assertOwningThread();
 
-    auto available = (std::size_t) impl->bufferData.size - offset;
-    auto count = bytes < available ? bytes : available;
-
-    // The whole of a streamed write. No recording is touched, so nothing
-    // orders it against the draws already on the list and nothing needs to:
-    // what makes it safe is that the caller does not write bytes an in-flight
-    // frame is still reading, which is the contract BufferStorage::Streaming
-    // states and StreamingBuffers keeps.
-    if (impl->mapped != nullptr)
-    {
-        std::memcpy(impl->mapped + offset, data, count);
-        return;
-    }
-
-    // The same path the initial data takes, rather than a pooled staging
-    // resource of its own: an update that lands while a frame is recording goes
-    // onto that recording, in order ahead of the work that reads it, instead of
-    // acquiring and submitting a list per call.
-    impl->stage(context, data, count, offset);
+    impl->write(data, byteCount, byteOffset);
 }
 
 void* Buffer::nativeBuffer() const

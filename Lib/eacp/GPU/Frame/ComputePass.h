@@ -87,12 +87,12 @@ public:
 
     // Uploads a small uniform block without a buffer object, like the render
     // pass's setVertexBytes. slot is the uniform-block slot (0 = first block).
-    void setBytes(const void* data, int bytes, int slot = 0);
+    void setBytes(const void* data, std::int64_t bytes, int slot = 0);
 
     template <typename T>
     void setUniform(const T& value, int slot = 0)
     {
-        setBytes(&value, (int) sizeof(T), slot);
+        setBytes(&value, (std::int64_t) sizeof(T), slot);
     }
 
     // Runs the kernel over count work items, in the bound pipeline's groups -
@@ -119,7 +119,7 @@ public:
     // offsetInBytes must be a multiple of four and leave a whole
     // DispatchArguments in the buffer; an offset that does not dispatches
     // nothing.
-    void dispatchIndirect(const Buffer& arguments, int offsetInBytes = 0);
+    void dispatchIndirect(const Buffer& arguments, std::int64_t offsetInBytes = 0);
 
     // Binds and dispatches a prepared ComputeProgram in one call: its pipeline,
     // storage buffers and uniform block (including the implicit element count
@@ -182,7 +182,7 @@ public:
     void dispatchIndirect(Program& program,
                           const Buffer& arguments,
                           int guardCount,
-                          int offsetInBytes = 0)
+                          std::int64_t offsetInBytes = 0)
     {
         setPipeline(program.pipeline());
         program.bindResources(*this);
@@ -260,6 +260,16 @@ private:
     }
 
     ThreadGroupShape boundGroup;
+
+    // Whether the last setPipeline had a pipeline to bind. A pipeline that
+    // would not build is not something a dispatch can report - the encoder is
+    // recorded against and the failure surfaces much later, as a crash on
+    // Metal, where an encoder with no pipeline state aborts the process - so a
+    // dispatch under one is dropped instead. Every dispatch below tests it.
+    //
+    // False until something is bound, which makes a pass that dispatches
+    // before it binds a no-op rather than whatever the encoder held.
+    bool boundPipeline = false;
 
     struct Native;
     Pimpl<Native> impl;

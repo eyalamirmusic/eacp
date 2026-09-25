@@ -1,6 +1,6 @@
 #include "DisplayLink.h"
 
-#include "../Window/WaylandDisplay-Linux.h"
+#include "../Window/LinuxWindowSystem-Linux.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
 
@@ -15,8 +15,9 @@ namespace eacp::Threads
 {
 namespace
 {
-// A clock, not a compositor signal: wl_surface.frame is per-surface and this
-// is process-wide. GPU views are paced by ViewSurface::onFrameDone instead.
+// A clock, not a window-system signal: what the compositor or the server says
+// about a frame is per-surface and this is process-wide. GPU views are paced
+// by ViewSurface::onFrameDone instead.
 constexpr long linuxNanosecondsPerSecond = 1'000'000'000;
 constexpr long linuxDisplayLinkFallbackPeriodNs = 16'666'667;
 
@@ -26,14 +27,9 @@ constexpr int linuxDisplayLinkMaxHz = 480;
 
 long linuxDisplayLinkPeriodNs()
 {
-    auto* connection = Graphics::waylandDisplay();
+    auto output = Graphics::linuxPrimaryOutput();
 
-    if (connection == nullptr)
-        return linuxDisplayLinkFallbackPeriodNs;
-
-    const auto* output = connection->getPrimaryOutput();
-
-    if (output == nullptr || output->refreshMilliHz <= 0)
+    if (!output || output->refreshMilliHz <= 0)
         return linuxDisplayLinkFallbackPeriodNs;
 
     auto hz = output->refreshMilliHz / 1000;
@@ -79,7 +75,7 @@ struct DisplayLink::Native
         assertMainThread();
 
         // periodNs is read on the main thread before the pacing thread starts:
-        // the Wayland connection is not thread-safe to interrogate.
+        // the window system's connection is not thread-safe to interrogate.
         thread = std::thread([this] { tickLoop(); });
     }
 

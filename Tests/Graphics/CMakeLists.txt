@@ -93,8 +93,17 @@ if (APPLE AND NOT IOS)
     target_link_libraries(GraphicsTests PRIVATE "-framework AppKit")
 endif ()
 
-# A binary of its own because this one must NOT be headless, unlike
-# GraphicsTests. It attaches a wl_shm buffer to a subsurface, hence eacp-wayland.
+# Four binaries of their own. The three window suites must NOT be headless,
+# unlike GraphicsTests, and each needs the raw client library a case reaches
+# for: WaylandWindowTests attaches a wl_shm buffer to a subsurface, and
+# X11WindowTests and EmbeddedViewTests open a second connection so what they
+# assert about a window comes from the server rather than from the backend
+# under test, and drive real pointer and key input into it through XTest.
+#
+# EmbeddedViewTests and DisplayLinkTests have a plain main because they play
+# host to the loop rather than running it: pumpEventLoop refuses re-entry, so a
+# case inside Apps::run would pump nothing (plan.md stage 0's note, and D6 -
+# an embedded surface never runs the loop it is in).
 if (LINUX)
     nano_add_executable(WaylandWindowTests
             NO_MAIN
@@ -103,4 +112,135 @@ if (LINUX)
             TARGETS eacp-graphics)
 
     target_link_libraries(WaylandWindowTests PRIVATE eacp-wayland)
+
+    nano_add_executable(X11WindowTests
+            NO_MAIN
+            SOURCES
+                X11ClipboardTests-Linux.cpp
+                X11WindowTests-Linux.cpp
+            TARGETS eacp-graphics)
+
+    # XTest is the tests' alone: it synthesises the pointer and key events the
+    # input cases need, and nothing in the library ever asks a server to make
+    # up input.
+    include(FindPkgConfig)
+    pkg_check_modules(EACP_XTEST IMPORTED_TARGET xcb-xtest)
+
+    target_link_libraries(X11WindowTests PRIVATE eacp-x11)
+
+    if (EACP_XTEST_FOUND)
+        target_link_libraries(X11WindowTests PRIVATE PkgConfig::EACP_XTEST)
+        target_compile_definitions(X11WindowTests PRIVATE EACP_HAS_XTEST=1)
+    endif ()
+
+    # The one suite that plays host to eacp: its own connection owns the parent
+    # window the surface is embedded in, and XTest is how a click reaches it.
+    nano_add_executable(EmbeddedViewTests
+            NO_MAIN
+            SOURCES
+                EmbeddedViewTests-Linux.cpp
+            TARGETS eacp-graphics)
+
+    target_link_libraries(EmbeddedViewTests PRIVATE eacp-x11)
+
+    if (EACP_XTEST_FOUND)
+        target_link_libraries(EmbeddedViewTests PRIVATE PkgConfig::EACP_XTEST)
+        target_compile_definitions(EmbeddedViewTests PRIVATE EACP_HAS_XTEST=1)
+    endif ()
+
+    nano_add_executable(DisplayLinkTests
+            NO_MAIN
+            SOURCES
+                DisplayLinkTests-Linux.cpp
+            TARGETS eacp-graphics)
+endif ()
+
+# The system clipboard is one object shared with the whole machine and NanoTest
+# gives every case its own process, so the three cases that take the selection
+# cannot overlap: under ctest -j one case's copy lands between another's copy
+# and its read. A RESOURCE_LOCK serialises them against each other while the
+# rest of the suite still runs in parallel, exactly as Tests/Core does for
+# ClipboardTests, and the names are read out of the source so a new case is
+# covered without editing a list here.
+if (LINUX AND NOT CMAKE_CROSSCOMPILING)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/WaylandWindowTests-Linux.cpp")
+
+    file(STRINGS WaylandWindowTests-Linux.cpp wayland_clipboard_test_lines
+            REGEX "\"Wayland/clipboard[^\"]+\"")
+
+    set(wayland_clipboard_lock_file
+            "${CMAKE_CURRENT_BINARY_DIR}/WaylandClipboardSerialisation.cmake")
+    file(WRITE "${wayland_clipboard_lock_file}" "")
+
+    foreach (line IN LISTS wayland_clipboard_test_lines)
+        string(REGEX MATCH "Wayland/clipboard[^\"]+" wayland_clipboard_test
+                "${line}")
+        file(APPEND "${wayland_clipboard_lock_file}"
+                "set_tests_properties(\"${wayland_clipboard_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK eacp-system-clipboard)\n")
+    endforeach ()
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${wayland_clipboard_lock_file}")
+endif ()
+
+# Everything that opens a window on the X11 lane takes one lock, the embedded
+# surfaces included: each of those maps a host window of its own. There is no
+# window manager under Scripts/with-xvfb, so every window a case opens lands at
+# the same place and over whatever is already there: the case underneath gets
+# an Expose on its presenting child and repaints, which is a frame nobody asked
+# for (Present/continuousModeKeepsPresenting counted them and failed). The
+# display also has exactly one pointer, one keyboard and one focus, which the
+# X11 cases drive through XTest and read back. The names come out of the
+# sources, so a new case is covered without editing a list here, and the source
+# files are configure dependencies so that a new or renamed one is picked up
+# rather than left unlocked until the next reconfigure.
+if (LINUX AND NOT CMAKE_CROSSCOMPILING)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/X11WindowTests-Linux.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/X11ClipboardTests-Linux.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/EmbeddedViewTests-Linux.cpp")
+
+    file(STRINGS X11WindowTests-Linux.cpp x11_test_lines
+            REGEX "\"X11/[^\"]+\"")
+
+    # The clipboard half of the same binary takes the clipboard lock as well:
+    # one display has one selection, and a case's copy must not land between
+    # another's copy and its read.
+    file(STRINGS X11ClipboardTests-Linux.cpp x11_clipboard_test_lines
+            REGEX "\"X11/[^\"]+\"")
+
+    file(STRINGS EmbeddedViewTests-Linux.cpp embedded_test_lines
+            REGEX "\"EmbeddedView/[^\"]+\"")
+
+    set(x11_lock_file "${CMAKE_CURRENT_BINARY_DIR}/X11Serialisation.cmake")
+    file(WRITE "${x11_lock_file}" "")
+
+    foreach (line IN LISTS x11_test_lines)
+        string(REGEX MATCH "X11/[^\"]+" x11_test "${line}")
+
+        file(APPEND "${x11_lock_file}"
+                "set_tests_properties(\"${x11_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK eacp-linux-display)\n")
+    endforeach ()
+
+    foreach (line IN LISTS x11_clipboard_test_lines)
+        string(REGEX MATCH "X11/[^\"]+" x11_clipboard_test "${line}")
+
+        file(APPEND "${x11_lock_file}"
+                "set_tests_properties(\"${x11_clipboard_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK \"eacp-linux-display;eacp-system-clipboard\")\n")
+    endforeach ()
+
+    foreach (line IN LISTS embedded_test_lines)
+        string(REGEX MATCH "EmbeddedView/[^\"]+" embedded_test "${line}")
+
+        file(APPEND "${x11_lock_file}"
+                "set_tests_properties(\"${embedded_test}\" PROPERTIES\n"
+                "        RESOURCE_LOCK eacp-linux-display)\n")
+    endforeach ()
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${x11_lock_file}")
 endif ()

@@ -131,6 +131,19 @@ std::wstring buildEnvironmentBlock(const Vector<EnvironmentVariable>& overrides)
     block.push_back(L'\0');
     return block;
 }
+
+DWORD creationFlags(const ProcessOptions& options, const std::wstring& environment)
+{
+    DWORD flags = 0;
+
+    if (!environment.empty())
+        flags |= CREATE_UNICODE_ENVIRONMENT;
+
+    if (options.noWindow)
+        flags |= CREATE_NO_WINDOW;
+
+    return flags;
+}
 } // namespace
 
 struct Process::Native
@@ -291,7 +304,7 @@ private:
             nullptr,
             nullptr,
             TRUE,
-            environment.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT,
+            creationFlags(options, environment),
             environment.empty() ? nullptr : (LPVOID) environment.data(),
             workingDir.empty() ? nullptr : workingDir.c_str(),
             &startup,
@@ -362,7 +375,7 @@ private:
             nullptr,
             nullptr,
             TRUE,
-            environment.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT,
+            creationFlags(options, environment),
             environment.empty() ? nullptr : (LPVOID) environment.data(),
             workingDir.empty() ? nullptr : workingDir.c_str(),
             &startup,

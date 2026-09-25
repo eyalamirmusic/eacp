@@ -41,6 +41,7 @@ target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
 
 target_sources(eacp-gpu PRIVATE
         Buffer/StreamingBuffers.cpp
+        CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
         Frame/Frame.cpp
         Frame/RenderPass.cpp
@@ -99,8 +100,10 @@ elseif (WIN32)
             windowsapp
             runtimeobject)
 else ()
-    # The Vulkan backend. Nothing here links or includes libwayland: the
-    # wl_display and wl_surface it presents to are opaque pointers.
+    # The Vulkan backend. Nothing here links a window system: the connection,
+    # surface and window it presents to arrive as a NativeSurfaceHandle, and
+    # the only headers that come in are the ones vulkan_wayland.h and
+    # vulkan_xcb.h declare their create-info structs from.
     if (NOT TARGET eacp-spirv)
         message(FATAL_ERROR
                 "A Linux build needs the SPIR-V compiler: the Vulkan "

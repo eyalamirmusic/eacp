@@ -57,9 +57,13 @@ if (APPLE AND NOT IOS)
     list(APPEND core_test_sources AppTerminationTests.cpp)
 endif ()
 
-# Threads::addLoopSource lives in EventLoop-Linux.h and nowhere else.
+# Threads::addLoopSource and the hosted pump live in EventLoop-Linux.h and
+# nowhere else.
 if (LINUX)
-    list(APPEND core_test_sources EventLoopSourceTests-Linux.cpp)
+    list(APPEND core_test_sources
+            EventLoopSourceTests-Linux.cpp
+            HostedLoopTests-Linux.cpp
+            RootLoopTests-Linux.cpp)
 endif ()
 
 nano_add_executable(CoreTests
@@ -108,6 +112,17 @@ target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
 add_dependencies(CoreTests DynamicLibraryTestPlugin)
 
+# The thin-eacp-host bridge: a plugin whose own copy defers work, so the
+# tests can watch this binary's root loop pump it (RootLoopTests-Linux.cpp).
+if (LINUX)
+    eacp_add_plugin(RootLoopTestPlugin RootLoopTestPlugin.cpp)
+    target_link_libraries(RootLoopTestPlugin PRIVATE eacp-core)
+
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_ROOT_LOOP_TEST_PLUGIN="$<TARGET_FILE:RootLoopTestPlugin>")
+    add_dependencies(CoreTests RootLoopTestPlugin)
+endif ()
+
 # The system clipboard is a single global object shared with the whole machine,
 # and NanoTest gives every case its own process, so these cannot overlap: under
 # ctest -j one case's copyText lands between another's copyText and getText, and
@@ -121,6 +136,9 @@ add_dependencies(CoreTests DynamicLibraryTestPlugin)
 # rather than an error, so only the cross-compiling case, which registers a
 # single target-level test instead, needs a guard.
 if (NOT CMAKE_CROSSCOMPILING)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/ClipboardTests.cpp")
+
     file(STRINGS ClipboardTests.cpp clipboard_test_lines
             REGEX "\"Clipboard/[^\"]+\"")
 

@@ -70,12 +70,16 @@ ComputePass::~ComputePass()
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
     boundGroup = pipeline.threadGroupShape();
+    boundPipeline = false;
 
     if (!impl->encoder)
         return;
 
     if (auto* state = static_cast<ID3D12PipelineState*>(pipeline.nativeState()))
+    {
         impl->encoder->commands->list->SetPipelineState(state);
+        boundPipeline = true;
+    }
 }
 
 namespace
@@ -173,9 +177,11 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), data->uav.gpu);
 }
 
-void ComputePass::setBytes(const void* data, int bytes, int slot)
+void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxUniformSlots)
+    // The `bytes <= 0` half is what keeps the cast below honest: a negative
+    // count would arrive at uploadConstants as an enormous std::size_t.
+    if (!impl->encoder || bytes <= 0 || slot < 0 || slot >= maxUniformSlots)
         return;
 
     auto& commands = *impl->encoder->commands;
@@ -189,7 +195,7 @@ void ComputePass::setBytes(const void* data, int bytes, int slot)
 
 void ComputePass::dispatch(int count)
 {
-    if (!impl->encoder || count <= 0)
+    if (!impl->encoder || !boundPipeline || count <= 0)
         return;
 
     auto width = static_cast<UINT>(groupFor1D().x);
@@ -202,7 +208,7 @@ void ComputePass::dispatch(int count)
 
 void ComputePass::dispatch(int width, int height)
 {
-    if (!impl->encoder || width <= 0 || height <= 0)
+    if (!impl->encoder || !boundPipeline || width <= 0 || height <= 0)
         return;
 
     auto group = groupFor2D();
@@ -218,7 +224,7 @@ void ComputePass::dispatch(int width, int height)
 
 void ComputePass::dispatch(int width, int height, int depth)
 {
-    if (!impl->encoder || width <= 0 || height <= 0 || depth <= 0)
+    if (!impl->encoder || !boundPipeline || width <= 0 || height <= 0 || depth <= 0)
         return;
 
     auto group = groupFor3D();
@@ -245,10 +251,12 @@ void ComputePass::dispatch(int width, int height, int depth)
 // this is not simply the same three lines twice. That transition is only a
 // transition, so in a concurrent pass the writer's UAV work is ordered against
 // it by hand first.
-void ComputePass::dispatchIndirect(const Buffer& arguments, int offsetInBytes)
+void ComputePass::dispatchIndirect(const Buffer& arguments,
+                                   std::int64_t offsetInBytes)
 {
-    if (!impl->encoder || offsetInBytes < 0
-        || offsetInBytes > arguments.size() - (int) sizeof(DispatchArguments))
+    if (!impl->encoder || !boundPipeline || offsetInBytes < 0
+        || offsetInBytes
+               > arguments.size() - (std::int64_t) sizeof(DispatchArguments))
         return;
 
     auto* data = static_cast<D3D12BufferData*>(arguments.nativeBuffer());

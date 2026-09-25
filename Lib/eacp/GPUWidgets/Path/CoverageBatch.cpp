@@ -19,13 +19,19 @@ void uploadTo(std::optional<GPU::Buffer>& buffer,
               const Vector<float>& values,
               int& updates)
 {
-    auto bytes = (int) sizeof(float) * values.size();
+    // Widened before the multiply: the product is a buffer's byte count, and it
+    // has to overflow nowhere on the way to a parameter that would have held it.
+    auto bytes = (std::int64_t) sizeof(float) * values.size();
 
     if (!buffer.has_value() || buffer->size() < bytes)
         buffer.emplace(
             GPU::Device::shared(), values.data(), bytes, GPU::BufferUsage::Storage);
     else
-        buffer->update(values.data(), bytes);
+        // Unordered because this is the frame loop: the ordered Buffer::update
+        // would wait for the newest submission in the middle of a frame, which
+        // is the CPU and the GPU taking turns. A canvas is gathered and
+        // dispatched inside one frame, which is what stands in for that wait.
+        buffer->updateUnordered(values.data(), bytes);
 
     ++updates;
 }
@@ -42,12 +48,12 @@ void padEmpty(Vector<float>& values)
 // The arrays the binning and backdrop stages work in. Never uploaded and never
 // read back - a kernel is what puts a value in one - so these are allocations
 // and nothing else, grown when a batch needs more than the last one did.
-void ensureRoom(std::optional<GPU::Buffer>& buffer, int bytes)
+void ensureRoom(std::optional<GPU::Buffer>& buffer, std::int64_t bytes)
 {
     if (!buffer.has_value() || buffer->size() < bytes)
         buffer.emplace(GPU::Device::shared(),
                        nullptr,
-                       std::max(4, bytes),
+                       std::max(std::int64_t {4}, bytes),
                        GPU::BufferUsage::Storage);
 }
 
@@ -164,14 +170,14 @@ void CoverageBatch::upload()
     uploadTo(recordBuffer, records, bufferUpdates);
     uploadTo(blockBuffer, blockOffsets, bufferUpdates);
 
-    ensureRoom(cellBuffer, (int) sizeof(std::uint32_t) * cells);
+    ensureRoom(cellBuffer, (std::int64_t) sizeof(std::uint32_t) * cells);
 
     // One past the last tile, holding the total: it is what makes the last
     // tile's run end a read of the same array rather than a special case, and
     // what the prefix sum leaves the entry count in.
-    ensureRoom(tileCountBuffer, (int) sizeof(std::uint32_t) * (tiles + 1));
-    ensureRoom(tileOffsetBuffer, (int) sizeof(std::uint32_t) * (tiles + 1));
-    ensureRoom(entryBuffer, (int) sizeof(float) * 4 * entries);
+    ensureRoom(tileCountBuffer, (std::int64_t) sizeof(std::uint32_t) * (tiles + 1));
+    ensureRoom(tileOffsetBuffer, (std::int64_t) sizeof(std::uint32_t) * (tiles + 1));
+    ensureRoom(entryBuffer, (std::int64_t) sizeof(float) * 4 * entries);
 }
 
 // Zero, count, sum, sort - the tiles, for every path in the batch, and the

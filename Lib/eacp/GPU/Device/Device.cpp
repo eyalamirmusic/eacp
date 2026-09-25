@@ -1,5 +1,9 @@
 #include "Device.h"
 
+#include <eacp/Core/Threads/ThreadUtils.h>
+
+#include <cassert>
+
 // Portable Device members. The platform backends (Device-macOS.mm /
 // Device-Windows.cpp) own construction and the native handles; anything that
 // only builds on the public API lives here so it compiles once for every
@@ -7,6 +11,28 @@
 
 namespace eacp::GPU
 {
+// The thread rule the class comment states, checked in one place for all three
+// backends. Out of line rather than inline so that <cassert> and the
+// main-thread query stay out of a header most of the module includes.
+//
+// The whole body is behind NDEBUG rather than only the assert, because the
+// question itself is not free: for Device::shared() it is Threads::isMainThread,
+// which is an out-of-line [NSThread isMainThread] on Apple, and this sits on
+// every buffer creation, read, update and submission. A release build is left
+// with an empty function.
+void Device::assertOwningThread() const
+{
+#ifndef NDEBUG
+    const auto onOwningThread = mainThreadOwned
+                                    ? Threads::isMainThread()
+                                    : std::this_thread::get_id() == owningThread;
+
+    assert(onOwningThread
+           && "eacp: a GPU::Device and everything made from it belong to the "
+              "thread that made it - give each thread its own");
+#endif
+}
+
 Texture Device::makeTexture(const Graphics::Image& image)
 {
     auto descriptor = TextureDescriptor {};
@@ -19,6 +45,10 @@ Texture Device::makeTexture(const Graphics::Image& image)
 
 void Device::beginFrame()
 {
+    // Every Frame on every backend starts here, which makes this the one place
+    // that covers the render and compute passes a Frame goes on to open.
+    assertOwningThread();
+
     ++frameCount;
 
     // The timer takes its slot from the counter, the same way StreamingBuffers

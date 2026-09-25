@@ -656,11 +656,12 @@ T readBufferVectorLoad(
 // as the two Float4s they unpack into: .low is nibbles 0..3 and .high nibbles
 // 4..7, in the order the word holds them.
 //
-// A pair rather than a readInt4x8Low beside a readInt4x8High, because the graph
-// shares constants and pure binaries and nothing else, so the two calls would
-// be two loads of the same word. One read unpacked twice in registers is what a
-// kernel consuming eight consecutive weights wants, and the call site reads as
-// one fetch because it is one:
+// A pair rather than a readInt4x8Low beside a readInt4x8High, because one fetch
+// should read as one call. The graph would now share the two loads of the word
+// either way - a read of a read-only buffer at a settled index is one node
+// however many calls named it - but one read unpacked twice in registers is
+// what a kernel consuming eight consecutive weights means, and the call site
+// says so because it is one:
 //
 //     auto weights = quantized.readInt4x8(block);
 //     sum += dot(weights.low, activations.read4(block * 2u))

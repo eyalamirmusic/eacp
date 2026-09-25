@@ -1,21 +1,14 @@
 #pragma once
 
-#include "../Primitives/Primitives.h"
+#include "ViewSurfaceBackend-Linux.h"
 
-// What Window-Linux.cpp needs of View-Linux.cpp.
+// The Wayland half of a presenting view: a wl_subsurface of the window's own
+// surface, sized through wp_viewport where the compositor offers one.
 
 namespace eacp::Graphics
 {
-class View;
 struct WaylandWindowSurface;
 
-void waylandBindWindowToContentView(View& contentView, WaylandWindowSurface& window);
-
-// Must run before the window's own wl_surface is destroyed.
-void waylandUnbindWindowFromContentView(View& contentView);
-
-void waylandWindowSurfaceStateChanged(View& contentView);
-
-// In the window's content points.
-Point waylandViewOriginInWindow(const View& view);
+std::unique_ptr<ViewSurfaceBackend>
+    makeWaylandViewSurfaceBackend(WaylandWindowSurface& window);
 } // namespace eacp::Graphics

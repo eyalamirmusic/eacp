@@ -10,11 +10,14 @@ endif ()
 
 if (EACP_HAS_GPU)
     add_subdirectory(GPU)
+
+    # Every host and plugin under here draws a GPUView, so a window and a
+    # device are the whole of what the pairs need.
+    add_subdirectory(Plugins)
 endif ()
 
-# All three paint through the platform's own 2D stack.
+# These two paint through the platform's own 2D stack.
 if (EACP_HAS_CONTEXT)
-    add_subdirectory(Plugins)
     add_subdirectory(Graphics)
     add_subdirectory(SVG)
 endif ()
