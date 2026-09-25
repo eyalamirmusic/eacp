@@ -178,3 +178,36 @@ auto tMILSpecification = test("MLGraph/Protobuf/modelFieldNumbers") = []
           == "08 08 12 00 B2 1F 22 08 01 12 1E 0A 04 6D 61 69 6E 12 16 12 07 43 6F "
              "72 65 4D 4C 37 1A 0B 0A 07 43 6F 72 65 4D 4C 37 12 00");
 };
+
+auto tMILSliceLike = test("MLGraph/Protobuf/sliceLikeBindsAShapeOpAsItsEnd") = []
+{
+    auto graph = Graph {};
+    auto rows = graph.input("rows", {6, 4}, {{2, 4}}, DType::float16);
+    auto table = zeroConstant(graph, "table", {6, 4});
+    graph.output(graph.sliceLike(table, rows), "y");
+
+    auto specification = graph.specification();
+    auto& operations = specification.program.main.block.operations;
+    auto isShape = [](const MIL::Operation& op) { return op.type == "shape"; };
+    auto isSlice = [](const MIL::Operation& op)
+    { return op.type == "slice_by_index"; };
+    auto* shape = operations.findIf(isShape);
+    auto* slice = operations.findIf(isSlice);
+    check(shape != nullptr && slice != nullptr);
+
+    if (shape == nullptr || slice == nullptr)
+        return;
+
+    auto isEnd = [](const MIL::Input& input) { return input.parameter == "end"; };
+    auto* end = slice->inputs.findIf(isEnd);
+    check(end != nullptr && end->arguments == Vector<std::string> {"shape_2"});
+
+    // type "shape", input x bound to "rows", and one output: shape_2, an int32
+    // tensor (23) of rank 1 with the one ConstantDimension 2.
+    auto withoutAttributes = *shape;
+    withoutAttributes.attributes.clear();
+    check(hex(MIL::encode(withoutAttributes).bytes())
+          == "0A 05 73 68 61 70 65 12 0D 0A 01 78 12 08 0A 06 0A 04 72 6F 77 73 "
+             "1A 17 0A 07 73 68 61 70 65 5F 32 12 0C 0A 0A 08 17 10 01 1A 04 0A "
+             "02 08 02");
+};

@@ -79,6 +79,32 @@ auto tAvailabilityIsHonest = test("MLPlacement/availabilityMatchesTheRunningOS")
     check(hasComputePlan() == version.atLeast(isIOS() ? 17 : 14, 4));
 };
 
+auto tSpecificationSupportIsHonest =
+    test("MLPlacement/specificationSupportMatchesTheRunningOS") = []
+{
+    auto version = osVersion();
+
+    check(supportsSpecification(5));
+    check(supportsSpecification(7) == isSupported());
+    check(supportsSpecification(8) == version.atLeast(isIOS() ? 17 : 14, 0));
+    check(supportsSpecification(9) == version.atLeast(isIOS() ? 18 : 15, 0));
+    check(!supportsSpecification(10));
+
+    auto graph = Graph {};
+    auto q = graph.input("q", {1, 4, 8}, DType::float16);
+    graph.output(graph.scaledDotProductAttention(q, q, q, false), "y");
+    auto needed = graph.specification().specificationVersion;
+    check(needed == 9);
+
+    if (!supportsSpecification(needed))
+        return;
+
+    auto model = Model {};
+    auto loaded = model.load(
+        graph.build(), optionsFor(ComputeUnits::cpu, freshCacheDirectory("spec")));
+    check(loaded.ok, loaded.error);
+};
+
 auto tEngineIsPresentWhenRequired =
     test("MLPlacement/anEngineIsPresentWhenRequired") = []
 {

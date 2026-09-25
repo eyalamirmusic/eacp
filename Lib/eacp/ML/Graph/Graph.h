@@ -50,6 +50,10 @@ public:
     Tensor scalar(float value);
 
     Tensor linear(Tensor x, Tensor weight, Tensor bias);
+
+    // A zero bias of x's type, which goes into the blob with the linear.
+    Tensor linear(Tensor x, Tensor weight);
+
     Tensor
         matmul(Tensor a, Tensor b, bool transposeA = false, bool transposeB = false);
     Tensor transpose(Tensor x, const Vector<int>& perm);
@@ -66,6 +70,13 @@ public:
     Tensor gather(Tensor table, Tensor indices, int axis);
     Tensor concat(const Vector<Tensor>& parts, int axis);
     Tensor slice(Tensor x, const Vector<int>& begin, const Vector<int>& end);
+
+    // x from its start to reference's extent on every axis, reference of x's
+    // rank: a positional table cut to the rows an enumerated input has at run
+    // time. A fixed reference is a plain slice, x itself is x, and any other
+    // reference reads its extents through MIL's shape op. Each of its fixed
+    // extents must fit x, and an axis unknown in x must be unknown in it too.
+    Tensor sliceLike(Tensor x, Tensor reference);
     Tensor scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causal);
     Tensor gelu(Tensor x);
     Tensor cast(Tensor x, DType type);

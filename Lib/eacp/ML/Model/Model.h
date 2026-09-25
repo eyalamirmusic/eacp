@@ -13,6 +13,13 @@ namespace eacp::ML
 // macOS 13 / iOS 16: the engine-only compute units and output backings.
 bool isSupported();
 
+// Whether this OS loads a model of that specification version, as
+// MIL::Specification::specificationVersion gives it: 6 wants macOS 12 / iOS
+// 15, 7 macOS 13 / iOS 16, 8 (the CoreML7 opset) macOS 14 / iOS 17, and 9
+// (CoreML8, which scaledDotProductAttention forces) macOS 15 / iOS 18. False
+// for a version newer than 9.
+bool supportsSpecification(int version);
+
 // macOS 14.4 / iOS 17.4: Model::computePlan().
 bool hasComputePlan();
 

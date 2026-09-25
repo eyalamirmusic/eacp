@@ -273,6 +273,96 @@ auto tShapeSlice = test("MLGraph/Shape/slice") = []
     check(!graph.slice(x, {1, 0}, {Shape::unknown, 4}).isValid());
 };
 
+auto tShapeSliceLike = test("MLGraph/Shape/sliceLike") = []
+{
+    auto graph = Graph {};
+    auto table = zeroConstant(graph, "table", {10, 4});
+    auto rows = graph.input("rows", {8, 4}, {{6, 4}}, DType::float16);
+    auto fixed = graph.input("fixed", {3, 4}, DType::float16);
+
+    auto cut = graph.sliceLike(table, rows);
+    check(graph.shape(cut) == Shape {Shape::unknown, 4});
+    auto head = graph.sliceLike(table, fixed);
+    check(graph.shape(head) == Shape {3, 4});
+    check(graph.sliceLike(rows, rows) == rows);
+
+    auto add = [](const GPU::Float& a, const GPU::Float& b) { return a + b; };
+    graph.output(graph.apply(rows, cut, add), "cut");
+    graph.output(graph.apply(fixed, head, add), "head");
+    buildChecked(graph);
+
+    auto flat = graph.input("flat", {4}, DType::float16);
+    check(!graph.sliceLike(table, flat).isValid());
+    check(failedWith(graph, "needs the rank of"));
+
+    auto tooWide = Graph {};
+    auto small = zeroConstant(tooWide, "small", {10, 2});
+    auto wide = tooWide.input("wide", {8, 4}, {{6, 4}}, DType::float16);
+    check(!tooWide.sliceLike(small, wide).isValid());
+
+    auto fromUnknown = Graph {};
+    auto enumerated = fromUnknown.input("x", {8, 4}, {{6, 4}}, DType::float16);
+    auto known = fromUnknown.input("y", {2, 4}, DType::float16);
+    check(!fromUnknown.sliceLike(enumerated, known).isValid());
+};
+
+// The Whisper encoder's ops over an enumerated sequence length: the unknown
+// axis survives conv, transpose, reshape with a -1, linear, layer norm, attention
+// at rank 3 and 4, and an apply of two tensors that share it.
+auto tShapeUnknownPropagates =
+    test("MLGraph/Shape/anEnumeratedLengthFlowsThroughTheEncoderOps") = []
+{
+    auto graph = Graph {};
+    auto add = [](const GPU::Float& a, const GPU::Float& b) { return a + b; };
+    auto mel = graph.input("mel", {1, 4, 16}, {{1, 4, 12}}, DType::float16);
+    auto convBias = zeroConstant(graph, "cb", {6});
+    auto first =
+        graph.conv(mel, zeroConstant(graph, "c1", {6, 4, 3}), convBias, 1, 1);
+    auto second =
+        graph.conv(first, zeroConstant(graph, "c2", {6, 6, 3}), convBias, 2, 1);
+    check(graph.shape(first) == Shape {1, 6, Shape::unknown});
+    check(graph.shape(second) == Shape {1, 6, Shape::unknown});
+
+    auto frames = graph.transpose(second, {0, 2, 1});
+    check(graph.shape(frames) == Shape {1, Shape::unknown, 6});
+
+    auto rows = graph.reshape(frames, {Shape::unknown, 6});
+    check(graph.shape(rows) == Shape {Shape::unknown, 6});
+
+    auto positioned = graph.apply(
+        rows, graph.sliceLike(zeroConstant(graph, "positions", {8, 6}), rows), add);
+    check(graph.shape(positioned) == Shape {Shape::unknown, 6});
+
+    auto normed = graph.layerNorm(positioned,
+                                  {-1},
+                                  zeroConstant(graph, "gamma", {6}),
+                                  zeroConstant(graph, "beta", {6}));
+    auto projected = graph.linear(normed, zeroConstant(graph, "w", {6, 6}));
+    check(graph.shape(normed) == Shape {Shape::unknown, 6});
+    check(graph.shape(projected) == Shape {Shape::unknown, 6});
+
+    auto heads =
+        graph.transpose(graph.reshape(projected, {Shape::unknown, 2, 3}), {1, 0, 2});
+    auto attended = graph.scaledDotProductAttention(heads, heads, heads, false);
+    check(graph.shape(attended) == Shape {2, Shape::unknown, 3});
+
+    auto batched = graph.transpose(
+        graph.reshape(projected, {1, Shape::unknown, 2, 3}), {0, 2, 1, 3});
+    auto attended4 =
+        graph.scaledDotProductAttention(batched, batched, batched, false);
+    check(graph.shape(attended4) == Shape {1, 2, Shape::unknown, 3});
+
+    auto merged =
+        graph.reshape(graph.transpose(attended, {1, 0, 2}), {Shape::unknown, 6});
+    auto merged4 =
+        graph.reshape(graph.transpose(attended4, {0, 2, 1, 3}), {Shape::unknown, 6});
+    auto summed = graph.apply(merged, merged4, add);
+    check(graph.shape(summed) == Shape {Shape::unknown, 6});
+
+    graph.output(summed, "y");
+    buildChecked(graph);
+};
+
 auto tShapeAttention = test("MLGraph/Shape/scaledDotProductAttention") = []
 {
     auto graph = Graph {};

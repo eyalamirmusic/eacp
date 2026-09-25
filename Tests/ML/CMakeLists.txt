@@ -24,7 +24,11 @@ nano_add_executable(MLTests
             MultiArrayTests.cpp
             AsyncTests.cpp
             CacheTests.cpp
+            EncoderReference.cpp
+            EncoderTests.cpp
             PlacementTests.cpp
             ProgramTests.cpp
             TestMain.cpp
         TARGETS eacp-ml)
+
+set_source_files_properties(EncoderReference.cpp PROPERTIES COMPILE_OPTIONS -O2)

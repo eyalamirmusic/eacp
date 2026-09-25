@@ -137,3 +137,39 @@ auto tBlobHalfConstant = test("MLGraph/Blob/halfConstantStoresHalves") = []
     check(halfBytes(values) == halvesBytes);
     check(buildChecked(fromFloats).weights == buildChecked(fromHalves).weights);
 };
+
+auto tBlobLinearWithoutBias =
+    test("MLGraph/Blob/aLinearWithoutABiasStoresZerosOnlyWhenUsed") = []
+{
+    auto weights = halves({1, 2, 3, 4});
+
+    auto used = Graph {};
+    auto x = used.input("x", {1, 2}, DType::float16);
+    auto weight = used.constant("w", {2, 2}, DType::float16, weights);
+    used.output(used.linear(x, weight), "y");
+
+    auto package = buildChecked(used);
+    check(package.weights.size() == 260);
+    check(readUInt64(package.weights, 192 + 16) == 256);
+    check(allZero(package.weights, 256, 260));
+
+    auto unused = Graph {};
+    auto input = unused.input("x", {1, 2}, DType::float16);
+    auto ignored = unused.constant("w", {2, 2}, DType::float16, weights);
+    unused.linear(input, ignored);
+    unused.output(unused.gelu(input), "y");
+
+    check(buildChecked(unused).weights.empty());
+    check(unused.toText().find("const_") == std::string::npos);
+
+    auto wide = Graph {};
+    auto single = wide.input("x", {1, 2}, DType::float32);
+    auto zeros = Bytes {};
+    zeros.resize(24, 0);
+    auto floats = wide.constant("w", {3, 2}, DType::float32, zeros);
+    wide.output(wide.linear(single, floats), "y");
+    check(buildChecked(wide).weights.size() == 256 + 12);
+
+    auto flat = zeroConstant(wide, "flat", {4});
+    check(!wide.linear(single, flat).isValid());
+};

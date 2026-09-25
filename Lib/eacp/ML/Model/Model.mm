@@ -27,6 +27,41 @@ bool isSupported()
     return false;
 }
 
+bool supportsSpecification(int version)
+{
+    if (version <= 5)
+        return true;
+
+    if (version == 6)
+    {
+        if (@available(macOS 12.0, iOS 15.0, *))
+            return true;
+
+        return false;
+    }
+
+    if (version == 7)
+        return isSupported();
+
+    if (version == 8)
+    {
+        if (@available(macOS 14.0, iOS 17.0, *))
+            return true;
+
+        return false;
+    }
+
+    if (version == 9)
+    {
+        if (@available(macOS 15.0, iOS 18.0, *))
+            return true;
+
+        return false;
+    }
+
+    return false;
+}
+
 bool hasComputePlan()
 {
     if (@available(macOS 14.4, iOS 17.4, *))

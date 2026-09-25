@@ -62,6 +62,21 @@ public:
     void copyTo(GPU::Buffer& buffer, DType bufferType = DType::float32) const;
     void copyFrom(const GPU::Buffer& buffer, DType bufferType = DType::float32);
 
+    // The same through part of a buffer: rows() rows of columns() elements,
+    // the first offset bytes into it and each bufferRowStride bytes after the
+    // one before, the bytes between them left as they are. The packed forms
+    // above are these at offset 0 with a stride of one row. Nothing is copied
+    // when the stride is shorter than a row or the last row would end past
+    // the buffer.
+    void copyTo(GPU::Buffer& buffer,
+                int offset,
+                size_t bufferRowStride,
+                DType bufferType = DType::float32) const;
+    void copyFrom(const GPU::Buffer& buffer,
+                  int offset,
+                  size_t bufferRowStride,
+                  DType bufferType = DType::float32);
+
     // Element for element from another array of the same element count.
     void copyFrom(const MultiArray& other);
 

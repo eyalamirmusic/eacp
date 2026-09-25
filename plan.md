@@ -189,10 +189,14 @@ The tensor-level EDSL. A `Tensor` is a bare index into its `Graph`, with a
 one size) and a `DType` of `float16`, `float32` or `int32`; it carries no
 operators of its own, and every op is a `Graph` member: `input`, `output`,
 `constant` (raw bytes, to the blob), `halfConstant` (fp32 values narrowed to
-an fp16 blob tensor), `scalar` (inline), `linear`, `matmul`, `transpose`,
-`reshape`, `softmax(axis)`, `sum(axis)`, `max(axis)`, `layerNorm`, `conv`,
-`gather`, `concat`, `slice`, `scaledDotProductAttention`, `gelu`, `cast`, and
-`apply`. Misuse is recorded rather than asserted or thrown: the op returns an
+an fp16 blob tensor), `scalar` (inline), `linear` (with a bias, or without
+one, when a zero bias of x's type goes into the blob with it), `matmul`,
+`transpose`, `reshape`, `softmax(axis)`, `sum(axis)`, `max(axis)`,
+`layerNorm`, `conv`, `gather`, `concat`, `slice`, `sliceLike` (x from its
+start to another tensor's extents: a plain slice where the reference is
+fixed, MIL's `shape` feeding `slice_by_index`'s `end` where it enumerates, so
+the positional table is cut to the rows a context has at run time),
+`scaledDotProductAttention`, `gelu`, `cast`, and `apply`. Misuse is recorded rather than asserted or thrown: the op returns an
 invalid `Tensor`, ops given one return another without a second error,
 `isValid()` and `errors()` say what went wrong first, and `build()` of an
 invalid graph is an empty `Package`.
@@ -309,7 +313,14 @@ linked in when the target is there as `eacp-spirv` is for GLSL.
   contents pointer, so they go through its `update()` and `read()`, whose wait
   on submitted work is the ordering the seam needs; they convert between the
   array's fp16 and the buffer's type, and copy row by row where an IOSurface's
-  row padding rules out a single memcpy.
+  row padding rules out a single memcpy. Each also takes a byte offset into
+  the buffer and a row stride in bytes, the buffer's rows longer than the
+  array's and the bytes between them left alone, which is the mel binding:
+  `[80, 3000]` band-major, of which a context of N reads the first 2N frames
+  of each band. The packed forms are those at offset 0 with a stride of one
+  row, and a stride shorter than a row or a last row past the buffer's end
+  copies nothing. They take the buffer and an offset rather than a
+  `GPU::BufferRange`, whose `const Buffer*` a write cannot go through.
 - `computePlan()`, `MLComputePlan` (macOS 14.4) read back as one entry per op
   with its MIL type, the device it landed on, the devices it could have, and
   its cost estimate, so a test can assert an encoder went to the Neural Engine
@@ -323,7 +334,12 @@ that raised it would put a linker warning into every app that links it. The
 runner guards with `@available` instead, and `ML::isSupported()` (macOS 13,
 iOS 16, for the engine-only compute units and output backings) and
 `ML::hasComputePlan()` (14.4, 17.4) say what the running OS has; the tests
-self-skip on false, and `MLState` for phase 4 wants 15. That floor is not
+self-skip on false, and `MLState` for phase 4 wants 15.
+`ML::supportsSpecification(version)` says whether the OS loads a program of
+the specification version `specification()` reports: 8, the `CoreML7`
+opset, wants macOS 14 and iOS 17, and 9, which `scaledDotProductAttention`
+forces, macOS 15 and iOS 18, so a caller on an older OS builds the
+attention from `matmul` and `softmax` instead; a version above 9 is false. That floor is not
 eacp's alone to keep: the Xcode 27 on the phase 1 machine refuses
 `IPHONEOS_DEPLOYMENT_TARGET` 14.0 for the simulator, whose floor there is
 15.0, so the whole project's iOS target moves the day CI's Xcode does, this
@@ -376,9 +392,12 @@ case: an eacp change made alongside the WhisperEACP change that needs it.
 - `Lib/WhisperEACP/Net/`: the `Net` seam, the kernel backend (`KernelNet`)
   extracted from `Encoder.cpp` and `Decoder.cpp`, and the Core ML backend over
   `eacp::ML`. `Encoder::encode` and the decoder's two recording calls become
-  the shared bodies, behind the same classes. `Whisper::prepare` takes a
-  backend choice, kernels or Core ML for the encoder, from phase 3, when there
-  is a second backend to choose.
+  the shared bodies, behind the same classes. The backend choice, kernels or
+  Core ML for the encoder, arrives with phase 3, when there is a second backend
+  to choose, and it is `Whisper::setEncoderBackend` before `prepare` rather
+  than a `prepare` parameter: the `setPacksWeights` pattern, a setting read
+  where the weights are built, with a call after `prepare` a `logic_error` and
+  a backend the machine cannot run a `ModelError` out of `prepare` itself.
 - `Tests/Net`: the encoder run both ways over the same mel, compared row by
   row at the tolerance phase 3 measures; the compute plan asserted to have
   placed the encoder on the Neural Engine under `EACP_REQUIRE_ANE=1`.
@@ -586,8 +605,8 @@ decoder oracle drive `Encoder::encode`, `beginSequence` and `step` directly
 and build their weights from `SafeTensors`. The op list above is where this
 phase starts, and writing both bodies against it is what confirms it.
 
-Status as of 2026-09-24: done on a Mac, uncommitted on WhisperEACP's
-`EDSL-CoreML`, branched from `FP16Work` and configured against this tree with
+Status as of 2026-09-24: done on a Mac, committed on WhisperEACP's
+`EDSL-CoreML` as `ec0b7c0`, branched from `FP16Work` and configured against this tree with
 `-DCPM_eacp_SOURCE`. WhisperEACP pins eacp's `develop`, and this branch is
 based on `main` and lacks three `develop` commits; it configured all the same,
 built without a warning and passed everything. The seam is
@@ -669,7 +688,300 @@ matches on the test audio, the row-by-row tolerance is measured and written
 down, and the benchmark shows the encoder's wall time on the engine beside its
 Metal time, with the GPU idle during it.
 
+Status as of 2026-09-24: done on a Mac, uncommitted in both trees, eacp on
+this branch and WhisperEACP on its `EDSL-CoreML` on top of `ec0b7c0`. eacp came
+first, and WhisperEACP then needed nothing further from it. In eacp, G1 to G5
+under "Gaps for eacp" closed in `ML/Graph` and `ML/Model`, and `Tests/ML` holds
+the ground truth: `WhisperEncoder.h` builds the tiny.en encoder at its real
+sizes over seeded weights (80 bands, width 384, fc 1536, six heads, four
+layers, the eighteen contexts with 1500 the default, the key projection without
+a bias, the positional add through `sliceLike`, fused attention, fp16 rows
+out), `MLGraphTests` builds and compiles it enumerated and fixed at 448, and
+`MLTests`' `MLEncoder` suite runs it against an fp32 scalar reference of the
+same graph (`EncoderReference.cpp`) at 1500, 448 and 576 rows under every
+setting, times it and reads its plan; `MLGraphTests` runs 82 tests and
+`MLTests` 38, all passing with and without `EACP_REQUIRE_ANE=1`, `MLTests` in a
+minute rather than eight seconds, three engine compiles being most of it. In
+WhisperEACP, `CoreMLNet` (`Lib/WhisperEACP/Net`, in `whisper-net`, which now
+links `eacp-ml-graph` and so builds on every platform) records
+`recordEncoder`'s calls into a `Graph`: the mel as an fp16 `[1, 80, 2n]` input
+enumerated over the eighteen contexts, the one transpose a relabelling, the
+convolutions' channels-first output turned into `[?, 384]` rows before anything
+else reads it, `rows` a lazy prefix that `add` lowers to `sliceLike`, attention
+split into `[6, ?, 64]` heads around the fused op (or two `matmul`s and a
+`softmax` where the OS stops at specification 8), and every weight a blob
+constant named after its key in the safetensors file, which `TensorBuffer` now
+carries. The cache keys the weights by eacp's own SHA-256 over the blob
+(`weightsName` left empty), so a fine-tuned checkpoint with tiny.en's header to
+the byte, and an F32 and an F16 file that narrow to the same blob, key as their
+bytes say. `CoreMLEncoder` (`Lib/WhisperEACP/Encoder`, Apple only, behind
+`if (TARGET eacp-ml)`) records, builds and loads that model and runs it
+blocking or through `encodeAsync`, the mel copied in through the strided
+`copyFrom` and the rows widened out through the packed `copyTo`. `Whisper`
+chooses it before `prepare` with `setEncoderBackend(coreML)` (supported where
+the build has `EACP_HAS_COREML`, `isSupported()` holds and specification 8
+loads), `setEncoderComputeUnits` (`cpuAndNeuralEngine` by default) and
+`setEncoderCacheDirectory`, and reports it through `encoderWasCacheHit`,
+`encoderLoadSeconds`, `lastEncoderPredictSeconds`, `lastEncoderMelSeconds` and
+`encoderComputePlan`; under it `prepare` builds host weights and compiles and
+allocates nothing of the kernel encoder, and an encode commits the mel alone,
+waits and predicts. `transcribeAsync(samples)` returns
+`Threads::Async<Vector<TokenId>>`: under Core ML it commits the mel on the
+calling thread, calls `encodeAsync` and decodes in that Async's resolve on the
+main thread; on the kernels it is `transcribe()`, resolved before it returns,
+and `transcribe()` is the same body split into `beginRun`, the encode and
+`decodeTranscript`, with the dispatches unchanged. A run in flight
+(`isTranscribing()`) makes `transcribe`, `transcribeAsync`, `setAudioContext`
+and `prepare` a `logic_error`. `LiveTranscriber` runs through it: while a run
+is out `update()` starts nothing and takes no audio, the resolve applies the
+result where the blocking call did, a failure throws from the next `update()`,
+`flush()` waits through `Async::waitFor`, `clear()` drops a late result by
+generation, and a weak token keeps a result off a destroyed transcriber;
+`LiveStats` gained `runInFlight` and `runsThatChangedTheText`. `Benchmark`
+gained its `WhisperEACP ANE` column with `--units=` and `--plan`, and `--live`
+streams on both backends; `DeviceInfo` prints what Core ML offers and, with
+`--plan`, where it places the bundled model's encoder; `Apps/Demo/LiveTranscribe`
+gained `--coreml`. The suite went from 316 at phase 2 to 355 in Debug, all
+passing, and `NetTests`, `WhisperTests` and `OracleTests` pass under
+`EACP_REQUIRE_ANE=1` as well. The oracle's bar holds: on the engine, with the
+fused attention, the tokens are whisper.cpp's exactly on jfk.wav, 24 at the
+full window and 23 at 576, and the kernel path's; under `cpu`, the placement
+the macOS CI runner gives every setting, they are whisper.cpp's exactly as
+well.
+
+A review pass followed. It made a `prepare` that fails leave the `Whisper`
+unprepared, where a failed re-prepare had left the earlier decoder beside no
+encoder, and made `prepare` with a run in flight a `logic_error`; declared the
+Core ML encoder after the buffers its pending run writes and the decoder that
+reads them, so that its destruction, which abandons the run, comes first; made
+the compute-unit mapping a named function; added `setEncoderCacheDirectory`,
+so that `NetTests`, `WhisperTests` and `OracleTests` share one fixed cache,
+`<temp>/whisper-eacp-tests/CoreML`, where each had compiled the same model
+into its own; resolved `transcribeAsync` outside the decode's `try`, so a
+caller's continuation that throws is not taken for a failed decode; and made
+`LiveTranscriber::flush()` report a timeout as one, leaving that run in flight
+to land on a later `update()`, and stop throwing for a failed run that
+`clear()` had already dropped.
+
+The seeded encoder in `MLTests`, on the phase 1 machine: max abs error at
+1500 / 448 / 576 rows (max rel is left out: an encoder row is mostly values
+near zero, and it runs to 10 and more everywhere), the device the plan
+reports, and the median of nine predictions after the first:
+
+| setting | placed | max abs error | 1500 rows | 448 rows |
+| --- | --- | --- | --- | --- |
+| CPU | CPU | 4.9e-2 / 3.2e-2 / 3.5e-2 | 18.6-19.0 ms | 4.5-4.6 ms |
+| CPU and GPU | GPU | 6.4e-3 / 5.8e-3 / 6.5e-3 | 3.1-5.1 ms | 1.6-2.2 ms |
+| CPU and engine | engine | 2.2e-2 / 2.3e-2 / 2.3e-2 | 11.3-11.4 ms | 1.4-1.5 ms |
+| all | GPU | as CPU and GPU | 2.4-6.2 ms | 1.8-2.9 ms |
+
+The tolerances sit at about three times these: 0.15 on the CPU, 0.02 on the
+GPU, 0.07 under the two engine settings, which are held to the CPU's bound
+unless `EACP_REQUIRE_ANE=1`, because reading an engine plan costs a compile.
+
+With tiny.en's own weights, measured by `NetTests` in a Debug build on the
+phase 1 machine, over jfk.wav's mel, against the kernel encoder's fp32 rows at 1500 / 576 / 448 positions,
+with the warm prediction (the second of two at that context, over several
+runs) beside it:
+
+| setting | max abs | 99.9th percentile | mean abs | predict |
+| --- | --- | --- | --- | --- |
+| CPU and engine | 0.26 / 0.21 / 1.10 | 0.056 / 0.069 / 0.072 | 0.0076 / 0.0091 / 0.0090 | 11.3-11.5 / 2.5-2.7 / 1.6 ms |
+| all (GPU) | 0.031 / 0.055 / 0.15 | 0.0084 / 0.011 / 0.010 | 0.0011 / 0.0015 / 0.0014 | 5.5-6.5 / 3.2-3.7 / 3.2-3.9 ms |
+| CPU | 0.42 / 0.20 / 2.60 | 0.14 / 0.070 / 0.098 | 0.018 / 0.010 / 0.010 | 18.3-19.4 / 6.2-6.7 / 4.4-4.8 ms |
+
+The tests hold each column at about three times its worst: 3.5, 0.22 and 0.03
+on the engine, 0.5, 0.035 and 0.005 on the GPU, 8, 0.45 and 0.06 on the CPU;
+every setting is held to the CPU's unless `EACP_REQUIRE_ANE=1`, since CI
+places everything on the CPU. The same encoder cut after 0 to 4 layers, one
+fixed program per depth, puts the engine's max abs at 0.064, 0.15, 0.21, 0.24
+and 0.26 at 1500 positions, and the GPU's at 0.0069, 0.024, 0.028, 0.023 and
+0.031. In Debug, `CoreMLEncoder::encode`, the two seam copies and the
+prediction, took 27-29 ms warm at 1500, 11-13 at 576 and 9-11 at 448, the
+unoptimised copies being most of it. The compute plan placed all 39 of the
+encoder's `conv`, `linear`, `layer_norm` and `scaled_dot_product_attention`
+ops on the engine under CPU and engine.
+
+The benchmark splits the Core ML column's encode three ways: `mel on the GPU`
+(`Whisper::lastEncoderMelSeconds()`, the mel's own command buffer, committed
+and waited on), `predict`, and `seam copies`, the encode less the other two.
+
+Release, on the phase 1 machine (M5 Max), jfk.wav, 30 timed runs after one
+warm-up, the encoder on the engine under CPU and engine unless the column
+says `all`; the plan put all 90 of the program's ops on the engine (and all
+90 on the GPU under `all`), and the transcript was the reference's at every
+context but 448, where all four columns loop, since jfk.wav's 11 s does not
+fit 448 positions (8.96 s):
+
+| context | Metal transcribe | ANE transcribe | Metal encode | ANE encode | mel / predict / seam | Metal decode | ANE decode |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1500 | 14.18 ms | 21.45 ms | 4.99 ms | 11.84 ms | 0.39 / 11.26 / 0.16 ms | 9.00 ms | 9.48 ms |
+| 1500, `all` (GPU) | 14.22 ms | 11.28 ms | 4.98 ms | 2.07 ms | 0.38 / 1.51 / 0.18 ms | 9.04 ms | 9.04 ms |
+| 704 (`audio`) | 11.09 ms | 12.60 ms | 2.39 ms | 3.61 ms | 0.36 / 3.11 / 0.13 ms | 8.50 ms | 8.84 ms |
+| 576 | 10.32 ms | 11.50 ms | 2.17 ms | 2.93 ms | 0.37 / 2.43 / 0.13 ms | 7.97 ms | 8.41 ms |
+| 448 | - | - | 1.99 ms | 2.12 ms | 0.41 / 1.57 / 0.14 ms | 409 us/step | 409 us/step |
+
+whisper.cpp at 1500 was 30.54 ms on Metal and 99.21 ms on the CPU, encode
+4.88 and 72.17 ms. The engine load was a cache hit at 0.03-0.04 s, a whole
+`prepare` 0.14-0.16 s; the first load of the session, after the key changed,
+compiled in 13.55 s. The same build ten minutes earlier gave the same
+numbers to within 0.1 ms.
+
+The live figures, `Benchmark --live`: jfk.wav on repeat with a 1.5 s gap,
+33 ms ticks. The one quiet-machine figure is a 15 s stream at the whole
+window, 25 runs a side: 21.3 ms a run on the kernels (encode 14.9, decode 6.1)
+and 26.6 ms on the engine (encode 14.2, decode 12.3). **The 30 s table below
+was taken under load**, with `mediaanalysisd` and `spotlightknowledged` holding
+about 180% CPU each and the load average near 20, and on four repeats its
+engine column ranged 61-106 ms a run; it says what the engine does on a busy
+machine, not what it costs on a quiet one. The load average was still 10 to
+30 through the final pass, so the table was not retaken:
+
+| | kernels, window | engine, window | kernels, `audio` | engine, `audio` |
+| --- | --- | --- | --- | --- |
+| runs (changed the text) | 49 (39) | 41 (37) | 49 (41) | 43 (35) |
+| per run, mean / longest | 22.9 / 37.4 ms | 106.3 / 333.2 ms | 18.3 / 29.6 ms | 89.1 / 652.2 ms |
+| encode / decode, mean | 15.6 / 6.8 ms | 54.9 / 37.4 ms | 10.0 / 7.8 ms | 46.7 / 22.0 ms |
+| duty | 3.7% | 14.5% | 3.0% | 12.8% |
+| segments committed | 2 | 2 | 2 | 2 |
+
+On the engine a run is its start to its result, loop turns included, so its
+`per run` and `duty` are latency, not main-thread or GPU time.
+
+The "done when", clause by clause. The transcript matches on the test audio:
+yes, on the engine, on the GPU and on the CPU; the oracle's tokens are
+whisper.cpp's under CPU and engine and under `cpu`, `Tests/Net` and the four
+live twins hold the engine's to the kernels', and the benchmark prints `same`
+under `all` as under CPU and engine. The row-by-row tolerance is measured and
+written down: yes, in the second table above, and `Tests/Net` holds it. The
+benchmark shows the encoder's wall time on the engine beside its Metal time,
+with the GPU idle during it: yes, and the idle GPU is shown by construction
+rather than by a counter, since on the Core ML path the mel row is the only
+GPU work in an encode, its own command buffer committed and waited on before
+the prediction starts, `--plan` puts all 90 ops on the engine, and the
+decoder's first step is not recorded until the rows are back. Phase 3 is done.
+
+What the numbers say about the engine is not what the plan expected: it is
+slower than the Metal kernels at every context, and what it buys is an idle GPU
+and an idle main thread for the length of the prediction. The compute-unit
+default, `cpuAndNeuralEngine`, is a decision these numbers now put in question,
+and it is left to the author.
+
+Phase 3 findings:
+
+- **`all` puts the encoder on the GPU, so the default is CPU and engine.** On
+  this machine, enumerated or fixed at 448 or 1500, every op of the encoder
+  lands on the GPU under `ComputeUnits::all`, as under CPU and GPU; only
+  `cpuAndNeuralEngine` reaches the engine, where every op lands, `shape` and
+  `slice_by_index` included, so nothing falls back to the CPU. Phase 1's
+  1500-row `linear` and `softmax` went to the engine under `all`; the encoder's
+  op mix does not. So `CoreMLEncoderOptions` and `Whisper` default to
+  `cpuAndNeuralEngine`, the only setting that leaves the GPU idle, and the
+  placement test asserts the engine under it and only logs `all`.
+- **The engine is slower than the Metal kernels at every context.** Its
+  prediction alone against the kernels' whole encode, the mel included, in
+  Release: 11.26 against 4.99 ms at 1500, 3.11 against 2.39 at 704, 2.43
+  against 2.17 at 576, and level at 448 (1.57 plus a 0.41 ms mel against 1.99).
+  The plan's premise, that the engine would lose the full window and win the
+  short live contexts, did not hold: it scales with the context more steeply
+  than the kernels (7.2 times from 448 to 1500, against 2.5), eightfold for 3.3
+  times the rows, which points at the 1500 by 1500 attention scores, so any
+  crossover is at or below 448, the floor. What the engine buys is an idle GPU
+  and an idle main thread for the length of the prediction, not wall time.
+- **Core ML on the GPU is the fastest encoder here.** Under `all` it predicts
+  the full window in 1.51 ms, and its encode is 2.07 ms against the kernels'
+  4.99 ms, 11.28 ms a transcribe against 14.22, with the same tokens: Apple's
+  own GPU lowering of the same program is about three times faster than our
+  Metal kernels. That is a target for the kernels (the attention and the
+  projections at 1500 rows), and a reason `EncoderComputeUnits::all` is worth
+  exposing as a setting rather than as a diagnostic.
+- **The engine compile is 13.5 s, once per cache directory.** A cold load of
+  the enumerated model under CPU and engine took 13.5 to 14.1 s, the engine
+  compiling all eighteen members; a warm one 12.6 to 13.1 ms in eacp's tests
+  and 30 to 165 ms through `CoreMLEncoder`, recording and building the program
+  not included (recording tiny.en is 0.53 s in Debug), and a whole warm
+  `prepare` on Core ML is 0.14 to 0.16 s in Release. Under `all` it is 0.75 to
+  0.8 s cold and 20 ms warm. The compile to `.mlmodelc` itself is under 0.1 s.
+  The cache key is the program, the weights and the OS, not the units, so the
+  compile is paid once per model whichever setting asks first; but it is paid
+  once per cache directory, and with the default, `appCacheDirectory() /
+  "CoreML"`, `DeviceInfo`, the benchmark, each test binary and the demo each
+  paid it for the same model until the tests were pointed at one directory. A
+  program fixed at one context compiles for the engine in 0.63 s at 448 and
+  1.02 s at 1500, so the risk's fallback, one model per context compiled on
+  first use, is about a second at each context's first use against fourteen up
+  front.
+- **The compute plan read costs the compile again, the first time.** Reading
+  it under CPU and engine took 13.2 to 14.7 s the first time in a session,
+  however warm the cache, and 0.0 s right after another read of the same
+  compiled model (0.8 s and 0.1 s under `all`): the OS appears to keep the
+  compile it did for the plan for a while. A program fixed at one context
+  reads its plan in about a second. The benchmark and `DeviceInfo` read it
+  only under `--plan`.
+- **The compute plan is the program's, not a member's.** `MLComputePlan` is
+  loaded from the compiled model and takes no shape, and the enumerated
+  model's plan lists the `shape` op a member fixed at its size would not hold:
+  it places the program as written, once. The probe per member is a program
+  fixed at that context (G4): at 448 and at 1500 every op lands on the engine
+  under CPU and engine, and the enumerated model's 448 member runs at the fixed
+  program's speed, 1.42 ms against 1.41. The op mix placed phase 1's lone
+  448-row `linear` and `softmax` elsewhere, not the size alone.
+- **The fp16 error is arithmetic throughout, not layer norm drifting.** Against
+  tiny.en's own weights the engine's max abs at the full window is 0.26, ten
+  times the seeded encoder's 2.2e-2, where the GPU through Core ML stays near
+  its seeded number (0.031). Cut by depth, the gap is there before the first
+  layer: the convolutions, the positional add and the final norm alone are
+  0.064 on the engine against 0.0069 on the GPU, the first layer doubles it,
+  and it grows little after (0.15, 0.21, 0.24, 0.26). The oracle's tokens are
+  unchanged by it.
+- **The maximum is a handful of elements.** At 448 positions the engine's max
+  abs is 1.1 and the CPU's 2.6, where the 99.9th percentile is 0.072 and 0.098
+  and the mean 0.009 and 0.010; it appears only after the fourth layer, and on
+  the GPU too (0.15), so it is the model amplifying one element rather than a
+  device fault. A tolerance on the maximum alone would either be loose or
+  fail, so `Tests/Net` holds the tail and the mean as well.
+- **The engine is shared with the system.** With `mediaanalysisd` and
+  `spotlightknowledged` busy, the back-to-back benchmark held its numbers
+  (11.26 ms), but the live stream's engine runs went from 26.6 ms to 61-106 ms,
+  with a longest of 0.3 to 0.65 s, while the kernel column moved by 1-2 ms. A
+  run that waits for the engine waits for whatever else the OS has queued on
+  it, and the live path, which idles it between runs, sees that most.
+- **The decode after an engine encode is slower.** Back to back it is about 5%
+  slower (9.48 ms against 9.00 at the window, 8.41 against 7.97 at 576), in
+  the quiet live stream twice as slow (12.3 ms against 6.1 for the same steps),
+  and three to five times under load. With the engine the GPU sees a 0.4 ms mel
+  and then nothing for the length of the prediction, where the kernels' encode
+  keeps it busy up to the first step; that is consistent with the GPU clocking
+  down in between, though nothing here measures the clock.
+- **A member's first prediction is slow.** The enumerated model's first
+  prediction at 448 rows took 10.7 to 11.8 ms on the engine and 42 ms on the
+  GPU, the ones after it 1.4 and 1.8 to 2.9; a fixed 448 program's first is
+  1.6 ms. `LiveTranscriber` primes nothing, so the first run at each new
+  context pays it.
+- **Core ML refuses an output that folds away.** An output that is an input
+  cut to its own shape fails the load with "Failed to build the model
+  execution plan ... error code: -6", so `sliceLike(x, x)` is `x`; a program
+  whose outputs were the enumerated cut and a constant table cut to a fixed
+  input nothing else read failed the same way, and passes once each cut is
+  added to its input, as the encoder's is.
+- **The reference is cheap enough to keep in the suite.** The fp32 encoder,
+  written as rows times transposed weights so the inner loops vectorize and
+  compiled at `-O2` in a Debug build, takes 1.5 s at 1500 rows and 0.33 s at
+  448.
+- **In Release the seam is noise.** The copies cost 0.13-0.18 ms and the mel's
+  own command buffer 0.36-0.41 ms at every context, so an encode on Core ML is
+  its prediction plus about half a millisecond. In Debug the unoptimised
+  copies were most of a 27 ms encode around an 11.4 ms prediction, which was a
+  cost of the build, not of the seam.
+
 ### Phase 4 - the decoder, if the numbers say so
+
+Phase 3 measured the per-prediction overhead as the encode less the
+prediction, 0.5-0.6 ms (the mel's command buffer 0.36-0.41 ms and the seam
+copies 0.13-0.18 ms, Release, at every context), on top of a smallest engine
+prediction of 1.57 ms (the whole encoder at 448), against a Metal decode step
+of 332-409 us all in; a Core ML decode step would have to fit its
+prediction, its hop and its copies in that.
 
 Only if phase 3's per-prediction overhead, measured, leaves room for a
 decode step to win. Stateful model with `MLState` for the KV cache, fixed
@@ -784,3 +1096,49 @@ Phase 2 surfaced one more:
   phase 2 left the dispatches and barriers unchanged had to fake a Metal
   compute encoder. A recording or counting hook on the pass would let a
   portable test pin dispatch and barrier counts on every backend. Still open.
+
+Phase 3 surfaced these, in eacp before WhisperEACP was touched:
+
+- G1: the positional add over an enumerated context had no spelling. `slice`
+  refused a fixed axis with an unknown end, and `apply` a `[1500, 384]` table
+  against `[?, 384]` rows. Closed in this phase: `sliceLike(x, reference)`,
+  lowered to `shape` and `slice_by_index` where the reference enumerates,
+  which Core ML places on the engine with the rest.
+- G2: `linear` took a bias tensor always, so Whisper's bias-less key
+  projection meant a named zero constant per layer. Closed in this phase:
+  `linear(x, weight)` supplies an unnamed zero blob constant, which reaches
+  the blob only when the linear reaches an output.
+- G3: the seam copies were packed from offset 0, and the mel binding is
+  `[80, 3000]` read 2N frames a band. Closed in this phase: `copyTo` and
+  `copyFrom` take a byte offset and a row stride in bytes.
+- G4: `computePlan()` describes the compiled program, not a member, and under
+  the engine settings reading it costs the engine compile again. Not
+  closable in eacp, since `MLComputePlan` takes no shape; the probe is a
+  program fixed at each context, in `Tests/ML/EncoderTests.cpp` rather than
+  the library, and it found 448 and 1500 wholly on the engine. Still open as
+  a Core ML limit.
+- G5: `isSupported()` checks macOS 13, but every program the graph writes is
+  specification 8 (macOS 14) or, with `scaledDotProductAttention`, 9 (macOS
+  15), so it answered yes on OSes that load none of them. Closed in this
+  phase: `supportsSpecification(version)`, asked with what
+  `specification()` reports.
+
+WhisperEACP's side of phase 3 surfaced two more:
+
+- G6: the default compiled-model cache is per app
+  (`appCacheDirectory() / "CoreML"`), so every binary of one product compiled
+  the same model for the engine, about 13.5 s each. What the callers wanted
+  was a shared directory, and `Options::cacheDirectory` already allows one:
+  WhisperEACP passes it through `CoreMLEncoderOptions::cacheDirectory` and
+  `Whisper::setEncoderCacheDirectory`, and its three Core ML test suites now
+  share one fixed directory under the temp directory and compile once per
+  machine. What remains open is smaller: the default has no level above the
+  app, so a product's binaries share only if each names the directory, and
+  nothing evicts a compiled model once no program or weights key to it, so a
+  long-lived shared directory only grows.
+- G7: `CoreMLEncoder`, and so `Whisper::transcribeAsync`, cannot time the
+  prediction on its own once it goes through `predictAsync`: the Async gives
+  the result, not how long the queue waited or the prediction ran, so an
+  async encode's time includes the hop back to the loop. A `Prediction` that
+  carried its own start and end on the queue would let the live path report
+  the engine time. Still open.

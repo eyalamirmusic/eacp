@@ -468,6 +468,26 @@ Tensor Graph::linear(Tensor x, Tensor weight, Tensor bias)
                          tensorParameter("bias", bias)});
 }
 
+Tensor Graph::linear(Tensor x, Tensor weight)
+{
+    if (!acceptOperands("linear", {x, weight}))
+        return {};
+
+    auto weights = node(weight).shape;
+
+    if (weights.rank() != 2 || !weights.isFixed() || !isFloat(x))
+        return fail("linear",
+                    "needs a floating-point x and weight [out, in], not "
+                        + weights.toString());
+
+    auto type = node(x).type;
+    auto zeros = Bytes {};
+    zeros.resize(weights[0] * MIL::sizeOf(type), 0);
+    auto bias = addBlobConstant("", {weights[0]}, type, zeros);
+
+    return linear(x, weight, bias);
+}
+
 Tensor Graph::matmul(Tensor a, Tensor b, bool transposeA, bool transposeB)
 {
     if (!acceptOperands("matmul", {a, b}))
@@ -899,6 +919,54 @@ Tensor Graph::slice(Tensor x, const Vector<int>& begin, const Vector<int>& end)
          valueParameter("begin", MIL::Value::ints(toInt32s(begin))),
          valueParameter("end", MIL::Value::ints(toInt32s(endValues))),
          valueParameter("end_mask", MIL::Value::bools(endMask))});
+}
+
+Tensor Graph::sliceLike(Tensor x, Tensor reference)
+{
+    auto op = "slice_by_index";
+
+    if (!acceptOperands(op, {x, reference}))
+        return {};
+
+    auto in = node(x).shape;
+    auto like = node(reference).shape;
+
+    if (like.rank() != in.rank())
+        return fail(op,
+                    "the reference " + like.toString() + " needs the rank of "
+                        + in.toString());
+
+    for (auto axis = 0; axis < in.rank(); ++axis)
+    {
+        auto fits = like[axis] == Shape::unknown
+                    || (in[axis] != Shape::unknown && like[axis] <= in[axis]);
+
+        if (!fits)
+            return fail(op,
+                        "axis " + std::to_string(axis) + " of " + in.toString()
+                            + " cannot be cut to " + like.toString());
+    }
+
+    if (x == reference)
+        return x;
+
+    auto begin = Vector<int> {};
+    begin.resize(in.rank(), 0);
+
+    if (like.isFixed())
+        return slice(x, begin, like.dims);
+
+    auto extents = addOperation("shape",
+                                {like.rank()},
+                                MIL::DataType::int32,
+                                {tensorParameter("x", reference)});
+
+    return addOperation(op,
+                        like,
+                        node(x).type,
+                        {tensorParameter("x", x),
+                         valueParameter("begin", MIL::Value::ints(toInt32s(begin))),
+                         tensorParameter("end", extents)});
 }
 
 Tensor Graph::scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causal)

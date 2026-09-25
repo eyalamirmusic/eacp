@@ -214,6 +214,67 @@ auto tTextSlice = test("MLGraph/Text/slice") = []
         "} -> (y);\n");
 };
 
+auto tTextSliceLike = test("MLGraph/Text/sliceLikeReadsTheReferencesShape") = []
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {6, 4}, {{2, 4}, {4, 4}}, DType::float16);
+    auto table = zeroConstant(graph, "table", {6, 4});
+    auto add = [](const GPU::Float& a, const GPU::Float& b) { return a + b; };
+    graph.output(graph.apply(x, graph.sliceLike(table, x), add), "y");
+    buildChecked(graph);
+
+    checkText(graph.toText(),
+              "program(1)\n"
+              "func main<CoreML7>(tensor<fp16, [?, 4]> x) {\n"
+              "    tensor<fp16, [6, 4]> table = const()[val = blob(64)];\n"
+              "    tensor<int32, [2]> shape_2 = shape(x = x);\n"
+              "    tensor<int32, [2]> slice_by_index_3_begin = const()[val = [0, "
+              "0]];\n"
+              "    tensor<fp16, [?, 4]> slice_by_index_3 = slice_by_index(x = "
+              "table, begin = slice_by_index_3_begin, end = shape_2);\n"
+              "    tensor<fp16, [?, 4]> y = add(x = x, y = slice_by_index_3);\n"
+              "} -> (y);\n");
+};
+
+auto tTextSliceLikeFixed = test("MLGraph/Text/sliceLikeAFixedReferenceIsASlice") = []
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {2, 4}, DType::float16);
+    auto table = zeroConstant(graph, "table", {6, 4});
+    graph.output(graph.sliceLike(table, x), "y");
+    buildChecked(graph);
+
+    checkText(
+        graph.toText(),
+        "program(1)\n"
+        "func main<CoreML7>(tensor<fp16, [2, 4]> x) {\n"
+        "    tensor<fp16, [6, 4]> table = const()[val = blob(64)];\n"
+        "    tensor<int32, [2]> y_begin = const()[val = [0, 0]];\n"
+        "    tensor<int32, [2]> y_end = const()[val = [2, 4]];\n"
+        "    tensor<bool, [2]> y_end_mask = const()[val = [false, false]];\n"
+        "    tensor<fp16, [2, 4]> y = slice_by_index(x = table, begin = y_begin, "
+        "end = y_end, end_mask = y_end_mask);\n"
+        "} -> (y);\n");
+};
+
+auto tTextLinearWithoutBias = test("MLGraph/Text/linearWithoutABias") = []
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {2, 4}, DType::float16);
+    auto weight = zeroConstant(graph, "w", {3, 4});
+    graph.output(graph.linear(x, weight), "y");
+    buildChecked(graph);
+
+    checkText(graph.toText(),
+              "program(1)\n"
+              "func main<CoreML7>(tensor<fp16, [2, 4]> x) {\n"
+              "    tensor<fp16, [3, 4]> w = const()[val = blob(64)];\n"
+              "    tensor<fp16, [3]> const_2 = const()[val = blob(192)];\n"
+              "    tensor<fp16, [2, 3]> y = linear(x = x, weight = w, bias = "
+              "const_2);\n"
+              "} -> (y);\n");
+};
+
 auto tTextAttention = test("MLGraph/Text/scaledDotProductAttention") = []
 {
     auto graph = Graph {};

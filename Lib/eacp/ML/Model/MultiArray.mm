@@ -625,55 +625,107 @@ void MultiArray::fromFloats(Span<const float> values)
                     remainder);
 }
 
+namespace
+{
+size_t bufferRowBytes(const MultiArray& array, DType bufferType)
+{
+    return (size_t) array.columns() * (size_t) elementSizeOf(bufferType);
+}
+
+bool fitsBuffer(const MultiArray& array,
+                const GPU::Buffer& buffer,
+                int offset,
+                size_t bufferRowStride,
+                DType bufferType)
+{
+    auto rowBytes = bufferRowBytes(array, bufferType);
+
+    if (!array.isValid() || !buffer.isValid() || offset < 0
+        || bufferRowStride < rowBytes)
+        return false;
+
+    auto lastRow = bufferRowStride * (size_t) (array.rows() - 1);
+    return (size_t) offset + lastRow + rowBytes <= (size_t) buffer.size();
+}
+} // namespace
+
 void MultiArray::copyTo(GPU::Buffer& buffer, DType bufferType) const
 {
-    if (!isValid() || !buffer.isValid())
-        return;
-
-    auto access = CpuAccess {*impl, true};
-    auto packedStride = (size_t) columns() * (size_t) elementSizeOf(bufferType);
-    auto total = packedStride * (size_t) rows();
-
-    if (bufferType == type() && rowStride() == packedStride)
-    {
-        buffer.update(access.data(), (int) total);
-        return;
-    }
-
-    auto staging = Vector<std::byte> {};
-    staging.resize((int) total, std::byte {0});
-    convertRows(access.data(),
-                type(),
-                rowStride(),
-                staging.data(),
-                bufferType,
-                packedStride,
-                rows(),
-                columns());
-    buffer.update(staging.data(), (int) total);
+    copyTo(buffer, 0, bufferRowBytes(*this, bufferType), bufferType);
 }
 
 void MultiArray::copyFrom(const GPU::Buffer& buffer, DType bufferType)
 {
-    if (!isValid() || !buffer.isValid())
+    copyFrom(buffer, 0, bufferRowBytes(*this, bufferType), bufferType);
+}
+
+void MultiArray::copyTo(GPU::Buffer& buffer,
+                        int offset,
+                        size_t bufferRowStride,
+                        DType bufferType) const
+{
+    if (!fitsBuffer(*this, buffer, offset, bufferRowStride, bufferType))
+        return;
+
+    auto access = CpuAccess {*impl, true};
+    auto rowBytes = bufferRowBytes(*this, bufferType);
+    auto isPacked = bufferRowStride == rowBytes;
+    auto source = access.data();
+    auto sourceStride = rowStride();
+    auto staging = Vector<std::byte> {};
+
+    if (bufferType != type() || (isPacked && sourceStride != rowBytes))
+    {
+        staging.resize((int) (rowBytes * (size_t) rows()), std::byte {0});
+        convertRows(access.data(),
+                    type(),
+                    rowStride(),
+                    staging.data(),
+                    bufferType,
+                    rowBytes,
+                    rows(),
+                    columns());
+        source = staging.data();
+        sourceStride = rowBytes;
+    }
+
+    if (isPacked)
+    {
+        buffer.update(source, (int) (rowBytes * (size_t) rows()), offset);
+        return;
+    }
+
+    for (auto row = 0; row < rows(); ++row)
+        buffer.update(source + (size_t) row * sourceStride,
+                      (int) rowBytes,
+                      offset + (int) ((size_t) row * bufferRowStride));
+}
+
+void MultiArray::copyFrom(const GPU::Buffer& buffer,
+                          int offset,
+                          size_t bufferRowStride,
+                          DType bufferType)
+{
+    if (!fitsBuffer(*this, buffer, offset, bufferRowStride, bufferType))
         return;
 
     auto access = CpuAccess {*impl, false};
-    auto packedStride = (size_t) columns() * (size_t) elementSizeOf(bufferType);
-    auto total = packedStride * (size_t) rows();
+    auto rowBytes = bufferRowBytes(*this, bufferType);
+    auto span = bufferRowStride * (size_t) (rows() - 1) + rowBytes;
 
-    if (bufferType == type() && rowStride() == packedStride)
+    if (bufferType == type() && rowStride() == rowBytes
+        && bufferRowStride == rowBytes)
     {
-        buffer.read(access.data(), (int) total);
+        buffer.read(access.data(), (int) span, offset);
         return;
     }
 
     auto staging = Vector<std::byte> {};
-    staging.resize((int) total, std::byte {0});
-    buffer.read(staging.data(), (int) total);
+    staging.resize((int) span, std::byte {0});
+    buffer.read(staging.data(), (int) span, offset);
     convertRows(staging.data(),
                 bufferType,
-                packedStride,
+                bufferRowStride,
                 access.data(),
                 type(),
                 rowStride(),

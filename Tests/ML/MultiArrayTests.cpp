@@ -128,6 +128,70 @@ auto tBufferSeamKeepsHalves =
     check(destination.toFloats() == values, "widened on the way in");
 };
 
+// The mel's case: each row of the array is the start of a longer row in the
+// buffer, which begins part way in. The gaps between rows are the buffer's own
+// and are left as they were.
+auto tBufferSeamStrided =
+    test("MLMultiArray/copiesThroughAnOffsetAndARowStride") = []
+{
+    if (!isSupported() || !eacp::GPU::Device::shared().isValid())
+        return;
+
+    constexpr auto rows = 3;
+    constexpr auto columns = 4;
+    constexpr auto strideFloats = 8;
+    constexpr auto offsetFloats = 4;
+    constexpr auto bufferFloats = offsetFloats + rows * strideFloats;
+    constexpr auto sentinel = -7.0f;
+
+    auto values = TestPrograms::seededValues(rows * columns, 23u, 1.0f);
+    auto offset = offsetFloats * (int) sizeof(float);
+    auto stride = (size_t) strideFloats * sizeof(float);
+
+    for (auto type: {DType::float16, DType::float32})
+    {
+        auto filled = Vector<float> {};
+        filled.resize(bufferFloats, sentinel);
+        auto buffer = eacp::GPU::Device::shared().makeBuffer(
+            filled.data(),
+            bufferFloats * (int) sizeof(float),
+            eacp::GPU::BufferUsage::Storage);
+
+        auto source = arrayOf(values, {rows, columns}, type);
+        source.copyTo(buffer, offset, stride);
+
+        auto expected = filled;
+
+        for (auto row = 0; row < rows; ++row)
+            for (auto column = 0; column < columns; ++column)
+                expected[offsetFloats + row * strideFloats + column] =
+                    values[row * columns + column];
+
+        check(buffered(buffer, bufferFloats) == expected,
+              "strided into fp32 from " + toString(type));
+
+        auto destination = MultiArray::create({rows, columns}, type);
+        destination.copyFrom(buffer, offset, stride);
+        check(destination.toFloats() == values,
+              "strided back into " + toString(type));
+
+        auto zeros = TestPrograms::zeros(rows * columns);
+        auto untouched = arrayOf(zeros, {rows, columns}, type);
+        untouched.copyFrom(buffer, offset, columns * sizeof(float) - 4);
+        untouched.copyFrom(buffer, offset + (int) stride, stride);
+        check(untouched.toFloats() == zeros,
+              "a stride shorter than a row or a row past the end copies nothing");
+    }
+
+    auto halfBuffer = storageBuffer(bufferFloats * 2);
+    auto halves = arrayOf(values, {rows, columns}, DType::float16);
+    halves.copyTo(halfBuffer, offsetFloats * 2, strideFloats * 2, DType::float16);
+
+    auto back = MultiArray::create({rows, columns}, DType::float32);
+    back.copyFrom(halfBuffer, offsetFloats * 2, strideFloats * 2, DType::float16);
+    check(back.toFloats() == values, "strided through an fp16 buffer");
+};
+
 auto tArrayCopiesConvert =
     test("MLMultiArray/anArrayCopiesFromAnotherOfAnotherType") = []
 {

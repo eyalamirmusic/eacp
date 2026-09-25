@@ -1,4 +1,5 @@
 #include "GraphCommon.h"
+#include "WhisperEncoder.h"
 
 #include <cmath>
 
@@ -139,4 +140,62 @@ auto tEncoderFused = test("MLGraph/Encoder/layerWithFusedAttention") = []
     auto text = graph.toText();
     check(text.find("scaled_dot_product_attention(") != std::string::npos);
     check(text.find("tensor<fp32, [16, 16]> rows = cast(") != std::string::npos);
+};
+
+namespace
+{
+int countOf(const MIL::Specification& specification, std::string_view type)
+{
+    auto count = 0;
+
+    for (auto& operation: specification.program.main.block.operations)
+        count += operation.type == type ? 1 : 0;
+
+    return count;
+}
+} // namespace
+
+auto tWhisperEncoder = test("MLGraph/Encoder/whisperTinyAtItsRealSizes") = []
+{
+    auto graph = WhisperEncoder::enumeratedEncoderGraph();
+    auto package = buildChecked(graph);
+    auto specification = graph.specification();
+
+    check(specification.program.main.opset == "CoreML8");
+
+    auto& mel = specification.description.inputs[0];
+    check(mel.shape == Vector<std::int64_t> {1, 80, 3000});
+    check(mel.enumeratedShapes.size() == 18);
+    check(mel.enumeratedShapes[1] == Vector<std::int64_t> {1, 80, 896});
+    check(mel.enumeratedShapes[17] == Vector<std::int64_t> {1, 80, 2944});
+
+    auto& rows = specification.program.main.block.operations.back();
+    check(rows.outputs[0].name == "rows");
+    check(rows.outputs[0].type.dimensions
+          == Vector<std::int64_t> {MIL::unknownDimension, 384});
+
+    check(countOf(specification, "conv") == 2);
+    check(countOf(specification, "linear") == 24);
+    check(countOf(specification, "scaled_dot_product_attention") == 4);
+    check(countOf(specification, "layer_norm") == 9);
+    check(countOf(specification, "gelu") == 6);
+    check(countOf(specification, "shape") == 1);
+    check(countOf(specification, "slice_by_index") == 1);
+
+    auto text = graph.toText();
+    check(text.find("blocks_3_attn_key_weight") != std::string::npos);
+    check(text.find("blocks_3_attn_key_bias") == std::string::npos);
+    check(package.weights.size() > 2 * 8'000'000);
+};
+
+auto tWhisperEncoderFixed = test("MLGraph/Encoder/whisperTinyAtOneFixedContext") = []
+{
+    auto graph = WhisperEncoder::fixedEncoderGraph(448);
+    buildChecked(graph);
+
+    auto specification = graph.specification();
+    check(specification.description.inputs[0].enumeratedShapes.empty());
+    check(specification.description.outputs[0].shape
+          == Vector<std::int64_t> {448, 384});
+    check(countOf(specification, "shape") == 0);
 };
