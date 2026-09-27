@@ -330,6 +330,9 @@ void notifyKeyState(id self, bool isKey)
     if (state->onKeyStateChanged)
         state->onKeyStateChanged(isKey);
 
+    if (state->events != nullptr)
+        state->events->input.activationChanged(isKey);
+
     if (state->events != nullptr && state->events->onActivationChanged)
         state->events->onActivationChanged(isKey);
 }

@@ -1,5 +1,6 @@
 #include "View.h"
 #include "../Image/Image.h"
+#include "../Window/Window.h"
 #include <ranges>
 
 namespace eacp::Graphics
@@ -246,8 +247,22 @@ void View::dispatchMouseDown(View* target, const MouseEvent& event)
         target->handleMouseEvent(createLocalEvent(event, target, event.type));
 }
 
+void View::dispatchKeyEvent(const KeyEvent& event)
+{
+    if (auto* window = getWindow())
+        window->events.input.keyEvent(event);
+
+    if (event.type == KeyEventType::Down)
+        keyDown(event);
+    else
+        keyUp(event);
+}
+
 void View::dispatchMouseEvent(const MouseEvent& event)
 {
+    if (ownerWindow != nullptr)
+        ownerWindow->events.input.mouseEvent(event);
+
     if (event.type == MouseEventType::Dragged || event.type == MouseEventType::Up)
     {
         forwardDragOrUpToCapturedTarget(event);
