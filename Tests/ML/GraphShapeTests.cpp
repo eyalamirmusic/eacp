@@ -183,6 +183,52 @@ auto tShapeReductions = test("MLGraph/Shape/sumAndMax") = []
     check(!graph.sum(x, 3).isValid());
 };
 
+auto tShapeArgmax = test("MLGraph/Shape/argmaxIsInt32AndDropsItsAxis") = []
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {3, 4, 5}, DType::float16);
+    auto dropped = graph.argmax(x, 1);
+    auto kept = graph.argmax(x, -1, true);
+    auto last = graph.argmax(x, -1);
+
+    check(graph.shape(dropped) == Shape {3, 5});
+    check(graph.type(dropped) == DType::int32);
+    check(graph.shape(kept) == Shape {3, 4, 1});
+    check(graph.type(kept) == DType::int32);
+    check(graph.shape(last) == Shape {3, 4});
+
+    graph.output(dropped, "dropped");
+    graph.output(kept, "kept");
+    graph.output(last, "last");
+    buildChecked(graph);
+
+    auto flexible = Graph {};
+    auto logits = flexible.input("logits", {4, 51864}, {{1, 51864}}, DType::float16);
+    auto token = flexible.argmax(logits, -1);
+    check(flexible.shape(token) == Shape {Shape::unknown});
+    flexible.output(token, "token");
+    buildChecked(flexible);
+};
+
+auto tShapeArgmaxRefusals = test("MLGraph/Shape/argmaxRefusals") = []
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {3, 4}, DType::float32);
+
+    check(!graph.argmax(x, 2).isValid());
+    check(failedWith(graph, "reduce_argmax: axis 2 is outside [3, 4]"));
+
+    auto negative = Graph {};
+    auto y = negative.input("y", {3, 4}, DType::float16);
+    check(!negative.argmax(y, -3).isValid());
+    check(failedWith(negative, "reduce_argmax: axis -3 is outside [3, 4]"));
+
+    auto integers = Graph {};
+    auto indices = integers.input("i", {3, 4}, DType::int32);
+    check(!integers.argmax(indices, 0).isValid());
+    check(failedWith(integers, "reduce_argmax: needs a floating-point tensor"));
+};
+
 auto tShapeLayerNorm = test("MLGraph/Shape/layerNorm") = []
 {
     auto graph = Graph {};
@@ -387,6 +433,72 @@ auto tShapeAttention = test("MLGraph/Shape/scaledDotProductAttention") = []
 
     auto flat = graph.input("flat", {5, 8}, DType::float16);
     check(!graph.scaledDotProductAttention(flat, flat, flat, false).isValid());
+};
+
+auto tShapeMaskedAttention =
+    test("MLGraph/Shape/scaledDotProductAttentionUnderARunTimeMask") = []
+{
+    auto graph = Graph {};
+    auto q = graph.input("q", {2, 5, 8}, DType::float16);
+    auto k = graph.input("k", {2, 7, 8}, DType::float16);
+    auto v = graph.input("v", {2, 7, 4}, DType::float16);
+    auto keys = graph.input("keys", {1, 7}, DType::float16);
+    auto pairs = graph.input("pairs", {2, 5, 7}, DType::float16);
+
+    auto byKey = graph.scaledDotProductAttention(q, k, v, keys);
+    auto byPair = graph.scaledDotProductAttention(q, k, v, pairs);
+    check(graph.shape(byKey) == Shape {2, 5, 4});
+    check(graph.type(byKey) == DType::float16);
+    check(graph.shape(byPair) == Shape {2, 5, 4});
+
+    graph.output(byKey, "byKey");
+    graph.output(byPair, "byPair");
+    buildChecked(graph);
+    check(graph.specification().program.main.opset == "CoreML8");
+    check(graph.specification().specificationVersion == 9);
+};
+
+auto tShapeMaskedAttentionRefusals =
+    test("MLGraph/Shape/scaledDotProductAttentionMaskRefusals") = []
+{
+    auto graph = Graph {};
+    auto q = graph.input("q", {2, 5, 8}, DType::float16);
+    auto k = graph.input("k", {2, 7, 8}, DType::float16);
+    auto v = graph.input("v", {2, 7, 4}, DType::float16);
+
+    auto shortMask = graph.input("short", {1, 6}, DType::float16);
+    check(!graph.scaledDotProductAttention(q, k, v, shortMask).isValid());
+    check(failedWith(graph,
+                     "the mask [1, 6] does not broadcast to the scores [2, 5, 7]"));
+
+    auto wideMask = graph.input("wide", {3, 5, 7}, DType::float16);
+    check(!graph.scaledDotProductAttention(q, k, v, wideMask).isValid());
+
+    auto deepMask = graph.input("deep", {1, 2, 5, 7}, DType::float16);
+    check(!graph.scaledDotProductAttention(q, k, v, deepMask).isValid());
+
+    auto integers = Graph {};
+    auto iq = integers.input("q", {2, 5, 8}, DType::float16);
+    auto ik = integers.input("k", {2, 7, 8}, DType::float16);
+    auto iv = integers.input("v", {2, 7, 4}, DType::float16);
+    auto intMask = integers.input("mask", {1, 7}, DType::int32);
+    check(!integers.scaledDotProductAttention(iq, ik, iv, intMask).isValid());
+    check(failedWith(integers, "fixed floating-point tensor"));
+
+    auto flexible = Graph {};
+    auto fq = flexible.input("q", {2, 5, 8}, DType::float16);
+    auto fk = flexible.input("k", {2, 7, 8}, DType::float16);
+    auto fv = flexible.input("v", {2, 7, 4}, DType::float16);
+    auto enumerated = flexible.input("mask", {1, 7}, {{1, 5}}, DType::float16);
+    check(!flexible.scaledDotProductAttention(fq, fk, fv, enumerated).isValid());
+    check(failedWith(flexible, "fixed floating-point tensor"));
+
+    auto mismatched = Graph {};
+    auto mq = mismatched.input("q", {2, 5, 8}, DType::float16);
+    auto mv = mismatched.input("v", {2, 7, 4}, DType::float16);
+    auto mask = mismatched.input("mask", {1, 7}, DType::float16);
+    check(!mismatched.scaledDotProductAttention(mq, mv, mv, mask).isValid());
+    check(failedWith(mismatched, "do not fit"));
 };
 
 auto tShapeGeluCast = test("MLGraph/Shape/geluAndCast") = []

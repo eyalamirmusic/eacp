@@ -287,4 +287,223 @@ inline Vector<float> attentionReference(const Vector<float>& q,
 
     return y;
 }
+
+// A greedy decoder's last step: the token whose logit is largest once the
+// suppressed ones have had -inf added.
+inline Package suppressedArgmax(int vocabulary)
+{
+    auto graph = Graph {};
+    auto shape = Shape {1, vocabulary};
+    auto logits = graph.input("logits", shape, DType::float16);
+    auto suppress = graph.input("suppress", shape, DType::float16);
+
+    auto add = [](const eacp::GPU::Float& a, const eacp::GPU::Float& b)
+    { return a + b; };
+
+    graph.output(graph.argmax(graph.apply(logits, suppress, add), -1), "token");
+    return graph.build();
+}
+
+inline int suppressedArgmaxReference(const Vector<float>& logits,
+                                     const Vector<float>& suppress)
+{
+    auto best = 0;
+    auto bestValue = -INFINITY;
+
+    for (auto i = 0; i < logits.size(); ++i)
+    {
+        auto value = logits[i] + suppress[i];
+
+        if (value > bestValue)
+        {
+            best = i;
+            bestValue = value;
+        }
+    }
+
+    return best;
+}
+
+// The same behind a logits projection, x [1, width] against a
+// [vocabulary, width] table, as a decoder step ends.
+struct ProjectedArgmax
+{
+    int vocabulary = 0;
+    int width = 0;
+    Vector<float> weights;
+};
+
+inline Package projectedArgmax(const ProjectedArgmax& net)
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {1, net.width}, DType::float16);
+    auto suppress = graph.input("suppress", {1, net.vocabulary}, DType::float16);
+    auto noBias = zeros(net.vocabulary);
+    auto weight =
+        graph.halfConstant("weight", {net.vocabulary, net.width}, net.weights);
+    auto bias = graph.halfConstant("bias", {net.vocabulary}, noBias);
+
+    auto add = [](const eacp::GPU::Float& a, const eacp::GPU::Float& b)
+    { return a + b; };
+
+    auto logits = graph.linear(x, weight, bias);
+    graph.output(graph.argmax(graph.apply(logits, suppress, add), -1), "token");
+    return graph.build();
+}
+
+inline Vector<float> projectedLogits(const ProjectedArgmax& net,
+                                     const Vector<float>& x)
+{
+    auto logits = zeros(net.vocabulary);
+
+    for (auto token = 0; token < net.vocabulary; ++token)
+    {
+        auto sum = 0.0;
+
+        for (auto i = 0; i < net.width; ++i)
+            sum += (double) x[i] * net.weights[token * net.width + i];
+
+        logits[token] = (float) sum;
+    }
+
+    return logits;
+}
+
+// One query per head against a key and value cache of the given length,
+// under a mask that arrives as an input: the shape of a decoder step's
+// self-attention over its cache.
+struct MaskedAttention
+{
+    int heads = 0;
+    int keys = 0;
+    int depth = 0;
+
+    // Empty for a lone attention over q [heads, 1, depth]; otherwise q is a
+    // row [1, heads * depth] projected into the heads, and the result is
+    // merged and projected out, as a decoder step's self-attention is.
+    Vector<float> queryWeights;
+    Vector<float> outWeights;
+
+    bool isProjected() const { return !queryWeights.empty(); }
+    int width() const { return heads * depth; }
+
+    Shape queryShape() const
+    {
+        return isProjected() ? Shape {1, width()} : Shape {heads, 1, depth};
+    }
+
+    Shape cacheShape() const { return {heads, keys, depth}; }
+    Shape maskShape() const { return {1, keys}; }
+};
+
+inline MaskedAttention projectedMaskedAttention(int heads, int keys, int depth)
+{
+    auto width = heads * depth;
+    return {heads,
+            keys,
+            depth,
+            seededValues(width * width, 66u, 0.05f),
+            seededValues(width * width, 67u, 0.05f)};
+}
+
+inline Package maskedAttention(const MaskedAttention& net)
+{
+    auto graph = Graph {};
+    auto q = graph.input("q", net.queryShape(), DType::float16);
+    auto k = graph.input("k", net.cacheShape(), DType::float16);
+    auto v = graph.input("v", net.cacheShape(), DType::float16);
+    auto allowed = graph.input("allowed", net.maskShape(), DType::float16);
+
+    if (!net.isProjected())
+    {
+        graph.output(graph.scaledDotProductAttention(q, k, v, allowed), "y");
+        return graph.build();
+    }
+
+    auto square = Shape {net.width(), net.width()};
+    auto queryWeight = graph.halfConstant("q_proj", square, net.queryWeights);
+    auto outWeight = graph.halfConstant("out_proj", square, net.outWeights);
+
+    auto projected = graph.linear(q, queryWeight);
+    auto perHead = graph.transpose(
+        graph.reshape(projected, {1, net.heads, net.depth}), {1, 0, 2});
+    auto attended = graph.scaledDotProductAttention(perHead, k, v, allowed);
+    auto merged =
+        graph.reshape(graph.transpose(attended, {1, 0, 2}), {1, net.width()});
+
+    graph.output(graph.linear(merged, outWeight), "y");
+    return graph.build();
+}
+
+inline Vector<float> timesTransposed(const Vector<float>& weights,
+                                     const Vector<float>& x)
+{
+    auto width = (int) x.size();
+    auto y = zeros(width);
+
+    for (auto o = 0; o < width; ++o)
+    {
+        auto sum = 0.0;
+
+        for (auto i = 0; i < width; ++i)
+            sum += (double) weights[o * width + i] * x[i];
+
+        y[o] = (float) sum;
+    }
+
+    return y;
+}
+
+inline Vector<float> prefixMask(int keys, int prefix)
+{
+    auto allowed = zeros(keys);
+
+    for (auto j = 0; j < prefix; ++j)
+        allowed[j] = 1.0f;
+
+    return allowed;
+}
+
+inline Vector<float> prefixAttentionReference(const MaskedAttention& net,
+                                              const Vector<float>& input,
+                                              const Vector<float>& k,
+                                              const Vector<float>& v,
+                                              int prefix)
+{
+    auto q = net.isProjected() ? timesTransposed(net.queryWeights, input) : input;
+    auto y = zeros(net.heads * net.depth);
+    auto scale = 1.0 / std::sqrt((double) net.depth);
+
+    for (auto head = 0; head < net.heads; ++head)
+    {
+        auto query = q.data() + head * net.depth;
+        auto keys = k.data() + head * net.keys * net.depth;
+        auto values = v.data() + head * net.keys * net.depth;
+        auto scores = zeros(prefix);
+
+        for (auto j = 0; j < prefix; ++j)
+        {
+            auto dot = 0.0;
+
+            for (auto d = 0; d < net.depth; ++d)
+                dot += (double) query[d] * keys[j * net.depth + d];
+
+            scores[j] = (float) (dot * scale);
+        }
+
+        softmaxRows(scores, 1, prefix);
+
+        for (auto d = 0; d < net.depth; ++d)
+        {
+            auto sum = 0.0;
+
+            for (auto j = 0; j < prefix; ++j)
+                sum += (double) scores[j] * values[j * net.depth + d];
+
+            y[head * net.depth + d] = (float) sum;
+        }
+    }
+
+    return net.isProjected() ? timesTransposed(net.outWeights, y) : y;
+}
 } // namespace TestPrograms

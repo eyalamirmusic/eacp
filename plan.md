@@ -192,11 +192,13 @@ operators of its own, and every op is a `Graph` member: `input`, `output`,
 an fp16 blob tensor), `scalar` (inline), `linear` (with a bias, or without
 one, when a zero bias of x's type goes into the blob with it), `matmul`,
 `transpose`, `reshape`, `softmax(axis)`, `sum(axis)`, `max(axis)`,
-`layerNorm`, `conv`, `gather`, `concat`, `slice`, `sliceLike` (x from its
+`argmax(axis)` (int32, G8), `layerNorm`, `conv`, `gather`, `concat`,
+`slice`, `sliceLike` (x from its
 start to another tensor's extents: a plain slice where the reference is
 fixed, MIL's `shape` feeding `slice_by_index`'s `end` where it enumerates, so
 the positional table is cut to the rows a context has at run time),
-`scaledDotProductAttention`, `gelu`, `cast`, and `apply`. Misuse is recorded rather than asserted or thrown: the op returns an
+`scaledDotProductAttention` (causal or not, or under a 0/1 mask tensor known
+only at run time, G9), `gelu`, `cast`, and `apply`. Misuse is recorded rather than asserted or thrown: the op returns an
 invalid `Tensor`, ops given one return another without a second error,
 `isValid()` and `errors()` say what went wrong first, and `build()` of an
 invalid graph is an empty `Package`.
@@ -1033,8 +1035,9 @@ ms a step), reads the first one's plan, and times them. `MLGraphTests` runs
 Decision, 2026-09-25: phase 4 is not built. The criterion is the plan's own,
 and the table below answers it: no setting fits a decode step in the Metal
 step's time before its hop and its copies, and the resident-cache bound says
-state would not change that. G8 to G10 stay open as what a phase 4 would need,
-should a machine or an OS move the numbers; `Tests/ML/DecoderStepTests.cpp` is
+state would not change that. G8 to G10 stayed open as what a phase 4 would
+need, should a machine or an OS move the numbers; G8 and G9 have since been
+built, with G13 beside them, and G10 alone stays open; `Tests/ML/DecoderStepTests.cpp` is
 the measurement to rerun then. G11, which the measurement surfaced, was an eacp
 bug in its own right and is closed under the gaps.
 
@@ -1281,20 +1284,64 @@ and G11 for eacp itself; G12, which CI surfaced after it, is Apple's:
 - G8: `Graph` has no argmax, so a step's output is the whole logits row,
   51864 fp16 values in a padded 103744-byte row, read back and reduced on the
   host every token, where the kernel path's argmax stays on the device. MIL's
-  `reduce_argmax` is the op, with an int32 output. Still open.
+  `reduce_argmax` is the op, with an int32 output. Closed:
+  `Graph::argmax(x, axis, keepDims)`, `reduce_argmax` with an int32 scalar
+  axis and `keep_dims`, the axis dropped unless kept, refusing a tensor that
+  is not floating-point and an axis outside x's rank. `MLGraphTests` has its
+  shapes, its text and its refusals; `MLTests` runs a suppressed argmax,
+  logits plus an additive `-inf` suppression input, over 64 and 51864 tokens,
+  and the same behind a `[51864, 384]` logits projection, under every
+  setting, and asks for the reference's token exactly: seeded rows, the
+  unsuppressed maximum suppressed so the answer moves, every even token
+  suppressed, two ties far apart, the same with the first suppressed, a tie
+  side by side and a row all equal. Measured: a tie goes to the lowest index
+  on the CPU and on the GPU, and `-inf` is exact on the CPU, the GPU and the
+  engine. Alone the argmax is placed on the CPU under every setting; behind
+  the projection it goes to the GPU with it under CPU and GPU, but under the
+  two engine settings the engine takes the `linear` and the `add` and hands
+  `reduce_argmax` back to the CPU, so what crosses back from the engine is
+  still the row, only no longer to the host. The tie rule on the engine is
+  therefore unmeasured because nothing runs it there.
 - G9: `scaledDotProductAttention` takes only a causal flag, so attention over
   a fixed cache with a run-time valid prefix has no fused spelling; the step
   builds it from `matmul`, an additive mask in `apply`, `softmax` and
   `matmul`. A form taking a mask tensor, lowered to a bool `attn_mask` the way
   the causal one is (since Core ML's fp16 attention ignores a float one),
   would give the engine the fused op; whether Core ML honours a bool mask
-  computed from an input rather than a constant is unmeasured. Still open.
+  computed from an input rather than a constant is unmeasured. Closed:
+  `scaledDotProductAttention(q, k, v, allowed)`, `allowed` a fixed
+  floating-point tensor broadcasting to the scores `[..., queries, keys]`, 1
+  to attend and 0 not, lowered as `greater(allowed, 0.5)` into the bool
+  `attn_mask`; it refuses a mask that does not broadcast, is not floating
+  point, or is enumerated. It honours the mask on every device. Two
+  measurements say so. A lone attention of six heads, one query each, over
+  449 and 1500 keys, with the mask an input allowing a prefix of 1, two
+  fifths or all of them and every key and value past the prefix fifty times
+  the size of the rest, matched an fp32 reference over the prefix alone to
+  1.2e-4, exactly at a prefix of one, where the same program with the mask
+  left out is 170-195 off; with a projection either side it was 1.5e-2. Core
+  ML keeps both on the CPU under every setting. So the whole decode step was
+  built the same way: `fusedStepGraph()` in `Tests/ML/WhisperDecoderStep.h`
+  is the step with its self-attention the fused op under a `[1, 448]` 0/1
+  input extended by a constant 1 for its own key, and
+  `MLDecoderStep/aStepWithFusedMaskedSelfAttentionMatchesTheReference` holds
+  it to the step's reference and bounds at prefixes 1 and 447. Under CPU and
+  GPU and under `all` every op went to the GPU; under CPU and engine every op
+  went to the engine, the four `greater`s included, but the two lookups, the
+  add of their rows, one `concat` and one `linear`, with the plan giving the
+  eight attentions no device at all. Max abs over the logits and the appended
+  rows was 7.8e-2 on the CPU, 8.5e-3 on the GPU and 5.8e-2 under CPU and
+  engine, against the unfused step's 7.9e-2, 8.5e-3 and 2.8e-2, all inside
+  the step's bounds. The same step given a mask allowing all 448 rows at
+  prefix 1 was 11 off on every setting, so the mask each device honoured was
+  the input's.
 - G10: nothing in eacp is stateful. `Graph` has no state input (MIL's
   `read_state`, `coreml_update_state`, specification 9), and `Model` no
   `MLState` handle to make per sequence and pass to a prediction (macOS 15,
   iOS 18), so the KV cache can only cross as inputs, 12 MB a step for
   tiny.en. The resident-cache program bounds what that would buy (the table
-  above). Still open.
+  above). Still open, and not built: measured no better than the cache as
+  I/O.
 - G11: `Async::waitFor` on macOS returned 16.66 ms after every
   `predictAsync()` in the step suite, whatever the setting, where the
   continuation the test chained had run 1-6 ms in. `EventLoop::runFor` waits
@@ -1350,3 +1397,23 @@ and G11 for eacp itself; G12, which CI surfaced after it, is Apple's:
   second to compile at each context's first use, runs there. The encoder
   should take that fallback, or refuse the backend, before macOS 27 when the
   plan reports the CPU; neither is built.
+
+A Core ML decoder with its KV cache as inputs and outputs surfaced one more:
+
+- G13: `MultiArray` could copy a whole array into another but not part of
+  one, so the step's new key and value rows, a `[4, 384]` output, had no way
+  into their places in the `[4, 448, 384]` cache arrays the next prediction
+  reads short of a pass through the whole of both; and a fresh fp16 array
+  held whatever its IOSurface did, where the plain arrays were already
+  zeroed, so cache rows never written could be NaN, which a mask need not
+  cancel: in the step's `matmul` spelling a masked-out value row still meets
+  its zero weight in the product, and zero times NaN is NaN. Closed: `MultiArray::copyRows(source, sourceRow,
+  destinationRow, rowCount)`, rows of another array with the same columns
+  into part of this one, converting between types and honouring both row
+  strides, copying nothing for different columns, a range outside either
+  array, no rows or the array itself; and `MultiArray::create` zeroes an
+  IOSurface-backed fp16 array as it does the others. `MLTests` copies rows
+  between padded fp16 surfaces, a step's row per layer into a
+  `[4, 448, 384]` cache, fp16 into fp32 and back, checks each refusal leaves
+  the destination as it was, and reads every type fresh as zeros three
+  times over, after filling the one before.
