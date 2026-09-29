@@ -31,6 +31,7 @@ set(graphics_test_sources
         ScrollWheelTests.cpp
         SizeConstraintTests.cpp
         TestMain.cpp
+        TouchTests.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)

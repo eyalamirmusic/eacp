@@ -23,7 +23,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
   and work area in points, so an app can pick a first window size that fits;
   `View::getWindow()` lets a view reach the window it is in rather than be
-  handed it.
+  handed it. On a touch screen a view that calls `setHandlesTouchEvents()`
+  gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
+  `touchEnded`, one id per finger, held by the view it came down on), and any
+  other view gets the first finger as the mouse, so widgets written for a mouse
+  work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
+  the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
+  stay zero and silent on desktop windows.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
   struct rather than a string literal per backend. The same compute kernel also
