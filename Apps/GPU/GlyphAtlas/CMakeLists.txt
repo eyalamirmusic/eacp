@@ -1,4 +1,4 @@
-add_executable(GlyphAtlas Main.cpp)
+eacp_add_app(GlyphAtlas Main.cpp)
 target_link_libraries(GlyphAtlas PRIVATE eacp-sprites eacp-text)
 
 set(BUNDLE_ID "com.eacp.glyphatlas")
