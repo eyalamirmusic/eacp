@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Spirv/SpirvCompiler.h"
 #include "../Texture/Texture.h"
 
 #include <eacp/Core/Threads/Timer.h>
@@ -246,6 +247,8 @@ public:
 
     void destroyImageView(VkImageView view);
 
+    Spirv::Target getSpirvTarget() const { return spirvTarget; }
+
     // Whether a multisampled depth image can be resolved for sampling. The spec
     // requires sample zero in both masks, so this only fails on a driver that
     // does not offer the resolve at all.
@@ -305,7 +308,9 @@ private:
     std::string adapterName = "no Vulkan device";
     DriverQuirks quirks;
     bool timestampsSupported = false;
+    bool coreFloor = false;
     bool renderPassPath = false;
+    Spirv::Target spirvTarget = Spirv::Target::vulkan13Spirv16;
     VulkanRenderPassCache renderPasses;
     bool depthResolvesBySampleZero = false;
 
