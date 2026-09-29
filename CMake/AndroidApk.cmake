@@ -32,6 +32,23 @@ set(EACP_ANDROID_BUILD_TOOLS "35.0.0" CACHE STRING
 set(EACP_ANDROID_TARGET_SDK "35" CACHE STRING
         "targetSdkVersion, and the android.jar the manifest links against")
 
+# The scripts are bash. A Windows host runs them through Git for Windows' bash,
+# found beside git before the PATH, where System32's bash would be WSL's.
+set(eacp_android_shell "")
+
+if (CMAKE_HOST_WIN32)
+    find_package(Git QUIET)
+    get_filename_component(eacp_git_dir "${GIT_EXECUTABLE}" DIRECTORY)
+    find_program(EACP_ANDROID_BASH bash
+            HINTS "${eacp_git_dir}/../bin" "$ENV{ProgramFiles}/Git/bin")
+
+    if (NOT EACP_ANDROID_BASH)
+        message(FATAL_ERROR "Packaging APKs on Windows needs Git for Windows' bash")
+    endif ()
+
+    set(eacp_android_shell "${EACP_ANDROID_BASH}")
+endif ()
+
 function(eacp_add_android_apk target)
     cmake_parse_arguments(APK ""
             "PACKAGE;LABEL;ORIENTATION;VERSION_CODE;VERSION_NAME;RES_DIR;ICON" ""
@@ -84,7 +101,7 @@ function(eacp_add_android_apk target)
 
     add_custom_command(
             OUTPUT "${apk}"
-            COMMAND "${EACP_ANDROID_APK_SCRIPT}"
+            COMMAND ${eacp_android_shell} "${EACP_ANDROID_APK_SCRIPT}"
                     "${sdk}"
                     "${EACP_ANDROID_BUILD_TOOLS}"
                     "android-${EACP_ANDROID_TARGET_SDK}"
@@ -101,7 +118,8 @@ function(eacp_add_android_apk target)
     add_custom_target(${target}-apk ALL DEPENDS "${apk}")
 
     add_custom_target(${target}-run
-            COMMAND "${EACP_ANDROID_RUN_SCRIPT}" "${sdk}" "${apk}" "${APK_PACKAGE}"
+            COMMAND ${eacp_android_shell} "${EACP_ANDROID_RUN_SCRIPT}"
+                    "${sdk}" "${apk}" "${APK_PACKAGE}"
             DEPENDS ${target}-apk
             USES_TERMINAL
             VERBATIM)

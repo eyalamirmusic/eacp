@@ -566,6 +566,14 @@ One ABI per build directory (`arm64-v8a` for devices and the Apple Silicon
 emulator, `x86_64` for an Intel one). Tests build too; `Network`, the WebView
 bridge and their tests are left out on Android.
 
+From a Windows host the same commands work in an x64 Native Tools prompt (the
+resource embedder's generator is built with a host compiler), with the SDK
+packages above for Windows, a JDK 17+ at `JAVA_HOME`, and Git for Windows,
+whose `bash` runs the packaging scripts. The emulator needs the Windows
+Hypervisor Platform and `-gpu host`, with the
+`system-images;android-35;google_apis;x86_64` image, which runs `arm64-v8a`
+apps through ARM translation; SwiftShader lacks features eacp needs.
+
 eacp logs to logcat under the tag `eacp`: `adb logcat -s eacp`. A native crash
 prints a tombstone to logcat; symbolicate it against the unstripped library in
 the build tree:
