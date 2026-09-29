@@ -85,7 +85,7 @@ links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
 of it is reached through `eacp::Zip`. To update it, replace the files under
 `ThirdParty/miniz` and the version in its README.
 
-Android (NDK r27, API 33+, Vulkan 1.3) is Linux without Wayland: CMake's
+Android (NDK r30, API 33+, Vulkan 1.3) is Linux without Wayland: CMake's
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`

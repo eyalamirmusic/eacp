@@ -537,14 +537,17 @@ the glyph atlas (rasterized by `android.graphics`), and touches logged.
 
 The floor is Android 13 (API 33; configuring lower is an error) on a device
 with Vulkan 1.3, which the manifest requires — the arm64 emulator on Apple
-Silicon qualifies. Tested with NDK r27 (27.3.13750724), build-tools 35.0.0 and
-platform 35. It needs a JDK 17+ for `keytool` and `apksigner` (`JAVA_HOME`,
-else `java` on the `PATH`, `java_home`, Homebrew's or Android Studio's), and
-the SDK at `$ANDROID_HOME` (or `-DEACP_ANDROID_SDK=`):
+Silicon qualifies. eacp builds with the current stable NDK, r30
+(30.0.16248370), the way the Apple platforms assume a current Xcode; older
+NDKs are not supported, and configuring with one is an error (eacp uses
+libc++'s `std::atomic_ref` and `std::jthread`). Tested with build-tools 35.0.0
+and platform 35. It needs a JDK 17+ for `keytool` and `apksigner`
+(`JAVA_HOME`, else `java` on the `PATH`, `java_home`, Homebrew's or Android
+Studio's), and the SDK at `$ANDROID_HOME` (or `-DEACP_ANDROID_SDK=`):
 
 ```bash
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" \
-    "ndk;27.3.13750724" "emulator" "system-images;android-35;google_apis;arm64-v8a"
+    "ndk;30.0.16248370" "emulator" "system-images;android-35;google_apis;arm64-v8a"
 avdmanager create avd -n eacp -k "system-images;android-35;google_apis;arm64-v8a" -d pixel_7
 ```
 
@@ -554,7 +557,7 @@ logcat:
 
 ```bash
 cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/27.3.13750724/build/cmake/android.toolchain.cmake \
+    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/30.0.16248370/build/cmake/android.toolchain.cmake \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33
 cmake --build build-android --target HelloGPU-run
 ```
@@ -568,7 +571,7 @@ prints a tombstone to logcat; symbolicate it against the unstripped library in
 the build tree:
 
 ```bash
-adb logcat -d | $ANDROID_HOME/ndk/27.3.13750724/ndk-stack -sym build-android/Apps/Android/HelloGPU
+adb logcat -d | $ANDROID_HOME/ndk/30.0.16248370/ndk-stack -sym build-android/Apps/Android/HelloGPU
 ```
 
 ## Repository layout
