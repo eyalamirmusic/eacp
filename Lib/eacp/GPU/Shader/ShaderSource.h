@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Common.h"
+#include "../Texture/Texture.h"
 
 namespace eacp::GPU
 {
@@ -8,7 +9,8 @@ enum class ShaderBackend
 {
     Metal,
     DirectX,
-    Vulkan
+    Vulkan,
+    WebGPU
 };
 
 enum class ShaderStage
@@ -48,6 +50,11 @@ struct ResourceBinding
     ShaderStage stage = ShaderStage::Vertex;
     int index = 0;
     std::string name;
+
+    // For a Sampler: how the texture in slot `index` is sampled. The WebGPU
+    // backend builds its sampler binding from it - filtering or not - where
+    // the WGSL declaration says only `sampler`.
+    TextureSampling sampling;
 };
 
 // Native shader source plus the metadata a pipeline needs. The whole GPU layer
@@ -77,6 +84,16 @@ struct ShaderSource
     {
         auto result = ShaderSource {};
         result.backend = ShaderBackend::Vulkan;
+        result.source = std::move(sourceToUse);
+        return result;
+    }
+
+    // One module holding every entry point; the bind group layout is reflected
+    // from its declarations (WgslBindings.h), the samplings from `bindings`.
+    static ShaderSource wgsl(std::string sourceToUse)
+    {
+        auto result = ShaderSource {};
+        result.backend = ShaderBackend::WebGPU;
         result.source = std::move(sourceToUse);
         return result;
     }
