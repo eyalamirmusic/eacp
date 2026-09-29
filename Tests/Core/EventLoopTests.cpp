@@ -1,6 +1,7 @@
 #include "Common.h"
 
-#include <algorithm>
+#include <array>
+#include <chrono>
 #include <thread>
 
 using namespace nano;
@@ -114,17 +115,37 @@ auto tCallAfterZeroDelayIsCallAsync =
 auto tCallAfterOrdersManyDeadlines =
     test("EventLoop/callAfter/ordersManyPendingDeadlines") = []
 {
+    using Clock = std::chrono::steady_clock;
+
     constexpr auto count = 64;
     auto order = EA::Vector<int>();
+    auto earliest = std::array<Clock::time_point, count + 1> {};
+    auto latest = earliest;
 
+    // The delays run down while the calls take time, so on a busy machine a
+    // shorter delay can still land after a longer one. Each deadline is only
+    // known to lie between the clock before its call and the clock after it.
     for (auto i = count; i > 0; --i)
+    {
+        auto delay = std::chrono::milliseconds {i};
+        earliest[i] = Clock::now() + delay;
         callAfter(eacp::Time::MS {i}, [&, i] { order.push_back(i); });
+        latest[i] = Clock::now() + delay;
+    }
 
     auto ok = runEventLoopUntil([&] { return order.size() == count; },
                                 eacp::Time::MS {5000});
 
     check(ok);
-    check(std::is_sorted(order.begin(), order.end()));
+
+    auto inDeadlineOrder = true;
+
+    for (auto first = 0; first < (int) order.size(); ++first)
+        for (auto then = first + 1; then < (int) order.size(); ++then)
+            if (earliest[order[first]] > latest[order[then]])
+                inDeadlineOrder = false;
+
+    check(inDeadlineOrder, "a later deadline fired first");
 };
 
 auto tCallAfterNestsFromItsOwnCallback =
