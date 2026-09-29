@@ -131,7 +131,8 @@ else ()
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
-            Vulkan/VulkanContext-Linux.cpp)
+            Vulkan/VulkanContext-Linux.cpp
+            Vulkan/VulkanRenderPass-Linux.cpp)
 
     # Both PRIVATE: neither Vulkan nor glslang reaches past this library.
     target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)

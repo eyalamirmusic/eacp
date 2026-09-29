@@ -176,11 +176,25 @@ struct Frame::Native
                 rendering.pStencilAttachment = &depthAttachment;
         }
 
+        const auto usesRenderPasses = getVulkanShared().usesRenderPasses();
+        auto renderPass = VulkanRenderPassBegin {};
+
+        if (usesRenderPasses)
+        {
+            renderPass = prepareVulkanRenderPass(rendering, data);
+
+            if (!renderPass.isValid())
+                return RenderPass(nullptr);
+        }
+
         auto* encoder =
             new VulkanRenderEncoder {commands, &data, data.width, data.height};
         timePass(*encoder, descriptor.label);
 
-        vkCmdBeginRendering(buffer, &rendering);
+        if (usesRenderPasses)
+            beginVulkanRenderPass(buffer, renderPass);
+        else
+            vkCmdBeginRendering(buffer, &rendering);
 
         // A copy inside a render pass instance is illegal, so until
         // RenderPass::end an upload takes a recording of its own.

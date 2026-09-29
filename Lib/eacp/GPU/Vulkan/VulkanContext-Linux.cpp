@@ -55,6 +55,12 @@ bool prefersSoftwareDevice()
     return vulkanEnvironmentFlag("EACP_VK_SOFTWARE");
 }
 
+// EACP_VK_RENDER_PASSES=1 runs a 1.3 device on the render-pass path a 1.1 one takes.
+bool forcesRenderPasses()
+{
+    return vulkanEnvironmentFlag("EACP_VK_RENDER_PASSES");
+}
+
 // EACP_VK_VALIDATION=1 turns on the validation layer and a logging messenger.
 bool wantsValidation()
 {
@@ -630,6 +636,8 @@ VulkanShared::~VulkanShared()
                 vkDestroyDescriptorSetLayout(device, layouts.setLayout, nullptr);
         }
 
+        renderPasses.destroyAll(device);
+
         vkDestroyDevice(device, nullptr);
     }
 
@@ -843,6 +851,7 @@ bool VulkanShared::selectPhysicalDevice()
                           && familyWritesTimestamps(physicalDevice, queueFamily);
 
     depthResolvesBySampleZero = queryDepthResolvesBySampleZero(physicalDevice);
+    renderPassPath = forcesRenderPasses();
 
     return true;
 }

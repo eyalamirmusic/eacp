@@ -144,6 +144,62 @@ struct SubmitSync
     VkSemaphore signal = VK_NULL_HANDLE;
 };
 
+struct VulkanRenderPassKey
+{
+    bool operator==(const VulkanRenderPassKey& other) const = default;
+
+    VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+    VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+    VkAttachmentLoadOp colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
+    VkAttachmentStoreOp colorStore = VK_ATTACHMENT_STORE_OP_STORE;
+    bool colorResolve = false;
+
+    VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+    bool stencil = false;
+    VkAttachmentLoadOp depthLoad = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    VkAttachmentStoreOp depthStore = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    bool depthResolve = false;
+};
+
+// A framebuffer dies with the first of its views: a destroyed view's handle can be
+// reused.
+class VulkanRenderPassCache
+{
+public:
+    VkRenderPass get(VkDevice device, const VulkanRenderPassKey& key);
+
+    // `views` in the render pass's attachment order.
+    VkFramebuffer getFramebuffer(VkDevice device,
+                                 VkRenderPass renderPass,
+                                 const Vector<VkImageView>& views,
+                                 std::uint32_t width,
+                                 std::uint32_t height);
+
+    void forgetView(VkDevice device, VkImageView view);
+
+    void destroyAll(VkDevice device);
+
+private:
+    struct RenderPassEntry
+    {
+        VulkanRenderPassKey key;
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+    };
+
+    struct FramebufferEntry
+    {
+        VkRenderPass renderPass = VK_NULL_HANDLE;
+        Vector<VkImageView> views;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    };
+
+    std::mutex mutex;
+    Vector<RenderPassEntry> renderPasses;
+    Vector<FramebufferEntry> framebuffers;
+};
+
 struct PipelineLayouts
 {
     bool isValid() const { return pipelineLayout != VK_NULL_HANDLE; }
@@ -178,6 +234,17 @@ public:
     const VkPhysicalDeviceFeatures& getFeatures() const { return features; }
 
     bool supportsTimestamps() const { return timestampsSupported; }
+
+    bool usesRenderPasses() const { return renderPassPath; }
+
+    VulkanRenderPassCache& getRenderPasses() { return renderPasses; }
+
+    VkRenderPass compatibleRenderPass(VkFormat colorFormat,
+                                      int samples,
+                                      VkFormat depthFormat,
+                                      bool stencil);
+
+    void destroyImageView(VkImageView view);
 
     // Whether a multisampled depth image can be resolved for sampling. The spec
     // requires sample zero in both masks, so this only fails on a driver that
@@ -238,6 +305,8 @@ private:
     std::string adapterName = "no Vulkan device";
     DriverQuirks quirks;
     bool timestampsSupported = false;
+    bool renderPassPath = false;
+    VulkanRenderPassCache renderPasses;
     bool depthResolvesBySampleZero = false;
 
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
