@@ -132,9 +132,31 @@ struct MouseEvent
     ScrollPhase scrollPhase = ScrollPhase::None;
 };
 
+enum class TouchPhase
+{
+    Began,
+    Moved,
+    Ended,
+    Cancelled
+};
+
+// id is held from Began to Ended or Cancelled, unique among fingers that are down.
+struct TouchEvent
+{
+    Point pos;
+    Point downPos;
+
+    int id = 0;
+    TouchPhase phase = TouchPhase::Began;
+    float pressure = 1.0f;
+    int tapCount = 1;
+    double timestamp = 0.0;
+};
+
 struct ViewProperties
 {
     bool handlesMouseEvents = false;
+    bool handlesTouchEvents = false;
     bool grabsFocusOnMouseDown = false;
 };
 
@@ -224,6 +246,14 @@ public:
     // Scroll wheel. event.delta carries the wheel movement (y vertical,
     // x horizontal) in WHEEL_DELTA units.
     virtual void mouseWheel(const MouseEvent&) {}
+    // Only for views that set handlesTouchEvents; a finger stays with the view it
+    // came down on. Other views get the first finger as mouse events.
+    virtual void touchBegan(const TouchEvent&) {}
+    virtual void touchMoved(const TouchEvent&) {}
+
+    // Ended or Cancelled: event.phase says which.
+    virtual void touchEnded(const TouchEvent&) {}
+
     virtual void keyDown(const KeyEvent&) {}
     virtual void keyUp(const KeyEvent&) {}
     virtual void resized();
@@ -255,6 +285,15 @@ public:
     // the news along to whatever owns that surface.
     virtual void visibilityChanged(bool) {}
 
+    // What system chrome (status bar, notch, home indicator) covers of this view,
+    // per edge. Zero on desktop windows.
+    Insets getSafeAreaInsets() const;
+
+    // Called by the platform on the window's content view.
+    void setSafeAreaInsets(const Insets& insets);
+
+    virtual void safeAreaInsetsChanged() {}
+
     Rect getBounds() const;
     Rect getLocalBounds() const;
 
@@ -277,6 +316,7 @@ public:
     ViewProperties& getProperties() { return properties; }
 
     View& setHandlesMouseEvents(bool value = true);
+    View& setHandlesTouchEvents(bool value = true);
     View& setGrabsFocusOnMouseDown(bool value = true);
 
     Point getMousePosition() const;
@@ -297,6 +337,9 @@ public:
     virtual View* hitTest(const Point& point);
 
     void dispatchMouseEvent(const MouseEvent& event);
+
+    // Called by the platform on the window's content view, once per changed finger.
+    void dispatchTouchEvent(const TouchEvent& event);
 
     bool isHovering() const;
 
@@ -351,6 +394,21 @@ private:
     void dispatchExitEvent(const MouseEvent& event);
     void dispatchMouseDown(View* target, const MouseEvent& event);
 
+    // view is null when the finger drives the mouse events.
+    struct ActiveTouch
+    {
+        int id = 0;
+        View* view = nullptr;
+        Point downPos;
+    };
+
+    View* touchTarget(const Point& point);
+    void beginTouch(const TouchEvent& event);
+    void sendTouch(View& target, const TouchEvent& event);
+    void sendTouchAsMouse(const TouchEvent& event);
+    void forgetTouchesIn(View& removed);
+    void notifySafeAreaInsetsChanged();
+
     void viewAdded(View& view);
     void viewRemoved(View& view);
 
@@ -367,6 +425,8 @@ private:
     View* parent = nullptr;
     View* hoveredView = nullptr;
     View* mouseDownTarget = nullptr;
+    Vector<ActiveTouch> touches;
+    Insets safeAreaInsets;
 
     ViewProperties properties;
 
