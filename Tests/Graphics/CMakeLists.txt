@@ -69,6 +69,7 @@ if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
             EmbeddedViewTests-macOS.mm
+            KeyForwardingTests-macOS.mm
             MenuTests-macOS.mm
             NativeChildSurfaceTests-macOS.mm
             ScrollWheelTests-macOS.mm
@@ -79,6 +80,7 @@ endif ()
 if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
+            KeyForwardingTests-Windows.cpp
             WindowGeometryTests-Windows.cpp)
 endif ()
 
