@@ -69,6 +69,12 @@ struct GPUView::Native
         metalLayer.get().contentsScale = scale;
         metalLayer.get().drawableSize = CGSizeMake(pixelWidth, pixelHeight);
 
+        // A CAMetalLayer defaults to opaque, unlike every other CALayer, and an
+        // opaque layer's alpha is thrown away at composition. Here rather than
+        // in the constructor because the answer is the window's, and the view
+        // is in no window yet when that runs; every layout passes through here.
+        metalLayer.get().opaque = platformWindowIsOpaque(view);
+
         updateMultisampleTexture(pixelWidth, pixelHeight);
         updateDepthTexture(pixelWidth, pixelHeight);
 

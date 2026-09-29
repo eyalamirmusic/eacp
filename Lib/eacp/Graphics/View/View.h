@@ -281,6 +281,28 @@ public:
 
     Point getMousePosition() const;
 
+    // A point in this view's own coordinates, as screen points — from the
+    // primary display's top-left, growing right and down, which is the space
+    // WindowOptions::initialPosition, Window::getPosition and Display are all
+    // in. So a popup window opened at a click opens where the click was.
+    //
+    // Exact on macOS, where AppKit is asked. Elsewhere it is still the
+    // window's own origin plus this view's offset inside it, which ignores
+    // whatever chrome the frame carries above the content.
+    Point localToScreen(Point point) const;
+
+    // Gives up the implicit capture a mouse-down took: the pressed view stops
+    // receiving the drags and the up that would have followed it, and a
+    // hovered view is told the pointer left.
+    //
+    // For a press that has, in effect, already ended somewhere else — opening
+    // a popup window from inside mouseDown. The press belongs to the popup
+    // from that moment, and the view under it would otherwise sit waiting for
+    // an up that is never coming, drawn pressed the whole time. Called on the
+    // root of the hierarchy the event was dispatched to, which is the window's
+    // content view.
+    void cancelMouseCapture();
+
     // The pointer's shape while it is over this view.
     //
     // Settable at any time, including from inside a mouseMoved handler, and
@@ -341,6 +363,12 @@ private:
     Window* ownerWindow = nullptr;
 
     void handleMouseEvent(const MouseEvent& event);
+
+    // localToScreen for the platforms that have no conversion of their own
+    // yet: this view's offset within its window's root view, plus the
+    // window's position.
+    Point localToScreenFallback(Point point) const;
+
     Point convertPointToDescendant(const Point& point, View* descendant);
     MouseEvent
         createLocalEvent(const MouseEvent& event, View* target, MouseEventType type);

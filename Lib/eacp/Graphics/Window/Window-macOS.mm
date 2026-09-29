@@ -1,9 +1,11 @@
 #include "Window.h"
 #include "MouseLock-macOS.h"
+#include "Window-macOS.h"
 #include "../Graphics/Keyboard.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/ObjC/RuntimeClass.h>
+#include <eacp/Core/Threads/EventLoop.h>
 #import <Cocoa/Cocoa.h>
 
 // std::min, for holding a window inside its screen's visible frame.
@@ -139,6 +141,14 @@ BOOL canBecomeKeyWindow(id, SEL)
     return YES;
 }
 
+// A popup is the opposite promise: it must never take key or main status, so
+// the window it pops over stays active while the menu is up. The
+// nonactivating mask alone is not enough — it governs the app, not the window.
+BOOL refusesKeyWindow(id, SEL)
+{
+    return NO;
+}
+
 Class getKeyableBorderlessWindowClass()
 {
     static auto instance = []
@@ -153,6 +163,27 @@ Class getKeyableBorderlessWindowClass()
     return instance->get();
 }
 
+Class getPopupPanelClass()
+{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSPanel>("EacpPopupPanel");
+        builder->addMethod(@selector(canBecomeKeyWindow), refusesKeyWindow);
+        builder->addMethod(@selector(canBecomeMainWindow), refusesKeyWindow);
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+// The masks AppKit only implements on NSPanel. Set on a plain NSWindow they
+// are silently nothing, which is what made NonactivatingPanel, HUDWindow and
+// UtilityWindow dead flags until the class was chosen from them.
+constexpr NSWindowStyleMask panelOnlyStyleMask =
+    NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskDocModalWindow
+    | NSWindowStyleMaskNonactivatingPanel | NSWindowStyleMaskHUDWindow;
+
 // AppKit measures screen points from the bottom-left of the primary screen
 // with y growing up; eacp measures them from its top-left with y growing down
 // (see Display, and WindowOptions::initialPosition). Both directions of the
@@ -165,7 +196,7 @@ double primaryScreenTop()
 
 Point toScreenPoint(NSRect frame)
 {
-    return {(float) frame.origin.x, (float) (primaryScreenTop() - NSMaxY(frame))};
+    return screenPointFromAppKit(CGPointMake(frame.origin.x, NSMaxY(frame)));
 }
 
 // Runtime classes get no automatic C++ ivar construction, so the delegate's
@@ -384,7 +415,279 @@ Class getWindowDelegateClass()
 
     return instance->get();
 }
+
+// The state the dismissal blocks hold, weakly. Its owner is the popup's
+// Native, so a block that outlives the window — one already queued when the
+// app destroyed the popup from the handler — finds nothing and does nothing.
+struct PopupDismissal
+{
+    WindowEvents* events = nullptr;
+    bool dismissOnOutsideClick = true;
+
+    // One request per showing. A click into another app is reported twice —
+    // by the global monitor and by the app deactivating — and a held Escape
+    // repeats, so without the latch a handler that only hides the popup is
+    // called again and again for the one gesture that closed it.
+    bool requested = false;
+};
+
+using PopupDismissalRef = std::shared_ptr<PopupDismissal>;
+
+// Deferred on purpose: the handler's whole job is to destroy or hide the
+// window whose monitor block is running, and unwinding an NSEvent monitor
+// through a freed NSWindow is not a thing to try.
+void requestPopupDismissal(const std::weak_ptr<PopupDismissal>& state)
+{
+    auto dismissal = state.lock();
+
+    if (dismissal == nullptr || dismissal->requested)
+        return;
+
+    dismissal->requested = true;
+
+    auto deliver = [state]
+    {
+        auto delivered = state.lock();
+
+        if (delivered == nullptr)
+            return;
+
+        // Copied before it runs: the handler is expected to destroy the
+        // Window, and the handler is a member of it — invoking it in place
+        // would free the callable half way through its own call.
+        auto handler = delivered->events->onDismissRequested;
+        handler();
+    };
+
+    Threads::callAsync(deliver);
+}
+
+CGPoint screenLocationOf(NSEvent* event)
+{
+    if (event.window != nil)
+        return [event.window convertPointToScreen:event.locationInWindow];
+
+    // An event with no window carries its location in screen coordinates
+    // already — which is what a press in another app's window arrives as.
+    return event.locationInWindow;
+}
+
+// Whether `window` is `ancestor` or one of the child windows hanging off it,
+// however deep — a popup's own submenu, and the submenu's submenu.
+bool isWithinWindow(NSWindow* window, NSWindow* ancestor)
+{
+    for (NSWindow* current = window; current != nil; current = current.parentWindow)
+        if (current == ancestor)
+            return true;
+
+    return false;
+}
+
+// Everything that watches over a child window: the event monitors that ask a
+// popup to dismiss — the local one that swallows a press landing outside it,
+// the global one for a press in another app, which cannot be swallowed since
+// it is not ours — and the owner's notifications.
+//
+// The monitors come and go with the popup being on screen; the observers stay
+// for as long as the window does, because an owner closing while the popup is
+// hidden still has to hand the child back before it goes.
+class PopupWatcher
+{
+public:
+    PopupWatcher() = default;
+    ~PopupWatcher() { remove(); }
+
+    // It owns monitors and observers it removes by hand, so a copy would
+    // remove them twice and a move would leave the source removing them early.
+    PopupWatcher(const PopupWatcher&) = delete;
+    PopupWatcher& operator=(const PopupWatcher&) = delete;
+    PopupWatcher(PopupWatcher&&) = delete;
+    PopupWatcher& operator=(PopupWatcher&&) = delete;
+
+    // A plain child window passes no state: it wants the detach and none of
+    // the dismissal.
+    void install(NSWindow* childToUse,
+                 NSWindow* owner,
+                 const PopupDismissalRef& state)
+    {
+        remove();
+
+        child = childToUse;
+        dismissal = state;
+
+        installOwnerObservers(owner);
+        installEventMonitors();
+    }
+
+    void installEventMonitors()
+    {
+        if (dismissal == nullptr || !monitors.empty())
+            return;
+
+        installPressAndKeyMonitors();
+    }
+
+    void removeEventMonitors()
+    {
+        for (auto& monitor: monitors)
+            [NSEvent removeMonitor:monitor.get()];
+
+        monitors.clear();
+    }
+
+    void remove()
+    {
+        removeEventMonitors();
+
+        auto* center = NSNotificationCenter.defaultCenter;
+
+        for (auto& observer: observers)
+            [center removeObserver:observer.get()];
+
+        observers.clear();
+
+        child = nil;
+        dismissal.reset();
+    }
+
+private:
+    void installPressAndKeyMonitors()
+    {
+        auto weakState = std::weak_ptr<PopupDismissal> {dismissal};
+        auto dismissOnOutsideClick = dismissal->dismissOnOutsideClick;
+        auto* popup = child;
+
+        auto presses = NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown
+                       | NSEventMaskOtherMouseDown;
+
+        auto handler = ^NSEvent*(NSEvent* event)
+        {
+            if (event.type == NSEventTypeKeyDown)
+            {
+                if (event.keyCode != KeyCode::Escape)
+                    return event;
+
+                requestPopupDismissal(weakState);
+                return nil;
+            }
+
+            if (event.window == popup)
+                return event;
+
+            // Another popup of ours: a submenu of this one, or a menu opened
+            // from somewhere else entirely. Never swallowed either way — the
+            // press belongs to the window it landed in, and a menu that ate
+            // its own submenu's clicks would leave the submenu unusable.
+            // Only the unrelated one takes this menu down with it.
+            if (isPopupWindow(event.window))
+            {
+                if (!isWithinWindow(event.window, popup) && dismissOnOutsideClick)
+                    requestPopupDismissal(weakState);
+
+                return event;
+            }
+
+            // Geometry is for the presses that name no window at all, which
+            // is what a press in another application arrives as.
+            if (NSPointInRect(screenLocationOf(event), popup.frame))
+                return event;
+
+            if (!dismissOnOutsideClick)
+                return event;
+
+            requestPopupDismissal(weakState);
+
+            // Swallowed: the press that closes a menu belongs to the menu,
+            // which is why clicking one away never also presses what was
+            // under it.
+            return nil;
+        };
+
+        id local = [NSEvent
+            addLocalMonitorForEventsMatchingMask:presses | NSEventMaskKeyDown
+                                         handler:handler];
+
+        // A press in another app: ours to hear about and not ours to stop.
+        auto globalHandler = ^(NSEvent*)
+        {
+            if (dismissOnOutsideClick)
+                requestPopupDismissal(weakState);
+        };
+
+        id global = [NSEvent addGlobalMonitorForEventsMatchingMask:presses
+                                                          handler:globalHandler];
+
+        monitors.add(ObjC::attachPtr((NSObject*) local));
+        monitors.add(ObjC::attachPtr((NSObject*) global));
+    }
+
+    void installOwnerObservers(NSWindow* owner)
+    {
+        auto weakState = std::weak_ptr<PopupDismissal> {dismissal};
+        auto* popup = child;
+
+        auto observe =
+            [this](NSNotificationName name, id object, void (^body)(NSNotification*))
+        {
+            if (object == nil)
+                return;
+
+            auto* token = [NSNotificationCenter.defaultCenter
+                addObserverForName:name
+                            object:object
+                             queue:nil
+                        usingBlock:body];
+
+            observers.add(ObjC::attachPtr((NSObject*) token));
+        };
+
+        auto dismiss = ^(NSNotification*) { requestPopupDismissal(weakState); };
+
+        // The owner's close is also the last moment both windows are alive:
+        // detach here rather than leave the popup's destructor to ask a window
+        // that may be gone by then who its parent was.
+        auto ownerClosing = ^(NSNotification*)
+        {
+            if (popup.parentWindow != nil)
+                [popup.parentWindow removeChildWindow:popup];
+
+            requestPopupDismissal(weakState);
+        };
+
+        observe(NSWindowWillCloseNotification, owner, ownerClosing);
+
+        // The rest is the popup's alone: an ordinary child window has no
+        // reason to go when its owner stops being key.
+        if (dismissal == nullptr)
+            return;
+
+        observe(NSWindowDidResignKeyNotification, owner, dismiss);
+        observe(NSWindowDidResignMainNotification, owner, dismiss);
+        observe(NSWindowDidMiniaturizeNotification, owner, dismiss);
+        observe(NSApplicationDidResignActiveNotification, NSApp, dismiss);
+    }
+
+    NSWindow* child = nil;
+    PopupDismissalRef dismissal;
+    Vector<ObjC::Ptr<NSObject>> monitors;
+    Vector<ObjC::Ptr<NSObject>> observers;
+};
 } // namespace
+
+bool isPopupWindow(NSWindow* window)
+{
+    return window != nil && [window isKindOfClass:getPopupPanelClass()];
+}
+
+Point screenPointFromAppKit(CGPoint appKitPoint)
+{
+    return {(float) appKitPoint.x, (float) (primaryScreenTop() - appKitPoint.y)};
+}
+
+CGPoint appKitPointFromScreen(Point screenPoint)
+{
+    return CGPointMake(screenPoint.x, primaryScreenTop() - screenPoint.y);
+}
 
 NSObject* createWindowDelegate(const WindowOptions& options)
 {
@@ -441,12 +744,55 @@ NSWindowStyleMask getFlag(WindowFlags flag)
 
 NSWindowStyleMask getStyle(const WindowOptions& options)
 {
+    // A popup is what the option says it is, not what the default flags left
+    // behind: borderless, and nonactivating so a click inside it leaves the
+    // owner key.
+    if (options.popup)
+        return NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel;
+
     auto res = NSWindowStyleMask();
 
     for (auto& flag: options.flags)
         res |= getFlag(flag);
 
     return res;
+}
+
+// The class has to match the mask. NSPanel is what implements the utility,
+// HUD, doc-modal and nonactivating behaviours, and a plain NSWindow given one
+// of those masks simply ignores it.
+Class windowClassFor(const WindowOptions& options, NSWindowStyleMask style)
+{
+    if (options.popup)
+        return getPopupPanelClass();
+
+    if ((style & panelOnlyStyleMask) != 0)
+        return [NSPanel class];
+
+    // NSWindowStyleMaskBorderless is 0 — "borderless" is the absence of the
+    // Titled bit, so that's what selects the keyable subclass.
+    return (style & NSWindowStyleMaskTitled) != 0
+               ? [NSWindow class]
+               : getKeyableBorderlessWindowClass();
+}
+
+// The window a popup is owned by: the eacp one if it was given, else whatever
+// the host handed over — an NSWindow, or a view inside one, which is the form
+// a plugin API names.
+NSWindow* resolveOwnerWindow(const WindowOptions& options)
+{
+    if (options.parent != nullptr)
+        return (NSWindow*) options.parent->getHandle();
+
+    id nativeParent = (id) options.nativeParent;
+
+    if ([nativeParent isKindOfClass:[NSView class]])
+        return [(NSView*) nativeParent window];
+
+    if ([nativeParent isKindOfClass:[NSWindow class]])
+        return (NSWindow*) nativeParent;
+
+    return nil;
 }
 
 struct Window::Native
@@ -457,12 +803,7 @@ struct Window::Native
         auto style = getStyle(options);
         auto initialSize = options.effectiveInitialSize();
         auto contentRect = NSMakeRect(0, 0, initialSize.x, initialSize.y);
-
-        // NSWindowStyleMaskBorderless is 0 — "borderless" is the absence of
-        // the Titled bit, so that's what selects the keyable subclass.
-        auto windowClass = (style & NSWindowStyleMaskTitled) != 0
-                               ? [NSWindow class]
-                               : getKeyableBorderlessWindowClass();
+        auto windowClass = windowClassFor(options, style);
 
         handle = [[windowClass alloc] initWithContentRect:contentRect
                                                 styleMask:style
@@ -534,23 +875,25 @@ struct Window::Native
         if (options.initialPosition)
         {
             // initialPosition is top-left from the primary display's
-            // top-left; see primaryScreenTop for the flip.
-            [getWindow()
-                setFrameTopLeftPoint:NSMakePoint(options.initialPosition->x,
-                                                 primaryScreenTop()
-                                                     - options.initialPosition
-                                                           ->y)];
+            // top-left; see appKitPointFromScreen for the flip.
+            [getWindow() setFrameTopLeftPoint:appKitPointFromScreen(
+                                                  *options.initialPosition)];
         }
         else
         {
             [getWindow() center];
         }
 
-        containWithinVisibleFrame(options);
+        if (options.popup)
+            containPopupWithinVisibleFrame();
+        else
+            containWithinVisibleFrame(options);
 
         [getWindow() setDelegate:(id<NSWindowDelegate>) delegate.get()];
 
-        if (options.showInactive)
+        attachToOwner(eventsToUse);
+
+        if (options.effectiveShowInactive())
         {
             if (!eacp::Apps::getAppEnvironment().headless)
                 [getWindow() orderFront:nil];
@@ -566,7 +909,97 @@ struct Window::Native
                 NSMakePoint(options.trafficLightPosition->x,
                             options.trafficLightPosition->y));
 
-        applyApplicationIcon(options.applicationIcon());
+        // A popup is a piece of another window, not one of the app's own, so
+        // it has nothing to say about the Dock tile.
+        if (!options.popup)
+            applyApplicationIcon(options.applicationIcon());
+    }
+
+    // The popup half of the constructor: the panel behaviours that only exist
+    // on NSPanel, the ownership that makes the thing travel with the window it
+    // pops over, and the watchers that ask for it to be dismissed.
+    void attachToOwner(WindowEvents& eventsToUse)
+    {
+        auto* owner = resolveOwnerWindow(opts);
+
+        if (opts.popup)
+            applyPopupBehaviour();
+
+        if (owner != nil)
+        {
+            // Ordered directly above its owner, moved with it and ordered out
+            // with it — all of which AppKit does for a child window, and none
+            // of which an app tracking onMoved by hand does as smoothly.
+            [owner addChildWindow:getWindow() ordered:NSWindowAbove];
+
+            // A child window inherits its parent's level, so the menu level
+            // goes on after the adoption or it is quietly dropped — and a
+            // popup that shares its owner's level is one a foreign native
+            // child view can still cover.
+            if (opts.popup)
+                [getWindow() setLevel:NSPopUpMenuWindowLevel];
+
+            // The press that opened the popup is over as far as the owner is
+            // concerned: the view it went down in must not sit waiting for an
+            // up that now belongs to the menu.
+            if (opts.popup && opts.parent != nullptr)
+                if (auto* content = opts.parent->contentLink.contentView)
+                    content->cancelMouseCapture();
+        }
+
+        if (opts.popup)
+        {
+            dismissal = std::make_shared<PopupDismissal>();
+            dismissal->events = &eventsToUse;
+            dismissal->dismissOnOutsideClick = opts.dismissOnOutsideClick;
+        }
+
+        // A plain child window watches too, for the one notification that
+        // keeps its destructor from asking a freed owner about its children.
+        if (owner != nil || dismissal != nullptr)
+            watcher.install(getWindow(), owner, dismissal);
+    }
+
+    void applyPopupBehaviour()
+    {
+        auto* panel = (NSPanel*) getWindow();
+
+        // A menu stays up while the app is switched away from — the dismissal
+        // is ours to decide, through onDismissRequested, not AppKit's to make
+        // by ordering the window out behind our back.
+        [panel setHidesOnDeactivate:NO];
+        [panel setBecomesKeyOnlyIfNeeded:YES];
+        [panel setWorksWhenModal:YES];
+        [panel setHasShadow:YES];
+        [panel setAcceptsMouseMovedEvents:YES];
+        [panel setLevel:NSPopUpMenuWindowLevel];
+        [panel setAnimationBehavior:NSWindowAnimationBehaviorUtilityWindow];
+    }
+
+    // A menu opened near an edge slides back onto the display rather than
+    // being recentred the way a document window is: where it opened is where
+    // the click was, and moving it any further than it has to be moved loses
+    // that.
+    void containPopupWithinVisibleFrame()
+    {
+        NSWindow* window = getWindow();
+        NSScreen* screen = window.screen != nil ? window.screen
+                                                : NSScreen.mainScreen;
+
+        if (screen == nil)
+            return;
+
+        auto visible = screen.visibleFrame;
+        auto frame = window.frame;
+
+        frame.origin.x = std::min(frame.origin.x,
+                                  NSMaxX(visible) - frame.size.width);
+        frame.origin.x = std::max(frame.origin.x, NSMinX(visible));
+        frame.origin.y = std::max(frame.origin.y, NSMinY(visible));
+        frame.origin.y = std::min(frame.origin.y,
+                                  NSMaxY(visible) - frame.size.height);
+
+        [window setFrame:frame display:NO];
     }
 
     // Whatever size was asked for, the window that opens is one the user can
@@ -739,6 +1172,11 @@ struct Window::Native
         // unambiguous, so a re-shown page reliably wakes back up.
         if (!visible)
         {
+            // Nothing watches for an outside click while there is nothing on
+            // screen to click outside of. The owner's observers stay: a hidden
+            // popup is still a child window its owner has to hand back.
+            watcher.removeEventMonitors();
+
             [getWindow() orderOut:nil];
             getWindow().contentView.hidden = YES;
             return;
@@ -746,15 +1184,29 @@ struct Window::Native
 
         getWindow().contentView.hidden = NO;
 
+        // A new showing is a new dismissal to ask for: the one the popup was
+        // hidden over is spent.
+        if (dismissal != nullptr)
+            dismissal->requested = false;
+
+        watcher.installEventMonitors();
+
         // Re-assert the float level + Spaces behaviour on every show —
         // cheap, and guards against anything having knocked them off while
         // the window was ordered out.
         if (opts.alwaysOnTop)
             [getWindow() setLevel:NSFloatingWindowLevel];
 
+        // A child window takes its owner's level when it is ordered back in,
+        // so the menu level has to be said again — otherwise a popup that was
+        // hidden and shown comes back level with the window it exists to
+        // cover, and the foreign native content in that window covers it.
+        if (opts.popup)
+            [getWindow() setLevel:NSPopUpMenuWindowLevel];
+
         applyCollectionBehavior();
 
-        if (opts.showInactive)
+        if (opts.effectiveShowInactive())
             [getWindow() orderFront:nil];
         else
             [getWindow() makeKeyAndOrderFront:nil];
@@ -872,6 +1324,18 @@ struct Window::Native
     {
         disengageMouseLock();
 
+        // Before the window goes: the monitor blocks hold it, and a dismissal
+        // already queued must find the state gone rather than the window.
+        watcher.remove();
+        dismissal.reset();
+
+        // The owner keeps a list of its children and AppKit keeps the other
+        // half of it on the child, so asking the window itself copes with an
+        // owner that closed first — a closed parent drops its children on the
+        // way out and leaves parentWindow nil.
+        if (auto* owner = handle.get().parentWindow)
+            [owner removeChildWindow:handle.get()];
+
         // Mirror Window-Windows.cpp's WM_DESTROY: programmatic destruction
         // must not fire the quit callback — only a user-initiated close may.
         // The delegate's windowWillClose: would invoke it during [close], so
@@ -886,6 +1350,10 @@ struct Window::Native
     View* contentView = nullptr;
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;
+
+    // Popups only: null in every other window.
+    PopupDismissalRef dismissal;
+    PopupWatcher watcher;
 };
 
 Window::Window(const WindowOptions& optionsToUse)
@@ -954,9 +1422,7 @@ Point Window::getPosition() const
 
 void Window::setPosition(Point position)
 {
-    [impl->getWindow()
-        setFrameTopLeftPoint:NSMakePoint(position.x,
-                                         primaryScreenTop() - position.y)];
+    [impl->getWindow() setFrameTopLeftPoint:appKitPointFromScreen(position)];
 }
 
 Point Window::getSize() const

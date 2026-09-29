@@ -272,6 +272,13 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
+// One window, filling the screen, so the offset inside it is the whole
+// answer.
+Point View::localToScreen(Point point) const
+{
+    return localToScreenFallback(point);
+}
+
 // Stored and never shown: iOS draws no pointer for a touch. Kept rather than
 // ignored so portable code can set a shape unconditionally, and so an iPad with
 // a trackpad has one obvious place to grow a real implementation.

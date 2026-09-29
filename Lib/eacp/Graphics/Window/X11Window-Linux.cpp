@@ -3,12 +3,16 @@
 #include "X11Connection-Linux.h"
 #include "X11Input-Linux.h"
 
+#include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Utils/Logging.h>
+
 #include <xcb/xcb_icccm.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unistd.h>
@@ -90,6 +94,74 @@ int x11WholePoints(float points)
     return std::max((int) std::lround(points), 1);
 }
 
+// What a popup's grab has to keep reporting: a press over a window that is not
+// ours arrives here and nowhere else, which is how a click outside a menu
+// closes it without also pressing whatever it landed on.
+constexpr uint16_t x11PopupGrabMask =
+    XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE
+    | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW
+    | XCB_EVENT_MASK_LEAVE_WINDOW;
+
+// Another client's menu may be holding the pointer: the loop is run for this
+// long between tries so the press that takes it down is heard.
+constexpr auto x11PopupGrabRetryWait = Time::MS {20};
+constexpr auto x11PopupGrabAttempts = 5;
+
+// A window tree is a handful of levels deep at most; the bound is there so a
+// cycle a broken host reports cannot hang the walk.
+constexpr auto x11MaxTreeDepth = 32;
+
+// The id the options name, whichever way they name it: an eacp Window widens
+// its own into a pointer, and a host hands one over already widened.
+xcb_window_t x11RequestedOwner(const WindowOptions& options)
+{
+    if (options.parent != nullptr)
+        return (xcb_window_t) (uintptr_t) options.parent->getHandle();
+
+    return (xcb_window_t) (uintptr_t) options.nativeParent;
+}
+
+// The toplevel an id belongs to: a host may hand over a child window inside
+// its editor, and WM_TRANSIENT_FOR names the window a window manager knows.
+xcb_window_t x11ToplevelOf(X11Connection& connection, xcb_window_t window)
+{
+    auto* screen = connection.getScreen();
+
+    if (screen == nullptr || window == XCB_NONE || window == screen->root)
+        return window;
+
+    auto* xcb = connection.getConnection();
+    auto current = window;
+
+    for (auto step = 0; step < x11MaxTreeDepth; ++step)
+    {
+        auto* reply =
+            xcb_query_tree_reply(xcb, xcb_query_tree(xcb, current), nullptr);
+
+        if (reply == nullptr)
+            return current;
+
+        const auto parent = reply->parent;
+        std::free(reply);
+
+        if (parent == XCB_NONE || parent == screen->root)
+            return current;
+
+        current = parent;
+    }
+
+    return current;
+}
+
+// The state a queued dismissal holds, weakly: its owner is the popup's native,
+// so one already on the loop when the app destroyed the window finds nothing
+// and does nothing.
+struct X11PopupDismissal
+{
+    WindowEvents* events = nullptr;
+    bool pending = false;
+};
+
 // A size the server sent and the size asked for instead of it, so the same
 // disagreement is only ever argued once.
 struct X11SizeRequest
@@ -105,16 +177,29 @@ struct X11SizeRequest
 struct X11WindowNative final
     : LinuxWindowNative
     , X11WindowSurface
+    , X11PopupGrab
 {
     X11WindowNative(const WindowOptions& options, WindowEvents& events)
         : state(*this, options, events)
         , borderless(options.flags.contains(WindowFlags::Borderless))
         , positionRequested(options.initialPosition.has_value())
+        , popup(options.popup)
+        , alwaysOnTop(options.alwaysOnTop)
+        , dismissOnOutsideClick(options.dismissOnOutsideClick)
+        , requestedOwner(x11RequestedOwner(options))
     {
         state.unmap = [this] { unmap(); };
 
+        refusesFocus = popup;
+
         onKeyboardFocus = [this](bool focused) { state.setActive(focused); };
         onConnectionLost = [this] { connectionLost(); };
+
+        if (popup)
+        {
+            dismissal = std::make_shared<X11PopupDismissal>();
+            dismissal->events = &events;
+        }
 
         if (auto* connection = x11Connection())
             scale = connection->getScale();
@@ -124,12 +209,22 @@ struct X11WindowNative final
 
     ~X11WindowNative() override
     {
+        // Before anything else: a dismissal already queued must find the state
+        // gone rather than a window half way through being torn down.
+        releasePopupGrab();
+        dismissal.reset();
+
         if (contentView != nullptr)
             linuxUnbindWindowFromContentView(*contentView);
 
         auto* connection = x11Connection();
 
-        if (getWindow() == XCB_NONE || connection == nullptr)
+        if (connection == nullptr)
+            return;
+
+        connection->unwatchForeignWindow(*this);
+
+        if (getWindow() == XCB_NONE)
             return;
 
         if (auto* seatInput = connection->getInput())
@@ -161,8 +256,28 @@ struct X11WindowNative final
         auto* xcb = connection->getConnection();
         auto window = xcb_generate_id(xcb);
 
-        const uint32_t values[] = {x11BackgroundPixel(state.background),
-                                   connection->getWindowEventMask()};
+        ownerWindow = x11ToplevelOf(*connection, requestedOwner);
+
+        // In the order the mask names them, which is the order the protocol
+        // reads them in.
+        auto values = std::array<uint32_t, 4> {};
+        auto count = size_t {0};
+        auto mask = uint32_t {XCB_CW_BACK_PIXEL};
+
+        values[count++] = x11BackgroundPixel(state.background);
+
+        // A popup is placed and stacked by us and not by a window manager, and
+        // the server keeps what it covers where it can, so a menu taken down
+        // leaves no hole for the window under it to repaint.
+        if (popup)
+        {
+            mask |= XCB_CW_OVERRIDE_REDIRECT | XCB_CW_SAVE_UNDER;
+            values[count++] = 1;
+            values[count++] = 1;
+        }
+
+        mask |= XCB_CW_EVENT_MASK;
+        values[count++] = connection->getWindowEventMask();
 
         xcb_create_window(xcb,
                           XCB_COPY_FROM_PARENT,
@@ -175,8 +290,8 @@ struct X11WindowNative final
                           0,
                           XCB_WINDOW_CLASS_INPUT_OUTPUT,
                           screen->root_visual,
-                          XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK,
-                          values);
+                          mask,
+                          values.data());
 
         setWindow(window);
         connection->registerWindow({window, this, nullptr});
@@ -185,8 +300,17 @@ struct X11WindowNative final
         applyProtocols();
         applyTitle();
         applyIdentity();
-        applySizeHints();
-        applyMotifHints();
+
+        // None of which a popup has: an override-redirect window is never
+        // decorated, never resized by anybody else and never negotiated over,
+        // so the hints a window manager would read are not written at all.
+        if (!popup)
+        {
+            applySizeHints();
+            applyMotifHints();
+        }
+
+        watchOwner();
 
         connection->flush();
     }
@@ -284,6 +408,10 @@ struct X11WindowNative final
                             1,
                             &pid);
 
+        const auto type = popup && atoms.netWmWindowTypePopupMenu != XCB_ATOM_NONE
+                              ? atoms.netWmWindowTypePopupMenu
+                              : atoms.netWmWindowTypeNormal;
+
         xcb_change_property(xcb,
                             XCB_PROP_MODE_REPLACE,
                             getWindow(),
@@ -291,7 +419,71 @@ struct X11WindowNative final
                             XCB_ATOM_ATOM,
                             32,
                             1,
-                            &atoms.netWmWindowTypeNormal);
+                            &type);
+
+        applyTransientFor();
+        applyAlwaysOnTop();
+    }
+
+    // Written for any window given an owner, popup or not: it is what tells a
+    // window manager which window this one belongs to, so it is kept above it
+    // and taken down with it.
+    void applyTransientFor()
+    {
+        auto* connection = liveConnection();
+
+        if (connection == nullptr || ownerWindow == XCB_NONE)
+            return;
+
+        xcb_icccm_set_wm_transient_for(
+            connection->getConnection(), getWindow(), ownerWindow);
+    }
+
+    // _NET_WM_STATE is the window manager's to change once a window is up, and
+    // the client's to state before it maps - which is the only moment this
+    // window has to say it.
+    void applyAlwaysOnTop()
+    {
+        auto* connection = liveConnection();
+
+        if (connection == nullptr || !alwaysOnTop)
+            return;
+
+        const auto& atoms = connection->getAtoms();
+
+        xcb_change_property(connection->getConnection(),
+                            XCB_PROP_MODE_REPLACE,
+                            getWindow(),
+                            atoms.netWmState,
+                            XCB_ATOM_ATOM,
+                            32,
+                            1,
+                            &atoms.netWmStateAbove);
+    }
+
+    // The owner is watched and never touched. What a popup has to hear about
+    // is the window it pops over going away, being hidden, or no longer being
+    // the one the keyboard goes to: each of those is the end of the menu.
+    void watchOwner()
+    {
+        auto* connection = liveConnection();
+
+        if (!popup || connection == nullptr || ownerWindow == XCB_NONE)
+            return;
+
+        // Unless the owner is a window of this copy's, whose own mask this
+        // would replace: it already selects both of these, and the watch alone
+        // is what brings its events here as well.
+        if (connection->findWindow(ownerWindow).windowSurface == nullptr)
+        {
+            const uint32_t mask =
+                XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_FOCUS_CHANGE;
+
+            xcb_change_window_attributes(
+                connection->getConnection(), ownerWindow, XCB_CW_EVENT_MASK, &mask);
+        }
+
+        connection->watchForeignWindow({ownerWindow, this, nullptr});
     }
 
     void applySizeHints()
@@ -391,6 +583,12 @@ struct X11WindowNative final
 
     void handleEvent(const xcb_generic_event_t& event) override
     {
+        if (handleOwnerEvent(event))
+            return;
+
+        if (handleGrabBroken(event))
+            return;
+
         switch (event.response_type & ~0x80)
         {
             case XCB_MAP_NOTIFY:
@@ -479,6 +677,237 @@ struct X11WindowNative final
         }
     }
 
+    // The owner's own events, routed here by the watch beside whatever the
+    // owner itself made of them. A grab or the pointer crossing is neither the
+    // owner losing the user's attention nor the popup's business, exactly as
+    // the seat reads a focus event.
+    bool handleOwnerEvent(const xcb_generic_event_t& event)
+    {
+        if (!popup || ownerWindow == XCB_NONE)
+            return false;
+
+        switch (event.response_type & ~0x80)
+        {
+            case XCB_UNMAP_NOTIFY:
+                if (x11As<xcb_unmap_notify_event_t>(event).window != ownerWindow)
+                    return false;
+
+                break;
+
+            case XCB_DESTROY_NOTIFY:
+                if (x11As<xcb_destroy_notify_event_t>(event).window != ownerWindow)
+                    return false;
+
+                break;
+
+            case XCB_FOCUS_OUT:
+            {
+                const auto& focus = x11As<xcb_focus_out_event_t>(event);
+
+                if (focus.event != ownerWindow || focus.mode == XCB_NOTIFY_MODE_GRAB
+                    || focus.mode == XCB_NOTIFY_MODE_UNGRAB
+                    || focus.detail == XCB_NOTIFY_DETAIL_POINTER)
+                    return false;
+
+                break;
+            }
+
+            default:
+                return false;
+        }
+
+        requestDismissal();
+
+        return true;
+    }
+
+    // The grab ended without this window asking: the server takes one back
+    // when the window it is on stops being viewable, and a menu with no
+    // pointer is a menu that can no longer be clicked away.
+    bool handleGrabBroken(const xcb_generic_event_t& event)
+    {
+        if (!pointerGrabbed || (event.response_type & ~0x80) != XCB_LEAVE_NOTIFY)
+            return false;
+
+        const auto& crossing = x11As<xcb_leave_notify_event_t>(event);
+
+        if (crossing.event != getWindow() || crossing.mode != XCB_NOTIFY_MODE_UNGRAB)
+            return false;
+
+        requestDismissal();
+
+        return true;
+    }
+
+    // Deferred a turn, and the callable copied before it runs: the handler's
+    // whole job is to destroy or hide the window it belongs to, and it is a
+    // member of that window.
+    void requestDismissal() override
+    {
+        if (dismissal == nullptr || dismissal->pending)
+            return;
+
+        dismissal->pending = true;
+
+        auto deliver = [weak = std::weak_ptr<X11PopupDismissal> {dismissal}]
+        {
+            auto state = weak.lock();
+
+            if (state == nullptr)
+                return;
+
+            state->pending = false;
+
+            auto handler = state->events->onDismissRequested;
+            handler();
+        };
+
+        Threads::callAsync(deliver);
+    }
+
+    bool dismissesOnOutsideClick() const override { return dismissOnOutsideClick; }
+
+    // An override-redirect window is where it asked to be, so its own numbers
+    // are the server's: no round trip per press.
+    bool containsRootPoint(Point rootPosition) const override
+    {
+        const auto x = (float) pixelX();
+        const auto y = (float) pixelY();
+
+        return rootPosition.x >= x && rootPosition.y >= y
+               && rootPosition.x < x + (float) pixelWidth()
+               && rootPosition.y < y + (float) pixelHeight();
+    }
+
+    // The pointer for as long as the menu is up. owner_events is on, unlike
+    // the mouse lock's: a press over a window of ours is still delivered
+    // there, and the seat measures those against this window's rectangle
+    // instead - so a press inside the popup reaches its views unchanged.
+    void takePopupGrab()
+    {
+        auto* connection = liveConnection();
+
+        if (!popup || popupActive || connection == nullptr || !mapped)
+            return;
+
+        popupActive = true;
+        connection->setActivePopup(*this);
+
+        if (dismissOnOutsideClick)
+            pointerGrabbed = grabPointerForPopup(*connection);
+
+        keyboardGrabbed = grabKeyboardForPopup(*connection);
+
+        // Whatever the owner's views were holding, they are not holding it any
+        // more: the up that would have ended it belongs to the menu.
+        if (auto* seatInput = getInput())
+            seatInput->popupGrabChanged();
+    }
+
+    void releasePopupGrab()
+    {
+        if (!popupActive)
+            return;
+
+        popupActive = false;
+
+        auto* connection = x11Connection();
+
+        if (connection == nullptr)
+            return;
+
+        connection->clearActivePopup(*this);
+
+        if (connection->isConnected())
+        {
+            auto* xcb = connection->getConnection();
+
+            if (pointerGrabbed)
+                xcb_ungrab_pointer(xcb, XCB_CURRENT_TIME);
+
+            if (keyboardGrabbed)
+                xcb_ungrab_keyboard(xcb, XCB_CURRENT_TIME);
+
+            connection->flush();
+        }
+
+        pointerGrabbed = false;
+        keyboardGrabbed = false;
+
+        if (auto* seatInput = connection->getInput())
+            seatInput->popupGrabChanged();
+    }
+
+    bool grabPointerForPopup(X11Connection& connection)
+    {
+        for (auto attempt = 0; attempt < x11PopupGrabAttempts; ++attempt)
+        {
+            auto* xcb = connection.getConnection();
+
+            auto* reply =
+                xcb_grab_pointer_reply(xcb,
+                                       xcb_grab_pointer(xcb,
+                                                        1,
+                                                        getWindow(),
+                                                        x11PopupGrabMask,
+                                                        XCB_GRAB_MODE_ASYNC,
+                                                        XCB_GRAB_MODE_ASYNC,
+                                                        XCB_NONE,
+                                                        XCB_CURSOR_NONE,
+                                                        XCB_CURRENT_TIME),
+                                       nullptr);
+
+            if (reply == nullptr)
+                break;
+
+            const auto status = reply->status;
+            std::free(reply);
+
+            if (status == XCB_GRAB_STATUS_SUCCESS)
+                return true;
+
+            // Frozen or not viewable is a window that will not carry a grab at
+            // all; only another client's menu is worth waiting out.
+            if (status != XCB_GRAB_STATUS_ALREADY_GRABBED)
+                break;
+
+            auto never = [] { return false; };
+            connection.dispatchUntil(never, Time::Deadline {x11PopupGrabRetryWait});
+        }
+
+        LOG("X11: the pointer could not be grabbed for a popup window, so a "
+            "press over another client's window will not dismiss it. Escape "
+            "and a press over one of this app's own windows still do.");
+
+        return false;
+    }
+
+    // So Escape reaches the menu wherever the keyboard is pointing. Taken with
+    // owner_events on, which changes nothing about focus: the window the popup
+    // pops over stays the focused one and still receives its own keys, and the
+    // seat picks Escape out of whichever window it lands in.
+    bool grabKeyboardForPopup(X11Connection& connection)
+    {
+        auto* xcb = connection.getConnection();
+
+        auto* reply = xcb_grab_keyboard_reply(xcb,
+                                              xcb_grab_keyboard(xcb,
+                                                                1,
+                                                                getWindow(),
+                                                                XCB_CURRENT_TIME,
+                                                                XCB_GRAB_MODE_ASYNC,
+                                                                XCB_GRAB_MODE_ASYNC),
+                                              nullptr);
+
+        if (reply == nullptr)
+            return false;
+
+        const auto granted = reply->status == XCB_GRAB_STATUS_SUCCESS;
+        std::free(reply);
+
+        return granted;
+    }
+
     // Xft.dpi changed under an open window. The content keeps the point size
     // it was laid out at, exactly as a Wayland toplevel keeps its logical
     // size, so what moves is the pixels: the window is asked for the size that
@@ -516,6 +945,11 @@ struct X11WindowNative final
             return;
 
         mapped = true;
+
+        // Once the window is really on screen: a grab on one the server has
+        // not mapped yet is refused as not viewable.
+        takePopupGrab();
+
         state.notifyHostVisibility(true);
 
         if (contentView != nullptr)
@@ -528,6 +962,7 @@ struct X11WindowNative final
             return;
 
         mapped = false;
+        releasePopupGrab();
 
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
@@ -803,8 +1238,31 @@ struct X11WindowNative final
         if (connection == nullptr || !connection->isConnected())
             return;
 
+        // The place is asked for again right before the map, and honoured
+        // verbatim because nothing redirects an override-redirect window: a
+        // menu opens where the click was, which may have been decided after
+        // the window was made.
+        if (popup)
+            applyPopupPosition();
+
         xcb_map_window(connection->getConnection(), getWindow());
         connection->flush();
+    }
+
+    void applyPopupPosition()
+    {
+        auto* connection = liveConnection();
+
+        if (connection == nullptr)
+            return;
+
+        const uint32_t values[] = {(uint32_t) (int32_t) x11ClampPosition(pixelX()),
+                                   (uint32_t) (int32_t) x11ClampPosition(pixelY())};
+
+        xcb_configure_window(connection->getConnection(),
+                             getWindow(),
+                             XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y,
+                             values);
     }
 
     // Eagerly, unlike the map: the view surfaces have to go before the request
@@ -813,6 +1271,8 @@ struct X11WindowNative final
     {
         auto wasMapped = mapped;
         mapped = false;
+
+        releasePopupGrab();
 
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
@@ -1035,6 +1495,11 @@ struct X11WindowNative final
         auto wasMapped = mapped;
         mapped = false;
 
+        releasePopupGrab();
+
+        if (auto* connection = x11Connection())
+            connection->unwatchForeignWindow(*this);
+
         if (contentView != nullptr)
             linuxWindowSurfaceStateChanged(*contentView);
 
@@ -1069,6 +1534,22 @@ struct X11WindowNative final
 
     bool borderless = false;
     bool positionRequested = false;
+
+    bool popup = false;
+    bool alwaysOnTop = false;
+    bool dismissOnOutsideClick = true;
+
+    // The id the options named, and the toplevel it turned out to belong to -
+    // a host may hand over a child window inside its editor.
+    xcb_window_t requestedOwner = XCB_NONE;
+    xcb_window_t ownerWindow = XCB_NONE;
+
+    bool popupActive = false;
+    bool pointerGrabbed = false;
+    bool keyboardGrabbed = false;
+
+    // Popups only: null in every other window.
+    std::shared_ptr<X11PopupDismissal> dismissal;
 };
 } // namespace
 

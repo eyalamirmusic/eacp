@@ -4,11 +4,14 @@
 #include "../Image/Image.h"
 #include "../Window/LinuxWindowSurface-Linux.h"
 #include "../Window/LinuxWindowSystem-Linux.h"
+#include "../Window/X11Connection-Linux.h"
 
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Threads/EventLoop.h>
 
+#include <cstdlib>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace eacp::Graphics
@@ -58,9 +61,9 @@ LinuxViewRecordPtr linuxFindViewRecordPtr(View& view)
     return found == records.end() ? LinuxViewRecordPtr {} : found->second;
 }
 
-View& linuxRootOf(View& view)
+const View& linuxRootOf(const View& view)
 {
-    auto* root = &view;
+    const auto* root = &view;
 
     while (root->getParent() != nullptr)
         root = root->getParent();
@@ -68,12 +71,41 @@ View& linuxRootOf(View& view)
     return *root;
 }
 
-LinuxWindowSurface* linuxWindowForView(View& view)
+LinuxWindowSurface* linuxWindowForView(const View& view)
 {
     auto& windows = linuxContentViewWindows();
-    auto found = windows.find(&linuxRootOf(view));
+    auto found = windows.find(const_cast<View*>(&linuxRootOf(view)));
 
     return found == windows.end() ? nullptr : found->second;
+}
+
+// Where the window's top left really is, in root pixels. An X11 toplevel is
+// told and a Wayland one never is, which is the whole difference between the
+// two answers to localToScreen.
+std::optional<Point> linuxWindowRootOrigin(const LinuxWindowSurface& window)
+{
+    auto* connection = x11Connection();
+
+    if (connection == nullptr || !connection->isConnected()
+        || connection->getScreen() == nullptr
+        || window.nativeSurface.kind != NativeSurfaceHandle::Kind::X11)
+        return {};
+
+    auto* xcb = connection->getConnection();
+
+    auto* reply = xcb_translate_coordinates_reply(
+        xcb,
+        xcb_translate_coordinates(
+            xcb, window.nativeSurface.window, connection->getScreen()->root, 0, 0),
+        nullptr);
+
+    if (reply == nullptr)
+        return {};
+
+    const auto origin = Point {(float) reply->dst_x, (float) reply->dst_y};
+    std::free(reply);
+
+    return origin;
 }
 
 bool linuxEffectivelyVisible(View& view)
@@ -300,6 +332,31 @@ Point View::getMousePosition() const
     auto position = linuxPointerPosition();
 
     return {position.x - origin.x, position.y - origin.y};
+}
+
+// The window's position plus this view's offset inside it. Asked of the server
+// on X11, where a toplevel really knows where it is, whatever frame a window
+// manager put around it; on Wayland a client is never told, so the window's own
+// origin is all there is to add.
+Point View::localToScreen(Point point) const
+{
+    auto* window = linuxWindowForView(*this);
+
+    if (window == nullptr)
+        return localToScreenFallback(point);
+
+    const auto origin = linuxWindowRootOrigin(*window);
+
+    if (!origin)
+        return localToScreenFallback(point);
+
+    // The server measures a toplevel in pixels and everything above the native
+    // in points.
+    const auto divisor = window->scale > 0.f ? window->scale : 1.f;
+    const auto inWindow = linuxViewOriginInWindow(*this);
+
+    return {origin->x / divisor + inWindow.x + point.x,
+            origin->y / divisor + inWindow.y + point.y};
 }
 
 // Applied at once, so a shape set from a mouseMoved handler takes effect now.

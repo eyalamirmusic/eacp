@@ -3,6 +3,7 @@
 #include "Window.h"
 #include "CompositionHostWindow-Windows.h"
 #include "WindowGeometry-Windows.h"
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Strings.h>
 #include "../Helpers/DarkMode-Windows.h"
 #include "../Helpers/ImageConversion-Windows.h"
@@ -18,6 +19,12 @@
 
 // std::min, for capping a window's minimum size at its display's work area.
 #include <algorithm>
+
+// std::shared_ptr, for the dismissal state a deferred callback holds weakly.
+#include <memory>
+
+// std::wcscmp, for telling one of this copy's own windows from a host's.
+#include <cwchar>
 
 namespace eacp::Graphics
 {
@@ -76,12 +83,60 @@ void fitFrameSizeToConstraint(RECT& frame,
     frame.bottom = frame.top + std::lround(allowed.y * scale) + insets.height;
 }
 
-// WM_NCHITTEST's screen coordinates. The halves are signed: a window on a
-// monitor left of or above the primary one is hit-tested at negative
-// coordinates, which an unsigned LOWORD reads as somewhere near 65535.
-POINT screenPointFromLParam(LPARAM lParam)
+// The point a message carries in its lParam: WM_NCHITTEST's in screen
+// coordinates, a button message's in the client area of the window holding the
+// capture. The halves are signed either way — a window on a monitor left of or
+// above the primary one is hit-tested at negative coordinates, and a press
+// above or left of a popup holding the grab lands at negative ones — which an
+// unsigned LOWORD reads as somewhere near 65535.
+POINT pointFromLParam(LPARAM lParam)
 {
     return {static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
+}
+
+// The state a deferred dismissal holds, weakly. Its owner is the popup's
+// Native, so a callback that outlives the window — one already queued when the
+// app destroyed the popup from inside the handler — finds nothing and does
+// nothing.
+struct PopupDismissal
+{
+    WindowEvents* events = nullptr;
+    bool dismissOnOutsideClick = true;
+    bool pending = false;
+};
+
+using PopupDismissalRef = std::shared_ptr<PopupDismissal>;
+
+// Deferred on purpose: the handler's whole job is to hide or destroy the
+// window whose message is being dispatched, and unwinding a WndProc through a
+// freed HWND is not a thing to try. A null state — every window that is not a
+// popup — asks for nothing.
+void requestPopupDismissal(const PopupDismissalRef& state)
+{
+    if (state == nullptr || state->pending)
+        return;
+
+    state->pending = true;
+
+    auto weakState = std::weak_ptr<PopupDismissal> {state};
+
+    auto deliver = [weakState]
+    {
+        auto dismissal = weakState.lock();
+
+        if (dismissal == nullptr)
+            return;
+
+        dismissal->pending = false;
+
+        // Copied before it runs: the handler is expected to destroy the
+        // Window, and the handler is a member of it — invoking it in place
+        // would free the callable half way through its own call.
+        auto handler = dismissal->events->onDismissRequested;
+        handler();
+    };
+
+    Threads::callAsync(deliver);
 }
 
 // The work area — the monitor minus the taskbar and any registered appbars — of
@@ -142,12 +197,21 @@ struct Window::Native
         Threads::attachCurrentThreadAsMain();
         registerWindowClass();
         createWindow(options);
+        attachToOwner(options);
         host.initializeComposition(true);
         host.onContentResized = onResize;
     }
 
     ~Native()
     {
+        endPopupCapture();
+        detachFromOwner();
+        releasePopupChildren();
+
+        // Before the deferred dismissals run: one already queued must find
+        // the state gone rather than a WindowEvents that went with the Window.
+        dismissal.reset();
+
         // Before teardown, while the handle is still valid — and it must happen
         // at all, or a later window landing on the same HWND address would
         // inherit this one's menu commands.
@@ -207,8 +271,16 @@ struct Window::Native
         DWORD style = WS_OVERLAPPEDWINDOW;
 
         host.transparentBackground = options.transparentBackground;
+        popup = options.popup;
 
-        if (options.flags.contains(WindowFlags::Borderless))
+        // A popup is borderless whatever the flags say, and takes no sizing
+        // frame with it: a menu is not dragged by its edges, and the frame
+        // WM_NCCALCSIZE would then have to eat is one it never had.
+        if (popup)
+        {
+            style = WS_POPUP;
+        }
+        else if (options.flags.contains(WindowFlags::Borderless))
         {
             style = WS_POPUP;
 
@@ -247,6 +319,14 @@ struct Window::Native
             style |= WS_THICKFRAME;
 
         DWORD exStyle = options.alwaysOnTop ? WS_EX_TOPMOST : 0;
+
+        // No activation, so a click inside leaves the owner's title bar lit,
+        // and a tool window, so a menu never gets a taskbar button or an
+        // Alt-Tab entry of its own. Ownership is what holds a popup above the
+        // window it pops over, so WS_EX_TOPMOST stays the app's own business.
+        if (popup)
+            exStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+
         if (options.ignoresMouseEvents)
             exStyle |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
 
@@ -257,8 +337,9 @@ struct Window::Native
         if (options.transparentBackground)
             exStyle |= WS_EX_NOREDIRECTIONBITMAP;
 
-        showWithoutActivating = options.showInactive;
+        showWithoutActivating = options.effectiveShowInactive();
         ignoresMouseEvents = options.ignoresMouseEvents;
+        ownerHwnd = resolveOwnerHwnd(options);
 
         auto windowWidth = rect.right - rect.left;
         auto windowHeight = rect.bottom - rect.top;
@@ -303,6 +384,10 @@ struct Window::Native
             frame.top = area.top + ((area.bottom - area.top) - windowHeight) / 2;
         }
 
+        // hWndParent on a style that is not WS_CHILD is the owner: the window
+        // this one is held above, minimized and destroyed with. Set here and
+        // not afterwards, because a window that was ever ownerless is a window
+        // the shell has already given a taskbar button to.
         host.hwnd =
             CreateWindowExW(exStyle,
                             WINDOW_CLASS_NAME,
@@ -312,10 +397,12 @@ struct Window::Native
                             frame.top,
                             windowWidth,
                             windowHeight,
-                            nullptr,
+                            ownerHwnd,
                             nullptr,
                             (HINSTANCE) eacp::Plugins::getCurrentModuleHandle(),
                             this);
+
+        lastOrigin = originOf(host.hwnd);
 
         if (host.hwnd && options.cornerRadius && !options.transparentBackground)
             applyRoundedCorners();
@@ -328,8 +415,198 @@ struct Window::Native
             applyTitleBarTheme(host.hwnd, isSystemDarkMode());
         }
 
-        if (host.hwnd)
+        // A popup is a piece of another window and not one of the app's own,
+        // so it has nothing to say about the taskbar or the Alt-Tab switcher.
+        if (host.hwnd && !popup)
             applyApplicationIcons(options);
+    }
+
+    // The window this one belongs to: the eacp one if it was given, else
+    // whatever the host handed over, widened to the toplevel holding it —
+    // every plugin API names the child window its editor lives in, and only a
+    // toplevel can own.
+    static HWND resolveOwnerHwnd(const WindowOptions& options)
+    {
+        if (options.parent != nullptr)
+            return (HWND) options.parent->getHandle();
+
+        auto given = (HWND) options.nativeParent;
+
+        if (given == nullptr || !IsWindow(given))
+            return nullptr;
+
+        return GetAncestor(given, GA_ROOT);
+    }
+
+    // The Native behind an HWND, for the windows this copy made and no others.
+    // The class name carries the module (getUniqueWindowClassName), so a
+    // host's window — or another copy's, whose Native is a struct of a
+    // different shape — answers null rather than a pointer to read.
+    static Native* fromHwnd(HWND hwnd)
+    {
+        if (hwnd == nullptr)
+            return nullptr;
+
+        constexpr auto maxClassName = 128;
+        wchar_t className[maxClassName] = {};
+
+        if (GetClassNameW(hwnd, className, maxClassName) == 0)
+            return nullptr;
+
+        if (std::wcscmp(className, WINDOW_CLASS_NAME) != 0)
+            return nullptr;
+
+        return reinterpret_cast<Native*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+
+    static POINT originOf(HWND hwnd)
+    {
+        auto frame = RECT {};
+
+        if (hwnd == nullptr || !GetWindowRect(hwnd, &frame))
+            return {};
+
+        return {frame.left, frame.top};
+    }
+
+    // The eacp side of Win32 ownership: the messages a popup cannot see for
+    // itself — Escape, the owner's activation, its move — are routed to it
+    // through the owner, which needs to know the popup is there.
+    void attachToOwner(const WindowOptions& options)
+    {
+        if (!popup)
+            return;
+
+        dismissal = std::make_shared<PopupDismissal>();
+        dismissal->events = events;
+        dismissal->dismissOnOutsideClick = options.dismissOnOutsideClick;
+
+        // The press that opened the popup is over as far as the owner is
+        // concerned: the view it went down in must not sit waiting for an up
+        // that now belongs to the menu.
+        if (options.parent != nullptr)
+            if (auto* content = options.parent->contentLink.contentView)
+                content->cancelMouseCapture();
+
+        ownerNative = fromHwnd(ownerHwnd);
+
+        if (ownerNative != nullptr)
+            ownerNative->popupChildren.add(this);
+    }
+
+    void detachFromOwner()
+    {
+        if (ownerNative == nullptr)
+            return;
+
+        auto isThisWindow = [this](const Native* child) { return child == this; };
+        ownerNative->popupChildren.eraseIf(isThisWindow);
+        ownerNative = nullptr;
+    }
+
+    void dismissPopupChildren()
+    {
+        for (auto* child: popupChildren)
+            requestPopupDismissal(child->dismissal);
+    }
+
+    // The owner is going: the children hand their pointer back before it
+    // dangles, and are asked to close while both windows are still alive.
+    void releasePopupChildren()
+    {
+        for (auto* child: popupChildren)
+        {
+            child->ownerNative = nullptr;
+            requestPopupDismissal(child->dismissal);
+        }
+
+        popupChildren.clear();
+    }
+
+    // Escape reaches the window that has the focus, and a popup never takes
+    // it, so it arrives in the owner and is spent on the menu over it.
+    bool dismissTopmostPopup()
+    {
+        if (popupChildren.empty())
+            return false;
+
+        requestPopupDismissal(popupChildren.back()->dismissal);
+        return true;
+    }
+
+    // Win32 keeps an owned window above its owner and takes it away with it,
+    // but nothing moves it: the popups follow by hand, which is the one half
+    // of a macOS child window that ownership here does not give.
+    void movePopupChildren()
+    {
+        auto origin = originOf(host.hwnd);
+        auto previous = lastOrigin;
+        lastOrigin = origin;
+
+        auto dx = origin.x - previous.x;
+        auto dy = origin.y - previous.y;
+
+        if (popupChildren.empty() || (dx == 0 && dy == 0))
+            return;
+
+        for (auto* child: popupChildren)
+        {
+            if (child->host.hwnd == nullptr)
+                continue;
+
+            auto childOrigin = originOf(child->host.hwnd);
+
+            SetWindowPos(child->host.hwnd,
+                         nullptr,
+                         childOrigin.x + dx,
+                         childOrigin.y + dy,
+                         0,
+                         0,
+                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+
+    // The grab a menu holds for as long as it is up, rather than for the
+    // length of a drag: with it, a press anywhere on the desktop arrives here
+    // instead of at whatever is under it, which is both how the press outside
+    // is noticed and how it is kept from reaching the window it landed on.
+    void beginPopupCapture()
+    {
+        if (host.hwnd == nullptr || dismissal == nullptr
+            || !dismissal->dismissOnOutsideClick)
+            return;
+
+        host.holdsCapture = true;
+        SetCapture(host.hwnd);
+    }
+
+    void endPopupCapture()
+    {
+        if (!host.holdsCapture)
+            return;
+
+        host.holdsCapture = false;
+
+        if (GetCapture() == host.hwnd)
+            ReleaseCapture();
+    }
+
+    // With the grab held, a press anywhere on the desktop is delivered here in
+    // this window's client coordinates — so a point outside the client rect is
+    // a press in whatever sits underneath. Without the grab no such message
+    // arrives at all, which is why holding it is not part of the test.
+    bool pressLandedOutside(LPARAM lParam) const
+    {
+        if (dismissal == nullptr || !dismissal->dismissOnOutsideClick)
+            return false;
+
+        auto client = RECT {};
+
+        if (host.hwnd == nullptr || !GetClientRect(host.hwnd, &client))
+            return false;
+
+        auto point = pointFromLParam(lParam);
+        return PtInRect(&client, point) == FALSE;
     }
 
     // The ICON resource eacp_set_app_icon compiles into the executable
@@ -394,11 +671,16 @@ struct Window::Native
 
         if (!visible)
         {
+            // Nothing watches for a press outside while there is nothing on
+            // screen to press outside of.
+            endPopupCapture();
+
             ShowWindow(host.hwnd, SW_HIDE);
             return;
         }
 
         ShowWindow(host.hwnd, showWithoutActivating ? SW_SHOWNOACTIVATE : SW_SHOW);
+        beginPopupCapture();
     }
 
     void minimize()
@@ -417,23 +699,42 @@ struct Window::Native
         ShowWindow(host.hwnd, IsZoomed(host.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
     }
 
-    void showWindow() const
+    void showWindow()
     {
         if (host.hwnd)
         {
             // showInactive: reveal without stealing focus (counterpart of
             // macOS orderFront). visibleOnAllWorkspaces has no Windows
-            // analogue. The window still activates normally when clicked.
+            // analogue. The window still activates normally when clicked —
+            // except a popup, which refuses activation outright.
             ShowWindow(host.hwnd,
                        showWithoutActivating ? SW_SHOWNOACTIVATE : SW_SHOW);
             UpdateWindow(host.hwnd);
+            beginPopupCapture();
         }
     }
 
-    void toFront() const
+    void toFront()
     {
         if (!host.hwnd || eacp::Apps::getAppEnvironment().headless)
             return;
+
+        // A popup is raised without being activated — the window it pops over
+        // has to stay the active one — and ownership already holds it above
+        // that window, so the foreground steal has nothing to do here.
+        if (popup)
+        {
+            ShowWindow(host.hwnd, SW_SHOWNOACTIVATE);
+            SetWindowPos(host.hwnd,
+                         HWND_TOP,
+                         0,
+                         0,
+                         0,
+                         0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            beginPopupCapture();
+            return;
+        }
 
         ShowWindow(host.hwnd, SW_SHOW);
         forceForeground(host.hwnd);
@@ -744,6 +1045,19 @@ struct Window::Native
     bool ignoresMouseEvents = false;
     bool framelessRounded = false;
     bool framelessResizable = false;
+
+    // See WindowOptions::popup. The dismissal state is a popup's alone and
+    // null in every other window; the pointer up and the list down are the two
+    // ends of one ownership, each dropped by the other's destructor so neither
+    // outlives the window it names.
+    bool popup = false;
+    PopupDismissalRef dismissal;
+    HWND ownerHwnd = nullptr;
+    Native* ownerNative = nullptr;
+    Vector<Native*> popupChildren;
+
+    // The frame origin this window's popups were last moved to match.
+    POINT lastOrigin {};
 };
 
 LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
@@ -789,18 +1103,89 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
                 return HTTRANSPARENT;
 
             if (self->framelessResizable)
-                return self->hitTestResizeBand(screenPointFromLParam(lParam));
+                return self->hitTestResizeBand(pointFromLParam(lParam));
 
             if (self->eatsFrame())
                 return HTCLIENT;
             break;
 
+        // A popup takes no activation from the window it pops over: the
+        // owner's title bar has to stay lit while the menu is up, and the
+        // press still reaches the popup's own views.
+        case WM_MOUSEACTIVATE:
+            if (self->popup)
+                return MA_NOACTIVATE;
+            break;
+
         case WM_ACTIVATE:
+            if (LOWORD(wParam) == WA_INACTIVE)
+                self->dismissPopupChildren();
+
             if (self->events && self->events->onActivationChanged)
                 self->events->onActivationChanged(LOWORD(wParam) != WA_INACTIVE);
             break;
 
+        // The app itself is being left. A popup is a toplevel of the same
+        // thread and hears this directly, and the owner asks on its behalf
+        // too: one of the two is reached whatever the shell decides a
+        // no-activate tool window is owed.
+        case WM_ACTIVATEAPP:
+            if (wParam == FALSE)
+            {
+                self->dismissPopupChildren();
+                requestPopupDismissal(self->dismissal);
+            }
+            break;
+
+        // A popup that somehow held the focus is one the user has just left.
+        case WM_KILLFOCUS:
+            requestPopupDismissal(self->dismissal);
+            break;
+
+        case WM_KEYDOWN:
+            if (wParam == VK_ESCAPE && self->dismissTopmostPopup())
+                return 0;
+            break;
+
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+            if (self->pressLandedOutside(lParam))
+            {
+                // Swallowed: the press that closes a menu belongs to the
+                // menu, which is why clicking one away never also presses
+                // what was under it.
+                requestPopupDismissal(self->dismissal);
+                return 0;
+            }
+            break;
+
+        // The grab has been taken by something else — a host's own menu, a
+        // drag loop. The next press will not reach the popup, so it goes; and
+        // the Up the capture loss would otherwise synthesize belongs to
+        // nothing, since the press that closes a popup never reached its views.
+        case WM_CAPTURECHANGED:
+            if (self->host.holdsCapture)
+            {
+                self->host.holdsCapture = false;
+                requestPopupDismissal(self->dismissal);
+                return 0;
+            }
+            break;
+
+        case WM_SIZE:
+            if (wParam == SIZE_MINIMIZED)
+                self->dismissPopupChildren();
+            break;
+
+        case WM_SHOWWINDOW:
+            if (wParam == FALSE)
+                self->dismissPopupChildren();
+            break;
+
         case WM_MOVE:
+            self->movePopupChildren();
+
             // Not lParam, which carries the client area's origin: the frame's
             // is what WindowOptions::initialPosition places and what
             // getPosition answers, and on a titled window the two differ by
@@ -810,6 +1195,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         case WM_CLOSE:
+            // Whatever becomes of the window itself, the menus over it go.
+            self->dismissPopupChildren();
+
             // See WindowOptions::hidesOnClose: hide instead of destroy, the
             // app keeps running and setVisible(true) brings it back.
             if (self->hidesOnClose)
@@ -829,6 +1217,11 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             return 0;
 
         case WM_DESTROY:
+            // The owner is going, and Win32 takes its owned windows with it:
+            // the popups are handed their pointer back and asked to close
+            // while both windows are still there to do it with.
+            self->releasePopupChildren();
+
             // Intentionally no PostQuitMessage here. The application's shutdown
             // is driven by Apps::quit() (which is what quitCallback() triggers
             // on the user-initiated WM_CLOSE). Destroying a Window

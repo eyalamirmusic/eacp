@@ -173,6 +173,16 @@ bool isHostWindowTransparent(HWND hwnd)
     return false;
 }
 
+float hostWindowDpiScale(HWND hwnd)
+{
+    for (auto* host: compositionHosts())
+        if (host->hwnd == hwnd)
+            return host->getDpiScale();
+
+    auto dpi = hwnd != nullptr ? GetDpiForWindow(hwnd) : GetDpiForSystem();
+    return static_cast<float>(dpi) / 96.f;
+}
+
 // Called by the rendering-device recovery in D2DFactory-Windows.cpp. Unlike
 // Windows.UI.Composition — which could hot-swap the rendering device and keep
 // its surfaces (they merely lost their pixels) — DirectComposition binds the
@@ -709,7 +719,11 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             {
                 // Capture the mouse so a drag keeps delivering moves even when
                 // the cursor leaves the client area (matching NSView tracking).
-                SetCapture(hwnd);
+                // A surface that already holds the grab for its whole life
+                // re-takes nothing: SetCapture on the window that has it
+                // reports a capture change to it.
+                if (!holdsCapture)
+                    SetCapture(hwnd);
 
                 auto event = makeMouseEvent(
                     lParam, getDpiScale(), MouseEventType::Down, getModifiers());
@@ -735,8 +749,10 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 dispatchMouseToContentView(event);
             }
 
-            // Release the capture once no buttons remain held.
-            if ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0)
+            // Release the capture once no buttons remain held — unless the
+            // grab is not this gesture's to give back (see holdsCapture).
+            if (!holdsCapture
+                && (wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) == 0)
                 ReleaseCapture();
             return 0;
 

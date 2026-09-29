@@ -4,6 +4,7 @@
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
 #include "../Window/MouseLock-macOS.h"
+#include "../Window/Window-macOS.h"
 
 #include <eacp/Core/Threads/Async.h>
 #include "../Graphics/Keyboard-MacOS.h"
@@ -355,10 +356,16 @@ void updateTrackingAreas(id self, SEL)
     for (NSTrackingArea* area in view.trackingAreas)
         [view removeTrackingArea:area];
 
-    NSTrackingAreaOptions options =
-        NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
-        | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
-        | NSTrackingCursorUpdate;
+    // A popup window is never key by design, so an ActiveInKeyWindow area in
+    // one would never fire and its items would not highlight under the
+    // pointer — which is most of what a menu is.
+    auto activeWhen = isPopupWindow(view.window) ? NSTrackingActiveAlways
+                                                 : NSTrackingActiveInKeyWindow;
+
+    NSTrackingAreaOptions options = NSTrackingMouseEnteredAndExited
+                                    | NSTrackingMouseMoved | activeWhen
+                                    | NSTrackingInVisibleRect
+                                    | NSTrackingCursorUpdate;
 
     NSTrackingArea* trackingArea =
         [[NSTrackingArea alloc] initWithRect:view.bounds
@@ -367,6 +374,15 @@ void updateTrackingAreas(id self, SEL)
                                     userInfo:nil];
     [view addTrackingArea:trackingArea];
     [trackingArea release];
+}
+
+// Which window a view is in decides how its tracking area is built (see
+// updateTrackingAreas), and a view is made before it is put in one, so the
+// area has to be rebuilt the moment it arrives.
+void viewDidMoveToWindow(id self, SEL)
+{
+    ObjC::sendSuper<void>(self, [NSView class], @selector(viewDidMoveToWindow));
+    [(NSView*) self updateTrackingAreas];
 }
 
 Class getNativeViewClass()
@@ -411,6 +427,7 @@ Class getNativeViewClass()
         builder->addMethod(@selector(cursorUpdate:), cursorUpdate);
         builder->addMethod(@selector(updateTrackingAreas),
                            updateTrackingAreas);
+        builder->addMethod(@selector(viewDidMoveToWindow), viewDidMoveToWindow);
 
         builder->registerClass();
         return builder;
@@ -579,6 +596,21 @@ Threads::Async<Image> View::renderToImageAsync(float scale)
 Point View::getMousePosition() const
 {
     return impl->getMousePosition();
+}
+
+// Asked of AppKit rather than assembled from bounds and a window origin: a
+// view's offset inside its window is the frame chain, not the sum of the
+// Rects, and the title bar and any scaling live in there too.
+Point View::localToScreen(Point point) const
+{
+    auto* view = const_cast<NSView*>(impl->nativeView.get());
+    NSWindow* window = view.window;
+
+    if (window == nil)
+        return localToScreenFallback(point);
+
+    auto inWindow = [view convertPoint:NSMakePoint(point.x, point.y) toView:nil];
+    return screenPointFromAppKit([window convertPointToScreen:inWindow]);
 }
 
 void View::setMouseCursor(MouseCursor cursor)

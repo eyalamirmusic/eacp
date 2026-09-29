@@ -1,5 +1,6 @@
 #include "View.h"
 #include "../Image/Image.h"
+#include "../Window/Window.h"
 #include <ranges>
 
 namespace eacp::Graphics
@@ -311,6 +312,45 @@ void View::handleMouseEvent(const MouseEvent& event)
 bool View::isHovering() const
 {
     return getLocalBounds().contains(getMousePosition());
+}
+
+Point View::localToScreenFallback(Point point) const
+{
+    auto result = point;
+
+    // The root's own bounds included: a content view is placed inside its
+    // window like any other view, and AppKit's conversion counts that frame
+    // too.
+    for (const auto* view = this; view != nullptr; view = view->parent)
+    {
+        auto bounds = view->getBounds();
+        result.x += bounds.x;
+        result.y += bounds.y;
+    }
+
+    if (auto* window = getWindow())
+    {
+        auto origin = window->getPosition();
+        result.x += origin.x;
+        result.y += origin.y;
+    }
+
+    return result;
+}
+
+void View::cancelMouseCapture()
+{
+    mouseDownTarget = nullptr;
+
+    if (hoveredView == nullptr)
+        return;
+
+    auto event = MouseEvent {};
+    event.type = MouseEventType::Exited;
+    event.pos = getMousePosition();
+    event.downPos = event.pos;
+
+    dispatchExitEvent(event);
 }
 
 void View::addLayer(Layer& layer)

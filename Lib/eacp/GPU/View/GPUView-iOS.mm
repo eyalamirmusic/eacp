@@ -18,4 +18,11 @@ double platformBackingScale(GPUView& view)
 
     return scale > 0.0 ? scale : 1.0;
 }
+
+// iOS has no transparent window to be in: the one UIWindow fills the screen and
+// there is nothing behind it to show through.
+bool platformWindowIsOpaque(GPUView&)
+{
+    return true;
+}
 } // namespace eacp::GPU
