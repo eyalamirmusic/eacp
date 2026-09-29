@@ -163,6 +163,23 @@ auto tUniformBlockAndSamplerCompile =
     test("Spirv/uniformBlockAndSamplerCompile") = []
 { checkIsSpirvModule(compileGlsl(Stage::Fragment, texturedQuadSource())); };
 
+// Word 1 of a module is its SPIR-V version, 0x00MMmm00.
+auto tTargetSetsTheSpirvVersion = test("Spirv/targetSetsTheSpirvVersion") = []
+{
+    const auto versionFor = [](Target target)
+    {
+        const auto result =
+            compileGlsl(Stage::Fragment, texturedQuadSource(), target);
+        checkIsSpirvModule(result);
+
+        return result.words.size() > 1 ? result.words[1] : 0u;
+    };
+
+    check(versionFor(Target::vulkan11Spirv13) == 0x00010300u);
+    check(versionFor(Target::vulkan11Spirv14) == 0x00010400u);
+    check(versionFor(Target::vulkan13Spirv16) == 0x00010600u);
+};
+
 auto tErrorReportsLineAndIdentifier =
     test("Spirv/errorReportsLineAndIdentifier") = []
 {
