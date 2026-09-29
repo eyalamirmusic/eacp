@@ -62,6 +62,20 @@ if (ANDROID AND ANDROID_PLATFORM_LEVEL LESS 33)
             "(or higher); this build targets API ${ANDROID_PLATFORM_LEVEL}.")
 endif ()
 
+if (ANDROID)
+    if (DEFINED ANDROID_NDK_MAJOR)
+        set(eacp_ndk_major "${ANDROID_NDK_MAJOR}")
+    else ()
+        string(REGEX MATCH "^[0-9]+" eacp_ndk_major "${CMAKE_ANDROID_NDK_VERSION}")
+    endif ()
+    if (eacp_ndk_major LESS 30)
+        message(FATAL_ERROR
+                "eacp builds with the current stable NDK, r30; this build uses "
+                "NDK ${eacp_ndk_major}, which is not supported: "
+                "sdkmanager \"ndk;30.0.16248370\"")
+    endif ()
+endif ()
+
 # What this host can do, decided once and read by Lib, Apps and Tests.
 #
 #   EACP_HAS_DRAW    a windowing system to put views in: Graphics.
