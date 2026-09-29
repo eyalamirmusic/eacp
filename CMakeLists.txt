@@ -56,6 +56,12 @@ if (NOT EACP_BUILD_GRAPHICS)
             "Build the WebView module" FORCE)
 endif ()
 
+if (ANDROID AND ANDROID_PLATFORM_LEVEL LESS 33)
+    message(FATAL_ERROR
+            "eacp needs Android 13 or later: configure with -DANDROID_PLATFORM=android-33 "
+            "(or higher); this build targets API ${ANDROID_PLATFORM_LEVEL}.")
+endif ()
+
 # What this host can do, decided once and read by Lib, Apps and Tests.
 #
 #   EACP_HAS_DRAW    a windowing system to put views in: Graphics.
@@ -66,24 +72,29 @@ endif ()
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
 #   EACP_HAS_NETWORK an HTTP client backend: Network, and the WebView page
-#                    bridge over its RPC. On everywhere today.
+#                    bridge over its RPC. Everywhere but Android, whose NDK
+#                    has no libcurl.
 set(EACP_HAS_NETWORK ON)
+
+if (ANDROID)
+    set(EACP_HAS_NETWORK OFF)
+endif ()
 
 set(EACP_HAS_DRAW OFF)
 
-if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX))
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID))
     set(EACP_HAS_DRAW ON)
 endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID))
     set(EACP_HAS_GPU ON)
 endif ()
 
 set(EACP_HAS_TEXT OFF)
 
-if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX))
+if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID))
     set(EACP_HAS_TEXT ON)
 endif ()
 
