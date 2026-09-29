@@ -25,5 +25,6 @@
 #include "Layers/LayerViews.h"
 #include "Primitives/TextMetrics.h"
 #include "Widgets/TextInput.h"
+#include "Window/KeyGrab.h"
 #include "Window/NativeChildSurface.h"
 #endif
