@@ -263,7 +263,8 @@ public:
     // View snapshot hooks: the page is async-only, so renderToImageAsync folds it
     // in via takeSnapshot. renderToImage (sync) leaves the web region blank.
     bool hasAsyncContent() const override { return true; }
-    void captureAsyncContent(float scale, std::function<void(Image)> done) override;
+    void captureAsyncContent(float scale,
+                             const std::function<void(Image)>& done) override;
 
     void zoomIn();
     void zoomOut();

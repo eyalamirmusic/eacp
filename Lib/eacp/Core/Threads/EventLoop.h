@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../Platform/Platform.h"
 #include "../Utils/Common.h"
 
 namespace eacp::Threads
@@ -78,6 +79,14 @@ void scheduleStartup(const Callback& func);
 // `timeout` elapses. Returns true if the predicate was met, false on
 // timeout. Must be called on the main thread, and must not be re-entered
 // from inside another event-loop callback.
+//
+// On the web nothing can block: the loop is the browser's, and it delivers
+// events, timers and frames only once the running task returns to it.
+// runEventLoop hands the thread to the browser and never returns to its caller
+// (run<T>'s app lives on; quit() destroys it), runEventLoopFor runs the work
+// already queued, and what that queues, and returns without waiting out its
+// timeout, and runEventLoopUntil does that once and answers ready(). Waiting on
+// a timer, an event or a frame is done by returning and being called back.
 template <typename Predicate>
 bool runEventLoopUntil(Predicate ready,
                        Time::MS timeout,
@@ -85,6 +94,12 @@ bool runEventLoopUntil(Predicate ready,
 {
     if (ready())
         return true;
+
+    if constexpr (Platform::isWeb())
+    {
+        runEventLoopFor(timeout);
+        return ready();
+    }
 
     auto deadline = Time::Deadline {timeout};
 

@@ -7,6 +7,15 @@ if (ANDROID)
     return ()
 endif ()
 
+# The web builds the Android example - a GPUView, the shader EDSL and the glyph
+# atlas - and the GPU examples, none of which needs the 2D tier or the network;
+# Apps/GPU leaves out the ones the web cannot run.
+if (EMSCRIPTEN)
+    add_subdirectory(Android/HelloGPU)
+    add_subdirectory(GPU)
+    return ()
+endif ()
+
 add_subdirectory(Console)
 add_subdirectory(Network)
 

@@ -19,7 +19,8 @@ struct NativeSurfaceHandle
         None,
         Wayland,
         X11,
-        Android
+        Android,
+        Canvas
     };
 
     bool isValid() const { return kind != Kind::None; }
@@ -34,6 +35,9 @@ struct NativeSurfaceHandle
 
     // xcb_window_t, and zero elsewhere.
     uint32_t window = 0;
+
+    // The canvas's CSS selector on the web ("#canvas"), and null elsewhere.
+    const char* selector = nullptr;
 };
 
 // The native surface behind a view that presents its own pixels (a GPUView).

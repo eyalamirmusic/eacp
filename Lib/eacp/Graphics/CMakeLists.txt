@@ -159,6 +159,23 @@ elseif (ANDROID)
     # survive the link even though nothing in the library calls it.
     target_link_libraries(eacp-graphics PUBLIC android log)
     target_link_options(eacp-graphics INTERFACE "-u" "ANativeActivity_onCreate")
+elseif (EMSCRIPTEN)
+    # The page's one canvas under Linux's view records, plus the Linux stubs
+    # for what needs a codec or a desktop environment.
+    target_sources(eacp-graphics PRIVATE
+            Graphics/Keyboard-Web.cpp
+            Helpers/DisplayLink-Web.cpp
+            Helpers/SystemAppearance-Linux.cpp
+            HotKey/GlobalHotKey-Linux.cpp
+            Image/Image-Linux.cpp
+            Layers/Layer-Linux.cpp
+            Menu/Menu-Linux.cpp
+            Primitives/Path-Linux.cpp
+            Tray/TrayIcon-Linux.cpp
+            View/View-Linux.cpp
+            View/WebViewSurface-Web.cpp
+            Window/Display-Web.cpp
+            Window/Window-Web.cpp)
 elseif (UNIX)
     # Wayland and X11 side by side, plus stubs for what needs a codec or a
     # desktop environment. Path is the exception, recording geometry rather

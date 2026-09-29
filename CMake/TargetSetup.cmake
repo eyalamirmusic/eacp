@@ -9,6 +9,9 @@ function(eacp_add_app target)
         add_library(${target} SHARED ${ARGN})
         string(TOLOWER "${target}" package)
         eacp_add_android_apk(${target} PACKAGE "com.eacp.${package}" LABEL "${target}")
+    elseif (EMSCRIPTEN)
+        add_executable(${target} ${ARGN})
+        eacp_web_app(${target})
     else ()
         add_executable(${target} ${ARGN})
     endif ()
@@ -56,6 +59,17 @@ function(set_default_target_setting target)
         set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_IOS_PLIST}")
     elseif (APPLE)
         set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_MACOS_PLIST}")
+    endif ()
+
+    # An example made with add_executable rather than eacp_add_app is still a
+    # page on the web, or its .js has no shell to start it.
+    if (EMSCRIPTEN)
+        get_target_property(type ${target} TYPE)
+        get_target_property(suffix ${target} SUFFIX)
+
+        if (type STREQUAL "EXECUTABLE" AND NOT suffix STREQUAL ".html")
+            eacp_web_app(${target})
+        endif ()
     endif ()
 endfunction()
 

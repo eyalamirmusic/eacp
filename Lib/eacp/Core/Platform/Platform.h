@@ -15,7 +15,8 @@ enum class OS
     iOS,
     Windows,
     Linux,
-    Android
+    Android,
+    Web
 };
 
 // The operating system this binary was built for. The single compile-time
@@ -35,6 +36,8 @@ constexpr OS current()
     return OS::Android;
 #elif defined(__linux__)
     return OS::Linux;
+#elif defined(__EMSCRIPTEN__)
+    return OS::Web;
 #else
 #error "eacp::Platform: unsupported target platform"
 #endif
@@ -65,6 +68,12 @@ constexpr bool isAndroid()
     return current() == OS::Android;
 }
 
+// A page in a browser: Emscripten's wasm32, WebGPU, and the browser's loop.
+constexpr bool isWeb()
+{
+    return current() == OS::Web;
+}
+
 // Linux desktop || Android: one kernel, and the same Vulkan backend and GLSL.
 constexpr bool isLinux()
 {
@@ -90,6 +99,8 @@ constexpr std::string_view name()
             return "Linux";
         case OS::Android:
             return "Android";
+        case OS::Web:
+            return "Web";
     }
     return "Unknown";
 }

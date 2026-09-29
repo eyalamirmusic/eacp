@@ -234,7 +234,8 @@ public:
     // view's bounds at `scale`, invoking done on the main thread (with an invalid
     // Image on failure). renderToImageAsync folds the result into the snapshot.
     virtual bool hasAsyncContent() const { return false; }
-    virtual void captureAsyncContent(float scale, std::function<void(Image)> done);
+    virtual void captureAsyncContent(float scale,
+                                     const std::function<void(Image)>& done);
 
     virtual void mouseDown(const MouseEvent&) {}
     virtual void mouseUp(const MouseEvent&) {}

@@ -25,14 +25,14 @@ examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
 `CameraView`, `Video`, `VideoView`, the last two additionally off on iOS),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
-`APPLE OR WIN32 OR LINUX OR ANDROID` — everywhere graphics builds at all — and stay
+`APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN` — everywhere graphics builds at all — and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
 are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
 An eighth, `EACP_HAS_NETWORK`, is on everywhere but Android (the NDK has no
-libcurl) and gates `Network`, the WebView page bridge over its RPC,
+libcurl) and the web (no sockets) and gates `Network`, the WebView page bridge over its RPC,
 `eacp-ui-network` and their tests.
 `Core`, `Network` and `SIMD` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
@@ -93,6 +93,15 @@ over `android.graphics` through JNI. `eacp_add_app` builds an example as an
 executable, or on Android as a shared library with `<target>-apk` and
 `<target>-run` (`Scripts/android-run`: boot an emulator if none is attached,
 install, launch, show logcat). README's "Android" section has the toolchain.
+
+The web (Emscripten, wasm32, WebGPU through `--use-port=emdawnwebgpu`) is
+checked before `UNIX` as `EMSCRIPTEN`; files are `Thing-Web.cpp`, shared emcc
+flags live in `CMake/WebSetup.cmake`, and `eacp_add_app` makes
+`<target>.html/.js/.wasm` from `CMake/WebShell.html`. Nothing may block: the
+loop is the browser's (`Core/Threads/EventLoop-Web.cpp`), `runEventLoop` never
+returns to its caller, and nested pumps run what is queued and return. The
+window is the `#canvas` element under Linux's view records
+(`NativeSurfaceHandle::Kind::Canvas`). README's "Web" section has the rest.
 
 ## Build Commands
 

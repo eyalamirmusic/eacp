@@ -15,7 +15,7 @@ bool View::renderNativeContentToTarget(void*, float)
     return false;
 }
 
-void View::captureAsyncContent(float, std::function<void(Image)> done)
+void View::captureAsyncContent(float, const std::function<void(Image)>& done)
 {
     done({});
 }

@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
-if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+# wasm32 is the one 32-bit target: the browser's memory is 32-bit addressed.
+if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
     message(FATAL_ERROR
             "eacp requires a 64-bit toolchain (x64 or ARM64), but the "
             "selected compiler targets 32-bit "
@@ -30,6 +31,12 @@ if (APPLE)
 endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
+
+# Before any target, the fetched dependencies included: every translation unit
+# in a wasm link must agree on the exception model.
+if (EMSCRIPTEN)
+    include(WebSetup)
+endif ()
 
 # Before anything that fetches or probes: it decides how loud they are.
 include(ConfigureLog)
@@ -87,28 +94,28 @@ endif ()
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
 #   EACP_HAS_NETWORK an HTTP client backend: Network, and the WebView page
 #                    bridge over its RPC. Everywhere but Android, whose NDK
-#                    has no libcurl.
+#                    has no libcurl, and the web, which has no sockets.
 set(EACP_HAS_NETWORK ON)
 
-if (ANDROID)
+if (ANDROID OR EMSCRIPTEN)
     set(EACP_HAS_NETWORK OFF)
 endif ()
 
 set(EACP_HAS_DRAW OFF)
 
-if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID))
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_DRAW ON)
 endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_GPU ON)
 endif ()
 
 set(EACP_HAS_TEXT OFF)
 
-if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID))
+if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_TEXT ON)
 endif ()
 

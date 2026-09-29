@@ -78,30 +78,33 @@ The dividing line is drawing. Everything that never touches a screen — the app
 and threading core, processes, plugins, files, the HTTP client and server, IPC
 and RPC, the SIMD kernels — builds on Linux too, which is what makes eacp usable
 for a headless service as well as for a GUI. The graphics stack builds on all
-five platforms, because it wraps each one's own compositor instead of shipping
-one: Cocoa and Metal, Win32 and D3D12, UIKit, Wayland or X11 with Vulkan, and
-Android's NativeActivity with Vulkan.
+six platforms, because it wraps each one's own compositor instead of shipping
+one: Cocoa and Metal, Win32 and D3D12, UIKit, Wayland or X11 with Vulkan,
+Android's NativeActivity with Vulkan, and a browser's canvas with WebGPU.
 
-| Module | macOS | Windows | iOS | Linux | Android |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ | ✅ ‡ |
-| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ | — |
-| `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † | ✅ † |
-| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ | ✅ ‡ |
-| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † | ✅ † |
-| `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — | — |
-| `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — | — |
-| `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — | — |
-| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — | — |
+| Module | macOS | Windows | iOS | Linux | Android | Web |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ | ✅ ‡ | ✅ § |
+| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ | — | — |
+| `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † | ✅ † | ✅ † |
+| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan, WebGPU and the shader EDSL | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ § |
+| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ | ✅ ‡ | ✅ § |
+| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † | ✅ † | ✅ † |
+| `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — | — | — |
+| `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — | — | — |
+| `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — | — | — |
+| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — | — | — |
 
-† Linux and Android have no platform 2D tier and no menus; what that costs is
-spelled out two paragraphs down. ‡ Android: Android 13 (API 33) or later on a
-Vulkan 1.1 device, as a NativeActivity (see [Android](#android)); no HTTP
-client (the NDK has no libcurl), no IME text input yet, and text is shaped a
-code point at a time (no kerning, ligatures or complex scripts).
+† Linux, Android and the web have no platform 2D tier and no menus; what that
+costs is spelled out two paragraphs down. ‡ Android: Android 13 (API 33) or
+later on a Vulkan 1.1 device, as a NativeActivity (see [Android](#android)); no
+HTTP client (the NDK has no libcurl), no IME text input yet, and text is shaped
+a code point at a time (no kerning, ligatures or complex scripts). § The web: a
+browser with WebGPU, one canvas per page (see [Web](#web)); no processes, no
+threads and no call that waits on the GPU, text shaped a code point at a time as
+on Android, and no `registerMemoryFont` yet.
 
 Linux graphics is on wherever the graphics modules are built, exactly as the
 other three platforms are, and it is three things. An `eacp-graphics` with two
@@ -180,18 +183,18 @@ stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
 `EACP_HAS_GPU` and is Apple-only; `EACP_HAS_NETWORK` is on everywhere but
-Android:
+Android and the web:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
+| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux, Android or the web | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux, Android or the web | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux, Android or the web | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
-| `EACP_HAS_NETWORK` | everywhere but Android, whose NDK has no libcurl | `Network`, the WebView page bridge over its RPC, `eacp-ui-network` and their tests |
+| `EACP_HAS_NETWORK` | everywhere but Android, whose NDK has no libcurl, and the web, which has no sockets | `Network`, the WebView page bridge over its RPC, `eacp-ui-network` and their tests |
 
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
@@ -584,6 +587,69 @@ the build tree:
 ```bash
 adb logcat -d | $ANDROID_HOME/ndk/30.0.16248370/ndk-stack -sym build-android/Apps/Android/HelloGPU
 ```
+
+### Web
+
+A page in a browser, built with Emscripten: wasm32, WebGPU through
+Emscripten's Dawn port (`--use-port=emdawnwebgpu`), and the browser's own loop.
+CMake's `EMSCRIPTEN` is checked ahead of `UNIX` (the toolchain sets both);
+per-platform files are `Thing-Web.cpp`. `eacp_add_app` builds an app as
+`<target>.html`, `.js` and `.wasm` from `CMake/WebShell.html`, one full-window
+canvas (`#canvas`) that the first `Window` takes. The shell asks for the WebGPU
+adapter and device before `main()` runs (`Module.preinitializedWebGPUDevice`),
+since `main()` cannot wait on a promise, and says so on the page when the
+browser has no WebGPU. The flags every library, dependency and app share are in
+`CMake/WebSetup.cmake`: native wasm exceptions (`-fwasm-exceptions`, since eacp
+catches), `-sALLOW_MEMORY_GROWTH=1`, a 1 MB stack, and no ASYNCIFY.
+
+```bash
+brew install emscripten
+emcmake cmake -G Ninja -B build-web -DCMAKE_BUILD_TYPE=Release -DEACP_BUILD_WEBVIEW=OFF
+cmake --build build-web --target <App>
+python3 -m http.server -d build-web/Apps/<dir>   # then open <App>.html
+```
+
+Nothing blocks. `runEventLoop` hands the thread to the browser and never
+returns to its caller (`emscripten_unwind_to_js_event_loop`): `run<T>`'s app
+lives on after `main()` has gone, and `quit()` destroys it in a task of its own.
+`callAsync` is a `MessageChannel` task, timers and `callAfter` are browser
+timeouts, `DisplayLink` and a view's frame callback are
+`requestAnimationFrame`. There are no threads, so `runEventLoopFor` runs what is
+queued and returns without waiting out its timeout, and `runEventLoopUntil`
+does that once; code that waits on an event must return and be called back.
+
+The window is the canvas: its size is the canvas's CSS size in points, its
+backing scale `devicePixelRatio`, its drawing buffer the product, and its safe
+area CSS's `env(safe-area-inset-*)`. Mouse and wheel arrive on the canvas (moves
+and releases on the document, so a drag outlives it), touches as
+`View::touchBegan/Moved/Ended` with one id per finger, keys on the window by
+`KeyboardEvent.code`, with Ctrl/Cmd shortcuts and the function keys left to the
+browser. The view layer is Linux's view records over the canvas
+(`Graphics/View/WebViewSurface-Web.h`: `NativeSurfaceHandle::Kind::Canvas` with
+its selector). Text is `Text/GlyphRasterizer-Web.cpp` over Canvas2D, one code
+point at a time as on Android, and Menlo, Consolas and the other stock
+fixed-pitch names map to CSS's `monospace`; `registerMemoryFont` answers
+nothing yet, since a `FontFace` loads from bytes through a promise.
+
+The GPU is WebGPU over the one device the shell handed over, drawing into the
+canvas in `BGRA8Unorm`, with shaders in WGSL from the shader EDSL's fourth
+emitter; hand-written MSL, HLSL or GLSL does not run there. Multisampling is 1
+or 4. Anything that waits on the GPU cannot: `CommandBuffer::commit()`'s wait,
+`CommandBuffer::wait`, `Device::waitForSubmittedWork`, `Buffer::read` of a
+device buffer and `Texture::read` log once and return, and `commitAsync` is the
+way to see work finish. The rest - reflection, uniforms, pipeline variants per
+depth format, timings and limits - is the Web section of
+[`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md).
+
+Stubbed: processes (never launched), plugins and `dlopen`, the clipboard, file
+pickers, menus, tray, hot keys, login items, image codecs and system
+appearance. `Network`, the WebView bridge, SPIR-V and the 2D tier are not
+built. Files are Emscripten's in-memory file system under `/home/web_user`,
+gone with the page. Audio through an AudioWorklet on its own thread needs
+`-pthread` or wasm workers, and so a page served cross-origin isolated
+(`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp`) for `SharedArrayBuffer`; nothing
+in eacp needs threads today, so nothing sets those headers.
 
 ## Repository layout
 
