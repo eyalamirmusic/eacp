@@ -648,17 +648,13 @@ Tensor Graph::softmax(Tensor x, int axis)
         {tensorParameter("x", x), valueParameter("axis", MIL::Value::scalar(axis))});
 }
 
-Tensor Graph::reduce(std::string_view op, Tensor x, int axis, bool keepDims)
+std::optional<Shape> Graph::reducedShape(Tensor x, int axis, bool keepDims) const
 {
-    if (!acceptOperands(op, {x}))
-        return {};
-
     auto& in = node(x).shape;
     auto normalized = normalizedAxis(axis, in.rank());
 
     if (!normalized)
-        return fail(op,
-                    "axis " + std::to_string(axis) + " is outside " + in.toString());
+        return std::nullopt;
 
     auto result = Shape {};
 
@@ -670,12 +666,53 @@ Tensor Graph::reduce(std::string_view op, Tensor x, int axis, bool keepDims)
             result.dims.add(1);
     }
 
+    return result;
+}
+
+Tensor Graph::reduce(std::string_view op, Tensor x, int axis, bool keepDims)
+{
+    if (!acceptOperands(op, {x}))
+        return {};
+
+    auto result = reducedShape(x, axis, keepDims);
+
+    if (!result)
+        return fail(op,
+                    "axis " + std::to_string(axis) + " is outside "
+                        + node(x).shape.toString());
+
     return addOperation(op,
-                        result,
+                        *result,
                         node(x).type,
                         {tensorParameter("x", x),
                          valueParameter("axes", MIL::Value::ints({axis})),
                          valueParameter("keep_dims", MIL::Value::scalar(keepDims))});
+}
+
+Tensor Graph::argmax(Tensor x, int axis, bool keepDims)
+{
+    auto op = "reduce_argmax";
+
+    if (!acceptOperands(op, {x}))
+        return {};
+
+    if (!isFloat(x))
+        return fail(op, "needs a floating-point tensor");
+
+    auto result = reducedShape(x, axis, keepDims);
+
+    if (!result)
+        return fail(op,
+                    "axis " + std::to_string(axis) + " is outside "
+                        + node(x).shape.toString());
+
+    return addOperation(
+        op,
+        *result,
+        MIL::DataType::int32,
+        {tensorParameter("x", x),
+         valueParameter("axis", MIL::Value::scalar(static_cast<std::int32_t>(axis))),
+         valueParameter("keep_dims", MIL::Value::scalar(keepDims))});
 }
 
 Tensor Graph::sum(Tensor x, int axis, bool keepDims)
@@ -969,6 +1006,41 @@ Tensor Graph::sliceLike(Tensor x, Tensor reference)
                          tensorParameter("end", extents)});
 }
 
+std::optional<Vector<Graph::Parameter>>
+    Graph::attentionOperands(Tensor q, Tensor k, Tensor v)
+{
+    auto op = "scaled_dot_product_attention";
+    auto queries = node(q).shape;
+    auto keys = node(k).shape;
+    auto values = node(v).shape;
+    auto rank = queries.rank();
+
+    auto refuse = [this, op](const std::string& message)
+    {
+        fail(op, message);
+        return std::nullopt;
+    };
+
+    if (rank < 3 || keys.rank() != rank || values.rank() != rank)
+        return refuse("needs q, k and v of one rank >= 3, not " + queries.toString()
+                      + ", " + keys.toString() + ", " + values.toString());
+
+    if (!isFloat(q) || node(k).type != node(q).type || node(v).type != node(q).type)
+        return refuse("q, k and v need one floating-point type");
+
+    for (auto axis = 0; axis < rank - 2; ++axis)
+        if (queries[axis] != keys[axis] || queries[axis] != values[axis])
+            return refuse("q, k and v need the same batch dimensions");
+
+    if (queries[rank - 1] != keys[rank - 1] || keys[rank - 2] != values[rank - 2])
+        return refuse("q " + queries.toString() + ", k " + keys.toString()
+                      + " and v " + values.toString() + " do not fit");
+
+    return Vector<Parameter> {tensorParameter("query", q),
+                              tensorParameter("key", k),
+                              tensorParameter("value", v)};
+}
+
 Tensor Graph::scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causal)
 {
     auto op = "scaled_dot_product_attention";
@@ -976,36 +1048,18 @@ Tensor Graph::scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causa
     if (!acceptOperands(op, {q, k, v}))
         return {};
 
+    auto parameters = attentionOperands(q, k, v);
+
+    if (!parameters)
+        return {};
+
     auto queries = node(q).shape;
-    auto keys = node(k).shape;
-    auto values = node(v).shape;
     auto rank = queries.rank();
-
-    if (rank < 3 || keys.rank() != rank || values.rank() != rank)
-        return fail(op,
-                    "needs q, k and v of one rank >= 3, not " + queries.toString()
-                        + ", " + keys.toString() + ", " + values.toString());
-
-    if (!isFloat(q) || node(k).type != node(q).type || node(v).type != node(q).type)
-        return fail(op, "q, k and v need one floating-point type");
-
-    for (auto axis = 0; axis < rank - 2; ++axis)
-        if (queries[axis] != keys[axis] || queries[axis] != values[axis])
-            return fail(op, "q, k and v need the same batch dimensions");
-
-    if (queries[rank - 1] != keys[rank - 1] || keys[rank - 2] != values[rank - 2])
-        return fail(op,
-                    "q " + queries.toString() + ", k " + keys.toString() + " and v "
-                        + values.toString() + " do not fit");
-
-    auto parameters = Vector<Parameter> {tensorParameter("query", q),
-                                         tensorParameter("key", k),
-                                         tensorParameter("value", v)};
 
     if (causal)
     {
         auto rows = queries[rank - 2];
-        auto columns = keys[rank - 2];
+        auto columns = node(k).shape[rank - 2];
 
         if (rows == Shape::unknown || columns == Shape::unknown)
             return fail(op, "a causal mask needs fixed query and key lengths");
@@ -1019,14 +1073,60 @@ Tensor Graph::scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causa
                          MIL::DataType::boolean,
                          {tensorParameter("x", allowedTensor),
                           valueParameter("y", MIL::Value::scalar(0.5f, type))});
-        parameters.add(tensorParameter("attn_mask", mask));
+        parameters->add(tensorParameter("attn_mask", mask));
     }
 
     auto result = queries;
-    result.dims[rank - 1] = values[rank - 1];
+    result.dims[rank - 1] = node(v).shape[rank - 1];
     needsCoreML8 = true;
 
-    return addOperation(op, result, node(q).type, parameters);
+    return addOperation(op, result, node(q).type, *parameters);
+}
+
+Tensor Graph::scaledDotProductAttention(Tensor q, Tensor k, Tensor v, Tensor allowed)
+{
+    auto op = "scaled_dot_product_attention";
+
+    if (!acceptOperands(op, {q, k, v, allowed}))
+        return {};
+
+    auto parameters = attentionOperands(q, k, v);
+
+    if (!parameters)
+        return {};
+
+    auto queries = node(q).shape;
+    auto rank = queries.rank();
+    auto& mask = node(allowed).shape;
+    auto scores = queries;
+    scores.dims[rank - 1] = node(k).shape[rank - 2];
+
+    if (!isFloat(allowed) || mask.rank() > rank || !mask.isFixed())
+        return fail(op,
+                    "the mask needs to be a fixed floating-point tensor of rank at "
+                    "most "
+                        + std::to_string(rank) + ", not " + mask.toString());
+
+    auto broadcast = broadcastShape(scores, mask);
+
+    if (!broadcast || *broadcast != scores)
+        return fail(op,
+                    "the mask " + mask.toString()
+                        + " does not broadcast to the scores " + scores.toString());
+
+    auto type = node(allowed).type;
+    auto keep = addOperation("greater",
+                             mask,
+                             MIL::DataType::boolean,
+                             {tensorParameter("x", allowed),
+                              valueParameter("y", MIL::Value::scalar(0.5f, type))});
+    parameters->add(tensorParameter("attn_mask", keep));
+
+    auto result = queries;
+    result.dims[rank - 1] = node(v).shape[rank - 1];
+    needsCoreML8 = true;
+
+    return addOperation(op, result, node(q).type, *parameters);
 }
 
 Tensor Graph::gelu(Tensor x)

@@ -61,6 +61,10 @@ public:
     Tensor softmax(Tensor x, int axis);
     Tensor sum(Tensor x, int axis, bool keepDims = false);
     Tensor max(Tensor x, int axis, bool keepDims = false);
+
+    // The index of the largest element along axis, as int32: MIL's
+    // reduce_argmax, which gives a tie to the lowest index.
+    Tensor argmax(Tensor x, int axis, bool keepDims = false);
     Tensor layerNorm(Tensor x,
                      const Vector<int>& axes,
                      Tensor gamma,
@@ -78,6 +82,13 @@ public:
     // extents must fit x, and an axis unknown in x must be unknown in it too.
     Tensor sliceLike(Tensor x, Tensor reference);
     Tensor scaledDotProductAttention(Tensor q, Tensor k, Tensor v, bool causal);
+
+    // Attention under a mask known only at run time: allowed is a floating
+    // tensor broadcasting to [..., queries, keys], 1 where a query may attend
+    // to a key and 0 where it may not. It reaches the op as the bool the
+    // causal mask is, greater(allowed, 0.5), since Core ML's fp16 attention
+    // ignores a float attn_mask.
+    Tensor scaledDotProductAttention(Tensor q, Tensor k, Tensor v, Tensor allowed);
     Tensor gelu(Tensor x);
     Tensor cast(Tensor x, DType type);
 
@@ -186,7 +197,9 @@ private:
     static Parameter valueParameter(std::string_view name, const MIL::Value& value);
 
     std::optional<Shape> broadcastShape(const Shape& a, const Shape& b) const;
+    std::optional<Shape> reducedShape(Tensor x, int axis, bool keepDims) const;
     Tensor reduce(std::string_view op, Tensor x, int axis, bool keepDims);
+    std::optional<Vector<Parameter>> attentionOperands(Tensor q, Tensor k, Tensor v);
 
     Vector<Node> nodes;
     Vector<OutputBinding> outputs;

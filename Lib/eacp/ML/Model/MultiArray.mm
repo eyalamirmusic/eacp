@@ -387,6 +387,8 @@ std::shared_ptr<MultiArray::Native> makeSurfaceNative(const Shape& shape)
         if (!native->array)
             return {};
 
+        auto access = CpuAccess {*native, false};
+        std::memset(access.data(), 0, native->stride * (size_t) rows);
         return native;
     }
 
@@ -755,5 +757,32 @@ void MultiArray::copyFrom(const MultiArray& other)
 
     auto values = other.toFloats();
     fromFloats(values);
+}
+
+void MultiArray::copyRows(const MultiArray& source,
+                          int sourceRow,
+                          int destinationRow,
+                          int rowCount)
+{
+    auto inside = [](int first, int count, int rows)
+    { return first >= 0 && count > 0 && first + count <= rows; };
+
+    if (!isValid() || !source.isValid() || source.impl == impl
+        || source.columns() != columns()
+        || !inside(sourceRow, rowCount, source.rows())
+        || !inside(destinationRow, rowCount, rows()))
+        return;
+
+    auto from = CpuAccess {*source.impl, true};
+    auto to = CpuAccess {*impl, false};
+
+    convertRows(from.data() + (size_t) sourceRow * source.rowStride(),
+                source.type(),
+                source.rowStride(),
+                to.data() + (size_t) destinationRow * rowStride(),
+                type(),
+                rowStride(),
+                rowCount,
+                columns());
 }
 } // namespace eacp::ML

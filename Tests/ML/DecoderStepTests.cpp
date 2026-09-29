@@ -44,10 +44,13 @@ int tokenFor(int prefix)
     return (prefix * 7919 + 50257) % WhisperDecoderStep::vocabulary;
 }
 
+// asInputsFused is the step with the caches as inputs and its self-attention
+// the fused op under an input mask.
 enum class Caches
 {
     asInputs,
-    resident
+    resident,
+    asInputsFused
 };
 
 const Package& packageFor(Caches caches)
@@ -55,12 +58,34 @@ const Package& packageFor(Caches caches)
     static const auto withInputs = WhisperDecoderStep::sharedStepGraph().build();
     static const auto resident =
         WhisperDecoderStep::residentCacheStepGraph().build();
-    return caches == Caches::asInputs ? withInputs : resident;
+    static const auto fused = WhisperDecoderStep::fusedStepGraph().build();
+
+    switch (caches)
+    {
+        case Caches::asInputs:
+            return withInputs;
+        case Caches::resident:
+            return resident;
+        case Caches::asInputsFused:
+            return fused;
+    }
+
+    return withInputs;
 }
 
 std::string programName(Caches caches)
 {
-    return caches == Caches::asInputs ? "decoder step" : "resident-cache step";
+    switch (caches)
+    {
+        case Caches::asInputs:
+            return "decoder step";
+        case Caches::resident:
+            return "resident-cache step";
+        case Caches::asInputsFused:
+            return "fused-mask step";
+    }
+
+    return "?";
 }
 
 const FilePath& stepCache()
@@ -101,12 +126,18 @@ Bound boundAt(int prefix, Caches caches = Caches::asInputs)
     auto token = Vector<float> {(float) tokenFor(prefix)};
     auto position = Vector<float> {(float) prefix};
 
-    auto bound = Bound {caches == Caches::asInputs ? cacheInputs() : Inputs {}, {}};
+    auto fused = caches == Caches::asInputsFused;
+    auto maskShape = Shape {1, WhisperDecoderStep::maxPositions};
+    auto bound = Bound {caches == Caches::resident ? Inputs {} : cacheInputs(), {}};
     bound.inputs["token"] = arrayOf(token, {1}, DType::int32);
     bound.inputs["position"] = arrayOf(position, {1}, DType::int32);
-    bound.inputs["mask"] = arrayOf(WhisperDecoderStep::maskFor(prefix),
-                                   {1, WhisperDecoderStep::maxPositions},
-                                   DType::float16);
+
+    if (fused)
+        bound.inputs["allowed"] = arrayOf(
+            WhisperDecoderStep::allowedFor(prefix), maskShape, DType::float16);
+    else
+        bound.inputs["mask"] =
+            arrayOf(WhisperDecoderStep::maskFor(prefix), maskShape, DType::float16);
 
     auto rowsShape =
         Shape {WhisperDecoderStep::layerCount, WhisperDecoderStep::width};
@@ -314,6 +345,13 @@ void checkAgainstReference(Caches caches)
 
         auto bound = boundFor(tolerance, model);
 
+        if (caches == Caches::asInputsFused)
+            LOG(programName(caches),
+                " [",
+                units,
+                "] placed: ",
+                placementSummary(model.computePlan()));
+
         for (auto prefix: checkedPrefixes)
         {
             auto step = boundAt(prefix, caches);
@@ -376,6 +414,17 @@ auto tResidentStepMatchesReference =
 {
     if (isSupportedStep())
         checkAgainstReference(Caches::resident);
+};
+
+// The self-attention as scaledDotProductAttention under the 0/1 mask the
+// step takes as an input: the same reference, the same bounds, and the
+// placement logged, since whether the engine takes a bool mask computed from
+// an input is what this step is here to show.
+auto tFusedStepMatchesReference =
+    test("MLDecoderStep/aStepWithFusedMaskedSelfAttentionMatchesTheReference") = []
+{
+    if (isSupportedStep())
+        checkAgainstReference(Caches::asInputsFused);
 };
 
 auto tStepTimes = test("MLDecoderStep/tinyEnStepPredictionTimes") = []

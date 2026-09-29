@@ -11,8 +11,9 @@
 // it; MLTests runs it against the fp32 reference in DecoderStepReference.h.
 //
 // The self-attention is matmul, an additive mask through apply, softmax and
-// matmul rather than scaledDotProductAttention, which takes only a causal
-// flag; the cross-attention is unmasked, so it is the fused op.
+// matmul, as phase 4 measured it; the cross-attention is unmasked, so it is
+// the fused op. fusedStepGraph() is the same step with the self-attention
+// fused too, under a 0/1 "allowed" input in place of the additive mask.
 
 #include "WhisperEncoder.h"
 
@@ -140,6 +141,16 @@ inline Vector<float> maskFor(int prefix)
     return mask;
 }
 
+inline Vector<float> allowedFor(int prefix)
+{
+    auto allowed = Vector<float> {};
+
+    for (auto row = 0; row < maxPositions; ++row)
+        allowed.add(row < prefix ? 1.0f : 0.0f);
+
+    return allowed;
+}
+
 inline Shape selfCacheShape()
 {
     return {layerCount, maxPositions, width};
@@ -178,15 +189,16 @@ public:
             "cross_values", crossCacheShape(), caches.crossValues);
     }
 
-    void step(const Weights& weights)
+    void step(const Weights& weights, bool fusedSelfAttention = false)
     {
         auto token = graph.input("token", {1}, DType::int32);
         auto position = graph.input("position", {1}, DType::int32);
-        auto mask = graph.input("mask", {1, maxPositions}, DType::float16);
+        fused = fusedSelfAttention;
 
-        auto ownKey = Vector<float> {0.0f};
-        auto ownKeyMask = graph.halfConstant("own_key_mask", {1, 1}, ownKey);
-        stepMask = graph.concat({mask, ownKeyMask}, 1);
+        if (fused)
+            stepMask = withOwnKey("allowed", 1.0f);
+        else
+            stepMask = withOwnKey("mask", 0.0f);
 
         auto tokenTable =
             graph.halfConstant("embed_tokens", {vocabulary, width}, weights.tokens);
@@ -208,6 +220,14 @@ public:
 private:
     static constexpr auto add = [](const eacp::GPU::Float& a,
                                    const eacp::GPU::Float& b) { return a + b; };
+
+    Tensor withOwnKey(const std::string& name, float ownKeyValue)
+    {
+        auto mask = graph.input(name, {1, maxPositions}, DType::float16);
+        auto ownKey = Vector<float> {ownKeyValue};
+        auto ownKeyMask = graph.halfConstant("own_key_" + name, {1, 1}, ownKey);
+        return graph.concat({mask, ownKeyMask}, 1);
+    }
 
     Tensor project(const std::string& name, Tensor x, const Projection& weights)
     {
@@ -263,6 +283,17 @@ private:
         auto values =
             graph.concat({layerRows(selfValues, index, maxPositions), v}, 0);
 
+        if (fused)
+        {
+            auto attended =
+                graph.scaledDotProductAttention(splitHeads(q, 1),
+                                                splitHeads(keys, keysPerStep),
+                                                splitHeads(values, keysPerStep),
+                                                stepMask);
+            return project(
+                prefix + "out_proj", mergeHeads(attended), weights.selfOut);
+        }
+
         auto scale = 1.0f / std::sqrt(static_cast<float>(headWidth));
         auto scaleAndMask =
             [scale](const eacp::GPU::Float& score, const eacp::GPU::Float& masked)
@@ -310,6 +341,7 @@ private:
     Tensor crossKeys;
     Tensor crossValues;
     Tensor stepMask;
+    bool fused = false;
     Vector<Tensor> newKeys;
     Vector<Tensor> newValues;
 };
@@ -326,6 +358,15 @@ inline Graph stepGraph(const Weights& weights)
 inline Graph sharedStepGraph()
 {
     return stepGraph(sharedWeights());
+}
+
+inline Graph fusedStepGraph()
+{
+    auto graph = Graph {};
+    auto builder = Builder {graph};
+    builder.cachesAsInputs();
+    builder.step(sharedWeights(), true);
+    return graph;
 }
 
 // The same step with the caches baked into the blob, so nothing but the token,
