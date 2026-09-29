@@ -1,13 +1,16 @@
 #include "../Common.h"
 
 #include "VulkanContext.h"
+#include "VulkanSurface.h"
 #include "VulkanTypes.h"
 
 #include "../Codegen/UniformLayout.h"
 #include "../Spirv/SpirvCompiler.h"
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/FilePath.h>
 
 #include <algorithm>
 #include <cassert>
@@ -71,6 +74,12 @@ std::uint64_t currentThreadId()
 // when neither is, which turns the pipeline cache off rather than guessing.
 std::string vulkanCacheDirectory()
 {
+    if constexpr (Platform::isAndroid())
+    {
+        const auto cache = FilePath::cacheDirectory();
+        return cache.empty() ? std::string {} : (cache / "eacp").str();
+    }
+
     const auto xdg = getEnvValue("XDG_CACHE_HOME");
 
     if (!xdg.empty())
@@ -709,23 +718,22 @@ bool VulkanShared::createInstance()
     }
 
     // Asked for rather than required: a headless ICD offers none of them. The
-    // two window systems are independent - a driver may carry either.
-    const auto waylandOffered =
-        hasInstanceExtension(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
-    const auto xcbOffered = hasInstanceExtension(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+    // window systems are independent - a driver may carry any of them.
+    auto windowSystemsOffered = Vector<const char*> {};
+
+    for (const auto* name: windowSystemSurfaceExtensions())
+        if (hasInstanceExtension(name))
+            windowSystemsOffered.add(name);
 
     const auto surfaceOffered = hasInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME)
-                                && (waylandOffered || xcbOffered);
+                                && !windowSystemsOffered.empty();
 
     if (surfaceOffered)
     {
         extensions.add(VK_KHR_SURFACE_EXTENSION_NAME);
 
-        if (waylandOffered)
-            extensions.add(VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME);
-
-        if (xcbOffered)
-            extensions.add(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+        for (const auto* name: windowSystemsOffered)
+            extensions.add(name);
     }
 
     VkInstanceCreateInfo info = {};

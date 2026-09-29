@@ -3,6 +3,7 @@
 #include "../Device/Device.h"
 #include "../Frame/Frame.h"
 #include "../Texture/Texture.h"
+#include "../Vulkan/VulkanSurface.h"
 #include "../Vulkan/VulkanTypes.h"
 
 #include <eacp/Graphics/Helpers/DisplayLink.h>
@@ -208,38 +209,6 @@ struct GPUView::Native
         stampedTick();
     }
 
-    // The instance enables a platform extension only where the driver offered
-    // it, so volk leaves the entry point of the other one null.
-    bool createWaylandSurface()
-    {
-        if (vkCreateWaylandSurfaceKHR == nullptr)
-            return false;
-
-        VkWaylandSurfaceCreateInfoKHR info = {};
-        info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
-        info.display = static_cast<wl_display*>(record.handle.connection);
-        info.surface = static_cast<wl_surface*>(record.handle.surface);
-
-        return vkCreateWaylandSurfaceKHR(
-                   getVulkanShared().getInstance(), &info, nullptr, &vkSurface)
-               == VK_SUCCESS;
-    }
-
-    bool createXcbSurface()
-    {
-        if (vkCreateXcbSurfaceKHR == nullptr)
-            return false;
-
-        VkXcbSurfaceCreateInfoKHR info = {};
-        info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-        info.connection = static_cast<xcb_connection_t*>(record.handle.connection);
-        info.window = static_cast<xcb_window_t>(record.handle.window);
-
-        return vkCreateXcbSurfaceKHR(
-                   getVulkanShared().getInstance(), &info, nullptr, &vkSurface)
-               == VK_SUCCESS;
-    }
-
     bool createSurface()
     {
         auto& shared = getVulkanShared();
@@ -253,26 +222,8 @@ struct GPUView::Native
         if (vkSurface != VK_NULL_HANDLE)
             return true;
 
-        // One branch per window system, and nothing below this cares which.
-        using Kind = Graphics::NativeSurfaceHandle::Kind;
-
-        auto created = false;
-
-        switch (record.handle.kind)
-        {
-            case Kind::Wayland:
-                created = createWaylandSurface();
-                break;
-
-            case Kind::X11:
-                created = createXcbSurface();
-                break;
-
-            case Kind::None:
-                break;
-        }
-
-        if (!created)
+        if (!createWindowSystemSurface(
+                shared.getInstance(), record.handle, vkSurface))
         {
             vkSurface = VK_NULL_HANDLE;
             return false;
