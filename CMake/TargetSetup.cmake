@@ -1,5 +1,19 @@
 include(AppleSetup)
 
+if (ANDROID)
+    include("${CMAKE_CURRENT_LIST_DIR}/AndroidApk.cmake")
+endif ()
+
+function(eacp_add_app target)
+    if (ANDROID)
+        add_library(${target} SHARED ${ARGN})
+        string(TOLOWER "${target}" package)
+        eacp_add_android_apk(${target} PACKAGE "com.eacp.${package}" LABEL "${target}")
+    else ()
+        add_executable(${target} ${ARGN})
+    endif ()
+endfunction()
+
 function(set_default_warnings_level target)
     if (MSVC)
         target_compile_options(${target} PRIVATE /W4)
