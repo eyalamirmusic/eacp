@@ -28,6 +28,16 @@ struct NativeChildSurface::Native
         // its new size in the same breath.
         container.get().autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
+        // The foreign content stays inside the rectangle it was given. From
+        // macOS 14 a view no longer clips to its bounds by default, and AppKit
+        // may back a view's drawing with a layer larger than the view: Arturia's
+        // JUCE editors get one the size of the whole window, hanging above the
+        // plugin's own rect, transparent and never drawn into, so its
+        // uninitialised pixels are composited over whatever the host put there.
+        // Earlier systems clip already, and have no clipsToBounds to set.
+        if (@available(macOS 14.0, *))
+            container.get().clipsToBounds = YES;
+
         [surface addSubview:container.get()];
     }
 
