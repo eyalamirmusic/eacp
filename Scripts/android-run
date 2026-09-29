@@ -21,8 +21,15 @@ if ! "$adb" get-state >/dev/null 2>&1; then
     fi
 
     echo "booting emulator $avd" >&2
-    nohup "$emulator" -avd "$avd" -no-snapshot-save -no-audio -gpu host \
-        >/dev/null 2>&1 &
+    if command -v cygpath >/dev/null; then
+        # Windows: a child inherits ninja's output pipe, and ninja waits for
+        # it to close, so the emulator starts through Start-Process instead.
+        powershell -NoProfile -Command "Start-Process -FilePath '$(cygpath -w "$emulator.exe")' \
+            -ArgumentList '-avd $avd -no-snapshot-save -no-audio -gpu host'"
+    else
+        nohup "$emulator" -avd "$avd" -no-snapshot-save -no-audio -gpu host \
+            >/dev/null 2>&1 &
+    fi
     "$adb" wait-for-device
 
     until [[ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; do

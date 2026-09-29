@@ -40,7 +40,15 @@ if [[ -z "${JAVA_HOME:-}" ]] && ! java -version >/dev/null 2>&1; then
     exit 1
 fi
 
-[[ -n "${JAVA_HOME:-}" ]] && export PATH="$JAVA_HOME/bin:$PATH"
+if [[ -n "${JAVA_HOME:-}" ]]; then
+    java_bin="$JAVA_HOME/bin"
+    command -v cygpath >/dev/null && java_bin="$(cygpath -u "$java_bin")"
+    export PATH="$java_bin:$PATH"
+fi
+
+# On Windows apksigner is a .bat.
+apksigner="$build_tools/apksigner"
+[[ -f "$apksigner.bat" ]] && apksigner="$apksigner.bat"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -61,7 +69,12 @@ fi
 
 mkdir -p "$work/stage/lib/$abi"
 cp "$library" "$work/stage/lib/$abi/"
-(cd "$work/stage" && zip -qr "$work/base.apk" lib)
+# Git for Windows' bash has no zip.
+if command -v zip >/dev/null; then
+    (cd "$work/stage" && zip -qr "$work/base.apk" lib)
+else
+    jar uf "$work/base.apk" -C "$work/stage" lib
+fi
 
 "$build_tools/zipalign" -P 16 -f 4 "$work/base.apk" "$work/aligned.apk"
 
@@ -75,7 +88,7 @@ if [[ ! -f "$keystore" ]]; then
 fi
 
 mkdir -p "$(dirname "$out")"
-"$build_tools/apksigner" sign --ks "$keystore" --ks-pass pass:android \
+"$apksigner" sign --ks "$keystore" --ks-pass pass:android \
     --key-pass pass:android --out "$out" "$work/aligned.apk"
 rm -f "$out.idsig"
 
