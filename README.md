@@ -99,7 +99,7 @@ Android's NativeActivity with Vulkan.
 
 † Linux and Android have no platform 2D tier and no menus; what that costs is
 spelled out two paragraphs down. ‡ Android: Android 13 (API 33) or later on a
-Vulkan 1.3 device, as a NativeActivity (see [Android](#android)); no HTTP
+Vulkan 1.1 device, as a NativeActivity (see [Android](#android)); no HTTP
 client (the NDK has no libcurl), no IME text input yet, and text is shaped a
 code point at a time (no kerning, ligatures or complex scripts).
 
@@ -536,14 +536,17 @@ the glyph atlas (rasterized by `android.graphics`), and touches logged.
 `Apps/GPU/Triangle` and `Apps/GPU/GlyphAtlas` build as APKs the same way.
 
 The floor is Android 13 (API 33; configuring lower is an error) on a device
-with Vulkan 1.3, which the manifest requires — the arm64 emulator on Apple
-Silicon qualifies. eacp builds with the current stable NDK, r30
-(30.0.16248370), the way the Apple platforms assume a current Xcode; older
-NDKs are not supported, and configuring with one is an error (eacp uses
-libc++'s `std::atomic_ref` and `std::jthread`). Tested with build-tools 35.0.0
-and platform 35. It needs a JDK 17+ for `keytool` and `apksigner`
-(`JAVA_HOME`, else `java` on the `PATH`, `java_home`, Homebrew's or Android
-Studio's), and the SDK at `$ANDROID_HOME` (or `-DEACP_ANDROID_SDK=`):
+with Vulkan 1.1, which the manifest requires, and the extensions that became
+1.3's synchronization: many phones' drivers still report 1.1 (a Galaxy S22's
+Adreno 730 does), and there the backend takes the render-pass path described
+in `Lib/eacp/GPU/README.md`. The arm64 emulator on Apple Silicon is a 1.3
+device. eacp builds with the current stable NDK, r30 (30.0.16248370), the way
+the Apple platforms assume a current Xcode; older NDKs are not supported, and
+configuring with one is an error (eacp uses libc++'s `std::atomic_ref` and
+`std::jthread`). Tested with build-tools 35.0.0 and platform 35. It needs a
+JDK 17+ for `keytool` and `apksigner` (`JAVA_HOME`, else `java` on the
+`PATH`, `java_home`, Homebrew's or Android Studio's), and the SDK at
+`$ANDROID_HOME` (or `-DEACP_ANDROID_SDK=`):
 
 ```bash
 sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" \
