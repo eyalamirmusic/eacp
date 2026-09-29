@@ -786,7 +786,16 @@ bool VulkanShared::selectPhysicalDevice()
         vkGetPhysicalDeviceProperties(candidate, &candidateProperties);
 
         if (candidateProperties.apiVersion < VK_API_VERSION_1_3)
+        {
+            LOG("Vulkan: ",
+                candidateProperties.deviceName,
+                " offers API ",
+                VK_API_VERSION_MAJOR(candidateProperties.apiVersion),
+                ".",
+                VK_API_VERSION_MINOR(candidateProperties.apiVersion),
+                "; eacp needs 1.3, so it is skipped");
             continue;
+        }
 
         if (!probeFeatures(candidate).allPresent())
         {
