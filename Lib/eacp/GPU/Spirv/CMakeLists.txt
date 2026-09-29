@@ -1,6 +1,6 @@
 # On by default only where something ships it: the Vulkan backend has no shader
 # compiler in the OS, while Metal and D3D12 compile their own dialects.
-if (LINUX)
+if (LINUX OR ANDROID)
     set(eacp_build_spirv_default ON)
 else ()
     set(eacp_build_spirv_default OFF)
