@@ -128,6 +128,46 @@ NSEvent* reencoded(NSEvent* event)
 }
 @end
 
+@interface FakeDawMainWindow : NSWindow
+@property(nonatomic, assign) KeyLog* log;
+@property(nonatomic, assign) int keyRequests;
+@property(nonatomic, assign) int misaddressed;
+@end
+
+@implementation FakeDawMainWindow
+- (void) sendEvent:(NSEvent*) event
+{
+    if (event.type != NSEventTypeKeyDown && event.type != NSEventTypeKeyUp)
+    {
+        [super sendEvent:event];
+        return;
+    }
+
+    if (event.windowNumber != self.windowNumber)
+        self.misaddressed = self.misaddressed + 1;
+
+    self.log->add(event);
+}
+
+- (void) makeKeyWindow
+{
+    self.keyRequests = self.keyRequests + 1;
+    [super makeKeyWindow];
+}
+@end
+
+@interface KeyRequestCountingWindow : NSWindow
+@property(nonatomic, assign) int keyRequests;
+@end
+
+@implementation KeyRequestCountingWindow
+- (void) makeKeyWindow
+{
+    self.keyRequests = self.keyRequests + 1;
+    [super makeKeyWindow];
+}
+@end
+
 namespace
 {
 enum class Plugin
@@ -183,9 +223,31 @@ void showWithoutActivating(Window& window)
     [nsWindow makeKeyWindow];
 }
 
-NSEvent* keyEvent(Window& window, NSEventType type, uint16_t keyCode, Repeat repeat)
+template <typename WindowClass>
+struct PlainWindow
 {
-    auto* nsWindow = (NSWindow*) window.getHandle();
+    PlainWindow(NSRect frame)
+        : window([[WindowClass alloc]
+              initWithContentRect:frame
+                        styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskResizable
+                          backing:NSBackingStoreBuffered
+                            defer:NO])
+    {
+        get().releasedWhenClosed = NO;
+        get().alphaValue = 0.f;
+        get().ignoresMouseEvents = YES;
+        [get() orderFrontRegardless];
+    }
+
+    ~PlainWindow() { [get() orderOut:nil]; }
+
+    WindowClass* get() { return window.get(); }
+
+    ObjC::Ptr<WindowClass> window;
+};
+
+NSEvent* keyEvent(NSWindow* nsWindow, NSEventType type, uint16_t keyCode, Repeat repeat)
+{
     auto* characters = keyCode == KeyCode::Space ? @" " : @"a";
 
     return [NSEvent keyEventWithType:type
@@ -198,6 +260,21 @@ NSEvent* keyEvent(Window& window, NSEventType type, uint16_t keyCode, Repeat rep
          charactersIgnoringModifiers:characters
                            isARepeat:repeat == Repeat::Yes
                              keyCode:keyCode];
+}
+
+NSEvent* keyEvent(Window& window, NSEventType type, uint16_t keyCode, Repeat repeat)
+{
+    return keyEvent((NSWindow*) window.getHandle(), type, keyCode, repeat);
+}
+
+NativeKeyEvent nativeKey(NSWindow* window, NSEventType type, uint16_t keyCode)
+{
+    auto* event = keyEvent(window, type, keyCode, Repeat::No);
+    auto keyType = type == NSEventTypeKeyDown ? KeyEventType::Down : KeyEventType::Up;
+
+    return {.key = {.keyCode = keyCode, .type = keyType, .timestamp = event.timestamp},
+            .nativeKey = keyCode,
+            .nsEvent = event};
 }
 
 void keyDown(Window& window, uint16_t keyCode, Repeat repeat = Repeat::No)
@@ -263,7 +340,27 @@ struct Topology
         grabSpace();
     }
 
+    void hostPanelInAWindow()
+    {
+        panelWindow.emplace(NSMakeRect(0, 0, 400, 300));
+        panelWindow->get().contentView = panel.get();
+    }
+
+    FakeDawMainWindow* addDawMainWindow(NSRect frame = NSMakeRect(0, 0, 900, 700))
+    {
+        mainWindow.emplace(frame);
+        mainWindow->get().log = &mainLog;
+        return mainWindow->get();
+    }
+
+    void forwardPress(NSWindow* source, uint16_t keyCode)
+    {
+        forwarder.forward(nativeKey(source, NSEventTypeKeyDown, keyCode));
+        forwarder.forward(nativeKey(source, NSEventTypeKeyUp, keyCode));
+    }
+
     KeyLog dawLog;
+    KeyLog mainLog;
     KeyLog pluginLog;
     ObjC::Ptr<FakeDawPanel> panel {
         [[FakeDawPanel alloc] initWithFrame:NSMakeRect(0, 0, 400, 300)]};
@@ -277,6 +374,9 @@ struct Topology
     ObjC::Ptr<FakePluginEditor> editor {
         [[FakePluginEditor alloc] initWithFrame:NSMakeRect(0, 0, 300, 200)]};
     std::optional<KeyGrab> grab;
+
+    std::optional<PlainWindow<NSWindow>> panelWindow;
+    std::optional<PlainWindow<FakeDawMainWindow>> mainWindow;
 };
 } // namespace
 
@@ -452,4 +552,86 @@ auto tGrabEndsWithItsObject =
 
     check(topology.pluginLog.receivedOnePress(KeyCode::Space));
     check(topology.dawLog.entries.empty());
+};
+
+auto tSiblingKeysGoToTheHostMainWindow =
+    test("HostedKeyForwarding/keysFromASiblingWindowGoToTheHostMainWindow") = []
+{
+    auto topology = Topology {Plugin::PassesUp};
+    topology.hostPanelInAWindow();
+    auto* main = topology.addDawMainWindow();
+    topology.wireLikeGestures();
+
+    press(topology.pluginWindow, KeyCode::A);
+    press(topology.pluginWindow, KeyCode::Space);
+
+    check(topology.mainLog.receivedOnePress(KeyCode::A));
+    check(topology.mainLog.receivedOnePress(KeyCode::Space));
+    check(topology.dawLog.entries.empty());
+    check(main.misaddressed == 0);
+    check(main.keyRequests == 4);
+};
+
+auto tKeyStatusIsHandedBack =
+    test("HostedKeyForwarding/theSourceWindowIsMadeKeyAgainAfterDelivery") = []
+{
+    auto topology = Topology {Plugin::PassesUp};
+    topology.hostPanelInAWindow();
+    topology.addDawMainWindow();
+    auto source = PlainWindow<KeyRequestCountingWindow> {NSMakeRect(0, 0, 200, 100)};
+
+    topology.forwardPress(source.get(), KeyCode::A);
+
+    check(topology.mainLog.receivedOnePress(KeyCode::A));
+    check(NSApp.keyWindow != nil || source.get().keyRequests == 2);
+};
+
+auto tPanelKeysKeepTheResponderChain =
+    test("HostedKeyForwarding/aKeyFromInsideThePanelWalksTheResponderChain") = []
+{
+    auto topology = Topology {Plugin::PassesUp};
+    topology.hostPanelInAWindow();
+    auto* main = topology.addDawMainWindow();
+
+    topology.forwardPress(topology.panelWindow->get(), KeyCode::A);
+
+    check(topology.dawLog.receivedOnePress(KeyCode::A));
+    check(topology.mainLog.entries.empty());
+    check(main.keyRequests == 0);
+};
+
+auto tNoHostMainWindowFallsBack =
+    test("HostedKeyForwarding/withNoHostMainWindowSiblingKeysWalkTheResponderChain") = []
+{
+    auto topology = Topology {Plugin::PassesUp};
+    topology.hostPanelInAWindow();
+    topology.wireLikeGestures();
+
+    press(topology.pluginWindow, KeyCode::A);
+
+    check(topology.dawLog.receivedOnePress(KeyCode::A));
+};
+
+auto tFrameworkWindowsAreNeverTheHost =
+    test("HostedKeyForwarding/anEacpWindowIsNeverTakenForTheHostMainWindow") = []
+{
+    auto topology = Topology {Plugin::PassesUp};
+    topology.hostPanelInAWindow();
+    topology.wireLikeGestures();
+
+    auto bigContent = View {};
+    auto bigOptions = pluginWindowOptions();
+    bigOptions.width = 1400;
+    bigOptions.height = 1000;
+    auto big = Window {bigContent, bigOptions};
+    showWithoutActivating(big);
+    showWithoutActivating(topology.pluginWindow);
+
+    press(topology.pluginWindow, KeyCode::A);
+    check(topology.dawLog.receivedOnePress(KeyCode::A));
+
+    topology.addDawMainWindow(NSMakeRect(0, 0, 300, 200));
+    press(topology.pluginWindow, KeyCode::B);
+    check(topology.mainLog.receivedOnePress(KeyCode::B));
+    check(topology.dawLog.count(true, KeyCode::B) == 0);
 };
