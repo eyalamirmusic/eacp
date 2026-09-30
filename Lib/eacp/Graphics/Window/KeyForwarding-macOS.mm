@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "KeyForwarding-macOS.h"
+#include "Window-macOS.h"
 #include "../Graphics/Keyboard-MacOS.h"
 #include "../View/View-MacOS.h"
 
@@ -15,6 +16,77 @@ NSView* outermostFrameworkView(NSView* view)
         view = view.superview;
 
     return view;
+}
+
+void deliverThroughResponderChain(NSView* start, NSEvent* event, bool isDown)
+{
+    auto* next = outermostFrameworkView(start).nextResponder;
+
+    if (next == nil)
+        return;
+
+    if (isDown)
+        [next keyDown:event];
+    else
+        [next keyUp:event];
+}
+
+bool isHostMainWindowCandidate(NSWindow* window, NSWindow* panel, NSWindow* source)
+{
+    return window != nil && window != panel && window != source && window.isVisible
+           && window.canBecomeMainWindow && ![window isKindOfClass:[NSPanel class]]
+           && !isFrameworkWindow(window);
+}
+
+NSWindow* hostMainWindow(NSWindow* panel, NSWindow* source)
+{
+    if (isHostMainWindowCandidate(NSApp.mainWindow, panel, source))
+        return NSApp.mainWindow;
+
+    NSWindow* largest = nil;
+    auto largestArea = 0.0;
+
+    for (NSWindow* window in NSApp.orderedWindows)
+    {
+        if (!isHostMainWindowCandidate(window, panel, source))
+            continue;
+
+        auto area = window.frame.size.width * window.frame.size.height;
+
+        if (area > largestArea)
+        {
+            largest = window;
+            largestArea = area;
+        }
+    }
+
+    return largest;
+}
+
+NSEvent* retargeted(NSEvent* event, NSWindow* target, bool isDown)
+{
+    return [NSEvent keyEventWithType:isDown ? NSEventTypeKeyDown : NSEventTypeKeyUp
+                            location:NSZeroPoint
+                       modifierFlags:event.modifierFlags
+                           timestamp:event.timestamp
+                        windowNumber:target.windowNumber
+                             context:nil
+                          characters:event.characters
+         charactersIgnoringModifiers:event.charactersIgnoringModifiers
+                           isARepeat:event.isARepeat
+                             keyCode:event.keyCode];
+}
+
+// Live, for one, ignores a key sent to its main window unless that window is key.
+void deliverWhileKey(NSWindow* target, NSEvent* event, bool isDown, NSWindow* source)
+{
+    auto* previous = NSApp.keyWindow != nil ? NSApp.keyWindow : source;
+
+    [target makeKeyWindow];
+    [target sendEvent:retargeted(event, target, isDown)];
+
+    if (previous != target)
+        [previous makeKeyWindow];
 }
 } // namespace
 
@@ -36,15 +108,20 @@ void EmbedderKeyForwarder::deliver(const NativeKeyEvent& event)
     if (nsEvent == nil || start == nil)
         return;
 
-    auto* next = outermostFrameworkView(start).nextResponder;
+    auto isDown = event.key.type == KeyEventType::Down;
+    auto* panel = start.window;
+    auto* source = nsEvent.window;
 
-    if (next == nil)
-        return;
+    if (source != nil && source != panel)
+    {
+        if (auto* main = hostMainWindow(panel, source))
+        {
+            deliverWhileKey(main, nsEvent, isDown, source);
+            return;
+        }
+    }
 
-    if (event.key.type == KeyEventType::Down)
-        [next keyDown:nsEvent];
-    else
-        [next keyUp:nsEvent];
+    deliverThroughResponderChain(start, nsEvent, isDown);
 }
 
 } // namespace eacp::Graphics
