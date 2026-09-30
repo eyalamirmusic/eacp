@@ -23,9 +23,13 @@ namespace
 constexpr auto acquireTimeoutNanoseconds = std::uint64_t {100000000};
 
 VkCompositeAlphaFlagBitsKHR
-    chooseCompositeAlpha(const VkSurfaceCapabilitiesKHR& capabilities)
+    chooseCompositeAlpha(const VkSurfaceCapabilitiesKHR& capabilities,
+                         bool transparent)
 {
     const auto offered = capabilities.supportedCompositeAlpha;
+
+    if (transparent && (offered & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) != 0)
+        return VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
 
     if ((offered & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) != 0)
         return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -426,7 +430,7 @@ struct GPUView::Native
 
         // Naming the compositor's own transform says there is nothing to undo.
         info.preTransform = capabilities.currentTransform;
-        info.compositeAlpha = chooseCompositeAlpha(capabilities);
+        info.compositeAlpha = chooseCompositeAlpha(capabilities, transparent);
         info.presentMode = choosePresentMode(physical);
         info.clipped = VK_TRUE;
 
@@ -808,6 +812,7 @@ struct GPUView::Native
     bool depthEnabled = false;
     bool stencilEnabled = false;
     bool continuous = false;
+    bool transparent = false;
 
     VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -932,6 +937,19 @@ void GPUView::setFramesInFlight(int count)
 int GPUView::framesInFlight() const
 {
     return impl->framesInFlight;
+}
+
+void GPUView::setTransparent(bool shouldBeTransparent)
+{
+    impl->transparent = shouldBeTransparent;
+
+    if (impl->swapchain != VK_NULL_HANDLE)
+        impl->swapchainStale = true;
+}
+
+bool GPUView::isTransparent() const
+{
+    return impl->transparent;
 }
 
 // No drawable to resize here: the swapchain is rebuilt from the surface's own
