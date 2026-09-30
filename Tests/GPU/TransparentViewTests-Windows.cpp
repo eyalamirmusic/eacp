@@ -105,18 +105,34 @@ void pumpPendingMessages()
     }
 }
 
-// The screen rather than PrintWindow: what is under test is how DWM stacks a
-// composition target over a child window, and only the composed desktop shows
-// that. The window is pinned topmost for the read so nothing covers it.
-Rgb screenPixelAtClientCenter(HWND hwnd)
+// Asks DWM for the window's composed content — the child windows and the
+// composition tree both, stacked as they are on screen — rather than reading
+// the desktop, where whatever else a CI runner has open can cover the window.
+// Defined locally: not every SDK header names it.
+constexpr auto printWindowFullContent = UINT {0x00000002};
+
+Rgb composedPixelAtClientCenter(HWND hwnd)
 {
     auto client = RECT {};
     GetClientRect(hwnd, &client);
-    auto center = POINT {client.right / 2, client.bottom / 2};
-    ClientToScreen(hwnd, &center);
+    auto width = static_cast<int>(client.right);
+    auto height = static_cast<int>(client.bottom);
+
+    if (width <= 0 || height <= 0)
+        return {};
 
     auto screenDc = GetDC(nullptr);
-    auto color = GetPixel(screenDc, center.x, center.y);
+    auto memoryDc = CreateCompatibleDC(screenDc);
+    auto bitmap = CreateCompatibleBitmap(screenDc, width, height);
+    auto previousBitmap = SelectObject(memoryDc, bitmap);
+
+    auto printed =
+        PrintWindow(hwnd, memoryDc, PW_CLIENTONLY | printWindowFullContent);
+    auto color = printed ? GetPixel(memoryDc, width / 2, height / 2) : CLR_INVALID;
+
+    SelectObject(memoryDc, previousBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memoryDc);
     ReleaseDC(nullptr, screenDc);
 
     if (color == CLR_INVALID)
@@ -133,7 +149,7 @@ Rgb waitForPixel(HWND hwnd, Predicate&& accept)
     for (auto attempt = 0; attempt < 60; ++attempt)
     {
         pumpPendingMessages();
-        pixel = screenPixelAtClientCenter(hwnd);
+        pixel = composedPixelAtClientCenter(hwnd);
 
         if (accept(pixel))
             return pixel;
@@ -184,14 +200,6 @@ void withHostedWindow(Body&& body)
                                          nullptr,
                                          GetModuleHandleW(nullptr),
                                          nullptr);
-
-            SetWindowPos(hwnd,
-                         HWND_TOPMOST,
-                         0,
-                         0,
-                         0,
-                         0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
 
             body(content, hwnd);
 
