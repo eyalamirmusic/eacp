@@ -18,7 +18,6 @@ target_sources(eacp-core PRIVATE
         Plugins/DynamicLibrary.cpp
         Process/Process.cpp
         Threads/Async.cpp
-        Threads/CallAfter.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
         Utils/Base64.cpp
@@ -58,7 +57,7 @@ if (APPLE)
                 App/App-iOS.mm
                 App/Clipboard-iOS.mm
                 App/LoginItem-iOS.cpp
-                Process/Process-iOS.cpp
+                Process/Process-Unavailable.cpp
                 Threads/EventLoop-iOS.mm)
         target_link_libraries(eacp-core PRIVATE "-framework UIKit")
     else ()
@@ -67,6 +66,7 @@ if (APPLE)
                 App/Clipboard-macOS.mm
                 App/LoginItem-macOS.mm
                 Process/Process-Posix.cpp
+                Process/SpawnDirectory-Posix.cpp
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
@@ -93,6 +93,28 @@ elseif (WIN32)
             Utils/MemoryMappedFile-Windows.cpp)
     target_link_libraries(eacp-core PRIVATE
             windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
+elseif (EMSCRIPTEN)
+    # The browser owns the loop and there are no threads: timers and callAfter
+    # are the browser's own timeouts. No processes and no clipboard backend;
+    # dlopen answers null. stdout is the console, so the Posix log is the log.
+    target_sources(eacp-core PRIVATE
+            App/App-Web.cpp
+            App/Clipboard-Linux.cpp
+            App/LoginItem-Linux.cpp
+            Platform/ScopedAutoReleasePool-Default.cpp
+            Plugins/DynamicLibrary-Linux.cpp
+            Plugins/DynamicLibrary-Posix.cpp
+            Plugins/ModuleInfo-Web.cpp
+            Process/Process-Unavailable.cpp
+            Threads/CallAfter-Web.cpp
+            Threads/EventLoop-Web.cpp
+            Threads/ThreadUtils-Linux.cpp
+            Threads/Timer-Web.cpp
+            Utils/Environment-Posix.cpp
+            Utils/FilePath-Web.cpp
+            Utils/Files-Linux.cpp
+            Utils/Logging-Posix.cpp
+            Utils/MemoryMappedFile-Posix.cpp)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
             App/App-Linux.cpp
@@ -108,12 +130,29 @@ elseif (UNIX AND NOT APPLE)
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
             Utils/Environment-Posix.cpp
-            Utils/FilePath-Linux.cpp
             Utils/Files-Linux.cpp
-            Utils/Logging-Posix.cpp
             Utils/MemoryMappedFile-Posix.cpp)
     find_package(Threads ${EACP_FIND_QUIET} REQUIRED)
     target_link_libraries(eacp-core PRIVATE Threads::Threads)
+
+    if (ANDROID)
+        target_sources(eacp-core PRIVATE
+                Process/SpawnDirectory-Android.cpp
+                Threads/EventLoop-Android.cpp
+                Utils/FilePath-Android.cpp
+                Utils/Logging-Android.cpp)
+        target_link_libraries(eacp-core PUBLIC android log)
+    else ()
+        target_sources(eacp-core PRIVATE
+                Process/SpawnDirectory-Posix.cpp
+                Threads/EventLoopWait-Linux.cpp
+                Utils/FilePath-Linux.cpp
+                Utils/Logging-Posix.cpp)
+    endif ()
+endif ()
+
+if (NOT EMSCRIPTEN)
+    target_sources(eacp-core PRIVATE Threads/CallAfter.cpp)
 endif ()
 
 set_default_target_setting(eacp-core)

@@ -1,3 +1,9 @@
+set(ui_test_targets eacp-ui eacp-sprites)
+
+if (EACP_HAS_NETWORK)
+    list(APPEND ui_test_targets eacp-ui-network)
+endif ()
+
 nano_add_executable(UITests
         SOURCES
             ClipMaskTests.cpp
@@ -13,13 +19,16 @@ nano_add_executable(UITests
             MaskCacheTests.cpp
             LayerTests.cpp
             ModuleShaderTests.cpp
-            OnlineResourceMonitorTests.cpp
             RepaintTests.cpp
             ShadowTests.cpp
             SliderTests.cpp
             TabsTests.cpp
             TextEditorTests.cpp
-        TARGETS eacp-ui eacp-ui-network eacp-sprites)
+        TARGETS ${ui_test_targets})
+
+if (EACP_HAS_NETWORK)
+    target_sources(UITests PRIVATE OnlineResourceMonitorTests.cpp)
+endif ()
 
 # ModuleShaderTests emits every shader this tier builds as GLSL and compiles it
 # with glslang wherever eacp-spirv is built. The helper comes from Tests/GPU.

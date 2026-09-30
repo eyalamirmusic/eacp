@@ -36,10 +36,10 @@ WebView::SnapshotCallback
     return once;
 }
 
-void WebView::captureAsyncContent(float, std::function<void(Image)> done)
+void WebView::captureAsyncContent(float, const std::function<void(Image)>& done)
 {
     takeSnapshot(
-        [done = std::move(done)](Bytes pngBytes, const std::string& error)
+        [done](Bytes pngBytes, const std::string& error)
         {
             if (!error.empty() || pngBytes.empty())
             {

@@ -5,6 +5,8 @@
 #include "ShaderBindings.h"
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
+#include "WgslBindings.h"
+#include "WgslHelpers.h"
 
 #include <cassert>
 #include <cmath>
@@ -22,12 +24,90 @@ enum class Backend
 {
     Metal,
     DirectX,
-    Vulkan
+    Vulkan,
+    WebGPU
 };
+
+const char* wgslTypeName(ValueType type)
+{
+    switch (type)
+    {
+        case ValueType::Float:
+            return "f32";
+        case ValueType::Float2:
+            return "vec2f";
+        case ValueType::Float3:
+            return "vec3f";
+        case ValueType::Float4:
+            return "vec4f";
+        case ValueType::Float2x2:
+            return "mat2x2f";
+        case ValueType::Float3x3:
+            return "mat3x3f";
+        case ValueType::Float4x4:
+            return "mat4x4f";
+        case ValueType::UInt:
+            return "u32";
+        case ValueType::UInt2:
+            return "vec2u";
+        case ValueType::UInt3:
+            return "vec3u";
+        case ValueType::UInt4:
+            return "vec4u";
+        case ValueType::Int:
+            return "i32";
+        case ValueType::Int2:
+            return "vec2i";
+        case ValueType::Int3:
+            return "vec3i";
+        case ValueType::Int4:
+            return "vec4i";
+        case ValueType::Bool:
+            return "bool";
+        case ValueType::Bool2:
+            return "vec2<bool>";
+        case ValueType::Bool3:
+            return "vec3<bool>";
+        case ValueType::Bool4:
+            return "vec4<bool>";
+    }
+
+    return "f32";
+}
+
+const char* wgslTypeNameFor(std::string_view canonicalName)
+{
+    for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)
+    {
+        auto type = static_cast<ValueType>(raw);
+
+        if (canonicalName == typeName(type))
+            return wgslTypeName(type);
+    }
+
+    return nullptr;
+}
 
 const char* typeName(Backend backend, ValueType type)
 {
+    if (backend == Backend::WebGPU)
+        return wgslTypeName(type);
+
     return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
+}
+
+// WGSL declares a name as `var name: type` or `let name: type`, where the other
+// three put the type first.
+std::string declaration(Backend backend,
+                        ValueType type,
+                        const std::string& name,
+                        bool mutableValue)
+{
+    if (backend != Backend::WebGPU)
+        return std::string(typeName(backend, type)) + " " + name;
+
+    return std::string(mutableValue ? "var " : "let ") + name + ": "
+           + wgslTypeName(type);
 }
 
 std::string shortestRoundTrip(float value)
@@ -66,7 +146,7 @@ bool isFlatVarying(ValueType type)
 
 std::string attributeSemantic(Backend backend, int index)
 {
-    if (backend == Backend::Vulkan)
+    if (backend == Backend::Vulkan || backend == Backend::WebGPU)
         return {};
 
     if (backend == Backend::Metal)
@@ -90,7 +170,7 @@ std::string varyingSemantic(Backend backend, int index, ValueType type)
 
 std::string positionSemantic(Backend backend)
 {
-    if (backend == Backend::Vulkan)
+    if (backend == Backend::Vulkan || backend == Backend::WebGPU)
         return {};
 
     if (backend == Backend::Metal)
@@ -103,6 +183,9 @@ std::string flatQualifier(Backend backend, ValueType type)
 {
     if (backend == Backend::Metal || !isFlatVarying(type))
         return {};
+
+    if (backend == Backend::WebGPU)
+        return "@interpolate(flat) ";
 
     return backend == Backend::Vulkan ? "flat " : "nointerpolation ";
 }
@@ -189,7 +272,40 @@ std::string callName(Backend backend, const std::string& name)
             return "eacpLog10";
     }
 
+    if (backend == Backend::WebGPU)
+    {
+        if (const auto* spelling = wgslTypeNameFor(name))
+            return spelling;
+
+        if (name == "rsqrt")
+            return "inverseSqrt";
+
+        if (name == "faceforward")
+            return "faceForward";
+
+        if (name == "dfdx")
+            return "dpdx";
+
+        if (name == "dfdy")
+            return "dpdy";
+
+        if (name == "log10")
+            return "eacpLog10";
+
+        // MSL rounds a half away from zero, WGSL to even.
+        if (name == "round")
+            return "eacpRound";
+    }
+
     return name;
+}
+
+// WGSL has no overloading, so each width of an eacp helper is a function of its
+// own, named for the width of the argument it takes.
+bool isWgslOverloadedHelper(const std::string& name)
+{
+    return name == "eacpErf" || name == "eacpErfc" || name == "eacpSaturatingTanh"
+           || name == "eacpLog10" || name == "eacpRound";
 }
 
 // The builtins GLSL overloads per width: it takes a scalar beside a vector only
@@ -199,6 +315,13 @@ bool isGenTypeCall(const std::string& name)
     return name == "min" || name == "max" || name == "clamp" || name == "mix"
            || name == "step" || name == "smoothstep" || name == "pow"
            || name == "atan2";
+}
+
+// WGSL names its reinterpreting cast by the type it produces, where MSL's
+// as_type<T> already did and HLSL and GLSL name one function per direction.
+bool isBitcastCall(const std::string& name)
+{
+    return name.starts_with("as_type<");
 }
 
 // GLSL reserves the relational and equality operators for scalars, so a
@@ -806,6 +929,8 @@ const char* helperDefinition(const ShaderHelper& helper, Backend backend)
             return helper.directX;
         case Backend::Vulkan:
             return helper.glsl;
+        case Backend::WebGPU:
+            break;
     }
 
     return helper.metal;
@@ -831,8 +956,36 @@ bool helperWidensPackedSimdMatrix(const ShaderGraph& graph,
 
 // Only the helpers a graph actually calls, so a shader that unpacks nothing
 // carries no definition for one.
+bool graphCalls(const ShaderGraph& graph, std::string_view name)
+{
+    for (auto node = 0; node < graph.nodeCount(); ++node)
+    {
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::Call && expr.text == name)
+            return true;
+    }
+
+    return false;
+}
+
+std::string wgslHelperDefinitions(const ShaderGraph& graph)
+{
+    auto definitions = std::string {};
+
+    for (const auto& helper: wgsl::helpers)
+        if (helperWidensPackedSimdMatrix(graph, helper.name, Backend::WebGPU)
+            || graphCalls(graph, helper.name))
+            definitions += helper.definition;
+
+    return definitions;
+}
+
 std::string helperDefinitions(const ShaderGraph& graph, Backend backend)
 {
+    if (backend == Backend::WebGPU)
+        return wgslHelperDefinitions(graph);
+
     auto definitions = std::string {};
 
     for (const auto& helper: shaderHelpers)
@@ -945,6 +1098,14 @@ const char* indexTypeName(DispatchRank rank)
         return "uint";
 
     return rank == DispatchRank::TwoD ? "uint2" : "uint3";
+}
+
+ValueType indexValueType(DispatchRank rank)
+{
+    if (rank == DispatchRank::OneD)
+        return ValueType::UInt;
+
+    return rank == DispatchRank::TwoD ? ValueType::UInt2 : ValueType::UInt3;
 }
 
 const char* glslIndexTypeName(DispatchRank rank)
@@ -1074,6 +1235,9 @@ std::string barrierStatement(Backend backend, const std::string& indent)
     if (backend == Backend::Vulkan)
         return indent + "memoryBarrierShared();\n" + indent + "barrier();\n";
 
+    if (backend == Backend::WebGPU)
+        return indent + "workgroupBarrier();\n";
+
     return indent
            + std::string(backend == Backend::Metal
                              ? "threadgroup_barrier(mem_flags::mem_threadgroup);\n"
@@ -1149,6 +1313,9 @@ const char* packedSimdMatrixHelper(SimdMatrixElement element)
 // fragment of its own type there, loaded through a reinterpreted pointer.
 const char* bitsOfFloat(Backend backend)
 {
+    if (backend == Backend::WebGPU)
+        return "bitcast<u32>";
+
     return backend == Backend::Vulkan ? "floatBitsToUint" : "asuint";
 }
 
@@ -1193,6 +1360,10 @@ std::string simdMatrixScratchDeclaration(const ShaderGraph& graph,
     if (graph.simdMatrixCount() == 0)
         return {};
 
+    if (qualifier == "var<workgroup>")
+        return qualifier + " " + simdMatrixScratchName + ": array<f32, "
+               + std::to_string(simdMatrixScratchElements(graph)) + ">;\n";
+
     return qualifier + " float " + simdMatrixScratchName + "["
            + std::to_string(simdMatrixScratchElements(graph)) + "];\n";
 }
@@ -1215,11 +1386,14 @@ std::string simdMatrixPreamble(Backend backend)
     auto width = std::to_string(simdGroupWidth);
     auto perRow = std::to_string(simdMatrixLanesPerRow);
 
-    auto source = "    uint sgmLane = " + lane + " % " + width + "u;\n";
-    source += "    uint sgmRow = sgmLane / " + perRow + "u;\n";
-    source += "    uint sgmColumn = (sgmLane % " + perRow + "u) * "
+    auto name = [backend](const char* local)
+    { return "    " + declaration(backend, ValueType::UInt, local, false); };
+
+    auto source = name("sgmLane") + " = " + lane + " % " + width + "u;\n";
+    source += name("sgmRow") + " = sgmLane / " + perRow + "u;\n";
+    source += name("sgmColumn") + " = (sgmLane % " + perRow + "u) * "
               + std::to_string(simdMatrixLaneElements) + "u;\n";
-    source += "    uint sgmBase = (" + lane + " / " + width + "u) * "
+    source += name("sgmBase") + " = (" + lane + " / " + width + "u) * "
               + std::to_string(simdMatrixScratchPerGroup) + "u;\n";
     return source;
 }
@@ -1248,7 +1422,8 @@ struct ExprPrinter
     // Float, whose width is one, when nothing is to be broadcast.
     ValueType broadcastType(const Expr& call) const
     {
-        if (backend != Backend::Vulkan || !isGenTypeCall(call.text))
+        if (backend == Backend::Metal || backend == Backend::DirectX
+            || !isGenTypeCall(call.text))
             return ValueType::Float;
 
         auto widest = ValueType::Float;
@@ -1272,6 +1447,88 @@ struct ExprPrinter
             return argument;
 
         return std::string(typeName(backend, wide)) + "(" + argument + ")";
+    }
+
+    // The widest of two operands, which WGSL wants the narrower one widened to
+    // wherever it will not broadcast a scalar itself.
+    ValueType widerOf(int left, int right) const
+    {
+        auto leftType = graph.expr(left).type;
+        auto rightType = graph.expr(right).type;
+        return componentCount(rightType) > componentCount(leftType) ? rightType
+                                                                    : leftType;
+    }
+
+    // A WGSL shift count is unsigned and shaped like the value shifted.
+    std::string wgslShiftCount(int node, ValueType shifted) const
+    {
+        auto count = ref(node);
+        auto type = graph.expr(node).type;
+        auto width = componentCount(shifted);
+
+        if (isUnsignedInteger(type) && componentCount(type) == width)
+            return count;
+
+        auto unsignedType = width == 1   ? ValueType::UInt
+                            : width == 2 ? ValueType::UInt2
+                            : width == 3 ? ValueType::UInt3
+                                         : ValueType::UInt4;
+
+        return std::string(wgslTypeName(unsignedType)) + "(" + count + ")";
+    }
+
+    std::string wgslCall(const Expr& expr) const
+    {
+        auto name = callName(backend, expr.text);
+
+        if (isBitcastCall(expr.text))
+            name = "bitcast<" + std::string(wgslTypeName(expr.type)) + ">";
+
+        if (isWgslOverloadedHelper(name) && !expr.args.empty())
+        {
+            auto width = componentCount(graph.expr(expr.args[0]).type);
+
+            if (width > 1)
+                name += std::to_string(width);
+        }
+
+        auto text = name + "(";
+        auto wide = broadcastType(expr);
+
+        for (auto i = 0; i < expr.args.size(); ++i)
+        {
+            if (i > 0)
+                text += ", ";
+
+            text += widened(expr.args[i], wide);
+        }
+
+        return text + ")";
+    }
+
+    // Sampling as WGSL spells it: textureSample only where there are
+    // derivatives to pick a level from, which is the fragment stage; level 0
+    // elsewhere, which is what Metal gives a kernel's sample. A depth texture
+    // takes its level as an integer.
+    std::string wgslSample(const Expr& expr) const
+    {
+        auto slot = std::to_string(expr.index);
+        auto arguments =
+            "texture" + slot + ", sampler" + slot + ", " + ref(expr.args[0]);
+        auto depth = graph.textureKind(expr.index) == TextureKind::Depth2D;
+
+        if (expr.args.size() < 2)
+        {
+            if (derivatives)
+                return "textureSample(" + arguments + ")";
+
+            return "textureSampleLevel(" + arguments + (depth ? ", 0)" : ", 0.0)");
+        }
+
+        auto level = ref(expr.args[1]);
+
+        return "textureSampleLevel(" + arguments + ", "
+               + (depth ? "i32(" + level + ")" : level) + ")";
     }
 
     std::string print(int node) const
@@ -1344,6 +1601,9 @@ struct ExprPrinter
 
             case ExprKind::Call:
             {
+                if (backend == Backend::WebGPU)
+                    return wgslCall(expr);
+
                 auto text = callName(backend, expr.text) + "(";
                 auto wide = broadcastType(expr);
 
@@ -1385,6 +1645,20 @@ struct ExprPrinter
                                 : ref(expr.args[0]);
                 auto right = ref(expr.args[1]);
 
+                // WGSL broadcasts a scalar beside a vector for arithmetic
+                // only: the bitwise operators want both sides one shape, and
+                // a shift wants its count unsigned and shaped like the value.
+                if (backend == Backend::WebGPU)
+                {
+                    if (isShift)
+                        return "(" + widened(expr.args[0], expr.type) + " " + op
+                               + " " + wgslShiftCount(expr.args[1], expr.type) + ")";
+
+                    if (op == "&" || op == "|" || op == "^")
+                        return "(" + widened(expr.args[0], expr.type) + " " + op
+                               + " " + widened(expr.args[1], expr.type) + ")";
+                }
+
                 // GLSL leaves % undefined on a negative operand, so the
                 // truncating remainder is written out of the division.
                 if (backend == Backend::Vulkan && op == "%"
@@ -1397,6 +1671,20 @@ struct ExprPrinter
 
             case ExprKind::Compare:
             {
+                // WGSL compares a vector with a vector only, and its && and
+                // || are scalar: a mask combines through & and |.
+                if (backend == Backend::WebGPU)
+                {
+                    auto wide = widerOf(expr.args[0], expr.args[1]);
+                    auto op = expr.text;
+
+                    if (componentCount(wide) > 1 && (op == "&&" || op == "||"))
+                        op = op.substr(1);
+
+                    return "(" + widened(expr.args[0], wide) + " " + op + " "
+                           + widened(expr.args[1], wide) + ")";
+                }
+
                 // A mask is the operator in two dialects, a function in GLSL.
                 if (backend == Backend::Vulkan && componentCount(expr.type) > 1)
                     if (const auto* name = glslComparison(expr.text))
@@ -1408,6 +1696,11 @@ struct ExprPrinter
             }
 
             case ExprKind::Select:
+                if (backend == Backend::WebGPU)
+                    return "select(" + widened(expr.args[2], expr.type) + ", "
+                           + widened(expr.args[1], expr.type) + ", "
+                           + ref(expr.args[0]) + ")";
+
                 // Both languages spell the conditional operator the same way,
                 // and both evaluate it without branching for scalar operands.
                 return "(" + ref(expr.args[0]) + " ? " + ref(expr.args[1]) + " : "
@@ -1443,6 +1736,9 @@ struct ExprPrinter
                 // a register, and there is one per sampling configuration that
                 // every texture declaring that sampling shares. See
                 // TextureSampling.
+                if (backend == Backend::WebGPU)
+                    return wgslSample(expr);
+
                 auto name = "texture" + std::to_string(expr.index);
                 auto sampler =
                     backend == Backend::Metal
@@ -1500,6 +1796,9 @@ struct ExprPrinter
 
                 if (backend == Backend::Metal)
                     return name + ".read(uint2(" + coordinates + "))";
+
+                if (backend == Backend::WebGPU)
+                    return "textureLoad(" + name + ", " + coordinates + ", 0)";
 
                 // GLSL takes the coordinate signed and the level explicitly -
                 // there are no derivatives to pick one from in a fetch.
@@ -1566,6 +1865,9 @@ struct ExprPrinter
                     return "atomic_load_explicit(&" + element
                            + ", memory_order_relaxed)";
 
+                if (backend == Backend::WebGPU)
+                    return "atomicLoad(&" + element + ")";
+
                 return element;
             }
 
@@ -1612,6 +1914,10 @@ struct ExprPrinter
     Backend backend;
     const Vector<int>& locals; // node id -> local index, -1 = inline
     Vector<int> attributeVaryings; // attribute slot -> varying, -1 = read direct
+
+    // Whether the stage has the derivatives an implicit-level sample needs,
+    // which WGSL asks of the stage rather than leaving to the compiler.
+    bool derivatives = false;
 };
 
 // Operation nodes are worth naming when evaluated more than once; leaf reads
@@ -2073,6 +2379,28 @@ struct StageEmitter
 
             const auto& array = arrays[slot];
 
+            // A var rather than a let: WGSL subscripts a let array with
+            // constant indices only.
+            if (printer.backend == Backend::WebGPU)
+            {
+                auto type = "array<" + std::string(wgslTypeName(array.elementType))
+                            + ", " + std::to_string(array.elements.size()) + ">";
+
+                source += indent + "var a" + std::to_string(slot) + ": " + type
+                          + " = " + type + "(";
+
+                for (auto i = 0; i < array.elements.size(); ++i)
+                {
+                    if (i > 0)
+                        source += ", ";
+
+                    source += printer.ref(array.elements[i]);
+                }
+
+                source += ");\n";
+                continue;
+            }
+
             auto qualifier =
                 std::string(printer.backend == Backend::Vulkan ? "" : "const ");
 
@@ -2131,16 +2459,17 @@ struct StageEmitter
             case StatementKind::Assign:
             {
                 auto declares = statement.kind == StatementKind::Declare;
-                auto type =
-                    declares
-                        ? std::string(typeName(printer.backend,
-                                               graph().variables()[statement.slot]))
-                              + " "
-                        : std::string {};
+                auto name = "v" + std::to_string(statement.slot);
+                auto target = declares
+                                  ? declaration(printer.backend,
+                                                graph().variables()[statement.slot],
+                                                name,
+                                                true)
+                                  : name;
 
                 source = define({statement.value}, indent, uses, open);
-                source += indent + type + "v" + std::to_string(statement.slot)
-                          + " = " + printer.ref(statement.value) + ";\n";
+                source +=
+                    indent + target + " = " + printer.ref(statement.value) + ";\n";
                 break;
             }
 
@@ -2195,6 +2524,9 @@ struct StageEmitter
                 if (atomic && printer.backend == Backend::Metal)
                     source += indent + "atomic_store_explicit(&" + element + ", "
                               + stored + ", memory_order_relaxed);\n";
+                else if (atomic && printer.backend == Backend::WebGPU)
+                    source +=
+                        indent + "atomicStore(&" + element + ", " + stored + ");\n";
                 else
                     source += indent + element + " = " + stored + ";\n";
 
@@ -2263,6 +2595,13 @@ struct StageEmitter
                     source += indent + "uint " + name
                               + " = atomic_fetch_add_explicit(&" + element + ", "
                               + addend + ", memory_order_relaxed);\n";
+                    break;
+                }
+
+                if (printer.backend == Backend::WebGPU)
+                {
+                    source += indent + "var " + name + ": u32 = atomicAdd(&"
+                              + element + ", " + addend + ");\n";
                     break;
                 }
 
@@ -2343,6 +2682,25 @@ struct StageEmitter
                 auto coordinates = pair + printer.ref(statement.index) + ", "
                                    + printer.ref(statement.indexY) + ")";
                 auto color = printer.ref(statement.value);
+
+                // uint2 converts its components where WGSL's vec2u will not.
+                if (printer.backend == Backend::WebGPU)
+                {
+                    auto component = [this](int node)
+                    {
+                        auto text = printer.ref(node);
+
+                        if (graph().expr(node).type == ValueType::UInt)
+                            return text;
+
+                        return "u32(" + text + ")";
+                    };
+
+                    source += indent + "textureStore(" + name + ", vec2u("
+                              + component(statement.index) + ", "
+                              + component(statement.indexY) + "), " + color + ");\n";
+                    break;
+                }
 
                 if (printer.backend == Backend::Metal)
                     source += indent + name + ".write(" + color + ", " + coordinates
@@ -2428,7 +2786,8 @@ private:
 
         auto source = indent + element + " = " + contributed + ";\n";
         source += barrier;
-        source += indent + "for (uint " + step + " = "
+        source += indent + "for ("
+                  + declaration(printer.backend, ValueType::UInt, step, true) + " = "
                   + std::to_string(reductionStride(width)) + "u; " + step + " > 0u; "
                   + step + " >>= 1u)\n" + indent + "{\n";
         // The third conjunct is the scratch's own bound, and it is not implied
@@ -2440,14 +2799,25 @@ private:
                              : " && " + lane + " + " + step + " < "
                                    + std::to_string(threadsPerGroup(graph())) + "u";
 
+        // WGSL braces every body, however short.
+        auto wgsl = printer.backend == Backend::WebGPU;
+
         source += indent + "    if (" + within + " < " + step + " && " + within
                   + " + " + step + " < " + widthText + bounded + ")\n";
+
+        if (wgsl)
+            source += indent + "    {\n";
+
         source += indent + "        " + element + " = "
                   + foldedPair(statement.reduction, element, partner) + ";\n";
+
+        if (wgsl)
+            source += indent + "    }\n";
+
         source += barrierStatement(printer.backend, indent + "    ");
         source += indent + "}\n";
-        source +=
-            indent + type + " " + name + " = " + scratch + "[" + first + "];\n";
+        source += indent + declaration(printer.backend, elementType, name, true)
+                  + " = " + scratch + "[" + first + "];\n";
 
         return source + barrier;
     }
@@ -2474,8 +2844,8 @@ private:
         // The fallback holds every fragment as a lane's pair of floats,
         // whatever the memory it came out of: what a packed load changes there
         // is the arithmetic that produces the pair, not the fragment.
-        return std::string(simdMatrixLaneType(printer.backend)) + " "
-               + simdMatrixName(slot);
+        return declaration(
+            printer.backend, ValueType::Float2, simdMatrixName(slot), true);
     }
 
     std::string simdMatrixFill(const Statement& statement, const std::string& indent)
@@ -2634,12 +3004,17 @@ private:
         source += indent + simdMatrixStaged(true, held + " + 1u") + " = " + right
                   + ".y;\n";
         source += barrier;
-        source += indent + "for (uint " + step + " = 0u; " + step + " < " + side
-                  + "u; ++" + step + ")\n";
+        auto wgsl = printer.backend == Backend::WebGPU;
+
+        source += indent + "for ("
+                  + declaration(printer.backend, ValueType::UInt, step, true)
+                  + " = 0u; " + step + " < " + side + "u; "
+                  + (wgsl ? step + "++" : "++" + step) + ")\n";
         source += indent + "{\n";
-        source += indent + "    float " + term + " = "
-                  + simdMatrixStaged(false, "sgmRow * " + side + "u + " + step)
-                  + ";\n";
+        source +=
+            indent + "    "
+            + declaration(printer.backend, ValueType::Float, term, false) + " = "
+            + simdMatrixStaged(false, "sgmRow * " + side + "u + " + step) + ";\n";
         source += indent + "    " + accumulator + ".x += " + term + " * "
                   + simdMatrixStaged(true, step + " * " + side + "u + sgmColumn")
                   + ";\n";
@@ -2703,9 +3078,11 @@ private:
         open.add(node);
 
         return indent
-               + std::string(typeName(printer.backend, graph().expr(node).type))
-               + " t" + std::to_string(locals[node]) + " = " + printer.print(node)
-               + ";\n";
+               + declaration(printer.backend,
+                             graph().expr(node).type,
+                             "t" + std::to_string(locals[node]),
+                             false)
+               + " = " + printer.print(node) + ";\n";
     }
 
     std::string holdTheRecord(const Statement& statement,
@@ -3140,6 +3517,31 @@ std::string uniformBlock(Backend backend,
 {
     auto glsl = backend == Backend::Vulkan;
 
+    // WGSL's uniform address space lays a block out as std140 does, so it
+    // takes the same pads.
+    if (backend == Backend::WebGPU)
+    {
+        auto offsets = uniformOffsets(types);
+        auto cursor = 0;
+        auto padCount = 0;
+        auto source = std::string {"struct Uniforms\n{\n"};
+
+        for (auto i = 0; i < types.size(); ++i)
+        {
+            while (std140PackedOffset(cursor, types[i]) < offsets[i])
+            {
+                source += "    pad" + std::to_string(padCount++) + ": f32,\n";
+                cursor += 4;
+            }
+
+            cursor = offsets[i] + byteSize(types[i]);
+            source += "    " + names[i] + ": " + wgslTypeName(types[i]) + ",\n";
+        }
+
+        return source + "};\n\n@group(" + std::to_string(wgslGroup) + ") @binding("
+               + std::to_string(binding) + ") var<uniform> uniforms: Uniforms;\n\n";
+    }
+
     auto source = glsl ? "layout(std140, set = 0, binding = "
                              + std::to_string(binding) + ") uniform Uniforms\n{\n"
                        : std::string {"struct Uniforms\n{\n"};
@@ -3271,6 +3673,68 @@ std::string glslSampledTexture(TextureKind kind, int slot, int binding)
            + glslTextureType(kind) + " texture" + std::to_string(slot) + ";\n";
 }
 
+std::string wgslBinding(int binding)
+{
+    return "@group(" + std::to_string(wgslGroup) + ") @binding("
+           + std::to_string(binding) + ") ";
+}
+
+// A storage buffer is a runtime-sized array of its elements, an atomic one of
+// atomic<u32>. read_write is what a WGSL storage buffer that is written or
+// operated on atomically has to say.
+std::string wgslBufferDeclaration(BufferAccess access,
+                                  ValueType elementType,
+                                  int slot,
+                                  int binding)
+{
+    auto element = access == BufferAccess::Atomic ? std::string("atomic<u32>")
+                                                  : wgslTypeName(elementType);
+    auto mode = access == BufferAccess::Read ? "read" : "read_write";
+
+    return wgslBinding(binding) + "var<storage, " + mode + "> buffer"
+           + std::to_string(slot) + ": array<" + element + ">;\n";
+}
+
+const char* wgslTextureType(TextureKind kind)
+{
+    switch (kind)
+    {
+        case TextureKind::Cube:
+            return "texture_cube<f32>";
+        case TextureKind::Depth2D:
+            return "texture_depth_2d";
+        default:
+            return "texture_2d<f32>";
+    }
+}
+
+// A sampled slot and its own sampler, as on Metal. The sampler is a plain one
+// whatever the texture is: nothing in the EDSL compares.
+std::string wgslSampledTexture(TextureKind kind, int slot, int binding)
+{
+    auto index = std::to_string(slot);
+
+    return wgslBinding(binding) + "var texture" + index + ": "
+           + wgslTextureType(kind) + ";\n" + wgslBinding(wgslSamplerBinding(slot))
+           + "var sampler" + index + ": sampler;\n";
+}
+
+// WGSL fixes a storage texture's format in the source, where the other three
+// write one format-agnostically; rgba8unorm is the format a kernel's written
+// texture is made in.
+std::string wgslWritableTexture(int slot, int binding)
+{
+    return wgslBinding(binding) + "var texture" + std::to_string(slot)
+           + ": texture_storage_2d<rgba8unorm, write>;\n";
+}
+
+std::string
+    wgslWorkgroupArray(ValueType elementType, const std::string& name, int elements)
+{
+    return "var<workgroup> " + name + ": array<" + wgslTypeName(elementType) + ", "
+           + std::to_string(elements) + ">;\n";
+}
+
 // The SamplerState globals an HLSL stage needs: one per sampling configuration
 // any of its readable textures asked for, at the register the root signature
 // put that configuration's static sampler on.
@@ -3306,10 +3770,14 @@ std::string hlslSamplerDeclarations(const ShaderGraph& graph)
 
 // The early return the rounded-up dispatch needs, over as many extents as the
 // rank has.
-std::string boundsGuard(DispatchRank rank)
+std::string boundsGuard(DispatchRank rank, Backend backend)
 {
+    auto exit =
+        std::string(backend == Backend::WebGPU ? "\n    {\n        return;\n    }\n"
+                                               : "\n        return;\n");
+
     if (rank == DispatchRank::OneD)
-        return "    if (gid >= uniforms.count)\n        return;\n";
+        return "    if (gid >= uniforms.count)" + exit;
 
     auto condition = std::string {};
 
@@ -3318,7 +3786,7 @@ std::string boundsGuard(DispatchRank rank)
                      + ("gid" + std::string(componentSuffix(i))) + " >= uniforms."
                      + gridExtentName(i);
 
-    return "    if (" + condition + ")\n        return;\n";
+    return "    if (" + condition + ")" + exit;
 }
 
 // Compute kernel emission. The expression printer is the render one; only the
@@ -3541,6 +4009,77 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
             source +=
                 "    " + indexType + " tgid = gl_WorkGroupID" + swizzle + ";\n";
     }
+    else if (backend == Backend::WebGPU)
+    {
+        for (auto i = 0; i < buffers.size(); ++i)
+            source += wgslBufferDeclaration(buffers[i],
+                                            graph.storageElementType(i),
+                                            i,
+                                            wgslComputeBufferBinding(i));
+
+        if (buffers.size() > 0)
+            source += "\n";
+
+        for (auto i = 0; i < graph.textureCount(); ++i)
+        {
+            auto binding = wgslComputeTextureBinding(i);
+
+            source += graph.textureAccess(i) == TextureAccess::Write
+                          ? wgslWritableTexture(i, binding)
+                          : wgslSampledTexture(graph.textureKind(i), i, binding);
+        }
+
+        if (graph.textureCount() > 0)
+            source += "\n";
+
+        for (auto i = 0; i < graph.sharedArrays().size(); ++i)
+        {
+            const auto& shared = graph.sharedArrays()[i];
+            source += wgslWorkgroupArray(
+                shared.elementType, "s" + std::to_string(i), shared.elements);
+        }
+
+        for (auto elementType: graph.groupReductionTypes())
+            source += wgslWorkgroupArray(
+                elementType, groupScratchName(elementType), threadsPerGroup(graph));
+
+        source += simdMatrixScratchDeclaration(graph, "var<workgroup>");
+
+        if (declaresGroupMemory(graph))
+            source += "\n";
+
+        const auto group = graph.threadGroupShape();
+
+        source +=
+            "@compute @workgroup_size(" + std::to_string(group.x) + ", "
+            + std::to_string(group.y) + ", " + std::to_string(group.z)
+            + ")\nfn computeMain(@builtin(global_invocation_id) threadId: vec3u";
+
+        if (graph.usesLocalId())
+            source += ",\n    @builtin(local_invocation_id) localThread: vec3u";
+
+        if (graph.usesGroupId())
+            source += ",\n    @builtin(workgroup_id) groupIndex: vec3u";
+
+        if (graph.usesGroupReduction() || graph.usesSimdGroups())
+            source += ",\n    @builtin(local_invocation_index) groupLane: u32";
+
+        source += ")\n{\n";
+
+        auto indexType = indexValueType(rank);
+        auto swizzle = std::string(indexSwizzle(rank));
+
+        source += "    " + declaration(backend, indexType, "gid", false)
+                  + " = threadId" + swizzle + ";\n";
+
+        if (graph.usesLocalId())
+            source += "    " + declaration(backend, indexType, "lid", false)
+                      + " = localThread" + swizzle + ";\n";
+
+        if (graph.usesGroupId())
+            source += "    " + declaration(backend, indexType, "tgid", false)
+                      + " = groupIndex" + swizzle + ";\n";
+    }
     else
     {
         // SRV t<slot> / UAV u<slot> with one shared slot counter, matching the
@@ -3651,7 +4190,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     // thread runs the whole body, and the kernel bounds its own stores
     // against gridCount()/gridWidth()/gridHeight()/gridDepth() instead.
     if (!graph.usesBarrier())
-        source += boundsGuard(rank);
+        source += boundsGuard(rank, backend);
 
     // Stores ride the statement stream like everything else, so the body is
     // one block walk: a write records where it was made, inside whatever
@@ -3668,10 +4207,135 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
     return source;
 }
 
+// The render pair in WGSL: one module, the Metal shape with its attributes
+// moved in front. Both stages share the uniform block and the resources; each
+// entry point uses what it reads. A fragment stage may sample inside control
+// flow a varying decides, which the other three dialects allow and WGSL's
+// uniformity analysis would refuse, so that analysis is turned off for
+// derivatives - which is the whole of what it guards against there.
+std::string emitWgslRender(const ShaderGraph& graph)
+{
+    constexpr auto backend = Backend::WebGPU;
+
+    auto promoted = promotedAttributes(graph);
+    auto varyings = stageVaryings(graph, promoted);
+
+    auto source = std::string {"diagnostic(off, derivative_uniformity);\n\n"};
+    source += helperDefinitions(graph, backend);
+
+    auto hasInputs = !graph.inputs().empty();
+
+    if (hasInputs)
+    {
+        source += "struct VertexIn\n{\n";
+
+        for (auto i = 0; i < graph.inputs().size(); ++i)
+            source += "    @location(" + std::to_string(i) + ") a"
+                      + std::to_string(i) + ": " + wgslTypeName(graph.inputs()[i])
+                      + ",\n";
+
+        source += "};\n\n";
+    }
+
+    source += "struct VertexOut\n{\n    @builtin(position) position: vec4f,\n";
+
+    for (auto i = 0; i < varyings.size(); ++i)
+        source += "    @location(" + std::to_string(i) + ") "
+                  + flatQualifier(backend, varyings[i].type) + "v"
+                  + std::to_string(i) + ": " + wgslTypeName(varyings[i].type)
+                  + ",\n";
+
+    source += "};\n\n";
+
+    if (!graph.uniforms().empty())
+    {
+        auto names = Vector<std::string> {};
+
+        for (auto i = 0; i < graph.uniforms().size(); ++i)
+            names.add("u" + std::to_string(i));
+
+        source += uniformBlock(backend, graph.uniforms(), names, wgslUniformBinding);
+    }
+
+    for (auto i = 0; i < graph.textureCount(); ++i)
+        source += wgslSampledTexture(graph.textureKind(i), i, wgslTextureBinding(i));
+
+    if (graph.textureCount() > 0)
+        source += "\n";
+
+    assert(graph.storageBuffers().size() + wgslBufferBinding(0) <= wgslSamplerBase
+           && "eacp: a render stage's storage buffers would reach the samplers");
+
+    for (auto i = 0; i < graph.storageBuffers().size(); ++i)
+        source += wgslBufferDeclaration(BufferAccess::Read,
+                                        graph.storageElementType(i),
+                                        i,
+                                        wgslBufferBinding(i));
+
+    if (graph.storageBuffers().size() > 0)
+        source += "\n";
+
+    auto vertexRoots = vertexStageRoots(graph);
+
+    source += "@vertex\nfn vertexMain(";
+
+    if (hasInputs)
+        source += "input: VertexIn";
+
+    source += ") -> VertexOut\n{\n";
+
+    auto vertexStage = StageEmitter {graph, backend};
+
+    source += vertexStage.declareArrays(vertexRoots, "    ");
+    source += vertexStage.defineFor(vertexRoots, "    ");
+    source += "    var output: VertexOut;\n";
+    source +=
+        "    output.position = " + vertexStage.printer.ref(graph.position()) + ";\n";
+
+    for (auto i = 0; i < varyings.size(); ++i)
+    {
+        auto value = varyings[i].sourceNode >= 0
+                         ? vertexStage.printer.ref(varyings[i].sourceNode)
+                         : attributeName(backend, varyings[i].attribute);
+
+        source += "    output.v" + std::to_string(i) + " = " + value + ";\n";
+    }
+
+    source += "    return output;\n}\n\n";
+
+    auto fragmentRoots = Vector<int> {graph.fragment()};
+
+    if (graph.discard() >= 0)
+        fragmentRoots.add(graph.discard());
+
+    auto stageRoots = fragmentStageRoots(graph);
+
+    source +=
+        "@fragment\nfn fragmentMain(input: VertexOut) -> @location(0) vec4f\n{\n";
+
+    auto fragmentStage = StageEmitter {graph, backend, promoted.varyingOf};
+    fragmentStage.printer.derivatives = true;
+
+    source += fragmentStage.declareArrays(stageRoots, "    ");
+    source += fragmentStage.emitBlock(ShaderGraph::rootBlock, "    ");
+    source += fragmentStage.defineFor(fragmentRoots, "    ");
+
+    if (graph.discard() >= 0)
+        source += "    if (" + fragmentStage.printer.ref(graph.discard()) + " < "
+                  + floatLiteral(graph.discardThreshold())
+                  + ")\n    {\n        discard;\n    }\n";
+
+    source += "    return " + fragmentStage.printer.ref(graph.fragment()) + ";\n}\n";
+    return source;
+}
+
 std::string emit(const ShaderGraph& graph, Backend backend)
 {
     if (graph.isCompute())
         return emitCompute(graph, backend);
+
+    if (backend == Backend::WebGPU)
+        return emitWgslRender(graph);
 
     auto source = std::string {};
     auto glsl = backend == Backend::Vulkan;
@@ -3956,5 +4620,10 @@ std::string emitHlsl(const ShaderGraph& graph)
 std::string emitGlsl(const ShaderGraph& graph)
 {
     return emit(graph, Backend::Vulkan);
+}
+
+std::string emitWgsl(const ShaderGraph& graph)
+{
+    return emit(graph, Backend::WebGPU);
 }
 } // namespace eacp::GPU

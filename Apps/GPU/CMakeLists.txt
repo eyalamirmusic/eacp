@@ -1,10 +1,21 @@
 set(CMAKE_FOLDER Examples/GPU)
 
-add_subdirectory(Triangle)
+# Hand-written MSL/HLSL/GLSL with no WGSL twin, so the web has nothing to draw.
+if (NOT EMSCRIPTEN)
+    add_subdirectory(Triangle)
+endif ()
+
 add_subdirectory(TriangleGen)
 add_subdirectory(RotatingTriangle)
 add_subdirectory(Teapot)
-add_subdirectory(Compute)
+
+# Compute, AsyncCompute, CpuCompute and PathBench read their results back
+# through a blocking commit() and Buffer::read, which the web cannot do (see
+# the Web section of Lib/eacp/GPU/README.md); AsyncCompute's dispatch is also
+# past WebGPU's 65535 workgroups.
+if (NOT EMSCRIPTEN)
+    add_subdirectory(Compute)
+endif ()
 
 # Compute feeding a draw on one frame: Frame::beginCompute, and a state buffer
 # the CPU never reads back.
@@ -14,13 +25,17 @@ add_subdirectory(ComputeParticles)
 # via threadPosition() and TextureDescriptor::computeWrite.
 add_subdirectory(ComputeImage)
 
-# Non-blocking submission: CommandBuffer::commitAsync overlapping GPU work with
-# the CPU, measured against the blocking commit.
-add_subdirectory(AsyncCompute)
+if (NOT EMSCRIPTEN)
+    # Non-blocking submission: CommandBuffer::commitAsync overlapping GPU work
+    # with the CPU, measured against the blocking commit.
+    add_subdirectory(AsyncCompute)
 
-# One kernel on both backends: ComputePass on the GPU and CpuCompute::Executor
-# on the CPU, compared and timed, and the CPU path alone where no device is.
-add_subdirectory(CpuCompute)
+    # One kernel on both backends: ComputePass on the GPU and
+    # CpuCompute::Executor on the CPU, compared and timed, and the CPU path
+    # alone where no device is.
+    add_subdirectory(CpuCompute)
+endif ()
+
 add_subdirectory(Paths)
 
 # Analytic antialiasing in a kernel: coverage computed per pixel from a path's
@@ -29,7 +44,9 @@ add_subdirectory(PathCoverage)
 
 # Headless: what a rasterization costs on the CPU against what it costs on the
 # GPU, which is the split that decides what is worth moving between them.
-add_subdirectory(PathBench)
+if (NOT EMSCRIPTEN)
+    add_subdirectory(PathBench)
+endif ()
 add_subdirectory(Texture)
 add_subdirectory(Maze)
 add_subdirectory(Sprites)

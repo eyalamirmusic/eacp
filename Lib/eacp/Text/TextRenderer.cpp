@@ -18,6 +18,14 @@ void TextRenderer::setViewport(Graphics::Point size, float scale)
     deviceScale = scale > 0.0f ? scale : 1.0f;
 }
 
+void TextRenderer::setSampleCount(int count)
+{
+    sampleCount = count;
+
+    if (glyphs.has_value())
+        glyphs->setSampleCount(count);
+}
+
 void TextRenderer::setFont(const Font& font)
 {
     defaultFont = font;
@@ -89,7 +97,10 @@ void TextRenderer::begin()
     rebuildIfNeeded();
 
     if (!glyphs.has_value())
+    {
         glyphs.emplace();
+        glyphs->setSampleCount(sampleCount);
+    }
 
     glyphs->setViewportSize(viewportSize);
     glyphs->begin();

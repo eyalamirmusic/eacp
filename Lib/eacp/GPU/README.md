@@ -2288,6 +2288,20 @@ Notes worth having:
   (the emitter declares a written texture as a `writeonly image2D` with no
   format qualifier). A device missing one is not used, rather than used until it
   fails.
+- **A 1.1 or 1.2 device reaches the same floor through extensions.** Phone
+  drivers lag the hardware: a Galaxy S22's Adreno 730 reports 1.1 under a 1.4
+  loader. Such a device is taken when it offers `VK_KHR_synchronization2`,
+  `VK_KHR_timeline_semaphore` and `VK_EXT_descriptor_indexing` with the same
+  features, plus `VK_KHR_create_renderpass2` and `VK_KHR_depth_stencil_resolve`
+  in place of dynamic rendering. `createDevice` enables them, chains their
+  feature structs in place of `VkPhysicalDeviceVulkan12/13Features`, and points
+  volk's core entry points (`vkCmdPipelineBarrier2`, `vkQueueSubmit2`,
+  `vkCmdWriteTimestamp2`, `vkWaitSemaphores`, `vkGetSemaphoreCounterValue`,
+  `vkCreateRenderPass2`) at the `KHR` ones, so no call site branches: the
+  structures and `_2_` flags are the same values. The instance asks for the
+  loader's version capped at 1.3, VMA for 1.1, and glslang writes SPIR-V 1.3 for
+  Vulkan 1.1 — 1.4 where `VK_KHR_spirv_1_4` is offered and enabled.
+  The log line at device creation says which path was taken.
 - **eacp ships its own shader compiler here**, which it does on neither other
   backend: GLSL 450 through glslang into SPIR-V, at a fixed ~2 MB per binary and
   a one-time ~90 ms symbol-table build that `VulkanShared` pays at device
@@ -2330,7 +2344,19 @@ Notes worth having:
   encoder as `Frame::timePass` writes them, and the pool reset and the buffer's
   own two queries recorded by the first labelled pass. A command buffer that
   labelled nothing creates no pool.
-- **A pass is one `vkCmdBeginRendering`; there is no `VkRenderPass`.**
+- **A pass is one `vkCmdBeginRendering` on a 1.3 device.** Below 1.3 (or with
+  `EACP_VK_RENDER_PASSES=1`, which is how a 1.3 device tests it) the same
+  `VkRenderingInfo` is turned into a `VkRenderPass` of one subpass with the same
+  attachments, ops and resolves — depth through
+  `VkSubpassDescriptionDepthStencilResolve` — and a framebuffer, both cached in
+  `VulkanRenderPassCache` (`Vulkan/VulkanRenderPass-Linux.cpp`): render passes by
+  formats, samples, ops and resolves, framebuffers by render pass, views and
+  extent, dropped when a view they name is destroyed. Every attachment's initial,
+  subpass and final layout is the one the barriers around the pass already put
+  it in, so the render pass moves nothing and the barriers stay the only
+  transitions on both paths. A pipeline names a render pass with its formats and
+  sample count, load/store ops and resolves not deciding compatibility for one
+  subpass.
   `DepthAction` is the attachment's load and store ops — `Clear` is
   `CLEAR`/`DONT_CARE`, `Keep` is `CLEAR`/`STORE`, `Resume` is `LOAD`/`STORE`,
   never Vulkan's own suspend/resume. A multisampled target draws into its
@@ -2522,3 +2548,128 @@ docker run --rm -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_GPU=1 \
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
     -R '^(X11|EmbeddedView|Present)/'
 ```
+
+## Web
+
+The web's GPU backend: WebGPU through Emscripten's Dawn port
+(`--use-port=emdawnwebgpu`, `<webgpu/webgpu.h>`), shaders in WGSL from the
+emitter (`Codegen/ShaderBuilder-Web.cpp`). WebGPU is shaped like Metal - clip
+space y up, framebuffer y down, depth 0..1, explicit passes, pipeline objects -
+so most of this is the Metal backend spelled in `wgpu*` calls. What follows is
+where it is not, decided once here.
+
+Nothing blocks the browser's main thread: there is no ASYNCIFY and no JSPI, and
+a wait on the main thread never ends, because the GPU's answer arrives as a task
+the browser runs only once control goes back to it.
+
+### The device arrives from the page
+
+Requesting a device is a promise, and `Device`'s constructor is synchronous. So
+the page's shell (`CMake/WebShell.html`) requests the adapter and device in
+`preRun`, holding `main` back on the `webgpu` run dependency, and leaves the
+device on `Module.preinitializedWebGPUDevice`; `WebGPUShared` takes it with
+`emscripten_webgpu_get_device()`. The shell asks for `float32-filterable`,
+`timestamp-query`, `texture-compression-bc` and `depth32float-stencil8` where the
+adapter has them, and the adapter's own limits for vertex attributes, colour
+attachments, bind groups, inter-stage variables, per-stage bindings and
+workgroup storage.
+
+Every `GPU::Device` draws through that one device; a Device's own state is its
+uniform ring and its submission count (`WebGPUContext`).
+
+Errors arrive later than the call that caused them. Shader modules log their
+WGSL errors with line numbers, pipeline creation runs inside a validation
+error scope and logs what fails, and anything else reaches the console through
+the device's `uncapturederror` event (`eacp WebGPU: ...`).
+
+### One bind group, reflected
+
+Every pipeline has one bind group, numbered as `Codegen/WgslBindings.h` says
+(the Vulkan numbers, plus a sampler per sampled texture slot at 32 + slot). The
+layout is reflected from the WGSL declarations themselves, as the Vulkan
+backend reflects SPIR-V, so a stage that declares nothing binds nothing.
+
+WGSL says `sampler` and `texture_2d<f32>` whatever the sampling, and a WebGPU
+layout has to say more, so the sampling each slot was declared with rides on
+`ShaderSource::bindings`:
+
+- **Nearest**: a non-filtering sampler and an `unfilterable-float` texture,
+  which every float format takes - `R32Float` included, on a device without
+  `float32-filterable`.
+- **Linear**: a filtering sampler and a `float` texture. `R32Float` and
+  `RGBA32Float` there need `float32-filterable`.
+- **A depth texture** always gets a non-filtering sampler.
+
+A bind at a Linear sampling into a Nearest slot takes the nearest sampler, a
+linear one being invalid there. A slot the shader declares and nothing bound
+gets a 1x1 placeholder (or a zeroed buffer), WebGPU having no partially bound
+groups. A new uniform block alone only moves the group's dynamic offset.
+
+### Uniforms: one block, a ring, one write per page
+
+`setVertexBytes` and `setFragmentBytes` set the one uniform block both stages
+see, as on Vulkan. Blocks are staged on the CPU in 256 KiB pages at
+`minUniformBufferOffsetAlignment` (256), bound by dynamic offset, and written
+with one `writeBuffer` per page when the recording is submitted - before any
+command naming them can run. The ring rewinds whenever no recording is open.
+
+### Uploads are queue writes
+
+`Buffer` and `Texture` writes are `writeBuffer` / `writeTexture`, ordered on the
+queue ahead of the next submission. That makes them Metal's shared-memory
+`memcpy` rather than Vulkan's recorded copy: a write in the middle of a frame is
+seen by draws recorded earlier in that frame. `update` and `updateUnordered` are
+the same call, the queue already being the ordering. `writeBuffer` takes whole
+words, so buffers are allocated rounded up to four and an update at an offset
+off the four-byte grid is refused.
+
+### Pipelines follow the pass's depth attachment
+
+WebGPU refuses a pipeline whose depth format differs from the pass it is drawn
+in, which Metal and Vulkan let through - and a HUD without a depth test drawn at
+the end of a depth-tested pass is the ordinary case. `setPipeline` builds (once,
+and keeps) a variant of the pipeline for the pass's depth format: no depth test
+and no write where the pipeline asked for none. Depth is `Depth32Float`, and
+`Depth24PlusStencil8` with a stencil plane.
+
+### The canvas
+
+A `GPUView` configures the page's canvas (`NativeSurfaceHandle::Kind::Canvas`)
+at its pixel size - CSS size times `devicePixelRatio` - with `BGRA8Unorm`,
+opaque and FIFO, and reconfigures on resize. `BGRA8Unorm` rather than the
+browser's preferred format: it is what `RenderPipelineDescriptor::colorFormat`
+defaults to, and every canvas takes it, so pipelines built for the default draw
+into it anywhere. Each frame takes `getCurrentTexture`; the browser presents
+it when the task returns, so there is no present call.
+
+Multisampling is 1 or 4, which is all WebGPU has. There is no depth resolve, so
+a multisampled `sampleableDepth` target is invalid.
+
+### Unsupported without JSPI
+
+Each logs once and returns:
+
+- `Buffer::read` of a device buffer. A `BufferStorage::Streaming` buffer reads
+  back its CPU copy, as it maps on the other backends.
+- `Texture::read`, and so `GPUView::renderNativeContent`.
+- `CommandBuffer::wait` and the wait in `commit()`, and
+  `Device::waitForSubmittedWork`, while work is outstanding.
+  `CommandBuffer::commitAsync` and `isComplete` work, from the queue's
+  work-done callback.
+
+### Timings
+
+Pass timings use `timestamp-query` where the device has it: each labelled pass
+writes a pair through the pass descriptor, resolved at the end of the frame and
+mapped a frame or more later, as `FrameTimer` expects. WebGPU has no
+command-level timestamp, so `FrameTimings::milliseconds` spans the labelled
+passes, from the first beginning to the last ending, and is zero in a frame
+that labels none.
+
+### Limits
+
+A pipeline over `maxVertexAttributes` (16 by default) or `maxVertexBuffers`,
+or a shader over a per-stage binding limit, is refused with a log naming both
+numbers. A dispatch over `maxComputeWorkgroupsPerDimension` (65535) groups is a
+WebGPU validation error. The emitter declares a writable texture as
+`rgba8unorm`, so a `computeWrite` texture in another format does not bind.

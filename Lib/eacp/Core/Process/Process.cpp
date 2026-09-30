@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "../Platform/Platform.h"
 
 #include <thread>
 
@@ -35,6 +36,14 @@ ProcessResult run(const std::string& executable,
 Threads::Async<ProcessResult> runAsync(ProcessOptions options)
 {
     auto promise = Threads::AsyncPromise<ProcessResult> {};
+
+    // No threads on the web, and nothing to spawn: run() answers at once.
+    if constexpr (Platform::isWeb())
+    {
+        Threads::callAsync([promise, result = run(std::move(options))]() mutable
+                           { promise.resolve(std::move(result)); });
+        return promise.get();
+    }
 
     std::thread(
         [promise, options = std::move(options)]() mutable

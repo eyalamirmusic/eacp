@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>eacp</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh;
+           touch-action: none; outline: none; }
+  #eacp-message { position: fixed; inset: 0; display: none; align-items: center;
+                  justify-content: center; padding: 16px; color: #eee;
+                  font: 16px/1.4 system-ui, sans-serif; text-align: center; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="eacp-message"></div>
+<script>
+  function eacpShowMessage(text) {
+    var message = document.getElementById('eacp-message');
+    message.textContent = text;
+    message.style.display = 'flex';
+  }
+
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: function (text) { console.log(text); },
+    printErr: function (text) { console.error(text); },
+
+    // The device is asked for before main() runs, since WebGPU's requests are
+    // promises and main() cannot wait on one. emdawnwebgpu hands it to the
+    // app through emscripten_webgpu_get_device().
+    preRun: [function () {
+      Module.addRunDependency('webgpu');
+
+      var fail = function (text) {
+        eacpShowMessage(text);
+        console.error(text);
+      };
+
+      if (!navigator.gpu) {
+        fail('This page needs WebGPU, which this browser does not offer.');
+        return;
+      }
+
+      navigator.gpu.requestAdapter().then(function (adapter) {
+        if (!adapter) {
+          fail('WebGPU is present but found no adapter.');
+          return;
+        }
+
+        var wanted = ['float32-filterable', 'timestamp-query',
+                      'texture-compression-bc', 'depth32float-stencil8'];
+        var limits = ['maxVertexAttributes', 'maxColorAttachments',
+                      'maxBindGroups', 'maxInterStageShaderVariables',
+                      'maxStorageBuffersPerShaderStage',
+                      'maxSampledTexturesPerShaderStage',
+                      'maxSamplersPerShaderStage',
+                      'maxComputeWorkgroupStorageSize'];
+        var requiredLimits = {};
+
+        limits.forEach(function (name) {
+          if (adapter.limits[name] !== undefined)
+            requiredLimits[name] = adapter.limits[name];
+        });
+
+        return adapter.requestDevice({
+          requiredFeatures: wanted.filter(function (f) {
+            return adapter.features.has(f);
+          }),
+          requiredLimits: requiredLimits
+        }).then(function (device) {
+          Module.preinitializedWebGPUDevice = device;
+          Module.removeRunDependency('webgpu');
+        });
+      }).catch(function (error) {
+        fail('WebGPU device request failed: ' + error);
+      });
+    }]
+  };
+
+  Module.canvas.focus();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

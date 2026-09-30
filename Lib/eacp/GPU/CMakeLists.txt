@@ -23,6 +23,8 @@ if (APPLE)
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Apple.cpp)
 elseif (WIN32)
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Windows.cpp)
+elseif (EMSCRIPTEN)
+    target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Web.cpp)
 else ()
     target_sources(eacp-gpu-codegen PRIVATE Codegen/ShaderBuilder-Linux.cpp)
 endif ()
@@ -103,6 +105,29 @@ elseif (WIN32)
             d3dcompiler
             windowsapp
             runtimeobject)
+elseif (EMSCRIPTEN)
+    # WebGPU through Emscripten's Dawn port (CMake/WebSetup.cmake), presenting
+    # to the page's canvas through the NativeSurfaceHandle in
+    # Graphics/View/View-Linux.h. No Vulkan, and no SPIR-V: shaders are WGSL.
+    target_sources(eacp-gpu PRIVATE
+            Buffer/Buffer-Web.cpp
+            CommandBuffer/CommandBuffer-Web.cpp
+            Device/Device-Web.cpp
+            Frame/ComputePass-Web.cpp
+            Frame/Frame-Web.cpp
+            Frame/RenderPass-Web.cpp
+            Pipeline/ComputePipeline-Web.cpp
+            Pipeline/RenderPipeline-Web.cpp
+            Shader/ShaderLibrary-Web.cpp
+            Texture/Texture-Web.cpp
+            Timing/GpuTimestamps-Web.cpp
+            View/GPUView-Web.cpp
+            WebGPU/WebGPUBindings-Web.cpp
+            WebGPU/WebGPUContext-Web.cpp)
+
+    # PUBLIC: an app links the port's JS library, and must name it itself.
+    target_compile_options(eacp-gpu PUBLIC ${EACP_WEB_WEBGPU_OPTIONS})
+    target_link_options(eacp-gpu PUBLIC ${EACP_WEB_WEBGPU_OPTIONS})
 else ()
     # The Vulkan backend. Nothing here links a window system: the connection,
     # surface and window it presents to arrive as a NativeSurfaceHandle, and
@@ -131,7 +156,14 @@ else ()
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
-            Vulkan/VulkanContext-Linux.cpp)
+            Vulkan/VulkanContext-Linux.cpp
+            Vulkan/VulkanRenderPass-Linux.cpp)
+
+    if (ANDROID)
+        target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Android.cpp)
+    else ()
+        target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Linux.cpp)
+    endif ()
 
     # Both PRIVATE: neither Vulkan nor glslang reaches past this library.
     target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)

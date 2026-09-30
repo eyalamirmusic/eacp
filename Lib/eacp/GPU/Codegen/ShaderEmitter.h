@@ -6,9 +6,9 @@ namespace eacp::GPU
 {
 class ShaderGraph;
 
-// Emit native shader source for a graph. All three dialects are produced by one
+// Emit native shader source for a graph. All four dialects are produced by one
 // shared walker, so they stay in lockstep by construction. Pure string
-// generation with no platform APIs, so all three can be produced and tested on
+// generation with no platform APIs, so all four can be produced and tested on
 // any host regardless of which one the platform actually compiles.
 std::string emitMetal(const ShaderGraph& graph);
 std::string emitHlsl(const ShaderGraph& graph);
@@ -16,6 +16,10 @@ std::string emitHlsl(const ShaderGraph& graph);
 // GLSL 450 for Vulkan. Both render stages share one string, each behind
 // #ifdef EACP_VERTEX / EACP_FRAGMENT; a kernel has one unguarded main().
 std::string emitGlsl(const ShaderGraph& graph);
+
+// WGSL for WebGPU: one module holding vertexMain and fragmentMain, or
+// computeMain. Resources sit in @group(0) at the bindings WgslBindings.h names.
+std::string emitWgsl(const ShaderGraph& graph);
 
 // Whether a stage's expressions read a uniform at all - the same answer the
 // emitter declares the Metal function parameter from, so a bind cannot disagree

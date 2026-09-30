@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.31)
 project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
-if (CMAKE_SIZEOF_VOID_P EQUAL 4)
+# wasm32 is the one 32-bit target: the browser's memory is 32-bit addressed.
+if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT EMSCRIPTEN)
     message(FATAL_ERROR
             "eacp requires a 64-bit toolchain (x64 or ARM64), but the "
             "selected compiler targets 32-bit "
@@ -31,6 +32,12 @@ endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 
+# Before any target, the fetched dependencies included: every translation unit
+# in a wasm link must agree on the exception model.
+if (EMSCRIPTEN)
+    include(WebSetup)
+endif ()
+
 # Before anything that fetches or probes: it decides how loud they are.
 include(ConfigureLog)
 
@@ -56,6 +63,26 @@ if (NOT EACP_BUILD_GRAPHICS)
             "Build the WebView module" FORCE)
 endif ()
 
+if (ANDROID AND ANDROID_PLATFORM_LEVEL LESS 33)
+    message(FATAL_ERROR
+            "eacp needs Android 13 or later: configure with -DANDROID_PLATFORM=android-33 "
+            "(or higher); this build targets API ${ANDROID_PLATFORM_LEVEL}.")
+endif ()
+
+if (ANDROID)
+    if (DEFINED ANDROID_NDK_MAJOR)
+        set(eacp_ndk_major "${ANDROID_NDK_MAJOR}")
+    else ()
+        string(REGEX MATCH "^[0-9]+" eacp_ndk_major "${CMAKE_ANDROID_NDK_VERSION}")
+    endif ()
+    if (eacp_ndk_major LESS 30)
+        message(FATAL_ERROR
+                "eacp builds with the current stable NDK, r30; this build uses "
+                "NDK ${eacp_ndk_major}, which is not supported: "
+                "sdkmanager \"ndk;30.0.16248370\"")
+    endif ()
+endif ()
+
 # What this host can do, decided once and read by Lib, Apps and Tests.
 #
 #   EACP_HAS_DRAW    a windowing system to put views in: Graphics.
@@ -65,21 +92,30 @@ endif ()
 #   EACP_HAS_CAPTURE Camera, CameraView, Video, VideoView.
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
+#   EACP_HAS_NETWORK an HTTP client backend: Network, and the WebView page
+#                    bridge over its RPC. Everywhere but Android, whose NDK
+#                    has no libcurl, and the web, which has no sockets.
+set(EACP_HAS_NETWORK ON)
+
+if (ANDROID OR EMSCRIPTEN)
+    set(EACP_HAS_NETWORK OFF)
+endif ()
+
 set(EACP_HAS_DRAW OFF)
 
-if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX))
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_DRAW ON)
 endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_GPU ON)
 endif ()
 
 set(EACP_HAS_TEXT OFF)
 
-if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX))
+if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID OR EMSCRIPTEN))
     set(EACP_HAS_TEXT ON)
 endif ()
 
