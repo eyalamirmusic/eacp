@@ -41,9 +41,9 @@ Color colorFor(int id)
     return palette[((id % count) + count) % count];
 }
 
-float radiusFor(float pressure)
+float discRadius(float touchRadius)
 {
-    return 36.f + 28.f * std::min(pressure, 2.f);
+    return touchRadius > 0.f ? std::clamp(touchRadius, 12.f, 120.f) : 36.f;
 }
 
 std::string format(const char* pattern, auto... args)
@@ -57,7 +57,7 @@ struct Finger final
 {
     int id = 0;
     Point pos;
-    float pressure = 1.f;
+    float radius = 0.f;
 };
 
 struct TouchView final : GPU::GPUView
@@ -71,7 +71,7 @@ struct TouchView final : GPU::GPUView
 
     void touchBegan(const TouchEvent& event) override
     {
-        fingers.add({event.id, event.pos, event.pressure});
+        fingers.add({event.id, event.pos, event.radius});
         repaint();
     }
 
@@ -80,7 +80,7 @@ struct TouchView final : GPU::GPUView
         if (auto* finger = find(event.id))
         {
             finger->pos = event.pos;
-            finger->pressure = event.pressure;
+            finger->radius = event.radius;
         }
 
         repaint();
@@ -90,7 +90,7 @@ struct TouchView final : GPU::GPUView
 
     void mouseDown(const MouseEvent& event) override
     {
-        fingers.add({mouseId, event.pos, 1.f});
+        fingers.add({mouseId, event.pos});
         repaint();
     }
 
@@ -152,7 +152,7 @@ struct TouchView final : GPU::GPUView
 
     void drawFinger(const Finger& finger, Point size)
     {
-        auto radius = radiusFor(finger.pressure);
+        auto radius = discRadius(finger.radius);
         auto color = colorFor(finger.id);
         auto ring = radius + 6.f;
         auto [x, y] = finger.pos;
@@ -163,7 +163,7 @@ struct TouchView final : GPU::GPUView
         shapes->drawRect(
             {x - ring, y - ring, ring * 2.f, ring * 2.f}, color, 3.f, ring);
 
-        auto label = format("#%d %.0f,%.0f r%.0f", finger.id, x, y, radius);
+        auto label = format("#%d %.0f,%.0f r%.0f", finger.id, x, y, finger.radius);
         auto width = text.measure(label);
         auto right = size.x - getSafeAreaInsets().right;
         auto left =
