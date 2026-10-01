@@ -1350,17 +1350,23 @@ struct WebView::Native
 
     void handleMouseWheel(const MouseEvent& event)
     {
-        // event.delta is in WHEEL_DELTA units; WebView2 expects the same value
-        // packed into mouseData. y drives the vertical wheel, x the horizontal.
+        // event.delta is in lines; WebView2 expects WHEEL_DELTA units packed
+        // into mouseData. y drives the vertical wheel, x the horizontal.
+        auto toWheelDelta = [](float lines)
+        {
+            return static_cast<uint32_t>(
+                static_cast<int32_t>(lines * static_cast<float>(WHEEL_DELTA)));
+        };
+
         if (event.delta.y != 0.f)
             sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_WHEEL,
                       event.pos,
-                      static_cast<uint32_t>(static_cast<int32_t>(event.delta.y)));
+                      toWheelDelta(event.delta.y));
 
         if (event.delta.x != 0.f)
             sendMouse(COREWEBVIEW2_MOUSE_EVENT_KIND_HORIZONTAL_WHEEL,
                       event.pos,
-                      static_cast<uint32_t>(static_cast<int32_t>(event.delta.x)));
+                      toWheelDelta(event.delta.x));
     }
 
     // --- Native file drag-out -----------------------------------------------
