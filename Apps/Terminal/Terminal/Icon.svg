@@ -1,0 +1,107 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Rose Pine backdrop: deep base graded toward a warmer overlay -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#232136"/>
+      <stop offset="0.55" stop-color="#191724"/>
+      <stop offset="1" stop-color="#12101c"/>
+    </linearGradient>
+
+    <!-- Glass sheen swept across the window -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.4" stop-color="#ffffff" stop-opacity="0.02"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Rose -> Iris accent, reused for horns and prompt -->
+    <linearGradient id="prompt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eb6f92"/>
+      <stop offset="1" stop-color="#c4a7e7"/>
+    </linearGradient>
+
+    <!-- Foam accent for the title bar hairline -->
+    <linearGradient id="hair" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#eb6f92" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#9ccfd8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#c4a7e7" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softshadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="26" stdDeviation="34" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+
+    <clipPath id="tileClip">
+      <rect x="112" y="112" width="800" height="800" rx="196"/>
+    </clipPath>
+  </defs>
+
+  <!-- App tile: superellipse-ish rounded square -->
+  <rect x="112" y="112" width="800" height="800" rx="196" fill="url(#bg)" filter="url(#softshadow)"/>
+
+  <!-- Faint cow-print spots on the tile, clipped inside the corners -->
+  <g clip-path="url(#tileClip)" fill="#c4a7e7" fill-opacity="0.06">
+    <path d="M 150 220 q 70 -50 120 -6 q 44 40 -8 84 q -70 40 -108 -8 q -34 -44 -4 -70 z"/>
+    <path d="M 840 300 q 54 -30 78 22 q 18 46 -34 62 q -60 16 -70 -34 q -8 -38 26 -50 z"/>
+    <path d="M 800 760 q 66 -20 92 34 q 20 52 -40 72 q -70 20 -86 -40 q -12 -50 34 -66 z"/>
+  </g>
+
+  <rect x="112" y="112" width="800" height="800" rx="196" fill="none" stroke="#56526e" stroke-opacity="0.35" stroke-width="2"/>
+
+  <!-- Terminal window -->
+  <g filter="url(#softshadow)">
+    <rect x="212" y="252" width="600" height="520" rx="52" fill="#1f1d2e"/>
+    <rect x="212" y="252" width="600" height="520" rx="52" fill="url(#sheen)"/>
+    <rect x="212" y="252" width="600" height="520" rx="52" fill="none" stroke="#403d52" stroke-width="2"/>
+  </g>
+
+  <!-- Title bar traffic lights -->
+  <circle cx="272" cy="312" r="15" fill="#eb6f92"/>
+  <circle cx="320" cy="312" r="15" fill="#f6c177"/>
+  <circle cx="368" cy="312" r="15" fill="#9ccfd8"/>
+
+  <!-- Title bar hairline -->
+  <rect x="236" y="356" width="552" height="2" fill="url(#hair)"/>
+
+  <!-- The hero: a cow, framed by the terminal window -->
+  <g>
+    <!-- Ears, behind the head -->
+    <ellipse cx="378" cy="512" rx="46" ry="30" fill="#e0def4" transform="rotate(-28 378 512)"/>
+    <ellipse cx="378" cy="512" rx="22" ry="14" fill="#ebbcba" transform="rotate(-28 378 512)"/>
+    <ellipse cx="646" cy="512" rx="46" ry="30" fill="#e0def4" transform="rotate(28 646 512)"/>
+    <ellipse cx="646" cy="512" rx="22" ry="14" fill="#ebbcba" transform="rotate(28 646 512)"/>
+
+    <!-- Horns, gently glowing -->
+    <g filter="url(#glow)">
+      <path d="M 430 470 q -34 -8 -46 -46 q 30 6 46 34 z" fill="url(#prompt)"/>
+      <path d="M 594 470 q 34 -8 46 -46 q -30 6 -46 34 z" fill="url(#prompt)"/>
+    </g>
+
+    <!-- Head -->
+    <ellipse cx="512" cy="556" rx="150" ry="132" fill="#e0def4"/>
+
+    <!-- A cow spot over the brow -->
+    <path d="M 452 470 q 60 -34 104 6 q 30 34 -6 62 q -58 34 -104 -8 q -26 -36 6 -60 z"
+          fill="#26233a" fill-opacity="0.9"/>
+
+    <!-- Eyes -->
+    <ellipse cx="462" cy="560" rx="15" ry="19" fill="#191724"/>
+    <ellipse cx="562" cy="560" rx="15" ry="19" fill="#191724"/>
+
+    <!-- Muzzle + nostrils -->
+    <ellipse cx="512" cy="636" rx="98" ry="64" fill="#ebbcba"/>
+    <ellipse cx="480" cy="636" rx="13" ry="18" fill="#7a3b52"/>
+    <ellipse cx="544" cy="636" rx="13" ry="18" fill="#7a3b52"/>
+  </g>
+
+  <!-- Prompt cursor beneath the cow, keeping the terminal read -->
+  <rect x="474" y="716" width="76" height="20" rx="10" fill="url(#prompt)"/>
+</svg>

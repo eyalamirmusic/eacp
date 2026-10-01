@@ -145,6 +145,26 @@ struct TrayIcon::Native
 
     void setOnClick(Callback callback) { onClick = std::move(callback); }
 
+    void setOnNotificationClick(Callback callback)
+    {
+        onNotificationClick = std::move(callback);
+    }
+
+    void showNotification(const std::string& title, const std::string& body)
+    {
+        if (!messageWindow)
+            return;
+
+        auto wideTitle = toWideString(title);
+        auto wideBody = toWideString(body);
+        lstrcpynW(nid.szInfoTitle, wideTitle.c_str(), ARRAYSIZE(nid.szInfoTitle));
+        lstrcpynW(nid.szInfo, wideBody.c_str(), ARRAYSIZE(nid.szInfo));
+
+        nid.uFlags |= NIF_INFO;
+        nid.dwInfoFlags = NIIF_NONE | NIIF_RESPECT_QUIET_TIME;
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+
     HMENU buildMenu(const Menu& menu)
     {
         auto* hmenu = CreatePopupMenu();
@@ -268,6 +288,19 @@ struct TrayIcon::Native
                 case WM_CONTEXTMENU:
                     self->showMenu();
                     break;
+
+                case NIN_BALLOONUSERCLICK:
+                    if (self->onNotificationClick)
+                    {
+                        auto cb = self->onNotificationClick;
+                        Threads::callAsync(
+                            [cb]
+                            {
+                                if (cb)
+                                    cb();
+                            });
+                    }
+                    break;
             }
             return 0;
         }
@@ -288,6 +321,7 @@ struct TrayIcon::Native
     UINT nextCommandId = 1;
     UINT taskbarCreatedMessage = 0;
     Callback onClick;
+    Callback onNotificationClick;
 };
 
 TrayIcon::TrayIcon() = default;
@@ -315,5 +349,15 @@ void TrayIcon::setOnClick(Callback callback)
 
 // Template rendering is a macOS menu-bar concept; nothing to do here.
 void TrayIcon::setTemplateRendering(bool) {}
+
+void TrayIcon::showNotification(const std::string& title, const std::string& body)
+{
+    impl->showNotification(title, body);
+}
+
+void TrayIcon::setOnNotificationClick(Callback callback)
+{
+    impl->setOnNotificationClick(std::move(callback));
+}
 
 } // namespace eacp::Graphics
