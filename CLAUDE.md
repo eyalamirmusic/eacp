@@ -90,9 +90,19 @@ Android (NDK r30, API 33+, Vulkan 1.1) is Linux without Wayland: CMake's
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
 over `android.graphics` through JNI. `eacp_add_app` builds an example as an
-executable, or on Android as a shared library with `<target>-apk` and
-`<target>-run` (`Scripts/android-run`: boot an emulator if none is attached,
-install, launch, show logcat). README's "Android" section has the toolchain.
+executable, or on Android as a shared library with `<target>-apk` (stripped in
+Release) and `<target>-run` (`Scripts/android-run.cmake`: wake the phone,
+install, launch, show logcat; with no phone, boot the `eacp` AVD the setup
+makes, wherever Google ships an emulator for the host). The
+Android scripts are CMake scripts run with `cmake -P`, so no host needs a
+shell; `Scripts/android-common.cmake` is what they share. The NDK,
+build-tools and platform versions live in `CMake/AndroidVersions.cmake` alone;
+`cmake -P Scripts/android-setup.cmake` installs them into `~/.eacp/android`
+(or `$ANDROID_HOME`), and `cmake --preset android` (`CMakePresets.json`,
+`CMake/AndroidToolchain.cmake`) builds against them into `build-android`. On
+Android `ResEmbed`'s generator is `CMake/ResEmbedGenerator.cmake`, run by
+CMake, so no host compiler is needed. `Apps/Android/README.md` is the
+step-by-step guide.
 
 ## Build Commands
 

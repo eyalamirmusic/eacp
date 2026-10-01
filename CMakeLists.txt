@@ -63,16 +63,19 @@ if (ANDROID AND ANDROID_PLATFORM_LEVEL LESS 33)
 endif ()
 
 if (ANDROID)
+    include(AndroidVersions)
+
     if (DEFINED ANDROID_NDK_MAJOR)
         set(eacp_ndk_major "${ANDROID_NDK_MAJOR}")
     else ()
         string(REGEX MATCH "^[0-9]+" eacp_ndk_major "${CMAKE_ANDROID_NDK_VERSION}")
     endif ()
-    if (eacp_ndk_major LESS 30)
+    string(REGEX MATCH "^[0-9]+" eacp_ndk_wanted "${EACP_ANDROID_NDK_VERSION}")
+    if (eacp_ndk_major LESS eacp_ndk_wanted)
         message(FATAL_ERROR
-                "eacp builds with the current stable NDK, r30; this build uses "
-                "NDK ${eacp_ndk_major}, which is not supported: "
-                "sdkmanager \"ndk;30.0.16248370\"")
+                "eacp builds with NDK ${EACP_ANDROID_NDK_VERSION}; this build uses "
+                "NDK ${eacp_ndk_major}, which is not supported: configure with "
+                "cmake --preset android, after cmake -P Scripts/android-setup.cmake")
     endif ()
 endif ()
 

@@ -3,15 +3,19 @@
 #                      [ICON <@mipmap/name>])
 #
 # Adds <target>-apk: the shared library <target> behind a NativeActivity,
-# packaged and debug-signed by Scripts/android-apk (no Gradle). The APK lands
-# at ${CMAKE_CURRENT_BINARY_DIR}/<target>.apk.
+# packaged and debug-signed by Scripts/android-apk.cmake (no Gradle). The APK
+# lands at ${CMAKE_CURRENT_BINARY_DIR}/<target>.apk.
 #
 # And <target>-run, which builds the APK, then installs and launches it through
-# Scripts/android-run on the device adb sees, booting an emulator ($EACP_AVD,
-# or the first AVD) when none is attached.
+# Scripts/android-run.cmake on the device adb sees: a phone over USB, or an
+# emulator it boots ($EACP_AVD, or the first AVD) where the host has one.
 
-set(EACP_ANDROID_APK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-apk")
-set(EACP_ANDROID_RUN_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-run")
+include("${CMAKE_CURRENT_LIST_DIR}/AndroidVersions.cmake")
+
+# CMake scripts, so they run the same with no shell on any host.
+set(EACP_ANDROID_APK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-apk.cmake")
+set(EACP_ANDROID_RUN_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-run.cmake")
+set(EACP_ANDROID_COMMON_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-common.cmake")
 set(EACP_ANDROID_MANIFEST_TEMPLATE
         "${CMAKE_CURRENT_LIST_DIR}/AndroidManifest.xml.in")
 
@@ -26,28 +30,6 @@ endif ()
 
 set(EACP_ANDROID_SDK "${eacp_android_sdk_default}" CACHE PATH
         "Android SDK that packages, installs and runs APKs")
-
-set(EACP_ANDROID_BUILD_TOOLS "35.0.0" CACHE STRING
-        "Android SDK build-tools version that packages APKs")
-set(EACP_ANDROID_TARGET_SDK "35" CACHE STRING
-        "targetSdkVersion, and the android.jar the manifest links against")
-
-# The scripts are bash. A Windows host runs them through Git for Windows' bash,
-# found beside git before the PATH, where System32's bash would be WSL's.
-set(eacp_android_shell "")
-
-if (CMAKE_HOST_WIN32)
-    find_package(Git QUIET)
-    get_filename_component(eacp_git_dir "${GIT_EXECUTABLE}" DIRECTORY)
-    find_program(EACP_ANDROID_BASH bash
-            HINTS "${eacp_git_dir}/../bin" "$ENV{ProgramFiles}/Git/bin")
-
-    if (NOT EACP_ANDROID_BASH)
-        message(FATAL_ERROR "Packaging APKs on Windows needs Git for Windows' bash")
-    endif ()
-
-    set(eacp_android_shell "${EACP_ANDROID_BASH}")
-endif ()
 
 function(eacp_add_android_apk target)
     cmake_parse_arguments(APK ""
@@ -101,25 +83,28 @@ function(eacp_add_android_apk target)
 
     add_custom_command(
             OUTPUT "${apk}"
-            COMMAND ${eacp_android_shell} "${EACP_ANDROID_APK_SCRIPT}"
-                    "${sdk}"
-                    "${EACP_ANDROID_BUILD_TOOLS}"
-                    "android-${EACP_ANDROID_TARGET_SDK}"
-                    "${manifest}"
-                    "$<TARGET_FILE:${target}>"
-                    "${ANDROID_ABI}"
-                    "${apk}"
-                    "${APK_RES_DIR}"
-                    "$<$<CONFIG:Debug>:debug>"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DSDK=${sdk}"
+                    "-DBUILD_TOOLS=${EACP_ANDROID_BUILD_TOOLS}"
+                    "-DPLATFORM=android-${EACP_ANDROID_TARGET_SDK}"
+                    "-DMANIFEST=${manifest}"
+                    "-DLIBRARY=$<TARGET_FILE:${target}>"
+                    "-DABI=${ANDROID_ABI}"
+                    "-DSTRIP=${CMAKE_STRIP}"
+                    "-DOUT=${apk}"
+                    "-DRES_DIR=${APK_RES_DIR}"
+                    "-DDEBUG=$<CONFIG:Debug>"
+                    -P "${EACP_ANDROID_APK_SCRIPT}"
             DEPENDS ${target} "${manifest}" "${EACP_ANDROID_APK_SCRIPT}"
+                    "${EACP_ANDROID_COMMON_SCRIPT}"
             COMMENT "Packaging ${target}.apk"
             VERBATIM)
 
     add_custom_target(${target}-apk ALL DEPENDS "${apk}")
 
     add_custom_target(${target}-run
-            COMMAND ${eacp_android_shell} "${EACP_ANDROID_RUN_SCRIPT}"
-                    "${sdk}" "${apk}" "${APK_PACKAGE}"
+            COMMAND "${CMAKE_COMMAND}" "-DSDK=${sdk}" "-DAPK=${apk}"
+                    "-DPACKAGE=${APK_PACKAGE}" -P "${EACP_ANDROID_RUN_SCRIPT}"
             DEPENDS ${target}-apk
             USES_TERMINAL
             VERBATIM)

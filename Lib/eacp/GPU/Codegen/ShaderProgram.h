@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <functional>
+#include <span>
 
 #include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
@@ -290,6 +291,12 @@ public:
     void setVertices(const V (&data)[N])
     {
         setVertices(data, (int) N);
+    }
+
+    template <typename V>
+    void setVertices(std::span<const V> data)
+    {
+        setVertices(data.data(), (int) data.size());
     }
 
     template <typename V>
