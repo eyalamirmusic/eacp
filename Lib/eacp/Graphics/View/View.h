@@ -248,7 +248,8 @@ public:
     virtual void mouseExited(const MouseEvent&) {}
 
     // Scroll wheel. event.delta carries the wheel movement (y vertical,
-    // x horizontal) in WHEEL_DELTA units.
+    // x horizontal): lines for a notched wheel, points for a trackpad, and
+    // event.preciseScrolling says which.
     virtual void mouseWheel(const MouseEvent&) {}
     // Only for views that set handlesTouchEvents; a finger stays with the view it
     // came down on. Other views get the first finger as mouse events.
