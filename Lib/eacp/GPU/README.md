@@ -301,8 +301,8 @@ constructor takes, the GPUWidgets kernels and shaders, both sprite shaders in
 all four sampling configurations, and the UI and text renderers' programs — is
 emitted as MSL, HLSL and GLSL by `ShaderGoldenTests` and compared byte for byte
 with `Tests/GPU/Golden/<Module>/<Kernel>[.<variant>].{msl,hlsl,glsl}`;
-StableAudio3's own kernels do the same in `SA3ShaderGoldenTests` against
-`Apps/GPU/StableAudio3/Tests/ShaderGolden/`. A change to the emitter that moves
+StableAudio3, now its own repo (`jamierpond/StableAudio3`), does the same for
+its kernels in `SA3ShaderGoldenTests`. A change to the emitter that moves
 any of that text fails with a diff of the first lines that moved. When the
 move is the point, run the suite with `EACP_UPDATE_GOLDENS=1` to rewrite the
 files (and delete any no kernel produces any more) and commit them with the
