@@ -5,6 +5,7 @@
 #include "../View/View.h"
 
 #include <bitset>
+#include <memory>
 
 namespace eacp::Graphics
 {
@@ -124,6 +125,7 @@ private:
 
     void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();
+    void layOutContentView();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(MouseEvent event);
 
@@ -144,6 +146,10 @@ private:
 
     bool rawMouseRegistered = false;
     Point rawMouseMovement;
+
+    std::shared_ptr<CompositionHostWindow*> lifetime {
+        std::make_shared<CompositionHostWindow*>(this)};
+
     void ensureAllLayersRendered(const View* view, float dpiScale) const;
     void dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lParam);
     void synthesizeMouseUpOnCaptureLoss();

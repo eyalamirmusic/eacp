@@ -82,7 +82,8 @@ if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
             KeyForwardingTests-Windows.cpp
-            WindowGeometryTests-Windows.cpp)
+            WindowGeometryTests-Windows.cpp
+            WindowLayoutTests-Windows.cpp)
 endif ()
 
 nano_add_executable(GraphicsTests

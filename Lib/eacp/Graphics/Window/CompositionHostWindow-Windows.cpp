@@ -3,6 +3,7 @@
 #include "../Helpers/SystemAppearance.h"
 #include "../Layers/NativeLayer-Windows.h"
 
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
 
 #include <unordered_map>
@@ -298,6 +299,12 @@ void CompositionHostWindow::attachContentView(View* view)
                      0.f,
                      static_cast<float>(clientRect.right) / scale,
                      static_cast<float>(clientRect.bottom) / scale});
+    Threads::callAsync(
+        [weak = std::weak_ptr<CompositionHostWindow*>(lifetime)]
+        {
+            if (auto host = weak.lock())
+                (*host)->layOutContentView();
+        });
 
     auto* viewVisual = static_cast<IDCompositionVisual2*>(view->getHandle());
 
@@ -515,6 +522,18 @@ void CompositionHostWindow::resizeContentViewToClient()
     if (onContentResized)
         onContentResized(static_cast<int>(widthInPoints),
                          static_cast<int>(heightInPoints));
+}
+
+// Attaching sizes the content view at once, usually inside the constructor of
+// the app that owns the window, before it has added the subviews its resized()
+// places. The window is shown and painted there too, so a paint is too early;
+// this pass is deferred a turn, as AppKit lays a window out before first
+// display. Without it those subviews keep zero bounds until a WM_SIZE, which a
+// window shown at its created size never gets.
+void CompositionHostWindow::layOutContentView()
+{
+    if (contentView != nullptr)
+        contentView->setBounds(contentView->getBounds());
 }
 
 void CompositionHostWindow::ensureMouseLeaveTracking()
