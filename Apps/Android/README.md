@@ -1,6 +1,6 @@
-# Running eacp on an Android phone
+# Running eacp on Android
 
-For a Windows, macOS or Linux machine and an Android 13+ phone with Vulkan 1.3.
+For a Windows, macOS or Linux machine, and an Android 13+ phone with Vulkan 1.3 or, with no phone, the Android Emulator the setup installs.
 Every command runs from the eacp checkout, in any shell: PowerShell, cmd, zsh or bash.
 
 ## 1. Install
@@ -13,10 +13,14 @@ CMake 3.31 or later, Ninja and Git, on the `PATH`. Nothing else.
 cmake -P Scripts/android-setup.cmake
 ```
 
-It puts the SDK, NDK and a JDK in `~/.eacp/android` (about 3 GB). It ends by printing the paths of `adb` and `ndk-stack`, written `<adb>` and `<ndk-stack>` below.
+It puts the SDK, NDK, a JDK and the Android Emulator in `~/.eacp/android` (about 8 GB, 5 of them the emulator and its system image), and an AVD called `eacp` in `~/.android/avd` (about 1 GB once booted). It ends by printing the paths of `adb` and `ndk-stack`, written `<adb>` and `<ndk-stack>` below.
 Run it again after an update; it is quick when nothing is missing.
+For a phone only, `cmake -DEACP_ANDROID_EMULATOR=OFF -P Scripts/android-setup.cmake` leaves the emulator out (3.3 GB).
+Windows and Linux on ARM get no emulator: Google ships none for them.
 
-## 3. Connect the phone
+## 3. Connect the phone, if you have one
+
+No phone: skip this step; the run boots the `eacp` emulator.
 
 1. Settings > About phone > Software information: tap Build number seven times.
 2. Settings > Developer options: turn on USB debugging.
@@ -76,7 +80,7 @@ int main()
 add_subdirectory(HelloWorld)
 ```
 
-4. Run it: the phone turns green and the log line prints in the terminal.
+4. Run it: the phone, or the emulator, turns green and the log line prints in the terminal.
 
 ```
 cmake --build --preset android --target HelloWorld-run
@@ -85,6 +89,9 @@ cmake --build --preset android --target HelloWorld-run
 ## When it goes wrong
 
 - "the phone is locked": unlock it; the app is behind the lock screen.
+- "emulator eacp did not boot": start it by hand with the command it prints to see why. On Linux the emulator needs KVM: `/dev/kvm` readable by you (add yourself to the `kvm` group).
+- Another AVD: `EACP_AVD=<name>` picks it over `eacp`.
+- "this SDK has no emulator to boot": the setup ran with `-DEACP_ANDROID_EMULATOR=OFF`, or `ANDROID_HOME` names an SDK it did not make; run the setup again without it.
 - "has not allowed USB debugging": accept the prompt on the phone, run again.
 - "installing ... for the first time": answer the Play Protect prompt on the phone, if one comes.
 - "signed with another debug key": nothing to do; the old install, and its data, is removed.

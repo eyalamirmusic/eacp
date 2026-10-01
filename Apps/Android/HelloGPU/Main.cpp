@@ -5,27 +5,20 @@ using namespace eacp;
 using namespace GPU;
 using namespace Maths;
 
-struct Color
-{
-    float r = 0.f;
-    float g = 0.f;
-    float b = 0.f;
-};
-
 struct Vertex
 {
     Vec2 position;
-    Color color;
+    Graphics::Color color;
 };
 
-EACP_SHADER_VALUE(Color, Float3)
+EACP_SHADER_VALUE(eacp::Graphics::Color, Float4)
 
 namespace
 {
-const Vertex triangleVertices[] = {
-    {{0.0f, 0.5f}, {1.0f, 0.2f, 0.2f}},
-    {{-0.5f, -0.3f}, {0.2f, 1.0f, 0.2f}},
-    {{0.5f, -0.3f}, {0.2f, 0.2f, 1.0f}},
+const Array<Vertex, 3> triangleVertices = {
+    Vertex {{0.0f, 0.5f}, {1.0f, 0.2f, 0.2f}},
+    Vertex {{-0.5f, -0.3f}, {0.2f, 1.0f, 0.2f}},
+    Vertex {{0.5f, -0.3f}, {0.2f, 0.2f, 1.0f}},
 };
 
 struct TriangleShader final : ShaderProgram
@@ -44,7 +37,7 @@ struct TriangleShader final : ShaderProgram
         auto rotated = float2(px * c - py * s, (px * s + py * c) * aspect);
 
         setPosition(float4(rotated, 0.0f, 1.0f));
-        setFragment(float4(varying(color), 1.0f));
+        setFragment(varying(color));
     }
 
     Uniform<Float> angle;
@@ -90,7 +83,7 @@ struct HelloView final : GPUView
         setHandlesTouchEvents(true);
         setContinuous(true);
 
-        triangle.setVertices(triangleVertices);
+        triangle.setVertices(std::span {triangleVertices});
         triangle.prepare(sampleCount());
         text.setSampleCount(sampleCount());
     }

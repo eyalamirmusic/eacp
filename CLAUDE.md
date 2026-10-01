@@ -92,7 +92,8 @@ the app is a NativeActivity shared library with its ordinary `main()`
 over `android.graphics` through JNI. `eacp_add_app` builds an example as an
 executable, or on Android as a shared library with `<target>-apk` (stripped in
 Release) and `<target>-run` (`Scripts/android-run.cmake`: wake the phone,
-install, launch, show logcat; an emulator only where the host has one). The
+install, launch, show logcat; with no phone, boot the `eacp` AVD the setup
+makes, wherever Google ships an emulator for the host). The
 Android scripts are CMake scripts run with `cmake -P`, so no host needs a
 shell; `Scripts/android-common.cmake` is what they share. The NDK,
 build-tools and platform versions live in `CMake/AndroidVersions.cmake` alone;

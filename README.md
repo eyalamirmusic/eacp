@@ -536,15 +536,19 @@ the glyph atlas (rasterized by `android.graphics`), and touches logged.
 `Apps/GPU/Triangle` and `Apps/GPU/GlyphAtlas` build as APKs the same way.
 
 [`Apps/Android/README.md`](Apps/Android/README.md) takes a machine with CMake,
-Ninja and Git from nothing to HelloGPU, and then a new app, running on a phone.
+Ninja and Git from nothing to HelloGPU, and then a new app, running on a phone
+or, with none, on the emulator the setup installs.
 Every step is `cmake`, in any shell: the setup, packaging and run scripts are
 CMake scripts (`Scripts/android-*.cmake`), so no host needs bash.
 
 `cmake -P Scripts/android-setup.cmake` fills `~/.eacp/android`: the SDK (`sdk/`, or
 `$ANDROID_HOME` when set) with exactly what `CMake/AndroidVersions.cmake` names,
 and a Temurin 21 JDK (`jdk/`) when it finds no Java 17+. It writes the license
-file `sdkmanager --licenses` would, accepting the Android SDK License, and
-installs no emulator. `cmake --preset android` is Ninja, Release, `arm64-v8a`,
+file `sdkmanager --licenses` would, accepting the Android SDK License (and the
+ARM DBT license the arm64-v8a system image is under), and, where
+Google ships one for the host, the Android Emulator, the `google_apis` system
+image for the host's ABI and an AVD called `eacp` (`-DEACP_ANDROID_EMULATOR=OFF`
+leaves them out). `cmake --preset android` is Ninja, Release, `arm64-v8a`,
 API 33, into `build-android`, the NDK found by `CMake/AndroidToolchain.cmake`.
 `<target>-run` wakes the phone and lifts its keyguard (a PIN keeps it locked,
 and it says so), installs, launches and prints the app's first seconds of
@@ -569,10 +573,10 @@ Each machine signs with its own debug key, so an APK built elsewhere cannot
 update this one's install: `HelloGPU-run` uninstalls the app, and its data,
 first. Point `EACP_ANDROID_KEYSTORE` at one shared keystore to avoid that.
 
-Windows on ARM runs on a phone only: Google ships no Android Emulator for it,
-and the x86_64 images need an x64 CPU. Elsewhere the emulator is optional: with
-`sdkmanager "emulator"`, a system image and an AVD, `HelloGPU-run` boots one when
-no phone is attached (`EACP_AVD`, else the first AVD). Apple Silicon's
+Windows and Linux on ARM run on a phone only: Google ships no Android Emulator
+for them, and the x86_64 images need an x64 CPU. Elsewhere, with no phone
+attached, `HelloGPU-run` boots an emulator: `EACP_AVD`, else the setup's
+`eacp`, else the first AVD. Apple Silicon's
 `system-images;android-35;google_apis;arm64-v8a` has Vulkan 1.3; an x64 PC
 needs the Windows Hypervisor Platform, `-gpu host` and the `x86_64` image,
 which runs the `arm64-v8a` APK through ARM translation (SwiftShader lacks

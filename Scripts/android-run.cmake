@@ -2,7 +2,8 @@
 #
 # Installs and launches an eacp APK on the device adb sees: a phone over USB,
 # woken and unlocked where it has no PIN, or else an emulator it boots on a host
-# that has one ($EACP_AVD, or the first AVD the emulator lists). Prints the
+# that has one ($EACP_AVD, else the AVD eacp that android-setup makes, else the
+# first AVD the emulator lists). Prints the
 # app's first seconds of logcat (tag "eacp", plus any crash).
 
 cmake_minimum_required(VERSION 3.31)
@@ -40,23 +41,28 @@ if (adb_failed)
                 "unlock it, accept the prompt there, and run this again")
     endif ()
 
-    # Google ships no emulator for Windows on ARM, and the x86_64 images need an
-    # x64 CPU's virtualization, so there is nothing to boot.
-    if (eacp_android_os STREQUAL "windows" AND eacp_android_arch STREQUAL "aarch64")
-        no_device("Windows on ARM has no Android Emulator to boot")
+    if (NOT eacp_android_has_emulator)
+        no_device("Google ships no Android Emulator for ${eacp_android_os} on ARM")
     endif ()
 
     find_program(emulator emulator HINTS "${SDK}/emulator" NO_DEFAULT_PATH NO_CACHE)
 
     if (NOT emulator)
-        no_device("this SDK has no emulator to boot")
+        no_device("this SDK has no emulator to boot; run "
+                "cmake -P Scripts/android-setup.cmake (without "
+                "-DEACP_ANDROID_EMULATOR=OFF) to install one and its AVD")
     endif ()
 
     set(avd "$ENV{EACP_AVD}")
 
     if (NOT avd)
         execute_process(COMMAND "${emulator}" -list-avds OUTPUT_VARIABLE avds)
-        string(REGEX MATCH "^[^\r\n]+" avd "${avds}")
+
+        if (avds MATCHES "(^|[\r\n])eacp([\r\n]|$)")
+            set(avd eacp)
+        else ()
+            string(REGEX MATCH "^[^\r\n]+" avd "${avds}")
+        endif ()
     endif ()
 
     if (NOT avd)

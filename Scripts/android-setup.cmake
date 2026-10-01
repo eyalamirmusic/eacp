@@ -7,11 +7,16 @@
 # script finds the same way; the SDK command-line tools; and exactly the
 # packages CMake/AndroidVersions.cmake names. It writes the license file
 # sdkmanager --licenses would, which accepts the Android SDK License
-# (https://developer.android.com/studio/terms) on your behalf.
+# (https://developer.android.com/studio/terms) on your behalf, and for the
+# arm64-v8a system image the android-sdk-arm-dbt-license too.
 #
-# No emulator and no system image: eacp runs on a phone over USB. Run it again
-# whenever AndroidVersions.cmake changes; what is present is kept, and a
-# complete SDK is checked in a second with nothing downloaded.
+# Where Google ships an Android Emulator for the host (all but Windows and
+# Linux on ARM), also the emulator, the system image AndroidVersions.cmake
+# names for the host's ABI, and an AVD called eacp, which HelloGPU-run boots
+# when no phone is attached. -DEACP_ANDROID_EMULATOR=OFF leaves all three out,
+# for a phone over USB only. Run it again whenever AndroidVersions.cmake
+# changes; what is present is kept, and a complete SDK is checked in a second
+# with nothing downloaded.
 
 cmake_minimum_required(VERSION 3.31)
 
@@ -21,6 +26,26 @@ include("${CMAKE_CURRENT_LIST_DIR}/android-common.cmake")
 set(sdk "${eacp_android_sdk}")
 set(platform "android-${EACP_ANDROID_TARGET_SDK}")
 set(work "${eacp_android_dir}/download")
+
+if (NOT DEFINED EACP_ANDROID_EMULATOR)
+    set(EACP_ANDROID_EMULATOR ON)
+endif ()
+
+set(emulator_wanted FALSE)
+
+if (EACP_ANDROID_EMULATOR AND eacp_android_has_emulator)
+    set(emulator_wanted TRUE)
+endif ()
+
+# Package paths are written with "/" here, since ";" splits a CMake list,
+# and go to sdkmanager with their own ";" in a package file.
+set(dirs platform-tools "platforms/${platform}"
+        "build-tools/${EACP_ANDROID_BUILD_TOOLS}" "ndk/${EACP_ANDROID_NDK_VERSION}")
+string(REPLACE ";" "/" image_dir "${eacp_android_image}")
+
+if (emulator_wanted)
+    list(APPEND dirs emulator "${image_dir}")
+endif ()
 
 function(download url file)
     eacp_say("downloading ${url}")
@@ -99,29 +124,35 @@ if (NOT EXISTS "${tools}/lib/sdkmanager-classpath.jar")
     eacp_say("installed the SDK command-line tools at ${shown}")
 endif ()
 
-# The hash sdkmanager --licenses writes once the Android SDK License is
-# accepted. Every package below is under that one license.
-set(license 24333f8a63b6825ea9c5514f83c2829b004d1fee)
-set(license_file "${sdk}/licenses/android-sdk-license")
-set(accepted "")
+# The hashes sdkmanager --licenses writes once a license is accepted. Every
+# package is under the Android SDK License but the ARM system image, which
+# Google puts under its own ARM DBT license.
+function(accept_license name hash)
+    set(file "${sdk}/licenses/${name}")
+    set(accepted "")
 
-if (EXISTS "${license_file}")
-    file(READ "${license_file}" accepted)
+    if (EXISTS "${file}")
+        file(READ "${file}" accepted)
+    endif ()
+
+    if (NOT accepted MATCHES "${hash}")
+        file(APPEND "${file}" "\n${hash}\n")
+        native("${sdk}/licenses" shown)
+        eacp_say("accepted ${name} in ${shown}")
+    endif ()
+endfunction()
+
+accept_license(android-sdk-license 24333f8a63b6825ea9c5514f83c2829b004d1fee)
+
+if (emulator_wanted AND eacp_android_image_abi STREQUAL "arm64-v8a")
+    accept_license(android-sdk-arm-dbt-license
+            859f317696f67ef3d7f30a50a5560e7834b43903)
 endif ()
 
-if (NOT accepted MATCHES "${license}")
-    file(APPEND "${license_file}" "\n${license}\n")
-    native("${sdk}/licenses" shown)
-    eacp_say("accepted the Android SDK License in ${shown}")
-endif ()
-
-# Package paths are written with "/" here, since ";" splits a CMake list,
-# and go to sdkmanager with their own ";" in a package file.
 set(missing "")
 set(packages "")
 
-foreach (dir IN ITEMS platform-tools "platforms/${platform}"
-        "build-tools/${EACP_ANDROID_BUILD_TOOLS}" "ndk/${EACP_ANDROID_NDK_VERSION}")
+foreach (dir IN LISTS dirs)
     if (NOT EXISTS "${sdk}/${dir}/source.properties")
         list(APPEND missing "${dir}")
         string(REPLACE "/" ";" package "${dir}")
@@ -151,10 +182,7 @@ if (missing)
     endif ()
 endif ()
 
-file(REMOVE_RECURSE "${work}")
-
-foreach (dir IN ITEMS platform-tools "platforms/${platform}"
-        "build-tools/${EACP_ANDROID_BUILD_TOOLS}" "ndk/${EACP_ANDROID_NDK_VERSION}")
+foreach (dir IN LISTS dirs)
     if (NOT EXISTS "${sdk}/${dir}/source.properties")
         eacp_fail("${sdk}/${dir} is missing")
     endif ()
@@ -163,6 +191,83 @@ endforeach ()
 native("${sdk}" shown)
 eacp_say("SDK at ${shown}: platform-tools, ${platform}, build-tools "
         "${EACP_ANDROID_BUILD_TOOLS}, NDK ${EACP_ANDROID_NDK_VERSION}")
+
+set(avd eacp)
+
+# Where avdmanager and the emulator both keep AVDs.
+function(avd_home out)
+    if (DEFINED ENV{ANDROID_AVD_HOME} AND NOT "$ENV{ANDROID_AVD_HOME}" STREQUAL "")
+        file(TO_CMAKE_PATH "$ENV{ANDROID_AVD_HOME}" home)
+    elseif (DEFINED ENV{ANDROID_USER_HOME} AND NOT "$ENV{ANDROID_USER_HOME}" STREQUAL "")
+        file(TO_CMAKE_PATH "$ENV{ANDROID_USER_HOME}/avd" home)
+    elseif (DEFINED ENV{ANDROID_EMULATOR_HOME}
+            AND NOT "$ENV{ANDROID_EMULATOR_HOME}" STREQUAL "")
+        file(TO_CMAKE_PATH "$ENV{ANDROID_EMULATOR_HOME}/avd" home)
+    else ()
+        set(home "${eacp_home}/.android/avd")
+    endif ()
+
+    set(${out} "${home}" PARENT_SCOPE)
+endfunction()
+
+# The emulator's own settings an AVD made by avdmanager leaves at a default
+# that suits eacp badly: GPU on (HelloGPU-run passes -gpu host), a hardware
+# keyboard, and memory for a Vulkan app.
+function(configure_avd config)
+    file(READ "${config}" text)
+
+    foreach (setting IN ITEMS hw.gpu.enabled=yes hw.gpu.mode=auto hw.keyboard=yes
+            hw.ramSize=2048 disk.dataPartition.size=4G)
+        string(REGEX REPLACE "=.*" "" key "${setting}")
+        string(REPLACE "." "\\." pattern "${key}")
+        string(REGEX REPLACE "(^|\n)${pattern}[ ]*=[^\n]*" "" text "${text}")
+        string(APPEND text "\n${setting}")
+    endforeach ()
+
+    string(REGEX REPLACE "^\n+" "" text "${text}")
+    file(WRITE "${config}" "${text}\n")
+endfunction()
+
+if (emulator_wanted)
+    execute_process(COMMAND "${sdk}/emulator/emulator" -list-avds
+            OUTPUT_VARIABLE avds ERROR_QUIET)
+
+    if (NOT avds MATCHES "(^|[\r\n])${avd}([\r\n]|$)")
+        eacp_say("creating the AVD ${avd} (${eacp_android_image})")
+
+        # avdmanager run the way its own launcher runs it, stdin empty for the
+        # same reason: it asks whether to make a custom hardware profile. Its
+        # output is shown only on failure: a good run still prints an "Error"
+        # for the devices.xml the system image does not carry.
+        file(TOUCH "${work}/empty")
+        execute_process(
+                COMMAND "${java}" "-Dcom.android.sdkmanager.toolsdir=${tools}"
+                        -classpath "${tools}/lib/avdmanager-classpath.jar"
+                        com.android.sdklib.tool.AvdManagerCli
+                        create avd -n ${avd}
+                        -k "${eacp_android_image}" -d pixel_8
+                INPUT_FILE "${work}/empty"
+                OUTPUT_VARIABLE output ERROR_VARIABLE output
+                RESULT_VARIABLE failed)
+
+        if (failed)
+            message(NOTICE "${output}")
+            eacp_fail("avdmanager could not create the AVD ${avd}")
+        endif ()
+
+        avd_home(home)
+
+        if (NOT EXISTS "${home}/${avd}.avd/config.ini")
+            eacp_fail("avdmanager made no ${home}/${avd}.avd/config.ini")
+        endif ()
+
+        configure_avd("${home}/${avd}.avd/config.ini")
+    endif ()
+
+    eacp_say("emulator and AVD ${avd} (${eacp_android_image})")
+endif ()
+
+file(REMOVE_RECURSE "${work}")
 
 find_program(ninja ninja NO_CACHE)
 
@@ -183,8 +288,15 @@ if (CMAKE_HOST_WIN32)
 endif ()
 
 native("${sdk}/ndk/${EACP_ANDROID_NDK_VERSION}/ndk-stack${exe}" ndk_stack)
-eacp_say("done. Turn on USB debugging on a phone (Android 13+, Vulkan 1.3), "
-        "plug it in, accept the prompt on it, and from the eacp checkout:")
+if (emulator_wanted)
+    eacp_say("done. From the eacp checkout, run HelloGPU on a phone with USB "
+            "debugging on (Android 13+, Vulkan 1.3), or with none attached on "
+            "the AVD ${avd}, which the run boots:")
+else ()
+    eacp_say("done. Turn on USB debugging on a phone (Android 13+, Vulkan 1.3), "
+            "plug it in, accept the prompt on it, and from the eacp checkout:")
+endif ()
+
 eacp_say("    cmake --preset android")
 eacp_say("    cmake --build --preset android --target HelloGPU-run")
 eacp_say("adb is ${adb}")

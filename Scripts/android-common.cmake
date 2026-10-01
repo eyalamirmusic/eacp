@@ -6,6 +6,10 @@
 #                      x64 CMake on an ARM64 PC still says aarch64
 #   eacp_android_dir   ~/.eacp/android
 #   eacp_android_sdk   $ANDROID_HOME, else ~/.eacp/android/sdk
+#   eacp_android_has_emulator  whether Google ships an Android Emulator for
+#                      the host: not for Windows or Linux on ARM
+#   eacp_android_image the system-image package an emulator boots, for the
+#                      host's ABI: system-images;android-35;google_apis;arm64-v8a
 
 include("${CMAKE_CURRENT_LIST_DIR}/../CMake/AndroidVersions.cmake")
 
@@ -44,6 +48,22 @@ else ()
 endif ()
 
 set(eacp_android_dir "${eacp_home}/.eacp/android")
+
+# The x86_64 images need an x64 CPU's virtualization, and Google builds the
+# emulator for ARM on macOS alone.
+set(eacp_android_has_emulator TRUE)
+set(eacp_android_image_abi x86_64)
+
+if (eacp_android_arch STREQUAL "aarch64")
+    set(eacp_android_image_abi arm64-v8a)
+
+    if (NOT eacp_android_os STREQUAL "mac")
+        set(eacp_android_has_emulator FALSE)
+    endif ()
+endif ()
+
+set(eacp_android_image "system-images;android-${EACP_ANDROID_TARGET_SDK};\
+${EACP_ANDROID_SYSTEM_IMAGE_TAG};${eacp_android_image_abi}")
 
 if (DEFINED ENV{ANDROID_HOME} AND NOT "$ENV{ANDROID_HOME}" STREQUAL "")
     file(TO_CMAKE_PATH "$ENV{ANDROID_HOME}" eacp_android_sdk)
