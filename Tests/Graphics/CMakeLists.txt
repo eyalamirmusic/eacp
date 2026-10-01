@@ -83,6 +83,7 @@ if (WIN32)
             CompositionPixelTests-Windows.cpp
             KeyForwardingTests-Windows.cpp
             MouseDeltaTests-Windows.cpp
+            MouseWheelTests-Windows.cpp
             WindowGeometryTests-Windows.cpp
             WindowLayoutTests-Windows.cpp)
 endif ()
