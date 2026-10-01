@@ -25,7 +25,7 @@ function(adb_output out)
 endfunction()
 
 function(no_device why)
-    eacp_say("no device attached; ${why}")
+    eacp_say("no device attached, and ${why}")
     eacp_fail("attach a phone with USB debugging on, check that 'adb devices' "
             "lists it as 'device', and run this again")
 endfunction()
@@ -49,7 +49,7 @@ if (adb_failed)
     find_program(emulator emulator HINTS "${SDK}/emulator" NO_DEFAULT_PATH NO_CACHE)
 
     if (NOT emulator)
-        no_device("and no emulator to boot (sdkmanager \"emulator\")")
+        no_device("this SDK has no emulator to boot")
     endif ()
 
     set(avd "$ENV{EACP_AVD}")
@@ -60,7 +60,7 @@ if (adb_failed)
     endif ()
 
     if (NOT avd)
-        no_device("and no AVD to boot: create one with avdmanager")
+        no_device("the emulator has no AVD to boot")
     endif ()
 
     eacp_say("booting emulator ${avd}")
