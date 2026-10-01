@@ -111,6 +111,12 @@ if (LINUX)
     list(APPEND gpu_test_sources PresentTests-Linux.cpp TextureSettleTests-Linux.cpp)
 endif ()
 
+# GPUView::setTransparent over a child window, read back from the composed
+# desktop. Self-skips without a device or a compositor.
+if (WIN32)
+    list(APPEND gpu_test_sources TransparentViewTests-Windows.cpp)
+endif ()
+
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests

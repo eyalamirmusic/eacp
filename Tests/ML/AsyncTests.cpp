@@ -138,6 +138,7 @@ auto tPredictionTimesItselfOnTheQueue =
     auto first = model.predictAsync(inputsFor(x));
     first.then(noteResolve);
     auto second = model.predictAsync(inputsFor(x));
+    auto secondCalled = Clock::now();
 
     auto firstPrediction = first.waitFor(timeout);
     auto secondPrediction = second.waitFor(timeout);
@@ -151,7 +152,13 @@ auto tPredictionTimesItselfOnTheQueue =
     check(firstPrediction.queueWaitSeconds + firstPrediction.predictSeconds
           <= wallSeconds);
     check(secondPrediction.predictSeconds > 0.0);
-    check(secondPrediction.queueWaitSeconds >= firstPrediction.predictSeconds,
+
+    // The first can start, even finish part of its run, before the second is
+    // queued, so the second's wait is only bounded by what the first spent on
+    // the queue less the time between the two calls.
+    auto betweenCalls = std::chrono::duration<double>(secondCalled - called).count();
+    check(secondPrediction.queueWaitSeconds + betweenCalls
+              >= firstPrediction.queueWaitSeconds + firstPrediction.predictSeconds,
           "the second waited behind the first");
 };
 

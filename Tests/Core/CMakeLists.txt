@@ -91,6 +91,15 @@ add_custom_command(TARGET CoreTests POST_BUILD
 target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_RESOURCE_MARKER="${resource_marker_name}")
 
+# The child Process/inheritStdio/streamsWhileRunning watches: it prints a
+# marker to the stdout it inherited and lingers until the test kills it.
+add_executable(StdioLingerHarness StdioLingerHarness.cpp)
+target_link_libraries(StdioLingerHarness PRIVATE eacp-core)
+
+target_compile_definitions(CoreTests PRIVATE
+        EACP_STDIO_LINGER_HARNESS="$<TARGET_FILE:StdioLingerHarness>")
+add_dependencies(CoreTests StdioLingerHarness)
+
 # The image a standalone executable reports for itself cannot be checked from
 # inside the test binary: it depends on the path the launcher used, so the
 # fixture is a second executable the cases start three different ways.

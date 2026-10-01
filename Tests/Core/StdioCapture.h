@@ -23,12 +23,8 @@ struct StdoutToFile
 
 eacp::Processes::ProcessOptions echoCommand(const std::string& text);
 
-// How long the echoThenLinger child stays alive after echoing. Generous on
-// purpose: a loaded CI runner can take seconds just to start the child, and
-// the marker window has to outlast that. Watchers kill the child the moment
-// they see the marker, so the happy path never pays for it.
-inline constexpr auto lingerSeconds = 60;
-
-// Echo the text, then stay alive for lingerSeconds.
+// Echo the text, then stay alive until killed or this process is gone. The
+// child is StdioLingerHarness, not a shell, so it starts fast, flushes the
+// text itself and has no linger of its own to run out.
 eacp::Processes::ProcessOptions echoThenLinger(const std::string& text);
 } // namespace StdioCapture
