@@ -274,7 +274,7 @@ Weston and then under an Xvfb — all three build it, one has a device, a
 compositor and an X server to run it on);
 iOS is built for the simulator. macOS is the most exercised of them. Android
 — Core, the window, Vulkan, GPU, GPUWidgets, Text and UI — builds and runs on
-the emulator (see [Android](#android)); it is not in CI yet.
+a phone and on the emulator (see [Android](#android)); it is not in CI yet.
 
 The HTTP client is one API over three backends — NSURLSession on Apple
 platforms, WinHTTP on Windows, libcurl on Linux — so a Linux build needs
@@ -535,52 +535,48 @@ following the finger, a spinning triangle through the shader EDSL, text through
 the glyph atlas (rasterized by `android.graphics`), and touches logged.
 `Apps/GPU/Triangle` and `Apps/GPU/GlyphAtlas` build as APKs the same way.
 
-The floor is Android 13 (API 33; configuring lower is an error) on a device
-with Vulkan 1.3, which the manifest requires — the arm64 emulator on Apple
-Silicon qualifies. eacp builds with the current stable NDK, r30
-(30.0.16248370), the way the Apple platforms assume a current Xcode; older
-NDKs are not supported, and configuring with one is an error (eacp uses
-libc++'s `std::atomic_ref` and `std::jthread`). Tested with build-tools 35.0.0
-and platform 35. It needs a JDK 17+ for `keytool` and `apksigner`
-(`JAVA_HOME`, else `java` on the `PATH`, `java_home`, Homebrew's or Android
-Studio's), and the SDK at `$ANDROID_HOME` (or `-DEACP_ANDROID_SDK=`):
+[`Apps/Android/README.md`](Apps/Android/README.md) takes a machine with CMake,
+Ninja and Git from nothing to HelloGPU, and then a new app, running on a phone.
+Every step is `cmake`, in any shell: the setup, packaging and run scripts are
+CMake scripts (`Scripts/android-*.cmake`), so no host needs bash.
 
-```bash
-sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" \
-    "ndk;30.0.16248370" "emulator" "system-images;android-35;google_apis;arm64-v8a"
-avdmanager create avd -n eacp -k "system-images;android-35;google_apis;arm64-v8a" -d pixel_7
-```
+`cmake -P Scripts/android-setup.cmake` fills `~/.eacp/android`: the SDK (`sdk/`, or
+`$ANDROID_HOME` when set) with exactly what `CMake/AndroidVersions.cmake` names,
+and a Temurin 21 JDK (`jdk/`) when it finds no Java 17+. It writes the license
+file `sdkmanager --licenses` would, accepting the Android SDK License, and
+installs no emulator. `cmake --preset android` is Ninja, Release, `arm64-v8a`,
+API 33, into `build-android`, the NDK found by `CMake/AndroidToolchain.cmake`.
+`<target>-run` wakes the phone and lifts its keyguard (a PIN keeps it locked,
+and it says so), installs, launches and prints the app's first seconds of
+logcat; a first install can make the phone ask about the app (Play Protect),
+and the install waits up to two minutes for the answer.
 
-Then one command builds, boots the emulator if nothing is attached (`EACP_AVD`,
-else the first AVD), installs, launches and prints the app's first seconds of
-logcat:
+The floor is Android 13 (API 33) on a device with Vulkan 1.3, which the
+manifest requires. eacp builds with one NDK, the current stable r30
+(30.0.16248370), the way the Apple platforms assume a current Xcode, with
+build-tools 35.0.0 and platform 35; an older NDK is an error (eacp uses
+libc++'s `std::atomic_ref` and `std::jthread`). Tests build too; `Network`, the
+WebView bridge and their tests are left out. The resource embedder's generator
+runs as CMake script on Android (`CMake/ResEmbedGenerator.cmake`), so nothing
+is compiled for the host.
 
-```bash
-cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_TOOLCHAIN_FILE=$ANDROID_HOME/ndk/30.0.16248370/build/cmake/android.toolchain.cmake \
-    -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33
-cmake --build build-android --target HelloGPU-run
-```
+eacp logs to logcat under the tag `eacp`: `adb logcat -s eacp`, with the `adb`
+the setup script prints. A Release APK carries the library stripped;
+`ndk-stack -sym build-android/Apps/Android/<app>` symbolicates a crash's
+tombstone against the unstripped one in the build tree.
 
-One ABI per build directory (`arm64-v8a` for devices and the Apple Silicon
-emulator, `x86_64` for an Intel one). Tests build too; `Network`, the WebView
-bridge and their tests are left out on Android.
+Each machine signs with its own debug key, so an APK built elsewhere cannot
+update this one's install: `HelloGPU-run` uninstalls the app, and its data,
+first. Point `EACP_ANDROID_KEYSTORE` at one shared keystore to avoid that.
 
-From a Windows host the same commands work in an x64 Native Tools prompt (the
-resource embedder's generator is built with a host compiler), with the SDK
-packages above for Windows, a JDK 17+ at `JAVA_HOME`, and Git for Windows,
-whose `bash` runs the packaging scripts. The emulator needs the Windows
-Hypervisor Platform and `-gpu host`, with the
-`system-images;android-35;google_apis;x86_64` image, which runs `arm64-v8a`
-apps through ARM translation; SwiftShader lacks features eacp needs.
-
-eacp logs to logcat under the tag `eacp`: `adb logcat -s eacp`. A native crash
-prints a tombstone to logcat; symbolicate it against the unstripped library in
-the build tree:
-
-```bash
-adb logcat -d | $ANDROID_HOME/ndk/30.0.16248370/ndk-stack -sym build-android/Apps/Android/HelloGPU
-```
+Windows on ARM runs on a phone only: Google ships no Android Emulator for it,
+and the x86_64 images need an x64 CPU. Elsewhere the emulator is optional: with
+`sdkmanager "emulator"`, a system image and an AVD, `HelloGPU-run` boots one when
+no phone is attached (`EACP_AVD`, else the first AVD). Apple Silicon's
+`system-images;android-35;google_apis;arm64-v8a` has Vulkan 1.3; an x64 PC
+needs the Windows Hypervisor Platform, `-gpu host` and the `x86_64` image,
+which runs the `arm64-v8a` APK through ARM translation (SwiftShader lacks
+features eacp needs).
 
 ## Repository layout
 
