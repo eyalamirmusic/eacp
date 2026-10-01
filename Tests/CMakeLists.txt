@@ -9,7 +9,10 @@ if (APPLE)
     add_subdirectory(ObjC)
 endif ()
 
-add_subdirectory(Network)
+if (EACP_HAS_NETWORK)
+    add_subdirectory(Network)
+endif ()
+
 add_subdirectory(Spirv)
 
 if (EACP_HAS_DRAW)
@@ -58,6 +61,8 @@ if (EACP_HAS_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
-# Always added: ScriptHostTests needs no web runtime and no graphics. The
-# directory returns after it unless EACP_HAS_WEBVIEW.
-add_subdirectory(WebView)
+# Wherever Network is: ScriptHostTests needs no web runtime and no graphics.
+# The directory returns after it unless EACP_HAS_WEBVIEW.
+if (EACP_HAS_NETWORK)
+    add_subdirectory(WebView)
+endif ()

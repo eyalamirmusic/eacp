@@ -163,13 +163,13 @@ for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
 
-The top-level `CMakeLists.txt` decides this once, in seven capability variables
+The top-level `CMakeLists.txt` decides this once, in eight capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
 The three drawing ones are on together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
-`EACP_HAS_GPU` and is Apple-only:
+`EACP_HAS_GPU` and is Apple-only; `EACP_HAS_NETWORK` is on everywhere today:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
@@ -180,13 +180,14 @@ a new port reaches them one at a time; the next three hang off
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
+| `EACP_HAS_NETWORK` | always, today | `Network`, the WebView page bridge over its RPC, `eacp-ui-network` and their tests |
 
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
 caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
 one on `eacp-ml` in the same way.
 
-Four pieces of the gated modules are portable and so sit outside all seven:
+Four pieces of the gated modules are portable and so sit outside all eight:
 they are built and tested on every platform, Linux included, because none
 touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
