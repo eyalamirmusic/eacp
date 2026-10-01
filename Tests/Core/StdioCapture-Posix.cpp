@@ -28,15 +28,8 @@ eacp::Processes::ProcessOptions echoCommand(const std::string& text)
     return {"/bin/echo", {text}};
 }
 
-// The linger execs, so the shell is replaced rather than left waiting on a
-// forked child: kill() reaches a pid that is the sleep itself. Without the
-// exec the sleep outlives the kill as an orphan, and it holds the inherited
-// stdout until it ends on its own — anything reading that pipe, ctest
-// included, waits out the whole linger.
 eacp::Processes::ProcessOptions echoThenLinger(const std::string& text)
 {
-    return {
-        "/bin/sh",
-        {"-c", "echo " + text + "; exec sleep " + std::to_string(lingerSeconds)}};
+    return {EACP_STDIO_LINGER_HARNESS, {text, std::to_string(getpid())}};
 }
 } // namespace StdioCapture
