@@ -23,10 +23,18 @@ them, so apps inherit the look, feel, and performance of the host OS:
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
   and work area in points, so an app can pick a first window size that fits;
   `View::getWindow()` lets a view reach the window it is in rather than be
-  handed it.
+  handed it. On a touch screen a view that calls `setHandlesTouchEvents()`
+  gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
+  `touchEnded`, one id per finger, held by the view it came down on), and any
+  other view gets the first finger as the mouse, so widgets written for a mouse
+  work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
+  the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
+  stay zero and silent on desktop windows.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
-  struct rather than a string literal per backend. See
+  struct rather than a string literal per backend. The same compute kernel also
+  runs on the CPU, on the calling thread and without allocating, where no
+  device came up or an audio callback needs it now. See
   [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md).
 - **Widgets & menus** — native text inputs, menus, and embedded views.
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
@@ -80,11 +88,13 @@ one: Cocoa and Metal, Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 | `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
 | `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
+| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ |
 | `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
 | `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † |
 | `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
 | `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
 | `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
+| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — |
 
 † Linux has no platform 2D tier and no menus; what that costs is spelled out
 two paragraphs down.
@@ -159,12 +169,13 @@ for real under a headless Weston, and again under an Xvfb for X11, which is
 where input is exercised — Weston's headless backend has no seat and Xvfb has
 one.
 
-The top-level `CMakeLists.txt` decides this once, in six capability variables
+The top-level `CMakeLists.txt` decides this once, in eight capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
 The three drawing ones are on together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
-a new port reaches them one at a time; the other three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only:
+a new port reaches them one at a time; the next three hang off
+`EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
+`EACP_HAS_GPU` and is Apple-only; `EACP_HAS_NETWORK` is on everywhere today:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
@@ -174,19 +185,28 @@ a new port reaches them one at a time; the other three hang off
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
+| `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
+| `EACP_HAS_NETWORK` | always, today | `Network`, the WebView page bridge over its RPC, `eacp-ui-network` and their tests |
 
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
-caller reaching one fails to compile rather than to link.
+caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
+one on `eacp-ml` in the same way.
 
-Two pieces of the gated modules are portable and so sit outside all six: they
-are built and tested on every platform, Linux included, because neither touches
-a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
+Four pieces of the gated modules are portable and so sit outside all eight:
+they are built and tested on every platform, Linux included, because none
+touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
-`GPUCodegenTests`. And `eacp-webview-bridge` is the page bridge over a
-`ScriptHost` rather than over a web view, checked by `ScriptHostTests`.
+`GPUCodegenTests`. `eacp-cpu-compute` runs the kernels that EDSL records on the
+CPU, checked by `CpuComputeTests` and timed by `CpuComputeBench`; it is also
+what gives `GPUCodegenTests` and `GPUTests` a numeric half that runs with no
+device, so the Linux lanes without a driver check what a kernel computes, not
+only that its GLSL compiles. `eacp-webview-bridge` is the page bridge over a
+`ScriptHost` rather than over a web view, checked by `ScriptHostTests`. And
+`eacp-ml-graph` is the graph builder and the MIL, protobuf and blob writers —
+bytes in and bytes out, with no Core ML under it — checked by `MLGraphTests`.
 
-A third, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
+A fifth, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
 (`SpirvTests`) and is built on Linux only by default: the Vulkan backend is the
 one that ships it, and the two Linux lanes without a Vulkan device build it
 too, so the GLSL dialect is compiled for real there before any device is

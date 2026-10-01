@@ -22,5 +22,5 @@ void main()
     if (gid >= uniforms.count)
         return;
     float t0 = buffer0[gid];
-    buffer1[gid] = ((0.5 * t0) * (1.0 + tanh((0.797885 * (t0 + (((0.044715 * t0) * t0) * t0))))));
+    buffer1[gid] = ((0.5 * t0) * (1.0 + tanh((0.7978846 * (t0 + (((0.044715 * t0) * t0) * t0))))));
 }

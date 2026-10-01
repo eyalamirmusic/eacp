@@ -39,7 +39,7 @@ layout(location = 0) out vec4 fragColor;
 void main()
 {
     vec4 t0 = texture(texture0, vary0);
-    vec3 t1 = ((t0).xyz / max((t0).w, 0.00195312));
+    vec3 t1 = ((t0).xyz / max((t0).w, 0.001953125));
     vec2 t2 = ((vary1 - (uniforms.u6).xy) * (uniforms.u6).zw);
     vec2 t3 = abs((t2 - 0.5));
     fragColor = vec4((t1).x, (t1).y, (t1).z, (((t0).w * uniforms.u3) * ((step((t3).x, 0.5) * step((t3).y, 0.5)) * (texture(texture1, ((uniforms.u7).xy + (t2 * (uniforms.u7).zw)))).x)));

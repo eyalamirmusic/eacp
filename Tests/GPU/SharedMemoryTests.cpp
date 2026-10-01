@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 // The one thing a reduction cannot rule out.
 //
@@ -13,6 +13,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -51,48 +52,34 @@ struct ExchangeKernel final : ComputeProgram
 // wrote.
 auto tExchangeCrossesLanes = test("SharedMemory/everyThreadReadsAnotherLane") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto output =
-        device.makeBuffer(sizeof(float) * threadCount, BufferUsage::Storage);
-
     auto kernel = ExchangeKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threadCount, 0.f)
+        .agreeing()
+        .run(threadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.floats(kernel.output);
+                 auto correct = 0;
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, threadCount);
-        }
+                 for (auto i = 0; i < threadCount; ++i)
+                 {
+                     auto base = (i / groupSize) * groupSize;
+                     auto expected =
+                         (float) (base + groupSize - 1 - (i % groupSize));
 
-        commands.commit();
-    }
+                     if (values[i] == expected)
+                         ++correct;
+                 }
 
-    float values[threadCount] = {};
-    output.read(values, sizeof(values));
+                 check(correct == threadCount, readback.name());
 
-    auto correct = 0;
-
-    for (auto i = 0; i < threadCount; ++i)
-    {
-        auto base = (i / groupSize) * groupSize;
-        auto expected = (float) (base + groupSize - 1 - (i % groupSize));
-
-        if (values[i] == expected)
-            ++correct;
-    }
-
-    check(correct == threadCount);
-
-    // And it is genuinely a reversal rather than the identity, which is what a
-    // kernel with unshared scratch would have produced.
-    check(values[0] != 0.f);
+                 // And it is genuinely a reversal rather than the identity,
+                 // which is what a kernel with unshared scratch would have
+                 // produced.
+                 check(values[0] != 0.f, readback.name());
+             });
 };
 
 namespace

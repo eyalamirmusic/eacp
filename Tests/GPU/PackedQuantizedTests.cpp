@@ -1,6 +1,7 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <array>
+#include <bit>
 #include <cstdint>
 
 // The byte and nibble reads: the int8 and int4 storage a block-quantized
@@ -22,10 +23,14 @@
 //      reads back as what was put in it.
 //   3. The two index conventions address one layout: element k of a buffer is
 //      readInt8(k), and it is component k % 4 of readInt8x4(k / 4).
+//
+// Every kernel runs on the CPU executor too, against the same references: the
+// layouts below are written out independently of the helpers' C++ twins.
 
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -597,39 +602,89 @@ struct PlainQuantizedKernel final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
-void runKernel(Device& device, ComputeProgram& kernel, int threads)
+// The words as the float slots the kernels read them through, bit for bit.
+Vector<float> asFloats(const Vector<std::uint32_t>& words)
 {
-    auto commands = device.makeCommandBuffer();
+    auto floats = Vector<float> {};
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+    for (auto word: words)
+        floats.add(std::bit_cast<float>(word));
 
-    commands.commit();
+    return floats;
 }
 
-Vector<float> floatsOf(const Buffer& buffer)
+std::uint32_t wordOf(float value)
 {
-    auto values =
-        Vector<float>((int) (buffer.size() / (std::int64_t) sizeof(float)));
-    buffer.read(values.data(), buffer.size());
-    return values;
+    return std::bit_cast<std::uint32_t>(value);
 }
 
-Vector<std::uint32_t> wordsOf(const Buffer& buffer)
+using VerifyOutput = std::function<void(const Vector<float>&, const Readback&)>;
+
+// Every kernel here reads `weights` and writes `output`: one CrossCheck over
+// the packed words, `outputs` elements out, each backend's output handed on.
+template <typename Kernel>
+void runOnBoth(Kernel& kernel,
+               const Vector<std::uint32_t>& words,
+               int outputs,
+               int threads,
+               const VerifyOutput& verify)
 {
-    auto words = Vector<std::uint32_t>(
-        (int) (buffer.size() / (std::int64_t) sizeof(std::uint32_t)));
-    buffer.read(words.data(), buffer.size());
-    return words;
+    CrossCheck {kernel}
+        .input(kernel.weights, asFloats(words))
+        .output(kernel.output, outputs)
+        .run(threads,
+             [&](const Readback& readback)
+             { verify(readback.floats(kernel.output), readback); });
 }
 
-Buffer storageOf(Device& device, const Vector<std::uint32_t>& words)
+// Each backend's output of one kernel, kept for comparing against another's.
+struct Readings
 {
-    return device.makeBuffer(words.data(),
-                             words.size() * (int) sizeof(std::uint32_t),
-                             BufferUsage::Storage);
+    Vector<float> cpu;
+    Vector<float> gpu;
+};
+
+template <typename Kernel>
+Readings readOnBoth(const Vector<std::uint32_t>& words, int outputs, int threads)
+{
+    auto kernel = Kernel {};
+    auto readings = Readings {};
+
+    runOnBoth(kernel,
+              words,
+              outputs,
+              threads,
+              [&](const Vector<float>& result, const Readback& readback)
+              {
+                  auto& slot =
+                      readback.backend == Backend::Cpu ? readings.cpu : readings.gpu;
+                  slot = result;
+              });
+
+    return readings;
+}
+
+// Two kernels' readings agreeing element for element, each backend against
+// itself.
+void checkSameReadings(const Readings& a, const Readings& b)
+{
+    check(a.cpu.size() == b.cpu.size(), "cpu");
+    check(a.gpu.size() == b.gpu.size(), "gpu");
+
+    for (auto i = 0; i < a.cpu.size() && i < b.cpu.size(); ++i)
+        check(a.cpu[i] == b.cpu[i], "cpu");
+
+    for (auto i = 0; i < a.gpu.size() && i < b.gpu.size(); ++i)
+        check(a.gpu[i] == b.gpu[i], "gpu");
+}
+
+// Every word of a packed store holding the word it was read from, to the bit.
+void checkWordsKept(const Vector<float>& result,
+                    const Vector<std::uint32_t>& words,
+                    const char* name)
+{
+    for (auto i = 0; i < words.size(); ++i)
+        check(wordOf(result[i]) == words[i], name);
 }
 
 // One wide read over a buffer holding every value at every position of its
@@ -639,26 +694,23 @@ Buffer storageOf(Device& device, const Vector<std::uint32_t>& words)
 // Exactly, not within a tolerance - every value a byte or a nibble encodes is
 // an integer a float holds outright, so any difference at all is a fault.
 template <typename Kernel>
-void checkWidensEveryPattern(Device& device,
-                             const Vector<std::uint32_t>& words,
+void checkWidensEveryPattern(const Vector<std::uint32_t>& words,
                              const Vector<int>& patterns,
                              int width,
                              int (*meaning)(int))
 {
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(patterns.size() * (int) sizeof(float));
-
     auto kernel = Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, patterns.size() / width);
-
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < patterns.size(); ++i)
-        check(result[i] == (float) meaning(patterns[i]));
+    runOnBoth(kernel,
+              words,
+              patterns.size(),
+              patterns.size() / width,
+              [&](const Vector<float>& result, const Readback& readback)
+              {
+                  for (auto i = 0; i < patterns.size(); ++i)
+                      check(result[i] == (float) meaning(patterns[i]),
+                            readback.name());
+              });
 }
 
 bool contains(const std::string& text, const char* needle)
@@ -752,191 +804,76 @@ auto tQuantizedHostHelpers = test("PackedQuantized/hostHelpersAreTheSameLayout")
     }
 };
 
+// Exactly, not within a tolerance: every value a byte encodes is an integer a
+// float holds outright, so any difference at all is a fault.
 auto tReadInt8 = test("PackedQuantized/readsEverySignedByteByIndex") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
-    auto words = wordsOfBytes(patterns);
-    auto count = patterns.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(float));
-
-    auto kernel = ReadInt8Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    // Exactly, not within a tolerance: every value a byte encodes is an
-    // integer a float holds outright, so any difference at all is a fault.
-    for (auto i = 0; i < count; ++i)
-        check(result[i] == (float) asSignedByte(patterns[i]));
+    checkWidensEveryPattern<ReadInt8Kernel>(
+        wordsOfBytes(patterns), patterns, 1, asSignedByte);
 };
 
 auto tReadUInt8 = test("PackedQuantized/readsEveryUnsignedByteByIndex") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
-    auto words = wordsOfBytes(patterns);
-    auto count = patterns.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(float));
-
-    auto kernel = ReadUInt8Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-        check(result[i] == (float) patterns[i]);
+    checkWidensEveryPattern<ReadUInt8Kernel>(
+        wordsOfBytes(patterns), patterns, 1, asUnsignedValue);
 };
 
 auto tQuantizedReadLiteral = test("PackedQuantized/readsBytesAtLiteralIndices") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
-    auto words = wordsOfBytes(patterns);
-
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(8 * (int) sizeof(float));
 
     auto kernel = LiteralInt8Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
 
-    runKernel(device, kernel, 1);
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < 8; ++i)
-        check(result[i] == (float) asSignedByte(patterns[i]));
+    runOnBoth(kernel,
+              wordsOfBytes(patterns),
+              8,
+              1,
+              [&](const Vector<float>& result, const Readback& readback)
+              {
+                  for (auto i = 0; i < 8; ++i)
+                      check(result[i] == (float) asSignedByte(patterns[i]),
+                            readback.name());
+              });
 };
 
+// Component by component this is the same walk readInt8 makes, which is what
+// says the two index conventions address one layout.
 auto tReadInt8x4 = test("PackedQuantized/readInt8x4ReadsAllFourOfAWord") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
-    auto words = wordsOfBytes(patterns);
-    auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 4 * (int) sizeof(float));
-
-    auto kernel = ReadInt8x4Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    // Component by component this is the same walk readInt8 makes, which is
-    // what says the two index conventions address one layout.
-    for (auto element = 0; element < patterns.size(); ++element)
-        check(result[element] == (float) asSignedByte(patterns[element]));
+    checkWidensEveryPattern<ReadInt8x4Kernel>(
+        wordsOfBytes(patterns), patterns, 4, asSignedByte);
 };
 
 auto tReadUInt8x4 = test("PackedQuantized/readUInt8x4ReadsAllFourOfAWord") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
-    auto words = wordsOfBytes(patterns);
-    auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 4 * (int) sizeof(float));
-
-    auto kernel = ReadUInt8x4Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    for (auto element = 0; element < patterns.size(); ++element)
-        check(result[element] == (float) patterns[element]);
+    checkWidensEveryPattern<ReadUInt8x4Kernel>(
+        wordsOfBytes(patterns), patterns, 4, asUnsignedValue);
 };
 
+// The low four then the high four, which is nibble 0 through nibble 7 of the
+// word in order.
 auto tReadInt4x8 = test("PackedQuantized/readInt4x8ReadsEightNibbles") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyNibblePattern();
-    auto words = wordsOfNibbles(patterns);
-    auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 8 * (int) sizeof(float));
-
-    auto kernel = ReadInt4x8Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    // The low four then the high four, which is nibble 0 through nibble 7 of
-    // the word in order.
-    for (auto element = 0; element < patterns.size(); ++element)
-        check(result[element] == (float) asSignedNibble(patterns[element]));
+    checkWidensEveryPattern<ReadInt4x8Kernel>(
+        wordsOfNibbles(patterns), patterns, 8, asSignedNibble);
 };
 
 auto tReadUInt4x8 = test("PackedQuantized/readUInt4x8ReadsEightNibbles") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyNibblePattern();
-    auto words = wordsOfNibbles(patterns);
-    auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * 8 * (int) sizeof(float));
-
-    auto kernel = ReadUInt4x8Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, count);
-    auto result = floatsOf(output);
-
-    for (auto element = 0; element < patterns.size(); ++element)
-        check(result[element] == (float) patterns[element]);
+    checkWidensEveryPattern<ReadUInt4x8Kernel>(
+        wordsOfNibbles(patterns), patterns, 8, asUnsignedValue);
 };
 
 // The wide reads, over buffers holding every byte value at every one of the
@@ -946,82 +883,52 @@ auto tReadUInt4x8 = test("PackedQuantized/readUInt4x8ReadsEightNibbles") = []
 // exactly what a narrower fixture would miss.
 auto tReadInt8x8 = test("PackedQuantized/readInt8x8ReadsEightAcrossTwoWords") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePatternIn(8);
 
     checkWidensEveryPattern<ReadInt8x8Kernel>(
-        device, wordsOfBytes(patterns), patterns, 8, asSignedByte);
+        wordsOfBytes(patterns), patterns, 8, asSignedByte);
 };
 
 auto tReadUInt8x8 = test("PackedQuantized/readUInt8x8ReadsEightAcrossTwoWords") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePatternIn(8);
 
     checkWidensEveryPattern<ReadUInt8x8Kernel>(
-        device, wordsOfBytes(patterns), patterns, 8, asUnsignedValue);
+        wordsOfBytes(patterns), patterns, 8, asUnsignedValue);
 };
 
 auto tReadInt8x16 =
     test("PackedQuantized/readInt8x16ReadsSixteenAcrossFourWords") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePatternIn(16);
 
     checkWidensEveryPattern<ReadInt8x16Kernel>(
-        device, wordsOfBytes(patterns), patterns, 16, asSignedByte);
+        wordsOfBytes(patterns), patterns, 16, asSignedByte);
 };
 
 auto tReadUInt8x16 =
     test("PackedQuantized/readUInt8x16ReadsSixteenAcrossFourWords") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePatternIn(16);
 
     checkWidensEveryPattern<ReadUInt8x16Kernel>(
-        device, wordsOfBytes(patterns), patterns, 16, asUnsignedValue);
+        wordsOfBytes(patterns), patterns, 16, asUnsignedValue);
 };
 
 auto tReadInt4x16 = test("PackedQuantized/readInt4x16ReadsSixteenNibbles") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyNibblePatternIn(16);
 
     checkWidensEveryPattern<ReadInt4x16Kernel>(
-        device, wordsOfNibbles(patterns), patterns, 16, asSignedNibble);
+        wordsOfNibbles(patterns), patterns, 16, asSignedNibble);
 };
 
 auto tReadUInt4x16 = test("PackedQuantized/readUInt4x16ReadsSixteenNibbles") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyNibblePatternIn(16);
 
     checkWidensEveryPattern<ReadUInt4x16Kernel>(
-        device, wordsOfNibbles(patterns), patterns, 16, asUnsignedValue);
+        wordsOfNibbles(patterns), patterns, 16, asUnsignedValue);
 };
 
 // One layout, three widths of read over it: element 16k + j of a byte buffer is
@@ -1034,39 +941,16 @@ auto tReadUInt4x16 = test("PackedQuantized/readUInt4x16ReadsSixteenNibbles") = [
 auto tWideReadsAgreeWithTheByteIndex =
     test("PackedQuantized/theWideReadsAgreeWithTheByteIndex") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePatternIn(16);
     auto words = wordsOfBytes(patterns);
     auto count = patterns.size();
 
-    auto input = storageOf(device, words);
+    auto scalar = readOnBoth<ReadInt8Kernel>(words, count, count);
+    auto pairs = readOnBoth<ReadInt8x8Kernel>(words, count, count / 8);
+    auto quads = readOnBoth<ReadInt8x16Kernel>(words, count, count / 16);
 
-    auto readEachWay = [&](auto&& kernel, int records)
-    {
-        auto output = device.makeBuffer(count * (int) sizeof(float));
-
-        kernel.weights = input;
-        kernel.output = output;
-        kernel.prepare(device);
-
-        runKernel(device, kernel, records);
-
-        return floatsOf(output);
-    };
-
-    auto scalar = readEachWay(ReadInt8Kernel {}, count);
-    auto pairs = readEachWay(ReadInt8x8Kernel {}, count / 8);
-    auto quads = readEachWay(ReadInt8x16Kernel {}, count / 16);
-
-    for (auto i = 0; i < count; ++i)
-    {
-        check(pairs[i] == scalar[i]);
-        check(quads[i] == scalar[i]);
-    }
+    checkSameReadings(pairs, scalar);
+    checkSameReadings(quads, scalar);
 };
 
 // And the same for nibbles: sixteen of them are two of readInt4x8's words, in
@@ -1074,37 +958,14 @@ auto tWideReadsAgreeWithTheByteIndex =
 auto tWideNibbleReadsAgree =
     test("PackedQuantized/theWideNibbleReadAgreesWithTheNarrowOne") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyNibblePatternIn(16);
     auto words = wordsOfNibbles(patterns);
     auto count = patterns.size();
 
-    auto input = storageOf(device, words);
+    auto narrow = readOnBoth<ReadInt4x8Kernel>(words, count, words.size());
+    auto wide = readOnBoth<ReadInt4x16Kernel>(words, count, count / 16);
 
-    auto narrowOutput = device.makeBuffer(count * (int) sizeof(float));
-    auto wideOutput = device.makeBuffer(count * (int) sizeof(float));
-
-    auto narrow = ReadInt4x8Kernel {};
-    narrow.weights = input;
-    narrow.output = narrowOutput;
-    narrow.prepare(device);
-    runKernel(device, narrow, words.size());
-
-    auto wide = ReadInt4x16Kernel {};
-    wide.weights = input;
-    wide.output = wideOutput;
-    wide.prepare(device);
-    runKernel(device, wide, count / 16);
-
-    auto narrowValues = floatsOf(narrowOutput);
-    auto wideValues = floatsOf(wideOutput);
-
-    for (auto i = 0; i < count; ++i)
-        check(wideValues[i] == narrowValues[i]);
+    checkSameReadings(wide, narrow);
 };
 
 // What the wide reads are for, on the real ComputeProgram path: sixteen bytes
@@ -1148,37 +1009,18 @@ auto tWideReadCostsOneRecordRead =
 // between holds all eight bits and nothing is rounded on either leg.
 auto tQuantizedRoundTrip = test("PackedQuantized/packRoundTripsEveryByte") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
     auto words = wordsOfBytes(patterns);
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
+    auto keepsTheWords = [&](const Vector<float>& result, const Readback& readback)
+    { checkWordsKept(result, words, readback.name()); };
 
     auto signedKernel = RoundTripInt8Kernel {};
-    signedKernel.weights = input;
-    signedKernel.output = output;
-    signedKernel.prepare(device);
-
-    runKernel(device, signedKernel, count);
-
-    for (auto i = 0; i < count; ++i)
-        check(wordsOf(output)[i] == words[i]);
+    runOnBoth(signedKernel, words, count, count, keepsTheWords);
 
     auto unsignedKernel = RoundTripUInt8Kernel {};
-    unsignedKernel.weights = input;
-    unsignedKernel.output = output;
-    unsignedKernel.prepare(device);
-
-    runKernel(device, unsignedKernel, count);
-
-    for (auto i = 0; i < count; ++i)
-        check(wordsOf(output)[i] == words[i]);
+    runOnBoth(unsignedKernel, words, count, count, keepsTheWords);
 };
 
 // writeInt8x4 is the store the round trip spells out by hand, so the two
@@ -1195,27 +1037,16 @@ auto tWriteIsTheStore = test("PackedQuantized/writeInt8x4IsThePackedStore") = []
 
     check(spelledOutUnsigned.source().source == shorthandUnsigned.source().source);
 
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
     auto words = wordsOfBytes(patterns);
     auto count = words.size();
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
-    shorthand.weights = input;
-    shorthand.output = output;
-    shorthand.prepare(device);
-
-    runKernel(device, shorthand, count);
-    auto result = wordsOf(output);
-
-    for (auto i = 0; i < count; ++i)
-        check(result[i] == words[i]);
+    runOnBoth(shorthand,
+              words,
+              count,
+              count,
+              [&](const Vector<float>& result, const Readback& readback)
+              { checkWordsKept(result, words, readback.name()); });
 };
 
 // The wide stores, each against the read it mirrors: a run of bytes read as one
@@ -1224,11 +1055,6 @@ auto tWriteIsTheStore = test("PackedQuantized/writeInt8x4IsThePackedStore") = []
 // because the widening they undo is the half of this that differs.
 auto tWideByteStores = test("PackedQuantized/theWideStoresAreTheWideReads") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
     auto words = wordsOfBytes(patterns);
 
@@ -1238,35 +1064,21 @@ auto tWideByteStores = test("PackedQuantized/theWideStoresAreTheWideReads") = []
         words.add(0u);
 
     auto count = words.size();
-    auto input = storageOf(device, words);
 
-    auto checkRoundTrip =
-        [&](ComputeProgram& kernel, auto& weights, auto& out, int wordsPerRecord)
-    {
-        auto output = device.makeBuffer(count * (int) sizeof(std::uint32_t));
-
-        weights = input;
-        out = output;
-        kernel.prepare(device);
-
-        runKernel(device, kernel, count / wordsPerRecord);
-        auto result = wordsOf(output);
-
-        for (auto i = 0; i < count; ++i)
-            check(result[i] == words[i]);
-    };
+    auto keepsTheWords = [&](const Vector<float>& result, const Readback& readback)
+    { checkWordsKept(result, words, readback.name()); };
 
     auto signedPair = WriteInt8x8Kernel {};
-    checkRoundTrip(signedPair, signedPair.weights, signedPair.output, 2);
+    runOnBoth(signedPair, words, count, count / 2, keepsTheWords);
 
     auto unsignedPair = WriteUInt8x8Kernel {};
-    checkRoundTrip(unsignedPair, unsignedPair.weights, unsignedPair.output, 2);
+    runOnBoth(unsignedPair, words, count, count / 2, keepsTheWords);
 
     auto signedQuad = WriteInt8x16Kernel {};
-    checkRoundTrip(signedQuad, signedQuad.weights, signedQuad.output, 4);
+    runOnBoth(signedQuad, words, count, count / 4, keepsTheWords);
 
     auto unsignedQuad = WriteUInt8x16Kernel {};
-    checkRoundTrip(unsignedQuad, unsignedQuad.weights, unsignedQuad.output, 4);
+    runOnBoth(unsignedQuad, words, count, count / 4, keepsTheWords);
 };
 
 // A buffer packed by the host helpers, read back by the shader: the two sides
@@ -1274,11 +1086,6 @@ auto tWideByteStores = test("PackedQuantized/theWideStoresAreTheWideReads") = []
 auto tHostPackedBufferReadsBack =
     test("PackedQuantized/aHostPackedBufferReadsBackExactly") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto patterns = everyBytePattern();
     auto words = Vector<std::uint32_t> {};
 
@@ -1288,19 +1095,7 @@ auto tHostPackedBufferReadsBack =
                                    (std::int8_t) asSignedByte(patterns[i + 2]),
                                    (std::int8_t) asSignedByte(patterns[i + 3])}));
 
-    auto input = storageOf(device, words);
-    auto output = device.makeBuffer(patterns.size() * (int) sizeof(float));
-
-    auto kernel = ReadInt8Kernel {};
-    kernel.weights = input;
-    kernel.output = output;
-    kernel.prepare(device);
-
-    runKernel(device, kernel, patterns.size());
-    auto result = floatsOf(output);
-
-    for (auto i = 0; i < patterns.size(); ++i)
-        check(result[i] == (float) asSignedByte(patterns[i]));
+    checkWidensEveryPattern<ReadInt8Kernel>(words, patterns, 1, asSignedByte);
 
     auto nibblePatterns = everyNibblePattern();
     auto nibbleWords = Vector<std::uint32_t> {};
@@ -1315,20 +1110,8 @@ auto tHostPackedBufferReadsBack =
         nibbleWords.add(int4x8FromNibbles(nibbles));
     }
 
-    auto nibbleInput = storageOf(device, nibbleWords);
-    auto nibbleOutput =
-        device.makeBuffer(nibblePatterns.size() * (int) sizeof(float));
-
-    auto nibbleKernel = ReadInt4x8Kernel {};
-    nibbleKernel.weights = nibbleInput;
-    nibbleKernel.output = nibbleOutput;
-    nibbleKernel.prepare(device);
-
-    runKernel(device, nibbleKernel, nibbleWords.size());
-    auto nibbleResult = floatsOf(nibbleOutput);
-
-    for (auto i = 0; i < nibblePatterns.size(); ++i)
-        check(nibbleResult[i] == (float) asSignedNibble(nibblePatterns[i]));
+    checkWidensEveryPattern<ReadInt4x8Kernel>(
+        nibbleWords, nibblePatterns, 8, asSignedNibble);
 };
 
 // Both backends' source, generated on whichever host runs the suite - the

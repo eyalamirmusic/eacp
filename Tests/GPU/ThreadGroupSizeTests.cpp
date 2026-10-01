@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 // The threadgroup a kernel asked for, on the device.
 //
@@ -9,6 +9,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -199,21 +200,34 @@ Vector<float> readAll(const Buffer& buffer, int count)
 }
 
 template <typename Kernel>
-Vector<float> localIdsOf(Kernel& kernel, int count)
+void expectLocalIdsWrap(Kernel& kernel, int count, int width)
 {
-    auto output = makeOutput(count);
-    kernel.output = output;
-    kernel.prepare();
+    CrossCheck {kernel}
+        .output(kernel.output, count, untouched)
+        .agreeing()
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& ids = readback.floats(kernel.output);
+                 auto correct = 0;
 
-    auto commands = Device::shared().makeCommandBuffer();
+                 for (auto i = 0; i < count; ++i)
+                     if (ids[i] == (float) (i % width))
+                         ++correct;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, count);
-    }
+                 check(correct == count, readback.name());
+             });
+}
 
-    commands.commit();
-    return readAll(output, count);
+int countWritten(const Vector<float>& values)
+{
+    auto written = 0;
+
+    for (auto value: values)
+        if (value != untouched)
+            ++written;
+
+    return written;
 }
 } // namespace
 
@@ -221,11 +235,6 @@ Vector<float> localIdsOf(Kernel& kernel, int count)
 // group would have reached.
 auto tWideGroupSums = test("ThreadGroupSize/aWideGroupSumsItsOwnRun") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto groups = 3;
     constexpr auto count = wideGroup * groups;
 
@@ -235,37 +244,28 @@ auto tWideGroupSums = test("ThreadGroupSize/aWideGroupSumsItsOwnRun") = []
     for (auto i = 0; i < count; ++i)
         values[i] = (float) (i % 7 + 1);
 
-    auto input = device.makeBuffer(
-        values.data(), (int) sizeof(float) * count, BufferUsage::Storage);
-    auto sums = makeOutput(groups);
-
     auto kernel = WideSumKernel {};
-    kernel.input = input;
-    kernel.output = sums;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, groups, untouched)
+        .agreeing()
+        .run(count,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, count);
-        }
+                 for (auto group = 0; group < groups; ++group)
+                 {
+                     auto expected = 0.f;
 
-        commands.commit();
-    }
+                     for (auto i = group * wideGroup; i < (group + 1) * wideGroup;
+                          ++i)
+                         expected += values[i];
 
-    auto result = readAll(sums, groups);
-
-    for (auto group = 0; group < groups; ++group)
-    {
-        auto expected = 0.f;
-
-        for (auto i = group * wideGroup; i < (group + 1) * wideGroup; ++i)
-            expected += values[i];
-
-        check(result[group] == expected);
-    }
+                     check(result[group] == expected, readback.name());
+                 }
+             });
 };
 
 // A 16x16 group, checked by the one arrangement of its tile that only a group
@@ -273,11 +273,6 @@ auto tWideGroupSums = test("ThreadGroupSize/aWideGroupSumsItsOwnRun") = []
 auto tTileGroupTransposes =
     test("ThreadGroupSize/aTiledGroupTransposesItsBlock") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto side = tile * 2;
     constexpr auto cells = side * side;
 
@@ -288,39 +283,30 @@ auto tTileGroupTransposes =
         for (auto x = 0; x < side; ++x)
             values[y * side + x] = (float) (y * side + x);
 
-    auto input = device.makeBuffer(
-        values.data(), (int) sizeof(float) * cells, BufferUsage::Storage);
-    auto output = makeOutput(cells);
-
     auto kernel = TileTransposeKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, cells, untouched)
+        .agreeing()
+        .run(side,
+             side,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 auto correct = 0;
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, side, side);
-        }
+                 for (auto y = 0; y < side; ++y)
+                     for (auto x = 0; x < side; ++x)
+                         if (result[y * side + x] == values[x * side + y])
+                             ++correct;
 
-        commands.commit();
-    }
+                 check(correct == cells, readback.name());
 
-    auto result = readAll(output, cells);
-    auto correct = 0;
-
-    for (auto y = 0; y < side; ++y)
-        for (auto x = 0; x < side; ++x)
-            if (result[y * side + x] == values[x * side + y])
-                ++correct;
-
-    check(correct == cells);
-
-    // And genuinely transposed rather than copied, which the diagonal alone
-    // would not have told apart.
-    check(result[1] != values[1]);
+                 // And genuinely transposed rather than copied, which the
+                 // diagonal alone would not have told apart.
+                 check(result[1] != values[1], readback.name());
+             });
 };
 
 // The width a lane counts to is its own kernel's, and a kernel that named no
@@ -328,76 +314,43 @@ auto tTileGroupTransposes =
 auto tLocalIdRunsToTheGroupWidth =
     test("ThreadGroupSize/aLaneCountsToItsOwnGroupWidth") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto count = wideGroup * 2;
 
     auto stock = LocalIdKernel {};
-    auto stockIds = localIdsOf(stock, count);
+    expectLocalIdsWrap(stock, count, ComputeProgram::groupWidth);
 
     auto wide = WideLocalIdKernel {};
-    auto wideIds = localIdsOf(wide, count);
-
-    auto stockCorrect = 0;
-    auto wideCorrect = 0;
-
-    for (auto i = 0; i < count; ++i)
-    {
-        if (stockIds[i] == (float) (i % ComputeProgram::groupWidth))
-            ++stockCorrect;
-
-        if (wideIds[i] == (float) (i % wideGroup))
-            ++wideCorrect;
-    }
-
-    check(stockCorrect == count);
-    check(wideCorrect == count);
+    expectLocalIdsWrap(wide, count, wideGroup);
 };
 
 // The 2D default, unchanged by any of this: 8x8.
 auto tStockGridGroupIsEightSquared =
     test("ThreadGroupSize/theStockGridGroupIsEightSquared") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto side = 32;
     constexpr auto cells = side * side;
-
-    auto output = makeOutput(cells);
-
-    auto kernel = LocalPositionKernel {};
-    kernel.output = output;
-    kernel.prepare();
-
-    {
-        auto commands = device.makeCommandBuffer();
-
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, side, side);
-        }
-
-        commands.commit();
-    }
-
-    auto result = readAll(output, cells);
-    auto correct = 0;
-
     constexpr auto stock = ComputeProgram::groupSize2D;
 
-    for (auto y = 0; y < side; ++y)
-        for (auto x = 0; x < side; ++x)
-            if (result[y * side + x]
-                == (float) (x % stock) + (float) (y % stock) * 1000.f)
-                ++correct;
+    auto kernel = LocalPositionKernel {};
 
-    check(correct == cells);
+    CrossCheck {kernel}
+        .output(kernel.output, cells, untouched)
+        .agreeing()
+        .run(side,
+             side,
+             [&](const Readback& readback)
+             {
+                 const auto& result = readback.floats(kernel.output);
+                 auto correct = 0;
+
+                 for (auto y = 0; y < side; ++y)
+                     for (auto x = 0; x < side; ++x)
+                         if (result[y * side + x]
+                             == (float) (x % stock) + (float) (y % stock) * 1000.f)
+                             ++correct;
+
+                 check(correct == cells, readback.name());
+             });
 };
 
 // The indirect path takes the group from the pipeline it is dispatching, so a
@@ -405,15 +358,37 @@ auto tStockGridGroupIsEightSquared =
 auto tIndirectDispatchUsesTheProgramsGroup =
     test("ThreadGroupSize/anIndirectDispatchRunsTheProgramsGroup") = []
 {
+    constexpr auto capacity = 1024;
+    constexpr auto marked = 300;
+    constexpr auto groups = (marked + wideGroup - 1) / wideGroup;
+
+    std::uint32_t initial[] = {0u, 1u, 1u, (std::uint32_t) marked};
+
+    auto onCpu = filled(capacity, untouched);
+
+    {
+        auto words = Vector<std::uint32_t> {};
+
+        for (auto word: initial)
+            words.add(word);
+
+        auto prepare = PrepareWideKernel {};
+        auto prepareBindings = CpuCompute::Bindings {};
+        check(prepareBindings.set(prepare.arguments, words));
+        dispatchOnCpu(prepare, prepareBindings, 1);
+
+        auto consume = WideConsumeKernel {};
+        auto consumeBindings = CpuCompute::Bindings {};
+        check(consumeBindings.set(consume.output, onCpu));
+        dispatchIndirectOnCpu(consume, consumeBindings, words, capacity);
+
+        check(countWritten(onCpu) == groups * wideGroup, "cpu");
+    }
+
     auto& device = Device::shared();
 
     if (!device.isValid())
         return;
-
-    constexpr auto capacity = 1024;
-    constexpr auto marked = 300;
-
-    std::uint32_t initial[] = {0u, 1u, 1u, (std::uint32_t) marked};
 
     auto arguments =
         device.makeBuffer(initial, sizeof(initial), BufferUsage::Storage);
@@ -443,13 +418,8 @@ auto tIndirectDispatchUsesTheProgramsGroup =
         commands.commit();
     }
 
-    auto values = readAll(output, capacity);
-    auto written = 0;
+    auto onGpu = readAll(output, capacity);
 
-    for (auto value: values)
-        if (value != untouched)
-            ++written;
-
-    constexpr auto groups = (marked + wideGroup - 1) / wideGroup;
-    check(written == groups * wideGroup);
+    check(countWritten(onGpu) == groups * wideGroup, "gpu");
+    expectAgreement(onCpu, onGpu);
 };

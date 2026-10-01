@@ -3,10 +3,11 @@
 nano_add_executable(GPUCodegenTests
         SOURCES
             AtomicCodegenTests.cpp
+            ComputeKernelCodegenTests.cpp
             GroupReductionCodegenTests.cpp
             ShaderCodegenTests.cpp
             SimdMatrixCodegenTests.cpp
-        TARGETS eacp-gpu-codegen)
+        TARGETS eacp-gpu-codegen eacp-cpu-compute)
 
 # With eacp-spirv around, every emitted GLSL source is compiled by glslang too;
 # without it the checks compile to nothing and the string assertions stand alone.
@@ -26,7 +27,7 @@ if (EACP_HAS_TEXT)
     nano_add_executable(ShaderGoldenTests
             SOURCES
                 ShaderGoldenTests.cpp
-            TARGETS eacp-ml eacp-gpuwidgets eacp-sprites eacp-ui eacp-text)
+            TARGETS eacp-ml-kernels eacp-gpuwidgets eacp-sprites eacp-ui eacp-text)
 
     target_compile_definitions(ShaderGoldenTests PRIVATE
             EACP_SHADER_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Golden")
@@ -39,7 +40,8 @@ if (NOT EACP_HAS_GPU)
 endif ()
 
 # Everything here runs on every backend, drawing included: a scissor or a blend
-# mode has no CPU-side observable. Every case self-skips without a device.
+# mode has no CPU-side observable. Every case self-skips without a device,
+# except for the CPU half of a compute cross-check (CpuCrossCheck.h).
 set(gpu_test_sources
         AdoptedMemoryTests.cpp
         AtomicTests.cpp
@@ -129,15 +131,23 @@ if (LINUX)
     list(APPEND gpu_test_sources PresentTests-Linux.cpp TextureSettleTests-Linux.cpp)
 endif ()
 
+# GPUView::setTransparent over a child window, read back from the composed
+# desktop. Self-skips without a device or a compositor.
+if (WIN32)
+    list(APPEND gpu_test_sources TransparentViewTests-Windows.cpp)
+endif ()
+
 # eacp-sprites is linked because CoordinateSpaceTests draws real rects through
 # SpriteRenderer: the y-axis contract it pins is between Rect and the things
 # that draw it, so it cannot be checked without one of them. SpriteBatchTests
 # rides the same path to pin what the renderer's batching may not reorder.
+# eacp-cpu-compute is the other half of CpuCrossCheck.h: the compute suites
+# run each kernel on the CPU too, with or without a device.
 nano_add_executable(GPUTests
         NO_MAIN
         SOURCES
             ${gpu_test_sources}
-        TARGETS eacp-sprites eacp-gpu)
+        TARGETS eacp-sprites eacp-gpu eacp-cpu-compute)
 
 eacp_enable_glsl_compile_checks(GPUTests)
 

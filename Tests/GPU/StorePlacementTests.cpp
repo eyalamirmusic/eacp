@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 // Where a kernel's writes actually happen.
 //
@@ -18,6 +18,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -74,41 +75,16 @@ struct LoopStoreKernel final : ComputeProgram
     EACP_SHADER(output)
 };
 
-Buffer makeFilled(int elements, float value)
+// The kernel over an output of elementCount untouched elements, on the CPU and
+// then the GPU; verify is handed what each left behind and the backend's name.
+template <typename Kernel, typename Verify>
+void runOver(Kernel& kernel, int threads, Verify verify)
 {
-    auto initial = Vector<float> {};
-    initial.assign(elements, value);
-
-    return Buffer {Device::shared(),
-                   initial.data(),
-                   (int) sizeof(float) * elements,
-                   BufferUsage::Storage};
-}
-
-Vector<float> readBack(const Buffer& buffer, int elements)
-{
-    auto values = Vector<float> {};
-    values.resize(elements);
-    buffer.read(values.data(), (int) sizeof(float) * elements);
-    return values;
-}
-
-template <typename Kernel>
-Vector<float>
-    runOver(Kernel& kernel, const Buffer& output, int threads, int elements)
-{
-    kernel.output = output;
-    kernel.prepare();
-
-    auto commands = Device::shared().makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
-
-    commands.commit();
-    return readBack(output, elements);
+    CrossCheck {kernel}
+        .output(kernel.output, elementCount, untouched)
+        .run(threads,
+             [&](const Readback& readback)
+             { verify(readback.floats(kernel.output), readback.name()); });
 }
 } // namespace
 
@@ -117,32 +93,32 @@ Vector<float>
 // followed it unconditionally.
 auto tGuardedStoreRespectsTheGuard = test("StorePlacement/aStoreObeysItsIfThen") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    auto output = makeFilled(elementCount, untouched);
     auto kernel = GuardedStoreKernel {};
-    auto values = runOver(kernel, output, elementCount, elementCount);
 
-    auto written = 0;
-    auto skipped = 0;
+    runOver(kernel,
+            elementCount,
+            [](const Vector<float>& values, const char* name)
+            {
+                auto written = 0;
+                auto skipped = 0;
 
-    for (auto i = 0; i < elementCount; ++i)
-    {
-        if (i % 2 == 0)
-        {
-            if (values[i] == (float) i)
-                ++written;
+                for (auto i = 0; i < elementCount; ++i)
+                {
+                    if (i % 2 == 0)
+                    {
+                        if (values[i] == (float) i)
+                            ++written;
 
-            continue;
-        }
+                        continue;
+                    }
 
-        if (values[i] == untouched)
-            ++skipped;
-    }
+                    if (values[i] == untouched)
+                        ++skipped;
+                }
 
-    check(written == elementCount / 2);
-    check(skipped == elementCount / 2);
+                check(written == elementCount / 2, name);
+                check(skipped == elementCount / 2, name);
+            });
 };
 
 // Every element of every thread's run, written from inside the loop body. A
@@ -150,19 +126,18 @@ auto tGuardedStoreRespectsTheGuard = test("StorePlacement/aStoreObeysItsIfThen")
 auto tLoopStoreRunsEveryIteration =
     test("StorePlacement/aStoreInsideALoopRepeats") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    auto threads = elementCount / perThread;
-    auto output = makeFilled(elementCount, untouched);
     auto kernel = LoopStoreKernel {};
-    auto values = runOver(kernel, output, threads, elementCount);
 
-    auto correct = 0;
+    runOver(kernel,
+            elementCount / perThread,
+            [](const Vector<float>& values, const char* name)
+            {
+                auto correct = 0;
 
-    for (auto i = 0; i < elementCount; ++i)
-        if (values[i] == (float) i + 100.f)
-            ++correct;
+                for (auto i = 0; i < elementCount; ++i)
+                    if (values[i] == (float) i + 100.f)
+                        ++correct;
 
-    check(correct == elementCount);
+                check(correct == elementCount, name);
+            });
 };

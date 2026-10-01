@@ -49,7 +49,7 @@ kernel void computeMain(device const float* buffer0 [[buffer(0)]],
     if (((t8 < t6) && (t9 < t10)))
     {
         uint t11 = (t8 / 16u);
-        float v2 = (float(int(atomic_load_explicit(&buffer2[((uint((t5).x) + (t11 * t10)) + t9)], memory_order_relaxed))) * 9.53674e-07);
+        float v2 = (float(int(atomic_load_explicit(&buffer2[((uint((t5).x) + (t11 * t10)) + t9)], memory_order_relaxed))) * 9.536743e-07);
         uint t12 = ((uint((t5).w) + ((t9 / 16u) * ((t6 + 15u) / 16u))) + t11);
         uint v3 = atomic_load_explicit(&buffer1[t12], memory_order_relaxed);
         uint v4 = atomic_load_explicit(&buffer1[(t12 + 1u)], memory_order_relaxed);

@@ -7,7 +7,9 @@
 #include "UniformLayout.h"
 
 #include <cassert>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 // The single source-of-truth walker. MSL and HLSL spell most of an expression
 // identically; GLSL differs in a countable list, each with one arm here.
@@ -28,12 +30,25 @@ const char* typeName(Backend backend, ValueType type)
     return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
 }
 
-std::string floatLiteral(float value)
+std::string shortestRoundTrip(float value)
 {
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "%g", value);
 
-    auto text = std::string(buffer);
+    for (auto precision = 6; precision < 9; ++precision)
+    {
+        std::snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
+
+        if (!std::isfinite(value) || std::strtof(buffer, nullptr) == value)
+            return buffer;
+    }
+
+    std::snprintf(buffer, sizeof(buffer), "%.9g", value);
+    return buffer;
+}
+
+std::string floatLiteral(float value)
+{
+    auto text = shortestRoundTrip(value);
 
     if (text.find('.') == std::string::npos && text.find('e') == std::string::npos
         && text.find('n') == std::string::npos)
@@ -1720,6 +1735,8 @@ void collectArrays(const ShaderGraph& graph,
         collectArrays(graph, argument, used, seen);
 }
 
+} // namespace
+
 // Which variables running a statement can leave holding something else -
 // following the bodies of an if or a loop, since what they write is written
 // just the same.
@@ -1894,6 +1911,8 @@ void collectBufferWrites(const ShaderGraph& graph, int block, Vector<char>& writ
         collectBufferWrites(graph, graph.statement(index), written);
 }
 
+namespace
+{
 // A visited set a walk can have a fresh one of without paying for one. Marking
 // is a stamp rather than a flag, so starting over is a counter increment
 // instead of clearing a buffer the size of the graph.
@@ -2040,8 +2059,7 @@ struct StageEmitter
         , searched(graphToUse.nodeCount())
     {
         locals.resize(graphToUse.nodeCount(), -1);
-        fragmentSources.resize(graphToUse.simdMatrixCount(),
-                                FragmentSource {});
+        fragmentSources.resize(graphToUse.simdMatrixCount(), FragmentSource {});
         loopConditionReads.resize(graphToUse.nodeCount(), 0);
     }
 
@@ -2190,11 +2208,8 @@ struct StageEmitter
         if (slot < 0 || slot >= fragmentSources.size())
             return;
 
-        fragmentSources[slot] = {true,
-                                 element,
-                                 std::move(memory),
-                                 std::move(offset),
-                                 std::move(stride)};
+        fragmentSources[slot] = {
+            true, element, std::move(memory), std::move(offset), std::move(stride)};
     }
 
     // Which statements leave a remembered source standing: one that declares a
@@ -2618,8 +2633,8 @@ private:
             return memory + "[" + index + "]";
 
         return std::string(packedSimdMatrixHelper(element)) + "("
-             + bitsOfFloat(printer.backend) + "(" + memory + "[(" + index
-             + ") / 2u]), (" + index + ") % 2u)";
+               + bitsOfFloat(printer.backend) + "(" + memory + "[(" + index
+               + ") / 2u]), (" + index + ") % 2u)";
     }
 
     // One of the two elements of a patch a lane holds, as the memory names it:
@@ -2762,28 +2777,28 @@ private:
             if (const auto* rightMemory = fragmentSourceFor(statement.right))
             {
                 auto leftIndex = leftMemory->offset + " + sgmRow * "
-                               + leftMemory->stride + " + " + step;
+                                 + leftMemory->stride + " + " + step;
 
                 auto rightAt = [&](const std::string& tail)
                 {
                     auto index = rightMemory->offset + " + " + step + " * "
-                               + rightMemory->stride + " + sgmColumn" + tail;
+                                 + rightMemory->stride + " + sgmColumn" + tail;
 
                     return simdMatrixElementAt(
                         rightMemory->element, rightMemory->memory, index);
                 };
 
-                auto fused = indent + "for (uint " + step + " = 0u; " + step
-                           + " < " + side + "u; ++" + step + ")\n";
+                auto fused = indent + "for (uint " + step + " = 0u; " + step + " < "
+                             + side + "u; ++" + step + ")\n";
                 fused += indent + "{\n";
                 fused += indent + "    float " + term + " = "
-                       + simdMatrixElementAt(
+                         + simdMatrixElementAt(
                              leftMemory->element, leftMemory->memory, leftIndex)
-                       + ";\n";
+                         + ";\n";
                 fused += indent + "    " + accumulator + ".x += " + term + " * "
-                       + rightAt("") + ";\n";
+                         + rightAt("") + ";\n";
                 fused += indent + "    " + accumulator + ".y += " + term + " * "
-                       + rightAt(" + 1u") + ";\n";
+                         + rightAt(" + 1u") + ";\n";
                 fused += indent + "}\n";
                 return fused;
             }

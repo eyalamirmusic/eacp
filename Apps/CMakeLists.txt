@@ -3,6 +3,11 @@ set(CMAKE_FOLDER Examples)
 add_subdirectory(Console)
 add_subdirectory(Network)
 
+# Core ML is Apple's; the spike is a macOS console app.
+if (EACP_HAS_COREML AND NOT IOS)
+    add_subdirectory(ML)
+endif ()
+
 if (EACP_HAS_GPU)
     add_subdirectory(GPU)
 

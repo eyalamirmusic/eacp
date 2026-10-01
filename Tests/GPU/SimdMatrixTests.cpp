@@ -1,7 +1,8 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/Core/Utils/Environment.h>
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -16,10 +17,18 @@
 // extent divides the tiling; and the same product at a shape whose extents
 // divide none of it, which is what says the clamped loads and the guarded
 // copy-out hold the edges.
+//
+// Every kernel runs on the CPU executor too, through CpuCrossCheck.h, and never
+// self-skips there. The packed half and bf16 products run on the CPU whatever
+// the device answers about the packed types, since the executor asks it
+// nothing; their GPU halves still need the device to hold the type natively.
+// The two refusal cases have no CPU half: what they check is the device's
+// answer and ComputePass dropping a dispatch, neither of which the CPU has.
 
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -208,7 +217,8 @@ std::vector<float> finelyScatteredValues(int count, int salt)
 
 // Two elements to a word, the low half first: the layout every packed read in
 // the EDSL already assumes, and what makes the offset count in elements.
-Buffer packedBufferOf(const std::vector<float>& values, SimdMatrixElement element)
+std::vector<std::uint32_t> packedWordsOf(const std::vector<float>& values,
+                                         SimdMatrixElement element)
 {
     auto words = std::vector<std::uint32_t>((values.size() + 1) / 2);
 
@@ -216,6 +226,25 @@ Buffer packedBufferOf(const std::vector<float>& values, SimdMatrixElement elemen
         words[i / 2] |= (std::uint32_t) narrowedTo(element, values[i])
                         << (16 * (i % 2));
 
+    return words;
+}
+
+// The same words as the float array a buffer declared float holds them in,
+// which is what the CPU binds for a packed InputBuffer.
+Vector<float> packedHostArrayOf(const std::vector<float>& values,
+                                SimdMatrixElement element)
+{
+    auto array = Vector<float> {};
+
+    for (auto word: packedWordsOf(values, element))
+        array.add(std::bit_cast<float>(word));
+
+    return array;
+}
+
+Buffer packedBufferOf(const std::vector<float>& values, SimdMatrixElement element)
+{
+    auto words = packedWordsOf(values, element);
     auto bytes = (int) (words.size() * sizeof(std::uint32_t));
     auto buffer = Device::shared().makeBuffer(bytes, BufferUsage::Storage);
 
@@ -289,17 +318,22 @@ struct TiledProduct final : ComputeProgram
         compile();
     }
 
-    void dispatch(ComputePass& pass, int rows, int columns, int inner)
+    void setShape(int rows, int columns, int inner)
     {
         rowCount = (std::uint32_t) rows;
         columnCount = (std::uint32_t) columns;
         innerCount = (std::uint32_t) inner;
-
-        const auto rowTiles = (rows + tileRows - 1) / tileRows;
-        const auto columnTiles = (columns + tileColumns - 1) / tileColumns;
-
-        pass.dispatch(*this, columnTiles * threads, rowTiles);
+        aRowStride = (std::uint32_t) inner;
+        bStride = (std::uint32_t) inner;
+        cRowStride = (std::uint32_t) columns;
     }
+
+    static int gridWidth(int columns)
+    {
+        return (columns + tileColumns - 1) / tileColumns * threads;
+    }
+
+    static int gridHeight(int rows) { return (rows + tileRows - 1) / tileRows; }
 
     void define() override
     {
@@ -427,40 +461,6 @@ struct TiledProduct final : ComputeProgram
                 cRowStride)
 };
 
-// The blocked product run once over one shape, and what it wrote read back.
-std::vector<float> tiledProduct(const std::vector<float>& a,
-                                const std::vector<float>& b,
-                                int rows,
-                                int columns,
-                                int inner)
-{
-    auto& device = Device::shared();
-
-    auto left = bufferOf(a);
-    auto right = bufferOf(b);
-    auto result = outputOf((std::size_t) rows * columns);
-
-    auto kernel = TiledProduct {};
-    kernel.a = left;
-    kernel.b = right;
-    kernel.output = result;
-    kernel.aRowStride = (std::uint32_t) inner;
-    kernel.bStride = (std::uint32_t) inner;
-    kernel.cRowStride = (std::uint32_t) columns;
-    kernel.prepare();
-
-    auto commands = device.makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        kernel.dispatch(pass, rows, columns, inner);
-    }
-
-    commands.commit();
-
-    return readBack(result, (std::size_t) rows * columns);
-}
-
 // The tolerance a sum of `inner` products of values under 1.5 deserves in
 // single precision, which is what both sides compute in.
 float toleranceFor(int inner)
@@ -468,18 +468,60 @@ float toleranceFor(int inner)
     return 2.0e-4f * (float) inner;
 }
 
-void checkMatches(const std::vector<float>& values,
+template <typename Values>
+void checkMatches(const Values& values,
                   const std::vector<float>& expected,
-                  float tolerance)
+                  float tolerance,
+                  const char* backend = "gpu")
 {
-    check(values.size() == expected.size());
+    check((std::size_t) values.size() == expected.size(), backend);
 
     auto worst = 0.f;
 
     for (auto i = std::size_t {}; i < expected.size(); ++i)
-        worst = std::max(worst, std::abs(values[i] - expected[i]));
+        worst = std::max(worst, std::abs(values[(int) i] - expected[i]));
 
-    check(worst <= tolerance);
+    check(worst <= tolerance, backend);
+}
+
+Vector<float> hostArray(const std::vector<float>& values)
+{
+    auto array = Vector<float> {};
+
+    for (auto value: values)
+        array.add(value);
+
+    return array;
+}
+
+// The blocked product run once over one shape on both backends, the first
+// `checkedRows` rows of what each wrote compared with `expected`.
+void checkTiledProduct(const std::vector<float>& a,
+                       const std::vector<float>& b,
+                       int rows,
+                       int columns,
+                       int inner,
+                       int checkedRows,
+                       const std::vector<float>& expected)
+{
+    auto kernel = TiledProduct {};
+    kernel.setShape(rows, columns, inner);
+
+    CrossCheck {kernel}
+        .input(kernel.a, hostArray(a))
+        .input(kernel.b, hostArray(b))
+        .output(kernel.output, rows * columns)
+        .run(TiledProduct::gridWidth(columns),
+             TiledProduct::gridHeight(rows),
+             [&](const Readback& readback)
+             {
+                 const auto& written = readback.floats(kernel.output);
+                 auto checked = std::vector<float>(
+                     written.begin(), written.begin() + checkedRows * columns);
+
+                 checkMatches(
+                     checked, expected, toleranceFor(inner), readback.name());
+             });
 }
 } // namespace
 
@@ -488,32 +530,8 @@ void checkMatches(const std::vector<float>& values,
 auto tOneFragmentProduct =
     test("SimdMatrix/oneFragmentProductMatchesTheReference") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     auto a = scatteredValues(fragmentElements, 1);
     auto b = scatteredValues(fragmentElements, 2);
-
-    auto left = bufferOf(a);
-    auto right = bufferOf(b);
-    auto result = outputOf(fragmentElements);
-
-    auto kernel = FragmentProduct {};
-    kernel.a = left;
-    kernel.b = right;
-    kernel.output = result;
-    kernel.prepare();
-
-    auto commands = device.makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, ComputeProgram::simdWidth);
-    }
-
-    commands.commit();
 
     // The kernel's fragments are read row-major, so the second operand's rows
     // are the product's inner index - a plain row-by-column product, unlike the
@@ -527,8 +545,20 @@ auto tOneFragmentProduct =
                     a[(std::size_t) m * fragment + k]
                     * b[(std::size_t) k * fragment + n];
 
-    checkMatches(
-        readBack(result, fragmentElements), expected, toleranceFor(fragment));
+    auto kernel = FragmentProduct {};
+
+    CrossCheck {kernel}
+        .input(kernel.a, hostArray(a))
+        .input(kernel.b, hostArray(b))
+        .output(kernel.output, fragmentElements)
+        .run(ComputeProgram::simdWidth,
+             [&](const Readback& readback)
+             {
+                 checkMatches(readback.floats(kernel.output),
+                              expected,
+                              toleranceFor(fragment),
+                              readback.name());
+             });
 };
 
 // The blocked product at a shape every extent of the tiling divides: 128 rows
@@ -536,9 +566,6 @@ auto tOneFragmentProduct =
 auto tTiledProductOnWholeTiles =
     test("SimdMatrix/blockedProductMatchesTheReference") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     constexpr auto rows = 128;
     constexpr auto columns = 128;
     constexpr auto inner = 64;
@@ -546,9 +573,13 @@ auto tTiledProductOnWholeTiles =
     auto a = scatteredValues(rows * inner, 3);
     auto b = scatteredValues(columns * inner, 5);
 
-    checkMatches(tiledProduct(a, b, rows, columns, inner),
-                 referenceProduct(a, b, rows, columns, inner, 0.f),
-                 toleranceFor(inner));
+    checkTiledProduct(a,
+                      b,
+                      rows,
+                      columns,
+                      inner,
+                      rows,
+                      referenceProduct(a, b, rows, columns, inner, 0.f));
 };
 
 // And at a shape none of them divides: 100 rows leaves 36 of the second row
@@ -558,9 +589,6 @@ auto tTiledProductOnWholeTiles =
 // neighbour here and is neither above.
 auto tTiledProductOnRaggedShape = test("SimdMatrix/blockedProductHoldsTheEdges") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     constexpr auto rows = 100;
     constexpr auto columns = 76;
     constexpr auto inner = 45;
@@ -568,9 +596,13 @@ auto tTiledProductOnRaggedShape = test("SimdMatrix/blockedProductHoldsTheEdges")
     auto a = scatteredValues(rows * inner, 7);
     auto b = scatteredValues(columns * inner, 11);
 
-    checkMatches(tiledProduct(a, b, rows, columns, inner),
-                 referenceProduct(a, b, rows, columns, inner, 0.f),
-                 toleranceFor(inner));
+    checkTiledProduct(a,
+                      b,
+                      rows,
+                      columns,
+                      inner,
+                      rows,
+                      referenceProduct(a, b, rows, columns, inner, 0.f));
 };
 
 // The shape a Whisper encoder's feed-forward is, which is what the primitive
@@ -580,9 +612,6 @@ auto tTiledProductOnRaggedShape = test("SimdMatrix/blockedProductHoldsTheEdges")
 auto tTiledProductAtEncoderShape =
     test("SimdMatrix/blockedProductAtAnEncoderShape") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     constexpr auto rows = 1500;
     constexpr auto columns = 1536;
     constexpr auto inner = 384;
@@ -591,13 +620,10 @@ auto tTiledProductAtEncoderShape =
     auto a = scatteredValues(rows * inner, 13);
     auto b = scatteredValues(columns * inner, 17);
 
-    auto values = tiledProduct(a, b, rows, columns, inner);
-
     auto strip = std::vector<float>(a.begin(), a.begin() + checkedRows * inner);
     auto expected = referenceProduct(strip, b, checkedRows, columns, inner, 0.f);
 
-    values.resize((std::size_t) checkedRows * columns);
-    checkMatches(values, expected, toleranceFor(inner));
+    checkTiledProduct(a, b, rows, columns, inner, checkedRows, expected);
 };
 
 namespace
@@ -610,12 +636,60 @@ namespace
 // a mixed product stays a float. Eighths would have checked only the first -
 // both formats hold one exactly, so a product that narrowed everything would
 // have agreed to the last bit.
+//
+// The CPU half runs whatever the device answers and is bound by hand: the
+// packed operand is the float array holding its words.
+Vector<float> packedProductOnCpu(SimdMatrixElement element,
+                                 const std::vector<float>& a,
+                                 const std::vector<float>& b)
+{
+    auto kernel = PackedFragmentProduct {element};
+    auto left = hostArray(a);
+    auto right = packedHostArrayOf(b, element);
+    auto result = filled(fragmentElements, 0.f);
+
+    auto bindings = CpuCompute::Bindings {};
+    bindings.set(kernel.a, left);
+    bindings.set(kernel.b, right);
+    bindings.set(kernel.output, result);
+    dispatchOnCpu(kernel, bindings, ComputeProgram::simdWidth);
+
+    return result;
+}
+
+bool holdsPackedFragmentsNatively(SimdMatrixElement element)
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return false;
+
+    return element == SimdMatrixElement::Half ? device.supportsHalfSimdMatrix()
+                                              : device.supportsBFloat16SimdMatrix();
+}
+
 void checkPackedFragmentProduct(SimdMatrixElement element)
 {
     auto& device = Device::shared();
 
     auto a = finelyScatteredValues(fragmentElements, 19);
     auto b = inexactValues(fragmentElements, 23);
+
+    auto stored = roundTripped(b, element);
+    auto expected = std::vector<float>(fragmentElements, accumulatorFill);
+
+    for (auto m = 0; m < fragment; ++m)
+        for (auto n = 0; n < fragment; ++n)
+            for (auto k = 0; k < fragment; ++k)
+                expected[(std::size_t) m * fragment + n] +=
+                    a[(std::size_t) m * fragment + k]
+                    * stored[(std::size_t) k * fragment + n];
+
+    checkMatches(
+        packedProductOnCpu(element, a, b), expected, toleranceFor(fragment), "cpu");
+
+    if (!holdsPackedFragmentsNatively(element))
+        return;
 
     auto left = bufferOf(a);
     auto right = packedBufferOf(b, element);
@@ -639,16 +713,6 @@ void checkPackedFragmentProduct(SimdMatrixElement element)
 
     commands.commit();
 
-    auto stored = roundTripped(b, element);
-    auto expected = std::vector<float>(fragmentElements, accumulatorFill);
-
-    for (auto m = 0; m < fragment; ++m)
-        for (auto n = 0; n < fragment; ++n)
-            for (auto k = 0; k < fragment; ++k)
-                expected[(std::size_t) m * fragment + n] +=
-                    a[(std::size_t) m * fragment + k]
-                    * stored[(std::size_t) k * fragment + n];
-
     checkMatches(
         readBack(result, fragmentElements), expected, toleranceFor(fragment));
 }
@@ -671,26 +735,12 @@ bool packedFragmentsCanBeRefused(const ComputeProgram& kernel)
 // mixed-precision instruction into a float accumulator.
 auto tPackedBFloat16Product =
     test("SimdMatrix/aPackedBFloat16FragmentMultipliesWithoutStaging") = []
-{
-    auto& device = Device::shared();
-
-    if (!device.isValid() || !device.supportsBFloat16SimdMatrix())
-        return;
-
-    checkPackedFragmentProduct(SimdMatrixElement::BFloat16);
-};
+{ checkPackedFragmentProduct(SimdMatrixElement::BFloat16); };
 
 // The fp16 sibling, which is the one of the two on eacp's macOS floor.
 auto tPackedHalfProduct =
     test("SimdMatrix/aPackedHalfFragmentMultipliesWithoutStaging") = []
-{
-    auto& device = Device::shared();
-
-    if (!device.isValid() || !device.supportsHalfSimdMatrix())
-        return;
-
-    checkPackedFragmentProduct(SimdMatrixElement::Half);
-};
+{ checkPackedFragmentProduct(SimdMatrixElement::Half); };
 
 // And what happens to a kernel built against the wrong answer: prepare()
 // refuses it rather than handing the backend a shader naming a type it has
@@ -808,26 +858,27 @@ auto tRefusedKernelDispatchesNothing =
 // 8.001953125 if the float side survives and to a flat 8 if it does not, and
 // the two are a thousand tolerances apart. On the hardware this runs on it
 // survives - see the README, where the number is recorded as a measurement and
-// not as something the language promises.
+// not as something the language promises. The CPU widens the packed operand
+// and multiplies in float, so there it survives by construction.
 auto tMixedProductKeepsTheFloatOperand =
     test("SimdMatrix/aMixedProductDoesNotNarrowTheFloatOperand") = []
 {
     auto& device = Device::shared();
 
-    if (!device.isValid())
-        return;
-
     for (auto element: {SimdMatrixElement::Half, SimdMatrixElement::BFloat16})
     {
-        auto native = element == SimdMatrixElement::Half
-                          ? device.supportsHalfSimdMatrix()
-                          : device.supportsBFloat16SimdMatrix();
-
-        if (!native)
-            continue;
-
         auto a = std::vector<float>(fragmentElements, 1.f + belowSixteenBits);
         auto b = std::vector<float>(fragmentElements, 1.f);
+
+        auto kept = accumulatorFill + (float) fragment * (1.f + belowSixteenBits);
+        auto narrowed = accumulatorFill + (float) fragment;
+        auto expected = std::vector<float>(fragmentElements, kept);
+
+        check(std::abs(kept - narrowed) > 1.0e-3f);
+        checkMatches(packedProductOnCpu(element, a, b), expected, 1.0e-5f, "cpu");
+
+        if (!holdsPackedFragmentsNatively(element))
+            continue;
 
         auto left = bufferOf(a);
         auto right = packedBufferOf(b, element);
@@ -850,12 +901,6 @@ auto tMixedProductKeepsTheFloatOperand =
 
         commands.commit();
 
-        auto kept = accumulatorFill + (float) fragment * (1.f + belowSixteenBits);
-
-        auto narrowed = accumulatorFill + (float) fragment;
-        auto expected = std::vector<float>(fragmentElements, kept);
-
         checkMatches(readBack(result, fragmentElements), expected, 1.0e-5f);
-        check(std::abs(kept - narrowed) > 1.0e-3f);
     }
 };

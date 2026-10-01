@@ -70,7 +70,7 @@ void main()
 {
     float t0 = ((((vary5).x * (vary4).x) + ((vary5).y * (vary4).y)) + (vary6).x);
     float t1 = mix(t0, length(vec2(t0, ((((vary5).z * (vary4).x) + ((vary5).w * (vary4).y)) + (vary6).y))), step(1.5, (vary3).w));
-    vec4 t2 = mix(vary2, texture(texture1, vec2((0.00195312 + (mix(mix(clamp(t1, 0.0, 1.0), (1.0 - abs((1.0 - (t1 - (2.0 * floor((t1 / 2.0))))))), step(0.5, (vary6).w)), (t1 - floor(t1)), step(1.5, (vary6).w)) * 0.996094)), (vary6).z)), vec4(step(0.5, (vary3).w)));
+    vec4 t2 = mix(vary2, texture(texture1, vec2((0.001953125 + (mix(mix(clamp(t1, 0.0, 1.0), (1.0 - abs((1.0 - (t1 - (2.0 * floor((t1 / 2.0))))))), step(0.5, (vary6).w)), (t1 - floor(t1)), step(1.5, (vary6).w)) * 0.99609375)), (vary6).z)), vec4(step(0.5, (vary3).w)));
     vec2 t3 = (abs(vary0) - (vary1 - vec2((vary3).x, (vary3).x)));
     float t4 = ((length(max(vec2(0.0), t3)) + min(0.0, max((t3).x, (t3).y))) - (vary3).x);
     float t5 = ((vary3).y * 0.5);

@@ -54,7 +54,7 @@ void main()
 {
     float t0 = ((((vary3).x * (vary2).x) + ((vary3).y * (vary2).y)) + (vary4).x);
     float t1 = mix(t0, length(vec2(t0, ((((vary3).z * (vary2).x) + ((vary3).w * (vary2).y)) + (vary4).y))), step(1.5, vary5));
-    vec4 t2 = mix(vary0, texture(texture1, vec2((0.00195312 + (mix(mix(clamp(t1, 0.0, 1.0), (1.0 - abs((1.0 - (t1 - (2.0 * floor((t1 / 2.0))))))), step(0.5, (vary4).w)), (t1 - floor(t1)), step(1.5, (vary4).w)) * 0.996094)), (vary4).z)), vec4(step(0.5, vary5)));
+    vec4 t2 = mix(vary0, texture(texture1, vec2((0.001953125 + (mix(mix(clamp(t1, 0.0, 1.0), (1.0 - abs((1.0 - (t1 - (2.0 * floor((t1 / 2.0))))))), step(0.5, (vary4).w)), (t1 - floor(t1)), step(1.5, (vary4).w)) * 0.99609375)), (vary4).z)), vec4(step(0.5, vary5)));
     vec2 t3 = ((vary2 - (uniforms.u1).xy) * (uniforms.u1).zw);
     vec2 t4 = abs((t3 - 0.5));
     fragColor = vec4((t2).x, (t2).y, (t2).z, ((t2).w * (vary1 * ((step((t4).x, 0.5) * step((t4).y, 0.5)) * (texture(texture0, ((uniforms.u2).xy + (t3 * (uniforms.u2).zw)))).x))));

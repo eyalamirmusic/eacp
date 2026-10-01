@@ -2,7 +2,7 @@ add_library(eacp-sa3-codec STATIC)
 
 target_include_directories(eacp-sa3-codec PUBLIC ${CMAKE_CURRENT_LIST_DIR}/..)
 
-target_link_libraries(eacp-sa3-codec PUBLIC eacp-ml)
+target_link_libraries(eacp-sa3-codec PUBLIC eacp-ml-kernels)
 
 target_sources(eacp-sa3-codec PRIVATE
         CodecTransformerBlock.cpp

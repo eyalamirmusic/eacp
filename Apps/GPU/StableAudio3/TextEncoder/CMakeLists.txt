@@ -2,7 +2,7 @@ add_library(eacp-sa3-text-encoder STATIC)
 
 target_include_directories(eacp-sa3-text-encoder PUBLIC ${CMAKE_CURRENT_LIST_DIR}/..)
 
-target_link_libraries(eacp-sa3-text-encoder PUBLIC eacp-ml)
+target_link_libraries(eacp-sa3-text-encoder PUBLIC eacp-ml-kernels)
 
 target_sources(eacp-sa3-text-encoder PRIVATE
         Tokenizer/BpeTokenizer.cpp

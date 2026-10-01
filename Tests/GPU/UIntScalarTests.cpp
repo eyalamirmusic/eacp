@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <eacp/GPU/Codegen/ShaderEmitter.h>
 
@@ -12,33 +12,13 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-constexpr auto uintBytes = (int) sizeof(std::uint32_t);
-
 bool contains(const std::string& text, const char* needle)
 {
     return text.find(needle) != std::string::npos;
-}
-
-Buffer makeUInts(int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.assign(elements, 0u);
-
-    return Buffer {Device::shared(),
-                   values.data(),
-                   uintBytes * values.size(),
-                   BufferUsage::Storage};
-}
-
-Vector<std::uint32_t> readUInts(const Buffer& buffer, int elements)
-{
-    auto values = Vector<std::uint32_t> {};
-    values.resize(elements);
-    buffer.read(values.data(), uintBytes * elements);
-    return values;
 }
 
 // One thread's worth per record, every operator in every form it takes, so a
@@ -250,70 +230,48 @@ auto tUIntScalarLiteral = test("UIntScalar/anUnsignedLiteralIsAHandle") = []
 
 auto tUIntScalarBitsRun = test("UIntScalar/masksRotatesAndFoldsExactly") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 128;
 
-    auto output = makeUInts(threads * perThread);
-
     auto kernel = ScalarBitsKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads * perThread, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     std::uint32_t expected[perThread] = {};
+                     expectedRecord((std::uint32_t) thread, expected);
 
-    commands.commit();
-
-    auto values = readUInts(output, threads * perThread);
-
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        std::uint32_t expected[perThread] = {};
-        expectedRecord((std::uint32_t) thread, expected);
-
-        for (auto slot = 0; slot < perThread; ++slot)
-            check(values[thread * perThread + slot] == expected[slot]);
-    }
+                     for (auto slot = 0; slot < perThread; ++slot)
+                         check(values[thread * perThread + slot] == expected[slot],
+                               readback.name());
+                 }
+             });
 };
 
 auto tUIntScalarLiteralRuns = test("UIntScalar/aWhollyLiteralPairArrives") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto threads = 32;
 
-    auto output = makeUInts(threads * 3);
-
     auto kernel = LiteralPairKernel {};
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .output(kernel.output, threads * 3, 0u)
+        .run(threads,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.uints(kernel.output);
+                 const auto* name = readback.name();
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, threads);
-    }
-
-    commands.commit();
-
-    auto values = readUInts(output, threads * 3);
-
-    for (auto thread = 0; thread < threads; ++thread)
-    {
-        check(values[thread * 3 + 0] == 11u);
-        check(values[thread * 3 + 1] == 22u);
-        check(values[thread * 3 + 2] == 53u);
-    }
+                 for (auto thread = 0; thread < threads; ++thread)
+                 {
+                     check(values[thread * 3 + 0] == 11u, name);
+                     check(values[thread * 3 + 1] == 22u, name);
+                     check(values[thread * 3 + 2] == 53u, name);
+                 }
+             });
 };

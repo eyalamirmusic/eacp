@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 #include <cmath>
 #include <string>
@@ -20,6 +20,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -394,29 +395,6 @@ struct RaisedScaleKernel final : ComputeProgram
     EACP_SHADER(input, output, tail)
 };
 
-Buffer makeStorage(const Vector<float>& values)
-{
-    return Buffer {Device::shared(),
-                   values.data(),
-                   (int) sizeof(float) * values.size(),
-                   BufferUsage::Storage};
-}
-
-Buffer makeStorage(int elements)
-{
-    auto zeroed = Vector<float> {};
-    zeroed.assign(elements, 0.0f);
-    return makeStorage(zeroed);
-}
-
-Vector<float> readBack(const Buffer& buffer, int elements)
-{
-    auto values = Vector<float> {};
-    values.resize(elements);
-    buffer.read(values.data(), (int) sizeof(float) * elements);
-    return values;
-}
-
 // A row whose largest element sits at a different place in every row, and
 // whose values are not ordered around it.
 Vector<float> makeRows()
@@ -640,103 +618,82 @@ auto tBranchBodyRecomputesWhatItMoved =
 // The scan itself, against the same argmax written in C++.
 auto tArgMaxRuns = test("Hoisting/theScanFindsTheSameIndex") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     auto rows = makeRows();
-    auto input = makeStorage(rows);
-    auto output = makeStorage(rowCount);
 
     auto kernel = ArgMaxKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    auto commands = Device::shared().makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, rows)
+        .output(kernel.output, rowCount)
+        .run(rowCount,
+             [&](const Readback& readback)
+             {
+                 const auto& values = readback.floats(kernel.output);
+                 auto matched = 0;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, rowCount);
-    }
+                 for (auto row = 0; row < rowCount; ++row)
+                 {
+                     auto best = 0;
 
-    commands.commit();
+                     for (auto column = 1; column < (int) rowLength; ++column)
+                         if (rows[row * (int) rowLength + column]
+                             > rows[row * (int) rowLength + best])
+                             best = column;
 
-    auto values = readBack(output, rowCount);
-    auto matched = 0;
+                     if (values[row] == (float) best)
+                         ++matched;
+                 }
 
-    for (auto row = 0; row < rowCount; ++row)
-    {
-        auto best = 0;
-
-        for (auto column = 1; column < (int) rowLength; ++column)
-            if (rows[row * (int) rowLength + column]
-                > rows[row * (int) rowLength + best])
-                best = column;
-
-        if (values[row] == (float) best)
-            ++matched;
-    }
-
-    check(matched == rowCount);
+                 check(matched == rowCount, readback.name());
+             });
 };
 
 // The normalising pass, against the same division written in C++.
 auto tNormaliseRuns = test("Hoisting/theNormaliserScalesByTheSameFactor") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     auto rows = makeRows();
-    auto input = makeStorage(rows);
-    auto output = makeStorage(rowCount * (int) rowLength);
-    auto scales = makeStorage(rowCount);
 
     auto kernel = NormaliseKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.scales = scales;
-    kernel.prepare();
 
-    auto commands = Device::shared().makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, rows)
+        .output(kernel.output, rowCount * (int) rowLength)
+        .output(kernel.scales, rowCount)
+        .run(rowCount,
+             [&](const Readback& readback)
+             {
+                 const auto& normalised = readback.floats(kernel.output);
+                 const auto& factors = readback.floats(kernel.scales);
+                 auto matched = 0;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, rowCount);
-    }
+                 for (auto row = 0; row < rowCount; ++row)
+                 {
+                     auto total = 0.0f;
 
-    commands.commit();
+                     for (auto column = 0; column < (int) rowLength; ++column)
+                         total += rows[row * (int) rowLength + column];
 
-    auto normalised = readBack(output, rowCount * (int) rowLength);
-    auto factors = readBack(scales, rowCount);
-    auto matched = 0;
+                     auto inverse = 1.0f / total;
 
-    for (auto row = 0; row < rowCount; ++row)
-    {
-        auto total = 0.0f;
+                     if (std::abs(factors[row] - inverse) > 1e-6f)
+                         continue;
 
-        for (auto column = 0; column < (int) rowLength; ++column)
-            total += rows[row * (int) rowLength + column];
+                     auto correct = 0;
 
-        auto inverse = 1.0f / total;
+                     for (auto column = 0; column < (int) rowLength; ++column)
+                     {
+                         auto at = row * (int) rowLength + column;
 
-        if (std::abs(factors[row] - inverse) > 1e-6f)
-            continue;
+                         if (std::abs(normalised[at] - rows[at] * inverse) <= 1e-6f)
+                             ++correct;
+                     }
 
-        auto correct = 0;
+                     if (correct == (int) rowLength)
+                         ++matched;
+                 }
 
-        for (auto column = 0; column < (int) rowLength; ++column)
-        {
-            auto at = row * (int) rowLength + column;
-
-            if (std::abs(normalised[at] - rows[at] * inverse) <= 1e-6f)
-                ++correct;
-        }
-
-        if (correct == (int) rowLength)
-            ++matched;
-    }
-
-    check(matched == rowCount);
+                 check(matched == rowCount, readback.name());
+             });
 };
 
 // ...and in the numbers: every iteration writes the product the handle was
@@ -744,46 +701,37 @@ auto tNormaliseRuns = test("Hoisting/theNormaliserScalesByTheSameFactor") = []
 // written in C++ over a float.
 auto tRaisedScaleRuns = test("Hoisting/everyIterationWritesTheBuiltValue") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
     auto rows = makeRows();
-    auto input = makeStorage(rows);
-    auto output = makeStorage(rowCount);
-    auto tail = makeStorage(rowCount * (int) rowLength);
 
     auto kernel = RaisedScaleKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.tail = tail;
-    kernel.prepare();
 
-    auto commands = Device::shared().makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, rows)
+        .output(kernel.output, rowCount)
+        .output(kernel.tail, rowCount * (int) rowLength)
+        .run(
+            rowCount,
+            [&](const Readback& readback)
+            {
+                const auto& seeds = readback.floats(kernel.output);
+                const auto& raised = readback.floats(kernel.tail);
+                auto correct = 0;
 
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(kernel, rowCount);
-    }
+                for (auto row = 0; row < rowCount; ++row)
+                {
+                    if (std::abs(seeds[row] - rows[row] * 2.0f) > 1e-6f)
+                        continue;
 
-    commands.commit();
+                    for (auto step = 0; step < (int) rowLength; ++step)
+                    {
+                        auto expected = rows[row] * 2.0f;
 
-    auto seeds = readBack(output, rowCount);
-    auto raised = readBack(tail, rowCount * (int) rowLength);
-    auto correct = 0;
+                        if (std::abs(raised[row * (int) rowLength + step] - expected)
+                            <= 1e-6f)
+                            ++correct;
+                    }
+                }
 
-    for (auto row = 0; row < rowCount; ++row)
-    {
-        if (std::abs(seeds[row] - rows[row] * 2.0f) > 1e-6f)
-            continue;
-
-        for (auto step = 0; step < (int) rowLength; ++step)
-        {
-            auto expected = rows[row] * 2.0f;
-
-            if (std::abs(raised[row * (int) rowLength + step] - expected) <= 1e-6f)
-                ++correct;
-        }
-    }
-
-    check(correct == rowCount * (int) rowLength);
+                check(correct == rowCount * (int) rowLength, readback.name());
+            });
 };

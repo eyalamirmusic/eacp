@@ -42,5 +42,5 @@ void computeMain(uint3 threadId : SV_DispatchThreadID)
     if (gid >= uniforms.count)
         return;
     float t0 = buffer0[gid];
-    buffer1[gid] = ((0.5 * t0) * (1.0 + eacpErf((t0 * 0.707107))));
+    buffer1[gid] = ((0.5 * t0) * (1.0 + eacpErf((t0 * 0.70710677))));
 }

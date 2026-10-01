@@ -20,5 +20,5 @@ void computeMain(uint3 threadId : SV_DispatchThreadID)
         return;
     uint t0 = (((gid / uniforms.u0) * uniforms.u0) * 2u);
     uint t1 = (gid % uniforms.u0);
-    buffer1[gid] = (buffer0[(t0 + t1)] * sin((buffer0[((t0 + uniforms.u0) + t1)] * 3.14159)));
+    buffer1[gid] = (buffer0[(t0 + t1)] * sin((buffer0[((t0 + uniforms.u0) + t1)] * 3.1415927)));
 }

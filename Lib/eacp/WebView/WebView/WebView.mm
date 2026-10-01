@@ -12,8 +12,7 @@
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Graphics/Primitives/GraphicUtils.h>
 #if !TARGET_OS_IPHONE
-#include <eacp/Graphics/Graphics/Keyboard-MacOS.h>
-#include <eacp/Graphics/View/View-MacOS.h>
+#include <eacp/Graphics/Window/KeyForwarding-macOS.h>
 #endif
 #include <atomic>
 
@@ -300,25 +299,15 @@ struct WebView::Native
         webView.get().frame = toCGRect(bounds);
     }
 
-    // What survives an NSEvent's round trip through an out-of-process host:
-    // the timestamp AppKit stamped on it at creation. See the echo guard in
-    // installKeyEventSupport.
-    struct KeyIdentity
-    {
-        double timestamp = -1.0;
-        uint16_t keyCode = 0;
-
-        bool operator==(const KeyIdentity&) const = default;
-    };
-
     ObjC::Ptr<WKWebView> webView;
     ObjC::Ptr<NSObject> delegate;
     ObjC::Ptr<WKWebViewConfiguration> config;
     Vector<ObjC::Ptr<NSObject>> schemeHandlers;
     MessageHandlerMap messageHandlers;
     WebView& owner;
-    KeyIdentity lastUnhandledDown;
-    KeyIdentity lastUnhandledUp;
+#if !TARGET_OS_IPHONE
+    EmbedderKeyForwarder keyForwarder {owner};
+#endif
     double zoomLevel = 1.0;
     bool observingTitle = false;
     bool loadDeclinedPopupsInline = true;
@@ -1163,55 +1152,13 @@ void WebView::installKeyEventSupport()
         impl->webView.get(),
         [this](NSEvent* event, bool isDown)
         {
-            auto type = isDown ? KeyEventType::Down : KeyEventType::Up;
+            auto key = nativeKeyEventFrom(event);
+            key.key.type = isDown ? KeyEventType::Down : KeyEventType::Up;
 
-            // A host that runs the editor out of process (Logic hosts AUs in
-            // AUHostingServiceXPC) dispatches a key we handed to its responder
-            // chain straight back into this view. It returns re-encoded across
-            // the boundary — a different NSEvent, isARepeat NO — so nothing
-            // marks it as ours except the timestamp AppKit stamped on the
-            // original. Report it and it goes back out, and one keypress
-            // becomes an unbounded round trip that freezes the host.
-            auto identity = Native::KeyIdentity {event.timestamp, event.keyCode};
-            auto& lastUnhandled =
-                isDown ? impl->lastUnhandledDown : impl->lastUnhandledUp;
-
-            if (identity == lastUnhandled)
-                return;
-
-            lastUnhandled = identity;
-
-            if (onUnhandledKeyEvent && onUnhandledKeyEvent(keyEventFrom(event, type)))
-                return;
-
-            auto* webView = impl->webView.get();
-
-            // Past EVERY framework view above the page, not just the one
-            // hosting it. An EacpNativeView's keyDown: feeds the C++ View and
-            // never calls super (see isFrameworkNativeView), so handing the
-            // event to the first one up ends the chain in a view tree that has
-            // nowhere to put it — silently, which is exactly how a plugin
-            // editor swallows a DAW's spacebar.
-            //
-            // Where the page IS the content view — an eacp Window, and every
-            // case this shipped against — nothing framework-owned sits above
-            // it and the walk is the single hop it always was. It only does
-            // more in a composition: the plugin editor's overlay lives in a
-            // container view above a GPU view, and the responder that has to
-            // hear the key is the embedder's, two levels up.
-            NSView* outermost = webView.superview;
-            while (outermost.superview != nil
-                   && isFrameworkNativeView(outermost.superview))
-                outermost = outermost.superview;
-
-            NSResponder* next = outermost.nextResponder;
-            if (next == nil)
-                return;
-
-            if (isDown)
-                [next keyDown:event];
-            else
-                [next keyUp:event];
+            impl->keyForwarder.forwardUnpaired(
+                key,
+                [this](const KeyEvent& unhandled)
+                { return onUnhandledKeyEvent && onUnhandledKeyEvent(unhandled); });
         });
 #endif
 }

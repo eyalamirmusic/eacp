@@ -6,11 +6,16 @@
 
 #include <eacp/Core/Threads/Async.h>
 
+#include <map>
+
 @interface NativeView : UIView
 {
 @public
     eacp::Graphics::View* cppView;
-    CGPoint touchDownPosition;
+
+    // Root view only.
+    std::map<UITouch*, int> touchIds;
+    int nextTouchId;
 }
 @end
 
@@ -26,8 +31,15 @@
     self = [super initWithFrame:frame];
     if (self)
     {
-        self.multipleTouchEnabled = NO;
+        self.multipleTouchEnabled = YES;
         self.userInteractionEnabled = YES;
+
+        // Transparent, as on macOS, so a view over a GPUView doesn't paint black.
+        self.opaque = NO;
+        self.backgroundColor = UIColor.clearColor;
+        self.layer.opaque = NO;
+
+        nextTouchId = 1;
     }
     return self;
 }
@@ -41,9 +53,28 @@
 - (void)layoutSubviews
 {
     [super layoutSubviews];
+    [self reportSafeArea];
     cppView->resizeStarted();
     cppView->resized();
     cppView->resizeFinished();
+}
+
+- (void)safeAreaInsetsDidChange
+{
+    [super safeAreaInsetsDidChange];
+    [self reportSafeArea];
+}
+
+- (void)reportSafeArea
+{
+    if (cppView->getParent() != nullptr)
+        return;
+
+    auto insets = self.safeAreaInsets;
+    cppView->setSafeAreaInsets({.top = (float) insets.top,
+                                .left = (float) insets.left,
+                                .bottom = (float) insets.bottom,
+                                .right = (float) insets.right});
 }
 
 - (void)setFrame:(CGRect)newFrame
@@ -74,71 +105,64 @@
     return root;
 }
 
-- (void)dispatchTouchEvent:(UITouch*)touch type:(eacp::Graphics::MouseEventType)type
+- (void)dispatchTouches:(NSSet<UITouch*>*)touches
+                  phase:(eacp::Graphics::TouchPhase)phase
 {
+    using eacp::Graphics::TouchPhase;
+
     auto root = [self rootView];
-    auto localPos = [touch locationInView:root];
 
-    auto e = eacp::Graphics::MouseEvent();
-
-    e.pos = {(float) localPos.x, (float) localPos.y};
-    e.type = type;
-    e.button = eacp::Graphics::MouseButton::Left;
-    e.modifiers = {};
-
-    e.timestamp = touch.timestamp;
-    e.delta = {0.f, 0.f};
-
-    if (type == eacp::Graphics::MouseEventType::Down
-        || type == eacp::Graphics::MouseEventType::Up)
+    for (UITouch* touch in touches)
     {
-        e.pressure = (float) touch.force;
-        e.clickCount = (int) touch.tapCount;
+        auto event = eacp::Graphics::TouchEvent {};
+
+        if (phase == TouchPhase::Began)
+        {
+            event.id = root->nextTouchId++;
+            root->touchIds[touch] = event.id;
+        }
+        else
+        {
+            auto found = root->touchIds.find(touch);
+
+            if (found == root->touchIds.end())
+                continue;
+
+            event.id = found->second;
+
+            if (phase != TouchPhase::Moved)
+                root->touchIds.erase(found);
+        }
+
+        auto position = [touch locationInView:root];
+        event.pos = {(float) position.x, (float) position.y};
+        event.phase = phase;
+        event.pressure = (float) touch.force;
+        event.tapCount = (int) touch.tapCount;
+        event.timestamp = touch.timestamp;
+
+        root->cppView->dispatchTouchEvent(event);
     }
-
-    if (type == eacp::Graphics::MouseEventType::Down)
-        root->touchDownPosition = localPos;
-
-    e.downPos = {(float) root->touchDownPosition.x,
-                 (float) root->touchDownPosition.y};
-
-    root->cppView->dispatchMouseEvent(e);
 }
 
 - (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
 {
-    UITouch* touch = [touches anyObject];
-    if (touch)
-    {
-        [self dispatchTouchEvent:touch type:eacp::Graphics::MouseEventType::Down];
-    }
+    [self dispatchTouches:touches phase:eacp::Graphics::TouchPhase::Began];
 }
 
 - (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
 {
-    UITouch* touch = [touches anyObject];
-    if (touch)
-    {
-        [self dispatchTouchEvent:touch type:eacp::Graphics::MouseEventType::Dragged];
-    }
+    [self dispatchTouches:touches phase:eacp::Graphics::TouchPhase::Moved];
 }
 
 - (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
 {
-    UITouch* touch = [touches anyObject];
-    if (touch)
-    {
-        [self dispatchTouchEvent:touch type:eacp::Graphics::MouseEventType::Up];
-    }
+    [self dispatchTouches:touches phase:eacp::Graphics::TouchPhase::Ended];
 }
 
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event
 {
-    UITouch* touch = [touches anyObject];
-    if (touch)
-    {
-        [self dispatchTouchEvent:touch type:eacp::Graphics::MouseEventType::Up];
-    }
+    [self dispatchTouches:touches phase:eacp::Graphics::TouchPhase::Cancelled];
 }
 
 @end

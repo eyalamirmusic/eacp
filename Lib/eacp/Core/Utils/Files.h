@@ -29,6 +29,13 @@ void writeFile(const FilePath& path, Span<const std::uint8_t> bytes);
 // Throws std::runtime_error, like writeFile, if the write or the rename fails.
 void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes);
 
+// The directory and every missing parent. True when it exists afterwards.
+bool createDirectories(const FilePath& directory);
+
+// The file, or the directory and everything under it. True when nothing is
+// left at path, which includes there having been nothing there to begin with.
+bool removeAll(const FilePath& path);
+
 // The running process's executable. Empty if unresolvable.
 FilePath executablePath();
 

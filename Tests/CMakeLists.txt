@@ -9,7 +9,10 @@ if (APPLE)
     add_subdirectory(ObjC)
 endif ()
 
-add_subdirectory(Network)
+if (EACP_HAS_NETWORK)
+    add_subdirectory(Network)
+endif ()
+
 add_subdirectory(Spirv)
 
 if (EACP_HAS_DRAW)
@@ -20,11 +23,17 @@ endif ()
 # directory returns before the device suites unless EACP_HAS_GPU.
 if (NOT IOS)
     add_subdirectory(GPU)
+    add_subdirectory(CpuCompute)
+endif ()
+
+# Always added: the graph and MIL writer tests are bytes in and bytes out, and
+# the directory returns before the Core ML suite unless EACP_HAS_COREML.
+if (NOT IOS)
+    add_subdirectory(ML)
 endif ()
 
 if (EACP_HAS_GPU AND NOT IOS)
     add_subdirectory(GPUWidgets)
-    add_subdirectory(ML)
 endif ()
 
 if (EACP_HAS_TEXT AND NOT IOS)
@@ -52,6 +61,8 @@ if (EACP_HAS_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
-# Always added: ScriptHostTests needs no web runtime and no graphics. The
-# directory returns after it unless EACP_HAS_WEBVIEW.
-add_subdirectory(WebView)
+# Wherever Network is: ScriptHostTests needs no web runtime and no graphics.
+# The directory returns after it unless EACP_HAS_WEBVIEW.
+if (EACP_HAS_NETWORK)
+    add_subdirectory(WebView)
+endif ()

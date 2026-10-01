@@ -1,7 +1,7 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
+#include <algorithm>
 #include <cmath>
-#include <vector>
 
 // What a group reduction has to answer with on a device: the fold over the
 // whole group, the same number on every thread of it, whatever else the kernel
@@ -10,6 +10,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -41,12 +42,12 @@ float groupTotal()
     return total;
 }
 
-std::vector<float> laneValues()
+Vector<float> laneValues()
 {
-    auto values = std::vector<float> {};
+    auto values = Vector<float> {};
 
     for (auto i = 0; i < threadCount; ++i)
-        values.push_back(laneValue(i % groupSize));
+        values.add(laneValue(i % groupSize));
 
     return values;
 }
@@ -216,12 +217,12 @@ float simdBlockTotal(int block)
     return total;
 }
 
-std::vector<float> simdLaneValues()
+Vector<float> simdLaneValues()
 {
-    auto values = std::vector<float> {};
+    auto values = Vector<float> {};
 
     for (auto i = 0; i < simdThreadCount; ++i)
-        values.push_back(simdLaneValue(i));
+        values.add(simdLaneValue(i));
 
     return values;
 }
@@ -363,115 +364,56 @@ struct NarrowGroupKernel final : ComputeProgram
 
     EACP_SHADER(input, wholeGroup, perSimdGroup, maxima)
 };
-
-Buffer makeFloatBuffer(Device& device, const std::vector<float>& values)
-{
-    return device.makeBuffer(
-        values.data(), (int) (sizeof(float) * values.size()), BufferUsage::Storage);
-}
 } // namespace
 
 // The sum, the maximum and the minimum of a group, on every thread of it.
 auto tGroupFoldsAreRight = test("GroupReduction/sumMaxAndMinOverTheGroup") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = laneValues();
-    auto input = makeFloatBuffer(device, values);
-
-    auto bytes = sizeof(float) * threadCount;
-    auto sums = device.makeBuffer(bytes, BufferUsage::Storage);
-    auto maxima = device.makeBuffer(bytes, BufferUsage::Storage);
-    auto minima = device.makeBuffer(bytes, BufferUsage::Storage);
-
     auto kernel = FoldKernel {};
-    kernel.input = input;
-    kernel.sums = sums;
-    kernel.maxima = maxima;
-    kernel.minima = minima;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, laneValues())
+        .output(kernel.sums, threadCount)
+        .output(kernel.maxima, threadCount)
+        .output(kernel.minima, threadCount)
+        .agreeing(1.0e-3f)
+        .run(threadCount,
+             [&](const Readback& readback)
+             {
+                 auto total = groupTotal();
+                 const auto& summed = readback.floats(kernel.sums);
+                 const auto& peaks = readback.floats(kernel.maxima);
+                 const auto& least = readback.floats(kernel.minima);
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, threadCount);
-        }
+                 auto agreeing = 0;
 
-        commands.commit();
-    }
+                 for (auto i = 0; i < threadCount; ++i)
+                     if (std::abs(summed[i] - total) < 1.0e-3f && peaks[i] == 137.25f
+                         && least[i] == -91.5f)
+                         ++agreeing;
 
-    auto readBack = [&](Buffer& buffer)
-    {
-        auto out = std::vector<float>(threadCount, 0.f);
-        buffer.read(out.data(), bytes);
-        return out;
-    };
+                 // Every slot, so a fold that reached only the first lane of
+                 // the group - or only the first group - is a count short of
+                 // this.
+                 check(agreeing == threadCount, readback.name());
 
-    auto total = groupTotal();
-    auto summed = readBack(sums);
-    auto peaks = readBack(maxima);
-    auto least = readBack(minima);
+                 // And bit for bit the same number on every thread of a group,
+                 // which is what "returned to every thread" means rather than
+                 // "close enough".
+                 auto identical = 0;
 
-    auto agreeing = 0;
+                 for (auto i = 0; i < threadCount; ++i)
+                     if (summed[i] == summed[(i / groupSize) * groupSize])
+                         ++identical;
 
-    for (auto i = 0; i < threadCount; ++i)
-        if (std::abs(summed[i] - total) < 1.0e-3f && peaks[i] == 137.25f
-            && least[i] == -91.5f)
-            ++agreeing;
-
-    // Every slot, so a fold that reached only the first lane of the group - or
-    // only the first group - is a count short of this.
-    check(agreeing == threadCount);
-
-    // And bit for bit the same number on every thread of a group, which is
-    // what "returned to every thread" means rather than "close enough".
-    auto identical = 0;
-
-    for (auto i = 0; i < threadCount; ++i)
-        if (summed[i] == summed[(i / groupSize) * groupSize])
-            ++identical;
-
-    check(identical == threadCount);
+                 check(identical == threadCount, readback.name());
+             });
 };
 
 // A mean out of one fold and a variance out of a second, which is what a
 // layernorm is written out of.
 auto tTwoFoldsInOneKernel = test("GroupReduction/aMeanThenAVariance") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = laneValues();
-    auto input = makeFloatBuffer(device, values);
-
-    auto bytes = sizeof(float) * threadCount;
-    auto means = device.makeBuffer(bytes, BufferUsage::Storage);
-    auto variances = device.makeBuffer(bytes, BufferUsage::Storage);
-
-    auto kernel = MeanAndVarianceKernel {};
-    kernel.input = input;
-    kernel.means = means;
-    kernel.variances = variances;
-    kernel.prepare();
-
-    {
-        auto commands = device.makeCommandBuffer();
-
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, threadCount);
-        }
-
-        commands.commit();
-    }
-
     auto expectedMean = groupTotal() / (float) groupSize;
     auto expectedVariance = 0.f;
 
@@ -483,168 +425,119 @@ auto tTwoFoldsInOneKernel = test("GroupReduction/aMeanThenAVariance") = []
 
     expectedVariance /= (float) groupSize;
 
-    auto meansBack = std::vector<float>(threadCount, 0.f);
-    auto variancesBack = std::vector<float>(threadCount, 0.f);
-    means.read(meansBack.data(), bytes);
-    variances.read(variancesBack.data(), bytes);
+    auto kernel = MeanAndVarianceKernel {};
 
-    auto agreeing = 0;
+    // The looser of the two tolerances below, the variance's.
+    CrossCheck {kernel}
+        .input(kernel.input, laneValues())
+        .output(kernel.means, threadCount)
+        .output(kernel.variances, threadCount)
+        .agreeing(1.0e-1f)
+        .run(threadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& meansBack = readback.floats(kernel.means);
+                 const auto& variancesBack = readback.floats(kernel.variances);
 
-    for (auto i = 0; i < threadCount; ++i)
-        if (std::abs(meansBack[i] - expectedMean) < 1.0e-3f
-            && std::abs(variancesBack[i] - expectedVariance) < 1.0e-1f)
-            ++agreeing;
+                 auto agreeing = 0;
 
-    check(agreeing == threadCount);
+                 for (auto i = 0; i < threadCount; ++i)
+                     if (std::abs(meansBack[i] - expectedMean) < 1.0e-3f
+                         && std::abs(variancesBack[i] - expectedVariance) < 1.0e-1f)
+                         ++agreeing;
+
+                 check(agreeing == threadCount, readback.name());
+             });
 };
 
 // A fold inside a loop body, once per row.
 auto tFoldInsideALoop = test("GroupReduction/aFoldPerLoopIteration") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto rows = 5;
 
-    auto values = std::vector<float> {};
+    auto values = Vector<float> {};
 
     for (auto row = 0; row < rows; ++row)
         for (auto lane = 0; lane < groupSize; ++lane)
-            values.push_back((float) (row + 1) * laneValue(lane));
-
-    auto input = makeFloatBuffer(device, values);
-    auto output = device.makeBuffer(sizeof(float) * rows, BufferUsage::Storage);
+            values.add((float) (row + 1) * laneValue(lane));
 
     auto kernel = RowSumKernel {};
-    kernel.input = input;
-    kernel.output = output;
     kernel.rows = (unsigned) rows;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, rows)
+        .agreeing(1.0e-2f)
+        .run(groupSize,
+             [&](const Readback& readback)
+             {
+                 const auto& back = readback.floats(kernel.output);
+                 auto correct = 0;
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, groupSize);
-        }
+                 for (auto row = 0; row < rows; ++row)
+                     if (std::abs(back[row] - (float) (row + 1) * groupTotal())
+                         < 1.0e-2f)
+                         ++correct;
 
-        commands.commit();
-    }
-
-    auto back = std::vector<float>(rows, 0.f);
-    output.read(back.data(), sizeof(float) * rows);
-
-    auto correct = 0;
-
-    for (auto row = 0; row < rows; ++row)
-        if (std::abs(back[row] - (float) (row + 1) * groupTotal()) < 1.0e-2f)
-            ++correct;
-
-    check(correct == rows);
+                 check(correct == rows, readback.name());
+             });
 };
 
 // A 2D kernel reduces over the whole 8x8 group.
 auto tTwoDimensionalFold = test("GroupReduction/aTwoDGroupFoldsAllOfIt") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
     constexpr auto tile = ComputePass::threadGroupSize2D;
     constexpr auto width = tile * 2;
     constexpr auto height = tile * 2;
     constexpr auto count = width * height;
 
-    auto values = std::vector<float> {};
+    auto values = Vector<float> {};
 
     for (auto i = 0; i < count; ++i)
-        values.push_back((float) (i % 7) + 0.5f);
-
-    auto input = makeFloatBuffer(device, values);
-    auto output = device.makeBuffer(sizeof(float) * count, BufferUsage::Storage);
+        values.add((float) (i % 7) + 0.5f);
 
     auto kernel = TileSumKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, count)
+        .agreeing(1.0e-2f)
+        .run(width,
+             height,
+             [&](const Readback& readback)
+             {
+                 const auto& back = readback.floats(kernel.output);
+                 auto correct = 0;
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, width, height);
-        }
+                 for (auto y = 0; y < height; ++y)
+                 {
+                     for (auto x = 0; x < width; ++x)
+                     {
+                         auto expected = 0.f;
 
-        commands.commit();
-    }
+                         for (auto row = 0; row < tile; ++row)
+                             for (auto column = 0; column < tile; ++column)
+                                 expected += values[((y / tile) * tile + row) * width
+                                                    + (x / tile) * tile + column];
 
-    auto back = std::vector<float>(count, 0.f);
-    output.read(back.data(), sizeof(float) * count);
+                         if (std::abs(back[y * width + x] - expected) < 1.0e-2f)
+                             ++correct;
+                     }
+                 }
 
-    auto correct = 0;
-
-    for (auto y = 0; y < height; ++y)
-    {
-        for (auto x = 0; x < width; ++x)
-        {
-            auto expected = 0.f;
-
-            for (auto row = 0; row < tile; ++row)
-                for (auto column = 0; column < tile; ++column)
-                    expected += values[(size_t) ((y / tile) * tile + row) * width
-                                       + (size_t) ((x / tile) * tile + column)];
-
-            if (std::abs(back[(size_t) y * width + (size_t) x] - expected) < 1.0e-2f)
-                ++correct;
-        }
-    }
-
-    check(correct == count);
+                 check(correct == count, readback.name());
+             });
 };
 
 // The unsigned siblings fold the same way.
 auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = std::vector<std::uint32_t> {};
+    auto values = Vector<std::uint32_t> {};
 
     for (auto i = 0; i < threadCount; ++i)
     {
         auto lane = i % groupSize;
-        values.push_back(lane == 5 ? 4000u
-                                   : (std::uint32_t) ((lane * 17) % 31) + 3u);
-    }
-
-    auto input = device.makeBuffer(values.data(),
-                                   (int) (sizeof(std::uint32_t) * threadCount),
-                                   BufferUsage::Storage);
-
-    auto output = device.makeBuffer(sizeof(std::uint32_t) * threadCount * 3,
-                                    BufferUsage::Storage);
-
-    auto kernel = UIntFoldKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
-
-    {
-        auto commands = device.makeCommandBuffer();
-
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, threadCount);
-        }
-
-        commands.commit();
+        values.add(lane == 5 ? 4000u : (std::uint32_t) ((lane * 17) % 31) + 3u);
     }
 
     auto expectedSum = std::uint32_t {0};
@@ -653,23 +546,30 @@ auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
 
     for (auto lane = 0; lane < groupSize; ++lane)
     {
-        expectedSum += values[(size_t) lane];
-        expectedMax = std::max(expectedMax, values[(size_t) lane]);
-        expectedMin = std::min(expectedMin, values[(size_t) lane]);
+        expectedSum += values[lane];
+        expectedMax = std::max(expectedMax, values[lane]);
+        expectedMin = std::min(expectedMin, values[lane]);
     }
 
-    auto back = std::vector<std::uint32_t>((size_t) threadCount * 3, 0u);
-    output.read(back.data(), sizeof(std::uint32_t) * back.size());
+    auto kernel = UIntFoldKernel {};
 
-    auto agreeing = 0;
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, threadCount * 3)
+        .agreeing()
+        .run(threadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& back = readback.uints(kernel.output);
+                 auto agreeing = 0;
 
-    for (auto i = 0; i < threadCount; ++i)
-        if (back[(size_t) i * 3] == expectedSum
-            && back[(size_t) i * 3 + 1] == expectedMax
-            && back[(size_t) i * 3 + 2] == expectedMin)
-            ++agreeing;
+                 for (auto i = 0; i < threadCount; ++i)
+                     if (back[i * 3] == expectedSum && back[i * 3 + 1] == expectedMax
+                         && back[i * 3 + 2] == expectedMin)
+                         ++agreeing;
 
-    check(agreeing == threadCount);
+                 check(agreeing == threadCount, readback.name());
+             });
 };
 
 // The narrow fold: every thread holds the fold of the thirty-two threads it
@@ -677,205 +577,139 @@ auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
 // holding four different numbers.
 auto tSimdFoldsAreRight = test("GroupReduction/sumMaxAndMinOverOneSimdGroup") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = simdLaneValues();
-    auto input = makeFloatBuffer(device, values);
-
-    auto bytes = sizeof(float) * simdThreadCount;
-    auto sums = device.makeBuffer((int) bytes, BufferUsage::Storage);
-    auto maxima = device.makeBuffer((int) bytes, BufferUsage::Storage);
-    auto minima = device.makeBuffer((int) bytes, BufferUsage::Storage);
-
     auto kernel = SimdFoldKernel {};
-    kernel.input = input;
-    kernel.sums = sums;
-    kernel.maxima = maxima;
-    kernel.minima = minima;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, simdLaneValues())
+        .output(kernel.sums, simdThreadCount)
+        .output(kernel.maxima, simdThreadCount)
+        .output(kernel.minima, simdThreadCount)
+        .agreeing(1.0e-2f)
+        .run(simdThreadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& summed = readback.floats(kernel.sums);
+                 const auto& peaks = readback.floats(kernel.maxima);
+                 const auto& least = readback.floats(kernel.minima);
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, simdThreadCount);
-        }
+                 auto agreeing = 0;
 
-        commands.commit();
-    }
+                 for (auto i = 0; i < simdThreadCount; ++i)
+                 {
+                     auto block = i / simdWidth;
 
-    auto readBack = [&](Buffer& buffer)
-    {
-        auto out = std::vector<float>(simdThreadCount, 0.f);
-        buffer.read(out.data(), (int) bytes);
-        return out;
-    };
+                     auto expectedMax = simdLaneValue(block * simdWidth);
+                     auto expectedMin = expectedMax;
 
-    auto summed = readBack(sums);
-    auto peaks = readBack(maxima);
-    auto least = readBack(minima);
+                     for (auto lane = 1; lane < simdWidth; ++lane)
+                     {
+                         auto value = simdLaneValue(block * simdWidth + lane);
+                         expectedMax = std::max(expectedMax, value);
+                         expectedMin = std::min(expectedMin, value);
+                     }
 
-    auto agreeing = 0;
+                     if (std::abs(summed[i] - simdBlockTotal(block)) < 1.0e-2f
+                         && peaks[i] == expectedMax && least[i] == expectedMin)
+                         ++agreeing;
+                 }
 
-    for (auto i = 0; i < simdThreadCount; ++i)
-    {
-        auto block = i / simdWidth;
+                 check(agreeing == simdThreadCount, readback.name());
 
-        auto expectedMax = simdLaneValue(block * simdWidth);
-        auto expectedMin = expectedMax;
+                 // And the four SIMD groups of a threadgroup disagree with each
+                 // other, which is what says the fold stopped at a SIMD group
+                 // rather than running on.
+                 auto distinct = 0;
 
-        for (auto lane = 1; lane < simdWidth; ++lane)
-        {
-            auto value = simdLaneValue(block * simdWidth + lane);
-            expectedMax = std::max(expectedMax, value);
-            expectedMin = std::min(expectedMin, value);
-        }
+                 for (auto block = 1; block < simdGroupsPerGroup; ++block)
+                     if (summed[block * simdWidth] != summed[0])
+                         ++distinct;
 
-        if (std::abs(summed[(size_t) i] - simdBlockTotal(block)) < 1.0e-2f
-            && peaks[(size_t) i] == expectedMax && least[(size_t) i] == expectedMin)
-            ++agreeing;
-    }
-
-    check(agreeing == simdThreadCount);
-
-    // And the four SIMD groups of a threadgroup disagree with each other, which
-    // is what says the fold stopped at a SIMD group rather than running on.
-    auto distinct = 0;
-
-    for (auto block = 1; block < simdGroupsPerGroup; ++block)
-        if (summed[(size_t) block * simdWidth] != summed[0])
-            ++distinct;
-
-    check(distinct == simdGroupsPerGroup - 1);
+                 check(distinct == simdGroupsPerGroup - 1, readback.name());
+             });
 };
 
 // The relation between the two scopes: a group's sum is its SIMD groups' sums
 // added up, which is the same arithmetic reached two ways in one kernel.
 auto tScopesAgree = test("GroupReduction/theWideFoldIsTheNarrowOnesAddedUp") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = simdLaneValues();
-    auto input = makeFloatBuffer(device, values);
-
-    auto bytes = sizeof(float) * simdThreadCount;
-    auto wholeGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
-    auto perSimdGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
-
     auto kernel = BothScopesKernel {};
-    kernel.input = input;
-    kernel.wholeGroup = wholeGroup;
-    kernel.perSimdGroup = perSimdGroup;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, simdLaneValues())
+        .output(kernel.wholeGroup, simdThreadCount)
+        .output(kernel.perSimdGroup, simdThreadCount)
+        .agreeing(1.0e-1f)
+        .run(simdThreadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& wide = readback.floats(kernel.wholeGroup);
+                 const auto& narrow = readback.floats(kernel.perSimdGroup);
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, simdThreadCount);
-        }
+                 auto agreeing = 0;
 
-        commands.commit();
-    }
+                 for (auto i = 0; i < simdThreadCount; ++i)
+                 {
+                     auto firstBlock = (i / simdGroupThreads) * simdGroupsPerGroup;
+                     auto expectedWide = 0.f;
 
-    auto wide = std::vector<float>(simdThreadCount, 0.f);
-    auto narrow = std::vector<float>(simdThreadCount, 0.f);
-    wholeGroup.read(wide.data(), (int) bytes);
-    perSimdGroup.read(narrow.data(), (int) bytes);
+                     for (auto block = 0; block < simdGroupsPerGroup; ++block)
+                         expectedWide += simdBlockTotal(firstBlock + block);
 
-    auto agreeing = 0;
+                     if (std::abs(wide[i] - expectedWide) < 1.0e-1f
+                         && std::abs(narrow[i] - simdBlockTotal(i / simdWidth))
+                                < 1.0e-2f)
+                         ++agreeing;
+                 }
 
-    for (auto i = 0; i < simdThreadCount; ++i)
-    {
-        auto firstBlock = (i / simdGroupThreads) * simdGroupsPerGroup;
-        auto expectedWide = 0.f;
-
-        for (auto block = 0; block < simdGroupsPerGroup; ++block)
-            expectedWide += simdBlockTotal(firstBlock + block);
-
-        if (std::abs(wide[(size_t) i] - expectedWide) < 1.0e-1f
-            && std::abs(narrow[(size_t) i] - simdBlockTotal(i / simdWidth))
-                   < 1.0e-2f)
-            ++agreeing;
-    }
-
-    check(agreeing == simdThreadCount);
+                 check(agreeing == simdThreadCount, readback.name());
+             });
 };
 
 // The unsigned siblings, which take the same path with a scratch array of their
 // own where the fold goes through one.
 auto tUIntSimdFolds = test("GroupReduction/theUnsignedNarrowFold") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = std::vector<std::uint32_t> {};
+    auto values = Vector<std::uint32_t> {};
 
     for (auto i = 0; i < simdThreadCount; ++i)
-        values.push_back((std::uint32_t) (((i % simdWidth) * 11) % 37)
-                         + (std::uint32_t) (i / simdWidth) * 1000u);
-
-    auto input = device.makeBuffer(values.data(),
-                                   (int) (sizeof(std::uint32_t) * values.size()),
-                                   BufferUsage::Storage);
-
-    auto output = device.makeBuffer(
-        (int) (sizeof(std::uint32_t) * simdThreadCount * 3), BufferUsage::Storage);
+        values.add((std::uint32_t) (((i % simdWidth) * 11) % 37)
+                   + (std::uint32_t) (i / simdWidth) * 1000u);
 
     auto kernel = UIntSimdFoldKernel {};
-    kernel.input = input;
-    kernel.output = output;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.output, simdThreadCount * 3)
+        .agreeing()
+        .run(simdThreadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& back = readback.uints(kernel.output);
+                 auto agreeing = 0;
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, simdThreadCount);
-        }
+                 for (auto i = 0; i < simdThreadCount; ++i)
+                 {
+                     auto block = i / simdWidth;
 
-        commands.commit();
-    }
+                     auto expectedSum = std::uint32_t {0};
+                     auto expectedMax = std::uint32_t {0};
+                     auto expectedMin = std::uint32_t {~0u};
 
-    auto back = std::vector<std::uint32_t>((size_t) simdThreadCount * 3, 0u);
-    output.read(back.data(), (int) (sizeof(std::uint32_t) * back.size()));
+                     for (auto lane = 0; lane < simdWidth; ++lane)
+                     {
+                         auto value = values[block * simdWidth + lane];
+                         expectedSum += value;
+                         expectedMax = std::max(expectedMax, value);
+                         expectedMin = std::min(expectedMin, value);
+                     }
 
-    auto agreeing = 0;
+                     if (back[i * 3] == expectedSum && back[i * 3 + 1] == expectedMax
+                         && back[i * 3 + 2] == expectedMin)
+                         ++agreeing;
+                 }
 
-    for (auto i = 0; i < simdThreadCount; ++i)
-    {
-        auto block = i / simdWidth;
-
-        auto expectedSum = std::uint32_t {0};
-        auto expectedMax = std::uint32_t {0};
-        auto expectedMin = std::uint32_t {~0u};
-
-        for (auto lane = 0; lane < simdWidth; ++lane)
-        {
-            auto value = values[(size_t) (block * simdWidth + lane)];
-            expectedSum += value;
-            expectedMax = std::max(expectedMax, value);
-            expectedMin = std::min(expectedMin, value);
-        }
-
-        if (back[(size_t) i * 3] == expectedSum
-            && back[(size_t) i * 3 + 1] == expectedMax
-            && back[(size_t) i * 3 + 2] == expectedMin)
-            ++agreeing;
-    }
-
-    check(agreeing == simdThreadCount);
+                 check(agreeing == simdThreadCount, readback.name());
+             });
 };
 
 // A group of exactly simdWidth threads, folded both ways against a CPU
@@ -886,70 +720,46 @@ auto tUIntSimdFolds = test("GroupReduction/theUnsignedNarrowFold") = []
 auto tNarrowGroupFoldsBothWays =
     test("GroupReduction/aGroupOfOneSimdGroupFoldsBothWays") = []
 {
-    auto& device = Device::shared();
-
-    if (!device.isValid())
-        return;
-
-    auto values = std::vector<float> {};
+    auto values = Vector<float> {};
 
     for (auto i = 0; i < narrowThreadCount; ++i)
-        values.push_back(simdLaneValue(i));
-
-    auto input = makeFloatBuffer(device, values);
-
-    auto bytes = sizeof(float) * narrowThreadCount;
-    auto wholeGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
-    auto perSimdGroup = device.makeBuffer((int) bytes, BufferUsage::Storage);
-    auto maxima = device.makeBuffer((int) bytes, BufferUsage::Storage);
+        values.add(simdLaneValue(i));
 
     auto kernel = NarrowGroupKernel {};
-    kernel.input = input;
-    kernel.wholeGroup = wholeGroup;
-    kernel.perSimdGroup = perSimdGroup;
-    kernel.maxima = maxima;
-    kernel.prepare();
 
-    {
-        auto commands = device.makeCommandBuffer();
+    CrossCheck {kernel}
+        .input(kernel.input, values)
+        .output(kernel.wholeGroup, narrowThreadCount)
+        .output(kernel.perSimdGroup, narrowThreadCount)
+        .output(kernel.maxima, narrowThreadCount)
+        .agreeing(1.0e-2f)
+        .run(narrowThreadCount,
+             [&](const Readback& readback)
+             {
+                 const auto& wide = readback.floats(kernel.wholeGroup);
+                 const auto& narrow = readback.floats(kernel.perSimdGroup);
+                 const auto& peaks = readback.floats(kernel.maxima);
 
-        {
-            auto pass = commands.beginCompute();
-            pass.dispatch(kernel, narrowThreadCount);
-        }
+                 auto agreeing = 0;
 
-        commands.commit();
-    }
+                 for (auto i = 0; i < narrowThreadCount; ++i)
+                 {
+                     auto block = i / narrowGroupThreads;
+                     auto expected = simdBlockTotal(block);
 
-    auto readBack = [&](Buffer& buffer)
-    {
-        auto out = std::vector<float>(narrowThreadCount, 0.f);
-        buffer.read(out.data(), (int) bytes);
-        return out;
-    };
+                     auto expectedMax = simdLaneValue(block * narrowGroupThreads);
 
-    auto wide = readBack(wholeGroup);
-    auto narrow = readBack(perSimdGroup);
-    auto peaks = readBack(maxima);
+                     for (auto lane = 1; lane < narrowGroupThreads; ++lane)
+                         expectedMax = std::max(
+                             expectedMax,
+                             simdLaneValue(block * narrowGroupThreads + lane));
 
-    auto agreeing = 0;
+                     if (std::abs(wide[i] - expected) < 1.0e-2f
+                         && std::abs(narrow[i] - expected) < 1.0e-2f
+                         && peaks[i] == expectedMax)
+                         ++agreeing;
+                 }
 
-    for (auto i = 0; i < narrowThreadCount; ++i)
-    {
-        auto block = i / narrowGroupThreads;
-        auto expected = simdBlockTotal(block);
-
-        auto expectedMax = simdLaneValue(block * narrowGroupThreads);
-
-        for (auto lane = 1; lane < narrowGroupThreads; ++lane)
-            expectedMax = std::max(expectedMax,
-                                   simdLaneValue(block * narrowGroupThreads + lane));
-
-        if (std::abs(wide[(size_t) i] - expected) < 1.0e-2f
-            && std::abs(narrow[(size_t) i] - expected) < 1.0e-2f
-            && peaks[(size_t) i] == expectedMax)
-            ++agreeing;
-    }
-
-    check(agreeing == narrowThreadCount);
+                 check(agreeing == narrowThreadCount, readback.name());
+             });
 };

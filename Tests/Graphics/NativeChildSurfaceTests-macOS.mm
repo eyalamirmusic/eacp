@@ -52,6 +52,19 @@ auto tOffersAStockViewInsideItsOwn =
     check(!foreignParent.isFlipped);
 };
 
+// Foreign content stays over the rect it was given. From macOS 14 nothing clips
+// a view to its bounds unless its parent says so, and a plugin's own view is
+// free to hang outside them — an Arturia editor leaves a window-sized, undrawn
+// layer above its rect, composited over whatever the host put there.
+auto tClipsForeignContentToItsBounds =
+    test("NativeChildSurface/clipsForeignContentToItsBounds") = []
+{
+    auto surface = NativeChildSurface {};
+
+    if (@available(macOS 14.0, *))
+        check(foreignParentOf(surface).clipsToBounds);
+};
+
 // The one that matters: a surface placed by a layout puts the foreign content
 // over the rect the layout asked for, in a real window.
 auto tCoversTheBoundsItWasGiven =

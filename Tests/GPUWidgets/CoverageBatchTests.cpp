@@ -1,4 +1,5 @@
 #include "CoverageProbe.h"
+#include "PathShapes.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -36,7 +37,6 @@ using namespace eacp::GPUWidgets;
 
 namespace
 {
-using Graphics::Point;
 using Graphics::Rect;
 
 // The two sides sum a pixel's segments in the same order here - it is the same
@@ -44,46 +44,9 @@ using Graphics::Rect;
 // texture the mask lives in.
 constexpr auto tolerance = 1.5f / 255.f;
 
-// ------------------------------------------------------------------ the paths
-
-Path star(Rect bounds, int points)
-{
-    auto centre = bounds.center();
-    auto radius = std::min(bounds.w, bounds.h) * 0.5f;
-
-    auto path = Path {};
-
-    // Every other vertex, which is what makes the outline cross itself and the
-    // two fill rules disagree about the middle.
-    for (auto i = 0; i < points; ++i)
-    {
-        auto angle = 2.f * pi * (float) (i * 2 % points) / (float) points;
-        auto at = Point {centre.x + std::sin(angle) * radius,
-                         centre.y - std::cos(angle) * radius};
-
-        if (i == 0)
-            path.moveTo(at);
-        else
-            path.lineTo(at);
-    }
-
-    path.close();
-    return path;
-}
-
-Path ellipse(Rect bounds)
-{
-    auto path = Path {};
-    path.addEllipse(bounds);
-    return path;
-}
-
-Path roundedRect(Rect bounds, float radius)
-{
-    auto path = Path {};
-    path.addRoundedRect(bounds, radius);
-    return path;
-}
+using shapes::ellipse;
+using shapes::roundedRect;
+using shapes::star;
 
 // ------------------------------------------------------------------ the batch
 

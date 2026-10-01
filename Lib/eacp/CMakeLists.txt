@@ -1,14 +1,24 @@
 add_subdirectory(Core)
 add_subdirectory(SIMD)
-add_subdirectory(Network)
+
+if (EACP_HAS_NETWORK)
+    add_subdirectory(Network)
+endif ()
 
 # Always added: it builds the shader codegen library (eacp-gpu-codegen), which
 # is pure string generation, and returns before eacp-gpu when there is no GPU.
 add_subdirectory(GPU)
 
-# Always added: it builds the page bridge (eacp-webview-bridge), which speaks to
-# a ScriptHost, and returns before eacp-webview when there is no web runtime.
-add_subdirectory(WebView)
+# Added wherever Network is: it builds the page bridge (eacp-webview-bridge),
+# which speaks to a ScriptHost over Network's RPC, and returns before
+# eacp-webview when there is no web runtime.
+if (EACP_HAS_NETWORK)
+    add_subdirectory(WebView)
+endif ()
+
+# Always added: it builds the graph builder and the MIL writers (eacp-ml-graph),
+# bytes in and bytes out, and returns before eacp-ml when there is no Core ML.
+add_subdirectory(ML)
 
 if (EACP_HAS_DRAW)
     add_subdirectory(Graphics)
@@ -20,7 +30,6 @@ if (EACP_HAS_GPU)
 
     # Batched textured quads, also on eacp-gpu alone - no glyphs involved.
     add_subdirectory(Sprites)
-    add_subdirectory(ML)
 endif ()
 
 if (EACP_HAS_TEXT)

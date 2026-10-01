@@ -748,8 +748,14 @@ public:
 
     const Statement& statement(int index) const { return statementList[index]; }
     const Block& block(int index) const { return blocks[index]; }
+    int statementCount() const { return statementList.size(); }
+    int blockCount() const { return blocks.size(); }
     const Vector<ValueType>& variables() const { return variableTypes; }
     bool hasStatements() const { return !blocks[rootBlock].statements.empty(); }
+
+    // Whether a node's value is the same wherever in the body it is read: no
+    // mutable state under it, save storage the kernel only reads.
+    bool isPure(int node) const;
 
 private:
     int add(Expr node);
@@ -776,7 +782,6 @@ private:
     static BinaryKey binaryKeyFor(const Expr& node);
     static ReadKey readKeyFor(const Expr& node);
 
-    bool isPure(int node) const;
     bool purityOf(const Expr& node) const;
     bool readsImmutableStorage(const Expr& node) const;
     int findShared(const Expr& node) const;
@@ -829,4 +834,20 @@ private:
     int discardNode = -1;
     float discardValue = 0.0f;
 };
+
+// What running a statement can leave holding something else, following the
+// bodies of an if or a loop: the variables, the storage-buffer slots, and
+// whether threadgroup memory may have moved. A handle built before such a
+// statement that reads what it changes is a value to be held across it - the
+// rule the emitter names one by and the CPU executor evaluates one by, so both
+// read it from here.
+void collectWrites(const ShaderGraph& graph,
+                   const Statement& statement,
+                   Vector<char>& written);
+
+void collectBufferWrites(const ShaderGraph& graph,
+                         const Statement& statement,
+                         Vector<char>& written);
+
+bool touchesShared(const ShaderGraph& graph, const Statement& statement);
 } // namespace eacp::GPU

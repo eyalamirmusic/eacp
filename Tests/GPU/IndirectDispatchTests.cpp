@@ -1,4 +1,4 @@
-#include "Common.h"
+#include "CpuCrossCheck.h"
 
 // A dispatch whose size the GPU decided.
 //
@@ -15,6 +15,7 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
+using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
@@ -122,13 +123,19 @@ struct GuardedConsumeKernel final : ComputeProgram
 // distinguishable - counting how many threads ran is the whole measurement.
 constexpr auto untouched = -1.f;
 
-Buffer makeCandidates(int howMany)
+Vector<float> candidateValues(int howMany)
 {
-    auto values = Vector<float> {};
-    values.assign(capacity, 0.f);
+    auto values = filled(capacity, 0.f);
 
     for (auto i = 0; i < howMany; ++i)
         values[i] = 1.f;
+
+    return values;
+}
+
+Buffer makeCandidates(int howMany)
+{
+    auto values = candidateValues(howMany);
 
     return Buffer {Device::shared(),
                    values.data(),
@@ -170,6 +177,10 @@ Vector<float> runPipeline(const Buffer& candidates, Consumer& consume)
     prepare.prepare();
 
     consume.output = output;
+
+    if constexpr (requires { consume.arguments; })
+        consume.arguments = arguments;
+
     consume.prepare();
 
     auto commands = Device::shared().makeCommandBuffer();
@@ -199,6 +210,59 @@ Vector<float> runPipeline(const Buffer& candidates, Consumer& consume)
     return values;
 }
 
+// The same three stages on the CPU, over one host array of arguments that
+// each stage hands the next, as the GPU's buffer is.
+template <typename Consumer>
+Vector<float> runPipelineOnCpu(const Vector<float>& candidates, Consumer& consume)
+{
+    auto arguments = Vector<std::uint32_t> {};
+
+    for (auto word: {0u, 1u, 1u, 0u})
+        arguments.add(word);
+
+    auto output = filled(capacity, untouched);
+
+    auto counter = CountKernel {};
+    auto counterBindings = CpuCompute::Bindings {};
+    check(counterBindings.set(counter.candidates, candidates));
+    check(counterBindings.set(counter.arguments, arguments));
+    dispatchOnCpu(counter, counterBindings, capacity);
+
+    auto prepare = PrepareKernel {};
+    auto prepareBindings = CpuCompute::Bindings {};
+    check(prepareBindings.set(prepare.arguments, arguments));
+    dispatchOnCpu(prepare, prepareBindings, 1);
+
+    auto consumeBindings = CpuCompute::Bindings {};
+    check(consumeBindings.set(consume.output, output));
+
+    if constexpr (requires { consume.arguments; })
+        check(consumeBindings.set(consume.arguments, arguments));
+
+    dispatchIndirectOnCpu(consume, consumeBindings, arguments, capacity);
+    return output;
+}
+
+using PipelineCheck = std::function<void(const Vector<float>&, const char*)>;
+
+// The pipeline on the CPU, always, then on the GPU where there is one, each
+// checked by `expect` and the two compared element for element.
+template <typename Consumer>
+void checkPipeline(int howMany, const PipelineCheck& expect)
+{
+    auto cpuConsumer = Consumer {};
+    auto onCpu = runPipelineOnCpu(candidateValues(howMany), cpuConsumer);
+    expect(onCpu, "cpu");
+
+    if (!Device::shared().isValid())
+        return;
+
+    auto gpuConsumer = Consumer {};
+    auto onGpu = runPipeline(makeCandidates(howMany), gpuConsumer);
+    expect(onGpu, "gpu");
+    expectAgreement(onCpu, onGpu);
+}
+
 int countWritten(const Vector<float>& values)
 {
     auto written = 0;
@@ -214,38 +278,27 @@ int countWritten(const Vector<float>& values)
 // measured here is where the arguments were read from, not where they came
 // from. The first uint is padding, so offset 4 is the smallest offset a whole
 // DispatchArguments still fits at, and it asks for exactly one group.
-Vector<float> dispatchAtOffset(int offsetInBytes)
+void expectWrittenAtOffset(int offsetInBytes, int expected)
 {
-    std::uint32_t initial[] = {0u, 1u, 1u, 1u};
+    auto arguments = Vector<std::uint32_t> {};
 
-    auto arguments =
-        Buffer {Device::shared(), initial, sizeof(initial), BufferUsage::Storage};
-
-    auto blank = Vector<float> {};
-    blank.assign(capacity, untouched);
-
-    auto output = Buffer {Device::shared(),
-                          blank.data(),
-                          (int) sizeof(float) * capacity,
-                          BufferUsage::Storage};
+    for (auto word: {0u, 1u, 1u, 1u})
+        arguments.add(word);
 
     auto consume = ConsumeKernel {};
-    consume.output = output;
-    consume.prepare();
 
-    auto commands = Device::shared().makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatchIndirect(consume, arguments, capacity, offsetInBytes);
-    }
-
-    commands.commit();
-
-    auto values = Vector<float> {};
-    values.resize(capacity);
-    output.read(values.data(), (int) sizeof(float) * capacity);
-    return values;
+    CrossCheck {consume}
+        .output(consume.output, capacity, untouched)
+        .agreeing()
+        .runIndirect(arguments,
+                     capacity,
+                     offsetInBytes / (int) sizeof(std::uint32_t),
+                     [&](const Readback& readback)
+                     {
+                         check(countWritten(readback.floats(consume.output))
+                                   == expected,
+                               readback.name());
+                     });
 }
 } // namespace
 
@@ -260,18 +313,18 @@ Vector<float> dispatchAtOffset(int offsetInBytes)
 auto tIndirectGridComesFromTheGpu =
     test("IndirectDispatch/theGridComesFromAKernel") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    auto consume = ConsumeKernel {};
-    auto values = runPipeline(makeCandidates(marked), consume);
-
     auto groups =
         (marked + ComputePass::threadGroupWidth - 1) / ComputePass::threadGroupWidth;
 
-    check(countWritten(values) == groups * ComputePass::threadGroupWidth);
-    check(countWritten(values) != capacity);
-    check(countWritten(values) != marked);
+    checkPipeline<ConsumeKernel>(
+        marked,
+        [&](const Vector<float>& values, const char* backend)
+        {
+            check(countWritten(values) == groups * ComputePass::threadGroupWidth,
+                  backend);
+            check(countWritten(values) != capacity, backend);
+            check(countWritten(values) != marked, backend);
+        });
 };
 
 // A grid of zero. The counting kernel finds nothing, so the prepared group count
@@ -281,13 +334,9 @@ auto tIndirectGridComesFromTheGpu =
 auto tIndirectZeroGridRunsNothing =
     test("IndirectDispatch/anEmptyCountRunsNoThreads") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    auto consume = ConsumeKernel {};
-    auto values = runPipeline(makeCandidates(0), consume);
-
-    check(countWritten(values) == 0);
+    checkPipeline<ConsumeKernel>(0,
+                                 [](const Vector<float>& values, const char* backend)
+                                 { check(countWritten(values) == 0, backend); });
 };
 
 // The offset has to leave a whole DispatchArguments in the buffer. One that
@@ -297,13 +346,10 @@ auto tIndirectZeroGridRunsNothing =
 auto tIndirectOffsetMustFitTheArguments =
     test("IndirectDispatch/theOffsetMustLeaveRoomForTheArguments") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    check(countWritten(dispatchAtOffset(4)) == ComputePass::threadGroupWidth);
+    expectWrittenAtOffset(4, ComputePass::threadGroupWidth);
 
     for (auto offset: {-4, 8, 16, 64})
-        check(countWritten(dispatchAtOffset(offset)) == 0);
+        expectWrittenAtOffset(offset, 0);
 };
 
 // And the pattern a real stage uses: the grid is rounded up to whole groups, so
@@ -312,57 +358,8 @@ auto tIndirectOffsetMustFitTheArguments =
 auto tGuardedConsumerStopsAtTheCount =
     test("IndirectDispatch/aGuardedStageStopsAtTheExactCount") = []
 {
-    if (!Device::shared().isValid())
-        return;
-
-    auto arguments = makeArguments();
-
-    auto blank = Vector<float> {};
-    blank.assign(capacity, untouched);
-
-    auto output = Buffer {Device::shared(),
-                          blank.data(),
-                          (int) sizeof(float) * capacity,
-                          BufferUsage::Storage};
-
-    auto candidates = makeCandidates(marked);
-
-    auto counter = CountKernel {};
-    counter.candidates = candidates;
-    counter.arguments = arguments;
-    counter.prepare();
-
-    auto prepare = PrepareKernel {};
-    prepare.arguments = arguments;
-    prepare.prepare();
-
-    auto consume = GuardedConsumeKernel {};
-    consume.arguments = arguments;
-    consume.output = output;
-    consume.prepare();
-
-    auto commands = Device::shared().makeCommandBuffer();
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(counter, capacity);
-    }
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatch(prepare, 1);
-    }
-
-    {
-        auto pass = commands.beginCompute();
-        pass.dispatchIndirect(consume, arguments, capacity);
-    }
-
-    commands.commit();
-
-    auto values = Vector<float> {};
-    values.resize(capacity);
-    output.read(values.data(), (int) sizeof(float) * capacity);
-
-    check(countWritten(values) == marked);
+    checkPipeline<GuardedConsumeKernel>(
+        marked,
+        [](const Vector<float>& values, const char* backend)
+        { check(countWritten(values) == marked, backend); });
 };
