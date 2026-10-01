@@ -1,3 +1,4 @@
+*.wav
 *.user
 *.cbp
 Makefile
