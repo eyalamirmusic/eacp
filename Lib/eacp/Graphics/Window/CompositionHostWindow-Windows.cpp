@@ -828,9 +828,13 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 event.type = MouseEventType::Wheel;
                 event.modifiers = getModifiers();
 
-                auto wheelDelta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
-                event.delta = (msg == WM_MOUSEWHEEL) ? Point {0.f, wheelDelta}
-                                                     : Point {wheelDelta, 0.f};
+                // In lines, as the other platforms report a notched wheel: a
+                // detent is WHEEL_DELTA, and a precision touchpad sends
+                // fractions of one.
+                auto lines = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam))
+                             / static_cast<float>(WHEEL_DELTA);
+                event.delta =
+                    (msg == WM_MOUSEWHEEL) ? Point {0.f, lines} : Point {lines, 0.f};
                 dispatchMouseToContentView(event);
             }
             return 0;
