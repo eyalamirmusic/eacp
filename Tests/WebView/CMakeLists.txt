@@ -72,8 +72,10 @@ if (TARGET eacp-webview-test-main)
     # keeps no native event stash, so its counterpart carries the key identity
     # in the verdict message and drives the path with DOM-dispatched events
     # instead of OS key injection (see the file headers).
+    # TypingTests drives the same NSEvent path and asserts the keystroke became
+    # text, including under a universal user-select: none.
     if (APPLE)
-        list(APPEND webview_test_sources KeyForwardingTests.mm)
+        list(APPEND webview_test_sources KeyForwardingTests.mm TypingTests.mm)
     endif ()
 
     if (WIN32)
