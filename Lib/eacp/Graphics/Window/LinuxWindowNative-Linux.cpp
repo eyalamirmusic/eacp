@@ -85,6 +85,7 @@ void LinuxWindowState::setActive(bool nowActive)
         return;
 
     active = nowActive;
+    events->input.activationChanged(active);
     events->onActivationChanged(active);
 }
 

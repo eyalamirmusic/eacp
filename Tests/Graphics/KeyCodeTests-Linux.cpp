@@ -103,6 +103,15 @@ const LinuxNamedKey linuxAllKeys[] = {
     {"ForwardDelete", KeyCode::ForwardDelete},
     {"CapsLock", KeyCode::CapsLock},
 
+    {"Shift", KeyCode::Shift},
+    {"RightShift", KeyCode::RightShift},
+    {"Control", KeyCode::Control},
+    {"RightControl", KeyCode::RightControl},
+    {"Option", KeyCode::Option},
+    {"RightOption", KeyCode::RightOption},
+    {"Command", KeyCode::Command},
+    {"RightCommand", KeyCode::RightCommand},
+
     {"KeypadEnter", KeyCode::KeypadEnter},
     {"Keypad0", KeyCode::Keypad0},
     {"Keypad1", KeyCode::Keypad1},
