@@ -77,13 +77,15 @@ NSEvent* retargeted(NSEvent* event, NSWindow* target, bool isDown)
                              keyCode:event.keyCode];
 }
 
-// Live, for one, ignores a key sent to its main window unless that window is key.
+// Hosts ignore a key unless the target is key. It must go through -[NSApplication sendEvent:],
+// not the window or postEvent:, because menu key equivalents and app-level shortcut hooks
+// (Reaper, Logic) only run there, and a posted event would be re-grabbed by KeyGrab's monitor.
 void deliverWhileKey(NSWindow* target, NSEvent* event, bool isDown, NSWindow* source)
 {
     auto* previous = NSApp.keyWindow != nil ? NSApp.keyWindow : source;
 
     [target makeKeyWindow];
-    [target sendEvent:retargeted(event, target, isDown)];
+    [NSApp sendEvent:retargeted(event, target, isDown)];
 
     if (previous != target)
         [previous makeKeyWindow];

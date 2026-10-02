@@ -6,6 +6,7 @@
 
 #include <bitset>
 #include <memory>
+#include <optional>
 
 namespace eacp::Graphics
 {
@@ -135,6 +136,11 @@ private:
     // Where the held button went down, in screen pixels — see
     // dispatchMouseToContentView for why it is not kept in client points.
     POINT mouseDownScreenPosition {};
+
+    // Where the pointer last was, in points: Windows reports positions, and
+    // MouseEvent::delta is the difference. Empty until the pointer is seen,
+    // and again once it has left, so a return does not report the jump.
+    std::optional<Point> lastPointerPosition;
 
     // The mouse's own movement, which the ordinary pointer messages cannot
     // report: they carry the pointer's position after the system's acceleration
