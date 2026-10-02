@@ -1,16 +1,8 @@
 # -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake: the NDK named in
-# AndroidVersions.cmake, in the SDK at $ANDROID_HOME, else in
-# ~/.eacp/android/sdk, where `cmake -P Scripts/android-setup.cmake` puts one.
+# AndroidVersions.cmake, from the SDK eacp_android_find_sdk finds.
 
 include("${CMAKE_CURRENT_LIST_DIR}/AndroidVersions.cmake")
-
-if (DEFINED ENV{ANDROID_HOME})
-    file(TO_CMAKE_PATH "$ENV{ANDROID_HOME}" eacp_android_sdk)
-elseif (DEFINED ENV{HOME})
-    file(TO_CMAKE_PATH "$ENV{HOME}/.eacp/android/sdk" eacp_android_sdk)
-else ()
-    file(TO_CMAKE_PATH "$ENV{USERPROFILE}/.eacp/android/sdk" eacp_android_sdk)
-endif ()
+eacp_android_find_sdk(eacp_android_sdk)
 
 set(eacp_ndk_toolchain
         "${eacp_android_sdk}/ndk/${EACP_ANDROID_NDK_VERSION}/build/cmake/android.toolchain.cmake")

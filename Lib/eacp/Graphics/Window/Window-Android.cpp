@@ -6,14 +6,15 @@
 #include "LinuxWindowSystem-Linux.h"
 #include "../View/AndroidViewSurface-Android.h"
 
+#include <eacp/Core/Android/Jni.h>
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/Threads/EventLoop-Android.h>
+#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/FilePath-Android.h>
 
 #include <android/configuration.h>
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
-#include <jni.h>
 
 #include <optional>
 #include <string>
@@ -22,8 +23,8 @@ namespace eacp::Graphics
 {
 namespace
 {
-constexpr auto androidInsetsLocalReferences = 16;
 constexpr auto nanosecondsPerSecond = 1e9;
+constexpr auto insetsRefreshHz = 4;
 
 // Before the native window arrives.
 const auto androidInitialContentSize = Point {640.f, 400.f};
@@ -36,8 +37,6 @@ struct AndroidActivity
 {
     android_app* app = nullptr;
     AndroidWindow* window = nullptr;
-
-    std::function<void(bool)> lifecycleHandler = [](bool) {};
 };
 
 AndroidActivity& androidActivity()
@@ -60,131 +59,118 @@ float androidBackingScale(android_app* app)
     return (float) density / (float) ACONFIGURATION_DENSITY_MEDIUM;
 }
 
-bool androidJavaFailed(JNIEnv* env)
+struct AndroidInsetsJava
 {
-    if (!env->ExceptionCheck())
-        return false;
+    void resolve(Jni::Lookup& lookup)
+    {
+        auto* types = lookup.findClass("android/view/WindowInsets$Type");
+        auto* windowInsets = lookup.findClass("android/view/WindowInsets");
+        auto* insets = lookup.findClass("android/graphics/Insets");
 
-    env->ExceptionClear();
-    return true;
+        auto* controller = lookup.findClass("android/view/WindowInsetsController");
+
+        auto type = [&](const char* name)
+        {
+            auto method = lookup.staticMethod(types, name, "()I");
+            return method != nullptr ? lookup.env->CallStaticIntMethod(types, method)
+                                     : 0;
+        };
+
+        ime = type("ime");
+        mask = type("systemBars") | type("displayCutout") | ime;
+
+        getInsets =
+            lookup.method(windowInsets, "getInsets", "(I)Landroid/graphics/Insets;");
+        left = lookup.field(insets, "left", "I");
+        top = lookup.field(insets, "top", "I");
+        right = lookup.field(insets, "right", "I");
+        bottom = lookup.field(insets, "bottom", "I");
+        show = lookup.method(controller, "show", "(I)V");
+    }
+
+    jint mask = 0;
+    jint ime = 0;
+    jmethodID getInsets = nullptr;
+    jmethodID show = nullptr;
+    jfieldID left = nullptr;
+    jfieldID top = nullptr;
+    jfieldID right = nullptr;
+    jfieldID bottom = nullptr;
+};
+
+struct AndroidKeyJava
+{
+    void resolve(Jni::Lookup& lookup)
+    {
+        keyEvent = lookup.findClass("android/view/KeyEvent");
+        init = lookup.method(keyEvent, "<init>", "(II)V");
+        getUnicodeChar = lookup.method(keyEvent, "getUnicodeChar", "(I)I");
+    }
+
+    jclass keyEvent = nullptr;
+    jmethodID init = nullptr;
+    jmethodID getUnicodeChar = nullptr;
+};
+
+// What the key types, from its key map; the NDK has no call for it.
+std::string androidKeyCharacters(const AInputEvent* event)
+{
+    auto* env = Jni::currentEnv();
+    const auto* java =
+        env != nullptr ? Jni::resolveOnce<AndroidKeyJava>(env) : nullptr;
+
+    if (java == nullptr)
+        return {};
+
+    auto frame = Jni::LocalFrame {env};
+    auto* key = env->NewObject(java->keyEvent,
+                               java->init,
+                               AKeyEvent_getAction(event),
+                               AKeyEvent_getKeyCode(event));
+    auto character = Jni::failed(env)
+                         ? 0
+                         : env->CallIntMethod(key,
+                                              java->getUnicodeChar,
+                                              AKeyEvent_getMetaState(event));
+
+    if (Jni::failed(env) || character <= 0)
+        return {};
+
+    return Strings::narrow(std::wstring(1, (wchar_t) character));
 }
 
-jobject androidCallObject(JNIEnv* env,
-                          jobject target,
-                          const char* name,
-                          const char* signature)
+// The system bars', the cutout's and the keyboard's insets in pixels, read over JNI: the glue's
+// content rect covers the whole window once an app is edge to edge, which
+// every app targeting API 35 is. Empty before the decor view is attached.
+std::optional<ARect> androidSystemInsets(ANativeActivity* activity)
 {
-    if (target == nullptr)
-        return nullptr;
+    auto* env = Jni::currentEnv();
+    const auto* java =
+        env != nullptr ? Jni::resolveOnce<AndroidInsetsJava>(env) : nullptr;
 
-    auto method = env->GetMethodID(env->GetObjectClass(target), name, signature);
-
-    if (androidJavaFailed(env))
-        return nullptr;
-
-    auto* result = env->CallObjectMethod(target, method);
-    return androidJavaFailed(env) ? nullptr : result;
-}
-
-jint androidInsetsType(JNIEnv* env, jclass types, const char* name)
-{
-    auto method = env->GetStaticMethodID(types, name, "()I");
-
-    if (androidJavaFailed(env))
-        return 0;
-
-    auto type = env->CallStaticIntMethod(types, method);
-    return androidJavaFailed(env) ? 0 : type;
-}
-
-std::optional<jint> androidIntField(JNIEnv* env, jobject target, const char* name)
-{
-    auto field = env->GetFieldID(env->GetObjectClass(target), name, "I");
-
-    if (androidJavaFailed(env))
+    if (java == nullptr || activity == nullptr)
         return std::nullopt;
 
-    return env->GetIntField(target, field);
-}
-
-std::optional<ARect> androidReadSystemInsets(JNIEnv* env, jobject activity)
-{
-    auto* window =
-        androidCallObject(env, activity, "getWindow", "()Landroid/view/Window;");
+    auto frame = Jni::LocalFrame {env};
+    auto* window = Jni::callObject(
+        env, activity->clazz, "getWindow", "()Landroid/view/Window;");
     auto* decor =
-        androidCallObject(env, window, "getDecorView", "()Landroid/view/View;");
-    auto* rootInsets = androidCallObject(
+        Jni::callObject(env, window, "getDecorView", "()Landroid/view/View;");
+    auto* rootInsets = Jni::callObject(
         env, decor, "getRootWindowInsets", "()Landroid/view/WindowInsets;");
 
     if (rootInsets == nullptr)
         return std::nullopt;
 
-    auto* types = env->FindClass("android/view/WindowInsets$Type");
+    auto* insets = env->CallObjectMethod(rootInsets, java->getInsets, java->mask);
 
-    if (androidJavaFailed(env))
+    if (Jni::failed(env) || insets == nullptr)
         return std::nullopt;
 
-    auto mask = androidInsetsType(env, types, "systemBars")
-                | androidInsetsType(env, types, "displayCutout");
-    auto getInsets = env->GetMethodID(env->GetObjectClass(rootInsets),
-                                      "getInsets",
-                                      "(I)Landroid/graphics/Insets;");
-
-    if (androidJavaFailed(env))
-        return std::nullopt;
-
-    auto* insets = env->CallObjectMethod(rootInsets, getInsets, mask);
-
-    if (androidJavaFailed(env) || insets == nullptr)
-        return std::nullopt;
-
-    auto left = androidIntField(env, insets, "left");
-    auto top = androidIntField(env, insets, "top");
-    auto right = androidIntField(env, insets, "right");
-    auto bottom = androidIntField(env, insets, "bottom");
-
-    if (!left || !top || !right || !bottom)
-        return std::nullopt;
-
-    return ARect {*left, *top, *right, *bottom};
-}
-
-// The system bars' and the cutout's insets in pixels, read over JNI: the glue's
-// content rect covers the whole window once an app is edge to edge, which
-// every app targeting API 35 is. Empty before the decor view is attached.
-std::optional<ARect> androidSystemInsets(ANativeActivity* activity)
-{
-    if (activity == nullptr || activity->vm == nullptr)
-        return std::nullopt;
-
-    auto* env = static_cast<JNIEnv*>(nullptr);
-    auto attached = false;
-
-    if (activity->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6)
-        != JNI_OK)
-    {
-        if (activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK)
-            return std::nullopt;
-
-        attached = true;
-    }
-
-    auto result = std::optional<ARect> {};
-
-    if (env->PushLocalFrame(androidInsetsLocalReferences) == 0)
-    {
-        result = androidReadSystemInsets(env, activity->clazz);
-        env->PopLocalFrame(nullptr);
-    }
-    else
-    {
-        androidJavaFailed(env);
-    }
-
-    if (attached)
-        activity->vm->DetachCurrentThread();
-
-    return result;
+    return ARect {env->GetIntField(insets, java->left),
+                  env->GetIntField(insets, java->top),
+                  env->GetIntField(insets, java->right),
+                  env->GetIntField(insets, java->bottom)};
 }
 
 void androidHandleCommand(android_app* app, int32_t command);
@@ -243,18 +229,25 @@ struct AndroidWindow : AndroidWindowSurface
             pixelHeight = 0;
         }
 
-        if (app != nullptr && nativeWindow != nullptr)
-        {
-            if (auto system = androidSystemInsets(app->activity))
-                readSystemInsets(*system);
-            else
-                readInsets(app->contentRect);
-
-            if (contentView != nullptr)
-                contentView->setSafeAreaInsets(insets);
-        }
+        refreshInsets();
 
         return contentSize.x != oldSize.x || contentSize.y != oldSize.y;
+    }
+
+    void refreshInsets()
+    {
+        auto* app = androidActivity().app;
+
+        if (app == nullptr || nativeWindow == nullptr)
+            return;
+
+        if (auto system = androidSystemInsets(app->activity))
+            readSystemInsets(*system);
+        else
+            readInsets(app->contentRect);
+
+        if (contentView != nullptr)
+            contentView->setSafeAreaInsets(insets);
     }
 
     void readSystemInsets(const ARect& pixels)
@@ -335,6 +328,9 @@ struct AndroidWindow : AndroidWindowSurface
 
     Insets insets;
     bool focused = false;
+
+    // No command comes when the on-screen keyboard shows or hides.
+    Threads::Timer insetsTimer {[this] { refreshInsets(); }, insetsRefreshHz};
 };
 
 // Pointer ids are Android's plus one, so a finger is never 0, as on iOS.
@@ -393,9 +389,30 @@ int32_t androidHandleMotion(AInputEvent* event)
     }
 }
 
+uint16_t androidKeyCode(int32_t code)
+{
+    switch (code)
+    {
+        case AKEYCODE_BACK:
+            return KeyCode::Escape;
+        case AKEYCODE_DEL:
+            return KeyCode::Delete;
+        case AKEYCODE_ENTER:
+            return KeyCode::Return;
+        default:
+            return KeyCode::Unknown;
+    }
+}
+
 int32_t androidHandleKey(AInputEvent* event)
 {
-    if (AKeyEvent_getKeyCode(event) != AKEYCODE_BACK)
+    auto key = KeyEvent {};
+    key.keyCode = androidKeyCode(AKeyEvent_getKeyCode(event));
+
+    if (key.keyCode == KeyCode::Unknown)
+        key.characters = androidKeyCharacters(event);
+
+    if (key.keyCode == KeyCode::Unknown && key.characters.empty())
         return 0;
 
     auto* window = androidActivity().window;
@@ -403,8 +420,6 @@ int32_t androidHandleKey(AInputEvent* event)
     if (window == nullptr || window->contentView == nullptr)
         return 1;
 
-    auto key = KeyEvent {};
-    key.keyCode = KeyCode::Escape;
     key.timestamp = (double) AKeyEvent_getEventTime(event) / nanosecondsPerSecond;
 
     if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN)
@@ -447,6 +462,8 @@ void androidHandleCommand(android_app* app, int32_t command)
     switch (command)
     {
         case APP_CMD_INIT_WINDOW:
+            Apps::Detail::setSuspended(false);
+            [[fallthrough]];
         case APP_CMD_WINDOW_RESIZED:
         case APP_CMD_CONFIG_CHANGED:
         case APP_CMD_CONTENT_RECT_CHANGED:
@@ -457,6 +474,7 @@ void androidHandleCommand(android_app* app, int32_t command)
         case APP_CMD_TERM_WINDOW:
             if (window != nullptr)
                 window->nativeWindowLost();
+            Apps::Detail::setSuspended(true);
             break;
 
         case APP_CMD_GAINED_FOCUS:
@@ -469,11 +487,8 @@ void androidHandleCommand(android_app* app, int32_t command)
             break;
 
         case APP_CMD_RESUME:
-            activity.lifecycleHandler(true);
-            break;
-
         case APP_CMD_PAUSE:
-            activity.lifecycleHandler(false);
+            Apps::Detail::setSuspended(command == APP_CMD_PAUSE);
             break;
 
         case APP_CMD_DESTROY:
@@ -517,17 +532,38 @@ Point linuxPointerPosition()
 
 void linuxRefreshCursor() {}
 
+// ANativeActivity_showSoftInput is ignored since Android 12: NativeActivity's
+// view is not one the input method serves.
+void linuxViewFocused()
+{
+    auto* app = androidActivity().app;
+    auto* env = Jni::currentEnv();
+    const auto* java =
+        env != nullptr ? Jni::resolveOnce<AndroidInsetsJava>(env) : nullptr;
+
+    if (app == nullptr || java == nullptr)
+        return;
+
+    auto frame = Jni::LocalFrame {env};
+    auto* window = Jni::callObject(
+        env, app->activity->clazz, "getWindow", "()Landroid/view/Window;");
+    auto* controller = Jni::callObject(env,
+                                       window,
+                                       "getInsetsController",
+                                       "()Landroid/view/WindowInsetsController;");
+
+    if (controller != nullptr)
+    {
+        env->CallVoidMethod(controller, java->show, java->ime);
+        Jni::failed(env);
+    }
+}
+
 namespace Android
 {
 android_app* getApp()
 {
     return androidActivity().app;
-}
-
-void setLifecycleHandler(std::function<void(bool resumed)> handler)
-{
-    androidActivity().lifecycleHandler =
-        handler ? std::move(handler) : std::function<void(bool)> {[](bool) {}};
 }
 } // namespace Android
 
@@ -629,6 +665,7 @@ extern "C" void eacpAndroidStart(android_app* app)
     using namespace eacp::Graphics;
 
     androidActivity().app = app;
+    eacp::Jni::setJavaVM(app->activity->vm);
 
     if (app->activity != nullptr && app->activity->internalDataPath != nullptr)
         eacp::setAndroidDataDirectory(app->activity->internalDataPath);

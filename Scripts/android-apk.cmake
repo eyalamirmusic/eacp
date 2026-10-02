@@ -96,8 +96,14 @@ if (NOT EXISTS "${keystore}")
             OUTPUT_QUIET COMMAND_ERROR_IS_FATAL ANY)
 endif ()
 
-run("${apksigner}" sign --ks "${keystore}" --ks-pass pass:android
-        --key-pass pass:android --out "${OUT}" "${work}/aligned.apk")
+set(password android)
+
+if (NOT "$ENV{EACP_ANDROID_KEYSTORE_PASSWORD}" STREQUAL "")
+    set(password "$ENV{EACP_ANDROID_KEYSTORE_PASSWORD}")
+endif ()
+
+run("${apksigner}" sign --ks "${keystore}" --ks-pass "pass:${password}"
+        --key-pass "pass:${password}" --out "${OUT}" "${work}/aligned.apk")
 file(REMOVE "${OUT}.idsig")
 file(REMOVE_RECURSE "${work}")
 

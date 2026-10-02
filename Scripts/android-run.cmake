@@ -5,16 +5,17 @@
 # woken and unlocked where it has no PIN, or else an emulator it boots on a host
 # that has one ($EACP_AVD, else the AVD eacp that android-setup makes, else the
 # first AVD the emulator lists). Prints the
-# app's first seconds of logcat (tag "eacp", plus any crash). Each --env becomes
-# a string extra on the launch intent, which eacp sets as an environment variable
-# before main() runs.
+# app's first seconds of logcat (tag "eacp", plus any crash). Each --env, and each
+# <name>=<value> in $EACP_RUN_ENV (which reaches <target>-run), becomes a string
+# extra on the launch intent, which eacp sets as an environment variable before
+# main() runs.
 
 cmake_minimum_required(VERSION 3.31)
 
 set(eacp_script android-run)
 include("${CMAKE_CURRENT_LIST_DIR}/android-common.cmake")
 
-set(launch_extras "")
+separate_arguments(launch_settings UNIX_COMMAND "$ENV{EACP_RUN_ENV}")
 set(past_separator FALSE)
 set(expect_env FALSE)
 math(EXPR last_arg "${CMAKE_ARGC} - 1")
@@ -27,13 +28,7 @@ foreach (index RANGE ${last_arg})
             set(past_separator TRUE)
         endif ()
     elseif (expect_env)
-        if (NOT arg MATCHES "^([^=]+)=(.*)$")
-            eacp_fail("--env takes <name>=<value>, not ${arg}")
-        endif ()
-
-        # adb hands the command to the device's shell, which would split an
-        # unquoted value at its spaces.
-        list(APPEND launch_extras --es "${CMAKE_MATCH_1}" "'${CMAKE_MATCH_2}'")
+        list(APPEND launch_settings "${arg}")
         set(expect_env FALSE)
     elseif (arg STREQUAL "--env")
         set(expect_env TRUE)
@@ -45,6 +40,18 @@ endforeach ()
 if (expect_env)
     eacp_fail("--env needs <name>=<value> after it")
 endif ()
+
+set(launch_extras "")
+
+foreach (setting IN LISTS launch_settings)
+    if (NOT setting MATCHES "^([^=]+)=(.*)$")
+        eacp_fail("--env takes <name>=<value>, not ${setting}")
+    endif ()
+
+    # adb hands the command to the device's shell, which would split an
+    # unquoted value at its spaces.
+    list(APPEND launch_extras --es "${CMAKE_MATCH_1}" "'${CMAKE_MATCH_2}'")
+endforeach ()
 
 find_program(adb adb HINTS "${SDK}/platform-tools" NO_DEFAULT_PATH NO_CACHE)
 

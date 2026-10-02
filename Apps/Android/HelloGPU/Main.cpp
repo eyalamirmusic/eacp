@@ -98,7 +98,19 @@ struct HelloView final : GPUView
     {
         follow(touch.pos);
     }
-    void touchEnded(const Graphics::TouchEvent& touch) override { logTouch(touch); }
+    void touchEnded(const Graphics::TouchEvent& touch) override
+    {
+        logTouch(touch);
+        focus();
+    }
+
+    void keyDown(const Graphics::KeyEvent& key) override
+    {
+        if (key.keyCode == Graphics::KeyCode::Delete && !typed.empty())
+            typed.pop_back();
+
+        typed += key.characters;
+    }
 
     void follow(Graphics::Point position)
     {
@@ -144,7 +156,9 @@ struct HelloView final : GPUView
 
         centred("Hello from eacp", size.y * 0.18f, title);
         centred("Vulkan + android.graphics text", size.y * 0.18f + 30.f, caption);
-        centred("touch to change the colour", size.y * 0.85f, caption);
+        centred(typed.empty() ? "touch to change the colour and type" : typed,
+                std::min(size.y * 0.85f, size.y - getSafeAreaInsets().bottom - 30.f),
+                caption);
 
         text.flush(pass);
     }
@@ -154,6 +168,7 @@ struct HelloView final : GPUView
     TriangleShader triangle;
     Text::TextRenderer text;
 
+    std::string typed;
     float angle = 0.f;
     float red = 0.95f;
     float blue = 0.35f;
@@ -163,5 +178,7 @@ int main()
 {
     LOG("eacp HelloGPU: ",
         Device::shared().isValid() ? "Vulkan device up" : "no device");
+    Apps::setSuspendHandler([](bool suspended)
+                            { LOG(suspended ? "suspended" : "resumed"); });
     return Graphics::runWindowedApp<HelloView>();
 }
