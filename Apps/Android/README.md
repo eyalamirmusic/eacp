@@ -97,7 +97,7 @@ cmake -G Ninja -B build-android-studio -DCMAKE_SYSTEM_NAME=Android
 
 Every Android configure writes an Android Studio project into its build folder (`-DEACP_ANDROID_STUDIO=OFF` skips it), `build-android` above included; this one keeps it apart from the command-line build. Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Every app has a run configuration of its own, its debugger set to Native (an all-native app has no Java for Studio's default, Auto, to attach to): pick one and press Run, or Debug to stop at a breakpoint in its C++.
 Every app is a module, so a new app shows up after running that line again.
-From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`, with `JAVA_HOME` set to a JDK 17+: the configure prints that line with the JDK it found (on a Mac, `/usr/bin/java` is a stub that fails without one installed).
+From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`, with `JAVA_HOME` set to a JDK 17+: the configure prints that line with the JDK it found (on a Mac, `/usr/bin/java` is a stub that fails without one installed). That JDK only starts Gradle: the build itself runs on JDK 25, which the project's `gradle/gradle-daemon-jvm.properties` asks for, and Gradle downloads it into `~/.gradle/jdks` the first time when none is installed, from the terminal or from Studio.
 
 ## When it goes wrong
 

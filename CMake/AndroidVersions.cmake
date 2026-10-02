@@ -20,6 +20,12 @@ set(EACP_ANDROID_CMDLINE_TOOLS 15859902)
 # hash since they are fetched from Gradle's repository at that release's tag.
 set(EACP_ANDROID_GRADLE_PLUGIN 9.4.1)
 set(EACP_ANDROID_GRADLE 9.8.0)
+# The JDK major version Gradle's daemon runs on (gradle-daemon-jvm.properties),
+# an exact match: 25, Android Studio's own runtime, so a JAVA_HOME at Studio's
+# JDK needs no download. The template's download URLs are what
+# `./gradlew updateDaemonJvm --jvm-version=<this>` writes with the Foojay
+# resolver applied, so a new version is that run pasted over them.
+set(EACP_ANDROID_GRADLE_JVM 25)
 set(EACP_ANDROID_GRADLE_WRAPPER_JAR_SHA256
         238e777fcddd7e34f9708186085def2abd6e08e658505b38718d79d74c21abd5)
 set(EACP_ANDROID_GRADLEW_SHA256

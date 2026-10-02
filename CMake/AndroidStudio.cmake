@@ -248,19 +248,18 @@ function(eacp_write_android_studio_project)
     endforeach ()
 
     # With .idea there, Studio opens the folder as a project rather than
-    # importing it, so it needs telling that Gradle builds it, and with which
-    # JDK: gradle.xml's #GRADLE_LOCAL_JAVA_HOME is config.properties' java.home.
-    # Written once: Studio keeps both files up to date from then on.
+    # importing it, so it needs telling that Gradle builds it. Which JDK the
+    # daemon runs on is gradle-daemon-jvm.properties' to say, Studio's and
+    # gradlew's alike, so gradle.xml names none. Written once: Studio keeps it
+    # up to date from then on.
     if (NOT EXISTS "${dir}/.idea/gradle.xml")
         configure_file("${templates}/gradle.xml.in" "${dir}/.idea/gradle.xml" @ONLY)
     endif ()
 
     eacp_android_studio_java_home(java_home)
 
-    if (java_home AND NOT EXISTS "${dir}/.gradle/config.properties")
-        file(WRITE "${dir}/.gradle/config.properties" "java.home=${java_home}\n")
-    endif ()
-
+    configure_file("${templates}/gradle-daemon-jvm.properties.in"
+            "${dir}/gradle/gradle-daemon-jvm.properties" @ONLY)
     configure_file("${templates}/settings.gradle.kts.in"
             "${dir}/settings.gradle.kts" @ONLY)
     configure_file("${templates}/build.gradle.kts.in" "${dir}/build.gradle.kts" @ONLY)

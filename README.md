@@ -655,10 +655,13 @@ and the rest of the first configure's cache, so a `-D` given there (a
 consumer's `-DMYAPP_BUILD_TESTS=OFF`, say) reaches them too. Both come in as a
 script the first configure writes, `eacp-nested-init.cmake`, which
 `<target>-aab` takes as well. Each app gets a run configuration with the
-native debugger in `.idea/runConfigurations`. `gradlew` needs `JAVA_HOME` at a JDK 17+ (Android Studio brings its
-own); the configure prints the line with the one it found, and records that
-one as the project's Gradle JDK (`.gradle/config.properties`), so Studio opens
-it with the same one. The modules
+native debugger in `.idea/runConfigurations`. The JDK the Gradle daemon runs
+on is the project's Daemon JVM criteria (`gradle/gradle-daemon-jvm.properties`):
+exactly JDK 25 (`EACP_ANDROID_GRADLE_JVM`), Android Studio's own runtime, found
+among the installed JDKs or else downloaded into `~/.gradle/jdks` from the
+pinned Temurin build, for Studio and `gradlew` alike, so no machine's JDK path
+is written anywhere. `gradlew` itself still needs a `java` to start, `JAVA_HOME`
+at any JDK 17+; the configure prints the line with the one it found. The modules
 build `arm64-v8a` and `x86_64` (`EACP_ANDROID_ABIS`); Android Studio
 builds only the ABI of the device it runs on. Release builds are signed with
 the debug key so they install from the IDE; a shipping app replaces that.

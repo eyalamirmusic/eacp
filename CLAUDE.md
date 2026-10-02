@@ -111,7 +111,10 @@ Gradle project for Android Studio into its own build directory
 `-G Xcode` writes an Xcode one (`CMake/AndroidStudio.cmake`, templates in
 `CMake/AndroidStudio/`): one module per `eacp_add_app` whose `externalNativeBuild` runs this
 `CMakeLists.txt` for that target, with the Android Gradle Plugin and Gradle
-versions pinned in `CMake/AndroidVersions.cmake`. On
+versions pinned in `CMake/AndroidVersions.cmake`, and the daemon's JDK
+(`EACP_ANDROID_GRADLE_JVM`, 25) as Gradle's Daemon JVM criteria in
+`gradle/gradle-daemon-jvm.properties` with pinned download URLs, so neither
+Studio nor `gradlew` is given a machine's JDK path. On
 Android `ResEmbed`'s generator is `CMake/ResEmbedGenerator.cmake`, run by
 CMake, so no host compiler is needed. `Apps/Android/README.md` is the
 step-by-step guide.
