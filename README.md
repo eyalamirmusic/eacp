@@ -576,6 +576,10 @@ is compiled for the host.
 eacp logs to logcat under the tag `eacp`: `adb logcat -s eacp`, with the `adb`
 the setup script prints.
 
+`Apps::setSuspendHandler` is told when the app goes to the background and comes
+back: on pause and resume, and when its surface goes and returns (on iOS, the
+background notifications). That is where an app stops and restarts its audio.
+
 An app `am start` launches has no environment of its own, so before `main()`
 eacp sets one from the system property `debug.<package>.env` (`adb shell setprop
 debug.<package>.env "K=V K=V"`, kept across launches) and then from the launch

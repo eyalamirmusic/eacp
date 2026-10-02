@@ -1,4 +1,5 @@
 #include "EventLoop.h"
+#include "../App/App.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
@@ -47,6 +48,19 @@ void runPendingLaunch()
 - (BOOL)application:(UIApplication*)application
     didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
+    auto* center = [NSNotificationCenter defaultCenter];
+    [center addObserverForName:UIApplicationDidEnterBackgroundNotification
+                        object:nil
+                         queue:nil
+                    usingBlock:^(NSNotification*) {
+                      eacp::Apps::Detail::setSuspended(true);
+                    }];
+    [center addObserverForName:UIApplicationWillEnterForegroundNotification
+                        object:nil
+                         queue:nil
+                    usingBlock:^(NSNotification*) {
+                      eacp::Apps::Detail::setSuspended(false);
+                    }];
     return YES;
 }
 

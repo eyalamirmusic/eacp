@@ -35,8 +35,6 @@ struct AndroidActivity
 {
     android_app* app = nullptr;
     AndroidWindow* window = nullptr;
-
-    std::function<void(bool)> lifecycleHandler = [](bool) {};
 };
 
 AndroidActivity& androidActivity()
@@ -381,6 +379,8 @@ void androidHandleCommand(android_app* app, int32_t command)
     switch (command)
     {
         case APP_CMD_INIT_WINDOW:
+            Apps::Detail::setSuspended(false);
+            [[fallthrough]];
         case APP_CMD_WINDOW_RESIZED:
         case APP_CMD_CONFIG_CHANGED:
         case APP_CMD_CONTENT_RECT_CHANGED:
@@ -391,6 +391,7 @@ void androidHandleCommand(android_app* app, int32_t command)
         case APP_CMD_TERM_WINDOW:
             if (window != nullptr)
                 window->nativeWindowLost();
+            Apps::Detail::setSuspended(true);
             break;
 
         case APP_CMD_GAINED_FOCUS:
@@ -403,11 +404,8 @@ void androidHandleCommand(android_app* app, int32_t command)
             break;
 
         case APP_CMD_RESUME:
-            activity.lifecycleHandler(true);
-            break;
-
         case APP_CMD_PAUSE:
-            activity.lifecycleHandler(false);
+            Apps::Detail::setSuspended(command == APP_CMD_PAUSE);
             break;
 
         case APP_CMD_DESTROY:
@@ -456,12 +454,6 @@ namespace Android
 android_app* getApp()
 {
     return androidActivity().app;
-}
-
-void setLifecycleHandler(std::function<void(bool resumed)> handler)
-{
-    androidActivity().lifecycleHandler =
-        handler ? std::move(handler) : std::function<void(bool)> {[](bool) {}};
 }
 } // namespace Android
 

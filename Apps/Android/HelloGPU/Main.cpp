@@ -163,5 +163,7 @@ int main()
 {
     LOG("eacp HelloGPU: ",
         Device::shared().isValid() ? "Vulkan device up" : "no device");
+    Apps::setSuspendHandler([](bool suspended)
+                            { LOG(suspended ? "suspended" : "resumed"); });
     return Graphics::runWindowedApp<HelloView>();
 }
