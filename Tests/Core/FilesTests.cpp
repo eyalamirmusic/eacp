@@ -280,6 +280,20 @@ auto tReadsEmbeddedNulBytes = test("Files/readsEmbeddedNulBytes") = []
     check(read(path).size() == 17);
 };
 
+// Text mode on Windows folds CRLF and stops at 0x1A, so a binary file came back
+// short; the read is byte-exact on every platform.
+auto tReadsBytesVerbatim = test("Files/readsBytesVerbatim") = []
+{
+    const auto dir = scratchDirectory("read-verbatim");
+    const auto path = dir / "data.bin";
+
+    const auto contents = std::string {"a\r\nb\032c\r\n", 7};
+    write(path, contents);
+
+    check(read(path) == contents);
+    check(read(path).size() == 7);
+};
+
 // --- resources beside the executable ----------------------------------------
 
 namespace
