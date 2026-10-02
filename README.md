@@ -573,7 +573,14 @@ runs as CMake script on Android (`CMake/ResEmbedGenerator.cmake`), so nothing
 is compiled for the host.
 
 eacp logs to logcat under the tag `eacp`: `adb logcat -s eacp`, with the `adb`
-the setup script prints. A Release APK carries the library stripped;
+the setup script prints.
+
+An app `am start` launches has no environment of its own, so before `main()`
+eacp sets one from the system property `debug.<package>.env` (`adb shell setprop
+debug.<package>.env "K=V K=V"`, kept across launches) and then from the launch
+intent's string extras (`am start ... --es K V`, an Android Studio run
+configuration's extras, or `android-run.cmake -- --env K=V`), which win where
+both set a variable. A Release APK carries the library stripped;
 `ndk-stack -sym build-android/Apps/Android/<app>` symbolicates a crash's
 tombstone against the unstripped one in the build tree.
 
