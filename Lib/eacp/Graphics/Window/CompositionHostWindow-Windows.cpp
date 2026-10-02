@@ -633,6 +633,14 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Dragged)
     {
+        // A locked move already carries its delta: the pointer is put back in
+        // the middle after every report, so its position says nothing.
+        if (!mouseLockEngaged)
+            event.delta =
+                lastPointerPosition ? event.pos - *lastPointerPosition : Point {};
+
+        lastPointerPosition = event.pos;
+
         // Whatever Raw Input has gathered since the last movement was reported.
         // A device that cannot report its own movement (a tablet, a remote
         // desktop) leaves this empty, and the pointer's movement stands in.
@@ -640,6 +648,14 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
         event.rawDelta = moved ? rawMouseMovement : event.delta;
         rawMouseMovement = {};
+    }
+    else if (event.type == MouseEventType::Down || event.type == MouseEventType::Up)
+    {
+        lastPointerPosition = event.pos;
+    }
+    else if (event.type == MouseEventType::Exited)
+    {
+        lastPointerPosition.reset();
     }
 
     contentView->dispatchMouseEvent(event);
