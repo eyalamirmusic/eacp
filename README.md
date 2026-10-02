@@ -591,7 +591,15 @@ tombstone against the unstripped one in the build tree.
 
 Each machine signs with its own debug key, so an APK built elsewhere cannot
 update this one's install: `HelloGPU-run` uninstalls the app, and its data,
-first. Point `EACP_ANDROID_KEYSTORE` at one shared keystore to avoid that.
+first. Point `EACP_ANDROID_KEYSTORE` (and `EACP_ANDROID_KEYSTORE_PASSWORD`,
+when it is not `android`) at one shared keystore to avoid that.
+
+`<target>-aab` builds the App Bundle Google Play takes, `<target>.aab` beside the
+APK: a Release library for each ABI in `EACP_ANDROID_ABIS` (each in its own tree
+under `aab/`), bundletool (pinned by hash in `CMake/AndroidVersions.cmake`), the
+symbols for Play's crash reports, signed with the upload key that
+`EACP_ANDROID_KEYSTORE`, `EACP_ANDROID_KEY_ALIAS` and
+`EACP_ANDROID_KEYSTORE_PASSWORD` name, and checked with `bundletool validate`.
 
 Windows and Linux on ARM run on a phone only: Google ships no Android Emulator
 for them, and the x86_64 images need an x64 CPU. Elsewhere, with no phone
@@ -636,7 +644,7 @@ anything else they need goes in `EACP_ANDROID_STUDIO_CMAKE_ARGS` (a consumer's
 `-DMYAPP_BUILD_TESTS=OFF`, say), since the first configure's cache does not
 reach them. `gradlew` needs `JAVA_HOME` at a JDK 17+ (Android Studio brings its
 own); the configure prints the line with the one it found. The modules
-build `arm64-v8a` and `x86_64` (`EACP_ANDROID_STUDIO_ABIS`); Android Studio
+build `arm64-v8a` and `x86_64` (`EACP_ANDROID_ABIS`); Android Studio
 builds only the ABI of the device it runs on. Release builds are signed with
 the debug key so they install from the IDE; a shipping app replaces that.
 `HelloGPU-run` and the rest of the CMake-only path are unchanged.

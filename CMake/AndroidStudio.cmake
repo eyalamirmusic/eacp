@@ -12,8 +12,8 @@ include_guard(GLOBAL)
 
 set(EACP_ANDROID_STUDIO_DIR "" CACHE PATH
         "Write an Android Studio (Gradle) project for every app here")
-set(EACP_ANDROID_STUDIO_ABIS "arm64-v8a;x86_64" CACHE STRING
-        "The ABIs the Android Studio project builds")
+set(EACP_ANDROID_ABIS "arm64-v8a;x86_64" CACHE STRING
+        "The ABIs the Android Studio project and <target>-aab build")
 set(EACP_ANDROID_STUDIO_CMAKE_ARGS "" CACHE STRING
         "More -D arguments for the configure each Gradle module runs")
 
@@ -115,15 +115,11 @@ function(eacp_android_studio_write_app dir target)
             "${dir}/${target}/src/main/AndroidManifest.xml")
 endfunction()
 
-function(eacp_write_android_studio_project)
-    get_property(apps GLOBAL PROPERTY EACP_ANDROID_STUDIO_APPS)
-    set(dir "${EACP_ANDROID_STUDIO_DIR}")
-    set(templates "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/AndroidStudio")
-
-    # Every package this configure fetched, by the source it fetched, so each
-    # module's own configure, one per ABI and build type, fetches nothing and
-    # builds the same sources, a CPM_<name>_SOURCE checkout included.
-    set(arguments "-DEACP_UNITY_BUILD=OFF")
+# Every package this configure fetched, by the source it fetched, so a nested
+# configure fetches nothing and builds the same sources, a CPM_<name>_SOURCE
+# checkout included.
+function(eacp_android_fetched_arguments out)
+    set(arguments "")
 
     foreach (package IN LISTS CPM_PACKAGES)
         if (CPM_PACKAGE_${package}_SOURCE_DIR)
@@ -136,11 +132,20 @@ function(eacp_write_android_studio_project)
         list(APPEND arguments "-DCPM_SOURCE_CACHE=${CPM_SOURCE_CACHE}")
     endif ()
 
-    list(APPEND arguments ${EACP_ANDROID_STUDIO_CMAKE_ARGS})
+    set(${out} "${arguments}" PARENT_SCOPE)
+endfunction()
+
+function(eacp_write_android_studio_project)
+    get_property(apps GLOBAL PROPERTY EACP_ANDROID_STUDIO_APPS)
+    set(dir "${EACP_ANDROID_STUDIO_DIR}")
+    set(templates "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/AndroidStudio")
+
+    eacp_android_fetched_arguments(arguments)
+    list(APPEND arguments -DEACP_UNITY_BUILD=OFF ${EACP_ANDROID_STUDIO_CMAKE_ARGS})
 
     eacp_quoted_list(EACP_STUDIO_CMAKE_ARGUMENTS ",\n                        "
             ${arguments})
-    eacp_quoted_list(EACP_STUDIO_ABIS ", " ${EACP_ANDROID_STUDIO_ABIS})
+    eacp_quoted_list(EACP_STUDIO_ABIS ", " ${EACP_ANDROID_ABIS})
     set(EACP_STUDIO_CMAKE_LISTS "${CMAKE_SOURCE_DIR}/CMakeLists.txt")
     set(EACP_STUDIO_NAME "${CMAKE_PROJECT_NAME}")
     set(EACP_STUDIO_SDK_DIR "${EACP_ANDROID_SDK}")

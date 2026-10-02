@@ -7,9 +7,14 @@
 # ACTIVITY_ATTRIBUTES on those two, each the text itself or a file holding it.
 # The icon is RES_DIR's mipmap/ic_launcher where it has one, else ICON.
 #
-# And <target>-run, which builds the APK, then installs and launches it through
+# <target>-run, which builds the APK, then installs and launches it through
 # Scripts/android-run.cmake on the device adb sees: a phone over USB, or an
 # emulator it boots ($EACP_AVD, or the first AVD) where the host has one.
+#
+# And <target>-aab, the App Bundle for Google Play that Scripts/android-bundle.cmake
+# builds from a Release library per ABI in EACP_ANDROID_ABIS, at
+# ${CMAKE_CURRENT_BINARY_DIR}/<target>.aab, signed with the upload key in
+# EACP_ANDROID_KEYSTORE, EACP_ANDROID_KEY_ALIAS and EACP_ANDROID_KEYSTORE_PASSWORD.
 
 include("${CMAKE_CURRENT_LIST_DIR}/AndroidVersions.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/AndroidStudio.cmake")
@@ -17,6 +22,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/AndroidStudio.cmake")
 # CMake scripts, so they run the same with no shell on any host.
 set(EACP_ANDROID_APK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-apk.cmake")
 set(EACP_ANDROID_RUN_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-run.cmake")
+set(EACP_ANDROID_BUNDLE_SCRIPT
+        "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-bundle.cmake")
 set(EACP_ANDROID_COMMON_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-common.cmake")
 set(EACP_ANDROID_MANIFEST_TEMPLATE
         "${CMAKE_CURRENT_LIST_DIR}/AndroidManifest.xml.in")
@@ -105,4 +112,51 @@ function(eacp_add_android_apk target)
             DEPENDS ${target}-apk
             USES_TERMINAL
             VERBATIM)
+
+    file(RELATIVE_PATH library_dir "${CMAKE_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+    set(config "${CMAKE_CURRENT_BINARY_DIR}/${target}-aab.cmake")
+    set_property(GLOBAL APPEND PROPERTY EACP_ANDROID_BUNDLES "${config}")
+    set_property(GLOBAL PROPERTY EACP_ANDROID_BUNDLE_${config} "\
+set(TARGET [==[${target}]==])
+set(LIBRARY [==[${library_dir}/lib${target}.so]==])
+set(MANIFEST [==[${manifest}]==])
+set(RES_DIR [==[${APP_RES_DIR}]==])
+set(OUT [==[${CMAKE_CURRENT_BINARY_DIR}/${target}.aab]==])
+")
+
+    add_custom_target(${target}-aab
+            COMMAND "${CMAKE_COMMAND}" "-DCONFIG=${config}"
+                    -P "${EACP_ANDROID_BUNDLE_SCRIPT}"
+            USES_TERMINAL
+            VERBATIM)
 endfunction()
+
+# Each <target>-aab's settings, written once every package is fetched, for the
+# Release configure per ABI to build the same sources.
+function(eacp_android_write_bundles)
+    eacp_android_fetched_arguments(arguments)
+    get_property(configs GLOBAL PROPERTY EACP_ANDROID_BUNDLES)
+
+    foreach (config IN LISTS configs)
+        get_property(app GLOBAL PROPERTY EACP_ANDROID_BUNDLE_${config})
+        file(WRITE "${config}" "${app}\
+set(SDK [==[${EACP_ANDROID_SDK}]==])
+set(SOURCE [==[${CMAKE_SOURCE_DIR}]==])
+set(BUILD_ROOT [==[${CMAKE_BINARY_DIR}/aab]==])
+set(ABIS [==[${EACP_ANDROID_ABIS}]==])
+set(STRIP [==[${CMAKE_STRIP}]==])
+set(OBJCOPY [==[${CMAKE_OBJCOPY}]==])
+set(CONFIGURE_ARGUMENTS [==[-G;${CMAKE_GENERATOR};\
+-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM};\
+-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE};\
+-DANDROID_PLATFORM=${ANDROID_PLATFORM};-DCMAKE_BUILD_TYPE=Release;${arguments}]==])
+")
+    endforeach ()
+endfunction()
+
+get_property(eacp_android_bundles_deferred GLOBAL PROPERTY EACP_ANDROID_BUNDLES_DEFERRED)
+
+if (NOT eacp_android_bundles_deferred)
+    set_property(GLOBAL PROPERTY EACP_ANDROID_BUNDLES_DEFERRED TRUE)
+    cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL eacp_android_write_bundles)
+endif ()

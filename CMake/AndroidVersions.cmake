@@ -24,6 +24,11 @@ set(EACP_ANDROID_GRADLEW_SHA256
         e01b5c97892572c82405c02b96a3382379100e7d825ce7c48883d95c26928750)
 set(EACP_ANDROID_GRADLEW_BAT_SHA256
         ad2fac6060c5b929bed15d428e09483e52747d0120874346861ad4ec324af64c)
+# bundletool, which <target>-aab builds the App Bundle with, from its GitHub
+# release, pinned by hash.
+set(EACP_ANDROID_BUNDLETOOL 1.18.3)
+set(EACP_ANDROID_BUNDLETOOL_SHA256
+        a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29)
 
 # The SDK that holds this NDK: Android Studio's, then $ANDROID_HOME, then
 # ~/.eacp/android/sdk. With none, $ANDROID_HOME, else ~/.eacp/android/sdk, where
