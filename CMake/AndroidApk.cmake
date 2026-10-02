@@ -1,13 +1,11 @@
-# eacp_add_android_apk(<target> PACKAGE <id> [LABEL <name>] [ORIENTATION <o>]
-#                      [VERSION_CODE <n>] [VERSION_NAME <s>] [RES_DIR <dir>]
-#                      [ICON <@mipmap/name>] [MANIFEST_ELEMENTS <xml>]
-#                      [APPLICATION_ATTRIBUTES <xml>] [ACTIVITY_ATTRIBUTES <xml>])
+# eacp_add_android_apk(<target>), called by eacp_add_app, whose APP_* arguments
+# it reads, for the shared library <target> behind a NativeActivity:
 #
-# Adds <target>-apk: the shared library <target> behind a NativeActivity,
-# packaged and debug-signed by Scripts/android-apk.cmake (no Gradle). The APK
-# lands at ${CMAKE_CURRENT_BINARY_DIR}/<target>.apk. The last three add to
-# eacp's manifest: elements inside <manifest>, and attributes of <application>
-# and of <activity>, each given as the text itself or a file holding it.
+# <target>-apk, packaged and debug-signed by Scripts/android-apk.cmake (no
+# Gradle) at ${CMAKE_CURRENT_BINARY_DIR}/<target>.apk. Its manifest is eacp's,
+# plus MANIFEST_ELEMENTS inside <manifest> and APPLICATION_ATTRIBUTES and
+# ACTIVITY_ATTRIBUTES on those two, each the text itself or a file holding it.
+# The icon is RES_DIR's mipmap/ic_launcher where it has one, else ICON.
 #
 # And <target>-run, which builds the APK, then installs and launches it through
 # Scripts/android-run.cmake on the device adb sees: a phone over USB, or an
@@ -23,62 +21,39 @@ set(EACP_ANDROID_COMMON_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-com
 set(EACP_ANDROID_MANIFEST_TEMPLATE
         "${CMAKE_CURRENT_LIST_DIR}/AndroidManifest.xml.in")
 
-# The NDK usually sits at <sdk>/ndk/<version>.
-if (DEFINED ENV{ANDROID_HOME})
-    set(eacp_android_sdk_default "$ENV{ANDROID_HOME}")
-elseif (DEFINED ENV{ANDROID_SDK_ROOT})
-    set(eacp_android_sdk_default "$ENV{ANDROID_SDK_ROOT}")
-else ()
-    get_filename_component(eacp_android_sdk_default "${ANDROID_NDK}/../.." ABSOLUTE)
-endif ()
-
+# The SDK the NDK sits in, at <sdk>/ndk/<version>.
+get_filename_component(eacp_android_sdk_default "${ANDROID_NDK}/../.." ABSOLUTE)
 set(EACP_ANDROID_SDK "${eacp_android_sdk_default}" CACHE PATH
         "Android SDK that packages, installs and runs APKs")
 
 function(eacp_add_android_apk target)
-    cmake_parse_arguments(APK ""
-            "PACKAGE;LABEL;ORIENTATION;VERSION_CODE;VERSION_NAME;RES_DIR;ICON;\
-MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES" ""
-            ${ARGN})
-
-    if (NOT APK_PACKAGE)
-        message(FATAL_ERROR "eacp_add_android_apk(${target}): PACKAGE is required")
-    endif ()
-
-    set(EACP_APK_PACKAGE "${APK_PACKAGE}")
-    set(EACP_APK_LABEL "${target}")
-    set(EACP_APK_ORIENTATION "unspecified")
-    set(EACP_APK_VERSION_CODE "1")
-    set(EACP_APK_VERSION_NAME "${PROJECT_VERSION}")
+    set(EACP_APK_PACKAGE "${APP_BUNDLE_ID}")
+    set(EACP_APK_LABEL "${APP_DISPLAY_NAME}")
+    set(EACP_APK_ORIENTATION "${APP_ORIENTATION}")
+    set(EACP_APK_VERSION_CODE "${APP_VERSION_CODE}")
+    set(EACP_APK_VERSION_NAME "${APP_VERSION}")
     set(EACP_APK_ICON_ATTRIBUTE "")
 
-    if (APK_LABEL)
-        set(EACP_APK_LABEL "${APK_LABEL}")
+    if (NOT EACP_APK_ORIENTATION)
+        set(EACP_APK_ORIENTATION unspecified)
     endif ()
 
-    if (APK_ORIENTATION)
-        set(EACP_APK_ORIENTATION "${APK_ORIENTATION}")
+    if (APP_RES_DIR)
+        get_filename_component(APP_RES_DIR "${APP_RES_DIR}" ABSOLUTE)
+        file(GLOB launcher "${APP_RES_DIR}/mipmap*/ic_launcher.*")
+    elseif (APP_ICON)
+        set(APP_RES_DIR "${CMAKE_CURRENT_BINARY_DIR}/${target}-res")
+        configure_file("${APP_ICON}" "${APP_RES_DIR}/mipmap/ic_launcher.png" COPYONLY)
+        set(launcher TRUE)
     endif ()
 
-    if (APK_VERSION_CODE)
-        set(EACP_APK_VERSION_CODE "${APK_VERSION_CODE}")
-    endif ()
-
-    if (APK_VERSION_NAME)
-        set(EACP_APK_VERSION_NAME "${APK_VERSION_NAME}")
-    endif ()
-
-    if (NOT EACP_APK_VERSION_NAME)
-        set(EACP_APK_VERSION_NAME "0.1")
-    endif ()
-
-    if (APK_ICON)
-        set(EACP_APK_ICON_ATTRIBUTE "android:icon=\"${APK_ICON}\"")
+    if (launcher)
+        set(EACP_APK_ICON_ATTRIBUTE "android:icon=\"@mipmap/ic_launcher\"")
     endif ()
 
     foreach (slot MANIFEST_ELEMENTS APPLICATION_ATTRIBUTES ACTIVITY_ATTRIBUTES)
-        set(EACP_APK_${slot} "${APK_${slot}}")
-        get_filename_component(file "${APK_${slot}}" ABSOLUTE)
+        set(EACP_APK_${slot} "${APP_${slot}}")
+        get_filename_component(file "${APP_${slot}}" ABSOLUTE)
 
         if (EXISTS "${file}" AND NOT IS_DIRECTORY "${file}")
             file(READ "${file}" EACP_APK_${slot})
@@ -106,7 +81,7 @@ MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES" ""
                     "-DABI=${ANDROID_ABI}"
                     "-DSTRIP=${CMAKE_STRIP}"
                     "-DOUT=${apk}"
-                    "-DRES_DIR=${APK_RES_DIR}"
+                    "-DRES_DIR=${APP_RES_DIR}"
                     "-DDEBUG=$<CONFIG:Debug>"
                     -P "${EACP_ANDROID_APK_SCRIPT}"
             DEPENDS ${target} "${manifest}" "${EACP_ANDROID_APK_SCRIPT}"
@@ -120,13 +95,13 @@ MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES" ""
             PACKAGE "${EACP_APK_PACKAGE}"
             VERSION_CODE "${EACP_APK_VERSION_CODE}"
             VERSION_NAME "${EACP_APK_VERSION_NAME}"
-            RES_DIR "${APK_RES_DIR}"
+            RES_DIR "${APP_RES_DIR}"
             MIN_SDK "${EACP_APK_MIN_SDK}"
             MANIFEST "${manifest}")
 
     add_custom_target(${target}-run
             COMMAND "${CMAKE_COMMAND}" "-DSDK=${sdk}" "-DAPK=${apk}"
-                    "-DPACKAGE=${APK_PACKAGE}" -P "${EACP_ANDROID_RUN_SCRIPT}"
+                    "-DPACKAGE=${EACP_APK_PACKAGE}" -P "${EACP_ANDROID_RUN_SCRIPT}"
             DEPENDS ${target}-apk
             USES_TERMINAL
             VERBATIM)

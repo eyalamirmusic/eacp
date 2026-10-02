@@ -529,7 +529,11 @@ cmake --build build --target Console   # build/Apps/Console/Console
 A NativeActivity app with no Java code and no Gradle: the app is a shared
 library with its ordinary `main()`, and `eacp_add_app` (`CMake/TargetSetup.cmake`)
 builds it as one and packages it through `eacp_add_android_apk`
-(`CMake/AndroidApk.cmake`), debug-signed with the SDK's own tools — debuggable
+(`CMake/AndroidApk.cmake`). Its `BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`,
+`VERSION_CODE`, `ICON` and `ORIENTATION` are the app's on every platform (the
+manifest and APK here, the bundle and icon on Apple and Windows), and
+`MANIFEST_ELEMENTS`, `APPLICATION_ATTRIBUTES` and `ACTIVITY_ATTRIBUTES` add to
+eacp's manifest rather than replacing it. The APK is debug-signed with the SDK's own tools — debuggable
 in Debug builds. `Apps/Android/HelloGPU` is the example: a Vulkan clear
 following the finger, a spinning triangle through the shader EDSL, text through
 the glyph atlas (rasterized by `android.graphics`), and touches logged.
@@ -551,7 +555,8 @@ image for the host's ABI and an AVD called `eacp` (`-DEACP_ANDROID_EMULATOR=OFF`
 leaves them out). eacp ships no presets; the configure is
 `cmake -G Ninja -B build-android -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33`,
 where `CMake/AndroidToolchain.cmake` includes the NDK's own toolchain file from
-`$ANDROID_HOME`, else `~/.eacp/android/sdk`, at the version
+Android Studio's SDK, else `$ANDROID_HOME`, else `~/.eacp/android/sdk`, whichever
+first has the version
 `CMake/AndroidVersions.cmake` pins (a consumer can point at the NDK's file
 directly, or wrap the line in its own `CMakePresets.json`).
 `<target>-run` wakes the phone and lifts its keyguard (a PIN keeps it locked,

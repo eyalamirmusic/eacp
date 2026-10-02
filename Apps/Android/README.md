@@ -37,7 +37,7 @@ cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FIL
 cmake --build build-android --target HelloGPU-run
 ```
 
-`CMake/AndroidToolchain.cmake` is the NDK's own toolchain file, found in `$ANDROID_HOME` or else where the setup put it, so the line is the same on every machine.
+`CMake/AndroidToolchain.cmake` is the NDK's own toolchain file, found in Android Studio's SDK, else `$ANDROID_HOME`, else where the setup put it, so the line is the same on every machine.
 
 ## 5. Make your own app
 
@@ -46,7 +46,8 @@ Create these three files verbatim (here for an app called `HelloWorld`), then fi
 1. `Apps/Android/HelloWorld/CMakeLists.txt`:
 
 ```cmake
-eacp_add_app(HelloWorld Main.cpp) # fill me in: more .cpp files
+eacp_add_app(HelloWorld Main.cpp # fill me in: more .cpp files
+        DISPLAY_NAME "Hello World") # BUNDLE_ID, VERSION, VERSION_CODE, ICON, ...
 target_link_libraries(HelloWorld PRIVATE eacp-gpu) # fill me in: eacp-text, ...
 set_default_target_setting(HelloWorld)
 ```
@@ -100,7 +101,7 @@ From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug
 
 ## When it goes wrong
 
-- Android Studio asks to switch the project to its own SDK: the configure took `$ANDROID_HOME`, else `~/.eacp/android/sdk`. To keep one SDK, run the setup and the configure with `ANDROID_HOME` at Android Studio's (`~/Library/Android/sdk` on a Mac, `%LOCALAPPDATA%\Android\Sdk` on Windows); the setup installs what is missing into it.
+- Android Studio asks to switch the project to its own SDK: its SDK (`~/Library/Android/sdk` on a Mac, `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` on Linux) has no NDK at the pinned version, so the configure took `$ANDROID_HOME` or `~/.eacp/android/sdk`. Install that NDK there with Studio's SDK Manager, or run the setup with `ANDROID_HOME` at it; the setup installs what is missing into it.
 
 - "the phone is locked": unlock it; the app is behind the lock screen.
 - "emulator eacp did not boot": start it by hand with the command it prints to see why. On Linux the emulator needs KVM: `/dev/kvm` readable by you (add yourself to the `kvm` group).

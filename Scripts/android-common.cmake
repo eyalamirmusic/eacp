@@ -5,7 +5,7 @@
 #   eacp_android_arch  x64 or aarch64: the machine's, not this CMake's, so an
 #                      x64 CMake on an ARM64 PC still says aarch64
 #   eacp_android_dir   ~/.eacp/android
-#   eacp_android_sdk   $ANDROID_HOME, else ~/.eacp/android/sdk
+#   eacp_android_sdk   the SDK eacp_android_find_sdk (AndroidVersions.cmake) finds
 #   eacp_android_has_emulator  whether Google ships an Android Emulator for
 #                      the host: not for Windows or Linux on ARM
 #   eacp_android_image the system-image package an emulator boots, for the
@@ -65,11 +65,7 @@ endif ()
 set(eacp_android_image "system-images;android-${EACP_ANDROID_TARGET_SDK};\
 ${EACP_ANDROID_SYSTEM_IMAGE_TAG};${eacp_android_image_abi}")
 
-if (DEFINED ENV{ANDROID_HOME} AND NOT "$ENV{ANDROID_HOME}" STREQUAL "")
-    file(TO_CMAKE_PATH "$ENV{ANDROID_HOME}" eacp_android_sdk)
-else ()
-    set(eacp_android_sdk "${eacp_android_dir}/sdk")
-endif ()
+eacp_android_find_sdk(eacp_android_sdk)
 
 # Prints "<script>: <arguments, joined>" without CMake's own prefix. ARGV<n>
 # rather than ARGN, which would split an argument at its semicolons.

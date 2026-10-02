@@ -24,3 +24,33 @@ set(EACP_ANDROID_GRADLEW_SHA256
         e01b5c97892572c82405c02b96a3382379100e7d825ce7c48883d95c26928750)
 set(EACP_ANDROID_GRADLEW_BAT_SHA256
         ad2fac6060c5b929bed15d428e09483e52747d0120874346861ad4ec324af64c)
+
+# The SDK that holds this NDK: Android Studio's, then $ANDROID_HOME, then
+# ~/.eacp/android/sdk. With none, $ANDROID_HOME, else ~/.eacp/android/sdk, where
+# Scripts/android-setup.cmake installs it.
+function(eacp_android_find_sdk out)
+    set(home "$ENV{HOME}")
+
+    if (NOT home)
+        set(home "$ENV{USERPROFILE}")
+    endif ()
+
+    set(fallback "${home}/.eacp/android/sdk")
+
+    if (NOT "$ENV{ANDROID_HOME}" STREQUAL "")
+        set(fallback "$ENV{ANDROID_HOME}")
+    endif ()
+
+    foreach (sdk "${home}/Library/Android/sdk" "$ENV{LOCALAPPDATA}/Android/Sdk"
+            "${home}/Android/Sdk" "${fallback}" "${home}/.eacp/android/sdk")
+        file(TO_CMAKE_PATH "${sdk}" sdk)
+
+        if (EXISTS "${sdk}/ndk/${EACP_ANDROID_NDK_VERSION}")
+            set(fallback "${sdk}")
+            break()
+        endif ()
+    endforeach ()
+
+    file(TO_CMAKE_PATH "${fallback}" fallback)
+    set(${out} "${fallback}" PARENT_SCOPE)
+endfunction()
