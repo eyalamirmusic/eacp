@@ -95,7 +95,7 @@ cmake --build build-android --target HelloWorld-run
 cmake -G Ninja -B build-android-studio/cmake -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33 -DEACP_ANDROID_STUDIO_DIR=build-android-studio
 ```
 
-Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Pick an app in the run configurations and press Run; Debug attaches the native debugger.
+Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Every app has a run configuration of its own, its debugger set to Native (an all-native app has no Java for Studio's default, Auto, to attach to): pick one and press Run, or Debug to stop at a breakpoint in its C++.
 Every app is a module, so a new app shows up after running that line again.
 From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`, with `JAVA_HOME` set to a JDK 17+: the configure prints that line with the JDK it found (on a Mac, `/usr/bin/java` is a stub that fails without one installed).
 
