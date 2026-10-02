@@ -21,7 +21,8 @@ android {
         externalNativeBuild {
             cmake {
                 targets += "@EACP_APK_LIB_NAME@"
-                arguments += listOf(@EACP_STUDIO_CMAKE_ARGUMENTS@)
+                arguments += listOf(
+                        @EACP_STUDIO_CMAKE_ARGUMENTS@)
             }
         }
     }

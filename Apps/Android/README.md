@@ -96,7 +96,7 @@ cmake -G Ninja -B build-android-studio/cmake -DCMAKE_TOOLCHAIN_FILE=CMake/Androi
 
 Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Pick an app in the run configurations and press Run; Debug attaches the native debugger.
 Every app is a module, so a new app shows up after running that line again.
-From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`.
+From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`, with `JAVA_HOME` set to a JDK 17+: the configure prints that line with the JDK it found (on a Mac, `/usr/bin/java` is a stub that fails without one installed).
 
 ## When it goes wrong
 

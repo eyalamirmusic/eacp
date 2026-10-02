@@ -592,9 +592,12 @@ The same configure with `-DEACP_ANDROID_STUDIO_DIR=build-android-studio`
 (and `-B build-android-studio/cmake`) writes a Gradle project there, the way `cmake -G Xcode` writes an Xcode project, for
 Android Studio, IntelliJ or `gradlew` on a CI machine. It has one module per
 `eacp_add_app`, each a few lines of `build.gradle.kts` whose
-`externalNativeBuild` runs eacp's own `CMakeLists.txt` for that one target, and
-a manifest generated from the same arguments `eacp_add_android_apk` takes:
-Gradle compiles no Java or Kotlin, it calls CMake and packages the library.
+`externalNativeBuild` runs the top-level `CMakeLists.txt` for that one target,
+and the manifest `eacp_add_android_apk` configured (an app's own
+`EACP_ANDROID_MANIFEST_TEMPLATE` included) less the package, versions and
+`<uses-sdk>`, which the module declares and the Android Gradle Plugin refuses
+in the manifest: Gradle compiles no Java or Kotlin, it calls CMake and packages
+the library.
 Open the folder in Android Studio and run any app on a phone or emulator, with
 the native debugger attached. `CMake/AndroidStudio.cmake` is all of it: any
 Android configure with `EACP_ANDROID_STUDIO_DIR` set writes the project there,
@@ -608,8 +611,13 @@ scripts are fetched from Gradle's repository at that release and checked
 against pinned hashes; Gradle itself downloads into `~/.gradle` on first sync.
 `local.properties` names the SDK the configure found and the CMake that ran
 it (`cmake.dir`), so Gradle builds with the same CMake 3.31+ rather than the
-SDK's, and the configure's CPM cache (`build-android-studio/cpm`) is shared
-by every module, ABI and build type so none of them fetch again. The modules
+SDK's. Each module's configure, one per ABI and build type, gets
+`CPM_<name>_SOURCE` for every package the first configure fetched, so none of
+them fetch again and a local checkout passed that way is the one they build;
+anything else they need goes in `EACP_ANDROID_STUDIO_CMAKE_ARGS` (a consumer's
+`-DMYAPP_BUILD_TESTS=OFF`, say), since the first configure's cache does not
+reach them. `gradlew` needs `JAVA_HOME` at a JDK 17+ (Android Studio brings its
+own); the configure prints the line with the one it found. The modules
 build `arm64-v8a` and `x86_64` (`EACP_ANDROID_STUDIO_ABIS`); Android Studio
 builds only the ABI of the device it runs on. Release builds are signed with
 the debug key so they install from the IDE; a shipping app replaces that.
