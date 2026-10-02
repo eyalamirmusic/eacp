@@ -45,12 +45,17 @@ struct Model final : ListBoxModel
         ++selections;
     }
 
-    void rowDoubleClicked(int row) override { lastDoubleClicked = row; }
+    void rowDoubleClicked(int row) override
+    {
+        lastDoubleClicked = row;
+        ++activations;
+    }
 
     int rows = 20;
     int lastSelected = -2;
     int selections = 0;
     int lastDoubleClicked = -1;
+    int activations = 0;
 };
 
 struct Harness
@@ -131,8 +136,30 @@ auto tListDoubleClick = test("ListBox/aSecondClickOnARowIsADoubleClick") = []
     harness.click({50.f, 50.f}, 2);
 
     check(harness.model.lastDoubleClicked == 2);
+    check(harness.model.activations == 1);
     check(harness.model.selections == 1,
           "and selecting what is selected is not new");
+};
+
+// A triple-click is not two double-clicks. The platform counts the presses of
+// one gesture 1, 2, 3, 4 and hands each of them over as its own mouseDown, so a
+// row that is opened on "two or more" opens twice for a user who clicked a
+// little too eagerly -- which, where opening a row loads something, is the whole
+// thing happening again half a second later.
+auto tListTripleClick = test("ListBox/aThirdClickOnARowIsNotASecondActivation") = []
+{
+    auto harness = Harness {};
+
+    harness.click({50.f, 50.f});
+    harness.click({50.f, 50.f}, 2);
+
+    check(harness.model.activations == 1);
+
+    harness.click({50.f, 50.f}, 3);
+    harness.click({50.f, 50.f}, 4);
+
+    check(harness.model.activations == 1, "the rest of the gesture is not one");
+    check(harness.list.getSelectedRow() == 2, "and the row stays where it was");
 };
 
 auto tListUpdateContentClamps =

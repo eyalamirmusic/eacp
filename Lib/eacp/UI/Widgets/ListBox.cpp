@@ -161,7 +161,11 @@ void ListBox::mouseDown(const MouseEvent& event)
 
     setSelectedRow(row, true);
 
-    if (event.clickCount >= 2)
+    // Exactly the second click, not the second and everything after it. A
+    // triple-click arrives as three presses counted 1, 2, 3 -- and what a model
+    // does with an activated row is rarely idempotent, so `>= 2` opened the same
+    // thing twice for a click the user meant once.
+    if (event.clickCount == 2)
         model->rowDoubleClicked(row);
 }
 
