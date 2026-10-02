@@ -1,5 +1,5 @@
 add_executable(TrayApp Main.cpp)
-target_link_libraries(TrayApp PRIVATE eacp-ui)
+target_link_libraries(TrayApp PRIVATE eacp-ui eacp-webview)
 
 set(BUNDLE_ID "com.eacp.trayapp")
 
