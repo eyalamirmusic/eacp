@@ -33,9 +33,11 @@ No phone: skip this step; the run boots the `eacp` emulator.
 ## 4. Run HelloGPU
 
 ```
-cmake --preset android
-cmake --build --preset android --target HelloGPU-run
+cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33
+cmake --build build-android --target HelloGPU-run
 ```
+
+`CMake/AndroidToolchain.cmake` is the NDK's own toolchain file, found in `$ANDROID_HOME` or else where the setup put it, so the line is the same on every machine.
 
 ## 5. Make your own app
 
@@ -83,17 +85,17 @@ add_subdirectory(HelloWorld)
 4. Run it: the phone, or the emulator, turns green and the log line prints in the terminal.
 
 ```
-cmake --build --preset android --target HelloWorld-run
+cmake --build build-android --target HelloWorld-run
 ```
 
 ## 6. Or use Android Studio
 
 ```
-cmake --preset android-studio
+cmake -G Ninja -B build-android-studio/cmake -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33 -DEACP_ANDROID_STUDIO_DIR=build-android-studio
 ```
 
 Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Pick an app in the run configurations and press Run; Debug attaches the native debugger.
-Every app is a module, so a new app shows up after the `cmake --preset android-studio` that follows step 5.
+Every app is a module, so a new app shows up after running that line again.
 From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`.
 
 ## When it goes wrong

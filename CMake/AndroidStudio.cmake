@@ -4,8 +4,7 @@
 # module's externalNativeBuild runs this same CMakeLists.txt for its one target
 # and packages the library behind the NativeActivity manifest. Versions come
 # from AndroidVersions.cmake, the wrapper from Gradle's repository at the
-# pinned release, checked against its hash. `cmake --preset android-studio`
-# writes it to build-android-studio.
+# pinned release, checked against its hash.
 
 set(EACP_ANDROID_STUDIO_DIR "" CACHE PATH
         "Write an Android Studio (Gradle) project for every app here")

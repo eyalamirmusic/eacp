@@ -548,8 +548,12 @@ file `sdkmanager --licenses` would, accepting the Android SDK License (and the
 ARM DBT license the arm64-v8a system image is under), and, where
 Google ships one for the host, the Android Emulator, the `google_apis` system
 image for the host's ABI and an AVD called `eacp` (`-DEACP_ANDROID_EMULATOR=OFF`
-leaves them out). `cmake --preset android` is Ninja, Release, `arm64-v8a`,
-API 33, into `build-android`, the NDK found by `CMake/AndroidToolchain.cmake`.
+leaves them out). eacp ships no presets; the configure is
+`cmake -G Ninja -B build-android -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33`,
+where `CMake/AndroidToolchain.cmake` includes the NDK's own toolchain file from
+`$ANDROID_HOME`, else `~/.eacp/android/sdk`, at the version
+`CMake/AndroidVersions.cmake` pins (a consumer can point at the NDK's file
+directly, or wrap the line in its own `CMakePresets.json`).
 `<target>-run` wakes the phone and lifts its keyguard (a PIN keeps it locked,
 and it says so), installs, launches and prints the app's first seconds of
 logcat; a first install can make the phone ask about the app (Play Protect),
@@ -584,8 +588,8 @@ features eacp needs).
 
 #### Android Studio
 
-`cmake --preset android-studio` writes a Gradle project to
-`build-android-studio`, the way `cmake -G Xcode` writes an Xcode project, for
+The same configure with `-DEACP_ANDROID_STUDIO_DIR=build-android-studio`
+(and `-B build-android-studio/cmake`) writes a Gradle project there, the way `cmake -G Xcode` writes an Xcode project, for
 Android Studio, IntelliJ or `gradlew` on a CI machine. It has one module per
 `eacp_add_app`, each a few lines of `build.gradle.kts` whose
 `externalNativeBuild` runs eacp's own `CMakeLists.txt` for that one target, and

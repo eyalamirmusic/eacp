@@ -1,6 +1,6 @@
-# The android preset's toolchain file: the NDK named in AndroidVersions.cmake,
-# in the SDK at $ANDROID_HOME, else in ~/.eacp/android/sdk, where
-# `cmake -P Scripts/android-setup.cmake` puts one.
+# -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake: the NDK named in
+# AndroidVersions.cmake, in the SDK at $ANDROID_HOME, else in
+# ~/.eacp/android/sdk, where `cmake -P Scripts/android-setup.cmake` puts one.
 
 include("${CMAKE_CURRENT_LIST_DIR}/AndroidVersions.cmake")
 
