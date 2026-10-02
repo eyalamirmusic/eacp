@@ -553,12 +553,14 @@ ARM DBT license the arm64-v8a system image is under), and, where
 Google ships one for the host, the Android Emulator, the `google_apis` system
 image for the host's ABI and an AVD called `eacp` (`-DEACP_ANDROID_EMULATOR=OFF`
 leaves them out). eacp ships no presets; the configure is
-`cmake -G Ninja -B build-android -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33`,
-where `CMake/AndroidToolchain.cmake` includes the NDK's own toolchain file from
-Android Studio's SDK, else `$ANDROID_HOME`, else `~/.eacp/android/sdk`, whichever
-first has the version
-`CMake/AndroidVersions.cmake` pins (a consumer can point at the NDK's file
-directly, or wrap the line in its own `CMakePresets.json`).
+`cmake -G Ninja -B build-android -DCMAKE_SYSTEM_NAME=Android`, as
+`-DCMAKE_SYSTEM_NAME=iOS` is for iOS: with no toolchain file given, the
+top-level `CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which includes
+the NDK's own toolchain file from Android Studio's SDK, else `$ANDROID_HOME`,
+else `~/.eacp/android/sdk`, whichever first has the version
+`CMake/AndroidVersions.cmake` pins, for `arm64-v8a` at API 33 unless
+`-DANDROID_ABI=...` or `-DANDROID_PLATFORM=...` says otherwise (an explicit
+`-DCMAKE_TOOLCHAIN_FILE`, the NDK's or a consumer's own, is used as given).
 `<target>-run` wakes the phone and lifts its keyguard (a PIN keeps it locked,
 and it says so), installs, launches and prints the app's first seconds of
 logcat; a first install can make the phone ask about the app (Play Protect),
@@ -616,8 +618,12 @@ features eacp needs).
 
 #### Android Studio
 
-The same configure with `-DEACP_ANDROID_STUDIO_DIR=build-android-studio`
-(and `-B build-android-studio/cmake`) writes a Gradle project there, the way `cmake -G Xcode` writes an Xcode project, for
+The same configure also writes a Gradle project into its build directory, the
+way `cmake -G Xcode` writes an Xcode project, so
+`cmake -G Ninja -B build-android-studio -DCMAKE_SYSTEM_NAME=Android` makes a
+folder to open in Android Studio (`-DEACP_ANDROID_STUDIO_DIR` puts it elsewhere,
+and `-DEACP_ANDROID_STUDIO=OFF`, for CI or an APK-only build, skips it and the
+wrapper download), for
 Android Studio, IntelliJ or `gradlew` on a CI machine. It has one module per
 `eacp_add_app`, each a few lines of `build.gradle.kts` whose
 `externalNativeBuild` runs the top-level `CMakeLists.txt` for that one target,
@@ -627,9 +633,10 @@ and the manifest `eacp_add_android_apk` configured (an app's own
 in the manifest: Gradle compiles no Java or Kotlin, it calls CMake and packages
 the library.
 Open the folder in Android Studio and run or debug any app on a phone or
-emulator. `CMake/AndroidStudio.cmake` is all of it: any
-Android configure with `EACP_ANDROID_STUDIO_DIR` set writes the project there,
-so a project that consumes eacp gets one for its own apps the same way.
+emulator; the root module excludes the CMake tree's own folders (`_deps`,
+`CMakeFiles` and the like), so Studio does not index them.
+`CMake/AndroidStudio.cmake` is all of it: any Android configure writes the
+project, so a project that consumes eacp gets one for its own apps the same way.
 
 The Android Gradle Plugin and Gradle versions live in
 `CMake/AndroidVersions.cmake` beside the NDK and SDK ones, which the modules
@@ -649,7 +656,9 @@ consumer's `-DMYAPP_BUILD_TESTS=OFF`, say) reaches them too. Both come in as a
 script the first configure writes, `eacp-nested-init.cmake`, which
 `<target>-aab` takes as well. Each app gets a run configuration with the
 native debugger in `.idea/runConfigurations`. `gradlew` needs `JAVA_HOME` at a JDK 17+ (Android Studio brings its
-own); the configure prints the line with the one it found. The modules
+own); the configure prints the line with the one it found, and records that
+one as the project's Gradle JDK (`.gradle/config.properties`), so Studio opens
+it with the same one. The modules
 build `arm64-v8a` and `x86_64` (`EACP_ANDROID_ABIS`); Android Studio
 builds only the ABI of the device it runs on. Release builds are signed with
 the debug key so they install from the IDE; a shipping app replaces that.

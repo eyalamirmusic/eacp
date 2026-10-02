@@ -2,10 +2,10 @@
 #
 # Makes the Android SDK eacp builds with, from nothing, in any shell: the SDK
 # at $ANDROID_HOME, else ~/.eacp/android/sdk, which CMake/AndroidToolchain.cmake
-# finds with no variable set; Java from $JAVA_HOME or the PATH when it is 17 or
-# later, else a Temurin 21 JDK in ~/.eacp/android/jdk, which the packaging
-# script finds the same way; the SDK command-line tools; and exactly the
-# packages CMake/AndroidVersions.cmake names. It writes the license file
+# finds with no variable set; Java from $JAVA_HOME, Android Studio or the PATH
+# when it is 17 or later, else a Temurin 21 JDK in ~/.eacp/android/jdk, which
+# the packaging script finds the same way; the SDK command-line tools; and
+# exactly the packages CMake/AndroidVersions.cmake names. It writes the license file
 # sdkmanager --licenses would, which accepts the Android SDK License
 # (https://developer.android.com/studio/terms) on your behalf, and for the
 # arm64-v8a system image the android-sdk-arm-dbt-license too.
@@ -298,8 +298,7 @@ else ()
 endif ()
 
 eacp_say("    cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release "
-        "-DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake "
-        "-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33")
+        "-DCMAKE_SYSTEM_NAME=Android")
 eacp_say("    cmake --build build-android --target HelloGPU-run")
 eacp_say("adb is ${adb}")
 eacp_say("ndk-stack is ${ndk_stack}")

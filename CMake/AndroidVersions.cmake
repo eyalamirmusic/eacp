@@ -4,6 +4,8 @@
 
 set(EACP_ANDROID_NDK_VERSION 30.0.16248370)
 set(EACP_ANDROID_BUILD_TOOLS 35.0.0)
+# The oldest API level eacp runs on, and the one a configure targets by default.
+set(EACP_ANDROID_MIN_SDK 33)
 # targetSdkVersion, and the android.jar the manifest links against.
 set(EACP_ANDROID_TARGET_SDK 35)
 # The emulator's system image: Google APIs at the target SDK, for the host's

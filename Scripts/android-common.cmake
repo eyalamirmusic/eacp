@@ -112,9 +112,9 @@ function(eacp_java_major java out)
     set(${out} ${major} PARENT_SCOPE)
 endfunction()
 
-# A Java 17 or later: $JAVA_HOME, the JDK android-setup installs, `java` on the
-# PATH, or a JDK in one of the usual places on a Mac. Sets <out> to the java
-# executable, or to nothing.
+# A Java 17 or later: $JAVA_HOME, the JDK android-setup installs, the one
+# Android Studio runs Gradle with, a JDK in one of the usual places on a Mac,
+# or `java` on the PATH. Sets <out> to the java executable, or to nothing.
 function(eacp_find_java out)
     set(homes "$ENV{JAVA_HOME}" "${eacp_android_dir}/jdk")
 
@@ -122,10 +122,18 @@ function(eacp_find_java out)
         # /usr/bin/java there is a stub that fails without a JDK installed.
         execute_process(COMMAND /usr/libexec/java_home
                 OUTPUT_VARIABLE java_home OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-        list(APPEND homes "${java_home}"
+        list(APPEND homes
+                "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+                "$ENV{HOME}/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+                "${java_home}"
                 /opt/homebrew/opt/openjdk@21 /opt/homebrew/opt/openjdk
-                /usr/local/opt/openjdk@21 /usr/local/opt/openjdk
-                "/Applications/Android Studio.app/Contents/jbr/Contents/Home")
+                /usr/local/opt/openjdk@21 /usr/local/opt/openjdk)
+    elseif (eacp_android_os STREQUAL "windows")
+        list(APPEND homes "$ENV{LOCALAPPDATA}/Programs/Android Studio/jbr"
+                "$ENV{ProgramFiles}/Android/Android Studio/jbr")
+    else ()
+        list(APPEND homes /opt/android-studio/jbr "$ENV{HOME}/android-studio/jbr"
+                /usr/local/android-studio/jbr)
     endif ()
 
     set(candidates "")

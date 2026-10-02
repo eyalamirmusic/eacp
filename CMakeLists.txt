@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Android" AND NOT CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/CMake/AndroidToolchain.cmake")
+endif ()
+
 project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
 if (CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -56,14 +61,15 @@ if (NOT EACP_BUILD_GRAPHICS)
             "Build the WebView module" FORCE)
 endif ()
 
-if (ANDROID AND ANDROID_PLATFORM_LEVEL LESS 33)
-    message(FATAL_ERROR
-            "eacp needs Android 13 or later: configure with -DANDROID_PLATFORM=android-33 "
-            "(or higher); this build targets API ${ANDROID_PLATFORM_LEVEL}.")
-endif ()
-
 if (ANDROID)
     include(AndroidVersions)
+
+    if (ANDROID_PLATFORM_LEVEL LESS EACP_ANDROID_MIN_SDK)
+        message(FATAL_ERROR
+                "eacp needs Android 13 or later: configure with "
+                "-DANDROID_PLATFORM=android-${EACP_ANDROID_MIN_SDK} (or higher); "
+                "this build targets API ${ANDROID_PLATFORM_LEVEL}.")
+    endif ()
 
     if (DEFINED ANDROID_NDK_MAJOR)
         set(eacp_ndk_major "${ANDROID_NDK_MAJOR}")
@@ -75,7 +81,7 @@ if (ANDROID)
         message(FATAL_ERROR
                 "eacp builds with NDK ${EACP_ANDROID_NDK_VERSION}; this build uses "
                 "NDK ${eacp_ndk_major}, which is not supported: configure with "
-                "-DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake, after "
+                "-DCMAKE_SYSTEM_NAME=Android and no toolchain file, after "
                 "cmake -P Scripts/android-setup.cmake")
     endif ()
 endif ()

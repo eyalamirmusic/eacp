@@ -33,11 +33,11 @@ No phone: skip this step; the run boots the `eacp` emulator.
 ## 4. Run HelloGPU
 
 ```
-cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33
+cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Android
 cmake --build build-android --target HelloGPU-run
 ```
 
-`CMake/AndroidToolchain.cmake` is the NDK's own toolchain file, found in Android Studio's SDK, else `$ANDROID_HOME`, else where the setup put it, so the line is the same on every machine.
+The configure builds with the NDK's own toolchain file, found in Android Studio's SDK, else `$ANDROID_HOME`, else where the setup put it, so the line is the same on every machine. It targets `arm64-v8a` at API 33; `-DANDROID_ABI=x86_64` or `-DANDROID_PLATFORM=android-35` changes that.
 
 ## 5. Make your own app
 
@@ -92,10 +92,10 @@ cmake --build build-android --target HelloWorld-run
 ## 6. Or use Android Studio
 
 ```
-cmake -G Ninja -B build-android-studio/cmake -DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33 -DEACP_ANDROID_STUDIO_DIR=build-android-studio
+cmake -G Ninja -B build-android-studio -DCMAKE_SYSTEM_NAME=Android
 ```
 
-Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Every app has a run configuration of its own, its debugger set to Native (an all-native app has no Java for Studio's default, Auto, to attach to): pick one and press Run, or Debug to stop at a breakpoint in its C++.
+Every Android configure writes an Android Studio project into its build folder (`-DEACP_ANDROID_STUDIO=OFF` skips it), `build-android` above included; this one keeps it apart from the command-line build. Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Every app has a run configuration of its own, its debugger set to Native (an all-native app has no Java for Studio's default, Auto, to attach to): pick one and press Run, or Debug to stop at a breakpoint in its C++.
 Every app is a module, so a new app shows up after running that line again.
 From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`, with `JAVA_HOME` set to a JDK 17+: the configure prints that line with the JDK it found (on a Mac, `/usr/bin/java` is a stub that fails without one installed).
 

@@ -98,14 +98,18 @@ Android scripts are CMake scripts run with `cmake -P`, so no host needs a
 shell; `Scripts/android-common.cmake` is what they share. The NDK,
 build-tools and platform versions live in `CMake/AndroidVersions.cmake` alone;
 `cmake -P Scripts/android-setup.cmake` installs them into `~/.eacp/android`
-(or `$ANDROID_HOME`), and a configure with
-`-DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake` (which finds that NDK)
-builds against them; eacp ships no presets, which are an app's convenience.
-`-DEACP_ANDROID_STUDIO_DIR=<dir>` on that configure
-writes a Gradle project for Android Studio into `<dir>`, as
+(or `$ANDROID_HOME`), and `cmake -G Ninja -B build-android
+-DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is for iOS, builds
+against them: with no toolchain file given, the top-level `CMakeLists.txt` takes
+`CMake/AndroidToolchain.cmake`, which finds that NDK and includes its own
+`android.toolchain.cmake` (legacy mode, what Gradle uses) for `arm64-v8a` at
+`EACP_ANDROID_MIN_SDK` (33) unless `-DANDROID_ABI`/`-DANDROID_PLATFORM` say
+otherwise, while an explicit `-DCMAKE_TOOLCHAIN_FILE` is used as given; eacp
+ships no presets, which are an app's convenience. That configure also writes a
+Gradle project for Android Studio into its own build directory
+(`EACP_ANDROID_STUDIO_DIR` moves it, `-DEACP_ANDROID_STUDIO=OFF` skips it), as
 `-G Xcode` writes an Xcode one (`CMake/AndroidStudio.cmake`, templates in
-`CMake/AndroidStudio/`): any Android configure with `EACP_ANDROID_STUDIO_DIR`
-set writes one module per `eacp_add_app` whose `externalNativeBuild` runs this
+`CMake/AndroidStudio/`): one module per `eacp_add_app` whose `externalNativeBuild` runs this
 `CMakeLists.txt` for that target, with the Android Gradle Plugin and Gradle
 versions pinned in `CMake/AndroidVersions.cmake`. On
 Android `ResEmbed`'s generator is `CMake/ResEmbedGenerator.cmake`, run by

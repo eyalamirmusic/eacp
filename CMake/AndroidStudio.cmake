@@ -1,22 +1,24 @@
-# The Android Studio project: with EACP_ANDROID_STUDIO_DIR set, an Android
-# configure writes a Gradle project there with one module per eacp_add_app, as
-# -G Xcode writes an Xcode project. Gradle compiles nothing of its own: each
-# module's externalNativeBuild runs the top-level CMakeLists.txt for its one
-# target and packages the library behind the manifest eacp_add_android_apk
-# configured, less what the module itself declares; its release build type is
-# CMake's Release, as the plain build's is, not the plugin's RelWithDebInfo.
-# Versions come from AndroidVersions.cmake, the wrapper from Gradle's
-# repository at the pinned release, checked against its hash.
+# The Android Studio project: an Android configure writes a Gradle project into
+# EACP_ANDROID_STUDIO_DIR, its own build tree unless set, with one module per
+# eacp_add_app, as -G Xcode writes an Xcode project. Gradle compiles nothing of
+# its own: each module's externalNativeBuild runs the top-level CMakeLists.txt
+# for its one target and packages the library behind the manifest
+# eacp_add_android_apk configured, less what the module itself declares; its
+# release build type is CMake's Release, as the plain build's is, not the
+# plugin's RelWithDebInfo. Versions come from AndroidVersions.cmake, the wrapper
+# from Gradle's repository at the pinned release, checked against its hash.
 
 include_guard(GLOBAL)
 
-set(EACP_ANDROID_STUDIO_DIR "" CACHE PATH
-        "Write an Android Studio (Gradle) project for every app here")
+option(EACP_ANDROID_STUDIO "Write an Android Studio (Gradle) project for every app"
+        ON)
+set(EACP_ANDROID_STUDIO_DIR "${CMAKE_BINARY_DIR}" CACHE PATH
+        "Where EACP_ANDROID_STUDIO writes the Android Studio project")
 set(EACP_ANDROID_ABIS "arm64-v8a;x86_64" CACHE STRING
         "The ABIs the Android Studio project and <target>-aab build")
 
 function(eacp_android_studio_add_app target)
-    if (NOT EACP_ANDROID_STUDIO_DIR)
+    if (NOT EACP_ANDROID_STUDIO OR NOT EACP_ANDROID_STUDIO_DIR)
         return()
     endif ()
 
@@ -139,9 +141,9 @@ endfunction()
 # ANDROID_* (toolchain, ABI, platform, build type, generator) bar a CMAKE_*
 # given on the command line, internal entries, find_* results, which are for
 # this ABI's sysroot, anything inside this build tree, and the Studio
-# directory, so a nested configure writes no project. Then every package this
-# configure fetched, by the source it fetched, so they fetch nothing and build
-# the same sources, a CPM_<name>_SOURCE checkout included.
+# settings, which it turns off so a nested configure writes no project. Then
+# every package this configure fetched, by the source it fetched, so they fetch
+# nothing and build the same sources, a CPM_<name>_SOURCE checkout included.
 #
 # It goes in as CMAKE_PROJECT_TOP_LEVEL_INCLUDES, not -C: the first project()
 # includes it on every configure, the ones Ninja reruns included, and Ninja
@@ -165,7 +167,7 @@ function(eacp_android_nested_init_cache out)
 
         if (type MATCHES "^(INTERNAL|STATIC)$"
                 OR name MATCHES "^(ANDROID_|CPM_|FETCHCONTENT_)"
-                OR name MATCHES "^(EACP_ANDROID_STUDIO_DIR|CMAKE_PROJECT_TOP_LEVEL_INCLUDES)$"
+                OR name MATCHES "^(EACP_ANDROID_STUDIO(_DIR)?|CMAKE_PROJECT_TOP_LEVEL_INCLUDES)$"
                 OR help MATCHES "^(Path to a |The directory containing a CMake)"
                 OR value MATCHES "-NOTFOUND$")
             continue()
@@ -189,6 +191,9 @@ function(eacp_android_nested_init_cache out)
         eacp_android_studio_cache_line(line ${name} "${value}" ${type})
         string(APPEND content "${line}")
     endforeach ()
+
+    eacp_android_studio_cache_line(line EACP_ANDROID_STUDIO OFF BOOL)
+    string(APPEND content "${line}")
 
     foreach (package IN LISTS CPM_PACKAGES)
         if (CPM_PACKAGE_${package}_SOURCE_DIR)
@@ -229,6 +234,8 @@ function(eacp_write_android_studio_project)
     set(EACP_STUDIO_NAME "${CMAKE_PROJECT_NAME}")
     set(EACP_STUDIO_SDK_DIR "${EACP_ANDROID_SDK}")
     eacp_android_studio_cmake_dir("${dir}" EACP_STUDIO_CMAKE_DIR)
+    eacp_android_studio_excludes("${dir}" excludes)
+    eacp_quoted_list(EACP_STUDIO_EXCLUDES ", " ${excludes})
 
     set(EACP_STUDIO_INCLUDES "")
     set(EACP_STUDIO_GRADLE_MODULES "")
@@ -241,10 +248,17 @@ function(eacp_write_android_studio_project)
     endforeach ()
 
     # With .idea there, Studio opens the folder as a project rather than
-    # importing it, so it needs telling that Gradle builds it. Written once:
-    # Studio keeps this file up to date from then on.
+    # importing it, so it needs telling that Gradle builds it, and with which
+    # JDK: gradle.xml's #GRADLE_LOCAL_JAVA_HOME is config.properties' java.home.
+    # Written once: Studio keeps both files up to date from then on.
     if (NOT EXISTS "${dir}/.idea/gradle.xml")
         configure_file("${templates}/gradle.xml.in" "${dir}/.idea/gradle.xml" @ONLY)
+    endif ()
+
+    eacp_android_studio_java_home(java_home)
+
+    if (java_home AND NOT EXISTS "${dir}/.gradle/config.properties")
+        file(WRITE "${dir}/.gradle/config.properties" "java.home=${java_home}\n")
     endif ()
 
     configure_file("${templates}/settings.gradle.kts.in"
@@ -263,7 +277,10 @@ function(eacp_write_android_studio_project)
         list(GET apps 0 first)
     endif ()
 
-    eacp_android_studio_java_home(java_home)
+    if (NOT java_home)
+        set(java_home "<a JDK 17+>")
+    endif ()
+
     message(STATUS "Android Studio project with ${count} app(s): ${dir}\n"
             "   Open it in Android Studio, or from a terminal there:\n"
             "   JAVA_HOME=\"${java_home}\" ./gradlew :${first}:installDebug")
@@ -296,11 +313,37 @@ function(eacp_android_studio_cmake_dir dir out)
             RESULT ninja_failed SYMBOLIC)
 
     if (cmake_failed OR ninja_failed)
-        file(REMOVE_RECURSE "${dir}/.cmake")
+        file(REMOVE_RECURSE "${links}")
         return()
     endif ()
 
     set(${out} "${dir}/.cmake" PARENT_SCOPE)
+endfunction()
+
+# The build tree's own folders, where it shares the project's folder: Studio
+# indexes all of the root module's, and leaves out what its idea block excludes.
+function(eacp_android_studio_excludes dir out)
+    set(binaries CMakeFiles CPM_modules _deps aab include)
+    list(TRANSFORM binaries PREPEND "${CMAKE_BINARY_DIR}/")
+    get_property(subdirs DIRECTORY "${CMAKE_SOURCE_DIR}" PROPERTY SUBDIRECTORIES)
+
+    foreach (subdir IN LISTS subdirs)
+        get_property(binary DIRECTORY "${subdir}" PROPERTY BINARY_DIR)
+        list(APPEND binaries "${binary}")
+    endforeach ()
+
+    set(excludes "")
+
+    foreach (binary IN LISTS binaries)
+        get_filename_component(parent "${binary}" DIRECTORY)
+
+        if (parent STREQUAL dir)
+            get_filename_component(name "${binary}" NAME)
+            list(APPEND excludes "${name}")
+        endif ()
+    endforeach ()
+
+    set(${out} "${excludes}" PARENT_SCOPE)
 endfunction()
 
 # gradlew runs the java at JAVA_HOME, or the PATH's, which on a Mac is a stub
@@ -309,7 +352,7 @@ function(eacp_android_studio_java_home out)
     set(eacp_script AndroidStudio)
     include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../Scripts/android-common.cmake")
     eacp_find_java(java)
-    set(home "<a JDK 17+>")
+    set(home "")
 
     if (java)
         get_filename_component(bin "${java}" DIRECTORY)
@@ -319,7 +362,7 @@ function(eacp_android_studio_java_home out)
     set(${out} "${home}" PARENT_SCOPE)
 endfunction()
 
-if (EACP_ANDROID_STUDIO_DIR)
+if (EACP_ANDROID_STUDIO AND EACP_ANDROID_STUDIO_DIR)
     cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}"
             CALL eacp_write_android_studio_project)
 endif ()
