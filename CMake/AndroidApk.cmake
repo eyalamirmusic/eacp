@@ -1,10 +1,13 @@
 # eacp_add_android_apk(<target> PACKAGE <id> [LABEL <name>] [ORIENTATION <o>]
 #                      [VERSION_CODE <n>] [VERSION_NAME <s>] [RES_DIR <dir>]
-#                      [ICON <@mipmap/name>])
+#                      [ICON <@mipmap/name>] [MANIFEST_ELEMENTS <xml>]
+#                      [APPLICATION_ATTRIBUTES <xml>] [ACTIVITY_ATTRIBUTES <xml>])
 #
 # Adds <target>-apk: the shared library <target> behind a NativeActivity,
 # packaged and debug-signed by Scripts/android-apk.cmake (no Gradle). The APK
-# lands at ${CMAKE_CURRENT_BINARY_DIR}/<target>.apk.
+# lands at ${CMAKE_CURRENT_BINARY_DIR}/<target>.apk. The last three add to
+# eacp's manifest: elements inside <manifest>, and attributes of <application>
+# and of <activity>, each given as the text itself or a file holding it.
 #
 # And <target>-run, which builds the APK, then installs and launches it through
 # Scripts/android-run.cmake on the device adb sees: a phone over USB, or an
@@ -34,7 +37,8 @@ set(EACP_ANDROID_SDK "${eacp_android_sdk_default}" CACHE PATH
 
 function(eacp_add_android_apk target)
     cmake_parse_arguments(APK ""
-            "PACKAGE;LABEL;ORIENTATION;VERSION_CODE;VERSION_NAME;RES_DIR;ICON" ""
+            "PACKAGE;LABEL;ORIENTATION;VERSION_CODE;VERSION_NAME;RES_DIR;ICON;\
+MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES" ""
             ${ARGN})
 
     if (NOT APK_PACKAGE)
@@ -71,6 +75,15 @@ function(eacp_add_android_apk target)
     if (APK_ICON)
         set(EACP_APK_ICON_ATTRIBUTE "android:icon=\"${APK_ICON}\"")
     endif ()
+
+    foreach (slot MANIFEST_ELEMENTS APPLICATION_ATTRIBUTES ACTIVITY_ATTRIBUTES)
+        set(EACP_APK_${slot} "${APK_${slot}}")
+        get_filename_component(file "${APK_${slot}}" ABSOLUTE)
+
+        if (EXISTS "${file}" AND NOT IS_DIRECTORY "${file}")
+            file(READ "${file}" EACP_APK_${slot})
+        endif ()
+    endforeach ()
 
     set(EACP_APK_MIN_SDK "${ANDROID_PLATFORM_LEVEL}")
     set(EACP_APK_TARGET_SDK "${EACP_ANDROID_TARGET_SDK}")
