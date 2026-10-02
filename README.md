@@ -580,6 +580,10 @@ the setup script prints.
 back: on pause and resume, and when its surface goes and returns (on iOS, the
 background notifications). That is where an app stops and restarts its audio.
 
+`View::focus()` shows the on-screen keyboard, the safe area shrinks above it, and
+the keys it types reach `keyDown` with their characters (Back as Escape, Delete
+and Enter as their key codes); HelloGPU echoes what is typed.
+
 An app `am start` launches has no environment of its own, so before `main()`
 eacp sets one from the system property `debug.<package>.env` (`adb shell setprop
 debug.<package>.env "K=V K=V"`, kept across launches) and then from the launch

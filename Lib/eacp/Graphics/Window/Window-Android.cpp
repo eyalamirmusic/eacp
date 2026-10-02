@@ -9,6 +9,7 @@
 #include <eacp/Core/Android/Jni.h>
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/Threads/EventLoop-Android.h>
+#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/FilePath-Android.h>
 
 #include <android/configuration.h>
@@ -23,6 +24,7 @@ namespace eacp::Graphics
 namespace
 {
 constexpr auto nanosecondsPerSecond = 1e9;
+constexpr auto insetsRefreshHz = 4;
 
 // Before the native window arrives.
 const auto androidInitialContentSize = Point {640.f, 400.f};
@@ -65,9 +67,17 @@ struct AndroidInsetsJava
         auto* windowInsets = lookup.findClass("android/view/WindowInsets");
         auto* insets = lookup.findClass("android/graphics/Insets");
 
-        for (const auto* type: {"systemBars", "displayCutout"})
-            if (auto method = lookup.staticMethod(types, type, "()I"))
-                mask |= lookup.env->CallStaticIntMethod(types, method);
+        auto* controller = lookup.findClass("android/view/WindowInsetsController");
+
+        auto type = [&](const char* name)
+        {
+            auto method = lookup.staticMethod(types, name, "()I");
+            return method != nullptr ? lookup.env->CallStaticIntMethod(types, method)
+                                     : 0;
+        };
+
+        ime = type("ime");
+        mask = type("systemBars") | type("displayCutout") | ime;
 
         getInsets =
             lookup.method(windowInsets, "getInsets", "(I)Landroid/graphics/Insets;");
@@ -75,17 +85,61 @@ struct AndroidInsetsJava
         top = lookup.field(insets, "top", "I");
         right = lookup.field(insets, "right", "I");
         bottom = lookup.field(insets, "bottom", "I");
+        show = lookup.method(controller, "show", "(I)V");
     }
 
     jint mask = 0;
+    jint ime = 0;
     jmethodID getInsets = nullptr;
+    jmethodID show = nullptr;
     jfieldID left = nullptr;
     jfieldID top = nullptr;
     jfieldID right = nullptr;
     jfieldID bottom = nullptr;
 };
 
-// The system bars' and the cutout's insets in pixels, read over JNI: the glue's
+struct AndroidKeyJava
+{
+    void resolve(Jni::Lookup& lookup)
+    {
+        keyEvent = lookup.findClass("android/view/KeyEvent");
+        init = lookup.method(keyEvent, "<init>", "(II)V");
+        getUnicodeChar = lookup.method(keyEvent, "getUnicodeChar", "(I)I");
+    }
+
+    jclass keyEvent = nullptr;
+    jmethodID init = nullptr;
+    jmethodID getUnicodeChar = nullptr;
+};
+
+// What the key types, from its key map; the NDK has no call for it.
+std::string androidKeyCharacters(const AInputEvent* event)
+{
+    auto* env = Jni::currentEnv();
+    const auto* java =
+        env != nullptr ? Jni::resolveOnce<AndroidKeyJava>(env) : nullptr;
+
+    if (java == nullptr)
+        return {};
+
+    auto frame = Jni::LocalFrame {env};
+    auto* key = env->NewObject(java->keyEvent,
+                               java->init,
+                               AKeyEvent_getAction(event),
+                               AKeyEvent_getKeyCode(event));
+    auto character = Jni::failed(env)
+                         ? 0
+                         : env->CallIntMethod(key,
+                                              java->getUnicodeChar,
+                                              AKeyEvent_getMetaState(event));
+
+    if (Jni::failed(env) || character <= 0)
+        return {};
+
+    return Strings::narrow(std::wstring(1, (wchar_t) character));
+}
+
+// The system bars', the cutout's and the keyboard's insets in pixels, read over JNI: the glue's
 // content rect covers the whole window once an app is edge to edge, which
 // every app targeting API 35 is. Empty before the decor view is attached.
 std::optional<ARect> androidSystemInsets(ANativeActivity* activity)
@@ -175,18 +229,25 @@ struct AndroidWindow : AndroidWindowSurface
             pixelHeight = 0;
         }
 
-        if (app != nullptr && nativeWindow != nullptr)
-        {
-            if (auto system = androidSystemInsets(app->activity))
-                readSystemInsets(*system);
-            else
-                readInsets(app->contentRect);
-
-            if (contentView != nullptr)
-                contentView->setSafeAreaInsets(insets);
-        }
+        refreshInsets();
 
         return contentSize.x != oldSize.x || contentSize.y != oldSize.y;
+    }
+
+    void refreshInsets()
+    {
+        auto* app = androidActivity().app;
+
+        if (app == nullptr || nativeWindow == nullptr)
+            return;
+
+        if (auto system = androidSystemInsets(app->activity))
+            readSystemInsets(*system);
+        else
+            readInsets(app->contentRect);
+
+        if (contentView != nullptr)
+            contentView->setSafeAreaInsets(insets);
     }
 
     void readSystemInsets(const ARect& pixels)
@@ -267,6 +328,9 @@ struct AndroidWindow : AndroidWindowSurface
 
     Insets insets;
     bool focused = false;
+
+    // No command comes when the on-screen keyboard shows or hides.
+    Threads::Timer insetsTimer {[this] { refreshInsets(); }, insetsRefreshHz};
 };
 
 // Pointer ids are Android's plus one, so a finger is never 0, as on iOS.
@@ -325,9 +389,30 @@ int32_t androidHandleMotion(AInputEvent* event)
     }
 }
 
+uint16_t androidKeyCode(int32_t code)
+{
+    switch (code)
+    {
+        case AKEYCODE_BACK:
+            return KeyCode::Escape;
+        case AKEYCODE_DEL:
+            return KeyCode::Delete;
+        case AKEYCODE_ENTER:
+            return KeyCode::Return;
+        default:
+            return KeyCode::Unknown;
+    }
+}
+
 int32_t androidHandleKey(AInputEvent* event)
 {
-    if (AKeyEvent_getKeyCode(event) != AKEYCODE_BACK)
+    auto key = KeyEvent {};
+    key.keyCode = androidKeyCode(AKeyEvent_getKeyCode(event));
+
+    if (key.keyCode == KeyCode::Unknown)
+        key.characters = androidKeyCharacters(event);
+
+    if (key.keyCode == KeyCode::Unknown && key.characters.empty())
         return 0;
 
     auto* window = androidActivity().window;
@@ -335,8 +420,6 @@ int32_t androidHandleKey(AInputEvent* event)
     if (window == nullptr || window->contentView == nullptr)
         return 1;
 
-    auto key = KeyEvent {};
-    key.keyCode = KeyCode::Escape;
     key.timestamp = (double) AKeyEvent_getEventTime(event) / nanosecondsPerSecond;
 
     if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN)
@@ -448,6 +531,33 @@ Point linuxPointerPosition()
 }
 
 void linuxRefreshCursor() {}
+
+// ANativeActivity_showSoftInput is ignored since Android 12: NativeActivity's
+// view is not one the input method serves.
+void linuxViewFocused()
+{
+    auto* app = androidActivity().app;
+    auto* env = Jni::currentEnv();
+    const auto* java =
+        env != nullptr ? Jni::resolveOnce<AndroidInsetsJava>(env) : nullptr;
+
+    if (app == nullptr || java == nullptr)
+        return;
+
+    auto frame = Jni::LocalFrame {env};
+    auto* window = Jni::callObject(
+        env, app->activity->clazz, "getWindow", "()Landroid/view/Window;");
+    auto* controller = Jni::callObject(env,
+                                       window,
+                                       "getInsetsController",
+                                       "()Landroid/view/WindowInsetsController;");
+
+    if (controller != nullptr)
+    {
+        env->CallVoidMethod(controller, java->show, java->ime);
+        Jni::failed(env);
+    }
+}
 
 namespace Android
 {
