@@ -334,12 +334,12 @@ bool reachesCoreFloor(std::uint32_t apiVersion)
     return apiVersion >= VK_API_VERSION_1_3;
 }
 
-constexpr const char* floorExtensions[] = {
-    VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-    VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-    VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-    VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME};
+constexpr auto floorExtensions =
+    std::array {VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
+                VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+                VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+                VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+                VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME};
 
 RequiredFeatures probeCoreFeatures(VkPhysicalDevice candidate)
 {

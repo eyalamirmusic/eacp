@@ -1,10 +1,12 @@
 #include "DisplayLink.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Logging.h>
 
 #include <android/choreographer.h>
 
 #include <memory>
+#include <utility>
 
 namespace eacp::Threads
 {
@@ -44,7 +46,14 @@ void androidPostDisplayLinkFrame(const AndroidDisplayLinkTickPtr& tick)
     auto* choreographer = AChoreographer_getInstance();
 
     if (choreographer == nullptr)
+    {
+        static auto reported = false;
+
+        if (!std::exchange(reported, true))
+            LOG("DisplayLink: no AChoreographer on this thread, so no frames");
+
         return;
+    }
 
     AChoreographer_postFrameCallback64(choreographer,
                                        androidDisplayLinkFrame,

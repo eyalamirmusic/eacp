@@ -1,5 +1,6 @@
 #include "Process.h"
 #include "SpawnDirectory-Posix.h"
+#include "../Utils/Logging.h"
 
 #include <cerrno>
 #include <csignal>
@@ -217,6 +218,10 @@ private:
         if (!options.workingDirectory.empty()
             && !addSpawnWorkingDirectory(actions, options.workingDirectory))
         {
+            LOG("Process: cannot start ",
+                options.executable,
+                " in ",
+                options.workingDirectory);
             posix_spawn_file_actions_destroy(&actions);
             closeAllPipes(inPipe, outPipe, errPipe);
             return;

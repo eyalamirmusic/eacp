@@ -31,12 +31,16 @@ void androidWatchLoopFd(int epollFd)
     if (looper == watchedBy)
         return;
 
-    ALooper_addFd(looper,
-                  epollFd,
-                  androidEventLoopIdent,
-                  ALOOPER_EVENT_INPUT,
-                  nullptr,
-                  nullptr);
+    if (ALooper_addFd(looper,
+                      epollFd,
+                      androidEventLoopIdent,
+                      ALOOPER_EVENT_INPUT,
+                      nullptr,
+                      nullptr)
+        != 1)
+        LOG("EventLoop: ALooper_addFd failed; posted callbacks will wait for "
+            "the next looper event");
+
     watchedBy = looper;
 }
 } // namespace

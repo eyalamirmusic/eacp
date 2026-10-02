@@ -1,6 +1,10 @@
 #include "AndroidViewSurface-Android.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 #include <android/choreographer.h>
+
+#include <utility>
 
 namespace eacp::Graphics
 {
@@ -64,7 +68,14 @@ public:
         auto* choreographer = AChoreographer_getInstance();
 
         if (choreographer == nullptr)
+        {
+            static auto reported = false;
+
+            if (!std::exchange(reported, true))
+                LOG("GPUView: no AChoreographer on this thread, so no frames");
+
             return;
+        }
 
         record.frameCallbackPending = true;
         AChoreographer_postFrameCallback64(
