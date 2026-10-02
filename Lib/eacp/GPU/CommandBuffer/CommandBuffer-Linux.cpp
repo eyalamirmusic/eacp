@@ -62,6 +62,14 @@ struct CommandBuffer::Native
         encoder.endQuery = pass * 2 + 1;
     }
 
+    VulkanComputeEncoder* openEncoder(std::string_view label)
+    {
+        auto* encoder = new VulkanComputeEncoder {commands};
+        timePass(*encoder, label);
+
+        return encoder;
+    }
+
     bool canSubmit() const { return commands != nullptr && !committed; }
 
     // Everything a submission needs recorded on it, in the order it needs it.
@@ -91,17 +99,28 @@ CommandBuffer::CommandBuffer(Device& device)
 {
 }
 
-ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder order)
+ComputePass CommandBuffer::beginCompute(std::string_view label,
+                                        DispatchOrder order,
+                                        TimingScope scope)
 {
     impl->device->assertOwningThread();
 
     if (impl->commands == nullptr || impl->committed)
         return ComputePass(nullptr, order);
 
-    auto* encoder = new VulkanComputeEncoder {impl->commands};
-    impl->timePass(*encoder, label);
+    if (scope == TimingScope::Pass)
+        return ComputePass(impl->openEncoder(label), order);
 
-    return ComputePass(encoder, order);
+    // vkCmdWriteTimestamp2 goes anywhere in a command buffer, so a timed
+    // dispatch is a pair of them around it on the one buffer.
+    auto* native = impl.get();
+
+    return ComputePass(
+        impl->openEncoder({}),
+        order,
+        [native](std::string_view dispatchLabel)
+        { return (void*) native->openEncoder(dispatchLabel); },
+        std::string {label});
 }
 
 void CommandBuffer::fill(const BufferRange& range, std::uint8_t value)

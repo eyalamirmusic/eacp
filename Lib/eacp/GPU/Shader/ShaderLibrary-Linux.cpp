@@ -3,9 +3,18 @@
 #include "../Device/Device.h"
 #include "../Spirv/SpirvCompiler.h"
 #include "../Vulkan/VulkanTypes.h"
+#include "ShaderBinaryCache.h"
 #include "ShaderSource.h"
 
+#include <cstring>
+#include <string>
+
 // The entry names ShaderSource carries are ignored: the entry point is main.
+//
+// glslang is the slow half of building a pipeline and the driver's half is
+// already kept in the VkPipelineCache, so the SPIR-V it produces is kept on disk
+// too (ShaderBinaryCache) and a later launch reads the words back instead of
+// compiling the same source again.
 
 namespace eacp::GPU
 {
@@ -24,6 +33,41 @@ VkShaderModule makeShaderModule(VkDevice device, const Vector<std::uint32_t>& wo
         return VK_NULL_HANDLE;
 
     return module;
+}
+
+Vector<std::uint32_t> wordsOf(const std::string& bytes)
+{
+    auto words = Vector<std::uint32_t> {};
+    words.resize((int) (bytes.size() / sizeof(std::uint32_t)));
+    std::memcpy(words.data(), bytes.data(), bytes.size());
+    return words;
+}
+
+// SPIR-V for one stage of the source, from the disk cache where a previous
+// launch compiled it, and compiled and stored there otherwise.
+Vector<std::uint32_t> spirvFor(Spirv::Stage stage, const std::string& source)
+{
+    const auto compiler = Spirv::compilerIdentity();
+    const auto key = std::to_string((int) stage) + '\n' + source;
+
+    if (auto cached = ShaderBinaryCache::load(compiler, key);
+        cached.has_value() && !cached->empty()
+        && cached->size() % sizeof(std::uint32_t) == 0)
+        return wordsOf(*cached);
+
+    auto result = Spirv::compileGlsl(stage, source);
+
+    if (!result.log.empty())
+        LOG(result.log);
+
+    if (result.succeeded())
+        ShaderBinaryCache::store(
+            compiler,
+            key,
+            std::string_view {reinterpret_cast<const char*>(result.words.data()),
+                              result.words.getSize() * sizeof(std::uint32_t)});
+
+    return std::move(result.words);
 }
 } // namespace
 
@@ -81,21 +125,17 @@ struct ShaderLibrary::Native
                       VkShaderModule& module,
                       int textureBindingBase)
     {
-        const auto result = Spirv::compileGlsl(stage, source);
+        const auto words = spirvFor(stage, source);
 
-        if (!result.log.empty())
-            LOG(result.log);
-
-        if (!result.succeeded())
+        if (words.empty())
             return;
 
-        module = makeShaderModule(context->getDevice(), result.words);
+        module = makeShaderModule(context->getDevice(), words);
 
         // The module rather than the graph: the layout has to describe the
         // SPIR-V the driver is given.
         if (module != VK_NULL_HANDLE)
-            program.textures.merge(
-                spirvTextureBindings(result.words, textureBindingBase));
+            program.textures.merge(spirvTextureBindings(words, textureBindingBase));
     }
 
     VulkanContext* context = nullptr;

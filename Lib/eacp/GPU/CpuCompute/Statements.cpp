@@ -471,6 +471,9 @@ void runBlock(const Context& context,
     {
         const auto& step = plan.step(plan.blockStep(position));
 
+        if (step.freezeEnd > step.freezeBegin)
+            evaluateRange(context, step.freezeBegin, step.freezeEnd);
+
         switch (step.kind)
         {
             case StatementKind::Declare:

@@ -1,3 +1,4 @@
+*.wav
 *.user
 *.cbp
 Makefile
@@ -32,3 +33,5 @@ xcschememanagement.plist
 
 workspace.xml
 xcuserdata
+Tooling/
+make.sh

@@ -1,0 +1,47 @@
+#include <metal_stdlib>
+using namespace metal;
+
+float eacpSaturatingTanh(float x)
+{
+    return x >= 10.0 ? 1.0 : (x <= -10.0 ? -1.0 : tanh(x));
+}
+
+float2 eacpSaturatingTanh(float2 x)
+{
+    return float2(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y));
+}
+
+float3 eacpSaturatingTanh(float3 x)
+{
+    return float3(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),
+                  eacpSaturatingTanh(x.z));
+}
+
+float4 eacpSaturatingTanh(float4 x)
+{
+    return float4(eacpSaturatingTanh(x.x), eacpSaturatingTanh(x.y),
+                  eacpSaturatingTanh(x.z), eacpSaturatingTanh(x.w));
+}
+
+struct Uniforms
+{
+    uint u0;
+    float u1;
+    uint u2;
+    uint u3;
+    uint u4;
+    uint width;
+    uint height;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device const float* buffer1 [[buffer(1)]],
+    device const float* buffer2 [[buffer(2)]],
+    device float* buffer3 [[buffer(3)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= uniforms.width || gid.y >= uniforms.height)
+        return;
+    buffer3[((gid.y * uniforms.u0) + gid.x)] = ((eacpSaturatingTanh((uniforms.u1 * buffer0[(((((gid.y / uniforms.u2) * uniforms.u3) + uniforms.u4) + ((gid.y % uniforms.u2) * uniforms.u0)) + gid.x)])) * buffer1[gid.x]) + buffer2[gid.x]);
+}

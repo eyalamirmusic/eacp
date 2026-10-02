@@ -215,6 +215,17 @@ void ComputePass::barrier()
                                               | MTLBarrierScopeTextures];
 }
 
+void ComputePass::beginTimedDispatch(std::string_view label)
+{
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder endEncoding];
+
+    impl->encoder.reset(
+        (__bridge NSObject<MTLComputeCommandEncoder>*) openTimedEncoder(label));
+    impl->ended = false;
+    boundPipeline = false;
+}
+
 // The encoder's own end orders everything it recorded against whatever the
 // command buffer does next, concurrent dispatch included, so there is no closing
 // barrier to record here.

@@ -202,6 +202,13 @@ public:
         int elseBody = -1;
         int scheduleBegin = 0;
         int scheduleEnd = 0;
+
+        // Handles built before the step that read what it changes, evaluated
+        // once ahead of it - before a loop's first test, not on every one - and
+        // read back by every later step of the block, so a handle is the value
+        // it had where it was built (the GPU README's "A handle is a value").
+        int freezeBegin = 0;
+        int freezeEnd = 0;
         bool bodiesJumpOut = false;
         GroupReduction reduction = GroupReduction::Sum;
         ReductionScope scope = ReductionScope::Group;

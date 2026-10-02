@@ -18,7 +18,9 @@ constexpr float backdropFixedScale = 1048576.f;
 // pipeline.
 //
 // Shared state is safe here because a dispatch sets every uniform it reads
-// immediately before issuing it, and command encoding is single-threaded. Built
+// immediately before issuing it, and command encoding is single-threaded. Like
+// GPU::sharedKernel's, each instance releases its buffers after every dispatch,
+// so one a dispatch did not assign throws rather than binding a stale one. Built
 // on first use rather than at load, since it needs the Device - which also puts
 // its destruction before the Device's own, statics tearing down in reverse.
 template <typename Kernel>
@@ -26,7 +28,11 @@ Kernel& sharedKernel()
 {
     struct Prepared
     {
-        Prepared() { kernel.prepare(); }
+        Prepared()
+        {
+            kernel.releaseBindingsAfterEachDispatch();
+            kernel.prepare();
+        }
 
         Kernel kernel;
     };

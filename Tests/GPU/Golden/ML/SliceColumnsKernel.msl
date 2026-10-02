@@ -1,0 +1,21 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint u1;
+    uint u2;
+    uint width;
+    uint height;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device float* buffer1 [[buffer(1)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= uniforms.width || gid.y >= uniforms.height)
+        return;
+    buffer1[((gid.y * uniforms.u2) + gid.x)] = buffer0[(((gid.y * uniforms.u0) + uniforms.u1) + gid.x)];
+}

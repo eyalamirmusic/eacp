@@ -1,5 +1,7 @@
 #include "Device.h"
 
+#include <algorithm>
+
 #include "../Vulkan/VulkanContext.h"
 
 namespace eacp::GPU
@@ -92,6 +94,34 @@ int Device::maxThreadgroupMemory() const
     return (int) getVulkanShared().getProperties().limits.maxComputeSharedMemorySize;
 }
 
+// The largest device-local heap, which is what a discrete card's memory is and
+// what a software or integrated driver reports as a slice of host RAM -
+// lavapipe answers system memory, and treating that as the budget is right,
+// since that is exactly where its "device" memory comes from. Vulkan has no
+// per-process recommendation to ask for, so the heap size is the honest
+// answer; zero where there is no device.
+std::int64_t Device::memoryBudget() const
+{
+    if (!isValid())
+        return 0;
+
+    auto memory = VkPhysicalDeviceMemoryProperties {};
+    vkGetPhysicalDeviceMemoryProperties(getVulkanShared().getPhysicalDevice(),
+                                        &memory);
+
+    auto largest = std::int64_t {0};
+
+    for (auto i = 0u; i < memory.memoryHeapCount; ++i)
+    {
+        const auto& heap = memory.memoryHeaps[i];
+
+        if ((heap.flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0)
+            largest = std::max(largest, (std::int64_t) heap.size);
+    }
+
+    return largest;
+}
+
 // No, and not because of the hardware: eacp emits GLSL 450 with no
 // cooperative-matrix extension, so a fragment here is the two-floats-per-lane
 // emulation whatever the driver could have done. The packed loads work on it -
@@ -146,5 +176,17 @@ void Device::trackSubmittedWork(void*)
 void Device::waitForSubmittedWork()
 {
     impl->context.waitIdle();
+}
+
+// The timeline semaphore's values are the serials: every submission signals
+// the next one, and its counter is how far the GPU has got.
+std::uint64_t Device::lastSubmission() const
+{
+    return impl->context.lastSubmitted();
+}
+
+bool Device::hasFinished(std::uint64_t submission) const
+{
+    return impl->context.hasCompleted(submission);
 }
 } // namespace eacp::GPU

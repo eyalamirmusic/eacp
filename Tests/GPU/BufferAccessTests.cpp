@@ -97,7 +97,7 @@ struct RereadKernel final : ComputeProgram
 
         write(doubled, i, seen + seen);
         write(output, i, seen * 10.0f);
-        write(after, i, seen + seen);
+        write(after, i, seen + output[i]);
     }
 
     Uniform<InputBuffer> input;
@@ -296,10 +296,11 @@ auto tReadsBackWhatItWrote = test("BufferAccess/aKernelReadsBackWhatItWrote") = 
         check(values[i] == source[i] * 2.0f + 1.0f);
 };
 
-// The name the emitter gives a repeated read is given up by a store to the
-// buffer it read, so the same handle used after one sees the stored value.
+// A handle read out of an output is the element's value where it was read: used
+// after a store to that element it is still the value from before the store,
+// and a read made after the store is what sees the stored one.
 auto tStoreGivesUpTheReadsName =
-    test("BufferAccess/aStoreGivesUpTheNameOfAReadOfIt") = []
+    test("BufferAccess/aReadKeepsItsValueAcrossAStoreToIt") = []
 {
     auto& device = Device::shared();
 
@@ -344,7 +345,7 @@ auto tStoreGivesUpTheReadsName =
     for (auto i = 0; i < count; ++i)
     {
         check(beforeStore[i] == source[i] * 2.0f);
-        check(afterStore[i] == source[i] * 20.0f);
+        check(afterStore[i] == source[i] + source[i] * 10.0f);
     }
 };
 

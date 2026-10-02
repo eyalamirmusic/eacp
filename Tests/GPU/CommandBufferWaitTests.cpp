@@ -437,8 +437,14 @@ auto tHostUpdateWinsOverAnInFlightKernel =
 // Both halves are numbers rather than timings. The markers say the write landed
 // after the kernel that was filling those bytes, and the trailing buffer still
 // being incomplete says the wait did not reach past this one - it is several
-// times the work, submitted behind it, so it cannot have finished in the time a
-// four-kilobyte memcpy took.
+// times the work, and it cannot start before this one ends, so it cannot have
+// finished in the time a four-kilobyte memcpy took.
+//
+// "Submitted behind it" alone does not make it start later: Metal runs two
+// command buffers of one queue side by side when nothing links them, and the
+// longer one then finishes first often enough to fail here. So the first buffer
+// also writes trailingOutput, last, and the trailing buffer's writes to it are
+// ordered after that one by the queue's hazard tracking.
 auto tScopedUpdateWaitsForOneBufferOnly =
     test("CommandBufferWait/aScopedUpdateWaitsForOneBufferOnly") = []
 {
@@ -463,7 +469,13 @@ auto tScopedUpdateWaitsForOneBufferOnly =
     trailingSlow.prepare();
 
     auto commands = device.makeCommandBuffer();
-    dispatchSlowWork(commands, slow);
+
+    {
+        auto pass = commands.beginCompute();
+        pass.dispatch(slow, slowElements);
+        pass.dispatch(trailingSlow, slowElements);
+    }
+
     commands.submit();
 
     auto trailing = device.makeCommandBuffer();

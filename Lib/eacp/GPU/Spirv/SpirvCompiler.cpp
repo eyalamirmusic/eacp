@@ -139,4 +139,12 @@ void warmUp()
     static auto once = std::once_flag {};
     std::call_once(once, [] { compileGlsl(Stage::Compute, warmUpSource()); });
 }
+std::string compilerIdentity()
+{
+    const auto version = glslang::GetVersion();
+
+    return "glslang-" + std::to_string(version.major) + '.'
+           + std::to_string(version.minor) + '.' + std::to_string(version.patch)
+           + "-glsl" + std::to_string(glslVersion) + "-vulkan1.3";
+}
 } // namespace eacp::GPU::Spirv

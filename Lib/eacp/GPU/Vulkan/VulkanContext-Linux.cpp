@@ -8,6 +8,7 @@
 
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/FilePath.h>
 
 #include <algorithm>
 #include <cassert>
@@ -67,21 +68,12 @@ std::uint64_t currentThreadId()
         std::hash<std::thread::id> {}(std::this_thread::get_id()));
 }
 
-// $XDG_CACHE_HOME/eacp, and $HOME/.cache/eacp where the first is unset. Empty
-// when neither is, which turns the pipeline cache off rather than guessing.
+// The app's own cache folder, FilePath::appCacheDirectory() - under
+// $XDG_CACHE_HOME, or $HOME/.cache where it is unset - beside the compiled
+// shaders ShaderBinaryCache keeps there.
 std::string vulkanCacheDirectory()
 {
-    const auto xdg = getEnvValue("XDG_CACHE_HOME");
-
-    if (!xdg.empty())
-        return xdg + "/eacp";
-
-    const auto home = getEnvValue("HOME");
-
-    if (home.empty())
-        return {};
-
-    return home + "/.cache/eacp";
+    return FilePath::appCacheDirectory().str();
 }
 
 std::string toHex(const std::uint8_t* bytes, int count)

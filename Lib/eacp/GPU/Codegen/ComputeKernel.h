@@ -1,11 +1,13 @@
 #pragma once
 
 #include "../Frame/ComputePass.h"
+#include "KernelName.h"
 #include "ShaderMembers.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 // The device-free half of a struct-authored compute kernel: the members, the
 // recorded body, and the source and graph generated from it. ComputeProgram
@@ -41,6 +43,11 @@ public:
     ComputeKernel& operator=(const ComputeKernel&) = delete;
 
     const ShaderSource& source() const { return generated.source; }
+
+    // What a per-dispatch timing calls this kernel: its type's name without
+    // namespaces, "LinearF32". Override it to tell apart the variants one type
+    // builds.
+    virtual std::string name() const { return readableTypeName(typeid(*this)); }
 
     // The graph the body was recorded into, so either backend's text can be
     // emitted from the kernel that ships rather than from a copy of its body.

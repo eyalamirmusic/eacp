@@ -254,15 +254,21 @@ Stages runOnGpu(const Scene& scene)
     stages.clearedCells = cpu::readBack<std::uint32_t>(cells, cellCount);
     stages.clearedCounts = cpu::readBack<std::uint32_t>(counts, tileCount);
 
+    // A shared kernel lets go of its buffers after each dispatch, so both of
+    // BinKernel's dispatches assign all of them.
     auto& bin = sharedKernel<BinKernel>();
-    bin.segments = segments;
-    bin.records = records;
-    bin.pathStarts = segmentStarts;
-    bin.cells = cells;
-    bin.tileCounts = counts;
-    bin.tileOffsets = offsets;
-    bin.tileSegments = entries;
+    auto assignBin = [&]
+    {
+        bin.segments = segments;
+        bin.records = records;
+        bin.pathStarts = segmentStarts;
+        bin.cells = cells;
+        bin.tileCounts = counts;
+        bin.tileOffsets = offsets;
+        bin.tileSegments = entries;
+    };
 
+    assignBin();
     setBinUniforms(bin, scene, BinKernel::countMode);
     submit([&](GPU::ComputePass& pass)
            { pass.dispatch(bin, scene.segmentCount()); });
@@ -286,6 +292,7 @@ Stages runOnGpu(const Scene& scene)
     stages.offsets = cpu::readBack<std::uint32_t>(offsets, tileCount);
     stages.summedCounts = cpu::readBack<std::uint32_t>(counts, tileCount);
 
+    assignBin();
     setBinUniforms(bin, scene, BinKernel::fillMode);
     submit([&](GPU::ComputePass& pass)
            { pass.dispatch(bin, scene.segmentCount()); });

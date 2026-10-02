@@ -1,0 +1,26 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint u1;
+    uint count;
+};
+
+kernel void computeMain(device atomic_uint* buffer0 [[buffer(0)]],
+    device atomic_uint* buffer1 [[buffer(1)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= uniforms.count)
+        return;
+    if ((gid < uniforms.u0))
+    {
+        atomic_store_explicit(&buffer0[gid], 0u, memory_order_relaxed);
+    }
+    if ((gid < uniforms.u1))
+    {
+        atomic_store_explicit(&buffer1[gid], 0u, memory_order_relaxed);
+    }
+}

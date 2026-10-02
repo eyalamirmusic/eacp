@@ -1,0 +1,89 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint u1;
+    uint u2;
+    uint u3;
+    uint u4;
+    uint u5;
+    uint width;
+    uint height;
+    uint depth;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device const float* buffer1 [[buffer(1)]],
+    device const float* buffer2 [[buffer(2)]],
+    device float* buffer3 [[buffer(3)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint3 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= uniforms.width || gid.y >= uniforms.height || gid.z >= uniforms.depth)
+        return;
+    float4 t0 = float4(0.0, 0.0, 0.0, 0.0);
+    float4 v0 = t0;
+    float4 v1 = t0;
+    float4 v2 = t0;
+    float4 v3 = t0;
+    uint v4 = 0u;
+    while ((v4 < uniforms.u3))
+    {
+        uint t1 = (gid.y * 4u);
+        uint t2 = (uniforms.u2 - 1u);
+        uint t3 = ((((((v4 * uniforms.u4) + uniforms.u5) + (gid.z * uniforms.u1)) + (gid.x * 4u)) / 4u) * 4u);
+        float4 t4 = float4(*((device const packed_float4*) (buffer0 + t3)));
+        v0 = (v0 + (buffer1[((((min((t1 + 0u), t2) * uniforms.u0) + gid.z) * uniforms.u3) + v4)] * t4));
+        v1 = (v1 + (buffer1[((((min((t1 + 1u), t2) * uniforms.u0) + gid.z) * uniforms.u3) + v4)] * t4));
+        v2 = (v2 + (buffer1[((((min((t1 + 2u), t2) * uniforms.u0) + gid.z) * uniforms.u3) + v4)] * t4));
+        v3 = (v3 + (buffer1[((((min((t1 + 3u), t2) * uniforms.u0) + gid.z) * uniforms.u3) + v4)] * t4));
+        v4 = (v4 + 1u);
+    }
+    uint t5 = (gid.y * 4u);
+    uint t6 = (t5 + 0u);
+    if ((t6 < uniforms.u2))
+    {
+        uint t7 = ((t6 * uniforms.u0) + gid.z);
+        uint t8 = ((t7 * uniforms.u1) + (gid.x * 4u));
+        float t9 = buffer2[t7];
+        buffer3[t8] = ((v0).x / t9);
+        buffer3[(t8 + 1u)] = ((v0).y / t9);
+        buffer3[(t8 + 2u)] = ((v0).z / t9);
+        buffer3[(t8 + 3u)] = ((v0).w / t9);
+    }
+    uint t10 = (t5 + 1u);
+    if ((t10 < uniforms.u2))
+    {
+        uint t11 = ((t10 * uniforms.u0) + gid.z);
+        uint t12 = ((t11 * uniforms.u1) + (gid.x * 4u));
+        float t13 = buffer2[t11];
+        buffer3[t12] = ((v1).x / t13);
+        buffer3[(t12 + 1u)] = ((v1).y / t13);
+        buffer3[(t12 + 2u)] = ((v1).z / t13);
+        buffer3[(t12 + 3u)] = ((v1).w / t13);
+    }
+    uint t14 = (t5 + 2u);
+    if ((t14 < uniforms.u2))
+    {
+        uint t15 = ((t14 * uniforms.u0) + gid.z);
+        uint t16 = ((t15 * uniforms.u1) + (gid.x * 4u));
+        float t17 = buffer2[t15];
+        buffer3[t16] = ((v2).x / t17);
+        buffer3[(t16 + 1u)] = ((v2).y / t17);
+        buffer3[(t16 + 2u)] = ((v2).z / t17);
+        buffer3[(t16 + 3u)] = ((v2).w / t17);
+    }
+    uint t18 = (t5 + 3u);
+    if ((t18 < uniforms.u2))
+    {
+        uint t19 = ((t18 * uniforms.u0) + gid.z);
+        uint t20 = ((t19 * uniforms.u1) + (gid.x * 4u));
+        float t21 = buffer2[t19];
+        buffer3[t20] = ((v3).x / t21);
+        buffer3[(t20 + 1u)] = ((v3).y / t21);
+        buffer3[(t20 + 2u)] = ((v3).z / t21);
+        buffer3[(t20 + 3u)] = ((v3).w / t21);
+    }
+}

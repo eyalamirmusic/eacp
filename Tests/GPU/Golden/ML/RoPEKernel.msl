@@ -1,0 +1,40 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms
+{
+    uint u0;
+    uint u1;
+    uint u2;
+    uint u3;
+    uint count;
+};
+
+kernel void computeMain(device const float* buffer0 [[buffer(0)]],
+    device const float* buffer1 [[buffer(1)]],
+    device float* buffer2 [[buffer(2)]],
+    constant Uniforms& uniforms [[buffer(16)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if (gid >= uniforms.count)
+        return;
+    uint t0 = (gid % uniforms.u1);
+    if ((t0 < (uniforms.u2 * 2u)))
+    {
+        uint t1 = (gid / uniforms.u1);
+        uint t2 = (t1 * uniforms.u1);
+        bool t3 = (t0 < uniforms.u2);
+        uint t4 = (t3 ? t0 : (t0 - uniforms.u2));
+        float t5 = buffer0[(t2 + t4)];
+        float t6 = (float(((t1 / uniforms.u0) % uniforms.u3)) * buffer1[t4]);
+        float t7 = cos(t6);
+        float t8 = buffer0[((t2 + uniforms.u2) + t4)];
+        float t9 = sin(t6);
+        buffer2[(t2 + t0)] = (t3 ? ((t5 * t7) - (t8 * t9)) : ((t8 * t7) + (t5 * t9)));
+    }
+    else
+    {
+        uint t10 = (((gid / uniforms.u1) * uniforms.u1) + t0);
+        buffer2[t10] = buffer0[t10];
+    }
+}
