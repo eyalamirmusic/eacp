@@ -80,7 +80,7 @@ bool GameInput::backendOwnsMouse() const
 
 void GameInput::windowKeyEvent(const KeyEvent& event)
 {
-    if (event.isRepeat || backendOwnsKeys())
+    if (backendOwnsKeys())
         return;
 
     queue.keyChanged(event.keyCode, event.type == KeyEventType::Down, now());

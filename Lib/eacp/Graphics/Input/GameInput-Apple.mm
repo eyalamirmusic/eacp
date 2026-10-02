@@ -4,29 +4,46 @@
 #include "GameInputBackend.h"
 #include "HidKeyCodes.h"
 
+#include <vector>
+
 namespace eacp::Graphics
 {
 namespace
 {
-// What the handler blocks capture, by shared_ptr, so it outlives every block
-// GameController still holds. `queue` is cleared on the handler queue itself
-// during teardown, so a handler running after that sees null and pushes
-// nothing; `ownerAlive` is the main thread's, for the connection
-// notifications.
-struct GameControllerShared
+// One GameInput's end of the process-wide feed. `keysDelivering` and
+// `mouseDelivering` are set on the handler queue when GameController first
+// hands this GameInput an event, and read on the main thread.
+struct GameInputSink
 {
     GameInputQueue* queue = nullptr;
     const std::atomic<bool>* active = nullptr;
+    std::atomic<bool> keysDelivering {false};
     std::atomic<bool> mouseDelivering {false};
+
+    bool accepting() const { return active->load(std::memory_order_relaxed); }
+};
+
+using Sink = std::shared_ptr<GameInputSink>;
+
+// What the handler blocks capture, by shared_ptr, so it outlives every block
+// GameController still holds. `sinks` is touched only on the handler queue,
+// so a handler running after the last sink left sees none and pushes nothing;
+// `ownerAlive` is the main thread's, for the connection notifications.
+struct HubShared
+{
+    std::vector<Sink> sinks;
     bool ownerAlive = true;
 
-    bool accepting() const
+    template <typename Function>
+    void forEachAccepting(Function&& function)
     {
-        return queue != nullptr && active->load(std::memory_order_relaxed);
+        for (auto& sink: sinks)
+            if (sink->accepting())
+                function(*sink);
     }
 };
 
-using SharedState = std::shared_ptr<GameControllerShared>;
+using SharedState = std::shared_ptr<HubShared>;
 
 dispatch_queue_t makeHandlerQueue()
 {
@@ -36,6 +53,74 @@ dispatch_queue_t makeHandlerQueue()
     return dispatch_queue_create("com.eacp.gameinput", attributes);
 }
 
+// Run on the first key GameController hands a sink: keys the window fed in
+// before it took over are set to what GameController says is held, so none is
+// left down without a release to come, or pressed a second time. The key
+// whose event triggered this is skipped: that event is pushed next and is
+// authoritative, where its button may not reflect it yet.
+void reconcileHeldKeys(GameInputQueue& queue,
+                       GCKeyboardInput* input,
+                       uint16_t triggeringKey,
+                       double time)
+{
+    constexpr auto usageCount = uint32_t {256};
+
+    for (auto usage = uint32_t {0}; usage < usageCount; ++usage)
+    {
+        const auto key = keyCodeFromHidUsage(usage);
+
+        if (key == KeyCode::Unknown || key == triggeringKey)
+            continue;
+
+        auto* button = [input buttonForKeyCode:(GCKeyCode) usage];
+        queue.keyChanged(key, button != nil && button.isPressed, time);
+    }
+}
+
+GCKeyboardValueChangedHandler keyHandler(const SharedState& state)
+{
+    auto shared = state;
+
+    auto handler = ^(GCKeyboardInput* input,
+                     GCControllerButtonInput*,
+                     GCKeyCode code,
+                     BOOL pressed)
+    {
+        const auto key = keyCodeFromHidUsage((uint32_t) code);
+        const auto time = GameInputQueue::now();
+
+        shared->forEachAccepting(
+            [&](GameInputSink& sink)
+            {
+                if (!sink.keysDelivering.exchange(true))
+                    reconcileHeldKeys(*sink.queue, input, key, time);
+
+                sink.queue->keyChanged(key, pressed == YES, time);
+            });
+    };
+
+    return [[handler copy] autorelease];
+}
+
+GCMouseMoved mouseMovedHandler(const SharedState& state)
+{
+    auto shared = state;
+
+    auto handler = ^(GCMouseInput*, float deltaX, float deltaY)
+    {
+        const auto time = GameInputQueue::now();
+
+        shared->forEachAccepting(
+            [&](GameInputSink& sink)
+            {
+                sink.mouseDelivering.store(true);
+                sink.queue->mouseMoved({deltaX, -deltaY}, time);
+            });
+    };
+
+    return [[handler copy] autorelease];
+}
+
 GCControllerButtonValueChangedHandler buttonHandler(const SharedState& state,
                                                     MouseButton button)
 {
@@ -43,24 +128,49 @@ GCControllerButtonValueChangedHandler buttonHandler(const SharedState& state,
 
     auto handler = ^(GCControllerButtonInput*, float, BOOL pressed)
     {
-        if (!shared->accepting())
-            return;
+        const auto time = GameInputQueue::now();
 
-        shared->mouseDelivering.store(true);
-        shared->queue->mouseButtonChanged(
-            button, pressed == YES, GameInputQueue::now());
+        shared->forEachAccepting(
+            [&](GameInputSink& sink)
+            {
+                sink.mouseDelivering.store(true);
+                sink.queue->mouseButtonChanged(button, pressed == YES, time);
+            });
     };
 
     return [[handler copy] autorelease];
 }
 
-struct GameControllerBackend final : GameInputBackend
+// GCKeyboard.coalescedKeyboard and every GCMouse are process-wide, each with
+// one set of handlers and one handler queue, so the handlers are installed
+// once, by the first GameInput, and fan out to every GameInput's sink. The
+// last one to leave takes them down. Main thread only, but for `shared`.
+class GameControllerHub
 {
-    GameControllerBackend(GameInputQueue& queue, const std::atomic<bool>& active)
+public:
+    static GameControllerHub& join(const Sink& sink)
     {
-        state->queue = &queue;
-        state->active = &active;
+        if (instance == nullptr)
+            instance = new GameControllerHub();
 
+        instance->add(sink);
+        return *instance;
+    }
+
+    static void leave(const Sink& sink)
+    {
+        if (instance == nullptr || !instance->remove(sink))
+            return;
+
+        delete instance;
+        instance = nullptr;
+    }
+
+    bool hasMice() const { return mice.count > 0; }
+
+private:
+    GameControllerHub()
+    {
         observe(GCKeyboardDidConnectNotification,
                 ^(NSNotification* note) { keyboardConnected(note.object); });
         observe(GCKeyboardDidDisconnectNotification,
@@ -76,9 +186,9 @@ struct GameControllerBackend final : GameInputBackend
             attachMouse(mouse);
     }
 
-    ~GameControllerBackend() override
+    ~GameControllerHub()
     {
-        state->ownerAlive = false;
+        shared->ownerAlive = false;
 
         for (id token in observers)
             [NSNotificationCenter.defaultCenter removeObserver:token];
@@ -94,28 +204,56 @@ struct GameControllerBackend final : GameInputBackend
 
         [mice release];
 
-        auto shared = state;
-        auto drain = ^{ shared->queue = nullptr; };
+        auto state = shared;
+        auto drain = ^{ state->sinks.clear(); };
         dispatch_sync(handlerQueue, drain);
         dispatch_release(handlerQueue);
     }
 
-    bool ownsKeys() const override { return keyboard != nil; }
-
-    bool ownsMouse() const override
+    void add(const Sink& sink)
     {
-        return mice.count > 0 && state->mouseDelivering.load();
+        auto state = shared;
+        auto added = sink;
+        auto addition = ^{ state->sinks.push_back(added); };
+        dispatch_sync(handlerQueue, addition);
+
+        ++users;
+    }
+
+    // Once this returns no handler is pushing into the sink's queue. True when
+    // it was the last.
+    bool remove(const Sink& sink)
+    {
+        auto state = shared;
+        auto removed = sink;
+        auto removal = ^{ std::erase(state->sinks, removed); };
+        dispatch_sync(handlerQueue, removal);
+
+        return --users == 0;
+    }
+
+    template <typename Function>
+    void forEachSink(Function function)
+    {
+        auto state = shared;
+
+        auto visit = ^{
+            for (auto& sink: state->sinks)
+                function(*sink);
+        };
+
+        dispatch_sync(handlerQueue, visit);
     }
 
     using NotificationHandler = void (^)(NSNotification*);
 
     void observe(NSNotificationName name, NotificationHandler handler)
     {
-        auto shared = state;
+        auto state = shared;
 
         auto guarded = ^(NSNotification* note)
         {
-            if (shared->ownerAlive)
+            if (state->ownerAlive)
                 handler(note);
         };
 
@@ -141,6 +279,10 @@ struct GameControllerBackend final : GameInputBackend
 
         detachKeyboard();
         attachKeyboard(GCKeyboard.coalescedKeyboard);
+
+        if (keyboard == nil)
+            forEachSink([](GameInputSink& sink)
+                        { sink.keysDelivering.store(false); });
     }
 
     void attachKeyboard(GCKeyboard* candidate)
@@ -152,20 +294,7 @@ struct GameControllerBackend final : GameInputBackend
 
         keyboard = [candidate retain];
         keyboard.handlerQueue = handlerQueue;
-
-        auto shared = state;
-
-        auto handler = ^(GCKeyboardInput*, GCDeviceButtonInput*, GCKeyCode code, BOOL pressed)
-        {
-            if (!shared->accepting())
-                return;
-
-            shared->queue->keyChanged(keyCodeFromHidUsage((uint32_t) code),
-                                      pressed == YES,
-                                      GameInputQueue::now());
-        };
-
-        keyboard.keyboardInput.keyChangedHandler = handler;
+        keyboard.keyboardInput.keyChangedHandler = keyHandler(shared);
     }
 
     void detachKeyboard()
@@ -187,27 +316,16 @@ struct GameControllerBackend final : GameInputBackend
         [mice addObject:mouse];
         mouse.handlerQueue = handlerQueue;
 
-        auto shared = state;
-
-        auto moved = ^(GCMouseInput*, float deltaX, float deltaY)
-        {
-            if (!shared->accepting())
-                return;
-
-            shared->mouseDelivering.store(true);
-            shared->queue->mouseMoved({deltaX, -deltaY}, GameInputQueue::now());
-        };
-
         auto* input = mouse.mouseInput;
-        input.mouseMovedHandler = moved;
+        input.mouseMovedHandler = mouseMovedHandler(shared);
         input.leftButton.pressedChangedHandler =
-            buttonHandler(state, MouseButton::Left);
+            buttonHandler(shared, MouseButton::Left);
         input.rightButton.pressedChangedHandler =
-            buttonHandler(state, MouseButton::Right);
+            buttonHandler(shared, MouseButton::Right);
         input.middleButton.pressedChangedHandler =
-            buttonHandler(state, MouseButton::Middle);
+            buttonHandler(shared, MouseButton::Middle);
         input.auxiliaryButtons.firstObject.pressedChangedHandler =
-            buttonHandler(state, MouseButton::Other);
+            buttonHandler(shared, MouseButton::Other);
     }
 
     void detachMouse(GCMouse* mouse)
@@ -226,14 +344,47 @@ struct GameControllerBackend final : GameInputBackend
         [mice removeObject:mouse];
 
         if (mice.count == 0)
-            state->mouseDelivering.store(false);
+            forEachSink([](GameInputSink& sink)
+                        { sink.mouseDelivering.store(false); });
     }
 
-    SharedState state = std::make_shared<GameControllerShared>();
+    static inline GameControllerHub* instance = nullptr;
+
+    SharedState shared = std::make_shared<HubShared>();
     dispatch_queue_t handlerQueue = makeHandlerQueue();
     NSMutableArray* observers = [[NSMutableArray alloc] init];
     NSMutableArray<GCMouse*>* mice = [[NSMutableArray alloc] init];
     GCKeyboard* keyboard = nil;
+    int users = 0;
+};
+
+struct GameControllerBackend final : GameInputBackend
+{
+    GameControllerBackend(GameInputQueue& queue, const std::atomic<bool>& active)
+        : sink(makeSink(queue, active))
+        , hub(GameControllerHub::join(sink))
+    {
+    }
+
+    ~GameControllerBackend() override { GameControllerHub::leave(sink); }
+
+    bool ownsKeys() const override { return sink->keysDelivering.load(); }
+
+    bool ownsMouse() const override
+    {
+        return hub.hasMice() && sink->mouseDelivering.load();
+    }
+
+    static Sink makeSink(GameInputQueue& queue, const std::atomic<bool>& active)
+    {
+        auto made = std::make_shared<GameInputSink>();
+        made->queue = &queue;
+        made->active = &active;
+        return made;
+    }
+
+    Sink sink;
+    GameControllerHub& hub;
 };
 } // namespace
 

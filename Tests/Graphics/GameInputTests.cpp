@@ -207,6 +207,110 @@ auto tManyProducers = test("GameInput/manyProducerThreadsLoseNoMovement") = []
         check(last.isDown((uint16_t) (KeyCode::A + index)));
 };
 
+auto tSnapshotFollowsHeldState =
+    test("GameInput/theSnapshotAlwaysEndsInTheHeldState") = []
+{
+    auto queue = GameInputQueue {};
+
+    queue.keyChanged(KeyCode::W, true, 1.0);
+    queue.releaseAll(1.1);
+    queue.keyChanged(KeyCode::W, true, 1.2);
+    const auto& pressedAgain = queue.snapshot(1.3);
+
+    check(pressedAgain.isDown(KeyCode::W));
+    check(pressedAgain.wasPressed(KeyCode::W));
+    check(pressedAgain.wasReleased(KeyCode::W));
+    check(pressedAgain.events().size() == 3);
+
+    queue.releaseAll(1.4);
+    const auto& released = queue.snapshot(1.5);
+
+    check(!released.isDown(KeyCode::W));
+    check(released.wasReleased(KeyCode::W));
+    check(!released.wasPressed(KeyCode::W));
+
+    queue.releaseAll(1.6);
+    queue.keyChanged(KeyCode::W, false, 1.7);
+    const auto& idle = queue.snapshot(1.8);
+
+    check(!idle.isDown(KeyCode::W));
+    check(!idle.wasReleased(KeyCode::W));
+    check(idle.events().empty());
+};
+
+auto tRacingProducersLeaveNothingStuck =
+    test("GameInput/racingProducersOnOneKeyLeaveNothingStuck") = []
+{
+    constexpr auto threadCount = 3;
+    constexpr auto rounds = 300;
+    constexpr auto togglesPerThread = 200;
+
+    auto queue = GameInputQueue {};
+    auto stuckRounds = 0;
+
+    for (auto round = 0; round < rounds; ++round)
+    {
+        auto started = std::atomic<int> {0};
+        auto finished = std::atomic<int> {0};
+
+        auto produce = [&queue, &started, &finished]
+        {
+            ++started;
+
+            while (started.load() <= threadCount)
+            {
+            }
+
+            for (auto index = 0; index < togglesPerThread; ++index)
+            {
+                const auto down = index % 2 == 0;
+                const auto time = GameInputQueue::now();
+                queue.keyChanged(KeyCode::W, down, time);
+                queue.mouseButtonChanged(MouseButton::Left, down, time);
+            }
+
+            ++finished;
+        };
+
+        auto threads = Array<std::thread, threadCount> {};
+
+        for (auto& thread: threads)
+            thread = std::thread(produce);
+
+        while (started.load() < threadCount)
+        {
+        }
+
+        ++started;
+
+        while (finished.load() < threadCount)
+        {
+            queue.releaseAll(GameInputQueue::now());
+            queue.snapshot(GameInputQueue::now());
+        }
+
+        for (auto& thread: threads)
+            thread.join();
+
+        queue.releaseAll(GameInputQueue::now());
+        const auto& released = queue.snapshot(GameInputQueue::now());
+
+        if (released.isDown(KeyCode::W) || released.isMouseDown(MouseButton::Left))
+            ++stuckRounds;
+    }
+
+    check(stuckRounds == 0);
+
+    queue.keyChanged(KeyCode::W, true, GameInputQueue::now());
+    queue.mouseButtonChanged(MouseButton::Left, true, GameInputQueue::now());
+    const auto& pressed = queue.snapshot(GameInputQueue::now());
+
+    check(pressed.isDown(KeyCode::W));
+    check(pressed.wasPressed(KeyCode::W));
+    check(pressed.isMouseDown(MouseButton::Left));
+    check(pressed.wasMousePressed(MouseButton::Left));
+};
+
 auto tHidTable = test("GameInput/hidUsagesMapToKeyCodes") = []
 {
     check(keyCodeFromHidUsage(0x04) == KeyCode::A);
@@ -263,6 +367,49 @@ auto tFocusLossReleases = test("GameInput/losingFocusReleasesEverything") = []
     check(!frame.isMouseDown(MouseButton::Left));
 };
 
+auto tRepeatAfterRefocus =
+    test("GameInput/aKeyStillHeldAfterRefocusReturnsOnItsRepeat") = []
+{
+    auto window = Window {};
+    auto input = GameInput {window, GameInputSource::WindowEvents};
+
+    window.events.input.activationChanged(true);
+    window.events.input.keyEvent(keyEvent(KeyCode::W, KeyEventType::Down));
+    check(input.snapshot().isDown(KeyCode::W));
+
+    window.events.input.activationChanged(false);
+    check(!input.snapshot().isDown(KeyCode::W));
+
+    window.events.input.activationChanged(true);
+    window.events.input.keyEvent(keyEvent(KeyCode::W, KeyEventType::Down, true));
+    const auto& frame = input.snapshot();
+
+    check(frame.isDown(KeyCode::W));
+    check(frame.wasPressed(KeyCode::W));
+};
+
+auto tRepeatOfAHeldKey = test("GameInput/aRepeatOfAHeldKeyIsNoNewPress") = []
+{
+    auto window = Window {};
+    auto input = GameInput {window, GameInputSource::WindowEvents};
+
+    window.events.input.activationChanged(true);
+    window.events.input.keyEvent(keyEvent(KeyCode::W, KeyEventType::Down));
+    check(input.snapshot().wasPressed(KeyCode::W));
+
+    window.events.input.keyEvent(keyEvent(KeyCode::W, KeyEventType::Down, true));
+    window.events.input.keyEvent(keyEvent(KeyCode::W, KeyEventType::Down, true));
+    const auto& frame = input.snapshot();
+
+    check(frame.isDown(KeyCode::W));
+    check(!frame.wasPressed(KeyCode::W));
+    check(frame.events().empty());
+
+    window.events.input.keyEvent(
+        keyEvent(KeyCode::Unknown, KeyEventType::Down, true));
+    check(input.snapshot().events().empty());
+};
+
 auto tPlatformFeedComesAndGoes = test("GameInput/thePlatformFeedComesAndGoes") = []
 {
     auto window = Window {};
@@ -287,4 +434,60 @@ auto tListenerRemovedOnDestruction =
     window.events.input.keyEvent(keyEvent(KeyCode::W, KeyEventType::Down));
     window.events.input.activationChanged(false);
     check(!window.events.input.isActive());
+};
+
+namespace
+{
+bool windowKeyReachesSnapshot(Window& window, GameInput& input, uint16_t key)
+{
+    window.events.input.activationChanged(true);
+    window.events.input.keyEvent(keyEvent(key, KeyEventType::Down));
+    const auto pressed = input.snapshot().isDown(key);
+
+    window.events.input.keyEvent(keyEvent(key, KeyEventType::Up));
+    const auto released = input.snapshot().wasReleased(key);
+
+    window.events.input.activationChanged(false);
+    input.snapshot();
+
+    return pressed && released;
+}
+} // namespace
+
+auto tTwoPlatformFeedsCoexist =
+    test("GameInput/twoPlatformFeedsOutliveEachOther") = []
+{
+    auto firstWindow = Window {};
+    auto secondWindow = Window {};
+
+    auto first = std::make_unique<GameInput>(firstWindow);
+    auto second = std::make_unique<GameInput>(secondWindow);
+
+    const auto name = std::string {second->backendName()};
+    check(!first->backendName().empty());
+    check(!name.empty());
+
+    first.reset();
+
+    check(second->backendName() == name);
+    check(second->snapshot().events().empty());
+    check(windowKeyReachesSnapshot(secondWindow, *second, KeyCode::A));
+
+    second.reset();
+
+    auto third = GameInput {firstWindow};
+    check(!third.backendName().empty());
+    check(third.snapshot().events().empty());
+    check(windowKeyReachesSnapshot(firstWindow, third, KeyCode::D));
+};
+
+auto tWindowKeysUntilPlatformDelivers =
+    test("GameInput/windowKeysCountUntilThePlatformDeliversOne") = []
+{
+    auto window = Window {};
+    auto input = GameInput {window};
+
+    check(input.backendName() == "Window events"
+          || input.backendName() == "window keys, GameController mouse");
+    check(windowKeyReachesSnapshot(window, input, KeyCode::W));
 };

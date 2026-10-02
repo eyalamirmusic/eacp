@@ -166,18 +166,14 @@ const GameInputFrame& GameInputQueue::snapshot(double now)
     frame.frameEvents.clear();
     frame.snapshotTime = now;
     frame.newestTime = 0.0;
-    frame.dropped = false;
 
     auto event = InputEvent {};
 
     for (auto drained = std::size_t {0}; drained < capacity && pop(event); ++drained)
         apply(event);
 
-    if (overflowed.exchange(false))
-    {
-        frame.dropped = true;
-        reconcile(now);
-    }
+    frame.dropped = overflowed.exchange(false);
+    reconcile(now);
 
     const auto lost = takeLostDelta();
     frame.delta = frame.delta + lost;
@@ -223,7 +219,7 @@ void GameInputQueue::reconcile(double now)
 {
     for (auto key = 0; key < GameInputFrame::keyCount; ++key)
     {
-        const auto held = keysHeld[key].load();
+        const auto held = keysHeld[key].load(std::memory_order_relaxed);
 
         if (held != frame.keysDown[(size_t) key])
             apply({held ? InputEventType::KeyDown : InputEventType::KeyUp,
@@ -234,7 +230,7 @@ void GameInputQueue::reconcile(double now)
 
     for (auto button = 0; button < GameInputFrame::buttonCount; ++button)
     {
-        const auto held = buttonsHeld[button].load();
+        const auto held = buttonsHeld[button].load(std::memory_order_relaxed);
 
         if (held != frame.buttonsDown[(size_t) button])
             apply({held ? InputEventType::MouseDown : InputEventType::MouseUp,

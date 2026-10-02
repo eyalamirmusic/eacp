@@ -110,9 +110,10 @@ private:
 // allocation-free after construction on both sides.
 //
 // A full ring drops the newest event. Each producer call also records the
-// true held state of its key or button before it pushes, so after an overflow
-// the consumer reconciles against that and the state stays right; movement
-// that did not fit is summed on the side and still reaches mouseDelta().
+// true held state of its key or button before it pushes, and every snapshot
+// reconciles against that, so the state stays right after an overflow or a
+// race between producers; movement that did not fit is summed on the side and
+// still reaches mouseDelta().
 class GameInputQueue
 {
 public:
@@ -131,6 +132,12 @@ public:
 
     // The consumer, one thread: drains what arrived into the frame. The
     // reference stays valid, and is overwritten by the next call.
+    //
+    // The edges come from the events, but the held state always ends as the
+    // producers' own: two producers racing on one key can enqueue in the
+    // opposite order to their changes, so a key the events left in the wrong
+    // state is corrected with a synthesized event stamped `now`, which is an
+    // edge in this frame like any other.
     const GameInputFrame& snapshot(double now);
 
     // Seconds on the monotonic clock FrameTime is measured on
