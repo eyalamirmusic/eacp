@@ -81,7 +81,8 @@ struct ShaderLibrary::Native
                       VkShaderModule& module,
                       int textureBindingBase)
     {
-        const auto result = Spirv::compileGlsl(stage, source);
+        const auto result =
+            Spirv::compileGlsl(stage, source, getVulkanShared().getSpirvTarget());
 
         if (!result.log.empty())
             LOG(result.log);

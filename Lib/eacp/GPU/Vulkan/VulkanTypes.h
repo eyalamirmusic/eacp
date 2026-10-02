@@ -360,6 +360,22 @@ inline void transitionResolvedDepthForUse(VkCommandBuffer commandBuffer,
                        target);
 }
 
+struct VulkanRenderPassBegin
+{
+    bool isValid() const { return framebuffer != VK_NULL_HANDLE; }
+
+    VkRenderPass renderPass = VK_NULL_HANDLE;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    VkRect2D renderArea = {};
+    Vector<VkClearValue> clearValues;
+};
+
+VulkanRenderPassBegin prepareVulkanRenderPass(const VkRenderingInfo& rendering,
+                                              const VulkanTextureData& data);
+
+void beginVulkanRenderPass(VkCommandBuffer commandBuffer,
+                           const VulkanRenderPassBegin& begin);
+
 VkImageView makeVulkanImageView(VkDevice device,
                                 VkImage image,
                                 VkFormat viewFormat,

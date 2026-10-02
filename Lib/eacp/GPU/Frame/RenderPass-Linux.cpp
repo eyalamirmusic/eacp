@@ -494,7 +494,11 @@ void RenderPass::end()
     endTimedPass(*impl->encoder);
 
     auto buffer = impl->commandBuffer();
-    vkCmdEndRendering(buffer);
+
+    if (getVulkanShared().usesRenderPasses())
+        vkCmdEndRenderPass(buffer);
+    else
+        vkCmdEndRendering(buffer);
 
     impl->encoder->commands->context->setRenderPassOpen(false);
 
