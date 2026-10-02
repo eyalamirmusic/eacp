@@ -11,7 +11,7 @@ struct Vertex
     Graphics::Color color;
 };
 
-EACP_SHADER_VALUE(eacp::Graphics::Color, Float4)
+EACP_SHADER_VALUE(Graphics::Color, Float4)
 
 namespace
 {
@@ -83,7 +83,7 @@ struct HelloView final : GPUView
         setHandlesTouchEvents(true);
         setContinuous(true);
 
-        triangle.setVertices(std::span {triangleVertices});
+        triangle.setVertices(triangleVertices);
         triangle.prepare(sampleCount());
         text.setSampleCount(sampleCount());
     }

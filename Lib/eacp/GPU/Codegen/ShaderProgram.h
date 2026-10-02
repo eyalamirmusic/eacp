@@ -6,7 +6,7 @@
 #include <array>
 #include <bit>
 #include <functional>
-#include <span>
+#include <ranges>
 
 #include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
@@ -293,10 +293,10 @@ public:
         setVertices(data, (int) N);
     }
 
-    template <typename V>
-    void setVertices(std::span<const V> data)
+    template <std::ranges::contiguous_range Range>
+    void setVertices(const Range& data)
     {
-        setVertices(data.data(), (int) data.size());
+        setVertices(std::ranges::data(data), (int) std::ranges::size(data));
     }
 
     template <typename V>
