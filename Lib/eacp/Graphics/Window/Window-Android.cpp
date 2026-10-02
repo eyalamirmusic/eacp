@@ -1,4 +1,5 @@
 #include "Android.h"
+#include "AndroidEnvironment-Android.h"
 #include "Window.h"
 
 #include "../Graphics/Keyboard.h"
@@ -631,6 +632,8 @@ extern "C" void eacpAndroidStart(android_app* app)
 
     if (app->activity != nullptr && app->activity->internalDataPath != nullptr)
         eacp::setAndroidDataDirectory(app->activity->internalDataPath);
+
+    importAndroidEnvironment(app->activity);
 
     app->onAppCmd = androidHandleCommand;
     app->onInputEvent = androidHandleInput;

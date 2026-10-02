@@ -141,6 +141,7 @@ elseif (ANDROID)
             Tray/TrayIcon-Linux.cpp
             View/AndroidViewSurface-Android.cpp
             View/View-Linux.cpp
+            Window/AndroidEnvironment-Android.cpp
             Window/AndroidMain-Android.c
             Window/Display-Android.cpp
             Window/Window-Android.cpp)

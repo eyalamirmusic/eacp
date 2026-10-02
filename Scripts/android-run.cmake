@@ -1,15 +1,50 @@
 # Usage: cmake -DSDK=<sdk> -DAPK=<app.apk> -DPACKAGE=<id> -P Scripts/android-run.cmake
+#              [-- --env <name>=<value> ...]
 #
 # Installs and launches an eacp APK on the device adb sees: a phone over USB,
 # woken and unlocked where it has no PIN, or else an emulator it boots on a host
 # that has one ($EACP_AVD, else the AVD eacp that android-setup makes, else the
 # first AVD the emulator lists). Prints the
-# app's first seconds of logcat (tag "eacp", plus any crash).
+# app's first seconds of logcat (tag "eacp", plus any crash). Each --env becomes
+# a string extra on the launch intent, which eacp sets as an environment variable
+# before main() runs.
 
 cmake_minimum_required(VERSION 3.31)
 
 set(eacp_script android-run)
 include("${CMAKE_CURRENT_LIST_DIR}/android-common.cmake")
+
+set(launch_extras "")
+set(past_separator FALSE)
+set(expect_env FALSE)
+math(EXPR last_arg "${CMAKE_ARGC} - 1")
+
+foreach (index RANGE ${last_arg})
+    set(arg "${CMAKE_ARGV${index}}")
+
+    if (NOT past_separator)
+        if (arg STREQUAL "--")
+            set(past_separator TRUE)
+        endif ()
+    elseif (expect_env)
+        if (NOT arg MATCHES "^([^=]+)=(.*)$")
+            eacp_fail("--env takes <name>=<value>, not ${arg}")
+        endif ()
+
+        # adb hands the command to the device's shell, which would split an
+        # unquoted value at its spaces.
+        list(APPEND launch_extras --es "${CMAKE_MATCH_1}" "'${CMAKE_MATCH_2}'")
+        set(expect_env FALSE)
+    elseif (arg STREQUAL "--env")
+        set(expect_env TRUE)
+    else ()
+        eacp_fail("unknown argument ${arg}; android-run takes --env <name>=<value>")
+    endif ()
+endforeach ()
+
+if (expect_env)
+    eacp_fail("--env needs <name>=<value> after it")
+endif ()
 
 find_program(adb adb HINTS "${SDK}/platform-tools" NO_DEFAULT_PATH NO_CACHE)
 
@@ -181,7 +216,8 @@ message(NOTICE "${output}")
 
 execute_process(COMMAND "${adb}" shell am force-stop "${PACKAGE}")
 execute_process(COMMAND "${adb}" logcat -c)
-execute_process(COMMAND "${adb}" shell am start -n "${PACKAGE}/android.app.NativeActivity")
+execute_process(COMMAND "${adb}" shell am start -n "${PACKAGE}/android.app.NativeActivity"
+        ${launch_extras})
 
 set(log_seconds 3)
 
