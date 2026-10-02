@@ -1,7 +1,7 @@
 # Usage: cmake -P Scripts/android-setup.cmake
 #
 # Makes the Android SDK eacp builds with, from nothing, in any shell: the SDK
-# at $ANDROID_HOME, else ~/.eacp/android/sdk, which `cmake --preset android`
+# at $ANDROID_HOME, else ~/.eacp/android/sdk, which CMake/AndroidToolchain.cmake
 # finds with no variable set; Java from $JAVA_HOME or the PATH when it is 17 or
 # later, else a Temurin 21 JDK in ~/.eacp/android/jdk, which the packaging
 # script finds the same way; the SDK command-line tools; and exactly the
@@ -297,7 +297,9 @@ else ()
             "plug it in, accept the prompt on it, and from the eacp checkout:")
 endif ()
 
-eacp_say("    cmake --preset android")
-eacp_say("    cmake --build --preset android --target HelloGPU-run")
+eacp_say("    cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release "
+        "-DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake "
+        "-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33")
+eacp_say("    cmake --build build-android --target HelloGPU-run")
 eacp_say("adb is ${adb}")
 eacp_say("ndk-stack is ${ndk_stack}")

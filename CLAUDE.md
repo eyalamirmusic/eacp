@@ -98,9 +98,11 @@ Android scripts are CMake scripts run with `cmake -P`, so no host needs a
 shell; `Scripts/android-common.cmake` is what they share. The NDK,
 build-tools and platform versions live in `CMake/AndroidVersions.cmake` alone;
 `cmake -P Scripts/android-setup.cmake` installs them into `~/.eacp/android`
-(or `$ANDROID_HOME`), and `cmake --preset android` (`CMakePresets.json`,
-`CMake/AndroidToolchain.cmake`) builds against them into `build-android`. `cmake --preset android-studio`
-writes a Gradle project for Android Studio into `build-android-studio`, as
+(or `$ANDROID_HOME`), and a configure with
+`-DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake` (which finds that NDK)
+builds against them; eacp ships no presets, which are an app's convenience.
+`-DEACP_ANDROID_STUDIO_DIR=<dir>` on that configure
+writes a Gradle project for Android Studio into `<dir>`, as
 `-G Xcode` writes an Xcode one (`CMake/AndroidStudio.cmake`, templates in
 `CMake/AndroidStudio/`): any Android configure with `EACP_ANDROID_STUDIO_DIR`
 set writes one module per `eacp_add_app` whose `externalNativeBuild` runs this

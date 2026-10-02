@@ -21,7 +21,8 @@ android {
         externalNativeBuild {
             cmake {
                 targets += "@EACP_APK_LIB_NAME@"
-                arguments += listOf(@EACP_STUDIO_CMAKE_ARGUMENTS@)
+                arguments += listOf(
+                        @EACP_STUDIO_CMAKE_ARGUMENTS@)
             }
         }
     }
@@ -29,6 +30,12 @@ android {
     buildTypes {
         getByName("release") {
             signingConfig = signingConfigs.getByName("debug")
+
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DCMAKE_BUILD_TYPE=Release"
+                }
+            }
         }
     }
 

@@ -105,13 +105,11 @@ function(eacp_add_android_apk target)
 
     eacp_android_studio_add_app(${target}
             PACKAGE "${EACP_APK_PACKAGE}"
-            LABEL "${EACP_APK_LABEL}"
-            ORIENTATION "${EACP_APK_ORIENTATION}"
             VERSION_CODE "${EACP_APK_VERSION_CODE}"
             VERSION_NAME "${EACP_APK_VERSION_NAME}"
             RES_DIR "${APK_RES_DIR}"
-            ICON_ATTRIBUTE "${EACP_APK_ICON_ATTRIBUTE}"
-            MIN_SDK "${EACP_APK_MIN_SDK}")
+            MIN_SDK "${EACP_APK_MIN_SDK}"
+            MANIFEST "${manifest}")
 
     add_custom_target(${target}-run
             COMMAND "${CMAKE_COMMAND}" "-DSDK=${sdk}" "-DAPK=${apk}"

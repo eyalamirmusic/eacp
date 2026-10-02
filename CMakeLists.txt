@@ -75,7 +75,8 @@ if (ANDROID)
         message(FATAL_ERROR
                 "eacp builds with NDK ${EACP_ANDROID_NDK_VERSION}; this build uses "
                 "NDK ${eacp_ndk_major}, which is not supported: configure with "
-                "cmake --preset android, after cmake -P Scripts/android-setup.cmake")
+                "-DCMAKE_TOOLCHAIN_FILE=CMake/AndroidToolchain.cmake, after "
+                "cmake -P Scripts/android-setup.cmake")
     endif ()
 endif ()
 
