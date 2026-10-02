@@ -1,11 +1,12 @@
 # The Android Studio project: with EACP_ANDROID_STUDIO_DIR set, an Android
 # configure writes a Gradle project there with one module per eacp_add_app, as
 # -G Xcode writes an Xcode project. Gradle compiles nothing of its own: each
-# module's externalNativeBuild runs the top-level CMakeLists.txt for its one target
-# and packages the library behind the manifest eacp_add_android_apk configured,
-# less what the module itself declares. Versions come from
-# AndroidVersions.cmake, the wrapper from Gradle's repository at the pinned
-# release, checked against its hash.
+# module's externalNativeBuild runs the top-level CMakeLists.txt for its one
+# target and packages the library behind the manifest eacp_add_android_apk
+# configured, less what the module itself declares; its release build type is
+# CMake's Release, as the plain build's is, not the plugin's RelWithDebInfo.
+# Versions come from AndroidVersions.cmake, the wrapper from Gradle's
+# repository at the pinned release, checked against its hash.
 
 include_guard(GLOBAL)
 
@@ -143,8 +144,7 @@ function(eacp_write_android_studio_project)
     set(EACP_STUDIO_CMAKE_LISTS "${CMAKE_SOURCE_DIR}/CMakeLists.txt")
     set(EACP_STUDIO_NAME "${CMAKE_PROJECT_NAME}")
     set(EACP_STUDIO_SDK_DIR "${EACP_ANDROID_SDK}")
-    get_filename_component(cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
-    get_filename_component(EACP_STUDIO_CMAKE_DIR "${cmake_bin}" DIRECTORY)
+    eacp_android_studio_cmake_dir("${dir}" EACP_STUDIO_CMAKE_DIR)
 
     set(EACP_STUDIO_INCLUDES "")
 
@@ -173,6 +173,40 @@ function(eacp_write_android_studio_project)
     message(STATUS "Android Studio project with ${count} app(s): ${dir}\n"
             "   Open it in Android Studio, or from a terminal there:\n"
             "   JAVA_HOME=\"${java_home}\" ./gradlew :${first}:installDebug")
+endfunction()
+
+# local.properties' cmake.dir: the directory whose bin/ holds the CMake that ran
+# this configure. The Android Gradle Plugin looks for Ninja beside that cmake,
+# in the SDK's CMake packages and on the PATH, which an IDE started from the
+# Dock or Finder does not share with a shell. So where this configure's Ninja
+# is elsewhere, cmake.dir is a directory of links to the two.
+function(eacp_android_studio_cmake_dir dir out)
+    get_filename_component(cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
+    get_filename_component(cmake_dir "${cmake_bin}" DIRECTORY)
+    get_filename_component(ninja_name "${CMAKE_MAKE_PROGRAM}" NAME_WE)
+    get_filename_component(ninja_bin "${CMAKE_MAKE_PROGRAM}" DIRECTORY)
+    set(${out} "${cmake_dir}" PARENT_SCOPE)
+
+    if (NOT ninja_name STREQUAL "ninja" OR ninja_bin STREQUAL cmake_bin)
+        return()
+    endif ()
+
+    get_filename_component(cmake_name "${CMAKE_COMMAND}" NAME)
+    get_filename_component(ninja_file "${CMAKE_MAKE_PROGRAM}" NAME)
+    set(links "${dir}/.cmake/bin")
+    file(REMOVE_RECURSE "${links}")
+    file(MAKE_DIRECTORY "${links}")
+    file(CREATE_LINK "${CMAKE_COMMAND}" "${links}/${cmake_name}" RESULT cmake_failed
+            SYMBOLIC)
+    file(CREATE_LINK "${CMAKE_MAKE_PROGRAM}" "${links}/${ninja_file}"
+            RESULT ninja_failed SYMBOLIC)
+
+    if (cmake_failed OR ninja_failed)
+        file(REMOVE_RECURSE "${dir}/.cmake")
+        return()
+    endif ()
+
+    set(${out} "${dir}/.cmake" PARENT_SCOPE)
 endfunction()
 
 # gradlew runs the java at JAVA_HOME, or the PATH's, which on a Mac is a stub
