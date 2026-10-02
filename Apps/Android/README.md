@@ -86,6 +86,16 @@ add_subdirectory(HelloWorld)
 cmake --build --preset android --target HelloWorld-run
 ```
 
+## 6. Or use Android Studio
+
+```
+cmake --preset android-studio
+```
+
+Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Pick an app in the run configurations and press Run; Debug attaches the native debugger.
+Every app is a module, so a new app shows up after the `cmake --preset android-studio` that follows step 5.
+From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`.
+
 ## When it goes wrong
 
 - "the phone is locked": unlock it; the app is behind the lock screen.

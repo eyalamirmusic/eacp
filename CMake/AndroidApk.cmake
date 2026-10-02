@@ -11,6 +11,7 @@
 # emulator it boots ($EACP_AVD, or the first AVD) where the host has one.
 
 include("${CMAKE_CURRENT_LIST_DIR}/AndroidVersions.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/AndroidStudio.cmake")
 
 # CMake scripts, so they run the same with no shell on any host.
 set(EACP_ANDROID_APK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Scripts/android-apk.cmake")
@@ -101,6 +102,16 @@ function(eacp_add_android_apk target)
             VERBATIM)
 
     add_custom_target(${target}-apk ALL DEPENDS "${apk}")
+
+    eacp_android_studio_add_app(${target}
+            PACKAGE "${EACP_APK_PACKAGE}"
+            LABEL "${EACP_APK_LABEL}"
+            ORIENTATION "${EACP_APK_ORIENTATION}"
+            VERSION_CODE "${EACP_APK_VERSION_CODE}"
+            VERSION_NAME "${EACP_APK_VERSION_NAME}"
+            RES_DIR "${APK_RES_DIR}"
+            ICON_ATTRIBUTE "${EACP_APK_ICON_ATTRIBUTE}"
+            MIN_SDK "${EACP_APK_MIN_SDK}")
 
     add_custom_target(${target}-run
             COMMAND "${CMAKE_COMMAND}" "-DSDK=${sdk}" "-DAPK=${apk}"

@@ -1,0 +1,2 @@
+sdk.dir=@EACP_STUDIO_SDK_DIR@
+cmake.dir=@EACP_STUDIO_CMAKE_DIR@
