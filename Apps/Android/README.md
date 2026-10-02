@@ -100,6 +100,8 @@ From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug
 
 ## When it goes wrong
 
+- Android Studio asks to switch the project to its own SDK: the configure took `$ANDROID_HOME`, else `~/.eacp/android/sdk`. To keep one SDK, run the setup and the configure with `ANDROID_HOME` at Android Studio's (`~/Library/Android/sdk` on a Mac, `%LOCALAPPDATA%\Android\Sdk` on Windows); the setup installs what is missing into it.
+
 - "the phone is locked": unlock it; the app is behind the lock screen.
 - "emulator eacp did not boot": start it by hand with the command it prints to see why. On Linux the emulator needs KVM: `/dev/kvm` readable by you (add yourself to the `kvm` group).
 - Another AVD: `EACP_AVD=<name>` picks it over `eacp`.

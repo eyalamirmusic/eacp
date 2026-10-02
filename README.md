@@ -611,7 +611,9 @@ scripts are fetched from Gradle's repository at that release and checked
 against pinned hashes; Gradle itself downloads into `~/.gradle` on first sync.
 `local.properties` names the SDK the configure found and the CMake that ran
 it (`cmake.dir`), so Gradle builds with the same CMake 3.31+ rather than the
-SDK's. Each module's configure, one per ABI and build type, gets
+SDK's (where Ninja is not beside that CMake, `cmake.dir` is a
+directory of links to the two, since the plugin looks for Ninja there and on a
+PATH an IDE started from the Dock does not have). Each module's configure, one per ABI and build type, gets
 `CPM_<name>_SOURCE` for every package the first configure fetched, so none of
 them fetch again and a local checkout passed that way is the one they build;
 anything else they need goes in `EACP_ANDROID_STUDIO_CMAKE_ARGS` (a consumer's
