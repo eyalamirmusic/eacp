@@ -49,7 +49,7 @@ VkRenderPass makeRenderPass(VkDevice device, const VulkanRenderPassKey& key)
     const auto depthLayout = imageDepthAttachment.layout;
     const auto depthAspect = depthAspectMask(key.stencil);
 
-    VkAttachmentDescription2 attachments[4] = {};
+    auto attachments = std::array<VkAttachmentDescription2, 4> {};
     auto count = std::uint32_t {0};
 
     const auto colorIndex = count;
@@ -131,14 +131,18 @@ VkRenderPass makeRenderPass(VkDevice device, const VulkanRenderPassKey& key)
     VkRenderPassCreateInfo2 info = {};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
     info.attachmentCount = count;
-    info.pAttachments = attachments;
+    info.pAttachments = attachments.data();
     info.subpassCount = 1;
     info.pSubpasses = &subpass;
 
     auto renderPass = VkRenderPass {VK_NULL_HANDLE};
 
-    if (vkCreateRenderPass2(device, &info, nullptr, &renderPass) != VK_SUCCESS)
+    if (const auto result = vkCreateRenderPass2(device, &info, nullptr, &renderPass);
+        result != VK_SUCCESS)
+    {
+        LOG("Vulkan: vkCreateRenderPass2 failed (", (int) result, ")");
         return VK_NULL_HANDLE;
+    }
 
     return renderPass;
 }
@@ -185,8 +189,13 @@ VkFramebuffer VulkanRenderPassCache::getFramebuffer(VkDevice device,
 
     auto framebuffer = VkFramebuffer {VK_NULL_HANDLE};
 
-    if (vkCreateFramebuffer(device, &info, nullptr, &framebuffer) != VK_SUCCESS)
+    if (const auto result =
+            vkCreateFramebuffer(device, &info, nullptr, &framebuffer);
+        result != VK_SUCCESS)
+    {
+        LOG("Vulkan: vkCreateFramebuffer failed (", (int) result, ")");
         return VK_NULL_HANDLE;
+    }
 
     framebuffers.add({renderPass, views, width, height, framebuffer});
     return framebuffer;
