@@ -1,5 +1,7 @@
 #include "Window.h"
+#include "Window-macOS.h"
 #include "MouseLock-macOS.h"
+#include "../View/View-MacOS.h"
 #include "../Graphics/Keyboard.h"
 #include "../Helpers/ImageConversion-macOS.h"
 #include "../Primitives/GraphicUtils.h"
@@ -1016,6 +1018,15 @@ bool Window::isCommandPressed() const
 ModifierKeys Window::getModifiers() const
 {
     return Keyboard::getModifiers();
+}
+
+bool isFrameworkWindow(NSWindow* window)
+{
+    if (window == nil)
+        return false;
+
+    return [(id) window.delegate isKindOfClass:getWindowDelegateClass()]
+           || isFrameworkNativeView(window.contentView);
 }
 
 } // namespace eacp::Graphics

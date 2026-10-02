@@ -1,6 +1,7 @@
 #include "View.h"
 #include "../Image/Image.h"
 #include "../Window/Window.h"
+#include <algorithm>
 #include <ranges>
 
 namespace eacp::Graphics
@@ -23,6 +24,12 @@ void View::captureAsyncContent(float, std::function<void(Image)> done)
 View& View::setHandlesMouseEvents(bool value)
 {
     properties.handlesMouseEvents = value;
+    return *this;
+}
+
+View& View::setHandlesTouchEvents(bool value)
+{
+    properties.handlesTouchEvents = value;
     return *this;
 }
 
@@ -107,6 +114,7 @@ void View::removeSubview(View& view)
         if (mouseDownTarget == &view)
             mouseDownTarget = nullptr;
 
+        forgetTouchesIn(view);
         viewRemoved(view);
     }
 }
@@ -321,6 +329,188 @@ void View::handleMouseEvent(const MouseEvent& event)
             mouseWheel(event);
             break;
     }
+}
+
+View* View::touchTarget(const Point& point)
+{
+    if (!getLocalBounds().contains(point))
+        return nullptr;
+
+    for (auto child: std::ranges::reverse_view(subviews))
+    {
+        auto childBounds = child->getBounds();
+        auto childPoint = Point {point.x - childBounds.x, point.y - childBounds.y};
+
+        if (auto* hit = child->touchTarget(childPoint))
+            return hit;
+    }
+
+    if (properties.handlesTouchEvents || properties.handlesMouseEvents)
+        return this;
+
+    return nullptr;
+}
+
+void View::dispatchTouchEvent(const TouchEvent& event)
+{
+    if (event.phase == TouchPhase::Began)
+    {
+        beginTouch(event);
+        return;
+    }
+
+    auto* touch =
+        touches.findIf([&](const ActiveTouch& t) { return t.id == event.id; });
+
+    if (touch == nullptr)
+        return;
+
+    auto withDown = event;
+    withDown.downPos = touch->downPos;
+
+    if (touch->view != nullptr)
+        sendTouch(*touch->view, withDown);
+    else
+        sendTouchAsMouse(withDown);
+
+    if (event.phase == TouchPhase::Ended || event.phase == TouchPhase::Cancelled)
+        touches.removeIndexesMatching([&](const ActiveTouch& t)
+                                      { return t.id == event.id; });
+}
+
+void View::beginTouch(const TouchEvent& event)
+{
+    touches.removeIndexesMatching([&](const ActiveTouch& t)
+                                  { return t.id == event.id; });
+
+    auto withDown = event;
+    withDown.downPos = event.pos;
+
+    auto* target = touchTarget(event.pos);
+
+    if (target != nullptr && target->properties.handlesTouchEvents)
+    {
+        touches.add({event.id, target, event.pos});
+        sendTouch(*target, withDown);
+        return;
+    }
+
+    auto mouseIsTaken =
+        touches.findIf([](const ActiveTouch& t) { return t.view == nullptr; })
+        != nullptr;
+
+    if (mouseIsTaken)
+        return;
+
+    touches.add({event.id, nullptr, event.pos});
+    sendTouchAsMouse(withDown);
+}
+
+void View::sendTouch(View& target, const TouchEvent& event)
+{
+    auto local = event;
+    local.pos = convertPointToDescendant(event.pos, &target);
+    local.downPos = convertPointToDescendant(event.downPos, &target);
+
+    switch (event.phase)
+    {
+        case TouchPhase::Began:
+            target.touchBegan(local);
+            break;
+        case TouchPhase::Moved:
+            target.touchMoved(local);
+            break;
+        case TouchPhase::Ended:
+        case TouchPhase::Cancelled:
+            target.touchEnded(local);
+            break;
+    }
+}
+
+void View::sendTouchAsMouse(const TouchEvent& event)
+{
+    auto mouse = MouseEvent {};
+    mouse.pos = event.pos;
+    mouse.downPos = event.downPos;
+    mouse.button = MouseButton::Left;
+    mouse.timestamp = event.timestamp;
+
+    switch (event.phase)
+    {
+        case TouchPhase::Began:
+            mouse.type = MouseEventType::Down;
+            break;
+        case TouchPhase::Moved:
+            mouse.type = MouseEventType::Dragged;
+            break;
+        case TouchPhase::Ended:
+        case TouchPhase::Cancelled:
+            mouse.type = MouseEventType::Up;
+            break;
+    }
+
+    if (mouse.type != MouseEventType::Dragged)
+    {
+        mouse.pressure = event.pressure;
+        mouse.clickCount = event.tapCount;
+    }
+
+    dispatchMouseEvent(mouse);
+}
+
+void View::forgetTouchesIn(View& removed)
+{
+    auto* root = this;
+
+    while (root->parent != nullptr)
+        root = root->parent;
+
+    auto isInRemoved = [&removed](const View* view)
+    {
+        for (; view != nullptr; view = view->parent)
+            if (view == &removed)
+                return true;
+
+        return false;
+    };
+
+    root->touches.removeIndexesMatching([&](const ActiveTouch& t)
+                                        { return isInRemoved(t.view); });
+}
+
+Insets View::getSafeAreaInsets() const
+{
+    if (parent == nullptr)
+        return safeAreaInsets;
+
+    auto outer = parent->getSafeAreaInsets();
+    auto bounds = getBounds();
+    auto parentBounds = parent->getLocalBounds();
+
+    return {.top = std::max(0.f, outer.top - bounds.y),
+            .left = std::max(0.f, outer.left - bounds.x),
+            .bottom =
+                std::max(0.f, outer.bottom - (parentBounds.h - bounds.bottom())),
+            .right = std::max(0.f, outer.right - (parentBounds.w - bounds.right()))};
+}
+
+void View::setSafeAreaInsets(const Insets& insets)
+{
+    if (insets.top == safeAreaInsets.top && insets.left == safeAreaInsets.left
+        && insets.bottom == safeAreaInsets.bottom
+        && insets.right == safeAreaInsets.right)
+        return;
+
+    safeAreaInsets = insets;
+    notifySafeAreaInsetsChanged();
+}
+
+void View::notifySafeAreaInsetsChanged()
+{
+    safeAreaInsetsChanged();
+
+    for (auto* child: subviews)
+        child->notifySafeAreaInsetsChanged();
 }
 
 bool View::isHovering() const

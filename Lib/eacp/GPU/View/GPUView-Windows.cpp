@@ -108,24 +108,12 @@ struct GPUView::Native : DeviceResourceHolder
     // resources rebuild through the view's onDeviceRestored hook.
     void recreateDeviceResources() override
     {
-        for (auto& buffer: backBuffers)
-            buffer = nullptr;
+        releaseSwapChain();
 
         msaaTexture = nullptr;
         depthTexture = nullptr;
         rtvHeap = nullptr;
         dsvHeap = nullptr;
-        if (frameLatencyWaitable != nullptr)
-        {
-            CloseHandle(frameLatencyWaitable);
-            frameLatencyWaitable = nullptr;
-        }
-
-        swapChain = nullptr;
-        frameFences.fill(0);
-
-        if (spriteVisual)
-            spriteVisual->SetContent(nullptr);
 
         // The DComp device is replaced along with the rendering device, so
         // re-acquire it and rebuild the visual before the swapchain reattaches.
@@ -148,6 +136,44 @@ struct GPUView::Native : DeviceResourceHolder
 
         view.onDeviceRestored();
         view.repaint();
+    }
+
+    void releaseSwapChain()
+    {
+        for (auto& buffer: backBuffers)
+            buffer = nullptr;
+
+        if (frameLatencyWaitable != nullptr)
+        {
+            CloseHandle(frameLatencyWaitable);
+            frameLatencyWaitable = nullptr;
+        }
+
+        swapChain = nullptr;
+        frameFences.fill(0);
+
+        if (spriteVisual)
+            spriteVisual->SetContent(nullptr);
+    }
+
+    // A swapchain's alpha mode is fixed when it is created, so changing it
+    // means a new one at the same size.
+    void rebuildSwapChain()
+    {
+        if (!swapChain)
+            return;
+
+        getD3D12Context(Device::shared()).waitIdle();
+        releaseSwapChain();
+        createSwapChain();
+        view.repaint();
+    }
+
+    bool composesAlpha() const
+    {
+        return transparent
+               || Graphics::isHostWindowTransparent(
+                   Graphics::findHostHwndForView(&view));
     }
 
     static float dpiScale() { return static_cast<float>(GetDpiForSystem()) / 96.f; }
@@ -211,14 +237,12 @@ struct GPUView::Native : DeviceResourceHolder
         descriptor.BufferCount = bufferCount;
         descriptor.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 
-        // In a transparentBackground window the swapchain composites straight
-        // to the screen, so its alpha must reach DWM — IGNORE would fill the
-        // window with an opaque black box. Opaque windows keep IGNORE: their
-        // GPU content never meant its alpha for the desktop behind the window.
+        // IGNORE is a solid rectangle whatever the pass cleared to. A view that
+        // asked to be transparent, or one in a transparentBackground window,
+        // needs its alpha to reach DWM instead — there IGNORE would be an
+        // opaque black box over whatever is behind it.
         descriptor.AlphaMode =
-            Graphics::isHostWindowTransparent(Graphics::findHostHwndForView(&view))
-                ? DXGI_ALPHA_MODE_PREMULTIPLIED
-                : DXGI_ALPHA_MODE_IGNORE;
+            composesAlpha() ? DXGI_ALPHA_MODE_PREMULTIPLIED : DXGI_ALPHA_MODE_IGNORE;
 
         // A waitable swapchain is what makes the present queue's depth ours to
         // choose. Without it DXGI queues up to three frames of its own accord,
@@ -570,6 +594,7 @@ struct GPUView::Native : DeviceResourceHolder
     HANDLE frameLatencyWaitable = nullptr;
 
     bool continuous = false;
+    bool transparent = false;
     bool depthEnabled = false;
     bool stencilEnabled = false;
     UINT width = 0;
@@ -664,6 +689,20 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+void GPUView::setTransparent(bool shouldBeTransparent)
+{
+    if (impl->transparent == shouldBeTransparent)
+        return;
+
+    impl->transparent = shouldBeTransparent;
+    impl->rebuildSwapChain();
+}
+
+bool GPUView::isTransparent() const
+{
+    return impl->transparent;
 }
 
 void GPUView::setMaxFps(int fps)

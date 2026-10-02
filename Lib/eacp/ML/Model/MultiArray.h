@@ -28,9 +28,9 @@ class MultiArray
 public:
     MultiArray();
 
-    // An invalid MultiArray when the OS has no Core ML array of that type (fp16
-    // wants macOS 12 / iOS 16), the shape is empty, or a dimension is unknown
-    // or not positive.
+    // Every element zero. An invalid MultiArray when the OS has no Core ML
+    // array of that type (fp16 wants macOS 12 / iOS 16), the shape is empty,
+    // or a dimension is unknown or not positive.
     static MultiArray create(const Shape& shape, DType type);
 
     bool isValid() const;
@@ -79,6 +79,17 @@ public:
 
     // Element for element from another array of the same element count.
     void copyFrom(const MultiArray& other);
+
+    // rowCount rows of another array, from its row sourceRow, into this
+    // array's rows from destinationRow on, converting between the two types:
+    // a model's output rows written into part of an array another prediction
+    // reads, without a pass through the whole of either. Nothing is copied
+    // unless the two have the same columns and both ranges lie inside their
+    // arrays.
+    void copyRows(const MultiArray& source,
+                  int sourceRow,
+                  int destinationRow,
+                  int rowCount);
 
     struct Native;
 

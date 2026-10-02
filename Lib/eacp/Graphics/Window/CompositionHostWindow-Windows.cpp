@@ -3,6 +3,7 @@
 #include "../Helpers/SystemAppearance.h"
 #include "../Layers/NativeLayer-Windows.h"
 
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
 
 #include <unordered_map>
@@ -299,6 +300,12 @@ void CompositionHostWindow::attachContentView(View* view)
                      0.f,
                      static_cast<float>(clientRect.right) / scale,
                      static_cast<float>(clientRect.bottom) / scale});
+    Threads::callAsync(
+        [weak = std::weak_ptr<CompositionHostWindow*>(lifetime)]
+        {
+            if (auto host = weak.lock())
+                (*host)->layOutContentView();
+        });
 
     auto* viewVisual = static_cast<IDCompositionVisual2*>(view->getHandle());
 
@@ -518,6 +525,18 @@ void CompositionHostWindow::resizeContentViewToClient()
                          static_cast<int>(heightInPoints));
 }
 
+// Attaching sizes the content view at once, usually inside the constructor of
+// the app that owns the window, before it has added the subviews its resized()
+// places. The window is shown and painted there too, so a paint is too early;
+// this pass is deferred a turn, as AppKit lays a window out before first
+// display. Without it those subviews keep zero bounds until a WM_SIZE, which a
+// window shown at its created size never gets.
+void CompositionHostWindow::layOutContentView()
+{
+    if (contentView != nullptr)
+        contentView->setBounds(contentView->getBounds());
+}
+
 void CompositionHostWindow::ensureMouseLeaveTracking()
 {
     if (trackingMouseLeave)
@@ -615,6 +634,14 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Dragged)
     {
+        // A locked move already carries its delta: the pointer is put back in
+        // the middle after every report, so its position says nothing.
+        if (!mouseLockEngaged)
+            event.delta =
+                lastPointerPosition ? event.pos - *lastPointerPosition : Point {};
+
+        lastPointerPosition = event.pos;
+
         // Whatever Raw Input has gathered since the last movement was reported.
         // A device that cannot report its own movement (a tablet, a remote
         // desktop) leaves this empty, and the pointer's movement stands in.
@@ -622,6 +649,14 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
         event.rawDelta = moved ? rawMouseMovement : event.delta;
         rawMouseMovement = {};
+    }
+    else if (event.type == MouseEventType::Down || event.type == MouseEventType::Up)
+    {
+        lastPointerPosition = event.pos;
+    }
+    else if (event.type == MouseEventType::Exited)
+    {
+        lastPointerPosition.reset();
     }
 
     contentView->dispatchMouseEvent(event);
@@ -810,9 +845,13 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 event.type = MouseEventType::Wheel;
                 event.modifiers = getModifiers();
 
-                auto wheelDelta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
-                event.delta = (msg == WM_MOUSEWHEEL) ? Point {0.f, wheelDelta}
-                                                     : Point {wheelDelta, 0.f};
+                // In lines, as the other platforms report a notched wheel: a
+                // detent is WHEEL_DELTA, and a precision touchpad sends
+                // fractions of one.
+                auto lines = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam))
+                             / static_cast<float>(WHEEL_DELTA);
+                event.delta =
+                    (msg == WM_MOUSEWHEEL) ? Point {0.f, lines} : Point {lines, 0.f};
                 dispatchMouseToContentView(event);
             }
             return 0;

@@ -32,6 +32,7 @@ set(graphics_test_sources
         ScrollWheelTests.cpp
         SizeConstraintTests.cpp
         TestMain.cpp
+        TouchTests.cpp
         ViewVisibilityTests.cpp
         ViewWindowTests.cpp
         WindowTests.cpp)
@@ -70,6 +71,7 @@ if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
             EmbeddedViewTests-macOS.mm
+            KeyForwardingTests-macOS.mm
             MenuTests-macOS.mm
             NativeChildSurfaceTests-macOS.mm
             ScrollWheelTests-macOS.mm
@@ -80,7 +82,11 @@ endif ()
 if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
-            WindowGeometryTests-Windows.cpp)
+            KeyForwardingTests-Windows.cpp
+            MouseDeltaTests-Windows.cpp
+            MouseWheelTests-Windows.cpp
+            WindowGeometryTests-Windows.cpp
+            WindowLayoutTests-Windows.cpp)
 endif ()
 
 nano_add_executable(GraphicsTests

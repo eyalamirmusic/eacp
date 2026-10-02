@@ -103,6 +103,28 @@ auto tTextReductions = test("MLGraph/Text/sumAndMax") = []
               "} -> (total, largest);\n");
 };
 
+auto tTextArgmax = test("MLGraph/Text/argmax") = []
+{
+    auto graph = Graph {};
+    auto x = graph.input("x", {3, 4}, DType::float32);
+    graph.output(graph.argmax(x, -1), "index");
+    graph.output(graph.argmax(x, 0, true), "column");
+    buildChecked(graph);
+
+    checkText(graph.toText(),
+              "program(1)\n"
+              "func main<CoreML7>(tensor<fp32, [3, 4]> x) {\n"
+              "    tensor<int32, []> index_axis = const()[val = -1];\n"
+              "    tensor<bool, []> index_keep_dims = const()[val = false];\n"
+              "    tensor<int32, [3]> index = reduce_argmax(x = x, axis = "
+              "index_axis, keep_dims = index_keep_dims);\n"
+              "    tensor<int32, []> column_axis = const()[val = 0];\n"
+              "    tensor<bool, []> column_keep_dims = const()[val = true];\n"
+              "    tensor<int32, [1, 4]> column = reduce_argmax(x = x, axis = "
+              "column_axis, keep_dims = column_keep_dims);\n"
+              "} -> (index, column);\n");
+};
+
 auto tTextLayerNorm = test("MLGraph/Text/layerNorm") = []
 {
     auto graph = Graph {};
@@ -317,6 +339,35 @@ auto tTextAttention = test("MLGraph/Text/scaledDotProductAttention") = []
     check(allowedAt(2, 1) == 1.f);
     check(allowedAt(1, 2) == 0.f);
     check(allowedAt(0, 3) == 0.f);
+};
+
+// The run-time mask reaches the op as the causal one does, a bool from a
+// greater than 0.5, but of the input rather than of a constant in the blob.
+auto tTextMaskedAttention =
+    test("MLGraph/Text/scaledDotProductAttentionUnderARunTimeMask") = []
+{
+    auto graph = Graph {};
+    auto q = graph.input("q", {1, 4, 8}, DType::float16);
+    auto k = graph.input("k", {1, 6, 8}, DType::float16);
+    auto v = graph.input("v", {1, 6, 8}, DType::float16);
+    auto allowed = graph.input("allowed", {1, 6}, DType::float16);
+    graph.output(graph.scaledDotProductAttention(q, k, v, allowed), "y");
+    buildChecked(graph);
+
+    checkText(
+        graph.toText(),
+        "program(1)\n"
+        "func main<CoreML8>(tensor<fp16, [1, 4, 8]> q, tensor<fp16, [1, 6, 8]> "
+        "k, tensor<fp16, [1, 6, 8]> v, tensor<fp16, [1, 6]> allowed) {\n"
+        "    tensor<fp16, []> greater_4_y = const()[val = 0.5];\n"
+        "    tensor<bool, [1, 6]> greater_4 = greater(x = allowed, y = "
+        "greater_4_y);\n"
+        "    tensor<fp16, [1, 4, 8]> y = scaled_dot_product_attention(query = q, "
+        "key = k, value = v, attn_mask = greater_4);\n"
+        "} -> (y);\n");
+
+    check(graph.specification().specificationVersion == 9);
+    check(graph.build().weights.size() <= 64);
 };
 
 auto tTextGeluCast = test("MLGraph/Text/geluAndCast") = []

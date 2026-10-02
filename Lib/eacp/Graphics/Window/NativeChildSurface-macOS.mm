@@ -1,25 +1,73 @@
+#import <Cocoa/Cocoa.h>
+
 #include "NativeChildSurface.h"
+#include "KeyForwarding-macOS.h"
 #include "../Primitives/GraphicUtils.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
-
-#import <Cocoa/Cocoa.h>
+#include <eacp/Core/ObjC/RuntimeClass.h>
 
 namespace eacp::Graphics
 {
 
+namespace
+{
+NativeChildSurface*& surfaceOf(id container)
+{
+    return ObjC::getIvar<NativeChildSurface*>(container, "surface");
+}
+
+void offerUnhandledKey(id container, NSEvent* event, KeyEventType type)
+{
+    auto* surface = surfaceOf(container);
+    if (surface != nullptr && surface->onUnhandledKey(nativeKeyEventFrom(event)))
+        return;
+
+    auto selector = type == KeyEventType::Down ? @selector(keyDown:) : @selector(keyUp:);
+    ObjC::sendSuper<void>(container, [NSView class], selector, event);
+}
+
+void containerKeyDown(id self, SEL, NSEvent* event)
+{
+    offerUnhandledKey(self, event, KeyEventType::Down);
+}
+
+void containerKeyUp(id self, SEL, NSEvent* event)
+{
+    offerUnhandledKey(self, event, KeyEventType::Up);
+}
+
+Class getContainerClass()
+{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSView>("EacpNativeChildContainer");
+
+        builder->addIvar<NativeChildSurface*>("surface");
+        builder->addMethod(@selector(keyDown:), containerKeyDown);
+        builder->addMethod(@selector(keyUp:), containerKeyUp);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+} // namespace
+
 struct NativeChildSurface::Native
 {
-    explicit Native(View& owner)
+    explicit Native(NativeChildSurface& owner)
     {
         auto* surface = (NSView*) owner.getHandle();
 
-        // A stock NSView, deliberately not one of ours. What gets parented in
-        // here is written against the view a host hands over, and every host
-        // hands over a stock one; ours answers YES to isFlipped, which is a
-        // coordinate system the foreign content never agreed to and would lay
-        // itself out upside down in.
-        container = [[NSView alloc] initWithFrame:surface.bounds];
+        // A stock NSView but for the keys it passes up, deliberately not one of
+        // ours. What gets parented in here is written against the view a host
+        // hands over, and every host hands over a stock one; ours answers YES
+        // to isFlipped, which is a coordinate system the foreign content never
+        // agreed to and would lay itself out upside down in.
+        container = [[getContainerClass() alloc] initWithFrame:surface.bounds];
+        surfaceOf(container.get()) = &owner;
 
         // Fills the surface and goes on filling it. AppKit applies this from
         // inside setFrame:, synchronously, so the container is the right size
@@ -28,6 +76,16 @@ struct NativeChildSurface::Native
         // its new size in the same breath.
         container.get().autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
+        // The foreign content stays inside the rectangle it was given. From
+        // macOS 14 a view no longer clips to its bounds by default, and AppKit
+        // may back a view's drawing with a layer larger than the view: Arturia's
+        // JUCE editors get one the size of the whole window, hanging above the
+        // plugin's own rect, transparent and never drawn into, so its
+        // uninitialised pixels are composited over whatever the host put there.
+        // Earlier systems clip already, and have no clipsToBounds to set.
+        if (@available(macOS 14.0, *))
+            container.get().clipsToBounds = YES;
+
         [surface addSubview:container.get()];
     }
 
@@ -35,7 +93,11 @@ struct NativeChildSurface::Native
     // belongs to another toolkit and is expected to have been detached by now
     // (a VST3 plugin is sent removed() first); a foreign view its own owner
     // still holds a reference to outlives this.
-    ~Native() { [container.get() removeFromSuperview]; }
+    ~Native()
+    {
+        surfaceOf(container.get()) = nullptr;
+        [container.get() removeFromSuperview];
+    }
 
     void setBounds(const Rect& bounds)
     {

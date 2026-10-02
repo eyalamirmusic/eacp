@@ -175,6 +175,7 @@ struct GPUView::Native
     // latency rather than saving it. See GPUView::setFramesInFlight.
     int framesInFlight = 3;
     bool continuous = false;
+    bool transparent = false;
     bool depthEnabled = false;
     bool stencilEnabled = false;
 
@@ -277,6 +278,17 @@ void GPUView::setFramesInFlight(int count)
 int GPUView::framesInFlight() const
 {
     return impl->framesInFlight;
+}
+
+void GPUView::setTransparent(bool shouldBeTransparent)
+{
+    impl->transparent = shouldBeTransparent;
+    impl->metalLayer.get().opaque = !shouldBeTransparent;
+}
+
+bool GPUView::isTransparent() const
+{
+    return impl->transparent;
 }
 
 // Serves both events: the drawable follows the new bounds or the new scale, and

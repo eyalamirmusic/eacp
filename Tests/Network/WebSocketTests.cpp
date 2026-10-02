@@ -326,7 +326,7 @@ auto tGreeting = test("WebSocket/deliversAMessageSentRightAfterTheHandshake") = 
     auto connection = webSocketConnect(server.url(), record);
 
     check(webSocketPumpUntil([&] { return record.messages.size() == 1; }));
-    check(record.messages[0].data == options.greeting);
+    check(!record.messages.empty() && record.messages[0].data == options.greeting);
     check(record.opens == 1);
     check(record.order[0] == "open");
 };
@@ -350,7 +350,7 @@ auto tFragmentedMessage = test("WebSocket/reassemblesAFragmentedServerMessage") 
     webSocketPumpFor(MS {150});
 
     check(record.messages.size() == 1);
-    check(record.messages[0].data == options.greeting);
+    check(!record.messages.empty() && record.messages[0].data == options.greeting);
 };
 
 auto tPingIsAnswered = test("WebSocket/answersAServerPingWithAPong") = []
@@ -510,7 +510,7 @@ auto tMessageThenClose =
     webSocketPumpFor(MS {200});
 
     check(record.messages.size() == 1);
-    check(record.messages[0].data == "last");
+    check(!record.messages.empty() && record.messages[0].data == "last");
     check(record.errors == 0);
     check(record.close.code == 1001);
     check(record.close.reason == "going away");

@@ -73,3 +73,19 @@ auto tWhisperDecoderStep = test("MLGraph/DecoderStep/whisperTinyAtItsRealSizes")
     check(text.find("embed_tokens") != std::string::npos);
     check(package.weights.size() > 2 * 20'000'000);
 };
+
+auto tWhisperFusedDecoderStep =
+    test("MLGraph/DecoderStep/theSelfAttentionFusedUnderAnInputMask") = []
+{
+    auto graph = WhisperDecoderStep::fusedStepGraph();
+    buildChecked(graph);
+    auto specification = graph.specification();
+
+    check(specification.specificationVersion == 9);
+    check(featureNamed(specification.description.inputs, "allowed") != nullptr);
+    check(featureNamed(specification.description.inputs, "mask") == nullptr);
+    check(countOf(specification, "matmul") == 0);
+    check(countOf(specification, "softmax") == 0);
+    check(countOf(specification, "greater") == 4);
+    check(countOf(specification, "scaled_dot_product_attention") == 8);
+};

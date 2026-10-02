@@ -220,6 +220,140 @@ auto tCopiesShareStorage = test("MLMultiArray/aCopiedArrayIsTheSameStorage") = [
     check(array.toFloats() == values);
 };
 
+auto tFreshArraysAreZero = test("MLMultiArray/aFreshArrayOfEveryTypeIsZero") = []
+{
+    if (!isSupported())
+        return;
+
+    for (auto round = 0; round < 3; ++round)
+    {
+        for (const auto& shape: {Shape {3, paddedColumns}, Shape {4, 448, 384}})
+            for (auto type: {DType::float16, DType::float32, DType::int32})
+            {
+                auto array = MultiArray::create(shape, type);
+                auto count = (int) shape.count();
+                check(array.toFloats() == TestPrograms::zeros(count),
+                      toString(type) + " " + shape.toString());
+
+                auto noise = TestPrograms::seededValues(count, 29u, 1.0f);
+                array.fromFloats(noise);
+            }
+    }
+};
+
+auto tCopyRowsBetweenSurfaces =
+    test("MLMultiArray/copyRowsWritesPartOfOneFp16SurfaceFromAnother") = []
+{
+    if (!isSupported())
+        return;
+
+    auto values = TestPrograms::seededValues(3 * paddedColumns, 31u, 2.0f);
+    auto source = arrayOf(values, {3, paddedColumns}, DType::float16);
+    auto destination = MultiArray::create({8, paddedColumns}, DType::float16);
+    check(source.isSurfaceBacked() && destination.isSurfaceBacked());
+
+    destination.copyRows(source, 1, 5, 2);
+
+    auto expected = TestPrograms::zeros(8 * paddedColumns);
+
+    for (auto column = 0; column < 2 * paddedColumns; ++column)
+        expected[5 * paddedColumns + column] = values[paddedColumns + column];
+
+    check(destination.toFloats() == expected);
+};
+
+// A decoder step's new key row written into its place in a cache of four
+// layers of 448 positions: the row index counts across the leading axes.
+auto tCopyRowsIntoACache =
+    test("MLMultiArray/copyRowsWritesAStepsRowIntoACacheArray") = []
+{
+    if (!isSupported())
+        return;
+
+    constexpr auto width = 384;
+    constexpr auto positions = 448;
+
+    auto step = TestPrograms::seededValues(4 * width, 33u, 1.0f);
+    auto rows = arrayOf(step, {4, 1, width}, DType::float16);
+    auto cache = MultiArray::create({4, positions, width}, DType::float16);
+    check(cache.isSurfaceBacked());
+
+    auto position = 17;
+
+    for (auto layer = 0; layer < 4; ++layer)
+        cache.copyRows(rows, layer, layer * positions + position, 1);
+
+    auto expected = TestPrograms::zeros(4 * positions * width);
+
+    for (auto layer = 0; layer < 4; ++layer)
+        for (auto column = 0; column < width; ++column)
+            expected[(layer * positions + position) * width + column] =
+                step[layer * width + column];
+
+    check(cache.toFloats() == expected);
+};
+
+auto tCopyRowsConverts = test("MLMultiArray/copyRowsConvertsBetweenTypes") = []
+{
+    if (!isSupported())
+        return;
+
+    auto values = TestPrograms::seededValues(3 * paddedColumns, 35u, 2.0f);
+    auto halves = arrayOf(values, {3, paddedColumns}, DType::float16);
+    auto floats = MultiArray::create({6, paddedColumns}, DType::float32);
+
+    floats.copyRows(halves, 0, 2, 3);
+
+    auto expected = TestPrograms::zeros(6 * paddedColumns);
+
+    for (auto index = 0; index < 3 * paddedColumns; ++index)
+        expected[2 * paddedColumns + index] = values[index];
+
+    check(floats.toFloats() == expected, "fp16 into fp32");
+
+    auto back = MultiArray::create({3, paddedColumns}, DType::float16);
+    back.copyRows(floats, 2, 0, 3);
+    check(back.toFloats() == values, "fp32 into fp16");
+};
+
+auto tCopyRowsRefuses =
+    test("MLMultiArray/copyRowsCopiesNothingOutsideEitherArray") = []
+{
+    if (!isSupported())
+        return;
+
+    auto values = TestPrograms::seededValues(4 * paddedColumns, 37u, 2.0f);
+    auto source = arrayOf(values, {4, paddedColumns}, DType::float16);
+    auto narrow = arrayOf(
+        TestPrograms::seededValues(4 * 8, 38u, 1.0f), {4, 8}, DType::float16);
+
+    auto untouched = TestPrograms::seededValues(4 * paddedColumns, 39u, 1.0f);
+    auto destination = arrayOf(untouched, {4, paddedColumns}, DType::float16);
+
+    destination.copyRows(narrow, 0, 0, 1);
+    check(destination.toFloats() == untouched, "the columns differ");
+
+    destination.copyRows(source, 3, 0, 2);
+    check(destination.toFloats() == untouched, "past the source's last row");
+
+    destination.copyRows(source, 0, 3, 2);
+    check(destination.toFloats() == untouched, "past the destination's last row");
+
+    destination.copyRows(source, -1, 0, 1);
+    destination.copyRows(source, 0, -1, 1);
+    check(destination.toFloats() == untouched, "a negative row");
+
+    destination.copyRows(source, 0, 0, 0);
+    check(destination.toFloats() == untouched, "no rows");
+
+    destination.copyRows(MultiArray {}, 0, 0, 1);
+    check(destination.toFloats() == untouched, "an invalid source");
+
+    auto alias = destination;
+    destination.copyRows(alias, 0, 1, 1);
+    check(destination.toFloats() == untouched, "the same array");
+};
+
 auto tEmptyShapeIsInvalid = test("MLMultiArray/anEmptyShapeMakesNoArray") = []
 {
     check(!MultiArray::create({}, DType::float32).isValid());

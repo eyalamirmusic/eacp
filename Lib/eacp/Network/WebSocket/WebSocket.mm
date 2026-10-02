@@ -298,9 +298,12 @@ private:
                     streamEnded(webSocketErrorText(error));
                 return;
 
+            // Once open, the receive loop ends the stream: the framework can
+            // report failure before it hands over frames it has already read.
             case nw_connection_state_failed:
             case nw_connection_state_cancelled:
-                streamEnded(webSocketErrorText(error));
+                if (!opened)
+                    streamEnded(webSocketErrorText(error));
                 return;
 
             default:
@@ -319,12 +322,6 @@ private:
         if (finished)
             return;
 
-        if (error != nullptr)
-        {
-            streamEnded(webSocketErrorText(error));
-            return;
-        }
-
         auto metadata = context != nullptr
                             ? nw_content_context_copy_protocol_metadata(
                                 context, webSocketDefinition)
@@ -333,7 +330,7 @@ private:
         // No frame in it: the stream has ended.
         if (metadata == nullptr)
         {
-            streamEnded({});
+            streamEnded(webSocketErrorText(error));
             return;
         }
 

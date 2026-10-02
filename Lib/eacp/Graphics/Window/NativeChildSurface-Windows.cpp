@@ -2,6 +2,7 @@
 
 #include "NativeChildSurface.h"
 #include "CompositionHostWindow-Windows.h"
+#include "KeyForwarding-Windows.h"
 #include "WindowGeometry-Windows.h"
 
 #include <eacp/Core/Plugins/ModuleInfo.h>
@@ -39,6 +40,18 @@ const auto nativeChildClassNameStorage =
 const wchar_t* nativeChildClassName = nativeChildClassNameStorage.c_str();
 bool nativeChildClassRegistered = false;
 
+bool offerUnhandledKey(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    auto* surface = reinterpret_cast<NativeChildSurface*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    if (surface == nullptr)
+        return false;
+
+    return surface->onUnhandledKey(nativeKeyEventFrom(
+        msg, wParam, lParam, static_cast<DWORD>(GetMessageTime())));
+}
+
 LRESULT CALLBACK nativeChildWindowProc(HWND hwnd,
                                        UINT msg,
                                        WPARAM wParam,
@@ -46,11 +59,16 @@ LRESULT CALLBACK nativeChildWindowProc(HWND hwnd,
 {
     // The container draws nothing and decides nothing: every pixel of it is
     // covered by the foreign child, and every message that matters is that
-    // child's. Erasing is claimed rather than defaulted so the moment between
-    // the window existing and the plugin parenting into it is not a flash of
-    // whatever brush the class was given.
+    // child's, bar the plain keys it passes up to its parent (JUCE posts the
+    // ones it does not use there). Sys-keys stay with DefWindowProc: handed to
+    // a DAW's panel, Alt+F4 would close the DAW. Erasing is claimed rather than
+    // defaulted so the moment between the window existing and the plugin
+    // parenting into it is not a flash of whatever brush the class was given.
     if (msg == WM_ERASEBKGND)
         return 1;
+
+    if (isPlainKeyMessage(msg) && offerUnhandledKey(hwnd, msg, wParam, lParam))
+        return 0;
 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
@@ -115,7 +133,7 @@ bool isEffectivelyVisible(View& view)
 
 struct NativeChildSurface::Native
 {
-    explicit Native(View& ownerToUse)
+    explicit Native(NativeChildSurface& ownerToUse)
         : owner(&ownerToUse)
     {
     }
@@ -179,6 +197,10 @@ struct NativeChildSurface::Native
                                nullptr,
                                (HINSTANCE) Plugins::getCurrentModuleHandle(),
                                nullptr);
+
+        if (hwnd != nullptr)
+            SetWindowLongPtrW(
+                hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
     }
 
     void place()
@@ -246,11 +268,12 @@ struct NativeChildSurface::Native
                 break;
         }
 
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         DestroyWindow(hwnd);
         hwnd = nullptr;
     }
 
-    View* owner {};
+    NativeChildSurface* owner {};
     HWND hwnd {};
 };
 
