@@ -626,8 +626,8 @@ and the manifest `eacp_add_android_apk` configured (an app's own
 `<uses-sdk>`, which the module declares and the Android Gradle Plugin refuses
 in the manifest: Gradle compiles no Java or Kotlin, it calls CMake and packages
 the library.
-Open the folder in Android Studio and run any app on a phone or emulator, with
-the native debugger attached. `CMake/AndroidStudio.cmake` is all of it: any
+Open the folder in Android Studio and run or debug any app on a phone or
+emulator. `CMake/AndroidStudio.cmake` is all of it: any
 Android configure with `EACP_ANDROID_STUDIO_DIR` set writes the project there,
 so a project that consumes eacp gets one for its own apps the same way.
 
@@ -643,10 +643,12 @@ SDK's (where Ninja is not beside that CMake, `cmake.dir` is a
 directory of links to the two, since the plugin looks for Ninja there and on a
 PATH an IDE started from the Dock does not have). Each module's configure, one per ABI and build type, gets
 `CPM_<name>_SOURCE` for every package the first configure fetched, so none of
-them fetch again and a local checkout passed that way is the one they build;
-anything else they need goes in `EACP_ANDROID_STUDIO_CMAKE_ARGS` (a consumer's
-`-DMYAPP_BUILD_TESTS=OFF`, say), since the first configure's cache does not
-reach them. `gradlew` needs `JAVA_HOME` at a JDK 17+ (Android Studio brings its
+them fetch again and a local checkout passed that way is the one they build,
+and the rest of the first configure's cache, so a `-D` given there (a
+consumer's `-DMYAPP_BUILD_TESTS=OFF`, say) reaches them too. Both come in as a
+script the first configure writes, `eacp-nested-init.cmake`, which
+`<target>-aab` takes as well. Each app gets a run configuration with the
+native debugger in `.idea/runConfigurations`. `gradlew` needs `JAVA_HOME` at a JDK 17+ (Android Studio brings its
 own); the configure prints the line with the one it found. The modules
 build `arm64-v8a` and `x86_64` (`EACP_ANDROID_ABIS`); Android Studio
 builds only the ABI of the device it runs on. Release builds are signed with

@@ -14,8 +14,6 @@ set(EACP_ANDROID_STUDIO_DIR "" CACHE PATH
         "Write an Android Studio (Gradle) project for every app here")
 set(EACP_ANDROID_ABIS "arm64-v8a;x86_64" CACHE STRING
         "The ABIs the Android Studio project and <target>-aab build")
-set(EACP_ANDROID_STUDIO_CMAKE_ARGS "" CACHE STRING
-        "More -D arguments for the configure each Gradle module runs")
 
 function(eacp_android_studio_add_app target)
     if (NOT EACP_ANDROID_STUDIO_DIR)
@@ -113,26 +111,107 @@ function(eacp_android_studio_write_app dir target)
     file(MAKE_DIRECTORY "${dir}/${target}/src/main")
     eacp_android_studio_write_manifest("${EACP_APK_MANIFEST}"
             "${dir}/${target}/src/main/AndroidManifest.xml")
+
+    # A shared run configuration per app with the native debugger. Left to
+    # itself, Studio makes one with the Auto debugger, which picks Dual for this
+    # module and waits for a Java debugger that the app, all native, never
+    # serves, then kills it. Studio makes no configuration of its own for a
+    # module that has one, and the first one is the selected one.
+    set(EACP_STUDIO_APP "${target}")
+    configure_file("${templates}/runConfiguration.xml.in"
+            "${dir}/.idea/runConfigurations/${target}.xml" @ONLY)
 endfunction()
 
-# Every package this configure fetched, by the source it fetched, so a nested
-# configure fetches nothing and builds the same sources, a CPM_<name>_SOURCE
-# checkout included.
-function(eacp_android_fetched_arguments out)
-    set(arguments "")
+# A line of the nested configures' init script that sets a cache entry as this
+# one is.
+function(eacp_android_studio_cache_line out name value type)
+    string(REPLACE "\\" "\\\\" value "${value}")
+    string(REPLACE "\"" "\\\"" value "${value}")
+    string(REPLACE "$" "\\$" value "${value}")
+    set(${out} "set(${name} \"${value}\" CACHE ${type} \"\" FORCE)\n" PARENT_SCOPE)
+endfunction()
+
+# The init script for the configures nested in this one, each Gradle module's
+# (one per ABI and build type) and <target>-aab's: this configure's own cache,
+# so a -D given here (a consumer's -DMYAPP_BUILD_TESTS=OFF, say) reaches them
+# as it reaches a plain build. Left out is what the nested
+# configure sets itself or what belongs to this one build: CMAKE_* and
+# ANDROID_* (toolchain, ABI, platform, build type, generator) bar a CMAKE_*
+# given on the command line, internal entries, find_* results, which are for
+# this ABI's sysroot, anything inside this build tree, and the Studio
+# directory, so a nested configure writes no project. Then every package this
+# configure fetched, by the source it fetched, so they fetch nothing and build
+# the same sources, a CPM_<name>_SOURCE checkout included.
+#
+# It goes in as CMAKE_PROJECT_TOP_LEVEL_INCLUDES, not -C: the first project()
+# includes it on every configure, the ones Ninja reruns included, and Ninja
+# reruns one when it changes. A -C cache is read once, so Gradle, which
+# configures again only when its own arguments change, would keep the old one.
+# Top-level includes given here, it includes in turn.
+function(eacp_android_nested_init_cache out)
+    set(file "${CMAKE_BINARY_DIR}/eacp-nested-init.cmake")
+    set(content "# Written by eacp's AndroidStudio.cmake on every configure of\n")
+    string(APPEND content "# ${CMAKE_BINARY_DIR}, for the configures nested in it.\n")
+    set(gradle_owned CMAKE_TOOLCHAIN_FILE CMAKE_BUILD_TYPE CMAKE_MAKE_PROGRAM
+            CMAKE_GENERATOR CMAKE_EXPORT_COMPILE_COMMANDS
+            CMAKE_LIBRARY_OUTPUT_DIRECTORY CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    set(command_line "No help, variable specified on the command line.")
+    get_cmake_property(names CACHE_VARIABLES)
+
+    foreach (name IN LISTS names)
+        get_property(type CACHE ${name} PROPERTY TYPE)
+        get_property(help CACHE ${name} PROPERTY HELPSTRING)
+        get_property(value CACHE ${name} PROPERTY VALUE)
+
+        if (type MATCHES "^(INTERNAL|STATIC)$"
+                OR name MATCHES "^(ANDROID_|CPM_|FETCHCONTENT_)"
+                OR name MATCHES "^(EACP_ANDROID_STUDIO_DIR|CMAKE_PROJECT_TOP_LEVEL_INCLUDES)$"
+                OR help MATCHES "^(Path to a |The directory containing a CMake)"
+                OR value MATCHES "-NOTFOUND$")
+            continue()
+        endif ()
+
+        if (name MATCHES "^CMAKE_" AND (NOT help STREQUAL command_line
+                OR name IN_LIST gradle_owned OR name MATCHES "^CMAKE_(SYSTEM|ANDROID)_"))
+            continue()
+        endif ()
+
+        string(FIND "${value}" "${CMAKE_BINARY_DIR}" in_build_tree)
+
+        if (NOT in_build_tree EQUAL -1)
+            continue()
+        endif ()
+
+        if (type STREQUAL "UNINITIALIZED")
+            set(type STRING)
+        endif ()
+
+        eacp_android_studio_cache_line(line ${name} "${value}" ${type})
+        string(APPEND content "${line}")
+    endforeach ()
 
     foreach (package IN LISTS CPM_PACKAGES)
         if (CPM_PACKAGE_${package}_SOURCE_DIR)
-            list(APPEND arguments
-                    "-DCPM_${package}_SOURCE=${CPM_PACKAGE_${package}_SOURCE_DIR}")
+            eacp_android_studio_cache_line(line CPM_${package}_SOURCE
+                    "${CPM_PACKAGE_${package}_SOURCE_DIR}" PATH)
+            string(APPEND content "${line}")
         endif ()
     endforeach ()
 
     if (CPM_SOURCE_CACHE)
-        list(APPEND arguments "-DCPM_SOURCE_CACHE=${CPM_SOURCE_CACHE}")
+        eacp_android_studio_cache_line(line CPM_SOURCE_CACHE "${CPM_SOURCE_CACHE}" PATH)
+        string(APPEND content "${line}")
     endif ()
 
-    set(${out} "${arguments}" PARENT_SCOPE)
+    foreach (include IN LISTS CMAKE_PROJECT_TOP_LEVEL_INCLUDES)
+        get_filename_component(include "${include}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+        string(APPEND content "include([==[${include}]==])\n")
+    endforeach ()
+
+    file(WRITE "${file}.new" "${content}")
+    file(COPY_FILE "${file}.new" "${file}" ONLY_IF_DIFFERENT)
+    file(REMOVE "${file}.new")
+    set(${out} "${file}" PARENT_SCOPE)
 endfunction()
 
 function(eacp_write_android_studio_project)
@@ -140,8 +219,8 @@ function(eacp_write_android_studio_project)
     set(dir "${EACP_ANDROID_STUDIO_DIR}")
     set(templates "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/AndroidStudio")
 
-    eacp_android_fetched_arguments(arguments)
-    list(APPEND arguments -DEACP_UNITY_BUILD=OFF ${EACP_ANDROID_STUDIO_CMAKE_ARGS})
+    eacp_android_nested_init_cache(includes)
+    set(arguments "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=${includes}")
 
     eacp_quoted_list(EACP_STUDIO_CMAKE_ARGUMENTS ",\n                        "
             ${arguments})
@@ -152,11 +231,21 @@ function(eacp_write_android_studio_project)
     eacp_android_studio_cmake_dir("${dir}" EACP_STUDIO_CMAKE_DIR)
 
     set(EACP_STUDIO_INCLUDES "")
+    set(EACP_STUDIO_GRADLE_MODULES "")
 
     foreach (app IN LISTS apps)
         string(APPEND EACP_STUDIO_INCLUDES "include(\":${app}\")\n")
+        string(APPEND EACP_STUDIO_GRADLE_MODULES
+                "            <option value=\"$PROJECT_DIR$/${app}\" />\n")
         eacp_android_studio_write_app("${dir}" ${app})
     endforeach ()
+
+    # With .idea there, Studio opens the folder as a project rather than
+    # importing it, so it needs telling that Gradle builds it. Written once:
+    # Studio keeps this file up to date from then on.
+    if (NOT EXISTS "${dir}/.idea/gradle.xml")
+        configure_file("${templates}/gradle.xml.in" "${dir}/.idea/gradle.xml" @ONLY)
+    endif ()
 
     configure_file("${templates}/settings.gradle.kts.in"
             "${dir}/settings.gradle.kts" @ONLY)

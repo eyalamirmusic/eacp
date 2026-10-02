@@ -134,7 +134,7 @@ endfunction()
 # Each <target>-aab's settings, written once every package is fetched, for the
 # Release configure per ABI to build the same sources.
 function(eacp_android_write_bundles)
-    eacp_android_fetched_arguments(arguments)
+    eacp_android_nested_init_cache(includes)
     get_property(configs GLOBAL PROPERTY EACP_ANDROID_BUNDLES)
 
     foreach (config IN LISTS configs)
@@ -149,7 +149,7 @@ set(OBJCOPY [==[${CMAKE_OBJCOPY}]==])
 set(CONFIGURE_ARGUMENTS [==[-G;${CMAKE_GENERATOR};\
 -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM};\
 -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE};\
--DANDROID_PLATFORM=${ANDROID_PLATFORM};-DCMAKE_BUILD_TYPE=Release;${arguments}]==])
+-DANDROID_PLATFORM=${ANDROID_PLATFORM};-DCMAKE_BUILD_TYPE=Release;-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=${includes}]==])
 ")
     endforeach ()
 endfunction()
