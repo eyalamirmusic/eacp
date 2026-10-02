@@ -1,13 +1,10 @@
 #include "GlyphRasterizer.h"
 #include "Utf8.h"
 
-#include <eacp/Core/Utils/Logging.h>
+#include <eacp/Core/Android/Jni.h>
 #include <eacp/Core/Utils/Strings.h>
-#include <eacp/Graphics/Window/Android.h>
 
 #include <android/bitmap.h>
-#include <android_native_app_glue.h>
-#include <jni.h>
 
 #include <algorithm>
 #include <mutex>
@@ -21,196 +18,67 @@ namespace eacp::Text
 {
 namespace
 {
-JavaVM* javaVM()
-{
-    auto* app = Graphics::Android::getApp();
-
-    if (app == nullptr || app->activity == nullptr)
-        return nullptr;
-
-    return app->activity->vm;
-}
-
-// Attached once per thread and detached when the thread ends, so a thread that
-// rasterizes a screenful of glyphs does not attach and detach per glyph.
-struct ThreadAttachment
-{
-    ~ThreadAttachment()
-    {
-        if (vm != nullptr)
-            vm->DetachCurrentThread();
-    }
-
-    JavaVM* vm = nullptr;
-};
-
-JNIEnv* currentEnv()
-{
-    auto* vm = javaVM();
-
-    if (vm == nullptr)
-        return nullptr;
-
-    auto* env = static_cast<JNIEnv*>(nullptr);
-
-    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK)
-        return env;
-
-    if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK)
-        return nullptr;
-
-    thread_local auto attachment = ThreadAttachment {};
-    attachment.vm = vm;
-
-    return env;
-}
-
-bool failed(JNIEnv* env)
-{
-    if (!env->ExceptionCheck())
-        return false;
-
-    env->ExceptionClear();
-    return true;
-}
-
-constexpr jint localReferencesPerCall = 32;
-
-// Every local reference a call makes is released when it returns: the render
-// thread never goes back to Java, so nothing else would release them.
-struct LocalFrame
-{
-    explicit LocalFrame(JNIEnv* envToUse)
-        : env(envToUse)
-        , pushed(env->PushLocalFrame(localReferencesPerCall) == 0)
-    {
-        if (!pushed)
-            failed(env);
-    }
-
-    ~LocalFrame()
-    {
-        if (pushed)
-            env->PopLocalFrame(nullptr);
-    }
-
-    JNIEnv* env;
-    bool pushed;
-};
-
 struct AndroidGraphics
 {
-    bool load(JNIEnv* env)
+    void resolve(Jni::Lookup& java)
     {
-        auto frame = LocalFrame {env};
-
-        auto global = [env](const char* name)
-        {
-            auto* local = env->FindClass(name);
-            return failed(env) || local == nullptr
-                       ? nullptr
-                       : static_cast<jclass>(env->NewGlobalRef(local));
-        };
-
-        typeface = global("android/graphics/Typeface");
-        paint = global("android/graphics/Paint");
-        fontMetrics = global("android/graphics/Paint$FontMetrics");
-        rect = global("android/graphics/Rect");
-        bitmap = global("android/graphics/Bitmap");
-        bitmapConfig = global("android/graphics/Bitmap$Config");
-        canvas = global("android/graphics/Canvas");
-
-        if (typeface == nullptr || paint == nullptr || fontMetrics == nullptr
-            || rect == nullptr || bitmap == nullptr || bitmapConfig == nullptr
-            || canvas == nullptr)
-            return false;
-
-        auto staticObject = [env](jclass owner, const char* name, const char* type)
-        {
-            auto field = env->GetStaticFieldID(owner, name, type);
-            auto* local =
-                failed(env) ? nullptr : env->GetStaticObjectField(owner, field);
-            return failed(env) || local == nullptr ? nullptr
-                                                   : env->NewGlobalRef(local);
-        };
-
-        auto complete = true;
-
-        auto method =
-            [env, &complete](jclass owner, const char* name, const char* type)
-        {
-            auto id = env->GetMethodID(owner, name, type);
-            complete = complete && !failed(env) && id != nullptr;
-            return id;
-        };
-
-        auto staticMethod =
-            [env, &complete](jclass owner, const char* name, const char* type)
-        {
-            auto id = env->GetStaticMethodID(owner, name, type);
-            complete = complete && !failed(env) && id != nullptr;
-            return id;
-        };
-
-        auto field =
-            [env, &complete](jclass owner, const char* name, const char* type)
-        {
-            auto id = env->GetFieldID(owner, name, type);
-            complete = complete && !failed(env) && id != nullptr;
-            return id;
-        };
+        typeface = java.findClass("android/graphics/Typeface");
+        paint = java.findClass("android/graphics/Paint");
+        fontMetrics = java.findClass("android/graphics/Paint$FontMetrics");
+        rect = java.findClass("android/graphics/Rect");
+        bitmap = java.findClass("android/graphics/Bitmap");
+        bitmapConfig = java.findClass("android/graphics/Bitmap$Config");
+        canvas = java.findClass("android/graphics/Canvas");
 
         defaultTypeface =
-            staticObject(typeface, "DEFAULT", "Landroid/graphics/Typeface;");
+            java.staticObject(typeface, "DEFAULT", "Landroid/graphics/Typeface;");
         monospaceTypeface =
-            staticObject(typeface, "MONOSPACE", "Landroid/graphics/Typeface;");
-        alpha8 = staticObject(
+            java.staticObject(typeface, "MONOSPACE", "Landroid/graphics/Typeface;");
+        alpha8 = java.staticObject(
             bitmapConfig, "ALPHA_8", "Landroid/graphics/Bitmap$Config;");
 
-        createFromName = staticMethod(
+        createFromName = java.staticMethod(
             typeface, "create", "(Ljava/lang/String;I)Landroid/graphics/Typeface;");
-        createWeighted = staticMethod(typeface,
-                                      "create",
-                                      "(Landroid/graphics/Typeface;IZ)"
-                                      "Landroid/graphics/Typeface;");
-        typefaceEquals = method(typeface, "equals", "(Ljava/lang/Object;)Z");
+        createWeighted = java.staticMethod(typeface,
+                                           "create",
+                                           "(Landroid/graphics/Typeface;IZ)"
+                                           "Landroid/graphics/Typeface;");
+        typefaceEquals = java.method(typeface, "equals", "(Ljava/lang/Object;)Z");
 
-        paintInit = method(paint, "<init>", "(I)V");
+        paintInit = java.method(paint, "<init>", "(I)V");
         setTypeface =
-            method(paint,
-                   "setTypeface",
-                   "(Landroid/graphics/Typeface;)Landroid/graphics/Typeface;");
-        setTextSize = method(paint, "setTextSize", "(F)V");
-        getFontMetrics = method(
+            java.method(paint,
+                        "setTypeface",
+                        "(Landroid/graphics/Typeface;)Landroid/graphics/Typeface;");
+        setTextSize = java.method(paint, "setTextSize", "(F)V");
+        getFontMetrics = java.method(
             paint, "getFontMetrics", "()Landroid/graphics/Paint$FontMetrics;");
-        measureText = method(paint, "measureText", "(Ljava/lang/String;)F");
-        getTextBounds = method(paint,
-                               "getTextBounds",
-                               "(Ljava/lang/String;IILandroid/graphics/Rect;)V");
-        hasGlyph = method(paint, "hasGlyph", "(Ljava/lang/String;)Z");
+        measureText = java.method(paint, "measureText", "(Ljava/lang/String;)F");
+        getTextBounds =
+            java.method(paint,
+                        "getTextBounds",
+                        "(Ljava/lang/String;IILandroid/graphics/Rect;)V");
+        hasGlyph = java.method(paint, "hasGlyph", "(Ljava/lang/String;)Z");
 
-        ascent = field(fontMetrics, "ascent", "F");
-        descent = field(fontMetrics, "descent", "F");
-        leading = field(fontMetrics, "leading", "F");
+        ascent = java.field(fontMetrics, "ascent", "F");
+        descent = java.field(fontMetrics, "descent", "F");
+        leading = java.field(fontMetrics, "leading", "F");
 
-        rectInit = method(rect, "<init>", "()V");
-        left = field(rect, "left", "I");
-        top = field(rect, "top", "I");
-        right = field(rect, "right", "I");
-        bottom = field(rect, "bottom", "I");
+        rectInit = java.method(rect, "<init>", "()V");
+        left = java.field(rect, "left", "I");
+        top = java.field(rect, "top", "I");
+        right = java.field(rect, "right", "I");
+        bottom = java.field(rect, "bottom", "I");
 
-        createBitmap = staticMethod(
+        createBitmap = java.staticMethod(
             bitmap,
             "createBitmap",
             "(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;");
-        recycle = method(bitmap, "recycle", "()V");
+        recycle = java.method(bitmap, "recycle", "()V");
 
-        canvasInit = method(canvas, "<init>", "(Landroid/graphics/Bitmap;)V");
-        drawText = method(
+        canvasInit = java.method(canvas, "<init>", "(Landroid/graphics/Bitmap;)V");
+        drawText = java.method(
             canvas, "drawText", "(Ljava/lang/String;FFLandroid/graphics/Paint;)V");
-
-        return complete && defaultTypeface != nullptr && monospaceTypeface != nullptr
-               && alpha8 != nullptr;
     }
 
     jclass typeface = nullptr;
@@ -250,25 +118,6 @@ struct AndroidGraphics
     jfieldID bottom = nullptr;
 };
 
-const AndroidGraphics* androidGraphics(JNIEnv* env)
-{
-    static auto once = std::once_flag {};
-    static auto graphics = AndroidGraphics {};
-    static auto loaded = false;
-
-    std::call_once(once,
-                   [env]
-                   {
-                       loaded = graphics.load(env);
-
-                       if (!loaded)
-                           LOG("Text: android.graphics did not load; no text "
-                               "will be drawn");
-                   });
-
-    return loaded ? &graphics : nullptr;
-}
-
 constexpr jint paintAntiAliasFlag = 0x01;
 constexpr jint paintSubpixelTextFlag = 0x80;
 
@@ -305,12 +154,6 @@ bool isGenericFamily(const std::string& family)
             return true;
 
     return false;
-}
-
-jstring javaString(JNIEnv* env, std::u16string_view text)
-{
-    return env->NewString(reinterpret_cast<const jchar*>(text.data()),
-                          (jsize) text.size());
 }
 
 std::u16string utf16Of(char32_t codepoint)
@@ -353,17 +196,17 @@ struct GlyphRasterizer::Native
     explicit Native(const FontRequest& requestToUse)
         : request(requestToUse)
     {
-        auto* env = currentEnv();
+        auto* env = Jni::currentEnv();
 
         if (env == nullptr)
             return;
 
-        java = androidGraphics(env);
+        java = Jni::resolveOnce<AndroidGraphics>(env);
 
         if (java == nullptr)
             return;
 
-        auto frame = LocalFrame {env};
+        auto frame = Jni::LocalFrame {env};
 
         resolve(env);
         valid = base != nullptr && variant(env, {}) != nullptr;
@@ -371,7 +214,7 @@ struct GlyphRasterizer::Native
 
     ~Native()
     {
-        auto* env = currentEnv();
+        auto* env = Jni::currentEnv();
 
         if (env == nullptr)
             return;
@@ -394,11 +237,12 @@ struct GlyphRasterizer::Native
 
         auto* name = env->NewStringUTF(request.family.c_str());
         auto* typeface =
-            failed(env) ? nullptr
-                        : env->CallStaticObjectMethod(
-                              java->typeface, java->createFromName, name, (jint) 0);
+            Jni::failed(env)
+                ? nullptr
+                : env->CallStaticObjectMethod(
+                      java->typeface, java->createFromName, name, (jint) 0);
 
-        if (failed(env) || typeface == nullptr)
+        if (Jni::failed(env) || typeface == nullptr)
             typeface = java->defaultTypeface;
 
         // Typeface.create hands back the default face for a name it does not
@@ -406,7 +250,7 @@ struct GlyphRasterizer::Native
         auto isDefault = env->CallBooleanMethod(
             typeface, java->typefaceEquals, java->defaultTypeface);
         auto substituted =
-            !failed(env) && isDefault && !isGenericFamily(request.family);
+            !Jni::failed(env) && isDefault && !isGenericFamily(request.family);
 
         base = env->NewGlobalRef(typeface);
         resolved =
@@ -420,7 +264,7 @@ struct GlyphRasterizer::Native
         if (auto found = variants.find(key); found != variants.end())
             return &found->second;
 
-        auto frame = LocalFrame {env};
+        auto frame = Jni::LocalFrame {env};
 
         auto* typeface = env->CallStaticObjectMethod(java->typeface,
                                                      java->createWeighted,
@@ -428,27 +272,27 @@ struct GlyphRasterizer::Native
                                                      (jint) key.weight,
                                                      (jboolean) key.italic);
 
-        if (failed(env) || typeface == nullptr)
+        if (Jni::failed(env) || typeface == nullptr)
             typeface = base;
 
         auto* paint = env->NewObject(java->paint, java->paintInit, paintFlags);
 
-        if (failed(env) || paint == nullptr)
+        if (Jni::failed(env) || paint == nullptr)
             return nullptr;
 
         env->CallObjectMethod(paint, java->setTypeface, typeface);
 
-        if (failed(env))
+        if (Jni::failed(env))
             return nullptr;
 
         env->CallVoidMethod(paint, java->setTextSize, (jfloat) request.pixelSize());
 
-        if (failed(env))
+        if (Jni::failed(env))
             return nullptr;
 
         auto* metrics = env->CallObjectMethod(paint, java->getFontMetrics);
 
-        if (failed(env) || metrics == nullptr)
+        if (Jni::failed(env) || metrics == nullptr)
             return nullptr;
 
         auto face = AndroidVariant {};
@@ -457,15 +301,15 @@ struct GlyphRasterizer::Native
         face.metrics.leading =
             std::max(0.f, env->GetFloatField(metrics, java->leading));
 
-        auto* letter = javaString(env, u"M");
+        auto* letter = Jni::toJava(env, u"M");
 
-        if (failed(env))
+        if (Jni::failed(env))
             return nullptr;
 
         face.metrics.advance =
             env->CallFloatMethod(paint, java->measureText, letter);
 
-        if (failed(env))
+        if (Jni::failed(env))
             return nullptr;
 
         face.paint = env->NewGlobalRef(paint);
@@ -478,13 +322,14 @@ struct GlyphRasterizer::Native
         if (auto found = face.advances.find(codepoint); found != face.advances.end())
             return found->second;
 
-        auto frame = LocalFrame {env};
-        auto* text = javaString(env, utf16Of(codepoint));
+        auto frame = Jni::LocalFrame {env};
+        auto* text = Jni::toJava(env, utf16Of(codepoint));
         auto advance =
-            failed(env) ? 0.f
-                        : env->CallFloatMethod(face.paint, java->measureText, text);
+            Jni::failed(env)
+                ? 0.f
+                : env->CallFloatMethod(face.paint, java->measureText, text);
 
-        if (failed(env))
+        if (Jni::failed(env))
             advance = 0.f;
 
         face.advances.emplace(codepoint, advance);
@@ -495,7 +340,7 @@ struct GlyphRasterizer::Native
     FontMetrics metrics(const FontVariant& wanted) const
     {
         const auto lock = std::lock_guard {mutex};
-        auto* env = valid ? currentEnv() : nullptr;
+        auto* env = valid ? Jni::currentEnv() : nullptr;
         auto* face = env != nullptr ? variant(env, wanted) : nullptr;
 
         return face != nullptr ? face->metrics : FontMetrics {};
@@ -505,7 +350,7 @@ struct GlyphRasterizer::Native
     {
         const auto lock = std::lock_guard {mutex};
         auto result = ShapedRun {};
-        auto* env = valid ? currentEnv() : nullptr;
+        auto* env = valid ? Jni::currentEnv() : nullptr;
         auto* face = env != nullptr ? variant(env, wanted) : nullptr;
 
         if (face == nullptr)
@@ -532,23 +377,23 @@ struct GlyphRasterizer::Native
     {
         const auto lock = std::lock_guard {mutex};
         auto result = GlyphBitmap {};
-        auto* env = valid ? currentEnv() : nullptr;
+        auto* env = valid ? Jni::currentEnv() : nullptr;
         auto* face = env != nullptr ? variant(env, wanted) : nullptr;
 
         if (face == nullptr || key.font != 0)
             return result;
 
         const auto codepoint = (char32_t) key.glyph;
-        auto frame = LocalFrame {env};
+        auto frame = Jni::LocalFrame {env};
         const auto utf16 = utf16Of(codepoint);
-        auto* text = javaString(env, utf16);
+        auto* text = Jni::toJava(env, utf16);
 
-        if (failed(env))
+        if (Jni::failed(env))
             return result;
 
         auto present = env->CallBooleanMethod(face->paint, java->hasGlyph, text);
 
-        if (failed(env) || !present)
+        if (Jni::failed(env) || !present)
             return result;
 
         result.valid = true;
@@ -556,7 +401,7 @@ struct GlyphRasterizer::Native
 
         auto* bounds = env->NewObject(java->rect, java->rectInit);
 
-        if (failed(env) || bounds == nullptr)
+        if (Jni::failed(env) || bounds == nullptr)
             return result;
 
         env->CallVoidMethod(face->paint,
@@ -566,7 +411,7 @@ struct GlyphRasterizer::Native
                             (jint) utf16.size(),
                             bounds);
 
-        if (failed(env))
+        if (Jni::failed(env))
             return result;
 
         const auto boundsLeft = env->GetIntField(bounds, java->left);
@@ -590,12 +435,12 @@ struct GlyphRasterizer::Native
                                                    (jint) height,
                                                    java->alpha8);
 
-        if (failed(env) || bitmap == nullptr)
+        if (Jni::failed(env) || bitmap == nullptr)
             return result;
 
         auto* canvas = env->NewObject(java->canvas, java->canvasInit, bitmap);
 
-        if (!failed(env) && canvas != nullptr)
+        if (!Jni::failed(env) && canvas != nullptr)
         {
             env->CallVoidMethod(canvas,
                                 java->drawText,
@@ -604,12 +449,12 @@ struct GlyphRasterizer::Native
                                 (jfloat) -top,
                                 face->paint);
 
-            if (!failed(env))
+            if (!Jni::failed(env))
                 copyPixels(env, bitmap, width, height, result);
         }
 
         env->CallVoidMethod(bitmap, java->recycle);
-        failed(env);
+        Jni::failed(env);
 
         result.bearingX = (float) left;
         result.bearingY = (float) -top;

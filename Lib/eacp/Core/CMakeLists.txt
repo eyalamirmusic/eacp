@@ -116,6 +116,7 @@ elseif (UNIX AND NOT APPLE)
 
     if (ANDROID)
         target_sources(eacp-core PRIVATE
+                Android/Jni-Android.cpp
                 Process/SpawnDirectory-Android.cpp
                 Threads/EventLoop-Android.cpp
                 Utils/FilePath-Android.cpp

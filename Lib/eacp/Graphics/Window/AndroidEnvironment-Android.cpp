@@ -1,10 +1,10 @@
 #include "AndroidEnvironment-Android.h"
 
+#include <eacp/Core/Android/Jni.h>
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Logging.h>
 
 #include <android/native_activity.h>
-#include <jni.h>
 #include <sys/system_properties.h>
 
 #include <sstream>
@@ -15,49 +15,6 @@ namespace eacp::Graphics
 namespace
 {
 constexpr jint localReferencesPerExtra = 8;
-
-bool javaFailed(JNIEnv* env)
-{
-    if (!env->ExceptionCheck())
-        return false;
-
-    env->ExceptionClear();
-    return true;
-}
-
-jobject
-    callObject(JNIEnv* env, jobject target, const char* name, const char* signature)
-{
-    if (target == nullptr)
-        return nullptr;
-
-    auto method = env->GetMethodID(env->GetObjectClass(target), name, signature);
-
-    if (javaFailed(env))
-        return nullptr;
-
-    auto* result = env->CallObjectMethod(target, method);
-    return javaFailed(env) ? nullptr : result;
-}
-
-std::string javaString(JNIEnv* env, jobject text)
-{
-    if (text == nullptr)
-        return {};
-
-    auto* chars = env->GetStringUTFChars(static_cast<jstring>(text), nullptr);
-
-    if (chars == nullptr)
-    {
-        javaFailed(env);
-        return {};
-    }
-
-    auto result = std::string {chars};
-    env->ReleaseStringUTFChars(static_cast<jstring>(text), chars);
-
-    return result;
-}
 
 void importVariable(const std::string& name,
                     const std::string& value,
@@ -105,29 +62,23 @@ void importSystemProperty(const std::string& package)
 
 void importExtra(JNIEnv* env, jobject extras, jmethodID getString, jobject key)
 {
-    if (env->PushLocalFrame(localReferencesPerExtra) != 0)
-    {
-        javaFailed(env);
-        return;
-    }
-
+    auto frame = Jni::LocalFrame {env, localReferencesPerExtra};
     auto* value = env->CallObjectMethod(extras, getString, key);
 
-    if (!javaFailed(env) && value != nullptr)
+    if (!Jni::failed(env) && value != nullptr)
         importVariable(
-            javaString(env, key), javaString(env, value), "the launch intent");
-
-    env->PopLocalFrame(nullptr);
+            Jni::toString(env, key), Jni::toString(env, value), "the launch intent");
 }
 
 void importIntentExtras(JNIEnv* env, jobject activity)
 {
     auto* intent =
-        callObject(env, activity, "getIntent", "()Landroid/content/Intent;");
-    auto* extras = callObject(env, intent, "getExtras", "()Landroid/os/Bundle;");
-    auto* keySet = callObject(env, extras, "keySet", "()Ljava/util/Set;");
+        Jni::callObject(env, activity, "getIntent", "()Landroid/content/Intent;");
+    auto* extras =
+        Jni::callObject(env, intent, "getExtras", "()Landroid/os/Bundle;");
+    auto* keySet = Jni::callObject(env, extras, "keySet", "()Ljava/util/Set;");
     auto* keys = static_cast<jobjectArray>(
-        callObject(env, keySet, "toArray", "()[Ljava/lang/Object;"));
+        Jni::callObject(env, keySet, "toArray", "()[Ljava/lang/Object;"));
 
     if (keys == nullptr)
         return;
@@ -136,7 +87,7 @@ void importIntentExtras(JNIEnv* env, jobject activity)
                                       "getString",
                                       "(Ljava/lang/String;)Ljava/lang/String;");
 
-    if (javaFailed(env))
+    if (Jni::failed(env))
         return;
 
     const auto count = env->GetArrayLength(keys);
@@ -145,7 +96,7 @@ void importIntentExtras(JNIEnv* env, jobject activity)
     {
         auto* key = env->GetObjectArrayElement(keys, index);
 
-        if (!javaFailed(env))
+        if (!Jni::failed(env))
             importExtra(env, extras, getString, key);
 
         env->DeleteLocalRef(key);
@@ -155,10 +106,10 @@ void importIntentExtras(JNIEnv* env, jobject activity)
 void importEnvironment(JNIEnv* env, jobject activity)
 {
     auto* package =
-        callObject(env, activity, "getPackageName", "()Ljava/lang/String;");
+        Jni::callObject(env, activity, "getPackageName", "()Ljava/lang/String;");
 
     if (package != nullptr)
-        importSystemProperty(javaString(env, package));
+        importSystemProperty(Jni::toString(env, package));
 
     importIntentExtras(env, activity);
 }
@@ -166,27 +117,12 @@ void importEnvironment(JNIEnv* env, jobject activity)
 
 void importAndroidEnvironment(ANativeActivity* activity)
 {
-    if (activity == nullptr || activity->vm == nullptr)
+    auto* env = Jni::currentEnv();
+
+    if (env == nullptr || activity == nullptr)
         return;
 
-    auto* env = static_cast<JNIEnv*>(nullptr);
-    auto attached = false;
-
-    if (activity->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6)
-        != JNI_OK)
-    {
-        if (activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK)
-        {
-            LOG("Android: could not attach to the VM; no environment imported");
-            return;
-        }
-
-        attached = true;
-    }
-
+    auto frame = Jni::LocalFrame {env};
     importEnvironment(env, activity->clazz);
-
-    if (attached)
-        activity->vm->DetachCurrentThread();
 }
 } // namespace eacp::Graphics

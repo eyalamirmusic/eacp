@@ -6,6 +6,7 @@
 #include "LinuxWindowSystem-Linux.h"
 #include "../View/AndroidViewSurface-Android.h"
 
+#include <eacp/Core/Android/Jni.h>
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/Threads/EventLoop-Android.h>
 #include <eacp/Core/Utils/FilePath-Android.h>
@@ -13,7 +14,6 @@
 #include <android/configuration.h>
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
-#include <jni.h>
 
 #include <optional>
 #include <string>
@@ -22,7 +22,6 @@ namespace eacp::Graphics
 {
 namespace
 {
-constexpr auto androidInsetsLocalReferences = 16;
 constexpr auto nanosecondsPerSecond = 1e9;
 
 // Before the native window arrives.
@@ -60,131 +59,66 @@ float androidBackingScale(android_app* app)
     return (float) density / (float) ACONFIGURATION_DENSITY_MEDIUM;
 }
 
-bool androidJavaFailed(JNIEnv* env)
+struct AndroidInsetsJava
 {
-    if (!env->ExceptionCheck())
-        return false;
+    void resolve(Jni::Lookup& lookup)
+    {
+        auto* types = lookup.findClass("android/view/WindowInsets$Type");
+        auto* windowInsets = lookup.findClass("android/view/WindowInsets");
+        auto* insets = lookup.findClass("android/graphics/Insets");
 
-    env->ExceptionClear();
-    return true;
-}
+        for (const auto* type: {"systemBars", "displayCutout"})
+            if (auto method = lookup.staticMethod(types, type, "()I"))
+                mask |= lookup.env->CallStaticIntMethod(types, method);
 
-jobject androidCallObject(JNIEnv* env,
-                          jobject target,
-                          const char* name,
-                          const char* signature)
-{
-    if (target == nullptr)
-        return nullptr;
+        getInsets =
+            lookup.method(windowInsets, "getInsets", "(I)Landroid/graphics/Insets;");
+        left = lookup.field(insets, "left", "I");
+        top = lookup.field(insets, "top", "I");
+        right = lookup.field(insets, "right", "I");
+        bottom = lookup.field(insets, "bottom", "I");
+    }
 
-    auto method = env->GetMethodID(env->GetObjectClass(target), name, signature);
-
-    if (androidJavaFailed(env))
-        return nullptr;
-
-    auto* result = env->CallObjectMethod(target, method);
-    return androidJavaFailed(env) ? nullptr : result;
-}
-
-jint androidInsetsType(JNIEnv* env, jclass types, const char* name)
-{
-    auto method = env->GetStaticMethodID(types, name, "()I");
-
-    if (androidJavaFailed(env))
-        return 0;
-
-    auto type = env->CallStaticIntMethod(types, method);
-    return androidJavaFailed(env) ? 0 : type;
-}
-
-std::optional<jint> androidIntField(JNIEnv* env, jobject target, const char* name)
-{
-    auto field = env->GetFieldID(env->GetObjectClass(target), name, "I");
-
-    if (androidJavaFailed(env))
-        return std::nullopt;
-
-    return env->GetIntField(target, field);
-}
-
-std::optional<ARect> androidReadSystemInsets(JNIEnv* env, jobject activity)
-{
-    auto* window =
-        androidCallObject(env, activity, "getWindow", "()Landroid/view/Window;");
-    auto* decor =
-        androidCallObject(env, window, "getDecorView", "()Landroid/view/View;");
-    auto* rootInsets = androidCallObject(
-        env, decor, "getRootWindowInsets", "()Landroid/view/WindowInsets;");
-
-    if (rootInsets == nullptr)
-        return std::nullopt;
-
-    auto* types = env->FindClass("android/view/WindowInsets$Type");
-
-    if (androidJavaFailed(env))
-        return std::nullopt;
-
-    auto mask = androidInsetsType(env, types, "systemBars")
-                | androidInsetsType(env, types, "displayCutout");
-    auto getInsets = env->GetMethodID(env->GetObjectClass(rootInsets),
-                                      "getInsets",
-                                      "(I)Landroid/graphics/Insets;");
-
-    if (androidJavaFailed(env))
-        return std::nullopt;
-
-    auto* insets = env->CallObjectMethod(rootInsets, getInsets, mask);
-
-    if (androidJavaFailed(env) || insets == nullptr)
-        return std::nullopt;
-
-    auto left = androidIntField(env, insets, "left");
-    auto top = androidIntField(env, insets, "top");
-    auto right = androidIntField(env, insets, "right");
-    auto bottom = androidIntField(env, insets, "bottom");
-
-    if (!left || !top || !right || !bottom)
-        return std::nullopt;
-
-    return ARect {*left, *top, *right, *bottom};
-}
+    jint mask = 0;
+    jmethodID getInsets = nullptr;
+    jfieldID left = nullptr;
+    jfieldID top = nullptr;
+    jfieldID right = nullptr;
+    jfieldID bottom = nullptr;
+};
 
 // The system bars' and the cutout's insets in pixels, read over JNI: the glue's
 // content rect covers the whole window once an app is edge to edge, which
 // every app targeting API 35 is. Empty before the decor view is attached.
 std::optional<ARect> androidSystemInsets(ANativeActivity* activity)
 {
-    if (activity == nullptr || activity->vm == nullptr)
+    auto* env = Jni::currentEnv();
+    const auto* java =
+        env != nullptr ? Jni::resolveOnce<AndroidInsetsJava>(env) : nullptr;
+
+    if (java == nullptr || activity == nullptr)
         return std::nullopt;
 
-    auto* env = static_cast<JNIEnv*>(nullptr);
-    auto attached = false;
+    auto frame = Jni::LocalFrame {env};
+    auto* window = Jni::callObject(
+        env, activity->clazz, "getWindow", "()Landroid/view/Window;");
+    auto* decor =
+        Jni::callObject(env, window, "getDecorView", "()Landroid/view/View;");
+    auto* rootInsets = Jni::callObject(
+        env, decor, "getRootWindowInsets", "()Landroid/view/WindowInsets;");
 
-    if (activity->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6)
-        != JNI_OK)
-    {
-        if (activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK)
-            return std::nullopt;
+    if (rootInsets == nullptr)
+        return std::nullopt;
 
-        attached = true;
-    }
+    auto* insets = env->CallObjectMethod(rootInsets, java->getInsets, java->mask);
 
-    auto result = std::optional<ARect> {};
+    if (Jni::failed(env) || insets == nullptr)
+        return std::nullopt;
 
-    if (env->PushLocalFrame(androidInsetsLocalReferences) == 0)
-    {
-        result = androidReadSystemInsets(env, activity->clazz);
-        env->PopLocalFrame(nullptr);
-    }
-    else
-    {
-        androidJavaFailed(env);
-    }
-
-    if (attached)
-        activity->vm->DetachCurrentThread();
-
-    return result;
+    return ARect {env->GetIntField(insets, java->left),
+                  env->GetIntField(insets, java->top),
+                  env->GetIntField(insets, java->right),
+                  env->GetIntField(insets, java->bottom)};
 }
 
 void androidHandleCommand(android_app* app, int32_t command);
@@ -629,6 +563,7 @@ extern "C" void eacpAndroidStart(android_app* app)
     using namespace eacp::Graphics;
 
     androidActivity().app = app;
+    eacp::Jni::setJavaVM(app->activity->vm);
 
     if (app->activity != nullptr && app->activity->internalDataPath != nullptr)
         eacp::setAndroidDataDirectory(app->activity->internalDataPath);
