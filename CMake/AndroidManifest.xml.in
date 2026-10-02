@@ -7,9 +7,9 @@
     <uses-sdk android:minSdkVersion="@EACP_APK_MIN_SDK@"
             android:targetSdkVersion="@EACP_APK_TARGET_SDK@" />
 
-    <!-- The Vulkan backend's floor: 1.3 with dynamic rendering. -->
+    <!-- The Vulkan backend's floor: 1.1 with the extensions it needs. -->
     <uses-feature android:name="android.hardware.vulkan.version"
-            android:version="0x403000" android:required="true" />
+            android:version="0x401000" android:required="true" />
 @EACP_APK_MANIFEST_ELEMENTS@
 
     <application android:label="@EACP_APK_LABEL@"

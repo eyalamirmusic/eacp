@@ -290,10 +290,10 @@ endif ()
 native("${sdk}/ndk/${EACP_ANDROID_NDK_VERSION}/ndk-stack${exe}" ndk_stack)
 if (emulator_wanted)
     eacp_say("done. From the eacp checkout, run HelloGPU on a phone with USB "
-            "debugging on (Android 13+, Vulkan 1.3), or with none attached on "
+            "debugging on (Android 13+, Vulkan 1.1), or with none attached on "
             "the AVD ${avd}, which the run boots:")
 else ()
-    eacp_say("done. Turn on USB debugging on a phone (Android 13+, Vulkan 1.3), "
+    eacp_say("done. Turn on USB debugging on a phone (Android 13+, Vulkan 1.1), "
             "plug it in, accept the prompt on it, and from the eacp checkout:")
 endif ()
 

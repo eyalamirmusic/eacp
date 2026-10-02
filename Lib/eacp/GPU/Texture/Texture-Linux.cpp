@@ -34,16 +34,10 @@ void retireImage(VulkanContext& context,
         return;
 
     context.deferRelease(
-        [allocator = context.getAllocator(),
-         device = context.getDevice(),
-         image,
-         allocation,
-         first,
-         second]
+        [allocator = context.getAllocator(), image, allocation, first, second]
         {
             for (auto view: {first, second})
-                if (view != VK_NULL_HANDLE)
-                    vkDestroyImageView(device, view, nullptr);
+                getVulkanShared().destroyImageView(view);
 
             // A swapchain image has no allocation of its own.
             if (allocation != nullptr)

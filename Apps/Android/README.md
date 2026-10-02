@@ -1,6 +1,6 @@
 # Running eacp on Android
 
-For a Windows, macOS or Linux machine, and an Android 13+ phone with Vulkan 1.3 or, with no phone, the Android Emulator the setup installs.
+For a Windows, macOS or Linux machine, and an Android 13+ phone with Vulkan 1.1 or, with no phone, the Android Emulator the setup installs.
 Every command runs from the eacp checkout, in any shell: PowerShell, cmd, zsh or bash.
 
 ## 1. Install

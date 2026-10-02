@@ -532,8 +532,7 @@ struct GPUView::Native
         currentSlot = 0;
 
         for (auto& image: images)
-            if (image.attachmentView != VK_NULL_HANDLE)
-                vkDestroyImageView(vulkanDevice, image.attachmentView, nullptr);
+            getVulkanShared().destroyImageView(image.attachmentView);
 
         images.clear();
 

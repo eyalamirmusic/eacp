@@ -99,7 +99,7 @@ Android's NativeActivity with Vulkan.
 
 † Linux and Android have no platform 2D tier and no menus; what that costs is
 spelled out two paragraphs down. ‡ Android: Android 13 (API 33) or later on a
-Vulkan 1.3 device, as a NativeActivity (see [Android](#android)); no HTTP
+Vulkan 1.1 device, as a NativeActivity (see [Android](#android)); no HTTP
 client (the NDK has no libcurl), no IME text input yet, and text is shaped a
 code point at a time (no kerning, ligatures or complex scripts).
 
@@ -566,8 +566,12 @@ and it says so), installs, launches and prints the app's first seconds of
 logcat; a first install can make the phone ask about the app (Play Protect),
 and the install waits up to two minutes for the answer.
 
-The floor is Android 13 (API 33) on a device with Vulkan 1.3, which the
-manifest requires. eacp builds with one NDK, the current stable r30
+The floor is Android 13 (API 33) on a device with Vulkan 1.1, which the
+manifest requires, and the extensions that became 1.3's synchronization: many
+phones' drivers still report 1.1 (a Galaxy S22's Adreno 730 does), and there
+the backend takes the render-pass path described in `Lib/eacp/GPU/README.md`.
+The arm64 emulator on Apple Silicon is a 1.3 device. eacp builds with one NDK,
+the current stable r30
 (30.0.16248370), the way the Apple platforms assume a current Xcode, with
 build-tools 35.0.0 and platform 35; an older NDK is an error (eacp uses
 libc++'s `std::atomic_ref` and `std::jthread`). Tests build too; `Network`, the
