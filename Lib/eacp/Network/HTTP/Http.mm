@@ -6,6 +6,11 @@
 #include <eacp/Core/ObjC/RuntimeClass.h>
 #include <eacp/Core/ObjC/Strings.h>
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+
 namespace eacp::HTTP
 {
 struct DownloadContext
@@ -219,29 +224,48 @@ void copyResponseHeaders(NSHTTPURLResponse* httpResponse, Response& response)
     }
 }
 
-SafeResult performSyncRequest(NSURLRequest* request, NSURLSession* session)
+// Waits in 50ms slices rather than on a semaphore so the caller's cancel
+// flag is seen while the task is blocked: cancelling the task then ends it
+// with NSURLErrorCancelled, which lands here like any other completion.
+SafeResult performSyncRequest(NSURLRequest* request,
+                              NSURLSession* session,
+                              const std::atomic<bool>* cancel)
 {
     auto result = SafeResult();
+    auto mutex = std::mutex();
+    auto settled = std::condition_variable();
+    auto done = false;
 
-    auto semaphore = Threads::TaskSemaphore();
-
-    auto cppHandler =
-        [&result, &semaphore](NSData* data, NSURLResponse* res, NSError* error)
+    auto cppHandler = [&](NSData* data, NSURLResponse* res, NSError* error)
     {
         result.data.reset(data);
         result.response.reset(res);
         result.error.reset(error);
 
-        semaphore.signal();
+        {
+            auto lock = std::scoped_lock(mutex);
+            done = true;
+        }
+
+        settled.notify_all();
     };
 
-    [[session
+    auto task = ObjC::attachPtr([session
         dataTaskWithRequest:request
           completionHandler:^(NSData* data, NSURLResponse* res, NSError* error) {
             cppHandler(data, res, error);
-          }] resume];
+          }]);
 
-    semaphore.wait();
+    [task.get() resume];
+
+    auto lock = std::unique_lock(mutex);
+
+    while (!settled.wait_for(
+        lock, std::chrono::milliseconds(50), [&done] { return done; }))
+    {
+        if (cancel != nullptr && cancel->load())
+            [task.get() cancel];
+    }
 
     return result;
 }
@@ -250,7 +274,10 @@ Response httpRequestInternal(const Request& req)
 {
     auto request = getRequest(req);
     auto session = SessionForRequest(req);
-    auto raw = performSyncRequest(request, session.get());
+    auto raw = performSyncRequest(
+        request,
+        session.get(),
+        req.progress != nullptr ? &req.progress->cancel : nullptr);
 
     if (raw.error)
         throw std::runtime_error(Strings::toStdString(raw.error.get()));

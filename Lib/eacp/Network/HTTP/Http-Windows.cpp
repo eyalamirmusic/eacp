@@ -6,6 +6,7 @@
 
 #include <winhttp.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -150,7 +151,10 @@ void applyTimeouts(HINTERNET request, const Request& req)
 // the curl and NSURLSession backends give. Closing the request handle is the
 // one thing that does cut a blocked call short, so the handle lives here with
 // a thread that closes it at the deadline; the call then fails with
-// ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout.
+// ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout. The same
+// thread watches the caller's cancel flag, polled every 50ms, so a cancel
+// cuts a blocked call short the same way rather than waiting for a chunk
+// to arrive and the streaming loop to notice.
 class TimedRequestHandle
 {
     using Clock = std::chrono::steady_clock;
@@ -164,17 +168,23 @@ public:
 
     // Takes ownership of the handle and starts the clock. Called before the
     // first blocking call, so the whole exchange sits inside the window.
-    void adopt(HINTERNET requestToOwn, Time::MS timeout)
+    void adopt(HINTERNET requestToOwn,
+               Time::MS timeout,
+               const std::atomic<bool>* cancelFlag)
     {
         handle = requestToOwn;
+        cancel = cancelFlag;
 
-        if (timeout.count <= 0)
+        if (timeout.count <= 0 && cancel == nullptr)
             return;
 
         // The deadline is pinned here rather than inside the watchdog: a
         // contended machine can take a while to schedule the thread, and that
         // delay would otherwise be added to the limit the caller asked for.
-        auto due = Clock::now() + std::chrono::milliseconds(timeout.count);
+        auto due = timeout.count > 0
+                       ? Clock::now() + std::chrono::milliseconds(timeout.count)
+                       : Clock::time_point::max();
+
         watchdog = std::thread([this, due] { watch(due); });
     }
 
@@ -182,6 +192,9 @@ public:
 
     void throwIfTimedOut() const
     {
+        if (cancelled.load())
+            throw std::runtime_error("The request was cancelled");
+
         if (expired.load())
             throw std::runtime_error("The request timed out");
     }
@@ -191,12 +204,27 @@ private:
     {
         auto lock = std::unique_lock(mutex);
 
-        if (settled.wait_until(lock, due, [this] { return finished; }))
-            return;
+        while (true)
+        {
+            auto slice = std::min(due, Clock::now() + std::chrono::milliseconds(50));
+
+            if (settled.wait_until(lock, slice, [this] { return finished; }))
+                return;
+
+            if (cancel != nullptr && cancel->load())
+            {
+                cancelled.store(true);
+                break;
+            }
+
+            if (Clock::now() >= due)
+            {
+                expired.store(true);
+                break;
+            }
+        }
 
         lock.unlock();
-
-        expired.store(true);
         closeOnce();
     }
 
@@ -222,10 +250,12 @@ private:
     }
 
     HINTERNET handle = nullptr;
+    const std::atomic<bool>* cancel = nullptr;
     std::thread watchdog;
     std::mutex mutex;
     std::condition_variable settled;
     std::atomic<bool> expired {false};
+    std::atomic<bool> cancelled {false};
     std::atomic<bool> closed {false};
     bool finished = false;
 };
@@ -303,7 +333,9 @@ void sendRequest(const Request& req, OpenedRequest& opened)
         throwLastError("Opening the request");
 
     applyTimeouts(request, req);
-    opened.request.adopt(request, req.timeout);
+    opened.request.adopt(request,
+                         req.timeout,
+                         req.progress != nullptr ? &req.progress->cancel : nullptr);
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
