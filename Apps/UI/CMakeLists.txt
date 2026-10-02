@@ -40,6 +40,11 @@ add_subdirectory(WidgetGallery)
 # that empties the folder both apps share.
 add_subdirectory(ResourceMonitor)
 
+# Every finger as a disc labelled with its id, position and radius, the count
+# and the safe-area insets in a corner: View's touch API, with the mouse as one
+# finger on a desktop.
+add_subdirectory(TouchDemo)
+
 # An SVG document drawn twice in one window: native shape layers on the left,
 # the component tier's coverage masks on the right, for comparing the two on
 # screen and for reading what a real document costs the atlas.

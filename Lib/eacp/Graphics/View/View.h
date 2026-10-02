@@ -149,6 +149,10 @@ struct TouchEvent
     int id = 0;
     TouchPhase phase = TouchPhase::Began;
     float pressure = 1.0f;
+
+    // The contact's radius in points, 0 where the input has none (a mouse).
+    // Android fills it from AMotionEvent_getTouchMajor.
+    float radius = 0.f;
     int tapCount = 1;
     double timestamp = 0.0;
 };
