@@ -23,12 +23,21 @@ if (NOT command STREQUAL "generate")
     message(FATAL_ERROR "ResEmbedGenerator: only `generate` is supported, not `${command}`")
 endif ()
 
-# --output-cpp <p> becomes output_cpp, and so on for every flag.
+# --output-cpp <p> becomes output_cpp, and so on for every flag. --use-embed
+# and --big-endian take no value; the arrays written here are plain bytes, so
+# both are read and neither changes what is written.
 set(category Resources)
 set(split_count 0)
+set(switches --use-embed --big-endian)
 
 while (args)
-    list(POP_FRONT args flag value)
+    list(POP_FRONT args flag)
+    set(value TRUE)
+
+    if (NOT flag IN_LIST switches)
+        list(POP_FRONT args value)
+    endif ()
+
     string(REGEX REPLACE "^--" "" flag "${flag}")
     string(REPLACE "-" "_" flag "${flag}")
     set(${flag} "${value}")

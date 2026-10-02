@@ -586,6 +586,35 @@ needs the Windows Hypervisor Platform, `-gpu host` and the `x86_64` image,
 which runs the `arm64-v8a` APK through ARM translation (SwiftShader lacks
 features eacp needs).
 
+#### Android Studio
+
+`cmake --preset android-studio` writes a Gradle project to
+`build-android-studio`, the way `cmake -G Xcode` writes an Xcode project, for
+Android Studio, IntelliJ or `gradlew` on a CI machine. It has one module per
+`eacp_add_app`, each a few lines of `build.gradle.kts` whose
+`externalNativeBuild` runs eacp's own `CMakeLists.txt` for that one target, and
+a manifest generated from the same arguments `eacp_add_android_apk` takes:
+Gradle compiles no Java or Kotlin, it calls CMake and packages the library.
+Open the folder in Android Studio and run any app on a phone or emulator, with
+the native debugger attached. `CMake/AndroidStudio.cmake` is all of it: any
+Android configure with `EACP_ANDROID_STUDIO_DIR` set writes the project there,
+so a project that consumes eacp gets one for its own apps the same way.
+
+The Android Gradle Plugin and Gradle versions live in
+`CMake/AndroidVersions.cmake` beside the NDK and SDK ones, which the modules
+take as `ndkVersion` and `compileSdk` (build-tools are the plugin's own default,
+which it installs on first sync). The wrapper jar and
+scripts are fetched from Gradle's repository at that release and checked
+against pinned hashes; Gradle itself downloads into `~/.gradle` on first sync.
+`local.properties` names the SDK the configure found and the CMake that ran
+it (`cmake.dir`), so Gradle builds with the same CMake 3.31+ rather than the
+SDK's, and the configure's CPM cache (`build-android-studio/cpm`) is shared
+by every module, ABI and build type so none of them fetch again. The modules
+build `arm64-v8a` and `x86_64` (`EACP_ANDROID_STUDIO_ABIS`); Android Studio
+builds only the ABI of the device it runs on. Release builds are signed with
+the debug key so they install from the IDE; a shipping app replaces that.
+`HelloGPU-run` and the rest of the CMake-only path are unchanged.
+
 ## Repository layout
 
 Each subdirectory of `Lib/eacp` is a self-contained area you can include on its

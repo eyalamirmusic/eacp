@@ -99,7 +99,13 @@ shell; `Scripts/android-common.cmake` is what they share. The NDK,
 build-tools and platform versions live in `CMake/AndroidVersions.cmake` alone;
 `cmake -P Scripts/android-setup.cmake` installs them into `~/.eacp/android`
 (or `$ANDROID_HOME`), and `cmake --preset android` (`CMakePresets.json`,
-`CMake/AndroidToolchain.cmake`) builds against them into `build-android`. On
+`CMake/AndroidToolchain.cmake`) builds against them into `build-android`. `cmake --preset android-studio`
+writes a Gradle project for Android Studio into `build-android-studio`, as
+`-G Xcode` writes an Xcode one (`CMake/AndroidStudio.cmake`, templates in
+`CMake/AndroidStudio/`): any Android configure with `EACP_ANDROID_STUDIO_DIR`
+set writes one module per `eacp_add_app` whose `externalNativeBuild` runs this
+`CMakeLists.txt` for that target, with the Android Gradle Plugin and Gradle
+versions pinned in `CMake/AndroidVersions.cmake`. On
 Android `ResEmbed`'s generator is `CMake/ResEmbedGenerator.cmake`, run by
 CMake, so no host compiler is needed. `Apps/Android/README.md` is the
 step-by-step guide.
