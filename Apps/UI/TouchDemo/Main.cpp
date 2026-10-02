@@ -1,3 +1,4 @@
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Text/TextRenderer.h>
 #include <eacp/UI/Render/CoverageAtlas.h>
@@ -5,8 +6,8 @@
 #include <eacp/UI/Render/ShapeBatch.h>
 
 #include <algorithm>
-#include <cstdio>
-#include <iterator>
+#include <array>
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -23,8 +24,11 @@ namespace
 constexpr auto background = Color {0.08f, 0.09f, 0.12f};
 constexpr auto labelColor = Color::gray(0.92f);
 constexpr auto mouseId = -1;
+constexpr auto smallestDisc = 12.f;
+constexpr auto largestDisc = 120.f;
+constexpr auto discWithoutRadius = 36.f;
 
-constexpr Color palette[] = {
+constexpr auto palette = std::to_array<Color>({
     {0.95f, 0.36f, 0.42f},
     {0.36f, 0.72f, 0.98f},
     {0.52f, 0.86f, 0.46f},
@@ -33,24 +37,18 @@ constexpr Color palette[] = {
     {0.30f, 0.88f, 0.82f},
     {0.98f, 0.56f, 0.24f},
     {0.94f, 0.50f, 0.82f},
-};
+});
 
 Color colorFor(int id)
 {
-    constexpr auto count = (int) std::size(palette);
+    constexpr auto count = (int) palette.size();
     return palette[((id % count) + count) % count];
 }
 
 float discRadius(float touchRadius)
 {
-    return touchRadius > 0.f ? std::clamp(touchRadius, 12.f, 120.f) : 36.f;
-}
-
-std::string format(const char* pattern, auto... args)
-{
-    char buffer[160];
-    std::snprintf(buffer, sizeof(buffer), pattern, args...);
-    return buffer;
+    return touchRadius > 0.f ? std::clamp(touchRadius, smallestDisc, largestDisc)
+                             : discWithoutRadius;
 }
 
 struct Finger final
@@ -163,7 +161,14 @@ struct TouchView final : GPU::GPUView
         shapes->drawRect(
             {x - ring, y - ring, ring * 2.f, ring * 2.f}, color, 3.f, ring);
 
-        auto label = format("#%d %.0f,%.0f r%.0f", finger.id, x, y, finger.radius);
+        auto label = Strings::concat("#",
+                                     finger.id,
+                                     " ",
+                                     std::lround(x),
+                                     ",",
+                                     std::lround(y),
+                                     " r",
+                                     std::lround(finger.radius));
         auto width = text.measure(label);
         auto right = size.x - getSafeAreaInsets().right;
         auto left =
@@ -180,13 +185,17 @@ struct TouchView final : GPU::GPUView
         auto left = insets.left + margin;
         auto top = size.y - insets.bottom - margin - height * 2.f;
 
-        std::string lines[] = {
-            format("%d touch%s", fingers.size(), fingers.size() == 1 ? "" : "es"),
-            format("safe area t%.0f l%.0f b%.0f r%.0f",
-                   insets.top,
-                   insets.left,
-                   insets.bottom,
-                   insets.right)};
+        auto lines = std::array {Strings::concat(fingers.size(),
+                                                 " touch",
+                                                 fingers.size() == 1 ? "" : "es"),
+                                 Strings::concat("safe area t",
+                                                 std::lround(insets.top),
+                                                 " l",
+                                                 std::lround(insets.left),
+                                                 " b",
+                                                 std::lround(insets.bottom),
+                                                 " r",
+                                                 std::lround(insets.right))};
 
         auto width = std::max(text.measure(lines[0]), text.measure(lines[1]));
 
