@@ -5,8 +5,8 @@ single, modern API. eacp lets you write desktop and mobile applications once
 and have them target the platform's first-class primitives directly. The heavy
 lifting stays with the OS: there is no bundled renderer, no bundled widget
 toolkit and no VM. That reaches the GPU too: a shader is a C++ struct, emitted
-as Metal and HLSL from one source, and the pipeline around it is one API over
-both backends.
+as Metal, HLSL and GLSL from one source, and the pipeline around it is one API
+over all three backends.
 
 ## What it abstracts
 
@@ -16,8 +16,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **Application lifecycle** — a templated `Apps::run<T>()` entry point that
   wires up the platform's main event loop.
 - **Event loops & threading** — `EventLoop`, `Timer`, `DisplayLink`, and
-  `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink (and equivalents
-  on Windows).
+  `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink, their Windows
+  equivalents, and on Linux one `epoll` descriptor a plugin host's own loop
+  can pump (`getEventLoopFd`, `pumpEventLoop`).
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
@@ -30,12 +31,30 @@ them, so apps inherit the look, feel, and performance of the host OS:
   work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
   the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
   stay zero and silent on desktop windows.
+- **Game input** — `GameInput` is keyboard and mouse state for a game loop,
+  polled once a frame beside the `View` callbacks that UI and text entry keep
+  using: `snapshot()` returns a frame that answers `isDown`, `wasPressed`,
+  `wasReleased` and `mouseDelta`, with every event timestamped on the clock
+  `FrameTime` uses. On Apple platforms the events come from the GameController
+  framework off the main thread, so they are captured while the app is still
+  drawing; elsewhere they come from the window's own events. Input counts
+  only while the window has key focus, and losing it releases every key.
+  `Apps/GPU/Maze` is a first-person maze driven by it.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
   struct rather than a string literal per backend. The same compute kernel also
   runs on the CPU, on the calling thread and without allocating, where no
   device came up or an audio callback needs it now. See
   [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md).
+- **ML** — tensor-level compute as a `Graph` of whole-tensor ops (`linear`,
+  `matmul`, `softmax`, `layerNorm`, `conv`, `gather`, attention with a causal
+  or run-time mask, `argmax`, and `apply` for anything elementwise, written
+  over the shader EDSL's own `Float`), written out as an `.mlpackage` that
+  Core ML compiles and runs on the CPU, the GPU or the Apple Neural Engine.
+  `Model` caches the compile, predicts blocking or as a `Threads::Async`,
+  reports where each op was placed, and its `MultiArray` copies to and from a
+  `GPU::Buffer`. The graph builder and writers build everywhere; only the
+  runner is Apple. See [`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md).
 - **Widgets & menus** — native text inputs, menus, and embedded views.
 - **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
   Windows) with support for popups and new-window requests.
@@ -46,15 +65,19 @@ them, so apps inherit the look, feel, and performance of the host OS:
   Network.framework on Apple platforms, WinHTTP on Windows and libcurl on
   Linux. `OnlineResource` fetches a file an app needs into its own
   Application Support folder once, revalidates it against the server's ETag
-  on later runs, and unpacks a zip — `Apps/Console/OnlineResource` fetches
-  one before it does anything else. Every fetch reports into the
-  `OnlineResources` registry, and `UI::OnlineResourceMonitor` shows that
-  registry as a list with progress bars and a Clear all button —
-  `Apps/UI/ResourceMonitor` is it in a window over DownloadAndPlay's clips.
+  on later runs, and unpacks a zip; `UI::OnlineResourceMonitor` shows every
+  such fetch as a list with progress bars. `Apps/Console/OnlineResource` and
+  `Apps/UI/ResourceMonitor` are the two examples.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
-  and unload shared libraries at runtime (`DynamicLibrary`).
+  and unload shared libraries at runtime (`DynamicLibrary`). Both directions of
+  plugin UI are covered: `EmbeddedView` puts a view tree of ours inside a window
+  a host owns, and `NativeChildSurface` is the inverse, a `View` in one of our
+  layouts that hands a foreign toolkit an `NSView*` or a child `HWND` to parent
+  its own editor into — what a plugin host passes to `IPlugView::attached()`.
+  `EmbedderKeyForwarder` and `KeyGrab` carry the keys a hosted editor does not
+  want back to the host's main window, so a DAW's shortcuts still work.
 - **Text & sprites** — font metrics, glyph rasterization and a GPU glyph atlas,
   alongside a batched textured-quad renderer for everything that draws in bulk.
 - **UI** — a lightweight component tier: a whole widget tree in one `GPUView`,
@@ -76,209 +99,46 @@ them, so apps inherit the look, feel, and performance of the host OS:
 
 The dividing line is drawing. Everything that never touches a screen — the app
 and threading core, processes, plugins, files, the HTTP client and server, IPC
-and RPC, the SIMD kernels — builds on Linux too, which is what makes eacp usable
-for a headless service as well as for a GUI. The graphics stack builds on all
-five platforms, because it wraps each one's own compositor instead of shipping
-one: Cocoa and Metal, Win32 and D3D12, UIKit, Wayland or X11 with Vulkan, and
-Android's NativeActivity with Vulkan.
+and RPC, the SIMD kernels, the CPU compute interpreter, the ML graph builder —
+builds on Linux too, which is what makes eacp usable for a headless service as
+well as for a GUI. The graphics stack builds on all four platforms, because it
+wraps each one's own compositor instead of shipping one: Cocoa and Metal,
+Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 
-| Module | macOS | Windows | iOS | Linux | Android |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ | ✅ ‡ |
-| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ | — |
-| `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † | ✅ † |
-| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ | ✅ ‡ |
-| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † | ✅ † |
-| `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — | — |
-| `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — | — |
-| `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — | — |
-| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — | — |
+| Module | macOS | Windows | iOS | Linux |
+| --- | :---: | :---: | :---: | :---: |
+| `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
+| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
+| `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
+| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
+| `GameInput` — polled keyboard and mouse for a game loop | ✅ ‡ | ✅ | ✅ ‡ | ✅ |
+| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
+| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ |
+| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
+| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † |
+| `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
+| `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
+| `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
+| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — |
 
-† Linux and Android have no platform 2D tier and no menus; what that costs is
-spelled out two paragraphs down. ‡ Android: Android 13 (API 33) or later on a
-Vulkan 1.3 device, as a NativeActivity (see [Android](#android)); no HTTP
-client (the NDK has no libcurl), no IME text input yet, and text is shaped a
-code point at a time (no kerning, ligatures or complex scripts).
+† Linux has no platform 2D tier: no `Graphics::Context`, `Font`, `TextInput`,
+image codecs, menus or tray. Everything drawn through a `GPUView` — the `UI`
+component tier, its text, its images and `SVGComponent` — works there in
+full, and a `Window` is a real Wayland or X11 window with input, clipboard,
+fractional scaling and mouse lock. Audio-plugin hosting has what it needs
+(`EmbeddedView` into a host's X11 window, and an event loop a host's own loop
+can pump), and `EACP_HEADLESS=1` runs every window and every GPU test with no
+display server at all. [`Docs/Linux.md`](Docs/Linux.md) is the full account.
 
-Linux graphics is on wherever the graphics modules are built, exactly as the
-other three platforms are, and it is three things. An `eacp-graphics` with two
-window systems in it: on Wayland a `Window` is a `wl_surface` with an xdg-shell
-toplevel decorated by libdecor, the view tree, hit-testing and input routing are
-the portable ones with the seat's pointer and keyboard translated into them
-through xkbcommon, a `GPUView` gets a `wl_subsurface` of its own kept at its
-bounds and scaled by the compositor's fractional scale, `Display` reports the
-first output, mouse lock goes through pointer-constraints, the clipboard is a
-`wl_data_device` on the seat (text and `text/uri-list`, installed into
-`Core`'s `Clipboard` through a backend hook so `eacp-core` still links no
-Wayland), a compositor that goes away mid-session tears every window down
-through the same `onLost` path a hidden view takes and leaves the process
-running headless, and the display's connection is pumped by eacp's own event
-loop. What a window cannot do there is what the protocol has no words for — a
-position, a raise, an icon — and the file says so where it matters. On X11 a
-`Window` is an xcb toplevel — no Xlib anywhere — carrying the ICCCM and EWMH
-properties a window manager reads, with an `xcb_create_window` child per
-presenting view, the keymap taken from the server through `xkbcommon-x11` so
-layouts and dead keys behave as they do on Wayland, mouse lock as a pointer
-grab and a warp to the centre, and frames paced by a timer at the RandR mode's
-rate because X11 has no frame callback — re-rated when a RandR change moves
-that rate; a position is a real one there, the display's scale is `Xft.dpi`
-over 96 read from the root's `RESOURCE_MANAGER` and followed when it changes,
-kept as a fraction so 150% is 1.5, an
-`EmbeddedView` is an `xcb_create_window` child of a window id its host owns
-whose scale is whatever that host says, and
-the clipboard is the `CLIPBOARD` selection owned by a 1x1 window that is never
-mapped, so a copy needs neither a toplevel nor keyboard focus to take it (text
-and `text/uri-list`, `TARGETS`, INCR on the receiving side, behind the same
-backend hook as the Wayland one). Both backends sit behind one window-system seam
-(`LinuxWindowSystem`, `LinuxWindowNative`, `LinuxWindowSurface`,
-`ViewSurfaceBackend`, `LinuxInput`, `LinuxSeat`) and both are compiled into
-every copy, so which one a window gets is a runtime decision:
-`EACP_WINDOW_SYSTEM=wayland|x11` overrides, and otherwise a plugin copy takes
-X11 while a standalone app takes Wayland when a compositor answers and X11 when
-none does. That embedded surface, together with an event loop that is one `epoll`
-descriptor with a pump (`getEventLoopFd`, `pumpEventLoop`) a plugin host's own
-loop can drive, is what audio-plugin hosting on Linux needs —
-`Apps/Plugins/X11Host` and `X11Plugin` run the whole path in-tree, a window id
-and four C functions apart. When the host is itself an eacp app even those
-four are not needed: the copy running the root loop advertises a bridge in the
-process environment, a copy loaded from a dynamic library attaches its
-descriptor to it on the first thing it defers, and its windows, timers and
-`callAsync`s then run off the host's loop with no code on either side —
-`Apps/Plugins/PluginHost` and `DemoPlugin`, now a `GPUView` pair, show it. A Vulkan backend under it: everything from `Device`
-to `RenderPass` is real, the drawable `Frame` renders
-into a swapchain image and presents it, and `GPUView` owns that swapchain —
-mailbox or FIFO, frames in flight, rebuilt on resize and `OUT_OF_DATE`, with
-continuous rendering paced by the compositor's frame callbacks on Wayland and
-by that same timer on X11 rather than by a clock of the renderer's own — beside
-the off-screen render-and-read-back path every pixel test rides. And a text
-stack beside them: `eacp-text`'s glyph rasterizer on FreeType, HarfBuzz and
-fontconfig, so `Sprites`, `UI` and the portable half of `SVG` build and run
-too — a whole widget tree, its text, its images and its SVG documents drawn
-inside one `GPUView` through the coverage rasterizer and the glyph atlas.
+‡ Fed by the GameController framework on Apple platforms, which times events
+off the main thread; fed by the window's own key and mouse events elsewhere.
 
-What Linux still does not have is the platform's own 2D tier. There is no
-`Graphics::Context` and no `Graphics::Font` — `Path` exists, but only as
-recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
-them, `TextInput`, the image codecs (an `Image` is a pixel container there, and
-loading a file yields an invalid one), menus and the tray are absent or honest
-stubs. `SVG`'s native-layer builder and the `SVG::parse`
-in front of it go with them; the same document parses and draws through
-`SVGComponent`. Under `EACP_HEADLESS=1`, or with neither display server to
-reach, every window is built and never shown and every GPU test still runs on
-Mesa's lavapipe with no display server at all; the window and present tests run
-for real under a headless Weston, and again under an Xvfb for X11, which is
-where input is exercised — Weston's headless backend has no seat and Xvfb has
-one.
-
-The top-level `CMakeLists.txt` decides this once, in eight capability variables
-that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
-The three drawing ones are on together on every platform that draws — they
-stay three nested variables because each gates a different set of modules, and
-a new port reaches them one at a time; the next three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
-`EACP_HAS_GPU` and is Apple-only; `EACP_HAS_NETWORK` is on everywhere but
-Android:
-
-| Variable | On when | Gates |
-| --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
-| `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
-| `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
-| `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
-| `EACP_HAS_NETWORK` | everywhere but Android, whose NDK has no libcurl | `Network`, the WebView page bridge over its RPC, `eacp-ui-network` and their tests |
-
-`EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
-`Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
-caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
-one on `eacp-ml` in the same way.
-
-Four pieces of the gated modules are portable and so sit outside all eight:
-they are built and tested on every platform, Linux included, because none
-touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
-emitters — string generation with no GPU under it, checked by
-`GPUCodegenTests`. `eacp-cpu-compute` runs the kernels that EDSL records on the
-CPU, checked by `CpuComputeTests` and timed by `CpuComputeBench`; it is also
-what gives `GPUCodegenTests` and `GPUTests` a numeric half that runs with no
-device, so the Linux lanes without a driver check what a kernel computes, not
-only that its GLSL compiles. `eacp-webview-bridge` is the page bridge over a
-`ScriptHost` rather than over a web view, checked by `ScriptHostTests`. And
-`eacp-ml-graph` is the graph builder and the MIL, protobuf and blob writers —
-bytes in and bytes out, with no Core ML under it — checked by `MLGraphTests`.
-
-A fifth, `eacp-spirv`, wraps glslang as a GLSL-to-SPIR-V compiler
-(`SpirvTests`) and is built on Linux only by default: the Vulkan backend is the
-one that ships it, and the two Linux lanes without a Vulkan device build it
-too, so the GLSL dialect is compiled for real there before any device is
-involved — every GLSL source `GPUCodegenTests` emits, every hand-written GLSL
-twin in `GPUTests` and every module shader `UITests` reaches is compiled by
-glslang as part of the test. macOS and Windows skip the fetch; passing
-`-DEACP_BUILD_SPIRV=ON` there builds it and turns those checks on. Passing
-`OFF` on Linux is only meaningful together with `-DEACP_BUILD_GRAPHICS=OFF`:
-the Vulkan backend has no shader compiler in the OS, so a Linux graphics build
-without it stops at configure time and says so.
-
-`-DEACP_BUILD_GRAPHICS=OFF` builds the portable half on any platform, Linux
-included — it is the only switch that turns the graphics modules off. CI
-builds headless, runs the suite inside a headless Weston session and then runs
-the window and present suites again inside an Xvfb, and the `Dockerfile`
-reproduces all three:
-
-```bash
-docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
-    -v "$PWD":/workspace eacp-ci-linux \
-    ci-build -DEACP_UNITY_BUILD=OFF
-
-docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
-    -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
-    with-weston ctest --test-dir build-ci-linux --output-on-failure \
-    -E '^(X11|EmbeddedView)/'
-
-docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
-    -v "$PWD":/workspace eacp-ci-linux \
-    with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-    -R '^(X11|EmbeddedView|Present)/'
-```
-
-The Vulkan half needs no new build dependency: the headers, `volk` and the
-allocator are fetched by CPM, and the loader is opened by name at runtime, so
-all a machine needs to run it is a driver — `mesa-vulkan-drivers` is enough, and
-its software rasterizer is what CI uses. `EACP_VK_SOFTWARE=1` asks for that
-device by preference; `EACP_REQUIRE_GPU=1` turns "no device" from a suite that
-silently skips into a suite that fails. The Wayland, X11 and text halves are
-found the way libcurl is, by pkg-config against the machine's own libraries:
-`libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev
-libdecor-0-dev libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev
-libxcb-randr0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev
-libxcb-xinput-dev libfreetype-dev libharfbuzz-dev libfontconfig-dev
-pkg-config` on Debian/Ubuntu,
-`weston` and `xvfb` to run the window tests without a desktop
-(`Scripts/with-weston` and `Scripts/with-xvfb`, which are also `with-weston` and
-`with-xvfb` in the image) with `libxcb-xtest0-dev` for the X11 suite's own
-synthetic input, and fonts for the text tests to resolve —
-`fonts-dejavu-core fonts-dejavu-extra
-fonts-droid-fallback fonts-noto-color-emoji`. `EACP_REQUIRE_DISPLAY=1` does for
-the display server what `EACP_REQUIRE_GPU=1` does for the device, and
-`EACP_REQUIRE_FONTS=1` does it for the fonts, which is the third way a suite can
-report green by skipping everything.
-
-CI builds every configuration in that matrix and runs the test suite on macOS
-(universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
-and a Clang lane that runs the graphics backend on lavapipe under a headless
-Weston and then under an Xvfb — all three build it, one has a device, a
-compositor and an X server to run it on);
-iOS is built for the simulator. macOS is the most exercised of them. Android
-— Core, the window, Vulkan, GPU, GPUWidgets, Text and UI — builds and runs on
-a phone and on the emulator (see [Android](#android)); it is not in CI yet.
-
-The HTTP client is one API over three backends — NSURLSession on Apple
-platforms, WinHTTP on Windows, libcurl on Linux — so a Linux build needs
-libcurl's development headers (`libcurl4-openssl-dev` on Debian/Ubuntu).
+CI builds and tests macOS (universal), Windows x64 and ARM64 (MSVC and
+clang-cl) and Linux (GCC, Clang, and a lane that runs the graphics stack on
+Mesa's software Vulkan under a headless Weston and then an Xvfb), and builds
+iOS for the simulator. macOS is the most exercised of them. Android is not
+supported on this branch; an initial port is in progress on the `jp/android`
+branches and is not yet merged.
 
 ## A taste of the API
 
@@ -391,10 +251,12 @@ More examples live under [`Apps/`](Apps), grouped by the module they exercise:
 There is no shader string anywhere in an eacp app. A shader is a struct that
 derives from `ShaderProgram`; `define()` records a graph of typed value handles,
 and the emitters turn that one graph into Metal Shading Language for macOS and
-iOS and into HLSL for Direct3D 12 on Windows. Vertex inputs are pulled straight
-out of the CPU vertex struct, so that struct _is_ the vertex layout; uniforms
-and textures are typed members assigned by name, and `Maths::Vec2` crosses to
-the GPU packed exactly as the `float2` it registers as.
+iOS, into HLSL for Direct3D 12 on Windows and into GLSL for Vulkan on Linux,
+where glslang compiles it to SPIR-V inside the binary. Vertex inputs are
+pulled straight out of the CPU vertex struct, so that struct _is_ the vertex
+layout; uniforms and textures are typed members assigned by name, and
+`Maths::Vec2` crosses to the GPU packed exactly as the `float2` it registers
+as.
 
 ```cpp
 #include <eacp/GPU/GPU.h>
@@ -476,11 +338,23 @@ The EDSL covers the `Float`, `Int`, `UInt` and `Bool` families and the
 matrices, every swizzle, the intrinsic set spelled the way MSL and HLSL spell
 it, `var` / `select` / `ifThen` / `loop`, 2D, cube and depth textures, storage
 buffers readable from either stage, instancing, and compute — `ComputeProgram`
-is the same struct shape, with atomics, threadgroup memory, barriers and a
-dispatch the GPU sized. What the two backends cannot pack the same way — a
-`Bool` or a `Float3x3` uniform — is a `static_assert` rather than a footnote.
+is the same struct shape, with atomics, threadgroup memory, barriers, SIMD-group
+matrix fragments, packed fp16, bf16, int8 and int4 weight reads and a dispatch
+the GPU sized. What the backends cannot pack the same way — a `Bool` or a
+`Float3x3` uniform — is a `static_assert` rather than a footnote.
 [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) is the full account, and
 `Apps/GPU` has a worked example of every piece.
+
+The graph a kernel records is also what runs it where there is no device.
+The CPU compute interpreter runs a `ComputeProgram` on the calling thread over
+plain arrays, allocation-free and realtime-safe, so an audio callback or a
+driverless Linux box runs the very same kernel the GPU does, and every emitter
+test has a numeric half that needs no driver — `Apps/GPU/CpuCompute` times the
+two against each other. One tier up, `Lib/eacp/ML` takes tensor-level compute
+written against the same buffers and compiles it to a Core ML program, so a
+net that runs through the compute kernels on every platform also runs on the
+Apple Neural Engine where there is one (see
+[`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md)).
 
 ## Building
 
@@ -501,171 +375,32 @@ cmake --build build --target GUI       # build/Apps/GUI/GUI.app
 cmake --build build --target Console   # build/Apps/Console/Console
 ```
 
-### Build options
+On Linux the window systems, the text stack and the HTTP client are found by
+pkg-config against the machine's own libraries, and the Vulkan loader is
+opened at runtime, so a driver is all the GPU half needs:
 
-- `EACP_UNITY_BUILD` (default `OFF`) — compiles eacp libraries as CMake unity
-  builds, which is markedly faster for a cold full-project build. It is off by
-  default because a unity build collapses per-file entries in
-  `compile_commands.json`, which is what language servers read:
+```bash
+sudo apt install pkg-config libcurl4-openssl-dev \
+    libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev libdecor-0-dev \
+    libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev libxcb-randr0-dev \
+    libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev libxcb-xinput-dev \
+    libfreetype-dev libharfbuzz-dev libfontconfig-dev mesa-vulkan-drivers
+```
 
-  ```bash
-  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=ON
-  ```
+The options most builds reach for:
 
-- `EACP_BUILD_GRAPHICS` (default `ON`) — builds the whole drawing half. Turn it
-  off to build only the portable modules, on any platform.
+- `EACP_UNITY_BUILD` (default `OFF`) — unity builds, markedly faster for a cold
+  full build, off by default because they collapse the per-file entries in
+  `compile_commands.json` that language servers read.
+- `EACP_BUILD_GRAPHICS` (default `ON`) — turn it off to build only the
+  portable modules, on any platform.
+- `EACP_BUILD_SPIRV` (default `ON` on Linux, `OFF` elsewhere) — the GLSL
+  compiler the Vulkan backend ships. Passing `ON` on a Mac or a Windows
+  machine turns the GLSL compile checks in the GPU test suites on.
 
-- `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's exact
-  configuration locally. It forces `EACP_UNITY_BUILD` and `MIRO_UNITY_BUILD` on,
-  and turns on `EACP_PCH`, a precompiled header shared across every target that
-  is worth roughly half the compile time of a cold Windows build.
-
-  ```bash
-  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
-  ```
-
-### Android
-
-A NativeActivity app with no Java code and no Gradle: the app is a shared
-library with its ordinary `main()`, and `eacp_add_app` (`CMake/TargetSetup.cmake`)
-builds it as one and packages it through `eacp_add_android_apk`
-(`CMake/AndroidApk.cmake`). Its `BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`,
-`VERSION_CODE`, `ICON` and `ORIENTATION` are the app's on every platform (the
-manifest and APK here, the bundle and icon on Apple and Windows), and
-`MANIFEST_ELEMENTS`, `APPLICATION_ATTRIBUTES` and `ACTIVITY_ATTRIBUTES` add to
-eacp's manifest rather than replacing it. The APK is debug-signed with the SDK's own tools — debuggable
-in Debug builds. `Apps/Android/HelloGPU` is the example: a Vulkan clear
-following the finger, a spinning triangle through the shader EDSL, text through
-the glyph atlas (rasterized by `android.graphics`), and touches logged.
-`Apps/GPU/Triangle` and `Apps/GPU/GlyphAtlas` build as APKs the same way.
-
-[`Apps/Android/README.md`](Apps/Android/README.md) takes a machine with CMake,
-Ninja and Git from nothing to HelloGPU, and then a new app, running on a phone
-or, with none, on the emulator the setup installs.
-Every step is `cmake`, in any shell: the setup, packaging and run scripts are
-CMake scripts (`Scripts/android-*.cmake`), so no host needs bash.
-
-`cmake -P Scripts/android-setup.cmake` fills `~/.eacp/android`: the SDK (`sdk/`, or
-`$ANDROID_HOME` when set) with exactly what `CMake/AndroidVersions.cmake` names,
-and a Temurin 21 JDK (`jdk/`) when it finds no Java 17+. It writes the license
-file `sdkmanager --licenses` would, accepting the Android SDK License (and the
-ARM DBT license the arm64-v8a system image is under), and, where
-Google ships one for the host, the Android Emulator, the `google_apis` system
-image for the host's ABI and an AVD called `eacp` (`-DEACP_ANDROID_EMULATOR=OFF`
-leaves them out). eacp ships no presets; the configure is
-`cmake -G Ninja -B build-android -DCMAKE_SYSTEM_NAME=Android`, as
-`-DCMAKE_SYSTEM_NAME=iOS` is for iOS: with no toolchain file given, the
-top-level `CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which includes
-the NDK's own toolchain file from Android Studio's SDK, else `$ANDROID_HOME`,
-else `~/.eacp/android/sdk`, whichever first has the version
-`CMake/AndroidVersions.cmake` pins, for `arm64-v8a` at API 33 unless
-`-DANDROID_ABI=...` or `-DANDROID_PLATFORM=...` says otherwise (an explicit
-`-DCMAKE_TOOLCHAIN_FILE`, the NDK's or a consumer's own, is used as given).
-`<target>-run` wakes the phone and lifts its keyguard (a PIN keeps it locked,
-and it says so), installs, launches and prints the app's first seconds of
-logcat; a first install can make the phone ask about the app (Play Protect),
-and the install waits up to two minutes for the answer.
-
-The floor is Android 13 (API 33) on a device with Vulkan 1.3, which the
-manifest requires. eacp builds with one NDK, the current stable r30
-(30.0.16248370), the way the Apple platforms assume a current Xcode, with
-build-tools 35.0.0 and platform 35; an older NDK is an error (eacp uses
-libc++'s `std::atomic_ref` and `std::jthread`). Tests build too; `Network`, the
-WebView bridge and their tests are left out. The resource embedder's generator
-runs as CMake script on Android (`CMake/ResEmbedGenerator.cmake`), so nothing
-is compiled for the host.
-
-eacp logs to logcat under the tag `eacp`: `adb logcat -s eacp`, with the `adb`
-the setup script prints.
-
-`Apps::setSuspendHandler` is told when the app goes to the background and comes
-back: on pause and resume, and when its surface goes and returns (on iOS, the
-background notifications). That is where an app stops and restarts its audio.
-
-`View::focus()` shows the on-screen keyboard, the safe area shrinks above it, and
-the keys it types reach `keyDown` with their characters (Back as Escape, Delete
-and Enter as their key codes); HelloGPU echoes what is typed.
-
-An app `am start` launches has no environment of its own, so before `main()`
-eacp sets one from the system property `debug.<package>.env` (`adb shell setprop
-debug.<package>.env "K=V K=V"`, kept across launches) and then from the launch
-intent's string extras (`am start ... --es K V`, an Android Studio run
-configuration's extras, or `android-run.cmake -- --env K=V`), which win where
-both set a variable. A Release APK carries the library stripped;
-`ndk-stack -sym build-android/Apps/Android/<app>` symbolicates a crash's
-tombstone against the unstripped one in the build tree.
-
-Each machine signs with its own debug key, so an APK built elsewhere cannot
-update this one's install: `HelloGPU-run` uninstalls the app, and its data,
-first. Point `EACP_ANDROID_KEYSTORE` (and `EACP_ANDROID_KEYSTORE_PASSWORD`,
-when it is not `android`) at one shared keystore to avoid that.
-
-`<target>-aab` builds the App Bundle Google Play takes, `<target>.aab` beside the
-APK: a Release library for each ABI in `EACP_ANDROID_ABIS` (each in its own tree
-under `aab/`), bundletool (pinned by hash in `CMake/AndroidVersions.cmake`), the
-symbols for Play's crash reports, signed with the upload key that
-`EACP_ANDROID_KEYSTORE`, `EACP_ANDROID_KEY_ALIAS` and
-`EACP_ANDROID_KEYSTORE_PASSWORD` name, and checked with `bundletool validate`.
-
-Windows and Linux on ARM run on a phone only: Google ships no Android Emulator
-for them, and the x86_64 images need an x64 CPU. Elsewhere, with no phone
-attached, `HelloGPU-run` boots an emulator: `EACP_AVD`, else the setup's
-`eacp`, else the first AVD. Apple Silicon's
-`system-images;android-35;google_apis;arm64-v8a` has Vulkan 1.3; an x64 PC
-needs the Windows Hypervisor Platform, `-gpu host` and the `x86_64` image,
-which runs the `arm64-v8a` APK through ARM translation (SwiftShader lacks
-features eacp needs).
-
-#### Android Studio
-
-The same configure also writes a Gradle project into its build directory, the
-way `cmake -G Xcode` writes an Xcode project, so
-`cmake -G Ninja -B build-android-studio -DCMAKE_SYSTEM_NAME=Android` makes a
-folder to open in Android Studio (`-DEACP_ANDROID_STUDIO_DIR` puts it elsewhere,
-and `-DEACP_ANDROID_STUDIO=OFF`, for CI or an APK-only build, skips it and the
-wrapper download), for
-Android Studio, IntelliJ or `gradlew` on a CI machine. It has one module per
-`eacp_add_app`, each a few lines of `build.gradle.kts` whose
-`externalNativeBuild` runs the top-level `CMakeLists.txt` for that one target,
-and the manifest `eacp_add_android_apk` configured (an app's own
-`EACP_ANDROID_MANIFEST_TEMPLATE` included) less the package, versions and
-`<uses-sdk>`, which the module declares and the Android Gradle Plugin refuses
-in the manifest: Gradle compiles no Java or Kotlin, it calls CMake and packages
-the library.
-Open the folder in Android Studio and run or debug any app on a phone or
-emulator; the root module excludes the CMake tree's own folders (`_deps`,
-`CMakeFiles` and the like), so Studio does not index them.
-`CMake/AndroidStudio.cmake` is all of it: any Android configure writes the
-project, so a project that consumes eacp gets one for its own apps the same way.
-
-The Android Gradle Plugin and Gradle versions live in
-`CMake/AndroidVersions.cmake` beside the NDK and SDK ones, which the modules
-take as `ndkVersion` and `compileSdk` (build-tools are the plugin's own default,
-which it installs on first sync). The wrapper jar and
-scripts are fetched from Gradle's repository at that release and checked
-against pinned hashes; Gradle itself downloads into `~/.gradle` on first sync.
-`local.properties` names the SDK the configure found and the CMake that ran
-it (`cmake.dir`), so Gradle builds with the same CMake 3.31+ rather than the
-SDK's (where Ninja is not beside that CMake, `cmake.dir` is a
-directory of links to the two, since the plugin looks for Ninja there and on a
-PATH an IDE started from the Dock does not have). Each module's configure, one per ABI and build type, gets
-`CPM_<name>_SOURCE` for every package the first configure fetched, so none of
-them fetch again and a local checkout passed that way is the one they build,
-and the rest of the first configure's cache, so a `-D` given there (a
-consumer's `-DMYAPP_BUILD_TESTS=OFF`, say) reaches them too. Both come in as a
-script the first configure writes, `eacp-nested-init.cmake`, which
-`<target>-aab` takes as well. Each app gets a run configuration with the
-native debugger in `.idea/runConfigurations`. The JDK the Gradle daemon runs
-on is the project's Daemon JVM criteria (`gradle/gradle-daemon-jvm.properties`):
-exactly JDK 25 (`EACP_ANDROID_GRADLE_JVM`), Android Studio's own runtime, found
-among the installed JDKs or else downloaded into `~/.gradle/jdks` from the
-pinned Temurin build, for Studio and `gradlew` alike, so no machine's JDK path
-is written anywhere. `gradlew` itself still needs a `java` to start, `JAVA_HOME`
-at any JDK 17+; the configure prints the line with the one it found. The modules
-build `arm64-v8a` and `x86_64` (`EACP_ANDROID_ABIS`); Android Studio
-builds only the ABI of the device it runs on. Release builds are signed with
-the debug key so they install from the IDE; a shipping app replaces that.
-`HelloGPU-run` and the rest of the CMake-only path are unchanged.
+Every option, the CPM and pkg-config dependencies, the capability variables
+that decide which modules a platform gets, and how CI runs are in
+[`Docs/Build.md`](Docs/Build.md).
 
 ## Repository layout
 
@@ -679,9 +414,10 @@ Lib/eacp/
   Network/    HTTP client and server, WebSocket client, TCP, IPC, RPC
   SIMD/       Portable SIMD kernels with runtime backend dispatch
   Graphics/   Windows, views, widgets, menus, drawing primitives
-  GPU/        Metal / D3D12: device, buffers, textures, pipelines, passes, and
-              the shader EDSL — see GPU/README.md
+  GPU/        Metal / D3D12 / Vulkan: device, buffers, textures, pipelines,
+              passes, the shader EDSL and its CPU interpreter — see GPU/README.md
   GPUWidgets/ Views drawn on the GPU (gradients, paths)
+  ML/         Tensor graphs compiled and run through Core ML — see ML/README.md
   Text/       Font metrics, glyph rasterization and a GPU glyph atlas
   Sprites/    Batched textured-quad renderer
   UI/         A whole widget tree in one GPUView
@@ -691,9 +427,26 @@ Lib/eacp/
   Video/      Screen capture and encoding, plus VideoView/ for playback
 Apps/         Example applications
 Tests/        Unit tests
+Docs/         In-depth documentation: the build system and the Linux backend
 ThirdParty/   Vendored single-file libraries (miniz, behind eacp::Zip)
 CMake/        Build helpers (TargetSetup, CPM)
 ```
+
+## Documentation
+
+- [`Docs/Build.md`](Docs/Build.md) — every build option, the dependencies,
+  the capability variables and the CI matrix.
+- [`Docs/Linux.md`](Docs/Linux.md) — the Linux backend: Wayland, X11, Vulkan
+  and FreeType, what is and is not there, and the environment variables that
+  drive it.
+- [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) — the GPU module and the
+  shader EDSL end to end: pipelines, render targets, compute, packed weights,
+  the SIMD-group matrix, running a kernel on the CPU, and the Vulkan backend.
+  [`SAMPLERS.md`](Lib/eacp/GPU/SAMPLERS.md) beside it is the sampler model.
+- [`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md) — the Core ML tier: building
+  a tensor graph, running a model, the compile cache and what was measured.
+- [`Apps/GPU/VariableFont/README.md`](Apps/GPU/VariableFont/README.md) — the
+  variable-font example.
 
 ## Built with eacp
 
@@ -720,6 +473,13 @@ they surface are what gets fixed next.
   once in the EDSL and emitted as both MSL and HLSL. Because it is a real view it
   composes: `Apps/MixedViews` puts it beside a `WebView` in one window, wired in
   both directions.
+
+- **[WhisperEACP](https://github.com/eyalamirmusic/WhisperEACP)** — Whisper
+  on eacp's compute stack: the encoder and decoder as EDSL compute kernels over
+  packed fp16 weights, running on Metal, D3D12 and Vulkan from one source, and
+  the encoder again through `Lib/eacp/ML` on Core ML. It is what drove the
+  SIMD-group matrix, the packed weight reads and the Core ML backend, and its
+  tests are what say the two ways of running the same net agree.
 
 - **[CowTerm](https://github.com/jamierpond/CowTerm)** — a GPU-accelerated
   terminal emulator and session manager by Jamie Pond. Every visible pixel is

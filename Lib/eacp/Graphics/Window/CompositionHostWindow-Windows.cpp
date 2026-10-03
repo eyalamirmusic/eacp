@@ -21,6 +21,7 @@ void redrawAllCompositionHosts();
 // (KeyCode::Unknown when unmapped), so KeyEvent::keyCode means the same thing
 // on every platform.
 uint16_t keyCodeFromVirtualKey(int vk);
+uint16_t keyCodeFromKeyMessage(int vk, LPARAM lParam);
 
 namespace
 {
@@ -884,7 +885,7 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
         return;
 
     KeyEvent event;
-    event.keyCode = keyCodeFromVirtualKey(vk);
+    event.keyCode = keyCodeFromKeyMessage(vk, lParam);
     event.type = down ? KeyEventType::Down : KeyEventType::Up;
     event.modifiers = getModifiers();
 
@@ -892,12 +893,9 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     {
         event.characters = takePendingCharacters();
         event.isRepeat = (lParam & 0x40000000) != 0;
-        contentView->keyDown(event);
     }
-    else
-    {
-        contentView->keyUp(event);
-    }
+
+    contentView->dispatchKeyEvent(event);
 
     ensureAllLayersRendered(contentView);
 }

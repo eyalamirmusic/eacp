@@ -4,6 +4,7 @@
 #include "../Primitives/Primitives.h"
 #include "../View/View.h"
 #include "SizeConstraint.h"
+#include "WindowInput.h"
 
 namespace eacp::Graphics
 {
@@ -56,6 +57,11 @@ struct WindowEvents
     // size, nothing needs a position before the window exists: a handler set
     // after construction has still missed nothing.
     std::function<void(Point position)> onMoved = [](auto&&) {};
+
+    // The raw key, mouse and focus stream, for input layers beside the view
+    // tree (see WindowInput.h). Framework-owned: the platform reports into it
+    // whatever the handlers above are set to.
+    WindowInputTap input;
 };
 
 struct WindowOptions

@@ -339,10 +339,7 @@ void X11Input::deliverKey(uint32_t code, bool down, bool isRepeat)
     event.characters = keyboardState.textForKey(code);
     event.charactersIgnoringModifiers = keyboardState.plainTextForKey(code);
 
-    if (down)
-        keyboardWindow->contentView->keyDown(event);
-    else
-        keyboardWindow->contentView->keyUp(event);
+    keyboardWindow->contentView->dispatchKeyEvent(event);
 }
 
 // A grab is a menu or a drag taking the keyboard for a moment, and

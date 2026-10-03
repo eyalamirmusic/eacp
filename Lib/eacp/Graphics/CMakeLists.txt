@@ -4,6 +4,8 @@ target_sources(eacp-graphics PRIVATE
         Helpers/DisplayLink.cpp
         Image/Image.cpp
         Image/ImageOps.cpp
+        Input/GameInput.cpp
+        Input/GameInputQueue.cpp
         Layers/Layer.cpp
         Menu/Menu.cpp
         Menu/MenuCommands.cpp
@@ -40,6 +42,7 @@ if (APPLE)
             Graphics/GraphicsContextImpl.mm
             Helpers/SystemAppearance-Apple.mm
             Image/Image-Apple.mm
+            Input/GameInput-Apple.mm
             Layers/Layer.mm
             Layers/ShapeLayer.mm
             Layers/TextLayer.mm
@@ -53,6 +56,7 @@ if (APPLE)
             "-framework CoreGraphics"
             "-framework CoreText"
             "-framework CoreVideo"
+            "-framework GameController"
             "-framework ImageIO")
 
     if (IOS)
@@ -98,6 +102,7 @@ elseif (WIN32)
             Helpers/ImageConversion-Windows.cpp
             HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
+            Input/GameInput-Default.cpp
             Layers/Layer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp
@@ -170,6 +175,7 @@ elseif (UNIX)
             Helpers/SystemAppearance-Linux.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Linux.cpp
+            Input/GameInput-Default.cpp
             Layers/Layer-Linux.cpp
             Menu/Menu-Linux.cpp
             Primitives/Path-Linux.cpp

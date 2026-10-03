@@ -1,15 +1,19 @@
 #include <eacp/GPU/GPU.h>
 #include <algorithm>
+#include <array>
+#include <cstdio>
 
 using namespace eacp;
 using namespace GPU;
 using namespace Maths;
 
 // A Wolfenstein3D-style first-person walk through a grid maze. The map below
-// extrudes into textured wall quads once at startup; the camera is two scalar
-// uniforms (position and yaw) the shader builds the view matrix from each
-// frame. Move with W/A/S/D, turn with the arrow keys — or click to lock the
-// mouse for mouse look; Escape releases it.
+// extrudes into textured wall quads once at startup; the camera is scalar
+// uniforms (position, eye height and yaw) the shader builds the view matrix
+// from each frame. Move with W/A/S/D (Shift to run), turn with the arrow keys, Space to
+// jump — or click to lock the mouse for mouse look; Escape releases it. Input
+// comes from a GameInput polled once a frame, and the title shows which feed
+// delivers it and how long the newest key press waited for a frame.
 namespace
 {
 // One character per cell: '.' is walkable, anything else is a wall whose
@@ -284,7 +288,7 @@ MazeMesh buildMaze()
     return mesh;
 }
 
-// The whole camera is three scalar uniforms; the shader assembles the view
+// The whole camera is four scalar uniforms; the shader assembles the view
 // matrix (yaw spin around the eye, then the eye translation) and projection
 // itself, so the CPU never touches a matrix.
 struct MazeShader final : ShaderProgram
@@ -297,7 +301,7 @@ struct MazeShader final : ShaderProgram
         auto uv = vertexInput(&Vertex::uv);
         auto shade = vertexInput(&Vertex::shade);
 
-        auto view = rotateY(-yaw) * translate(-camX, constant(-0.5f), -camZ);
+        auto view = rotateY(-yaw) * translate(-camX, -camY, -camZ);
         auto projection = perspective(aspect, radians(65.0f), 0.05f, 100.0f);
         setPosition(projection * view * float4(position, 1.0f));
 
@@ -306,12 +310,13 @@ struct MazeShader final : ShaderProgram
     }
 
     Uniform<Float> camX;
+    Uniform<Float> camY;
     Uniform<Float> camZ;
     Uniform<Float> yaw;
     Uniform<Float> aspect;
     Uniform<Texture2D> atlas;
 
-    EACP_SHADER(camX, camZ, yaw, aspect, atlas)
+    EACP_SHADER(camX, camY, camZ, yaw, aspect, atlas)
 };
 } // namespace
 
@@ -336,59 +341,93 @@ struct MazeView final : GPUView
             window->setMouseLocked(true);
     }
 
-    void mouseMoved(const Graphics::MouseEvent& event) override
-    {
-        turnWithMouse(event);
-    }
-
-    void mouseDragged(const Graphics::MouseEvent& event) override
-    {
-        turnWithMouse(event);
-    }
-
-    void turnWithMouse(const Graphics::MouseEvent& event)
-    {
-        if (window != nullptr && window->isMouseLocked())
-            yaw -= event.delta.x * mouseSensitivity;
-    }
-
     void update(Threads::FrameTime time) override
     {
         using namespace Graphics;
 
+        if (input == nullptr || window == nullptr)
+            return;
+
+        const auto& frame = input->snapshot();
         auto delta = (float) time.delta;
 
-        if (window != nullptr && Keyboard::isKeyPressed(KeyCode::Escape))
+        if (frame.wasPressed(KeyCode::Escape))
             window->setMouseLocked(false);
 
-        auto turn = 0.0f;
-        if (Keyboard::isKeyPressed(KeyCode::LeftArrow))
-            turn += 1.0f;
-        if (Keyboard::isKeyPressed(KeyCode::RightArrow))
-            turn -= 1.0f;
+        if (frame.wasPressed(KeyCode::Space))
+            jump();
 
-        yaw += turn * turnSpeed * delta;
+        if (window->isMouseLocked())
+            yaw -= frame.mouseDelta().x * mouseSensitivity;
 
-        auto forward = 0.0f;
-        if (Keyboard::isKeyPressed(KeyCode::W)
-            || Keyboard::isKeyPressed(KeyCode::UpArrow))
-            forward += 1.0f;
-        if (Keyboard::isKeyPressed(KeyCode::S)
-            || Keyboard::isKeyPressed(KeyCode::DownArrow))
-            forward -= 1.0f;
+        auto axis = [&frame](uint16_t positive, uint16_t negative)
+        {
+            return (frame.isDown(positive) ? 1.0f : 0.0f)
+                   - (frame.isDown(negative) ? 1.0f : 0.0f);
+        };
 
-        auto strafe = 0.0f;
-        if (Keyboard::isKeyPressed(KeyCode::D))
-            strafe += 1.0f;
-        if (Keyboard::isKeyPressed(KeyCode::A))
-            strafe -= 1.0f;
+        yaw += axis(KeyCode::LeftArrow, KeyCode::RightArrow) * turnSpeed * delta;
+
+        auto forward = std::clamp(axis(KeyCode::W, KeyCode::S)
+                                      + axis(KeyCode::UpArrow, KeyCode::DownArrow),
+                                  -1.0f,
+                                  1.0f);
+        auto strafe = axis(KeyCode::D, KeyCode::A);
+        auto sprinting =
+            frame.isDown(KeyCode::Shift) || frame.isDown(KeyCode::RightShift);
 
         auto sinYaw = std::sin(yaw);
         auto cosYaw = std::cos(yaw);
-        auto step = moveSpeed * delta;
+        auto step = moveSpeed * delta * (sprinting ? sprintFactor : 1.0f);
 
         moveWithSliding((-sinYaw * forward + cosYaw * strafe) * step,
                         (-cosYaw * forward - sinYaw * strafe) * step);
+
+        fall(delta);
+        showInputAge(frame, time);
+    }
+
+    void jump()
+    {
+        if (posY <= eyeHeight)
+            velocityY = jumpVelocity;
+    }
+
+    void fall(float delta)
+    {
+        velocityY -= gravity * delta;
+        posY += velocityY * delta;
+
+        if (posY > eyeHeight)
+            return;
+
+        posY = eyeHeight;
+        velocityY = 0.0f;
+    }
+
+    // The newest key event this frame consumed, measured against the moment the
+    // frame took its snapshot: how long a key press waited before a frame saw it.
+    void showInputAge(const Graphics::GameInputFrame& frame, Threads::FrameTime time)
+    {
+        for (const auto& event: frame.events())
+            if (event.isKey())
+                lastKeyAge = frame.time() - event.timestamp;
+
+        if (time.time - lastTitleTime < titleInterval)
+            return;
+
+        lastTitleTime = time.time;
+
+        auto title = std::array<char, 160> {};
+        auto name = input->backendName();
+        std::snprintf(title.data(),
+                      title.size(),
+                      "Maze - input: %.*s - last key to frame: %.2f ms",
+                      (int) name.size(),
+                      name.data(),
+                      lastKeyAge * 1000.0);
+
+        window->setTitle(title.data());
     }
 
     // Axes resolve separately so a blocked diagonal slides along the wall
@@ -419,6 +458,7 @@ struct MazeView final : GPUView
         auto bounds = getLocalBounds();
 
         shader.camX = posX;
+        shader.camY = posY;
         shader.camZ = posZ;
         shader.yaw = yaw;
         shader.aspect = bounds.h > 0.0f ? bounds.w / bounds.h : 1.0f;
@@ -430,15 +470,26 @@ struct MazeView final : GPUView
     static constexpr float moveSpeed = 3.0f;
     static constexpr float turnSpeed = 2.4f;
     static constexpr float mouseSensitivity = 0.0035f;
+    static constexpr float sprintFactor = 1.8f;
+    static constexpr float eyeHeight = 0.5f;
+    static constexpr float jumpVelocity = 2.4f;
+    static constexpr float gravity = 9.6f;
+    static constexpr double titleInterval = 0.25;
 
     Graphics::Window* window = nullptr;
+    Graphics::GameInput* input = nullptr;
     MazeMesh mesh;
     Texture atlas;
     MazeShader shader;
 
     float posX = 1.5f;
+    float posY = eyeHeight;
     float posZ = 1.5f;
     float yaw = -pi / 2.0f;
+    float velocityY = 0.0f;
+
+    double lastKeyAge = 0.0;
+    double lastTitleTime = 0.0;
 };
 
 struct MyApp
@@ -446,11 +497,20 @@ struct MyApp
     MyApp()
     {
         maze.window = &window;
+        maze.input = &input;
         maze.focus();
     }
 
     MazeView maze;
-    Graphics::Window window {maze};
+    Graphics::Window window {maze, options()};
+    Graphics::GameInput input {window};
+
+    static Graphics::WindowOptions options()
+    {
+        auto result = Graphics::WindowOptions {};
+        result.title = "Maze";
+        return result;
+    }
 };
 
 int main()
