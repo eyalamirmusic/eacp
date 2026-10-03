@@ -12,6 +12,7 @@
 
 namespace eacp::Graphics
 {
+#ifndef NDEBUG
 namespace
 {
 constexpr jint localReferencesPerExtra = 8;
@@ -114,6 +115,7 @@ void importEnvironment(JNIEnv* env, jobject activity)
     importIntentExtras(env, activity);
 }
 } // namespace
+#endif
 
 void importAndroidEnvironment([[maybe_unused]] ANativeActivity* activity)
 {

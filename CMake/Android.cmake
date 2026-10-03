@@ -25,8 +25,6 @@ get_filename_component(eacp_android_sdk_default "${ANDROID_NDK}/../.." ABSOLUTE)
 set(EACP_ANDROID_SDK "${eacp_android_sdk_default}" CACHE PATH
         "The Android SDK the Studio project builds with")
 
-set(EACP_ANDROID_TEMPLATES "${CMAKE_CURRENT_LIST_DIR}/Android")
-
 function(eacp_android_quoted_list out)
     set(quoted "")
 
@@ -108,7 +106,7 @@ function(eacp_add_android_app target)
     set(module "${EACP_ANDROID_STUDIO_DIR}/${target}")
     configure_file("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/AndroidManifest.xml.in"
             "${module}/src/main/AndroidManifest.xml" @ONLY)
-    configure_file("${EACP_ANDROID_TEMPLATES}/app.build.gradle.kts.in"
+    configure_file("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Android/app.build.gradle.kts.in"
             "${module}/build.gradle.kts" @ONLY)
 
     set_property(GLOBAL APPEND PROPERTY EACP_ANDROID_APPS ${target})
@@ -123,6 +121,7 @@ function(eacp_write_android_studio_project)
     endif ()
 
     set(dir "${EACP_ANDROID_STUDIO_DIR}")
+    set(templates "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Android")
     set(EACP_STUDIO_NAME "${CMAKE_PROJECT_NAME}")
     set(EACP_STUDIO_SDK_DIR "${EACP_ANDROID_SDK}")
     set(EACP_STUDIO_INCLUDES "")
@@ -138,15 +137,15 @@ function(eacp_write_android_studio_project)
 
     foreach (file settings.gradle.kts build.gradle.kts gradle.properties
             local.properties)
-        configure_file("${EACP_ANDROID_TEMPLATES}/${file}.in" "${dir}/${file}" @ONLY)
+        configure_file("${templates}/${file}.in" "${dir}/${file}" @ONLY)
     endforeach ()
 
-    configure_file("${EACP_ANDROID_TEMPLATES}/gradle-wrapper.properties.in"
+    configure_file("${templates}/gradle-wrapper.properties.in"
             "${dir}/gradle/wrapper/gradle-wrapper.properties" @ONLY)
-    file(COPY "${EACP_ANDROID_TEMPLATES}/wrapper/gradle-wrapper.jar"
+    file(COPY "${templates}/wrapper/gradle-wrapper.jar"
             DESTINATION "${dir}/gradle/wrapper")
-    file(COPY "${EACP_ANDROID_TEMPLATES}/wrapper/gradlew"
-            "${EACP_ANDROID_TEMPLATES}/wrapper/gradlew.bat"
+    file(COPY "${templates}/wrapper/gradlew"
+            "${templates}/wrapper/gradlew.bat"
             DESTINATION "${dir}")
 
     list(LENGTH apps count)
