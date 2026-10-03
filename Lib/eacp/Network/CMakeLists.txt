@@ -1,6 +1,7 @@
 add_library(eacp-network STATIC)
 
 target_sources(eacp-network PRIVATE
+        Connectivity/Connectivity.cpp
         HTTP/Http.cpp
         HTTP/HttpAsync.cpp
         HTTP/HttpProtocol.cpp
@@ -22,6 +23,7 @@ target_link_libraries(eacp-network PUBLIC eacp-core)
 
 if (APPLE)
     target_sources(eacp-network PRIVATE
+            Connectivity/Connectivity-Apple.mm
             HTTP/Http.mm
             HTTPServer/HttpServer.mm
             IPC/Channel-Apple.cpp
@@ -35,15 +37,17 @@ if (APPLE)
             "-framework Network")
 elseif (WIN32)
     target_sources(eacp-network PRIVATE
+            Connectivity/Connectivity-Windows.cpp
             HTTP/Http-Windows.cpp
             HTTPServer/HttpServer-Windows.cpp
             IPC/Channel-Windows.cpp
             IPC/Lock-Windows.cpp
             TCP/Connection-Windows.cpp
             WebSocket/WebSocket-Windows.cpp)
-    target_link_libraries(eacp-network PRIVATE winhttp ws2_32 advapi32)
+    target_link_libraries(eacp-network PRIVATE winhttp ws2_32 advapi32 iphlpapi)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
+            Connectivity/Connectivity-Linux.cpp
             HTTP/Http-Linux.cpp
             HTTPServer/HttpServer-Linux.cpp
             IPC/Channel-Linux.cpp
