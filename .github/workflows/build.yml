@@ -215,7 +215,7 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug -- -sdk iphonesimulator
 
-  # The one Android build anything is checked against: the pinned NDK, the
+  # The one Android build anything is checked against: the NDK it installs, the
   # toolchain file -DCMAKE_SYSTEM_NAME=Android alone selects, and HelloGPU,
   # which pulls Core, Graphics, GPU, Text and the SPIR-V compiler through the
   # NDK's clang. The configure also writes the Android Studio project, so the
@@ -224,24 +224,25 @@ jobs:
   build-android:
     name: Android arm64-v8a
     runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 30.0.16248370
 
     steps:
       - uses: actions/checkout@v6
 
-      # The runner's SDK carries sdkmanager and a few NDKs, not necessarily
-      # the one CMake/AndroidVersions.cmake pins, and the toolchain file
-      # accepts no other. Ninja is the generator; the resource embedder's
-      # generator is built for the host with the runner's own compiler.
-      - name: Install Ninja and the pinned NDK
+      # The runner's SDK carries sdkmanager and a few older NDKs, and names
+      # one of them in ANDROID_NDK_HOME; the configure names the one it
+      # installed, which an app locking its NDK does the same way. Ninja is
+      # the generator; the resource embedder's generator is built for the host
+      # with the runner's own compiler.
+      - name: Install Ninja and the NDK
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
-          ndk=$(sed -n 's/^set(EACP_ANDROID_NDK_VERSION \(.*\))$/\1/p' CMake/AndroidVersions.cmake)
-          echo "NDK $ndk"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"
 
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
 
       - name: Build
         run: cmake --build build --target HelloGPU

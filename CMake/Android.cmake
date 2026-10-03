@@ -67,6 +67,24 @@ function(eacp_android_cmake_arguments out)
     set(${out} "${arguments}" PARENT_SCOPE)
 endfunction()
 
+# The NDK this configure compiles with: Gradle's ndkVersion.
+function(eacp_android_ndk_version out)
+    if (ANDROID_NDK_REVISION)
+        set(${out} "${ANDROID_NDK_REVISION}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    if (CMAKE_ANDROID_NDK)
+        set(ndk "${CMAKE_ANDROID_NDK}")
+    else ()
+        set(ndk "${ANDROID_NDK}")
+    endif ()
+
+    file(STRINGS "${ndk}/source.properties" revision REGEX "^Pkg\\.Revision")
+    string(REGEX REPLACE "^Pkg\\.Revision *= *" "" revision "${revision}")
+    set(${out} "${revision}" PARENT_SCOPE)
+endfunction()
+
 function(eacp_add_android_app target)
     if (NOT EACP_ANDROID_STUDIO)
         return()
@@ -101,6 +119,7 @@ function(eacp_add_android_app target)
     eacp_android_cmake_arguments(arguments)
     eacp_android_quoted_list(EACP_STUDIO_CMAKE_ARGUMENTS ${arguments})
     eacp_android_quoted_list(EACP_STUDIO_ABIS ${EACP_ANDROID_ABIS})
+    eacp_android_ndk_version(EACP_STUDIO_NDK_VERSION)
     set(EACP_STUDIO_CMAKE_LISTS "${CMAKE_SOURCE_DIR}/CMakeLists.txt")
 
     set(module "${EACP_ANDROID_STUDIO_DIR}/${target}")

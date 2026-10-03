@@ -106,11 +106,12 @@ files under `ThirdParty/miniz` and the version in its README.
 
 ## Android
 
-`-DCMAKE_SYSTEM_NAME=Android` configures with the NDK that
-`CMake/AndroidVersions.cmake` pins, found in Android Studio's SDK or at
-`$ANDROID_HOME` (`CMake/AndroidToolchain.cmake`), for `arm64-v8a` at API 33
-unless `-DANDROID_ABI` or `-DANDROID_PLATFORM` say otherwise. An explicit
-`-DCMAKE_TOOLCHAIN_FILE` is used as given. The NDK is installed with Studio's
+`-DCMAKE_SYSTEM_NAME=Android` configures with the NDK
+`EACP_ANDROID_NDK_VERSION` locks to, else the one `$ANDROID_NDK_HOME` (or
+`$ANDROID_NDK_ROOT`, `$ANDROID_NDK`) names, else the newest NDK in Android
+Studio's SDK or `$ANDROID_HOME` (`CMake/AndroidToolchain.cmake`), for
+`arm64-v8a` at API 33 unless `-DANDROID_ABI` or `-DANDROID_PLATFORM` say
+otherwise. An explicit `-DCMAKE_TOOLCHAIN_FILE` is used as given. The NDK is installed with Studio's
 SDK Manager; eacp installs nothing.
 
 The configure writes an Android Studio project, which is how an app is built,
@@ -126,6 +127,11 @@ templates and the Gradle wrapper in `CMake/Android/`.
 - `EACP_ANDROID_ABIS` (default `arm64-v8a;x86_64`) — the ABIs its modules
   build; the second is the emulator on an Intel host.
 - `EACP_ANDROID_SDK` (default: the SDK the NDK sits in) — Gradle's `sdk.dir`.
+- `EACP_ANDROID_MIN_SDK` (default `33`) and `EACP_ANDROID_TARGET_SDK`
+  (default `35`) — `minSdk`, and `targetSdk` and `compileSdk`.
+
+The module's `ndkVersion` is the NDK the configure compiled with, so a
+project's own toolchain file carries through to Studio.
 
 Gradle runs the CMake that ran the configure and looks for Ninja beside it,
 in the SDK's own CMake package, or on its PATH. `ResEmbed`'s generator is
@@ -243,8 +249,7 @@ without it stops at configure time and says so.
 and a Clang lane that runs the graphics backend on lavapipe under a headless
 Weston and then under an Xvfb — all three build it, one has a device, a
 compositor and an X server to run it on), and builds iOS for the simulator
-and Android: an Ubuntu lane installs the NDK `CMake/AndroidVersions.cmake`
-pins with `sdkmanager`, configures with `-DCMAKE_SYSTEM_NAME=Android` and
+and Android: an Ubuntu lane installs an NDK with `sdkmanager`, configures with `-DCMAKE_SYSTEM_NAME=Android` and
 builds `HelloGPU` for `arm64-v8a`, which is every module an Android app
 links. Every lane configures with `EACP_CI_BUILD=ON`.
 

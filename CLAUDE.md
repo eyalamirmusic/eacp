@@ -67,7 +67,7 @@ systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
 tests on), and builds iOS for the simulator and HelloGPU for Android
-(arm64-v8a, the pinned NDK installed with `sdkmanager`).
+(arm64-v8a, an NDK installed with `sdkmanager`).
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the
@@ -118,14 +118,14 @@ variables from the launch intent's string extras and from
 executable, or on Android as the shared library NativeActivity loads, with
 `BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON` and
 `ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android). The
-prerequisites are Android Studio with the NDK that
-`CMake/AndroidVersions.cmake` pins (the SDK Manager installs it), CMake and
-Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
+prerequisites are Android Studio with an NDK (the SDK Manager installs it),
+CMake and Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
 build-android -DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is
 for iOS, configures: with no toolchain file given, the top-level
-`CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which finds that NDK in
-Studio's SDK (or `$ANDROID_HOME`) and includes its own `android.toolchain.cmake`
-for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` (33) unless
+`CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which takes the
+`EACP_ANDROID_NDK_VERSION` an app locks to, else the NDK `$ANDROID_NDK_HOME`
+names, else the newest NDK in Studio's SDK (or `$ANDROID_HOME`), and includes its own
+`android.toolchain.cmake` for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` (33) unless
 `-DANDROID_ABI`/`-DANDROID_PLATFORM` say otherwise, while an explicit
 `-DCMAKE_TOOLCHAIN_FILE` is used as given. That configure also writes a Gradle
 project for Android Studio into `<build>/AndroidStudio`
@@ -134,8 +134,8 @@ project for Android Studio into `<build>/AndroidStudio`
 Gradle wrapper in `CMake/Android/`): one module per `eacp_add_app` whose
 `externalNativeBuild` runs this `CMakeLists.txt` for that target per ABI in
 `EACP_ANDROID_ABIS`, given every `-D` the generating configure was given, with
-the Android Gradle Plugin and Gradle versions pinned in
-`CMake/AndroidVersions.cmake`. Building, installing, running, debugging,
+`ndkVersion` the NDK the configure compiled with, and the Android Gradle
+Plugin and Gradle versions pinned in `CMake/AndroidVersions.cmake`. Building, installing, running, debugging,
 signing and the App Bundle for Google Play are all Gradle's and Studio's;
 nothing in eacp makes an APK. `Apps/Android/README.md` is the step-by-step
 guide.

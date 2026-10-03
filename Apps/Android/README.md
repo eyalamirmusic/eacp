@@ -9,8 +9,10 @@ compiles the library, as it does on every platform.
 
 - Android Studio. In its SDK Manager (Settings > Languages & Frameworks >
   Android SDK > SDK Tools, with "Show Package Details" ticked) install "NDK
-  (Side by side)" at the version `CMake/AndroidVersions.cmake` pins. The SDK,
-  `adb` and the emulator come with Studio; `ANDROID_HOME` names another SDK.
+  (Side by side)". eacp builds with the version `-DEACP_ANDROID_NDK_VERSION`
+  locks to, else the one `ANDROID_NDK_HOME` names, else the newest NDK there.
+  The SDK, `adb` and the emulator come with Studio; `ANDROID_HOME` names
+  another SDK.
 - CMake 3.31 or later and Ninja, on the `PATH`. Gradle runs the CMake that ran
   the configure and looks for Ninja beside it (Homebrew keeps both in one
   place), in the SDK's CMake package, or on its own `PATH`.
@@ -122,8 +124,9 @@ what must survive in your app struct and let nothing assume a single run; a
 ## When it goes wrong
 
 - Studio offers to switch the project to its own SDK: that SDK has no NDK at
-  the pinned version, so the configure took `$ANDROID_HOME`. Install the NDK
-  with Studio's SDK Manager and configure again.
+  the version the configure compiled with, which came from `$ANDROID_HOME` or
+  `$ANDROID_NDK_HOME`. Install that NDK with Studio's SDK Manager and
+  configure again.
 - "Ninja not found" from Gradle: Studio started from the Dock or the Start
   menu has the login shell's `PATH` only. Put Ninja beside CMake, or install
   the SDK's CMake package, which carries one.
