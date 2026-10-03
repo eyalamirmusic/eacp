@@ -1,5 +1,4 @@
 add_subdirectory(Core)
-add_subdirectory(SIMD)
 
 if (EACP_HAS_NETWORK)
     add_subdirectory(Network)

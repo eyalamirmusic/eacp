@@ -4,6 +4,8 @@ target_sources(eacp-graphics PRIVATE
         Helpers/DisplayLink.cpp
         Image/Image.cpp
         Image/ImageOps.cpp
+        Input/GameInput.cpp
+        Input/GameInputQueue.cpp
         Layers/Layer.cpp
         Menu/Menu.cpp
         Menu/MenuCommands.cpp
@@ -22,11 +24,12 @@ if (EACP_HAS_CONTEXT)
             Widgets/TextInput.cpp)
 endif ()
 
-# The image hot loops (resizeBilinear / warpAffineInverse / mirroredCrop) now all
-# live in eacp-simd, which is always built -O3 -- so ImageOps.cpp holds only thin
+# The image hot loops (resizeBilinear / warpAffineInverse / mirroredCrop) all
+# live in ESIMD, which is always built -O3 -- so ImageOps.cpp holds only thin
 # wrappers and needs no per-source optimization flag here. (The old per-config
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
-target_link_libraries(eacp-graphics PUBLIC eacp-core eacp-simd)
+find_package(ESIMD REQUIRED)
+target_link_libraries(eacp-graphics PUBLIC eacp-core ESIMD)
 
 # PUBLIC so the capability is a compile-time fact for every consumer, not just
 # a CMake variable: Graphics.h leaves the 2D-tier headers out where there is no
@@ -40,6 +43,7 @@ if (APPLE)
             Graphics/GraphicsContextImpl.mm
             Helpers/SystemAppearance-Apple.mm
             Image/Image-Apple.mm
+            Input/GameInput-Apple.mm
             Layers/Layer.mm
             Layers/ShapeLayer.mm
             Layers/TextLayer.mm
@@ -53,6 +57,7 @@ if (APPLE)
             "-framework CoreGraphics"
             "-framework CoreText"
             "-framework CoreVideo"
+            "-framework GameController"
             "-framework ImageIO")
 
     if (IOS)
@@ -98,6 +103,7 @@ elseif (WIN32)
             Helpers/ImageConversion-Windows.cpp
             HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
+            Input/GameInput-Default.cpp
             Layers/Layer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp
@@ -128,6 +134,39 @@ elseif (WIN32)
             ole32
             shell32
             windowscodecs)
+elseif (ANDROID)
+    target_sources(eacp-graphics PRIVATE
+            Graphics/Keyboard-Android.cpp
+            Helpers/DisplayLink-Android.cpp
+            Helpers/SystemAppearance-Linux.cpp
+            HotKey/GlobalHotKey-Linux.cpp
+            Image/Image-Linux.cpp
+            Input/GameInput-Default.cpp
+            Layers/Layer-Linux.cpp
+            Menu/Menu-Linux.cpp
+            Primitives/Path-Linux.cpp
+            Tray/TrayIcon-Linux.cpp
+            View/AndroidViewSurface-Android.cpp
+            View/View-Linux.cpp
+            Window/AndroidEnvironment-Android.cpp
+            Window/AndroidMain-Android.c
+            Window/Display-Android.cpp
+            Window/Window-Android.cpp)
+
+    # The glue is the NDK's own source, not clean under eacp's warning set.
+    set(eacp_android_glue_dir
+            "${ANDROID_NDK}/sources/android/native_app_glue")
+    target_sources(eacp-graphics PRIVATE
+            "${eacp_android_glue_dir}/android_native_app_glue.c")
+    set_source_files_properties(
+            "${eacp_android_glue_dir}/android_native_app_glue.c"
+            PROPERTIES COMPILE_OPTIONS "-w")
+    target_include_directories(eacp-graphics SYSTEM PUBLIC "${eacp_android_glue_dir}")
+
+    # The app is a shared library NativeActivity loads: its entry point must
+    # survive the link even though nothing in the library calls it.
+    target_link_libraries(eacp-graphics PUBLIC android log)
+    target_link_options(eacp-graphics INTERFACE "-u" "ANativeActivity_onCreate")
 elseif (UNIX)
     # Wayland and X11 side by side, plus stubs for what needs a codec or a
     # desktop environment. Path is the exception, recording geometry rather
@@ -138,6 +177,7 @@ elseif (UNIX)
             Helpers/SystemAppearance-Linux.cpp
             HotKey/GlobalHotKey-Linux.cpp
             Image/Image-Linux.cpp
+            Input/GameInput-Default.cpp
             Layers/Layer-Linux.cpp
             Menu/Menu-Linux.cpp
             Primitives/Path-Linux.cpp

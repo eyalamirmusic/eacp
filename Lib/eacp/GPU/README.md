@@ -1,7 +1,12 @@
 # GPU
 
-Metal on Apple platforms, D3D12 on Windows, behind one API — and a shader EDSL
-that makes a shader a C++ struct rather than a string literal per backend.
+Metal on Apple platforms, D3D12 on Windows and Vulkan on Linux, behind one
+API — and a shader EDSL that makes a shader a C++ struct rather than a string
+literal per backend. The same kernel the EDSL records also runs with no device
+at all: `CpuCompute/` interprets it on the calling thread ("Running a kernel on
+the CPU" below), and `Lib/eacp/ML` lifts tensor-level compute written against
+the same `Buffer`s into a Core ML program that the Apple Neural Engine can run
+(`Lib/eacp/ML/README.md`).
 
 Everything here is main-thread only, like the rest of eacp, and every public
 type hides its backend behind a `Pimpl`, so nothing Metal or D3D leaks into a
@@ -31,13 +36,17 @@ an `assert`, so a release build pays for nothing but the call.
 | `Texture` | 2D textures: uploaded, wrapped zero-copy from a camera buffer, or rendered into |
 | `RenderPipeline` | A compiled pipeline state |
 | `CommandBuffer` / `ComputePass` | The compute path — off-screen, blocking or not; `Frame::beginCompute` puts one on a frame |
-| `Codegen/` | The shader EDSL and the MSL / HLSL emitters |
+| `Codegen/` | The shader EDSL and the MSL / HLSL / GLSL emitters, plus `ComputeKernel`, the device-free half of a `ComputeProgram` |
+| `CpuCompute/` | `eacp-cpu-compute`: the interpreter that runs a recorded compute kernel on the CPU, allocation-free, on the calling thread |
+| `Spirv/` | `eacp-spirv`: glslang wrapped as a GLSL-to-SPIR-V compiler, built where the Vulkan backend ships it |
+| `Vulkan/` | The Linux backend — see "Linux" below |
 
 ## A shader
 
 `define()` records a graph of value handles. Nothing in it is text: the emitters
-turn that one source into MSL and into HLSL, so the two backends cannot drift
-apart on a shader an app wrote once.
+turn that one source into MSL, into HLSL and into GLSL 450 (compiled to SPIR-V
+by glslang on Linux), so the three backends cannot drift apart on a shader an
+app wrote once.
 
 ```cpp
 #include <eacp/GPU/GPU.h>
@@ -265,7 +274,7 @@ struct Hit
 ### What it deliberately refuses
 
 `ShaderBuilder::uniform<T>()` static_asserts rather than leaving these to a
-comment, because each is a case where the two backends disagree about the
+comment, because each is a case where the backends disagree about the
 packing *inside* a value and no padding between fields can bridge it:
 
 - `Bool` and the boolean vectors — MSL packs a `bool` into a byte, an HLSL
@@ -360,7 +369,7 @@ reason. A clamped scissor still shows the caller what they asked for; a clamped
 viewport keeps drawing and silently squashes the picture into a rectangle nobody
 chose, which looks like a bug in the caller's own maths. Neither backend forces
 this: Metal accepts an out-of-target viewport happily. It is eacp's choice, and
-`ViewportTests` is what holds the two backends to it.
+`ViewportTests` is what holds every backend to it.
 
 ## Rendering into a texture
 
@@ -1092,9 +1101,10 @@ stores, typically with `ifThen(id < gridCount(), ...)`. Size the grid in
 multiples of `groupShape()` where the tail would otherwise compute nonsense, and
 guard the writes either way.
 
-The declaration is the one place the two backends are not the same shape twice:
-MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` is a
-global, so the same array lands on opposite sides of the entry point.
+The declaration is the one place the backends are not the same shape twice:
+MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` and
+GLSL's `shared` are globals, so the same array lands on opposite sides of the
+entry point.
 
 A buffer whose elements are records rather than single floats is read and
 written a record at a time. `read2`/`read3`/`read4` take N consecutive floats
@@ -1605,7 +1615,7 @@ idiomatic path.
 There is no `Half` value type and there is not going to be one: the Windows
 backend compiles HLSL through FXC at `cs_5_0`, where `half` is a synonym for
 `float` and there is no 16-bit arithmetic at all, so the same declaration would
-mean two different things on the two backends. What *is* portable, and what a
+mean two different things on two of the backends. What *is* portable, and what a
 model's weights actually want, is fp16 **storage** with fp32 arithmetic — half
 the buffer, half the bandwidth, and every value widened before it is used:
 

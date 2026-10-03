@@ -305,13 +305,13 @@ void mouseExited(id self, SEL, NSEvent* event)
 void keyDown(id self, SEL, NSEvent* event)
 {
     if (auto* view = getView(self))
-        view->keyDown(keyEventFrom(event, KeyEventType::Down));
+        view->dispatchKeyEvent(keyEventFrom(event, KeyEventType::Down));
 }
 
 void keyUp(id self, SEL, NSEvent* event)
 {
     if (auto* view = getView(self))
-        view->keyUp(keyEventFrom(event, KeyEventType::Up));
+        view->dispatchKeyEvent(keyEventFrom(event, KeyEventType::Up));
 }
 
 NSCursor* toNSCursor(MouseCursor cursor)

@@ -105,6 +105,15 @@ constexpr LinuxKeyMapping linuxKeyMappings[] = {
     {KeyCode::PageDown, KEY_PAGEDOWN},
     {KeyCode::CapsLock, KEY_CAPSLOCK},
 
+    {KeyCode::Shift, KEY_LEFTSHIFT},
+    {KeyCode::RightShift, KEY_RIGHTSHIFT},
+    {KeyCode::Control, KEY_LEFTCTRL},
+    {KeyCode::RightControl, KEY_RIGHTCTRL},
+    {KeyCode::Option, KEY_LEFTALT},
+    {KeyCode::RightOption, KEY_RIGHTALT},
+    {KeyCode::Command, KEY_LEFTMETA},
+    {KeyCode::RightCommand, KEY_RIGHTMETA},
+
     {KeyCode::KeypadEnter, KEY_KPENTER},
     {KeyCode::Keypad0, KEY_KP0},
     {KeyCode::Keypad1, KEY_KP1},

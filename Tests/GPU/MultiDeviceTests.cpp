@@ -99,7 +99,7 @@ auto tDevicesHaveTheirOwnQueue = test("GPU/devicesHaveTheirOwnQueue") = []
 
     check(worker.nativeQueue() != nullptr);
 
-    if constexpr (!Platform::isLinux())
+    if constexpr (!Platform::isLinuxFamily())
         check(worker.nativeQueue() != Device::shared().nativeQueue());
 
     // The underlying GPU is deliberately the same one: an MTLBuffer belongs to

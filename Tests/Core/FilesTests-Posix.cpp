@@ -4,13 +4,16 @@
 // advance. The portable half is in FilesTests.cpp.
 
 #include "Common.h"
+#include <eacp/Core/Utils/StdPath.h>
 #include <csignal>
+#include <unistd.h>
 #include <sys/stat.h>
 
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace nano;
 using eacp::FilePath;
@@ -136,3 +139,152 @@ auto tReadsAStreamWithNoKnownSize = test("Files/readsAStreamWhoseSizeIsUnknown")
     check(read.size() == contents.size());
     check(read == contents);
 };
+
+namespace
+{
+using eacp::Files::DirectoryEntry;
+using eacp::Files::DirectoryOptions;
+using eacp::Files::EntryKind;
+using eacp::Files::Symlinks;
+using eacp::Files::Visit;
+
+std::vector<std::string> relativeNames(const std::filesystem::path& root,
+                                       const eacp::Vector<DirectoryEntry>& entries)
+{
+    auto names = std::vector<std::string> {};
+
+    for (const auto& entry: entries)
+        names.push_back(
+            eacp::toStdPath(entry.path).lexically_relative(root).generic_string());
+
+    return names;
+}
+
+// a/x.txt, a/up -> a (a cycle), file-link -> a/x.txt, dir-link -> a.
+std::filesystem::path linkedTree(const std::string& name)
+{
+    auto dir = scratchDirectory(name);
+
+    std::filesystem::create_directories(dir / "a");
+    write(dir / "a" / "x.txt", "x");
+    std::filesystem::create_directory_symlink(dir / "a", dir / "a" / "up");
+    std::filesystem::create_symlink(dir / "a" / "x.txt", dir / "file-link");
+    std::filesystem::create_directory_symlink(dir / "a", dir / "dir-link");
+
+    return dir;
+}
+
+DirectoryOptions recursiveWith(Symlinks symlinks)
+{
+    auto options = DirectoryOptions {};
+    options.recursive = true;
+    options.symlinks = symlinks;
+    return options;
+}
+} // namespace
+
+auto tSymlinksSkipped =
+    test("Files/symlinksAreReportedAsThemselvesAndNotEntered") = []
+{
+    auto dir = linkedTree("list-symlink-skip");
+
+    auto entries =
+        eacp::Files::listDirectory(FilePath {dir}, recursiveWith(Symlinks::skip));
+
+    check(relativeNames(dir, entries)
+          == std::vector<std::string> {
+              "a", "a/up", "a/x.txt", "dir-link", "file-link"});
+    check(entries[1].kind == EntryKind::symlink);
+    check(entries[3].kind == EntryKind::symlink);
+    check(entries[4].kind == EntryKind::symlink);
+    check(entries[4].file().isRegularFile());
+
+    auto files =
+        eacp::Files::listFiles(FilePath {dir}, recursiveWith(Symlinks::skip));
+    check(files.size() == 1);
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tSymlinksFollowed = test("Files/followEntersEachDirectoryOnce") = []
+{
+    auto dir = linkedTree("list-symlink-follow");
+
+    auto entries =
+        eacp::Files::listDirectory(FilePath {dir}, recursiveWith(Symlinks::follow));
+
+    check(relativeNames(dir, entries)
+          == std::vector<std::string> {
+              "a", "a/up", "a/x.txt", "dir-link", "file-link"});
+
+    auto files =
+        eacp::Files::listFiles(FilePath {dir}, recursiveWith(Symlinks::follow));
+    check(files.size() == 2);
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tUnreadableDirectory = test("Files/anUnreadableDirectoryReachesOnError") = []
+{
+    if (geteuid() == 0)
+        return;
+
+    auto dir = scratchDirectory("list-unreadable");
+    std::filesystem::create_directories(dir / "locked");
+    write(dir / "locked" / "secret.txt", "s");
+    write(dir / "open.txt", "o");
+    std::filesystem::create_directories(dir / "zed");
+
+    chmod((dir / "locked").c_str(), 0);
+
+    auto options = DirectoryOptions {};
+    options.recursive = true;
+    auto reported = std::vector<FilePath> {};
+
+    options.onError = [&](const eacp::Files::TraversalError& error)
+    {
+        reported.push_back(error.path);
+        return Visit::next;
+    };
+
+    auto entries = eacp::Files::listDirectory(FilePath {dir}, options);
+
+    check(relativeNames(dir, entries)
+          == std::vector<std::string> {"locked", "open.txt", "zed"});
+    check(reported.size() == 1);
+    check(reported.front() == FilePath {dir / "locked"});
+
+    options.onError = [&](const eacp::Files::TraversalError&)
+    { return Visit::stop; };
+
+    check(relativeNames(dir, eacp::Files::listDirectory(FilePath {dir}, options))
+          == std::vector<std::string> {"locked"});
+
+    chmod((dir / "locked").c_str(), 0755);
+    std::filesystem::remove_all(dir);
+};
+
+#ifdef __APPLE__
+auto tFinderHidden = test("Files/aFinderHiddenFileIsHiddenWithoutADot") = []
+{
+    auto dir = scratchDirectory("list-finder-hidden");
+    write(dir / "plain.txt", "p");
+    write(dir / "flagged.txt", "f");
+
+    check(chflags((dir / "flagged.txt").c_str(), UF_HIDDEN) == 0);
+
+    check(relativeNames(dir, eacp::Files::listDirectory(FilePath {dir}))
+          == std::vector<std::string> {"plain.txt"});
+
+    auto options = DirectoryOptions {};
+    options.includeHidden = true;
+    auto all = eacp::Files::listDirectory(FilePath {dir}, options);
+
+    check(relativeNames(dir, all)
+          == std::vector<std::string> {"flagged.txt", "plain.txt"});
+    check(all[0].isHidden);
+    check(!all[1].isHidden);
+
+    std::filesystem::remove_all(dir);
+};
+#endif

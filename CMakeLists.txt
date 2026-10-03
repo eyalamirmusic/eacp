@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.31)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Android" AND NOT CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/CMake/AndroidToolchain.cmake")
+endif ()
+
 project(eacp VERSION 0.1.0 LANGUAGES C CXX)
 
 if (CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -15,7 +20,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # eacp builds runtime-loaded plugins and webview helpers as shared libraries,
 # and those link eacp-core together with its static dependencies (ea_data_structures,
-# Miro, ResEmbed). Every such static lib must be position-independent or the
+# Miro, ResEmbed, ESIMD). Every such static lib must be position-independent or the
 # shared-object link fails on Linux (ld: "final link failed: bad value"). Force
 # PIC for every target, including the CPM-fetched dependencies configured below.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -56,6 +61,17 @@ if (NOT EACP_BUILD_GRAPHICS)
             "Build the WebView module" FORCE)
 endif ()
 
+if (ANDROID)
+    include(AndroidVersions)
+
+    if (ANDROID_PLATFORM_LEVEL LESS EACP_ANDROID_MIN_SDK)
+        message(FATAL_ERROR
+                "eacp needs Android 13 or later: configure with "
+                "-DANDROID_PLATFORM=android-${EACP_ANDROID_MIN_SDK} (or higher); "
+                "this build targets API ${ANDROID_PLATFORM_LEVEL}.")
+    endif ()
+endif ()
+
 # What this host can do, decided once and read by Lib, Apps and Tests.
 #
 #   EACP_HAS_DRAW    a windowing system to put views in: Graphics.
@@ -66,24 +82,29 @@ endif ()
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
 #   EACP_HAS_NETWORK an HTTP client backend: Network, and the WebView page
-#                    bridge over its RPC. On everywhere today.
+#                    bridge over its RPC. Everywhere but Android, whose NDK
+#                    has no libcurl.
 set(EACP_HAS_NETWORK ON)
+
+if (ANDROID)
+    set(EACP_HAS_NETWORK OFF)
+endif ()
 
 set(EACP_HAS_DRAW OFF)
 
-if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX))
+if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID))
     set(EACP_HAS_DRAW ON)
 endif ()
 
 set(EACP_HAS_GPU OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR LINUX OR ANDROID))
     set(EACP_HAS_GPU ON)
 endif ()
 
 set(EACP_HAS_TEXT OFF)
 
-if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX))
+if (EACP_HAS_GPU AND (APPLE OR WIN32 OR LINUX OR ANDROID))
     set(EACP_HAS_TEXT ON)
 endif ()
 

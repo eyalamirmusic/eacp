@@ -134,6 +134,12 @@ else ()
             Vulkan/VulkanContext-Linux.cpp
             Vulkan/VulkanRenderPass-Linux.cpp)
 
+    if (ANDROID)
+        target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Android.cpp)
+    else ()
+        target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Linux.cpp)
+    endif ()
+
     # Both PRIVATE: neither Vulkan nor glslang reaches past this library.
     target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)
 endif ()

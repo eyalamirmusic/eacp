@@ -57,6 +57,10 @@ public:
     // size is baked at construction and forces a rebuild on every resize.
     void setViewportSize(Graphics::Point size);
 
+    // The pipelines are built for it: a multisampled pass rejects a
+    // single-sample pipeline.
+    void setSampleCount(int count);
+
     void begin();
 
     // Queues one glyph. Mask and colour glyphs go to separate queues because
@@ -91,6 +95,7 @@ private:
     Vector<GlyphInstance> colors;
 
     Graphics::Point viewport {1.f, 1.f};
+    int sampleCount = 1;
     bool prepared = false;
 };
 } // namespace eacp::Text
