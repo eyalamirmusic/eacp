@@ -16,6 +16,72 @@ function(eacp_bundle_plist_template out_var)
     endif ()
 endfunction()
 
+if (ANDROID)
+    include("${CMAKE_CURRENT_LIST_DIR}/Android.cmake")
+endif ()
+
+# eacp_add_app(<target> <sources>... [BUNDLE_ID <id>] [DISPLAY_NAME <name>]
+#              [VERSION <x.y.z>] [VERSION_CODE <n>] [ICON <png>] [ORIENTATION <o>]
+#              [RES_DIR <dir>] [MANIFEST_ELEMENTS <xml>]
+#              [APPLICATION_ATTRIBUTES <xml>] [ACTIVITY_ATTRIBUTES <xml>]
+#              [IOS_RESOURCES <paths>...])
+#
+# One app with one identity everywhere: com.eacp.<target>, named <target>, at the
+# project's version, build 1, unless told otherwise. An executable whose bundle
+# properties and at-rest icon these set, or on Android the shared library
+# NativeActivity loads, with a module in the Android Studio project
+# (eacp_add_android_app, which reads the rest).
+# IOS_RESOURCES go in the iOS bundle's Resources, where Xcode compiles an asset
+# catalog and takes its AppIcon as the icon.
+function(eacp_add_app target)
+    cmake_parse_arguments(APP "" "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;\
+ORIENTATION;RES_DIR;MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES"
+            "IOS_RESOURCES" ${ARGN})
+    string(TOLOWER "com.eacp.${target}" default_BUNDLE_ID)
+    set(default_DISPLAY_NAME "${target}")
+    set(default_VERSION "${PROJECT_VERSION}")
+    set(default_VERSION_CODE 1)
+
+    foreach (key BUNDLE_ID DISPLAY_NAME VERSION VERSION_CODE)
+        if (NOT APP_${key})
+            set(APP_${key} "${default_${key}}")
+        endif ()
+    endforeach ()
+
+    if (NOT APP_VERSION)
+        set(APP_VERSION 0.0.0)
+    endif ()
+
+    if (ANDROID)
+        add_library(${target} SHARED ${APP_UNPARSED_ARGUMENTS})
+    else ()
+        add_executable(${target} ${APP_UNPARSED_ARGUMENTS})
+    endif ()
+
+    set_target_properties(${target} PROPERTIES
+            MACOSX_BUNDLE_BUNDLE_NAME "${APP_DISPLAY_NAME}"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "${APP_BUNDLE_ID}"
+            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${APP_BUNDLE_ID}"
+            XCODE_ATTRIBUTE_MARKETING_VERSION "${APP_VERSION}"
+            XCODE_ATTRIBUTE_CURRENT_PROJECT_VERSION "${APP_VERSION_CODE}"
+            EACP_APP_VERSION "${APP_VERSION}"
+            EACP_APP_VERSION_CODE "${APP_VERSION_CODE}")
+
+    if (ANDROID)
+        eacp_add_android_app(${target})
+    elseif (APP_ICON)
+        eacp_set_app_icon(${target} IMAGE "${APP_ICON}")
+    endif ()
+
+    if (IOS AND APP_IOS_RESOURCES)
+        target_sources(${target} PRIVATE ${APP_IOS_RESOURCES})
+        set_source_files_properties(${APP_IOS_RESOURCES} PROPERTIES
+                MACOSX_PACKAGE_LOCATION Resources)
+        set_target_properties(${target} PROPERTIES
+                XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME AppIcon)
+    endif ()
+endfunction()
+
 function(set_default_warnings_level target)
     if (MSVC)
         target_compile_options(${target} PRIVATE /W4)
@@ -191,7 +257,8 @@ endfunction()
 # runtime. The name comes from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before
 # calling us) or the target name; the company from the target's
 # EACP_COMPANY_NAME property, else the EACP_COMPANY_NAME variable, else empty;
-# the version from ${PROJECT_VERSION}, defaulting to 0.0.0. Name and company
+# the version from eacp_add_app's VERSION, else ${PROJECT_VERSION}, else 0.0.0,
+# and the build from its VERSION_CODE, else the version. Name and company
 # are what FilePath::appSupportDirectory() puts the app's own folder under.
 function(eacp_embed_app_info target)
     get_target_property(app_name ${target} MACOSX_BUNDLE_BUNDLE_NAME)
@@ -204,36 +271,39 @@ function(eacp_embed_app_info target)
         set(company_name "${EACP_COMPANY_NAME}")
     endif ()
 
-    set(app_version "${PROJECT_VERSION}")
+    get_target_property(app_version ${target} EACP_APP_VERSION)
+    if (NOT app_version)
+        set(app_version "${PROJECT_VERSION}")
+    endif ()
     if (NOT app_version)
         set(app_version "0.0.0")
+    endif ()
+
+    get_target_property(build ${target} EACP_APP_VERSION_CODE)
+    if (NOT build)
+        set(build "${app_version}")
     endif ()
 
     if (APPLE)
         set_target_properties(${target} PROPERTIES
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "${app_version}"
-                MACOSX_BUNDLE_BUNDLE_VERSION "${app_version}"
+                MACOSX_BUNDLE_BUNDLE_VERSION "${build}"
                 MACOSX_BUNDLE_LONG_VERSION_STRING "${app_version}")
     elseif (WIN32)
         # VERSIONINFO's FILEVERSION/PRODUCTVERSION need four numeric fields; the
-        # project may set fewer, so pad the missing components with 0.
-        set(v_major "${PROJECT_VERSION_MAJOR}")
-        set(v_minor "${PROJECT_VERSION_MINOR}")
-        set(v_patch "${PROJECT_VERSION_PATCH}")
-        set(v_tweak "${PROJECT_VERSION_TWEAK}")
-        foreach (comp v_major v_minor v_patch v_tweak)
-            if (NOT ${comp})
-                set(${comp} 0)
-            endif ()
-        endforeach ()
+        # version may have fewer, so the missing ones are 0.
+        string(REGEX MATCHALL "[0-9]+" fields "${app_version}")
+        list(APPEND fields 0 0 0 0)
+        list(SUBLIST fields 0 4 fields)
+        list(JOIN fields "," numeric_version)
 
         # Resource ids are per-type, so id 1 here does not clash with the
         # id-1 ICON that eacp_set_app_icon emits.
         set(version_rc "${CMAKE_CURRENT_BINARY_DIR}/${target}-version.rc")
         file(CONFIGURE OUTPUT "${version_rc}" @ONLY CONTENT [==[
 1 VERSIONINFO
-FILEVERSION @v_major@,@v_minor@,@v_patch@,@v_tweak@
-PRODUCTVERSION @v_major@,@v_minor@,@v_patch@,@v_tweak@
+FILEVERSION @numeric_version@
+PRODUCTVERSION @numeric_version@
 FILEOS 0x40004L
 FILETYPE 0x1L
 BEGIN

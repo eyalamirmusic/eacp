@@ -103,6 +103,17 @@ void GlyphRenderer::setViewportSize(Graphics::Point size)
     viewport = {size.x > 0.f ? size.x : 1.f, size.y > 0.f ? size.y : 1.f};
 }
 
+void GlyphRenderer::setSampleCount(int count)
+{
+    count = count > 0 ? count : 1;
+
+    if (count == sampleCount)
+        return;
+
+    sampleCount = count;
+    prepared = false;
+}
+
 void GlyphRenderer::begin()
 {
     masks.clear();
@@ -170,11 +181,11 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
         // then that texture faded, otherwise loses the coverage of every edge it
         // has. On a window's own drawable, where the destination is opaque
         // already, the two are the same picture.
-        maskProgram->prepare(1,
+        maskProgram->prepare(sampleCount,
                              false,
                              PrimitiveTopology::Triangles,
                              BlendMode::AlphaBlendOntoTransparent);
-        colorProgram->prepare(1,
+        colorProgram->prepare(sampleCount,
                               false,
                               PrimitiveTopology::Triangles,
                               BlendMode::AlphaBlendOntoTransparent);

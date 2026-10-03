@@ -46,6 +46,8 @@ namespace
 bool s_runningAsPlugin = false;
 std::atomic<int> s_returnValue {0};
 Callback s_reopenHandler = [] {};
+std::function<void(bool)> s_suspendHandler = [](bool) {};
+bool s_suspended = false;
 std::function<bool()> s_quitHandler = [] { return true; };
 } // namespace
 
@@ -57,6 +59,17 @@ void setReopenHandler(const Callback& handler)
 const Callback& getReopenHandler()
 {
     return s_reopenHandler;
+}
+
+void setSuspendHandler(std::function<void(bool suspended)> handler)
+{
+    s_suspendHandler = handler ? std::move(handler) : [](bool) {};
+}
+
+void Detail::setSuspended(bool suspended)
+{
+    if (suspended != s_suspended)
+        s_suspendHandler(s_suspended = suspended);
 }
 
 void setQuitHandler(std::function<bool()> handler)

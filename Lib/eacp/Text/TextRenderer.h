@@ -82,6 +82,11 @@ public:
     // scale rebuilds the atlas; a changed size is free.
     void setViewport(Graphics::Point size, float scale);
 
+    // The samples per pixel of the pass flush() draws into: one, the default,
+    // for a plain view, and the view's own sampleCount() for text drawn inside
+    // a multisampled scene.
+    void setSampleCount(int count);
+
     // The face used by the calls that name none. Changing it costs nothing but
     // the glyphs of the new face: sizes coexist in one atlas, so the old one is
     // still there for whatever is still drawing in it.
@@ -181,6 +186,7 @@ private:
 
     Graphics::Point viewportSize {0.0f, 0.0f};
     float deviceScale = 1.0f;
+    int sampleCount = 1;
 
     OwningPointer<GlyphAtlas> atlas;
     std::optional<GlyphRenderer> glyphs;
