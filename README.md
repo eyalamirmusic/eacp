@@ -19,6 +19,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink, their Windows
   equivalents, and on Linux one `epoll` descriptor a plugin host's own loop
   can pump (`getEventLoopFd`, `pumpEventLoop`).
+- **Files** — `FilePath` carries a path as UTF-8 text, `Files::readFile` /
+  `writeFile` / `writeFileAtomically` move whole files, `File` and
+  `MemoryMappedFile` read big ones in pieces, and `Zip` reads and writes
+  archives. A directory is walked with `Files::forEachEntry` (a visitor that
+  can prune a subtree or stop early, with unreadable entries reported to a
+  callback) or collected with `listDirectory` / `listFiles`, recursively or
+  not, hidden entries and symlinks by choice.
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame

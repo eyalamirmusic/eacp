@@ -761,6 +761,22 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   or the variable of that name, and its level is omitted when empty); an app
   with no `AppInfo` is named after its executable (`Files::executablePath`).
   The two-argument overloads take the names instead
+- `Files::forEachEntry` / `listDirectory` / `listFiles` (`Utils/Files.h`):
+  the one directory walk. `forEachEntry` calls a `VisitingFunc` per
+  `DirectoryEntry` (path, `EntryKind` of the entry itself so a symlink is a
+  symlink, depth, hidden) and collects nothing; the visitor answers
+  `Visit::next`, `skipChildren` or `stop`. `DirectoryOptions` is recursion,
+  hidden entries (a leading '.', plus the hidden attribute on Windows and
+  Finder's `UF_HIDDEN` flag on Apple through the `Detail::hasHiddenAttribute`
+  seam in `FilesPlatform.h`; Linux has no such flag) and a `Symlinks`
+  policy — `skip` never descends a link, `follow` keeps the canonical path of
+  every directory entered and silently skips one seen before, so a cycle is a
+  dead end — plus a `TraversalErrorFunc` that defaults to skipping an
+  unreadable entry and can answer `stop`. Each directory is read whole and
+  sorted by name before any visitor call, so the order is deterministic and a
+  visitor may delete what it is shown. `Zip::Writer::addDirectory`, the
+  `OnlineResources` directory size and the Core ML cache's listing and sweep
+  all go through it rather than a `directory_iterator` of their own
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)

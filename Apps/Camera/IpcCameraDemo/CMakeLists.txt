@@ -12,8 +12,6 @@ set_target_properties(IpcCameraDemo PROPERTIES
 eacp_set_gui_subsystem(IpcCameraDemo)
 set_default_target_setting(IpcCameraDemo)
 
-# Override the shared bundle plist with one carrying NSCameraUsageDescription,
-# which macOS requires before it will grant camera access (TCC).
-set_target_properties(IpcCameraDemo PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST
-        "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
+# macOS grants the camera (TCC) only to a bundle that says why it wants it.
+eacp_add_plist_entries(IpcCameraDemo NSCameraUsageDescription
+        "This demo captures the camera in one process and broadcasts the feed to a second process over eacp IPC.")
