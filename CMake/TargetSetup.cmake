@@ -1,5 +1,21 @@
 include(AppleSetup)
 
+# Published at include time rather than from eacp_default_setup(), which only
+# runs when eacp is the top-level project: a project that fetches eacp gets
+# the same bundle templates its own apps do.
+set(EACP_MACOS_PLIST "${CMAKE_CURRENT_LIST_DIR}/macOSBundleInfo.plist.in"
+        CACHE INTERNAL "eacp macOS bundle Info.plist template")
+set(EACP_IOS_PLIST "${CMAKE_CURRENT_LIST_DIR}/iOSBundleInfo.plist.in"
+        CACHE INTERNAL "eacp iOS bundle Info.plist template")
+
+function(eacp_bundle_plist_template out_var)
+    if (IOS)
+        set(${out_var} "${EACP_IOS_PLIST}" PARENT_SCOPE)
+    else ()
+        set(${out_var} "${EACP_MACOS_PLIST}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
 function(set_default_warnings_level target)
     if (MSVC)
         target_compile_options(${target} PRIVATE /W4)
@@ -35,14 +51,86 @@ function(silence_target_warnings target)
     endif ()
 endfunction()
 
+# The bundle plist is eacp's template unless the target already has one, so
+# an app's own plist, or eacp_add_plist_entries, may come before or after.
 function(set_default_target_setting target)
     set_default_warnings_level(${target})
     set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-    if (IOS)
-        set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_IOS_PLIST}")
-    elseif (APPLE)
-        set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_MACOS_PLIST}")
+
+    if (APPLE)
+        get_target_property(plist ${target} MACOSX_BUNDLE_INFO_PLIST)
+
+        if (NOT plist)
+            eacp_bundle_plist_template(template)
+            set_target_properties(${target} PROPERTIES
+                    MACOSX_BUNDLE_INFO_PLIST "${template}")
+        endif ()
     endif ()
+endfunction()
+
+function(eacp_plist_element value out_var)
+    if (value STREQUAL "TRUE")
+        set(${out_var} "<true/>" PARENT_SCOPE)
+    elseif (value STREQUAL "FALSE")
+        set(${out_var} "<false/>" PARENT_SCOPE)
+    else ()
+        string(REPLACE "&" "&amp;" value "${value}")
+        string(REPLACE "<" "&lt;" value "${value}")
+        string(REPLACE ">" "&gt;" value "${value}")
+        set(${out_var} "<string>${value}</string>" PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# Adds keys to an app's Info.plist on top of eacp's template for the platform,
+# so an app that needs a usage description or LSUIElement does not carry a
+# copy of the whole file. TRUE and FALSE become booleans, anything else a
+# string. Calls accumulate, and may come before or after
+# set_default_target_setting. A no-op off Apple.
+#
+#   eacp_add_plist_entries(MyApp
+#           NSCameraUsageDescription "Shows the camera in a GPU view."
+#           LSUIElement TRUE)
+function(eacp_add_plist_entries target)
+    if (NOT APPLE)
+        return()
+    endif ()
+
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "" "")
+    list(LENGTH ARG_UNPARSED_ARGUMENTS count)
+    math(EXPR remainder "${count} % 2")
+
+    if (count EQUAL 0 OR remainder)
+        message(FATAL_ERROR
+                "eacp_add_plist_entries(${target}): expects key value pairs")
+    endif ()
+
+    get_target_property(entries ${target} EACP_PLIST_ENTRIES)
+
+    if (NOT entries)
+        set(entries "")
+    endif ()
+
+    math(EXPR last "${count} - 1")
+
+    foreach (i RANGE 0 ${last} 2)
+        math(EXPR j "${i} + 1")
+        list(GET ARG_UNPARSED_ARGUMENTS ${i} key)
+        list(GET ARG_UNPARSED_ARGUMENTS ${j} value)
+        eacp_plist_element("${value}" element)
+        string(APPEND entries "\t<key>${key}</key>\n\t${element}\n")
+    endforeach ()
+
+    set_target_properties(${target} PROPERTIES EACP_PLIST_ENTRIES "${entries}")
+
+    eacp_bundle_plist_template(template)
+    file(READ "${template}" plist)
+    string(REPLACE "</dict>\n</plist>" "${entries}</dict>\n</plist>" plist
+            "${plist}")
+
+    set(generated "${CMAKE_CURRENT_BINARY_DIR}/${target}-Info.plist.in")
+    file(WRITE "${generated}" "${plist}")
+    set_target_properties(${target} PROPERTIES
+            MACOSX_BUNDLE_INFO_PLIST "${generated}")
 endfunction()
 
 function(eacp_enable_unity_build target)

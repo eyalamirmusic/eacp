@@ -11,8 +11,6 @@ set_target_properties(CameraProbe PROPERTIES
 
 set_default_target_setting(CameraProbe)
 
-# Override the shared bundle plist with one carrying NSCameraUsageDescription,
-# which macOS requires before it will grant camera access (TCC).
-set_target_properties(CameraProbe PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST
-        "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
+# macOS grants the camera (TCC) only to a bundle that says why it wants it.
+eacp_add_plist_entries(CameraProbe NSCameraUsageDescription
+        "This example captures from the camera to demonstrate the eacp camera subsystem.")

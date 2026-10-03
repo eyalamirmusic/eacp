@@ -12,8 +12,6 @@ set_target_properties(CameraViewDemo PROPERTIES
 eacp_set_gui_subsystem(CameraViewDemo)
 set_default_target_setting(CameraViewDemo)
 
-# Override the shared bundle plist with one carrying NSCameraUsageDescription,
-# which macOS requires before it will grant camera access (TCC).
-set_target_properties(CameraViewDemo PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST
-        "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
+# macOS grants the camera (TCC) only to a bundle that says why it wants it.
+eacp_add_plist_entries(CameraViewDemo NSCameraUsageDescription
+        "This demo shows the live camera in a GPU view to exercise the eacp camera subsystem.")
