@@ -33,11 +33,12 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `View::getWindow()` lets a view reach the window it is in rather than be
   handed it. On a touch screen a view that calls `setHandlesTouchEvents()`
   gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
-  `touchEnded`, one id per finger, held by the view it came down on), and any
+  `touchEnded`, one id per finger, held by the view it came down on, with its contact
+  `radius` in points), and any
   other view gets the first finger as the mouse, so widgets written for a mouse
   work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
   the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
-  stay zero and silent on desktop windows.
+  stay zero and silent on desktop windows. `Apps/UI/TouchDemo` draws both.
 - **Game input** — `GameInput` is keyboard and mouse state for a game loop,
   polled once a frame beside the `View` callbacks that UI and text entry keep
   using: `snapshot()` returns a frame that answers `isDown`, `wasPressed`,
