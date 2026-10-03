@@ -1,4 +1,4 @@
-add_executable(VariableFont Main.cpp)
+eacp_add_app(VariableFont Main.cpp DISPLAY_NAME "Variable Font")
 target_link_libraries(VariableFont PRIVATE eacp-sprites eacp-text)
 
 # The face is data, not code: embedded so the app carries it with nothing to
@@ -10,13 +10,7 @@ res_embed_add(VariableFont
         NAMESPACE VariableFontAssets
         CATEGORY  VariableFontAssets)
 
-set(BUNDLE_ID "com.eacp.variablefont")
-
-set_target_properties(VariableFont PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Variable Font"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+set_target_properties(VariableFont PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(VariableFont)
 set_default_target_setting(VariableFont)

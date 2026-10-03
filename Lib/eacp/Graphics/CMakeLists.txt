@@ -134,6 +134,38 @@ elseif (WIN32)
             ole32
             shell32
             windowscodecs)
+elseif (ANDROID)
+    target_sources(eacp-graphics PRIVATE
+            Graphics/Keyboard-Android.cpp
+            Helpers/DisplayLink-Android.cpp
+            Helpers/SystemAppearance-Linux.cpp
+            HotKey/GlobalHotKey-Linux.cpp
+            Image/Image-Linux.cpp
+            Layers/Layer-Linux.cpp
+            Menu/Menu-Linux.cpp
+            Primitives/Path-Linux.cpp
+            Tray/TrayIcon-Linux.cpp
+            View/AndroidViewSurface-Android.cpp
+            View/View-Linux.cpp
+            Window/AndroidEnvironment-Android.cpp
+            Window/AndroidMain-Android.c
+            Window/Display-Android.cpp
+            Window/Window-Android.cpp)
+
+    # The glue is the NDK's own source, not clean under eacp's warning set.
+    set(eacp_android_glue_dir
+            "${ANDROID_NDK}/sources/android/native_app_glue")
+    target_sources(eacp-graphics PRIVATE
+            "${eacp_android_glue_dir}/android_native_app_glue.c")
+    set_source_files_properties(
+            "${eacp_android_glue_dir}/android_native_app_glue.c"
+            PROPERTIES COMPILE_OPTIONS "-w")
+    target_include_directories(eacp-graphics SYSTEM PUBLIC "${eacp_android_glue_dir}")
+
+    # The app is a shared library NativeActivity loads: its entry point must
+    # survive the link even though nothing in the library calls it.
+    target_link_libraries(eacp-graphics PUBLIC android log)
+    target_link_options(eacp-graphics INTERFACE "-u" "ANativeActivity_onCreate")
 elseif (UNIX)
     # Wayland and X11 side by side, plus stubs for what needs a codec or a
     # desktop environment. Path is the exception, recording geometry rather

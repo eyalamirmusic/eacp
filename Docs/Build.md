@@ -104,6 +104,35 @@ files under `ThirdParty/miniz` and the version in its README.
   the top-level project) — build `Tests/` and `Apps/`. A project consuming
   eacp through CPM gets neither unless it asks.
 
+## Android
+
+`-DCMAKE_SYSTEM_NAME=Android` configures with the NDK that
+`CMake/AndroidVersions.cmake` pins, found in Android Studio's SDK or at
+`$ANDROID_HOME` (`CMake/AndroidToolchain.cmake`), for `arm64-v8a` at API 33
+unless `-DANDROID_ABI` or `-DANDROID_PLATFORM` say otherwise. An explicit
+`-DCMAKE_TOOLCHAIN_FILE` is used as given. The NDK is installed with Studio's
+SDK Manager; eacp installs nothing.
+
+The configure writes an Android Studio project, which is how an app is built,
+installed, run, debugged, signed and bundled for Google Play. The project is a
+Gradle one with one module per `eacp_add_app`, whose `externalNativeBuild`
+runs this `CMakeLists.txt` for that one target per ABI, given every `-D` the
+generating configure was given plus `CPM_SOURCE_CACHE`, so a module builds the
+same sources with the same options. `CMake/Android.cmake` writes it from the
+templates and the Gradle wrapper in `CMake/Android/`.
+
+- `EACP_ANDROID_STUDIO` (default `ON`) — write the project.
+- `EACP_ANDROID_STUDIO_DIR` (default `<build>/AndroidStudio`) — where.
+- `EACP_ANDROID_ABIS` (default `arm64-v8a;x86_64`) — the ABIs its modules
+  build; the second is the emulator on an Intel host.
+- `EACP_ANDROID_SDK` (default: the SDK the NDK sits in) — Gradle's `sdk.dir`.
+
+Gradle runs the CMake that ran the configure and looks for Ninja beside it,
+in the SDK's own CMake package, or on its PATH. `ResEmbed`'s generator is
+built for the host inside each module's configure, as on every cross build,
+so the host needs a C++ compiler and Ninja where Gradle can find them.
+[`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
+
 ## A local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against
@@ -120,6 +149,38 @@ Use `$HOME`, not `~`. CMake does not expand `~`, and shell tilde expansion is
 suppressed inside quotes, so `-DCPM_Miro_SOURCE="~/Code/Miro"` silently
 configures against a non-existent path and fails later with errors like
 `Unknown CMake command "miro_add_type_export"`.
+
+## App targets
+
+An app bundle is set up with the functions in `CMake/TargetSetup.cmake`, which
+a project that fetches eacp has as well:
+
+- `set_default_target_setting(target)` — the warning level, LTO in Release,
+  and on Apple the bundle's `Info.plist` from eacp's template
+  (`CMake/macOSBundleInfo.plist.in`, or the iOS one), unless the target
+  already has one.
+- `eacp_set_gui_subsystem(target)` — a windowed app on Windows, and the app's
+  name and version stamped into the binary.
+- `eacp_set_app_icon(target IMAGE ...)` — the at-rest icon.
+- `eacp_add_plist_entries(target key value ...)` — keys added to the
+  template's plist, for the usage description macOS wants before it grants
+  the camera or the microphone, or `LSUIElement` for a menu-bar app. `TRUE`
+  and `FALSE` become booleans, anything else a string. Calls accumulate, and
+  may come before or after `set_default_target_setting`.
+
+```cmake
+eacp_add_plist_entries(MyApp
+        NSMicrophoneUsageDescription "MyApp listens to transcribe what it hears."
+        LSUIElement TRUE)
+```
+
+The generated template lands in the target's binary directory as
+`<target>-Info.plist.in`. An app that needs more than key-value entries sets
+`MACOSX_BUNDLE_INFO_PLIST` to a template of its own, which
+`set_default_target_setting` leaves alone. The template paths are
+`EACP_MACOS_PLIST` and `EACP_IOS_PLIST`, published when `TargetSetup` is
+included, so a project that fetches eacp reads them without running
+`eacp_default_setup()`.
 
 ## Capability variables
 

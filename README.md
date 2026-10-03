@@ -19,6 +19,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink, their Windows
   equivalents, and on Linux one `epoll` descriptor a plugin host's own loop
   can pump (`getEventLoopFd`, `pumpEventLoop`).
+- **Files** — `FilePath` carries a path as UTF-8 text, `Files::readFile` /
+  `writeFile` / `writeFileAtomically` move whole files, `File` and
+  `MemoryMappedFile` read big ones in pieces, and `Zip` reads and writes
+  archives. A directory is walked with `Files::forEachEntry` (a visitor that
+  can prune a subtree or stop early, with unreadable entries reported to a
+  callback) or collected with `listDirectory` / `listFiles`, recursively or
+  not, hidden entries and symlinks by choice.
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
@@ -136,9 +143,10 @@ off the main thread; fed by the window's own key and mouse events elsewhere.
 CI builds and tests macOS (universal), Windows x64 and ARM64 (MSVC and
 clang-cl) and Linux (GCC, Clang, and a lane that runs the graphics stack on
 Mesa's software Vulkan under a headless Weston and then an Xvfb), and builds
-iOS for the simulator. macOS is the most exercised of them. Android is not
-supported on this branch; an initial port is in progress on the `jp/android`
-branches and is not yet merged.
+iOS for the simulator. macOS is the most exercised of them. Android (API 33+,
+Vulkan 1.3) builds through an Android Studio project the configure writes and
+is not yet in CI; [`Apps/Android/README.md`](Apps/Android/README.md) is the
+guide.
 
 ## A taste of the API
 

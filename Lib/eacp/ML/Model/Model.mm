@@ -3,6 +3,7 @@
 
 #include <eacp/Core/ObjC/AutoReleasePool.h>
 #include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
 
 #include <CommonCrypto/CommonDigest.h>
@@ -224,15 +225,12 @@ Vector<std::string> filesUnder(const FilePath& directory)
 {
     auto root = toStdPath(directory);
     auto files = Vector<std::string> {};
-    auto error = std::error_code {};
 
-    for (const auto& entry: std::filesystem::recursive_directory_iterator(root, error))
-    {
-        auto isHidden = entry.path().filename().string().starts_with(".");
+    auto options = Files::DirectoryOptions {};
+    options.recursive = true;
 
-        if (entry.is_regular_file(error) && !isHidden)
-            files.add(entry.path().lexically_relative(root).generic_string());
-    }
+    for (const auto& file: Files::listFiles(directory, options))
+        files.add(toStdPath(file).lexically_relative(root).generic_string());
 
     files.sort();
     return files;
@@ -292,9 +290,9 @@ bool startsWithCacheKey(const std::string& name)
     return true;
 }
 
-bool isStaleTemporary(const std::filesystem::directory_entry& entry)
+bool isStaleTemporary(const FilePath& path)
 {
-    auto name = entry.path().filename().string();
+    auto name = Files::filenameFromPath(path.str());
     auto isTemporary =
         name.ends_with(".mlpackage") || name.ends_with(".tmp") || name.ends_with(".trash");
 
@@ -302,7 +300,7 @@ bool isStaleTemporary(const std::filesystem::directory_entry& entry)
         return false;
 
     auto error = std::error_code {};
-    auto modified = entry.last_write_time(error);
+    auto modified = std::filesystem::last_write_time(toStdPath(path), error);
 
     if (error)
         return false;
@@ -313,16 +311,12 @@ bool isStaleTemporary(const std::filesystem::directory_entry& entry)
 
 void sweepStaleTemporaries(const FilePath& directory)
 {
-    auto stale = Vector<FilePath> {};
-    auto error = std::error_code {};
+    auto options = Files::DirectoryOptions {};
+    options.includeHidden = true;
 
-    for (const auto& entry:
-         std::filesystem::directory_iterator(toStdPath(directory), error))
-        if (isStaleTemporary(entry))
-            stale.add(FilePath {entry.path()});
-
-    for (const auto& path: stale)
-        Files::removeAll(path);
+    for (const auto& entry: Files::listDirectory(directory, options))
+        if (isStaleTemporary(entry.path))
+            Files::removeAll(entry.path);
 }
 
 void discardDamaged(const FilePath& target)

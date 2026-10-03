@@ -1,5 +1,11 @@
 set(CMAKE_FOLDER Examples)
 
+if (ANDROID)
+    add_subdirectory(Android)
+    add_subdirectory(GPU)
+    return ()
+endif ()
+
 add_subdirectory(Console)
 add_subdirectory(Network)
 

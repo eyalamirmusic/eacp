@@ -2,9 +2,12 @@
 #include "FilesPlatform.h"
 #include "StdPath.h"
 
+#include <algorithm>
 #include <atomic>
 #include <fstream>
+#include <set>
 #include <sstream>
+#include <vector>
 
 namespace eacp::Files
 {
@@ -160,6 +163,258 @@ bool removeAll(const FilePath& path)
     auto error = std::error_code {};
     std::filesystem::remove_all(toStdPath(path), error);
     return !error;
+}
+
+namespace
+{
+EntryKind kindOf(const std::filesystem::file_status& status)
+{
+    if (std::filesystem::is_symlink(status))
+        return EntryKind::symlink;
+
+    if (std::filesystem::is_directory(status))
+        return EntryKind::directory;
+
+    if (std::filesystem::is_regular_file(status))
+        return EntryKind::file;
+
+    return EntryKind::other;
+}
+
+bool isHiddenName(const std::filesystem::path& path)
+{
+    const auto name = path.filename().generic_u8string();
+    return !name.empty() && name.front() == u8'.';
+}
+
+// One traversal: the options and the visitor for its whole length, and under
+// Symlinks::follow the directories already entered.
+class DirectoryWalker
+{
+public:
+    DirectoryWalker(const DirectoryOptions& optionsToUse,
+                    const VisitingFunc& visitorToUse)
+        : options(optionsToUse)
+        , visitor(visitorToUse)
+    {
+    }
+
+    bool walk(const std::filesystem::path& root)
+    {
+        auto ec = std::error_code {};
+        auto iterator = std::filesystem::directory_iterator(root, ec);
+
+        if (ec)
+        {
+            report(root, "cannot list", ec);
+            return false;
+        }
+
+        if (options.symlinks == Symlinks::follow)
+            rememberEntered(root);
+
+        walkChildren(std::move(iterator), root, 0);
+        return true;
+    }
+
+private:
+    Visit walkChildren(std::filesystem::directory_iterator iterator,
+                       const std::filesystem::path& directory,
+                       int depth)
+    {
+        auto [children, listing] =
+            collectChildren(std::move(iterator), directory, depth);
+
+        if (listing == Visit::stop)
+            return Visit::stop;
+
+        for (const auto& child: children)
+        {
+            const auto verdict = visitor(child);
+
+            if (verdict == Visit::stop)
+                return Visit::stop;
+
+            if (verdict == Visit::next && options.recursive
+                && descend(child, depth + 1) == Visit::stop)
+                return Visit::stop;
+        }
+
+        return Visit::next;
+    }
+
+    struct Children
+    {
+        std::vector<DirectoryEntry> entries;
+        Visit listing = Visit::next;
+    };
+
+    // The whole directory before any visitor call, so the order is by name and
+    // a visitor that deletes what it is shown cannot upset the iterator.
+    Children collectChildren(std::filesystem::directory_iterator iterator,
+                             const std::filesystem::path& directory,
+                             int depth)
+    {
+        auto children = Children {};
+        auto ec = std::error_code {};
+
+        for (; iterator != std::filesystem::directory_iterator {} && !ec;
+             iterator.increment(ec))
+        {
+            if (auto entry = describe(*iterator, depth, children.listing))
+                children.entries.push_back(std::move(*entry));
+
+            if (children.listing == Visit::stop)
+                return children;
+        }
+
+        if (ec && report(directory, "cannot list", ec) == Visit::stop)
+            children.listing = Visit::stop;
+
+        std::sort(children.entries.begin(),
+                  children.entries.end(),
+                  [](const DirectoryEntry& a, const DirectoryEntry& b)
+                  { return a.path.str() < b.path.str(); });
+
+        return children;
+    }
+
+    std::optional<DirectoryEntry> describe(
+        const std::filesystem::directory_entry& item, int depth, Visit& listing)
+    {
+        auto ec = std::error_code {};
+        const auto status = item.symlink_status(ec);
+
+        if (ec)
+        {
+            listing = report(item.path(), "cannot stat", ec);
+            return std::nullopt;
+        }
+
+        auto entry = DirectoryEntry {};
+        entry.path = FilePath {item.path()};
+        entry.kind = kindOf(status);
+        entry.depth = depth;
+        entry.isHidden =
+            isHiddenName(item.path()) || Detail::hasHiddenAttribute(item.path());
+
+        if (entry.isHidden && !options.includeHidden)
+            return std::nullopt;
+
+        return entry;
+    }
+
+    Visit descend(const DirectoryEntry& entry, int depth)
+    {
+        const auto path = toStdPath(entry.path);
+
+        if (!leadsToDirectory(entry, path))
+            return Visit::next;
+
+        if (options.symlinks == Symlinks::follow && !rememberEntered(path))
+            return Visit::next;
+
+        auto ec = std::error_code {};
+        auto iterator = std::filesystem::directory_iterator(path, ec);
+
+        if (ec)
+            return report(path, "cannot list", ec);
+
+        return walkChildren(std::move(iterator), path, depth);
+    }
+
+    bool leadsToDirectory(const DirectoryEntry& entry,
+                          const std::filesystem::path& path) const
+    {
+        if (entry.kind == EntryKind::directory)
+            return true;
+
+        if (entry.kind != EntryKind::symlink || options.symlinks != Symlinks::follow)
+            return false;
+
+        auto ec = std::error_code {};
+        return std::filesystem::is_directory(path, ec);
+    }
+
+    // False when this directory has been entered before on this walk.
+    bool rememberEntered(const std::filesystem::path& directory)
+    {
+        auto ec = std::error_code {};
+        auto canonical = std::filesystem::canonical(directory, ec);
+
+        if (ec)
+            return true;
+
+        return entered.insert(std::move(canonical)).second;
+    }
+
+    Visit report(const std::filesystem::path& path,
+                 std::string_view operation,
+                 const std::error_code& ec)
+    {
+        auto error = TraversalError {};
+        error.path = FilePath {path};
+        error.message = std::string {operation} + ": " + ec.message();
+
+        return options.onError(error);
+    }
+
+    const DirectoryOptions& options;
+    const VisitingFunc& visitor;
+    std::set<std::filesystem::path> entered;
+};
+} // namespace
+
+bool forEachEntry(const FilePath& directory,
+                  const DirectoryOptions& options,
+                  const VisitingFunc& visitor)
+{
+    return DirectoryWalker {options, visitor}.walk(toStdPath(directory));
+}
+
+Vector<DirectoryEntry> listDirectory(const FilePath& directory,
+                                     const DirectoryOptions& options)
+{
+    auto entries = Vector<DirectoryEntry> {};
+
+    forEachEntry(directory,
+                 options,
+                 [&](const DirectoryEntry& entry)
+                 {
+                     entries.add(entry);
+                     return Visit::next;
+                 });
+
+    return entries;
+}
+
+Vector<FilePath> listFiles(const FilePath& directory,
+                           const DirectoryOptions& options)
+{
+    auto files = Vector<FilePath> {};
+
+    const auto isFile = [&](const DirectoryEntry& entry)
+    {
+        if (entry.kind == EntryKind::file)
+            return true;
+
+        if (entry.kind != EntryKind::symlink || options.symlinks != Symlinks::follow)
+            return false;
+
+        return entry.file().isRegularFile();
+    };
+
+    forEachEntry(directory,
+                 options,
+                 [&](const DirectoryEntry& entry)
+                 {
+                     if (isFile(entry))
+                         files.add(entry.path);
+
+                     return Visit::next;
+                 });
+
+    return files;
 }
 
 std::string getBundleResourcePath(const std::string& filename)

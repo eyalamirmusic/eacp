@@ -32,15 +32,15 @@ examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
 `CameraView`, `Video`, `VideoView`, the last two additionally off on iOS),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
-`APPLE OR WIN32 OR LINUX` — everywhere graphics builds at all — and stay
+`APPLE OR WIN32 OR LINUX OR ANDROID` — everywhere graphics builds at all — and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
 are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-An eighth, `EACP_HAS_NETWORK`, is on everywhere today and gates `Network`,
-the WebView page bridge over its RPC, `eacp-ui-network` and their tests, so a
-port without an HTTP client backend turns off one variable.
+An eighth, `EACP_HAS_NETWORK`, is on everywhere but Android (the NDK has no
+libcurl) and gates `Network`, the WebView page bridge over its RPC,
+`eacp-ui-network` and their tests.
 `Core` and `Network` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
 and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
@@ -97,6 +97,34 @@ so it never joins a unity build and its warnings are silenced. Only `eacp-core`
 links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
 of it is reached through `eacp::Zip`. To update it, replace the files under
 `ThirdParty/miniz` and the version in its README.
+
+Android (NDK r30, API 33+, Vulkan 1.3) is Linux without Wayland: CMake's
+`ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
+the app is a NativeActivity shared library with its ordinary `main()`
+(`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
+over `android.graphics` through JNI. `eacp_add_app` builds an example as an
+executable, or on Android as the shared library NativeActivity loads. The
+prerequisites are Android Studio with the NDK that
+`CMake/AndroidVersions.cmake` pins (the SDK Manager installs it), CMake and
+Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
+build-android -DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is
+for iOS, configures: with no toolchain file given, the top-level
+`CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which finds that NDK in
+Studio's SDK (or `$ANDROID_HOME`) and includes its own `android.toolchain.cmake`
+for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` (33) unless
+`-DANDROID_ABI`/`-DANDROID_PLATFORM` say otherwise, while an explicit
+`-DCMAKE_TOOLCHAIN_FILE` is used as given. That configure also writes a Gradle
+project for Android Studio into `<build>/AndroidStudio`
+(`EACP_ANDROID_STUDIO_DIR` moves it, `-DEACP_ANDROID_STUDIO=OFF` skips it), as
+`-G Xcode` writes an Xcode one (`CMake/Android.cmake`, templates and the
+Gradle wrapper in `CMake/Android/`): one module per `eacp_add_app` whose
+`externalNativeBuild` runs this `CMakeLists.txt` for that target per ABI in
+`EACP_ANDROID_ABIS`, given every `-D` the generating configure was given, with
+the Android Gradle Plugin and Gradle versions pinned in
+`CMake/AndroidVersions.cmake`. Building, installing, running, debugging,
+signing and the App Bundle for Google Play are all Gradle's and Studio's;
+nothing in eacp makes an APK. `Apps/Android/README.md` is the step-by-step
+guide.
 
 ## Build Commands
 
@@ -739,6 +767,22 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   or the variable of that name, and its level is omitted when empty); an app
   with no `AppInfo` is named after its executable (`Files::executablePath`).
   The two-argument overloads take the names instead
+- `Files::forEachEntry` / `listDirectory` / `listFiles` (`Utils/Files.h`):
+  the one directory walk. `forEachEntry` calls a `VisitingFunc` per
+  `DirectoryEntry` (path, `EntryKind` of the entry itself so a symlink is a
+  symlink, depth, hidden) and collects nothing; the visitor answers
+  `Visit::next`, `skipChildren` or `stop`. `DirectoryOptions` is recursion,
+  hidden entries (a leading '.', plus the hidden attribute on Windows and
+  Finder's `UF_HIDDEN` flag on Apple through the `Detail::hasHiddenAttribute`
+  seam in `FilesPlatform.h`; Linux has no such flag) and a `Symlinks`
+  policy — `skip` never descends a link, `follow` keeps the canonical path of
+  every directory entered and silently skips one seen before, so a cycle is a
+  dead end — plus a `TraversalErrorFunc` that defaults to skipping an
+  unreadable entry and can answer `stop`. Each directory is read whole and
+  sorted by name before any visitor call, so the order is deterministic and a
+  visitor may delete what it is shown. `Zip::Writer::addDirectory`, the
+  `OnlineResources` directory size and the Core ML cache's listing and sweep
+  all go through it rather than a `directory_iterator` of their own
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)
