@@ -11,6 +11,13 @@ the current conversation.
 
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
 
+`README.md` is written for users of the library — interface, capabilities and
+usage — and stays free of build-system and implementation detail. In-depth
+docs live under `Docs/` (`Build.md` for options, dependencies, capability
+variables and CI; `Linux.md` for the Linux backend) and beside the modules
+they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`). New
+implementation-level documentation goes there, not in the README.
+
 Platform coverage splits on whether a module draws, decided once in the
 top-level `CMakeLists.txt` by eight capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
@@ -51,7 +58,7 @@ ships it, and macOS and Windows can opt in. Where it is built, every GLSL
 source the codegen tests emit — and every hand-written GLSL twin in `GPUTests` —
 is compiled by glslang inside the suite, so an emitter regression fails on every
 Linux CI lane, the two with no Vulkan device included, rather than only as a
-wrong pixel on the lane that has a device. See the table in `README.md`. CI
+wrong pixel on the lane that has a device. See the table in `Docs/Build.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC, Clang, and a Clang lane that runs the Vulkan backend on Mesa's lavapipe,
 with the tests inside a headless Weston session and then the window and present
@@ -587,12 +594,34 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Window window {view, options};`
 
 **Graphics/** - Rendering and UI
-- `Context`: Abstract base for drawing operations; `MacOSContext` is the Core Graphics implementation
+- `Context`: Abstract base for drawing operations, backed by Core Graphics on
+  Apple platforms and Direct2D on Windows; absent on Linux (`EACP_HAS_CONTEXT`)
 - `View`: UI component base class with `paint(Context&)` and `mouseDown(MouseEvent)` virtual methods
-- `Window`: macOS window wrapper with configurable flags
+- `Window`: the platform window (Cocoa, Win32, UIKit, Wayland or X11) with configurable flags
 - `Path`: Vector path drawing (rect, ellipse, curves)
-- `Font`: CoreText-based typography
+- `Font`: CoreText / DirectWrite typography, `EACP_HAS_CONTEXT` only
 - `Primitives.h`: Basic types (`Point`, `Rect`, `Color`)
+- `Input/GameInput`: keyboard and mouse state for a game loop, polled once a
+  frame with `snapshot()` beside the `View` callbacks. `GameInputQueue` is a
+  bounded lock-free MPSC ring (no allocation after construction) that any
+  thread can push into; every snapshot reconciles against the per-key held
+  state so nothing sticks after an overflow or a producer race. The Apple
+  backend (`GameInput-Apple.mm`, GameController's `GCKeyboard`/`GCMouse` on a
+  serial high-priority queue, shared through a ref-counted hub because the
+  framework has one handler slot per device) owns a feed only once it has
+  delivered an event; `GameInput-Default.cpp` returns no backend on Windows
+  and Linux, so those use `Window::events.input` alone. Input counts only
+  while the window is key. `GameInputSource::WindowEvents` forces the window
+  feed. `Tests/Graphics/GameInputTests.cpp` (19 `GameInput/` cases) drives the
+  queue directly and real windows; `Apps/GPU/Maze` is the demo
+- `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
+  layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a
+  foreign toolkit parents its own editor into, for plugin hosts. The macOS
+  container clips to its bounds since the macOS 14 SDK stopped doing so
+- `Window/KeyForwarding`, `KeyGrab`: `EmbedderKeyForwarder` sends the keys a
+  hosted editor leaves unhandled back to the host's main window; on macOS it
+  briefly makes that window key and dispatches through `NSApp` so a DAW's
+  shortcut hooks and menu equivalents see them
 
 **Threads/** - Event loop and timing
 - `EventLoop`: CFRunLoop wrapper with `run()`, `quit()`, `call(Callback)`
@@ -733,6 +762,34 @@ allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
 and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
 CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
+### ML (`Lib/eacp/ML`)
+
+Two targets. `eacp-ml-graph` (every platform but iOS; links `eacp-core` and
+`eacp-gpu-codegen`) is `ML::Graph` — inputs with fixed or enumerated shapes,
+fp16 constants that land in the weight blob, the transformer ops (`linear`,
+`matmul`, `softmax`, `layerNorm`, `conv`, `gather`, `concat`, `slice`,
+`scaledDotProductAttention` causal or with a run-time mask lowered to bool,
+`argmax`, `gelu`, `cast`) and `apply`, whose elementwise body is written over
+`GPU::Float` and lowered to MIL by `Graph/Elementwise.cpp` — plus the writers
+under `MIL/` (`MILWriter`, a hand-rolled `Protobuf::Writer`, `Blob::Writer`,
+`Half.h`) that `build()` turns into a `Package`, which `Package::write` lays
+out as an `.mlpackage`. Errors are recorded, not thrown: a failing op returns
+an invalid `Tensor`, `isValid()`/`errors()` report it, and `build()` is then
+empty. `MLGraphTests` (90 `MLGraph/` cases) runs on macOS, Windows and Linux.
+`eacp-ml` (`EACP_HAS_COREML`: `EACP_HAS_GPU` and Apple, a PUBLIC define) is
+`ML::Model` under `Model/`: `load` from a `Package`, an `.mlpackage` or an
+`.mlmodelc`, `ComputeUnits` selection, `predict` blocking or `predictAsync`
+on the model's serial queue resolving on the main thread, `computePlan()`,
+and `MultiArray` (fp16 is IOSurface-backed and zeroed; `copyTo`/`copyFrom` a
+`GPU::Buffer` converting fp16/fp32; `copyRows` into a fixed cache). Compiled
+models are cached at `<cacheDirectory>/<hash>.mlmodelc`, the hash over program
+bytes, `Options::weightsName`/`weightsVersion` (or the blob) and the OS build;
+a hit is never recompiled because Core ML ties its Neural Engine cache to the
+compiled path. `MLTests` (55 cases, `TestMain.cpp` of its own) builds Whisper
+tiny.en's encoder and decode step at real sizes against fp32 references;
+`EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners have none).
+`Apps/ML/Projection` is the worked example. `plan.md` is the design record.
+
 ### Key Design Patterns
 
 - **Pimpl**: Platform-specific implementations hidden behind abstract interfaces
@@ -742,7 +799,8 @@ CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
 ### Framework Dependencies
 
-macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
+macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal,
+GameController, and for `eacp-ml` Core ML and Accelerate.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
 xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor,
