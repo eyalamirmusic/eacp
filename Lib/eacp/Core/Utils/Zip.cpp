@@ -453,21 +453,37 @@ bool Writer::addDirectory(const FilePath& directory,
                           std::string_view prefix,
                           Level level)
 {
-    const auto root = toStdPath(directory);
-    auto ec = std::error_code {};
-    auto files = std::vector<std::filesystem::path> {};
+    auto options = Files::DirectoryOptions {};
+    options.recursive = true;
+    options.includeHidden = true;
 
-    for (const auto& item: std::filesystem::recursive_directory_iterator(root, ec))
-        if (item.is_regular_file(ec))
-            files.push_back(item.path());
+    auto unreadable = false;
 
-    if (ec)
+    options.onError = [&](const Files::TraversalError&)
+    {
+        unreadable = true;
+        return Files::Visit::stop;
+    };
+
+    auto files = Vector<FilePath> {};
+
+    Files::forEachEntry(directory,
+                        options,
+                        [&](const Files::DirectoryEntry& entry)
+                        {
+                            if (entry.kind == Files::EntryKind::file)
+                                files.add(entry.path);
+
+                            return Files::Visit::next;
+                        });
+
+    if (unreadable)
     {
         impl->error = "cannot list '" + directory.str() + "'";
         return false;
     }
 
-    std::sort(files.begin(), files.end());
+    const auto root = toStdPath(directory);
 
     auto base = std::string {prefix};
 
@@ -478,10 +494,11 @@ bool Writer::addDirectory(const FilePath& directory,
 
     for (const auto& file: files)
     {
-        const auto relative = file.lexically_relative(root).generic_string();
+        const auto relative =
+            toStdPath(file).lexically_relative(root).generic_string();
         const auto name = base.empty() ? relative : base + "/" + relative;
 
-        ok = addFile(name, FilePath {file}, level) && ok;
+        ok = addFile(name, file, level) && ok;
     }
 
     return ok;

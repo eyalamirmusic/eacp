@@ -4,6 +4,7 @@
 #include "../ObjC/CFRef.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <sys/stat.h>
 
 namespace eacp
 {
@@ -47,6 +48,16 @@ std::string bundleResourcePath(const std::string& filename)
     return toFilePath(CFBundleCopyResourceURL(
                           CFBundleGetMainBundle(), name, nullptr, nullptr))
         .str();
+}
+
+// Finder's hidden flag, set with `chflags hidden`, which hides a file whose
+// name carries no dot. lstat rather than stat: the flag belongs to the entry
+// itself, as the dot does.
+bool hasHiddenAttribute(const std::filesystem::path& path)
+{
+    struct stat info {};
+
+    return lstat(path.c_str(), &info) == 0 && (info.st_flags & UF_HIDDEN) != 0;
 }
 } // namespace Detail
 } // namespace eacp
