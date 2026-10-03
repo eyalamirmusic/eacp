@@ -37,6 +37,10 @@ struct AndroidActivity
 {
     android_app* app = nullptr;
     AndroidWindow* window = nullptr;
+
+    // Set by APP_CMD_DESTROY: the system took the activity down, which is not
+    // the app quitting. It may be about to create another one in this process.
+    bool destroyed = false;
 };
 
 AndroidActivity& androidActivity()
@@ -492,6 +496,7 @@ void androidHandleCommand(android_app* app, int32_t command)
             break;
 
         case APP_CMD_DESTROY:
+            activity.destroyed = true;
             Apps::quit();
             break;
 
@@ -659,12 +664,14 @@ ModifierKeys Window::getModifiers() const
 
 } // namespace eacp::Graphics
 
-// Called by android_main (AndroidMain-Android.c) around the app's main().
+// Called by android_main (AndroidMain-Android.c) around the app's main(), once
+// per activity: a recreated activity runs both again on a new thread in the
+// same process, so the state they set is set afresh each time.
 extern "C" void eacpAndroidStart(android_app* app)
 {
     using namespace eacp::Graphics;
 
-    androidActivity().app = app;
+    androidActivity() = AndroidActivity {app};
     eacp::Jni::setJavaVM(app->activity->vm);
 
     if (app->activity != nullptr && app->activity->internalDataPath != nullptr)
@@ -678,8 +685,25 @@ extern "C" void eacpAndroidStart(android_app* app)
     eacp::Threads::setLooperEventHandler(androidHandleLooperEvent);
 }
 
-extern "C" void eacpAndroidFinish(android_app* app)
+// Nonzero when the system destroyed the activity: the process stays, since
+// Android may be recreating it. Zero when main() returned on its own, which
+// finishes the activity the app left behind.
+extern "C" int eacpAndroidFinish(android_app* app)
 {
-    ANativeActivity_finish(app->activity);
-    eacp::Graphics::androidActivity().app = nullptr;
+    auto& activity = eacp::Graphics::androidActivity();
+    const auto destroyed = activity.destroyed;
+
+    if (destroyed)
+        eacp::LOG(
+            "Android: the activity was destroyed; the process stays for a recreate");
+    else
+    {
+        eacp::LOG(
+            "Android: main() returned; finishing the activity and the process");
+        ANativeActivity_finish(app->activity);
+    }
+
+    activity = {};
+
+    return destroyed ? 1 : 0;
 }

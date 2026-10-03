@@ -65,15 +65,22 @@ constexpr bool isAndroid()
     return current() == OS::Android;
 }
 
-// Linux desktop || Android: one kernel, and the same Vulkan backend and GLSL.
+// Desktop Linux only. Android shares its kernel, its Vulkan backend and its
+// GLSL, and nothing else — not its fonts, its files or its process model — so
+// code that means the backend asks isLinuxFamily().
 constexpr bool isLinux()
 {
-    return current() == OS::Linux || isAndroid();
+    return current() == OS::Linux;
 }
 
-constexpr bool isPosix() // Apple || Linux
+constexpr bool isLinuxFamily() // Linux || Android
 {
-    return isApple() || isLinux();
+    return isLinux() || isAndroid();
+}
+
+constexpr bool isPosix() // Apple || Linux family
+{
+    return isApple() || isLinuxFamily();
 }
 
 constexpr std::string_view name()

@@ -8,8 +8,14 @@
 int main(int argc, char* argv[]);
 
 void eacpAndroidStart(struct android_app* app);
-void eacpAndroidFinish(struct android_app* app);
+int eacpAndroidFinish(struct android_app* app);
 
+// Once per activity, on a thread of the glue's. Android destroys and recreates
+// an activity in the same process for a configuration change the manifest does
+// not claim (the font size, the locale) and when it reclaims a stopped one, and
+// the recreated activity calls this again: the loop, the device and the app's
+// own statics all run a second time, so main() must be written to run twice.
+// Only an app whose main() returned on its own ends the process.
 void android_main(struct android_app* app)
 {
     char name[] = "eacp";
@@ -17,9 +23,9 @@ void android_main(struct android_app* app)
 
     eacpAndroidStart(app);
     int result = main(1, argv);
-    eacpAndroidFinish(app);
 
-    // Static state (the loop, the app singletons) is not built to run twice,
-    // and a recreated activity in this process would call android_main again.
+    if (eacpAndroidFinish(app))
+        return;
+
     exit(result);
 }

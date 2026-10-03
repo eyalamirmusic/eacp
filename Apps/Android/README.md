@@ -54,6 +54,12 @@ adb shell am start -n com.eacp.hellogpu/android.app.NativeActivity
 adb logcat -s eacp
 ```
 
+A debug build takes environment variables from the launch intent's string
+extras (`am start ... --es EACP_VK_VALIDATION 1`) and from the system property
+`debug.<package>.env` (`adb shell setprop debug.com.eacp.hellogpu.env "K=V
+K=V"`), which persists across launches; a release build takes none, since
+anything on the device can start an activity with extras.
+
 `./gradlew :HelloGPU:bundleRelease` makes the App Bundle Google Play takes,
 once the module's `build.gradle.kts` has a `signingConfig` with your upload
 key in place of the debug one it starts with.
@@ -67,7 +73,8 @@ own code where marked.
 
 ```cmake
 eacp_add_app(HelloWorld Main.cpp # fill me in: more .cpp files
-        DISPLAY_NAME "Hello World") # BUNDLE_ID, VERSION, VERSION_CODE, ICON, ...
+        DISPLAY_NAME "Hello World") # BUNDLE_ID, VERSION, VERSION_CODE, ICON,
+                                    # ORIENTATION portrait|landscape
 target_link_libraries(HelloWorld PRIVATE eacp-gpu) # fill me in: eacp-text, ...
 set_default_target_setting(HelloWorld)
 ```
@@ -104,6 +111,13 @@ add_subdirectory(HelloWorld)
 ```
 
 Run the configure again: the module appears in Studio after a sync.
+
+`main()` runs once per activity, not once per process. Android destroys and
+recreates the activity for a configuration change the manifest does not claim
+(the font size, the locale) and when it reclaims a stopped app, and the
+recreated one runs `main()` again on a new thread in the same process, so keep
+what must survive in your app struct and let nothing assume a single run; a
+`main()` that returns on its own ends the process.
 
 ## When it goes wrong
 

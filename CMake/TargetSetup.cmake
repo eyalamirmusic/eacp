@@ -21,22 +21,26 @@ if (ANDROID)
 endif ()
 
 # eacp_add_app(<target> <sources>... [BUNDLE_ID <id>] [DISPLAY_NAME <name>]
-#              [VERSION <x.y.z>] [VERSION_CODE <n>] [ICON <png>] [ORIENTATION <o>]
-#              [RES_DIR <dir>] [MANIFEST_ELEMENTS <xml>]
-#              [APPLICATION_ATTRIBUTES <xml>] [ACTIVITY_ATTRIBUTES <xml>]
-#              [IOS_RESOURCES <paths>...])
+#              [VERSION <x.y.z>] [VERSION_CODE <n>] [ICON <png>]
+#              [ORIENTATION portrait|landscape])
 #
 # One app with one identity everywhere: com.eacp.<target>, named <target>, at the
 # project's version, build 1, unless told otherwise. An executable whose bundle
 # properties and at-rest icon these set, or on Android the shared library
 # NativeActivity loads, with a module in the Android Studio project
-# (eacp_add_android_app, which reads the rest).
-# IOS_RESOURCES go in the iOS bundle's Resources, where Xcode compiles an asset
-# catalog and takes its AppIcon as the icon.
+# (eacp_add_android_app, which reads the rest). ORIENTATION locks a phone app
+# to one orientation on iOS (UISupportedInterfaceOrientations) and Android
+# (screenOrientation); landscape is either way up. Unset, the device rotates it.
 function(eacp_add_app target)
-    cmake_parse_arguments(APP "" "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;\
-ORIENTATION;RES_DIR;MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES"
-            "IOS_RESOURCES" ${ARGN})
+    cmake_parse_arguments(APP ""
+            "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;ORIENTATION" ""
+            ${ARGN})
+
+    if (APP_ORIENTATION AND NOT APP_ORIENTATION MATCHES "^(portrait|landscape)$")
+        message(FATAL_ERROR "eacp_add_app(${target}): ORIENTATION is portrait or "
+                "landscape, not '${APP_ORIENTATION}'")
+    endif ()
+
     string(TOLOWER "com.eacp.${target}" default_BUNDLE_ID)
     set(default_DISPLAY_NAME "${target}")
     set(default_VERSION "${PROJECT_VERSION}")
@@ -73,12 +77,12 @@ ORIENTATION;RES_DIR;MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES
         eacp_set_app_icon(${target} IMAGE "${APP_ICON}")
     endif ()
 
-    if (IOS AND APP_IOS_RESOURCES)
-        target_sources(${target} PRIVATE ${APP_IOS_RESOURCES})
-        set_source_files_properties(${APP_IOS_RESOURCES} PROPERTIES
-                MACOSX_PACKAGE_LOCATION Resources)
-        set_target_properties(${target} PROPERTIES
-                XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME AppIcon)
+    if (IOS AND APP_ORIENTATION STREQUAL "portrait")
+        eacp_add_plist_entries(${target} UISupportedInterfaceOrientations
+                "UIInterfaceOrientationPortrait")
+    elseif (IOS AND APP_ORIENTATION STREQUAL "landscape")
+        eacp_add_plist_entries(${target} UISupportedInterfaceOrientations
+                "UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight")
     endif ()
 endfunction()
 
@@ -134,24 +138,40 @@ function(set_default_target_setting target)
     endif ()
 endfunction()
 
+function(eacp_plist_string value out_var)
+    string(REPLACE "&" "&amp;" value "${value}")
+    string(REPLACE "<" "&lt;" value "${value}")
+    string(REPLACE ">" "&gt;" value "${value}")
+    set(${out_var} "<string>${value}</string>" PARENT_SCOPE)
+endfunction()
+
 function(eacp_plist_element value out_var)
+    list(LENGTH value count)
+
     if (value STREQUAL "TRUE")
         set(${out_var} "<true/>" PARENT_SCOPE)
     elseif (value STREQUAL "FALSE")
         set(${out_var} "<false/>" PARENT_SCOPE)
+    elseif (count GREATER 1)
+        set(array "<array>\n")
+
+        foreach (item IN LISTS value)
+            eacp_plist_string("${item}" element)
+            string(APPEND array "\t\t${element}\n")
+        endforeach ()
+
+        set(${out_var} "${array}\t</array>" PARENT_SCOPE)
     else ()
-        string(REPLACE "&" "&amp;" value "${value}")
-        string(REPLACE "<" "&lt;" value "${value}")
-        string(REPLACE ">" "&gt;" value "${value}")
-        set(${out_var} "<string>${value}</string>" PARENT_SCOPE)
+        eacp_plist_string("${value}" element)
+        set(${out_var} "${element}" PARENT_SCOPE)
     endif ()
 endfunction()
 
 # Adds keys to an app's Info.plist on top of eacp's template for the platform,
 # so an app that needs a usage description or LSUIElement does not carry a
-# copy of the whole file. TRUE and FALSE become booleans, anything else a
-# string. Calls accumulate, and may come before or after
-# set_default_target_setting. A no-op off Apple.
+# copy of the whole file. TRUE and FALSE become booleans, a list of more than
+# one item an array of strings, anything else a string. Calls accumulate, and
+# may come before or after set_default_target_setting. A no-op off Apple.
 #
 #   eacp_add_plist_entries(MyApp
 #           NSCameraUsageDescription "Shows the camera in a GPU view."

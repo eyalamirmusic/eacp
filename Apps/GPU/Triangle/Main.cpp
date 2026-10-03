@@ -23,7 +23,7 @@ const char* triangleShaderFile()
 {
     if constexpr (Platform::isWindows())
         return "Triangle.hlsl";
-    else if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinuxFamily())
         return "Triangle.glsl";
     else
         return "Triangle.metal";
@@ -33,7 +33,7 @@ ShaderSource shaderSourceFrom(std::string text)
 {
     if constexpr (Platform::isWindows())
         return ShaderSource::hlsl(std::move(text));
-    else if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinuxFamily())
         return ShaderSource::glsl(std::move(text));
     else
         return ShaderSource::msl(std::move(text));
