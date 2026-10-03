@@ -2145,21 +2145,30 @@ Mask compareWide(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
 // Comparisons, on scalars and against scalar literals on either side. Two
 // values of the same shape or a value and a float, the way every other binary
 // operator here takes them.
+// The scalar comparisons' result, named through an operand so that a
+// non-shader operand fails substitution while the signature is still being
+// formed. An enum beside a built-in number (`status != SUCCESS` under a using
+// directive for this namespace) makes C++ weigh these templates, and clang 21
+// rejects a deduced operator over two built-in types before any constraint is
+// checked; a failure in the return type is the ordinary, silent kind.
+template <ShaderScalarLike T>
+using ScalarComparison = Bool;
+
 #define EACP_COMPARISON(name, spelling)                                             \
     template <ShaderScalarLike L, ShaderScalarLike R>                               \
-    Bool name(const L& lhs, const R& rhs)                                           \
+    ScalarComparison<L> name(const L& lhs, const R& rhs)                            \
     {                                                                               \
         return detail::compare(spelling, lhs, rhs);                                 \
     }                                                                               \
                                                                                     \
     template <ShaderScalarLike L>                                                   \
-    Bool name(const L& lhs, float rhs)                                              \
+    ScalarComparison<L> name(const L& lhs, float rhs)                               \
     {                                                                               \
         return detail::compare(spelling, lhs, detail::constantOn(lhs, rhs));        \
     }                                                                               \
                                                                                     \
     template <ShaderScalarLike R>                                                   \
-    Bool name(float lhs, const R& rhs)                                              \
+    ScalarComparison<R> name(float lhs, const R& rhs)                               \
     {                                                                               \
         return detail::compare(spelling, detail::constantOn(rhs, lhs), rhs);        \
     }

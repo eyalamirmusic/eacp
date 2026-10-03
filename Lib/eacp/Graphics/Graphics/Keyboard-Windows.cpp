@@ -103,6 +103,17 @@ constexpr KeyMapping keyMappings[] = {
     {KeyCode::ForwardDelete, VK_DELETE},
     {KeyCode::CapsLock, VK_CAPITAL},
 
+    // Sided only: a key message carries the generic VK_SHIFT / VK_CONTROL /
+    // VK_MENU, which keyCodeFromKeyMessage resolves to a side first.
+    {KeyCode::Shift, VK_LSHIFT},
+    {KeyCode::RightShift, VK_RSHIFT},
+    {KeyCode::Control, VK_LCONTROL},
+    {KeyCode::RightControl, VK_RCONTROL},
+    {KeyCode::Option, VK_LMENU},
+    {KeyCode::RightOption, VK_RMENU},
+    {KeyCode::Command, VK_LWIN},
+    {KeyCode::RightCommand, VK_RWIN},
+
     // Windows has no separate keypad Enter virtual key -- both Return keys
     // report VK_RETURN and are told apart only by the extended-key flag in the
     // message's lParam, which is not available here. Mapping it to VK_RETURN
@@ -159,6 +170,29 @@ uint16_t keyCodeFromVirtualKey(int vk)
             return mapping.keyCode;
 
     return KeyCode::Unknown;
+}
+
+// A WM_(SYS)KEYDOWN/UP's key: the generic modifier codes resolved to the side
+// the message's scan code and extended-key flag name.
+uint16_t keyCodeFromKeyMessage(int vk, LPARAM lParam)
+{
+    const auto extended = (lParam & 0x01000000) != 0;
+
+    switch (vk)
+    {
+        case VK_SHIFT:
+        {
+            const auto scanCode = (UINT) ((lParam >> 16) & 0xFF);
+            const auto sided = (int) MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK_EX);
+            return keyCodeFromVirtualKey(sided == VK_RSHIFT ? VK_RSHIFT : VK_LSHIFT);
+        }
+        case VK_CONTROL:
+            return keyCodeFromVirtualKey(extended ? VK_RCONTROL : VK_LCONTROL);
+        case VK_MENU:
+            return keyCodeFromVirtualKey(extended ? VK_RMENU : VK_LMENU);
+        default:
+            return keyCodeFromVirtualKey(vk);
+    }
 }
 
 int virtualKeyFromKeyCode(uint16_t keyCode)

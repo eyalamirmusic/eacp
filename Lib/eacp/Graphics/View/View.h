@@ -343,6 +343,11 @@ public:
 
     void dispatchMouseEvent(const MouseEvent& event);
 
+    // What the platform layer calls with a key event for this view: reports it
+    // to the window's input tap (WindowEvents::input), then calls keyDown or
+    // keyUp.
+    void dispatchKeyEvent(const KeyEvent& event);
+
     // Called by the platform on the window's content view, once per changed finger.
     void dispatchTouchEvent(const TouchEvent& event);
 

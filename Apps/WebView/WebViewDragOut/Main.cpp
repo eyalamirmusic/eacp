@@ -1,4 +1,5 @@
 #include <eacp/WebView/WebView.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <WebResources.h>
@@ -90,20 +91,9 @@ WebView::DraggableFileList buildFileList()
     }
 
     // Then real audio files from ~/Downloads.
-    auto ec = std::error_code {};
-    auto downloads = Vector<std::string> {};
-
-    for (const auto& entry: std::filesystem::directory_iterator(downloadsDir(), ec))
-    {
-        if (entry.is_regular_file(ec) && isAudioFile(entry.path()))
-            downloads.add(entry.path().string());
-    }
-
-    downloads.sort();
-
-    for (const auto& path: downloads)
-        list.files.push_back(
-            {path, std::filesystem::path {path}.filename().string()});
+    for (const auto& file: Files::listFiles(FilePath::downloadsDirectory()))
+        if (isAudioFile(toStdPath(file)))
+            list.files.push_back({file.str(), Files::filenameFromPath(file.str())});
 
     return list;
 }

@@ -1,4 +1,6 @@
 #include "Process.h"
+#include "SpawnDirectory-Posix.h"
+#include "../Utils/Logging.h"
 
 #include <cerrno>
 #include <csignal>
@@ -213,19 +215,16 @@ private:
                 posix_spawn_file_actions_addclose(&actions, fd);
         }
 
-        if (!options.workingDirectory.empty())
+        if (!options.workingDirectory.empty()
+            && !addSpawnWorkingDirectory(actions, options.workingDirectory))
         {
-            // _np is the only variant available at our deployment target; the
-            // non-suffixed addchdir is macOS 26+ only.
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#endif
-            posix_spawn_file_actions_addchdir_np(&actions,
-                                                 options.workingDirectory.c_str());
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+            LOG("Process: cannot start ",
+                options.executable,
+                " in ",
+                options.workingDirectory);
+            posix_spawn_file_actions_destroy(&actions);
+            closeAllPipes(inPipe, outPipe, errPipe);
+            return;
         }
 
         auto attr = posix_spawnattr_t {};

@@ -34,6 +34,9 @@ constexpr const char* defaultUIFontFamily()
     if constexpr (Platform::isLinux())
         return "DejaVu Sans";
 
+    if constexpr (Platform::isAndroid())
+        return "sans-serif";
+
     return "Helvetica Neue";
 }
 

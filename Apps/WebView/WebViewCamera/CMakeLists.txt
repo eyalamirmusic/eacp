@@ -12,9 +12,9 @@ set_target_properties(WebViewCamera PROPERTIES
 eacp_set_gui_subsystem(WebViewCamera)
 set_default_target_setting(WebViewCamera)
 
-# Override the shared bundle plist with one that carries the
-# NSCameraUsageDescription / NSMicrophoneUsageDescription entries
-# required for navigator.mediaDevices.getUserMedia from the WebView.
-set_target_properties(WebViewCamera PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST
-        "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in")
+# navigator.mediaDevices.getUserMedia from the WebView needs both grants.
+eacp_add_plist_entries(WebViewCamera
+        NSCameraUsageDescription
+        "This example uses the camera to demonstrate getUserMedia from a WebView."
+        NSMicrophoneUsageDescription
+        "This example uses the microphone to demonstrate getUserMedia from a WebView.")

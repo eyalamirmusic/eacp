@@ -40,5 +40,13 @@ std::string bundleResourcePath(const std::string& /*filename*/)
 {
     return {};
 }
+
+bool hasHiddenAttribute(const std::filesystem::path& path)
+{
+    const auto attributes = GetFileAttributesW(path.c_str());
+
+    return attributes != INVALID_FILE_ATTRIBUTES
+           && (attributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+}
 } // namespace Detail
 } // namespace eacp

@@ -67,6 +67,7 @@ if (APPLE)
                 App/Clipboard-macOS.mm
                 App/LoginItem-macOS.mm
                 Process/Process-Posix.cpp
+                Process/SpawnDirectory-Posix.cpp
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
@@ -108,12 +109,26 @@ elseif (UNIX AND NOT APPLE)
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
             Utils/Environment-Posix.cpp
-            Utils/FilePath-Linux.cpp
             Utils/Files-Linux.cpp
-            Utils/Logging-Posix.cpp
             Utils/MemoryMappedFile-Posix.cpp)
     find_package(Threads ${EACP_FIND_QUIET} REQUIRED)
     target_link_libraries(eacp-core PRIVATE Threads::Threads)
+
+    if (ANDROID)
+        target_sources(eacp-core PRIVATE
+                Android/Jni-Android.cpp
+                Process/SpawnDirectory-Android.cpp
+                Threads/EventLoop-Android.cpp
+                Utils/FilePath-Android.cpp
+                Utils/Logging-Android.cpp)
+        target_link_libraries(eacp-core PUBLIC android log)
+    else ()
+        target_sources(eacp-core PRIVATE
+                Process/SpawnDirectory-Posix.cpp
+                Threads/EventLoopWait-Linux.cpp
+                Utils/FilePath-Linux.cpp
+                Utils/Logging-Posix.cpp)
+    endif ()
 endif ()
 
 set_default_target_setting(eacp-core)

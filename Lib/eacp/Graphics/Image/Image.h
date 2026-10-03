@@ -65,7 +65,7 @@ public:
     void set(int x, int y, const Color& color);
 
     // Reuse this image's storage as a width*height RGBA render target for an
-    // external writer that fills every byte (an eacp::simd image kernel, a
+    // external writer that fills every byte (an esimd image kernel, a
     // camera colour-convert, ...). Only (re)allocates when the pixel count
     // changes; when it already matches, there is no allocation and no zero-fill
     // -- the previous bytes are left for the writer to overwrite in full. This

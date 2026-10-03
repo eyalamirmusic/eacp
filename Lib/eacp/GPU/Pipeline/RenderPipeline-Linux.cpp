@@ -485,7 +485,22 @@ struct RenderPipeline::Native
 
         VkGraphicsPipelineCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        info.pNext = &rendering;
+
+        if (getVulkanShared().usesRenderPasses())
+        {
+            info.renderPass = getVulkanShared().compatibleRenderPass(
+                state.colorFormat,
+                state.sampleCount,
+                rendering.depthAttachmentFormat,
+                descriptor.stencil);
+
+            if (info.renderPass == VK_NULL_HANDLE)
+                return;
+        }
+        else
+        {
+            info.pNext = &rendering;
+        }
         info.stageCount = 2;
         info.pStages = stages;
         info.pVertexInputState = &vertexInput;

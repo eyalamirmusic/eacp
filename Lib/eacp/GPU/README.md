@@ -1,7 +1,12 @@
 # GPU
 
-Metal on Apple platforms, D3D12 on Windows, behind one API — and a shader EDSL
-that makes a shader a C++ struct rather than a string literal per backend.
+Metal on Apple platforms, D3D12 on Windows and Vulkan on Linux, behind one
+API — and a shader EDSL that makes a shader a C++ struct rather than a string
+literal per backend. The same kernel the EDSL records also runs with no device
+at all: `CpuCompute/` interprets it on the calling thread ("Running a kernel on
+the CPU" below), and `Lib/eacp/ML` lifts tensor-level compute written against
+the same `Buffer`s into a Core ML program that the Apple Neural Engine can run
+(`Lib/eacp/ML/README.md`).
 
 Everything here is main-thread only, like the rest of eacp, and every public
 type hides its backend behind a `Pimpl`, so nothing Metal or D3D leaks into a
@@ -31,13 +36,17 @@ an `assert`, so a release build pays for nothing but the call.
 | `Texture` | 2D textures: uploaded, wrapped zero-copy from a camera buffer, or rendered into |
 | `RenderPipeline` | A compiled pipeline state |
 | `CommandBuffer` / `ComputePass` | The compute path — off-screen, blocking or not; `Frame::beginCompute` puts one on a frame |
-| `Codegen/` | The shader EDSL and the MSL / HLSL emitters |
+| `Codegen/` | The shader EDSL and the MSL / HLSL / GLSL emitters, plus `ComputeKernel`, the device-free half of a `ComputeProgram` |
+| `CpuCompute/` | `eacp-cpu-compute`: the interpreter that runs a recorded compute kernel on the CPU, allocation-free, on the calling thread |
+| `Spirv/` | `eacp-spirv`: glslang wrapped as a GLSL-to-SPIR-V compiler, built where the Vulkan backend ships it |
+| `Vulkan/` | The Linux backend — see "Linux" below |
 
 ## A shader
 
 `define()` records a graph of value handles. Nothing in it is text: the emitters
-turn that one source into MSL and into HLSL, so the two backends cannot drift
-apart on a shader an app wrote once.
+turn that one source into MSL, into HLSL and into GLSL 450 (compiled to SPIR-V
+by glslang on Linux), so the three backends cannot drift apart on a shader an
+app wrote once.
 
 ```cpp
 #include <eacp/GPU/GPU.h>
@@ -265,7 +274,7 @@ struct Hit
 ### What it deliberately refuses
 
 `ShaderBuilder::uniform<T>()` static_asserts rather than leaving these to a
-comment, because each is a case where the two backends disagree about the
+comment, because each is a case where the backends disagree about the
 packing *inside* a value and no padding between fields can bridge it:
 
 - `Bool` and the boolean vectors — MSL packs a `bool` into a byte, an HLSL
@@ -360,7 +369,7 @@ reason. A clamped scissor still shows the caller what they asked for; a clamped
 viewport keeps drawing and silently squashes the picture into a rectangle nobody
 chose, which looks like a bug in the caller's own maths. Neither backend forces
 this: Metal accepts an out-of-target viewport happily. It is eacp's choice, and
-`ViewportTests` is what holds the two backends to it.
+`ViewportTests` is what holds every backend to it.
 
 ## Rendering into a texture
 
@@ -1092,9 +1101,10 @@ stores, typically with `ifThen(id < gridCount(), ...)`. Size the grid in
 multiples of `groupShape()` where the tail would otherwise compute nonsense, and
 guard the writes either way.
 
-The declaration is the one place the two backends are not the same shape twice:
-MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` is a
-global, so the same array lands on opposite sides of the entry point.
+The declaration is the one place the backends are not the same shape twice:
+MSL's `threadgroup` is a local of the kernel function, HLSL's `groupshared` and
+GLSL's `shared` are globals, so the same array lands on opposite sides of the
+entry point.
 
 A buffer whose elements are records rather than single floats is read and
 written a record at a time. `read2`/`read3`/`read4` take N consecutive floats
@@ -1605,7 +1615,7 @@ idiomatic path.
 There is no `Half` value type and there is not going to be one: the Windows
 backend compiles HLSL through FXC at `cs_5_0`, where `half` is a synonym for
 `float` and there is no 16-bit arithmetic at all, so the same declaration would
-mean two different things on the two backends. What *is* portable, and what a
+mean two different things on two of the backends. What *is* portable, and what a
 model's weights actually want, is fp16 **storage** with fp32 arithmetic — half
 the buffer, half the bandwidth, and every value widened before it is used:
 
@@ -2288,6 +2298,20 @@ Notes worth having:
   (the emitter declares a written texture as a `writeonly image2D` with no
   format qualifier). A device missing one is not used, rather than used until it
   fails.
+- **A 1.1 or 1.2 device reaches the same floor through extensions.** Phone
+  drivers lag the hardware: a Galaxy S22's Adreno 730 reports 1.1 under a 1.4
+  loader. Such a device is taken when it offers `VK_KHR_synchronization2`,
+  `VK_KHR_timeline_semaphore` and `VK_EXT_descriptor_indexing` with the same
+  features, plus `VK_KHR_create_renderpass2` and `VK_KHR_depth_stencil_resolve`
+  in place of dynamic rendering. `createDevice` enables them, chains their
+  feature structs in place of `VkPhysicalDeviceVulkan12/13Features`, and points
+  volk's core entry points (`vkCmdPipelineBarrier2`, `vkQueueSubmit2`,
+  `vkCmdWriteTimestamp2`, `vkWaitSemaphores`, `vkGetSemaphoreCounterValue`,
+  `vkCreateRenderPass2`) at the `KHR` ones, so no call site branches: the
+  structures and `_2_` flags are the same values. The instance asks for the
+  loader's version capped at 1.3, VMA for 1.1, and glslang writes SPIR-V 1.3 for
+  Vulkan 1.1 — 1.4 where `VK_KHR_spirv_1_4` is offered and enabled.
+  The log line at device creation says which path was taken.
 - **eacp ships its own shader compiler here**, which it does on neither other
   backend: GLSL 450 through glslang into SPIR-V, at a fixed ~2 MB per binary and
   a one-time ~90 ms symbol-table build that `VulkanShared` pays at device
@@ -2330,7 +2354,19 @@ Notes worth having:
   encoder as `Frame::timePass` writes them, and the pool reset and the buffer's
   own two queries recorded by the first labelled pass. A command buffer that
   labelled nothing creates no pool.
-- **A pass is one `vkCmdBeginRendering`; there is no `VkRenderPass`.**
+- **A pass is one `vkCmdBeginRendering` on a 1.3 device.** Below 1.3 (or with
+  `EACP_VK_RENDER_PASSES=1`, which is how a 1.3 device tests it) the same
+  `VkRenderingInfo` is turned into a `VkRenderPass` of one subpass with the same
+  attachments, ops and resolves — depth through
+  `VkSubpassDescriptionDepthStencilResolve` — and a framebuffer, both cached in
+  `VulkanRenderPassCache` (`Vulkan/VulkanRenderPass-Linux.cpp`): render passes by
+  formats, samples, ops and resolves, framebuffers by render pass, views and
+  extent, dropped when a view they name is destroyed. Every attachment's initial,
+  subpass and final layout is the one the barriers around the pass already put
+  it in, so the render pass moves nothing and the barriers stay the only
+  transitions on both paths. A pipeline names a render pass with its formats and
+  sample count, load/store ops and resolves not deciding compatibility for one
+  subpass.
   `DepthAction` is the attachment's load and store ops — `Clear` is
   `CLEAR`/`DONT_CARE`, `Keep` is `CLEAR`/`STORE`, `Resume` is `LOAD`/`STORE`,
   never Vulkan's own suspend/resume. A multisampled target draws into its

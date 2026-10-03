@@ -81,6 +81,7 @@ Window::Window(const WindowOptions& optionsToUse)
     : options(optionsToUse)
     , impl(options)
 {
+    events.input.activationChanged(true);
 }
 
 void Window::setTitle(const std::string& title)
