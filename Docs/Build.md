@@ -8,8 +8,12 @@ modules a platform gets, the pieces that build everywhere, and how CI runs.
 ## Dependencies
 
 Dependencies are fetched by [CPM](https://github.com/cpm-cmake/CPM.cmake) at
-configure time — `ea_data_structures`, `Miro`, `ResEmbed` and, behind
-`EACP_BUILD_SPIRV` and so on Linux only by default, `glslang`. A Linux build
+configure time — `ea_data_structures`, `Miro`, `ResEmbed`,
+[`ESIMD`](https://github.com/eyalamirmusic/ESIMD) (the SIMD kernels behind
+`Graphics`' image operations and the camera frame conversion, a library of its
+own so other projects can take it without eacp; `CMake/FindESIMD.cmake`, the
+`ESIMD` target, `-DCPM_ESIMD_SOURCE=$HOME/Code/ESIMD` for a local checkout) and,
+behind `EACP_BUILD_SPIRV` and so on Linux only by default, `glslang`. A Linux build
 adds `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator`
 (`CMake/FindVulkanBackend.cmake`, one `eacp-vulkan` target, fetched on no
 other platform), libcurl for the HTTP client, and three pkg-config groups

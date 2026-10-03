@@ -41,7 +41,7 @@ off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
 An eighth, `EACP_HAS_NETWORK`, is on everywhere but Android (the NDK has no
 libcurl) and gates `Network`, the WebView page bridge over its RPC,
 `eacp-ui-network` and their tests.
-`Core`, `Network` and `SIMD` build everywhere, Linux included, and so do four
+`Core` and `Network` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
 and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
 interpreter that runs the same compute kernels on the CPU with no device
@@ -70,7 +70,13 @@ tests on), and builds iOS for the simulator and HelloGPU for Android
 (arm64-v8a, the pinned NDK installed with `sdkmanager`).
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
-`ResEmbed` and, behind `EACP_BUILD_SPIRV` and so on Linux only by default,
+`ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the
+portable SIMD kernels — namespace `esimd`, `<ESIMD/ESIMD.h>` — that
+`Graphics`' image operations and `Camera`'s frame conversion run through; it
+was `Lib/eacp/SIMD` until it became a repo of its own so other projects can
+take it without eacp, its tests live there, and
+`-DCPM_ESIMD_SOURCE=$HOME/Code/ESIMD` builds against a local checkout) and,
+behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
 one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
