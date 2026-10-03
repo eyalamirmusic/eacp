@@ -131,7 +131,8 @@ else ()
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
-            Vulkan/VulkanContext-Linux.cpp)
+            Vulkan/VulkanContext-Linux.cpp
+            Vulkan/VulkanRenderPass-Linux.cpp)
 
     if (ANDROID)
         target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Android.cpp)

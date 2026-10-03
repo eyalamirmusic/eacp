@@ -186,6 +186,16 @@ jobs:
           Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
           -R '^(X11|EmbeddedView|Present)/'
 
+      # lavapipe is a 1.3 device; this forces the render-pass path a Vulkan 1.1
+      # device takes, so both paths stay covered.
+      - name: Test the GPU suite on render passes
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_VK_RENDER_PASSES: '1'
+        run: Scripts/with-weston build/Tests/GPU/GPUTests
+
   build-ios:
     name: iOS Simulator
     runs-on: macos-latest

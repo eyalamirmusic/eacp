@@ -2298,6 +2298,20 @@ Notes worth having:
   (the emitter declares a written texture as a `writeonly image2D` with no
   format qualifier). A device missing one is not used, rather than used until it
   fails.
+- **A 1.1 or 1.2 device reaches the same floor through extensions.** Phone
+  drivers lag the hardware: a Galaxy S22's Adreno 730 reports 1.1 under a 1.4
+  loader. Such a device is taken when it offers `VK_KHR_synchronization2`,
+  `VK_KHR_timeline_semaphore` and `VK_EXT_descriptor_indexing` with the same
+  features, plus `VK_KHR_create_renderpass2` and `VK_KHR_depth_stencil_resolve`
+  in place of dynamic rendering. `createDevice` enables them, chains their
+  feature structs in place of `VkPhysicalDeviceVulkan12/13Features`, and points
+  volk's core entry points (`vkCmdPipelineBarrier2`, `vkQueueSubmit2`,
+  `vkCmdWriteTimestamp2`, `vkWaitSemaphores`, `vkGetSemaphoreCounterValue`,
+  `vkCreateRenderPass2`) at the `KHR` ones, so no call site branches: the
+  structures and `_2_` flags are the same values. The instance asks for the
+  loader's version capped at 1.3, VMA for 1.1, and glslang writes SPIR-V 1.3 for
+  Vulkan 1.1 — 1.4 where `VK_KHR_spirv_1_4` is offered and enabled.
+  The log line at device creation says which path was taken.
 - **eacp ships its own shader compiler here**, which it does on neither other
   backend: GLSL 450 through glslang into SPIR-V, at a fixed ~2 MB per binary and
   a one-time ~90 ms symbol-table build that `VulkanShared` pays at device
@@ -2340,7 +2354,19 @@ Notes worth having:
   encoder as `Frame::timePass` writes them, and the pool reset and the buffer's
   own two queries recorded by the first labelled pass. A command buffer that
   labelled nothing creates no pool.
-- **A pass is one `vkCmdBeginRendering`; there is no `VkRenderPass`.**
+- **A pass is one `vkCmdBeginRendering` on a 1.3 device.** Below 1.3 (or with
+  `EACP_VK_RENDER_PASSES=1`, which is how a 1.3 device tests it) the same
+  `VkRenderingInfo` is turned into a `VkRenderPass` of one subpass with the same
+  attachments, ops and resolves — depth through
+  `VkSubpassDescriptionDepthStencilResolve` — and a framebuffer, both cached in
+  `VulkanRenderPassCache` (`Vulkan/VulkanRenderPass-Linux.cpp`): render passes by
+  formats, samples, ops and resolves, framebuffers by render pass, views and
+  extent, dropped when a view they name is destroyed. Every attachment's initial,
+  subpass and final layout is the one the barriers around the pass already put
+  it in, so the render pass moves nothing and the barriers stay the only
+  transitions on both paths. A pipeline names a render pass with its formats and
+  sample count, load/store ops and resolves not deciding compatibility for one
+  subpass.
   `DepthAction` is the attachment's load and store ops — `Clear` is
   `CLEAR`/`DONT_CARE`, `Keep` is `CLEAR`/`STORE`, `Resume` is `LOAD`/`STORE`,
   never Vulkan's own suspend/resume. A multisampled target draws into its
