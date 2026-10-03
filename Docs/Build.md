@@ -117,6 +117,38 @@ suppressed inside quotes, so `-DCPM_Miro_SOURCE="~/Code/Miro"` silently
 configures against a non-existent path and fails later with errors like
 `Unknown CMake command "miro_add_type_export"`.
 
+## App targets
+
+An app bundle is set up with the functions in `CMake/TargetSetup.cmake`, which
+a project that fetches eacp has as well:
+
+- `set_default_target_setting(target)` — the warning level, LTO in Release,
+  and on Apple the bundle's `Info.plist` from eacp's template
+  (`CMake/macOSBundleInfo.plist.in`, or the iOS one), unless the target
+  already has one.
+- `eacp_set_gui_subsystem(target)` — a windowed app on Windows, and the app's
+  name and version stamped into the binary.
+- `eacp_set_app_icon(target IMAGE ...)` — the at-rest icon.
+- `eacp_add_plist_entries(target key value ...)` — keys added to the
+  template's plist, for the usage description macOS wants before it grants
+  the camera or the microphone, or `LSUIElement` for a menu-bar app. `TRUE`
+  and `FALSE` become booleans, anything else a string. Calls accumulate, and
+  may come before or after `set_default_target_setting`.
+
+```cmake
+eacp_add_plist_entries(MyApp
+        NSMicrophoneUsageDescription "MyApp listens to transcribe what it hears."
+        LSUIElement TRUE)
+```
+
+The generated template lands in the target's binary directory as
+`<target>-Info.plist.in`. An app that needs more than key-value entries sets
+`MACOSX_BUNDLE_INFO_PLIST` to a template of its own, which
+`set_default_target_setting` leaves alone. The template paths are
+`EACP_MACOS_PLIST` and `EACP_IOS_PLIST`, published when `TargetSetup` is
+included, so a project that fetches eacp reads them without running
+`eacp_default_setup()`.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in eight capability variables
