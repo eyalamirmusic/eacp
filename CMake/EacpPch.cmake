@@ -9,6 +9,18 @@ function(eacp_skip_pch target)
     set_target_properties(${target} PROPERTIES EACP_SKIP_PCH ON)
 endfunction()
 
+# Clang stamps POSIX thread support into an image and refuses it from any
+# translation unit whose setting differs. On Android the -pthread FindThreads
+# answers (Bionic needs none) reaches some consumers -- eacp-core through
+# Threads::Threads, eacp-spirv through glslang -- and not the rest, so the
+# image and every consumer are given it alike; it defines _REENTRANT and
+# changes nothing else there.
+function(eacp_match_pch_thread_flag target)
+    if (ANDROID)
+        target_compile_options(${target} PRIVATE -pthread)
+    endif ()
+endfunction()
+
 # An image is shared by every target that can use it, through REUSE_FROM. A
 # per-target PCH would be created once per app, test and plugin -- around 150
 # times -- and creating one costs more than the handful of translation units in
@@ -25,6 +37,7 @@ function(eacp_create_pch_image name)
 
     add_library(${name} STATIC ${sources})
     eacp_skip_pch(${name})
+    eacp_match_pch_thread_flag(${name})
 
     # Miro exports /Zc:preprocessor to everything that links it, which is nearly
     # every target here, so the image has to be created under it too.
@@ -140,6 +153,7 @@ function(eacp_apply_pch_in_directory dir)
 
         eacp_pch_image_for(${target} image)
         target_precompile_headers(${target} REUSE_FROM ${image})
+        eacp_match_pch_thread_flag(${target})
 
         if (MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             # An image serves targets that each carry their own -D -- a harness

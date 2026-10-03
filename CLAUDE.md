@@ -66,7 +66,8 @@ ones again inside an Xvfb, so windows and swapchains are real on both window
 systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
-tests on), and builds iOS for the simulator.
+tests on), and builds iOS for the simulator and HelloGPU for Android
+(arm64-v8a, the pinned NDK installed with `sdkmanager`).
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed` and, behind `EACP_BUILD_SPIRV` and so on Linux only by default,
@@ -96,8 +97,21 @@ Android (NDK r30, API 33+, Vulkan 1.3) is Linux without Wayland: CMake's
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
-over `android.graphics` through JNI. `eacp_add_app` builds an example as an
-executable, or on Android as the shared library NativeActivity loads. The
+over `android.graphics` through JNI. `Platform::isLinux()` is desktop Linux
+alone; the sites that mean the Vulkan backend and its GLSL ask
+`isLinuxFamily()`, and the font defaults are Android's own
+`sans-serif` and `monospace`. `main()` runs once per activity: Android
+destroys and recreates one for a configuration change the manifest does not
+claim and when it reclaims a stopped app, and the recreated activity calls
+`android_main` again on a new thread in the same process, so the loop, the
+device and the app's statics all run a second time; only a `main()` that
+returns on its own ends the process. A debug build takes environment
+variables from the launch intent's string extras and from
+`debug.<package>.env`; a release build takes none.
+`eacp_add_app` builds an example as an
+executable, or on Android as the shared library NativeActivity loads, with
+`BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON` and
+`ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android). The
 prerequisites are Android Studio with the NDK that
 `CMake/AndroidVersions.cmake` pins (the SDK Manager installs it), CMake and
 Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
@@ -637,8 +651,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   backend (`GameInput-Apple.mm`, GameController's `GCKeyboard`/`GCMouse` on a
   serial high-priority queue, shared through a ref-counted hub because the
   framework has one handler slot per device) owns a feed only once it has
-  delivered an event; `GameInput-Default.cpp` returns no backend on Windows
-  and Linux, so those use `Window::events.input` alone. Input counts only
+  delivered an event; `GameInput-Default.cpp` returns no backend on Windows,
+  Linux and Android, so those use `Window::events.input` alone. Input counts only
   while the window is key. `GameInputSource::WindowEvents` forces the window
   feed. `Tests/Graphics/GameInputTests.cpp` (19 `GameInput/` cases) drives the
   queue directly and real windows; `Apps/GPU/Maze` is the demo

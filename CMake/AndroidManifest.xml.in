@@ -5,19 +5,16 @@
     <!-- The Vulkan backend's floor: 1.3 with dynamic rendering. -->
     <uses-feature android:name="android.hardware.vulkan.version"
             android:version="0x403000" android:required="true" />
-@EACP_APK_MANIFEST_ELEMENTS@
 
     <application android:label="@EACP_APK_LABEL@"
             @EACP_APK_ICON_ATTRIBUTE@
             android:hasCode="false"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
-            @EACP_APK_APPLICATION_ATTRIBUTES@>
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <activity android:name="android.app.NativeActivity"
                 android:exported="true"
                 android:launchMode="singleTask"
                 android:screenOrientation="@EACP_APK_ORIENTATION@"
-                android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboard|keyboardHidden|navigation|uiMode"
-                @EACP_APK_ACTIVITY_ATTRIBUTES@>
+                android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|density|keyboard|keyboardHidden|navigation|uiMode">
             <meta-data android:name="android.app.lib_name"
                     android:value="@EACP_APK_LIB_NAME@" />
             <intent-filter>

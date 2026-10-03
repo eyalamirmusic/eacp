@@ -204,3 +204,34 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Debug -- -sdk iphonesimulator
+
+  # The one Android build anything is checked against: the pinned NDK, the
+  # toolchain file -DCMAKE_SYSTEM_NAME=Android alone selects, and HelloGPU,
+  # which pulls Core, Graphics, GPU, Text and the SPIR-V compiler through the
+  # NDK's clang. The configure also writes the Android Studio project, so the
+  # Gradle templates are exercised; nothing runs it. Debug, so the build is
+  # what a device gets from Studio's Run.
+  build-android:
+    name: Android arm64-v8a
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # The runner's SDK carries sdkmanager and a few NDKs, not necessarily
+      # the one CMake/AndroidVersions.cmake pins, and the toolchain file
+      # accepts no other. Ninja is the generator; the resource embedder's
+      # generator is built for the host with the runner's own compiler.
+      - name: Install Ninja and the pinned NDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          ndk=$(sed -n 's/^set(EACP_ANDROID_NDK_VERSION \(.*\))$/\1/p' CMake/AndroidVersions.cmake)
+          echo "NDK $ndk"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk"
+
+      - name: Configure
+        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+
+      - name: Build
+        run: cmake --build build --target HelloGPU

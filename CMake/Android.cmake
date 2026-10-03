@@ -7,10 +7,8 @@
 # Bundle for Google Play are Gradle's; nothing in eacp packages an APK.
 #
 # eacp_add_android_app(<target>) is called by eacp_add_app with its APP_*
-# arguments in scope. The manifest is eacp's, plus MANIFEST_ELEMENTS inside
-# <manifest> and APPLICATION_ATTRIBUTES and ACTIVITY_ATTRIBUTES on those two,
-# each the text itself or a file holding it. The icon is RES_DIR's
-# mipmap/ic_launcher where it has one, else ICON.
+# arguments in scope: the identity and versions go to the module, ORIENTATION
+# to the manifest, and ICON becomes the module's mipmap/ic_launcher.
 
 include_guard(GLOBAL)
 include("${CMAKE_CURRENT_LIST_DIR}/AndroidVersions.cmake")
@@ -82,40 +80,23 @@ function(eacp_add_android_app target)
     set(EACP_APK_VERSION_NAME "${APP_VERSION}")
     set(EACP_APK_MIN_SDK "${ANDROID_PLATFORM_LEVEL}")
     set(EACP_APK_LIB_NAME "${target}")
-    set(EACP_APK_ORIENTATION "${APP_ORIENTATION}")
     set(EACP_APK_ICON_ATTRIBUTE "")
+    set(EACP_STUDIO_RES "")
 
-    if (NOT EACP_APK_ORIENTATION)
+    if (APP_ORIENTATION STREQUAL "portrait")
+        set(EACP_APK_ORIENTATION portrait)
+    elseif (APP_ORIENTATION STREQUAL "landscape")
+        set(EACP_APK_ORIENTATION sensorLandscape)
+    else ()
         set(EACP_APK_ORIENTATION unspecified)
     endif ()
 
-    if (APP_RES_DIR)
-        get_filename_component(APP_RES_DIR "${APP_RES_DIR}" ABSOLUTE)
-        file(GLOB launcher "${APP_RES_DIR}/mipmap*/ic_launcher.*")
-    elseif (APP_ICON)
-        set(APP_RES_DIR "${CMAKE_CURRENT_BINARY_DIR}/${target}-res")
-        configure_file("${APP_ICON}" "${APP_RES_DIR}/mipmap/ic_launcher.png" COPYONLY)
-        set(launcher TRUE)
-    endif ()
-
-    if (launcher)
+    if (APP_ICON)
+        set(res "${CMAKE_CURRENT_BINARY_DIR}/${target}-res")
+        configure_file("${APP_ICON}" "${res}/mipmap/ic_launcher.png" COPYONLY)
         set(EACP_APK_ICON_ATTRIBUTE "android:icon=\"@mipmap/ic_launcher\"")
-    endif ()
-
-    foreach (slot MANIFEST_ELEMENTS APPLICATION_ATTRIBUTES ACTIVITY_ATTRIBUTES)
-        set(EACP_APK_${slot} "${APP_${slot}}")
-        get_filename_component(file "${APP_${slot}}" ABSOLUTE)
-
-        if (EXISTS "${file}" AND NOT IS_DIRECTORY "${file}")
-            file(READ "${file}" EACP_APK_${slot})
-        endif ()
-    endforeach ()
-
-    set(EACP_STUDIO_RES "")
-
-    if (APP_RES_DIR)
         set(EACP_STUDIO_RES "
-    sourceSets.getByName(\"main\").res.directories.add(\"${APP_RES_DIR}\")
+    sourceSets.getByName(\"main\").res.directories.add(\"${res}\")
 ")
     endif ()
 

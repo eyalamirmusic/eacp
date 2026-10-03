@@ -139,8 +139,7 @@ bool isMonospaceFamily(const std::string& family)
                             "Courier",
                             "Courier New",
                             "Droid Sans Mono",
-                            "Roboto Mono",
-                            defaultMonospaceFamily()})
+                            "Roboto Mono"})
         if (Strings::equalsCaseInsensitive(family, name))
             return true;
 

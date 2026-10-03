@@ -76,6 +76,9 @@ constexpr const char* defaultMonospaceFamily()
     if constexpr (Platform::isLinux())
         return "DejaVu Sans Mono";
 
+    if constexpr (Platform::isAndroid())
+        return "monospace";
+
     return "Menlo";
 }
 

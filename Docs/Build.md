@@ -126,7 +126,8 @@ templates and the Gradle wrapper in `CMake/Android/`.
 Gradle runs the CMake that ran the configure and looks for Ninja beside it,
 in the SDK's own CMake package, or on its PATH. `ResEmbed`'s generator is
 built for the host inside each module's configure, as on every cross build,
-so the host needs a C++ compiler and Ninja where Gradle can find them.
+so the host needs a C++ compiler; the Ninja Gradle found is handed to that
+configure too, so Studio started from the Dock, with no shell `PATH`, builds.
 [`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
 
 ## A local Miro source
@@ -237,8 +238,11 @@ without it stops at configure time and says so.
 (universal), Windows x64 and ARM64 (MSVC and clang-cl) and Linux (GCC, Clang,
 and a Clang lane that runs the graphics backend on lavapipe under a headless
 Weston and then under an Xvfb — all three build it, one has a device, a
-compositor and an X server to run it on), and builds iOS for the simulator.
-Every lane configures with `EACP_CI_BUILD=ON`.
+compositor and an X server to run it on), and builds iOS for the simulator
+and Android: an Ubuntu lane installs the NDK `CMake/AndroidVersions.cmake`
+pins with `sdkmanager`, configures with `-DCMAKE_SYSTEM_NAME=Android` and
+builds `HelloGPU` for `arm64-v8a`, which is every module an Android app
+links. Every lane configures with `EACP_CI_BUILD=ON`.
 
 The Linux lanes install the packages listed in [Linux.md](Linux.md), and the
 `Dockerfile` reproduces their three steps — a headless build, the suite under

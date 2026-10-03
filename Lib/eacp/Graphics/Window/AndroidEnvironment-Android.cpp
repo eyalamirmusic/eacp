@@ -115,8 +115,9 @@ void importEnvironment(JNIEnv* env, jobject activity)
 }
 } // namespace
 
-void importAndroidEnvironment(ANativeActivity* activity)
+void importAndroidEnvironment([[maybe_unused]] ANativeActivity* activity)
 {
+#ifndef NDEBUG
     auto* env = Jni::currentEnv();
 
     if (env == nullptr || activity == nullptr)
@@ -124,5 +125,6 @@ void importAndroidEnvironment(ANativeActivity* activity)
 
     auto frame = Jni::LocalFrame {env};
     importEnvironment(env, activity->clazz);
+#endif
 }
 } // namespace eacp::Graphics

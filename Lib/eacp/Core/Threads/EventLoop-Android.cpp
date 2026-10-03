@@ -22,9 +22,11 @@ LooperEventHandler& androidLooperHandler()
     return handler;
 }
 
+// Per thread, as a looper is: a recreated activity's loop runs on a new thread
+// whose looper may well be allocated where the last one was.
 void androidWatchLoopFd(int epollFd)
 {
-    static auto* watchedBy = static_cast<ALooper*>(nullptr);
+    thread_local auto* watchedBy = static_cast<ALooper*>(nullptr);
 
     auto* looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
 
