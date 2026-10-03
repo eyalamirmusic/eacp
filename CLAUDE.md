@@ -97,34 +97,28 @@ Android (NDK r30, API 33+, Vulkan 1.3) is Linux without Wayland: CMake's
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
 over `android.graphics` through JNI. `eacp_add_app` builds an example as an
-executable, or on Android as a shared library with `<target>-apk` (stripped in
-Release) and `<target>-run` (`Scripts/android-run.cmake`: wake the phone,
-install, launch, show logcat; with no phone, boot the `eacp` AVD the setup
-makes, wherever Google ships an emulator for the host). The
-Android scripts are CMake scripts run with `cmake -P`, so no host needs a
-shell; `Scripts/android-common.cmake` is what they share. The NDK,
-build-tools and platform versions live in `CMake/AndroidVersions.cmake` alone;
-`cmake -P Scripts/android-setup.cmake` installs them into `~/.eacp/android`
-(or `$ANDROID_HOME`), and `cmake -G Ninja -B build-android
--DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is for iOS, builds
-against them: with no toolchain file given, the top-level `CMakeLists.txt` takes
-`CMake/AndroidToolchain.cmake`, which finds that NDK and includes its own
-`android.toolchain.cmake` (legacy mode, what Gradle uses) for `arm64-v8a` at
-`EACP_ANDROID_MIN_SDK` (33) unless `-DANDROID_ABI`/`-DANDROID_PLATFORM` say
-otherwise, while an explicit `-DCMAKE_TOOLCHAIN_FILE` is used as given; eacp
-ships no presets, which are an app's convenience. That configure also writes a
-Gradle project for Android Studio into its own build directory
+executable, or on Android as the shared library NativeActivity loads. The
+prerequisites are Android Studio with the NDK that
+`CMake/AndroidVersions.cmake` pins (the SDK Manager installs it), CMake and
+Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
+build-android -DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is
+for iOS, configures: with no toolchain file given, the top-level
+`CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which finds that NDK in
+Studio's SDK (or `$ANDROID_HOME`) and includes its own `android.toolchain.cmake`
+for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` (33) unless
+`-DANDROID_ABI`/`-DANDROID_PLATFORM` say otherwise, while an explicit
+`-DCMAKE_TOOLCHAIN_FILE` is used as given. That configure also writes a Gradle
+project for Android Studio into `<build>/AndroidStudio`
 (`EACP_ANDROID_STUDIO_DIR` moves it, `-DEACP_ANDROID_STUDIO=OFF` skips it), as
-`-G Xcode` writes an Xcode one (`CMake/AndroidStudio.cmake`, templates in
-`CMake/AndroidStudio/`): one module per `eacp_add_app` whose `externalNativeBuild` runs this
-`CMakeLists.txt` for that target, with the Android Gradle Plugin and Gradle
-versions pinned in `CMake/AndroidVersions.cmake`, and the daemon's JDK
-(`EACP_ANDROID_GRADLE_JVM`, 25) as Gradle's Daemon JVM criteria in
-`gradle/gradle-daemon-jvm.properties` with pinned download URLs, so neither
-Studio nor `gradlew` is given a machine's JDK path. On
-Android `ResEmbed`'s generator is `CMake/ResEmbedGenerator.cmake`, run by
-CMake, so no host compiler is needed. `Apps/Android/README.md` is the
-step-by-step guide.
+`-G Xcode` writes an Xcode one (`CMake/Android.cmake`, templates and the
+Gradle wrapper in `CMake/Android/`): one module per `eacp_add_app` whose
+`externalNativeBuild` runs this `CMakeLists.txt` for that target per ABI in
+`EACP_ANDROID_ABIS`, given every `-D` the generating configure was given, with
+the Android Gradle Plugin and Gradle versions pinned in
+`CMake/AndroidVersions.cmake`. Building, installing, running, debugging,
+signing and the App Bundle for Google Play are all Gradle's and Studio's;
+nothing in eacp makes an APK. `Apps/Android/README.md` is the step-by-step
+guide.
 
 ## Build Commands
 

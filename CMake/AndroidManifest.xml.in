@@ -1,11 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-        package="@EACP_APK_PACKAGE@"
-        android:versionCode="@EACP_APK_VERSION_CODE@"
-        android:versionName="@EACP_APK_VERSION_NAME@">
-
-    <uses-sdk android:minSdkVersion="@EACP_APK_MIN_SDK@"
-            android:targetSdkVersion="@EACP_APK_TARGET_SDK@" />
+<!-- The package, versions and SDK levels are the Gradle module's. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- The Vulkan backend's floor: 1.3 with dynamic rendering. -->
     <uses-feature android:name="android.hardware.vulkan.version"
@@ -15,7 +10,6 @@
     <application android:label="@EACP_APK_LABEL@"
             @EACP_APK_ICON_ATTRIBUTE@
             android:hasCode="false"
-            android:extractNativeLibs="true"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             @EACP_APK_APPLICATION_ATTRIBUTES@>
         <activity android:name="android.app.NativeActivity"

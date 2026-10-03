@@ -14,8 +14,9 @@ set(eacp_ndk_toolchain
 
 if (NOT EXISTS "${eacp_ndk_toolchain}")
     message(FATAL_ERROR
-            "No NDK ${EACP_ANDROID_NDK_VERSION} in ${eacp_android_sdk}: "
-            "run cmake -P Scripts/android-setup.cmake, which installs it there.")
+            "No NDK ${EACP_ANDROID_NDK_VERSION} in ${eacp_android_sdk}: install it "
+            "with Android Studio's SDK Manager (SDK Tools, NDK (Side by side), "
+            "with Show Package Details), or set ANDROID_HOME to an SDK that has it.")
 endif ()
 
 include("${eacp_ndk_toolchain}")

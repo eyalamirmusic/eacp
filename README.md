@@ -136,9 +136,10 @@ off the main thread; fed by the window's own key and mouse events elsewhere.
 CI builds and tests macOS (universal), Windows x64 and ARM64 (MSVC and
 clang-cl) and Linux (GCC, Clang, and a lane that runs the graphics stack on
 Mesa's software Vulkan under a headless Weston and then an Xvfb), and builds
-iOS for the simulator. macOS is the most exercised of them. Android is not
-supported on this branch; an initial port is in progress on the `jp/android`
-branches and is not yet merged.
+iOS for the simulator. macOS is the most exercised of them. Android (API 33+,
+Vulkan 1.3) builds through an Android Studio project the configure writes and
+is not yet in CI; [`Apps/Android/README.md`](Apps/Android/README.md) is the
+guide.
 
 ## A taste of the API
 

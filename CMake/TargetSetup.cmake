@@ -1,7 +1,7 @@
 include(AppleSetup)
 
 if (ANDROID)
-    include("${CMAKE_CURRENT_LIST_DIR}/AndroidApk.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/Android.cmake")
 endif ()
 
 # eacp_add_app(<target> <sources>... [BUNDLE_ID <id>] [DISPLAY_NAME <name>]
@@ -13,7 +13,8 @@ endif ()
 # One app with one identity everywhere: com.eacp.<target>, named <target>, at the
 # project's version, build 1, unless told otherwise. An executable whose bundle
 # properties and at-rest icon these set, or on Android the shared library
-# NativeActivity loads, packaged by eacp_add_android_apk, which reads the rest.
+# NativeActivity loads, with a module in the Android Studio project
+# (eacp_add_android_app, which reads the rest).
 # IOS_RESOURCES go in the iOS bundle's Resources, where Xcode compiles an asset
 # catalog and takes its AppIcon as the icon.
 function(eacp_add_app target)
@@ -51,7 +52,7 @@ ORIENTATION;RES_DIR;MANIFEST_ELEMENTS;APPLICATION_ATTRIBUTES;ACTIVITY_ATTRIBUTES
             EACP_APP_VERSION_CODE "${APP_VERSION_CODE}")
 
     if (ANDROID)
-        eacp_add_android_apk(${target})
+        eacp_add_android_app(${target})
     elseif (APP_ICON)
         eacp_set_app_icon(${target} IMAGE "${APP_ICON}")
     endif ()

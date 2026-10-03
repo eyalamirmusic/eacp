@@ -1,47 +1,67 @@
 # Running eacp on Android
 
-For a Windows, macOS or Linux machine, and an Android 13+ phone with Vulkan 1.3 or, with no phone, the Android Emulator the setup installs.
-Every command runs from the eacp checkout, in any shell: PowerShell, cmd, zsh or bash.
+For a macOS, Windows or Linux machine, and an Android 13+ device with Vulkan
+1.3 or the Android Emulator. Building, installing, running and debugging go
+through Android Studio and Gradle, as they do for any Android app; CMake
+compiles the library, as it does on every platform.
 
 ## 1. Install
 
-CMake 3.31 or later, Ninja and Git, on the `PATH`. Nothing else.
+- Android Studio. In its SDK Manager (Settings > Languages & Frameworks >
+  Android SDK > SDK Tools, with "Show Package Details" ticked) install "NDK
+  (Side by side)" at the version `CMake/AndroidVersions.cmake` pins. The SDK,
+  `adb` and the emulator come with Studio; `ANDROID_HOME` names another SDK.
+- CMake 3.31 or later and Ninja, on the `PATH`. Gradle runs the CMake that ran
+  the configure and looks for Ninja beside it (Homebrew keeps both in one
+  place), in the SDK's CMake package, or on its own `PATH`.
+- A C++ compiler for this machine, which the resource embedder's generator is
+  built with: Xcode's command-line tools, Visual Studio's Build Tools, or GCC.
 
-## 2. Set up the SDK, once
-
-```
-cmake -P Scripts/android-setup.cmake
-```
-
-It puts the SDK, NDK, a JDK and the Android Emulator in `~/.eacp/android` (about 8 GB, 5 of them the emulator and its system image), and an AVD called `eacp` in `~/.android/avd` (about 1 GB once booted). It ends by printing the paths of `adb` and `ndk-stack`, written `<adb>` and `<ndk-stack>` below.
-Run it again after an update; it is quick when nothing is missing.
-For a phone only, `cmake -DEACP_ANDROID_EMULATOR=OFF -P Scripts/android-setup.cmake` leaves the emulator out (3.3 GB).
-Windows and Linux on ARM get no emulator: Google ships none for them.
-
-## 3. Connect the phone, if you have one
-
-No phone: skip this step; the run boots the `eacp` emulator.
-
-1. Settings > About phone > Software information: tap Build number seven times.
-2. Settings > Developer options: turn on USB debugging.
-3. Plug it in, unlock it, accept "Allow USB debugging", and check it shows as `device`:
+## 2. Configure
 
 ```
-<adb> devices
+cmake -G Ninja -B build-android -DCMAKE_SYSTEM_NAME=Android
 ```
 
-## 4. Run HelloGPU
+That finds the NDK in Studio's SDK, builds `libHelloGPU.so` for `arm64-v8a`
+at API 33 (`-DANDROID_ABI=x86_64` or `-DANDROID_PLATFORM=android-35` change
+that), which is the quick way to check that the code compiles, and writes an
+Android Studio project into `build-android/AndroidStudio` with one module per
+app. Every `-D` given here (`-DEACP_UNITY_BUILD=OFF`, a `-DCPM_Miro_SOURCE`)
+reaches the project's own configures too.
+
+## 3. Run
+
+Open the `build-android/AndroidStudio` folder in Android Studio (File > Open).
+The first sync downloads Gradle and the Android Gradle Plugin, once per
+machine. Pick `HelloGPU` and a device: a phone with USB debugging on (Settings
+> About phone, tap Build number seven times, then Developer options > USB
+debugging), or an AVD from Device Manager with an API 35 Google APIs image,
+which has Vulkan 1.3 on Apple Silicon and on x86-64. Press Run. The app logs
+under the tag `eacp` in Studio's Logcat.
+
+To debug, if Studio's default debugger ("Detect Automatically") fails to
+attach, set Run > Edit Configurations > Debugger > Debug type to "Native Only":
+an eacp app has no Java for the other half to attach to.
+
+From a terminal, in that folder, with `JAVA_HOME` at a JDK 17 or later
+(Studio's own is `Android Studio.app/Contents/jbr/Contents/Home` on a Mac,
+`jbr` under its install folder elsewhere):
 
 ```
-cmake -G Ninja -B build-android -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Android
-cmake --build build-android --target HelloGPU-run
+./gradlew :HelloGPU:installDebug
+adb shell am start -n com.eacp.hellogpu/android.app.NativeActivity
+adb logcat -s eacp
 ```
 
-The configure builds with the NDK's own toolchain file, found in Android Studio's SDK, else `$ANDROID_HOME`, else where the setup put it, so the line is the same on every machine. It targets `arm64-v8a` at API 33; `-DANDROID_ABI=x86_64` or `-DANDROID_PLATFORM=android-35` changes that.
+`./gradlew :HelloGPU:bundleRelease` makes the App Bundle Google Play takes,
+once the module's `build.gradle.kts` has a `signingConfig` with your upload
+key in place of the debug one it starts with.
 
-## 5. Make your own app
+## 4. Make your own app
 
-Create these three files verbatim (here for an app called `HelloWorld`), then fill in your own code where marked.
+Create these files (here for an app called `HelloWorld`), then fill in your
+own code where marked.
 
 1. `Apps/Android/HelloWorld/CMakeLists.txt`:
 
@@ -72,7 +92,7 @@ struct HelloWorldView final : GPU::GPUView
 
 int main()
 {
-    LOG("HelloWorld: hello from eacp"); // shows in adb logcat -s eacp
+    LOG("HelloWorld: hello from eacp"); // shows in logcat under the tag eacp
     return Graphics::runWindowedApp<HelloWorldView>();
 }
 ```
@@ -83,36 +103,17 @@ int main()
 add_subdirectory(HelloWorld)
 ```
 
-4. Run it: the phone, or the emulator, turns green and the log line prints in the terminal.
-
-```
-cmake --build build-android --target HelloWorld-run
-```
-
-## 6. Or use Android Studio
-
-```
-cmake -G Ninja -B build-android-studio -DCMAKE_SYSTEM_NAME=Android
-```
-
-Every Android configure writes an Android Studio project into its build folder (`-DEACP_ANDROID_STUDIO=OFF` skips it), `build-android` above included; this one keeps it apart from the command-line build. Then open the `build-android-studio` folder in Android Studio (File > Open). The first sync downloads Gradle and the Android Gradle Plugin, once per machine. Every app has a run configuration of its own, its debugger set to Native (an all-native app has no Java for Studio's default, Auto, to attach to): pick one and press Run, or Debug to stop at a breakpoint in its C++.
-Every app is a module, so a new app shows up after running that line again.
-From a terminal, the same project builds with `gradlew :HelloWorld:assembleDebug` inside `build-android-studio`, with `JAVA_HOME` set to a JDK 17+: the configure prints that line with the JDK it found (on a Mac, `/usr/bin/java` is a stub that fails without one installed). That JDK only starts Gradle: the build itself runs on JDK 25, which the project's `gradle/gradle-daemon-jvm.properties` asks for, and Gradle downloads it into `~/.gradle/jdks` the first time when none is installed, from the terminal or from Studio.
+Run the configure again: the module appears in Studio after a sync.
 
 ## When it goes wrong
 
-- Android Studio asks to switch the project to its own SDK: its SDK (`~/Library/Android/sdk` on a Mac, `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` on Linux) has no NDK at the pinned version, so the configure took `$ANDROID_HOME` or `~/.eacp/android/sdk`. Install that NDK there with Studio's SDK Manager, or run the setup with `ANDROID_HOME` at it; the setup installs what is missing into it.
-
-- "the phone is locked": unlock it; the app is behind the lock screen.
-- "emulator eacp did not boot": start it by hand with the command it prints to see why. On Linux the emulator needs KVM: `/dev/kvm` readable by you (add yourself to the `kvm` group).
-- Another AVD: `EACP_AVD=<name>` picks it over `eacp`.
-- "this SDK has no emulator to boot": the setup ran with `-DEACP_ANDROID_EMULATOR=OFF`, or `ANDROID_HOME` names an SDK it did not make; run the setup again without it.
-- "has not allowed USB debugging": accept the prompt on the phone, run again.
-- "installing ... for the first time": answer the Play Protect prompt on the phone, if one comes.
-- "signed with another debug key": nothing to do; the old install, and its data, is removed.
-- Logs: `<adb> logcat -s eacp`
-- A native crash, symbolicated:
-
-```
-<adb> logcat -d | <ndk-stack> -sym build-android/Apps/Android/HelloWorld
-```
+- Studio offers to switch the project to its own SDK: that SDK has no NDK at
+  the pinned version, so the configure took `$ANDROID_HOME`. Install the NDK
+  with Studio's SDK Manager and configure again.
+- "Ninja not found" from Gradle: Studio started from the Dock or the Start
+  menu has the login shell's `PATH` only. Put Ninja beside CMake, or install
+  the SDK's CMake package, which carries one.
+- A native crash: Studio's Logcat symbolicates it. From a terminal,
+  `adb logcat -d | <sdk>/ndk/<version>/ndk-stack -sym <path to the unstripped
+  libHelloGPU.so under the module's .cxx folder>`.
+- The app is behind the lock screen: unlock the phone.

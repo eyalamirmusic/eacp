@@ -70,20 +70,6 @@ if (ANDROID)
                 "-DANDROID_PLATFORM=android-${EACP_ANDROID_MIN_SDK} (or higher); "
                 "this build targets API ${ANDROID_PLATFORM_LEVEL}.")
     endif ()
-
-    if (DEFINED ANDROID_NDK_MAJOR)
-        set(eacp_ndk_major "${ANDROID_NDK_MAJOR}")
-    else ()
-        string(REGEX MATCH "^[0-9]+" eacp_ndk_major "${CMAKE_ANDROID_NDK_VERSION}")
-    endif ()
-    string(REGEX MATCH "^[0-9]+" eacp_ndk_wanted "${EACP_ANDROID_NDK_VERSION}")
-    if (eacp_ndk_major LESS eacp_ndk_wanted)
-        message(FATAL_ERROR
-                "eacp builds with NDK ${EACP_ANDROID_NDK_VERSION}; this build uses "
-                "NDK ${eacp_ndk_major}, which is not supported: configure with "
-                "-DCMAKE_SYSTEM_NAME=Android and no toolchain file, after "
-                "cmake -P Scripts/android-setup.cmake")
-    endif ()
 endif ()
 
 # What this host can do, decided once and read by Lib, Apps and Tests.
