@@ -1,7 +1,7 @@
 #include "Camera.h"
 
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/SIMD/SIMD.h>
+#include <ESIMD/ESIMD.h>
 
 // Portable Camera members. The platform backends (Camera-macOS.mm /
 // Camera-Windows.cpp) own the capture session and frame delivery; conversions
@@ -13,7 +13,7 @@ namespace eacp::Cameras
 namespace
 {
 // BGRA (camera byte order) → RGBA (Graphics::Image byte order), into `out`'s
-// reused storage. The per-pixel swap + row-unpad runs in eacp-simd (always
+// reused storage. The per-pixel swap + row-unpad runs in ESIMD (always
 // optimized); prepareForOverwrite recycles the buffer so a per-frame capture
 // loop neither reallocates nor zero-fills. `out` is left empty on a bad size.
 void bgraToImage(const std::uint8_t* data,
@@ -26,7 +26,7 @@ void bgraToImage(const std::uint8_t* data,
     if (dst == nullptr)
         return;
 
-    eacp::simd::convertBgraToRgba(data, bytesPerRow, dst, width, height);
+    esimd::convertBgraToRgba(data, bytesPerRow, dst, width, height);
 }
 } // namespace
 

@@ -24,11 +24,12 @@ if (EACP_HAS_CONTEXT)
             Widgets/TextInput.cpp)
 endif ()
 
-# The image hot loops (resizeBilinear / warpAffineInverse / mirroredCrop) now all
-# live in eacp-simd, which is always built -O3 -- so ImageOps.cpp holds only thin
+# The image hot loops (resizeBilinear / warpAffineInverse / mirroredCrop) all
+# live in ESIMD, which is always built -O3 -- so ImageOps.cpp holds only thin
 # wrappers and needs no per-source optimization flag here. (The old per-config
 # per-source -O2 also broke the Xcode generator, which the iOS build uses.)
-target_link_libraries(eacp-graphics PUBLIC eacp-core eacp-simd)
+find_package(ESIMD REQUIRED)
+target_link_libraries(eacp-graphics PUBLIC eacp-core ESIMD)
 
 # PUBLIC so the capability is a compile-time fact for every consumer, not just
 # a CMake variable: Graphics.h leaves the 2D-tier headers out where there is no
