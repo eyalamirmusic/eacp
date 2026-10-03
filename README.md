@@ -82,8 +82,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
   alongside a batched textured-quad renderer for everything that draws in bulk.
 - **UI** — a lightweight component tier: a whole widget tree in one `GPUView`,
   drawn through the sprite and glyph batchers.
-- **SIMD** — portable kernels with runtime backend dispatch, so one source picks
-  the widest instruction set the machine actually has.
+- **SIMD** — the image hot loops run through
+  [ESIMD](https://github.com/eyalamirmusic/ESIMD), a portable SIMD library with
+  runtime backend dispatch that is also usable on its own.
 - **Maths** — `Vec2` / `Vec3` / `Vec4` and a column-major `Mat4` with the
   transform and projection builders, packed exactly as the shader types they
   register as, so the same value does the CPU-side geometry and crosses to the
@@ -99,7 +100,7 @@ them, so apps inherit the look, feel, and performance of the host OS:
 
 The dividing line is drawing. Everything that never touches a screen — the app
 and threading core, processes, plugins, files, the HTTP client and server, IPC
-and RPC, the SIMD kernels, the CPU compute interpreter, the ML graph builder —
+and RPC, the CPU compute interpreter, the ML graph builder —
 builds on Linux too, which is what makes eacp usable for a headless service as
 well as for a GUI. The graphics stack builds on all four platforms, because it
 wraps each one's own compositor instead of shipping one: Cocoa and Metal,
@@ -109,7 +110,6 @@ Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 | --- | :---: | :---: | :---: | :---: |
 | `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
 | `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
-| `SIMD` — portable kernels with runtime backend dispatch | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
 | `GameInput` — polled keyboard and mouse for a game loop | ✅ ‡ | ✅ | ✅ ‡ | ✅ |
 | `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
@@ -359,8 +359,10 @@ Apple Neural Engine where there is one (see
 ## Building
 
 eacp uses CMake (3.31+) and a C++20 toolchain. Dependencies are fetched via
-[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time,
-except [miniz](https://github.com/richgel999/miniz), which is carried in
+[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time
+— among them [ESIMD](https://github.com/eyalamirmusic/ESIMD), the SIMD kernels
+the image operations run through — except
+[miniz](https://github.com/richgel999/miniz), which is carried in
 `ThirdParty/` and wrapped by `eacp::Zip`.
 
 ```bash
@@ -412,7 +414,6 @@ Lib/eacp/
   Core/       App lifecycle, threading, processes, plugins, files, vector maths,
               ObjC/CF interop
   Network/    HTTP client and server, WebSocket client, TCP, IPC, RPC
-  SIMD/       Portable SIMD kernels with runtime backend dispatch
   Graphics/   Windows, views, widgets, menus, drawing primitives
   GPU/        Metal / D3D12 / Vulkan: device, buffers, textures, pipelines,
               passes, the shader EDSL and its CPU interpreter — see GPU/README.md

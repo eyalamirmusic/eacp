@@ -1,6 +1,6 @@
 #include "ImageOps.h"
 
-#include <eacp/SIMD/SIMD.h>
+#include <ESIMD/ESIMD.h>
 
 namespace eacp::Graphics
 {
@@ -14,7 +14,7 @@ void resizeBilinear(const Image& src, int dstWidth, int dstHeight, Image& dst)
     }
 
     auto* out = dst.prepareForOverwrite(dstWidth, dstHeight);
-    eacp::simd::resizeBilinear(
+    esimd::resizeBilinear(
         src.pixels().data(), src.width(), src.height(), out, dstWidth, dstHeight);
 }
 
@@ -34,13 +34,13 @@ Image warpAffineInverse(const Image& src,
         return {};
 
     auto outData = ImageData(dstWidth * dstHeight * 4);
-    eacp::simd::warpAffineInverse(src.pixels().data(),
-                                  src.width(),
-                                  src.height(),
-                                  inverse.m,
-                                  outData.data(),
-                                  dstWidth,
-                                  dstHeight);
+    esimd::warpAffineInverse(src.pixels().data(),
+                             src.width(),
+                             src.height(),
+                             inverse.m,
+                             outData.data(),
+                             dstWidth,
+                             dstHeight);
     return {dstWidth, dstHeight, std::move(outData)};
 }
 
@@ -54,8 +54,7 @@ void mirroredCrop(const Image& src, int x, int y, int width, int height, Image& 
     }
 
     auto* out = dst.prepareForOverwrite(width, height);
-    eacp::simd::mirroredCrop(
-        src.pixels().data(), src.width(), x, y, width, height, out);
+    esimd::mirroredCrop(src.pixels().data(), src.width(), x, y, width, height, out);
 }
 
 Image mirroredCrop(const Image& src, int x, int y, int width, int height)

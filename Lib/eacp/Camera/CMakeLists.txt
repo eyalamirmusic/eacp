@@ -1,6 +1,8 @@
 add_library(eacp-camera STATIC)
 
+find_package(ESIMD REQUIRED)
 target_link_libraries(eacp-camera PUBLIC eacp-core eacp-graphics)
+target_link_libraries(eacp-camera PRIVATE ESIMD)
 
 target_sources(eacp-camera PRIVATE
         Camera.cpp)

@@ -110,7 +110,7 @@ too (`libcurl4-openssl-dev` on Debian/Ubuntu).
 ## Building without it
 
 `-DEACP_BUILD_GRAPHICS=OFF` builds the portable half on Linux as on any other
-platform — `Core`, `Network`, `SIMD`, the shader EDSL and emitters, the CPU
+platform — `Core`, `Network`, the shader EDSL and emitters, the CPU
 compute interpreter, the ML graph builder — and is the only switch that turns
 the graphics modules off; there is no Linux-specific one. How CI builds and
 tests the backend, and the Docker commands that reproduce its three steps, are
