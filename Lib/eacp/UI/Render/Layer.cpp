@@ -2,6 +2,7 @@
 
 #include "../Component/Component.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace eacp::UI

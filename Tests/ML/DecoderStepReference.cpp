@@ -1,6 +1,8 @@
 #include "DecoderStepReference.h"
 #include "EncoderReference.h"
 
+#include <algorithm>
+
 namespace WhisperDecoderStep
 {
 namespace

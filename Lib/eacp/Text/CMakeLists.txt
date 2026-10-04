@@ -12,7 +12,8 @@ add_library(eacp-text STATIC
         GlyphRasterizer.cpp
         GlyphRenderer.cpp
         ShelfPacker.cpp
-        TextRenderer.cpp)
+        TextRenderer.cpp
+        UnicodeEmoji.cpp)
 
 if (APPLE)
     target_sources(eacp-text PRIVATE GlyphRasterizer-Apple.mm)

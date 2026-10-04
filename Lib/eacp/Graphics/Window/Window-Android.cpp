@@ -16,6 +16,7 @@
 #include <android/native_window.h>
 #include <android_native_app_glue.h>
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>

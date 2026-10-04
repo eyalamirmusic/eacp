@@ -2,6 +2,8 @@
 
 #include "../Widgets/TouchScroller.h"
 
+#include <algorithm>
+
 namespace eacp::UI
 {
 namespace

@@ -1,6 +1,8 @@
 #include <eacp/GPU/GPU.h>
 #include <eacp/Text/Text.h>
 
+#include <algorithm>
+
 using namespace eacp;
 using namespace GPU;
 using namespace Maths;

@@ -1,8 +1,6 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
-#include <iterator>
 
 namespace eacp::Text
 {
@@ -487,61 +485,13 @@ inline constexpr BracketPair bracketPairs[] = {
 };
 } // namespace BidiTable
 
-inline BidiClass bidiClassOf(char32_t codepoint)
-{
-    const auto* begin = std::begin(BidiTable::classRanges);
-    const auto* end = std::end(BidiTable::classRanges);
-
-    const auto* found =
-        std::upper_bound(begin,
-                         end,
-                         codepoint,
-                         [](char32_t value, const BidiTable::ClassRange& range)
-                         { return value < range.first; });
-
-    if (found != begin && codepoint <= (found - 1)->last)
-        return (found - 1)->value;
-
-    return BidiClass::L;
-}
+BidiClass bidiClassOf(char32_t codepoint);
 
 // The Bidi_Mirroring_Glyph, or the codepoint itself where there is none,
 // which is what rule L4 wants: it mirrors only what has a mirror.
-inline char32_t bidiMirroredGlyph(char32_t codepoint)
-{
-    const auto* begin = std::begin(BidiTable::mirrorPairs);
-    const auto* end = std::end(BidiTable::mirrorPairs);
+char32_t bidiMirroredGlyph(char32_t codepoint);
 
-    const auto* found =
-        std::lower_bound(begin,
-                         end,
-                         codepoint,
-                         [](const BidiTable::MirrorPair& pair, char32_t value)
-                         { return pair.codepoint < value; });
-
-    if (found != end && found->codepoint == codepoint)
-        return found->mirrored;
-
-    return codepoint;
-}
-
-inline const BidiTable::BracketPair* bidiBracketOf(char32_t codepoint)
-{
-    const auto* begin = std::begin(BidiTable::bracketPairs);
-    const auto* end = std::end(BidiTable::bracketPairs);
-
-    const auto* found =
-        std::lower_bound(begin,
-                         end,
-                         codepoint,
-                         [](const BidiTable::BracketPair& pair, char32_t value)
-                         { return pair.codepoint < value; });
-
-    if (found != end && found->codepoint == codepoint)
-        return found;
-
-    return nullptr;
-}
+const BidiTable::BracketPair* bidiBracketOf(char32_t codepoint);
 
 // BD16 compares brackets under canonical equivalence, and the only pair that
 // matters for is the angle brackets Unicode deprecated for the CJK ones.

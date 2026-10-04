@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <eacp/Text/UnicodeEmoji.h>
+
 // The Unicode Emoji_Presentation property and the two variation selectors that
 // override it. Pure logic over the generated table, so it runs everywhere;
 // EmojiPresentation-LinuxTests.cpp covers the face the rasterizer then picks.

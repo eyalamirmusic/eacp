@@ -4,6 +4,7 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
