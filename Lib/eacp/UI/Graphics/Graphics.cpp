@@ -419,4 +419,35 @@ void Graphics::restoreState()
     state = stack.back();
     stack.erase(stack.end() - 1);
 }
+
+Color Graphics::getColour() const
+{
+    return state.colour;
+}
+
+bool Graphics::hasGradient() const
+{
+    return !state.gradient.isEmpty();
+}
+
+const Font& Graphics::getFont() const
+{
+    return state.font;
+}
+
+bool Graphics::hasClipShape() const
+{
+    return !state.clipMask.isEmpty();
+}
+
+Graphics::ScopedState::ScopedState(Graphics& graphicsToUse)
+    : graphics(graphicsToUse)
+{
+    graphics.saveState();
+}
+
+Graphics::ScopedState::~ScopedState()
+{
+    graphics.restoreState();
+}
 } // namespace eacp::UI

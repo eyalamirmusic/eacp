@@ -31,7 +31,7 @@ public:
     };
 
     State feed(const char* data, int length);
-    Request& request() { return parsed; }
+    Request& request();
 
 private:
     State tryParseHeaders();

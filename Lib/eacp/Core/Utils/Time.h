@@ -19,10 +19,7 @@ struct MS
 // that just need to sleep.
 void sleep(MS duration);
 
-inline void sleepMS(int ms)
-{
-    sleep(MS {ms});
-}
+void sleepMS(int ms);
 
 // A point in the future, for pump-until loops. Wraps the steady clock behind
 // out-of-line methods so headers using it stay free of <chrono>.

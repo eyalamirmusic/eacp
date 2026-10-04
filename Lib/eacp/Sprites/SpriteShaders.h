@@ -15,11 +15,7 @@ namespace eacp::Sprites
 // instance layouts are SpriteVertex and SpriteInstance, in SpriteRenderer.h.
 struct SpriteShader final : GPU::ShaderProgram
 {
-    explicit SpriteShader(GPU::TextureSampling sampling)
-    {
-        image.sampling = sampling;
-        compile();
-    }
+    explicit SpriteShader(GPU::TextureSampling sampling);
 
     void define() override;
 
@@ -42,12 +38,7 @@ struct SpriteShader final : GPU::ShaderProgram
 // one would only add machinery.
 struct Nv12Shader final : GPU::ShaderProgram
 {
-    explicit Nv12Shader(GPU::TextureSampling sampling)
-    {
-        luma.sampling = sampling;
-        chroma.sampling = sampling;
-        compile();
-    }
+    explicit Nv12Shader(GPU::TextureSampling sampling);
 
     void define() override;
 

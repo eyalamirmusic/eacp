@@ -54,14 +54,14 @@ public:
     // shape's fragment reads this one, so the alternative is a stand-in texture
     // and a branch to choose it -- against a quarter of a megabyte that is fixed
     // whatever the interface does.
-    const GPU::Texture& getTexture() const { return *texture; }
+    const GPU::Texture& getTexture() const;
 
-    int getRowCount() const { return rows.size(); }
+    int getRowCount() const;
 
     // Gradients there was no row for. Each one draws as its flat colour, which
     // is a picture missing its shading rather than missing a shape -- but it is
     // still a thing that happened silently, so it is counted.
-    int getDroppedCount() const { return dropped; }
+    int getDroppedCount() const;
 
     // How many texels wide a ramp is. Enough that a two-stop gradient across a
     // full window has more steps than an 8-bit channel can show, and a document

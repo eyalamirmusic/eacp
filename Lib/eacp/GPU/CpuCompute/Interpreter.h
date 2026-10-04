@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Workspace.h"
+#include "Lanes.h"
+#include "Plan.h"
 
 #include <array>
 #include <atomic>
@@ -58,9 +59,9 @@ struct Context
     int stride = 0;
     std::array<SlotView, Plan::maxSlots> slots {};
 
-    Word* lanes(std::uint32_t offset) const { return words + offset; }
+    constexpr Word* lanes(std::uint32_t offset) const { return words + offset; }
 
-    Word* lanes(const Plan::Node& node, int component = 0) const
+    constexpr Word* lanes(const Plan::Node& node, int component = 0) const
     {
         return words + node.scratch
                + static_cast<std::size_t>(component)
@@ -99,14 +100,14 @@ struct LaneRuns
 class RampBounds
 {
 public:
-    RampBounds(Word startToUse, Word scaleToUse, int lanesToUse)
+    constexpr RampBounds(Word startToUse, Word scaleToUse, int lanesToUse)
         : start(startToUse)
         , scale(scaleToUse)
         , lanes(lanesToUse)
     {
     }
 
-    LaneRuns inRange(Word size) const
+    constexpr LaneRuns inRange(Word size) const
     {
         constexpr auto wrap = std::uint64_t {1} << 32;
         auto result = LaneRuns {};
@@ -116,7 +117,7 @@ public:
     }
 
 private:
-    int firstLaneReaching(std::uint64_t element) const
+    constexpr int firstLaneReaching(std::uint64_t element) const
     {
         if (start >= element)
             return 0;
@@ -129,7 +130,8 @@ private:
                                                         : lanes;
     }
 
-    void addRun(LaneRuns& result, std::uint64_t low, std::uint64_t high) const
+    constexpr void
+        addRun(LaneRuns& result, std::uint64_t low, std::uint64_t high) const
     {
         auto begin = firstLaneReaching(low);
         auto end = firstLaneReaching(high);
@@ -149,7 +151,7 @@ private:
 
 // Whether an index row the plan could not prove a ramp is one anyway, as
 // (i + 1) % length is on every group but the one that wraps.
-inline bool isContiguousRow(const Word* indices, int lanes)
+constexpr bool isContiguousRow(const Word* indices, int lanes)
 {
     auto first = indices[0];
     auto last = lanes - 1;

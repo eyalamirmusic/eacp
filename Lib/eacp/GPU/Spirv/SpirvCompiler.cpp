@@ -8,6 +8,11 @@
 
 namespace eacp::GPU::Spirv
 {
+bool CompileResult::succeeded() const
+{
+    return !words.empty();
+}
+
 namespace
 {
 constexpr auto glslVersion = 450;

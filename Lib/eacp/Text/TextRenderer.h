@@ -1,13 +1,17 @@
 #pragma once
 
-#include "GlyphAtlas.h"
+#include "GlyphRasterizer.h"
 #include "GlyphRenderer.h"
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace eacp::Text
 {
+class GlyphAtlas;
+
 // One glyph a layout placed: its pen in the caller's own points, and which
 // glyph of which face to draw there.
 //
@@ -91,10 +95,10 @@ public:
     // the glyphs of the new face: sizes coexist in one atlas, so the old one is
     // still there for whatever is still drawing in it.
     void setFont(const Font& font);
-    const Font& getFont() const { return defaultFont; }
+    constexpr const Font& getFont() const { return defaultFont; }
 
     void setPointSize(float pointSizeToUse);
-    float pointSize() const { return defaultFont.pointSize; }
+    constexpr float pointSize() const { return defaultFont.pointSize; }
 
     // Distance between baselines, in logical points.
     float lineHeight();

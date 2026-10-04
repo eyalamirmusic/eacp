@@ -9,6 +9,7 @@
 add_library(eacp-text STATIC
         Bidi.cpp
         GlyphAtlas.cpp
+        GlyphRasterizer.cpp
         GlyphRenderer.cpp
         ShelfPacker.cpp
         TextRenderer.cpp)

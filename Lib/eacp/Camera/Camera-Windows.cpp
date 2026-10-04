@@ -1,3 +1,4 @@
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/WinInclude.h>
 #include <chrono>

@@ -1,12 +1,110 @@
 #include "ComputeProgram.h"
+#include "../Device/Device.h"
+#include "../Frame/ComputePass.h"
 
 #include <eacp/Core/Utils/Logging.h>
 
 namespace eacp::GPU
 {
+Uniform<InputBuffer>& Uniform<InputBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
+Uniform<OutputBuffer>& Uniform<OutputBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
+Uniform<UIntInputBuffer>&
+    Uniform<UIntInputBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
+Uniform<UIntOutputBuffer>&
+    Uniform<UIntOutputBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
+Uniform<AtomicBuffer>& Uniform<AtomicBuffer>::operator=(const Buffer& newBuffer)
+{
+    value = BufferRange::of(newBuffer);
+    return *this;
+}
+
 ComputeProgram::ComputeProgram() = default;
 
 ComputeProgram::~ComputeProgram() = default;
+
+namespace
+{
+// Resource bind walk: hand each assigned buffer and texture member to the
+// compute pass at the slot its handle was declared with. One walk rather than
+// one per resource kind - the members are visited in declaration order either
+// way, and the slots are already carried by the handles.
+class ComputeBindVisitor final : public ShaderVisitor
+{
+public:
+    explicit ComputeBindVisitor(ComputePass& passToUse);
+
+    void onUniform(const char*,
+                   ValueType,
+                   detail::ValueHandle&,
+                   const void*) override;
+
+    void onInputBuffer(const char*,
+                       InputBuffer& handle,
+                       const BufferRange& range) override;
+
+    void onOutputBuffer(const char*,
+                        OutputBuffer& handle,
+                        const BufferRange& range) override;
+
+    // The integer buffers bind through the same two calls the float ones do:
+    // what the elements are is settled by the kernel's declaration, not by how
+    // the pass hands the buffer over.
+    void onUIntInputBuffer(const char*,
+                           UIntInputBuffer& handle,
+                           const BufferRange& range) override;
+
+    void onUIntOutputBuffer(const char*,
+                            UIntOutputBuffer& handle,
+                            const BufferRange& range) override;
+
+    // An atomic buffer binds exactly as an output does - a Metal device buffer,
+    // a D3D UAV - since what makes it atomic is the type the kernel declares it
+    // through and not how the pass hands it over.
+    void onAtomicBuffer(const char*,
+                        AtomicBuffer& handle,
+                        const BufferRange& range) override;
+
+    void onTexture(const char*,
+                   Texture2D& handle,
+                   const Texture* texture,
+                   TextureSampling sampling) override;
+
+    // The same call the 2D one takes, for the reason the render bind visitor
+    // gives: a cube is one texture on one slot of one index space on both
+    // backends, and its dimensionality was settled when it was created and when
+    // the kernel was compiled.
+    void onCubeTexture(const char*,
+                       TextureCube& handle,
+                       const Texture* texture,
+                       TextureSampling sampling) override;
+
+    void onWritableTexture(const char*,
+                           WritableTexture2D& handle,
+                           const Texture* texture) override;
+
+private:
+    ComputePass& pass;
+};
 
 ComputeBindVisitor::ComputeBindVisitor(ComputePass& passToUse)
     : pass(passToUse)
@@ -85,6 +183,7 @@ void ComputeBindVisitor::onWritableTexture(const char*,
     if (texture != nullptr)
         pass.setOutputTexture(*texture, handle.slot);
 }
+} // namespace
 
 ComputeProgram::ComputeProgram(ThreadGroupShape shape)
     : ComputeKernel(shape)

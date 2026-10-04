@@ -264,4 +264,40 @@ void ListBox::paint(Graphics& g)
     paintRows(g);
     paintScrollIndicator(g);
 }
+
+void ListBoxModel::paintCell(Graphics&, int, int, const Rect&, bool) {}
+
+void ListBoxModel::selectedRowChanged(int) {}
+
+void ListBoxModel::rowDoubleClicked(int) {}
+
+ListBoxModel* ListBox::getModel() const
+{
+    return model;
+}
+
+float ListBox::getRowHeight() const
+{
+    return rowHeight;
+}
+
+int ListBox::getNumRows() const
+{
+    return numRows;
+}
+
+int ListBox::getSelectedRow() const
+{
+    return selectedRow;
+}
+
+float ListBox::getScrollPosition() const
+{
+    return scrollOffset;
+}
+
+const Vector<ListBox::Column>& ListBox::getColumns() const
+{
+    return columns;
+}
 } // namespace eacp::UI

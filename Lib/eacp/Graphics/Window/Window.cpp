@@ -90,6 +90,10 @@ Window::Window(View& view, const WindowOptions& optionsToUse)
     setContentView(view);
 }
 
+void WindowInputListener::windowKeyEvent(const KeyEvent&) {}
+void WindowInputListener::windowMouseEvent(const MouseEvent&) {}
+void WindowInputListener::windowActivationChanged(bool) {}
+
 void WindowInputTap::addListener(WindowInputListener& listener)
 {
     listeners.addIfNotThere(&listener);

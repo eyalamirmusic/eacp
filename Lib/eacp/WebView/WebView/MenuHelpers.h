@@ -1,6 +1,6 @@
 #pragma once
 
-#include "WebView.h"
+#include <eacp/Graphics/Menu/Menu.h>
 
 namespace eacp::Graphics
 {

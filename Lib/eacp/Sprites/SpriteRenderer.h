@@ -2,7 +2,8 @@
 
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/Pimpl.h>
-#include <eacp/GPU/GPU.h>
+#include <eacp/GPU/Frame/RenderPass.h>
+#include <eacp/GPU/Pipeline/RenderPipeline.h>
 
 namespace eacp::Sprites
 {
@@ -127,7 +128,7 @@ public:
     // and not anything compiled: a view that resizes sets it again rather than
     // rebuilding the renderer and recompiling its pipelines.
     void setLogicalSize(Point size);
-    Point getLogicalSize() const { return logicalSize; }
+    Point getLogicalSize() const;
 
     // Draws the queued quads and then clips the pass, so that what was issued
     // before the call escapes the clip. Same units as

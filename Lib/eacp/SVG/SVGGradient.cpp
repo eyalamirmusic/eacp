@@ -1,5 +1,7 @@
 #include "SVGGradient.h"
 
+#include "SVGAttributes.h"
+
 #include <cmath>
 
 namespace eacp::SVG

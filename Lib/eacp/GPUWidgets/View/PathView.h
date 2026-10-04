@@ -2,6 +2,9 @@
 
 #include "../Path/Path.h"
 
+#include <eacp/Core/Utils/Pimpl.h>
+#include <eacp/GPU/View/GPUView.h>
+
 namespace eacp::GPU
 {
 class Frame;

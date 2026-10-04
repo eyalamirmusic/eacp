@@ -56,7 +56,7 @@ public:
              const Rect& bounds);
 
     void setColour(const Color& colour);
-    Color getColour() const { return state.colour; }
+    Color getColour() const;
 
     // Fills what follows with a gradient rather than the flat colour, until
     // clearGradient or a restoreState puts the colour back. Everything that
@@ -74,7 +74,7 @@ public:
     // a shape drawn through this always has something to be drawn in.
     void setGradient(const Gradient& gradient);
     void clearGradient();
-    bool hasGradient() const { return !state.gradient.isEmpty(); }
+    bool hasGradient() const;
 
     // Fills the whole clip region, whatever the current origin is -- the usual
     // first line of a paint().
@@ -198,7 +198,7 @@ public:
     void setFontSize(float pointSize);
     void setFontStyle(FontStyle style);
 
-    const Font& getFont() const { return state.font; }
+    const Font& getFont() const;
 
     void translate(float x, float y);
 
@@ -245,7 +245,7 @@ public:
     // so a string under a shaped clip is cut by the bounds and not by the shape.
     void reduceClipToShape(const PathShape& shape);
 
-    bool hasClipShape() const { return !state.clipMask.isEmpty(); }
+    bool hasClipShape() const;
 
     // The clip, back in the current space.
     Rect getClipBounds() const;
@@ -265,13 +265,8 @@ public:
 
     struct ScopedState
     {
-        explicit ScopedState(Graphics& graphicsToUse)
-            : graphics(graphicsToUse)
-        {
-            graphics.saveState();
-        }
-
-        ~ScopedState() { graphics.restoreState(); }
+        explicit ScopedState(Graphics& graphicsToUse);
+        ~ScopedState();
 
         ScopedState(const ScopedState&) = delete;
         ScopedState& operator=(const ScopedState&) = delete;

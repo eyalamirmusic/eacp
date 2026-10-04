@@ -259,6 +259,11 @@ void GlobalRef::reset(JNIEnv* env, jobject local)
     object = local != nullptr ? env->NewGlobalRef(local) : nullptr;
 }
 
+jobject GlobalRef::get() const
+{
+    return object;
+}
+
 std::string toString(JNIEnv* env, jobject text)
 {
     if (text == nullptr)

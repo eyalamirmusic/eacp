@@ -93,7 +93,7 @@ public:
 
     struct Native;
 
-    std::shared_ptr<Native> native() const { return impl; }
+    std::shared_ptr<Native> native() const;
     explicit MultiArray(const std::shared_ptr<Native>& nativeToUse);
 
 private:

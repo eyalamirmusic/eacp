@@ -1,6 +1,7 @@
 #include "MeshBatch.h"
 
 #include "ClipShader.h"
+#include "GradientRamps.h"
 #include "GradientShader.h"
 
 #include <algorithm>
@@ -9,6 +10,13 @@ namespace eacp::UI
 {
 namespace
 {
+// Which corner of its triangle a vertex is: 0, 1 or 2. The whole per-vertex
+// stream, because the geometry itself is per-instance -- see MeshTriangle.
+struct MeshCorner
+{
+    float index;
+};
+
 constexpr MeshCorner triangleCorners[] = {{0.f}, {1.f}, {2.f}};
 } // namespace
 
@@ -252,5 +260,10 @@ void MeshBatch::addMesh(const Vector<GPUWidgets::MeshVertex>& mesh,
 void MeshBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
 {
     visit(Program {}.graph());
+}
+
+bool MeshBatch::isEmpty() const
+{
+    return triangles.empty();
 }
 } // namespace eacp::UI

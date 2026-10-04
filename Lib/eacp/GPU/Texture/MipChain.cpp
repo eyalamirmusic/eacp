@@ -153,6 +153,21 @@ void halveHalves(const std::uint8_t* source,
 // are arithmetic over a size, and a caller whose size is known at compile time
 // should be able to size a buffer with them.
 
+bool MipChain::isValid() const
+{
+    return !levels.empty();
+}
+
+int MipChain::levelCount() const
+{
+    return levels.size();
+}
+
+const void* MipChain::level(int index) const
+{
+    return levels[index].data();
+}
+
 MipChain buildMipChain(
     const void* pixels, int width, int height, TextureFormat format, int bytesPerRow)
 {

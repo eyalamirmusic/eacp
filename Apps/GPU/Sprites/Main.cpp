@@ -1,3 +1,4 @@
+#include <eacp/GPU/GPU.h>
 #include <eacp/Sprites/Sprites.h>
 
 #include <cstdlib>

@@ -10,5 +10,5 @@ namespace eacp::Graphics::detail
 // event carrying the phantom motion clears it and drops its movement.
 //
 // A process has one cursor, so one flag covers every window.
-inline bool cursorWasWarped = false;
+extern bool cursorWasWarped;
 } // namespace eacp::Graphics::detail

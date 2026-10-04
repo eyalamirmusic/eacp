@@ -11,6 +11,16 @@ Writer::Writer()
         writeUInt64(0);
 }
 
+int Writer::count() const
+{
+    return entries;
+}
+
+const Bytes& Writer::bytes() const
+{
+    return out;
+}
+
 std::uint64_t Writer::append(DataType type, Span<const std::uint8_t> data)
 {
     padToAlignment();

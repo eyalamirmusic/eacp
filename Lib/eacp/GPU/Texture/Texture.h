@@ -2,8 +2,6 @@
 
 #include "../Common.h"
 
-#include <eacp/Graphics/Image/Image.h>
-
 #include <cstddef>
 
 namespace eacp::GPU

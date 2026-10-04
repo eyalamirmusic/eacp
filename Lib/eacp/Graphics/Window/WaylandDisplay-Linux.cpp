@@ -72,6 +72,11 @@ WaylandWindowSurface::WaylandWindowSurface()
     viewSurfaces = makeWaylandViewSurfaceBackend(*this);
 }
 
+wl_surface* WaylandWindowSurface::getSurface() const
+{
+    return static_cast<wl_surface*>(nativeSurface.surface);
+}
+
 void WaylandWindowSurface::setSurface(wl_surface* surface)
 {
     auto* connection = waylandDisplay();
@@ -668,6 +673,11 @@ const WaylandOutputInfo* WaylandDisplay::getPrimaryOutput() const
             return info.get();
 
     return outputs.empty() ? nullptr : outputs[0].get();
+}
+
+WaylandInput* WaylandDisplay::getInput() const
+{
+    return input.get();
 }
 
 float WaylandDisplay::getFallbackScale() const

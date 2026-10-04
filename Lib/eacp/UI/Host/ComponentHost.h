@@ -3,6 +3,7 @@
 #include "../Component/Component.h"
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
+#include "../Render/MaskCache.h"
 
 #include <optional>
 
@@ -34,7 +35,7 @@ public:
     // The tree to draw. The component is not owned and has to outlive the host.
     // It is resized to fill the host, so its own bounds are ignored.
     void setRootComponent(Component& newRoot);
-    Component* getRootComponent() const { return root; }
+    Component* getRootComponent() const;
 
     void setBackgroundColour(const Color& colour);
 
@@ -42,7 +43,7 @@ public:
     // for its own paint(), and they share one glyph atlas, so what this decides
     // is what the tree looks like rather than what it costs.
     void setFont(const Font& font);
-    const Font& getFont() const { return font; }
+    const Font& getFont() const;
 
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
@@ -58,39 +59,39 @@ public:
     // Where an image a component draws comes from: the host turns a decoded
     // image into a texture once, and the reference it hands back is what
     // Graphics::drawImage takes. See ImageCache for who keeps it alive.
-    ImageCache& getImageCache() { return imageCache; }
+    ImageCache& getImageCache();
 
     // How many image textures the host is holding: everything some recording
     // in the tree, or some caller, still draws. What a screen of pictures
     // costs in memory, one entry per distinct image.
-    int getCachedImageCount() const { return imageCache.size(); }
+    int getCachedImageCount() const;
 
     // Image draws in the last frame's own pass: one per run of quads out of
     // one texture, so a row of icons out of one image is one and a page of
     // photographs is one apiece. See ImageBatch.
-    int getLastImageDrawCount() const { return lastImageDraws; }
+    int getLastImageDrawCount() const;
 
     // What the last frame cost. `clipChanges` is the number of batch breaks:
     // between two of them every quad goes out as one instanced draw, so this is
     // the figure that should stay flat as the tree grows.
-    int getLastClipChangeCount() const { return lastClipChanges; }
-    int getLastComponentCount() const { return lastComponentCount; }
+    int getLastClipChangeCount() const;
+    int getLastComponentCount() const;
 
     // How many components were actually painted, as against how many were drawn.
     // The figure this tier's redrawing policy is judged by: it is the count of
     // repaint()s the frame answered, so a settled interface reports zero however
     // many components it has, and an animation reports the one that is moving.
-    int getLastPaintedComponentCount() const { return lastPaintedComponents; }
+    int getLastPaintedComponentCount() const;
 
     // Draws spent alternating between masked and meshed shapes. See
     // DrawPlayer::getRendererSwitchCount.
-    int getLastRendererSwitchCount() const { return lastRendererSwitches; }
+    int getLastRendererSwitchCount() const;
 
     // Layers in the tree that were rendered into a texture of their own this
     // frame, each one a render pass before the frame's. Zero once nothing is
     // changing: a layer whose content is unchanged is drawn from the texture it
     // already has, which is what makes an animated opacity cheap.
-    int getLastRenderedLayerCount() const { return lastRenderedLayers; }
+    int getLastRenderedLayerCount() const;
 
     // Vector shapes in the tree that have no mask, the coverage atlas having had
     // no room for them: each one draws as nothing. Zero unless an interface has
@@ -101,7 +102,7 @@ public:
     // Worth reading somewhere, because nothing else says it happened. A shape
     // dropped this way comes back the next time the atlas is rebuilt -- a
     // resize, a display change, or any later allocation that compacts it.
-    int getLastDroppedPathCount() const { return lastDroppedPaths; }
+    int getLastDroppedPathCount() const;
 
     // Called when that figure changes, for a client that would rather be told
     // than poll. Once on the way up and once on the way back down.
@@ -112,14 +113,14 @@ public:
     // whose shapes are widget-sized; artwork is what meets the threshold, and
     // this is the figure that says how much of a document stopped competing for
     // the atlas. See PathShape::Backing.
-    int getLastMeshedPathCount() const { return lastMeshedPaths; }
+    int getLastMeshedPathCount() const;
 
     // Shapes in the tree drawing through a mask somebody else rasterized. A
     // census like the meshed count beside it rather than a tally of what this
     // frame did, since what is worth knowing is how much of the tree is costing
     // the atlas nothing: an interface built out of repeated parts reports every
     // copy but the first of each shape it repeats.
-    int getLastSharedMaskCount() const { return lastSharedMasks; }
+    int getLastSharedMaskCount() const;
 
     // How full the coverage atlas is, and how large it has grown, as the
     // distance to that ceiling while there is still distance to it. Room
@@ -147,12 +148,12 @@ public:
     // and asks the window for the keyboard, a component tree only hearing a key
     // at all if the one native view it lives in is the first responder.
     void setFocusedComponent(Component* component);
-    Component* getFocusedComponent() const { return focusedComponent; }
+    Component* getFocusedComponent() const;
 
     // Whether Tab moves focus through the tree. On by default; off for a tree
     // where Tab means something else, an editor that indents being the case that
     // wants it.
-    void setTabMovesFocus(bool shouldMoveFocus) { tabMovesFocus = shouldMoveFocus; }
+    void setTabMovesFocus(bool shouldMoveFocus);
 
     void keyDown(const eacp::Graphics::KeyEvent& event) override;
     void keyUp(const eacp::Graphics::KeyEvent& event) override;

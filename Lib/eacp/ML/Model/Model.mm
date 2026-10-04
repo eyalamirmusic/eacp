@@ -2,6 +2,7 @@
 #include "Model.h"
 
 #include <eacp/Core/ObjC/AutoReleasePool.h>
+#include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/Strings.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>

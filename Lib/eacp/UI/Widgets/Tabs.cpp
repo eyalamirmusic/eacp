@@ -232,4 +232,34 @@ void TabbedComponent::resized()
     if (auto* page = getCurrentPage())
         page->setBounds(getPageArea());
 }
+
+int TabBar::getNumTabs() const
+{
+    return names.size();
+}
+
+int TabBar::getCurrentTabIndex() const
+{
+    return currentIndex;
+}
+
+int TabbedComponent::getCurrentTabIndex() const
+{
+    return tabs.getCurrentTabIndex();
+}
+
+int TabbedComponent::getNumTabs() const
+{
+    return tabs.getNumTabs();
+}
+
+float TabbedComponent::getTabBarHeight() const
+{
+    return tabBarHeight;
+}
+
+TabBar& TabbedComponent::getTabBar()
+{
+    return tabs;
+}
 } // namespace eacp::UI

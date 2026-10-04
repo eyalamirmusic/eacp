@@ -5,6 +5,7 @@ target_sources(eacp-svg PRIVATE
         SVGAttributes.cpp
         SVGClip.cpp
         SVGComponent.cpp
+        SVGElement.cpp
         SVGGeometry.cpp
         SVGGradient.cpp
         SVGImage.cpp

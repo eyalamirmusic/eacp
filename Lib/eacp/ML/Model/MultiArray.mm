@@ -1,7 +1,11 @@
 #include "MultiArrayNative.h"
 
 #include <eacp/Core/ObjC/AutoReleasePool.h>
+#include <eacp/Core/ObjC/CFRef.h>
+#include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/GPU/GPU.h>
+
+#import <CoreVideo/CoreVideo.h>
 
 #include <Accelerate/Accelerate.h>
 
@@ -11,10 +15,36 @@
 
 namespace eacp::ML
 {
-int elementSizeOf(DType type)
+// A surface-backed array keeps no pointer: its base address is only valid
+// while the pixel buffer is locked, so every CPU access locks it for its own
+// duration. bytes is the plain array's memory, owned by the MLMultiArray.
+struct MultiArray::Native
+{
+    Shape shape;
+    DType type = DType::float32;
+    ObjC::Ptr<MLMultiArray> array;
+    CFRef<CVPixelBufferRef> surface;
+    std::byte* bytes = nullptr;
+    size_t stride = 0;
+};
+
+namespace
+{
+int multiArrayElementSizeOf(DType type)
 {
     return type == DType::float16 ? 2 : 4;
 }
+
+NSArray<NSNumber*>* multiArrayShapeToNSArray(const Shape& shape)
+{
+    auto dimensions = [NSMutableArray arrayWithCapacity:(NSUInteger) shape.dims.size()];
+
+    for (auto dimension: shape.dims)
+        [dimensions addObject:@(dimension)];
+
+    return dimensions;
+}
+} // namespace
 
 Shape toShape(NSArray<NSNumber*>* dimensions)
 {
@@ -24,16 +54,6 @@ Shape toShape(NSArray<NSNumber*>* dimensions)
         shape.dims.add(dimension.intValue);
 
     return shape;
-}
-
-NSArray<NSNumber*>* toNSArray(const Shape& shape)
-{
-    auto dimensions = [NSMutableArray arrayWithCapacity:(NSUInteger) shape.dims.size()];
-
-    for (auto dimension: shape.dims)
-        [dimensions addObject:@(dimension)];
-
-    return dimensions;
 }
 
 bool toDType(MLMultiArrayDataType dataType, DType& type)
@@ -150,16 +170,17 @@ void convertNarrowing(const void* source,
     auto to = planeOf(destination, rows, columns, destinationStride);
     vImageConvert_PlanarFtoPlanar16F(&from, &to, kvImageNoFlags);
 }
-} // namespace
 
-void convertRows(const void* source,
-                 DType sourceType,
-                 size_t sourceStride,
-                 void* destination,
-                 DType destinationType,
-                 size_t destinationStride,
-                 int rows,
-                 int columns)
+// Rows of columns elements from one layout and type to another. Strides are in
+// bytes; fp16 <-> fp32 goes through vImage, which honours both strides.
+void multiArrayConvertRows(const void* source,
+                           DType sourceType,
+                           size_t sourceStride,
+                           void* destination,
+                           DType destinationType,
+                           size_t destinationStride,
+                           int rows,
+                           int columns)
 {
     if (source == nullptr || destination == nullptr || rows <= 0 || columns <= 0)
         return;
@@ -169,7 +190,8 @@ void convertRows(const void* source,
 
     if (sourceType == destinationType)
     {
-        auto rowBytes = (size_t) columns * (size_t) elementSizeOf(sourceType);
+        auto rowBytes =
+            (size_t) columns * (size_t) multiArrayElementSizeOf(sourceType);
         copyRows(from, sourceStride, to, destinationStride, rows, rowBytes);
         return;
     }
@@ -230,8 +252,6 @@ void convertRows(const void* source,
                         columns);
 }
 
-namespace
-{
 bool isAllocatable(const Shape& shape)
 {
     auto isEmptyOrUnknown = [](int size) { return size <= 0; };
@@ -331,7 +351,7 @@ std::shared_ptr<MultiArray::Native> makePlainNative(const Shape& shape, DType ty
 
     NSError* error = nil;
     auto array = ObjC::Ptr<MLMultiArray> {[[MLMultiArray alloc]
-        initWithShape:toNSArray(shape)
+        initWithShape:multiArrayShapeToNSArray(shape)
              dataType:dataType
                 error:&error]};
 
@@ -345,7 +365,8 @@ std::shared_ptr<MultiArray::Native> makePlainNative(const Shape& shape, DType ty
     native->bytes = static_cast<std::byte*>(array.get().dataPointer);
 
     if (native->bytes == nullptr
-        || !readRowStride(array.get(), elementSizeOf(type), native->stride))
+        || !readRowStride(
+            array.get(), multiArrayElementSizeOf(type), native->stride))
         return {};
 
     std::memset(native->bytes, 0, native->stride * (size_t) (shape.count() / shape.dims.back()));
@@ -381,8 +402,9 @@ std::shared_ptr<MultiArray::Native> makeSurfaceNative(const Shape& shape)
         native->type = DType::float16;
         native->surface.reset(buffer);
         native->stride = CVPixelBufferGetBytesPerRow(buffer);
+        auto dimensions = multiArrayShapeToNSArray(shape);
         native->array = [[MLMultiArray alloc] initWithPixelBuffer:buffer
-                                                            shape:toNSArray(shape)];
+                                                            shape:dimensions];
 
         if (!native->array)
             return {};
@@ -449,7 +471,7 @@ void copyStridedInto(MultiArray& copy, MLMultiArray* output)
         auto type = copy.type();
         auto rows = copy.rows();
         auto columns = copy.columns();
-        auto elementSize = (size_t) elementSizeOf(type);
+        auto elementSize = (size_t) multiArrayElementSizeOf(type);
         auto offsets = RowOffsets {output};
         auto columnStride = (size_t) offsets.columnStride();
 
@@ -512,6 +534,11 @@ MultiArray::MultiArray(const std::shared_ptr<Native>& nativeToUse)
 {
 }
 
+std::shared_ptr<MultiArray::Native> MultiArray::native() const
+{
+    return impl;
+}
+
 MultiArray MultiArray::create(const Shape& shape, DType type)
 {
     if (!isAllocatable(shape))
@@ -563,7 +590,7 @@ int MultiArray::rows() const
 
 int MultiArray::elementSize() const
 {
-    return elementSizeOf(type());
+    return multiArrayElementSizeOf(type());
 }
 
 size_t MultiArray::rowStride() const
@@ -585,7 +612,7 @@ Vector<float> MultiArray::toFloats() const
 
     auto access = CpuAccess {*impl, true};
     values.resize(elementCount(), 0.0f);
-    convertRows(access.data(),
+    multiArrayConvertRows(access.data(),
                 type(),
                 rowStride(),
                 values.data(),
@@ -605,7 +632,7 @@ void MultiArray::fromFloats(Span<const float> values)
     auto packedStride = (size_t) columns() * sizeof(float);
     auto wholeRows = std::min((int) values.size() / columns(), rows());
 
-    convertRows(values.data(),
+    multiArrayConvertRows(values.data(),
                 DType::float32,
                 packedStride,
                 access.data(),
@@ -617,7 +644,7 @@ void MultiArray::fromFloats(Span<const float> values)
     auto remainder = std::min((int) values.size(), elementCount()) - wholeRows * columns();
 
     if (remainder > 0)
-        convertRows(values.data() + wholeRows * columns(),
+        multiArrayConvertRows(values.data() + wholeRows * columns(),
                     DType::float32,
                     packedStride,
                     access.data() + (size_t) wholeRows * rowStride(),
@@ -631,7 +658,7 @@ namespace
 {
 size_t bufferRowBytes(const MultiArray& array, DType bufferType)
 {
-    return (size_t) array.columns() * (size_t) elementSizeOf(bufferType);
+    return (size_t) array.columns() * (size_t) multiArrayElementSizeOf(bufferType);
 }
 
 bool fitsBuffer(const MultiArray& array,
@@ -679,7 +706,7 @@ void MultiArray::copyTo(GPU::Buffer& buffer,
     if (bufferType != type() || (isPacked && sourceStride != rowBytes))
     {
         staging.resize((int) (rowBytes * (size_t) rows()), std::byte {0});
-        convertRows(access.data(),
+        multiArrayConvertRows(access.data(),
                     type(),
                     rowStride(),
                     staging.data(),
@@ -725,7 +752,7 @@ void MultiArray::copyFrom(const GPU::Buffer& buffer,
     auto staging = Vector<std::byte> {};
     staging.resize((int) span, std::byte {0});
     buffer.read(staging.data(), (int) span, offset);
-    convertRows(staging.data(),
+    multiArrayConvertRows(staging.data(),
                 bufferType,
                 bufferRowStride,
                 access.data(),
@@ -744,7 +771,7 @@ void MultiArray::copyFrom(const MultiArray& other)
     {
         auto source = CpuAccess {*other.impl, true};
         auto destination = CpuAccess {*impl, false};
-        convertRows(source.data(),
+        multiArrayConvertRows(source.data(),
                     other.type(),
                     other.rowStride(),
                     destination.data(),
@@ -776,7 +803,7 @@ void MultiArray::copyRows(const MultiArray& source,
     auto from = CpuAccess {*source.impl, true};
     auto to = CpuAccess {*impl, false};
 
-    convertRows(from.data() + (size_t) sourceRow * source.rowStride(),
+    multiArrayConvertRows(from.data() + (size_t) sourceRow * source.rowStride(),
                 source.type(),
                 source.rowStride(),
                 to.data() + (size_t) destinationRow * rowStride(),

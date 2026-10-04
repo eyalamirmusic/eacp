@@ -1,6 +1,8 @@
 #include "ShapeBatch.h"
 
 #include "ClipShader.h"
+#include "DrawList.h"
+#include "GradientRamps.h"
 #include "GradientShader.h"
 
 #include <algorithm>
@@ -14,6 +16,12 @@ namespace
 // has somewhere to land. One point is enough at any scale: the ramp itself is a
 // device pixel wide, and a point is never smaller than one.
 constexpr auto antialiasMargin = 1.f;
+
+// A unit-quad corner, each component 0 or 1, mapped onto every shape's box.
+struct ShapeVertex
+{
+    float corner[2];
+};
 
 constexpr ShapeVertex shapeUnitQuad[] = {
     {{0.f, 0.f}},
@@ -620,5 +628,15 @@ void ShapeBatch::drawLine(Point a,
 void ShapeBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
 {
     visit(Program {}.graph());
+}
+
+bool ShapeBatch::isEmpty() const
+{
+    return instances.empty();
+}
+
+const CoverageAtlas& ShapeBatch::getAtlas() const
+{
+    return atlas;
 }
 } // namespace eacp::UI

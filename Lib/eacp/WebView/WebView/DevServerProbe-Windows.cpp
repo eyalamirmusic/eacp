@@ -1,3 +1,4 @@
+#include "../Common.h"
 #include "DevServerProbeInternal.h"
 
 #include <winsock2.h>
@@ -83,8 +84,7 @@ bool socketHasNoError(SOCKET s)
 
 bool tryConnect(const addrinfo& ai, int timeoutMs)
 {
-    auto sock = SocketGuard(
-        ::socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol));
+    auto sock = SocketGuard(::socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol));
 
     if (sock.get() == INVALID_SOCKET)
         return false;
@@ -99,7 +99,7 @@ bool tryConnect(const addrinfo& ai, int timeoutMs)
     if (WSAGetLastError() != WSAEWOULDBLOCK)
         return false;
 
-    if (! waitWritable(sock.get(), timeoutMs))
+    if (!waitWritable(sock.get(), timeoutMs))
         return false;
 
     return socketHasNoError(sock.get());
@@ -110,7 +110,7 @@ bool probeTCP(const std::string& host, int port, int timeoutMs)
 {
     auto winsock = WinsockGuard();
 
-    if (! winsock.ready())
+    if (!winsock.ready())
         return false;
 
     auto hints = addrinfo {};
@@ -119,8 +119,7 @@ bool probeTCP(const std::string& host, int port, int timeoutMs)
 
     addrinfo* res = nullptr;
 
-    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(),
-                    &hints, &res) != 0)
+    if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0)
         return false;
 
     auto connected = false;

@@ -1233,4 +1233,94 @@ bool ScrollPanel::mouseWheelMove(const MouseEvent& event)
     setScrollPosition(scrollOffset - step);
     return true;
 }
+
+const std::string& Label::getText() const
+{
+    return text;
+}
+
+bool Button::getToggleState() const
+{
+    return toggledOn;
+}
+
+const std::string& Checkbox::getText() const
+{
+    return text;
+}
+
+bool Checkbox::isChecked() const
+{
+    return checked;
+}
+
+const std::string& TextEditor::getText() const
+{
+    return text;
+}
+
+bool TextEditor::isReadOnly() const
+{
+    return readOnly;
+}
+
+bool TextEditor::getDrawsFrame() const
+{
+    return drawsFrame;
+}
+
+const std::string& TextEditor::getPasswordCharacter() const
+{
+    return passwordCharacter;
+}
+
+int TextEditor::getCaretPosition() const
+{
+    return caret;
+}
+
+bool TextEditor::hasSelection() const
+{
+    return selectionStart != caret;
+}
+
+int TextEditor::selectionLeft() const
+{
+    return std::min(selectionStart, caret);
+}
+
+int TextEditor::selectionRight() const
+{
+    return std::max(selectionStart, caret);
+}
+
+std::string TextEditor::displayed() const
+{
+    return displayedPrefix((int) text.size());
+}
+
+float Slider::getValue() const
+{
+    return value;
+}
+
+const std::optional<float>& Slider::getDefaultValue() const
+{
+    return defaultValue;
+}
+
+float Knob::getValue() const
+{
+    return value;
+}
+
+const std::optional<float>& Knob::getDefaultValue() const
+{
+    return defaultValue;
+}
+
+float ScrollPanel::getScrollPosition() const
+{
+    return scrollOffset;
+}
 } // namespace eacp::UI

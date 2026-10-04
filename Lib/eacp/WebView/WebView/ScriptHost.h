@@ -57,7 +57,7 @@ class ScriptHost
 public:
     using MessageFunc = std::function<void(const std::string& message)>;
 
-    virtual ~ScriptHost() = default;
+    virtual ~ScriptHost();
 
     virtual void addUserScript(const std::string& source, bool atDocumentStart) = 0;
 
@@ -68,7 +68,7 @@ public:
 
     virtual void evaluateJavaScript(const std::string& script) = 0;
 
-    virtual void armFileDrag(const Vector<std::string>&) {}
+    virtual void armFileDrag(const Vector<std::string>& paths);
 };
 
 } // namespace eacp::Graphics

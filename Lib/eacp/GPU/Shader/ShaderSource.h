@@ -31,8 +31,8 @@ enum class ResourceKind
 // siblings spell.
 struct ThreadGroupShape
 {
-    bool isSet() const { return x > 0; }
-    int threadCount() const { return x * y * z; }
+    constexpr bool isSet() const { return x > 0; }
+    constexpr int threadCount() const { return x * y * z; }
 
     int x = 0;
     int y = 1;
@@ -55,69 +55,35 @@ struct ResourceBinding
 // becomes "a factory that returns a ShaderSource" with no call-site changes.
 struct ShaderSource
 {
-    static ShaderSource msl(std::string sourceToUse)
-    {
-        auto result = ShaderSource {};
-        result.backend = ShaderBackend::Metal;
-        result.source = std::move(sourceToUse);
-        return result;
-    }
+    static ShaderSource msl(std::string sourceToUse);
 
-    static ShaderSource hlsl(std::string sourceToUse)
-    {
-        auto result = ShaderSource {};
-        result.backend = ShaderBackend::DirectX;
-        result.source = std::move(sourceToUse);
-        return result;
-    }
+    static ShaderSource hlsl(std::string sourceToUse);
 
     // Both stages share one string behind #ifdef EACP_VERTEX / EACP_FRAGMENT, so
     // the entry is always main; only computeEntry is still read, by isCompute().
-    static ShaderSource glsl(std::string sourceToUse)
-    {
-        auto result = ShaderSource {};
-        result.backend = ShaderBackend::Vulkan;
-        result.source = std::move(sourceToUse);
-        return result;
-    }
+    static ShaderSource glsl(std::string sourceToUse);
 
-    ShaderSource& withVertex(std::string entry)
-    {
-        vertexEntry = std::move(entry);
-        return *this;
-    }
+    ShaderSource& withVertex(std::string entry);
 
-    ShaderSource& withFragment(std::string entry)
-    {
-        fragmentEntry = std::move(entry);
-        return *this;
-    }
+    ShaderSource& withFragment(std::string entry);
 
     // Names the kernel entry point and marks this as a compute source: a library
     // built from it compiles only the compute stage, and ComputePipeline pulls
     // this function. Leave unset for a vertex/fragment source.
-    ShaderSource& withCompute(std::string entry)
-    {
-        computeEntry = std::move(entry);
-        return *this;
-    }
+    ShaderSource& withCompute(std::string entry);
 
-    bool isCompute() const { return !computeEntry.empty(); }
+    bool isCompute() const;
 
     // The group the kernel's entry point was emitted for, which is the group
     // the pass has to dispatch it in. Left unset for a hand-written source, and
     // the stock shape for the dispatch's rank is used.
-    ShaderSource& withThreadGroup(ThreadGroupShape shape)
+    constexpr ShaderSource& withThreadGroup(ThreadGroupShape shape)
     {
         threadGroup = shape;
         return *this;
     }
 
-    ShaderSource& withBinding(ResourceBinding binding)
-    {
-        bindings.add(std::move(binding));
-        return *this;
-    }
+    ShaderSource& withBinding(ResourceBinding binding);
 
     ShaderBackend backend = ShaderBackend::Metal;
     std::string source;

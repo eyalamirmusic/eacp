@@ -36,6 +36,16 @@ WebView::SnapshotCallback
     return once;
 }
 
+void WebView::evaluateJavaScript(const std::string& script)
+{
+    evaluateJavaScript(script, nullptr);
+}
+
+bool WebView::hasAsyncContent() const
+{
+    return true;
+}
+
 void WebView::captureAsyncContent(float, std::function<void(Image)> done)
 {
     takeSnapshot(
@@ -346,6 +356,14 @@ FileProvider fromResEmbed(std::string category)
 
         return ByteView {view.data(), view.getSize()};
     };
+}
+
+WebView::Options embeddedOptions(std::string category)
+{
+    auto options = WebView::Options {};
+    options.embedded.enabled = true;
+    options.embedded.provider = fromResEmbed(std::move(category));
+    return options;
 }
 
 StreamingProvider

@@ -496,6 +496,19 @@ std::unordered_map<std::string, std::string>
     return declarations;
 }
 
+PropertyReader::PropertyReader(const SVGElement& elementToUse)
+    : element(elementToUse)
+    , declarations(parseStyleDeclarations(elementToUse.attr("style")))
+{
+}
+
+std::string PropertyReader::operator()(const std::string& name) const
+{
+    auto found = declarations.find(name);
+
+    return found != declarations.end() ? found->second : element.attr(name);
+}
+
 Vector<float> parseNumberList(const std::string& value)
 {
     auto result = Vector<float>();

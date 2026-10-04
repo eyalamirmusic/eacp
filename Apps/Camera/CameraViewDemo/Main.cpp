@@ -1,4 +1,5 @@
 #include <eacp/CameraView/CameraView.h>
+#include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Menu/Menu.h>
 #include <algorithm>
 

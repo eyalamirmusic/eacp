@@ -1,10 +1,15 @@
 #pragma once
 
+#include <eacp/GPU/Texture/Texture.h>
+#include <eacp/GPU/View/GPUView.h>
 #include <eacp/Sprites/Sprites.h>
-#include <eacp/Video/Decode/Player.h>
+#include <eacp/Video/Decode/VideoFrame.h>
 
 namespace eacp::Video
 {
+class Player;
+class FrameStream;
+
 // Placement and colour appear throughout this module, so they are hoisted here
 // rather than qualified at each mention. Scoped to the module deliberately:
 // pulling them into all of eacp would collide with any user type of the same
@@ -79,7 +84,7 @@ public:
 
     // Whether the frame just rendered reached the GPU without a copy. False
     // when it went through the CPU upload path, or when nothing was drawn.
-    bool lastFrameWasZeroCopy() const { return zeroCopyLastFrame; }
+    bool lastFrameWasZeroCopy() const;
 
     // Where a texture's top-left corner lands and where its +u and +v axes go,
     // to place a textureWidth x textureHeight frame into `area` under a display

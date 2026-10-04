@@ -34,11 +34,14 @@ class PreparedDispatch
 public:
     // False when the plan is invalid, the kernel was written for another rank,
     // or a slot it reads or writes is unbound or bound as the wrong kind.
-    bool isValid() const { return valid; }
+    constexpr bool isValid() const { return valid; }
 
     // Zero for an extent of zero, which is valid and runs nothing.
-    std::int64_t groupCount() const { return totalGroups; }
-    const std::array<std::uint32_t, 3>& groups() const { return groupsPerAxis; }
+    constexpr std::int64_t groupCount() const { return totalGroups; }
+    constexpr const std::array<std::uint32_t, 3>& groups() const
+    {
+        return groupsPerAxis;
+    }
 
 private:
     friend class Executor;
@@ -73,9 +76,9 @@ public:
     Executor(const Executor&) = delete;
     Executor& operator=(const Executor&) = delete;
 
-    bool isValid() const { return executionPlan.isValid(); }
-    const std::string& reason() const { return executionPlan.reason(); }
-    const Plan& plan() const { return executionPlan; }
+    constexpr bool isValid() const { return executionPlan.isValid(); }
+    constexpr const std::string& reason() const { return executionPlan.reason(); }
+    constexpr const Plan& plan() const { return executionPlan; }
 
     // The value of uniform `slot`, tightly packed as Uniform<T>::value is;
     // bytes must be byteSize of the slot's type. For an executor built over a

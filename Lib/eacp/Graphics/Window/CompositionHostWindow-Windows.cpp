@@ -78,7 +78,6 @@ MouseEvent makeMouseEvent(LPARAM lParam,
     event.modifiers = modifiers;
     return event;
 }
-} // namespace
 
 void registerContentViewHwnd(View* root, HWND hwnd)
 {
@@ -89,6 +88,7 @@ void unregisterContentViewHwnd(View* root)
 {
     contentViewToHwnd().erase(root);
 }
+} // namespace
 
 HWND findHostHwndForView(View* view)
 {

@@ -1,4 +1,5 @@
 #include "ImageConversion-Windows.h"
+#include "../Image/Image.h"
 
 #include <ESIMD/ESIMD.h>
 

@@ -50,11 +50,11 @@ public:
 
     // The most recent frame the GPU has finished and reported. Empty - no
     // passes, and a zero frameIndex - until one has.
-    const FrameTimings& lastTimings() const { return latest; }
+    constexpr const FrameTimings& lastTimings() const { return latest; }
 
     // See GpuTimestamps::isSupported. Only meaningful once a frame has begun,
     // which is what builds the timestamp resources.
-    bool isSupported() const { return timestamps.isSupported(); }
+    bool isSupported() const;
 
 private:
     void drainCompleted(const Device& device);

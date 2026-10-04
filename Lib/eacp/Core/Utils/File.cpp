@@ -23,6 +23,11 @@ File::File(FilePath path)
 {
 }
 
+const FilePath& File::path() const
+{
+    return filePath;
+}
+
 bool File::exists() const
 {
     auto ec = std::error_code {};

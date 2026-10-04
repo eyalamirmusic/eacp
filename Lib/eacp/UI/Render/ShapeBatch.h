@@ -3,16 +3,12 @@
 #include "../Common.h"
 #include "ClipMask.h"
 #include "CoverageAtlas.h"
-#include "DrawList.h"
-#include "GradientRamps.h"
+#include "Gradient.h"
 
 namespace eacp::UI
 {
-// A unit-quad corner, each component 0 or 1, mapped onto every shape's box.
-struct ShapeVertex
-{
-    float corner[2];
-};
+class GradientRamps;
+struct ShadowShape;
 
 // One shape. Everything that varies from shape to shape lives here, so a run of
 // them is a single instanced draw rather than a draw apiece.
@@ -120,12 +116,12 @@ public:
 
     // Whether a flush would draw anything, which is what a caller ordering this
     // renderer against another one has to know: see MeshBatch.
-    bool isEmpty() const { return instances.empty(); }
+    bool isEmpty() const;
 
     // The texture every shape's coverage lives in, which a caller drawing
     // something else under the same clip needs: a clip is a rect of this atlas
     // however the thing it cuts was drawn. See LayerRenderer.
-    const CoverageAtlas& getAtlas() const { return atlas; }
+    const CoverageAtlas& getAtlas() const;
 
     void setLogicalSize(Point size);
     void setPixelScale(float scale);

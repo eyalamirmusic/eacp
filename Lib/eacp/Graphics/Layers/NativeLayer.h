@@ -1,7 +1,7 @@
 #pragma once
 
 #import <QuartzCore/QuartzCore.h>
-#include "../Primitives/GraphicUtils.h"
+#include "../Primitives/Primitives.h"
 
 namespace eacp::Graphics
 {
@@ -9,34 +9,14 @@ struct NativeLayer
 {
     virtual ~NativeLayer() = default;
 
-    void attachTo(CALayer* parentLayer)
-    {
-        if (parentLayer && !attached)
-        {
-            nativeLayer.contentsScale = parentLayer.contentsScale;
-            [parentLayer addSublayer:nativeLayer];
-            attached = true;
-        }
-    }
+    void attachTo(CALayer* parentLayer);
+    void detach();
 
-    void detach()
-    {
-        if (attached)
-        {
-            [nativeLayer removeFromSuperlayer];
-            attached = false;
-        }
-    }
+    void setBounds(const Rect& bounds);
+    void setPosition(const Point& pos);
 
-    void setBounds(const Rect& bounds) { nativeLayer.bounds = toCGRect(bounds); }
-
-    void setPosition(const Point& pos)
-    {
-        nativeLayer.position = CGPointMake(pos.x, pos.y);
-    }
-
-    void setHidden(bool hidden) { nativeLayer.hidden = hidden; }
-    void setOpacity(float opacity) { nativeLayer.opacity = opacity; }
+    void setHidden(bool hidden);
+    void setOpacity(float opacity);
 
     CALayer* nativeLayer = nullptr;
     bool attached = false;

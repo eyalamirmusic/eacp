@@ -125,11 +125,11 @@ public:
     // back; a backend that can really move a window overrides this.
     virtual void setPosition(Point newPosition);
 
-    LinuxWindowSurface& getWindowSurface() { return getState().surface; }
+    LinuxWindowSurface& getWindowSurface();
 
-    bool isVisible() { return getWindowSurface().mapped; }
-    Point getPosition() { return getState().position; }
-    bool isMouseLocked() { return getWindowSurface().mouseLockIntent; }
+    bool isVisible();
+    Point getPosition();
+    bool isMouseLocked();
     void* getContentViewHandle();
 };
 

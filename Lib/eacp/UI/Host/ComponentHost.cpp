@@ -880,4 +880,79 @@ void ComponentHost::mouseWheel(const eacp::Graphics::MouseEvent& event)
         target = target->getParentComponent();
     }
 }
+
+Component* ComponentHost::getRootComponent() const
+{
+    return root;
+}
+
+const Font& ComponentHost::getFont() const
+{
+    return font;
+}
+
+ImageCache& ComponentHost::getImageCache()
+{
+    return imageCache;
+}
+
+int ComponentHost::getCachedImageCount() const
+{
+    return imageCache.size();
+}
+
+int ComponentHost::getLastImageDrawCount() const
+{
+    return lastImageDraws;
+}
+
+int ComponentHost::getLastClipChangeCount() const
+{
+    return lastClipChanges;
+}
+
+int ComponentHost::getLastComponentCount() const
+{
+    return lastComponentCount;
+}
+
+int ComponentHost::getLastPaintedComponentCount() const
+{
+    return lastPaintedComponents;
+}
+
+int ComponentHost::getLastRendererSwitchCount() const
+{
+    return lastRendererSwitches;
+}
+
+int ComponentHost::getLastRenderedLayerCount() const
+{
+    return lastRenderedLayers;
+}
+
+int ComponentHost::getLastDroppedPathCount() const
+{
+    return lastDroppedPaths;
+}
+
+int ComponentHost::getLastMeshedPathCount() const
+{
+    return lastMeshedPaths;
+}
+
+int ComponentHost::getLastSharedMaskCount() const
+{
+    return lastSharedMasks;
+}
+
+Component* ComponentHost::getFocusedComponent() const
+{
+    return focusedComponent;
+}
+
+void ComponentHost::setTabMovesFocus(bool shouldMoveFocus)
+{
+    tabMovesFocus = shouldMoveFocus;
+}
 } // namespace eacp::UI

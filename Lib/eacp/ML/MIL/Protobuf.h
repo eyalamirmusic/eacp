@@ -11,10 +11,7 @@ namespace eacp::ML
 {
 using Bytes = Vector<std::uint8_t>;
 
-inline Span<const std::uint8_t> asBytes(std::string_view text)
-{
-    return {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()};
-}
+Span<const std::uint8_t> asBytes(std::string_view text);
 
 template <typename Container>
     requires(!std::convertible_to<const Container&, std::string_view>)
@@ -59,7 +56,7 @@ public:
     void packedBool(int field, Span<const std::uint8_t> values);
     void packedFloat(int field, Span<const float> values);
 
-    const Bytes& bytes() const { return out; }
+    const Bytes& bytes() const;
 
 private:
     void append(Span<const std::uint8_t> data);

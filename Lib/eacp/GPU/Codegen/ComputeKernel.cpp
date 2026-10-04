@@ -1,4 +1,5 @@
 #include "ComputeKernel.h"
+#include "UniformLayout.h"
 
 #include <cassert>
 #include <cstring>

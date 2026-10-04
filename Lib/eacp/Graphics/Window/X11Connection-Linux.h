@@ -25,7 +25,7 @@ class X11Input;
 
 // A position on the wire is a signed 16-bit number and a size an unsigned one,
 // while both start as points an app may put anything at all in.
-inline int16_t x11ClampPosition(long value)
+constexpr int16_t x11ClampPosition(long value)
 {
     constexpr auto lowest = (long) std::numeric_limits<int16_t>::min();
     constexpr auto highest = (long) std::numeric_limits<int16_t>::max();
@@ -33,7 +33,7 @@ inline int16_t x11ClampPosition(long value)
     return (int16_t) std::clamp(value, lowest, highest);
 }
 
-inline uint16_t x11ClampSize(long value)
+constexpr uint16_t x11ClampSize(long value)
 {
     constexpr auto highest = (long) std::numeric_limits<uint16_t>::max();
 
@@ -47,7 +47,7 @@ struct X11WindowSurface : LinuxWindowSurface
     X11WindowSurface();
 
     // Zero while the window is headless or the connection failed.
-    xcb_window_t getWindow() const { return nativeSurface.window; }
+    constexpr xcb_window_t getWindow() const { return nativeSurface.window; }
 
     void setWindow(xcb_window_t window);
 
@@ -154,29 +154,29 @@ public:
     X11Connection(const X11Connection&) = delete;
     X11Connection& operator=(const X11Connection&) = delete;
 
-    bool isValid() const { return connection != nullptr; }
+    constexpr bool isValid() const { return connection != nullptr; }
 
     // False once the server has gone: windows made afterwards come up
     // surfaceless, exactly as headless ones do.
-    bool isConnected() const { return connected; }
+    constexpr bool isConnected() const { return connected; }
 
-    xcb_connection_t* getConnection() const { return connection; }
-    xcb_screen_t* getScreen() const { return screen; }
+    constexpr xcb_connection_t* getConnection() const { return connection; }
+    constexpr xcb_screen_t* getScreen() const { return screen; }
 
-    const X11Atoms& getAtoms() const { return atoms; }
+    constexpr const X11Atoms& getAtoms() const { return atoms; }
 
     // The core keyboard, and -1 when the server has no XKB extension.
-    int32_t getKeyboardDeviceId() const { return keyboardDeviceId; }
+    constexpr int32_t getKeyboardDeviceId() const { return keyboardDeviceId; }
 
     // Null when no cursor theme could be opened.
-    xcb_cursor_context_t* getCursorContext() const { return cursors; }
+    constexpr xcb_cursor_context_t* getCursorContext() const { return cursors; }
 
     // XInput 2.1 or better, which is where a pointer's scroll arrives as a
     // valuator rather than as buttons 4-7 and where a locked pointer can be
     // measured from the device itself. False on an older server and under
     // EACP_X11_NO_XI2=1, and the core pointer events are then the whole of the
     // seat, exactly as they were before any of this.
-    bool isXinputAvailable() const { return xinputOpcode != 0; }
+    constexpr bool isXinputAvailable() const { return xinputOpcode != 0; }
 
     // What a window of ours selects: the mask above, less the pointer bits
     // XI2 is carrying where it is there.
@@ -195,12 +195,12 @@ public:
 
     // The core pointer and keyboard of this connection. Never null once the
     // connection came up.
-    X11Input* getInput() const { return input.get(); }
+    X11Input* getInput() const;
 
     // The CLIPBOARD selection of this connection. Never null once the
     // connection came up, and answering the no-clipboard answers once it has
     // gone.
-    X11Clipboard* getClipboard() const { return clipboard.get(); }
+    X11Clipboard* getClipboard() const;
 
     // The RandR primary output, falling back to the root window's size where
     // there is no RandR or no primary, and nothing at all with no connection.
@@ -214,7 +214,7 @@ public:
     // than rounded to a whole factor - Qt's rule, not GTK's - because a
     // desktop at 150% says 144 and means 1.5, and every pixel the backend
     // derives from it is rounded at the point it is derived.
-    float getScale() const { return scale; }
+    constexpr float getScale() const { return scale; }
 
     void registerWindow(const X11WindowTarget& target);
     void unregisterWindow(xcb_window_t window);

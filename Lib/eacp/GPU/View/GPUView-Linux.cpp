@@ -7,6 +7,7 @@
 #include "../Vulkan/VulkanTypes.h"
 
 #include <eacp/Graphics/Helpers/DisplayLink.h>
+#include <eacp/Graphics/Image/Image.h>
 #include <eacp/Graphics/View/View-Linux.h>
 
 #include <algorithm>

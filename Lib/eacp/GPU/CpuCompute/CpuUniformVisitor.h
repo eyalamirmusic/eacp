@@ -4,8 +4,6 @@
 
 #include <eacp/GPU/Codegen/ShaderMembers.h>
 
-#include <cstring>
-
 // The fourth member walk, beside the build, upload and bind ones: each uniform
 // member's current value copied as it is typed - tightly packed, no MSL padding
 // - into the words of the slot its handle names. A virtual call per member on a
@@ -18,32 +16,13 @@ class CpuUniformVisitor final : public ShaderVisitor
 public:
     CpuUniformVisitor(const ShaderGraph& graphToRead,
                       const Plan& planToFollow,
-                      Word* uniformWordsToFill)
-        : graph(graphToRead)
-        , plan(planToFollow)
-        , words(uniformWordsToFill)
-    {
-    }
+                      Word* uniformWordsToFill);
 
 protected:
     void onUniform(const char*,
                    ValueType type,
                    detail::ValueHandle& handle,
-                   const void* data) override
-    {
-        if (handle.node < 0 || handle.node >= graph.nodeCount())
-            return;
-
-        auto slot = graph.expr(handle.node).index;
-
-        if (slot < 0 || slot >= plan.uniformCount()
-            || byteSize(type) != byteSize(plan.uniformType(slot)))
-            return;
-
-        std::memcpy(words + plan.uniformOffset(slot),
-                    data,
-                    static_cast<std::size_t>(byteSize(type)));
-    }
+                   const void* data) override;
 
 private:
     const ShaderGraph& graph;

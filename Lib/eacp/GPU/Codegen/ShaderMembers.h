@@ -10,7 +10,6 @@
 #include "ShaderBuilder.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
-#include "UniformLayout.h"
 
 // The member half of a struct-authored shader or kernel, which needs no device:
 // the typed Uniform<T> members, the visitor their EACP_SHADER list is walked
@@ -259,7 +258,7 @@ struct Uniform : T
 template <>
 struct Uniform<Texture2D> : Texture2D
 {
-    Uniform& operator=(const Texture& newTexture)
+    constexpr Uniform& operator=(const Texture& newTexture)
     {
         value = &newTexture;
         return *this;
@@ -288,7 +287,7 @@ struct Uniform<Texture2D> : Texture2D
 template <>
 struct Uniform<TextureCube> : TextureCube
 {
-    Uniform& operator=(const Texture& newTexture)
+    constexpr Uniform& operator=(const Texture& newTexture)
     {
         value = &newTexture;
         return *this;
@@ -314,7 +313,7 @@ struct Uniform<TextureCube> : TextureCube
 template <>
 struct Uniform<TextureDepth2D> : TextureDepth2D
 {
-    Uniform& operator=(const Texture& newRenderTarget)
+    constexpr Uniform& operator=(const Texture& newRenderTarget)
     {
         value = &newRenderTarget;
         return *this;
@@ -335,13 +334,9 @@ struct Uniform<TextureDepth2D> : TextureDepth2D
 template <>
 struct Uniform<InputBuffer> : InputBuffer
 {
-    Uniform& operator=(const Buffer& newBuffer)
-    {
-        value = BufferRange::of(newBuffer);
-        return *this;
-    }
+    Uniform& operator=(const Buffer& newBuffer);
 
-    Uniform& operator=(const BufferRange& newRange)
+    constexpr Uniform& operator=(const BufferRange& newRange)
     {
         value = newRange;
         return *this;
@@ -355,13 +350,9 @@ struct Uniform<InputBuffer> : InputBuffer
 template <>
 struct Uniform<OutputBuffer> : OutputBuffer
 {
-    Uniform& operator=(const Buffer& newBuffer)
-    {
-        value = BufferRange::of(newBuffer);
-        return *this;
-    }
+    Uniform& operator=(const Buffer& newBuffer);
 
-    Uniform& operator=(const BufferRange& newRange)
+    constexpr Uniform& operator=(const BufferRange& newRange)
     {
         value = newRange;
         return *this;
@@ -378,13 +369,9 @@ struct Uniform<OutputBuffer> : OutputBuffer
 template <>
 struct Uniform<UIntInputBuffer> : UIntInputBuffer
 {
-    Uniform& operator=(const Buffer& newBuffer)
-    {
-        value = BufferRange::of(newBuffer);
-        return *this;
-    }
+    Uniform& operator=(const Buffer& newBuffer);
 
-    Uniform& operator=(const BufferRange& newRange)
+    constexpr Uniform& operator=(const BufferRange& newRange)
     {
         value = newRange;
         return *this;
@@ -398,13 +385,9 @@ struct Uniform<UIntInputBuffer> : UIntInputBuffer
 template <>
 struct Uniform<UIntOutputBuffer> : UIntOutputBuffer
 {
-    Uniform& operator=(const Buffer& newBuffer)
-    {
-        value = BufferRange::of(newBuffer);
-        return *this;
-    }
+    Uniform& operator=(const Buffer& newBuffer);
 
-    Uniform& operator=(const BufferRange& newRange)
+    constexpr Uniform& operator=(const BufferRange& newRange)
     {
         value = newRange;
         return *this;
@@ -422,13 +405,9 @@ struct Uniform<UIntOutputBuffer> : UIntOutputBuffer
 template <>
 struct Uniform<AtomicBuffer> : AtomicBuffer
 {
-    Uniform& operator=(const Buffer& newBuffer)
-    {
-        value = BufferRange::of(newBuffer);
-        return *this;
-    }
+    Uniform& operator=(const Buffer& newBuffer);
 
-    Uniform& operator=(const BufferRange& newRange)
+    constexpr Uniform& operator=(const BufferRange& newRange)
     {
         value = newRange;
         return *this;
@@ -447,7 +426,7 @@ struct Uniform<AtomicBuffer> : AtomicBuffer
 template <>
 struct Uniform<WritableTexture2D> : WritableTexture2D
 {
-    Uniform& operator=(const Texture& newTexture)
+    constexpr Uniform& operator=(const Texture& newTexture)
     {
         value = &newTexture;
         return *this;

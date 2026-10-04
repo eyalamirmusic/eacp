@@ -238,20 +238,20 @@ public:
 private:
     // The group each dispatch is encoded with: the bound pipeline's own, or the
     // stock shape for the dispatch's rank when it carried none.
-    ThreadGroupShape groupFor1D() const
+    constexpr ThreadGroupShape groupFor1D() const
     {
         return boundGroup.isSet() ? boundGroup
                                   : ThreadGroupShape {threadGroupWidth, 1, 1};
     }
 
-    ThreadGroupShape groupFor2D() const
+    constexpr ThreadGroupShape groupFor2D() const
     {
         return boundGroup.isSet()
                    ? boundGroup
                    : ThreadGroupShape {threadGroupSize2D, threadGroupSize2D, 1};
     }
 
-    ThreadGroupShape groupFor3D() const
+    constexpr ThreadGroupShape groupFor3D() const
     {
         return boundGroup.isSet() ? boundGroup
                                   : ThreadGroupShape {threadGroupSize3D,

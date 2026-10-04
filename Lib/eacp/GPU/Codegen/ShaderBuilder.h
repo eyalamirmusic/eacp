@@ -709,7 +709,7 @@ public:
 
     GeneratedShader build() const;
 
-    const ShaderGraph& graph() const { return graphData; }
+    constexpr const ShaderGraph& graph() const { return graphData; }
 
 private:
     template <typename T>

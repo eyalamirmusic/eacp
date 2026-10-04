@@ -139,4 +139,24 @@ void* LinuxWindowNative::getContentViewHandle()
     auto* view = getWindowSurface().contentView;
     return view != nullptr ? view->getHandle() : nullptr;
 }
+
+LinuxWindowSurface& LinuxWindowNative::getWindowSurface()
+{
+    return getState().surface;
+}
+
+bool LinuxWindowNative::isVisible()
+{
+    return getWindowSurface().mapped;
+}
+
+Point LinuxWindowNative::getPosition()
+{
+    return getState().position;
+}
+
+bool LinuxWindowNative::isMouseLocked()
+{
+    return getWindowSurface().mouseLockIntent;
+}
 } // namespace eacp::Graphics

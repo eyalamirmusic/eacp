@@ -9,19 +9,8 @@ namespace eacp::Graphics
 
 struct FontOptions
 {
-    FontOptions withName(const std::string& newName) const
-    {
-        auto copy = *this;
-        copy.name = newName;
-        return copy;
-    }
-
-    FontOptions withSize(float newSize)
-    {
-        auto copy = *this;
-        copy.size = newSize;
-        return copy;
-    }
+    FontOptions withName(const std::string& newName) const;
+    FontOptions withSize(float newSize);
 
     std::string name = "Helvetica";
     float size = 12.f;

@@ -1,4 +1,5 @@
 #include <eacp/Text/TextRenderer.h>
+#include <eacp/Video/Decode/Player.h>
 #include <eacp/Video/SyntheticClip.h>
 #include <eacp/VideoView/VideoView.h>
 

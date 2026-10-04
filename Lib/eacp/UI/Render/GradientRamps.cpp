@@ -179,4 +179,19 @@ void GradientRamps::commit()
 
     uploadedRows = rows.size();
 }
+
+const GPU::Texture& GradientRamps::getTexture() const
+{
+    return *texture;
+}
+
+int GradientRamps::getRowCount() const
+{
+    return rows.size();
+}
+
+int GradientRamps::getDroppedCount() const
+{
+    return dropped;
+}
 } // namespace eacp::UI

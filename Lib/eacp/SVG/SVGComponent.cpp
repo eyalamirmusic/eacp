@@ -1,14 +1,164 @@
 #include "SVGComponent.h"
 
 #include "SVGAttributes.h"
+#include "SVGClip.h"
 #include "SVGGeometry.h"
 #include "SVGGradient.h"
 #include "SVGPathParser.h"
+
+#include <eacp/UI/UI.h>
 
 #include <algorithm>
 
 namespace eacp::SVG
 {
+// What a clip-path came to for one drawable: the region multiplying its
+// coverage, and the rectangle everything rectangular about its clips
+// intersected to.
+//
+// Both, and not one or the other. The rectangle is what a rectangular clip
+// is exactly, what an outer clip contributes when an inner one already holds
+// the mask, what a clip the atlas refused falls back to, and the only thing
+// that reaches the text renderer.
+struct SVGComponent::ClipState
+{
+    int maskIndex = -1;
+    Graphics::Rect rect;
+    bool hasRect = false;
+
+    bool isEmpty() const { return maskIndex < 0 && !hasRect; }
+};
+
+// One filled region: the mask a kernel rasterized for it and the colour it
+// is multiplied by. A stroke is one of these too, its geometry being the
+// region the pen covers rather than the pen's path.
+struct SVGComponent::Shape
+{
+    explicit Shape(UI::Component& owner)
+        : mask(owner)
+    {
+    }
+
+    UI::PathShape mask;
+    Graphics::Color colour;
+    ClipState clip;
+
+    // The gradient the colour is replaced by, empty for the usual case.
+    // Resolved when the shape was built rather than at paint time, because
+    // placing one needs the geometry: a gradient in bounding-box units means
+    // something different for every element it paints.
+    UI::Gradient gradient;
+
+    // The geometry's own bounds, kept because the mask's are only known once
+    // a kernel has rasterized it and this has to be readable before that.
+    Graphics::Rect maskBounds;
+};
+
+enum class SVGComponent::TextAnchor
+{
+    Start,
+    Middle,
+    End
+};
+
+// A string placed on its baseline, in this component's points. The anchor is
+// resolved at paint time rather than here, because resolving it needs the
+// width of the glyphs that will actually be drawn and only the renderer
+// knows that.
+struct SVGComponent::TextRun
+{
+    std::string text;
+    Graphics::Point baseline;
+    Graphics::Color colour;
+    TextAnchor anchor = TextAnchor::Start;
+
+    // The face, in the size the transform left it at. A value rather than an
+    // index into a table of renderers: one atlas holds every face the
+    // document uses, so there is no table and nothing to keep in step with
+    // it across a rebuild.
+    UI::Font font;
+
+    // Only the rectangle of it ever applies. See ClipState.
+    ClipState clip;
+};
+
+// A clip region the document referenced, built once however many drawables
+// it cuts.
+//
+// Shared where a group's clip-path covers twenty children, which is the
+// usual way a document writes one: the region is the same mask at the same
+// place for every one of them, so the twenty are one entry here. That is not
+// true of <use>, whose instances differ by a transform, and it stops being
+// true here for the same reason -- a clip in bounding-box units is placed
+// against each element it clips, so those do not share.
+struct SVGComponent::Clip
+{
+    explicit Clip(UI::Component& owner)
+        : mask(owner)
+    {
+    }
+
+    std::string reference;
+    GPUWidgets::AffineTransform transform;
+    Graphics::Rect objectBounds;
+
+    // Part of what two askers have to agree on before they share a region,
+    // since a clipPath written in percentages resolves to different geometry
+    // under two viewports however alike everything else about them is.
+    Viewport viewport;
+
+    // Unused for a clip that came out a rectangle, which needs no mask: the
+    // bounds below are the whole of it, and a scissor rect draws them for
+    // nothing.
+    UI::PathShape mask;
+    bool isRectangle = false;
+
+    Graphics::Rect bounds;
+};
+
+// Document order, which is paint order: SVG has no z-index and later
+// elements cover earlier ones. Shapes, text runs and groups live in their
+// own vectors because neither a PathShape nor a Layer can be moved -- each
+// registers with its component in its constructor -- so this is what keeps
+// them interleaved the way the markup had them.
+struct SVGComponent::Drawable
+{
+    enum class Kind
+    {
+        Shape,
+        Text,
+
+        // A group composited as a unit rather than drawn shape by shape,
+        // which is what a container's own opacity means. See OpacityGroup.
+        Group
+    };
+
+    Kind kind = Kind::Shape;
+    int index = 0;
+};
+
+// A container the document asked to fade as a whole: its content, and the
+// texture that content is rendered into so the fade can be applied once.
+//
+// The distinction is the whole feature. Multiplying a group's opacity into
+// each of its children's colours -- which is what this module did before,
+// and what SVGBuilder still does -- fades the children; the format means the
+// group. They agree exactly until two shapes inside it overlap, and there
+// the first shows the seam between them and the second does not.
+//
+// Built innermost-first, because a layer may hold another and UI::Layer
+// renders them in the order they registered.
+struct SVGComponent::OpacityGroup
+{
+    explicit OpacityGroup(UI::Component& owner)
+        : layer(owner)
+    {
+    }
+
+    UI::Layer layer;
+    Vector<Drawable> content;
+};
+
 // Everything an element inherits from the tree above it.
 //
 // The whole reason it exists: SVGBuilder reads fill straight off the element
@@ -319,6 +469,41 @@ void SVGComponent::applyPresentationAttributes(Style& style,
 
 SVGComponent::SVGComponent() = default;
 SVGComponent::~SVGComponent() = default;
+
+Graphics::Rect SVGComponent::getViewBox() const
+{
+    return viewBox;
+}
+
+PreserveAspectRatio SVGComponent::getAspectRatio() const
+{
+    return aspectRatio;
+}
+
+float SVGComponent::getDocumentWidth() const
+{
+    return documentWidth;
+}
+
+float SVGComponent::getDocumentHeight() const
+{
+    return documentHeight;
+}
+
+int SVGComponent::getShapeCount() const
+{
+    return shapes.size();
+}
+
+int SVGComponent::getOpacityGroupCount() const
+{
+    return groups.size();
+}
+
+int SVGComponent::getClipCount() const
+{
+    return clips.size();
+}
 
 void SVGComponent::setDocument(const SVGElement& root)
 {

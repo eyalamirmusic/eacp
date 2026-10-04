@@ -30,8 +30,8 @@ public:
 
     std::uint64_t append(DataType type, Span<const std::uint8_t> data);
 
-    int count() const { return entries; }
-    const Bytes& bytes() const { return out; }
+    int count() const;
+    const Bytes& bytes() const;
 
 private:
     void writeUInt32(std::uint32_t value);

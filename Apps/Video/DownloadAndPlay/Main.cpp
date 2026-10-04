@@ -1,6 +1,7 @@
 #include "Catalogue.h"
 
 #include <eacp/Text/TextRenderer.h>
+#include <eacp/Video/Decode/Player.h>
 #include <eacp/VideoView/VideoView.h>
 
 #include <cstdarg>

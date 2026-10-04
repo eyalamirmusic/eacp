@@ -107,4 +107,9 @@ Workspace& Workspace::operator=(Workspace&& other) noexcept
     serial = std::exchange(other.serial, 0);
     return *this;
 }
+
+std::size_t Workspace::sizeInBytes() const
+{
+    return storage.size() * sizeof(Word);
+}
 } // namespace eacp::GPU::CpuCompute

@@ -159,6 +159,101 @@ ShaderGraph::ShaderGraph(ShaderGraph&& other) noexcept = default;
 ShaderGraph& ShaderGraph::operator=(const ShaderGraph& other) = default;
 ShaderGraph& ShaderGraph::operator=(ShaderGraph&& other) noexcept = default;
 
+const ShaderGraph::Caches* ShaderGraph::SharingCaches::find() const
+{
+    return caches.get();
+}
+
+const Expr& ShaderGraph::expr(int node) const
+{
+    return nodes[node];
+}
+
+int ShaderGraph::nodeCount() const
+{
+    return nodes.size();
+}
+
+int ShaderGraph::textureCount() const
+{
+    return textureSamplings.size();
+}
+
+TextureSampling ShaderGraph::textureSampling(int slot) const
+{
+    return slot >= 0 && slot < textureSamplings.size() ? textureSamplings[slot]
+                                                       : TextureSampling {};
+}
+
+TextureAccess ShaderGraph::textureAccess(int slot) const
+{
+    return slot >= 0 && slot < textureAccesses.size() ? textureAccesses[slot]
+                                                      : TextureAccess::Sample;
+}
+
+TextureKind ShaderGraph::textureKind(int slot) const
+{
+    return slot >= 0 && slot < textureKinds.size() ? textureKinds[slot]
+                                                   : TextureKind::Texture2D;
+}
+
+ValueType ShaderGraph::storageElementType(int slot) const
+{
+    return slot >= 0 && slot < storageElements.size() ? storageElements[slot]
+                                                      : ValueType::Float;
+}
+
+bool ShaderGraph::usesGroupReduction() const
+{
+    return !reductionTypes.empty();
+}
+
+int ShaderGraph::simdMatrixCount() const
+{
+    return simdMatrixElementList.size();
+}
+
+bool ShaderGraph::usesSimdGroups() const
+{
+    return simdMatrixCount() > 0 || simdGroupIndexUsed;
+}
+
+SimdMatrixElement ShaderGraph::simdMatrixElement(int matrix) const
+{
+    return simdMatrixElementList[matrix];
+}
+
+bool ShaderGraph::isCompute() const
+{
+    return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed
+           || usesSimdGroups();
+}
+
+const Statement& ShaderGraph::statement(int index) const
+{
+    return statementList[index];
+}
+
+const Block& ShaderGraph::block(int index) const
+{
+    return blocks[index];
+}
+
+int ShaderGraph::statementCount() const
+{
+    return statementList.size();
+}
+
+int ShaderGraph::blockCount() const
+{
+    return blocks.size();
+}
+
+bool ShaderGraph::hasStatements() const
+{
+    return !blocks[rootBlock].statements.empty();
+}
+
 bool ShaderGraph::isPure(int node) const
 {
     return node >= 0 && node < pureFlags.size() && pureFlags[node] != 0;

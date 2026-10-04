@@ -1,6 +1,8 @@
 #pragma once
 
-#include <eacp/GPU/GPU.h>
+#include <eacp/Core/Maths/Constants.h>
+#include <eacp/Core/Utils/Containers.h>
+#include <eacp/Graphics/Primitives/Primitives.h>
 
 namespace eacp::GPUWidgets
 {

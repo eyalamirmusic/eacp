@@ -6,12 +6,6 @@
 
 namespace eacp::UI
 {
-// A unit-quad corner, each component 0 or 1, mapped onto every image's box.
-struct ImageVertex
-{
-    float corner[2];
-};
-
 // One image. Everything that differs from quad to quad lives here, so a run of
 // them out of one texture is a single instanced draw rather than a draw apiece.
 struct ImageInstance
@@ -67,12 +61,12 @@ public:
 
     // Whether a flush would draw anything, which is what a caller ordering this
     // renderer against another one has to know.
-    bool isEmpty() const { return instances.empty(); }
+    bool isEmpty() const;
 
     // How many draws this batch has issued since begin(): one per run of quads
     // out of one texture. The figure that says what a screen of pictures costs
     // beyond its shapes.
-    int getDrawCount() const { return draws; }
+    int getDrawCount() const;
 
     void setLogicalSize(Point size);
 

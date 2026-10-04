@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Menu.h"
-
 #include <eacp/Core/Utils/WinInclude.h>
 
 namespace eacp::Graphics::detail
@@ -12,10 +10,6 @@ namespace eacp::Graphics::detail
 // message loop, so the two halves cannot live in one file: Menu-Windows.cpp
 // owns the menu and its command table, and Window-Windows.cpp owns the WndProc
 // that has to route WM_COMMAND and WM_INITMENUPOPUP into it.
-
-// Builds the native menu, attaches it to `hwnd` and drops whatever was there
-// before. Safe to call repeatedly on the same window.
-void installWin32MenuBar(HWND hwnd, const MenuBar& bar);
 
 // WM_COMMAND. True when the id belonged to this window's menu bar and the
 // action was run, false for every other source of WM_COMMAND — the WndProc

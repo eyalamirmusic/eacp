@@ -1,7 +1,7 @@
 #pragma once
 
+#include <bit>
 #include <cstdint>
-#include <cstring>
 
 namespace eacp::UI
 {
@@ -23,7 +23,7 @@ namespace eacp::UI
 class ContentHash
 {
 public:
-    void mix(std::uint32_t bits)
+    constexpr void mix(std::uint32_t bits)
     {
         for (auto byte = 0; byte < 4; ++byte)
         {
@@ -32,21 +32,18 @@ public:
         }
     }
 
-    void mix(float value)
+    constexpr void mix(float value)
     {
         if (value == 0.f)
             value = 0.f;
 
-        auto bits = std::uint32_t {};
-        std::memcpy(&bits, &value, sizeof(bits));
-
-        mix(bits);
+        mix(std::bit_cast<std::uint32_t>(value));
     }
 
-    void mix(bool value) { mix((std::uint32_t) value); }
-    void mix(int value) { mix((std::uint32_t) value); }
+    constexpr void mix(bool value) { mix((std::uint32_t) value); }
+    constexpr void mix(int value) { mix((std::uint32_t) value); }
 
-    std::uint64_t get() const { return hash; }
+    constexpr std::uint64_t get() const { return hash; }
 
 private:
     static constexpr std::uint64_t prime = 1099511628211ull;

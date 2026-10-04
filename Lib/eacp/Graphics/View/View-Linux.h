@@ -22,7 +22,7 @@ struct NativeSurfaceHandle
         Android
     };
 
-    bool isValid() const { return kind != Kind::None; }
+    constexpr bool isValid() const { return kind != Kind::None; }
 
     Kind kind = Kind::None;
 

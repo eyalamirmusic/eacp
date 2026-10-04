@@ -61,7 +61,7 @@ struct Mp4AudioInfo
     int numChannels = 0;
     int sampleRate = 0;
 
-    double seconds() const
+    constexpr double seconds() const
     {
         return timescale > 0 ? static_cast<double>(duration) / timescale : 0.0;
     }
@@ -87,14 +87,14 @@ public:
     // sampleBytes(). For tests and in-memory sources.
     bool parse(Span<const std::uint8_t> fileBytes);
 
-    bool isValid() const { return valid; }
+    constexpr bool isValid() const { return valid; }
 
-    const Mp4TrackInfo& track() const { return trackInfo; }
+    constexpr const Mp4TrackInfo& track() const { return trackInfo; }
 
-    const Mp4AudioInfo& audioTrack() const { return audioInfo; }
+    constexpr const Mp4AudioInfo& audioTrack() const { return audioInfo; }
 
     // Every sample of the track, in decode order.
-    const Vector<Mp4Sample>& samples() const { return sampleList; }
+    constexpr const Vector<Mp4Sample>& samples() const { return sampleList; }
 
     // The mapped bytes of one sample; empty for an out-of-range index.
     Span<const std::uint8_t> sampleBytes(int index) const;

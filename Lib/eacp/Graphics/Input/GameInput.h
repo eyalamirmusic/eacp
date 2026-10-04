@@ -1,7 +1,7 @@
 #pragma once
 
 #include "GameInputQueue.h"
-#include "../Window/Window.h"
+#include "../Window/WindowInput.h"
 
 #include <string_view>
 
@@ -9,6 +9,7 @@ namespace eacp::Graphics
 {
 
 struct GameInputBackend;
+class Window;
 
 enum class GameInputSource
 {
@@ -52,7 +53,7 @@ public:
     std::string_view backendName() const;
 
     // The clock every InputEvent and GameInputFrame::time() is on.
-    static double now() { return GameInputQueue::now(); }
+    static double now();
 
 private:
     void windowKeyEvent(const KeyEvent& event) override;
