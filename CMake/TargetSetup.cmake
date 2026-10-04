@@ -77,12 +77,18 @@ function(eacp_add_app target)
         eacp_set_app_icon(${target} IMAGE "${APP_ICON}")
     endif ()
 
+    set(orientations "")
+
     if (IOS AND APP_ORIENTATION STREQUAL "portrait")
-        eacp_add_plist_entries(${target} UISupportedInterfaceOrientations
-                "UIInterfaceOrientationPortrait")
+        eacp_plist_array(orientations UIInterfaceOrientationPortrait)
     elseif (IOS AND APP_ORIENTATION STREQUAL "landscape")
-        eacp_add_plist_entries(${target} UISupportedInterfaceOrientations
-                "UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight")
+        eacp_plist_array(orientations UIInterfaceOrientationLandscapeLeft
+                UIInterfaceOrientationLandscapeRight)
+    endif ()
+
+    if (orientations)
+        eacp_append_plist_xml(${target}
+                "\t<key>UISupportedInterfaceOrientations</key>\n\t${orientations}\n")
     endif ()
 endfunction()
 
@@ -145,6 +151,17 @@ function(eacp_plist_string value out_var)
     set(${out_var} "<string>${value}</string>" PARENT_SCOPE)
 endfunction()
 
+function(eacp_plist_array out_var)
+    set(array "<array>\n")
+
+    foreach (item IN LISTS ARGN)
+        eacp_plist_string("${item}" element)
+        string(APPEND array "\t\t${element}\n")
+    endforeach ()
+
+    set(${out_var} "${array}\t</array>" PARENT_SCOPE)
+endfunction()
+
 function(eacp_plist_element value out_var)
     list(LENGTH value count)
 
@@ -153,14 +170,8 @@ function(eacp_plist_element value out_var)
     elseif (value STREQUAL "FALSE")
         set(${out_var} "<false/>" PARENT_SCOPE)
     elseif (count GREATER 1)
-        set(array "<array>\n")
-
-        foreach (item IN LISTS value)
-            eacp_plist_string("${item}" element)
-            string(APPEND array "\t\t${element}\n")
-        endforeach ()
-
-        set(${out_var} "${array}\t</array>" PARENT_SCOPE)
+        eacp_plist_array(array ${value})
+        set(${out_var} "${array}" PARENT_SCOPE)
     else ()
         eacp_plist_string("${value}" element)
         set(${out_var} "${element}" PARENT_SCOPE)
@@ -190,12 +201,7 @@ function(eacp_add_plist_entries target)
                 "eacp_add_plist_entries(${target}): expects key value pairs")
     endif ()
 
-    get_target_property(entries ${target} EACP_PLIST_ENTRIES)
-
-    if (NOT entries)
-        set(entries "")
-    endif ()
-
+    set(entries "")
     math(EXPR last "${count} - 1")
 
     foreach (i RANGE 0 ${last} 2)
@@ -206,6 +212,20 @@ function(eacp_add_plist_entries target)
         string(APPEND entries "\t<key>${key}</key>\n\t${element}\n")
     endforeach ()
 
+    eacp_append_plist_xml(${target} "${entries}")
+endfunction()
+
+# Appends raw <key>/value XML to the target's plist entries and rewrites its
+# Info.plist template: eacp_add_plist_entries, and eacp_add_app for the
+# orientations, which are an array even with one item.
+function(eacp_append_plist_xml target xml)
+    get_target_property(entries ${target} EACP_PLIST_ENTRIES)
+
+    if (NOT entries)
+        set(entries "")
+    endif ()
+
+    string(APPEND entries "${xml}")
     set_target_properties(${target} PROPERTIES EACP_PLIST_ENTRIES "${entries}")
 
     eacp_bundle_plist_template(template)

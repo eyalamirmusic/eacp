@@ -20,12 +20,73 @@ set(EACP_ANDROID_STUDIO_DIR "${CMAKE_BINARY_DIR}/AndroidStudio" CACHE PATH
 set(EACP_ANDROID_ABIS "arm64-v8a;x86_64" CACHE STRING
         "The ABIs the Android Studio project builds")
 
-# The SDK the NDK sits in, at <sdk>/ndk/<version>: Gradle's sdk.dir.
-get_filename_component(eacp_android_sdk_default "${ANDROID_NDK}/../.." ABSOLUTE)
+# Gradle's sdk.dir: the SDK the toolchain looked in, unless that is no SDK and
+# the NDK this configure uses sits in one, at <sdk>/ndk/<version>.
+eacp_android_find_sdk(eacp_android_sdk_default)
+
+if (ANDROID_NDK)
+    set(eacp_android_ndk_used "${ANDROID_NDK}")
+else ()
+    set(eacp_android_ndk_used "${CMAKE_ANDROID_NDK}")
+endif ()
+
+get_filename_component(eacp_android_ndk_sdk "${eacp_android_ndk_used}/../.."
+        ABSOLUTE)
+
+if (NOT EXISTS "${eacp_android_sdk_default}/platforms"
+        AND NOT EXISTS "${eacp_android_sdk_default}/ndk"
+        AND (EXISTS "${eacp_android_ndk_sdk}/platforms"
+        OR EXISTS "${eacp_android_ndk_sdk}/ndk"))
+    set(eacp_android_sdk_default "${eacp_android_ndk_sdk}")
+endif ()
+
 set(EACP_ANDROID_SDK "${eacp_android_sdk_default}" CACHE PATH
         "The Android SDK the Studio project builds with")
 
-set(EACP_ANDROID_TEMPLATES "${CMAKE_CURRENT_LIST_DIR}/Android")
+# Gradle's compileSdk, resolved once for every module: EACP_ANDROID_COMPILE_SDK,
+# else the newest platform in the SDK, else targetSdk for Gradle to download.
+function(eacp_android_compile_sdk out)
+    get_property(level GLOBAL PROPERTY EACP_ANDROID_COMPILE_SDK_LEVEL)
+
+    if (level)
+        set(${out} "${level}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    set(level "${EACP_ANDROID_COMPILE_SDK}")
+    set(target "${EACP_ANDROID_TARGET_SDK}")
+
+    if (NOT level)
+        eacp_android_newest_platform("${EACP_ANDROID_SDK}" level)
+    endif ()
+
+    if (NOT level)
+        message(WARNING
+                "No Android platform is installed in ${EACP_ANDROID_SDK}: the "
+                "Studio project compiles against android-${target}, which Gradle "
+                "downloads on sync if the SDK's licenses are accepted. Install a "
+                "platform with Android Studio's SDK Manager (SDK Platforms), or "
+                "set EACP_ANDROID_COMPILE_SDK.")
+        set(level "${target}")
+    endif ()
+
+    if (NOT level MATCHES "^[0-9]+(\\.[0-9]+)?$")
+        message(FATAL_ERROR
+                "EACP_ANDROID_COMPILE_SDK is ${level}: give an API level, such "
+                "as 35 or 37.0.")
+    endif ()
+
+    if (level VERSION_LESS target)
+        message(FATAL_ERROR
+                "compileSdk ${level} is below EACP_ANDROID_TARGET_SDK ${target}: "
+                "install android-${target} or newer with Android Studio's SDK "
+                "Manager, set EACP_ANDROID_COMPILE_SDK to ${target} or higher, or "
+                "lower EACP_ANDROID_TARGET_SDK.")
+    endif ()
+
+    set_property(GLOBAL PROPERTY EACP_ANDROID_COMPILE_SDK_LEVEL "${level}")
+    set(${out} "${level}" PARENT_SCOPE)
+endfunction()
 
 function(eacp_android_quoted_list out)
     set(quoted "")
@@ -41,20 +102,28 @@ function(eacp_android_quoted_list out)
     set(${out} "${joined}" PARENT_SCOPE)
 endfunction()
 
-# What Gradle's configures are given beyond its own: every -D this configure
-# was given on the command line (a -DEACP_UNITY_BUILD=OFF or a
-# -DCPM_Miro_SOURCE=... reaches them as it reached this one), bar the CMAKE_*
-# and ANDROID_* that Gradle sets itself, and the source cache, so no module
+# What Gradle's configures are given beyond its own: every EACP_* and CPM_*
+# setting of this configure (a -DEACP_UNITY_BUILD=OFF or a
+# -DCPM_Miro_SOURCE=... reaches them as it reached this one) and any other -D
+# it was given on the command line, bar the CMAKE_* and ANDROID_* that Gradle
+# sets itself and the Studio project's own, and the source cache, so no module
 # fetches a package twice.
 function(eacp_android_cmake_arguments out)
     set(arguments -DEACP_ANDROID_STUDIO=OFF)
     get_cmake_property(names CACHE_VARIABLES)
 
     foreach (name IN LISTS names)
+        get_property(type CACHE ${name} PROPERTY TYPE)
         get_property(help CACHE ${name} PROPERTY HELPSTRING)
 
-        if (NOT help STREQUAL "No help, variable specified on the command line."
-                OR name MATCHES "^(CMAKE_|ANDROID_|EACP_ANDROID_STUDIO)")
+        if (type STREQUAL "INTERNAL" OR type STREQUAL "STATIC"
+                OR name MATCHES "^(CMAKE_|ANDROID_|CPM_SOURCE_CACHE$)"
+                OR name MATCHES "^EACP_ANDROID_(STUDIO|ABIS$|SDK$)")
+            continue()
+        endif ()
+
+        if (NOT name MATCHES "^(EACP|CPM)_" AND NOT help STREQUAL
+                "No help, variable specified on the command line.")
             continue()
         endif ()
 
@@ -67,6 +136,24 @@ function(eacp_android_cmake_arguments out)
     endif ()
 
     set(${out} "${arguments}" PARENT_SCOPE)
+endfunction()
+
+# The NDK this configure compiles with: Gradle's ndkVersion.
+function(eacp_android_ndk_version out)
+    if (ANDROID_NDK_REVISION)
+        set(${out} "${ANDROID_NDK_REVISION}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    if (CMAKE_ANDROID_NDK)
+        set(ndk "${CMAKE_ANDROID_NDK}")
+    else ()
+        set(ndk "${ANDROID_NDK}")
+    endif ()
+
+    file(STRINGS "${ndk}/source.properties" revision REGEX "^Pkg\\.Revision")
+    string(REGEX REPLACE "^Pkg\\.Revision *= *" "" revision "${revision}")
+    set(${out} "${revision}" PARENT_SCOPE)
 endfunction()
 
 function(eacp_add_android_app target)
@@ -103,12 +190,17 @@ function(eacp_add_android_app target)
     eacp_android_cmake_arguments(arguments)
     eacp_android_quoted_list(EACP_STUDIO_CMAKE_ARGUMENTS ${arguments})
     eacp_android_quoted_list(EACP_STUDIO_ABIS ${EACP_ANDROID_ABIS})
+    eacp_android_ndk_version(EACP_STUDIO_NDK_VERSION)
+    eacp_android_compile_sdk(compile_sdk)
+    string(REPLACE "." ";" compile_sdk "${compile_sdk}.0")
+    list(GET compile_sdk 0 EACP_STUDIO_COMPILE_SDK)
+    list(GET compile_sdk 1 EACP_STUDIO_COMPILE_SDK_MINOR)
     set(EACP_STUDIO_CMAKE_LISTS "${CMAKE_SOURCE_DIR}/CMakeLists.txt")
 
     set(module "${EACP_ANDROID_STUDIO_DIR}/${target}")
     configure_file("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/AndroidManifest.xml.in"
             "${module}/src/main/AndroidManifest.xml" @ONLY)
-    configure_file("${EACP_ANDROID_TEMPLATES}/app.build.gradle.kts.in"
+    configure_file("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Android/app.build.gradle.kts.in"
             "${module}/build.gradle.kts" @ONLY)
 
     set_property(GLOBAL APPEND PROPERTY EACP_ANDROID_APPS ${target})
@@ -123,6 +215,7 @@ function(eacp_write_android_studio_project)
     endif ()
 
     set(dir "${EACP_ANDROID_STUDIO_DIR}")
+    set(templates "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Android")
     set(EACP_STUDIO_NAME "${CMAKE_PROJECT_NAME}")
     set(EACP_STUDIO_SDK_DIR "${EACP_ANDROID_SDK}")
     set(EACP_STUDIO_INCLUDES "")
@@ -138,15 +231,15 @@ function(eacp_write_android_studio_project)
 
     foreach (file settings.gradle.kts build.gradle.kts gradle.properties
             local.properties)
-        configure_file("${EACP_ANDROID_TEMPLATES}/${file}.in" "${dir}/${file}" @ONLY)
+        configure_file("${templates}/${file}.in" "${dir}/${file}" @ONLY)
     endforeach ()
 
-    configure_file("${EACP_ANDROID_TEMPLATES}/gradle-wrapper.properties.in"
+    configure_file("${templates}/gradle-wrapper.properties.in"
             "${dir}/gradle/wrapper/gradle-wrapper.properties" @ONLY)
-    file(COPY "${EACP_ANDROID_TEMPLATES}/wrapper/gradle-wrapper.jar"
+    file(COPY "${templates}/wrapper/gradle-wrapper.jar"
             DESTINATION "${dir}/gradle/wrapper")
-    file(COPY "${EACP_ANDROID_TEMPLATES}/wrapper/gradlew"
-            "${EACP_ANDROID_TEMPLATES}/wrapper/gradlew.bat"
+    file(COPY "${templates}/wrapper/gradlew"
+            "${templates}/wrapper/gradlew.bat"
             DESTINATION "${dir}")
 
     list(LENGTH apps count)

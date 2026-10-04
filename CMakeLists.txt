@@ -66,7 +66,7 @@ if (ANDROID)
 
     if (ANDROID_PLATFORM_LEVEL LESS EACP_ANDROID_MIN_SDK)
         message(FATAL_ERROR
-                "eacp needs Android 13 or later: configure with "
+                "eacp needs API ${EACP_ANDROID_MIN_SDK} or later: configure with "
                 "-DANDROID_PLATFORM=android-${EACP_ANDROID_MIN_SDK} (or higher); "
                 "this build targets API ${ANDROID_PLATFORM_LEVEL}.")
     endif ()
