@@ -21,13 +21,17 @@ enum class GameInputSource
     WindowEvents
 };
 
-// Keyboard and mouse state for a game loop, polled once a frame, beside the
-// View key/mouse callbacks (which stay what UI and text entry use).
+// Keyboard, mouse and gamepad state for a game loop, polled once a frame,
+// beside the View key/mouse callbacks (which stay what UI and text entry use).
 //
 //     auto& frame = input.snapshot();   // once per frame, in update()
 //     if (frame.isDown(KeyCode::W)) ...
 //     if (frame.wasPressed(KeyCode::Space)) ...
 //     yaw -= frame.mouseDelta().x * sensitivity;
+//     for (auto& pad: frame.gamepads()) walk(pad.leftStick());
+//
+// Gamepads come only from the platform feed (GCController's extended gamepads
+// on Apple); where there is none, frame.gamepads() stays empty.
 //
 // On Apple the events come from GameController (GCKeyboard, GCMouse) on a
 // high-priority queue of their own, so they are captured and timestamped even

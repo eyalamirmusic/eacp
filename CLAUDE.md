@@ -677,8 +677,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Path`: Vector path drawing (rect, ellipse, curves)
 - `Font`: CoreText / DirectWrite typography, `EACP_HAS_CONTEXT` only
 - `Primitives.h`: Basic types (`Point`, `Rect`, `Color`)
-- `Input/GameInput`: keyboard and mouse state for a game loop, polled once a
-  frame with `snapshot()` beside the `View` callbacks. `GameInputQueue` is a
+- `Input/GameInput`: keyboard, mouse and gamepad state for a game loop, polled
+  once a frame with `snapshot()` beside the `View` callbacks. `GameInputQueue` is a
   bounded lock-free MPSC ring (no allocation after construction) that any
   thread can push into; every snapshot reconciles against the per-key held
   state so nothing sticks after an overflow or a producer race. The Apple
@@ -688,7 +688,12 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   delivered an event; `GameInput-Default.cpp` returns no backend on Windows,
   Linux and Android, so those use `Window::events.input` alone. Input counts only
   while the window is key. `GameInputSource::WindowEvents` forces the window
-  feed. `Tests/Graphics/GameInputTests.cpp` (19 `GameInput/` cases) drives the
+  feed. Gamepads (`GamepadState` in `frame.gamepads()`, buttons named by
+  position, raw sticks -1..1 y up and triggers 0..1, up to eight by stable id)
+  come from `GCController` extended gamepads on Apple and nowhere else yet;
+  axes are state, buttons follow the key rules, and disconnecting or
+  `releaseAll` releases the buttons and zeroes the axes.
+  `Tests/Graphics/GameInputTests.cpp` (27 `GameInput/` cases) drives the
   queue directly and real windows; `Apps/GPU/Maze` is the demo
 - `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
   layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a

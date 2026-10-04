@@ -35,7 +35,31 @@ bool applyEdge(std::bitset<Size>& down,
     edges.set(index);
     return true;
 }
+
+bool isValidGamepadButton(GamepadButton button)
+{
+    return (int) button < GamepadState::buttonCount;
+}
 } // namespace
+
+Point GamepadState::leftStick() const
+{
+    return {axis(GamepadAxis::LeftX), axis(GamepadAxis::LeftY)};
+}
+
+Point GamepadState::rightStick() const
+{
+    return {axis(GamepadAxis::RightX), axis(GamepadAxis::RightY)};
+}
+
+GamepadState* GameInputFrame::findGamepad(int id)
+{
+    for (auto& pad: pads)
+        if (pad.gamepadId == id)
+            return &pad;
+
+    return nullptr;
+}
 
 GameInputQueue::GameInputQueue(int capacityToUse)
     : capacity(std::bit_ceil((std::size_t) std::max(capacityToUse, 2)))
@@ -47,8 +71,10 @@ GameInputQueue::GameInputQueue(int capacityToUse)
         slots[index].sequence.store(index, std::memory_order_relaxed);
 
     const auto synthesizedLimit =
-        GameInputFrame::keyCount + GameInputFrame::buttonCount;
+        GameInputFrame::keyCount + GameInputFrame::buttonCount
+        + 2 * GameInputFrame::maxGamepads * (GamepadState::buttonCount + 2);
     frame.frameEvents.reserve((std::size_t) capacity + synthesizedLimit);
+    frame.pads.reserve(2 * GameInputFrame::maxGamepads);
 }
 
 double GameInputQueue::now()
@@ -94,6 +120,110 @@ void GameInputQueue::mouseMoved(Point delta, double time)
     overflowed.store(true);
 }
 
+void GameInputQueue::gamepadConnected(int id,
+                                      GamepadFamily family,
+                                      int playerIndex,
+                                      double time)
+{
+    if (id < 0)
+        return;
+
+    auto* slot = findGamepad(id);
+
+    if (slot == nullptr)
+        slot = claimGamepad(id);
+
+    if (slot == nullptr)
+        return;
+
+    slot->family.store(family);
+    slot->playerIndex.store(playerIndex);
+
+    if (slot->connected.exchange(true))
+        return;
+
+    enqueue({InputEventType::GamepadConnected, (uint16_t) family, {}, time, id});
+}
+
+void GameInputQueue::gamepadDisconnected(int id, double time)
+{
+    auto* slot = findGamepad(id);
+
+    if (slot == nullptr || !slot->connected.load())
+        return;
+
+    releaseGamepad(*slot, id, time);
+    slot->connected.store(false);
+    enqueue({InputEventType::GamepadDisconnected, 0, {}, time, id});
+    slot->id.store(-1);
+}
+
+void GameInputQueue::gamepadButtonChanged(int id,
+                                          GamepadButton button,
+                                          bool down,
+                                          double time)
+{
+    if (!isValidGamepadButton(button))
+        return;
+
+    auto* slot = findGamepad(id);
+
+    if (slot == nullptr || !slot->connected.load())
+        return;
+
+    if (slot->buttonsHeld[(int) button].exchange(down) == down)
+        return;
+
+    const auto type = down ? InputEventType::GamepadDown : InputEventType::GamepadUp;
+    enqueue({type, (uint16_t) button, {}, time, id});
+}
+
+void GameInputQueue::gamepadAxisChanged(int id, GamepadAxis axis, float value)
+{
+    if ((int) axis >= GamepadState::axisCount)
+        return;
+
+    auto* slot = findGamepad(id);
+
+    if (slot != nullptr && slot->connected.load())
+        slot->axes[(int) axis].store(value, std::memory_order_relaxed);
+}
+
+GameInputQueue::GamepadSlot* GameInputQueue::findGamepad(int id)
+{
+    if (id < 0)
+        return nullptr;
+
+    for (auto& slot: gamepadSlots)
+        if (slot.id.load() == id)
+            return &slot;
+
+    return nullptr;
+}
+
+GameInputQueue::GamepadSlot* GameInputQueue::claimGamepad(int id)
+{
+    for (auto& slot: gamepadSlots)
+    {
+        auto free = -1;
+
+        if (slot.id.compare_exchange_strong(free, id))
+            return &slot;
+    }
+
+    return nullptr;
+}
+
+void GameInputQueue::releaseGamepad(GamepadSlot& slot, int id, double time)
+{
+    for (auto button = 0; button < GamepadState::buttonCount; ++button)
+        if (slot.buttonsHeld[(int) button].exchange(false))
+            enqueue({InputEventType::GamepadUp, (uint16_t) button, {}, time, id});
+
+    for (auto& axis: slot.axes)
+        axis.store(0.0f, std::memory_order_relaxed);
+}
+
 void GameInputQueue::releaseAll(double time)
 {
     for (auto key = 0; key < GameInputFrame::keyCount; ++key)
@@ -103,6 +233,14 @@ void GameInputQueue::releaseAll(double time)
     for (auto button = 0; button < GameInputFrame::buttonCount; ++button)
         if (buttonsHeld[button].exchange(false))
             enqueue({InputEventType::MouseUp, (uint16_t) button, {}, time});
+
+    for (auto& slot: gamepadSlots)
+    {
+        const auto id = slot.id.load();
+
+        if (id >= 0 && slot.connected.load())
+            releaseGamepad(slot, id, time);
+    }
 }
 
 void GameInputQueue::enqueue(const InputEvent& event)
@@ -163,6 +301,14 @@ const GameInputFrame& GameInputQueue::snapshot(double now)
     frame.keysReleased.reset();
     frame.buttonsPressed.reset();
     frame.buttonsReleased.reset();
+    frame.padsChanged = false;
+
+    for (auto& pad: frame.pads)
+    {
+        pad.buttonsPressed.reset();
+        pad.buttonsReleased.reset();
+    }
+
     frame.delta = {};
     frame.frameEvents.clear();
     frame.snapshotTime = now;
@@ -207,6 +353,12 @@ void GameInputQueue::apply(const InputEvent& event)
         case InputEventType::MouseMove:
             frame.delta = frame.delta + event.delta;
             break;
+        case InputEventType::GamepadConnected:
+        case InputEventType::GamepadDisconnected:
+        case InputEventType::GamepadDown:
+        case InputEventType::GamepadUp:
+            applyGamepad(event, accepted);
+            break;
     }
 
     if (!accepted)
@@ -214,6 +366,49 @@ void GameInputQueue::apply(const InputEvent& event)
 
     frame.frameEvents.add(event);
     frame.newestTime = std::max(frame.newestTime, event.timestamp);
+}
+
+void GameInputQueue::applyGamepad(const InputEvent& event, bool& accepted)
+{
+    auto* pad = frame.findGamepad(event.gamepad);
+
+    if (event.type == InputEventType::GamepadConnected)
+    {
+        accepted = pad == nullptr;
+
+        if (!accepted)
+            return;
+
+        auto added = GamepadState {};
+        added.gamepadId = event.gamepad;
+        added.kind = (GamepadFamily) event.code;
+        frame.pads.add(added);
+        frame.padsChanged = true;
+        return;
+    }
+
+    accepted = pad != nullptr;
+
+    if (!accepted)
+        return;
+
+    switch (event.type)
+    {
+        case InputEventType::GamepadDisconnected:
+            std::erase_if(frame.pads.getVector(),
+                          [&](const GamepadState& candidate)
+                          { return candidate.gamepadId == event.gamepad; });
+            frame.padsChanged = true;
+            break;
+        case InputEventType::GamepadDown:
+            accepted =
+                applyEdge(pad->buttonsDown, pad->buttonsPressed, event.code, true);
+            break;
+        default:
+            accepted =
+                applyEdge(pad->buttonsDown, pad->buttonsReleased, event.code, false);
+            break;
+    }
 }
 
 void GameInputQueue::reconcile(double now)
@@ -238,6 +433,69 @@ void GameInputQueue::reconcile(double now)
                    (uint16_t) button,
                    {},
                    now});
+    }
+
+    reconcileGamepads(now);
+}
+
+// Pads the producers no longer have are disconnected, pads they have and the
+// frame lacks are connected, then each one's buttons end as held and its axes
+// take their latest values.
+void GameInputQueue::reconcileGamepads(double now)
+{
+    auto isConnected = [this](int id)
+    {
+        for (auto& slot: gamepadSlots)
+            if (slot.connected.load() && slot.id.load() == id)
+                return true;
+
+        return false;
+    };
+
+    for (auto index = frame.pads.size(); index-- > 0;)
+    {
+        const auto id = frame.pads[index].gamepadId;
+
+        if (!isConnected(id))
+            apply({InputEventType::GamepadDisconnected, 0, {}, now, id});
+    }
+
+    for (auto& slot: gamepadSlots)
+    {
+        if (!slot.connected.load())
+            continue;
+
+        const auto id = slot.id.load();
+
+        if (id < 0)
+            continue;
+
+        const auto family = slot.family.load();
+
+        if (frame.findGamepad(id) == nullptr)
+            apply(
+                {InputEventType::GamepadConnected, (uint16_t) family, {}, now, id});
+
+        auto* pad = frame.findGamepad(id);
+        pad->kind = family;
+        pad->player = slot.playerIndex.load();
+
+        for (auto button = 0; button < GamepadState::buttonCount; ++button)
+        {
+            const auto held = slot.buttonsHeld[(int) button].load();
+
+            if (held != pad->buttonsDown[(size_t) button])
+                apply(
+                    {held ? InputEventType::GamepadDown : InputEventType::GamepadUp,
+                     (uint16_t) button,
+                     {},
+                     now,
+                     id});
+        }
+
+        for (auto axis = 0; axis < GamepadState::axisCount; ++axis)
+            pad->axes[(int) axis] =
+                slot.axes[(int) axis].load(std::memory_order_relaxed);
     }
 }
 

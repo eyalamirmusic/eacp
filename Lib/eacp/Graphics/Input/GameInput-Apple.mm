@@ -4,6 +4,7 @@
 #include "GameInputBackend.h"
 #include "HidKeyCodes.h"
 #include "../View/View.h"
+#include <eacp/Core/Utils/Logging.h>
 
 #include <vector>
 
@@ -26,13 +27,23 @@ struct GameInputSink
 
 using Sink = std::shared_ptr<GameInputSink>;
 
+// A controller as the hub hands it to every sink.
+struct ConnectedPad
+{
+    int id = 0;
+    int playerIndex = -1;
+    GamepadFamily family = GamepadFamily::Generic;
+};
+
 // What the handler blocks capture, by shared_ptr, so it outlives every block
-// GameController still holds. `sinks` is touched only on the handler queue,
-// so a handler running after the last sink left sees none and pushes nothing;
-// `ownerAlive` is the main thread's, for the connection notifications.
+// GameController still holds. `sinks` and `pads` are touched only on the
+// handler queue, so a handler running after the last sink left sees none and
+// pushes nothing; `ownerAlive` is the main thread's, for the connection
+// notifications.
 struct HubShared
 {
     std::vector<Sink> sinks;
+    std::vector<ConnectedPad> pads;
     bool ownerAlive = true;
 
     template <typename Function>
@@ -41,6 +52,11 @@ struct HubShared
         for (auto& sink: sinks)
             if (sink->accepting())
                 function(*sink);
+    }
+
+    void connect(GameInputSink& sink, const ConnectedPad& pad, double time)
+    {
+        sink.queue->gamepadConnected(pad.id, pad.family, pad.playerIndex, time);
     }
 };
 
@@ -142,6 +158,117 @@ GCControllerButtonValueChangedHandler buttonHandler(const SharedState& state,
     return [[handler copy] autorelease];
 }
 
+bool contains(NSString* text, NSString* part)
+{
+    return text != nil
+           && [text rangeOfString:part options:NSCaseInsensitiveSearch].location
+                  != NSNotFound;
+}
+
+bool isKind(GCExtendedGamepad* gamepad, NSString* className)
+{
+    auto* type = NSClassFromString(className);
+    return type != nil && [gamepad isKindOfClass:type];
+}
+
+GamepadFamily familyOf(GCController* controller)
+{
+    auto* gamepad = controller.extendedGamepad;
+    auto* category = controller.productCategory;
+
+    if (isKind(gamepad, @"GCXboxGamepad") || contains(category, @"Xbox"))
+        return GamepadFamily::Xbox;
+
+    if (isKind(gamepad, @"GCDualSenseGamepad")
+        || isKind(gamepad, @"GCDualShockGamepad") || contains(category, @"DualSense")
+        || contains(category, @"DualShock") || contains(category, @"PlayStation"))
+        return GamepadFamily::PlayStation;
+
+    if (contains(category, @"Switch") || contains(category, @"Joy-Con")
+        || contains(category, @"Nintendo") || contains(category, @"NES")
+        || contains(controller.vendorName, @"Nintendo"))
+        return GamepadFamily::Nintendo;
+
+    return GamepadFamily::Generic;
+}
+
+const char* textOf(NSString* text)
+{
+    return text != nil ? text.UTF8String : "";
+}
+
+const char* familyName(GamepadFamily family)
+{
+    switch (family)
+    {
+        case GamepadFamily::Xbox:
+            return "Xbox";
+        case GamepadFamily::PlayStation:
+            return "PlayStation";
+        case GamepadFamily::Nintendo:
+            return "Nintendo";
+        default:
+            return "Generic";
+    }
+}
+
+void pushButton(GameInputQueue& queue,
+                int id,
+                GamepadButton button,
+                GCControllerButtonInput* input,
+                double time)
+{
+    queue.gamepadButtonChanged(id, button, input != nil && input.isPressed, time);
+}
+
+// The whole of a gamepad on every change: the queue drops what did not
+// change, and one handler for the profile cannot miss an element.
+void pushGamepad(GameInputQueue& queue, int id, GCExtendedGamepad* pad, double time)
+{
+    using Button = GamepadButton;
+
+    pushButton(queue, id, Button::South, pad.buttonA, time);
+    pushButton(queue, id, Button::East, pad.buttonB, time);
+    pushButton(queue, id, Button::West, pad.buttonX, time);
+    pushButton(queue, id, Button::North, pad.buttonY, time);
+    pushButton(queue, id, Button::LeftShoulder, pad.leftShoulder, time);
+    pushButton(queue, id, Button::RightShoulder, pad.rightShoulder, time);
+    pushButton(queue, id, Button::LeftStick, pad.leftThumbstickButton, time);
+    pushButton(queue, id, Button::RightStick, pad.rightThumbstickButton, time);
+    pushButton(queue, id, Button::Start, pad.buttonMenu, time);
+    pushButton(queue, id, Button::Back, pad.buttonOptions, time);
+    pushButton(queue, id, Button::Home, pad.buttonHome, time);
+    pushButton(queue, id, Button::DpadUp, pad.dpad.up, time);
+    pushButton(queue, id, Button::DpadDown, pad.dpad.down, time);
+    pushButton(queue, id, Button::DpadLeft, pad.dpad.left, time);
+    pushButton(queue, id, Button::DpadRight, pad.dpad.right, time);
+
+    queue.gamepadAxisChanged(id, GamepadAxis::LeftX, pad.leftThumbstick.xAxis.value);
+    queue.gamepadAxisChanged(id, GamepadAxis::LeftY, pad.leftThumbstick.yAxis.value);
+    queue.gamepadAxisChanged(
+        id, GamepadAxis::RightX, pad.rightThumbstick.xAxis.value);
+    queue.gamepadAxisChanged(
+        id, GamepadAxis::RightY, pad.rightThumbstick.yAxis.value);
+    queue.gamepadAxisChanged(id, GamepadAxis::LeftTrigger, pad.leftTrigger.value);
+    queue.gamepadAxisChanged(id, GamepadAxis::RightTrigger, pad.rightTrigger.value);
+}
+
+GCExtendedGamepadValueChangedHandler gamepadHandler(const SharedState& state,
+                                                    int id)
+{
+    auto shared = state;
+
+    auto handler = ^(GCExtendedGamepad* gamepad, GCControllerElement*)
+    {
+        const auto time = GameInputQueue::now();
+
+        shared->forEachAccepting([&](GameInputSink& sink)
+                                 { pushGamepad(*sink.queue, id, gamepad, time); });
+    };
+
+    return [[handler copy] autorelease];
+}
+
 // GCKeyboard.coalescedKeyboard and every GCMouse are process-wide, each with
 // one set of handlers and one handler queue, so the handlers are installed
 // once, by the first GameInput, and fan out to every GameInput's sink. The
@@ -180,11 +307,18 @@ private:
                 ^(NSNotification* note) { attachMouse(note.object); });
         observe(GCMouseDidDisconnectNotification,
                 ^(NSNotification* note) { detachMouse(note.object); });
+        observe(GCControllerDidConnectNotification,
+                ^(NSNotification* note) { attachController(note.object); });
+        observe(GCControllerDidDisconnectNotification,
+                ^(NSNotification* note) { detachController(note.object); });
 
         attachKeyboard(GCKeyboard.coalescedKeyboard);
 
         for (GCMouse* mouse in GCMouse.mice)
             attachMouse(mouse);
+
+        for (GCController* controller in GCController.controllers)
+            attachController(controller);
     }
 
     ~GameControllerHub()
@@ -205,6 +339,14 @@ private:
 
         [mice release];
 
+        NSArray<GCController*>* controllersAttached =
+            [[controllers copy] autorelease];
+
+        for (GCController* controller in controllersAttached)
+            detachController(controller);
+
+        [controllers release];
+
         auto state = shared;
         auto drain = ^{ state->sinks.clear(); };
         dispatch_sync(handlerQueue, drain);
@@ -215,7 +357,14 @@ private:
     {
         auto state = shared;
         auto added = sink;
-        auto addition = ^{ state->sinks.push_back(added); };
+
+        auto addition = ^{
+            state->sinks.push_back(added);
+
+            for (auto& pad: state->pads)
+                state->connect(*added, pad, GameInputQueue::now());
+        };
+
         dispatch_sync(handlerQueue, addition);
 
         ++users;
@@ -349,13 +498,110 @@ private:
                         { sink.mouseDelivering.store(false); });
     }
 
+    // Extended gamepads only: a micro gamepad (the Siri Remote) has too few
+    // controls to stand in for one.
+    void attachController(GCController* controller)
+    {
+        if (controller == nil || controller.extendedGamepad == nil
+            || [controllers containsObject:controller])
+            return;
+
+        const auto pad = ConnectedPad {
+            nextGamepadId++, freePlayerIndex(), familyOf(controller)};
+
+        [controllers addObject:controller];
+        padIds.push_back(pad.id);
+        controller.playerIndex = pad.playerIndex < 0
+                                     ? GCControllerPlayerIndexUnset
+                                     : (GCControllerPlayerIndex) pad.playerIndex;
+
+        LOG("GameInput: gamepad ",
+            pad.id,
+            " connected: ",
+            textOf(controller.vendorName),
+            " (",
+            textOf(controller.productCategory),
+            "), ",
+            familyName(pad.family),
+            ", player ",
+            pad.playerIndex,
+            ", buttonA shows ",
+            textOf(controller.extendedGamepad.buttonA.sfSymbolsName));
+
+        auto state = shared;
+
+        auto connection = ^{
+            state->pads.push_back(pad);
+
+            for (auto& sink: state->sinks)
+                state->connect(*sink, pad, GameInputQueue::now());
+        };
+
+        dispatch_async(handlerQueue, connection);
+
+        controller.handlerQueue = handlerQueue;
+        controller.extendedGamepad.valueChangedHandler =
+            gamepadHandler(shared, pad.id);
+    }
+
+    void detachController(GCController* controller)
+    {
+        const auto index = controller == nil ? NSNotFound
+                                             : [controllers indexOfObject:controller];
+
+        if (index == NSNotFound)
+            return;
+
+        const auto id = padIds[(size_t) index];
+        padIds.erase(padIds.begin() + (std::ptrdiff_t) index);
+
+        controller.extendedGamepad.valueChangedHandler = nil;
+        controller.handlerQueue = dispatch_get_main_queue();
+        controller.playerIndex = GCControllerPlayerIndexUnset;
+        [controllers removeObjectAtIndex:index];
+
+        auto state = shared;
+
+        auto disconnection = ^{
+            std::erase_if(state->pads,
+                          [id](const ConnectedPad& pad) { return pad.id == id; });
+
+            for (auto& sink: state->sinks)
+                sink->queue->gamepadDisconnected(id, GameInputQueue::now());
+        };
+
+        dispatch_async(handlerQueue, disconnection);
+    }
+
+    // The lowest of the four lights no attached controller shows, else -1.
+    int freePlayerIndex() const
+    {
+        constexpr auto lights = 4;
+
+        for (auto index = 0; index < lights; ++index)
+        {
+            auto taken = false;
+
+            for (GCController* controller in controllers)
+                taken = taken || (int) controller.playerIndex == index;
+
+            if (!taken)
+                return index;
+        }
+
+        return -1;
+    }
+
     static inline GameControllerHub* instance = nullptr;
 
     SharedState shared = std::make_shared<HubShared>();
     dispatch_queue_t handlerQueue = makeHandlerQueue();
     NSMutableArray* observers = [[NSMutableArray alloc] init];
     NSMutableArray<GCMouse*>* mice = [[NSMutableArray alloc] init];
+    NSMutableArray<GCController*>* controllers = [[NSMutableArray alloc] init];
+    std::vector<int> padIds;
     GCKeyboard* keyboard = nil;
+    int nextGamepadId = 0;
     int users = 0;
 };
 
