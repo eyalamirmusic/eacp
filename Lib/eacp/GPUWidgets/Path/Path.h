@@ -45,7 +45,7 @@ public:
     // work buys little and costs visibly; tighten it only for a shape rasterized
     // far above its authored size. Set before the curves are added.
     void setFlatness(float toleranceInPathUnits);
-    float getFlatness() const { return flatness; }
+    constexpr float getFlatness() const { return flatness; }
 
     // Starts a new sub-path at target. Subsequent line/curve calls extend it.
     void moveTo(const Graphics::Point& target);
@@ -90,7 +90,7 @@ public:
     // path.
     Graphics::Rect getBounds() const;
 
-    const Vector<SubPath>& getSubPaths() const { return subPaths; }
+    constexpr const Vector<SubPath>& getSubPaths() const { return subPaths; }
 
 private:
     SubPath& currentSubPath();

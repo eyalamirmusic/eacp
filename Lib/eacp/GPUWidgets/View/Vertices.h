@@ -2,6 +2,8 @@
 
 #include "../Common.h"
 
+#include <eacp/GPU/Codegen/Codegen.h>
+
 namespace eacp::GPUWidgets
 {
 // Position-only vertex, used for solid fills and strokes. A Graphics::Point is

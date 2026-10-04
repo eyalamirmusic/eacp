@@ -193,7 +193,7 @@ public:
     // native GPU/web content), composited over whatever sits behind it. Sibling
     // of Layer::setOpacity, but for an entire View rather than a single layer.
     void setOpacity(float opacity);
-    float getOpacity() const { return opacity; }
+    constexpr float getOpacity() const { return opacity; }
 
     // Whether this view and its subtree are shown at all.
     //
@@ -211,11 +211,11 @@ public:
     // parent comes back — which is what the platforms already do, and what
     // visibilityChanged reports.
     void setVisible(bool visible);
-    bool isVisible() const { return visible; }
+    constexpr bool isVisible() const { return visible; }
 
     void* getHandle();
 
-    virtual void paint(Context&) {};
+    virtual void paint(Context&);
 
     // Native, non-paint content this view renders itself (a GPUView's Metal
     // layer), returned as a straight-alpha Image sized to the view's bounds at
@@ -237,50 +237,50 @@ public:
     // captureAsyncContent() delivers it as a straight-alpha Image sized to the
     // view's bounds at `scale`, invoking done on the main thread (with an invalid
     // Image on failure). renderToImageAsync folds the result into the snapshot.
-    virtual bool hasAsyncContent() const { return false; }
+    virtual bool hasAsyncContent() const;
     virtual void captureAsyncContent(float scale, std::function<void(Image)> done);
 
-    virtual void mouseDown(const MouseEvent&) {}
-    virtual void mouseUp(const MouseEvent&) {}
-    virtual void mouseDragged(const MouseEvent&) {}
-    virtual void mouseMoved(const MouseEvent&) {}
-    virtual void mouseEntered(const MouseEvent&) {}
-    virtual void mouseExited(const MouseEvent&) {}
+    virtual void mouseDown(const MouseEvent&);
+    virtual void mouseUp(const MouseEvent&);
+    virtual void mouseDragged(const MouseEvent&);
+    virtual void mouseMoved(const MouseEvent&);
+    virtual void mouseEntered(const MouseEvent&);
+    virtual void mouseExited(const MouseEvent&);
 
     // Scroll wheel. event.delta carries the wheel movement (y vertical,
     // x horizontal): lines for a notched wheel, points for a trackpad, and
     // event.preciseScrolling says which.
-    virtual void mouseWheel(const MouseEvent&) {}
+    virtual void mouseWheel(const MouseEvent&);
     // Only for views that set handlesTouchEvents; a finger stays with the view it
     // came down on. Other views get the first finger as mouse events.
-    virtual void touchBegan(const TouchEvent&) {}
-    virtual void touchMoved(const TouchEvent&) {}
+    virtual void touchBegan(const TouchEvent&);
+    virtual void touchMoved(const TouchEvent&);
 
     // Ended or Cancelled: event.phase says which.
-    virtual void touchEnded(const TouchEvent&) {}
+    virtual void touchEnded(const TouchEvent&);
 
-    virtual void keyDown(const KeyEvent&) {}
-    virtual void keyUp(const KeyEvent&) {}
+    virtual void keyDown(const KeyEvent&);
+    virtual void keyUp(const KeyEvent&);
     virtual void resized();
 
     //Internal helpers to deal with scaling
     //you likely never have to call or override those
-    virtual void resizeStarted() {}
-    virtual void resizeFinished() {}
+    virtual void resizeStarted();
+    virtual void resizeFinished();
 
     // The view moved to a display with a different backing scale (a window
     // dragged between a Retina and a non-Retina screen), or that display's scale
     // changed. Anything sized in device pixels rather than logical points is now
     // wrong and must be rebuilt — a glyph atlas rasterized at 2x is blurry at 1x.
-    virtual void backingScaleChanged() {}
+    virtual void backingScaleChanged();
 
     // The window hosting this view moved on screen, or was shown/hidden.
     // Views drawn by the composition tree need neither: it follows the window
     // for free. A view backed by a native surface the OS places in screen
     // coordinates (a WebView) does — that surface keeps whatever placement and
     // visibility it was given until it is told otherwise.
-    virtual void hostWindowMoved() {}
-    virtual void hostWindowVisibilityChanged(bool) {}
+    virtual void hostWindowMoved();
+    virtual void hostWindowVisibilityChanged(bool);
 
     // This view's effective visibility changed — setVisible was called on it or
     // on an ancestor. Sibling of hostWindowVisibilityChanged, for the same
@@ -288,7 +288,7 @@ public:
     // composition tree needs nothing, because hiding the native view hides it
     // for free, while a view hosting a separate platform surface has to pass
     // the news along to whatever owns that surface.
-    virtual void visibilityChanged(bool) {}
+    virtual void visibilityChanged(bool);
 
     // What system chrome (status bar, notch, home indicator) covers of this view,
     // per edge. Zero on desktop windows.
@@ -297,7 +297,7 @@ public:
     // Called by the platform on the window's content view.
     void setSafeAreaInsets(const Insets& insets);
 
-    virtual void safeAreaInsetsChanged() {}
+    virtual void safeAreaInsetsChanged();
 
     Rect getBounds() const;
     Rect getLocalBounds() const;
@@ -318,7 +318,7 @@ public:
     void addLayer(Layer& layer);
     void removeLayer(Layer& layer);
 
-    ViewProperties& getProperties() { return properties; }
+    constexpr ViewProperties& getProperties() { return properties; }
 
     View& setHandlesMouseEvents(bool value = true);
     View& setHandlesTouchEvents(bool value = true);
@@ -337,7 +337,7 @@ public:
     // Setting the same shape twice is free, so a handler can call this on every
     // move without checking first.
     void setMouseCursor(MouseCursor cursor);
-    MouseCursor getMouseCursor() const { return currentCursor; }
+    constexpr MouseCursor getMouseCursor() const { return currentCursor; }
 
     virtual View* hitTest(const Point& point);
 
@@ -364,9 +364,9 @@ public:
     // clicked directly. See Window's key-activation handling.
     virtual void* nativeFocusTarget();
 
-    const Vector<View*>& getSubviews() const { return subviews; }
-    const Vector<Layer*>& getLayers() const { return layers; }
-    View* getParent() const { return parent; }
+    constexpr const Vector<View*>& getSubviews() const { return subviews; }
+    constexpr const Vector<Layer*>& getLayers() const { return layers; }
+    constexpr View* getParent() const { return parent; }
 
     // The window this view is in, or null while it is in none - before
     // Window::setContentView, inside an EmbeddedView (whose host window belongs

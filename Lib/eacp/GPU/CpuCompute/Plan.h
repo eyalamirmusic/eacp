@@ -271,38 +271,38 @@ public:
 
     explicit Plan(const ShaderGraph& graph, Options options = {});
 
-    bool isValid() const { return failure.empty(); }
-    const std::string& reason() const { return failure; }
+    constexpr bool isValid() const { return failure.empty(); }
+    constexpr const std::string& reason() const { return failure; }
 
     // Unique to each plan built, and shared by its copies, which have its
     // layout: what a Workspace or a PreparedDispatch is checked against.
-    std::uint64_t serial() const { return planSerial; }
+    constexpr std::uint64_t serial() const { return planSerial; }
 
-    DispatchRank rank() const { return dispatchRank; }
-    ThreadGroupShape groupShape() const { return shape; }
+    constexpr DispatchRank rank() const { return dispatchRank; }
+    constexpr ThreadGroupShape groupShape() const { return shape; }
 
     // One group's lanes, and a batch's: groupsPerBatch() groups back to back.
-    int lanes() const { return laneCount; }
-    int groupsPerBatch() const { return groupsInBatch; }
-    int batchLanes() const { return laneCount * groupsInBatch; }
-    int laneStride() const { return stride; }
-    bool guardsBounds() const { return boundsGuard; }
+    constexpr int lanes() const { return laneCount; }
+    constexpr int groupsPerBatch() const { return groupsInBatch; }
+    constexpr int batchLanes() const { return laneCount * groupsInBatch; }
+    constexpr int laneStride() const { return stride; }
+    constexpr bool guardsBounds() const { return boundsGuard; }
 
-    int storageSlotCount() const { return slotCount; }
+    constexpr int storageSlotCount() const { return slotCount; }
     BufferAccess access(int slot) const;
     ValueType element(int slot) const;
     bool referencesSlot(int slot) const;
 
-    int uniformCount() const { return uniformTypes.size(); }
+    int uniformCount() const;
     ValueType uniformType(int slot) const;
 
     // Uniform slot s is the byteSize words at uniformOffset(s) of a block of
     // uniformBlockWords(), packed in slot order.
-    int uniformOffset(int slot) const { return uniformOffsets[slot]; }
-    int uniformBlockWords() const { return uniformWordCount; }
+    int uniformOffset(int slot) const;
+    constexpr int uniformBlockWords() const { return uniformWordCount; }
 
     std::size_t footprintBytes() const;
-    std::size_t totalWords() const { return wordCount; }
+    constexpr std::size_t totalWords() const { return wordCount; }
 
     const Node& node(int id) const { return nodes[id]; }
     int argument(const Node& node, int which) const
@@ -310,75 +310,81 @@ public:
         return arguments[node.argBegin + which];
     }
 
-    const Vector<int>& schedule() const { return scheduleList; }
+    constexpr const Vector<int>& schedule() const { return scheduleList; }
 
     // The nodes every lane of a dispatch, or of a group, computes alike: run
     // once after the uniforms are read, and once per group after its ids.
-    const Range& dispatchSchedule() const { return dispatchRange; }
-    const Range& groupSchedule() const { return groupRange; }
+    constexpr const Range& dispatchSchedule() const { return dispatchRange; }
+    constexpr const Range& groupSchedule() const { return groupRange; }
 
-    int stepCount() const { return steps.size(); }
+    int stepCount() const;
     const Step& step(int id) const { return steps[id]; }
     const BlockRange& block(int id) const { return blocks[id]; }
     int blockStep(int position) const { return blockSteps[position]; }
-    int rootBlock() const { return 0; }
+    constexpr int rootBlock() const { return 0; }
 
-    const Vector<ArrayLayout>& arrays() const { return arrayLayouts; }
-    int arrayElement(const ArrayLayout& array, int which) const
+    constexpr const Vector<ArrayLayout>& arrays() const { return arrayLayouts; }
+    int arrayElement(const ArrayLayout& array, int which) const;
+
+    constexpr const Vector<Variable>& variables() const { return variableLayouts; }
+    constexpr const Vector<ConstantNode>& constants() const { return constantNodes; }
+    constexpr const Vector<LeafNode>& uniformNodes() const { return uniformLeaves; }
+    constexpr const Vector<LeafNode>& extentNodes() const { return extentLeaves; }
+    constexpr const Vector<LeafNode>& threadIdNodes() const
     {
-        return arrayElements[array.elementBegin + which];
+        return threadIdLeaves;
+    }
+    constexpr const Vector<LeafNode>& groupIdNodes() const { return groupIdLeaves; }
+    constexpr const Vector<int>& simdGroupIndexNodes() const
+    {
+        return simdGroupLeaves;
     }
 
-    const Vector<Variable>& variables() const { return variableLayouts; }
-    const Vector<ConstantNode>& constants() const { return constantNodes; }
-    const Vector<LeafNode>& uniformNodes() const { return uniformLeaves; }
-    const Vector<LeafNode>& extentNodes() const { return extentLeaves; }
-    const Vector<LeafNode>& threadIdNodes() const { return threadIdLeaves; }
-    const Vector<LeafNode>& groupIdNodes() const { return groupIdLeaves; }
-    const Vector<int>& simdGroupIndexNodes() const { return simdGroupLeaves; }
+    constexpr const Vector<SharedLayout>& sharedArrays() const
+    {
+        return sharedLayouts;
+    }
+    constexpr std::uint32_t sharedWords() const { return sharedOffset; }
+    constexpr int sharedWordCount() const { return sharedCount; }
 
-    const Vector<SharedLayout>& sharedArrays() const { return sharedLayouts; }
-    std::uint32_t sharedWords() const { return sharedOffset; }
-    int sharedWordCount() const { return sharedCount; }
-
-    std::uint32_t reductionScratch() const { return reductionOffset; }
+    constexpr std::uint32_t reductionScratch() const { return reductionOffset; }
 
     // Fragment f of SIMD group g is a dense row-major 8x8 at
     // fragment(f, g): held whole per SIMD group, not spread over its lanes.
     static constexpr int fragmentElements = simdMatrixSize * simdMatrixSize;
 
-    int simdGroupCount() const
+    constexpr int simdGroupCount() const
     {
         return (laneCount + simdGroupWidth - 1) / simdGroupWidth;
     }
 
-    std::uint32_t fragment(int which, int simdGroup) const
+    constexpr std::uint32_t fragment(int which, int simdGroup) const
     {
         return fragmentOffset
                + static_cast<std::uint32_t>((which * simdGroupCount() + simdGroup)
                                             * fragmentElements);
     }
 
-    std::uint32_t fragmentWords() const { return fragmentOffset; }
-    int fragmentWordCount() const { return fragmentCount; }
+    constexpr std::uint32_t fragmentWords() const { return fragmentOffset; }
+    constexpr int fragmentWordCount() const { return fragmentCount; }
 
-    int maskFrameCount() const { return 1 + 2 * nesting; }
-    std::uint32_t maskFrame(int frame) const
+    constexpr int maskFrameCount() const { return 1 + 2 * nesting; }
+    constexpr std::uint32_t maskFrame(int frame) const
     {
         return maskOffset + static_cast<std::uint32_t>(frame * stride);
     }
 
-    std::uint32_t localCoordinates(int axis) const
+    constexpr std::uint32_t localCoordinates(int axis) const
     {
         return localOffset + static_cast<std::uint32_t>(axis * stride);
     }
 
-    std::uint32_t realLanes() const { return realLaneOffset; }
+    constexpr std::uint32_t realLanes() const { return realLaneOffset; }
 
     // Per lane of a batch: which of its groups the lane is in, and its x
     // offset from the batch's first thread (groupInBatch * shape.x + local x).
-    std::uint32_t groupInBatch() const { return groupInBatchOffset; }
-    std::uint32_t batchX() const { return batchXOffset; }
+    constexpr std::uint32_t groupInBatch() const { return groupInBatchOffset; }
+    constexpr std::uint32_t batchX() const { return batchXOffset; }
 
 private:
     friend class PlanBuilder;

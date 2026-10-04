@@ -112,6 +112,12 @@ void CameraView::ensureRenderer()
     }
 }
 
+Graphics::Rect CameraView::computeImageArea(
+    float viewWidth, float viewHeight, int textureWidth, int textureHeight, Fit fit)
+{
+    return Sprites::fitRect(viewWidth, viewHeight, textureWidth, textureHeight, fit);
+}
+
 Graphics::Rect CameraView::imageAreaFor(int textureWidth, int textureHeight) const
 {
     auto bounds = getLocalBounds();

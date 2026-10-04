@@ -2908,6 +2908,26 @@ ValueType Plan::uniformType(int slot) const
                                                    : ValueType::Float;
 }
 
+int Plan::uniformCount() const
+{
+    return uniformTypes.size();
+}
+
+int Plan::uniformOffset(int slot) const
+{
+    return uniformOffsets[slot];
+}
+
+int Plan::stepCount() const
+{
+    return steps.size();
+}
+
+int Plan::arrayElement(const ArrayLayout& array, int which) const
+{
+    return arrayElements[array.elementBegin + which];
+}
+
 std::size_t Plan::footprintBytes() const
 {
     return wordCount * sizeof(Word) + 64;

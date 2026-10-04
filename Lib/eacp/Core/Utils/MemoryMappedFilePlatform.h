@@ -21,7 +21,7 @@ struct MappingFile
     std::intptr_t handle = -1;
     std::uint64_t size = 0;
 
-    bool isOpen() const { return handle != -1; }
+    constexpr bool isOpen() const { return handle != -1; }
 };
 
 // Opens for reading, and fails for anything that is not a regular file: a

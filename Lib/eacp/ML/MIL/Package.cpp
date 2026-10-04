@@ -34,6 +34,11 @@ bool isSafeToReplace(const FilePath& mlpackageDirectory)
 }
 } // namespace
 
+bool Package::isEmpty() const
+{
+    return model.empty();
+}
+
 std::string Package::standardManifest()
 {
     auto text = std::string {"{\n    \"fileFormatVersion\": \"1.0.0\",\n"

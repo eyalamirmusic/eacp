@@ -91,10 +91,10 @@ constexpr bool canBuildMipChain(TextureFormat format)
 // expensive part of this.
 struct MipChain
 {
-    bool isValid() const { return !levels.empty(); }
-    int levelCount() const { return levels.size(); }
+    bool isValid() const;
+    int levelCount() const;
 
-    const void* level(int index) const { return levels[index].data(); }
+    const void* level(int index) const;
 
     Vector<Vector<std::uint8_t>> levels;
 };

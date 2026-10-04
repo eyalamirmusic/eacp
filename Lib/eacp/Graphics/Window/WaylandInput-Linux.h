@@ -32,24 +32,14 @@ public:
     ModifierKeys getModifiers() const override;
     std::string characterForCode(uint32_t evdevCode) const override;
 
-    WaylandWindowSurface* getKeyboardFocus() const override
-    {
-        return keyboardWindow;
-    }
+    WaylandWindowSurface* getKeyboardFocus() const override;
 
     // The serial wl_data_device.set_selection wants: the last keyboard event
     // on a surface of ours, and zero while something else has the focus.
     uint32_t getSelectionSerial() const;
 
-    WaylandWindowSurface* getPointerWindow() const override
-    {
-        return pointerWindow;
-    }
-
-    Point getPointerPosition() const override
-    {
-        return pointerState.getPosition();
-    }
+    WaylandWindowSurface* getPointerWindow() const override;
+    Point getPointerPosition() const override;
 
     void refreshCursor() override;
 

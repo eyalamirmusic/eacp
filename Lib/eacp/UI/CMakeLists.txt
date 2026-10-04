@@ -7,16 +7,21 @@ add_library(eacp-ui STATIC)
 target_link_libraries(eacp-ui PUBLIC eacp-gpu eacp-gpuwidgets eacp-text)
 
 target_sources(eacp-ui PRIVATE
+        Common.cpp
         Component/Component.cpp
         DragAndDrop/DragAndDrop.cpp
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp
+        Render/ClipShader.cpp
         Render/CoverageAtlas.cpp
         Render/DrawList.cpp
         Render/DrawPlayer.cpp
+        Render/Gradient.cpp
         Render/GradientRamps.cpp
+        Render/GradientShader.cpp
         Render/ImageBatch.cpp
         Render/ImageCache.cpp
+        Render/ImageTexture.cpp
         Render/Layer.cpp
         Render/LayerRenderer.cpp
         Render/MaskCache.cpp

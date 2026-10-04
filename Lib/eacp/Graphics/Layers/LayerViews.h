@@ -13,7 +13,7 @@ struct TextLayerView : View
 
     void resized() override;
 
-    TextLayer* operator->() { return &layer; }
+    constexpr TextLayer* operator->() { return &layer; }
 
     TextLayer layer;
 };
@@ -24,7 +24,7 @@ struct ShapeLayerView : View
 
     void resized() override;
 
-    ShapeLayer* operator->() { return &layer; }
+    constexpr ShapeLayer* operator->() { return &layer; }
 
     ShapeLayer layer;
 };

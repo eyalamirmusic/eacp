@@ -6,6 +6,11 @@
 
 namespace eacp::GPU
 {
+void CommandBuffer::fill(const Buffer& buffer, std::uint8_t value)
+{
+    fill(BufferRange::of(buffer), value);
+}
+
 void CommandBuffer::update(Buffer& buffer,
                            const void* data,
                            std::int64_t bytes,

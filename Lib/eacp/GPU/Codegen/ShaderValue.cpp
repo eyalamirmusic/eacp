@@ -144,6 +144,78 @@ int recordBase(ShaderGraph* graph, const UInt& index, int count)
         ValueType::UInt, '*', index.node, graph->addUIntConstant((unsigned) count));
 }
 
+// One element of a storage buffer, whichever way the kernel declared it. Both
+// backends subscript the binding they were given, so a read is the same node
+// and the same emitted text for an input and for an output.
+template <typename T>
+T readBufferElement(ShaderGraph* graph, int slot, const UInt& index)
+{
+    auto result = T {};
+    result.graph = graph;
+    result.node = graph->addBufferRead(slot, index.node);
+    return result;
+}
+
+// count consecutive elements starting at index * count, assembled into a
+// vector, as count separate subscripts. A buffer stays a run of floats on every
+// backend - this is arithmetic over the binding that already works, not a
+// retyped one - so what it costs is count scalar loads. See
+// ShaderBuilder::write for the store that lays the same layout down.
+//
+// What a *read-only* buffer takes instead is readBufferVectorLoad below. This
+// is what an output takes, and the difference is not a missing optimisation:
+// an output may hold what this very thread stored into it a statement ago, and
+// the subscript through the pointer that was written is what orders the two.
+// A load through a second pointer of another type has nothing saying it may not
+// be hoisted above the store.
+//
+// Which is also why one GPU::Buffer must not be bound to an input slot and an
+// output slot of the same kernel, as InputBuffer's own comment says: the
+// emitter orders a read against the stores to *its slot*, not against the
+// stores to whatever resource the slot was bound, so an input's packed load is
+// unordered against a write through the output slot that happens to name the
+// same buffer. A kernel computing in place declares one OutputBuffer and reads
+// that.
+template <typename T>
+T readBufferVector(
+    ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
+{
+    auto base = recordBase(graph, index, count);
+
+    auto components = Vector<int> {};
+
+    for (auto i = 0; i < count; ++i)
+    {
+        auto element = i == 0
+                           ? base
+                           : graph->addBinary(ValueType::UInt,
+                                              '+',
+                                              base,
+                                              graph->addUIntConstant((unsigned) i));
+
+        components.add(graph->addBufferRead(slot, element));
+    }
+
+    auto result = T {};
+    result.graph = graph;
+    result.node = graph->addConstruct(type, std::move(components));
+    return result;
+}
+
+// The same run of elements as one node, which Metal makes one load of and the
+// other two print as exactly the construct above. Read-only buffers only.
+template <typename T>
+T readBufferVectorLoad(
+    ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
+{
+    auto result = T {};
+    result.graph = graph;
+    result.node =
+        graph->addBufferVectorRead(slot, recordBase(graph, index, count), type);
+
+    return result;
+}
+
 ValueHandle constantOn(const ValueHandle& value, float literal)
 {
     return {value.graph, value.graph->addConstant(literal)};
@@ -171,6 +243,201 @@ int argumentNode(const ValueHandle& anchor, float literal)
     return anchor.graph->addConstant(literal);
 }
 } // namespace detail
+
+Float InputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Float>(graph, slot, index);
+}
+
+Float InputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Float2 InputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Float2>(
+        graph, slot, index, ValueType::Float2, 2);
+}
+
+Float3 InputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Float3>(
+        graph, slot, index, ValueType::Float3, 3);
+}
+
+Float4 InputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<Float4>(
+        graph, slot, index, ValueType::Float4, 4);
+}
+
+Float2 InputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Float3 InputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Float4 InputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+Float OutputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<Float>(graph, slot, index);
+}
+
+Float OutputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+Float2 OutputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVector<Float2>(
+        graph, slot, index, ValueType::Float2, 2);
+}
+
+Float3 OutputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVector<Float3>(
+        graph, slot, index, ValueType::Float3, 3);
+}
+
+Float4 OutputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVector<Float4>(
+        graph, slot, index, ValueType::Float4, 4);
+}
+
+Float2 OutputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+Float3 OutputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+Float4 OutputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+UInt UIntInputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<UInt>(graph, slot, index);
+}
+
+UInt UIntInputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+UInt2 UIntInputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<UInt2>(
+        graph, slot, index, ValueType::UInt2, 2);
+}
+
+UInt3 UIntInputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<UInt3>(
+        graph, slot, index, ValueType::UInt3, 3);
+}
+
+UInt4 UIntInputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVectorLoad<UInt4>(
+        graph, slot, index, ValueType::UInt4, 4);
+}
+
+UInt2 UIntInputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+UInt3 UIntInputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+UInt4 UIntInputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+UInt UIntOutputBuffer::operator[](const UInt& index) const
+{
+    return detail::readBufferElement<UInt>(graph, slot, index);
+}
+
+UInt UIntOutputBuffer::operator[](unsigned index) const
+{
+    return (*this)[detail::bufferIndex(graph, index)];
+}
+
+UInt2 UIntOutputBuffer::read2(const UInt& index) const
+{
+    return detail::readBufferVector<UInt2>(graph, slot, index, ValueType::UInt2, 2);
+}
+
+UInt3 UIntOutputBuffer::read3(const UInt& index) const
+{
+    return detail::readBufferVector<UInt3>(graph, slot, index, ValueType::UInt3, 3);
+}
+
+UInt4 UIntOutputBuffer::read4(const UInt& index) const
+{
+    return detail::readBufferVector<UInt4>(graph, slot, index, ValueType::UInt4, 4);
+}
+
+UInt2 UIntOutputBuffer::read2(unsigned index) const
+{
+    return read2(detail::bufferIndex(graph, index));
+}
+
+UInt3 UIntOutputBuffer::read3(unsigned index) const
+{
+    return read3(detail::bufferIndex(graph, index));
+}
+
+UInt4 UIntOutputBuffer::read4(unsigned index) const
+{
+    return read4(detail::bufferIndex(graph, index));
+}
+
+UInt UIntOutputBuffer::literal(unsigned value) const
+{
+    return detail::bufferIndex(graph, value);
+}
+
+UInt AtomicBuffer::load(const UInt& index) const
+{
+    auto result = UInt {};
+    result.graph = graph;
+    result.node = graph->addAtomicLoad(slot, index.node);
+    return result;
+}
+
+UInt AtomicBuffer::load(unsigned index) const
+{
+    return load(literal(index));
+}
+
+UInt AtomicBuffer::literal(unsigned value) const
+{
+    auto result = UInt {};
+    result.graph = graph;
+    result.node = graph->addUIntConstant(value);
+    return result;
+}
 
 Float toFloat(const UInt& value)
 {
@@ -799,4 +1066,138 @@ Float4 InputBuffer::readBFloat16x4(unsigned index) const
 {
     return readBFloat16x4(detail::bufferIndex(graph, index));
 }
+
+#define EACP_DEFINE_UINT_OPERATOR(name, spelling)                                   \
+    UInt name(const UInt& lhs, const UInt& rhs)                                     \
+    {                                                                               \
+        return detail::binaryOp<UInt>(spelling, lhs, rhs);                          \
+    }                                                                               \
+                                                                                    \
+    UInt name(const UInt& lhs, unsigned rhs)                                        \
+    {                                                                               \
+        return detail::binaryOp<UInt>(                                              \
+            spelling, lhs, detail::uintConstantOn(lhs, rhs));                       \
+    }                                                                               \
+                                                                                    \
+    UInt name(unsigned lhs, const UInt& rhs)                                        \
+    {                                                                               \
+        return detail::binaryOp<UInt>(                                              \
+            spelling, detail::uintConstantOn(rhs, lhs), rhs);                       \
+    }
+
+EACP_DEFINE_UINT_OPERATOR(operator+, '+')
+EACP_DEFINE_UINT_OPERATOR(operator-, '-')
+EACP_DEFINE_UINT_OPERATOR(operator*, '*')
+EACP_DEFINE_UINT_OPERATOR(operator/, '/')
+EACP_DEFINE_UINT_OPERATOR(operator%, '%')
+EACP_DEFINE_UINT_OPERATOR(operator&, '&')
+EACP_DEFINE_UINT_OPERATOR(operator|, '|')
+EACP_DEFINE_UINT_OPERATOR(operator^, '^')
+EACP_DEFINE_UINT_OPERATOR(operator<<, "<<")
+EACP_DEFINE_UINT_OPERATOR(operator>>, ">>")
+
+#undef EACP_DEFINE_UINT_OPERATOR
+
+#define EACP_DEFINE_INT_OPERATOR(name, spelling)                                    \
+    Int name(const Int& lhs, const Int& rhs)                                        \
+    {                                                                               \
+        return detail::binaryOp<Int>(spelling, lhs, rhs);                           \
+    }                                                                               \
+                                                                                    \
+    Int name(const Int& lhs, int rhs)                                               \
+    {                                                                               \
+        return detail::binaryOp<Int>(                                               \
+            spelling, lhs, detail::intConstantOn(lhs, rhs));                        \
+    }                                                                               \
+                                                                                    \
+    Int name(int lhs, const Int& rhs)                                               \
+    {                                                                               \
+        return detail::binaryOp<Int>(                                               \
+            spelling, detail::intConstantOn(rhs, lhs), rhs);                        \
+    }
+
+EACP_DEFINE_INT_OPERATOR(operator+, '+')
+EACP_DEFINE_INT_OPERATOR(operator-, '-')
+EACP_DEFINE_INT_OPERATOR(operator*, '*')
+EACP_DEFINE_INT_OPERATOR(operator/, '/')
+EACP_DEFINE_INT_OPERATOR(operator%, '%')
+EACP_DEFINE_INT_OPERATOR(operator&, '&')
+EACP_DEFINE_INT_OPERATOR(operator|, '|')
+EACP_DEFINE_INT_OPERATOR(operator^, '^')
+EACP_DEFINE_INT_OPERATOR(operator<<, "<<")
+EACP_DEFINE_INT_OPERATOR(operator>>, ">>")
+
+#undef EACP_DEFINE_INT_OPERATOR
+
+#define EACP_DEFINE_INT_COMPARISON(name, spelling)                                  \
+    Bool name(const Int& lhs, const Int& rhs)                                       \
+    {                                                                               \
+        return detail::compare(spelling, lhs, rhs);                                 \
+    }                                                                               \
+                                                                                    \
+    Bool name(const Int& lhs, int rhs)                                              \
+    {                                                                               \
+        return detail::compare(spelling, lhs, detail::intConstantOn(lhs, rhs));     \
+    }                                                                               \
+                                                                                    \
+    Bool name(int lhs, const Int& rhs)                                              \
+    {                                                                               \
+        return detail::compare(spelling, detail::intConstantOn(rhs, lhs), rhs);     \
+    }
+
+EACP_DEFINE_INT_COMPARISON(operator<, "<")
+EACP_DEFINE_INT_COMPARISON(operator<=, "<=")
+EACP_DEFINE_INT_COMPARISON(operator>, ">")
+EACP_DEFINE_INT_COMPARISON(operator>=, ">=")
+EACP_DEFINE_INT_COMPARISON(operator==, "==")
+EACP_DEFINE_INT_COMPARISON(operator!=, "!=")
+
+#undef EACP_DEFINE_INT_COMPARISON
+
+#define EACP_DEFINE_UINT_COMPARISON(name, spelling)                                 \
+    Bool name(const UInt& lhs, const UInt& rhs)                                     \
+    {                                                                               \
+        return detail::compare(spelling, lhs, rhs);                                 \
+    }                                                                               \
+                                                                                    \
+    Bool name(const UInt& lhs, unsigned rhs)                                        \
+    {                                                                               \
+        return detail::compare(spelling, lhs, detail::uintConstantOn(lhs, rhs));    \
+    }                                                                               \
+                                                                                    \
+    Bool name(unsigned lhs, const UInt& rhs)                                        \
+    {                                                                               \
+        return detail::compare(spelling, detail::uintConstantOn(rhs, lhs), rhs);    \
+    }
+
+EACP_DEFINE_UINT_COMPARISON(operator<, "<")
+EACP_DEFINE_UINT_COMPARISON(operator<=, "<=")
+EACP_DEFINE_UINT_COMPARISON(operator>, ">")
+EACP_DEFINE_UINT_COMPARISON(operator>=, ">=")
+EACP_DEFINE_UINT_COMPARISON(operator==, "==")
+EACP_DEFINE_UINT_COMPARISON(operator!=, "!=")
+
+#undef EACP_DEFINE_UINT_COMPARISON
+
+#define EACP_DEFINE_MATRIX_SCALE(Matrix)                                            \
+    Matrix operator*(const Matrix& matrix, float scalar)                            \
+    {                                                                               \
+        return detail::scalarOp<Matrix>('*', matrix, scalar);                       \
+    }                                                                               \
+                                                                                    \
+    Matrix operator*(float scalar, const Matrix& matrix)                            \
+    {                                                                               \
+        return detail::scalarOpLeft<Matrix>('*', scalar, matrix);                   \
+    }                                                                               \
+                                                                                    \
+    Matrix operator/(const Matrix& matrix, float scalar)                            \
+    {                                                                               \
+        return detail::scalarOp<Matrix>('/', matrix, scalar);                       \
+    }
+
+EACP_DEFINE_MATRIX_SCALE(Float2x2)
+EACP_DEFINE_MATRIX_SCALE(Float3x3)
+EACP_DEFINE_MATRIX_SCALE(Float4x4)
+
+#undef EACP_DEFINE_MATRIX_SCALE
 } // namespace eacp::GPU

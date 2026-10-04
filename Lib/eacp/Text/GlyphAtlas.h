@@ -113,12 +113,9 @@ public:
     // each one rather than renumbering them.
     int findOrAddFace(const std::string& family, float pointSize);
 
-    int findOrAddFace(const Font& font)
-    {
-        return findOrAddFace(font.family, font.pointSize);
-    }
+    int findOrAddFace(const Font& font);
 
-    int faceCount() const { return faces.size(); }
+    int faceCount() const;
 
     // Shapes the string through the face's source and returns each glyph with
     // its slot, rasterizing what the atlas has not seen. Shaped strings are
@@ -150,12 +147,9 @@ public:
     // Face metrics in **points**, unlike the pixel-space FontMetrics the
     // rasterizer reports.
     FontMetrics metrics(const FontVariant& variant, int face = 0) const;
-    FontMetrics metrics(FontStyle style = FontStyle::Regular, int face = 0) const
-    {
-        return metrics(variantOf(style), face);
-    }
+    FontMetrics metrics(FontStyle style = FontStyle::Regular, int face = 0) const;
 
-    float scale() const { return deviceScale; }
+    constexpr float scale() const { return deviceScale; }
 
     // Device pixels per point for everything in the atlas. Changing it clears
     // and rebuilds every face: a bitmap rasterized for one display is the wrong
@@ -176,10 +170,10 @@ public:
     // Bumped when the atlas is cleared, which invalidates every slot handed out
     // before it. A caller that caches slots across frames re-requests when this
     // changes; one that requests every glyph each frame can ignore it.
-    std::uint32_t generation() const { return atlasGeneration; }
+    constexpr std::uint32_t generation() const { return atlasGeneration; }
 
-    int size() const { return atlasSize; }
-    float occupancy() const { return maskPacker.occupancy(); }
+    constexpr int size() const { return atlasSize; }
+    float occupancy() const;
 
 private:
     struct Page;

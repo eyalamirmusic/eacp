@@ -3,6 +3,7 @@
 
 #include "GameInputBackend.h"
 #include "HidKeyCodes.h"
+#include "../View/View.h"
 
 #include <vector>
 

@@ -198,6 +198,36 @@ std::string narrow(std::wstring_view wide)
     return out;
 }
 
+std::string toString(const std::string& s)
+{
+    return s;
+}
+
+std::string toString(std::string_view s)
+{
+    return std::string {s};
+}
+
+std::string toString(const char* s)
+{
+    return std::string {s};
+}
+
+std::string toString(char* s)
+{
+    return std::string {s};
+}
+
+std::string toString(char c)
+{
+    return std::string(1, c);
+}
+
+std::string toString(bool b)
+{
+    return b ? "true" : "false";
+}
+
 std::string trim(std::string_view s)
 {
     auto begin = s.find_first_not_of(" \t\r\n");

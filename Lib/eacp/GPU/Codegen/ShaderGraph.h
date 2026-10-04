@@ -6,6 +6,7 @@
 
 #include "../Pipeline/VertexLayout.h"
 #include "../Shader/ShaderSource.h"
+#include "../Texture/Texture.h"
 
 #include <cstdint>
 #include <memory>
@@ -577,80 +578,76 @@ public:
     void addSimdMatrixMultiplyAdd(int accumulator, int left, int right);
     int addSimdGroupIndex();
 
-    void setPosition(int node) { positionNode = node; }
-    void setFragment(int node) { fragmentNode = node; }
+    constexpr void setPosition(int node) { positionNode = node; }
+    constexpr void setFragment(int node) { fragmentNode = node; }
 
     // The alpha test: a third fragment-stage root, evaluated before the colour
     // is written. When the node's value falls below the threshold the fragment
     // is killed outright, writing neither colour nor depth.
-    void setDiscard(int node, float threshold)
+    constexpr void setDiscard(int node, float threshold)
     {
         discardNode = node;
         discardValue = threshold;
     }
 
-    const Expr& expr(int node) const { return nodes[node]; }
-    int nodeCount() const { return nodes.size(); }
-    const Vector<ValueType>& inputs() const { return inputTypes; }
-    const Vector<StepRate>& inputStepRates() const { return inputRates; }
-    const Vector<int>& inputBufferIndices() const { return inputSlots; }
-    const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
-    const Vector<ValueType>& uniforms() const { return uniformTypes; }
-    int textureCount() const { return textureSamplings.size(); }
+    const Expr& expr(int node) const;
+    int nodeCount() const;
+    constexpr const Vector<ValueType>& inputs() const { return inputTypes; }
+    constexpr const Vector<StepRate>& inputStepRates() const { return inputRates; }
+    constexpr const Vector<int>& inputBufferIndices() const { return inputSlots; }
+    constexpr const Vector<VaryingSlot>& varyings() const { return varyingSlots; }
+    constexpr const Vector<ValueType>& uniforms() const { return uniformTypes; }
+    int textureCount() const;
 
     // How texture `slot` is to be sampled, as its shader declared it.
-    TextureSampling textureSampling(int slot) const
-    {
-        return slot >= 0 && slot < textureSamplings.size() ? textureSamplings[slot]
-                                                           : TextureSampling {};
-    }
+    TextureSampling textureSampling(int slot) const;
 
     // Whether the shader reads texture `slot` or writes it, which is what
     // decides the declaration each backend emits for it.
-    TextureAccess textureAccess(int slot) const
-    {
-        return slot >= 0 && slot < textureAccesses.size() ? textureAccesses[slot]
-                                                          : TextureAccess::Sample;
-    }
+    TextureAccess textureAccess(int slot) const;
 
     // Whether texture `slot` is a 2D image or a cube - the other half of that
     // declaration, and the only other thing the emitter needs to print it.
-    TextureKind textureKind(int slot) const
+    TextureKind textureKind(int slot) const;
+
+    constexpr int position() const { return positionNode; }
+    constexpr int fragment() const { return fragmentNode; }
+    constexpr int discard() const { return discardNode; }
+    constexpr float discardThreshold() const { return discardValue; }
+
+    constexpr const Vector<BufferAccess>& storageBuffers() const
     {
-        return slot >= 0 && slot < textureKinds.size() ? textureKinds[slot]
-                                                       : TextureKind::Texture2D;
+        return storageSlots;
     }
-
-    int position() const { return positionNode; }
-    int fragment() const { return fragmentNode; }
-    int discard() const { return discardNode; }
-    float discardThreshold() const { return discardValue; }
-
-    const Vector<BufferAccess>& storageBuffers() const { return storageSlots; }
 
     // What storage buffer `slot` holds, as its kernel declared it.
-    ValueType storageElementType(int slot) const
-    {
-        return slot >= 0 && slot < storageElements.size() ? storageElements[slot]
-                                                          : ValueType::Float;
-    }
+    ValueType storageElementType(int slot) const;
 
-    const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
-    const Vector<Store>& stores() const { return storeList; }
-    const Vector<TextureStore>& textureStores() const { return textureStoreList; }
-    const Vector<SharedArray>& sharedArrays() const { return sharedArrayList; }
+    constexpr const Vector<ArrayConstant>& arrays() const { return arrayConstants; }
+    constexpr const Vector<Store>& stores() const { return storeList; }
+    constexpr const Vector<TextureStore>& textureStores() const
+    {
+        return textureStoreList;
+    }
+    constexpr const Vector<SharedArray>& sharedArrays() const
+    {
+        return sharedArrayList;
+    }
 
     // The element types the kernel's reductions fold, one entry each, so the
     // emitter declares the scratch a reduction needs and no more. Both scopes
     // are in here, because a backend with no wave intrinsic stages the narrow
     // fold in the same array the wide one uses.
-    const Vector<ValueType>& groupReductionTypes() const { return reductionTypes; }
-    bool usesGroupReduction() const { return !reductionTypes.empty(); }
+    constexpr const Vector<ValueType>& groupReductionTypes() const
+    {
+        return reductionTypes;
+    }
+    bool usesGroupReduction() const;
 
     // The subset folded over the *whole* group, which is the only scope Metal
     // needs an array for: there a SIMD-group fold is one instruction, and so is
     // a whole-group fold in a group no wider than a SIMD group.
-    const Vector<ValueType>& wholeGroupReductionTypes() const
+    constexpr const Vector<ValueType>& wholeGroupReductionTypes() const
     {
         return wholeGroupTypes;
     }
@@ -658,7 +655,7 @@ public:
     // Whether any reduction is collective over a SIMD group rather than over
     // the threadgroup - which puts the kernel under the same rule a SIMD-group
     // matrix is under, that the group has to be a whole number of SIMD groups.
-    bool usesSimdReduction() const { return simdReductionUsed; }
+    constexpr bool usesSimdReduction() const { return simdReductionUsed; }
 
     // How many bytes of threadgroup memory one group of this kernel takes: the
     // shared arrays it declared, plus the scratch the emitter adds behind them
@@ -678,21 +675,15 @@ public:
     // How many 8x8 fragments the kernel declared, and whether it asked the
     // entry point for the SIMD-group vocabulary at all - a matrix statement or
     // a read of the SIMD group's index both do.
-    int simdMatrixCount() const { return simdMatrixElementList.size(); }
+    int simdMatrixCount() const;
 
-    bool usesSimdGroups() const
-    {
-        return simdMatrixCount() > 0 || simdGroupIndexUsed;
-    }
+    bool usesSimdGroups() const;
 
     // What one fragment is made of, and whether any fragment at all is made of
     // a packed sixteen-bit element. The emitter takes the declared type and the
     // pointer reinterpret from the first; ComputeProgram::fitsPackedSimdMatrix
     // takes from the second the question it puts to the device.
-    SimdMatrixElement simdMatrixElement(int matrix) const
-    {
-        return simdMatrixElementList[matrix];
-    }
+    SimdMatrixElement simdMatrixElement(int matrix) const;
 
     bool usesPackedSimdMatrix(SimdMatrixElement element) const;
 
@@ -701,9 +692,9 @@ public:
     // a kernel that barriers gets no early-return bounds guard, because a
     // barrier below a return some threads took is undefined on both backends.
     // Such a kernel bounds its own stores, typically against gridExtent.
-    bool usesLocalId() const { return localIdUsed; }
-    bool usesGroupId() const { return groupIdUsed; }
-    bool usesBarrier() const { return barrierUsed; }
+    constexpr bool usesLocalId() const { return localIdUsed; }
+    constexpr bool usesGroupId() const { return groupIdUsed; }
+    constexpr bool usesBarrier() const { return barrierUsed; }
 
     // Recording any store - to a buffer, to a texture, or an atomic add - is
     // what marks the graph as a kernel.
@@ -715,17 +706,16 @@ public:
     // A SIMD-group matrix is in the list for the same reason the atomic is: it
     // is a threadgroup facility with no render-stage spelling, so a kernel
     // whose only output is a fragment stored to a buffer is still a kernel.
-    bool isCompute() const
-    {
-        return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed
-               || usesSimdGroups();
-    }
+    bool isCompute() const;
 
-    DispatchRank dispatchRank() const { return rank; }
+    constexpr DispatchRank dispatchRank() const { return rank; }
 
     // The group the kernel is dispatched in: what the author asked for, or the
     // stock shape for the rank recorded so far when they asked for nothing.
-    void setThreadGroupShape(ThreadGroupShape shape) { groupShape = shape; }
+    constexpr void setThreadGroupShape(ThreadGroupShape shape)
+    {
+        groupShape = shape;
+    }
     ThreadGroupShape threadGroupShape() const;
 
     // The body every recorded statement ends up in, directly or inside a nested
@@ -734,12 +724,12 @@ public:
     // it afterwards.
     static constexpr int rootBlock = 0;
 
-    const Statement& statement(int index) const { return statementList[index]; }
-    const Block& block(int index) const { return blocks[index]; }
-    int statementCount() const { return statementList.size(); }
-    int blockCount() const { return blocks.size(); }
-    const Vector<ValueType>& variables() const { return variableTypes; }
-    bool hasStatements() const { return !blocks[rootBlock].statements.empty(); }
+    const Statement& statement(int index) const;
+    const Block& block(int index) const;
+    int statementCount() const;
+    int blockCount() const;
+    constexpr const Vector<ValueType>& variables() const { return variableTypes; }
+    bool hasStatements() const;
 
     // Whether a node's value is the same wherever in the body it is read: no
     // mutable state under it, save storage the kernel only reads.
@@ -770,7 +760,7 @@ private:
         SharingCaches& operator=(const SharingCaches& other);
         SharingCaches& operator=(SharingCaches&& other) noexcept;
 
-        const Caches* find() const { return caches.get(); }
+        const Caches* find() const;
         Caches& get();
 
     private:

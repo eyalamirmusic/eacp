@@ -6,10 +6,7 @@
 namespace eacp::Graphics
 {
 // Suppresses implicit animations so property changes apply immediately.
-inline id<CAAction> immediateActionForKey(id, SEL, NSString*)
-{
-    return (id<CAAction>) [NSNull null];
-}
+id<CAAction> immediateActionForKey(id, SEL, NSString*);
 
 // Runtime-registered CALayer subclass (process-unique name, see
 // RuntimeClass) whose only override is the immediate actionForKey:.

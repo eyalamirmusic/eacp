@@ -1,6 +1,9 @@
 #pragma once
 
-#include "SVGAttributes.h"
+#include "SVGElement.h"
+
+#include <eacp/GPUWidgets/Path/AffineTransform.h>
+#include <eacp/UI/Render/Gradient.h>
 
 namespace eacp::SVG
 {

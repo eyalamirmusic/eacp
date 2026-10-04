@@ -44,6 +44,16 @@ bool isUnder(const FilePath& path, const FilePath& root)
 }
 } // namespace
 
+bool OnlineResources::Entry::isFetching() const
+{
+    return status == Status::fetching;
+}
+
+OnlineResources::OnlineResources()
+    : directory(FilePath::appSupportDirectory() / "Resources")
+{
+}
+
 OnlineResources& OnlineResources::get()
 {
     static OnlineResources instance;

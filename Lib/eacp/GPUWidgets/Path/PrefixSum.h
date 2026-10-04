@@ -2,11 +2,14 @@
 
 #include "../Common.h"
 
-#include <eacp/Core/Utils/Containers.h>
 #include <eacp/GPU/Buffer/Buffer.h>
-#include <eacp/GPU/Frame/ComputePass.h>
 
 #include <optional>
+
+namespace eacp::GPU
+{
+class ComputePass;
+}
 
 namespace eacp::GPUWidgets
 {
@@ -30,7 +33,7 @@ public:
 
     // Dispatches the last run took, which is two per level less one. It is what
     // a batch adds up to say what a frame costs.
-    int getDispatchCount() const { return dispatches; }
+    constexpr int getDispatchCount() const { return dispatches; }
 
 private:
     // One rung: how many elements it sums, how many groups that is, the total

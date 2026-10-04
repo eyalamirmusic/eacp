@@ -93,4 +93,54 @@ void DrawList::addFence()
 {
     append(DrawCommand::Kind::Fence, 0);
 }
+
+bool DrawList::isEmpty() const
+{
+    return commands.empty();
+}
+
+Vector<Text::PlacedGlyph>& DrawList::glyphStorage()
+{
+    return glyphs;
+}
+
+const Vector<DrawCommand>& DrawList::getCommands() const
+{
+    return commands;
+}
+
+const Vector<ShapeDraw>& DrawList::getShapes() const
+{
+    return shapes;
+}
+
+const Vector<Text::PlacedGlyph>& DrawList::getGlyphs() const
+{
+    return glyphs;
+}
+
+const Vector<GlyphRun>& DrawList::getGlyphRuns() const
+{
+    return glyphRuns;
+}
+
+const Vector<MeshDraw>& DrawList::getMeshes() const
+{
+    return meshes;
+}
+
+const Vector<LayerDraw>& DrawList::getLayers() const
+{
+    return layers;
+}
+
+const Vector<ImageDraw>& DrawList::getImages() const
+{
+    return images;
+}
+
+const Vector<ClipDraw>& DrawList::getClips() const
+{
+    return clips;
+}
 } // namespace eacp::UI

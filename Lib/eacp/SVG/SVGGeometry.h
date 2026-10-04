@@ -1,13 +1,14 @@
 #pragma once
 
 #include "Common.h"
-#include "SVGAttributes.h"
-#include "SVGElement.h"
 
 #include <eacp/GPUWidgets/Path/Path.h>
 
 namespace eacp::SVG
 {
+struct SVGElement;
+struct Viewport;
+
 // The elements that are a shape rather than a container or a definition: the
 // six primitives and <path>.
 bool isShapeTag(const std::string& tag);

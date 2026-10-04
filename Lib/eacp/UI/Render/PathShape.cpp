@@ -2,6 +2,7 @@
 
 #include "../Component/Component.h"
 #include "ContentHash.h"
+#include "MaskCache.h"
 
 namespace eacp::UI
 {
@@ -271,5 +272,46 @@ void PathShape::rasterize(CoverageAtlas& atlas,
         cache.publish(geometryHash, path, fillRule, {slot, maskUV, bounds});
         publishedKey = geometryHash;
     }
+}
+
+PathShape::Backing PathShape::getBacking() const
+{
+    return backing;
+}
+
+bool PathShape::isMeshed() const
+{
+    return !mesh.empty();
+}
+
+bool PathShape::isSharingMask() const
+{
+    return sharing;
+}
+
+Rect PathShape::getMaskUV() const
+{
+    return maskUV;
+}
+
+const Vector<GPUWidgets::MeshVertex>& PathShape::getMesh() const
+{
+    return mesh;
+}
+
+bool PathShape::wasDropped() const
+{
+    return dropped;
+}
+
+void PathShape::invalidate()
+{
+    dirty = true;
+    placed = false;
+}
+
+bool PathShape::isDirty() const
+{
+    return dirty;
 }
 } // namespace eacp::UI

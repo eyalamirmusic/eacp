@@ -58,7 +58,7 @@ struct DirectoryEntry
     int depth = 0;
     bool isHidden = false;
 
-    File file() const { return File {path}; }
+    File file() const;
 };
 
 struct TraversalError

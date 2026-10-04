@@ -8,6 +8,12 @@ namespace eacp::UI
 {
 namespace
 {
+// A unit-quad corner, each component 0 or 1, mapped onto every image's box.
+struct ImageVertex
+{
+    float corner[2];
+};
+
 constexpr ImageVertex imageUnitQuad[] = {
     {{0.f, 0.f}},
     {{1.f, 0.f}},
@@ -241,5 +247,15 @@ void ImageBatch::draw(const GPU::Texture& texture,
 void ImageBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)
 {
     visit(Program {}.graph());
+}
+
+bool ImageBatch::isEmpty() const
+{
+    return instances.empty();
+}
+
+int ImageBatch::getDrawCount() const
+{
+    return draws;
 }
 } // namespace eacp::UI

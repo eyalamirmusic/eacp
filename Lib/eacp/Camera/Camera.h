@@ -1,6 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Core.h>
+#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {
@@ -70,20 +70,20 @@ public:
                 const std::uint8_t* data,
                 void* nativeBuffer);
 
-    int width() const { return frameWidth; }
-    int height() const { return frameHeight; }
-    PixelFormat format() const { return pixelFormat; }
-    int bytesPerRow() const { return rowBytes; }
-    double timestampSeconds() const { return timestamp; }
+    constexpr int width() const { return frameWidth; }
+    constexpr int height() const { return frameHeight; }
+    constexpr PixelFormat format() const { return pixelFormat; }
+    constexpr int bytesPerRow() const { return rowBytes; }
+    constexpr double timestampSeconds() const { return timestamp; }
 
     // The raw pixel bytes (BGRA for PixelFormat::BGRA8), rows bytesPerRow apart
     // — which may exceed width * 4 when the row is padded. Null when the backend
     // could not map the buffer.
-    const std::uint8_t* data() const { return pixels; }
+    constexpr const std::uint8_t* data() const { return pixels; }
 
     // The platform pixel buffer (CVPixelBufferRef on macOS) for zero-copy GPU
     // upload. Null on backends that don't expose one.
-    void* nativeBuffer() const { return buffer; }
+    constexpr void* nativeBuffer() const { return buffer; }
 
     // A tightly packed RGBA copy of the frame (top-left origin), ready for
     // Graphics::Image consumers and GPU upload. Returns an empty image when the

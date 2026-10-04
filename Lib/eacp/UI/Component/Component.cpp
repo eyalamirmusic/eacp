@@ -387,4 +387,136 @@ int Component::countComponentsInTree() const
 
     return total;
 }
+
+const Rect& Component::getBounds() const
+{
+    return bounds;
+}
+
+Rect Component::getLocalBounds() const
+{
+    return {0.f, 0.f, bounds.w, bounds.h};
+}
+
+float Component::getWidth() const
+{
+    return bounds.w;
+}
+
+float Component::getHeight() const
+{
+    return bounds.h;
+}
+
+const Vector<Component*>& Component::getChildren() const
+{
+    return children;
+}
+
+Component* Component::getParentComponent() const
+{
+    return parent;
+}
+
+bool Component::isVisible() const
+{
+    return visible;
+}
+
+bool Component::getInterceptsMouseClicks() const
+{
+    return interceptsMouseClicks;
+}
+
+eacp::Graphics::MouseCursor Component::getMouseCursor() const
+{
+    return cursor;
+}
+
+bool Component::needsRepaint() const
+{
+    return selfDirty;
+}
+
+void Component::paint(Graphics&) {}
+
+void Component::paintOverChildren(Graphics&) {}
+
+void Component::resized() {}
+
+void Component::mouseEnter(const MouseEvent&) {}
+
+void Component::mouseExit(const MouseEvent&) {}
+
+void Component::mouseDown(const MouseEvent&) {}
+
+void Component::mouseDrag(const MouseEvent&) {}
+
+void Component::mouseUp(const MouseEvent&) {}
+
+void Component::mouseMove(const MouseEvent&) {}
+
+bool Component::mouseWheelMove(const MouseEvent&)
+{
+    return false;
+}
+
+bool Component::getWantsKeyboardFocus() const
+{
+    return wantsKeyboardFocus;
+}
+
+void Component::focusGained() {}
+
+void Component::focusLost() {}
+
+bool Component::keyDown(const KeyEvent&)
+{
+    return false;
+}
+
+bool Component::keyUp(const KeyEvent&)
+{
+    return false;
+}
+
+ComponentHost* Component::getHost() const
+{
+    return findHost();
+}
+
+bool Component::isMouseOver() const
+{
+    return mouseOver;
+}
+
+const Vector<PathShape*>& Component::getPathShapes() const
+{
+    return pathShapes;
+}
+
+DragAndDropTarget* Component::getDropTarget() const
+{
+    return dropTarget;
+}
+
+const Vector<Layer*>& Component::getLayers() const
+{
+    return layers;
+}
+
+void Component::setDropTarget(DragAndDropTarget* target)
+{
+    dropTarget = target;
+}
+
+void Component::setDragContainer(DragAndDropContainer* container)
+{
+    dragContainer = container;
+}
+
+bool Component::needsRecording() const
+{
+    return selfDirty || descendantDirty;
+}
 } // namespace eacp::UI

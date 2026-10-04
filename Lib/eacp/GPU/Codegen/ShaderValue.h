@@ -407,91 +407,6 @@ struct ThreadPosition3
     UInt z;
 };
 
-namespace detail
-{
-// One element of a storage buffer, whichever way the kernel declared it. Both
-// backends subscript the binding they were given, so a read is the same node
-// and the same emitted text for an input and for an output.
-template <typename T>
-T readBufferElement(ShaderGraph* graph, int slot, const UInt& index)
-{
-    auto result = T {};
-    result.graph = graph;
-    result.node = graph->addBufferRead(slot, index.node);
-    return result;
-}
-
-// A literal element index, anchored on the buffer's own graph - the same
-// courtesy AtomicBuffer::load extends to its counter, and worth as much here: a
-// buffer holding one number, a scale or a total another kernel arrived at, is
-// addressed at element zero and nowhere else.
-UInt bufferIndex(ShaderGraph* graph, unsigned index);
-
-// The first element of record `index` in a buffer of `count`-wide records,
-// which is the one index a vector read and its matching write share.
-int recordBase(ShaderGraph* graph, const UInt& index, int count);
-
-// count consecutive elements starting at index * count, assembled into a
-// vector, as count separate subscripts. A buffer stays a run of floats on every
-// backend - this is arithmetic over the binding that already works, not a
-// retyped one - so what it costs is count scalar loads. See
-// ShaderBuilder::write for the store that lays the same layout down.
-//
-// What a *read-only* buffer takes instead is readBufferVectorLoad below. This
-// is what an output takes, and the difference is not a missing optimisation:
-// an output may hold what this very thread stored into it a statement ago, and
-// the subscript through the pointer that was written is what orders the two.
-// A load through a second pointer of another type has nothing saying it may not
-// be hoisted above the store.
-//
-// Which is also why one GPU::Buffer must not be bound to an input slot and an
-// output slot of the same kernel, as InputBuffer's own comment says: the
-// emitter orders a read against the stores to *its slot*, not against the
-// stores to whatever resource the slot was bound, so an input's packed load is
-// unordered against a write through the output slot that happens to name the
-// same buffer. A kernel computing in place declares one OutputBuffer and reads
-// that.
-template <typename T>
-T readBufferVector(
-    ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
-{
-    auto base = recordBase(graph, index, count);
-
-    auto components = Vector<int> {};
-
-    for (auto i = 0; i < count; ++i)
-    {
-        auto element = i == 0
-                           ? base
-                           : graph->addBinary(ValueType::UInt,
-                                              '+',
-                                              base,
-                                              graph->addUIntConstant((unsigned) i));
-
-        components.add(graph->addBufferRead(slot, element));
-    }
-
-    auto result = T {};
-    result.graph = graph;
-    result.node = graph->addConstruct(type, std::move(components));
-    return result;
-}
-
-// The same run of elements as one node, which Metal makes one load of and the
-// other two print as exactly the construct above. Read-only buffers only.
-template <typename T>
-T readBufferVectorLoad(
-    ShaderGraph* graph, int slot, const UInt& index, ValueType type, int count)
-{
-    auto result = T {};
-    result.graph = graph;
-    result.node =
-        graph->addBufferVectorRead(slot, recordBase(graph, index, count), type);
-
-    return result;
-}
-} // namespace detail
-
 // Eight values out of one word, which is wider than any vector the three
 // languages share - none of them has a float8, and inventing one in the EDSL
 // would leave nothing to emit it into. So the eight nibbles of a word come back
@@ -552,18 +467,12 @@ struct Float4Quad
 // reads it.
 struct InputBuffer
 {
-    Float operator[](const UInt& index) const
-    {
-        return detail::readBufferElement<Float>(graph, slot, index);
-    }
+    Float operator[](const UInt& index) const;
 
     // A literal index, which is what a broadcast reads: the one element every
     // thread of a dispatch wants has no index to compute, and manufacturing one
     // through a var() would name a mutable local for a constant.
-    Float operator[](unsigned index) const
-    {
-        return (*this)[detail::bufferIndex(graph, index)];
-    }
+    Float operator[](unsigned index) const;
 
     // The vector reads, for a buffer whose elements are records rather than
     // single floats: read4(i) is elements 4i..4i+3 as a Float4, which is what a
@@ -582,39 +491,13 @@ struct InputBuffer
     // emitter's metalPackedVectorType.
     //
     // OutputBuffer's siblings stay scalar on every backend on purpose; the
-    // comment on readBufferVector says why.
-    Float2 read2(const UInt& index) const
-    {
-        return detail::readBufferVectorLoad<Float2>(
-            graph, slot, index, ValueType::Float2, 2);
-    }
-
-    Float3 read3(const UInt& index) const
-    {
-        return detail::readBufferVectorLoad<Float3>(
-            graph, slot, index, ValueType::Float3, 3);
-    }
-
-    Float4 read4(const UInt& index) const
-    {
-        return detail::readBufferVectorLoad<Float4>(
-            graph, slot, index, ValueType::Float4, 4);
-    }
-
-    Float2 read2(unsigned index) const
-    {
-        return read2(detail::bufferIndex(graph, index));
-    }
-
-    Float3 read3(unsigned index) const
-    {
-        return read3(detail::bufferIndex(graph, index));
-    }
-
-    Float4 read4(unsigned index) const
-    {
-        return read4(detail::bufferIndex(graph, index));
-    }
+    // comment on readBufferVector in ShaderValue.cpp says why.
+    Float2 read2(const UInt& index) const;
+    Float3 read3(const UInt& index) const;
+    Float4 read4(const UInt& index) const;
+    Float2 read2(unsigned index) const;
+    Float3 read3(unsigned index) const;
+    Float4 read4(unsigned index) const;
 
     // The fp16 reads, for a buffer whose elements are halves: readHalf counts
     // in halves, readHalf2 in the words that hold two of them, readHalf4 in
@@ -719,52 +602,19 @@ struct OutputBuffer
     //
     // It is also how a kernel computes in place: write(output, i, f(output[i]))
     // over the buffer it was handed, one binding and no second allocation.
-    Float operator[](const UInt& index) const
-    {
-        return detail::readBufferElement<Float>(graph, slot, index);
-    }
-
-    Float operator[](unsigned index) const
-    {
-        return (*this)[detail::bufferIndex(graph, index)];
-    }
+    Float operator[](const UInt& index) const;
+    Float operator[](unsigned index) const;
 
     // The record reads, pairing with the Float2/Float3/Float4 overloads of
     // ShaderBuilder::write on the same terms InputBuffer's do: the index counts
     // records, so a kernel reading back what it wrote spells the same index it
     // wrote at.
-    Float2 read2(const UInt& index) const
-    {
-        return detail::readBufferVector<Float2>(
-            graph, slot, index, ValueType::Float2, 2);
-    }
-
-    Float3 read3(const UInt& index) const
-    {
-        return detail::readBufferVector<Float3>(
-            graph, slot, index, ValueType::Float3, 3);
-    }
-
-    Float4 read4(const UInt& index) const
-    {
-        return detail::readBufferVector<Float4>(
-            graph, slot, index, ValueType::Float4, 4);
-    }
-
-    Float2 read2(unsigned index) const
-    {
-        return read2(detail::bufferIndex(graph, index));
-    }
-
-    Float3 read3(unsigned index) const
-    {
-        return read3(detail::bufferIndex(graph, index));
-    }
-
-    Float4 read4(unsigned index) const
-    {
-        return read4(detail::bufferIndex(graph, index));
-    }
+    Float2 read2(const UInt& index) const;
+    Float3 read3(const UInt& index) const;
+    Float4 read4(const UInt& index) const;
+    Float2 read2(unsigned index) const;
+    Float3 read3(unsigned index) const;
+    Float4 read4(unsigned index) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -778,53 +628,20 @@ struct OutputBuffer
 // 2^24.
 struct UIntInputBuffer
 {
-    UInt operator[](const UInt& index) const
-    {
-        return detail::readBufferElement<UInt>(graph, slot, index);
-    }
-
-    UInt operator[](unsigned index) const
-    {
-        return (*this)[detail::bufferIndex(graph, index)];
-    }
+    UInt operator[](const UInt& index) const;
+    UInt operator[](unsigned index) const;
 
     // The record reads, for a buffer whose elements are records of integers
     // rather than single ones: read4(i) is elements 4i..4i+3 as a UInt4. The
     // index is in records, not in elements - read4(i) and the matching
     // write(output, i, UInt4) address the same record - so a kernel never
     // spells the stride itself. One load on Metal, as InputBuffer's are.
-    UInt2 read2(const UInt& index) const
-    {
-        return detail::readBufferVectorLoad<UInt2>(
-            graph, slot, index, ValueType::UInt2, 2);
-    }
-
-    UInt3 read3(const UInt& index) const
-    {
-        return detail::readBufferVectorLoad<UInt3>(
-            graph, slot, index, ValueType::UInt3, 3);
-    }
-
-    UInt4 read4(const UInt& index) const
-    {
-        return detail::readBufferVectorLoad<UInt4>(
-            graph, slot, index, ValueType::UInt4, 4);
-    }
-
-    UInt2 read2(unsigned index) const
-    {
-        return read2(detail::bufferIndex(graph, index));
-    }
-
-    UInt3 read3(unsigned index) const
-    {
-        return read3(detail::bufferIndex(graph, index));
-    }
-
-    UInt4 read4(unsigned index) const
-    {
-        return read4(detail::bufferIndex(graph, index));
-    }
+    UInt2 read2(const UInt& index) const;
+    UInt3 read3(const UInt& index) const;
+    UInt4 read4(const UInt& index) const;
+    UInt2 read2(unsigned index) const;
+    UInt3 read3(unsigned index) const;
+    UInt4 read4(unsigned index) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -835,56 +652,23 @@ struct UIntOutputBuffer
     // What the element holds: what this thread stored into it earlier in the
     // kernel, or what the buffer was bound holding where it stored nothing -
     // read-after-write within one thread, on the terms OutputBuffer sets.
-    UInt operator[](const UInt& index) const
-    {
-        return detail::readBufferElement<UInt>(graph, slot, index);
-    }
-
-    UInt operator[](unsigned index) const
-    {
-        return (*this)[detail::bufferIndex(graph, index)];
-    }
+    UInt operator[](const UInt& index) const;
+    UInt operator[](unsigned index) const;
 
     // The record reads, pairing with the UInt2/UInt3/UInt4 overloads of
     // ShaderBuilder::write on the terms UIntInputBuffer's do: the index counts
     // records, so a kernel reading back what it wrote spells the same index it
     // wrote at.
-    UInt2 read2(const UInt& index) const
-    {
-        return detail::readBufferVector<UInt2>(
-            graph, slot, index, ValueType::UInt2, 2);
-    }
-
-    UInt3 read3(const UInt& index) const
-    {
-        return detail::readBufferVector<UInt3>(
-            graph, slot, index, ValueType::UInt3, 3);
-    }
-
-    UInt4 read4(const UInt& index) const
-    {
-        return detail::readBufferVector<UInt4>(
-            graph, slot, index, ValueType::UInt4, 4);
-    }
-
-    UInt2 read2(unsigned index) const
-    {
-        return read2(detail::bufferIndex(graph, index));
-    }
-
-    UInt3 read3(unsigned index) const
-    {
-        return read3(detail::bufferIndex(graph, index));
-    }
-
-    UInt4 read4(unsigned index) const
-    {
-        return read4(detail::bufferIndex(graph, index));
-    }
+    UInt2 read2(const UInt& index) const;
+    UInt3 read3(const UInt& index) const;
+    UInt4 read4(const UInt& index) const;
+    UInt2 read2(unsigned index) const;
+    UInt3 read3(unsigned index) const;
+    UInt4 read4(unsigned index) const;
 
     // A literal anchored on this buffer's own graph, as AtomicBuffer's is: an
     // id a kernel writes outright rather than computes.
-    UInt literal(unsigned value) const { return detail::bufferIndex(graph, value); }
+    UInt literal(unsigned value) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -908,27 +692,15 @@ struct AtomicBuffer
     // operations and nothing else - relaxed, like the add - so it answers "how
     // many are there" after a dispatch, not "what is the other threads' state"
     // during one.
-    UInt load(const UInt& index) const
-    {
-        auto result = UInt {};
-        result.graph = graph;
-        result.node = graph->addAtomicLoad(slot, index.node);
-        return result;
-    }
+    UInt load(const UInt& index) const;
 
     // A literal index, anchored on this buffer's own graph - the same courtesy
     // the intrinsics extend to a float literal, and worth more here, because a
     // single shared counter is spelled at element zero and would otherwise be
     // the one index a kernel could not write.
-    UInt load(unsigned index) const { return load(literal(index)); }
+    UInt load(unsigned index) const;
 
-    UInt literal(unsigned value) const
-    {
-        auto result = UInt {};
-        result.graph = graph;
-        result.node = graph->addUIntConstant(value);
-        return result;
-    }
+    UInt literal(unsigned value) const;
 
     ShaderGraph* graph = nullptr;
     int slot = -1;
@@ -2306,34 +2078,21 @@ struct Var
 // there are no implicit conversions between the two; cross over with toFloat().
 // Subtraction wraps below zero like the languages it emits into, so guard a
 // backwards step with max(), or wrap deliberately with %.
-#define EACP_UINT_OPERATOR(name, spelling)                                          \
-    inline UInt name(const UInt& lhs, const UInt& rhs)                              \
-    {                                                                               \
-        return detail::binaryOp<UInt>(spelling, lhs, rhs);                          \
-    }                                                                               \
-                                                                                    \
-    inline UInt name(const UInt& lhs, unsigned rhs)                                 \
-    {                                                                               \
-        return detail::binaryOp<UInt>(                                              \
-            spelling, lhs, detail::uintConstantOn(lhs, rhs));                       \
-    }                                                                               \
-                                                                                    \
-    inline UInt name(unsigned lhs, const UInt& rhs)                                 \
-    {                                                                               \
-        return detail::binaryOp<UInt>(                                              \
-            spelling, detail::uintConstantOn(rhs, lhs), rhs);                       \
-    }
+#define EACP_UINT_OPERATOR(name)                                                    \
+    UInt name(const UInt& lhs, const UInt& rhs);                                    \
+    UInt name(const UInt& lhs, unsigned rhs);                                       \
+    UInt name(unsigned lhs, const UInt& rhs);
 
-EACP_UINT_OPERATOR(operator+, '+')
-EACP_UINT_OPERATOR(operator-, '-')
-EACP_UINT_OPERATOR(operator*, '*')
-EACP_UINT_OPERATOR(operator/, '/')
-EACP_UINT_OPERATOR(operator%, '%')
-EACP_UINT_OPERATOR(operator&, '&')
-EACP_UINT_OPERATOR(operator|, '|')
-EACP_UINT_OPERATOR(operator^, '^')
-EACP_UINT_OPERATOR(operator<<, "<<")
-EACP_UINT_OPERATOR(operator>>, ">>")
+EACP_UINT_OPERATOR(operator+)
+EACP_UINT_OPERATOR(operator-)
+EACP_UINT_OPERATOR(operator*)
+EACP_UINT_OPERATOR(operator/)
+EACP_UINT_OPERATOR(operator%)
+EACP_UINT_OPERATOR(operator&)
+EACP_UINT_OPERATOR(operator|)
+EACP_UINT_OPERATOR(operator^)
+EACP_UINT_OPERATOR(operator<<)
+EACP_UINT_OPERATOR(operator>>)
 
 #undef EACP_UINT_OPERATOR
 
@@ -2427,34 +2186,21 @@ ShaderHandle<L> max(const L& a, const R& b)
 // Division and the remainder truncate towards zero on a negative operand, as
 // they do in GLSL and in both languages this emits into. That is not what
 // floor-based tiling wants: mod() is the floored one, and is spelled for floats.
-#define EACP_INT_OPERATOR(name, spelling)                                           \
-    inline Int name(const Int& lhs, const Int& rhs)                                 \
-    {                                                                               \
-        return detail::binaryOp<Int>(spelling, lhs, rhs);                           \
-    }                                                                               \
-                                                                                    \
-    inline Int name(const Int& lhs, int rhs)                                        \
-    {                                                                               \
-        return detail::binaryOp<Int>(                                               \
-            spelling, lhs, detail::intConstantOn(lhs, rhs));                        \
-    }                                                                               \
-                                                                                    \
-    inline Int name(int lhs, const Int& rhs)                                        \
-    {                                                                               \
-        return detail::binaryOp<Int>(                                               \
-            spelling, detail::intConstantOn(rhs, lhs), rhs);                        \
-    }
+#define EACP_INT_OPERATOR(name)                                                     \
+    Int name(const Int& lhs, const Int& rhs);                                       \
+    Int name(const Int& lhs, int rhs);                                              \
+    Int name(int lhs, const Int& rhs);
 
-EACP_INT_OPERATOR(operator+, '+')
-EACP_INT_OPERATOR(operator-, '-')
-EACP_INT_OPERATOR(operator*, '*')
-EACP_INT_OPERATOR(operator/, '/')
-EACP_INT_OPERATOR(operator%, '%')
-EACP_INT_OPERATOR(operator&, '&')
-EACP_INT_OPERATOR(operator|, '|')
-EACP_INT_OPERATOR(operator^, '^')
-EACP_INT_OPERATOR(operator<<, "<<")
-EACP_INT_OPERATOR(operator>>, ">>")
+EACP_INT_OPERATOR(operator+)
+EACP_INT_OPERATOR(operator-)
+EACP_INT_OPERATOR(operator*)
+EACP_INT_OPERATOR(operator/)
+EACP_INT_OPERATOR(operator%)
+EACP_INT_OPERATOR(operator&)
+EACP_INT_OPERATOR(operator|)
+EACP_INT_OPERATOR(operator^)
+EACP_INT_OPERATOR(operator<<)
+EACP_INT_OPERATOR(operator>>)
 
 #undef EACP_INT_OPERATOR
 
@@ -2551,28 +2297,17 @@ ShaderHandle<T> abs(const T& value)
 
 // Integer comparisons, which the float ones cannot cover: those are constrained
 // on the float scalar shape, and an Int is deliberately not one.
-#define EACP_INT_COMPARISON(name, spelling)                                         \
-    inline Bool name(const Int& lhs, const Int& rhs)                                \
-    {                                                                               \
-        return detail::compare(spelling, lhs, rhs);                                 \
-    }                                                                               \
-                                                                                    \
-    inline Bool name(const Int& lhs, int rhs)                                       \
-    {                                                                               \
-        return detail::compare(spelling, lhs, detail::intConstantOn(lhs, rhs));     \
-    }                                                                               \
-                                                                                    \
-    inline Bool name(int lhs, const Int& rhs)                                       \
-    {                                                                               \
-        return detail::compare(spelling, detail::intConstantOn(rhs, lhs), rhs);     \
-    }
+#define EACP_INT_COMPARISON(name)                                                   \
+    Bool name(const Int& lhs, const Int& rhs);                                      \
+    Bool name(const Int& lhs, int rhs);                                             \
+    Bool name(int lhs, const Int& rhs);
 
-EACP_INT_COMPARISON(operator<, "<")
-EACP_INT_COMPARISON(operator<=, "<=")
-EACP_INT_COMPARISON(operator>, ">")
-EACP_INT_COMPARISON(operator>=, ">=")
-EACP_INT_COMPARISON(operator==, "==")
-EACP_INT_COMPARISON(operator!=, "!=")
+EACP_INT_COMPARISON(operator<)
+EACP_INT_COMPARISON(operator<=)
+EACP_INT_COMPARISON(operator>)
+EACP_INT_COMPARISON(operator>=)
+EACP_INT_COMPARISON(operator==)
+EACP_INT_COMPARISON(operator!=)
 
 #undef EACP_INT_COMPARISON
 
@@ -2581,28 +2316,17 @@ EACP_INT_COMPARISON(operator!=, "!=")
 // count it runs to. The literal overloads take unsigned and record a uint
 // constant node, so a bound is spelled i < 4u exactly as the index arithmetic
 // spells i + 1u.
-#define EACP_UINT_COMPARISON(name, spelling)                                        \
-    inline Bool name(const UInt& lhs, const UInt& rhs)                              \
-    {                                                                               \
-        return detail::compare(spelling, lhs, rhs);                                 \
-    }                                                                               \
-                                                                                    \
-    inline Bool name(const UInt& lhs, unsigned rhs)                                 \
-    {                                                                               \
-        return detail::compare(spelling, lhs, detail::uintConstantOn(lhs, rhs));    \
-    }                                                                               \
-                                                                                    \
-    inline Bool name(unsigned lhs, const UInt& rhs)                                 \
-    {                                                                               \
-        return detail::compare(spelling, detail::uintConstantOn(rhs, lhs), rhs);    \
-    }
+#define EACP_UINT_COMPARISON(name)                                                  \
+    Bool name(const UInt& lhs, const UInt& rhs);                                    \
+    Bool name(const UInt& lhs, unsigned rhs);                                       \
+    Bool name(unsigned lhs, const UInt& rhs);
 
-EACP_UINT_COMPARISON(operator<, "<")
-EACP_UINT_COMPARISON(operator<=, "<=")
-EACP_UINT_COMPARISON(operator>, ">")
-EACP_UINT_COMPARISON(operator>=, ">=")
-EACP_UINT_COMPARISON(operator==, "==")
-EACP_UINT_COMPARISON(operator!=, "!=")
+EACP_UINT_COMPARISON(operator<)
+EACP_UINT_COMPARISON(operator<=)
+EACP_UINT_COMPARISON(operator>)
+EACP_UINT_COMPARISON(operator>=)
+EACP_UINT_COMPARISON(operator==)
+EACP_UINT_COMPARISON(operator!=)
 
 #undef EACP_UINT_COMPARISON
 
@@ -3056,15 +2780,8 @@ Float4x4 operator*(const Float4x4& a, const Float4x4& b);
         return detail::binaryOp<Matrix>('*', scalar, matrix);                       \
     }                                                                               \
                                                                                     \
-    inline Matrix operator*(const Matrix& matrix, float scalar)                     \
-    {                                                                               \
-        return detail::scalarOp<Matrix>('*', matrix, scalar);                       \
-    }                                                                               \
-                                                                                    \
-    inline Matrix operator*(float scalar, const Matrix& matrix)                     \
-    {                                                                               \
-        return detail::scalarOpLeft<Matrix>('*', scalar, matrix);                   \
-    }                                                                               \
+    Matrix operator*(const Matrix& matrix, float scalar);                           \
+    Matrix operator*(float scalar, const Matrix& matrix);                           \
                                                                                     \
     template <ShaderScalarLike S>                                                   \
     Matrix operator/(const Matrix& matrix, const S& scalar)                         \
@@ -3072,10 +2789,7 @@ Float4x4 operator*(const Float4x4& a, const Float4x4& b);
         return detail::binaryOp<Matrix>('/', matrix, scalar);                       \
     }                                                                               \
                                                                                     \
-    inline Matrix operator/(const Matrix& matrix, float scalar)                     \
-    {                                                                               \
-        return detail::scalarOp<Matrix>('/', matrix, scalar);                       \
-    }
+    Matrix operator/(const Matrix& matrix, float scalar);
 
 EACP_MATRIX_SCALE(Float2x2)
 EACP_MATRIX_SCALE(Float3x3)
@@ -3134,7 +2848,7 @@ constexpr int componentsOf()
 
 // The graph the constructed vector records into, taken from the first handle
 // argument (the constraint guarantees one exists).
-inline ShaderGraph* graphOf()
+constexpr ShaderGraph* graphOf()
 {
     return nullptr;
 }
@@ -3223,7 +2937,7 @@ constexpr int handleComponentsOf()
         return componentCount(ValueTypeOf<ShaderHandle<T>>::value);
 }
 
-inline ShaderGraph* handleGraphOf()
+constexpr ShaderGraph* handleGraphOf()
 {
     return nullptr;
 }

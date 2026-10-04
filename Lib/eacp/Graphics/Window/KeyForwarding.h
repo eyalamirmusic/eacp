@@ -1,12 +1,12 @@
 #pragma once
 
 #include "../Graphics/Keyboard.h"
-#include "../View/View.h"
 
 #include <cstdint>
 
 namespace eacp::Graphics
 {
+class View;
 
 struct NativeKeyEvent
 {

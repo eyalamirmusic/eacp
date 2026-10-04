@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../View/View.h"
+#include "../Primitives/Primitives.h"
 
 #include <atomic>
 #include <bitset>
@@ -8,6 +8,8 @@
 
 namespace eacp::Graphics
 {
+
+enum class MouseButton;
 
 enum class InputEventType : uint8_t
 {
@@ -32,7 +34,7 @@ struct InputEvent
 
     double timestamp = 0.0;
 
-    bool isKey() const
+    constexpr bool isKey() const
     {
         return type == InputEventType::KeyDown || type == InputEventType::KeyUp;
     }
@@ -48,49 +50,56 @@ public:
     static constexpr int keyCount = 128;
     static constexpr int buttonCount = 4;
 
-    bool isDown(uint16_t key) const { return inRange(key) && keysDown[key]; }
-    bool wasPressed(uint16_t key) const { return inRange(key) && keysPressed[key]; }
+    constexpr bool isDown(uint16_t key) const
+    {
+        return inRange(key) && keysDown[key];
+    }
 
-    bool wasReleased(uint16_t key) const
+    constexpr bool wasPressed(uint16_t key) const
+    {
+        return inRange(key) && keysPressed[key];
+    }
+
+    constexpr bool wasReleased(uint16_t key) const
     {
         return inRange(key) && keysReleased[key];
     }
 
-    bool isMouseDown(MouseButton button) const
+    constexpr bool isMouseDown(MouseButton button) const
     {
         return buttonsDown[(size_t) button];
     }
 
-    bool wasMousePressed(MouseButton button) const
+    constexpr bool wasMousePressed(MouseButton button) const
     {
         return buttonsPressed[(size_t) button];
     }
 
-    bool wasMouseReleased(MouseButton button) const
+    constexpr bool wasMouseReleased(MouseButton button) const
     {
         return buttonsReleased[(size_t) button];
     }
 
     // The device's movement since the previous snapshot, summed.
-    Point mouseDelta() const { return delta; }
+    constexpr Point mouseDelta() const { return delta; }
 
-    const Vector<InputEvent>& events() const { return frameEvents; }
+    constexpr const Vector<InputEvent>& events() const { return frameEvents; }
 
     // When the snapshot was taken, on GameInputQueue::now()'s clock.
-    double time() const { return snapshotTime; }
+    constexpr double time() const { return snapshotTime; }
 
     // The newest timestamp among events(), or 0 when there were none.
-    double newestEventTime() const { return newestTime; }
+    constexpr double newestEventTime() const { return newestTime; }
 
     // Whether the queue overflowed since the previous snapshot. The state is
     // still right (it was reconciled against the producers' own), but some
     // edges or events in between are missing.
-    bool droppedEvents() const { return dropped; }
+    constexpr bool droppedEvents() const { return dropped; }
 
 private:
     friend class GameInputQueue;
 
-    static bool inRange(uint16_t key) { return key < keyCount; }
+    static constexpr bool inRange(uint16_t key) { return key < keyCount; }
 
     std::bitset<keyCount> keysDown;
     std::bitset<keyCount> keysPressed;

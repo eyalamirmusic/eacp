@@ -103,82 +103,6 @@ void appendItem(HMENU parent, const MenuItem& item, unsigned& nextId)
 
 namespace detail
 {
-void installWin32MenuBar(HWND hwnd, const MenuBar& bar)
-{
-    if (hwnd == nullptr)
-        return;
-
-    removeWin32MenuBar(hwnd);
-
-    auto installed = InstalledBar {};
-    installed.menu = CreateMenu();
-
-    // Both this walk and flattenCommands assign ids by switching on
-    // classifyMenuEntry, so they agree structurally rather than by two
-    // functions having been written to match. MenuCommandsTests covers that
-    // classification, which is the half of the agreement a Mac can check.
-    auto nextId = 1u;
-
-    for (const auto& menu: bar.menus)
-    {
-        auto* popup = buildPopup(menu, nextId);
-
-        // A menu that came out empty is left off the bar entirely. macOS's
-        // standardApplicationMenu is empty here by design — Windows has no
-        // About/Hide/Quit block — and buildDefaultWebViewMenuBar adds it
-        // regardless, so without this five shipped examples grow a top-level
-        // title that opens onto nothing.
-        if (GetMenuItemCount(popup) <= 0)
-        {
-            DestroyMenu(popup);
-            continue;
-        }
-
-        AppendMenuW(installed.menu,
-                    MF_POPUP,
-                    reinterpret_cast<UINT_PTR>(popup),
-                    toMenuText(menu.title).c_str());
-    }
-
-    installed.commands = flattenCommands(bar);
-
-    // The window was sized before it had a menu — AdjustWindowRectExForDpi was
-    // told bMenu = FALSE, because at creation time it was true — and SetMenu
-    // takes the bar's height straight out of the client area. So the content
-    // would silently come up a menu-bar shorter than the size it asked for.
-    // Measured rather than calculated: the bar can wrap to two rows on a narrow
-    // window, and GetSystemMetrics(SM_CYMENU) only ever describes one.
-    RECT client {};
-    GetClientRect(hwnd, &client);
-
-    const auto heightBefore = client.bottom - client.top;
-
-    SetMenu(hwnd, installed.menu);
-
-    // The bar is non-client area, so the window has to be told to redraw it:
-    // without this the menu exists and simply is not painted until something
-    // else forces a frame.
-    DrawMenuBar(hwnd);
-
-    GetClientRect(hwnd, &client);
-
-    if (const auto lost = heightBefore - (client.bottom - client.top); lost > 0)
-    {
-        RECT frame {};
-        GetWindowRect(hwnd, &frame);
-
-        SetWindowPos(hwnd,
-                     nullptr,
-                     0,
-                     0,
-                     frame.right - frame.left,
-                     (frame.bottom - frame.top) + lost,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-
-    installedBars()[hwnd] = std::move(installed);
-}
-
 bool handleWin32MenuCommand(HWND hwnd, unsigned id)
 {
     auto& bars = installedBars();
@@ -255,6 +179,87 @@ void removeWin32MenuBar(HWND hwnd)
 }
 } // namespace detail
 
+namespace
+{
+// Builds the native menu, attaches it to `hwnd` and drops whatever was there
+// before. Safe to call repeatedly on the same window.
+void installWin32MenuBar(HWND hwnd, const MenuBar& bar)
+{
+    if (hwnd == nullptr)
+        return;
+
+    detail::removeWin32MenuBar(hwnd);
+
+    auto installed = InstalledBar {};
+    installed.menu = CreateMenu();
+
+    // Both this walk and flattenCommands assign ids by switching on
+    // classifyMenuEntry, so they agree structurally rather than by two
+    // functions having been written to match. MenuCommandsTests covers that
+    // classification, which is the half of the agreement a Mac can check.
+    auto nextId = 1u;
+
+    for (const auto& menu: bar.menus)
+    {
+        auto* popup = buildPopup(menu, nextId);
+
+        // A menu that came out empty is left off the bar entirely. macOS's
+        // standardApplicationMenu is empty here by design — Windows has no
+        // About/Hide/Quit block — and buildDefaultWebViewMenuBar adds it
+        // regardless, so without this five shipped examples grow a top-level
+        // title that opens onto nothing.
+        if (GetMenuItemCount(popup) <= 0)
+        {
+            DestroyMenu(popup);
+            continue;
+        }
+
+        AppendMenuW(installed.menu,
+                    MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(popup),
+                    toMenuText(menu.title).c_str());
+    }
+
+    installed.commands = flattenCommands(bar);
+
+    // The window was sized before it had a menu — AdjustWindowRectExForDpi was
+    // told bMenu = FALSE, because at creation time it was true — and SetMenu
+    // takes the bar's height straight out of the client area. So the content
+    // would silently come up a menu-bar shorter than the size it asked for.
+    // Measured rather than calculated: the bar can wrap to two rows on a narrow
+    // window, and GetSystemMetrics(SM_CYMENU) only ever describes one.
+    RECT client {};
+    GetClientRect(hwnd, &client);
+
+    const auto heightBefore = client.bottom - client.top;
+
+    SetMenu(hwnd, installed.menu);
+
+    // The bar is non-client area, so the window has to be told to redraw it:
+    // without this the menu exists and simply is not painted until something
+    // else forces a frame.
+    DrawMenuBar(hwnd);
+
+    GetClientRect(hwnd, &client);
+
+    if (const auto lost = heightBefore - (client.bottom - client.top); lost > 0)
+    {
+        RECT frame {};
+        GetWindowRect(hwnd, &frame);
+
+        SetWindowPos(hwnd,
+                     nullptr,
+                     0,
+                     0,
+                     frame.right - frame.left,
+                     (frame.bottom - frame.top) + lost,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    installedBars()[hwnd] = std::move(installed);
+}
+} // namespace
+
 void setApplicationMenuBar(const MenuBar& bar, Window& window)
 {
     // Windows has no application menu bar — a menu belongs to a window and is
@@ -269,7 +274,7 @@ void setApplicationMenuBar(const MenuBar& bar, Window& window)
     // `command` for the *Windows* key here, so an app binding cmd+S prints
     // Ctrl+S and responds to Win+S until that mapping is settled. See
     // acceleratorText in MenuCommands.h.
-    detail::installWin32MenuBar(static_cast<HWND>(window.getHandle()), bar);
+    installWin32MenuBar(static_cast<HWND>(window.getHandle()), bar);
 }
 
 Menu standardApplicationMenu(std::string applicationName)

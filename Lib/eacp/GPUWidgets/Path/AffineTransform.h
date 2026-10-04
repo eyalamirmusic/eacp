@@ -2,9 +2,6 @@
 
 #include "../Common.h"
 
-#include <algorithm>
-#include <cmath>
-
 namespace eacp::GPUWidgets
 {
 // A 2D affine transform, applied to a point as
@@ -21,39 +18,25 @@ namespace eacp::GPUWidgets
 // list is written in, so nothing has to be reversed at the call site.
 struct AffineTransform
 {
-    static AffineTransform translation(float x, float y)
+    static constexpr AffineTransform translation(float x, float y)
     {
         return {1.f, 0.f, 0.f, 1.f, x, y};
     }
 
-    static AffineTransform scaling(float x, float y)
+    static constexpr AffineTransform scaling(float x, float y)
     {
         return {x, 0.f, 0.f, y, 0.f, 0.f};
     }
 
-    static AffineTransform rotation(float radians)
-    {
-        auto cosine = std::cos(radians);
-        auto sine = std::sin(radians);
+    static AffineTransform rotation(float radians);
 
-        return {cosine, sine, -sine, cosine, 0.f, 0.f};
-    }
-
-    static AffineTransform skew(float radiansX, float radiansY)
-    {
-        return {1.f, std::tan(radiansY), std::tan(radiansX), 1.f, 0.f, 0.f};
-    }
+    static AffineTransform skew(float radiansX, float radiansY);
 
     static AffineTransform rotationAbout(float radians,
-                                         const Graphics::Point& centre)
-    {
-        return translation(-centre.x, -centre.y)
-            .then(rotation(radians))
-            .then(translation(centre.x, centre.y));
-    }
+                                         const Graphics::Point& centre);
 
     // This transform first, then `next`.
-    AffineTransform then(const AffineTransform& next) const
+    constexpr AffineTransform then(const AffineTransform& next) const
     {
         return {next.a * a + next.c * b,
                 next.b * a + next.d * b,
@@ -63,67 +46,29 @@ struct AffineTransform
                 next.b * tx + next.d * ty + next.ty};
     }
 
-    Graphics::Point apply(const Graphics::Point& point) const
-    {
-        return {a * point.x + c * point.y + tx, b * point.x + d * point.y + ty};
-    }
+    Graphics::Point apply(const Graphics::Point& point) const;
 
     // The upright rectangle round the four corners of `rect` once they have
     // been through this. Not the transform of a rectangle -- a turned one is
     // not a rectangle -- but what a caller placing a scissor, sizing a texture
     // or asking what was touched actually needs.
-    Graphics::Rect apply(const Graphics::Rect& rect) const
-    {
-        auto topLeft = apply({rect.x, rect.y});
-        auto topRight = apply({rect.right(), rect.y});
-        auto bottomLeft = apply({rect.x, rect.bottom()});
-        auto bottomRight = apply({rect.right(), rect.bottom()});
-
-        auto left = std::min(std::min(topLeft.x, topRight.x),
-                             std::min(bottomLeft.x, bottomRight.x));
-        auto right = std::max(std::max(topLeft.x, topRight.x),
-                              std::max(bottomLeft.x, bottomRight.x));
-        auto top = std::min(std::min(topLeft.y, topRight.y),
-                            std::min(bottomLeft.y, bottomRight.y));
-        auto bottom = std::max(std::max(topLeft.y, topRight.y),
-                               std::max(bottomLeft.y, bottomRight.y));
-
-        return {left, top, right - left, bottom - top};
-    }
+    Graphics::Rect apply(const Graphics::Rect& rect) const;
 
     // How much this magnifies a length, as one number: the square root of the
     // area scale. Exact for a rotation or a uniform scale, and the usual
     // compromise for anything else - a stroke width has to become a single
     // number whatever the matrix did to the two axes, and this is the number SVG
     // itself picks for that.
-    float getScaleFactor() const { return std::sqrt(std::abs(a * d - b * c)); }
+    float getScaleFactor() const;
 
-    float getDeterminant() const { return a * d - b * c; }
+    constexpr float getDeterminant() const { return a * d - b * c; }
 
     // The transform that undoes this one, or the identity when there is none --
     // which is a matrix that collapsed the plane onto a line or a point, and has
     // no inverse to give. A caller that needs to know asks getDeterminant.
-    AffineTransform inverted() const
-    {
-        auto determinant = getDeterminant();
+    AffineTransform inverted() const;
 
-        if (std::abs(determinant) < 1e-12f)
-            return {};
-
-        auto inverseA = d / determinant;
-        auto inverseB = -b / determinant;
-        auto inverseC = -c / determinant;
-        auto inverseD = a / determinant;
-
-        return {inverseA,
-                inverseB,
-                inverseC,
-                inverseD,
-                -(inverseA * tx + inverseC * ty),
-                -(inverseB * tx + inverseD * ty)};
-    }
-
-    bool isIdentity() const
+    constexpr bool isIdentity() const
     {
         return a == 1.f && b == 0.f && c == 0.f && d == 1.f && tx == 0.f
                && ty == 0.f;
@@ -133,7 +78,7 @@ struct AffineTransform
     // placed by the same matrix -- and two matrices composed the same way out of
     // the same numbers are bit-identical, while two that merely look alike are a
     // different placement and deserve their own entry.
-    bool operator==(const AffineTransform& other) const
+    constexpr bool operator==(const AffineTransform& other) const
     {
         return a == other.a && b == other.b && c == other.c && d == other.d
                && tx == other.tx && ty == other.ty;

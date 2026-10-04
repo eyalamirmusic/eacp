@@ -8,7 +8,8 @@ target_link_libraries(eacp-sprites PUBLIC eacp-gpu)
 
 target_sources(eacp-sprites PRIVATE
         Fit.cpp
-        SpriteRenderer.cpp)
+        SpriteRenderer.cpp
+        SpriteShaders.cpp)
 
 set_default_target_setting(eacp-sprites)
 eacp_enable_unity_build(eacp-sprites)

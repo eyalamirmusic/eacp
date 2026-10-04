@@ -20,6 +20,11 @@ void sleep(MS duration)
     std::this_thread::sleep_for(std::chrono::milliseconds {duration.count});
 }
 
+void sleepMS(int ms)
+{
+    sleep(MS {ms});
+}
+
 Deadline::Deadline(MS timeout)
     : end(nowMs() + timeout.count)
 {

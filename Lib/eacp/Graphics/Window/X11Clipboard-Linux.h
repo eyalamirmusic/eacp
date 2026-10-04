@@ -66,8 +66,8 @@ private:
 
     bool ensureWindow();
 
-    xcb_connection_t* xcb() const { return connection.getConnection(); }
-    const X11Atoms& atoms() const { return connection.getAtoms(); }
+    constexpr xcb_connection_t* xcb() const { return connection.getConnection(); }
+    constexpr const X11Atoms& atoms() const { return connection.getAtoms(); }
 
     xcb_window_t selectionOwner();
     bool takeSelection(std::string data, Content kind);

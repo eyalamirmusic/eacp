@@ -26,7 +26,7 @@ namespace eacp::GPU
 // integer vectors, signed and unsigned alike, are not in that position - both
 // pack an int2 or a uint2 exactly where they pack a float2 - so those cross like
 // their scalars do.
-inline int uniformAlignment(ValueType type)
+constexpr int uniformAlignment(ValueType type)
 {
     switch (type)
     {
@@ -57,7 +57,7 @@ inline int uniformAlignment(ValueType type)
     return 4;
 }
 
-inline int uniformSlotStride(ValueType type)
+constexpr int uniformSlotStride(ValueType type)
 {
     if (type == ValueType::Float3 || type == ValueType::UInt3
         || type == ValueType::Int3 || type == ValueType::Bool3)
@@ -71,32 +71,19 @@ inline int uniformSlotStride(ValueType type)
     return byteSize(type);
 }
 
-inline int alignUp(int value, int alignment)
+constexpr int alignUp(int value, int alignment)
 {
     return (value + alignment - 1) / alignment * alignment;
 }
 
 // The byte offset of every uniform field in the packed block.
-inline Vector<int> uniformOffsets(const Vector<ValueType>& types)
-{
-    auto offsets = Vector<int> {};
-    auto cursor = 0;
-
-    for (auto type: types)
-    {
-        auto offset = alignUp(cursor, uniformAlignment(type));
-        offsets.add(offset);
-        cursor = offset + uniformSlotStride(type);
-    }
-
-    return offsets;
-}
+Vector<int> uniformOffsets(const Vector<ValueType>& types);
 
 // Where HLSL cbuffer packing would place a field on its own: it only forbids a
 // value straddling a 16-byte register, it does not align a vector to its size
 // the way MSL does. Wherever this lands below the MSL offset the HLSL emitter
 // inserts explicit pad scalars so both backends read the same packed bytes.
-inline int hlslPackedOffset(int cursor, ValueType type)
+constexpr int hlslPackedOffset(int cursor, ValueType type)
 {
     if (isMatrix(type))
         return alignUp(cursor, 16);
@@ -107,32 +94,15 @@ inline int hlslPackedOffset(int cursor, ValueType type)
 }
 
 // std140 sizes a vec3 at 12 bytes where MSL gives 16, so a scalar after one pads.
-inline int std140PackedOffset(int cursor, ValueType type)
+constexpr int std140PackedOffset(int cursor, ValueType type)
 {
     return alignUp(cursor, uniformAlignment(type));
 }
 
-inline int uniformBlockSize(const Vector<ValueType>& types)
-{
-    auto cursor = 0;
-    auto blockAlignment = 1;
-
-    for (auto type: types)
-    {
-        cursor = alignUp(cursor, uniformAlignment(type)) + uniformSlotStride(type);
-
-        if (uniformAlignment(type) > blockAlignment)
-            blockAlignment = uniformAlignment(type);
-    }
-
-    return alignUp(cursor, blockAlignment);
-}
+int uniformBlockSize(const Vector<ValueType>& types);
 
 // A dynamic uniform range shorter than the std140 block fails validation.
 constexpr int std140BlockAlignment = 16;
 
-inline int std140BlockSize(const Vector<ValueType>& types)
-{
-    return alignUp(uniformBlockSize(types), std140BlockAlignment);
-}
+int std140BlockSize(const Vector<ValueType>& types);
 } // namespace eacp::GPU

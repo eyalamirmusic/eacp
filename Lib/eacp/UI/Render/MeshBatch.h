@@ -3,18 +3,13 @@
 #include "../Common.h"
 #include "ClipMask.h"
 #include "CoverageAtlas.h"
-#include "GradientRamps.h"
+#include "Gradient.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
 namespace eacp::UI
 {
-// Which corner of its triangle a vertex is: 0, 1 or 2. The whole per-vertex
-// stream, because the geometry itself is per-instance -- see MeshTriangle.
-struct MeshCorner
-{
-    float index;
-};
+class GradientRamps;
 
 // One triangle of a filled shape. Per-instance rather than per-vertex, and that
 // is the reason this renderer looks the way it does: a program's vertex buffer
@@ -112,7 +107,7 @@ public:
                  const Color& color,
                  const GradientFill& gradient = {});
 
-    bool isEmpty() const { return triangles.empty(); }
+    bool isEmpty() const;
 
     static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
 

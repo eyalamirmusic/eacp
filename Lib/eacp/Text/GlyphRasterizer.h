@@ -141,7 +141,7 @@ public:
     // In device pixels, for the requested variant. Faces in a family can
     // differ: a bold face is often slightly wider than its regular sibling.
     FontMetrics metrics(const FontVariant& variant) const override;
-    FontMetrics metrics(FontStyle style) const { return metrics(variantOf(style)); }
+    FontMetrics metrics(FontStyle style) const;
 
     float scale() const override;
 

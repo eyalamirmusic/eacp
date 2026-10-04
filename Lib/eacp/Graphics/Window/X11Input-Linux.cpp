@@ -1222,6 +1222,21 @@ std::string X11Input::characterForCode(uint32_t evdevCode) const
     return keyboardState.plainTextForKey(evdevCode);
 }
 
+X11WindowSurface* X11Input::getKeyboardFocus() const
+{
+    return keyboardWindow;
+}
+
+X11WindowSurface* X11Input::getPointerWindow() const
+{
+    return pointerWindow;
+}
+
+Point X11Input::getPointerPosition() const
+{
+    return pointerState.getPosition();
+}
+
 void X11Input::windowDestroyed(X11WindowSurface& window)
 {
     if (lockedWindow == &window)

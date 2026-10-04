@@ -13,9 +13,9 @@ struct WindowInputListener
 {
     virtual ~WindowInputListener() = default;
 
-    virtual void windowKeyEvent(const KeyEvent&) {}
-    virtual void windowMouseEvent(const MouseEvent&) {}
-    virtual void windowActivationChanged(bool) {}
+    virtual void windowKeyEvent(const KeyEvent&);
+    virtual void windowMouseEvent(const MouseEvent&);
+    virtual void windowActivationChanged(bool);
 };
 
 // The platform layer reports into this; listeners subscribe to it. A listener
@@ -31,7 +31,7 @@ public:
     void activationChanged(bool isKey);
 
     // Whether the window last reported having key focus.
-    bool isActive() const { return active; }
+    constexpr bool isActive() const { return active; }
 
 private:
     Vector<WindowInputListener*> listeners;

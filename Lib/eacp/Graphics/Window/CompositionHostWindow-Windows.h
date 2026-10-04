@@ -11,12 +11,11 @@
 namespace eacp::Graphics
 {
 
-// Maps a content view's root to the HWND hosting it. Both the top-level Window
-// and the child EmbeddedView register through CompositionHostWindow, so a
-// WebView (or any repaint-driven View) nested in either surface can resolve its
-// host HWND. Main-thread only, so no locking is needed.
-void registerContentViewHwnd(View* root, HWND hwnd);
-void unregisterContentViewHwnd(View* root);
+// The HWND hosting the content view `view` belongs to. Both the top-level
+// Window and the child EmbeddedView register their content view through
+// CompositionHostWindow, so a WebView (or any repaint-driven View) nested in
+// either surface can resolve its host HWND. Main-thread only, so no locking is
+// needed.
 HWND findHostHwndForView(View* view);
 
 // Whether `hwnd` hosts a WindowOptions::transparentBackground surface. Content
@@ -71,7 +70,7 @@ struct CompositionHostWindow
     // The lock expresses intent: it engages while the HWND has focus and
     // WM_SETFOCUS / WM_KILLFOCUS re-engage / suspend it.
     void setMouseLocked(bool locked);
-    bool isMouseLocked() const { return mouseLockIntent; }
+    constexpr bool isMouseLocked() const { return mouseLockIntent; }
 
     // Tears down the visual tree, registry entry, and HWND. Call from the
     // owning surface's destructor.

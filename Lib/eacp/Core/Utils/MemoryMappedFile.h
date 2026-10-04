@@ -39,7 +39,7 @@ public:
                               std::uint64_t offset = 0,
                               std::uint64_t length = toEndOfFile);
 
-    const FilePath& path() const { return filePath; }
+    const FilePath& path() const;
 
     bool isValid() const;
 

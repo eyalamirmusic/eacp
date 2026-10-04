@@ -361,6 +361,11 @@ private:
 };
 } // namespace
 
+File DirectoryEntry::file() const
+{
+    return File {path};
+}
+
 bool forEachEntry(const FilePath& directory,
                   const DirectoryOptions& options,
                   const VisitingFunc& visitor)

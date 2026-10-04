@@ -1,5 +1,6 @@
 #include "GameInput.h"
 #include "GameInputBackend.h"
+#include "../Window/Window.h"
 
 namespace eacp::Graphics
 {
@@ -39,6 +40,11 @@ GameInput::~GameInput()
 {
     window.events.input.removeListener(*this);
     backend.reset();
+}
+
+double GameInput::now()
+{
+    return GameInputQueue::now();
 }
 
 const GameInputFrame& GameInput::snapshot()

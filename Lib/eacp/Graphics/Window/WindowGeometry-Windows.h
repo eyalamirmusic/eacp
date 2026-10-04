@@ -4,9 +4,6 @@
 
 #include "../Primitives/Primitives.h"
 
-#include <algorithm>
-#include <cmath>
-
 // The geometry behind the placement rules a Win32 surface has to enforce for
 // itself, kept apart from the HWND that feeds them so all of it can be checked
 // without a display: where a point lands on a window's own resize band, how a
@@ -21,18 +18,7 @@ namespace eacp::Graphics::detail
 // to the nearest. A surface rounded down leaves a seam of whatever is behind
 // it showing along its right and bottom edges, and against a host's own window
 // that seam is visible in a way half a pixel of overlap is not.
-inline RECT toPhysicalPixels(const Rect& bounds, float scale)
-{
-    auto left = std::floor(bounds.x * scale);
-    auto top = std::floor(bounds.y * scale);
-    auto right = std::ceil((bounds.x + bounds.w) * scale);
-    auto bottom = std::ceil((bounds.y + bounds.h) * scale);
-
-    return {static_cast<LONG>(left),
-            static_cast<LONG>(top),
-            static_cast<LONG>(right),
-            static_cast<LONG>(bottom)};
-}
+RECT toPhysicalPixels(const Rect& bounds, float scale);
 
 // Shrinks and slides a window rect until the whole of it lies inside `work`
 // (the display's work area — the monitor minus the taskbar and any appbars).
@@ -45,18 +31,7 @@ inline RECT toPhysicalPixels(const Rect& bounds, float scale)
 //
 // The sides are trimmed independently; a window with a shape rule puts the
 // result back through its WindowOptions::sizeConstraint afterwards.
-inline void containWithinWorkArea(RECT& frame, const RECT& work)
-{
-    auto maxWidth = work.right - work.left;
-    auto maxHeight = work.bottom - work.top;
-    auto width = std::min(frame.right - frame.left, maxWidth);
-    auto height = std::min(frame.bottom - frame.top, maxHeight);
-
-    auto left = std::clamp(frame.left, work.left, work.right - width);
-    auto top = std::clamp(frame.top, work.top, work.bottom - height);
-
-    frame = {left, top, left + width, top + height};
-}
+void containWithinWorkArea(RECT& frame, const RECT& work);
 
 // Where `point` (screen coordinates) lands on a window whose client area is
 // its whole rect, as an HT* hit-test code.
@@ -70,37 +45,5 @@ inline void containWithinWorkArea(RECT& frame, const RECT& work)
 // `band` is the edge thickness in physical pixels. A corner reaches twice that
 // far along both of its edges, the way a titled window's does: a band-square
 // diagonal grab is a target the user has to aim at.
-inline LRESULT resizeBandHitTest(const RECT& frame, POINT point, LONG band)
-{
-    auto onLeft = point.x < frame.left + band;
-    auto onRight = point.x >= frame.right - band;
-    auto onTop = point.y < frame.top + band;
-    auto onBottom = point.y >= frame.bottom - band;
-
-    if (!onLeft && !onRight && !onTop && !onBottom)
-        return HTCLIENT;
-
-    auto corner = band * 2;
-    auto nearLeft = point.x < frame.left + corner;
-    auto nearRight = point.x >= frame.right - corner;
-    auto nearTop = point.y < frame.top + corner;
-    auto nearBottom = point.y >= frame.bottom - corner;
-
-    if ((onTop && nearLeft) || (onLeft && nearTop))
-        return HTTOPLEFT;
-    if ((onTop && nearRight) || (onRight && nearTop))
-        return HTTOPRIGHT;
-    if ((onBottom && nearLeft) || (onLeft && nearBottom))
-        return HTBOTTOMLEFT;
-    if ((onBottom && nearRight) || (onRight && nearBottom))
-        return HTBOTTOMRIGHT;
-
-    if (onLeft)
-        return HTLEFT;
-    if (onRight)
-        return HTRIGHT;
-    if (onTop)
-        return HTTOP;
-    return HTBOTTOM;
-}
+LRESULT resizeBandHitTest(const RECT& frame, POINT point, LONG band);
 } // namespace eacp::Graphics::detail

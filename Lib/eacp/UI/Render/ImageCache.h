@@ -45,7 +45,7 @@ public:
     // after each recording walk.
     void releaseUnused();
 
-    int size() const { return (int) entries.size(); }
+    int size() const;
 
 private:
     std::unordered_map<std::uint64_t, ImageRef> entries;

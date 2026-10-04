@@ -1,4 +1,5 @@
 #include "MenuHelpers.h"
+#include "WebView.h"
 
 namespace eacp::Graphics
 {

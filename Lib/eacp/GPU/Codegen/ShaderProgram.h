@@ -13,12 +13,10 @@
 #include "../Frame/RenderPass.h"
 #include "Forward.h"
 #include "GeneratedShader.h"
-#include "PackedVertex.h"
 #include "ShaderBuilder.h"
 #include "ShaderMembers.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
-#include "UniformLayout.h"
 
 // A shader authored as a struct. Uniforms are named, typed members you set by
 // name; vertex inputs are pulled straight out of the CPU vertex struct inside
@@ -127,83 +125,6 @@ constexpr int expectedAttributeBytes()
     else
         return (int) sizeof(typename CpuValueOf<Handle>::type);
 }
-
-// Texture bind walk: hand each assigned texture member to the render pass at
-// the slot its handle was declared with.
-class ShaderTextureBindVisitor final : public ShaderVisitor
-{
-public:
-    explicit ShaderTextureBindVisitor(RenderPass& passToUse);
-
-    void onUniform(const char*,
-                   ValueType,
-                   detail::ValueHandle&,
-                   const void*) override;
-
-    void onTexture(const char*,
-                   Texture2D& handle,
-                   const Texture* texture,
-                   TextureSampling sampling) override;
-
-    // The same call, and that is the point rather than an economy: a cube is one
-    // texture on one slot of one index space on both backends, so nothing about
-    // binding it differs from binding a 2D image. The dimensionality was settled
-    // when the texture was created and when the shader was compiled.
-    void onCubeTexture(const char*,
-                       TextureCube& handle,
-                       const Texture* texture,
-                       TextureSampling sampling) override;
-
-    // The one member whose bind is a different call, because what was assigned
-    // is a render target and what is wanted is the depth buffer inside it.
-    void onDepthTexture(const char*,
-                        TextureDepth2D& handle,
-                        const Texture* renderTarget,
-                        TextureSampling sampling) override;
-
-private:
-    RenderPass& pass;
-};
-
-// Storage-buffer bind walk: hand each assigned input-buffer member to the
-// render pass at the slot its handle was declared with.
-//
-// Bound to both stages, for the reason the uniform block is: which stage reads
-// the buffer is a property of define(), not of the member, and a stage whose
-// generated function never declares it ignores the bind.
-class ShaderBufferBindVisitor final : public ShaderVisitor
-{
-public:
-    explicit ShaderBufferBindVisitor(RenderPass& passToUse);
-
-    void onUniform(const char*,
-                   ValueType,
-                   detail::ValueHandle&,
-                   const void*) override;
-
-    void onInputBuffer(const char*,
-                       InputBuffer& handle,
-                       const BufferRange& range) override;
-
-    // The integer input reads exactly as the float one does: one storage
-    // binding, and only the element type the generated stage declares differs.
-    void onUIntInputBuffer(const char*,
-                           UIntInputBuffer& handle,
-                           const BufferRange& range) override;
-
-    void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) override;
-
-    void onUIntOutputBuffer(const char*,
-                            UIntOutputBuffer&,
-                            const BufferRange&) override;
-
-    void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) override;
-
-    void onWritableTexture(const char*, WritableTexture2D&, const Texture*) override;
-
-private:
-    RenderPass& pass;
-};
 
 // Base for struct-authored shaders. Derive, declare uniform members, list them
 // with EACP_SHADER, write define() (pulling vertex inputs from the CPU vertex
@@ -369,7 +290,7 @@ public:
 
     const RenderPipeline& pipeline() const;
     const Buffer& vertices() const;
-    int vertexCount() const { return vertexCountValue; }
+    constexpr int vertexCount() const { return vertexCountValue; }
 
     // Whether setVertices ever gave this program geometry of its own. A program
     // only ever drawn through RenderPass::bind(program, vertices) has none, and
@@ -379,8 +300,8 @@ public:
 
     bool hasIndices() const;
     const Buffer& indices() const;
-    int indexCount() const { return indexCountValue; }
-    IndexFormat indexFormat() const { return indexFormatValue; }
+    constexpr int indexCount() const { return indexCountValue; }
+    constexpr IndexFormat indexFormat() const { return indexFormatValue; }
 
     // Re-packs the current uniform values and returns the block, ready for
     // RenderPass::setVertexBytes. Cheap - the block is a handful of floats.
@@ -414,11 +335,11 @@ public:
 
     // True once any instanceInput() was pulled: the program feeds one or more
     // per-instance buffers and is drawn with drawInstanced(program, ...).
-    bool isInstanced() const { return usesInstancing; }
+    constexpr bool isInstanced() const { return usesInstancing; }
 
     // The element count last uploaded via setInstances - the number of
     // instances the owned per-instance buffers hold.
-    int instanceCount() const { return instanceCountValue; }
+    constexpr int instanceCount() const { return instanceCountValue; }
 
     // Binds every per-instance buffer at the slot it was given to, whether the
     // program uploaded it or a kernel filled it. RenderPass::drawInstanced(

@@ -2,6 +2,14 @@
 
 #include <bit>
 
+namespace eacp::ML
+{
+Span<const std::uint8_t> asBytes(std::string_view text)
+{
+    return {reinterpret_cast<const std::uint8_t*>(text.data()), text.size()};
+}
+} // namespace eacp::ML
+
 namespace eacp::ML::Protobuf
 {
 void Writer::varint(std::uint64_t value)
@@ -119,5 +127,10 @@ void Writer::packedField(int field, const Writer& packed)
 {
     if (!packed.out.empty())
         messageField(field, packed);
+}
+
+const Bytes& Writer::bytes() const
+{
+    return out;
 }
 } // namespace eacp::ML::Protobuf

@@ -4,7 +4,6 @@
 #include "SVGElement.h"
 
 #include <eacp/GPUWidgets/Path/AffineTransform.h>
-#include <eacp/UI/Render/Gradient.h>
 
 namespace eacp::SVG
 {
@@ -156,18 +155,9 @@ std::unordered_map<std::string, std::string>
 // the constructor: reading eight properties off one element is one parse.
 struct PropertyReader
 {
-    explicit PropertyReader(const SVGElement& elementToUse)
-        : element(elementToUse)
-        , declarations(parseStyleDeclarations(elementToUse.attr("style")))
-    {
-    }
+    explicit PropertyReader(const SVGElement& elementToUse);
 
-    std::string operator()(const std::string& name) const
-    {
-        auto found = declarations.find(name);
-
-        return found != declarations.end() ? found->second : element.attr(name);
-    }
+    std::string operator()(const std::string& name) const;
 
     const SVGElement& element;
     std::unordered_map<std::string, std::string> declarations;

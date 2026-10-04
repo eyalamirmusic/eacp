@@ -6,6 +6,8 @@
 #include "PathFillShader.h"
 #include "VertexColorShader.h"
 
+#include <eacp/GPU/Frame/Frame.h>
+
 namespace eacp::GPUWidgets
 {
 struct PathView::Impl

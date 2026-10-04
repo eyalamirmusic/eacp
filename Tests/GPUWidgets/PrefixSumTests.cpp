@@ -1,6 +1,7 @@
 #include "CpuPathKernels.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
+#include <eacp/GPUWidgets/Path/PrefixSumKernels.h>
 
 #include <NanoTest/NanoTest.h>
 

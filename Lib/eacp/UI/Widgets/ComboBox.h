@@ -36,7 +36,7 @@ public:
     // just gone.
     void clear();
 
-    int getNumItems() const { return items.size(); }
+    int getNumItems() const;
 
     // Empty for an index that names no item, so a caller can ask about the
     // selection without testing it first.
@@ -49,7 +49,7 @@ public:
     // selection pushed in from whatever the box is attached to does not come
     // straight back out as a change.
     void setSelectedIndex(int index, bool notify = false);
-    int getSelectedIndex() const { return selectedIndex; }
+    int getSelectedIndex() const;
 
     // What the box draws: the selected item, or the placeholder while there is
     // no selection.
@@ -63,7 +63,7 @@ public:
 
     void showPopup();
     void hidePopup();
-    bool isPopupOpen() const { return popup.has_value(); }
+    bool isPopupOpen() const;
 
     // Where the list is, in the root's coordinates, and empty while it is
     // closed -- so which way it opened is a question that can be asked rather
@@ -113,7 +113,7 @@ private:
         // usable in a list taller than the tree.
         void setHighlightedRow(int row);
         void moveHighlight(int delta);
-        int getHighlightedRow() const { return highlighted; }
+        int getHighlightedRow() const;
 
         void setScrollPosition(float newOffset);
         float maximumScroll() const;
@@ -123,7 +123,7 @@ private:
         // Every point in the tree, and not merely every point in these bounds:
         // a click outside the list has to dismiss it wherever the root has
         // since grown to.
-        bool hitTest(Point) const override { return true; }
+        bool hitTest(Point) const override;
 
         void mouseDown(const MouseEvent& event) override;
         void mouseMove(const MouseEvent& event) override;

@@ -2,6 +2,11 @@
 
 namespace eacp::GPU
 {
+bool FrameTimer::isSupported() const
+{
+    return timestamps.isSupported();
+}
+
 void FrameTimer::beginFrame(std::uint64_t frameIndex, Device& device)
 {
     // Before the new frame takes a slot, so that the one it is about to take is

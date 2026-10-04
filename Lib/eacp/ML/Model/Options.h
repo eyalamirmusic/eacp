@@ -32,10 +32,10 @@ struct Options
 // has: ok, and an error message when it is not.
 struct Result
 {
-    explicit operator bool() const { return ok; }
+    constexpr explicit operator bool() const { return ok; }
 
-    static Result success() { return {true, {}}; }
-    static Result failure(const std::string& message) { return {false, message}; }
+    static Result success();
+    static Result failure(const std::string& message);
 
     bool ok = false;
     std::string error;

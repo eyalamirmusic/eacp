@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Common.h"
+#include <string>
 
 namespace eacp::Graphics
 {

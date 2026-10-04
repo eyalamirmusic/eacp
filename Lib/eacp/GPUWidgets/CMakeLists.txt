@@ -8,13 +8,21 @@ target_link_libraries(eacp-gpuwidgets PUBLIC eacp-gpu)
 
 target_sources(eacp-gpuwidgets PRIVATE
         Gradient.cpp
+        Path/AffineTransform.cpp
+        Path/BackdropKernels.cpp
+        Path/BinKernels.cpp
         Path/CoverageBatch.cpp
+        Path/CoverageKernel.cpp
         Path/Path.cpp
         Path/PathRasterizer.cpp
         Path/PathStroker.cpp
         Path/PrefixSum.cpp
+        Path/PrefixSumKernels.cpp
         Path/PathTessellator.cpp
-        View/PathView.cpp)
+        View/CoverageShader.cpp
+        View/PathFillShader.cpp
+        View/PathView.cpp
+        View/VertexColorShader.cpp)
 
 set_default_target_setting(eacp-gpuwidgets)
 eacp_enable_unity_build(eacp-gpuwidgets)

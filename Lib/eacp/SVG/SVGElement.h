@@ -7,21 +7,10 @@ namespace eacp::SVG
 
 struct SVGElement
 {
-    std::string attr(const std::string& name, const std::string& fallback = "") const
-    {
-        auto it = attributes.find(name);
-        if (it != attributes.end())
-            return it->second;
-        return fallback;
-    }
+    std::string attr(const std::string& name,
+                     const std::string& fallback = "") const;
 
-    float numAttr(const std::string& name, float fallback = 0.f) const
-    {
-        auto it = attributes.find(name);
-        if (it == attributes.end())
-            return fallback;
-        return Strings::parseFloatOr(it->second, fallback);
-    }
+    float numAttr(const std::string& name, float fallback = 0.f) const;
 
     std::string tag;
     std::unordered_map<std::string, std::string> attributes;
@@ -35,15 +24,6 @@ using ElementsById = std::unordered_map<std::string, const SVGElement*>;
 
 // First wins where a document repeats an id, which is what a browser does with
 // the same mistake.
-inline void collectIds(const SVGElement& element, ElementsById& byId)
-{
-    auto id = element.attr("id");
-
-    if (!id.empty())
-        byId.emplace(id, &element);
-
-    for (const auto& child: element.children)
-        collectIds(child, byId);
-}
+void collectIds(const SVGElement& element, ElementsById& byId);
 
 } // namespace eacp::SVG

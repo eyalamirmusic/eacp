@@ -8,3 +8,5 @@
 #include "View/PathFillShader.h"
 #include "View/PathView.h"
 #include "View/VertexColorShader.h"
+
+#include <eacp/GPU/GPU.h>

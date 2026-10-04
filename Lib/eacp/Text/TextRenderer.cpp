@@ -1,4 +1,5 @@
 #include "TextRenderer.h"
+#include "GlyphAtlas.h"
 
 #include <cmath>
 #include <utility>

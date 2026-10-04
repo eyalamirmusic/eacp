@@ -128,4 +128,34 @@ void Layer::markRendered()
     dirty = false;
     ready = true;
 }
+
+Rect Layer::getBounds() const
+{
+    return bounds;
+}
+
+float Layer::getOpacity() const
+{
+    return opacity;
+}
+
+const GPUWidgets::AffineTransform& Layer::getTransform() const
+{
+    return transform;
+}
+
+bool Layer::isEmpty() const
+{
+    return !ready;
+}
+
+const GPU::Texture& Layer::getTexture() const
+{
+    return *texture;
+}
+
+bool Layer::isDirty() const
+{
+    return dirty;
+}
 } // namespace eacp::UI

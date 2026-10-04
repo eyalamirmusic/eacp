@@ -2,8 +2,6 @@
 
 #include "Tensor.h"
 
-#include "../MIL/Blob.h"
-#include "../MIL/Half.h"
 #include "../MIL/MILWriter.h"
 #include "../MIL/Package.h"
 
@@ -130,8 +128,8 @@ public:
     const Shape& shape(Tensor value) const;
     DType type(Tensor value) const;
 
-    bool isValid() const { return errorList.empty(); }
-    const Vector<std::string>& errors() const { return errorList; }
+    bool isValid() const;
+    const Vector<std::string>& errors() const;
 
     MIL::Specification specification() const;
     std::string toText() const;

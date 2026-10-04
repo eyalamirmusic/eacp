@@ -1,4 +1,5 @@
 #include "ShaderMembers.h"
+#include "UniformLayout.h"
 
 #include <cstring>
 

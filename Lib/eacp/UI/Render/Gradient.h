@@ -56,7 +56,7 @@ struct Gradient
     // sorts and clamps.
     Vector<GradientStop> stops;
 
-    bool isEmpty() const { return stops.empty(); }
+    bool isEmpty() const;
 };
 
 // A gradient resolved against the ramp texture and the space it will be drawn
@@ -98,6 +98,6 @@ struct GradientFill
     // Negative when there is no gradient.
     float rampV = -1.f;
 
-    bool isEmpty() const { return kind == Kind::None; }
+    constexpr bool isEmpty() const { return kind == Kind::None; }
 };
 } // namespace eacp::UI

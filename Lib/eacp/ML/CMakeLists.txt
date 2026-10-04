@@ -27,7 +27,9 @@ target_link_libraries(eacp-ml PUBLIC eacp-ml-graph eacp-gpu)
 target_compile_definitions(eacp-ml PUBLIC EACP_HAS_COREML=1)
 
 target_sources(eacp-ml PRIVATE
+        Model/ComputePlan.cpp
         Model/MultiArray.mm
+        Model/Options.cpp
         Model/MultiArrayNative.h
         Model/Model.mm)
 

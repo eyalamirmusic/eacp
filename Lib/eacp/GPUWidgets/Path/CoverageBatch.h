@@ -2,7 +2,10 @@
 
 #include "PrefixSum.h"
 
-#include <eacp/GPU/Texture/Texture.h>
+namespace eacp::GPU
+{
+class Texture;
+}
 
 namespace eacp::GPUWidgets
 {
@@ -61,8 +64,8 @@ public:
     // needed is copied here.
     void add(const PathRasterizer& rasterizer);
 
-    bool isEmpty() const { return paths == 0; }
-    int getPathCount() const { return paths; }
+    constexpr bool isEmpty() const { return paths == 0; }
+    constexpr int getPathCount() const { return paths; }
 
     // Uploads what was gathered and runs the stages. A no-op on an empty batch,
     // and the pass must end before the render pass that samples the coverage
@@ -72,8 +75,8 @@ public:
     // What the last dispatch cost in the units this exists to cut: a handful of
     // dispatches however many paths went in, and one buffer update per buffer
     // that had something in it rather than per path.
-    int getDispatchCount() const { return dispatches; }
-    int getBufferUpdateCount() const { return bufferUpdates; }
+    constexpr int getDispatchCount() const { return dispatches; }
+    constexpr int getBufferUpdateCount() const { return bufferUpdates; }
 
 private:
     void upload();
