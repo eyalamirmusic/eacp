@@ -17,8 +17,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <functional>
-#include <thread>
 
 #include <unistd.h>
 
@@ -68,12 +66,6 @@ bool forcesRenderPasses()
 bool wantsValidation()
 {
     return vulkanEnvironmentFlag("EACP_VK_VALIDATION");
-}
-
-std::uint64_t currentThreadId()
-{
-    return static_cast<std::uint64_t>(
-        std::hash<std::thread::id> {}(std::this_thread::get_id()));
 }
 
 // $XDG_CACHE_HOME/eacp, and $HOME/.cache/eacp where the first is unset. Empty
@@ -1198,7 +1190,7 @@ VulkanShared& getVulkanShared()
 }
 
 VulkanContext::VulkanContext()
-    : owningThreadId(currentThreadId())
+    : owningThreadId(Threads::currentThreadId())
 {
     createAll();
 }
@@ -1287,7 +1279,7 @@ void VulkanContext::assertOwningThread() const
 {
     const auto onOwningThread = mainThreadOwned
                                     ? Threads::isMainThread()
-                                    : currentThreadId() == owningThreadId;
+                                    : Threads::currentThreadId() == owningThreadId;
 
     assert(onOwningThread
            && "eacp: a GPU::Device belongs to the thread that made it - give "

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Forward.h"
 #include "ShaderGraph.h"
 #include "ShaderTypes.h"
 
@@ -13,23 +14,6 @@
 
 namespace eacp::GPU
 {
-struct Float;
-struct Float2;
-struct Float3;
-struct Float4;
-struct UInt;
-struct UInt2;
-struct UInt3;
-struct UInt4;
-struct Int;
-struct Int2;
-struct Int3;
-struct Int4;
-struct Bool;
-struct Bool2;
-struct Bool3;
-struct Bool4;
-
 namespace detail
 {
 struct ValueHandle
@@ -75,52 +59,7 @@ constexpr bool spellableAt(int width, const char* components)
     return true;
 }
 
-// The cross product of the component set with itself, once per swizzle width.
-// The action macro passed in is what makes one accessor out of a set of
-// components - declaring it inside Swizzles below, or defining it once the
-// vector types it returns are complete.
-#define EACP_SWIZZLE_PAIR_ROW(PAIR, a) PAIR(a, x) PAIR(a, y) PAIR(a, z) PAIR(a, w)
-
-#define EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, b)                                    \
-    TRIPLE(a, b, x) TRIPLE(a, b, y) TRIPLE(a, b, z) TRIPLE(a, b, w)
-
-#define EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, a)                                          \
-    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, x)                                        \
-    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, y)                                        \
-    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, z)                                        \
-    EACP_SWIZZLE_TRIPLE_COLUMN(TRIPLE, a, w)
-
-#define EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, c)                                    \
-    QUAD(a, b, c, x) QUAD(a, b, c, y) QUAD(a, b, c, z) QUAD(a, b, c, w)
-
-#define EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, b)                                        \
-    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, x)                                        \
-    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, y)                                        \
-    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, z)                                        \
-    EACP_SWIZZLE_QUAD_ELEMENT(QUAD, a, b, w)
-
-#define EACP_SWIZZLE_QUAD_ROW(QUAD, a)                                              \
-    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, x)                                            \
-    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, y)                                            \
-    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, z)                                            \
-    EACP_SWIZZLE_QUAD_COLUMN(QUAD, a, w)
-
-// clang-format off
-#define EACP_SWIZZLES(ONE, PAIR, TRIPLE, QUAD)                                      \
-    ONE(x) ONE(y) ONE(z) ONE(w)                                                     \
-    EACP_SWIZZLE_PAIR_ROW(PAIR, x)                                                  \
-    EACP_SWIZZLE_PAIR_ROW(PAIR, y)                                                  \
-    EACP_SWIZZLE_PAIR_ROW(PAIR, z)                                                  \
-    EACP_SWIZZLE_PAIR_ROW(PAIR, w)                                                  \
-    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, x)                                              \
-    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, y)                                              \
-    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, z)                                              \
-    EACP_SWIZZLE_TRIPLE_ROW(TRIPLE, w)                                              \
-    EACP_SWIZZLE_QUAD_ROW(QUAD, x)                                                  \
-    EACP_SWIZZLE_QUAD_ROW(QUAD, y)                                                  \
-    EACP_SWIZZLE_QUAD_ROW(QUAD, z)                                                  \
-    EACP_SWIZZLE_QUAD_ROW(QUAD, w)
-// clang-format on
+#include "SwizzleGrid.h"
 
 // One vector family: the four widths a swizzle can land in and the graph types
 // that go with them. Naming the family is what lets one set of accessors serve
@@ -205,10 +144,13 @@ using Bools = Family<Bool,
 // stay one node however it is written. Rebuilding .bgra as a constructor over
 // four extracted components would instead record the source subtree four times.
 //
-// Declared here and defined below, once the vector types are complete: a Float3
-// that returns a Float2 and a Float2 that returns a Float3 cannot both be
-// defined first, and a definition - unlike a declaration - needs its return
-// type complete the moment the class is instantiated.
+// Declared here and defined in ShaderValue.cpp, which explicitly instantiates
+// them for the twelve vector types below; a call elsewhere links against that
+// instantiation. A Float3 that returns a Float2 and a Float2 that returns a
+// Float3 cannot both be defined first, and keeping the 340 bodies out of the
+// header spares every includer from parsing them. There is deliberately no
+// `extern template` here: declaring the instantiation makes every includer
+// check all 4080 constraints up front, which costs more than the bodies did.
 template <typename Group, int Width>
 struct Swizzles : ValueHandle
 {
@@ -222,6 +164,13 @@ struct Swizzles : ValueHandle
 #undef EACP_DECLARE_SWIZZLE_2
 #undef EACP_DECLARE_SWIZZLE_3
 #undef EACP_DECLARE_SWIZZLE_4
+#undef EACP_SWIZZLES
+#undef EACP_SWIZZLE_PAIR_ROW
+#undef EACP_SWIZZLE_TRIPLE_COLUMN
+#undef EACP_SWIZZLE_TRIPLE_ROW
+#undef EACP_SWIZZLE_QUAD_ELEMENT
+#undef EACP_SWIZZLE_QUAD_COLUMN
+#undef EACP_SWIZZLE_QUAD_ROW
 } // namespace detail
 
 struct Float : detail::ValueHandle
@@ -318,58 +267,6 @@ struct Bool4 : detail::Swizzles<detail::Bools, 4>
 {
 };
 
-namespace detail
-{
-#define EACP_DEFINE_SWIZZLE_1(a)                                                    \
-    template <typename Group, int Width>                                            \
-    typename Group::Component Swizzles<Group, Width>::a() const                     \
-        requires(spellableAt(Width, #a))                                            \
-    {                                                                               \
-        return swizzle<typename Group::Component>(Group::componentType, #a);        \
-    }
-
-#define EACP_DEFINE_SWIZZLE_2(a, b)                                                 \
-    template <typename Group, int Width>                                            \
-    typename Group::Pair Swizzles<Group, Width>::a##b() const                       \
-        requires(spellableAt(Width, #a #b))                                         \
-    {                                                                               \
-        return swizzle<typename Group::Pair>(Group::pairType, #a #b);               \
-    }
-
-#define EACP_DEFINE_SWIZZLE_3(a, b, c)                                              \
-    template <typename Group, int Width>                                            \
-    typename Group::Triple Swizzles<Group, Width>::a##b##c() const                  \
-        requires(spellableAt(Width, #a #b #c))                                      \
-    {                                                                               \
-        return swizzle<typename Group::Triple>(Group::tripleType, #a #b #c);        \
-    }
-
-#define EACP_DEFINE_SWIZZLE_4(a, b, c, d)                                           \
-    template <typename Group, int Width>                                            \
-    typename Group::Quad Swizzles<Group, Width>::a##b##c##d() const                 \
-        requires(spellableAt(Width, #a #b #c #d))                                   \
-    {                                                                               \
-        return swizzle<typename Group::Quad>(Group::quadType, #a #b #c #d);         \
-    }
-
-EACP_SWIZZLES(EACP_DEFINE_SWIZZLE_1,
-              EACP_DEFINE_SWIZZLE_2,
-              EACP_DEFINE_SWIZZLE_3,
-              EACP_DEFINE_SWIZZLE_4)
-
-#undef EACP_DEFINE_SWIZZLE_1
-#undef EACP_DEFINE_SWIZZLE_2
-#undef EACP_DEFINE_SWIZZLE_3
-#undef EACP_DEFINE_SWIZZLE_4
-#undef EACP_SWIZZLES
-#undef EACP_SWIZZLE_PAIR_ROW
-#undef EACP_SWIZZLE_TRIPLE_COLUMN
-#undef EACP_SWIZZLE_TRIPLE_ROW
-#undef EACP_SWIZZLE_QUAD_ELEMENT
-#undef EACP_SWIZZLE_QUAD_COLUMN
-#undef EACP_SWIZZLE_QUAD_ROW
-} // namespace detail
-
 // The square matrix values. No swizzles; their operations are matrix * vector
 // and matrix * matrix, which record a Mul node so the emitter can spell it
 // per-backend.
@@ -403,13 +300,7 @@ struct Texture2D
     int slot = -1;
 };
 
-inline Float4 sample(const Texture2D& texture, const Float2& coordinates)
-{
-    auto result = Float4 {};
-    result.graph = texture.graph;
-    result.node = texture.graph->addSample(texture.slot, coordinates.node);
-    return result;
-}
+Float4 sample(const Texture2D& texture, const Float2& coordinates);
 
 // A cube texture declared by the shader: six square faces, sampled with a
 // direction out of the cube's centre rather than with a coordinate on an image.
@@ -429,13 +320,7 @@ struct TextureCube
 // largest component's axis and sign, and where in it by the other two divided by
 // that component - so a reflection vector goes in exactly as the arithmetic
 // produced it, and a normalize() before this would change nothing but the cost.
-inline Float4 sample(const TextureCube& texture, const Float3& direction)
-{
-    auto result = Float4 {};
-    result.graph = texture.graph;
-    result.node = texture.graph->addSample(texture.slot, direction.node);
-    return result;
-}
+Float4 sample(const TextureCube& texture, const Float3& direction);
 
 // The depth buffer of a render target, declared as a slot like the two above and
 // taking its slot from the same counter - but bound with
@@ -462,13 +347,7 @@ struct TextureDepth2D
 // single channel, and a Float4 here would be three components the hardware never
 // produced. What comes back is the window-space depth the pass wrote - 0 at the
 // near plane, 1 at the far one, after whatever depth range the viewport set.
-inline Float sample(const TextureDepth2D& texture, const Float2& coordinates)
-{
-    auto result = Float {};
-    result.graph = texture.graph;
-    result.node = texture.graph->addDepthSample(texture.slot, coordinates.node);
-    return result;
-}
+Float sample(const TextureDepth2D& texture, const Float2& coordinates);
 
 // Sampling at a mip level the shader chooses rather than the one the hardware
 // derives from the neighbouring fragments. Two things need this: a sample taken
@@ -477,29 +356,14 @@ inline Float sample(const TextureDepth2D& texture, const Float2& coordinates)
 //
 // A texture with one level ignores the level, since there is nothing else to
 // read; GPU::Texture has no mips yet, so that is every texture today.
-inline Float4
-    sample(const Texture2D& texture, const Float2& coordinates, const Float& level)
-{
-    auto result = Float4 {};
-    result.graph = texture.graph;
-    result.node =
-        texture.graph->addSample(texture.slot, coordinates.node, level.node);
-    return result;
-}
+Float4
+    sample(const Texture2D& texture, const Float2& coordinates, const Float& level);
 
 // The level is a literal far more often than not - a shader reaching for this
 // usually wants the top of the pyramid and nothing else - and a plain float has
 // no graph to record itself into. The texture carries one, so this spells what
 // the caller would otherwise need a ShaderBuilder in scope to anchor.
-inline Float4
-    sample(const Texture2D& texture, const Float2& coordinates, float level)
-{
-    auto result = Float4 {};
-    result.graph = texture.graph;
-    result.node = texture.graph->addSample(
-        texture.slot, coordinates.node, texture.graph->addConstant(level));
-    return result;
-}
+Float4 sample(const Texture2D& texture, const Float2& coordinates, float level);
 
 // One texel, addressed in texels rather than in the [0, 1] the sampler works
 // in, and read without it: no filtering, no wrap, no interpolation. A
@@ -508,21 +372,9 @@ inline Float4
 // An Int2 is what a texel index is, and what GLSL's texelFetch takes. The
 // Float2 form stays because a shader usually has the coordinate in hand as one:
 // it truncates towards zero, exactly as GLSL's ivec2 conversion does.
-inline Float4 fetch(const Texture2D& texture, const Int2& coordinates)
-{
-    auto result = Float4 {};
-    result.graph = texture.graph;
-    result.node = texture.graph->addFetch(texture.slot, coordinates.node);
-    return result;
-}
+Float4 fetch(const Texture2D& texture, const Int2& coordinates);
 
-inline Float4 fetch(const Texture2D& texture, const Float2& coordinates)
-{
-    auto result = Float4 {};
-    result.graph = texture.graph;
-    result.node = texture.graph->addFetch(texture.slot, coordinates.node);
-    return result;
-}
+Float4 fetch(const Texture2D& texture, const Float2& coordinates);
 
 // A 2D texture a kernel writes. Like Texture2D it is slot-identified rather
 // than an expression node, and like an OutputBuffer its one operation is the
@@ -573,21 +425,11 @@ T readBufferElement(ShaderGraph* graph, int slot, const UInt& index)
 // courtesy AtomicBuffer::load extends to its counter, and worth as much here: a
 // buffer holding one number, a scale or a total another kernel arrived at, is
 // addressed at element zero and nowhere else.
-inline UInt bufferIndex(ShaderGraph* graph, unsigned index)
-{
-    auto result = UInt {};
-    result.graph = graph;
-    result.node = graph->addUIntConstant(index);
-    return result;
-}
+UInt bufferIndex(ShaderGraph* graph, unsigned index);
 
 // The first element of record `index` in a buffer of `count`-wide records,
 // which is the one index a vector read and its matching write share.
-inline int recordBase(ShaderGraph* graph, const UInt& index, int count)
-{
-    return graph->addBinary(
-        ValueType::UInt, '*', index.node, graph->addUIntConstant((unsigned) count));
-}
+int recordBase(ShaderGraph* graph, const UInt& index, int count);
 
 // count consecutive elements starting at index * count, assembled into a
 // vector, as count separate subscripts. A buffer stays a run of floats on every
@@ -1381,26 +1223,14 @@ T unaryOp(char op, const ValueHandle& value)
 
 // A float literal as a handle on the same graph as an existing value, for
 // intrinsics taking scalar-literal arguments.
-inline ValueHandle constantOn(const ValueHandle& value, float literal)
-{
-    return {value.graph, value.graph->addConstant(literal)};
-}
+ValueHandle constantOn(const ValueHandle& value, float literal);
 
 // Its integer siblings, for uint and int index arithmetic.
-inline ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal)
-{
-    return {value.graph, value.graph->addUIntConstant(literal)};
-}
+ValueHandle uintConstantOn(const ValueHandle& value, unsigned literal);
 
-inline ValueHandle intConstantOn(const ValueHandle& value, int literal)
-{
-    return {value.graph, value.graph->addIntConstant(literal)};
-}
+ValueHandle intConstantOn(const ValueHandle& value, int literal);
 
-inline ValueHandle boolConstantOn(const ValueHandle& value, bool literal)
-{
-    return {value.graph, value.graph->addBoolConstant(literal)};
-}
+ValueHandle boolConstantOn(const ValueHandle& value, bool literal);
 
 template <typename T>
 T construct(ShaderGraph& graph, ValueType type, std::initializer_list<int> nodes)
@@ -1481,7 +1311,7 @@ concept LiteralArgument = std::same_as<T, float>;
 template <typename T>
 concept IntrinsicArgument = ShaderValueLike<T> || LiteralArgument<T>;
 
-inline void anchorAt(const ValueHandle*&, float) {}
+void anchorAt(const ValueHandle*&, float);
 
 template <ShaderValueLike T>
 void anchorAt(const ValueHandle*& anchor, const T& value)
@@ -1490,10 +1320,7 @@ void anchorAt(const ValueHandle*& anchor, const T& value)
         anchor = &value;
 }
 
-inline int argumentNode(const ValueHandle& anchor, float literal)
-{
-    return anchor.graph->addConstant(literal);
-}
+int argumentNode(const ValueHandle& anchor, float literal);
 
 template <ShaderValueLike T>
 int argumentNode(const ValueHandle&, const T& value)
@@ -1533,10 +1360,7 @@ concept ShapedBeside =
 
 // The thread id as a float, e.g. a value computed from the element index. The
 // constructor-style cast spells identically in MSL and HLSL.
-inline Float toFloat(const UInt& value)
-{
-    return detail::call<Float>(value, ValueType::Float, "float");
-}
+Float toFloat(const UInt& value);
 
 // Componentwise builtins. Call nodes carry the MSL spelling; the emitter
 // translates the few HLSL spells differently (fract -> frac, mix -> lerp).
@@ -2121,13 +1945,7 @@ ShaderBase<T> mod(const T& x, float y)
 
 namespace detail
 {
-inline Bool compare(const char* op, const ValueHandle& lhs, const ValueHandle& rhs)
-{
-    auto result = Bool {};
-    result.graph = lhs.graph;
-    result.node = lhs.graph->addCompare(op, lhs.node, rhs.node);
-    return result;
-}
+Bool compare(const char* op, const ValueHandle& lhs, const ValueHandle& rhs);
 
 // The componentwise form: same node, same spelling, a mask of the operands'
 // width for a result.
@@ -2231,33 +2049,18 @@ EACP_VECTOR_COMPARISON(operator!=, "!=")
 // language's own, so the shader itself still skips the right-hand side. That
 // only matters for what it costs, never for what it computes: a recorded node
 // has no side effects to skip.
-inline Bool operator&&(const Bool& lhs, const Bool& rhs)
-{
-    return detail::compare("&&", lhs, rhs);
-}
+Bool operator&&(const Bool& lhs, const Bool& rhs);
 
-inline Bool operator||(const Bool& lhs, const Bool& rhs)
-{
-    return detail::compare("||", lhs, rhs);
-}
+Bool operator||(const Bool& lhs, const Bool& rhs);
 
-inline Bool operator!(const Bool& value)
-{
-    return detail::unaryOp<Bool>('!', value);
-}
+Bool operator!(const Bool& value);
 
 // Two conditions compared rather than combined, which is what a shader asking
 // whether two tests agreed writes. GLSL has it, both languages under this have
 // it, and it is not the connectives: `a == b` is true when both are false.
-inline Bool operator==(const Bool& lhs, const Bool& rhs)
-{
-    return detail::compare("==", lhs, rhs);
-}
+Bool operator==(const Bool& lhs, const Bool& rhs);
 
-inline Bool operator!=(const Bool& lhs, const Bool& rhs)
-{
-    return detail::compare("!=", lhs, rhs);
-}
+Bool operator!=(const Bool& lhs, const Bool& rhs);
 
 // What collapses a mask into something a branch or a select can test: true when
 // every component is, and when any one is. Both languages spell them the same,
@@ -2326,12 +2129,7 @@ Float select(const Bool& condition, float whenTrue, const T& whenFalse)
         condition, detail::constantOn(condition, whenTrue), whenFalse);
 }
 
-inline Float select(const Bool& condition, float whenTrue, float whenFalse)
-{
-    return detail::selectOp<Float>(condition,
-                                   detail::constantOn(condition, whenTrue),
-                                   detail::constantOn(condition, whenFalse));
-}
+Float select(const Bool& condition, float whenTrue, float whenFalse);
 
 // The same, over the families the float overload above does not reach: an index
 // or a mask picked without a branch. The condition is a scalar Bool in all of
@@ -2356,12 +2154,7 @@ UInt select(const Bool& condition, unsigned whenTrue, const T& whenFalse)
         condition, detail::uintConstantOn(condition, whenTrue), whenFalse);
 }
 
-inline UInt select(const Bool& condition, unsigned whenTrue, unsigned whenFalse)
-{
-    return detail::selectOp<UInt>(condition,
-                                  detail::uintConstantOn(condition, whenTrue),
-                                  detail::uintConstantOn(condition, whenFalse));
-}
+UInt select(const Bool& condition, unsigned whenTrue, unsigned whenFalse);
 
 template <SameShaderHandle<Int> T>
 Int select(const Bool& condition, const T& whenTrue, int whenFalse)
@@ -2377,12 +2170,7 @@ Int select(const Bool& condition, int whenTrue, const T& whenFalse)
         condition, detail::intConstantOn(condition, whenTrue), whenFalse);
 }
 
-inline Int select(const Bool& condition, int whenTrue, int whenFalse)
-{
-    return detail::selectOp<Int>(condition,
-                                 detail::intConstantOn(condition, whenTrue),
-                                 detail::intConstantOn(condition, whenFalse));
-}
+Int select(const Bool& condition, int whenTrue, int whenFalse);
 
 template <SameShaderHandle<Bool> T>
 Bool select(const Bool& condition, const T& whenTrue, bool whenFalse)
@@ -2398,12 +2186,7 @@ Bool select(const Bool& condition, bool whenTrue, const T& whenFalse)
         condition, detail::boolConstantOn(condition, whenTrue), whenFalse);
 }
 
-inline Bool select(const Bool& condition, bool whenTrue, bool whenFalse)
-{
-    return detail::selectOp<Bool>(condition,
-                                  detail::boolConstantOn(condition, whenTrue),
-                                  detail::boolConstantOn(condition, whenFalse));
-}
+Bool select(const Bool& condition, bool whenTrue, bool whenFalse);
 
 // A mutable shader local: the one handle in the EDSL that names a place rather
 // than a value. Reading it records a node at the point of the read, so what it
@@ -2556,10 +2339,7 @@ EACP_UINT_OPERATOR(operator>>, ">>")
 
 // The bitwise complement; there is no unary minus, an unsigned value having no
 // negation to take.
-inline UInt operator~(const UInt& value)
-{
-    return detail::unaryOp<UInt>('~', value);
-}
+UInt operator~(const UInt& value);
 
 // The same componentwise on the unsigned vectors, together with the operators
 // only an integer has - the bitwise set and the two shifts. Against another
@@ -2678,16 +2458,10 @@ EACP_INT_OPERATOR(operator>>, ">>")
 
 #undef EACP_INT_OPERATOR
 
-inline Int operator-(const Int& value)
-{
-    return detail::unaryOp<Int>('-', value);
-}
+Int operator-(const Int& value);
 
 // The bitwise complement, the one unary operator no float has.
-inline Int operator~(const Int& value)
-{
-    return detail::unaryOp<Int>('~', value);
-}
+Int operator~(const Int& value);
 
 // The same set componentwise, on the integer vectors: against another vector of
 // the same width, against a scalar Int or an integer literal broadcast across
@@ -2834,42 +2608,21 @@ EACP_UINT_COMPARISON(operator!=, "!=")
 
 // int min/max/abs: the branchless way to hold an index inside an array, for the
 // shader that would rather clamp than mask.
-inline Int min(const Int& a, const Int& b)
-{
-    return detail::call2<Int>(a, b, ValueType::Int, "min");
-}
+Int min(const Int& a, const Int& b);
 
-inline Int min(const Int& a, int b)
-{
-    return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "min");
-}
+Int min(const Int& a, int b);
 
 // The literal on the left as well, for the same reason the float intrinsics
 // take one in any position: a shader writes max(0, -i) as readily as max(i, 0).
-inline Int min(int a, const Int& b)
-{
-    return detail::call2<Int>(detail::intConstantOn(b, a), b, ValueType::Int, "min");
-}
+Int min(int a, const Int& b);
 
-inline Int max(const Int& a, const Int& b)
-{
-    return detail::call2<Int>(a, b, ValueType::Int, "max");
-}
+Int max(const Int& a, const Int& b);
 
-inline Int max(const Int& a, int b)
-{
-    return detail::call2<Int>(a, detail::intConstantOn(a, b), ValueType::Int, "max");
-}
+Int max(const Int& a, int b);
 
-inline Int max(int a, const Int& b)
-{
-    return detail::call2<Int>(detail::intConstantOn(b, a), b, ValueType::Int, "max");
-}
+Int max(int a, const Int& b);
 
-inline Int abs(const Int& value)
-{
-    return detail::call<Int>(value, ValueType::Int, "abs");
-}
+Int abs(const Int& value);
 
 // Crossing between the integer and the float vocabularies, explicit in both
 // directions. The constructor-style cast spells identically in MSL and HLSL,
@@ -2886,24 +2639,15 @@ Result convertTo(const T& value)
 }
 } // namespace detail
 
-inline Float toFloat(const Int& value)
-{
-    return detail::convertTo<Float>(value);
-}
+Float toFloat(const Int& value);
 
 // And out of a condition, which is the other crossing GLSL spells with a
 // constructor: int(a > b) is 1 or 0, and both languages under this cast a bool
 // the same way. It is not a select - there is nothing to choose between - and
 // it is what a shader counting how many of its tests passed adds up.
-inline Int toInt(const Bool& value)
-{
-    return detail::convertTo<Int>(value);
-}
+Int toInt(const Bool& value);
 
-inline Float toFloat(const Bool& value)
-{
-    return detail::convertTo<Float>(value);
-}
+Float toFloat(const Bool& value);
 
 template <ShaderScalarLike T>
 Int toInt(const T& value)
@@ -2916,15 +2660,9 @@ Int toInt(const T& value)
 // of a padded convolution, a backwards step - and back out through toUInt for
 // the subscript once it is clamped. toUInt of a float scalar truncates
 // towards zero on the way, exactly as toInt does.
-inline Int toInt(const UInt& value)
-{
-    return detail::convertTo<Int>(value);
-}
+Int toInt(const UInt& value);
 
-inline UInt toUInt(const Int& value)
-{
-    return detail::convertTo<UInt>(value);
-}
+UInt toUInt(const Int& value);
 
 // A float's *bits*, not its value: the reinterpretation, where toUInt above is
 // the conversion. 1.0f arrives as 0x3f800000 rather than as 1.
@@ -2935,10 +2673,7 @@ inline UInt toUInt(const Int& value)
 // whose value is meaningless and whose bits are the payload. This is the way
 // back to them, and it is exact: neither backend rounds or canonicalizes a
 // bitcast, including of a pattern that would read as a denormal.
-inline UInt asUInt(const Float& value)
-{
-    return detail::intrinsic<UInt>("as_type<uint>", value);
-}
+UInt asUInt(const Float& value);
 
 // And the way back, which is what lets a kernel *write* something packed: a
 // store takes a Float, so two halves reach an output buffer as
@@ -2947,10 +2682,7 @@ inline UInt asUInt(const Float& value)
 // Recorded through detail::call rather than detail::intrinsic for the reason
 // unpackHalf2 gives: the argument is a UInt, which is deliberately outside the
 // float vocabulary intrinsic() takes.
-inline Float asFloat(const UInt& value)
-{
-    return detail::call<Float>(value, ValueType::Float, "as_type<float>");
-}
+Float asFloat(const UInt& value);
 
 // The two half-precision floats packed into one 32-bit word, widened: .x is
 // the low sixteen bits, .y the high.
@@ -2971,18 +2703,7 @@ inline Float asFloat(const UInt& value)
 // Recorded against the graph directly rather than through detail::intrinsic,
 // which takes float-vocabulary arguments only: UInt is deliberately outside it
 // (see baseOf), and an index type is exactly what a packed word arrives as.
-inline Float2 unpackHalf2(const UInt& bits)
-{
-    auto arguments = Vector<int> {};
-    arguments.add(bits.node);
-
-    auto result = Float2 {};
-    result.graph = bits.graph;
-    result.node = bits.graph->addCall(
-        ValueType::Float2, "eacpUnpackHalf2", std::move(arguments));
-
-    return result;
-}
+Float2 unpackHalf2(const UInt& bits);
 
 // The inverse: two floats narrowed to fp16 and packed into one word, .x in the
 // low sixteen bits. What a kernel producing fp16 output writes, and the other
@@ -3007,48 +2728,7 @@ inline Float2 unpackHalf2(const UInt& bits)
 //
 // A helper for the same reason unpackHalf2 is one: MSL converts to a half2 and
 // bitcasts the pair, HLSL narrows each component and shifts one into place.
-inline UInt packHalf2(const Float2& values)
-{
-    return detail::call<UInt>(values, ValueType::UInt, "eacpPackHalf2");
-}
-
-// One fp16 element of a buffer whose elements are halves rather than floats,
-// widened to a Float. The index counts halves, so a buffer of N weights is
-// walked 0..N-1 exactly as a float one is and nothing at the call site spells
-// the packing: the word is index / 2 and which half of it is index % 2.
-//
-// The choice between the two halves is made inside a helper taking the word
-// and that parity, rather than by unpacking both and selecting. Both are
-// correct; the helper is one call node instead of six, and it is the shape the
-// languages already have - MSL and HLSL each reach the wanted half with a
-// single shift, where a select computes both and throws one away.
-inline Float InputBuffer::readHalf(const UInt& index) const
-{
-    return detail::call2<Float>(
-        asUInt((*this)[index / 2u]), index % 2u, ValueType::Float, "eacpReadHalf");
-}
-
-// The literal form, folded here rather than emitted as `6u / 2u`.
-inline Float InputBuffer::readHalf(unsigned index) const
-{
-    return detail::call2<Float>(asUInt((*this)[index / 2u]),
-                                detail::bufferIndex(graph, index % 2u),
-                                ValueType::Float,
-                                "eacpReadHalf");
-}
-
-// Both halves of one word, which is what a kernel walking a weight matrix two
-// at a time wants. The index counts words here rather than halves - it is the
-// same index the matching writeHalf2 stores at.
-inline Float2 InputBuffer::readHalf2(const UInt& index) const
-{
-    return unpackHalf2(asUInt((*this)[index]));
-}
-
-inline Float2 InputBuffer::readHalf2(unsigned index) const
-{
-    return readHalf2(detail::bufferIndex(graph, index));
-}
+UInt packHalf2(const Float2& values);
 
 // The bfloat16 pair in one word, widened: .x the low sixteen bits, .y the high,
 // on exactly the layout unpackHalf2 promises for fp16.
@@ -3063,18 +2743,7 @@ inline Float2 InputBuffer::readHalf2(unsigned index) const
 // fp16 five, so 1e-6 and 1e30 are ordinary bf16 values that fp16 flushes to
 // zero and to infinity. A checkpoint routed through half is not less precise,
 // it is wrong.
-inline Float2 unpackBFloat16x2(const UInt& bits)
-{
-    auto arguments = Vector<int> {};
-    arguments.add(bits.node);
-
-    auto result = Float2 {};
-    result.graph = bits.graph;
-    result.node = bits.graph->addCall(
-        ValueType::Float2, "eacpUnpackBFloat16x2", std::move(arguments));
-
-    return result;
-}
+Float2 unpackBFloat16x2(const UInt& bits);
 
 // The inverse: two floats narrowed to bf16 and packed into one word, .x in the
 // low sixteen bits.
@@ -3086,48 +2755,7 @@ inline Float2 unpackBFloat16x2(const UInt& bits)
 // disagreements can reach it. A NaN is quieted rather than rounded, since
 // carrying one into the exponent would land it on an infinity, which is a
 // different answer rather than a coarser one.
-inline UInt packBFloat16x2(const Float2& values)
-{
-    return detail::call<UInt>(values, ValueType::UInt, "eacpPackBFloat16x2");
-}
-
-// One bf16 element of a buffer whose elements are bfloat16s rather than floats,
-// widened to a Float. The index counts bfloat16s, so a buffer of N weights is
-// walked 0..N-1 and the call site never spells the packing: the word is
-// index / 2 and which half of it is index % 2.
-//
-// The parity goes into the helper rather than selecting between both halves,
-// for the reason readHalf gives: shifting the wanted half up is one instruction
-// in every language.
-inline Float InputBuffer::readBFloat16(const UInt& index) const
-{
-    return detail::call2<Float>(asUInt((*this)[index / 2u]),
-                                index % 2u,
-                                ValueType::Float,
-                                "eacpReadBFloat16");
-}
-
-// The literal form, folded here rather than emitted as `6u / 2u`.
-inline Float InputBuffer::readBFloat16(unsigned index) const
-{
-    return detail::call2<Float>(asUInt((*this)[index / 2u]),
-                                detail::bufferIndex(graph, index % 2u),
-                                ValueType::Float,
-                                "eacpReadBFloat16");
-}
-
-// Both bfloat16s of one word, which is what a kernel walking a weight matrix
-// two at a time wants. The index counts words here rather than elements - it is
-// the same index the matching writeBFloat16x2 stores at.
-inline Float2 InputBuffer::readBFloat16x2(const UInt& index) const
-{
-    return unpackBFloat16x2(asUInt((*this)[index]));
-}
-
-inline Float2 InputBuffer::readBFloat16x2(unsigned index) const
-{
-    return readBFloat16x2(detail::bufferIndex(graph, index));
-}
+UInt packBFloat16x2(const Float2& values);
 
 // The four bytes of one word, widened: .x the low eight bits through .w the
 // high, which is little-endian order and so the order a memcpy of a row of
@@ -3142,15 +2770,9 @@ inline Float2 InputBuffer::readBFloat16x2(unsigned index) const
 // arithmetically back leans on each language's own rule for what the sign bit
 // does under a shift - three rules, spelled three ways, for a widening that has
 // to be bit-identical.
-inline Float4 unpackInt8x4(const UInt& bits)
-{
-    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackInt8x4");
-}
+Float4 unpackInt8x4(const UInt& bits);
 
-inline Float4 unpackUInt8x4(const UInt& bits)
-{
-    return detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackUInt8x4");
-}
+Float4 unpackUInt8x4(const UInt& bits);
 
 // The inverse: four integers packed into one word, .x in the low eight bits.
 //
@@ -3163,15 +2785,9 @@ inline Float4 unpackUInt8x4(const UInt& bits)
 // Only the low eight bits of each component are stored, so a value outside
 // [-128, 127] wraps rather than saturating. Quantization clamps before it gets
 // here; nothing is spent re-clamping in the shader.
-inline UInt packInt8x4(const Int4& values)
-{
-    return detail::call<UInt>(values, ValueType::UInt, "eacpPackInt8x4");
-}
+UInt packInt8x4(const Int4& values);
 
-inline UInt packUInt8x4(const UInt4& values)
-{
-    return detail::call<UInt>(values, ValueType::UInt, "eacpPackUInt8x4");
-}
+UInt packUInt8x4(const UInt4& values);
 
 // The eight nibbles of one word, widened, as the two halves Float4Pair
 // describes. Two float4s rather than one returned aggregate because no dialect
@@ -3182,198 +2798,9 @@ inline UInt packUInt8x4(const UInt4& values)
 // same helper over a shift node rather than a second helper - one definition
 // covers both halves, and the shift is a pure binary the graph shares with any
 // other use of it.
-inline Float4Pair unpackInt4x8(const UInt& bits)
-{
-    return {
-        detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackInt4x4"),
-        detail::call<Float4>(bits >> 16u, ValueType::Float4, "eacpUnpackInt4x4")};
-}
+Float4Pair unpackInt4x8(const UInt& bits);
 
-inline Float4Pair unpackUInt4x8(const UInt& bits)
-{
-    return {
-        detail::call<Float4>(bits, ValueType::Float4, "eacpUnpackUInt4x4"),
-        detail::call<Float4>(bits >> 16u, ValueType::Float4, "eacpUnpackUInt4x4")};
-}
-
-// One byte of a buffer whose elements are int8 rather than float, widened. The
-// index counts bytes, so the call site never spells the packing: the word is
-// index / 4 and which byte of it is index % 4.
-//
-// The byte position goes into the helper rather than selecting between four
-// unpacked values, for the reason readHalf gives - shifting the wanted byte
-// down is one instruction in every language, where a select computes four and
-// throws three away.
-inline Float InputBuffer::readInt8(const UInt& index) const
-{
-    return detail::call2<Float>(
-        asUInt((*this)[index / 4u]), index % 4u, ValueType::Float, "eacpReadInt8");
-}
-
-// The literal form, folded here rather than emitted as `6u / 4u`.
-inline Float InputBuffer::readInt8(unsigned index) const
-{
-    return detail::call2<Float>(asUInt((*this)[index / 4u]),
-                                detail::bufferIndex(graph, index % 4u),
-                                ValueType::Float,
-                                "eacpReadInt8");
-}
-
-inline Float InputBuffer::readUInt8(const UInt& index) const
-{
-    return detail::call2<Float>(
-        asUInt((*this)[index / 4u]), index % 4u, ValueType::Float, "eacpReadUInt8");
-}
-
-inline Float InputBuffer::readUInt8(unsigned index) const
-{
-    return detail::call2<Float>(asUInt((*this)[index / 4u]),
-                                detail::bufferIndex(graph, index % 4u),
-                                ValueType::Float,
-                                "eacpReadUInt8");
-}
-
-// All four bytes of one word, which is what a kernel walking a quantized row
-// wants. The index counts words here rather than bytes - it is the same index
-// the matching writeInt8x4 stores at.
-inline Float4 InputBuffer::readInt8x4(const UInt& index) const
-{
-    return unpackInt8x4(asUInt((*this)[index]));
-}
-
-inline Float4 InputBuffer::readInt8x4(unsigned index) const
-{
-    return readInt8x4(detail::bufferIndex(graph, index));
-}
-
-inline Float4 InputBuffer::readUInt8x4(const UInt& index) const
-{
-    return unpackUInt8x4(asUInt((*this)[index]));
-}
-
-inline Float4 InputBuffer::readUInt8x4(unsigned index) const
-{
-    return readUInt8x4(detail::bufferIndex(graph, index));
-}
-
-// Eight nibbles out of one word, on the terms readInt8x4 sets: the index counts
-// words, and the whole word is fetched once.
-inline Float4Pair InputBuffer::readInt4x8(const UInt& index) const
-{
-    return unpackInt4x8(asUInt((*this)[index]));
-}
-
-inline Float4Pair InputBuffer::readInt4x8(unsigned index) const
-{
-    return readInt4x8(detail::bufferIndex(graph, index));
-}
-
-inline Float4Pair InputBuffer::readUInt4x8(const UInt& index) const
-{
-    return unpackUInt4x8(asUInt((*this)[index]));
-}
-
-inline Float4Pair InputBuffer::readUInt4x8(unsigned index) const
-{
-    return readUInt4x8(detail::bufferIndex(graph, index));
-}
-
-// The wide byte reads. Each takes its words through one record read - read2 for
-// eight bytes, read4 for sixteen - rather than through that many subscripts, so
-// the whole record is one vector load wherever the backend has one and the four
-// unpackings are register arithmetic over the value it brought back. It is the
-// same shape readBFloat16x4 has, and deliberately: half the bytes for the same
-// number of loads is the point of storing weights as bytes at all.
-//
-// The load is emitted once because the record read is one node with four uses,
-// and the emitter names any node it evaluates more than once. Nothing here
-// depends on a compiler noticing two subscripts are the same address, which the
-// graph does not look for.
-inline Float4Pair InputBuffer::readInt8x8(const UInt& index) const
-{
-    auto words = read2(index);
-
-    return {unpackInt8x4(asUInt(words.x())), unpackInt8x4(asUInt(words.y()))};
-}
-
-inline Float4Pair InputBuffer::readInt8x8(unsigned index) const
-{
-    return readInt8x8(detail::bufferIndex(graph, index));
-}
-
-inline Float4Pair InputBuffer::readUInt8x8(const UInt& index) const
-{
-    auto words = read2(index);
-
-    return {unpackUInt8x4(asUInt(words.x())), unpackUInt8x4(asUInt(words.y()))};
-}
-
-inline Float4Pair InputBuffer::readUInt8x8(unsigned index) const
-{
-    return readUInt8x8(detail::bufferIndex(graph, index));
-}
-
-inline Float4Quad InputBuffer::readInt8x16(const UInt& index) const
-{
-    auto words = read4(index);
-
-    return {unpackInt8x4(asUInt(words.x())),
-            unpackInt8x4(asUInt(words.y())),
-            unpackInt8x4(asUInt(words.z())),
-            unpackInt8x4(asUInt(words.w()))};
-}
-
-inline Float4Quad InputBuffer::readInt8x16(unsigned index) const
-{
-    return readInt8x16(detail::bufferIndex(graph, index));
-}
-
-inline Float4Quad InputBuffer::readUInt8x16(const UInt& index) const
-{
-    auto words = read4(index);
-
-    return {unpackUInt8x4(asUInt(words.x())),
-            unpackUInt8x4(asUInt(words.y())),
-            unpackUInt8x4(asUInt(words.z())),
-            unpackUInt8x4(asUInt(words.w()))};
-}
-
-inline Float4Quad InputBuffer::readUInt8x16(unsigned index) const
-{
-    return readUInt8x16(detail::bufferIndex(graph, index));
-}
-
-// Sixteen nibbles are the eight bytes readInt8x8 already fetches in one load,
-// unpacked four ways instead of two - so the wide nibble read is the wide byte
-// read's machinery with unpackInt4x8 in place of unpackInt8x4, and costs a
-// helper of its own nothing.
-inline Float4Quad InputBuffer::readInt4x16(const UInt& index) const
-{
-    auto words = read2(index);
-    auto first = unpackInt4x8(asUInt(words.x()));
-    auto second = unpackInt4x8(asUInt(words.y()));
-
-    return {first.low, first.high, second.low, second.high};
-}
-
-inline Float4Quad InputBuffer::readInt4x16(unsigned index) const
-{
-    return readInt4x16(detail::bufferIndex(graph, index));
-}
-
-inline Float4Quad InputBuffer::readUInt4x16(const UInt& index) const
-{
-    auto words = read2(index);
-    auto first = unpackUInt4x8(asUInt(words.x()));
-    auto second = unpackUInt4x8(asUInt(words.y()));
-
-    return {first.low, first.high, second.low, second.high};
-}
-
-inline Float4Quad InputBuffer::readUInt4x16(unsigned index) const
-{
-    return readUInt4x16(detail::bufferIndex(graph, index));
-}
+Float4Pair unpackUInt4x8(const UInt& bits);
 
 template <ShaderScalarLike T>
 UInt toUInt(const T& value)
@@ -3564,27 +2991,13 @@ struct SimdMatrix
 };
 
 // uint min/max, the branchless way to clamp an index to a valid range.
-inline UInt min(const UInt& a, const UInt& b)
-{
-    return detail::call2<UInt>(a, b, ValueType::UInt, "min");
-}
+UInt min(const UInt& a, const UInt& b);
 
-inline UInt min(const UInt& a, unsigned b)
-{
-    return detail::call2<UInt>(
-        a, detail::uintConstantOn(a, b), ValueType::UInt, "min");
-}
+UInt min(const UInt& a, unsigned b);
 
-inline UInt max(const UInt& a, const UInt& b)
-{
-    return detail::call2<UInt>(a, b, ValueType::UInt, "max");
-}
+UInt max(const UInt& a, const UInt& b);
 
-inline UInt max(const UInt& a, unsigned b)
-{
-    return detail::call2<UInt>(
-        a, detail::uintConstantOn(a, b), ValueType::UInt, "max");
-}
+UInt max(const UInt& a, unsigned b);
 
 namespace detail
 {
@@ -3600,20 +3013,11 @@ Result matrixMul(const A& a, const B& b)
 
 // Matrix * vector, e.g. a 2D rotation applied to a texture coordinate or an MVP
 // transform applied to a clip-space position.
-inline Float2 operator*(const Float2x2& matrix, const Float2& vector)
-{
-    return detail::matrixMul<Float2>(matrix, vector);
-}
+Float2 operator*(const Float2x2& matrix, const Float2& vector);
 
-inline Float3 operator*(const Float3x3& matrix, const Float3& vector)
-{
-    return detail::matrixMul<Float3>(matrix, vector);
-}
+Float3 operator*(const Float3x3& matrix, const Float3& vector);
 
-inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
-{
-    return detail::matrixMul<Float4>(matrix, vector);
-}
+Float4 operator*(const Float4x4& matrix, const Float4& vector);
 
 // Vector * matrix, which is the same product against the matrix's rows rather
 // than its columns - what a shader writes to go back through an orientation
@@ -3621,36 +3025,18 @@ inline Float4 operator*(const Float4x4& matrix, const Float4& vector)
 // spell it. It needs no per-backend form of its own beyond the one the product
 // already has: MSL's * and HLSL's mul() both read the left operand as a row
 // vector when it is the one on the left.
-inline Float2 operator*(const Float2& vector, const Float2x2& matrix)
-{
-    return detail::matrixMul<Float2>(vector, matrix);
-}
+Float2 operator*(const Float2& vector, const Float2x2& matrix);
 
-inline Float3 operator*(const Float3& vector, const Float3x3& matrix)
-{
-    return detail::matrixMul<Float3>(vector, matrix);
-}
+Float3 operator*(const Float3& vector, const Float3x3& matrix);
 
-inline Float4 operator*(const Float4& vector, const Float4x4& matrix)
-{
-    return detail::matrixMul<Float4>(vector, matrix);
-}
+Float4 operator*(const Float4& vector, const Float4x4& matrix);
 
 // Matrix * matrix, e.g. composing two rotations, or model/view/projection.
-inline Float2x2 operator*(const Float2x2& a, const Float2x2& b)
-{
-    return detail::matrixMul<Float2x2>(a, b);
-}
+Float2x2 operator*(const Float2x2& a, const Float2x2& b);
 
-inline Float3x3 operator*(const Float3x3& a, const Float3x3& b)
-{
-    return detail::matrixMul<Float3x3>(a, b);
-}
+Float3x3 operator*(const Float3x3& a, const Float3x3& b);
 
-inline Float4x4 operator*(const Float4x4& a, const Float4x4& b)
-{
-    return detail::matrixMul<Float4x4>(a, b);
-}
+Float4x4 operator*(const Float4x4& a, const Float4x4& b);
 
 // A matrix scaled by a scalar, on either side and by a handle or a literal.
 // This is not one of the products above and is deliberately not a Mul node: it
@@ -3700,24 +3086,12 @@ EACP_MATRIX_SCALE(Float4x4)
 // Builds a matrix from its columns. Column-major, matching Metal's
 // float4x4(c0, c1, c2, c3); the HLSL emitter transposes this construction, since
 // HLSL fills a matrix from rows rather than columns.
-inline Float2x2 float2x2(const Float2& c0, const Float2& c1)
-{
-    return detail::construct<Float2x2>(
-        *c0.graph, ValueType::Float2x2, {c0.node, c1.node});
-}
+Float2x2 float2x2(const Float2& c0, const Float2& c1);
 
-inline Float3x3 float3x3(const Float3& c0, const Float3& c1, const Float3& c2)
-{
-    return detail::construct<Float3x3>(
-        *c0.graph, ValueType::Float3x3, {c0.node, c1.node, c2.node});
-}
+Float3x3 float3x3(const Float3& c0, const Float3& c1, const Float3& c2);
 
-inline Float4x4
-    float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3)
-{
-    return detail::construct<Float4x4>(
-        *c0.graph, ValueType::Float4x4, {c0.node, c1.node, c2.node, c3.node});
-}
+Float4x4
+    float4x4(const Float4& c0, const Float4& c1, const Float4& c2, const Float4& c3);
 
 // The transpose of a matrix, spelled the same in both backends and right in
 // both for the same reason the construction above is: HLSL holds transposed
@@ -3728,37 +3102,19 @@ inline Float4x4
 // rather than an omission here: neither MSL nor HLSL has one, so it would have
 // to be built out of a cofactor expansion per order - which is a function a
 // caller can write out of the nodes below, and not a node the graph is missing.
-inline Float2x2 transpose(const Float2x2& matrix)
-{
-    return detail::call<Float2x2>(matrix, ValueType::Float2x2, "transpose");
-}
+Float2x2 transpose(const Float2x2& matrix);
 
-inline Float3x3 transpose(const Float3x3& matrix)
-{
-    return detail::call<Float3x3>(matrix, ValueType::Float3x3, "transpose");
-}
+Float3x3 transpose(const Float3x3& matrix);
 
-inline Float4x4 transpose(const Float4x4& matrix)
-{
-    return detail::call<Float4x4>(matrix, ValueType::Float4x4, "transpose");
-}
+Float4x4 transpose(const Float4x4& matrix);
 
 // The determinant, which needs no such argument at all: a matrix and its
 // transpose have the same one, so the backends agree whatever each is holding.
-inline Float determinant(const Float2x2& matrix)
-{
-    return detail::call<Float>(matrix, ValueType::Float, "determinant");
-}
+Float determinant(const Float2x2& matrix);
 
-inline Float determinant(const Float3x3& matrix)
-{
-    return detail::call<Float>(matrix, ValueType::Float, "determinant");
-}
+Float determinant(const Float3x3& matrix);
 
-inline Float determinant(const Float4x4& matrix)
-{
-    return detail::call<Float>(matrix, ValueType::Float, "determinant");
-}
+Float determinant(const Float4x4& matrix);
 
 // A vector-constructor argument: any value handle (or derived member), or a
 // numeric literal that becomes a constant node.
@@ -3993,44 +3349,5 @@ template <typename... Args>
 Bool4 bool4(const Args&... args)
 {
     return detail::buildFrom<Bool4, ValueType::Bool>(args...);
-}
-
-// The four-wide packed reads, down here because they are the one pair spelled
-// in terms of float4(), which the vector builders below the conversions
-// declare. Both take their two words through read2 rather than through two
-// subscripts, so the eight bytes are a single load wherever the backend has
-// one and the unpacking is register arithmetic over what it brought back.
-
-// Four halves, which is two words - and read as one record of two floats rather
-// than as two subscripts, so the eight bytes are a single load wherever the
-// backend has one. The index counts records of four halves, so element k of the
-// buffer is readHalf(k) and readHalf4(k / 4) component k % 4, on the layout
-// readHalf2 already fixes: the low half of a word comes first.
-inline Float4 InputBuffer::readHalf4(const UInt& index) const
-{
-    auto words = read2(index);
-
-    return float4(unpackHalf2(asUInt(words.x())), unpackHalf2(asUInt(words.y())));
-}
-
-inline Float4 InputBuffer::readHalf4(unsigned index) const
-{
-    return readHalf4(detail::bufferIndex(graph, index));
-}
-
-// Four bfloat16s in two words, on exactly the terms readHalf4 sets: one record
-// read of two floats, so one load, and the widening is four shifts over what it
-// brought back.
-inline Float4 InputBuffer::readBFloat16x4(const UInt& index) const
-{
-    auto words = read2(index);
-
-    return float4(unpackBFloat16x2(asUInt(words.x())),
-                  unpackBFloat16x2(asUInt(words.y())));
-}
-
-inline Float4 InputBuffer::readBFloat16x4(unsigned index) const
-{
-    return readBFloat16x4(detail::bufferIndex(graph, index));
 }
 } // namespace eacp::GPU

@@ -1,5 +1,7 @@
 ﻿#include "PathRasterizer.h"
 
+#include "CoverageKernel.h"
+
 #include <cmath>
 
 namespace eacp::GPUWidgets

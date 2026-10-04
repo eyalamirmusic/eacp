@@ -9,9 +9,10 @@
 #include "../Texture/Texture.h"
 #include "../Timing/FrameTimer.h"
 
+#include <eacp/Core/Threads/ThreadUtils.h>
+
 #include <cstdint>
 #include <string>
-#include <thread>
 
 namespace eacp::Graphics
 {
@@ -347,7 +348,7 @@ private:
     // The thread this Device was constructed on, and therefore the one it may
     // be used from - unless followMainThread() said to track the main thread
     // instead, which Device::shared() does.
-    std::thread::id owningThread = std::this_thread::get_id();
+    std::uint64_t owningThread = Threads::currentThreadId();
     bool mainThreadOwned = false;
 
     std::uint64_t frameCount = 0;

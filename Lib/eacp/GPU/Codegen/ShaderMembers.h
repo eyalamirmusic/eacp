@@ -464,7 +464,7 @@ struct Uniform<WritableTexture2D> : WritableTexture2D
 class ShaderVisitor
 {
 public:
-    virtual ~ShaderVisitor() = default;
+    virtual ~ShaderVisitor();
 
     template <typename T>
     void operator()(const char* name, Uniform<T>& member)
@@ -472,50 +472,23 @@ public:
         onUniform(name, ValueTypeOf<T>::value, member, &member.value);
     }
 
-    void operator()(const char* name, Uniform<Texture2D>& member)
-    {
-        onTexture(name, member, member.value, member.sampling);
-    }
+    void operator()(const char* name, Uniform<Texture2D>& member);
 
-    void operator()(const char* name, Uniform<TextureCube>& member)
-    {
-        onCubeTexture(name, member, member.value, member.sampling);
-    }
+    void operator()(const char* name, Uniform<TextureCube>& member);
 
-    void operator()(const char* name, Uniform<TextureDepth2D>& member)
-    {
-        onDepthTexture(name, member, member.value, member.sampling);
-    }
+    void operator()(const char* name, Uniform<TextureDepth2D>& member);
 
-    void operator()(const char* name, Uniform<InputBuffer>& member)
-    {
-        onInputBuffer(name, member, member.value);
-    }
+    void operator()(const char* name, Uniform<InputBuffer>& member);
 
-    void operator()(const char* name, Uniform<OutputBuffer>& member)
-    {
-        onOutputBuffer(name, member, member.value);
-    }
+    void operator()(const char* name, Uniform<OutputBuffer>& member);
 
-    void operator()(const char* name, Uniform<UIntInputBuffer>& member)
-    {
-        onUIntInputBuffer(name, member, member.value);
-    }
+    void operator()(const char* name, Uniform<UIntInputBuffer>& member);
 
-    void operator()(const char* name, Uniform<UIntOutputBuffer>& member)
-    {
-        onUIntOutputBuffer(name, member, member.value);
-    }
+    void operator()(const char* name, Uniform<UIntOutputBuffer>& member);
 
-    void operator()(const char* name, Uniform<AtomicBuffer>& member)
-    {
-        onAtomicBuffer(name, member, member.value);
-    }
+    void operator()(const char* name, Uniform<AtomicBuffer>& member);
 
-    void operator()(const char* name, Uniform<WritableTexture2D>& member)
-    {
-        onWritableTexture(name, member, member.value);
-    }
+    void operator()(const char* name, Uniform<WritableTexture2D>& member);
 
 protected:
     virtual void onUniform(const char* name,
@@ -525,30 +498,21 @@ protected:
 
     // Texture and storage-buffer members are not packed into the uniform block,
     // so only the walks that care (build, resource bind) override these.
-    virtual void onTexture(const char*, Texture2D&, const Texture*, TextureSampling)
-    {
-    }
+    virtual void onTexture(const char*, Texture2D&, const Texture*, TextureSampling);
     virtual void
-        onCubeTexture(const char*, TextureCube&, const Texture*, TextureSampling)
-    {
-    }
+        onCubeTexture(const char*, TextureCube&, const Texture*, TextureSampling);
+    virtual void onDepthTexture(const char*,
+                                TextureDepth2D&,
+                                const Texture*,
+                                TextureSampling);
+    virtual void onInputBuffer(const char*, InputBuffer&, const BufferRange&);
+    virtual void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&);
     virtual void
-        onDepthTexture(const char*, TextureDepth2D&, const Texture*, TextureSampling)
-    {
-    }
-    virtual void onInputBuffer(const char*, InputBuffer&, const BufferRange&) {}
-    virtual void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) {}
-    virtual void onUIntInputBuffer(const char*, UIntInputBuffer&, const BufferRange&)
-    {
-    }
+        onUIntInputBuffer(const char*, UIntInputBuffer&, const BufferRange&);
     virtual void
-        onUIntOutputBuffer(const char*, UIntOutputBuffer&, const BufferRange&)
-    {
-    }
-    virtual void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) {}
-    virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*)
-    {
-    }
+        onUIntOutputBuffer(const char*, UIntOutputBuffer&, const BufferRange&);
+    virtual void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&);
+    virtual void onWritableTexture(const char*, WritableTexture2D&, const Texture*);
 };
 
 // Build walk: each uniform member adopts a freshly added graph slot, so define()
@@ -556,82 +520,50 @@ protected:
 class ShaderBuildVisitor final : public ShaderVisitor
 {
 public:
-    explicit ShaderBuildVisitor(ShaderBuilder& builderToUse)
-        : builder(builderToUse)
-    {
-    }
+    explicit ShaderBuildVisitor(ShaderBuilder& builderToUse);
 
     void onUniform(const char*,
                    ValueType type,
                    detail::ValueHandle& handle,
-                   const void*) override
-    {
-        handle = builder.addUniform(type);
-    }
+                   const void*) override;
 
     void onTexture(const char*,
                    Texture2D& handle,
                    const Texture*,
-                   TextureSampling sampling) override
-    {
-        handle = builder.texture(sampling);
-    }
+                   TextureSampling sampling) override;
 
     void onCubeTexture(const char*,
                        TextureCube& handle,
                        const Texture*,
-                       TextureSampling sampling) override
-    {
-        handle = builder.cubeTexture(sampling);
-    }
+                       TextureSampling sampling) override;
 
     void onDepthTexture(const char*,
                         TextureDepth2D& handle,
                         const Texture*,
-                        TextureSampling sampling) override
-    {
-        handle = builder.depthTexture(sampling);
-    }
+                        TextureSampling sampling) override;
 
-    void onInputBuffer(const char*, InputBuffer& handle, const BufferRange&) override
-    {
-        handle = builder.inputBuffer();
-    }
+    void
+        onInputBuffer(const char*, InputBuffer& handle, const BufferRange&) override;
 
     void onOutputBuffer(const char*,
                         OutputBuffer& handle,
-                        const BufferRange&) override
-    {
-        handle = builder.outputBuffer();
-    }
+                        const BufferRange&) override;
 
     void onUIntInputBuffer(const char*,
                            UIntInputBuffer& handle,
-                           const BufferRange&) override
-    {
-        handle = builder.uintInputBuffer();
-    }
+                           const BufferRange&) override;
 
     void onUIntOutputBuffer(const char*,
                             UIntOutputBuffer& handle,
-                            const BufferRange&) override
-    {
-        handle = builder.uintOutputBuffer();
-    }
+                            const BufferRange&) override;
 
     void onAtomicBuffer(const char*,
                         AtomicBuffer& handle,
-                        const BufferRange&) override
-    {
-        handle = builder.atomicBuffer();
-    }
+                        const BufferRange&) override;
 
     void onWritableTexture(const char*,
                            WritableTexture2D& handle,
-                           const Texture*) override
-    {
-        handle = builder.writableTexture();
-    }
+                           const Texture*) override;
 
 private:
     ShaderBuilder& builder;
@@ -646,31 +578,14 @@ private:
 class ShaderUploadVisitor final : public ShaderVisitor
 {
 public:
-    explicit ShaderUploadVisitor(Vector<std::byte>& bytesToFill)
-        : bytes(bytesToFill)
-    {
-    }
+    explicit ShaderUploadVisitor(Vector<std::byte>& bytesToFill);
 
     void onUniform(const char*,
                    ValueType type,
                    detail::ValueHandle&,
-                   const void* data) override
-    {
-        auto alignment = uniformAlignment(type);
-        auto offset = alignUp(cursor, alignment);
-        auto next = offset + uniformSlotStride(type);
+                   const void* data) override;
 
-        if (bytes.size() < next)
-            bytes.resize(next);
-
-        std::memcpy(bytes.data() + offset, data, (std::size_t) byteSize(type));
-        cursor = next;
-
-        if (alignment > blockAlignment)
-            blockAlignment = alignment;
-    }
-
-    void finish() { bytes.resize(alignUp(bytes.size(), blockAlignment)); }
+    void finish();
 
 private:
     Vector<std::byte>& bytes;
@@ -716,3 +631,8 @@ private:
     {                                                                               \
         using type = eacp::GPU::Handle;                                             \
     };
+
+// Last, because it needs the macro above: whatever can name ShaderValueOf also
+// sees the Core maths registrations, so no translation unit can pick an overload
+// without them.
+#include "MathValues.h"

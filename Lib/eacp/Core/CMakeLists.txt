@@ -21,6 +21,7 @@ target_sources(eacp-core PRIVATE
         Threads/CallAfter.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
+        Threads/ThreadId.cpp
         Utils/Base64.cpp
         Utils/Environment.cpp
         Utils/File.cpp
