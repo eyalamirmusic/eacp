@@ -8,7 +8,6 @@
 #include <xcb/xcb.h>
 #include <xcb/xcb_cursor.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -25,20 +24,8 @@ class X11Input;
 
 // A position on the wire is a signed 16-bit number and a size an unsigned one,
 // while both start as points an app may put anything at all in.
-constexpr int16_t x11ClampPosition(long value)
-{
-    constexpr auto lowest = (long) std::numeric_limits<int16_t>::min();
-    constexpr auto highest = (long) std::numeric_limits<int16_t>::max();
-
-    return (int16_t) std::clamp(value, lowest, highest);
-}
-
-constexpr uint16_t x11ClampSize(long value)
-{
-    constexpr auto highest = (long) std::numeric_limits<uint16_t>::max();
-
-    return (uint16_t) std::clamp(value, 1L, highest);
-}
+int16_t x11ClampPosition(long value);
+uint16_t x11ClampSize(long value);
 
 // A Window on this connection: the neutral half plus the toplevel id every
 // piece of X11 glue starts from.

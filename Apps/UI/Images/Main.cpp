@@ -1,5 +1,6 @@
 #include <eacp/UI/UI.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 

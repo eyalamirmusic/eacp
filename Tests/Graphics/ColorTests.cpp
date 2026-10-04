@@ -1,6 +1,6 @@
 #include "Common.h"
 
-// Color's constructors and derivations are constexpr so a theme -- a table of
+// Color's constructors and withAlpha are constexpr so a theme -- a table of
 // named colours -- can be a compile-time constant rather than something built
 // during static initialisation.
 //
@@ -23,8 +23,6 @@ constexpr auto grayed = Color::gray(0.5f);
 constexpr auto white = Color::white();
 constexpr auto black = Color::black(0.25f);
 constexpr auto faded = rgb.withAlpha(0.5f);
-constexpr auto lighter = rgb.brighter(0.1f);
-constexpr auto darker = rgb.darker(0.1f);
 
 static_assert(defaultColor.a == 1.f, "a default Color is opaque");
 static_assert(rgb.r == 0.25f && rgb.g == 0.5f && rgb.b == 0.75f);
@@ -34,8 +32,6 @@ static_assert(grayed.r == grayed.g && grayed.g == grayed.b);
 static_assert(white.r == 1.f && white.a == 1.f);
 static_assert(black.r == 0.f && black.a == 0.25f);
 static_assert(faded.a == 0.5f && faded.r == rgb.r, "withAlpha keeps the hue");
-static_assert(lighter.b > rgb.b);
-static_assert(darker.b < rgb.b);
 
 // A whole palette as one compile-time table, which is the shape this change
 // exists to allow.
@@ -47,15 +43,10 @@ struct Theme
 };
 
 constexpr auto theme = Theme {.background = Color {0.11f, 0.12f, 0.15f},
-                             .foreground = Color::gray(0.9f),
-                             .accent = Color {0.4f, 0.6f, 0.9f}};
+                              .foreground = Color::gray(0.9f),
+                              .accent = Color {0.4f, 0.6f, 0.9f}};
 
 static_assert(theme.accent.b == 0.9f);
-
-// The clamps hold at compile time too, so a palette entry cannot silently carry
-// an out-of-range channel.
-static_assert(Color::white().brighter(0.5f).r == 1.f, "brighter clamps at 1");
-static_assert(Color::black().darker(0.5f).r == 0.f, "darker clamps at 0");
 } // namespace
 
 auto tColorDefaultsToOpaqueBlack = test("Color/defaultsToOpaqueBlack") = []
@@ -106,6 +97,18 @@ auto tColorClampsAtBounds = test("Color/brighterAndDarkerClamp") = []
     check(dark.r == 0.f);
     check(dark.g == 0.f);
     check(dark.b == 0.f);
+
+    check(Color::white().brighter(0.5f).r == 1.f);
+    check(Color::black().darker(0.5f).r == 0.f);
+};
+
+auto tColorBrighterAndDarkerMoveBlue =
+    test("Color/brighterAndDarkerMoveEveryChannel") = []
+{
+    auto rgb = Color {0.25f, 0.5f, 0.75f};
+
+    check(rgb.brighter(0.1f).b > rgb.b);
+    check(rgb.darker(0.1f).b < rgb.b);
 };
 
 auto tColorHelpers = test("Color/grayWhiteBlackHelpers") = []

@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Environment.h>
 #include <eacp/Core/Utils/Strings.h>
+#include <eacp/Text/UnicodeEmoji.h>
 
 #include <initializer_list>
 #include <string>

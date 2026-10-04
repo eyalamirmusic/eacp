@@ -1,8 +1,5 @@
 #pragma once
 
-#include <algorithm>
-#include <iterator>
-
 namespace eacp::Text
 {
 // The Unicode Emoji_Presentation property (UTS #51), from emoji-data.txt of
@@ -16,6 +13,7 @@ struct EmojiRange
     char32_t last;
 };
 
+// clang-format off
 inline constexpr EmojiRange emojiPresentationRanges[] = {
     {0x231A, 0x231B},
     {0x23E9, 0x23EC},
@@ -98,35 +96,15 @@ inline constexpr EmojiRange emojiPresentationRanges[] = {
     {0x1FADF, 0x1FAE9},
     {0x1FAF0, 0x1FAF8},
 };
+// clang-format on
 
 // U+FE0F VARIATION SELECTOR-16 asks for emoji presentation, U+FE0E
 // VARIATION SELECTOR-15 for text presentation.
 inline constexpr char32_t emojiVariationSelector = 0xFE0F;
 inline constexpr char32_t textVariationSelector = 0xFE0E;
 
-constexpr bool hasEmojiPresentation(char32_t codepoint)
-{
-    const auto* begin = std::begin(emojiPresentationRanges);
-    const auto* end = std::end(emojiPresentationRanges);
-
-    const auto* found = std::upper_bound(begin,
-                                         end,
-                                         codepoint,
-                                         [](char32_t value, const EmojiRange& range)
-                                         { return value < range.first; });
-
-    return found != begin && codepoint <= (found - 1)->last;
-}
+bool hasEmojiPresentation(char32_t codepoint);
 
 // `next` is the codepoint following, which is where a variation selector sits.
-constexpr bool wantsEmojiPresentation(char32_t codepoint, char32_t next)
-{
-    if (next == emojiVariationSelector)
-        return true;
-
-    if (next == textVariationSelector)
-        return false;
-
-    return hasEmojiPresentation(codepoint);
-}
+bool wantsEmojiPresentation(char32_t codepoint, char32_t next);
 } // namespace eacp::Text

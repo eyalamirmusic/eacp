@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Environment.h>
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>

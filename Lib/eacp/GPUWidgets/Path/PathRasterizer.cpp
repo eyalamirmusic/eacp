@@ -2,6 +2,7 @@
 
 #include "CoverageKernel.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace eacp::GPUWidgets
