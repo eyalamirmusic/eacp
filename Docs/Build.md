@@ -121,8 +121,14 @@ installed, run, debugged, signed and bundled for Google Play. The project is a
 Gradle one with one module per `eacp_add_app`, whose `externalNativeBuild`
 runs this `CMakeLists.txt` for that one target per ABI, given every
 non-internal `EACP_*` and `CPM_*` cache variable of the generating configure
-plus `CPM_SOURCE_CACHE`, so a module builds the same sources with the same
-options. The SDK is found once — `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, else
+plus `CPM_SOURCE_CACHE`, so a module builds with the same options. It builds
+the same sources too, and clones none of them:
+`<build>/AndroidStudio/eacp-sources.cmake`, included at the top of every
+module's configure, sets `CPM_<name>_SOURCE` to the source CPM recorded for
+each package the generating configure fetched. A package the module was given
+its own `CPM_<name>_SOURCE` for keeps it, and one whose recorded source is gone
+by then is fetched as usual. The SDK is found once — `$ANDROID_HOME`,
+`$ANDROID_SDK_ROOT`, else
 Studio's default location — and the toolchain and the project use the same
 one. `CMake/Android.cmake` writes it from the
 templates and the Gradle wrapper in `CMake/Android/`.
