@@ -35,10 +35,6 @@ add_ide_sources(eacp-ui)
 # The one widget that knows the network: a view of the OnlineResources
 # registry. Its own target so eacp-ui stays free of eacp-network, and an app
 # with no downloads links nothing for them.
-if (NOT EACP_HAS_NETWORK)
-    return ()
-endif ()
-
 add_library(eacp-ui-network STATIC)
 target_sources(eacp-ui-network PRIVATE
         Network/OnlineResourceMonitor.cpp

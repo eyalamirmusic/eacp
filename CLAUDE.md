@@ -19,7 +19,7 @@ they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`). New
 implementation-level documentation goes there, not in the README.
 
 Platform coverage splits on whether a module draws, decided once in the
-top-level `CMakeLists.txt` by eight capability variables that `Lib`, `Apps` and
+top-level `CMakeLists.txt` by seven capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` — `EmbeddedView` with it, since embedding is a windowing feature
 rather than a drawing one — and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`,
@@ -38,10 +38,10 @@ set of modules and a new port reaches them one at a time. The next three hang of
 `EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
 are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-An eighth, `EACP_HAS_NETWORK`, is on everywhere — the HTTP client is
+`Network` is gated by none of them: it builds everywhere — the HTTP client is
 NSURLSession on Apple, WinHTTP on Windows, libcurl on Linux and Java's
-`HttpURLConnection` and sockets through JNI on Android — and gates `Network`,
-the WebView page bridge over its RPC, `eacp-ui-network` and their tests.
+`HttpURLConnection` and sockets through JNI on Android — and the WebView page
+bridge over its RPC, `eacp-ui-network` and their tests build with it.
 `Core` and `Network` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
 and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
