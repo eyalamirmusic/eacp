@@ -13,13 +13,13 @@ using namespace eacp::Graphics;
 
 namespace
 {
-constexpr auto streamingResultTimeout = eacp::Time::MS {30000};
-
 // 26 bytes; a closed range pulls out a known slice.
 const std::string streamData = "abcdefghijklmnopqrstuvwxyz";
 
+// The page only announces itself on load; the fetch waits for the test to
+// ask, so booting the engine and the round trip each get a budget of their own.
 const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
-(async function () {
+window.runFetch = async function () {
   try {
     const r = await fetch('teststream://host/data', { headers: { Range: 'bytes=2-5' } });
     const body = await r.text();
@@ -33,7 +33,8 @@ const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
     window.webkit.messageHandlers.result.postMessage(
         JSON.stringify({ error: String(e) }));
   }
-})();
+};
+window.webkit.messageHandlers.ready.postMessage('ready');
 </script></body></html>)HTML";
 
 StreamingProvider testProvider()
@@ -78,6 +79,10 @@ auto tStreamingRangeFetch = test("StreamingPump/rangeFetchReturns206Slice") = []
     auto window = Window {};
     window.setContentView(webView);
 
+    auto ready = false;
+    webView.addScriptMessageHandler("ready",
+                                    [&](const std::string&) { ready = true; });
+
     auto done = false;
     auto message = std::string {};
     webView.addScriptMessageHandler("result",
@@ -89,10 +94,19 @@ auto tStreamingRangeFetch = test("StreamingPump/rangeFetchReturns206Slice") = []
 
     webView.loadURL("teststream://host/index.html");
 
-    auto ok =
-        Threads::runEventLoopUntil([&] { return done; }, streamingResultTimeout);
+    auto pageReady =
+        Threads::runEventLoopUntil([&] { return ready; }, firstNavigationTimeout);
+    check(pageReady, "stage 1: environment and first navigation");
 
-    check(ok);
+    if (!pageReady)
+        return;
+
+    webView.evaluateJavaScript("window.runFetch()");
+
+    auto fetchDone =
+        Threads::runEventLoopUntil([&] { return done; }, webViewResultTimeout);
+    check(fetchDone, "stage 2: ranged fetch round trip");
+
     check(message.find(R"("status":206)") != std::string::npos);
     check(message.find(R"("body":"cdef")") != std::string::npos);
     check(message.find("bytes 2-5/26") != std::string::npos);
