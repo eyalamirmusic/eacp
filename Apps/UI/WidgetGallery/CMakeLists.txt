@@ -1,13 +1,6 @@
-add_executable(WidgetGallery Main.cpp)
+eacp_add_app(WidgetGallery Main.cpp)
 target_link_libraries(WidgetGallery PRIVATE eacp-ui)
-
-set(BUNDLE_ID "com.eacp.widgetgallery")
-
-set_target_properties(WidgetGallery PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "WidgetGallery"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+set_target_properties(WidgetGallery PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(WidgetGallery)
 set_default_target_setting(WidgetGallery)

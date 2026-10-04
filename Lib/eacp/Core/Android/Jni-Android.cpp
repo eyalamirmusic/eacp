@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
+#include <atomic>
+
 namespace eacp::Jni
 {
 namespace
@@ -126,6 +128,77 @@ JNIEnv* currentEnv()
     attachment.vm = javaVM;
 
     return env;
+}
+
+namespace
+{
+std::atomic<jobject>& storedContext()
+{
+    static auto context = std::atomic<jobject> {nullptr};
+    return context;
+}
+
+jobject keepForTheProcess(JNIEnv* env, jobject local)
+{
+    return local != nullptr ? env->NewGlobalRef(local) : nullptr;
+}
+
+jobject currentApplication(JNIEnv* env)
+{
+    auto frame = LocalFrame {env};
+    auto* activityThread = env->FindClass("android/app/ActivityThread");
+
+    if (failed(env) || activityThread == nullptr)
+        return nullptr;
+
+    auto method = env->GetStaticMethodID(
+        activityThread, "currentApplication", "()Landroid/app/Application;");
+
+    if (failed(env) || method == nullptr)
+        return nullptr;
+
+    auto* application = env->CallStaticObjectMethod(activityThread, method);
+    return failed(env) ? nullptr : keepForTheProcess(env, application);
+}
+} // namespace
+
+void setContext(JNIEnv* env, jobject anyContext)
+{
+    if (env == nullptr || anyContext == nullptr)
+        return;
+
+    auto frame = LocalFrame {env};
+    auto* application = callObject(
+        env, anyContext, "getApplicationContext", "()Landroid/content/Context;");
+    auto* kept =
+        keepForTheProcess(env, application != nullptr ? application : anyContext);
+
+    if (auto* previous = storedContext().exchange(kept))
+        env->DeleteGlobalRef(previous);
+}
+
+jobject applicationContext(JNIEnv* env)
+{
+    if (auto* context = storedContext().load())
+        return context;
+
+    if (env == nullptr)
+        return nullptr;
+
+    auto* found = currentApplication(env);
+    auto* expected = static_cast<jobject>(nullptr);
+
+    if (found == nullptr)
+    {
+        LOG("JNI: no application Context; nothing called Jni::setContext");
+        return nullptr;
+    }
+
+    if (storedContext().compare_exchange_strong(expected, found))
+        return found;
+
+    env->DeleteGlobalRef(found);
+    return expected;
 }
 
 bool failed(JNIEnv* env)

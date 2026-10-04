@@ -68,11 +68,13 @@ FilePath FilePath::tempDirectory()
 
 FilePath FilePath::appDataDirectory()
 {
-    return androidUnderHome("data");
+    return homeDirectory();
 }
 
+// Context.getCacheDir(), which the system clears under storage pressure.
 FilePath FilePath::cacheDirectory()
 {
-    return androidUnderHome("cache");
+    auto files = homeDirectory();
+    return files.empty() ? files : files.parentDirectory() / "cache";
 }
 } // namespace eacp

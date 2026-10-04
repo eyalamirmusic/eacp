@@ -108,10 +108,12 @@ endfunction()
 # setting of this configure (a -DEACP_UNITY_BUILD=OFF or a
 # -DCPM_Miro_SOURCE=... reaches them as it reached this one) and any other -D
 # it was given on the command line, bar the CMAKE_* and ANDROID_* that Gradle
-# sets itself and the Studio project's own, and the source cache, so no module
-# fetches a package twice.
+# sets itself and the Studio project's own, the source cache, and the script
+# that hands them the sources this configure fetched.
 function(eacp_android_cmake_arguments out)
-    set(arguments -DEACP_ANDROID_STUDIO=OFF)
+    set(sources "${EACP_ANDROID_STUDIO_DIR}/eacp-sources.cmake")
+    set(arguments -DEACP_ANDROID_STUDIO=OFF
+            "-DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=${sources}")
     get_cmake_property(names CACHE_VARIABLES)
 
     foreach (name IN LISTS names)
@@ -138,6 +140,35 @@ function(eacp_android_cmake_arguments out)
     endif ()
 
     set(${out} "${arguments}" PARENT_SCOPE)
+endfunction()
+
+# Every package this configure fetched, by the source CPM recorded for it, as
+# the CPM_<name>_SOURCE of each Gradle configure, so none clones a package
+# again. It is included at their first project() on every configure, so a
+# source deleted since is fetched as usual rather than failing, an override a
+# configure was given is kept, and so is a source a build fetched for itself
+# while it still exists: ResEmbed's generator build refuses a moved source.
+function(eacp_android_write_fetched_sources)
+    set(content "")
+
+    foreach (package IN LISTS CPM_PACKAGES)
+        set(source "${CPM_PACKAGE_${package}_SOURCE_DIR}")
+
+        if (source)
+            set(recorded "CPM_PACKAGE_${package}_SOURCE_DIR")
+            string(APPEND content
+                    "if (NOT CPM_${package}_SOURCE AND EXISTS [==[${source}]==]\n"
+                    "        AND (NOT EXISTS \"\${${recorded}}\"\n"
+                    "        OR ${recorded} STREQUAL [==[${source}]==]))\n"
+                    "    set(CPM_${package}_SOURCE [==[${source}]==])\n"
+                    "endif ()\n")
+        endif ()
+    endforeach ()
+
+    set(file "${EACP_ANDROID_STUDIO_DIR}/eacp-sources.cmake")
+    file(WRITE "${file}.new" "${content}")
+    file(COPY_FILE "${file}.new" "${file}" ONLY_IF_DIFFERENT)
+    file(REMOVE "${file}.new")
 endfunction()
 
 # The NDK this configure compiles with: Gradle's ndkVersion.
@@ -249,6 +280,7 @@ function(eacp_write_android_studio_project)
     file(COPY "${templates}/wrapper/gradlew"
             "${templates}/wrapper/gradlew.bat"
             DESTINATION "${dir}")
+    eacp_android_write_fetched_sources()
 
     list(LENGTH apps count)
     list(GET apps 0 first)

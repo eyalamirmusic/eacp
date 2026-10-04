@@ -121,8 +121,14 @@ installed, run, debugged, signed and bundled for Google Play. The project is a
 Gradle one with one module per `eacp_add_app`, whose `externalNativeBuild`
 runs this `CMakeLists.txt` for that one target per ABI, given every
 non-internal `EACP_*` and `CPM_*` cache variable of the generating configure
-plus `CPM_SOURCE_CACHE`, so a module builds the same sources with the same
-options. The SDK is found once — `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, else
+plus `CPM_SOURCE_CACHE`, so a module builds with the same options. It builds
+the same sources too, and clones none of them:
+`<build>/AndroidStudio/eacp-sources.cmake`, included at the top of every
+module's configure, sets `CPM_<name>_SOURCE` to the source CPM recorded for
+each package the generating configure fetched. A package the module was given
+its own `CPM_<name>_SOURCE` for keeps it, and one whose recorded source is gone
+by then is fetched as usual. The SDK is found once — `$ANDROID_HOME`,
+`$ANDROID_SDK_ROOT`, else
 Studio's default location — and the toolchain and the project use the same
 one. `CMake/Android.cmake` writes it from the
 templates and the Gradle wrapper in `CMake/Android/`.
@@ -158,6 +164,38 @@ built for the host inside each module's configure, as on every cross build,
 so the host needs a C++ compiler; the Ninja Gradle found is handed to that
 configure too, so Studio started from the Dock, with no shell `PATH`, builds.
 [`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
+
+Of the examples, an Android build takes `Apps/Android`, `Apps/GPU` and
+`Apps/UI` — each an `eacp_add_app`, so each is a module of the project — and
+leaves out the rest, which are console tools, plugin hosts or need a
+capability Android lacks; the capability gates below still apply inside the
+three, so `SVGDocument` and the GPU examples that paint a 2D overlay stay out.
+
+`Core` reaches the framework through JNI where Android has no C API
+(`Core/Android/Jni.h`), with the application `Context` from
+`Jni::setContext`, else `ActivityThread.currentApplication()`. `Clipboard` is
+`ClipboardManager` (`App/Clipboard-Android.cpp`): text only, `copyFiles`
+returns false, and a read is empty while the app lacks focus.
+`Apps::openExternalURL` is an `ACTION_VIEW` intent; the file pickers return
+`nullopt` at once, a Storage Access Framework picker needing activity-result
+plumbing NativeActivity does not have. `FilePath::appDataDirectory()` is
+`getFilesDir()` and `cacheDirectory()` is `getCacheDir()`, so
+`appSupportDirectory()` and `appCacheDirectory()` land under each.
+`Files::executablePath()` is the app's own `lib<Target>.so` (the process is the
+zygote's `app_process64`), so the fallback app name is the target's;
+`resourcesDirectory()` and `getBundleResourcePath()` are empty in an app,
+whose resources are APK assets with no path, readable only through
+`AAssetManager`, which eacp does not wrap yet. A binary run from `adb shell` is its own executable, with its
+resources beside it, as on desktop Linux.
+
+Android has no 2D `Context`, but it does have the image codecs:
+`Image-Android.cpp` decodes through `BitmapFactory.decodeByteArray` into an
+unpremultiplied `ARGB_8888` bitmap and encodes through `Bitmap.compress`, the
+pixels crossing with jnigraphics (`eacp-graphics` links it PRIVATE), so
+`Image::decode`, `load`, `encode` and `save` behave as on Apple and Windows,
+from any thread. `isSystemDarkMode()` reads the night bit of the activity's
+current configuration (`SystemAppearance-Android.cpp`). There is no
+change notification behind it on any platform; a caller asks again.
 
 ## A local Miro source
 
@@ -227,7 +265,7 @@ and their tests build with it:
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |

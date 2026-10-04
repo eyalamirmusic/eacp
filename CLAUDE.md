@@ -104,7 +104,8 @@ Android (API `EACP_ANDROID_MIN_SDK`+, Vulkan 1.1) is Linux without Wayland: CMak
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
-over `android.graphics` through JNI. `Platform::isLinux()` is desktop Linux
+over `android.graphics` through JNI, as are the image codecs
+(`Image/Image-Android.cpp`), which Android has without `EACP_HAS_CONTEXT`. `Platform::isLinux()` is desktop Linux
 alone; the sites that mean the Vulkan backend and its GLSL ask
 `isLinuxFamily()`, and the font defaults are Android's own
 `sans-serif` and `monospace`. The HTTP client is `Http-Android.cpp` over
@@ -127,6 +128,14 @@ device and the app's statics all run a second time; only a `main()` that
 returns on its own ends the process. A debug build takes environment
 variables from the launch intent's string extras and from
 `debug.<package>.env`; a release build takes none.
+`Core` has Android files of its own where desktop Linux's would be wrong:
+`Clipboard-Android.cpp` is `ClipboardManager` (text only, no backend hook),
+`App-Android.cpp` opens a URL with an `ACTION_VIEW` intent and has no file
+pickers, and `Files-Android.cpp` takes the program from the app's own `.so`
+rather than `/proc/self/exe` (`app_process64`), with no resources directory
+since assets live in the APK; `FilePath`'s data and cache roots are
+`getFilesDir()` and `getCacheDir()`. The application `Context` they need is
+`Jni::applicationContext()` (see `Docs/Build.md`).
 `eacp_add_app` builds an example as an
 executable, or on Android as the shared library NativeActivity loads, with
 `BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON` and

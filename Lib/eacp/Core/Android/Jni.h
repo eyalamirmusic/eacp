@@ -15,6 +15,14 @@ void setJavaVM(JavaVM* vm);
 // ends. Null before setJavaVM, or when the attach fails.
 JNIEnv* currentEnv();
 
+// The application's Context, for the framework services that need one: the
+// clipboard, starting an activity. Any Context will do, the activity included;
+// its application context is what is kept, so it outlives a recreated activity.
+// Until one is set the process's Application is asked for through
+// ActivityThread.currentApplication(). Null when neither is available.
+void setContext(JNIEnv* env, jobject anyContext);
+jobject applicationContext(JNIEnv* env);
+
 // Logs and clears a pending exception; true when there was one.
 bool failed(JNIEnv* env);
 

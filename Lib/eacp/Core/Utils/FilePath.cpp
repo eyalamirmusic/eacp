@@ -74,6 +74,10 @@ std::string executableName()
     if (dot != std::string::npos && dot > 0)
         name.erase(dot);
 
+    if constexpr (Platform::isAndroid())
+        if (name.starts_with("lib") && name.size() > 3)
+            name.erase(0, 3);
+
     return name;
 }
 
