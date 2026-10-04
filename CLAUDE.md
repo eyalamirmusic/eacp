@@ -19,7 +19,7 @@ they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`). New
 implementation-level documentation goes there, not in the README.
 
 Platform coverage splits on whether a module draws, decided once in the
-top-level `CMakeLists.txt` by eight capability variables that `Lib`, `Apps` and
+top-level `CMakeLists.txt` by seven capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` — `EmbeddedView` with it, since embedding is a windowing feature
 rather than a drawing one — and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`,
@@ -38,9 +38,10 @@ set of modules and a new port reaches them one at a time. The next three hang of
 `EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
 are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-An eighth, `EACP_HAS_NETWORK`, is on everywhere but Android (the NDK has no
-libcurl) and gates `Network`, the WebView page bridge over its RPC,
-`eacp-ui-network` and their tests.
+`Network` is gated by none of them: it builds everywhere — the HTTP client is
+NSURLSession on Apple, WinHTTP on Windows, libcurl on Linux and Java's
+`HttpURLConnection` and sockets through JNI on Android — and the WebView page
+bridge over its RPC, `eacp-ui-network` and their tests build with it.
 `Core` and `Network` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
 and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
@@ -66,8 +67,8 @@ ones again inside an Xvfb, so windows and swapchains are real on both window
 systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
-tests on), and builds iOS for the simulator and HelloGPU for Android
-(arm64-v8a, an NDK installed with `sdkmanager`).
+tests on), and builds iOS for the simulator and HelloGPU and HelloNetwork
+for Android (arm64-v8a, an NDK installed with `sdkmanager`).
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the
@@ -106,9 +107,21 @@ the app is a NativeActivity shared library with its ordinary `main()`
 over `android.graphics` through JNI. `Platform::isLinux()` is desktop Linux
 alone; the sites that mean the Vulkan backend and its GLSL ask
 `isLinuxFamily()`, and the font defaults are Android's own
-`sans-serif` and `monospace`. `main()` runs once per activity: Android
-destroys and recreates one for a configuration change the manifest does not
-claim and when it reclaims a stopped app, and the recreated activity calls
+`sans-serif` and `monospace`. The HTTP client is `Http-Android.cpp` over
+`java.net.HttpURLConnection` (the platform's TLS, certificate store, proxy and
+network security config; a watchdog makes `Request::timeout` a total deadline,
+as on WinHTTP) and `WebSocket-Android.cpp` is `java.net.Socket`, under an
+`SSLSocketFactory` for `wss://`, carrying `Protocol.h`'s own framing; the rest
+of `Network` is the POSIX files desktop Linux uses, and there is no libcurl.
+Every manifest asks for `INTERNET`, and `EACP_ANDROID_CLEARTEXT_TRAFFIC`
+(default `OFF`, `CMake/Android.cmake`) is its `usesCleartextTraffic`, which
+governs `http://` and `ws://` to any host, loopback included;
+`Apps/Android/HelloNetwork` runs the client, server, download, timeout,
+`OnlineResource` and WebSocket paths and turns green when all pass, red
+otherwise. Tests compile for Android but nothing runs them there. `main()`
+runs once per activity: Android destroys and recreates one for a configuration
+change the manifest does not claim and when it reclaims a stopped app, and the
+recreated activity calls
 `android_main` again on a new thread in the same process, so the loop, the
 device and the app's statics all run a second time; only a `main()` that
 returns on its own ends the process. A debug build takes environment
@@ -750,18 +763,25 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   app sets the directory, declares its resources and constructs one;
   `Apps/UI/ResourceMonitor` does exactly that over DownloadAndPlay's own
   folder.
-- `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
+- `WebSocket::Connection` (`Network/WebSocket/`): a client over the same
   platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
   NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on
   GitHub's macOS runners), WinHTTP's WebSocket API,
   libcurl's `curl_ws_*` (`isSupported()` is false where libcurl lacks it, as on
-  Ubuntu 24.04's 8.5.0). `WebSocket.cpp` is the one state machine, marshalling
+  Ubuntu 24.04's 8.5.0), and on Android `java.net.Socket` through JNI with
+  `Protocol.h` framing it, a reader and a writer thread per connection, the
+  certificate checked against the host for `wss://` and `ws://` refused where
+  the network security config refuses cleartext. `WebSocket.cpp` is the one
+  state machine, marshalling
   every `Sink` report to the message thread through `Threads::callAsync`; each
   `WebSocket-<Platform>` file implements `Backend.h`'s `makeBackend` and
-  nothing else. `Protocol.h` is RFC 6455 framing, spoken by
+  nothing else. `Protocol.h` is RFC 6455 framing and the client handshake
+  (`parseUrl`, `randomClientKey`, `clientHandshakeRequest`,
+  `validateHandshakeResponse`, built everywhere), spoken by
   `WebSocket::Server` (`Server.h`: over `TCP::Listener`, an accept thread and
   one per client, clients addressed by `ClientId`, callbacks on the message
-  thread like the client's) and by the tests' misbehaving server.
+  thread like the client's), by the Android client and by the tests'
+  misbehaving server.
   `Apps/Network/WebSocketDemo` runs both ends in one process. The library is
   one translation unit under a unity build, so every file-scope name in
   `WebSocket/` is prefixed `webSocket`/`WebSocket`.
@@ -876,6 +896,8 @@ Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
 xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor,
 xcb-icccm and xcb-xinput, FreeType, HarfBuzz and fontconfig, plus the Vulkan
 loader, opened with `dlopen` rather than linked.
+Android: android, log, jnigraphics, the Vulkan loader the same way, and
+`java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
 
 ## Code Style
 

@@ -6,9 +6,12 @@
     <uses-feature android:name="android.hardware.vulkan.version"
             android:version="0x401000" android:required="true" />
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application android:label="@EACP_APK_LABEL@"
             @EACP_APK_ICON_ATTRIBUTE@
             android:hasCode="false"
+            android:usesCleartextTraffic="@EACP_APK_CLEARTEXT_TRAFFIC@"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <activity android:name="android.app.NativeActivity"
                 android:exported="true"

@@ -25,7 +25,9 @@ X11 backend (`CMake/FindX11Backend.cmake`); and FreeType, HarfBuzz and
 fontconfig for the glyph rasterizer (`CMake/FindLinuxText.cmake`). Nothing
 links `libvulkan`: `volkInitialize()` opens it by name at runtime, so a
 machine with no driver builds the same binary and reports `Device::isValid()`
-false. The package names are in [Linux.md](Linux.md).
+false. The package names are in [Linux.md](Linux.md). An Android build
+fetches nothing more and needs no libcurl: its HTTP and WebSocket clients are
+Java's own, reached through JNI.
 
 One dependency is carried in the tree instead: `ThirdParty/miniz`, the
 amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
@@ -129,6 +131,9 @@ templates and the Gradle wrapper in `CMake/Android/`.
 - `EACP_ANDROID_STUDIO_DIR` (default `<build>/AndroidStudio`) — where.
 - `EACP_ANDROID_ABIS` (default `arm64-v8a;x86_64`) — the ABIs its modules
   build; the second is the emulator on an Intel host.
+- `EACP_ANDROID_CLEARTEXT_TRAFFIC` (default `OFF`) — the manifest's
+  `usesCleartextTraffic`, which decides whether `http://` and `ws://` reach
+  any host, loopback included. Every manifest asks for `INTERNET` either way.
 - `EACP_ANDROID_SDK` (default: the SDK found above) — Gradle's `sdk.dir`.
 - `EACP_ANDROID_MIN_SDK` (default `33`) — `minSdk` and the level a configure
   compiles for: eacp's floor, an app's decision. The NDK carries every level's
@@ -205,25 +210,27 @@ included, so a project that fetches eacp reads them without running
 
 ## Capability variables
 
-The top-level `CMakeLists.txt` decides this once, in eight capability variables
+The top-level `CMakeLists.txt` decides this once, in seven capability variables
 that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
 The three drawing ones are on together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
 `EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
-`EACP_HAS_GPU` and is Apple-only; `EACP_HAS_NETWORK` is on everywhere today:
+`EACP_HAS_GPU` and is Apple-only. `Network` needs none of them: it is
+unconditional, over NSURLSession and Network.framework on Apple, WinHTTP on
+Windows, libcurl on Linux and Java's `HttpURLConnection` and sockets through
+JNI on Android, and the WebView page bridge over its RPC, `eacp-ui-network`
+and their tests build with it:
 
 | Variable | On when | Gates |
 | --- | --- | --- |
-| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows or Linux | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
-| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows or Linux | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows or Linux | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
+| `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
+| `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
-| `EACP_HAS_NETWORK` | always, today | `Network`, the WebView page bridge over its RPC, `eacp-ui-network` and their tests |
-
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the
 `Graphics.h` umbrella leaves the 2D-tier headers out where it is off and a
 caller reaching one fails to compile rather than to link. `EACP_HAS_COREML` is
@@ -231,7 +238,7 @@ one on `eacp-ml` in the same way.
 
 ## The pieces that build everywhere
 
-Four pieces of the gated modules are portable and so sit outside all eight:
+Four pieces of the gated modules are portable and so sit outside all seven:
 they are built and tested on every platform, Linux included, because none
 touches a device. `eacp-gpu-codegen` is the shader EDSL and the MSL, HLSL and GLSL
 emitters — string generation with no GPU under it, checked by
@@ -264,8 +271,9 @@ and a Clang lane that runs the graphics backend on lavapipe under a headless
 Weston and then under an Xvfb — all three build it, one has a device, a
 compositor and an X server to run it on), and builds iOS for the simulator
 and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
-against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` for
-`arm64-v8a`, which is every module an Android app links, then configures once
+against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
+`HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
+the network backend included, then configures once
 more with no NDK named, which exercises the newest-installed path. Every lane configures with `EACP_CI_BUILD=ON`.
 
 The Linux lanes install the packages listed in [Linux.md](Linux.md), and the

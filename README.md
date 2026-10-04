@@ -70,11 +70,12 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `HTTPServer`, a `WebSocket::Connection` client and `WebSocket::Server`, TCP
   sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
   runs both WebSocket ends in one process. Backed by NSURLSession and
-  Network.framework on Apple platforms, WinHTTP on Windows and libcurl on
-  Linux. `OnlineResource` fetches a file an app needs into its own
-  Application Support folder once, revalidates it against the server's ETag
-  on later runs, and unpacks a zip; `UI::OnlineResourceMonitor` shows every
-  such fetch as a list with progress bars. `Apps/Console/OnlineResource` and
+  Network.framework on Apple platforms, WinHTTP on Windows, libcurl on
+  Linux and Java's own `HttpURLConnection` and sockets on Android.
+  `OnlineResource` fetches a file an app needs into its own Application
+  Support folder once, revalidates it against the server's ETag on later runs,
+  and unpacks a zip; `UI::OnlineResourceMonitor` shows every such fetch as a
+  list with progress bars. `Apps/Console/OnlineResource` and
   `Apps/UI/ResourceMonitor` are the two examples.
 - **SVG** — parsing and rendering of SVG documents into the graphics layer.
 - **Processes & plugins** — launch a child process with args, env and working
@@ -144,8 +145,10 @@ off the main thread; fed by the window's own key and mouse events elsewhere.
 CI builds and tests macOS (universal), Windows x64 and ARM64 (MSVC and
 clang-cl) and Linux (GCC, Clang, and a lane that runs the graphics stack on
 Mesa's software Vulkan under a headless Weston and then an Xvfb), and builds
-iOS for the simulator and Android (Vulkan 1.1; the HelloGPU example for
-arm64-v8a with a pinned NDK). macOS is the most exercised of them.
+iOS for the simulator and Android (Vulkan 1.1; the HelloGPU and
+HelloNetwork examples for arm64-v8a with a pinned NDK; the second checks the
+HTTP client and server, downloads, `OnlineResource` and both WebSocket ends
+when run on a device). macOS is the most exercised of them.
 Android builds through an Android Studio project the configure writes;
 [`Apps/Android/README.md`](Apps/Android/README.md) is the guide.
 

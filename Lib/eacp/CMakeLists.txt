@@ -1,19 +1,14 @@
 add_subdirectory(Core)
-
-if (EACP_HAS_NETWORK)
-    add_subdirectory(Network)
-endif ()
+add_subdirectory(Network)
 
 # Always added: it builds the shader codegen library (eacp-gpu-codegen), which
 # is pure string generation, and returns before eacp-gpu when there is no GPU.
 add_subdirectory(GPU)
 
-# Added wherever Network is: it builds the page bridge (eacp-webview-bridge),
-# which speaks to a ScriptHost over Network's RPC, and returns before
-# eacp-webview when there is no web runtime.
-if (EACP_HAS_NETWORK)
-    add_subdirectory(WebView)
-endif ()
+# Always added: it builds the page bridge (eacp-webview-bridge), which speaks
+# to a ScriptHost over Network's RPC, and returns before eacp-webview when
+# there is no web runtime.
+add_subdirectory(WebView)
 
 # Always added: it builds the graph builder and the MIL writers (eacp-ml-graph),
 # bytes in and bytes out, and returns before eacp-ml when there is no Core ML.

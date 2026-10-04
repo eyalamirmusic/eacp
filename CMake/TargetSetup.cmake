@@ -241,7 +241,9 @@ endfunction()
 
 function(eacp_enable_unity_build target)
     if (EACP_UNITY_BUILD)
-        set_target_properties(${target} PROPERTIES UNITY_BUILD ON)
+        set_target_properties(${target} PROPERTIES
+                UNITY_BUILD ON
+                CXX_SCAN_FOR_MODULES OFF)
     endif ()
 endfunction()
 
@@ -492,7 +494,7 @@ function(add_ide_sources target)
 endfunction()
 
 function(eacp_default_setup)
-    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF PARENT_SCOPE)
     add_compile_definitions(_LIBCPP_REMOVE_TRANSITIVE_INCLUDES)
     eacp_setup_apple()
 

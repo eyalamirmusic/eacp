@@ -81,15 +81,6 @@ endif ()
 #   EACP_HAS_CAPTURE Camera, CameraView, Video, VideoView.
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
-#   EACP_HAS_NETWORK an HTTP client backend: Network, and the WebView page
-#                    bridge over its RPC. Everywhere but Android, whose NDK
-#                    has no libcurl.
-set(EACP_HAS_NETWORK ON)
-
-if (ANDROID)
-    set(EACP_HAS_NETWORK OFF)
-endif ()
-
 set(EACP_HAS_DRAW OFF)
 
 if (EACP_BUILD_GRAPHICS AND (APPLE OR WIN32 OR LINUX OR ANDROID))

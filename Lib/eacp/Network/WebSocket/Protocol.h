@@ -50,4 +50,37 @@ std::optional<Decoded> decode(std::string_view buffer);
 std::string encodeClose(int code, std::string_view reason);
 CloseStatus decodeClose(std::string_view payload);
 
+// A ws:// or wss:// URL taken apart. The host is bare, an IPv6 literal without
+// its brackets; target is the path and query, "/" when the URL has neither.
+struct Address
+{
+    bool secure = false;
+    std::string host;
+    int port = 0;
+    std::string target = "/";
+};
+
+std::optional<Address> parseUrl(std::string_view url);
+
+// §4.1: sixteen random bytes, base64
+std::string randomClientKey();
+
+// The client's upgrade request, header block and blank line included
+std::string clientHandshakeRequest(const Address& address,
+                                   std::string_view key,
+                                   const Options& options);
+
+struct HandshakeResult
+{
+    bool ok = false;
+    std::string error;
+    std::string protocol;
+};
+
+// §4.1's checks on the server's answer, given its header block - the status
+// line through the blank line, or without it.
+HandshakeResult validateHandshakeResponse(std::string_view head,
+                                          std::string_view key,
+                                          const Vector<std::string>& offered);
+
 } // namespace eacp::WebSocket::Protocol

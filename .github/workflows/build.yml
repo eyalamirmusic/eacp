@@ -218,9 +218,10 @@ jobs:
   # The one Android build anything is checked against: the NDK it installs, the
   # toolchain file -DCMAKE_SYSTEM_NAME=Android alone selects, and HelloGPU,
   # which pulls Core, Graphics, GPU, Text and the SPIR-V compiler through the
-  # NDK's clang. The configure also writes the Android Studio project, so the
-  # Gradle templates are exercised; nothing runs it. Debug, so the build is
-  # what a device gets from Studio's Run.
+  # NDK's clang, with HelloNetwork beside it for the JNI network backend. The
+  # configure also writes the Android Studio project, so the Gradle templates
+  # are exercised; nothing runs it. Debug, so the build is what a device gets
+  # from Studio's Run.
   build-android:
     name: Android arm64-v8a
     runs-on: ubuntu-latest
@@ -253,4 +254,4 @@ jobs:
           grep -A2 "compileSdk" build-floating/AndroidStudio/HelloGPU/build.gradle.kts
 
       - name: Build
-        run: cmake --build build --target HelloGPU
+        run: cmake --build build --target HelloGPU HelloNetwork

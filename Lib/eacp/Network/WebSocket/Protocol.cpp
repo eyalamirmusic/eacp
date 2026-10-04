@@ -1,7 +1,10 @@
 #include "Protocol.h"
 
+#include "../HTTP/HttpProtocol.h"
+
 #include <eacp/Core/Utils/Base64.h>
 
+#include <charconv>
 #include <random>
 
 namespace eacp::WebSocket::Protocol
@@ -10,6 +13,8 @@ namespace
 {
 constexpr auto webSocketHandshakeGuid =
     std::string_view("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+
+constexpr auto webSocketSha1Steps = 80;
 
 std::uint32_t webSocketRotateLeft(std::uint32_t value, int bits)
 {
@@ -73,7 +78,7 @@ std::string webSocketSha1(std::string_view input)
 
     for (auto chunk = 0; chunk < (int) message.size(); chunk += 64)
     {
-        auto schedule = Array<std::uint32_t, 80> {};
+        auto schedule = Array<std::uint32_t, webSocketSha1Steps> {};
 
         for (auto i = 0; i < 16; ++i)
         {
@@ -84,7 +89,7 @@ std::string webSocketSha1(std::string_view input)
                           | (std::uint32_t) webSocketByteAt(message, at + 3);
         }
 
-        for (auto i = 16; i < schedule.size(); ++i)
+        for (auto i = 16; i < webSocketSha1Steps; ++i)
             schedule[i] =
                 webSocketRotateLeft(schedule[i - 3] ^ schedule[i - 8]
                                         ^ schedule[i - 14] ^ schedule[i - 16],
@@ -96,7 +101,7 @@ std::string webSocketSha1(std::string_view input)
         auto d = hash[3];
         auto e = hash[4];
 
-        for (auto step = 0; step < 80; ++step)
+        for (auto step = 0; step < webSocketSha1Steps; ++step)
         {
             auto round = webSocketSha1Round(step, b, c, d);
             auto next = webSocketRotateLeft(a, 5) + round.mix + e + round.constant
@@ -124,17 +129,194 @@ std::string webSocketSha1(std::string_view input)
     return digest;
 }
 
-Array<std::uint8_t, 4> webSocketRandomMask()
+std::uint8_t webSocketRandomByte()
 {
     static thread_local auto engine = std::mt19937(std::random_device {}());
     auto bytes = std::uniform_int_distribution<int>(0, 255);
 
+    return (std::uint8_t) bytes(engine);
+}
+
+Array<std::uint8_t, 4> webSocketRandomMask()
+{
     auto key = Array<std::uint8_t, 4> {};
 
     for (auto& byte: key)
-        byte = (std::uint8_t) bytes(engine);
+        byte = webSocketRandomByte();
 
     return key;
+}
+
+int webSocketDefaultPort(bool secure)
+{
+    return secure ? 443 : 80;
+}
+
+std::optional<int> webSocketPortFrom(std::string_view text, bool secure)
+{
+    if (text.empty())
+        return webSocketDefaultPort(secure);
+
+    auto port = 0;
+    auto [end, error] =
+        std::from_chars(text.data(), text.data() + text.size(), port);
+
+    if (error != std::errc() || end != text.data() + text.size() || port < 1
+        || port > 65535)
+        return std::nullopt;
+
+    return port;
+}
+
+struct WebSocketHostAndPort
+{
+    std::string_view host;
+    std::string_view port;
+};
+
+std::optional<WebSocketHostAndPort> webSocketSplitAuthority(std::string_view text)
+{
+    auto at = text.rfind('@');
+
+    if (at != std::string_view::npos)
+        text.remove_prefix(at + 1);
+
+    if (!text.starts_with('['))
+    {
+        auto colon = text.rfind(':');
+
+        if (colon == std::string_view::npos)
+            return WebSocketHostAndPort {text, {}};
+
+        return WebSocketHostAndPort {text.substr(0, colon), text.substr(colon + 1)};
+    }
+
+    auto close = text.find(']');
+
+    if (close == std::string_view::npos)
+        return std::nullopt;
+
+    auto host = text.substr(1, close - 1);
+    auto after = text.substr(close + 1);
+
+    if (after.empty())
+        return WebSocketHostAndPort {host, {}};
+
+    if (!after.starts_with(':'))
+        return std::nullopt;
+
+    return WebSocketHostAndPort {host, after.substr(1)};
+}
+
+std::string webSocketHostHeader(const Address& address)
+{
+    auto host = address.host.find(':') == std::string::npos
+                    ? address.host
+                    : "[" + address.host + "]";
+
+    if (address.port == webSocketDefaultPort(address.secure))
+        return host;
+
+    return host + ":" + std::to_string(address.port);
+}
+
+bool webSocketIsHandshakeOwnHeader(std::string_view name)
+{
+    for (auto owned: {"host",
+                      "upgrade",
+                      "connection",
+                      "sec-websocket-key",
+                      "sec-websocket-version",
+                      "sec-websocket-protocol"})
+        if (Strings::equalsCaseInsensitive(name, owned))
+            return true;
+
+    return false;
+}
+
+bool webSocketHasLineBreak(std::string_view text)
+{
+    return text.find_first_of("\r\n") != std::string_view::npos;
+}
+
+bool webSocketCanSendHeader(const std::string& name, const std::string& value)
+{
+    return !name.empty() && !webSocketIsHandshakeOwnHeader(name)
+           && !webSocketHasLineBreak(name) && !webSocketHasLineBreak(value);
+}
+
+std::string webSocketJoined(const Vector<std::string>& items)
+{
+    auto joined = std::string();
+
+    for (const auto& item: items)
+    {
+        if (!joined.empty())
+            joined += ", ";
+
+        joined += item;
+    }
+
+    return joined;
+}
+
+bool webSocketListHasToken(std::string_view list, std::string_view token)
+{
+    while (!list.empty())
+    {
+        auto comma = list.find(',');
+
+        if (Strings::equalsCaseInsensitive(Strings::trim(list.substr(0, comma)),
+                                           token))
+            return true;
+
+        if (comma == std::string_view::npos)
+            break;
+
+        list.remove_prefix(comma + 1);
+    }
+
+    return false;
+}
+
+std::string_view webSocketNextLine(std::string_view& text)
+{
+    auto end = text.find('\n');
+    auto line = text.substr(0, end);
+    text.remove_prefix(end == std::string_view::npos ? text.size() : end + 1);
+
+    if (line.ends_with('\r'))
+        line.remove_suffix(1);
+
+    return line;
+}
+
+std::optional<int> webSocketStatusCode(std::string_view statusLine)
+{
+    if (!statusLine.starts_with("HTTP/"))
+        return std::nullopt;
+
+    auto space = statusLine.find(' ');
+
+    if (space == std::string_view::npos)
+        return std::nullopt;
+
+    auto codeText = statusLine.substr(space + 1, 3);
+    auto code = 0;
+    auto [end, error] =
+        std::from_chars(codeText.data(), codeText.data() + codeText.size(), code);
+
+    if (error != std::errc() || end != codeText.data() + codeText.size())
+        return std::nullopt;
+
+    return code;
+}
+
+HandshakeResult webSocketHandshakeFailure(const std::string& error)
+{
+    auto result = HandshakeResult();
+    result.error = error;
+    return result;
 }
 
 bool webSocketIsControlOpcode(Opcode opcode)
@@ -281,13 +463,11 @@ std::optional<Decoded> decode(std::string_view buffer)
 
     if (masked)
     {
-        if (buffer.size() < (std::size_t) (header + 4))
+        if (buffer.size() < (std::size_t) header + 4)
             return std::nullopt;
 
-        for (auto i = 0; i < key.size(); ++i)
-            key[i] = webSocketByteAt(buffer, header + i);
-
-        header += 4;
+        for (auto& byte: key)
+            byte = webSocketByteAt(buffer, header++);
     }
 
     if (length > buffer.size() - (std::size_t) header)
@@ -333,6 +513,122 @@ CloseStatus decodeClose(std::string_view payload)
     status.code = (int) webSocketReadBigEndian(payload, 0, 2);
     status.reason = std::string(payload.substr(2));
     return status;
+}
+
+std::optional<Address> parseUrl(std::string_view url)
+{
+    auto schemeEnd = url.find("://");
+
+    if (schemeEnd == std::string_view::npos)
+        return std::nullopt;
+
+    auto address = Address();
+    auto scheme = Strings::toLower(url.substr(0, schemeEnd));
+
+    if (scheme == "wss")
+        address.secure = true;
+    else if (scheme != "ws")
+        return std::nullopt;
+
+    auto rest = url.substr(schemeEnd + 3);
+    rest = rest.substr(0, rest.find('#'));
+
+    auto authorityEnd = rest.find_first_of("/?");
+    auto authority = webSocketSplitAuthority(rest.substr(0, authorityEnd));
+
+    if (!authority.has_value() || authority->host.empty())
+        return std::nullopt;
+
+    auto port = webSocketPortFrom(authority->port, address.secure);
+
+    if (!port.has_value())
+        return std::nullopt;
+
+    address.host = std::string(authority->host);
+    address.port = *port;
+
+    if (authorityEnd != std::string_view::npos)
+    {
+        auto target = rest.substr(authorityEnd);
+        address.target = target.starts_with('?') ? "/" + std::string(target)
+                                                 : std::string(target);
+    }
+
+    return address;
+}
+
+std::string randomClientKey()
+{
+    auto bytes = std::string(16, '\0');
+
+    for (auto& byte: bytes)
+        byte = (char) webSocketRandomByte();
+
+    return Base64::encode(bytes);
+}
+
+std::string clientHandshakeRequest(const Address& address,
+                                   std::string_view key,
+                                   const Options& options)
+{
+    auto request = "GET " + address.target + " HTTP/1.1\r\n";
+    request += "Host: " + webSocketHostHeader(address) + "\r\n";
+    request += "Upgrade: websocket\r\n"
+               "Connection: Upgrade\r\n"
+               "Sec-WebSocket-Version: 13\r\n";
+    request += "Sec-WebSocket-Key: " + std::string(key) + "\r\n";
+
+    if (!options.protocols.empty())
+        request +=
+            "Sec-WebSocket-Protocol: " + webSocketJoined(options.protocols) + "\r\n";
+
+    for (const auto& [name, value]: options.headers)
+        if (webSocketCanSendHeader(name, value))
+            request.append(name).append(": ").append(value).append("\r\n");
+
+    return request + "\r\n";
+}
+
+HandshakeResult validateHandshakeResponse(std::string_view head,
+                                          std::string_view key,
+                                          const Vector<std::string>& offered)
+{
+    auto status = webSocketStatusCode(webSocketNextLine(head));
+
+    if (!status.has_value())
+        return webSocketHandshakeFailure("The server's answer is not HTTP");
+
+    if (*status != 101)
+        return webSocketHandshakeFailure("The server answered the upgrade with "
+                                         + std::to_string(*status));
+
+    auto headers = std::map<std::string, std::string>();
+
+    while (!head.empty())
+        HTTP::addHeaderLine(webSocketNextLine(head), headers);
+
+    auto header = [&headers](const std::string& name)
+    { return HTTP::findHeaderIgnoringCase(headers, name); };
+
+    if (!Strings::equalsCaseInsensitive(header("Upgrade"), "websocket"))
+        return webSocketHandshakeFailure("The server did not upgrade to websocket");
+
+    if (!webSocketListHasToken(header("Connection"), "upgrade"))
+        return webSocketHandshakeFailure("The server's Connection is not Upgrade");
+
+    if (header("Sec-WebSocket-Accept") != acceptKeyFor(key))
+        return webSocketHandshakeFailure(
+            "The server's Sec-WebSocket-Accept is wrong");
+
+    auto result = HandshakeResult();
+    result.protocol = header("Sec-WebSocket-Protocol");
+
+    if (!result.protocol.empty() && !offered.contains(result.protocol))
+        return webSocketHandshakeFailure(
+            "The server chose a subprotocol not offered: " + result.protocol);
+
+    result.ok = true;
+    return result;
 }
 
 } // namespace eacp::WebSocket::Protocol

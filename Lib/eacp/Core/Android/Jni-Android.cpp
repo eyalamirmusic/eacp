@@ -31,6 +31,74 @@ Id found(Lookup& lookup, Id id, const char* name, const char* signature)
 
     return id;
 }
+
+int sequenceLength(unsigned char lead)
+{
+    if (lead < 0x80)
+        return 1;
+
+    if ((lead & 0xE0) == 0xC0)
+        return 2;
+
+    if ((lead & 0xF0) == 0xE0)
+        return 3;
+
+    if ((lead & 0xF8) == 0xF0)
+        return 4;
+
+    return 0;
+}
+
+char32_t decodeOne(std::string_view utf8, std::size_t& index)
+{
+    constexpr auto replacement = char32_t {0xFFFD};
+    auto lead = (unsigned char) utf8[index++];
+    auto length = sequenceLength(lead);
+
+    if (length == 1)
+        return lead;
+
+    if (length == 0 || index + (std::size_t) length - 1 > utf8.size())
+        return replacement;
+
+    auto codepoint = (char32_t) (lead & (0x7F >> length));
+
+    for (auto i = 1; i < length; ++i)
+    {
+        auto next = (unsigned char) utf8[index];
+
+        if ((next & 0xC0) != 0x80)
+            return replacement;
+
+        codepoint = (codepoint << 6) | (next & 0x3F);
+        ++index;
+    }
+
+    return codepoint > 0x10FFFF ? replacement : codepoint;
+}
+
+std::u16string utf16From(std::string_view utf8)
+{
+    auto result = std::u16string {};
+    result.reserve(utf8.size());
+
+    for (auto index = std::size_t {0}; index < utf8.size();)
+    {
+        auto codepoint = decodeOne(utf8, index);
+
+        if (codepoint < 0x10000)
+        {
+            result.push_back((char16_t) codepoint);
+            continue;
+        }
+
+        codepoint -= 0x10000;
+        result.push_back((char16_t) (0xD800 + (codepoint >> 10)));
+        result.push_back((char16_t) (0xDC00 + (codepoint & 0x3FF)));
+    }
+
+    return result;
+}
 } // namespace
 
 void setJavaVM(JavaVM* vm)
@@ -70,6 +138,23 @@ bool failed(JNIEnv* env)
     return true;
 }
 
+std::string takeException(JNIEnv* env)
+{
+    if (!env->ExceptionCheck())
+        return {};
+
+    auto* throwable = env->ExceptionOccurred();
+    env->ExceptionClear();
+
+    auto* text = callObject(env, throwable, "toString", "()Ljava/lang/String;");
+    auto message = toString(env, text);
+
+    env->DeleteLocalRef(text);
+    env->DeleteLocalRef(throwable);
+
+    return message.empty() ? std::string {"Java exception"} : message;
+}
+
 LocalFrame::LocalFrame(JNIEnv* envToUse, jint capacity)
     : env(envToUse)
     , pushed(env->PushLocalFrame(capacity) == 0)
@@ -82,6 +167,23 @@ LocalFrame::~LocalFrame()
 {
     if (pushed)
         env->PopLocalFrame(nullptr);
+}
+
+GlobalRef::~GlobalRef()
+{
+    if (object == nullptr)
+        return;
+
+    if (auto* env = currentEnv())
+        env->DeleteGlobalRef(object);
+}
+
+void GlobalRef::reset(JNIEnv* env, jobject local)
+{
+    if (object != nullptr)
+        env->DeleteGlobalRef(object);
+
+    object = local != nullptr ? env->NewGlobalRef(local) : nullptr;
 }
 
 std::string toString(JNIEnv* env, jobject text)
@@ -107,6 +209,26 @@ jstring toJava(JNIEnv* env, std::u16string_view text)
 {
     return env->NewString(reinterpret_cast<const jchar*>(text.data()),
                           (jsize) text.size());
+}
+
+jstring toJava(JNIEnv* env, std::string_view utf8)
+{
+    return toJava(env, std::u16string_view {utf16From(utf8)});
+}
+
+jbyteArray toJavaBytes(JNIEnv* env, std::string_view bytes)
+{
+    auto* array = env->NewByteArray((jsize) bytes.size());
+
+    if (array == nullptr)
+        return nullptr;
+
+    env->SetByteArrayRegion(array,
+                            0,
+                            (jsize) bytes.size(),
+                            reinterpret_cast<const jbyte*>(bytes.data()));
+
+    return array;
 }
 
 jobject

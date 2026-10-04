@@ -55,8 +55,9 @@ The API levels and tools are cache variables an app sets to its own values:
 
 Open the `build-android/AndroidStudio` folder in Android Studio (File > Open).
 The first sync downloads Gradle and the Android Gradle Plugin, once per
-machine. Pick `HelloGPU` and a device: a phone with USB debugging on (Settings
-> About phone, tap Build number seven times, then Developer options > USB
+machine. Pick `HelloGPU` (or `HelloNetwork`, below) and a device: a phone with
+USB debugging on (Settings > About phone, tap Build number seven times, then
+Developer options > USB
 debugging), or an AVD from Device Manager at or above `EACP_ANDROID_MIN_SDK`,
 whose Google APIs images have a Vulkan driver on Apple Silicon and x86-64
 hosts. Press Run. The app logs
@@ -140,6 +141,16 @@ recreates the activity for a configuration change the manifest does not claim
 recreated one runs `main()` again on a new thread in the same process, so keep
 what must survive in your app struct and let nothing assume a single run; a
 `main()` that returns on its own ends the process.
+
+Every app's manifest asks for `INTERNET`, so `eacp-network`'s HTTP client works
+out of the box, over Java's own `HttpURLConnection`. Android refuses plain
+`http://` to an app targeting this SDK, loopback included; configure with
+`-DEACP_ANDROID_CLEARTEXT_TRAFFIC=ON` to allow it, as a local test server
+needs. `WebSocket::Connection` runs over Java's own sockets, with TLS and
+hostname verification for `wss://`, and the same setting governs plain
+`ws://`. `HelloNetwork` is the worked example: run with that setting on, it
+fetches, serves, downloads, times out and echoes over both WebSocket schemes,
+logs each check under `eacp`, and turns green when all pass, red otherwise.
 
 ## When it goes wrong
 
