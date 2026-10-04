@@ -6,6 +6,7 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 
+#include <algorithm>
 #include <cmath>
 
 // Apple decode backend (AVFoundation). AVAssetReader does demux, hardware

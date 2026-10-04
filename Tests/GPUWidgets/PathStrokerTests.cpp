@@ -2,6 +2,7 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <algorithm>
 #include <cmath>
 
 // strokeToFill turns a stroke into a fill by emitting the pieces of the stroke

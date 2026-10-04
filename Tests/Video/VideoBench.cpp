@@ -1,5 +1,6 @@
 #include <eacp/Video/Decode/Decoder.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>

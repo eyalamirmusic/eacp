@@ -1,5 +1,7 @@
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
+#include <algorithm>
+
 using namespace eacp;
 using namespace GPU;
 

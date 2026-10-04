@@ -1,6 +1,7 @@
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Graphics.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>

@@ -1,6 +1,7 @@
 #include <eacp/GPU/GPU.h>
 #include <eacp/Network/Network.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <thread>

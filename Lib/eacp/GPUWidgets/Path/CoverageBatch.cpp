@@ -4,6 +4,7 @@
 #include "BinKernels.h"
 #include "PathRasterizer.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>

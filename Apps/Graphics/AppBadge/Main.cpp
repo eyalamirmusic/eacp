@@ -1,5 +1,7 @@
 #include <eacp/Graphics/Graphics.h>
 
+#include <algorithm>
+
 using namespace eacp;
 using namespace Graphics;
 
