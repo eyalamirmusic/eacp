@@ -97,6 +97,11 @@ void Component::removeChildComponent(Component& child)
     if (child.parent != this)
         return;
 
+    // A subtree leaving the host stops animating in it, since nothing would
+    // tell the host when one of those components is later destroyed.
+    if (auto* found = findHost())
+        found->forgetAnimationsIn(child);
+
     child.parent = nullptr;
     children.removeAllMatches(&child);
 
@@ -288,6 +293,25 @@ ComponentHost* Component::findHost() const
     return current->host;
 }
 
+void Component::startAnimating()
+{
+    if (auto* found = findHost())
+        found->startAnimating(*this);
+}
+
+void Component::stopAnimating()
+{
+    if (auto* found = findHost())
+        found->stopAnimating(*this);
+}
+
+bool Component::isAnimating() const
+{
+    auto* found = findHost();
+
+    return found != nullptr && found->isAnimating(*this);
+}
+
 void Component::repaint()
 {
     // The ancestor walk only where the bit was not already set. If it was, they
@@ -461,9 +485,31 @@ bool Component::mouseWheelMove(const MouseEvent&)
     return false;
 }
 
+bool Component::interceptsTouch(const MouseEvent&)
+{
+    return false;
+}
+
+bool Component::claimsTouchDrag(const MouseEvent&)
+{
+    return false;
+}
+
+void Component::mouseCancel(const MouseEvent&) {}
+
+bool Component::advanceAnimation(double)
+{
+    return false;
+}
+
 bool Component::getWantsKeyboardFocus() const
 {
     return wantsKeyboardFocus;
+}
+
+bool Component::wantsTextInput() const
+{
+    return false;
 }
 
 void Component::focusGained() {}

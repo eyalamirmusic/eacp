@@ -62,7 +62,7 @@ continuous rendering paced by the compositor's frame callbacks on Wayland and
 by that same timer on X11 rather than by a clock of the renderer's own — beside
 the off-screen render-and-read-back path every pixel test rides. And a text
 stack beside them: `eacp-text`'s glyph rasterizer on FreeType, HarfBuzz and
-fontconfig, so `Sprites`, `UI` and the portable half of `SVG` build and run
+fontconfig, so `Sprites`, `UI` and `SVG` build and run
 too — a whole widget tree, its text, its images and its SVG documents drawn
 inside one `GPUView` through the coverage rasterizer and the glyph atlas.
 
@@ -71,9 +71,8 @@ What Linux still does not have is the platform's own 2D tier. There is no
 recorded geometry — so the retained `ShapeLayer`/`TextLayer` and the views over
 them, `TextInput`, the image codecs (an `Image` is a pixel container there, and
 loading a file yields an invalid one), menus and the tray are absent or honest
-stubs. `SVG`'s native-layer builder and the `SVG::parse`
-in front of it go with them; the same document parses and draws through
-`SVGComponent`. Under `EACP_HEADLESS=1`, or with neither display server to
+stubs. `SVG` loses nothing to that: its one renderer on every platform is
+`SVGComponent`, and the recorded `Path` is what its path parser builds. Under `EACP_HEADLESS=1`, or with neither display server to
 reach, every window is built and never shown and every GPU test still runs on
 Mesa's lavapipe with no display server at all; the window and present tests run
 for real under a headless Weston, and again under an Xvfb for X11, which is

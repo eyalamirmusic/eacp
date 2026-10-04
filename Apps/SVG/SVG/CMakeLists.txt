@@ -1,19 +1,13 @@
-add_executable(SVG Main.cpp)
+eacp_add_app(SVG Main.cpp)
 target_link_libraries(SVG PRIVATE eacp-svg)
 
-set(BUNDLE_ID "com.eacp.svg")
+find_package(ResEmbed REQUIRED)
+res_embed_add(SVG
+        FILES example.svg
+        NAMESPACE SVGAssets
+        CATEGORY SVGAssets)
 
-set(SVG_RESOURCES ${CMAKE_CURRENT_SOURCE_DIR}/example.svg)
-set_source_files_properties(${SVG_RESOURCES} PROPERTIES
-        MACOSX_PACKAGE_LOCATION Resources)
-target_sources(SVG PRIVATE ${SVG_RESOURCES})
-
-set_target_properties(SVG PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "SVG App"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID}
-        RESOURCE "${SVG_RESOURCES}")
+set_target_properties(SVG PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(SVG)
 set_default_target_setting(SVG)

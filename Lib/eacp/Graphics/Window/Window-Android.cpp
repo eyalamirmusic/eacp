@@ -2,7 +2,7 @@
 #include "AndroidEnvironment-Android.h"
 #include "Window.h"
 
-#include "../Graphics/Keyboard.h"
+#include "../Graphics/Keyboard-Android.h"
 #include "LinuxWindowSystem-Linux.h"
 #include "../View/AndroidViewSurface-Android.h"
 
@@ -17,6 +17,7 @@
 #include <android_native_app_glue.h>
 
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -27,8 +28,40 @@ namespace
 constexpr auto nanosecondsPerSecond = 1e9;
 constexpr auto insetsRefreshHz = 4;
 
+// The Linux backends' double-click rule, so a double tap counts the same.
+constexpr auto doubleTapIntervalSeconds = 0.4;
+constexpr auto doubleTapSlopPoints = 5.f;
+
 // Before the native window arrives.
 const auto androidInitialContentSize = Point {640.f, 400.f};
+
+// The count the first finger down earns, carried through to its release so the
+// mouse events made from it report the same one. Later fingers count 1.
+class TapCounter
+{
+public:
+    int began(int id, Point position, double time)
+    {
+        auto near = std::abs(position.x - lastPosition.x) <= doubleTapSlopPoints
+                    && std::abs(position.y - lastPosition.y) <= doubleTapSlopPoints;
+        auto soon = time - lastTime <= doubleTapIntervalSeconds;
+
+        count = (near && soon) ? count + 1 : 1;
+        lastTime = time;
+        lastPosition = position;
+        countedId = id;
+
+        return count;
+    }
+
+    int countFor(int id) const { return id == countedId ? count : 1; }
+
+private:
+    int count = 0;
+    int countedId = 0;
+    double lastTime = -doubleTapIntervalSeconds * 2.0;
+    Point lastPosition;
+};
 
 // The activity as the glue reports it, outliving any one Window: the native
 // window can arrive before the app has built one.
@@ -91,58 +124,19 @@ struct AndroidInsetsJava
         right = lookup.field(insets, "right", "I");
         bottom = lookup.field(insets, "bottom", "I");
         show = lookup.method(controller, "show", "(I)V");
+        hide = lookup.method(controller, "hide", "(I)V");
     }
 
     jint mask = 0;
     jint ime = 0;
     jmethodID getInsets = nullptr;
     jmethodID show = nullptr;
+    jmethodID hide = nullptr;
     jfieldID left = nullptr;
     jfieldID top = nullptr;
     jfieldID right = nullptr;
     jfieldID bottom = nullptr;
 };
-
-struct AndroidKeyJava
-{
-    void resolve(Jni::Lookup& lookup)
-    {
-        keyEvent = lookup.findClass("android/view/KeyEvent");
-        init = lookup.method(keyEvent, "<init>", "(II)V");
-        getUnicodeChar = lookup.method(keyEvent, "getUnicodeChar", "(I)I");
-    }
-
-    jclass keyEvent = nullptr;
-    jmethodID init = nullptr;
-    jmethodID getUnicodeChar = nullptr;
-};
-
-// What the key types, from its key map; the NDK has no call for it.
-std::string androidKeyCharacters(const AInputEvent* event)
-{
-    auto* env = Jni::currentEnv();
-    const auto* java =
-        env != nullptr ? Jni::resolveOnce<AndroidKeyJava>(env) : nullptr;
-
-    if (java == nullptr)
-        return {};
-
-    auto frame = Jni::LocalFrame {env};
-    auto* key = env->NewObject(java->keyEvent,
-                               java->init,
-                               AKeyEvent_getAction(event),
-                               AKeyEvent_getKeyCode(event));
-    auto character = Jni::failed(env)
-                         ? 0
-                         : env->CallIntMethod(key,
-                                              java->getUnicodeChar,
-                                              AKeyEvent_getMetaState(event));
-
-    if (Jni::failed(env) || character <= 0)
-        return {};
-
-    return Strings::narrow(std::wstring(1, (wchar_t) character));
-}
 
 // The system bars', the cutout's and the keyboard's insets in pixels, read over JNI: the glue's
 // content rect covers the whole window once an app is edge to edge, which
@@ -333,10 +327,36 @@ struct AndroidWindow : AndroidWindowSurface
 
     Insets insets;
     bool focused = false;
+    TapCounter taps;
 
     // No command comes when the on-screen keyboard shows or hides.
     Threads::Timer insetsTimer {[this] { refreshInsets(); }, insetsRefreshHz};
 };
+
+Point androidPointerPosition(const AndroidWindow& window,
+                             const AInputEvent* event,
+                             size_t index)
+{
+    return {AMotionEvent_getX(event, index) / window.scale,
+            AMotionEvent_getY(event, index) / window.scale};
+}
+
+double androidMotionTime(const AInputEvent* event)
+{
+    return (double) AMotionEvent_getEventTime(event) / nanosecondsPerSecond;
+}
+
+// The contact is an ellipse whose axes Android gives as diameters in pixels.
+float androidTouchRadius(const AndroidWindow& window,
+                         const AInputEvent* event,
+                         size_t index)
+{
+    auto major = AMotionEvent_getTouchMajor(event, index);
+    auto minor = AMotionEvent_getTouchMinor(event, index);
+    auto diameter = minor > 0.f ? (major + minor) * 0.5f : major;
+
+    return std::max(diameter, 0.f) * 0.5f / window.scale;
+}
 
 // Pointer ids are Android's plus one, so a finger is never 0, as on iOS.
 void androidDispatchPointer(AndroidWindow* window,
@@ -350,13 +370,50 @@ void androidDispatchPointer(AndroidWindow* window,
     auto touch = TouchEvent {};
     touch.id = (int) AMotionEvent_getPointerId(event, index) + 1;
     touch.phase = phase;
-    touch.pos = {AMotionEvent_getX(event, index) / window->scale,
-                 AMotionEvent_getY(event, index) / window->scale};
+    touch.pos = androidPointerPosition(*window, event, index);
     touch.pressure = AMotionEvent_getPressure(event, index);
-    touch.timestamp =
-        (double) AMotionEvent_getEventTime(event) / nanosecondsPerSecond;
+    touch.radius = androidTouchRadius(*window, event, index);
+    touch.timestamp = androidMotionTime(event);
+
+    auto isFirstFingerDown =
+        phase == TouchPhase::Began && AMotionEvent_getPointerCount(event) == 1;
+
+    touch.tapCount = isFirstFingerDown
+                         ? window->taps.began(touch.id, touch.pos, touch.timestamp)
+                         : window->taps.countFor(touch.id);
 
     window->contentView->dispatchTouchEvent(touch);
+}
+
+// A mouse, a stylus or the emulator's pointer: hovering and the wheel come as
+// motion of their own, never as a touch.
+bool androidDispatchMouse(AndroidWindow* window,
+                          MouseEventType type,
+                          const AInputEvent* event)
+{
+    if (window == nullptr || window->contentView == nullptr)
+        return false;
+
+    auto mouse = MouseEvent {};
+    mouse.type = type;
+    mouse.pos = androidPointerPosition(*window, event, 0);
+    mouse.downPos = mouse.pos;
+    mouse.modifiers = androidModifiersFromMeta(AMotionEvent_getMetaState(event));
+    mouse.timestamp = androidMotionTime(event);
+
+    if (type == MouseEventType::Wheel)
+    {
+        mouse.delta = {
+            -AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_HSCROLL, 0),
+            AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_VSCROLL, 0)};
+
+        if (mouse.delta.x == 0.f && mouse.delta.y == 0.f)
+            return true;
+    }
+
+    window->contentView->dispatchMouseEvent(mouse);
+
+    return true;
 }
 
 int32_t androidHandleMotion(AInputEvent* event)
@@ -369,6 +426,18 @@ int32_t androidHandleMotion(AInputEvent* event)
 
     switch (masked)
     {
+        case AMOTION_EVENT_ACTION_HOVER_ENTER:
+            return androidDispatchMouse(window, MouseEventType::Entered, event);
+
+        case AMOTION_EVENT_ACTION_HOVER_MOVE:
+            return androidDispatchMouse(window, MouseEventType::Moved, event);
+
+        case AMOTION_EVENT_ACTION_HOVER_EXIT:
+            return androidDispatchMouse(window, MouseEventType::Exited, event);
+
+        case AMOTION_EVENT_ACTION_SCROLL:
+            return androidDispatchMouse(window, MouseEventType::Wheel, event);
+
         case AMOTION_EVENT_ACTION_DOWN:
         case AMOTION_EVENT_ACTION_POINTER_DOWN:
             androidDispatchPointer(window, TouchPhase::Began, event, index);
@@ -394,52 +463,52 @@ int32_t androidHandleMotion(AInputEvent* event)
     }
 }
 
-uint16_t androidKeyCode(int32_t code)
+std::optional<KeyEvent> androidKeyEvent(const AInputEvent* event)
 {
-    switch (code)
-    {
-        case AKEYCODE_BACK:
-            return KeyCode::Escape;
-        case AKEYCODE_DEL:
-            return KeyCode::Delete;
-        case AKEYCODE_ENTER:
-            return KeyCode::Return;
-        default:
-            return KeyCode::Unknown;
-    }
+    const auto action = AKeyEvent_getAction(event);
+
+    if (action != AKEY_EVENT_ACTION_DOWN && action != AKEY_EVENT_ACTION_UP)
+        return std::nullopt;
+
+    const auto code = AKeyEvent_getKeyCode(event);
+    const auto metaState = AKeyEvent_getMetaState(event);
+
+    auto key = KeyEvent {};
+    key.keyCode = androidKeyCodeFromNative(code);
+    key.characters = androidKeyText(code, metaState);
+    key.charactersIgnoringModifiers = androidKeyText(code, 0);
+
+    // Volume, media, power and the like: the system's, and never the app's.
+    if (key.keyCode == KeyCode::Unknown && key.characters.empty())
+        return std::nullopt;
+
+    key.type =
+        action == AKEY_EVENT_ACTION_DOWN ? KeyEventType::Down : KeyEventType::Up;
+    key.modifiers = androidModifiersFromMeta(metaState);
+    key.isRepeat =
+        key.type == KeyEventType::Down && AKeyEvent_getRepeatCount(event) > 0;
+    key.timestamp = (double) AKeyEvent_getEventTime(event) / nanosecondsPerSecond;
+
+    return key;
 }
 
+// Zero hands the key back to the system, which is how a Back the app leaves
+// alone still leaves the app.
 int32_t androidHandleKey(AInputEvent* event)
 {
-    auto key = KeyEvent {};
-    key.keyCode = androidKeyCode(AKeyEvent_getKeyCode(event));
+    auto key = androidKeyEvent(event);
 
-    if (key.keyCode == KeyCode::Unknown)
-        key.characters = androidKeyCharacters(event);
-
-    if (key.keyCode == KeyCode::Unknown && key.characters.empty())
+    if (!key)
         return 0;
+
+    androidKeyboardEvent(*key);
 
     auto* window = androidActivity().window;
 
     if (window == nullptr || window->contentView == nullptr)
-        return 1;
+        return 0;
 
-    key.timestamp = (double) AKeyEvent_getEventTime(event) / nanosecondsPerSecond;
-
-    if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_DOWN)
-    {
-        key.type = KeyEventType::Down;
-        key.isRepeat = AKeyEvent_getRepeatCount(event) > 0;
-        window->contentView->keyDown(key);
-    }
-    else if (AKeyEvent_getAction(event) == AKEY_EVENT_ACTION_UP)
-    {
-        key.type = KeyEventType::Up;
-        window->contentView->keyUp(key);
-    }
-
-    return 1;
+    return window->contentView->dispatchKeyEvent(*key) ? 1 : 0;
 }
 
 int32_t androidHandleInput(android_app*, AInputEvent* event)
@@ -484,6 +553,8 @@ void androidHandleCommand(android_app* app, int32_t command)
 
         case APP_CMD_GAINED_FOCUS:
         case APP_CMD_LOST_FOCUS:
+            androidKeyboardReset();
+
             if (window != nullptr)
             {
                 window->focused = command == APP_CMD_GAINED_FOCUS;
@@ -540,7 +611,7 @@ void linuxRefreshCursor() {}
 
 // ANativeActivity_showSoftInput is ignored since Android 12: NativeActivity's
 // view is not one the input method serves.
-void linuxViewFocused()
+void linuxViewFocused(bool wantsTextInput)
 {
     auto* app = androidActivity().app;
     auto* env = Jni::currentEnv();
@@ -560,7 +631,8 @@ void linuxViewFocused()
 
     if (controller != nullptr)
     {
-        env->CallVoidMethod(controller, java->show, java->ime);
+        env->CallVoidMethod(
+            controller, wantsTextInput ? java->show : java->hide, java->ime);
         Jni::failed(env);
     }
 }

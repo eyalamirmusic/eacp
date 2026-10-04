@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <utility>
 
 namespace eacp::GPU
 {
@@ -41,6 +42,29 @@ VkCompositeAlphaFlagBitsKHR
             return static_cast<VkCompositeAlphaFlagBitsKHR>(bit);
 
     return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+}
+
+// Identity wherever the surface allows it, so nothing above the swapchain has
+// to pre-rotate: on a rotated Android display the compositor turns the image.
+VkSurfaceTransformFlagBitsKHR
+    chooseTransform(const VkSurfaceCapabilitiesKHR& capabilities)
+{
+    if ((capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+        != 0)
+        return VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+
+    return capabilities.currentTransform;
+}
+
+bool isQuarterTurn(VkSurfaceTransformFlagsKHR transform)
+{
+    constexpr auto quarterTurns = VkSurfaceTransformFlagsKHR {
+        VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR
+        | VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR
+        | VK_SURFACE_TRANSFORM_HORIZONTAL_MIRROR_ROTATE_90_BIT_KHR
+        | VK_SURFACE_TRANSFORM_HORIZONTAL_MIRROR_ROTATE_270_BIT_KHR};
+
+    return (transform & quarterTurns) != 0;
 }
 } // namespace
 
@@ -312,18 +336,34 @@ struct GPUView::Native
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    // Wayland answers 0xFFFFFFFF, meaning "you decide": its surfaces have no
-    // server-side size, so the extent comes from the record.
-    VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities) const
+    VkExtent2D windowExtent(VkSurfaceTransformFlagBitsKHR transform) const
     {
-        if (capabilities.currentExtent.width != 0xFFFFFFFFu)
-            return capabilities.currentExtent;
-
-        if (record.pixelWidth <= 0 || record.pixelHeight <= 0)
-            return {};
-
         auto extent = VkExtent2D {static_cast<std::uint32_t>(record.pixelWidth),
                                   static_cast<std::uint32_t>(record.pixelHeight)};
+
+        if (isQuarterTurn(transform))
+            std::swap(extent.width, extent.height);
+
+        return extent;
+    }
+
+    // Wayland answers 0xFFFFFFFF, meaning "you decide": its surfaces have no
+    // server-side size, so the extent comes from the record. A surface that
+    // can rotate (Android) answers in whichever orientation it last presented
+    // in, which lags the window's resize, so the window's own size decides.
+    VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& capabilities,
+                            VkSurfaceTransformFlagBitsKHR transform) const
+    {
+        const auto hasWindowSize = record.pixelWidth > 0 && record.pixelHeight > 0;
+        const auto undefined = capabilities.currentExtent.width == 0xFFFFFFFFu;
+        const auto rotates = isQuarterTurn(capabilities.supportedTransforms);
+
+        if (undefined && !hasWindowSize)
+            return {};
+
+        auto extent = hasWindowSize && (undefined || rotates)
+                          ? windowExtent(transform)
+                          : capabilities.currentExtent;
 
         extent.width = std::clamp(extent.width,
                                   capabilities.minImageExtent.width,
@@ -351,7 +391,8 @@ struct GPUView::Native
             != VK_SUCCESS)
             return false;
 
-        const auto extent = chooseExtent(capabilities);
+        const auto transform = chooseTransform(capabilities);
+        const auto extent = chooseExtent(capabilities, transform);
 
         if (extent.width == 0 || extent.height == 0)
             return false;
@@ -380,8 +421,7 @@ struct GPUView::Native
         info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        // Naming the compositor's own transform says there is nothing to undo.
-        info.preTransform = capabilities.currentTransform;
+        info.preTransform = transform;
         info.compositeAlpha = chooseCompositeAlpha(capabilities, transparent);
         info.presentMode = choosePresentMode(physical);
         info.clipped = VK_TRUE;
@@ -402,6 +442,8 @@ struct GPUView::Native
         swapchainFormat = format.format;
         swapchainWidth = static_cast<int>(extent.width);
         swapchainHeight = static_cast<int>(extent.height);
+        suboptimalIsExpected = transform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+                               && isQuarterTurn(capabilities.supportedTransforms);
 
         return createImages() && createCompanions() && createSemaphores();
     }
@@ -690,7 +732,7 @@ struct GPUView::Native
         // Suboptimal did hand over an image and did signal, so dropping the
         // frame here would leave a signalled semaphore behind.
         if (acquired == VK_SUBOPTIMAL_KHR)
-            swapchainStale = true;
+            noteSuboptimal();
 
         auto& target = images[static_cast<int>(imageIndex)];
 
@@ -729,12 +771,25 @@ struct GPUView::Native
             return;
         }
 
-        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+        if (result == VK_ERROR_OUT_OF_DATE_KHR)
             swapchainStale = true;
+
+        if (result == VK_SUBOPTIMAL_KHR)
+            noteSuboptimal();
 
         // The frame never presented, so its acquire semaphore was signalled and
         // never waited on; only the rebuild retires it.
         if (result == VK_NOT_READY)
+            swapchainStale = true;
+    }
+
+    // Android calls every frame suboptimal while the swapchain's transform is
+    // not the display's, which an identity one on a rotated display never is,
+    // and says nothing else with it: a size change is out of date instead,
+    // and the window's resize rebuilds for it.
+    void noteSuboptimal()
+    {
+        if (!suboptimalIsExpected)
             swapchainStale = true;
     }
 
@@ -770,6 +825,7 @@ struct GPUView::Native
     VkFormat swapchainFormat = VK_FORMAT_UNDEFINED;
     int swapchainWidth = 0;
     int swapchainHeight = 0;
+    bool suboptimalIsExpected = false;
 
     Vector<VulkanTextureData> images;
     VulkanTextureData companions;

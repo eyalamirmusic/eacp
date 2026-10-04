@@ -153,7 +153,10 @@ struct AtlasTextView final : GPU::GPUView
     void keyDown(const Graphics::KeyEvent& event) override
     {
         if (event.characters.empty())
+        {
+            passKeyOn();
             return;
+        }
 
         auto& typed = lines.back().text;
 

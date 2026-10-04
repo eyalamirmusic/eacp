@@ -11,14 +11,11 @@ namespace eacp::SVG
 {
 // An SVG document drawn through the component tier.
 //
-// The sibling of SVGView, and the difference is the whole point of it. That one
-// builds a native Graphics::ShapeLayer per shape -- a CAShapeLayer on macOS, a
-// Direct2D geometry on Windows -- which is one window-server object per element
-// of a drawing, the weight UI::Component exists to avoid. This one builds a
-// UI::PathShape per shape instead: the masks are rasterized by one compute
-// dispatch before the frame opens, and the document then draws as quads out of
-// the shared coverage atlas, joining the same instanced draw as the interface
-// around it.
+// The module's one renderer, and the same on every platform. It builds a
+// UI::PathShape per shape rather than a window-server object per element: the
+// masks are rasterized by one compute dispatch before the frame opens, and the
+// document then draws as quads out of the shared coverage atlas, joining the
+// same instanced draw as the interface around it.
 //
 // Which makes a static document nearly free to display. Rasterization is
 // triggered by setting the geometry, so a document that is not being resized

@@ -31,6 +31,7 @@ target_sources(eacp-ui PRIVATE
         Widgets/ComboBox.cpp
         Widgets/ListBox.cpp
         Widgets/Tabs.cpp
+        Widgets/TouchScroller.cpp
         Widgets/Widgets.cpp)
 
 set_default_target_setting(eacp-ui)

@@ -313,7 +313,7 @@ void View::setMouseCursor(MouseCursor cursor)
 void View::focus()
 {
     impl->focus();
-    linuxViewFocused();
+    linuxViewFocused(properties.wantsTextInput);
 }
 
 bool View::hasFocus() const

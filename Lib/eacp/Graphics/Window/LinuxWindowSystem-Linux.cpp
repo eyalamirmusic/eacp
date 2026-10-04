@@ -192,7 +192,7 @@ void linuxRefreshCursor()
         seat->refreshCursor();
 }
 
-void linuxViewFocused() {}
+void linuxViewFocused(bool) {}
 
 void linuxInstallClipboard(LinuxWindowSystem system, Clipboard::Backend backend)
 {

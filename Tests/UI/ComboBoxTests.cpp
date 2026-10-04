@@ -174,6 +174,25 @@ auto tComboEscapeDismisses =
     check(harness.changes == 0);
 };
 
+auto tComboBackDismisses =
+    test("ComboBox/backClosesTheListAndIsPassedOnOnceClosed") = []
+{
+    auto harness = Harness {};
+
+    harness.box.setSelectedIndex(0);
+    harness.click({40.f, 30.f});
+
+    check(harness.box.isPopupOpen());
+    check(harness.host.dispatchKeyEvent(keyOf(KeyCode::Back)),
+          "the first back is the list's");
+    check(!harness.box.isPopupOpen());
+    check(harness.box.getSelectedIndex() == 0);
+    check(harness.changes == 0);
+
+    check(!harness.host.dispatchKeyEvent(keyOf(KeyCode::Back)),
+          "and the next is the platform's");
+};
+
 auto tComboArrowsAndReturn =
     test("ComboBox/arrowsMoveTheHighlightAndReturnTakesIt") = []
 {
