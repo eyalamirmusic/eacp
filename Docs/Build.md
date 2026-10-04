@@ -176,6 +176,15 @@ whose resources are APK assets with no path, readable only through
 `AAssetManager`, which eacp does not wrap yet. A binary run from `adb shell` is its own executable, with its
 resources beside it, as on desktop Linux.
 
+Android has no 2D `Context`, but it does have the image codecs:
+`Image-Android.cpp` decodes through `BitmapFactory.decodeByteArray` into an
+unpremultiplied `ARGB_8888` bitmap and encodes through `Bitmap.compress`, the
+pixels crossing with jnigraphics (`eacp-graphics` links it PRIVATE), so
+`Image::decode`, `load`, `encode` and `save` behave as on Apple and Windows,
+from any thread. `isSystemDarkMode()` reads the night bit of the activity's
+current configuration (`SystemAppearance-Android.cpp`). There is no
+change notification behind it on any platform; a caller asks again.
+
 ## A local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against
@@ -244,7 +253,7 @@ and their tests build with it:
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |

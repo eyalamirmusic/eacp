@@ -138,9 +138,9 @@ elseif (ANDROID)
     target_sources(eacp-graphics PRIVATE
             Graphics/Keyboard-Android.cpp
             Helpers/DisplayLink-Android.cpp
-            Helpers/SystemAppearance-Linux.cpp
+            Helpers/SystemAppearance-Android.cpp
             HotKey/GlobalHotKey-Linux.cpp
-            Image/Image-Linux.cpp
+            Image/Image-Android.cpp
             Input/GameInput-Default.cpp
             Layers/Layer-Linux.cpp
             Menu/Menu-Linux.cpp
@@ -165,7 +165,7 @@ elseif (ANDROID)
 
     # The app is a shared library NativeActivity loads: its entry point must
     # survive the link even though nothing in the library calls it.
-    target_link_libraries(eacp-graphics PUBLIC android log)
+    target_link_libraries(eacp-graphics PUBLIC android log PRIVATE jnigraphics)
     target_link_options(eacp-graphics INTERFACE "-u" "ANativeActivity_onCreate")
 elseif (UNIX)
     # Wayland and X11 side by side, plus stubs for what needs a codec or a

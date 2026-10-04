@@ -104,7 +104,8 @@ Android (API `EACP_ANDROID_MIN_SDK`+, Vulkan 1.1) is Linux without Wayland: CMak
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
-over `android.graphics` through JNI. `Platform::isLinux()` is desktop Linux
+over `android.graphics` through JNI, as are the image codecs
+(`Image/Image-Android.cpp`), which Android has without `EACP_HAS_CONTEXT`. `Platform::isLinux()` is desktop Linux
 alone; the sites that mean the Vulkan backend and its GLSL ask
 `isLinuxFamily()`, and the font defaults are Android's own
 `sans-serif` and `monospace`. The HTTP client is `Http-Android.cpp` over
