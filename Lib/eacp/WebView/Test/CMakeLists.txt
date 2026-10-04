@@ -46,4 +46,6 @@ else ()
     target_sources(eacp-webview-test-main PRIVATE TestCrashGuard-Default.cpp)
 endif ()
 target_link_libraries(eacp-webview-test-main PUBLIC NanoTest eacp-core)
+# IPC::Lock serialises WebView test processes; see TestMain.cpp.
+target_link_libraries(eacp-webview-test-main PRIVATE eacp-network)
 set_default_target_setting(eacp-webview-test-main)
