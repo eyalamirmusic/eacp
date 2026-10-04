@@ -4,7 +4,11 @@ plugins {
 
 android {
     namespace = "@EACP_APK_PACKAGE@"
-    compileSdk = @EACP_ANDROID_TARGET_SDK@
+    compileSdk {
+        version = release(@EACP_STUDIO_COMPILE_SDK@) {
+            minorApiLevel = @EACP_STUDIO_COMPILE_SDK_MINOR@
+        }
+    }
     ndkVersion = "@EACP_STUDIO_NDK_VERSION@"
 
     defaultConfig {

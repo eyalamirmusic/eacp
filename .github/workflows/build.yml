@@ -235,14 +235,22 @@ jobs:
       # installed, which an app locking its NDK does the same way. Ninja is
       # the generator; the resource embedder's generator is built for the host
       # with the runner's own compiler.
-      - name: Install Ninja and the NDK
+      - name: Install Ninja, the NDK and a platform
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-35"
 
       - name: Configure
         run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+
+      # What a configure that names nothing picks: the newest NDK and the
+      # newest platform in the SDK, with no NDK variable to point elsewhere.
+      - name: Configure with the newest NDK and platform
+        run: |
+          unset ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK
+          cmake -G Ninja -B build-floating -DCMAKE_SYSTEM_NAME=Android -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+          grep -A2 "compileSdk" build-floating/AndroidStudio/HelloGPU/build.gradle.kts
 
       - name: Build
         run: cmake --build build --target HelloGPU

@@ -110,25 +110,39 @@ files under `ThirdParty/miniz` and the version in its README.
 `EACP_ANDROID_NDK_VERSION` locks to, else the one `$ANDROID_NDK_HOME` (or
 `$ANDROID_NDK_ROOT`, `$ANDROID_NDK`) names, else the newest NDK in Android
 Studio's SDK or `$ANDROID_HOME` (`CMake/AndroidToolchain.cmake`), for
-`arm64-v8a` at API 33 unless `-DANDROID_ABI` or `-DANDROID_PLATFORM` say
-otherwise. An explicit `-DCMAKE_TOOLCHAIN_FILE` is used as given. The NDK is installed with Studio's
+`arm64-v8a` at `EACP_ANDROID_MIN_SDK` unless `-DANDROID_ABI` or
+`-DANDROID_PLATFORM` say otherwise. An explicit `-DCMAKE_TOOLCHAIN_FILE` is used as given. The NDK is installed with Studio's
 SDK Manager; eacp installs nothing.
 
 The configure writes an Android Studio project, which is how an app is built,
 installed, run, debugged, signed and bundled for Google Play. The project is a
 Gradle one with one module per `eacp_add_app`, whose `externalNativeBuild`
-runs this `CMakeLists.txt` for that one target per ABI, given every `-D` the
-generating configure was given plus `CPM_SOURCE_CACHE`, so a module builds the
-same sources with the same options. `CMake/Android.cmake` writes it from the
+runs this `CMakeLists.txt` for that one target per ABI, given every
+non-internal `EACP_*` and `CPM_*` cache variable of the generating configure
+plus `CPM_SOURCE_CACHE`, so a module builds the same sources with the same
+options. The SDK is found once — `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, else
+Studio's default location — and the toolchain and the project use the same
+one. `CMake/Android.cmake` writes it from the
 templates and the Gradle wrapper in `CMake/Android/`.
 
 - `EACP_ANDROID_STUDIO` (default `ON`) — write the project.
 - `EACP_ANDROID_STUDIO_DIR` (default `<build>/AndroidStudio`) — where.
 - `EACP_ANDROID_ABIS` (default `arm64-v8a;x86_64`) — the ABIs its modules
   build; the second is the emulator on an Intel host.
-- `EACP_ANDROID_SDK` (default: the SDK the NDK sits in) — Gradle's `sdk.dir`.
-- `EACP_ANDROID_MIN_SDK` (default `33`) and `EACP_ANDROID_TARGET_SDK`
-  (default `35`) — `minSdk`, and `targetSdk` and `compileSdk`.
+- `EACP_ANDROID_SDK` (default: the SDK found above) — Gradle's `sdk.dir`.
+- `EACP_ANDROID_MIN_SDK` (default `33`) — `minSdk` and the level a configure
+  compiles for: eacp's floor, an app's decision. The NDK carries every level's
+  sysroot, so nothing installed decides it.
+- `EACP_ANDROID_TARGET_SDK` (default `35`) — `targetSdk`.
+- `EACP_ANDROID_COMPILE_SDK` (default empty) — `compileSdk`. Empty is the
+  newest platform under `<sdk>/platforms`, previews skipped; with none
+  installed it is the target level, with a warning, and Gradle downloads it on
+  sync once the SDK licenses are accepted. Below the target level fails the
+  configure.
+- `EACP_ANDROID_GRADLE_PLUGIN` (default `9.4.1`) and `EACP_ANDROID_GRADLE`
+  (default `9.8.0`) — the Android Gradle Plugin and Gradle, a tested pair an
+  app may raise. Both are downloaded, not installed, so nothing on the machine
+  picks them.
 
 The module's `ndkVersion` is the NDK the configure compiled with, so a
 project's own toolchain file carries through to Studio.
@@ -249,9 +263,10 @@ without it stops at configure time and says so.
 and a Clang lane that runs the graphics backend on lavapipe under a headless
 Weston and then under an Xvfb — all three build it, one has a device, a
 compositor and an X server to run it on), and builds iOS for the simulator
-and Android: an Ubuntu lane installs an NDK with `sdkmanager`, configures with `-DCMAKE_SYSTEM_NAME=Android` and
-builds `HelloGPU` for `arm64-v8a`, which is every module an Android app
-links. Every lane configures with `EACP_CI_BUILD=ON`.
+and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
+against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` for
+`arm64-v8a`, which is every module an Android app links, then configures once
+more with no NDK named, which exercises the newest-installed path. Every lane configures with `EACP_CI_BUILD=ON`.
 
 The Linux lanes install the packages listed in [Linux.md](Linux.md), and the
 `Dockerfile` reproduces their three steps — a headless build, the suite under

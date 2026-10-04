@@ -1,7 +1,8 @@
 # Running eacp on Android
 
-For a macOS, Windows or Linux machine, and an Android 13+ device with Vulkan
-1.3 or the Android Emulator. Building, installing, running and debugging go
+For a macOS, Windows or Linux machine, and an Android device or emulator image
+at or above the app's minimum API level (`EACP_ANDROID_MIN_SDK`, below) with
+Vulkan 1.1. Building, installing, running and debugging go
 through Android Studio and Gradle, as they do for any Android app; CMake
 compiles the library, as it does on every platform.
 
@@ -26,11 +27,29 @@ cmake -G Ninja -B build-android -DCMAKE_SYSTEM_NAME=Android
 ```
 
 That finds the NDK in Studio's SDK, builds `libHelloGPU.so` for `arm64-v8a`
-at API 33 (`-DANDROID_ABI=x86_64` or `-DANDROID_PLATFORM=android-35` change
-that), which is the quick way to check that the code compiles, and writes an
-Android Studio project into `build-android/AndroidStudio` with one module per
-app. Every `-D` given here (`-DEACP_UNITY_BUILD=OFF`, a `-DCPM_Miro_SOURCE`)
-reaches the project's own configures too.
+at the app's minimum API level (`-DANDROID_ABI=x86_64` or
+`-DANDROID_PLATFORM=android-<level>` change that), which is the quick way to
+check that the code compiles, and writes an Android Studio project into
+`build-android/AndroidStudio` with one module per app. Every `EACP_*` and
+`CPM_*` setting given here (`-DEACP_UNITY_BUILD=OFF`, a `-DCPM_Miro_SOURCE`)
+reaches the project's own configures too; other `-D`s do not.
+
+The API levels and tools are cache variables an app sets to its own values:
+
+- `EACP_ANDROID_MIN_SDK` (default 33): `minSdk`, the oldest Android the app
+  runs on and the level the configure compiles for; an `-DANDROID_PLATFORM`
+  below it fails the configure. The NDK carries every level, so nothing
+  installed changes it.
+- `EACP_ANDROID_TARGET_SDK` (default 35): `targetSdk`.
+- `EACP_ANDROID_COMPILE_SDK` (default empty): `compileSdk`. Empty means the
+  newest platform installed in the SDK (SDK Manager > SDK Platforms); with
+  none installed it is the target level, with a warning, and Gradle downloads
+  that platform on its first sync once the SDK licenses are accepted. It may
+  not be below the target level.
+- `EACP_ANDROID_NDK_VERSION` (default empty): the NDK above.
+- `EACP_ANDROID_GRADLE_PLUGIN` and `EACP_ANDROID_GRADLE`: the Android Gradle
+  Plugin and Gradle the project runs, a pair tested together and downloaded
+  on the first sync rather than installed; an app may raise them.
 
 ## 3. Run
 
@@ -38,8 +57,9 @@ Open the `build-android/AndroidStudio` folder in Android Studio (File > Open).
 The first sync downloads Gradle and the Android Gradle Plugin, once per
 machine. Pick `HelloGPU` and a device: a phone with USB debugging on (Settings
 > About phone, tap Build number seven times, then Developer options > USB
-debugging), or an AVD from Device Manager with an API 35 Google APIs image,
-which has Vulkan 1.3 on Apple Silicon and on x86-64. Press Run. The app logs
+debugging), or an AVD from Device Manager at or above `EACP_ANDROID_MIN_SDK`,
+whose Google APIs images have a Vulkan driver on Apple Silicon and x86-64
+hosts. Press Run. The app logs
 under the tag `eacp` in Studio's Logcat.
 
 To debug, if Studio's default debugger ("Detect Automatically") fails to

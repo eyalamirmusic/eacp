@@ -99,7 +99,7 @@ links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
 of it is reached through `eacp::Zip`. To update it, replace the files under
 `ThirdParty/miniz` and the version in its README.
 
-Android (NDK r30, API 33+, Vulkan 1.1) is Linux without Wayland: CMake's
+Android (API `EACP_ANDROID_MIN_SDK`+, Vulkan 1.1) is Linux without Wayland: CMake's
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
 the app is a NativeActivity shared library with its ordinary `main()`
 (`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
@@ -125,7 +125,7 @@ for iOS, configures: with no toolchain file given, the top-level
 `CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which takes the
 `EACP_ANDROID_NDK_VERSION` an app locks to, else the NDK `$ANDROID_NDK_HOME`
 names, else the newest NDK in Studio's SDK (or `$ANDROID_HOME`), and includes its own
-`android.toolchain.cmake` for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` (33) unless
+`android.toolchain.cmake` for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` unless
 `-DANDROID_ABI`/`-DANDROID_PLATFORM` say otherwise, while an explicit
 `-DCMAKE_TOOLCHAIN_FILE` is used as given. That configure also writes a Gradle
 project for Android Studio into `<build>/AndroidStudio`
@@ -133,9 +133,15 @@ project for Android Studio into `<build>/AndroidStudio`
 `-G Xcode` writes an Xcode one (`CMake/Android.cmake`, templates and the
 Gradle wrapper in `CMake/Android/`): one module per `eacp_add_app` whose
 `externalNativeBuild` runs this `CMakeLists.txt` for that target per ABI in
-`EACP_ANDROID_ABIS`, given every `-D` the generating configure was given, with
-`ndkVersion` the NDK the configure compiled with, and the Android Gradle
-Plugin and Gradle versions pinned in `CMake/AndroidVersions.cmake`. Building, installing, running, debugging,
+`EACP_ANDROID_ABIS`, given every non-internal `EACP_*` and `CPM_*` cache
+variable of the generating configure, with `ndkVersion` the NDK the configure
+compiled with and the same SDK (`$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, else
+Studio's), found once. `CMake/AndroidVersions.cmake` pins `minSdk`
+(`EACP_ANDROID_MIN_SDK`, eacp's floor and the app's decision) and `targetSdk`
+(`EACP_ANDROID_TARGET_SDK`); `compileSdk` (`EACP_ANDROID_COMPILE_SDK`) floats
+to the newest platform installed, falling back to `targetSdk` with a warning
+and failing below it; the Android Gradle Plugin and Gradle are a tested pair
+an app may raise. Building, installing, running, debugging,
 signing and the App Bundle for Google Play are all Gradle's and Studio's;
 nothing in eacp makes an APK. `Apps/Android/README.md` is the step-by-step
 guide.
