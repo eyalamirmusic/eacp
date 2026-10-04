@@ -50,15 +50,13 @@ std::filesystem::path temporaryBeside(const std::filesystem::path& target)
 // Streaming into an ostringstream and returning its str() is the obvious
 // version, and costs four times the file: a doubling buffer plus a copy out.
 //
-// The size is only a hint. A FIFO or a device has none to give — and on macOS
-// file_size throws rather than answering zero, hence the error_code overload —
-// while the stream stays in text mode, so on Windows a CRLF pair arrives as one
-// character and a regular file yields fewer than its bytes.
+// The size is only a hint: a FIFO or a device has none to give, and on macOS
+// file_size throws rather than answering zero, hence the error_code overload.
 std::string readFile(const FilePath& path)
 {
     const auto stdPath = toStdPath(path);
 
-    auto stream = std::ifstream(stdPath);
+    auto stream = std::ifstream(stdPath, std::ios::binary);
 
     if (!stream.is_open())
         return {};
@@ -71,8 +69,6 @@ std::string readFile(const FilePath& path)
         contents.resize(static_cast<std::size_t>(size));
         stream.read(contents.data(), static_cast<std::streamsize>(contents.size()));
 
-        // Not resize(size): equal on POSIX, so nothing here can tell the two
-        // apart, and on Windows that would leave a run of NULs after the text.
         contents.resize(static_cast<std::size_t>(stream.gcount()));
     }
 
