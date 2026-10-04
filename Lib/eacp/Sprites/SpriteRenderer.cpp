@@ -1,7 +1,16 @@
 #include "SpriteRenderer.h"
+#include "SpriteShaders.h"
+
+#include <optional>
 
 namespace eacp::Sprites
 {
+struct SpriteRenderer::Programs
+{
+    Array<std::optional<SpriteShader>, GPU::samplingConfigurations> sprite;
+    Array<std::optional<Nv12Shader>, GPU::samplingConfigurations> nv12;
+};
+
 // No EACP_SHADER_VALUE declaration for SpriteInstance: every field the shader
 // pulls from it is a plain float[N], which the EDSL already maps to FloatN. The
 // macro is only needed for structs with named components.
@@ -117,7 +126,7 @@ SpriteRenderer::SpriteRenderer(Point logicalSizeToUse,
 
 SpriteShader& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 {
-    auto& slot = programs[GPU::samplingIndex(sampling)];
+    auto& slot = programs->sprite[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
         prepareBlended(slot.emplace(sampling), sampleCount, colorFormat);
@@ -127,7 +136,7 @@ SpriteShader& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 
 Nv12Shader& SpriteRenderer::nv12ProgramFor(GPU::TextureSampling sampling)
 {
-    auto& slot = nv12Programs[GPU::samplingIndex(sampling)];
+    auto& slot = programs->nv12[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
         prepareBlended(slot.emplace(sampling), sampleCount, colorFormat);

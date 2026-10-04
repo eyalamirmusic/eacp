@@ -94,8 +94,9 @@ configuration**, not one program it re-points.
 
 `Sprites::SpriteRenderer` is the case in the tree: it draws camera frames
 (scaled to fit, so `Linear`) and pixel art (so `Nearest`) through the same
-`drawTexture`. It keeps an `Array<std::optional<SpriteShader>,
-samplingConfigurations>` built on first use, and `drawTexture` takes a
+`drawTexture`. It keeps a program per sampling configuration, built on first
+use, behind a Pimpl in `SpriteRenderer.cpp` (the shader classes are in
+`SpriteShaders.h`), and `drawTexture` takes a
 `TextureSampling` defaulting to `Nearest`.
 
 Sampling is therefore part of what a batch is: the renderer queues quads and

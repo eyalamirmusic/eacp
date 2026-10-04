@@ -8,9 +8,8 @@
 #include "../Shader/ShaderSource.h"
 
 #include <cstdint>
-#include <map>
+#include <memory>
 #include <string>
-#include <tuple>
 
 namespace eacp::GPU
 {
@@ -344,11 +343,12 @@ struct Expr
 class ShaderGraph
 {
 public:
-    ShaderGraph()
-    {
-        blocks.add(Block {});
-        openBlocks.add(rootBlock);
-    }
+    ShaderGraph();
+    ~ShaderGraph();
+    ShaderGraph(const ShaderGraph& other);
+    ShaderGraph(ShaderGraph&& other) noexcept;
+    ShaderGraph& operator=(const ShaderGraph& other);
+    ShaderGraph& operator=(ShaderGraph&& other) noexcept;
 
     struct VaryingSlot
     {
@@ -754,29 +754,32 @@ private:
     int declareSimdMatrix(SimdMatrixElement element);
     int addIndexNode(ExprKind kind, DispatchRank forRank, int component);
 
-    // Structural sharing for the three kinds that can take it. A key holds
-    // everything add() would have to compare to call two nodes the same value;
-    // a binary's operands and a read's index are node ids, which is enough
-    // because the nodes they name were themselves shared on the way in.
-    //
-    // A read's key is its kind and width beside its slot and its index, so a
-    // read2 and a read4 starting at the same element stay two nodes - and only
-    // a read of a read-only slot is ever pure enough to reach the cache at all.
-    using ConstantKey = std::tuple<ValueType, int, std::uint32_t>;
-    using BinaryKey = std::tuple<ValueType, char, std::string, int, int>;
-    using ReadKey = std::tuple<ExprKind, ValueType, int, int>;
-
-    static ConstantKey constantKeyFor(const Expr& node);
-    static BinaryKey binaryKeyFor(const Expr& node);
-    static ReadKey readKeyFor(const Expr& node);
-
     bool purityOf(const Expr& node) const;
     bool readsImmutableStorage(const Expr& node) const;
     int findShared(const Expr& node) const;
 
-    std::map<ConstantKey, int> constantCache;
-    std::map<BinaryKey, int> binaryCache;
-    std::map<ReadKey, int> readCache;
+    struct Caches;
+
+    class SharingCaches
+    {
+    public:
+        SharingCaches();
+        ~SharingCaches();
+        SharingCaches(const SharingCaches& other);
+        SharingCaches(SharingCaches&& other) noexcept;
+        SharingCaches& operator=(const SharingCaches& other);
+        SharingCaches& operator=(SharingCaches&& other) noexcept;
+
+        const Caches* find() const { return caches.get(); }
+        Caches& get();
+
+    private:
+        static std::unique_ptr<Caches> copyOf(const SharingCaches& other);
+
+        std::unique_ptr<Caches> caches;
+    };
+
+    SharingCaches sharing;
     Vector<char> pureFlags; // parallel to nodes
 
     Vector<Expr> nodes;

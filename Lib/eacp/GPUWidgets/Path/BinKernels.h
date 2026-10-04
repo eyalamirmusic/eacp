@@ -1,7 +1,7 @@
 #pragma once
 
 #include "BackdropKernels.h"
-#include "PrefixSum.h"
+#include "PrefixSumKernels.h"
 
 namespace eacp::GPUWidgets
 {

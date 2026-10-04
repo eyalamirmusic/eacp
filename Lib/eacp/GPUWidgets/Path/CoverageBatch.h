@@ -1,6 +1,8 @@
 #pragma once
 
-#include "BinKernels.h"
+#include "PrefixSum.h"
+
+#include <eacp/GPU/Texture/Texture.h>
 
 namespace eacp::GPUWidgets
 {

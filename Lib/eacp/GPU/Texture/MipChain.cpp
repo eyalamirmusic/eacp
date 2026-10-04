@@ -1,6 +1,6 @@
 #include "MipChain.h"
 
-#include "../Codegen/PackedVertex.h"
+#include "../Codegen/PackedScalars.h"
 
 #include <cstring>
 

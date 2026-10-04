@@ -5,3 +5,4 @@
 #include "Frame/Frame.h"
 #include "Texture/MipChain.h"
 #include "View/GPUView.h"
+#include <eacp/Graphics/Graphics.h>

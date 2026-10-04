@@ -25,7 +25,7 @@ void Device::assertOwningThread() const
 #ifndef NDEBUG
     const auto onOwningThread = mainThreadOwned
                                     ? Threads::isMainThread()
-                                    : std::this_thread::get_id() == owningThread;
+                                    : Threads::currentThreadId() == owningThread;
 
     assert(onOwningThread
            && "eacp: a GPU::Device and everything made from it belong to the "

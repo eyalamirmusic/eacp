@@ -1,5 +1,6 @@
 #include "CoverageBatch.h"
 
+#include "BinKernels.h"
 #include "PathRasterizer.h"
 
 #include <cassert>

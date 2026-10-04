@@ -2,7 +2,11 @@
 
 #include "../Common.h"
 
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/Core/Utils/Pimpl.h>
+#include <eacp/Graphics/Helpers/DisplayLink.h>
+#include <eacp/Graphics/View/View.h>
+
+#include <functional>
 
 namespace eacp::GPU
 {

@@ -1,6 +1,7 @@
 #include "PrefixSum.h"
 
 #include "CoverageKernel.h"
+#include "PrefixSumKernels.h"
 
 #include <cassert>
 
