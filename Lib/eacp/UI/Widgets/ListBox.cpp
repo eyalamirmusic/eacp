@@ -152,7 +152,7 @@ Rect ListBox::getColumnBounds(int column, const Rect& rowBounds) const
     return {x, rowBounds.y, columns[column].width, rowBounds.h};
 }
 
-void ListBox::mouseDown(const MouseEvent& event)
+void ListBox::selectRowAt(const MouseEvent& event)
 {
     auto row = getRowAt(event.position);
 
@@ -165,6 +165,43 @@ void ListBox::mouseDown(const MouseEvent& event)
         model->rowDoubleClicked(row);
 }
 
+void ListBox::mouseDown(const MouseEvent& event)
+{
+    if (event.fromTouch)
+        touchScroll.press(event);
+    else
+        selectRowAt(event);
+}
+
+void ListBox::mouseDrag(const MouseEvent& event)
+{
+    if (event.fromTouch)
+        setScrollPosition(touchScroll.drag(event, scrollOffset));
+}
+
+void ListBox::mouseUp(const MouseEvent& event)
+{
+    if (event.fromTouch && touchScroll.release(event))
+        selectRowAt(event);
+}
+
+void ListBox::mouseCancel(const MouseEvent&)
+{
+    touchScroll.stop();
+}
+
+bool ListBox::claimsTouchDrag(const MouseEvent& event)
+{
+    return TouchScrolling::isScrollDrag(event, maximumScroll());
+}
+
+bool ListBox::advanceAnimation(double seconds)
+{
+    setScrollPosition(touchScroll.advance(seconds, scrollOffset, maximumScroll()));
+
+    return touchScroll.isFlinging();
+}
+
 bool ListBox::mouseWheelMove(const MouseEvent& event)
 {
     if (maximumScroll() <= 0.f)
@@ -175,6 +212,7 @@ bool ListBox::mouseWheelMove(const MouseEvent& event)
     // it.
     auto step = event.preciseWheel ? event.wheelDelta.y : event.wheelDelta.y * 40.f;
 
+    touchScroll.stop();
     setScrollPosition(scrollOffset - step);
 
     return true;

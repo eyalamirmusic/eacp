@@ -1,7 +1,21 @@
 #include "ComponentHost.h"
 
+#include "../Widgets/TouchScroller.h"
+
 namespace eacp::UI
 {
+namespace
+{
+bool isWithin(const Component* component, const Component& subtree)
+{
+    for (; component != nullptr; component = component->getParentComponent())
+        if (component == &subtree)
+            return true;
+
+    return false;
+}
+} // namespace
+
 ComponentHost::ComponentHost()
 {
     // No multisampling, for two reasons that point the same way. The clip is a
@@ -26,19 +40,27 @@ ComponentHost::~ComponentHost()
         root->host = nullptr;
 }
 
+// The whole subtree and not just the component: a child it does not own is cut
+// loose without being removed, so once it is detached nothing would tell the
+// host about it again, and it would be animated or pressed after it is gone.
 void ComponentHost::componentDeleted(Component& component)
 {
-    if (hoveredComponent == &component)
+    if (isWithin(hoveredComponent, component))
         hoveredComponent = nullptr;
 
-    if (mouseDownTarget == &component)
+    if (isWithin(mouseDownTarget, component))
+    {
         mouseDownTarget = nullptr;
+        touch = {};
+    }
 
     // Dropped rather than moved on. Telling the next component in the focus
     // order that it has the keyboard while a subtree is halfway through being
     // destroyed is how a focusGained lands on something already gone.
-    if (focusedComponent == &component)
+    if (isWithin(focusedComponent, component))
         focusedComponent = nullptr;
+
+    forgetAnimationsIn(component);
 
     if (root == &component)
     {
@@ -55,13 +77,160 @@ void ComponentHost::componentDeleted(Component& component)
 void ComponentHost::setRootComponent(Component& newRoot)
 {
     if (root != nullptr)
+    {
+        forgetAnimationsIn(*root);
         root->host = nullptr;
+    }
 
     root = &newRoot;
     root->host = this;
-    root->setBounds(getLocalBounds());
+    root->setBounds(getRootBounds());
 
     repaint();
+}
+
+Rect ComponentHost::getRootBounds() const
+{
+    auto bounds = getLocalBounds();
+
+    if (!respectsSafeArea)
+        return bounds;
+
+    auto inset = bounds.inset(getSafeAreaInsets());
+
+    return {inset.x, inset.y, std::max(0.f, inset.w), std::max(0.f, inset.h)};
+}
+
+void ComponentHost::setRespectsSafeArea(bool shouldRespect)
+{
+    if (respectsSafeArea == shouldRespect)
+        return;
+
+    respectsSafeArea = shouldRespect;
+    safeAreaInsetsChanged();
+}
+
+void ComponentHost::safeAreaInsetsChanged()
+{
+    if (root == nullptr)
+        return;
+
+    root->setBounds(getRootBounds());
+    repaint();
+}
+
+eacp::Graphics::MouseEvent
+    ComponentHost::inRootSpace(const eacp::Graphics::MouseEvent& event) const
+{
+    if (root == nullptr)
+        return event;
+
+    auto origin = Point {root->getBounds().x, root->getBounds().y};
+    auto result = event;
+
+    result.pos = event.pos - origin;
+    result.downPos = event.downPos - origin;
+
+    return result;
+}
+
+void ComponentHost::startAnimating(Component& component)
+{
+    if (!animating.addIfNotThere(&component))
+        return;
+
+    startAnimationClock();
+}
+
+void ComponentHost::stopAnimating(Component& component)
+{
+    for (auto*& entry: animating)
+        if (entry == &component)
+            entry = nullptr;
+
+    if (!advancingAnimations)
+        animating.removeAllMatches(static_cast<Component*>(nullptr));
+
+    retireAnimationClockWhenIdle();
+}
+
+bool ComponentHost::isAnimating(const Component& component) const
+{
+    return animating.contains(&component);
+}
+
+void ComponentHost::forgetAnimationsIn(Component& subtree)
+{
+    for (auto*& entry: animating)
+        if (isWithin(entry, subtree))
+            entry = nullptr;
+
+    if (!advancingAnimations)
+        animating.removeAllMatches(static_cast<Component*>(nullptr));
+
+    retireAnimationClockWhenIdle();
+}
+
+void ComponentHost::advanceAnimations(double seconds)
+{
+    advancingAnimations = true;
+
+    // By index, since a component may start another as it advances.
+    for (auto index = 0; index < animating.size(); ++index)
+    {
+        auto* component = animating[index];
+
+        if (component != nullptr && !component->advanceAnimation(seconds))
+            animating[index] = nullptr;
+    }
+
+    advancingAnimations = false;
+    animating.removeAllMatches(static_cast<Component*>(nullptr));
+
+    retireAnimationClockWhenIdle();
+}
+
+void ComponentHost::setAnimationClockEnabled(bool shouldRun)
+{
+    animationClockEnabled = shouldRun;
+
+    if (!shouldRun)
+        animationClock.reset();
+    else if (!animating.empty())
+        startAnimationClock();
+}
+
+void ComponentHost::startAnimationClock()
+{
+    if (!animationClockEnabled || animationClock != nullptr)
+        return;
+
+    auto tick = [this](Threads::FrameTime frame) { advanceAnimations(frame.delta); };
+    animationClock.create(Threads::DisplayLink::FrameCallback {tick});
+}
+
+// Later rather than now: this is usually running inside the link's own tick,
+// and a link cannot be destroyed from there.
+void ComponentHost::retireAnimationClockWhenIdle()
+{
+    if (!animating.empty() || animationClock == nullptr || animationClockRetiring)
+        return;
+
+    animationClockRetiring = true;
+
+    auto token = std::weak_ptr<bool> {alive};
+    auto retire = [this, token]
+    {
+        if (token.expired())
+            return;
+
+        animationClockRetiring = false;
+
+        if (animating.empty())
+            animationClock.reset();
+    };
+
+    Threads::callAsync(retire);
 }
 
 float ComponentHost::getAtlasFillFraction() const
@@ -177,7 +346,7 @@ void ComponentHost::resized()
     }
 
     if (root != nullptr)
-        root->setBounds(bounds);
+        root->setBounds(getRootBounds());
 }
 
 // A resize only moves the logical space the shaders map from, so every batch is
@@ -674,6 +843,8 @@ MouseEvent ComponentHost::makeEvent(const Component& target,
     result.clickCount = event.clickCount;
     result.wheelDelta = event.delta;
     result.preciseWheel = event.preciseScrolling;
+    result.fromTouch = event.fromTouch;
+    result.timestamp = event.timestamp;
 
     return result;
 }
@@ -727,10 +898,16 @@ void ComponentHost::setFocusedComponent(Component* component)
     if (previous != nullptr)
         previous->focusLost();
 
-    if (focusedComponent != nullptr)
+    if (focusedComponent == nullptr)
     {
-        // The native view, not the component: what the window hands keys to is
+        setWantsTextInput(false);
+    }
+    else
+    {
+        // Set without being applied, so the one focus() below applies it. The
+        // native view, not the component: what the window hands keys to is
         // this one view, and it can only pass them on if it has them.
+        getProperties().wantsTextInput = focusedComponent->wantsTextInput();
         focus();
         focusedComponent->focusGained();
     }
@@ -738,7 +915,7 @@ void ComponentHost::setFocusedComponent(Component* component)
     repaint();
 }
 
-void ComponentHost::moveFocusToPressed(Component* pressed)
+Component* ComponentHost::moveFocusToPressed(Component* pressed)
 {
     for (auto* current = pressed; current != nullptr;
          current = current->getParentComponent())
@@ -746,9 +923,20 @@ void ComponentHost::moveFocusToPressed(Component* pressed)
         if (current->getWantsKeyboardFocus())
         {
             setFocusedComponent(current);
-            return;
+            return current;
         }
     }
+
+    return nullptr;
+}
+
+void ComponentHost::focusTapped(Component* pressed)
+{
+    auto* before = focusedComponent;
+    auto* focused = moveFocusToPressed(pressed);
+
+    if (focused != nullptr && focused == before && focused->wantsTextInput())
+        focus();
 }
 
 bool ComponentHost::dispatchKey(const eacp::Graphics::KeyEvent& event, bool isDown)
@@ -789,58 +977,147 @@ bool ComponentHost::moveFocusByTab(const eacp::Graphics::KeyEvent& event)
 
 void ComponentHost::keyDown(const eacp::Graphics::KeyEvent& event)
 {
-    if (root == nullptr)
-        return;
-
     // The tree first, traversal second: a component that wants Tab for itself
     // says so by consuming it, which is the same verdict every other key is
     // decided by rather than a second mechanism.
-    if (dispatchKey(event, true))
+    if (root != nullptr && (dispatchKey(event, true) || moveFocusByTab(event)))
         return;
 
-    moveFocusByTab(event);
+    passKeyOn();
 }
 
 void ComponentHost::keyUp(const eacp::Graphics::KeyEvent& event)
 {
-    if (root != nullptr)
-        dispatchKey(event, false);
+    if (root == nullptr || !dispatchKey(event, false))
+        passKeyOn();
 }
 
-void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& event)
+Component*
+    ComponentHost::findTouchInterceptor(Component* from,
+                                        const eacp::Graphics::MouseEvent& event)
+{
+    for (auto* current = from; current != nullptr;
+         current = current->getParentComponent())
+    {
+        if (current->interceptsTouch(makeEvent(*current, event)))
+            return current;
+    }
+
+    return nullptr;
+}
+
+void ComponentHost::handTouchTo(Component& interceptor,
+                                const eacp::Graphics::MouseEvent& event)
+{
+    if (mouseDownTarget != nullptr)
+        mouseDownTarget->mouseCancel(makeEvent(*mouseDownTarget, event));
+
+    touch.settled = true;
+    touch.handedOff = true;
+    mouseDownTarget = &interceptor;
+
+    // The gesture is the finger's, not the pressed component's, so nothing
+    // under it should go on looking hovered.
+    setHoveredComponent(nullptr, event);
+
+    auto atDown = event;
+    atDown.pos = dragOrigin;
+    atDown.timestamp = touch.downTime;
+
+    interceptor.mouseDown(makeEvent(interceptor, atDown));
+}
+
+void ComponentHost::settleTouchDrag(const eacp::Graphics::MouseEvent& event)
+{
+    if (!touch.active || touch.settled || mouseDownTarget == nullptr)
+        return;
+
+    if (mouseDownTarget->claimsTouchDrag(makeEvent(*mouseDownTarget, event)))
+    {
+        touch.settled = true;
+        return;
+    }
+
+    auto* above = mouseDownTarget->getParentComponent();
+
+    if (auto* interceptor = findTouchInterceptor(above, event))
+        handTouchTo(*interceptor, event);
+}
+
+bool ComponentHost::wasTouchTap(const eacp::Graphics::MouseEvent& event) const
+{
+    return touch.active && !touch.handedOff
+           && isWithinTouchSlop(dragOrigin, event.pos);
+}
+
+void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& hostEvent)
 {
     if (root == nullptr)
         return;
 
+    auto event = inRootSpace(hostEvent);
+
     dragOrigin = event.pos;
     lastMousePosition = event.pos;
 
+    touch = {event.fromTouch, false, event.timestamp};
+
     mouseDownTarget = root->getComponentAt(event.pos);
+
+    // A finger landing on a list that is still coasting stops it, and is not a
+    // tap on whatever the list happens to be carrying past -- nor on the list,
+    // so it moves no focus either. The pressed component is asked too, since
+    // the finger may have landed on the list itself.
+    if (touch.active)
+    {
+        if (auto* interceptor = findTouchInterceptor(mouseDownTarget, event))
+        {
+            touch.settled = true;
+            touch.handedOff = true;
+            mouseDownTarget = interceptor;
+        }
+    }
 
     if (mouseDownTarget != nullptr)
     {
-        moveFocusToPressed(mouseDownTarget);
+        // A finger moves focus when it lifts, and only if it tapped: a press
+        // that becomes a scroll must not focus an editor and raise the keyboard.
+        if (!touch.active)
+            moveFocusToPressed(mouseDownTarget);
+
         setHoveredComponent(mouseDownTarget, event);
         mouseDownTarget->mouseDown(makeEvent(*mouseDownTarget, event));
     }
 }
 
-void ComponentHost::mouseDragged(const eacp::Graphics::MouseEvent& event)
+void ComponentHost::mouseDragged(const eacp::Graphics::MouseEvent& hostEvent)
 {
+    auto event = inRootSpace(hostEvent);
+
     lastMousePosition = event.pos;
+
+    settleTouchDrag(event);
 
     if (mouseDownTarget != nullptr)
         mouseDownTarget->mouseDrag(makeEvent(*mouseDownTarget, event));
 }
 
-void ComponentHost::mouseUp(const eacp::Graphics::MouseEvent& event)
+void ComponentHost::mouseUp(const eacp::Graphics::MouseEvent& hostEvent)
 {
+    auto event = inRootSpace(hostEvent);
+
     lastMousePosition = event.pos;
+
+    // Before the release, as a mouse focuses before its press, so a click
+    // handler that hands focus somewhere else keeps the last word.
+    if (wasTouchTap(event))
+        focusTapped(mouseDownTarget);
 
     if (mouseDownTarget != nullptr)
         mouseDownTarget->mouseUp(makeEvent(*mouseDownTarget, event));
 
     mouseDownTarget = nullptr;
+    touch = {};
 
     // The pointer may have left the pressed component during the drag, so the
     // hover has to be recomputed from where it actually ended up.
@@ -848,24 +1125,28 @@ void ComponentHost::mouseUp(const eacp::Graphics::MouseEvent& event)
         setHoveredComponent(root->getComponentAt(event.pos), event);
 }
 
-void ComponentHost::mouseMoved(const eacp::Graphics::MouseEvent& event)
+void ComponentHost::mouseMoved(const eacp::Graphics::MouseEvent& hostEvent)
 {
     if (root == nullptr)
         return;
+
+    auto event = inRootSpace(hostEvent);
 
     lastMousePosition = event.pos;
     updateHover(root->getComponentAt(event.pos), event);
 }
 
-void ComponentHost::mouseExited(const eacp::Graphics::MouseEvent& event)
+void ComponentHost::mouseExited(const eacp::Graphics::MouseEvent& hostEvent)
 {
-    setHoveredComponent(nullptr, event);
+    setHoveredComponent(nullptr, inRootSpace(hostEvent));
 }
 
-void ComponentHost::mouseWheel(const eacp::Graphics::MouseEvent& event)
+void ComponentHost::mouseWheel(const eacp::Graphics::MouseEvent& hostEvent)
 {
     if (root == nullptr)
         return;
+
+    auto event = inRootSpace(hostEvent);
 
     // To whatever is under the pointer, then up the tree until something
     // consumes it -- a row inside a list does not scroll, but the list holding

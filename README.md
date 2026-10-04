@@ -39,6 +39,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
   the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
   stay zero and silent on desktop windows. `Apps/UI/TouchDemo` draws both.
+  A `UI::ComponentHost` lays its root inside the safe area by default
+  (`setRespectsSafeArea(false)` gives it the whole view), and `ScrollPanel` and
+  `ListBox` scroll by finger, coasting on when flung, while a mouse drag over
+  them means what it always did.
 - **Game input** — `GameInput` is keyboard and mouse state for a game loop,
   polled once a frame beside the `View` callbacks that UI and text entry keep
   using: `snapshot()` returns a frame that answers `isDown`, `wasPressed`,

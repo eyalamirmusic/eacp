@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
+#include "TouchScroller.h"
 
 #include <optional>
 #include <string>
@@ -84,6 +85,7 @@ public:
     void mouseExit(const MouseEvent&) override;
     void mouseDown(const MouseEvent&) override;
     void mouseUp(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
 
 private:
     std::string text;
@@ -200,11 +202,16 @@ public:
 
     bool keyDown(const KeyEvent& event) override;
 
+    // A finger focuses the editor and places the caret when it lifts, and only
+    // if it was a tap: a press that turns into a scroll raises no keyboard.
     void mouseDown(const MouseEvent& event) override;
     void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent& event) override;
 
     void focusGained() override;
     void focusLost() override;
+
+    bool wantsTextInput() const override { return !readOnly; }
 
 private:
     Font fontToDrawIn() const;
@@ -307,11 +314,18 @@ public:
     void mouseDrag(const MouseEvent& event) override;
     void mouseUp(const MouseEvent&) override;
 
+    // A finger moving along the track drags the thumb even inside something
+    // that scrolls; one moving across it is left to scroll. A cancelled press
+    // puts the value back where the press found it.
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
+
 private:
     void setValueFromPosition(Point position);
 
     Orientation orientation;
     float value = 0.5f;
+    float valueAtDragStart = 0.5f;
     std::optional<float> defaultValue;
     Color accent = defaultTheme().accent;
     bool dragging = false;
@@ -369,6 +383,11 @@ public:
     void mouseDrag(const MouseEvent& event) override;
     void mouseUp(const MouseEvent&) override;
 
+    // Up and down is how a knob turns, so a finger moving that way keeps it
+    // inside a panel that scrolls the same way. See Slider.
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
+
 private:
     void rebuildTrack();
     void rebuildArc();
@@ -383,12 +402,19 @@ private:
     PathShape arc {*this};
 };
 
-// A clipping viewport over a taller content component, scrolled by the wheel.
+// A clipping viewport over a taller content component, scrolled by the wheel
+// or by a finger.
 //
 // The clipping is not this component's code: paint() gives every component a
 // Graphics already clipped to its own bounds, so content taller than the
 // viewport is cut at the edge without the viewport asking. What it adds is the
-// scroll offset, the wheel handling and the position indicator.
+// scroll offset, the wheel and touch handling and the position indicator.
+//
+// A finger dragged up or down anywhere over it scrolls, even one that went
+// down on a button in the content: the button is cancelled once the finger
+// has moved past the slop (see TouchScroller), and a tap that never moved
+// still clicks it. Let go moving and the content coasts; a press while it
+// coasts stops it and clicks nothing. A mouse drag means what it always did.
 class ScrollPanel final : public Component
 {
 public:
@@ -401,15 +427,33 @@ public:
     void setScrollPosition(float newOffset);
     float getScrollPosition() const { return scrollOffset; }
 
+    bool isFlinging() const { return touchScroll.isFlinging(); }
+
     void paint(Graphics& g) override;
     void paintOverChildren(Graphics& g) override;
+
+    // Shrinking keeps the focused component in view, which is what a panel
+    // the on-screen keyboard has just covered half of needs.
     void resized() override;
     bool mouseWheelMove(const MouseEvent& event) override;
 
+    void mouseDown(const MouseEvent& event) override;
+    void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
+
+    bool interceptsTouch(const MouseEvent& event) override;
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    bool advanceAnimation(double seconds) override;
+
 private:
     float maximumScroll() const;
+    void keepFocusedInView();
 
     Component* content = nullptr;
     float scrollOffset = 0.f;
+    float lastHeight = 0.f;
+
+    TouchScrolling touchScroll {*this};
 };
 } // namespace eacp::UI

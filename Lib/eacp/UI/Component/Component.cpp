@@ -97,6 +97,11 @@ void Component::removeChildComponent(Component& child)
     if (child.parent != this)
         return;
 
+    // A subtree leaving the host stops animating in it, since nothing would
+    // tell the host when one of those components is later destroyed.
+    if (auto* found = findHost())
+        found->forgetAnimationsIn(child);
+
     child.parent = nullptr;
     children.removeAllMatches(&child);
 
@@ -286,6 +291,25 @@ ComponentHost* Component::findHost() const
         current = current->parent;
 
     return current->host;
+}
+
+void Component::startAnimating()
+{
+    if (auto* found = findHost())
+        found->startAnimating(*this);
+}
+
+void Component::stopAnimating()
+{
+    if (auto* found = findHost())
+        found->stopAnimating(*this);
+}
+
+bool Component::isAnimating() const
+{
+    auto* found = findHost();
+
+    return found != nullptr && found->isAnimating(*this);
 }
 
 void Component::repaint()

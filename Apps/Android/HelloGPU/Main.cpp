@@ -46,6 +46,11 @@ struct TriangleShader final : ShaderProgram
     EACP_SHADER(angle, aspect)
 };
 
+bool isControlCharacter(char character)
+{
+    return static_cast<unsigned char>(character) < 0x20;
+}
+
 const char* phaseName(Graphics::TouchPhase phase)
 {
     switch (phase)
@@ -81,6 +86,7 @@ struct HelloView final : GPUView
     HelloView()
     {
         setHandlesTouchEvents(true);
+        setWantsTextInput(true);
         setContinuous(true);
 
         triangle.setVertices(triangleVertices);
@@ -106,8 +112,19 @@ struct HelloView final : GPUView
 
     void keyDown(const Graphics::KeyEvent& key) override
     {
-        if (key.keyCode == Graphics::KeyCode::Delete && !typed.empty())
-            typed.pop_back();
+        if (key.keyCode == Graphics::KeyCode::Delete)
+        {
+            if (!typed.empty())
+                typed.pop_back();
+
+            return;
+        }
+
+        if (key.characters.empty() || isControlCharacter(key.characters.front()))
+        {
+            passKeyOn();
+            return;
+        }
 
         typed += key.characters;
     }

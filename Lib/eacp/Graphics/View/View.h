@@ -130,6 +130,12 @@ struct MouseEvent
 
     // Wheel events only. See ScrollPhase.
     ScrollPhase scrollPhase = ScrollPhase::None;
+
+    // A finger rather than a pointer: a touch the view did not take as touches
+    // and was handed as the left button instead. What lets a scrolling list
+    // follow a finger dragged across it while a mouse dragged the same way
+    // still selects.
+    bool fromTouch = false;
 };
 
 enum class TouchPhase
@@ -162,6 +168,11 @@ struct ViewProperties
     bool handlesMouseEvents = false;
     bool handlesTouchEvents = false;
     bool grabsFocusOnMouseDown = false;
+
+    // Whether focusing this view should bring up an on-screen keyboard, where
+    // the platform has one (Android). Focusing a view without it puts that
+    // keyboard away, so a tap on a button does not raise it.
+    bool wantsTextInput = false;
 };
 
 class View
@@ -259,8 +270,10 @@ public:
     // Ended or Cancelled: event.phase says which.
     virtual void touchEnded(const TouchEvent&) {}
 
-    virtual void keyDown(const KeyEvent&) {}
-    virtual void keyUp(const KeyEvent&) {}
+    // A view that overrides these keeps every key it is handed unless it calls
+    // passKeyOn(); one that does not override them keeps none.
+    virtual void keyDown(const KeyEvent&);
+    virtual void keyUp(const KeyEvent&);
     virtual void resized();
 
     //Internal helpers to deal with scaling
@@ -324,6 +337,9 @@ public:
     View& setHandlesTouchEvents(bool value = true);
     View& setGrabsFocusOnMouseDown(bool value = true);
 
+    // Applied at once when this view already has focus.
+    View& setWantsTextInput(bool value = true);
+
     Point getMousePosition() const;
 
     // The pointer's shape while it is over this view.
@@ -345,8 +361,12 @@ public:
 
     // What the platform layer calls with a key event for this view: reports it
     // to the window's input tap (WindowEvents::input), then calls keyDown or
-    // keyUp.
-    void dispatchKeyEvent(const KeyEvent& event);
+    // keyUp. Returns whether the view kept the key: one it passed on is the
+    // platform's to act on, as Android's Back leaves the activity.
+    bool dispatchKeyEvent(const KeyEvent& event);
+
+    // From inside keyDown or keyUp: the key is not this view's.
+    void passKeyOn();
 
     // Called by the platform on the window's content view, once per changed finger.
     void dispatchTouchEvent(const TouchEvent& event);
@@ -441,6 +461,8 @@ private:
     ViewProperties properties;
 
     MouseCursor currentCursor = MouseCursor::Default;
+
+    bool keyKept = false;
 
     struct Native;
     Pimpl<Native> impl;

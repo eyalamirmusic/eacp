@@ -62,6 +62,7 @@ constexpr KeyMapping keyMappings[] = {
     {KeyCode::Tab, VK_TAB},
     {KeyCode::Delete, VK_BACK},
     {KeyCode::Escape, VK_ESCAPE},
+    {KeyCode::Back, VK_BROWSER_BACK},
 
     {KeyCode::LeftArrow, VK_LEFT},
     {KeyCode::RightArrow, VK_RIGHT},

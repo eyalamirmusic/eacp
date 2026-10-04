@@ -108,7 +108,15 @@ over `android.graphics` through JNI, as are the image codecs
 (`Image/Image-Android.cpp`), which Android has without `EACP_HAS_CONTEXT`. `Platform::isLinux()` is desktop Linux
 alone; the sites that mean the Vulkan backend and its GLSL ask
 `isLinuxFamily()`, and the font defaults are Android's own
-`sans-serif` and `monospace`. The HTTP client is `Http-Android.cpp` over
+`sans-serif` and `monospace`. Keys go through `Graphics/Keyboard-Android.cpp`,
+an `AKEYCODE_*` table both ways (Back is `KeyCode::Back`), the text a key types
+from Java's `KeyEvent`, and the polled `Keyboard` state answered from the key
+events the window has seen. Focusing a view with `wantsTextInput` (a
+`ComponentHost` sets it from its focused component) shows the soft keyboard
+through `WindowInsetsController`, and focusing one without it hides it. A
+finger's `TouchEvent` carries its contact radius in points and a `tapCount`
+for quick taps in one spot; a mouse's motion with no button down is hover
+(`mouseMoved`/`mouseExited`) and its wheel is `mouseWheel`. The HTTP client is `Http-Android.cpp` over
 `java.net.HttpURLConnection` (the platform's TLS, certificate store, proxy and
 network security config; a watchdog makes `Request::timeout` a total deadline,
 as on WinHTTP) and `WebSocket-Android.cpp` is `java.net.Socket`, under an
@@ -672,7 +680,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on
   Apple platforms and Direct2D on Windows; absent on Linux (`EACP_HAS_CONTEXT`)
-- `View`: UI component base class with `paint(Context&)` and `mouseDown(MouseEvent)` virtual methods
+- `View`: UI component base class with `paint(Context&)` and `mouseDown(MouseEvent)` virtual methods.
+  A `keyDown`/`keyUp` override keeps every key it is handed unless it calls
+  `passKeyOn()` (`dispatchKeyEvent` returns which); on Android a passed-on
+  `KeyCode::Back` — its own code, not `Escape` — leaves the activity, so a view
+  closes a popup on Back and passes every other press on
 - `Window`: the platform window (Cocoa, Win32, UIKit, Wayland or X11) with configurable flags
 - `Path`: Vector path drawing (rect, ellipse, curves)
 - `Font`: CoreText / DirectWrite typography, `EACP_HAS_CONTEXT` only

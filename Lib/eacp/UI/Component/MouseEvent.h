@@ -34,5 +34,14 @@ struct MouseEvent
     // eacp::Graphics::MouseEvent::preciseScrolling.
     Point wheelDelta;
     bool preciseWheel = false;
+
+    // A finger rather than a pointer. A scrolling component follows a finger
+    // dragged across it and leaves a mouse drag with the meaning it always had.
+    bool fromTouch = false;
+
+    // Seconds, on whatever clock the platform stamps its input with: only the
+    // difference between two events means anything, which is what a fling's
+    // velocity is measured from.
+    double timestamp = 0.0;
 };
 } // namespace eacp::UI

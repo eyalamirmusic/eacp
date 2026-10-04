@@ -139,6 +139,12 @@ constexpr uint16_t KeypadDivide = 0x4B;
 constexpr uint16_t KeypadClear = 0x47;
 constexpr uint16_t KeypadEquals = 0x51;
 
+// Android's Back, and the Back key some desktop keyboards carry. Outside the
+// Mac's range, which has no such key. Distinct from Escape because passing it
+// on means something: on Android a Back no view kept leaves the activity, so
+// a view closes a popup on it and lets every other press go.
+constexpr uint16_t Back = 0x100;
+
 // A platform key with no framework mapping. Backends that translate native
 // codes (Windows) report it for keys outside the table above.
 constexpr uint16_t Unknown = 0xFFFF;

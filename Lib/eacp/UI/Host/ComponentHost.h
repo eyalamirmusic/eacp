@@ -4,6 +4,7 @@
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
 
+#include <memory>
 #include <optional>
 
 namespace eacp::UI
@@ -32,9 +33,24 @@ public:
     ~ComponentHost() override;
 
     // The tree to draw. The component is not owned and has to outlive the host.
-    // It is resized to fill the host, so its own bounds are ignored.
+    // It is resized to fill the host -- inside the safe area, see below -- so
+    // its own bounds are ignored.
     void setRootComponent(Component& newRoot);
     Component* getRootComponent() const { return root; }
+
+    // Whether the root is laid out inside the view's safe area -- clear of the
+    // status bar, a display cutout, the gesture bar and an on-screen keyboard
+    // -- rather than over the whole view. On by default. Zero on a desktop, so
+    // nothing moves there.
+    //
+    // The background colour fills the whole view either way, so the edges the
+    // root leaves are the host's colour. Off is for a root that paints its own
+    // full-bleed backdrop and reads the insets itself.
+    void setRespectsSafeArea(bool shouldRespect);
+    bool getRespectsSafeArea() const { return respectsSafeArea; }
+
+    // Where the root is placed, in the view's coordinates.
+    Rect getRootBounds() const;
 
     void setBackgroundColour(const Color& colour);
 
@@ -138,6 +154,18 @@ public:
 
     void resized() override;
     void render(GPU::Frame& frame) override;
+    void safeAreaInsetsChanged() override;
+
+    // Steps every animating component by `seconds` (see
+    // Component::startAnimating). The host calls it from a display link of its
+    // own while anything animates; public so a test can step time by hand.
+    void advanceAnimations(double seconds);
+    bool isAnimating() const { return !animating.empty(); }
+
+    // Whether the host runs that display link. On by default; off leaves
+    // advanceAnimations to the caller, which is what makes an animation
+    // deterministic under test.
+    void setAnimationClockEnabled(bool shouldRun);
 
     // The component keys are offered to first. Null means none has been focused,
     // and the tree's keys go to the root -- which is what makes a shortcut work
@@ -174,6 +202,35 @@ private:
     // own base, so the host would otherwise write through a dead pointer on its
     // way out.
     void componentDeleted(Component& component);
+
+    void startAnimating(Component& component);
+    void stopAnimating(Component& component);
+    bool isAnimating(const Component& component) const;
+    void forgetAnimationsIn(Component& subtree);
+    void startAnimationClock();
+    void retireAnimationClockWhenIdle();
+
+    // The event as the root sees it: the root sits inside the safe area, and
+    // everything below the host measures from the root's corner.
+    eacp::Graphics::MouseEvent
+        inRootSpace(const eacp::Graphics::MouseEvent& event) const;
+
+    // `from` or the nearest ancestor of it that takes the touch gesture, or
+    // null.
+    Component* findTouchInterceptor(Component* from,
+                                    const eacp::Graphics::MouseEvent& event);
+
+    // Moves the gesture from the pressed component to `interceptor`: the first
+    // is cancelled, the second is pressed where the finger went down.
+    void handTouchTo(Component& interceptor,
+                     const eacp::Graphics::MouseEvent& event);
+
+    // Settles whether the moving finger stays with what it pressed or goes to
+    // an ancestor that scrolls.
+    void settleTouchDrag(const eacp::Graphics::MouseEvent& event);
+
+    // A finger lifting where it went down, from a press nothing took away.
+    bool wasTouchTap(const eacp::Graphics::MouseEvent& event) const;
 
     // Paints every component in the tree whose drawing is stale, into a list of
     // its own, and steps over every subtree that has nothing to record. Returns
@@ -243,8 +300,13 @@ private:
     // The pressed component, or the nearest ancestor of it, that wants the
     // keyboard. A press on something that wants nothing leaves focus alone
     // rather than clearing it, so clicking a panel does not silently disarm the
-    // editor next to it.
-    void moveFocusToPressed(Component* pressed);
+    // editor next to it. Returns the component that wanted it, or null.
+    Component* moveFocusToPressed(Component* pressed);
+
+    // A finger's moveFocusToPressed. A tap on the component that already has
+    // focus asks for the keyboard again, which is how an editor whose
+    // on-screen keyboard Back put away gets it back.
+    void focusTapped(Component* pressed);
 
     bool moveFocusByTab(const eacp::Graphics::KeyEvent& event);
 
@@ -329,6 +391,32 @@ private:
     Component* focusedComponent = nullptr;
 
     bool tabMovesFocus = true;
+    bool respectsSafeArea = true;
+
+    // A press made by a finger, which an ancestor may still take as a scroll
+    // until it is settled one way or the other.
+    struct TouchGesture
+    {
+        bool active = false;
+        bool settled = false;
+        double downTime = 0.0;
+        bool handedOff = false;
+    };
+
+    TouchGesture touch;
+
+    // Null entries are components that stopped while the list was being
+    // walked, swept once the walk is over.
+    Vector<Component*> animating;
+    bool advancingAnimations = false;
+
+    OwningPointer<Threads::DisplayLink> animationClock;
+    bool animationClockEnabled = true;
+    bool animationClockRetiring = false;
+
+    // What a deferred retirement checks before touching the host, since the
+    // link cannot be destroyed from inside its own tick.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
     int lastClipChanges = 0;
     int lastRendererSwitches = 0;

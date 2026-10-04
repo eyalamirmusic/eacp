@@ -79,7 +79,8 @@ public:
 
     // Up and Down step the selection while the list is closed and move the
     // highlight while it is open; Return takes the highlighted item, Escape
-    // puts the list away.
+    // or Back puts the list away. A Back with the list closed is passed on, so
+    // on Android it still leaves the app.
     bool keyDown(const KeyEvent& event) override;
 
     void focusLost() override;

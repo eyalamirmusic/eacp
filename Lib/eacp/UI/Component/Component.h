@@ -160,11 +160,50 @@ public:
     // code at all to let its parent have it.
     virtual bool mouseWheelMove(const MouseEvent&) { return false; }
 
+    // A finger, unlike a pointer, is how a list is scrolled, so a press on a
+    // button inside a scrolling panel may turn out to be the start of a scroll.
+    // These three settle which, for touches only; a mouse press always belongs
+    // to what it landed on.
+    //
+    // interceptsTouch is asked of every ancestor of the pressed component,
+    // nearest first, when the finger goes down and on every move until the
+    // gesture is settled. The first to say yes takes it: the pressed component
+    // is sent mouseCancel, and the ancestor a mouseDown where the finger went
+    // down followed by the drags and the release. When the finger goes down
+    // the pressed component is asked as well, and a yes from anything then --
+    // a list still coasting -- makes the press one that stops it rather than a
+    // tap, so it moves no focus.
+    //
+    // claimsTouchDrag is asked of the pressed component first, on every move
+    // until settled, and a yes keeps the gesture where it is -- what lets a
+    // slider inside a scrolling panel still be dragged along its own axis.
+    virtual bool interceptsTouch(const MouseEvent&) { return false; }
+    virtual bool claimsTouchDrag(const MouseEvent&) { return false; }
+
+    // The press this component was sent will get no release: something else
+    // took the gesture. Put back whatever the press started.
+    virtual void mouseCancel(const MouseEvent&) {}
+
+    // Asks the host to call advanceAnimation once a display frame until it
+    // answers false or stopAnimating is called. Does nothing outside a host.
+    void startAnimating();
+    void stopAnimating();
+    bool isAnimating() const;
+
+    // `seconds` since the host's clock last ticked: zero on the clock's first
+    // frame, and one frame's worth for a component that starts while the clock
+    // is already running. Answer whether to keep going.
+    virtual bool advanceAnimation(double) { return false; }
+
     // Whether this component can hold keyboard focus. Off by default, the same
     // way mouse interception is and for the same reason: a panel that holds an
     // editor should not be able to take the keyboard away from it by accident.
     void setWantsKeyboardFocus(bool shouldWantFocus);
     bool getWantsKeyboardFocus() const { return wantsKeyboardFocus; }
+
+    // Whether this component, once focused, types text: what brings up an
+    // on-screen keyboard where there is one, so a focused slider does not.
+    virtual bool wantsTextInput() const { return false; }
 
     // Makes this the host's focused component, and asks the native view for the
     // keyboard while it is at it -- a component tree only sees a key event if the

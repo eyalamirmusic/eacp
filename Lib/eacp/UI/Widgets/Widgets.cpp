@@ -1,8 +1,11 @@
 #include "Widgets.h"
 
+#include "../Host/ComponentHost.h"
+
 #include <eacp/Core/App/Clipboard.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace eacp::UI
 {
@@ -178,6 +181,12 @@ void Button::mouseUp(const MouseEvent& event)
         onClick();
     }
 
+    repaint();
+}
+
+void Button::mouseCancel(const MouseEvent&)
+{
+    down = false;
     repaint();
 }
 
@@ -571,6 +580,9 @@ int TextEditor::positionAt(float x) const
 
 void TextEditor::mouseDown(const MouseEvent& event)
 {
+    if (event.fromTouch)
+        return;
+
     grabKeyboardFocus();
 
     auto position = positionAt(event.position.x);
@@ -582,7 +594,19 @@ void TextEditor::mouseDown(const MouseEvent& event)
 
 void TextEditor::mouseDrag(const MouseEvent& event)
 {
+    if (event.fromTouch)
+        return;
+
     moveCaret(positionAt(event.position.x), true);
+}
+
+void TextEditor::mouseUp(const MouseEvent& event)
+{
+    if (!isTouchTap(event))
+        return;
+
+    grabKeyboardFocus();
+    moveCaret(positionAt(event.position.x), false);
 }
 
 void TextEditor::focusGained()
@@ -885,6 +909,7 @@ void Slider::mouseDown(const MouseEvent& event)
         return;
 
     dragging = true;
+    valueAtDragStart = value;
     onDragStart();
     setValueFromPosition(event.position);
     repaint();
@@ -907,6 +932,32 @@ void Slider::mouseUp(const MouseEvent&)
     dragging = false;
     onDragEnd();
     repaint();
+}
+
+namespace
+{
+bool isTouchDragAlong(const MouseEvent& event, bool horizontal)
+{
+    auto movement = event.position - event.downPosition;
+    auto along = std::abs(horizontal ? movement.x : movement.y);
+    auto across = std::abs(horizontal ? movement.y : movement.x);
+
+    return along > touchSlop && along >= across;
+}
+} // namespace
+
+bool Slider::claimsTouchDrag(const MouseEvent& event)
+{
+    return dragging
+           && isTouchDragAlong(event, orientation == Orientation::Horizontal);
+}
+
+void Slider::mouseCancel(const MouseEvent& event)
+{
+    if (dragging)
+        setValue(valueAtDragStart, true);
+
+    mouseUp(event);
 }
 
 namespace
@@ -1151,6 +1202,19 @@ void Knob::mouseUp(const MouseEvent&)
     repaint();
 }
 
+bool Knob::claimsTouchDrag(const MouseEvent& event)
+{
+    return dragging && isTouchDragAlong(event, false);
+}
+
+void Knob::mouseCancel(const MouseEvent& event)
+{
+    if (dragging)
+        setValue(valueAtDragStart, true);
+
+    mouseUp(event);
+}
+
 ScrollPanel::ScrollPanel()
 {
     setInterceptsMouseClicks(true);
@@ -1188,9 +1252,42 @@ void ScrollPanel::resized()
     if (content == nullptr)
         return;
 
+    auto shrank = getHeight() < lastHeight;
+    lastHeight = getHeight();
+
     scrollOffset = std::clamp(scrollOffset, 0.f, maximumScroll());
 
     content->setBounds({0.f, -scrollOffset, getWidth(), content->getHeight()});
+
+    if (shrank)
+        keepFocusedInView();
+}
+
+void ScrollPanel::keepFocusedInView()
+{
+    auto* host = getHost();
+    auto* focused = host != nullptr ? host->getFocusedComponent() : nullptr;
+
+    if (focused == nullptr || content == nullptr)
+        return;
+
+    auto* ancestor = focused->getParentComponent();
+
+    while (ancestor != nullptr && ancestor != content)
+        ancestor = ancestor->getParentComponent();
+
+    if (ancestor == nullptr && focused != content)
+        return;
+
+    auto top = focused->localPointToRoot({}).y - content->localPointToRoot({}).y;
+    auto bottom = top + focused->getHeight();
+
+    // The bottom edge first and the top second, so a component taller than the
+    // panel shows its top rather than its bottom.
+    auto wanted = std::max(scrollOffset, bottom - getHeight());
+    wanted = std::min(wanted, top);
+
+    setScrollPosition(wanted);
 }
 
 void ScrollPanel::paint(Graphics& g)
@@ -1230,7 +1327,49 @@ bool ScrollPanel::mouseWheelMove(const MouseEvent& event)
     // reports lines, and only this component knows what a line is worth here.
     auto step = event.preciseWheel ? event.wheelDelta.y : event.wheelDelta.y * 40.f;
 
+    touchScroll.stop();
     setScrollPosition(scrollOffset - step);
     return true;
+}
+
+void ScrollPanel::mouseDown(const MouseEvent& event)
+{
+    if (event.fromTouch)
+        touchScroll.press(event);
+}
+
+void ScrollPanel::mouseDrag(const MouseEvent& event)
+{
+    if (event.fromTouch)
+        setScrollPosition(touchScroll.drag(event, scrollOffset));
+}
+
+void ScrollPanel::mouseUp(const MouseEvent& event)
+{
+    if (event.fromTouch)
+        touchScroll.release(event);
+}
+
+void ScrollPanel::mouseCancel(const MouseEvent&)
+{
+    touchScroll.stop();
+}
+
+bool ScrollPanel::interceptsTouch(const MouseEvent& event)
+{
+    return touchScroll.isFlinging()
+           || TouchScrolling::isScrollDrag(event, maximumScroll());
+}
+
+bool ScrollPanel::claimsTouchDrag(const MouseEvent& event)
+{
+    return interceptsTouch(event);
+}
+
+bool ScrollPanel::advanceAnimation(double seconds)
+{
+    setScrollPosition(touchScroll.advance(seconds, scrollOffset, maximumScroll()));
+
+    return touchScroll.isFlinging();
 }
 } // namespace eacp::UI

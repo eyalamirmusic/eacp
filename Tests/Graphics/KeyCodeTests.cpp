@@ -46,7 +46,7 @@ const NamedKey allKeys[] = {
 
     {"Space", KeyCode::Space},   {"Return", KeyCode::Return},
     {"Tab", KeyCode::Tab},       {"Delete", KeyCode::Delete},
-    {"Escape", KeyCode::Escape},
+    {"Escape", KeyCode::Escape}, {"Back", KeyCode::Back},
 
     {"LeftArrow", KeyCode::LeftArrow},
     {"RightArrow", KeyCode::RightArrow},
