@@ -28,6 +28,10 @@ elseif (WIN32)
     target_sources(eacp-camera PRIVATE
             Camera-Windows.cpp)
     target_link_libraries(eacp-camera PRIVATE windowsapp)
+elseif (ANDROID)
+    target_sources(eacp-camera PRIVATE
+            Camera-Android.cpp)
+    target_link_libraries(eacp-camera PRIVATE camera2ndk mediandk android log)
 endif ()
 
 set_default_target_setting(eacp-camera)

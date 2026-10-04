@@ -98,7 +98,8 @@ own code where marked.
 ```cmake
 eacp_add_app(HelloWorld Main.cpp # fill me in: more .cpp files
         DISPLAY_NAME "Hello World") # BUNDLE_ID, VERSION, VERSION_CODE, ICON,
-                                    # ORIENTATION portrait|landscape
+                                    # ORIENTATION portrait|landscape,
+                                    # PERMISSIONS CAMERA ...
 target_link_libraries(HelloWorld PRIVATE eacp-gpu) # fill me in: eacp-text, ...
 set_default_target_setting(HelloWorld)
 ```
@@ -152,6 +153,12 @@ hostname verification for `wss://`, and the same setting governs plain
 `ws://`. `HelloNetwork` is the worked example: run with that setting on, it
 fetches, serves, downloads, times out and echoes over both WebSocket schemes,
 logs each check under `eacp`, and turns green when all pass, red otherwise.
+
+Any other permission is `eacp_add_app`'s `PERMISSIONS`: `PERMISSIONS CAMERA`
+puts `android.permission.CAMERA` in the manifest. One the user has to grant,
+as the camera is, is then asked for at run time with
+`Android::requestPermission` (`<eacp/Core/Android/Permissions-Android.h>`),
+which answers on the main thread once the dialog closes.
 
 ## When it goes wrong
 

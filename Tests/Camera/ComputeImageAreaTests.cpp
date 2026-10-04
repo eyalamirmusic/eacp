@@ -1,4 +1,7 @@
-#include "Common.h"
+#include <eacp/CameraView/CameraView.h>
+#include <NanoTest/NanoTest.h>
+
+#include <cmath>
 
 using namespace nano;
 using namespace eacp;
@@ -63,4 +66,25 @@ auto tDegenerate = test("CameraView/computeImageAreaDegenerate") = []
 {
     auto rect = CameraView::computeImageArea(100, 100, 0, 0, CameraView::Fit::Cover);
     check(rectEquals(rect, 0, 0, 100, 100));
+};
+
+// A 2:1 sensor frame turned a quarter is shown as 1:2, so Contain letterboxes
+// left/right as for a tall image.
+auto tContainQuarterTurn = test("CameraView/computeImageAreaContainQuarterTurn") = []
+{
+    auto rect = CameraView::computeImageArea(
+        100, 100, 200, 100, CameraView::Fit::Contain, 90);
+    check(rectEquals(rect, 25, 0, 50, 100));
+
+    auto opposite = CameraView::computeImageArea(
+        100, 100, 200, 100, CameraView::Fit::Contain, 270);
+    check(rectEquals(opposite, 25, 0, 50, 100));
+};
+
+// A half turn keeps the frame's own aspect.
+auto tContainHalfTurn = test("CameraView/computeImageAreaContainHalfTurn") = []
+{
+    auto rect = CameraView::computeImageArea(
+        100, 100, 200, 100, CameraView::Fit::Contain, 180);
+    check(rectEquals(rect, 0, 25, 100, 50));
 };

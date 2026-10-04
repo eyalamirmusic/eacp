@@ -47,7 +47,9 @@ if (EACP_HAS_CAPTURE AND NOT IOS)
     # The video playback stack above the Decoder interface — frame queueing,
     # playhead-to-frame selection, the clock — is portable C++, so these run
     # against a synthetic decoder with no media file and no codec involved.
-    add_subdirectory(Video)
+    if (NOT ANDROID)
+        add_subdirectory(Video)
+    endif ()
 endif ()
 
 # Codegen tests exercise eacp's WebView events/hooks format registrations,

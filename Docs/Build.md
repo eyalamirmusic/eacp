@@ -139,7 +139,12 @@ templates and the Gradle wrapper in `CMake/Android/`.
   build; the second is the emulator on an Intel host.
 - `EACP_ANDROID_CLEARTEXT_TRAFFIC` (default `OFF`) — the manifest's
   `usesCleartextTraffic`, which decides whether `http://` and `ws://` reach
-  any host, loopback included. Every manifest asks for `INTERNET` either way.
+  any host, loopback included. Every manifest asks for `INTERNET` either way;
+  an app asks for more with `eacp_add_app`'s `PERMISSIONS` (`CAMERA` is
+  `android.permission.CAMERA`, a name with a dot is taken as it is), and
+  `CAMERA` adds an optional `android.hardware.camera.any` feature beside it.
+  A dangerous permission is still asked for at run time, through
+  `Android::requestPermission` (`Core/Android/Permissions-Android.h`).
 - `EACP_ANDROID_SDK` (default: the SDK found above) — Gradle's `sdk.dir`.
 - `EACP_ANDROID_MIN_SDK` (default `33`) — `minSdk` and the level a configure
   compiles for: eacp's floor, an app's decision. The NDK carries every level's
@@ -166,15 +171,20 @@ configure too, so Studio started from the Dock, with no shell `PATH`, builds.
 [`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
 
 Of the examples, an Android build takes `Apps/Android`, `Apps/GPU`, `Apps/UI`
-(`SVGDocument` included) and `Apps/SVG` — each an `eacp_add_app`, so each is a
-module of the project — and leaves out the rest, which are console tools,
-plugin hosts or need a capability Android lacks; the capability gates below
-still apply inside the four, so the GPU examples that paint a 2D overlay stay
-out.
+(`SVGDocument` included), `Apps/SVG` and `CameraViewDemo` from `Apps/Camera` —
+each an `eacp_add_app`, so each is a module of the project — and leaves out
+the rest, which are console tools, plugin hosts or need a capability Android
+lacks; the capability gates below still apply inside the five, so the GPU
+examples that paint a 2D overlay stay out.
 
 `Core` reaches the framework through JNI where Android has no C API
 (`Core/Android/Jni.h`), with the application `Context` from
-`Jni::setContext`, else `ActivityThread.currentApplication()`. `Clipboard` is
+`Jni::setContext`, else `ActivityThread.currentApplication()`, and the activity
+itself from `Jni::activity`. A runtime permission is `Android::hasPermission`
+and `Android::requestPermission` (`Core/Android/Permissions-Android.h`); since
+NativeActivity never hands native code the dialog's result, a request is
+answered on the main thread when the activity resumes after the pause the
+dialog caused, and every caller waiting on that permission with it. `Clipboard` is
 `ClipboardManager` (`App/Clipboard-Android.cpp`): text only, `copyFiles`
 returns false, and a read is empty while the app lacks focus.
 `Apps::openExternalURL` is an `ACTION_VIEW` intent; the file pickers return
@@ -254,7 +264,8 @@ that `Lib`, `Apps` and `Tests` all read rather than restating the platform test.
 The three drawing ones are on together on every platform that draws — they
 stay three nested variables because each gates a different set of modules, and
 a new port reaches them one at a time; the next three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only, and `EACP_HAS_COREML` hangs off
+`EACP_HAS_DRAW` and are Apple/Windows-only, capture excepted, which Android
+has too, and `EACP_HAS_COREML` hangs off
 `EACP_HAS_GPU` and is Apple-only. `Network` needs none of them: it is
 unconditional, over NSURLSession and Network.framework on Apple, WinHTTP on
 Windows, libcurl on Linux and Java's `HttpURLConnection` and sockets through
@@ -267,7 +278,7 @@ and their tests build with it:
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
 | `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
 | `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
-| `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
+| `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple, Windows or Android | `Camera`, `CameraView`, their tests and `Apps/Camera`; `Video`, `VideoView` and theirs too but on iOS and Android, which have no decoder or encoder behind them |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |
 `EACP_HAS_CONTEXT` is also a compile definition on `eacp-graphics`, so the

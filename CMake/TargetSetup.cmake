@@ -22,7 +22,7 @@ endif ()
 
 # eacp_add_app(<target> <sources>... [BUNDLE_ID <id>] [DISPLAY_NAME <name>]
 #              [VERSION <x.y.z>] [VERSION_CODE <n>] [ICON <png>]
-#              [ORIENTATION portrait|landscape])
+#              [ORIENTATION portrait|landscape] [PERMISSIONS <name>...])
 #
 # One app with one identity everywhere: com.eacp.<target>, named <target>, at the
 # project's version, build 1, unless told otherwise. An executable whose bundle
@@ -31,10 +31,13 @@ endif ()
 # (eacp_add_android_app, which reads the rest). ORIENTATION locks a phone app
 # to one orientation on iOS (UISupportedInterfaceOrientations) and Android
 # (screenOrientation); landscape is either way up. Unset, the device rotates it.
+# PERMISSIONS are Android's, CAMERA being android.permission.CAMERA and a name
+# with a dot taken as it is, and land in the manifest beside INTERNET; the
+# dangerous ones still have to be asked for at run time.
 function(eacp_add_app target)
     cmake_parse_arguments(APP ""
-            "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;ORIENTATION" ""
-            ${ARGN})
+            "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;ORIENTATION"
+            "PERMISSIONS" ${ARGN})
 
     if (APP_ORIENTATION AND NOT APP_ORIENTATION MATCHES "^(portrait|landscape)$")
         message(FATAL_ERROR "eacp_add_app(${target}): ORIENTATION is portrait or "

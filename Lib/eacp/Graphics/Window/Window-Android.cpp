@@ -7,6 +7,7 @@
 #include "../View/AndroidViewSurface-Android.h"
 
 #include <eacp/Core/Android/Jni.h>
+#include <eacp/Core/Android/Permissions-Android.h>
 #include <eacp/Core/App/App.h>
 #include <eacp/Core/Threads/EventLoop-Android.h>
 #include <eacp/Core/Threads/Timer.h>
@@ -563,8 +564,13 @@ void androidHandleCommand(android_app* app, int32_t command)
             break;
 
         case APP_CMD_RESUME:
+            Apps::Detail::setSuspended(false);
+            eacp::Android::Detail::permissionsActivityResumed();
+            break;
+
         case APP_CMD_PAUSE:
-            Apps::Detail::setSuspended(command == APP_CMD_PAUSE);
+            Apps::Detail::setSuspended(true);
+            eacp::Android::Detail::permissionsActivityPaused();
             break;
 
         case APP_CMD_DESTROY:
@@ -751,6 +757,7 @@ extern "C" void eacpAndroidStart(android_app* app)
 
     eacp::Jni::setJavaVM(app->activity->vm);
     eacp::Jni::setContext(eacp::Jni::currentEnv(), app->activity->clazz);
+    eacp::Jni::setActivity(eacp::Jni::currentEnv(), app->activity->clazz);
 
     importAndroidEnvironment(app->activity);
 
@@ -778,6 +785,7 @@ extern "C" int eacpAndroidFinish(android_app* app)
         ANativeActivity_finish(app->activity);
     }
 
+    eacp::Jni::setActivity(eacp::Jni::currentEnv(), nullptr);
     activity = {};
 
     return destroyed ? 1 : 0;

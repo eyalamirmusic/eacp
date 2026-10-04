@@ -69,13 +69,15 @@ public:
                              const Graphics::Rect& imageArea);
 
     // The destination rect for a texWidth x texHeight image inside a
-    // viewWidth x viewHeight view under the given fit. Pure geometry, exposed
-    // for testing.
+    // viewWidth x viewHeight view under the given fit, once the image is turned
+    // by rotationDegrees (a quarter turn swaps its width and height). Pure
+    // geometry, exposed for testing.
     static Graphics::Rect computeImageArea(float viewWidth,
                                            float viewHeight,
                                            int textureWidth,
                                            int textureHeight,
-                                           Fit fit);
+                                           Fit fit,
+                                           int rotationDegrees = 0);
 
 protected:
     void render(GPU::Frame& frame) override;
@@ -83,11 +85,13 @@ protected:
 private:
     void ensureRenderer();
     void applyRenderMode();
-    Graphics::Rect imageAreaFor(int textureWidth, int textureHeight) const;
+    Graphics::Rect
+        imageAreaFor(int textureWidth, int textureHeight, int rotationDegrees) const;
 
     // Each returns whether a camera image was drawn and, if so, sets imageArea.
     bool renderZeroCopy(Graphics::Rect& imageArea);
     bool renderCpuUpload(Graphics::Rect& imageArea);
+    bool uploadLatestFrame();
 
     Camera* camera = nullptr;
     Fit fit = Fit::Cover;
@@ -106,8 +110,12 @@ private:
     std::optional<Sprites::SpriteRenderer> renderer;
     Graphics::Point rendererSize {0.0f, 0.0f};
 
-    // CPU-upload path: a frame reused across calls and the texture it feeds.
+    // CPU-upload path: a frame reused across calls and the textures it feeds.
+    // BGRA8 uses only uploadTexture; NV12 puts luma there and the half-size
+    // CbCr plane in chromaTexture.
     FramePixels scratch;
     std::optional<GPU::Texture> uploadTexture;
+    std::optional<GPU::Texture> chromaTexture;
+    PixelFormat uploadedFormat = PixelFormat::BGRA8;
 };
 } // namespace eacp::Cameras

@@ -116,6 +116,7 @@ elseif (UNIX AND NOT APPLE)
     if (ANDROID)
         target_sources(eacp-core PRIVATE
                 Android/Jni-Android.cpp
+                Android/Permissions-Android.cpp
                 App/App-Android.cpp
                 App/Clipboard-Android.cpp
                 Process/SpawnDirectory-Android.cpp

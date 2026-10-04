@@ -158,6 +158,9 @@ iOS for the simulator and Android (Vulkan 1.1; the HelloGPU and
 HelloNetwork examples for arm64-v8a with a pinned NDK; the second checks the
 HTTP client and server, downloads, `OnlineResource` and both WebSocket ends
 when run on a device). macOS is the most exercised of them.
+On Android, `Camera` and `CameraView` work as well, with the camera permission
+asked for at run time (`eacp::Android::requestPermission`); `Video` and
+`VideoView` are not available there yet.
 Android builds through an Android Studio project the configure writes;
 [`Apps/Android/README.md`](Apps/Android/README.md) is the guide.
 

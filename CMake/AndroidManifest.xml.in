@@ -4,9 +4,9 @@
 
     <!-- The Vulkan backend's floor: 1.1 with the extensions it needs. -->
     <uses-feature android:name="android.hardware.vulkan.version"
-            android:version="0x401000" android:required="true" />
+            android:version="0x401000" android:required="true" />@EACP_APK_FEATURES@
 
-    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.INTERNET" />@EACP_APK_PERMISSIONS@
 
     <application android:label="@EACP_APK_LABEL@"
             @EACP_APK_ICON_ATTRIBUTE@
