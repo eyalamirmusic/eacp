@@ -23,12 +23,13 @@ top-level `CMakeLists.txt` by seven capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` — `EmbeddedView` with it, since embedding is a windowing feature
 rather than a drawing one — and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`,
-`GPUWidgets`, `Sprites`, `Apps/GPU`, `Apps/Plugins`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`,
-`Apps/UI` and the GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the
+`GPUWidgets`, `Sprites`, `Apps/GPU`, `Apps/Plugins`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG` — whose
+one renderer is `SVGComponent`, so the module has no Context half —
+`Apps/UI` with `SVGDocument`, `Apps/SVG` and the GPU examples that draw
+glyphs), `EACP_HAS_CONTEXT` (the
 platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
 `TextInput`, the retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
-`SVGBuilder`, `Apps/Graphics`, `Apps/SVG`, `Apps/UI/SVGDocument` and the GPU
-examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
+`Apps/Graphics` and the GPU examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
 `CameraView`, `Video`, `VideoView`, the last two additionally off on iOS),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
@@ -570,9 +571,9 @@ Hebrew/Arabic/Latin line shapes in visual order. It is built on all three
 platforms and called on none of the others: CTLine and IDWriteTextLayout
 reorder inside themselves, so `GlyphRasterizer::shape()` returns visually
 ordered glyphs everywhere and nothing reorders twice. All of it makes
-`eacp-text` real on Linux and with it `eacp-ui`, the portable half of
-`eacp-svg`, `Apps/UI` (minus `SVGDocument`) and `Apps/GPU`'s `GlyphAtlas` and
-`VariableFont`. It needs font files as well as libraries — a font test asks
+`eacp-text` real on Linux and with it `eacp-ui`, `eacp-svg` (`SVGComponent`,
+the one SVG renderer everywhere, over `Path`'s recorded geometry), `Apps/UI`,
+`Apps/SVG` and `Apps/GPU`'s `GlyphAtlas` and `VariableFont`. It needs font files as well as libraries — a font test asks
 fontconfig for a family and self-skips when nothing resolves, so an
 installation with no fonts runs the Text suite as a silent green;
 `EACP_REQUIRE_FONTS=1` turns that skip into a failure, and the packages CI and
@@ -583,11 +584,11 @@ fonts-noto-color-emoji`.
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
 `TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
 left out of the Linux source list rather than stubbed, and with them
-`SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/SVG`, `Apps/UI/SVGDocument`
-and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
+`Apps/Graphics` and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
 where it is 0. `Path` is there as recorded geometry only
-(`Primitives/Path-Linux.h`). Every GPU test but the Metal-only
+(`Primitives/Path-Linux.{h,cpp}`, Android's too), which is what
+`SVGPathParser` builds into. Every GPU test but the Metal-only
 `TextureInteropTests.mm` runs there on lavapipe.
 
 `-DEACP_BUILD_GRAPHICS=OFF` is the only way to build Linux without any of this;

@@ -4,18 +4,16 @@
 #include <cmath>
 #include <string>
 
-// The same SVG document drawn twice: on the left by the native builder, on the
-// right through the component tier.
+// A gallery of SVG documents drawn through the component tier, one at a time; a
+// click or a tap moves to the next.
 //
-// The left half is one Graphics::ShapeLayer per shape -- a CAShapeLayer on
-// macOS, a Direct2D geometry on Windows -- which is what eacp-svg has always
-// done. The right half is one UI::PathShape per shape: every mask in the
-// document rasterized by a single compute dispatch before the frame opens, and
-// then drawn as quads out of one shared atlas, in one instanced draw, alongside
-// whatever else the interface is drawing.
+// Each is one UI::PathShape per shape: every mask in the document rasterized by
+// a single compute dispatch before the frame opens, and then drawn as quads out
+// of one shared atlas, in one instanced draw, alongside whatever else the
+// interface is drawing.
 //
-// Side by side because the two questions this rung exists to answer are both
-// questions you answer by looking.
+// The two questions this example was written to answer are both questions you
+// answer by looking.
 //
 // The first is whether a document fits in the atlas at all. A mask is the size
 // of its shape on screen, and the argument that the atlas is therefore always
@@ -34,8 +32,7 @@
 //
 // Both were answered, and the two documents that answered them are still here
 // because the answers are worth being able to re-read. What the documents added
-// since show is the format rather than the tier: the features the component
-// builder has and the native one does not, and the fit it now gets right -- a
+// since show is the format rather than the tier, and the fit it gets right -- a
 // document is letterboxed into a component of the wrong aspect rather than
 // stretched, which is what preserveAspectRatio's own default says.
 
@@ -84,17 +81,8 @@ const auto featureDocument = std::string {
   <text x="376" y="272" text-anchor="end" font-family="Helvetica" font-size="9" fill="#B0A294">viewBox origin 20,20</text>
 </svg>)SVG"};
 
-// Everything rung 2 added, and the first document where the two halves of this
-// window are supposed to disagree.
-//
-// The component tier draws all of it. The native side draws the arcs -- the path
-// parser is shared, and it emits cubics that either path type takes -- and none
-// of the rest: a <use> resolves nothing there, a style="" declaration is not
-// read, a dash pattern has no operation behind it, and preserveAspectRatio is
-// the stretch-to-fit SVGView has always done. So the left half is what the
-// module rendered before this rung and the right half is what it renders now,
-// which makes the difference the thing you are looking at rather than a bug to
-// find.
+// Everything rung 2 added: arcs, <use> and <symbol>, dash patterns, and a
+// style="" declaration that wins over the presentation attribute beside it.
 const auto documentFeatureDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
   <defs>
@@ -137,8 +125,7 @@ const auto documentFeatureDocument = std::string {
         fill="#D0021B" style="fill:#8A7A6A">arcs · use · symbol · dashes · style</text>
 </svg>)SVG"};
 
-// Gradients, which is the whole of what rung 3 added and the first thing the
-// native half of this window cannot draw at all.
+// Gradients, which is the whole of what rung 3 added.
 //
 // Every case that is easy to get wrong is in here on purpose. The default units
 // are fractions of each shape's own bounding box, so the same <linearGradient>
@@ -368,9 +355,9 @@ const auto opacityDocument = std::string {
   </g>
 </svg>)SVG"};
 
-// The same markup in a component of a different aspect, which is the only way to
-// see what preserveAspectRatio does. A 320x120 document in a tall half-window
-// letterboxes under the default; the native side, which stretches, does not.
+// A document of a very different aspect from the window, which is the only way
+// to see what preserveAspectRatio does: a 320x120 document letterboxes under the
+// default rather than stretching, so the circles stay round.
 const auto aspectDocument = std::string {
     R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="320" height="120" viewBox="0 0 320 120">
   <rect x="0" y="0" width="320" height="120" fill="#EFE7DA"/>
@@ -461,38 +448,22 @@ struct Document
 {
     std::string name;
     std::string markup;
-
-    // Whether the native side draws it too.
-    //
-    // It cannot always. A native shape layer is a DirectComposition surface (a
-    // CALayer on macOS) sized to the view, because the geometry is in the view's
-    // coordinates and a native path cannot be translated -- so a document of 300
-    // shapes asks the window server for 300 surfaces the size of the window, and
-    // on this window that is gigabytes. The component tier draws the same
-    // document into one shared atlas.
-    //
-    // Which is the comparison rather than a limitation of the demo, so it is
-    // said on screen rather than worked around.
-    bool nativeCanAfford = true;
 };
 
 Vector<Document> makeDocuments()
 {
     auto documents = Vector<Document> {};
 
-    documents.add({"Badge", badgeDocument, true});
-    documents.add({"Features", featureDocument, true});
-    documents.add({"Document features - arcs, use, dashes, style",
-                   documentFeatureDocument,
-                   true});
+    documents.add({"Badge", badgeDocument});
+    documents.add({"Features", featureDocument});
     documents.add(
-        {"Gradients - linear, radial, spread, units", gradientDocument, true});
-    documents.add({"Clip paths - rect, union, units, nesting", clipDocument, true});
-    documents.add(
-        {"Group opacity - per element against per group", opacityDocument, true});
-    documents.add({"Aspect ratio - fitted against stretched", aspectDocument, true});
-    documents.add({"Tiles - abutting edges", makeTilesDocument(16, 12), false});
-    documents.add({"Stacked - 300 large shapes", makeStackedDocument(300), false});
+        {"Document features - arcs, use, dashes, style", documentFeatureDocument});
+    documents.add({"Gradients - linear, radial, spread, units", gradientDocument});
+    documents.add({"Clip paths - rect, union, units, nesting", clipDocument});
+    documents.add({"Group opacity - per element and per group", opacityDocument});
+    documents.add({"Aspect ratio - letterboxed, not stretched", aspectDocument});
+    documents.add({"Tiles - abutting edges", makeTilesDocument(16, 12)});
+    documents.add({"Stacked - 300 large shapes", makeStackedDocument(300)});
 
     return documents;
 }
@@ -502,13 +473,38 @@ Vector<Document> makeDocuments()
 // that produced the numbers is cleared on its way out, so a label told them
 // would sit one frame behind for ever on a tree that only redraws when something
 // moves.
+//
+// Four groups of figures, laid out one, two or four to a line by the width it is
+// given, so a phone in portrait reads the same numbers as a desktop window.
 struct StatsBar final : UI::Component
 {
-    void paint(UI::Graphics& g) override
-    {
-        if (host == nullptr || document == nullptr)
-            return;
+    static constexpr auto lineHeight = 16.f;
+    static constexpr auto groupCount = 4;
 
+    static int linesFor(float width)
+    {
+        if (width >= 1100.f)
+            return 1;
+
+        if (width >= 600.f)
+            return 2;
+
+        return groupCount;
+    }
+
+    static float heightFor(float width)
+    {
+        return lineHeight * (float) linesFor(width);
+    }
+
+    static std::string millions(float texels)
+    {
+        auto tenths = (int) std::round(texels / 100000.f);
+        return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
+    }
+
+    Vector<std::string> describe() const
+    {
         // What the document asks the atlas for, against what the atlas holds.
         // The demand is in device pixels, so it is the mask area times the
         // square of the backing scale; the supply is the atlas squared.
@@ -517,39 +513,71 @@ struct StatsBar final : UI::Component
         auto unmeshed = document->getTotalMaskArea() * scale * scale;
         auto held = (float) host->getAtlasSize() * (float) host->getAtlasSize();
 
-        auto millions = [](float texels)
-        {
-            auto tenths = (int) std::round(texels / 100000.f);
-            return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10);
-        };
+        auto groups = Vector<std::string> {};
 
-        auto text =
-            std::to_string(document->getShapeCount()) + " shapes   "
-            + std::to_string(document->getMeshedShapeCount()) + " meshed   "
-            + std::to_string(document->getClipCount()) + " clips ("
-            + std::to_string(document->getClipMaskCount()) + " masked)   "
-            + std::to_string(document->getOpacityGroupCount()) + " groups ("
-            + std::to_string(host->getLastRenderedLayerCount()) + " rendered)   "
-            + std::to_string(document->getFontCount()) + " fonts   " + "asks "
-            + millions(asked) + "M texels of a " + millions(held) + "M atlas ("
-            + millions(unmeshed) + "M unmeshed)   "
-            + std::to_string((int) (host->getAtlasFillFraction() * 100.f))
-            // The host's figure rather than the document's, because a clip
-            // region is a mask like any other and one the atlas refused is as
-            // missing from the picture as a shape would be.
-            + "% reserved   " + std::to_string(host->getLastDroppedPathCount())
-            + " dropped   " + std::to_string(host->getLastClipChangeCount())
-            + " breaks   " + std::to_string(host->getLastRendererSwitchCount())
-            + " switches";
+        groups.add(std::to_string(document->getShapeCount()) + " shapes · "
+                   + std::to_string(document->getMeshedShapeCount()) + " meshed · "
+                   + std::to_string(document->getClipCount()) + " clips ("
+                   + std::to_string(document->getClipMaskCount()) + " masked)");
+
+        groups.add(std::to_string(document->getOpacityGroupCount()) + " groups ("
+                   + std::to_string(host->getLastRenderedLayerCount())
+                   + " rendered) · " + std::to_string(document->getFontCount())
+                   + " fonts");
+
+        groups.add("asks " + millions(asked) + "M texels of a " + millions(held)
+                   + "M atlas (" + millions(unmeshed) + "M unmeshed)");
+
+        // The host's figure rather than the document's, because a clip region
+        // is a mask like any other and one the atlas refused is as missing from
+        // the picture as a shape would be.
+        groups.add(std::to_string((int) (host->getAtlasFillFraction() * 100.f))
+                   + "% reserved · "
+                   + std::to_string(host->getLastDroppedPathCount()) + " dropped · "
+                   + std::to_string(host->getLastClipChangeCount()) + " breaks · "
+                   + std::to_string(host->getLastRendererSwitchCount())
+                   + " switches");
+
+        return groups;
+    }
+
+    void paint(UI::Graphics& g) override
+    {
+        if (host == nullptr || document == nullptr)
+            return;
+
+        auto groups = describe();
+        auto lines = linesFor(getWidth());
+        auto perLine = groupCount / lines;
+        auto area = getLocalBounds();
+        auto summary = std::string {};
 
         g.setColour(UI::defaultTheme().dimText);
-        g.drawText(text, getLocalBounds(), UI::Justification::Left);
 
-        if (text != lastPainted)
+        for (auto line = 0; line < lines; ++line)
         {
-            lastPainted = text;
-            LOG(text);
-            Threads::callAsync([this] { repaint(); });
+            auto text = std::string {};
+
+            for (auto index = 0; index < perLine; ++index)
+            {
+                if (index > 0)
+                    text += "   ";
+
+                text += groups[line * perLine + index];
+            }
+
+            g.drawText(
+                text, area.removeFromTop(lineHeight), UI::Justification::Left);
+            summary += text + "   ";
+        }
+
+        if (summary != lastPainted)
+        {
+            lastPainted = summary;
+            LOG(summary);
+
+            auto repaintNextFrame = [this] { repaint(); };
+            Threads::callAsync(repaintNextFrame);
         }
     }
 
@@ -558,61 +586,6 @@ struct StatsBar final : UI::Component
     std::string lastPainted;
 };
 
-struct ComponentSide final : UI::Component
-{
-    ComponentSide()
-    {
-        title.setColour(UI::defaultTheme().text);
-        stats.document = &document;
-
-        addChildren({title, document, stats});
-    }
-
-    void show(const Document& toShow)
-    {
-        title.setText("Component tier — " + toShow.name);
-
-        auto parsed = SVG::parseXML(toShow.markup);
-
-        if (parsed.has_value())
-            document.setDocument(*parsed);
-
-        repaint();
-    }
-
-    void paint(UI::Graphics& g) override { g.fillAll(Graphics::Color::white()); }
-
-    void resized() override
-    {
-        auto area = getLocalBounds().inset(padding);
-
-        title.setBounds(area.removeFromTop(22.f));
-        stats.setBounds(area.removeFromBottom(20.f));
-        area.removeFromBottom(6.f);
-
-        document.setBounds(area);
-    }
-
-    UI::Label title;
-    SVG::SVGComponent document;
-    StatsBar stats;
-};
-
-struct ComponentHostView final : UI::ComponentHost
-{
-    ComponentHostView()
-    {
-        setBackgroundColour(Graphics::Color::white());
-        setFontPointSize(12.f);
-        side.stats.host = this;
-        setRootComponent(side);
-    }
-
-    ComponentSide side;
-};
-
-// The two tiers as siblings in one window: a native view holding native layers,
-// beside a GPUView holding a component tree.
 // Which document to open with, as argv[1], so a screenshot of any of them can be
 // taken without anyone having to click through the others first.
 int startingDocument()
@@ -622,75 +595,86 @@ int startingDocument()
     return args.size() > 1 ? Strings::parseIntOr(args[1], 0) : 0;
 }
 
-struct SplitView final : Graphics::View
+struct Gallery final : UI::Component
 {
-    SplitView()
+    Gallery()
     {
-        setHandlesMouseEvents(true);
-        addSubview(componentHost);
-        showDocument(startingDocument());
+        setInterceptsMouseClicks(true);
+        title.setColour(Graphics::Color {0.16f, 0.16f, 0.2f, 1.f});
+        title.setFontSize(14.f);
+        hint.setColour(UI::defaultTheme().dimText);
+        stats.document = &document;
+
+        addChildren({title, hint, document, stats});
+        show(startingDocument());
     }
 
-    void showDocument(int index)
+    void show(int index)
     {
-        current = (index + documents.size()) % documents.size();
+        auto count = (int) documents.size();
+        current = ((index % count) + count) % count;
 
-        auto& document = documents[current];
+        auto& toShow = documents[current];
+        title.setText(toShow.name);
+        hint.setText(std::to_string(current + 1) + " of " + std::to_string(count)
+                     + " · click or tap for the next");
 
-        if (nativeResult.root != nullptr)
-            removeSubview(*nativeResult.root);
+        auto parsed = SVG::parseXML(toShow.markup);
 
-        if (document.nativeCanAfford)
-            nativeResult = SVG::parse(document.markup);
-        else
-            nativeResult = {};
+        if (parsed.has_value())
+            document.setDocument(*parsed);
 
-        if (nativeResult.root != nullptr)
-        {
-            addSubview(*nativeResult.root);
-            nativeResult.root->stretchToFit();
-        }
-
-        componentHost.side.show(document);
-        resized();
+        stats.repaint();
+        repaint();
     }
 
-    void mouseDown(const Graphics::MouseEvent&) override
-    {
-        showDocument(current + 1);
-    }
+    void mouseDown(const UI::MouseEvent&) override { show(current + 1); }
+
+    void paint(UI::Graphics& g) override { g.fillAll(Graphics::Color::white()); }
 
     void resized() override
     {
-        auto area = getLocalBounds();
-        auto half = area.w * 0.5f;
+        auto area = getLocalBounds().inset(padding);
 
-        if (nativeResult.root != nullptr)
-        {
-            nativeResult.root->setBounds({padding,
-                                          padding + 22.f,
-                                          half - padding * 2.f,
-                                          area.h - padding * 2.f - 22.f});
-            nativeResult.root->stretchToFit();
-        }
+        title.setBounds(area.removeFromTop(22.f));
+        hint.setBounds(area.removeFromTop(18.f));
+        area.removeFromTop(6.f);
 
-        componentHost.setBounds({half, 0.f, area.w - half, area.h});
+        stats.setBounds(area.removeFromBottom(StatsBar::heightFor(area.w)));
+        area.removeFromBottom(6.f);
+
+        document.setBounds(area);
     }
 
     Vector<Document> documents {makeDocuments()};
     int current = 0;
 
-    SVG::ParseResult nativeResult;
-    ComponentHostView componentHost;
+    UI::Label title;
+    UI::Label hint;
+    SVG::SVGComponent document;
+    StatsBar stats;
+};
+
+struct GalleryHost final : UI::ComponentHost
+{
+    GalleryHost()
+    {
+        setBackgroundColour(Graphics::Color::white());
+        setFontPointSize(12.f);
+        gallery.stats.host = this;
+        setRootComponent(gallery);
+    }
+
+    Gallery gallery;
 };
 
 Graphics::WindowOptions makeOptions()
 {
     auto options = Graphics::WindowOptions {};
-    options.width = 1180;
-    options.height = 660;
-    options.title = "eacp SVG — native layers | component tier (click to cycle)";
-    options.minWidth = 640;
+    options.width = 760;
+    options.height = 680;
+    options.title = "eacp SVG — component tier (click to cycle)";
+    options.minWidth = 360;
     options.minHeight = 400;
 
     return options;
@@ -700,5 +684,5 @@ Graphics::WindowOptions makeOptions()
 
 int main(int argc, char* argv[])
 {
-    return Graphics::runWindowedApp<SplitView>(argc, argv, makeOptions());
+    return Graphics::runWindowedApp<GalleryHost>(argc, argv, makeOptions());
 }

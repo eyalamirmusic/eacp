@@ -81,7 +81,12 @@ them, so apps inherit the look, feel, and performance of the host OS:
   and unpacks a zip; `UI::OnlineResourceMonitor` shows every such fetch as a
   list with progress bars. `Apps/Console/OnlineResource` and
   `Apps/UI/ResourceMonitor` are the two examples.
-- **SVG** — parsing and rendering of SVG documents into the graphics layer.
+- **SVG** — SVG documents parsed (`SVG::parseXML`) and drawn by
+  `SVG::SVGComponent`, a `UI` component, or rendered off-screen to an image
+  (`SVG::renderToImage`), the same on every platform: linear and radial
+  gradients, clip paths, element and group opacity, `<use>`/`<symbol>`, nested
+  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute and text. Not
+  `<mask>`, `<style>` selectors, filters or `<image>`.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
   and unload shared libraries at runtime (`DynamicLibrary`). Both directions of

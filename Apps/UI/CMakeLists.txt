@@ -45,9 +45,6 @@ add_subdirectory(ResourceMonitor)
 # finger on a desktop.
 add_subdirectory(TouchDemo)
 
-# An SVG document drawn twice in one window: native shape layers on the left,
-# the component tier's coverage masks on the right, for comparing the two on
-# screen and for reading what a real document costs the atlas.
-if (EACP_HAS_CONTEXT)
-    add_subdirectory(SVGDocument)
-endif ()
+# A gallery of SVG documents through the component tier, one at a time, with
+# what each one costs the coverage atlas read out beneath it.
+add_subdirectory(SVGDocument)

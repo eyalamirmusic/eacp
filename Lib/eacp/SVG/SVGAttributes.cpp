@@ -187,38 +187,7 @@ float toRadians(float degrees)
 {
     return degrees * GPUWidgets::pi / 180.f;
 }
-} // namespace
 
-Transform parseTransform(const std::string& value)
-{
-    auto result = Transform();
-
-    forEachTransformFunction(value,
-                             [&result](std::string_view name, NumberReader& reader)
-                             {
-                                 if (name == "translate")
-                                 {
-                                     result.translateX = reader.readFloat();
-                                     result.translateY =
-                                         readOptionalFloat(reader, 0.f);
-                                 }
-                                 else if (name == "scale")
-                                 {
-                                     result.scaleX = reader.readFloat();
-                                     result.scaleY =
-                                         readOptionalFloat(reader, result.scaleX);
-                                 }
-                                 else if (name == "rotate")
-                                 {
-                                     result.rotateDeg = reader.readFloat();
-                                 }
-                             });
-
-    return result;
-}
-
-namespace
-{
 GPUWidgets::AffineTransform readTransformFunction(std::string_view name,
                                                   NumberReader& reader)
 {
