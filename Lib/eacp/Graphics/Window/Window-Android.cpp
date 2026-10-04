@@ -672,10 +672,12 @@ extern "C" void eacpAndroidStart(android_app* app)
     using namespace eacp::Graphics;
 
     androidActivity() = AndroidActivity {app};
-    eacp::Jni::setJavaVM(app->activity->vm);
 
     if (app->activity != nullptr && app->activity->internalDataPath != nullptr)
         eacp::setAndroidDataDirectory(app->activity->internalDataPath);
+
+    eacp::Jni::setJavaVM(app->activity->vm);
+    eacp::Jni::setContext(eacp::Jni::currentEnv(), app->activity->clazz);
 
     importAndroidEnvironment(app->activity);
 

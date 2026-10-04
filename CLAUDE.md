@@ -127,6 +127,14 @@ device and the app's statics all run a second time; only a `main()` that
 returns on its own ends the process. A debug build takes environment
 variables from the launch intent's string extras and from
 `debug.<package>.env`; a release build takes none.
+`Core` has Android files of its own where desktop Linux's would be wrong:
+`Clipboard-Android.cpp` is `ClipboardManager` (text only, no backend hook),
+`App-Android.cpp` opens a URL with an `ACTION_VIEW` intent and has no file
+pickers, and `Files-Android.cpp` takes the program from the app's own `.so`
+rather than `/proc/self/exe` (`app_process64`), with no resources directory
+since assets live in the APK; `FilePath`'s data and cache roots are
+`getFilesDir()` and `getCacheDir()`. The application `Context` they need is
+`Jni::applicationContext()` (see `Docs/Build.md`).
 `eacp_add_app` builds an example as an
 executable, or on Android as the shared library NativeActivity loads, with
 `BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON` and

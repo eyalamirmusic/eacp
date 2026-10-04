@@ -159,6 +159,23 @@ so the host needs a C++ compiler; the Ninja Gradle found is handed to that
 configure too, so Studio started from the Dock, with no shell `PATH`, builds.
 [`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
 
+`Core` reaches the framework through JNI where Android has no C API
+(`Core/Android/Jni.h`), with the application `Context` from
+`Jni::setContext`, else `ActivityThread.currentApplication()`. `Clipboard` is
+`ClipboardManager` (`App/Clipboard-Android.cpp`): text only, `copyFiles`
+returns false, and a read is empty while the app lacks focus.
+`Apps::openExternalURL` is an `ACTION_VIEW` intent; the file pickers return
+`nullopt` at once, a Storage Access Framework picker needing activity-result
+plumbing NativeActivity does not have. `FilePath::appDataDirectory()` is
+`getFilesDir()` and `cacheDirectory()` is `getCacheDir()`, so
+`appSupportDirectory()` and `appCacheDirectory()` land under each.
+`Files::executablePath()` is the app's own `lib<Target>.so` (the process is the
+zygote's `app_process64`), so the fallback app name is the target's;
+`resourcesDirectory()` and `getBundleResourcePath()` are empty in an app,
+whose resources are APK assets with no path, readable only through
+`AAssetManager`, which eacp does not wrap yet. A binary run from `adb shell` is its own executable, with its
+resources beside it, as on desktop Linux.
+
 ## A local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against
