@@ -159,6 +159,12 @@ so the host needs a C++ compiler; the Ninja Gradle found is handed to that
 configure too, so Studio started from the Dock, with no shell `PATH`, builds.
 [`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
 
+Of the examples, an Android build takes `Apps/Android`, `Apps/GPU` and
+`Apps/UI` — each an `eacp_add_app`, so each is a module of the project — and
+leaves out the rest, which are console tools, plugin hosts or need a
+capability Android lacks; the capability gates below still apply inside the
+three, so `SVGDocument` and the GPU examples that paint a 2D overlay stay out.
+
 `Core` reaches the framework through JNI where Android has no C API
 (`Core/Android/Jni.h`), with the application `Context` from
 `Jni::setContext`, else `ActivityThread.currentApplication()`. `Clipboard` is

@@ -3,6 +3,7 @@ set(CMAKE_FOLDER Examples)
 if (ANDROID)
     add_subdirectory(Android)
     add_subdirectory(GPU)
+    add_subdirectory(UI)
     return ()
 endif ()
 
