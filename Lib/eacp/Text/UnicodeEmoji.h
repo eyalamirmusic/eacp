@@ -104,7 +104,7 @@ inline constexpr EmojiRange emojiPresentationRanges[] = {
 inline constexpr char32_t emojiVariationSelector = 0xFE0F;
 inline constexpr char32_t textVariationSelector = 0xFE0E;
 
-inline bool hasEmojiPresentation(char32_t codepoint)
+constexpr bool hasEmojiPresentation(char32_t codepoint)
 {
     const auto* begin = std::begin(emojiPresentationRanges);
     const auto* end = std::end(emojiPresentationRanges);
@@ -119,7 +119,7 @@ inline bool hasEmojiPresentation(char32_t codepoint)
 }
 
 // `next` is the codepoint following, which is where a variation selector sits.
-inline bool wantsEmojiPresentation(char32_t codepoint, char32_t next)
+constexpr bool wantsEmojiPresentation(char32_t codepoint, char32_t next)
 {
     if (next == emojiVariationSelector)
         return true;

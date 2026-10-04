@@ -129,6 +129,21 @@ void TouchScroller::stop()
     velocity = 0.f;
 }
 
+bool TouchScroller::isDragging() const
+{
+    return dragging;
+}
+
+bool TouchScroller::isFlinging() const
+{
+    return velocity != 0.f;
+}
+
+float TouchScroller::getVelocity() const
+{
+    return velocity;
+}
+
 void TouchScroller::addSample(float y, double time)
 {
     samples[nextSample] = {y, time};
@@ -213,5 +228,10 @@ bool TouchScrolling::isScrollDrag(const MouseEvent& event, float maximum)
 {
     return maximum > 0.f
            && TouchScroller::isScrollMovement(event.position - event.downPosition);
+}
+
+bool TouchScrolling::isFlinging() const
+{
+    return scroller.isFlinging();
 }
 } // namespace eacp::UI

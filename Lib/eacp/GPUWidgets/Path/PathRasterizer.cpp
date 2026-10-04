@@ -1,5 +1,7 @@
 ﻿#include "PathRasterizer.h"
 
+#include "CoverageKernel.h"
+
 #include <cmath>
 
 namespace eacp::GPUWidgets
@@ -51,6 +53,21 @@ void PathRasterizer::setScale(float pixelsPerUnit)
 bool PathRasterizer::isEmpty() const
 {
     return segments.empty() || coverageWidth <= 0 || coverageHeight <= 0;
+}
+
+Graphics::Rect PathRasterizer::getCoveredBounds() const
+{
+    return covered;
+}
+
+int PathRasterizer::getSegmentCount() const
+{
+    return segments.size() / 4;
+}
+
+const GPU::Texture& PathRasterizer::getCoverage() const
+{
+    return *coverageTexture;
 }
 
 void PathRasterizer::setTarget(const GPU::Texture& texture,

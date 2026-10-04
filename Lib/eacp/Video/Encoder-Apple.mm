@@ -115,6 +115,11 @@ void waitForInput(AVAssetWriterInput* in, Time::MS timeout)
 }
 } // namespace
 
+bool AppleEncoder::valid() const
+{
+    return writer && input && adaptor;
+}
+
 bool AppleEncoder::begin(const FilePath& path, const EncoderSpec& spec)
 {
     width = spec.video.width;

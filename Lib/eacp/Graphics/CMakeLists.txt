@@ -9,6 +9,7 @@ target_sources(eacp-graphics PRIVATE
         Layers/Layer.cpp
         Menu/Menu.cpp
         Menu/MenuCommands.cpp
+        Primitives/FontOptions.cpp
         Primitives/Primitives.cpp
         View/View.cpp
         Window/SizeConstraint.cpp
@@ -105,6 +106,7 @@ elseif (WIN32)
             Image/Image-Windows.cpp
             Input/GameInput-Default.cpp
             Layers/Layer-Windows.cpp
+            Layers/NativeLayer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp
             Layers/TextLayer-Windows.cpp
             Menu/Menu-Windows.cpp
@@ -121,7 +123,8 @@ elseif (WIN32)
             Window/KeyForwarding-Windows.cpp
             Window/KeyGrab-Windows.cpp
             Window/NativeChildSurface-Windows.cpp
-            Window/Window-Windows.cpp)
+            Window/Window-Windows.cpp
+            Window/WindowGeometry-Windows.cpp)
 
     target_link_libraries(eacp-graphics PUBLIC eacp-core PRIVATE
             d2d1

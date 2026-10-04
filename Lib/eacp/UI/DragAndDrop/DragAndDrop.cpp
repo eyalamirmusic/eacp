@@ -195,4 +195,29 @@ void DragAndDropContainer::componentDeleted(Component& component)
     current.source = nullptr;
     cancelDrag();
 }
+
+Component& DragAndDropTarget::getComponent() const
+{
+    return owner;
+}
+
+bool DragAndDropContainer::isDragging() const
+{
+    return dragging;
+}
+
+const DragInfo& DragAndDropContainer::getCurrentDrag() const
+{
+    return current;
+}
+
+DragAndDropContainer::DragImage::DragImage()
+{
+    setInterceptsMouseClicks(false);
+}
+
+void DragAndDropContainer::DragImage::paint(Graphics& g)
+{
+    painter(g, getLocalBounds());
+}
 } // namespace eacp::UI

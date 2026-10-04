@@ -59,7 +59,7 @@ public:
 
     CoverageAtlas();
 
-    const GPU::Texture& getTexture() const { return *texture; }
+    const GPU::Texture& getTexture() const;
 
     // What a shape with no mask samples: a uv rect inside the opaque texel.
     Rect getOpaqueUV() const;
@@ -74,14 +74,14 @@ public:
     // still start its whole walk again -- on the pass whose layout is the one
     // being drawn through, it cannot, and this is how it says so. An allocation
     // that would have moved something is refused and counted instead.
-    void setRelocationAllowed(bool allowed) { relocationAllowed = allowed; }
+    void setRelocationAllowed(bool allowed);
 
     // Forgets every allocation, so the next one starts from an empty shelf.
     // Only sound when nothing holds a slot any more -- the caller has just
     // invalidated every shape it is about to rasterize again. Without it, a
     // second walk allocates beside what the first one placed and abandoned,
     // and an atlas the tree fits in is one it needs twice over.
-    void forgetAllocations() { reset(); }
+    void forgetAllocations();
 
     // The uv rect for part of a slot, so a mask that came out smaller than the
     // room reserved for it can stay where it is instead of moving.
@@ -95,13 +95,13 @@ public:
     // The flag above is for the caller that reads it once and re-rasterizes; this
     // is for the one that *recorded* a uv rather than asking for one each frame,
     // and has to notice at some later point that what it kept is stale.
-    std::uint32_t generation() const { return atlasGeneration; }
+    std::uint32_t generation() const;
 
     // Masks there was no room for since the count was last cleared. Zero on any
     // interface that fits, and the only outward sign of the ceiling: each one
     // is a shape that will draw as nothing.
-    int getDroppedCount() const { return dropped; }
-    void clearDroppedCount() { dropped = 0; }
+    int getDroppedCount() const;
+    void clearDroppedCount();
 
     // How much of the atlas is spoken for, counting the room reserved rather
     // than the coverage written into it, since it is the reservation that runs

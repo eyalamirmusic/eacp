@@ -8,11 +8,13 @@ target_link_libraries(eacp-video PUBLIC eacp-core eacp-graphics)
 # agnostic by design, so only Decoder-* is per-OS.
 target_sources(eacp-video PRIVATE
         AudioRing.cpp
+        Encoder.cpp
         VideoRecorder.cpp
         SyntheticClip.cpp
         Decode/FrameImage.cpp
         Decode/FrameStream.cpp
         Decode/Player.cpp
+        Decode/VideoFrame.cpp
         Demux/Mp4Demuxer.cpp)
 
 if (APPLE)

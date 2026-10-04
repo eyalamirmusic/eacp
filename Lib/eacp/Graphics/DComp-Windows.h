@@ -48,17 +48,9 @@ void commitComposition();
 // earlier render on top), FALSE appends (TOP). These wrappers carry the WinRT
 // Children().InsertAtTop/InsertAtBottom semantics the call sites were written
 // against.
-inline HRESULT insertVisualAtTop(IDCompositionVisual2* parent,
-                                 IDCompositionVisual2* child)
-{
-    return parent->AddVisual(child, FALSE, nullptr);
-}
-
-inline HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
-                                    IDCompositionVisual2* child)
-{
-    return parent->AddVisual(child, TRUE, nullptr);
-}
+HRESULT insertVisualAtTop(IDCompositionVisual2* parent, IDCompositionVisual2* child);
+HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
+                             IDCompositionVisual2* child);
 
 // Bumped every time the rendering device is replaced. Anything holding a visual,
 // surface or target must compare against its own stamp and rebuild on a

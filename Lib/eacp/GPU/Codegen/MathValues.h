@@ -2,7 +2,7 @@
 
 #include <eacp/Core/Maths/Maths.h>
 
-#include "ShaderProgram.h"
+#include "ShaderMembers.h"
 
 // Teach the shader layer the shape of the Core maths types, so a Vec3 stands in
 // wherever a Float3 vertex field or uniform is expected and a Mat4 wherever a

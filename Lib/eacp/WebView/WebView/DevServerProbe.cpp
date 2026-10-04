@@ -1,5 +1,6 @@
 #include "DevServerProbe.h"
 
+#include "../Common.h"
 #include "DevServerProbeInternal.h"
 
 namespace eacp::Graphics

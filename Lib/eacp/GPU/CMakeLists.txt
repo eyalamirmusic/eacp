@@ -13,10 +13,17 @@ target_compile_options(eacp-gpu-codegen PUBLIC
         $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
 
 target_sources(eacp-gpu-codegen PRIVATE
+        Codegen/ComputeKernel.cpp
+        Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderBuilder.cpp
         Codegen/ShaderEmitter.cpp
-        Codegen/ShaderGraph.cpp)
+        Codegen/ShaderGraph.cpp
+        Codegen/ShaderMembers.cpp
+        Codegen/ShaderValue.cpp
+        Codegen/UniformLayout.cpp
+        Pipeline/VertexLayout.cpp
+        Shader/ShaderSource.cpp)
 
 # Which dialect build() calls the native one: selection only, no backend.
 if (APPLE)
@@ -44,14 +51,18 @@ add_library(eacp-gpu STATIC)
 target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
 
 target_sources(eacp-gpu PRIVATE
+        Buffer/Buffer.cpp
         Buffer/StreamingBuffers.cpp
+        Codegen/ComputeProgram.cpp
+        Codegen/ShaderProgram.cpp
         CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
         Frame/Frame.cpp
         Frame/RenderPass.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
-        Texture/MipChain.cpp)
+        Texture/MipChain.cpp
+        View/GPUView.cpp)
 
 if (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only

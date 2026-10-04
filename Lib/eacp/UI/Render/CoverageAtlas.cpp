@@ -244,4 +244,34 @@ CoverageAtlas::Slot CoverageAtlas::allocate(int width, int height)
     ++dropped;
     return empty;
 }
+
+const GPU::Texture& CoverageAtlas::getTexture() const
+{
+    return *texture;
+}
+
+void CoverageAtlas::setRelocationAllowed(bool allowed)
+{
+    relocationAllowed = allowed;
+}
+
+void CoverageAtlas::forgetAllocations()
+{
+    reset();
+}
+
+std::uint32_t CoverageAtlas::generation() const
+{
+    return atlasGeneration;
+}
+
+int CoverageAtlas::getDroppedCount() const
+{
+    return dropped;
+}
+
+void CoverageAtlas::clearDroppedCount()
+{
+    dropped = 0;
+}
 } // namespace eacp::UI

@@ -1707,7 +1707,7 @@ narrowing is bit-identical as well: no dialect has a bf16 instruction to hand
 the rounding to, so `packBFloat16x2` does round-to-nearest-even in integer
 arithmetic itself, and every backend emits the same arithmetic. A NaN is
 quieted rather than rounded, so it cannot carry into the exponent and come back
-as an infinity. `bfloat16FromFloat` / `bfloat16ToFloat` in `PackedVertex.h` are
+as an infinity. `bfloat16FromFloat` / `bfloat16ToFloat` in `PackedScalars.h` are
 the host side of the same encoding, for filling a buffer or checking one.
 
 ### int8 and int4 weights, kept packed
@@ -1846,7 +1846,7 @@ quantization clamps before this point and nothing is spent re-clamping in the
 shader.
 
 `int8x4FromBytes` / `uint8x4FromBytes` / `int4x8FromNibbles` /
-`uint4x8FromNibbles` in `PackedVertex.h`, with `int8x4ToByte` and
+`uint4x8FromNibbles` in `PackedScalars.h`, with `int8x4ToByte` and
 `int4x8ToNibble` going the other way, are the host side of the same layout —
 what a loader turning a quantized checkpoint into a storage buffer writes. They
 are per word, and that is all the wide reads need: a record is a run of

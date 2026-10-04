@@ -60,6 +60,16 @@ RpcServer::RpcServer(std::string_view name, Miro::Bridge& bridgeToUse)
     server.onClient = [this](Messenger& client) { serve(client); };
 }
 
+void RpcServer::setCommandExecution(Rpc::CommandExecution mode)
+{
+    commandExecution = mode;
+}
+
+int RpcServer::connectedClients() const
+{
+    return clients.size();
+}
+
 void RpcServer::serve(Messenger& client)
 {
     clients.add(&client);
@@ -124,7 +134,7 @@ void RpcServer::broadcast()
 }
 
 OwningPointer<RpcServer> createRPCServer(std::string_view name,
-                                      Miro::Bridge& bridgeToUse)
+                                         Miro::Bridge& bridgeToUse)
 {
     try
     {
@@ -132,7 +142,7 @@ OwningPointer<RpcServer> createRPCServer(std::string_view name,
     }
     catch (std::exception& e)
     {
-        LOG ("Can't create server ", e.what());
+        LOG("Can't create server ", e.what());
     }
 
     return nullptr;

@@ -1,6 +1,7 @@
 #include "Device.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Graphics/Image/Image.h>
 
 #include <cassert>
 
@@ -25,12 +26,78 @@ void Device::assertOwningThread() const
 #ifndef NDEBUG
     const auto onOwningThread = mainThreadOwned
                                     ? Threads::isMainThread()
-                                    : std::this_thread::get_id() == owningThread;
+                                    : Threads::currentThreadId() == owningThread;
 
     assert(onOwningThread
            && "eacp: a GPU::Device and everything made from it belong to the "
               "thread that made it - give each thread its own");
 #endif
+}
+
+Buffer Device::makeBuffer(const void* data,
+                          std::int64_t bytes,
+                          BufferUsage usage,
+                          BufferStorage storage)
+{
+    assertOwningThread();
+
+    return {*this, data, bytes, usage, storage};
+}
+
+Buffer Device::makeBuffer(std::int64_t bytes, BufferUsage usage)
+{
+    assertOwningThread();
+
+    return {*this, nullptr, bytes, usage};
+}
+
+Buffer Device::makeBufferOverMemory(ExternalMemory memory, BufferUsage usage)
+{
+    assertOwningThread();
+
+    return {*this, std::move(memory), usage};
+}
+
+Texture Device::makeTexture(const TextureDescriptor& descriptor, const void* pixels)
+{
+    return {*this, descriptor, pixels};
+}
+
+Texture Device::wrapPixelBuffer(void* nativePixelBuffer)
+{
+    return {*this, nativePixelBuffer};
+}
+
+ShaderLibrary Device::makeShaderLibrary(const ShaderSource& source)
+{
+    return {*this, source};
+}
+
+RenderPipeline Device::makeRenderPipeline(const RenderPipelineDescriptor& descriptor)
+{
+    return {*this, descriptor};
+}
+
+ComputePipeline Device::makeComputePipeline(const ShaderLibrary& library)
+{
+    return {*this, library};
+}
+
+CommandBuffer Device::makeCommandBuffer()
+{
+    assertOwningThread();
+
+    return CommandBuffer {*this};
+}
+
+const FrameTimings& Device::lastFrameTimings() const
+{
+    return timer.lastTimings();
+}
+
+bool Device::supportsPassTimings() const
+{
+    return timer.isSupported();
 }
 
 Texture Device::makeTexture(const Graphics::Image& image)

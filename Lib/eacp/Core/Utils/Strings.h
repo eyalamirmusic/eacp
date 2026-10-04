@@ -46,30 +46,12 @@ std::string narrow(std::wstring_view wide);
 // Number/bool → string. String-like and char inputs pass through unchanged so
 // callers can concatenate heterogeneous values without minding their types.
 // This is the single place the framework turns a value into text (see LOG).
-inline std::string toString(const std::string& s)
-{
-    return s;
-}
-inline std::string toString(std::string_view s)
-{
-    return std::string {s};
-}
-inline std::string toString(const char* s)
-{
-    return std::string {s};
-}
-inline std::string toString(char* s)
-{
-    return std::string {s};
-}
-inline std::string toString(char c)
-{
-    return std::string(1, c);
-}
-inline std::string toString(bool b)
-{
-    return b ? "true" : "false";
-}
+std::string toString(const std::string& s);
+std::string toString(std::string_view s);
+std::string toString(const char* s);
+std::string toString(char* s);
+std::string toString(char c);
+std::string toString(bool b);
 
 template <typename T>
 std::string toString(const T& value)

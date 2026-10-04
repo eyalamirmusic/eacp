@@ -1,4 +1,5 @@
 #include "LinuxInput-Linux.h"
+#include "LinuxSeat-Linux.h"
 
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Threads/Timer.h>
@@ -207,6 +208,16 @@ void XkbKeyboardState::clearPressed()
 bool XkbKeyboardState::isPressed(uint32_t evdevCode) const
 {
     return pressedCodes.contains(evdevCode);
+}
+
+Vector<uint32_t> XkbKeyboardState::getPressedCodes() const
+{
+    return pressedCodes;
+}
+
+bool LinuxSeat::hasKeyboardFocus() const
+{
+    return getKeyboardFocus() != nullptr;
 }
 
 struct KeyRepeat::Pending

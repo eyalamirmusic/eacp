@@ -57,7 +57,7 @@ public:
     GlobalRef& operator=(const GlobalRef&) = delete;
 
     void reset(JNIEnv* env, jobject local);
-    jobject get() const { return object; }
+    jobject get() const;
 
 private:
     jobject object = nullptr;

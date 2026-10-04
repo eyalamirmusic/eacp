@@ -41,10 +41,7 @@ public:
     // and a range starting at or past that end fills nothing.
     void fill(const BufferRange& range, std::uint8_t value = 0);
 
-    void fill(const Buffer& buffer, std::uint8_t value = 0)
-    {
-        fill(BufferRange::of(buffer), value);
-    }
+    void fill(const Buffer& buffer, std::uint8_t value = 0);
 
     // Submits the recorded work and waits for completion.
     void commit();

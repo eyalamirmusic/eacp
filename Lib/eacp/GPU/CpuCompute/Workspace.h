@@ -22,15 +22,15 @@ public:
     Workspace& operator=(Workspace&& other) noexcept;
 
     // The serial of the plan this was laid out for.
-    std::uint64_t planSerial() const { return serial; }
+    constexpr std::uint64_t planSerial() const { return serial; }
 
-    Word* words() { return base; }
-    const Word* words() const { return base; }
+    constexpr Word* words() { return base; }
+    constexpr const Word* words() const { return base; }
 
-    Word* at(std::uint32_t offset) { return base + offset; }
-    const Word* at(std::uint32_t offset) const { return base + offset; }
+    constexpr Word* at(std::uint32_t offset) { return base + offset; }
+    constexpr const Word* at(std::uint32_t offset) const { return base + offset; }
 
-    std::size_t sizeInBytes() const { return storage.size() * sizeof(Word); }
+    std::size_t sizeInBytes() const;
 
 private:
     Vector<Word> storage;

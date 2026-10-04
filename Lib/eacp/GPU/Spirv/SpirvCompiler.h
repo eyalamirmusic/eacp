@@ -24,7 +24,7 @@ enum class Target
 // The log is empty on a clean compile.
 struct CompileResult
 {
-    bool succeeded() const { return !words.empty(); }
+    bool succeeded() const;
 
     Vector<uint32_t> words;
     std::string log;

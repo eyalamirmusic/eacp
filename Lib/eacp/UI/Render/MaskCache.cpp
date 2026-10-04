@@ -110,4 +110,19 @@ bool MaskCache::reclaim(std::uint64_t key)
 
     return true;
 }
+
+int MaskCache::getEntryCount() const
+{
+    return (int) entries.size();
+}
+
+int MaskCache::getSharedCount() const
+{
+    return shared;
+}
+
+void MaskCache::clearSharedCount()
+{
+    shared = 0;
+}
 } // namespace eacp::UI

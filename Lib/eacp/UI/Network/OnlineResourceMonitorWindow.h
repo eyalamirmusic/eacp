@@ -14,7 +14,7 @@ class OnlineResourceMonitorHost final : public ComponentHost
 public:
     OnlineResourceMonitorHost();
 
-    OnlineResourceMonitor& getMonitor() { return monitor; }
+    OnlineResourceMonitor& getMonitor();
 
 private:
     OnlineResourceMonitor monitor;
@@ -31,8 +31,8 @@ public:
     explicit OnlineResourceMonitorWindow(
         const eacp::Graphics::WindowOptions& options = defaultOptions());
 
-    OnlineResourceMonitor& getMonitor() { return host.getMonitor(); }
-    eacp::Graphics::Window& getWindow() { return window; }
+    OnlineResourceMonitor& getMonitor();
+    eacp::Graphics::Window& getWindow();
 
 private:
     OnlineResourceMonitorHost host;

@@ -1,4 +1,5 @@
 #include "GameInputQueue.h"
+#include "../View/View.h"
 
 #include <bit>
 #include <chrono>

@@ -1,5 +1,7 @@
 #include "Graph.h"
 
+#include "../MIL/Blob.h"
+
 namespace eacp::ML
 {
 namespace

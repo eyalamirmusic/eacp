@@ -1,4 +1,5 @@
 #include "ImageConversion-macOS.h"
+#include "../Image/Image.h"
 
 namespace eacp::Graphics
 {

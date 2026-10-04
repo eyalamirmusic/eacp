@@ -1,7 +1,5 @@
 #pragma once
 
-#include "UnicodeBidi.h"
-
 #include <eacp/Core/Utils/Containers.h>
 
 #include <cstdint>
@@ -59,7 +57,7 @@ struct BidiRun
     int end = 0;
     int level = 0;
 
-    bool isRightToLeft() const { return (level & 1) != 0; }
+    constexpr bool isRightToLeft() const { return (level & 1) != 0; }
 };
 
 // The paragraph's runs in visual order, left to right. Empty for empty text;
@@ -79,8 +77,5 @@ bool isLeftToRightOnly(std::string_view text);
 // A caller that places codepoints itself applies this; the Linux rasterizer
 // does not, because HarfBuzz mirrors a right-to-left buffer on its own and
 // mirroring twice is mirroring not at all.
-inline char32_t bidiMirroredAt(char32_t codepoint, int level)
-{
-    return (level & 1) != 0 ? bidiMirroredGlyph(codepoint) : codepoint;
-}
+char32_t bidiMirroredAt(char32_t codepoint, int level);
 } // namespace eacp::Text

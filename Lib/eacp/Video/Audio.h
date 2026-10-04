@@ -9,12 +9,12 @@ namespace eacp::Video
 // samples in each. The layout every audio callback already has.
 struct AudioBuffer
 {
-    Span<const float> channel(int index) const
+    constexpr Span<const float> channel(int index) const
     {
         return {channels[index], numFrames};
     }
 
-    bool isValid() const
+    constexpr bool isValid() const
     {
         return channels != nullptr && numChannels > 0 && numFrames > 0;
     }
@@ -51,7 +51,7 @@ struct AudioSpec
     bool operator==(const AudioSpec&) const = default;
 };
 
-inline int audioBitrateFor(const AudioSpec& spec)
+constexpr int audioBitrateFor(const AudioSpec& spec)
 {
     return spec.bitrate > 0 ? spec.bitrate : 64'000 * spec.numChannels;
 }
@@ -59,9 +59,9 @@ inline int audioBitrateFor(const AudioSpec& spec)
 // Where the audio frame at `frameIndex` lands on the recording's timeline.
 // Anchored once, then advanced by sample count, so the track follows the audio
 // device's own rate instead of the jitter of its callbacks.
-inline double audioTimeFor(std::int64_t frameIndex,
-                           double anchorSeconds,
-                           const AudioSpec& spec)
+constexpr double audioTimeFor(std::int64_t frameIndex,
+                              double anchorSeconds,
+                              const AudioSpec& spec)
 {
     auto frames = static_cast<double>(frameIndex + spec.latencyFrames);
     return anchorSeconds + frames / spec.sampleRate;

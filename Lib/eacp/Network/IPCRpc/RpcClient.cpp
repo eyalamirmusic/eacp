@@ -48,6 +48,16 @@ AsyncValue RpcClient::call(const std::string& command,
     return promise.get();
 }
 
+bool RpcClient::isConnected() const
+{
+    return messenger.isConnected();
+}
+
+void RpcClient::on(const std::string& event, const Callback& handler)
+{
+    events[event] = [handler](const Miro::Json::Value&) { handler(); };
+}
+
 AsyncValue RpcClient::call(const std::string& command)
 {
     return call(command, Miro::Json::Value {});

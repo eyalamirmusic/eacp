@@ -4,6 +4,8 @@
 
 #include <bit>
 #include <cassert>
+#include <map>
+#include <tuple>
 
 namespace eacp::GPU
 {
@@ -63,7 +65,194 @@ bool dependsOnMutableState(ExprKind kind)
 
     return false;
 }
+
+// Structural sharing for the three kinds that can take it. A key holds
+// everything add() would have to compare to call two nodes the same value; a
+// binary's operands and a read's index are node ids, which is enough because
+// the nodes they name were themselves shared on the way in.
+//
+// A read's key is its kind and width beside its slot and its index, so a read2
+// and a read4 starting at the same element stay two nodes - and only a read of
+// a read-only slot is ever pure enough to reach the cache at all.
+using ConstantKey = std::tuple<ValueType, int, std::uint32_t>;
+using BinaryKey = std::tuple<ValueType, char, std::string, int, int>;
+using ReadKey = std::tuple<ExprKind, ValueType, int, int>;
+
+ConstantKey constantKeyFor(const Expr& node)
+{
+    return {node.type, node.index, std::bit_cast<std::uint32_t>(node.value)};
+}
+
+BinaryKey binaryKeyFor(const Expr& node)
+{
+    return {node.type, node.op, node.text, node.args[0], node.args[1]};
+}
+
+// The kind tells a scalar read from a record one and the type tells a record's
+// width, so a read2 and a read4 at the same first element stay two nodes: they
+// are different values, however much of the same memory they cover.
+ReadKey readKeyFor(const Expr& node)
+{
+    return {node.kind, node.type, node.index, node.args[0]};
+}
 } // namespace
+
+struct ShaderGraph::Caches
+{
+    std::map<ConstantKey, int> constants;
+    std::map<BinaryKey, int> binaries;
+    std::map<ReadKey, int> reads;
+};
+
+ShaderGraph::SharingCaches::SharingCaches()
+    : caches(std::make_unique<Caches>())
+{
+}
+
+ShaderGraph::SharingCaches::~SharingCaches() = default;
+
+std::unique_ptr<ShaderGraph::Caches>
+    ShaderGraph::SharingCaches::copyOf(const SharingCaches& other)
+{
+    if (other.caches)
+        return std::make_unique<Caches>(*other.caches);
+
+    return std::make_unique<Caches>();
+}
+
+ShaderGraph::SharingCaches::SharingCaches(const SharingCaches& other)
+    : caches(copyOf(other))
+{
+}
+
+ShaderGraph::SharingCaches::SharingCaches(SharingCaches&& other) noexcept = default;
+
+ShaderGraph::SharingCaches&
+    ShaderGraph::SharingCaches::operator=(const SharingCaches& other)
+{
+    if (this != &other)
+        caches = copyOf(other);
+
+    return *this;
+}
+
+ShaderGraph::SharingCaches&
+    ShaderGraph::SharingCaches::operator=(SharingCaches&& other) noexcept = default;
+
+ShaderGraph::Caches& ShaderGraph::SharingCaches::get()
+{
+    if (!caches)
+        caches = std::make_unique<Caches>();
+
+    return *caches;
+}
+
+ShaderGraph::ShaderGraph()
+{
+    blocks.add(Block {});
+    openBlocks.add(rootBlock);
+}
+
+ShaderGraph::~ShaderGraph() = default;
+ShaderGraph::ShaderGraph(const ShaderGraph& other) = default;
+ShaderGraph::ShaderGraph(ShaderGraph&& other) noexcept = default;
+ShaderGraph& ShaderGraph::operator=(const ShaderGraph& other) = default;
+ShaderGraph& ShaderGraph::operator=(ShaderGraph&& other) noexcept = default;
+
+const ShaderGraph::Caches* ShaderGraph::SharingCaches::find() const
+{
+    return caches.get();
+}
+
+const Expr& ShaderGraph::expr(int node) const
+{
+    return nodes[node];
+}
+
+int ShaderGraph::nodeCount() const
+{
+    return nodes.size();
+}
+
+int ShaderGraph::textureCount() const
+{
+    return textureSamplings.size();
+}
+
+TextureSampling ShaderGraph::textureSampling(int slot) const
+{
+    return slot >= 0 && slot < textureSamplings.size() ? textureSamplings[slot]
+                                                       : TextureSampling {};
+}
+
+TextureAccess ShaderGraph::textureAccess(int slot) const
+{
+    return slot >= 0 && slot < textureAccesses.size() ? textureAccesses[slot]
+                                                      : TextureAccess::Sample;
+}
+
+TextureKind ShaderGraph::textureKind(int slot) const
+{
+    return slot >= 0 && slot < textureKinds.size() ? textureKinds[slot]
+                                                   : TextureKind::Texture2D;
+}
+
+ValueType ShaderGraph::storageElementType(int slot) const
+{
+    return slot >= 0 && slot < storageElements.size() ? storageElements[slot]
+                                                      : ValueType::Float;
+}
+
+bool ShaderGraph::usesGroupReduction() const
+{
+    return !reductionTypes.empty();
+}
+
+int ShaderGraph::simdMatrixCount() const
+{
+    return simdMatrixElementList.size();
+}
+
+bool ShaderGraph::usesSimdGroups() const
+{
+    return simdMatrixCount() > 0 || simdGroupIndexUsed;
+}
+
+SimdMatrixElement ShaderGraph::simdMatrixElement(int matrix) const
+{
+    return simdMatrixElementList[matrix];
+}
+
+bool ShaderGraph::isCompute() const
+{
+    return storeList.size() > 0 || textureStoreList.size() > 0 || atomicUsed
+           || usesSimdGroups();
+}
+
+const Statement& ShaderGraph::statement(int index) const
+{
+    return statementList[index];
+}
+
+const Block& ShaderGraph::block(int index) const
+{
+    return blocks[index];
+}
+
+int ShaderGraph::statementCount() const
+{
+    return statementList.size();
+}
+
+int ShaderGraph::blockCount() const
+{
+    return blocks.size();
+}
+
+bool ShaderGraph::hasStatements() const
+{
+    return !blocks[rootBlock].statements.empty();
+}
 
 bool ShaderGraph::isPure(int node) const
 {
@@ -114,43 +303,33 @@ bool ShaderGraph::purityOf(const Expr& node) const
 // registration stranded.
 int ShaderGraph::findShared(const Expr& node) const
 {
+    auto* caches = sharing.find();
+
+    if (caches == nullptr)
+        return -1;
+
     if (node.kind == ExprKind::Constant)
     {
-        auto found = constantCache.find(constantKeyFor(node));
-        return found != constantCache.end() ? found->second : -1;
+        auto& cache = caches->constants;
+        auto found = cache.find(constantKeyFor(node));
+        return found != cache.end() ? found->second : -1;
     }
 
     if (node.kind == ExprKind::Binary)
     {
-        auto found = binaryCache.find(binaryKeyFor(node));
-        return found != binaryCache.end() ? found->second : -1;
+        auto& cache = caches->binaries;
+        auto found = cache.find(binaryKeyFor(node));
+        return found != cache.end() ? found->second : -1;
     }
 
     if (node.kind == ExprKind::BufferRead || node.kind == ExprKind::BufferVectorRead)
     {
-        auto found = readCache.find(readKeyFor(node));
-        return found != readCache.end() ? found->second : -1;
+        auto& cache = caches->reads;
+        auto found = cache.find(readKeyFor(node));
+        return found != cache.end() ? found->second : -1;
     }
 
     return -1;
-}
-
-ShaderGraph::ConstantKey ShaderGraph::constantKeyFor(const Expr& node)
-{
-    return {node.type, node.index, std::bit_cast<std::uint32_t>(node.value)};
-}
-
-ShaderGraph::BinaryKey ShaderGraph::binaryKeyFor(const Expr& node)
-{
-    return {node.type, node.op, node.text, node.args[0], node.args[1]};
-}
-
-// The kind tells a scalar read from a record one and the type tells a record's
-// width, so a read2 and a read4 at the same first element stay two nodes: they
-// are different values, however much of the same memory they cover.
-ShaderGraph::ReadKey ShaderGraph::readKeyFor(const Expr& node)
-{
-    return {node.kind, node.type, node.index, node.args[0]};
 }
 
 int ShaderGraph::add(Expr node)
@@ -169,13 +348,15 @@ int ShaderGraph::add(Expr node)
 
     if (pure)
     {
+        auto& caches = sharing.get();
+
         if (node.kind == ExprKind::Constant)
-            constantCache.emplace(constantKeyFor(node), id);
+            caches.constants.emplace(constantKeyFor(node), id);
         else if (node.kind == ExprKind::Binary)
-            binaryCache.emplace(binaryKeyFor(node), id);
+            caches.binaries.emplace(binaryKeyFor(node), id);
         else if (node.kind == ExprKind::BufferRead
                  || node.kind == ExprKind::BufferVectorRead)
-            readCache.emplace(readKeyFor(node), id);
+            caches.reads.emplace(readKeyFor(node), id);
     }
 
     pureFlags.add(pure ? (char) 1 : (char) 0);

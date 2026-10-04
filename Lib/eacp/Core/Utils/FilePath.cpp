@@ -2,6 +2,7 @@
 
 #include "../Platform/Platform.h"
 #include "Files.h"
+#include "StdPath.h"
 #include "Strings.h"
 
 #include <cstddef>
@@ -9,6 +10,17 @@
 
 namespace eacp
 {
+std::filesystem::path toStdPath(const FilePath& path)
+{
+    // Wide on Windows via wide(), which never throws — the u8string route
+    // throws on text that is not valid UTF-8. Elsewhere the native encoding
+    // is the text as-is.
+    if constexpr (sizeof(std::filesystem::path::value_type) == sizeof(wchar_t))
+        return std::filesystem::path {path.wide()};
+    else
+        return std::filesystem::path {path.str()};
+}
+
 FilePath::FilePath(std::string textToUse)
     : text(std::move(textToUse))
 {

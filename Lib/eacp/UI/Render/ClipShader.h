@@ -21,28 +21,17 @@ namespace eacp::UI
 // pays a fetch of a texel that is in cache for the whole frame -- which is the
 // trade the mask fetch beside it already makes, against a second pipeline and a
 // batch break between clipped and unclipped shapes.
-inline GPU::Float clipCoverage(const GPU::Float2& position,
-                               const GPU::Float4& region,
-                               const GPU::Float4& mask,
-                               GPU::Uniform<GPU::Texture2D>& atlas)
-{
-    auto place = (position - region.xy()) * region.zw();
-
-    // Measured from the middle rather than tested against both ends, so the
-    // unclipped case -- which lands exactly on zero -- is inside by the same
-    // comparison that keeps a real clip's own edges.
-    auto fromCentre = abs(place - 0.5f);
-    auto inside = step(fromCentre.x(), 0.5f) * step(fromCentre.y(), 0.5f);
-
-    return inside * sample(atlas, mask.xy() + place * mask.zw()).x();
-}
+GPU::Float clipCoverage(const GPU::Float2& position,
+                        const GPU::Float4& region,
+                        const GPU::Float4& mask,
+                        GPU::Uniform<GPU::Texture2D>& atlas);
 
 // The two uniforms the function above reads, filled in from a clip and the uv
 // of the atlas texel that stands for no clip at all.
-inline void packClipMask(const ClipMask& clip,
-                         const Rect& opaqueUV,
-                         Array<float, 4>& region,
-                         Array<float, 4>& mask)
+constexpr void packClipMask(const ClipMask& clip,
+                            const Rect& opaqueUV,
+                            Array<float, 4>& region,
+                            Array<float, 4>& mask)
 {
     using Slot = Array<float, 4>;
 

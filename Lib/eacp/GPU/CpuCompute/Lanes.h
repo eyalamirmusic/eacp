@@ -12,27 +12,27 @@ using Word = std::uint32_t;
 
 namespace Lanes
 {
-inline float toFloat(Word word)
+constexpr float toFloat(Word word)
 {
     return std::bit_cast<float>(word);
 }
 
-inline Word toWord(float value)
+constexpr Word toWord(float value)
 {
     return std::bit_cast<Word>(value);
 }
 
-inline std::int32_t toSigned(Word word)
+constexpr std::int32_t toSigned(Word word)
 {
     return std::bit_cast<std::int32_t>(word);
 }
 
-inline Word fromSigned(std::int32_t value)
+constexpr Word fromSigned(std::int32_t value)
 {
     return std::bit_cast<Word>(value);
 }
 
-inline Word maskOf(bool condition)
+constexpr Word maskOf(bool condition)
 {
     return Word {0} - static_cast<Word>(condition);
 }
@@ -42,13 +42,13 @@ inline void copy(Word* out, const Word* in, int count)
     std::memcpy(out, in, sizeof(Word) * static_cast<std::size_t>(count));
 }
 
-inline void fill(Word* out, Word value, int count)
+constexpr void fill(Word* out, Word value, int count)
 {
     for (auto lane = 0; lane < count; ++lane)
         out[lane] = value;
 }
 
-inline bool anyActive(const Word* mask, int count)
+constexpr bool anyActive(const Word* mask, int count)
 {
     auto combined = Word {0};
 
@@ -58,35 +58,36 @@ inline bool anyActive(const Word* mask, int count)
     return combined != 0;
 }
 
-inline void blend(Word* out, const Word* value, const Word* mask, int count)
+constexpr void blend(Word* out, const Word* value, const Word* mask, int count)
 {
     for (auto lane = 0; lane < count; ++lane)
         out[lane] = (value[lane] & mask[lane]) | (out[lane] & ~mask[lane]);
 }
 
-inline void intersect(Word* out, const Word* a, const Word* b, int count)
+constexpr void intersect(Word* out, const Word* a, const Word* b, int count)
 {
     for (auto lane = 0; lane < count; ++lane)
         out[lane] = a[lane] & b[lane];
 }
 
-inline void intersectComplement(Word* out, const Word* a, const Word* b, int count)
+constexpr void
+    intersectComplement(Word* out, const Word* a, const Word* b, int count)
 {
     for (auto lane = 0; lane < count; ++lane)
         out[lane] = a[lane] & ~b[lane];
 }
 
-inline void clearWhere(Word* out, const Word* cleared, int count)
+constexpr void clearWhere(Word* out, const Word* cleared, int count)
 {
     for (auto lane = 0; lane < count; ++lane)
         out[lane] &= ~cleared[lane];
 }
 
-inline void select(Word* out,
-                   const Word* mask,
-                   const Word* whenTrue,
-                   const Word* whenFalse,
-                   int count)
+constexpr void select(Word* out,
+                      const Word* mask,
+                      const Word* whenTrue,
+                      const Word* whenFalse,
+                      int count)
 {
     for (auto lane = 0; lane < count; ++lane)
         out[lane] = (whenTrue[lane] & mask[lane]) | (whenFalse[lane] & ~mask[lane]);

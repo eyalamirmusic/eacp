@@ -3,6 +3,8 @@
 #include "SVGComponent.h"
 #include "XMLParser.h"
 
+#include <eacp/UI/UI.h>
+
 namespace eacp::SVG
 {
 Graphics::Image renderToImage(const SVGElement& root, int width, int height)

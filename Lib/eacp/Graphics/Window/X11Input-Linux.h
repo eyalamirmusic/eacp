@@ -66,9 +66,9 @@ public:
     ModifierKeys getModifiers() const override;
     std::string characterForCode(uint32_t evdevCode) const override;
 
-    X11WindowSurface* getKeyboardFocus() const override { return keyboardWindow; }
-    X11WindowSurface* getPointerWindow() const override { return pointerWindow; }
-    Point getPointerPosition() const override { return pointerState.getPosition(); }
+    X11WindowSurface* getKeyboardFocus() const override;
+    X11WindowSurface* getPointerWindow() const override;
+    Point getPointerPosition() const override;
 
     void refreshCursor() override;
 
@@ -170,7 +170,7 @@ private:
     Point lockCentre() const;
     void warpToLockCentre();
 
-    xcb_connection_t* xcb() const { return connection.getConnection(); }
+    constexpr xcb_connection_t* xcb() const { return connection.getConnection(); }
 
     struct CachedCursor
     {

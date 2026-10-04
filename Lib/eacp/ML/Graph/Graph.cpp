@@ -1,5 +1,7 @@
 #include "Graph.h"
 
+#include "../MIL/Half.h"
+
 #include <algorithm>
 #include <bit>
 
@@ -136,6 +138,26 @@ Shape::Shape(std::initializer_list<int> dimsToUse)
 Shape::Shape(const Vector<int>& dimsToUse)
     : dims(dimsToUse)
 {
+}
+
+int Shape::rank() const
+{
+    return dims.size();
+}
+
+int Shape::operator[](int axis) const
+{
+    return dims[axis];
+}
+
+bool Shape::operator==(const Shape& other) const
+{
+    return dims == other.dims;
+}
+
+bool Shape::operator!=(const Shape& other) const
+{
+    return !(*this == other);
 }
 
 bool Shape::isFixed() const
@@ -1169,5 +1191,15 @@ const Shape& Graph::shape(Tensor value) const
 DType Graph::type(Tensor value) const
 {
     return isKnown(value) ? fromMIL(node(value).type) : DType::float32;
+}
+
+bool Graph::isValid() const
+{
+    return errorList.empty();
+}
+
+const Vector<std::string>& Graph::errors() const
+{
+    return errorList;
 }
 } // namespace eacp::ML

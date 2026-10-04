@@ -55,11 +55,11 @@ public:
 
     void stop();
 
-    bool isDragging() const { return dragging; }
-    bool isFlinging() const { return velocity != 0.f; }
+    bool isDragging() const;
+    bool isFlinging() const;
 
     // Scroll offset per second, positive toward the end of the content.
-    float getVelocity() const { return velocity; }
+    float getVelocity() const;
 
 private:
     struct Sample
@@ -113,7 +113,7 @@ public:
     // points to scroll through.
     static bool isScrollDrag(const MouseEvent& event, float maximum);
 
-    bool isFlinging() const { return scroller.isFlinging(); }
+    bool isFlinging() const;
 
 private:
     Component& owner;

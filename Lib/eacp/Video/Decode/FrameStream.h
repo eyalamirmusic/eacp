@@ -75,7 +75,7 @@ public:
     void close();
     bool isOpen() const;
 
-    const VideoInfo& info() const { return videoInfo; }
+    constexpr const VideoInfo& info() const { return videoInfo; }
 
     // The frame that belongs on screen at `seconds`: the newest queued frame
     // that has already started by then. Frames older than that are dropped —

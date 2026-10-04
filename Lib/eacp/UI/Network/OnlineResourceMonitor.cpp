@@ -1,5 +1,7 @@
 #include "OnlineResourceMonitor.h"
 
+#include <eacp/Core/Threads/Timer.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -361,5 +363,15 @@ void OnlineResourceMonitor::rowDoubleClicked(int row)
         OnlineResources::get().cancel(rows[row].path);
     else
         OnlineResources::get().fetch(rows[row].path);
+}
+
+const Vector<OnlineResources::Entry>& OnlineResourceMonitor::getRows() const
+{
+    return rows;
+}
+
+int OnlineResourceMonitor::getNumRows()
+{
+    return rows.size();
 }
 } // namespace eacp::UI

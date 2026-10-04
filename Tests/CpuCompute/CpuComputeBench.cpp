@@ -2,6 +2,7 @@
 
 #if EACP_BENCH_PATHS
 #include <eacp/GPUWidgets/GPUWidgets.h>
+#include <eacp/GPUWidgets/Path/BinKernels.h>
 #endif
 
 #include <algorithm>

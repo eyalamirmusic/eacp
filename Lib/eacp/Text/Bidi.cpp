@@ -1,5 +1,6 @@
 #include "Bidi.h"
 
+#include "UnicodeBidi.h"
 #include "Utf8.h"
 
 #include <algorithm>
@@ -934,5 +935,10 @@ Vector<BidiRun> bidiRuns(std::string_view text, BidiBaseDirection base)
         visual.add(runs[run]);
 
     return visual;
+}
+
+char32_t bidiMirroredAt(char32_t codepoint, int level)
+{
+    return (level & 1) != 0 ? bidiMirroredGlyph(codepoint) : codepoint;
 }
 } // namespace eacp::Text

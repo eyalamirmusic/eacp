@@ -1,6 +1,7 @@
 #pragma once
 
 #include "KeyForwarding.h"
+#include "../View/View.h"
 
 namespace eacp::Graphics
 {

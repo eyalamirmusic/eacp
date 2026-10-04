@@ -22,7 +22,7 @@ public:
 
     // The group the kernel was compiled for, which is the group the pass
     // dispatches it in. Unset for a hand-written source that named none.
-    ThreadGroupShape threadGroupShape() const { return groupShape; }
+    constexpr ThreadGroupShape threadGroupShape() const { return groupShape; }
 
     // How many threads this pipeline's SIMD groups really hold on this device -
     // Metal's threadExecutionWidth, which is a property of the compiled kernel

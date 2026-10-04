@@ -514,4 +514,29 @@ void ComboBox::Popup::paint(Graphics& g)
                    row.inset(textInset - listPadding, 0.f));
     }
 }
+
+int ComboBox::getNumItems() const
+{
+    return items.size();
+}
+
+int ComboBox::getSelectedIndex() const
+{
+    return selectedIndex;
+}
+
+bool ComboBox::isPopupOpen() const
+{
+    return popup.has_value();
+}
+
+int ComboBox::Popup::getHighlightedRow() const
+{
+    return highlighted;
+}
+
+bool ComboBox::Popup::hitTest(Point) const
+{
+    return true;
+}
 } // namespace eacp::UI

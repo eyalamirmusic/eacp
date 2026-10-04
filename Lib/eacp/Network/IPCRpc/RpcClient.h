@@ -16,8 +16,6 @@ using AsyncValue = Threads::Async<Miro::Json::Value>;
 class RpcClient
 {
 public:
-
-
     explicit RpcClient(std::string_view name, Time::MS timeout = Time::MS {5000});
 
     RpcClient(const RpcClient&) = delete;
@@ -25,7 +23,7 @@ public:
     RpcClient(RpcClient&&) = delete;
     RpcClient& operator=(RpcClient&&) = delete;
 
-    bool isConnected() const { return messenger.isConnected(); }
+    bool isConnected() const;
 
     // Invokes a command on the server, resolving with its JSON result on
     // the main thread. The typed overloads serialize the request and
@@ -67,10 +65,7 @@ public:
         };
     }
 
-    void on(const std::string& event, const Callback& handler)
-    {
-        events[event] = [handler](const Miro::Json::Value&) { handler(); };
-    }
+    void on(const std::string& event, const Callback& handler);
 
     Callback onConnected = [] {};
     Callback onDisconnected = [] {};

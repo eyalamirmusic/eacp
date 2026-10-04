@@ -1,7 +1,12 @@
 #pragma once
 
 #include <eacp/Camera/Camera.h>
+#include <eacp/GPU/Texture/Texture.h>
+#include <eacp/GPU/View/GPUView.h>
 #include <eacp/Sprites/Sprites.h>
+
+#include <memory>
+#include <optional>
 
 namespace eacp::Cameras
 {
@@ -70,11 +75,7 @@ public:
                                            float viewHeight,
                                            int textureWidth,
                                            int textureHeight,
-                                           Fit fit)
-    {
-        return Sprites::fitRect(
-            viewWidth, viewHeight, textureWidth, textureHeight, fit);
-    }
+                                           Fit fit);
 
 protected:
     void render(GPU::Frame& frame) override;

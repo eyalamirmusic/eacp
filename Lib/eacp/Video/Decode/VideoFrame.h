@@ -145,20 +145,11 @@ public:
     // VideoFrame sharing it is destroyed. The backend passes its own retain
     // already applied (CFRetain on Apple) and CFRelease as the releaser.
     static VideoFrame
-        fromNativeBuffer(void* buffer, Releaser release, const FrameInfo& info)
-    {
-        auto frame = VideoFrame {};
-        frame.payload = std::make_shared<Payload>(buffer, std::move(release), info);
-        return frame;
-    }
+        fromNativeBuffer(void* buffer, Releaser release, const FrameInfo& info);
 
     // Takes ownership of a CPU-side BGRA8 copy, for backends without a
     // GPU-wrappable buffer (Media Foundation today).
-    static VideoFrame fromPixels(Vector<std::uint8_t> pixels, const FrameInfo& info)
-    {
-        return fromPixelBuffer(
-            std::make_shared<Vector<std::uint8_t>>(std::move(pixels)), info);
-    }
+    static VideoFrame fromPixels(Vector<std::uint8_t> pixels, const FrameInfo& info);
 
     // Shares an existing pixel buffer rather than handing over a fresh one, so a
     // backend can recycle buffers across frames instead of allocating one per
@@ -169,109 +160,41 @@ public:
     // The buffer must not be written again until every VideoFrame sharing it is
     // gone; a backend checks that with use_count() before reusing one.
     static VideoFrame fromPixelBuffer(std::shared_ptr<Vector<std::uint8_t>> pixels,
-                                      const FrameInfo& info)
-    {
-        auto frame = VideoFrame {};
-        frame.payload = std::make_shared<Payload>(std::move(pixels), info);
-        return frame;
-    }
+                                      const FrameInfo& info);
 
-    bool isValid() const { return payload != nullptr; }
+    bool isValid() const;
 
-    const FrameInfo& info() const
-    {
-        static const auto empty = FrameInfo {};
-        return payload != nullptr ? payload->info : empty;
-    }
+    const FrameInfo& info() const;
 
-    int width() const { return info().width; }
-    int height() const { return info().height; }
-    double seconds() const { return info().seconds; }
-    double duration() const { return info().duration; }
-    int bytesPerRow() const { return info().bytesPerRow; }
-    FramePixelFormat format() const { return info().format; }
+    int width() const;
+    int height() const;
+    double seconds() const;
+    double duration() const;
+    int bytesPerRow() const;
+    FramePixelFormat format() const;
 
-    YuvTransform yuvTransform() const
-    {
-        return yuvTransformFor(info().yuvMatrix, info().fullRangeYuv);
-    }
+    YuvTransform yuvTransform() const;
 
     // Whether `time` falls in this frame's presentation interval. A frame with
     // no duration covers everything from its own timestamp on, so the last
     // frame of a stream keeps being shown rather than blinking out.
-    bool covers(double time) const
-    {
-        if (!isValid() || time < seconds())
-            return false;
-
-        return duration() <= 0.0 || time < seconds() + duration();
-    }
+    bool covers(double time) const;
 
     // The platform pixel buffer for a zero-copy GPU wrap, or null when this
     // frame carries CPU pixels instead. Valid for as long as this VideoFrame
     // (or any copy of it) is alive.
-    void* nativeBuffer() const
-    {
-        return payload != nullptr ? payload->buffer : nullptr;
-    }
+    void* nativeBuffer() const;
 
     // The CPU-side BGRA8 pixels, or null on the zero-copy path.
-    const std::uint8_t* pixels() const
-    {
-        if (payload == nullptr || payload->pixels == nullptr
-            || payload->pixels->size() == 0)
-            return nullptr;
-
-        return payload->pixels->data();
-    }
+    const std::uint8_t* pixels() const;
 
     // The interleaved Cb/Cr plane of an NV12 frame, or null for any other
     // format. It shares bytesPerRow() with the luma plane and has half as many
     // rows, each covering two pixels' worth of chroma.
-    const std::uint8_t* chromaPlane() const
-    {
-        if (format() != FramePixelFormat::NV12)
-            return nullptr;
-
-        const auto* base = pixels();
-
-        if (base == nullptr)
-            return nullptr;
-
-        return base + bytesPerRow() * height();
-    }
+    const std::uint8_t* chromaPlane() const;
 
 private:
-    struct Payload
-    {
-        Payload(void* bufferToUse, Releaser releaseToUse, const FrameInfo& infoToUse)
-            : info(infoToUse)
-            , buffer(bufferToUse)
-            , release(std::move(releaseToUse))
-        {
-        }
-
-        Payload(std::shared_ptr<Vector<std::uint8_t>> pixelsToUse,
-                const FrameInfo& infoToUse)
-            : info(infoToUse)
-            , pixels(std::move(pixelsToUse))
-        {
-        }
-
-        ~Payload()
-        {
-            if (buffer != nullptr)
-                release(buffer);
-        }
-
-        Payload(const Payload&) = delete;
-        Payload& operator=(const Payload&) = delete;
-
-        FrameInfo info;
-        void* buffer = nullptr;
-        Releaser release = [](void*) {};
-        std::shared_ptr<Vector<std::uint8_t>> pixels;
-    };
+    struct Payload;
 
     std::shared_ptr<const Payload> payload;
 };

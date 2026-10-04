@@ -2,6 +2,8 @@
 
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 #include <eacp/GPUWidgets/GPUWidgets.h>
+#include <eacp/GPUWidgets/Path/BinKernels.h>
+#include <eacp/GPUWidgets/Path/PrefixSumKernels.h>
 
 #include <NanoTest/NanoTest.h>
 

@@ -32,10 +32,10 @@ struct ClipMask
     // The atlas rect that coverage was rasterized into.
     Rect uv;
 
-    bool isEmpty() const { return region.w <= 0.f || region.h <= 0.f; }
+    constexpr bool isEmpty() const { return region.w <= 0.f || region.h <= 0.f; }
 };
 
-inline bool sameClipMask(const ClipMask& a, const ClipMask& b)
+constexpr bool sameClipMask(const ClipMask& a, const ClipMask& b)
 {
     return sameRect(a.region, b.region) && sameRect(a.uv, b.uv);
 }

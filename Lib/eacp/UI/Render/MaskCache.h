@@ -79,13 +79,13 @@ public:
     // belongs to them and the publisher has to allocate another.
     bool reclaim(std::uint64_t key);
 
-    int getEntryCount() const { return (int) entries.size(); }
+    int getEntryCount() const;
 
     // Masks that were shared rather than rasterized, since the count was last
     // cleared -- which is the whole claim of this class, so it is worth being
     // able to read.
-    int getSharedCount() const { return shared; }
-    void clearSharedCount() { shared = 0; }
+    int getSharedCount() const;
+    void clearSharedCount();
 
 private:
     struct Record

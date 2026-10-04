@@ -366,6 +366,11 @@ void WindowsEncoder::appendAudio(const AudioBuffer& buffer, double ptsSeconds)
     writer->WriteSample(audioStreamIndex, sample.Get());
 }
 
+bool WindowsEncoder::acceptsAudio() const
+{
+    return writer && audioSpec.has_value();
+}
+
 Threads::Async<void> WindowsEncoder::finish()
 {
     auto promise = Threads::AsyncPromise<void> {};

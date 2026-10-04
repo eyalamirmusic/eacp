@@ -14,7 +14,7 @@ struct Package
     Bytes weights;
     std::string manifest;
 
-    bool isEmpty() const { return model.empty(); }
+    bool isEmpty() const;
 
     // Deletes whatever is at the path first, so refuses one that exists and
     // does not end in .mlpackage.

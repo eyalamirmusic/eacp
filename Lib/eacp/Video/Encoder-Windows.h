@@ -34,7 +34,7 @@ struct WindowsEncoder final : Encoder
     bool begin(const FilePath& path, const EncoderSpec& spec) override;
     void appendImage(const Graphics::Image& image, double ptsSeconds) override;
     void appendAudio(const AudioBuffer& buffer, double ptsSeconds) override;
-    bool acceptsAudio() const override { return writer && audioSpec.has_value(); }
+    bool acceptsAudio() const override;
     Threads::Async<void> finish() override;
 
     // Windows-only, used by the Screen tier: one already-composited BGRA frame

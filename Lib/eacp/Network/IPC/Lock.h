@@ -91,8 +91,8 @@ public:
     ScopedLock(ScopedLock&&) = delete;
     ScopedLock& operator=(ScopedLock&&) = delete;
 
-    [[nodiscard]] bool isLocked() const { return locked; }
-    explicit operator bool() const { return locked; }
+    [[nodiscard]] bool isLocked() const;
+    explicit operator bool() const;
 
 private:
     Lock& lock;

@@ -40,7 +40,7 @@ public:
 
     // For a server that hands its keymap over as an object rather than as
     // text, which is how X11 does it.
-    xkb_context* getContext() const { return context; }
+    constexpr xkb_context* getContext() const { return context; }
 
     // Both take the keymap on: the previous one and the states made from it
     // are dropped. False leaves the last keymap in place.
@@ -65,7 +65,7 @@ public:
     void clearPressed();
 
     bool isPressed(uint32_t evdevCode) const;
-    Vector<uint32_t> getPressedCodes() const { return pressedCodes; }
+    Vector<uint32_t> getPressedCodes() const;
 
 private:
     void releaseKeymap();
@@ -114,17 +114,17 @@ private:
 class PointerTracker
 {
 public:
-    Point getPosition() const { return position; }
-    void setPosition(Point newPosition) { position = newPosition; }
+    constexpr Point getPosition() const { return position; }
+    constexpr void setPosition(Point newPosition) { position = newPosition; }
 
     // The click count this press earns.
     int pressed(MouseButton button, uint32_t timeMilliseconds);
-    void released() { buttonHeld = false; }
+    constexpr void released() { buttonHeld = false; }
 
-    bool isButtonHeld() const { return buttonHeld; }
-    MouseButton getHeldButton() const { return heldButton; }
-    Point getDownPosition() const { return downPosition; }
-    int getClickCount() const { return clickCount; }
+    constexpr bool isButtonHeld() const { return buttonHeld; }
+    constexpr MouseButton getHeldButton() const { return heldButton; }
+    constexpr Point getDownPosition() const { return downPosition; }
+    constexpr int getClickCount() const { return clickCount; }
 
 private:
     Point position;
@@ -150,10 +150,10 @@ public:
     void setSource(bool isPrecise, bool isGesture);
     void setStopped();
 
-    bool isPending() const { return pending; }
-    bool isPrecise() const { return precise; }
-    bool isGesture() const { return gesture; }
-    bool hasStopped() const { return stopped; }
+    constexpr bool isPending() const { return pending; }
+    constexpr bool isPrecise() const { return precise; }
+    constexpr bool isGesture() const { return gesture; }
+    constexpr bool hasStopped() const { return stopped; }
 
     // Lines for a notched wheel, points for a trackpad.
     Point getDelta() const;
@@ -179,8 +179,8 @@ public:
     bool setShape(MouseCursor newShape);
     bool setHidden(bool shouldHide);
 
-    MouseCursor getShape() const { return shape; }
-    bool isHidden() const { return hidden; }
+    constexpr MouseCursor getShape() const { return shape; }
+    constexpr bool isHidden() const { return hidden; }
 
 private:
     MouseCursor shape = MouseCursor::Default;

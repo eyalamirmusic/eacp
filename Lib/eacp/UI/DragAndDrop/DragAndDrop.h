@@ -59,7 +59,7 @@ public:
 
     std::function<void(const DragInfo&)> itemDropped = [](const DragInfo&) {};
 
-    Component& getComponent() const { return owner; }
+    Component& getComponent() const;
 
 private:
     Component& owner;
@@ -101,8 +101,8 @@ public:
     // being dragged goes away underneath it.
     void cancelDrag();
 
-    bool isDragging() const { return dragging; }
-    const DragInfo& getCurrentDrag() const { return current; }
+    bool isDragging() const;
+    const DragInfo& getCurrentDrag() const;
 
 private:
     friend class Component;
@@ -111,9 +111,9 @@ private:
     // a target under the pointer never finds it.
     struct DragImage final : Component
     {
-        DragImage() { setInterceptsMouseClicks(false); }
+        DragImage();
 
-        void paint(Graphics& g) override { painter(g, getLocalBounds()); }
+        void paint(Graphics& g) override;
 
         std::function<void(Graphics&, const Rect&)> painter = [](Graphics&,
                                                                  const Rect&) {};

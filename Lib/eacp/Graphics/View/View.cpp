@@ -81,6 +81,33 @@ Window* View::getWindow() const
 
 void View::resized() {}
 
+void View::paint(Context&) {}
+
+bool View::hasAsyncContent() const
+{
+    return false;
+}
+
+void View::mouseDown(const MouseEvent&) {}
+void View::mouseUp(const MouseEvent&) {}
+void View::mouseDragged(const MouseEvent&) {}
+void View::mouseMoved(const MouseEvent&) {}
+void View::mouseEntered(const MouseEvent&) {}
+void View::mouseExited(const MouseEvent&) {}
+void View::mouseWheel(const MouseEvent&) {}
+
+void View::touchBegan(const TouchEvent&) {}
+void View::touchMoved(const TouchEvent&) {}
+void View::touchEnded(const TouchEvent&) {}
+
+void View::resizeStarted() {}
+void View::resizeFinished() {}
+void View::backingScaleChanged() {}
+void View::hostWindowMoved() {}
+void View::hostWindowVisibilityChanged(bool) {}
+void View::visibilityChanged(bool) {}
+void View::safeAreaInsetsChanged() {}
+
 void View::notifyVisibilityChanged(bool effectivelyVisible)
 {
     visibilityChanged(effectivelyVisible);

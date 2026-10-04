@@ -27,14 +27,7 @@ void setJson(Response& response, const T& value)
     response.setContent(Miro::toJSONString(value), "application/json");
 }
 
-[[noreturn]] inline void throwError(const std::string& message, int statusCode = 400)
-{
-    auto body = ErrorResponse {.error = message, .status = statusCode};
-    auto response = Response();
-    response.statusCode = statusCode;
-    setJson(response, body);
-    throw Error(std::move(response));
-}
+[[noreturn]] void throwError(const std::string& message, int statusCode = 400);
 
 template <typename Resp, typename Req>
 RequestHandler makeHandler(Resp (*fn)(const Req&))

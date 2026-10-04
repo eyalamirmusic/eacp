@@ -103,6 +103,11 @@ void addClipChild(const SVGElement& element,
 }
 } // namespace
 
+bool ClipRegion::isEmpty() const
+{
+    return path.isEmpty();
+}
+
 ClipRegion resolveClipPath(const std::string& reference,
                            const ElementsById& byId,
                            const Graphics::Rect& objectBounds,

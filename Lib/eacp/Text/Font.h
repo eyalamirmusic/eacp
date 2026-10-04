@@ -94,7 +94,7 @@ struct FontRequest
     float pointSize = 13.f;
     float scale = 1.f;
 
-    float pixelSize() const { return pointSize * scale; }
+    constexpr float pixelSize() const { return pointSize * scale; }
 };
 
 // A face named completely: the family and size a FontStyle cannot vary, and the
@@ -114,7 +114,7 @@ struct Font
     // takes it from the style: 400, or 700 when the style is bold.
     int weight = 0;
 
-    FontVariant variant() const
+    constexpr FontVariant variant() const
     {
         return {weight > 0 ? weightClass(weight) : (isBold(style) ? 700 : 400),
                 isItalic(style)};
@@ -128,7 +128,7 @@ struct Font
 // of glyphs per frame of the drag.
 constexpr float faceSizeTolerance = 0.01f;
 
-inline bool sameFace(const Font& a, const Font& b)
+constexpr bool sameFace(const Font& a, const Font& b)
 {
     return a.family == b.family
            && (a.pointSize - b.pointSize) * (a.pointSize - b.pointSize)
@@ -147,6 +147,6 @@ struct FontMetrics
     // reports it only as a reasonable column guess.
     float advance = 0.f;
 
-    float lineHeight() const { return ascent + descent + leading; }
+    constexpr float lineHeight() const { return ascent + descent + leading; }
 };
 } // namespace eacp::Text

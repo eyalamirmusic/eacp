@@ -51,8 +51,8 @@ public:
     // alternated between the queueing renderers. Each is a batch break, so
     // between them they are what a frame costs beyond its primitives. See
     // ComponentHost, which reports both.
-    int getClipChangeCount() const { return clipChanges; }
-    int getRendererSwitchCount() const { return rendererSwitches; }
+    int getClipChangeCount() const;
+    int getRendererSwitchCount() const;
 
 private:
     // Which of the queueing renderers is about to be drawn into. They share one

@@ -20,6 +20,8 @@ target_link_libraries(eacp-webview-bridge PUBLIC
 
 target_sources(eacp-webview-bridge PRIVATE
         WebView/Bridge.cpp
+        WebView/JsStringLiteral.cpp
+        WebView/ScriptHost.cpp
         WebView/StateBridge.cpp)
 
 # The bridge's own page script, embedded for
@@ -104,6 +106,7 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-webview PRIVATE
             WebView/WebView-Windows.cpp
+            WebView/FileDrag-Windows.cpp
             WebView/DevServerProbe-Windows.cpp)
 
     find_package(WebView2 REQUIRED)

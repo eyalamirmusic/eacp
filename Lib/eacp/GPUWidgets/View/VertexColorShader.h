@@ -13,20 +13,9 @@ namespace eacp::GPUWidgets
 // surface.
 struct VertexColorShader final : GPU::ShaderProgram
 {
-    VertexColorShader() { compile(); }
+    VertexColorShader();
 
-    void define() override
-    {
-        auto position = vertexInput(&GradientVertex::position);
-        auto color = vertexInput(&GradientVertex::color);
-        auto fragColor = varying(color);
-
-        auto clipX = position.x() / (viewport.x() * 0.5f) - 1.0f;
-        auto clipY = 1.0f - position.y() / (viewport.y() * 0.5f);
-
-        setPosition(float4(clipX, clipY, 0.0f, 1.0f));
-        setFragment(fragColor);
-    }
+    void define() override;
 
     GPU::Uniform<GPU::Float2> viewport; // logical width/height paths map into
 

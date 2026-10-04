@@ -539,6 +539,16 @@ void X11Connection::setupXinput()
         xinputOpcode = extension->major_opcode;
 }
 
+X11Input* X11Connection::getInput() const
+{
+    return input.get();
+}
+
+X11Clipboard* X11Connection::getClipboard() const
+{
+    return clipboard.get();
+}
+
 uint32_t X11Connection::getWindowEventMask() const
 {
     return isXinputAvailable() ? x11WindowEventMask & ~x11PointerEventMask
