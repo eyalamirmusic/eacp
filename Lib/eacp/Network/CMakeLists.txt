@@ -42,6 +42,15 @@ elseif (WIN32)
             TCP/Connection-Windows.cpp
             WebSocket/WebSocket-Windows.cpp)
     target_link_libraries(eacp-network PRIVATE winhttp ws2_32 advapi32)
+elseif (ANDROID)
+    target_sources(eacp-network PRIVATE
+            HTTP/Http-Android.cpp
+            HTTPServer/HttpServer-Linux.cpp
+            IPC/Channel-Linux.cpp
+            IPC/Channel-Posix.cpp
+            IPC/Lock-Posix.cpp
+            TCP/Connection-Posix.cpp
+            WebSocket/WebSocket-Android.cpp)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Linux.cpp

@@ -5,6 +5,7 @@ using namespace nano;
 using eacp::Vector;
 using eacp::WebSocket::CloseStatus;
 using eacp::WebSocket::Protocol::acceptKeyFor;
+using eacp::WebSocket::Protocol::clientHandshakeRequest;
 using eacp::WebSocket::Protocol::decode;
 using eacp::WebSocket::Protocol::decodeClose;
 using eacp::WebSocket::Protocol::encode;
@@ -12,6 +13,9 @@ using eacp::WebSocket::Protocol::encodeClose;
 using eacp::WebSocket::Protocol::Error;
 using eacp::WebSocket::Protocol::Frame;
 using eacp::WebSocket::Protocol::Opcode;
+using eacp::WebSocket::Protocol::parseUrl;
+using eacp::WebSocket::Protocol::randomClientKey;
+using eacp::WebSocket::Protocol::validateHandshakeResponse;
 
 namespace
 {
@@ -68,6 +72,28 @@ bool protocolThrowsOn(std::string_view wire)
     }
 
     return false;
+}
+
+constexpr auto protocolSampleKey = "dGhlIHNhbXBsZSBub25jZQ==";
+
+std::string protocolUpgradeAnswer(const std::string& status,
+                                  const std::string& acceptKey,
+                                  const std::string& extraHeaders = {})
+{
+    return status + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+           + "Sec-WebSocket-Accept: " + acceptKey + "\r\n" + extraHeaders + "\r\n";
+}
+
+std::string protocolValidAnswer(const std::string& extraHeaders = {})
+{
+    return protocolUpgradeAnswer("HTTP/1.1 101 Switching Protocols",
+                                 acceptKeyFor(protocolSampleKey),
+                                 extraHeaders);
+}
+
+bool protocolContains(const std::string& text, const std::string& part)
+{
+    return text.find(part) != std::string::npos;
 }
 } // namespace
 
@@ -277,4 +303,187 @@ auto tCloseThroughAFrame = test("WebSocketProtocol/aCloseFrameCarriesItsStatus")
 
     check(status.code == 1001);
     check(status.reason == "going away");
+};
+
+auto tParseUrlParts = test("WebSocketProtocol/parseUrlSplitsAWsUrl") = []
+{
+    auto plain = parseUrl("ws://example.com/chat?room=1#top");
+
+    check(plain.has_value());
+    check(!plain->secure);
+    check(plain->host == "example.com");
+    check(plain->port == 80);
+    check(plain->target == "/chat?room=1");
+
+    auto secure = parseUrl("WSS://user@example.com:8443");
+
+    check(secure.has_value());
+    check(secure->secure);
+    check(secure->host == "example.com");
+    check(secure->port == 8443);
+    check(secure->target == "/");
+
+    auto query = parseUrl("ws://127.0.0.1:9?x=1");
+
+    check(query.has_value());
+    check(query->port == 9);
+    check(query->target == "/?x=1");
+
+    auto literal = parseUrl("wss://[::1]:9000/socket");
+
+    check(literal.has_value());
+    check(literal->host == "::1");
+    check(literal->port == 9000);
+    check(parseUrl("wss://[::1]/")->port == 443);
+};
+
+auto tParseUrlRefuses = test("WebSocketProtocol/parseUrlRefusesWhatIsNotWs") = []
+{
+    check(!parseUrl("http://example.com/").has_value());
+    check(!parseUrl("example.com").has_value());
+    check(!parseUrl("ws:///path").has_value());
+    check(!parseUrl("ws://host:0/").has_value());
+    check(!parseUrl("ws://host:65536/").has_value());
+    check(!parseUrl("ws://host:12ab/").has_value());
+    check(!parseUrl("ws://[::1/").has_value());
+};
+
+auto tRandomKey = test("WebSocketProtocol/aClientKeyIsSixteenRandomBytes") = []
+{
+    auto key = randomClientKey();
+    auto decoded = eacp::Base64::decode(key);
+
+    check(key.size() == 24);
+    check(decoded.has_value() && decoded->size() == 16);
+    check(randomClientKey() != key);
+};
+
+auto tRequestShape =
+    test("WebSocketProtocol/theUpgradeRequestCarriesTheHandshake") = []
+{
+    auto options = eacp::WebSocket::Options();
+    options.protocols.add("chat");
+    options.protocols.add("superchat");
+    options.headers["Origin"] = "https://eacp.test";
+    options.headers["Sec-WebSocket-Key"] = "forged";
+    options.headers["X-Injected"] = "a\r\nEvil: yes";
+
+    auto request = clientHandshakeRequest(
+        *parseUrl("ws://example.com:8080/chat?a=b"), protocolSampleKey, options);
+
+    check(request.starts_with("GET /chat?a=b HTTP/1.1\r\n"));
+    check(request.ends_with("\r\n\r\n"));
+    check(protocolContains(request, "\r\nHost: example.com:8080\r\n"));
+    check(protocolContains(request, "\r\nUpgrade: websocket\r\n"));
+    check(protocolContains(request, "\r\nConnection: Upgrade\r\n"));
+    check(protocolContains(request, "\r\nSec-WebSocket-Version: 13\r\n"));
+    check(protocolContains(request,
+                           std::string("\r\nSec-WebSocket-Key: ") + protocolSampleKey
+                               + "\r\n"));
+    check(protocolContains(request,
+                           "\r\nSec-WebSocket-Protocol: chat, superchat\r\n"));
+    check(protocolContains(request, "\r\nOrigin: https://eacp.test\r\n"));
+    check(!protocolContains(request, "forged"));
+    check(!protocolContains(request, "Evil"));
+};
+
+auto tRequestHostPort =
+    test("WebSocketProtocol/theHostNamesThePortOnlyWhenNeeded") = []
+{
+    auto options = eacp::WebSocket::Options();
+
+    auto hostOf = [&options](std::string_view url)
+    { return clientHandshakeRequest(*parseUrl(url), "k", options); };
+
+    check(protocolContains(hostOf("ws://a.test/"), "\r\nHost: a.test\r\n"));
+    check(protocolContains(hostOf("ws://a.test:80/"), "\r\nHost: a.test\r\n"));
+    check(protocolContains(hostOf("wss://a.test:443/"), "\r\nHost: a.test\r\n"));
+    check(protocolContains(hostOf("wss://a.test:80/"), "\r\nHost: a.test:80\r\n"));
+    check(protocolContains(hostOf("ws://a.test:443/"), "\r\nHost: a.test:443\r\n"));
+    check(protocolContains(hostOf("ws://[::1]:9/"), "\r\nHost: [::1]:9\r\n"));
+    check(!protocolContains(hostOf("ws://a.test/"), "Sec-WebSocket-Protocol"));
+};
+
+auto tValidAnswer = test("WebSocketProtocol/aValidUpgradeAnswerIsAccepted") = []
+{
+    auto offered = Vector<std::string> {"chat", "superchat"};
+
+    auto plain =
+        validateHandshakeResponse(protocolValidAnswer(), protocolSampleKey, {});
+
+    check(plain.ok);
+    check(plain.error.empty());
+    check(plain.protocol.empty());
+
+    auto chosen = validateHandshakeResponse(
+        protocolValidAnswer("Sec-WebSocket-Protocol: superchat\r\n"),
+        protocolSampleKey,
+        offered);
+
+    check(chosen.ok);
+    check(chosen.protocol == "superchat");
+};
+
+auto tAnswerIgnoresCase =
+    test("WebSocketProtocol/theUpgradeAnswerIgnoresHeaderCase") = []
+{
+    auto answer = std::string("HTTP/1.1 101 Switching Protocols\r\n"
+                              "upgrade: WebSocket\r\n"
+                              "CONNECTION: keep-alive, upgrade\r\n"
+                              "sec-websocket-accept: ")
+                  + acceptKeyFor(protocolSampleKey) + "\r\n\r\n";
+
+    check(validateHandshakeResponse(answer, protocolSampleKey, {}).ok);
+};
+
+auto tWrongAccept = test("WebSocketProtocol/aWrongAcceptKeyIsRefused") = []
+{
+    auto answer = protocolUpgradeAnswer("HTTP/1.1 101 Switching Protocols",
+                                        acceptKeyFor("another key"));
+    auto result = validateHandshakeResponse(answer, protocolSampleKey, {});
+
+    check(!result.ok);
+    check(protocolContains(result.error, "Accept"));
+};
+
+auto tWrongStatus = test("WebSocketProtocol/anAnswerThatIsNot101IsRefused") = []
+{
+    auto notFound = protocolUpgradeAnswer("HTTP/1.1 404 Not Found",
+                                          acceptKeyFor(protocolSampleKey));
+    auto result = validateHandshakeResponse(notFound, protocolSampleKey, {});
+
+    check(!result.ok);
+    check(protocolContains(result.error, "404"));
+    check(!validateHandshakeResponse("garbage\r\n\r\n", protocolSampleKey, {}).ok);
+    check(!validateHandshakeResponse("", protocolSampleKey, {}).ok);
+};
+
+auto tMissingUpgrade =
+    test("WebSocketProtocol/anAnswerThatDoesNotUpgradeIsRefused") = []
+{
+    auto accept = acceptKeyFor(protocolSampleKey);
+
+    auto noUpgrade = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\n"
+                     "Sec-WebSocket-Accept: "
+                     + accept + "\r\n\r\n";
+    auto noConnection = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                        "Sec-WebSocket-Accept: "
+                        + accept + "\r\n\r\n";
+
+    check(!validateHandshakeResponse(noUpgrade, protocolSampleKey, {}).ok);
+    check(!validateHandshakeResponse(noConnection, protocolSampleKey, {}).ok);
+};
+
+auto tUnrequestedProtocol =
+    test("WebSocketProtocol/aSubprotocolNobodyOfferedIsRefused") = []
+{
+    auto answer = protocolValidAnswer("Sec-WebSocket-Protocol: mqtt\r\n");
+
+    auto offeredOthers =
+        validateHandshakeResponse(answer, protocolSampleKey, {"chat"});
+    auto offeredNone = validateHandshakeResponse(answer, protocolSampleKey, {});
+
+    check(!offeredOthers.ok);
+    check(protocolContains(offeredOthers.error, "mqtt"));
+    check(!offeredNone.ok);
 };

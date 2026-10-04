@@ -18,6 +18,10 @@ JNIEnv* currentEnv();
 // Logs and clears a pending exception; true when there was one.
 bool failed(JNIEnv* env);
 
+// Clears a pending exception and returns its toString(), such as
+// "java.net.UnknownHostException: ..."; empty when there was none.
+std::string takeException(JNIEnv* env);
+
 // Every local reference made while it lives is released when it goes, since
 // nothing else would release them on a thread that never returns to Java.
 struct LocalFrame final
@@ -32,8 +36,31 @@ struct LocalFrame final
     bool pushed;
 };
 
+// A reference any attached thread may use, unlike a local one, which is valid
+// only on the thread and inside the frame that made it. It is released through
+// the env of whichever thread lets it go.
+class GlobalRef final
+{
+public:
+    GlobalRef() = default;
+    ~GlobalRef();
+
+    GlobalRef(const GlobalRef&) = delete;
+    GlobalRef& operator=(const GlobalRef&) = delete;
+
+    void reset(JNIEnv* env, jobject local);
+    jobject get() const { return object; }
+
+private:
+    jobject object = nullptr;
+};
+
 std::string toString(JNIEnv* env, jobject text);
 jstring toJava(JNIEnv* env, std::u16string_view text);
+jstring toJava(JNIEnv* env, std::string_view utf8);
+
+// A new byte[] holding bytes; null, with the exception left pending, on failure.
+jbyteArray toJavaBytes(JNIEnv* env, std::string_view bytes);
 
 // target.name() for a method with no arguments that returns an object; null on
 // any failure, a null target included.

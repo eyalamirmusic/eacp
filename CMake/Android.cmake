@@ -19,6 +19,8 @@ set(EACP_ANDROID_STUDIO_DIR "${CMAKE_BINARY_DIR}/AndroidStudio" CACHE PATH
         "Where the Android Studio project is written")
 set(EACP_ANDROID_ABIS "arm64-v8a;x86_64" CACHE STRING
         "The ABIs the Android Studio project builds")
+option(EACP_ANDROID_CLEARTEXT_TRAFFIC "Let the app's HTTP client reach http:// URLs"
+        OFF)
 
 # Gradle's sdk.dir: the SDK the toolchain looked in, unless that is no SDK and
 # the NDK this configure uses sits in one, at <sdk>/ndk/<version>.
@@ -169,6 +171,12 @@ function(eacp_add_android_app target)
     set(EACP_APK_LIB_NAME "${target}")
     set(EACP_APK_ICON_ATTRIBUTE "")
     set(EACP_STUDIO_RES "")
+
+    if (EACP_ANDROID_CLEARTEXT_TRAFFIC)
+        set(EACP_APK_CLEARTEXT_TRAFFIC true)
+    else ()
+        set(EACP_APK_CLEARTEXT_TRAFFIC false)
+    endif ()
 
     if (APP_ORIENTATION STREQUAL "portrait")
         set(EACP_APK_ORIENTATION portrait)
