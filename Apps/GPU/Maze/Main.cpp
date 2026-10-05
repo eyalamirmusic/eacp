@@ -11,10 +11,9 @@ using namespace Maths;
 // extrudes into textured wall quads once at startup; the camera is scalar
 // uniforms (position, eye height and yaw) the shader builds the view matrix
 // from each frame. Move with W/A/S/D (Shift to run), turn with the arrow keys, Space to
-// jump — or click to lock the mouse for mouse look; Escape releases it. On a
-// controller the left stick moves, the right stick turns and South (A, cross)
-// jumps. Input comes from a GameInput polled once a frame, and the title shows
-// which feed delivers it and how long the newest key press waited for a frame.
+// jump — or click to lock the mouse for mouse look; Escape releases it. Input
+// comes from a GameInput polled once a frame, and the title shows which feed
+// delivers it and how long the newest key press waited for a frame.
 namespace
 {
 // One character per cell: '.' is walkable, anything else is a wall whose
@@ -355,18 +354,6 @@ struct MazeView final : GPUView
         if (frame.wasPressed(KeyCode::Escape))
             window->setMouseLocked(false);
 
-        auto pad = Point {};
-        auto look = 0.0f;
-
-        for (const auto& gamepad: frame.gamepads())
-        {
-            if (gamepad.wasPressed(GamepadButton::South))
-                jump();
-
-            pad = pad + outsideDeadZone(gamepad.leftStick());
-            look += outsideDeadZone(gamepad.rightStick()).x;
-        }
-
         if (frame.wasPressed(KeyCode::Space))
             jump();
 
@@ -379,15 +366,13 @@ struct MazeView final : GPUView
                    - (frame.isDown(negative) ? 1.0f : 0.0f);
         };
 
-        yaw += (axis(KeyCode::LeftArrow, KeyCode::RightArrow) - look) * turnSpeed
-               * delta;
+        yaw += axis(KeyCode::LeftArrow, KeyCode::RightArrow) * turnSpeed * delta;
 
-        auto forward =
-            std::clamp(axis(KeyCode::W, KeyCode::S)
-                           + axis(KeyCode::UpArrow, KeyCode::DownArrow) + pad.y,
-                       -1.0f,
-                       1.0f);
-        auto strafe = std::clamp(axis(KeyCode::D, KeyCode::A) + pad.x, -1.0f, 1.0f);
+        auto forward = std::clamp(axis(KeyCode::W, KeyCode::S)
+                                      + axis(KeyCode::UpArrow, KeyCode::DownArrow),
+                                  -1.0f,
+                                  1.0f);
+        auto strafe = axis(KeyCode::D, KeyCode::A);
         auto sprinting =
             frame.isDown(KeyCode::Shift) || frame.isDown(KeyCode::RightShift);
 
@@ -400,13 +385,6 @@ struct MazeView final : GPUView
 
         fall(delta);
         showInputAge(frame, time);
-    }
-
-    // GameInput hands sticks over raw; a resting stick rarely reads zero.
-    static Graphics::Point outsideDeadZone(Graphics::Point stick)
-    {
-        constexpr auto deadZone = 0.15f;
-        return stick.length() < deadZone ? Graphics::Point {} : stick;
     }
 
     void jump()
