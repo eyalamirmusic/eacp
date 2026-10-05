@@ -224,9 +224,21 @@ struct VariantKeyHash
     }
 };
 
+// Android hints every advance to a whole pixel at the size it measures at, so a
+// line measured at the size being rasterized is a different width in points at
+// every scale, and text that fits at one wraps at another. Layout is measured
+// at this size instead and scaled to the one asked for, where a pixel of
+// rounding is a fraction of a percent of an em.
+constexpr auto layoutPixelSize = 1024.f;
+
 struct AndroidVariant
 {
     jobject paint = nullptr;
+
+    // At layoutPixelSize; layoutScale takes what it measures to the
+    // rasterizing size.
+    jobject layoutPaint = nullptr;
+    float layoutScale = 1.f;
     FontMetrics metrics;
     std::unordered_map<char32_t, float> advances;
 };
@@ -660,7 +672,10 @@ struct GlyphRasterizer::Native
             return;
 
         for (auto& [key, face]: variants)
+        {
             env->DeleteGlobalRef(face.paint);
+            env->DeleteGlobalRef(face.layoutPaint);
+        }
 
         if (base != nullptr)
             env->DeleteGlobalRef(base);
@@ -734,6 +749,52 @@ struct GlyphRasterizer::Native
         if (Jni::failed(env) || typeface == nullptr)
             typeface = source;
 
+        auto* paint = makePaint(env, typeface, memoryFace, key, request.pixelSize());
+        auto* layoutPaint =
+            makePaint(env, typeface, memoryFace, key, layoutPixelSize);
+
+        if (paint == nullptr || layoutPaint == nullptr)
+            return nullptr;
+
+        auto* metrics = env->CallObjectMethod(layoutPaint, java->getFontMetrics);
+
+        if (Jni::failed(env) || metrics == nullptr)
+            return nullptr;
+
+        auto face = AndroidVariant {};
+        face.layoutScale = request.pixelSize() / layoutPixelSize;
+        face.metrics.ascent =
+            -env->GetFloatField(metrics, java->ascent) * face.layoutScale;
+        face.metrics.descent =
+            env->GetFloatField(metrics, java->descent) * face.layoutScale;
+        face.metrics.leading =
+            std::max(0.f, env->GetFloatField(metrics, java->leading))
+            * face.layoutScale;
+
+        auto* letter = Jni::toJava(env, u"M");
+
+        if (Jni::failed(env))
+            return nullptr;
+
+        face.metrics.advance =
+            env->CallFloatMethod(layoutPaint, java->measureText, letter)
+            * face.layoutScale;
+
+        if (Jni::failed(env))
+            return nullptr;
+
+        face.paint = env->NewGlobalRef(paint);
+        face.layoutPaint = env->NewGlobalRef(layoutPaint);
+
+        return &variants.emplace(key, std::move(face)).first->second;
+    }
+
+    jobject makePaint(JNIEnv* env,
+                      jobject typeface,
+                      const AndroidMemoryFont* memoryFace,
+                      const VariantKey& key,
+                      float pixelSize) const
+    {
         auto* paint = env->NewObject(java->paint, java->paintInit, paintFlags);
 
         if (Jni::failed(env) || paint == nullptr)
@@ -748,36 +809,9 @@ struct GlyphRasterizer::Native
             if (!applyVariation(env, paint, *memoryFace, key))
                 return nullptr;
 
-        env->CallVoidMethod(paint, java->setTextSize, (jfloat) request.pixelSize());
+        env->CallVoidMethod(paint, java->setTextSize, (jfloat) pixelSize);
 
-        if (Jni::failed(env))
-            return nullptr;
-
-        auto* metrics = env->CallObjectMethod(paint, java->getFontMetrics);
-
-        if (Jni::failed(env) || metrics == nullptr)
-            return nullptr;
-
-        auto face = AndroidVariant {};
-        face.metrics.ascent = -env->GetFloatField(metrics, java->ascent);
-        face.metrics.descent = env->GetFloatField(metrics, java->descent);
-        face.metrics.leading =
-            std::max(0.f, env->GetFloatField(metrics, java->leading));
-
-        auto* letter = Jni::toJava(env, u"M");
-
-        if (Jni::failed(env))
-            return nullptr;
-
-        face.metrics.advance =
-            env->CallFloatMethod(paint, java->measureText, letter);
-
-        if (Jni::failed(env))
-            return nullptr;
-
-        face.paint = env->NewGlobalRef(paint);
-
-        return &variants.emplace(key, std::move(face)).first->second;
+        return Jni::failed(env) ? nullptr : paint;
     }
 
     bool applyVariation(JNIEnv* env,
@@ -810,7 +844,8 @@ struct GlyphRasterizer::Native
         auto advance =
             Jni::failed(env)
                 ? 0.f
-                : env->CallFloatMethod(face.paint, java->measureText, text);
+                : env->CallFloatMethod(face.layoutPaint, java->measureText, text)
+                      * face.layoutScale;
 
         if (Jni::failed(env))
             advance = 0.f;
