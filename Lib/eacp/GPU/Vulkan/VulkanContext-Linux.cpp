@@ -1,6 +1,7 @@
 #include "../Common.h"
 
 #include "VulkanContext.h"
+#include "VulkanLegacySync.h"
 #include "VulkanSurface.h"
 #include "VulkanTypes.h"
 
@@ -60,6 +61,13 @@ bool prefersSoftwareDevice()
 bool forcesRenderPasses()
 {
     return vulkanEnvironmentFlag("EACP_VK_RENDER_PASSES");
+}
+
+// EACP_VK_LEGACY_SYNC=1 runs a synchronization2 device on the vkCmdPipelineBarrier
+// path a device without the extension takes.
+bool forcesLegacySync()
+{
+    return vulkanEnvironmentFlag("EACP_VK_LEGACY_SYNC");
 }
 
 // EACP_VK_VALIDATION=1 turns on the validation layer and a logging messenger.
@@ -1001,7 +1009,7 @@ bool VulkanShared::selectPhysicalDevice()
     else
         spirvTarget = Spirv::Target::vulkan11Spirv13;
 
-    synchronization2Path = capabilities.synchronization2;
+    synchronization2Path = capabilities.synchronization2 && !forcesLegacySync();
     partiallyBoundPath = capabilities.descriptorBindingPartiallyBound;
 
     LOG("Vulkan: ",
@@ -1130,6 +1138,9 @@ bool VulkanShared::createDevice()
         device = VK_NULL_HANDLE;
         return false;
     }
+
+    if (!synchronization2Path)
+        installLegacySynchronization();
 
     vkGetDeviceQueue(device, queueFamily, 0, &queue);
 

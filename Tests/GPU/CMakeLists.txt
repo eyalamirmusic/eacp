@@ -106,9 +106,13 @@ endif ()
 # The one file that needs a display: a GPUView presenting through a Vulkan
 # swapchain onto a Wayland surface. Self-skips without a compositor. Beside it,
 # the deferred initial image transition, which is a Vulkan-only shape and is
-# pinned by counting the backend's submissions.
+# pinned by counting the backend's submissions, and the synchronization2 flag
+# translation the legacy barrier path runs on, which needs no device.
 if (LINUX)
-    list(APPEND gpu_test_sources PresentTests-Linux.cpp TextureSettleTests-Linux.cpp)
+    list(APPEND gpu_test_sources
+            LegacySyncTests-Linux.cpp
+            PresentTests-Linux.cpp
+            TextureSettleTests-Linux.cpp)
 endif ()
 
 # GPUView::setTransparent over a child window, read back from the composed
