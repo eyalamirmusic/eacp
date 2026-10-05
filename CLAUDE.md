@@ -717,7 +717,10 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Tests/Graphics/GameInputTests.cpp` (28 `GameInput/` cases) drives the
   queue directly and real windows; the last one reports a controller that is
   actually plugged in and passes without one unless `EACP_REQUIRE_GAMEPAD=1`.
-  `Apps/GPU/Maze` is the demo
+  `Apps/GPU/Maze` plays on one, and `Apps/UI/GamepadDemo` is the controller
+  tester: a disc the sticks move and aim, each of the fifteen buttons doing a
+  visible thing and announcing its press and release in a log, and a panel of
+  every button and axis named as the pad's `GamepadFamily` prints them
 - `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
   layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a
   foreign toolkit parents its own editor into, for plugin hosts. The macOS

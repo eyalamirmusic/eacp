@@ -54,7 +54,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `frame.gamepads()` lists the connected controllers — buttons named by
   position, sticks and triggers as raw axes — from GameController on Apple
   and XInput on Windows, so an Xbox controller on USB or Bluetooth works on
-  both. `Apps/GPU/Maze` is a first-person maze driven by it.
+  both. `Apps/GPU/Maze` is a first-person maze driven by it, and
+  `Apps/UI/GamepadDemo` is every button and axis of a controller doing
+  something on screen and announcing itself.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
   struct rather than a string literal per backend. The same compute kernel also
