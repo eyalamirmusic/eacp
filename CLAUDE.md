@@ -576,7 +576,11 @@ on resize and `OUT_OF_DATE`; continuous mode paced by whatever answered
 `setMaxFps` skipping early ticks rather than running a timer), every pipeline
 built through one `VkPipelineCache` persisted under `$XDG_CACHE_HOME/eacp/`,
 with the off-screen `renderNativeContent` path
-unchanged beside it. The GPU module knows the window system only as the
+unchanged beside it. `GPUView::setRenderScale` builds that swapchain smaller
+than the view where `ViewSurface::stretchesBuffer` says the window system
+stretches it back (Android, Wayland with `wp_viewporter`) and is a no-op on
+X11; Metal and D3D12 honour it too (`Lib/eacp/GPU/README.md`, "Rendering
+fewer pixels than the view covers"). The GPU module knows the window system only as the
 `NativeSurfaceHandle` it branches on in `createSurface()` and neither links
 nor includes it. Under `EACP_HEADLESS=1`, with neither `WAYLAND_DISPLAY` nor
 `DISPLAY` to reach, or when the preferred backend cannot connect, a window is
