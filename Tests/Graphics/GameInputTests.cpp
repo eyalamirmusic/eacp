@@ -729,7 +729,8 @@ auto tWindowKeysUntilPlatformDelivers =
 namespace
 {
 // The platform feed announces a controller on joining (Apple) or on its first
-// poll tick (Windows); one that is not there never does.
+// poll tick (Windows); one that is not there never does. GameController tells
+// a process about a controller through the main run loop, so the wait pumps it.
 bool aGamepadArrives(GameInput& input, double seconds)
 {
     const auto deadline = GameInput::now() + seconds;
@@ -739,7 +740,7 @@ bool aGamepadArrives(GameInput& input, double seconds)
         if (GameInput::now() > deadline)
             return false;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds {10});
+        eacp::Threads::runEventLoopFor(eacp::Time::MS {10});
     }
 
     return true;
@@ -769,15 +770,15 @@ auto tAPluggedInGamepadIsReported =
     for (auto& pad: frame.gamepads())
     {
         eacp::LOG("GameInput: gamepad ",
-            pad.id(),
-            ", family ",
-            (int) pad.family(),
-            ", player ",
-            pad.playerIndex(),
-            ", left stick ",
-            pad.leftStick().x,
-            ", ",
-            pad.leftStick().y);
+                  pad.id(),
+                  ", family ",
+                  (int) pad.family(),
+                  ", player ",
+                  pad.playerIndex(),
+                  ", left stick ",
+                  pad.leftStick().x,
+                  ", ",
+                  pad.leftStick().y);
 
         check(pad.id() >= 0);
         check(pad.playerIndex() >= -1);

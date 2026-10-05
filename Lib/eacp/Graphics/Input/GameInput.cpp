@@ -110,5 +110,7 @@ void GameInput::windowActivationChanged(bool isKey)
 
     if (!isKey)
         queue.releaseAll(now());
+    else if (backend != nullptr)
+        backend->resumed();
 }
 } // namespace eacp::Graphics

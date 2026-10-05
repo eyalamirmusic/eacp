@@ -5,7 +5,9 @@
 #include "HidKeyCodes.h"
 #include "../View/View.h"
 #include <eacp/Core/Utils/Logging.h>
+#include <eacp/Core/ObjC/ObjC.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace eacp::Graphics
@@ -21,6 +23,7 @@ struct GameInputSink
     const std::atomic<bool>* active = nullptr;
     std::atomic<bool> keysDelivering {false};
     std::atomic<bool> mouseDelivering {false};
+    bool wasAccepting = false;
 
     bool accepting() const { return active->load(std::memory_order_relaxed); }
 };
@@ -33,7 +36,13 @@ struct ConnectedPad
     int id = 0;
     int playerIndex = -1;
     GamepadFamily family = GamepadFamily::Generic;
+    ObjC::Ptr<GCExtendedGamepad> gamepad;
 };
+
+void pushWholeGamepadState(GameInputQueue& queue,
+                           int id,
+                           GCExtendedGamepad* pad,
+                           double timestampSeconds);
 
 // What the handler blocks capture, by shared_ptr, so it outlives every block
 // GameController still holds. `sinks` and `pads` are touched only on the
@@ -47,16 +56,49 @@ struct HubShared
     bool ownerAlive = true;
 
     template <typename Function>
-    void forEachAccepting(Function&& function)
+    void forEachAccepting(double timestampSeconds, Function&& function)
     {
         for (auto& sink: sinks)
-            if (sink->accepting())
+            if (resumeIfAccepting(*sink, timestampSeconds))
                 function(*sink);
     }
 
-    void connect(GameInputSink& sink, const ConnectedPad& pad, double time)
+    // GameController reports a change only, and the sink's queue released
+    // everything while it was not accepting, so on accepting again every pad's
+    // whole state is pushed: a stick or button held across the gap counts
+    // without waiting for it to move.
+    bool resumeIfAccepting(GameInputSink& sink, double timestampSeconds)
     {
-        sink.queue->gamepadConnected(pad.id, pad.family, pad.playerIndex, time);
+        const auto accepting = sink.accepting();
+
+        if (accepting && !sink.wasAccepting)
+            for (auto& pad: pads)
+                pushWholeGamepadState(
+                    *sink.queue, pad.id, pad.gamepad.get(), timestampSeconds);
+
+        sink.wasAccepting = accepting;
+        return accepting;
+    }
+
+    void resume(const Sink& sink, double timestampSeconds)
+    {
+        if (std::ranges::find(sinks, sink) == sinks.end())
+            return;
+
+        sink->wasAccepting = false;
+        resumeIfAccepting(*sink, timestampSeconds);
+    }
+
+    void connect(GameInputSink& sink, ConnectedPad& pad, double timestampSeconds)
+    {
+        sink.queue->gamepadConnected(
+            pad.id, pad.family, pad.playerIndex, timestampSeconds);
+
+        const auto alreadyPushed = !sink.wasAccepting;
+
+        if (resumeIfAccepting(sink, timestampSeconds) && !alreadyPushed)
+            pushWholeGamepadState(
+                *sink.queue, pad.id, pad.gamepad.get(), timestampSeconds);
     }
 };
 
@@ -78,7 +120,7 @@ dispatch_queue_t makeHandlerQueue()
 void reconcileHeldKeys(GameInputQueue& queue,
                        GCKeyboardInput* input,
                        uint16_t triggeringKey,
-                       double time)
+                       double timestampSeconds)
 {
     constexpr auto usageCount = uint32_t {256};
 
@@ -90,11 +132,11 @@ void reconcileHeldKeys(GameInputQueue& queue,
             continue;
 
         auto* button = [input buttonForKeyCode:(GCKeyCode) usage];
-        queue.keyChanged(key, button != nil && button.isPressed, time);
+        queue.keyChanged(key, button != nil && button.isPressed, timestampSeconds);
     }
 }
 
-GCKeyboardValueChangedHandler keyHandler(const SharedState& state)
+GCKeyboardValueChangedHandler makeKeyHandler(const SharedState& state)
 {
     auto shared = state;
 
@@ -104,54 +146,58 @@ GCKeyboardValueChangedHandler keyHandler(const SharedState& state)
                      BOOL pressed)
     {
         const auto key = keyCodeFromHidUsage((uint32_t) code);
-        const auto time = GameInputQueue::now();
+        const auto timestampSeconds = GameInputQueue::now();
 
         shared->forEachAccepting(
+            timestampSeconds,
             [&](GameInputSink& sink)
             {
                 if (!sink.keysDelivering.exchange(true))
-                    reconcileHeldKeys(*sink.queue, input, key, time);
+                    reconcileHeldKeys(*sink.queue, input, key, timestampSeconds);
 
-                sink.queue->keyChanged(key, pressed == YES, time);
+                sink.queue->keyChanged(key, pressed == YES, timestampSeconds);
             });
     };
 
     return [[handler copy] autorelease];
 }
 
-GCMouseMoved mouseMovedHandler(const SharedState& state)
+GCMouseMoved makeMouseMovedHandler(const SharedState& state)
 {
     auto shared = state;
 
     auto handler = ^(GCMouseInput*, float deltaX, float deltaY)
     {
-        const auto time = GameInputQueue::now();
+        const auto timestampSeconds = GameInputQueue::now();
 
         shared->forEachAccepting(
+            timestampSeconds,
             [&](GameInputSink& sink)
             {
                 sink.mouseDelivering.store(true);
-                sink.queue->mouseMoved({deltaX, -deltaY}, time);
+                sink.queue->mouseMoved({deltaX, -deltaY}, timestampSeconds);
             });
     };
 
     return [[handler copy] autorelease];
 }
 
-GCControllerButtonValueChangedHandler buttonHandler(const SharedState& state,
+GCControllerButtonValueChangedHandler makeButtonHandler(const SharedState& state,
                                                     MouseButton button)
 {
     auto shared = state;
 
     auto handler = ^(GCControllerButtonInput*, float, BOOL pressed)
     {
-        const auto time = GameInputQueue::now();
+        const auto timestampSeconds = GameInputQueue::now();
 
         shared->forEachAccepting(
+            timestampSeconds,
             [&](GameInputSink& sink)
             {
                 sink.mouseDelivering.store(true);
-                sink.queue->mouseButtonChanged(button, pressed == YES, time);
+                sink.queue->mouseButtonChanged(
+                    button, pressed == YES, timestampSeconds);
             });
     };
 
@@ -212,36 +258,43 @@ const char* familyName(GamepadFamily family)
     }
 }
 
-void pushButton(GameInputQueue& queue,
+void pushButtonState(GameInputQueue& queue,
                 int id,
                 GamepadButton button,
                 GCControllerButtonInput* input,
-                double time)
+                double timestampSeconds)
 {
-    queue.gamepadButtonChanged(id, button, input != nil && input.isPressed, time);
+    queue.gamepadButtonChanged(
+        id, button, input != nil && input.isPressed, timestampSeconds);
 }
 
 // The whole of a gamepad on every change: the queue drops what did not
 // change, and one handler for the profile cannot miss an element.
-void pushGamepad(GameInputQueue& queue, int id, GCExtendedGamepad* pad, double time)
+void pushWholeGamepadState(GameInputQueue& queue,
+                           int id,
+                           GCExtendedGamepad* pad,
+                           double timestampSeconds)
 {
     using Button = GamepadButton;
 
-    pushButton(queue, id, Button::South, pad.buttonA, time);
-    pushButton(queue, id, Button::East, pad.buttonB, time);
-    pushButton(queue, id, Button::West, pad.buttonX, time);
-    pushButton(queue, id, Button::North, pad.buttonY, time);
-    pushButton(queue, id, Button::LeftShoulder, pad.leftShoulder, time);
-    pushButton(queue, id, Button::RightShoulder, pad.rightShoulder, time);
-    pushButton(queue, id, Button::LeftStick, pad.leftThumbstickButton, time);
-    pushButton(queue, id, Button::RightStick, pad.rightThumbstickButton, time);
-    pushButton(queue, id, Button::Start, pad.buttonMenu, time);
-    pushButton(queue, id, Button::Back, pad.buttonOptions, time);
-    pushButton(queue, id, Button::Home, pad.buttonHome, time);
-    pushButton(queue, id, Button::DpadUp, pad.dpad.up, time);
-    pushButton(queue, id, Button::DpadDown, pad.dpad.down, time);
-    pushButton(queue, id, Button::DpadLeft, pad.dpad.left, time);
-    pushButton(queue, id, Button::DpadRight, pad.dpad.right, time);
+    auto push = [&](Button button, GCControllerButtonInput* input)
+    { pushButtonState(queue, id, button, input, timestampSeconds); };
+
+    push(Button::South, pad.buttonA);
+    push(Button::East, pad.buttonB);
+    push(Button::West, pad.buttonX);
+    push(Button::North, pad.buttonY);
+    push(Button::LeftShoulder, pad.leftShoulder);
+    push(Button::RightShoulder, pad.rightShoulder);
+    push(Button::LeftStick, pad.leftThumbstickButton);
+    push(Button::RightStick, pad.rightThumbstickButton);
+    push(Button::Start, pad.buttonMenu);
+    push(Button::Back, pad.buttonOptions);
+    push(Button::Home, pad.buttonHome);
+    push(Button::DpadUp, pad.dpad.up);
+    push(Button::DpadDown, pad.dpad.down);
+    push(Button::DpadLeft, pad.dpad.left);
+    push(Button::DpadRight, pad.dpad.right);
 
     queue.gamepadAxisChanged(id, GamepadAxis::LeftX, pad.leftThumbstick.xAxis.value);
     queue.gamepadAxisChanged(id, GamepadAxis::LeftY, pad.leftThumbstick.yAxis.value);
@@ -253,17 +306,21 @@ void pushGamepad(GameInputQueue& queue, int id, GCExtendedGamepad* pad, double t
     queue.gamepadAxisChanged(id, GamepadAxis::RightTrigger, pad.rightTrigger.value);
 }
 
-GCExtendedGamepadValueChangedHandler gamepadHandler(const SharedState& state,
+GCExtendedGamepadValueChangedHandler makeGamepadHandler(const SharedState& state,
                                                     int id)
 {
     auto shared = state;
 
     auto handler = ^(GCExtendedGamepad* gamepad, GCControllerElement*)
     {
-        const auto time = GameInputQueue::now();
+        const auto timestampSeconds = GameInputQueue::now();
 
-        shared->forEachAccepting([&](GameInputSink& sink)
-                                 { pushGamepad(*sink.queue, id, gamepad, time); });
+        shared->forEachAccepting(timestampSeconds,
+                                 [&](GameInputSink& sink)
+                                 {
+                                     pushWholeGamepadState(
+                                         *sink.queue, id, gamepad, timestampSeconds);
+                                 });
     };
 
     return [[handler copy] autorelease];
@@ -296,9 +353,21 @@ public:
 
     bool hasMice() const { return mice.count > 0; }
 
+    // The full state of every pad is pushed to the sink once the handler
+    // queue gets to it, if it is still accepting then.
+    void resumed(const Sink& sink)
+    {
+        auto state = shared;
+        auto resumedSink = sink;
+        auto resumption = ^{ state->resume(resumedSink, GameInputQueue::now()); };
+        dispatch_async(handlerQueue, resumption);
+    }
+
 private:
     GameControllerHub()
     {
+        GCController.shouldMonitorBackgroundEvents = YES;
+
         observe(GCKeyboardDidConnectNotification,
                 ^(NSNotification* note) { keyboardConnected(note.object); });
         observe(GCKeyboardDidDisconnectNotification,
@@ -359,10 +428,14 @@ private:
         auto added = sink;
 
         auto addition = ^{
+            const auto timestampSeconds = GameInputQueue::now();
             state->sinks.push_back(added);
 
             for (auto& pad: state->pads)
-                state->connect(*added, pad, GameInputQueue::now());
+                added->queue->gamepadConnected(
+                    pad.id, pad.family, pad.playerIndex, timestampSeconds);
+
+            state->resumeIfAccepting(*added, timestampSeconds);
         };
 
         dispatch_sync(handlerQueue, addition);
@@ -444,7 +517,7 @@ private:
 
         keyboard = [candidate retain];
         keyboard.handlerQueue = handlerQueue;
-        keyboard.keyboardInput.keyChangedHandler = keyHandler(shared);
+        keyboard.keyboardInput.keyChangedHandler = makeKeyHandler(shared);
     }
 
     void detachKeyboard()
@@ -467,15 +540,15 @@ private:
         mouse.handlerQueue = handlerQueue;
 
         auto* input = mouse.mouseInput;
-        input.mouseMovedHandler = mouseMovedHandler(shared);
+        input.mouseMovedHandler = makeMouseMovedHandler(shared);
         input.leftButton.pressedChangedHandler =
-            buttonHandler(shared, MouseButton::Left);
+            makeButtonHandler(shared, MouseButton::Left);
         input.rightButton.pressedChangedHandler =
-            buttonHandler(shared, MouseButton::Right);
+            makeButtonHandler(shared, MouseButton::Right);
         input.middleButton.pressedChangedHandler =
-            buttonHandler(shared, MouseButton::Middle);
+            makeButtonHandler(shared, MouseButton::Middle);
         input.auxiliaryButtons.firstObject.pressedChangedHandler =
-            buttonHandler(shared, MouseButton::Other);
+            makeButtonHandler(shared, MouseButton::Other);
     }
 
     void detachMouse(GCMouse* mouse)
@@ -506,8 +579,10 @@ private:
             || [controllers containsObject:controller])
             return;
 
-        const auto pad = ConnectedPad {
-            nextGamepadId++, freePlayerIndex(), familyOf(controller)};
+        const auto pad = ConnectedPad {nextGamepadId++,
+                                       freePlayerIndex(),
+                                       familyOf(controller),
+                                       ObjC::attachPtr(controller.extendedGamepad)};
 
         [controllers addObject:controller];
         padIds.push_back(pad.id);
@@ -531,17 +606,17 @@ private:
         auto state = shared;
 
         auto connection = ^{
-            state->pads.push_back(pad);
+            auto& added = state->pads.emplace_back(pad);
 
             for (auto& sink: state->sinks)
-                state->connect(*sink, pad, GameInputQueue::now());
+                state->connect(*sink, added, GameInputQueue::now());
         };
 
         dispatch_async(handlerQueue, connection);
 
         controller.handlerQueue = handlerQueue;
         controller.extendedGamepad.valueChangedHandler =
-            gamepadHandler(shared, pad.id);
+            makeGamepadHandler(shared, pad.id);
     }
 
     void detachController(GCController* controller)
@@ -614,6 +689,8 @@ struct GameControllerBackend final : GameInputBackend
     }
 
     ~GameControllerBackend() override { GameControllerHub::leave(sink); }
+
+    void resumed() override { hub.resumed(sink); }
 
     bool ownsKeys() const override { return sink->keysDelivering.load(); }
 
