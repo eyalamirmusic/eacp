@@ -366,7 +366,8 @@ public:
 private:
     GameControllerHub()
     {
-        GCController.shouldMonitorBackgroundEvents = YES;
+        if (@available(macOS 11.3, iOS 14.5, *))
+            GCController.shouldMonitorBackgroundEvents = YES;
 
         observe(GCKeyboardDidConnectNotification,
                 ^(NSNotification* note) { keyboardConnected(note.object); });
