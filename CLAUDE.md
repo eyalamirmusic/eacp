@@ -703,7 +703,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   while the window is key. `GameInputSource::WindowEvents` forces the window
   feed. Gamepads (`GamepadState` in `frame.gamepads()`, buttons named by
   position, raw sticks -1..1 y up and triggers 0..1, up to eight by stable id)
-  come from `GCController` extended gamepads on Apple and from XInput on
+  come from `GCController` extended gamepads on Apple (the hub sets
+  `shouldMonitorBackgroundEvents`, since GameController otherwise shows a
+  controller only to the frontmost process; verified on macOS with a Switch
+  Pro Controller over USB, reported as `GamepadFamily::Nintendo`, digital
+  ZL/ZR, + as `Start`, - as `Back`, Capture unmapped) and from XInput on
   Windows (`GameInput-Windows.cpp`: `xinput1_4.dll` loaded by name, the
   ordinal-100 `XInputGetState` so the Guide button is `Home`, one poll
   thread per process on a 4 ms high-resolution waitable timer feeding every
@@ -713,12 +717,15 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   and keys and mouse stay the window's, so `backendName()` still says
   "Window events"); Linux and Android have none yet.
   Axes are state, buttons follow the key rules, and disconnecting or
-  `releaseAll` releases the buttons and zeroes the axes.
+  `releaseAll` releases the buttons and zeroes the axes. Both feeds report
+  changes only, so when a `GameInput` starts accepting again - the window
+  took key focus back, `GameInputBackend::resumed()` - every pad's whole
+  state is pushed once more, and a stick held across the gap counts without
+  moving.
   `Tests/Graphics/GameInputTests.cpp` (28 `GameInput/` cases) drives the
   queue directly and real windows; the last one reports a controller that is
   actually plugged in and passes without one unless `EACP_REQUIRE_GAMEPAD=1`.
-  `Apps/GPU/Maze` plays on one, and `Apps/UI/GamepadDemo` is the controller
-  tester: a disc the sticks move and aim, each of the fifteen buttons doing a
+  `Apps/UI/GamepadDemo` is the controller tester: a disc the sticks move and aim, each of the fifteen buttons doing a
   visible thing and announcing its press and release in a log, and a panel of
   every button and axis named as the pad's `GamepadFamily` prints them
 - `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
