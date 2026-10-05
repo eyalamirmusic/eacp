@@ -2,6 +2,7 @@
 #include <eacp/Graphics/Graphics.h>
 #include <eacp/Sprites/Sprites.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 

@@ -39,6 +39,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
   the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
   stay zero and silent on desktop windows. `Apps/UI/TouchDemo` draws both.
+  A `UI::ComponentHost` lays its root inside the safe area by default
+  (`setRespectsSafeArea(false)` gives it the whole view), and `ScrollPanel` and
+  `ListBox` scroll by finger, coasting on when flung, while a mouse drag over
+  them means what it always did.
 - **Game input** — `GameInput` is keyboard and mouse state for a game loop,
   polled once a frame beside the `View` callbacks that UI and text entry keep
   using: `snapshot()` returns a frame that answers `isDown`, `wasPressed`,
@@ -77,7 +81,12 @@ them, so apps inherit the look, feel, and performance of the host OS:
   and unpacks a zip; `UI::OnlineResourceMonitor` shows every such fetch as a
   list with progress bars. `Apps/Console/OnlineResource` and
   `Apps/UI/ResourceMonitor` are the two examples.
-- **SVG** — parsing and rendering of SVG documents into the graphics layer.
+- **SVG** — SVG documents parsed (`SVG::parseXML`) and drawn by
+  `SVG::SVGComponent`, a `UI` component, or rendered off-screen to an image
+  (`SVG::renderToImage`), the same on every platform: linear and radial
+  gradients, clip paths, element and group opacity, `<use>`/`<symbol>`, nested
+  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute and text. Not
+  `<mask>`, `<style>` selectors, filters or `<image>`.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
   and unload shared libraries at runtime (`DynamicLibrary`). Both directions of

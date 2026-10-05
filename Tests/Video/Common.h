@@ -3,6 +3,7 @@
 #include <eacp/Video/Decode/Player.h>
 #include <NanoTest/NanoTest.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace VideoTests

@@ -25,4 +25,5 @@
 #include "Widgets/ComboBox.h"
 #include "Widgets/ListBox.h"
 #include "Widgets/Tabs.h"
+#include "Widgets/TouchScroller.h"
 #include "Widgets/Widgets.h"

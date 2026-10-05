@@ -10,6 +10,7 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <TargetConditionals.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>

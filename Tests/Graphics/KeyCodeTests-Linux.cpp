@@ -65,6 +65,7 @@ const LinuxNamedKey linuxAllKeys[] = {
     {"Tab", KeyCode::Tab},
     {"Delete", KeyCode::Delete},
     {"Escape", KeyCode::Escape},
+    {"Back", KeyCode::Back},
 
     {"LeftArrow", KeyCode::LeftArrow},
     {"RightArrow", KeyCode::RightArrow},

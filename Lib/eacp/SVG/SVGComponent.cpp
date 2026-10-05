@@ -141,8 +141,8 @@ struct SVGComponent::Drawable
 // texture that content is rendered into so the fade can be applied once.
 //
 // The distinction is the whole feature. Multiplying a group's opacity into
-// each of its children's colours -- which is what this module did before,
-// and what SVGBuilder still does -- fades the children; the format means the
+// each of its children's colours -- which is what this module did before --
+// fades the children; the format means the
 // group. They agree exactly until two shapes inside it overlap, and there
 // the first shows the seam between them and the second does not.
 //
@@ -161,9 +161,9 @@ struct SVGComponent::OpacityGroup
 
 // Everything an element inherits from the tree above it.
 //
-// The whole reason it exists: SVGBuilder reads fill straight off the element
-// with no walk to the parent, so a `<g fill="red">` colours nothing and every
-// child of it comes out black. Most real documents set fill on a group, which
+// The whole reason it exists: reading fill straight off the element with no
+// walk to the parent means a `<g fill="red">` colours nothing and every child
+// of it comes out black. Most real documents set fill on a group, which
 // makes that one bug enough to render an illustration in the wrong colours from
 // end to end.
 struct SVGComponent::Style
@@ -532,9 +532,9 @@ void SVGComponent::setDocument(const SVGElement& root)
     {
         viewBox = {numbers[0], numbers[1], numbers[2], numbers[3]};
 
-        // The origin is subtracted, not ignored. SVGBuilder reads only the
-        // third and fourth numbers, so viewBox="10 20 100 100" renders shifted
-        // by (10, 20) and nothing says so.
+        // The origin is subtracted, not ignored. Reading only the third and
+        // fourth numbers renders viewBox="10 20 100 100" shifted by (10, 20)
+        // and nothing says so.
         if (!declaresWidth)
             documentWidth = viewBox.w;
 
@@ -987,8 +987,8 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
     run.text = element.textContent;
 
     // SVG's y on a text element is the baseline, which is exactly what
-    // Graphics::drawText's pen wants. SVGBuilder guesses at y - fontSize
-    // instead, and then centres against a width of fontSize x length x 0.6.
+    // Graphics::drawText's pen wants, so it is used as given rather than
+    // guessed at from the font size.
     //
     // Only the origin is transformed. A rotated transform rotates where the text
     // sits and not the text, because a glyph is an axis-aligned quad out of an

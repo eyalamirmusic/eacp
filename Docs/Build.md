@@ -165,11 +165,12 @@ so the host needs a C++ compiler; the Ninja Gradle found is handed to that
 configure too, so Studio started from the Dock, with no shell `PATH`, builds.
 [`Apps/Android/README.md`](../Apps/Android/README.md) is the walkthrough.
 
-Of the examples, an Android build takes `Apps/Android`, `Apps/GPU` and
-`Apps/UI` — each an `eacp_add_app`, so each is a module of the project — and
-leaves out the rest, which are console tools, plugin hosts or need a
-capability Android lacks; the capability gates below still apply inside the
-three, so `SVGDocument` and the GPU examples that paint a 2D overlay stay out.
+Of the examples, an Android build takes `Apps/Android`, `Apps/GPU`, `Apps/UI`
+(`SVGDocument` included) and `Apps/SVG` — each an `eacp_add_app`, so each is a
+module of the project — and leaves out the rest, which are console tools,
+plugin hosts or need a capability Android lacks; the capability gates below
+still apply inside the four, so the GPU examples that paint a 2D overlay stay
+out.
 
 `Core` reaches the framework through JNI where Android has no C API
 (`Core/Android/Jni.h`), with the application `Context` from
@@ -264,8 +265,8 @@ and their tests build with it:
 | --- | --- | --- |
 | `EACP_HAS_DRAW` | `EACP_BUILD_GRAPHICS`, and Apple, Windows, Linux or Android | `Graphics` — `EmbeddedView` with it, embedding being a windowing feature rather than a drawing one — and `Tests/Graphics` |
 | `EACP_HAS_GPU` | `EACP_HAS_DRAW`, and Apple, Windows, Linux or Android | `GPU`, `GPUWidgets`, `Sprites`, their tests, `Apps/GPU` and `Apps/Plugins` |
-| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG`, their tests, `Apps/UI` and the GPU examples that draw glyphs |
-| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `SVGBuilder`, `Apps/Graphics`, `Apps/SVG` and the examples that paint a 2D overlay |
+| `EACP_HAS_TEXT` | `EACP_HAS_GPU`, and Apple, Windows, Linux or Android | `Text`, `UI`, `SVG` (`SVGComponent`, its only renderer), their tests, `Apps/UI` (`SVGDocument` included), `Apps/SVG` and the GPU examples that draw glyphs |
+| `EACP_HAS_CONTEXT` | `EACP_HAS_DRAW`, and Apple or Windows | the platform's own 2D tier: `Graphics::Context`, `Font`, `TextMetrics`, `TextInput`, the retained layers and layer views, the image codecs (Android has those without the rest) — and so `Apps/Graphics` and the examples that paint a 2D overlay |
 | `EACP_HAS_CAPTURE` | `EACP_HAS_DRAW`, and Apple or Windows | `Camera`, `CameraView`, `Video`, `VideoView` |
 | `EACP_HAS_WEBVIEW` | `EACP_HAS_DRAW` and `EACP_BUILD_WEBVIEW`, and Apple or Windows | the native `WebView` (WKWebView / WebView2) |
 | `EACP_HAS_COREML` | `EACP_HAS_GPU`, and Apple | `eacp-ml`, the Core ML runner, `MLTests` and `Apps/ML` |

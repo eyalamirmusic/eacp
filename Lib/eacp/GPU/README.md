@@ -2497,13 +2497,38 @@ CI lane's second test step.
   (matching what the off-screen snapshot renders into and what the other two
   backends give their swapchains), else the first offered; composite alpha
   `OPAQUE` else the first offered; `minImageCount + 1` images clamped to
-  `maxImageCount`; `preTransform` taken as the surface's own. Wayland reports
+  `maxImageCount`; `preTransform` identity wherever the surface supports it,
+  else the surface's own. Wayland reports
   `currentExtent` as `0xFFFFFFFF` — there is no server-side surface size — so the
   extent comes from the record's `pixelWidth`/`pixelHeight`; X11 reports the
   child window's real size and that is taken as it stands.
+- **Rotation on Android** is the compositor's. The swapchain is built
+  identity, the window's own size, and the frame is drawn upright in the
+  window's coordinates; the compositor turns it. Pre-rotating instead would
+  save that pass but would mean rotating every projection, clip space
+  position, viewport and scissor an app or the UI tier writes, and there is no
+  one place eacp applies them. The extent of a surface that offers quarter
+  turns in `supportedTransforms` — Android's — is the record's
+  `pixelWidth`/`pixelHeight` (the `ANativeWindow`'s size), sides swapped only
+  in the fallback where identity is unsupported and the surface's quarter-turn
+  `currentTransform` is taken, then clamped to `min`/`maxImageExtent`:
+  `currentExtent` is not used there because it describes the orientation the
+  surface last presented in, and at the resize that announces a turn it still
+  holds the old one (measured on the emulator: a 2400x1080 window reporting
+  1080x2400 and the old transform). Wayland and X11 offer identity alone and
+  are unchanged. On a rotated display Android reports every acquire and present
+  `SUBOPTIMAL` because an identity transform is not the display's, and that is
+  all it means there — a size change is `OUT_OF_DATE` or a resize — so a
+  swapchain built identity on such a surface ignores `SUBOPTIMAL` outright:
+  no rebuild and no surface query in a steady landscape frame. Turning between
+  portrait and landscape resizes the `ANativeWindow`, which the window reports
+  as a resize, so the content is laid out again at the new size in points and
+  the swapchain rebuilt once; a half turn (90 to 270) keeps the size and
+  rebuilds nothing.
 - **Rebuilds** are marked and done at the next frame, so a live resize that
-  reports twenty sizes builds one swapchain: `onResized`, and `OUT_OF_DATE` or
-  `SUBOPTIMAL` from either the acquire or the present. A `SUBOPTIMAL` acquire is
+  reports twenty sizes builds one swapchain: `onResized`, `OUT_OF_DATE` from
+  either the acquire or the present, and `SUBOPTIMAL` from either except where
+  the rotation rule above expects it. A `SUBOPTIMAL` acquire is
   drawn and presented first — it handed over an image and signalled the
   semaphore, and dropping it would leave that semaphore signalled. `onLost`
   destroys the swapchain, the semaphores, the companions and the `VkSurfaceKHR`

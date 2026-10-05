@@ -225,6 +225,8 @@ struct VariableFontView final : GPU::GPUView
         else if (code == Graphics::KeyCode::LeftArrow
                  || code == Graphics::KeyCode::Minus)
             setLiveWeight(liveWeight - weightStep);
+        else
+            passKeyOn();
     }
 
     void setLiveWeight(int weight)

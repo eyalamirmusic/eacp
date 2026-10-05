@@ -39,6 +39,19 @@ View& View::setGrabsFocusOnMouseDown(bool value)
     return *this;
 }
 
+View& View::setWantsTextInput(bool value)
+{
+    if (properties.wantsTextInput == value)
+        return *this;
+
+    properties.wantsTextInput = value;
+
+    if (hasFocus())
+        focus();
+
+    return *this;
+}
+
 void* View::nativeFocusTarget()
 {
     return getHandle();
@@ -86,9 +99,6 @@ void View::mouseWheel(const MouseEvent&) {}
 void View::touchBegan(const TouchEvent&) {}
 void View::touchMoved(const TouchEvent&) {}
 void View::touchEnded(const TouchEvent&) {}
-
-void View::keyDown(const KeyEvent&) {}
-void View::keyUp(const KeyEvent&) {}
 
 void View::resizeStarted() {}
 void View::resizeFinished() {}
@@ -285,15 +295,34 @@ void View::dispatchMouseDown(View* target, const MouseEvent& event)
         target->handleMouseEvent(createLocalEvent(event, target, event.type));
 }
 
-void View::dispatchKeyEvent(const KeyEvent& event)
+bool View::dispatchKeyEvent(const KeyEvent& event)
 {
     if (auto* window = getWindow())
         window->events.input.keyEvent(event);
+
+    keyKept = true;
 
     if (event.type == KeyEventType::Down)
         keyDown(event);
     else
         keyUp(event);
+
+    return keyKept;
+}
+
+void View::passKeyOn()
+{
+    keyKept = false;
+}
+
+void View::keyDown(const KeyEvent&)
+{
+    passKeyOn();
+}
+
+void View::keyUp(const KeyEvent&)
+{
+    passKeyOn();
 }
 
 void View::dispatchMouseEvent(const MouseEvent& event)
@@ -464,6 +493,7 @@ void View::sendTouchAsMouse(const TouchEvent& event)
     mouse.downPos = event.downPos;
     mouse.button = MouseButton::Left;
     mouse.timestamp = event.timestamp;
+    mouse.fromTouch = true;
 
     switch (event.phase)
     {

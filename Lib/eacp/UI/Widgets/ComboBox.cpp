@@ -229,6 +229,7 @@ bool ComboBox::keyDown(const KeyEvent& event)
             }
 
             case KeyCode::Escape:
+            case KeyCode::Back:
                 hidePopup();
                 return true;
 

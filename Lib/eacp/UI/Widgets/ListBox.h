@@ -107,15 +107,31 @@ public:
 
     void paint(Graphics& g) override;
 
+    // A mouse selects on the press. A finger selects on the release, and only
+    // if it neither moved past the slop -- which scrolls the list instead,
+    // coasting on when let go moving -- nor landed while the list was coasting,
+    // which stops it.
     void mouseDown(const MouseEvent& event) override;
+    void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
     bool mouseWheelMove(const MouseEvent& event) override;
+
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    bool advanceAnimation(double seconds) override;
+
+    bool isFlinging() const;
 
 private:
     void paintHeader(Graphics& g);
     void paintRows(Graphics& g);
     void paintScrollIndicator(Graphics& g);
 
+    void selectRowAt(const MouseEvent& event);
+
     float maximumScroll() const;
+
+    TouchScrolling touchScroll {*this};
 
     ListBoxModel* model = nullptr;
 

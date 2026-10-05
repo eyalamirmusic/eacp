@@ -55,8 +55,8 @@ The API levels and tools are cache variables an app sets to its own values:
 
 Open the `build-android/AndroidStudio` folder in Android Studio (File > Open).
 The first sync downloads Gradle and the Android Gradle Plugin, once per
-machine. Pick `HelloGPU` (or `HelloNetwork`, below, or any of the `Apps/GPU`
-and `Apps/UI` examples, which are modules of the same project) and a device: a phone with
+machine. Pick `HelloGPU` (or `HelloNetwork`, below, or any of the `Apps/GPU`,
+`Apps/UI` and `Apps/SVG` examples, which are modules of the same project) and a device: a phone with
 USB debugging on (Settings > About phone, tap Build number seven times, then
 Developer options > USB
 debugging), or an AVD from Device Manager at or above `EACP_ANDROID_MIN_SDK`,
