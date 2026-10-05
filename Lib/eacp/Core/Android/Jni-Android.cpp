@@ -3,6 +3,7 @@
 #include <eacp/Core/Utils/Logging.h>
 
 #include <atomic>
+#include <mutex>
 
 namespace eacp::Jni
 {
@@ -199,6 +200,46 @@ jobject applicationContext(JNIEnv* env)
 
     env->DeleteGlobalRef(found);
     return expected;
+}
+
+namespace
+{
+struct StoredActivity final
+{
+    std::mutex lock;
+    jobject activity = nullptr;
+};
+
+StoredActivity& storedActivity()
+{
+    static auto stored = StoredActivity {};
+    return stored;
+}
+} // namespace
+
+void setActivity(JNIEnv* env, jobject activity)
+{
+    if (env == nullptr)
+        return;
+
+    auto& stored = storedActivity();
+    auto guard = std::scoped_lock {stored.lock};
+
+    if (stored.activity != nullptr)
+        env->DeleteGlobalRef(stored.activity);
+
+    stored.activity = keepForTheProcess(env, activity);
+}
+
+jobject activity(JNIEnv* env)
+{
+    if (env == nullptr)
+        return nullptr;
+
+    auto& stored = storedActivity();
+    auto guard = std::scoped_lock {stored.lock};
+
+    return stored.activity != nullptr ? env->NewLocalRef(stored.activity) : nullptr;
 }
 
 bool failed(JNIEnv* env)

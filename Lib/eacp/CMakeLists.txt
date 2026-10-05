@@ -43,12 +43,7 @@ if (EACP_HAS_CAPTURE)
     add_subdirectory(Camera)
     add_subdirectory(CameraView)
 
-    # View->video recorder, and video decode/playback. The Snapshot tier is
-    # portable (AVFoundation on macOS, Media Foundation on Windows); the Screen
-    # tier is ScreenCaptureKit on macOS and a stub on Windows until
-    # Windows.Graphics.Capture lands. VideoView draws a decoded stream through
-    # the sprite renderer, the way CameraView draws a live camera.
-    if (NOT IOS)
+    if (NOT IOS AND NOT ANDROID)
         add_subdirectory(Video)
         add_subdirectory(VideoView)
     endif ()

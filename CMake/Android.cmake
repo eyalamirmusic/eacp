@@ -217,6 +217,24 @@ function(eacp_add_android_app target)
         set(EACP_APK_ORIENTATION unspecified)
     endif ()
 
+    set(EACP_APK_PERMISSIONS "")
+    set(EACP_APK_FEATURES "")
+
+    foreach (permission IN LISTS APP_PERMISSIONS)
+        if (NOT permission MATCHES "\\.")
+            set(permission "android.permission.${permission}")
+        endif ()
+
+        string(APPEND EACP_APK_PERMISSIONS
+                "\n    <uses-permission android:name=\"${permission}\" />")
+
+        if (permission STREQUAL "android.permission.CAMERA")
+            string(APPEND EACP_APK_FEATURES "\n    <uses-feature "
+                    "android:name=\"android.hardware.camera.any\" "
+                    "android:required=\"false\" />")
+        endif ()
+    endforeach ()
+
     if (APP_ICON)
         set(res "${CMAKE_CURRENT_BINARY_DIR}/${target}-res")
         configure_file("${APP_ICON}" "${res}/mipmap/ic_launcher.png" COPYONLY)

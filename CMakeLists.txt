@@ -78,7 +78,7 @@ endif ()
 #   EACP_HAS_GPU     a GPU backend: GPU, GPUWidgets, Sprites.
 #   EACP_HAS_TEXT    a glyph rasterizer: Text, UI, the portable half of SVG.
 #   EACP_HAS_CONTEXT the platform's own 2D tier: Context, Font, the codecs.
-#   EACP_HAS_CAPTURE Camera, CameraView, Video, VideoView.
+#   EACP_HAS_CAPTURE Camera, CameraView; Video, VideoView but not on iOS or Android.
 #   EACP_HAS_WEBVIEW a native web runtime (WKWebView, WebView2).
 #   EACP_HAS_COREML  a Core ML runtime: the ML module's runner.
 set(EACP_HAS_DRAW OFF)
@@ -107,7 +107,7 @@ endif ()
 
 set(EACP_HAS_CAPTURE OFF)
 
-if (EACP_HAS_DRAW AND (APPLE OR WIN32))
+if (EACP_HAS_DRAW AND (APPLE OR WIN32 OR ANDROID))
     set(EACP_HAS_CAPTURE ON)
 endif ()
 

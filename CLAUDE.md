@@ -30,14 +30,16 @@ glyphs), `EACP_HAS_CONTEXT` (the
 platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
 `TextInput`, the retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
 `Apps/Graphics` and the GPU examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
-`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS),
+`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS and
+Android),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
 `APPLE OR WIN32 OR LINUX OR ANDROID` — everywhere graphics builds at all — and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
-are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
+`EACP_HAS_DRAW`: `CONTEXT` and `WEBVIEW` are Apple/Windows-only and `CAPTURE`
+is Apple, Windows and Android, so on Apple and Windows the first six are
+simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
 `Network` is gated by none of them: it builds everywhere — the HTTP client is
 NSURLSession on Apple, WinHTTP on Windows, libcurl on Linux and Java's
@@ -128,7 +130,27 @@ Every manifest asks for `INTERNET`, and `EACP_ANDROID_CLEARTEXT_TRAFFIC`
 governs `http://` and `ws://` to any host, loopback included;
 `Apps/Android/HelloNetwork` runs the client, server, download, timeout,
 `OnlineResource` and WebSocket paths and turns green when all pass, red
-otherwise. Tests compile for Android but nothing runs them there. `main()`
+otherwise. `Camera` is `Camera/Camera-Android.cpp`, camera2ndk feeding an
+`AImageReader` whose YUV_420_888 is packed to tight NV12 on the reader's thread
+(BT.601 full range, `chromaPlane()` after the luma, no zero-copy, so
+`acquireLatestPixelBuffer` is null and `CameraView` uploads it as R8 luma and
+RG8 chroma through `SpriteRenderer::drawNv12Quad`), with `rotationDegrees`
+taken camera2's way from `ACAMERA_SENSOR_ORIENTATION` and `Display.getRotation()`
+and `nativeSession()` the `ACameraCaptureSession*`; `Video` and `VideoView`
+have no decoder or encoder there yet. The camera is a runtime permission:
+`Core/Android/Permissions-Android.h` is `Android::hasPermission` and
+`requestPermission`, which asks through `Jni::activity` (set by
+`Jni::setActivity`, a new local ref each call), keeps one system request in
+flight and queues the rest, and, since a NativeActivity is never handed
+`onRequestPermissionsResult`, reads the permission back when the activity
+resumes after the dialog (`Window-Android.cpp` calls
+`Detail::permissionsActivityPaused`/`Resumed`) and answers once on the main
+thread; `permissionStatus()` is `Granted` or `Denied`, never `NotDetermined`,
+and `start()` without it returns false. The manifest side is `eacp_add_app`'s
+`PERMISSIONS` (`CAMERA` is `android.permission.CAMERA`, a dotted name is taken
+as written, and `CAMERA` adds an optional `android.hardware.camera.any`
+`uses-feature`), which is how `Apps/Camera/CameraViewDemo` builds for Android.
+Tests compile for Android but nothing runs them there. `main()`
 runs once per activity: Android destroys and recreates one for a configuration
 change the manifest does not claim and when it reclaims a stopped app, and the
 recreated activity calls
@@ -147,8 +169,9 @@ since assets live in the APK; `FilePath`'s data and cache roots are
 `Jni::applicationContext()` (see `Docs/Build.md`).
 `eacp_add_app` builds an example as an
 executable, or on Android as the shared library NativeActivity loads, with
-`BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON` and
-`ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android). The
+`BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON`,
+`ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android) and
+`PERMISSIONS` (Android's manifest permissions). The
 prerequisites are Android Studio with an NDK (the SDK Manager installs it),
 CMake and Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
 build-android -DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is

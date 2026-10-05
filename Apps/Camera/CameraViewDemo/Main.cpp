@@ -1,9 +1,10 @@
 #include <eacp/CameraView/CameraView.h>
+#include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Logging.h>
 #include <eacp/GPU/GPU.h>
 #include <eacp/Graphics/Menu/Menu.h>
 #include <algorithm>
 
-#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -62,9 +63,11 @@ struct DemoCameraView final : Cameras::CameraView
         renderer.drawRect(bounds, {0.2f, 1.0f, 0.45f, 0.8f}, 3.0f);
 
         if (overlayTicks % 30 == 0)
-            std::printf("render tick %d  (frames with camera image: %d)\n",
-                        overlayTicks,
-                        framesWithImage);
+            LOG("render tick ",
+                overlayTicks,
+                "  (frames with camera image: ",
+                framesWithImage,
+                ")");
     }
 
     double elapsed = 0.0;
@@ -80,7 +83,6 @@ struct CameraApp
         if (getEnvValue("EACP_DEMO_UPLOAD_MODE") == "copy")
             view.setUploadMode(Cameras::CameraView::UploadMode::Copy);
 
-        view.setMirrored(true); // front-camera-style preview
         view.attach(camera);
         installMenuBar();
         beginCapture();
@@ -122,8 +124,8 @@ struct CameraApp
             return;
 
         selectedDeviceId = std::move(deviceId);
-        std::printf("switching camera to %s\n",
-                    selectedDeviceId ? selectedDeviceId->c_str() : "system default");
+        LOG("switching camera to ",
+            selectedDeviceId ? *selectedDeviceId : std::string {"system default"});
 
         // The view stays attached across the restart: it follows the Camera
         // object, not the capture session.
@@ -138,12 +140,41 @@ struct CameraApp
         }
     }
 
+    // The device start() opens with no id: Android takes the first back
+    // camera, which is what a phone preview wants.
+    bool startsOnFrontCamera() const
+    {
+        auto devices = Cameras::Camera::devices();
+
+        for (const auto& device: devices)
+        {
+            auto chosen = selectedDeviceId ? device.id == *selectedDeviceId
+                                           : !device.isFrontFacing;
+
+            if (chosen)
+                return device.isFrontFacing;
+        }
+
+        return devices.size() > 0 && devices[0].isFrontFacing;
+    }
+
+    // Desktop previews are mirrored like a webcam; on a phone only the front
+    // camera is.
+    bool shouldMirror() const
+    {
+        if (!Platform::isAndroid())
+            return true;
+
+        return startsOnFrontCamera();
+    }
+
     void startCamera()
     {
         auto config = Cameras::CameraConfig {};
         config.width = 1280;
         config.height = 720;
         config.deviceId = selectedDeviceId;
+        view.setMirrored(shouldMirror());
         camera.start(config);
     }
 
@@ -151,38 +182,38 @@ struct CameraApp
     // the display link so the overlay still animates.
     void showOverlayOnly()
     {
-        std::printf("Camera access not granted; showing overlay only.\n");
+        LOG("Camera access not granted; showing overlay only.");
         view.setRenderMode(Cameras::CameraView::RenderMode::Continuous);
     }
 
     void beginCapture()
     {
-        switch (Cameras::Camera::permissionStatus())
+        if (Cameras::Camera::permissionStatus()
+            == Cameras::PermissionStatus::Granted)
         {
-            case Cameras::PermissionStatus::Granted:
-                startCamera();
-                break;
-            case Cameras::PermissionStatus::NotDetermined:
-                Cameras::Camera::requestPermission(
-                    [this](bool granted)
-                    {
-                        if (granted)
-                            startCamera();
-                        else
-                            showOverlayOnly();
-                    });
-                break;
-            default:
-                showOverlayOnly();
-                break;
+            startCamera();
+            return;
         }
+
+        // Asked whatever the status: Android reports Denied until the user
+        // says yes, and elsewhere a decided request answers at once.
+        auto onAnswer = [this](bool granted)
+        {
+            if (granted)
+                startCamera();
+            else
+                showOverlayOnly();
+        };
+
+        Cameras::Camera::requestPermission(onAnswer);
     }
 
     // Timer-driven, not render-driven, so it fires even when no camera ever
     // delivers a frame.
     void armAutoQuit()
     {
-        auto seconds = std::atof(getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS").c_str());
+        auto text = getEnvValue("EACP_DEMO_AUTOQUIT_SECONDS");
+        auto seconds = std::strtod(text.c_str(), nullptr);
 
         if (seconds <= 0.0)
             return;
@@ -194,9 +225,11 @@ struct CameraApp
                 if (!quitDeadline->expired())
                     return;
 
-                std::printf("auto-quit: %d ticks, %d with image\n",
-                            view.overlayTicks,
-                            view.framesWithImage);
+                LOG("auto-quit: ",
+                    view.overlayTicks,
+                    " ticks, ",
+                    view.framesWithImage,
+                    " with image");
                 Apps::quit();
             },
             100);

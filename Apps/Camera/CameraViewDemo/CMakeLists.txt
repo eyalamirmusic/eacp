@@ -1,13 +1,9 @@
-add_executable(CameraViewDemo Main.cpp)
+eacp_add_app(CameraViewDemo Main.cpp
+        BUNDLE_ID "com.eacp.cameraviewdemo"
+        DISPLAY_NAME "Camera View Demo"
+        PERMISSIONS CAMERA)
 target_link_libraries(CameraViewDemo PRIVATE eacp-camera-view)
-
-set(BUNDLE_ID "com.eacp.cameraviewdemo")
-
-set_target_properties(CameraViewDemo PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Camera View Demo"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+set_target_properties(CameraViewDemo PROPERTIES MACOSX_BUNDLE TRUE)
 
 eacp_set_gui_subsystem(CameraViewDemo)
 set_default_target_setting(CameraViewDemo)

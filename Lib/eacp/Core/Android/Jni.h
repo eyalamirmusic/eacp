@@ -23,6 +23,12 @@ JNIEnv* currentEnv();
 void setContext(JNIEnv* env, jobject anyContext);
 jobject applicationContext(JNIEnv* env);
 
+// The activity running main(), for what only an Activity answers, such as
+// requestPermissions. A recreated activity is a new object, so it is set again
+// for each one, and null clears it. A new local reference comes back, or null.
+void setActivity(JNIEnv* env, jobject activity);
+jobject activity(JNIEnv* env);
+
 // Logs and clears a pending exception; true when there was one.
 bool failed(JNIEnv* env);
 
