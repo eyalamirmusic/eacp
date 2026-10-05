@@ -400,7 +400,8 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
 // Built per pipeline; a kernel declaring no texture uses VulkanShared's.
 PipelineLayouts makeComputeLayouts(VkDevice device,
                                    int bufferSlots,
-                                   const VulkanTextureBindings& textures);
+                                   const VulkanTextureBindings& textures,
+                                   bool partiallyBound);
 
 // Pointed to by ShaderLibrary::nativeLibrary().
 struct VulkanShaderProgram
