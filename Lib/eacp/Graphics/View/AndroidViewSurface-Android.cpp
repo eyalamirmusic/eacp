@@ -59,6 +59,7 @@ public:
         record.pixelWidth = window.pixelWidth;
         record.pixelHeight = window.pixelHeight;
         record.scale = window.scale;
+        record.stretchesBuffer = true;
 
         return changed;
     }
