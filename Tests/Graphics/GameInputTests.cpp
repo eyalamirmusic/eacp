@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Logging.h>
 #include <eacp/Graphics/Input/HidKeyCodes.h>
 
 #include <thread>
@@ -238,6 +240,224 @@ auto tSnapshotFollowsHeldState =
     check(idle.events().empty());
 };
 
+auto tGamepadConnects = test("GameInput/aConnectedGamepadShowsUp") = []
+{
+    auto queue = GameInputQueue {};
+
+    check(queue.snapshot(1.0).gamepads().empty());
+
+    queue.gamepadConnected(7, GamepadFamily::Nintendo, 0, 1.1);
+    const auto& frame = queue.snapshot(1.2);
+
+    check(frame.gamepadsChanged());
+    check(frame.gamepads().size() == 1);
+    check(frame.gamepads()[0].id() == 7);
+    check(frame.gamepads()[0].family() == GamepadFamily::Nintendo);
+    check(frame.gamepads()[0].playerIndex() == 0);
+    check(frame.events().size() == 1);
+    check(frame.events()[0].type == InputEventType::GamepadConnected);
+    check(frame.events()[0].gamepad == 7);
+
+    const auto& next = queue.snapshot(1.3);
+
+    check(!next.gamepadsChanged());
+    check(next.gamepads().size() == 1);
+};
+
+auto tGamepadButtonEdges = test("GameInput/gamepadButtonsHaveKeyEdges") = []
+{
+    auto queue = GameInputQueue {};
+    queue.gamepadConnected(1, GamepadFamily::Xbox, 0, 1.0);
+
+    queue.gamepadButtonChanged(1, GamepadButton::South, true, 1.1);
+    const auto& first = queue.snapshot(1.2);
+    const auto& pressed = first.gamepads()[0];
+
+    check(pressed.isDown(GamepadButton::South));
+    check(pressed.wasPressed(GamepadButton::South));
+    check(!pressed.isDown(GamepadButton::East));
+
+    queue.gamepadButtonChanged(1, GamepadButton::South, true, 1.3);
+    const auto& second = queue.snapshot(1.4);
+    const auto& held = second.gamepads()[0];
+
+    check(held.isDown(GamepadButton::South));
+    check(!held.wasPressed(GamepadButton::South));
+    check(second.events().empty());
+
+    queue.gamepadButtonChanged(1, GamepadButton::South, false, 1.5);
+    queue.gamepadButtonChanged(1, GamepadButton::North, true, 1.5);
+    queue.gamepadButtonChanged(1, GamepadButton::North, false, 1.6);
+    const auto& third = queue.snapshot(1.7);
+    const auto& released = third.gamepads()[0];
+
+    check(!released.isDown(GamepadButton::South));
+    check(released.wasReleased(GamepadButton::South));
+    check(released.wasPressed(GamepadButton::North));
+    check(released.wasReleased(GamepadButton::North));
+    check(!released.isDown(GamepadButton::North));
+};
+
+auto tGamepadAxisIsLatest = test("GameInput/aGamepadAxisIsItsLatestValue") = []
+{
+    auto queue = GameInputQueue {};
+    queue.gamepadConnected(1, GamepadFamily::Generic, -1, 1.0);
+    queue.snapshot(1.0);
+
+    queue.gamepadAxisChanged(1, GamepadAxis::LeftX, 0.25f);
+    queue.gamepadAxisChanged(1, GamepadAxis::LeftX, -0.5f);
+    queue.gamepadAxisChanged(1, GamepadAxis::LeftY, 1.0f);
+    queue.gamepadAxisChanged(1, GamepadAxis::RightTrigger, 0.75f);
+    const auto& frame = queue.snapshot(1.1);
+    const auto& pad = frame.gamepads()[0];
+
+    check(pad.axis(GamepadAxis::LeftX) == -0.5f);
+    check(pad.leftStick().x == -0.5f);
+    check(pad.leftStick().y == 1.0f);
+    check(pad.axis(GamepadAxis::RightTrigger) == 0.75f);
+    check(pad.rightStick().x == 0.0f);
+    check(frame.events().empty());
+
+    const auto& next = queue.snapshot(1.2);
+
+    check(next.gamepads()[0].axis(GamepadAxis::LeftX) == -0.5f);
+};
+
+auto tGamepadDisconnect =
+    test("GameInput/disconnectingAGamepadReleasesAndZeroesIt") = []
+{
+    auto queue = GameInputQueue {};
+    queue.gamepadConnected(3, GamepadFamily::PlayStation, 1, 1.0);
+    queue.gamepadButtonChanged(3, GamepadButton::West, true, 1.0);
+    queue.gamepadAxisChanged(3, GamepadAxis::LeftY, 1.0f);
+    queue.snapshot(1.1);
+
+    queue.gamepadDisconnected(3, 1.2);
+    const auto& gone = queue.snapshot(1.3);
+
+    check(gone.gamepadsChanged());
+    check(gone.gamepads().empty());
+    check(gone.events().size() == 2);
+    check(gone.events()[0].type == InputEventType::GamepadUp);
+    check(gone.events()[0].code == (uint16_t) GamepadButton::West);
+    check(gone.events()[1].type == InputEventType::GamepadDisconnected);
+
+    queue.gamepadButtonChanged(3, GamepadButton::West, true, 1.4);
+    queue.gamepadConnected(3, GamepadFamily::PlayStation, 1, 1.5);
+    const auto& back = queue.snapshot(1.6);
+    const auto& pad = back.gamepads()[0];
+
+    check(!pad.isDown(GamepadButton::West));
+    check(pad.axis(GamepadAxis::LeftY) == 0.0f);
+};
+
+auto tReleaseAllZeroesAxes =
+    test("GameInput/releaseAllReleasesGamepadsAndZeroesAxes") = []
+{
+    auto queue = GameInputQueue {};
+    queue.gamepadConnected(1, GamepadFamily::Xbox, 0, 1.0);
+    queue.gamepadButtonChanged(1, GamepadButton::RightShoulder, true, 1.0);
+    queue.gamepadAxisChanged(1, GamepadAxis::LeftY, 1.0f);
+    queue.gamepadAxisChanged(1, GamepadAxis::LeftTrigger, 0.5f);
+    queue.snapshot(1.1);
+
+    queue.releaseAll(1.2);
+    const auto& frame = queue.snapshot(1.3);
+    const auto& pad = frame.gamepads()[0];
+
+    check(!frame.gamepadsChanged());
+    check(!pad.isDown(GamepadButton::RightShoulder));
+    check(pad.wasReleased(GamepadButton::RightShoulder));
+    check(pad.leftStick().y == 0.0f);
+    check(pad.axis(GamepadAxis::LeftTrigger) == 0.0f);
+};
+
+auto tGamepadOverflow = test("GameInput/anOverflowKeepsGamepadStateRight") = []
+{
+    auto queue = GameInputQueue {4};
+
+    for (auto index = 0; index < 20; ++index)
+        queue.mouseMoved({1.0f, 0.0f}, 1.0);
+
+    queue.gamepadConnected(5, GamepadFamily::Nintendo, 2, 1.1);
+    queue.gamepadButtonChanged(5, GamepadButton::South, true, 1.1);
+    queue.gamepadButtonChanged(5, GamepadButton::East, true, 1.1);
+    queue.gamepadButtonChanged(5, GamepadButton::East, false, 1.2);
+    queue.gamepadAxisChanged(5, GamepadAxis::RightX, -1.0f);
+
+    const auto& frame = queue.snapshot(1.3);
+
+    check(frame.droppedEvents());
+    check(frame.gamepadsChanged());
+    check(frame.gamepads().size() == 1);
+
+    const auto& pad = frame.gamepads()[0];
+
+    check(pad.family() == GamepadFamily::Nintendo);
+    check(pad.playerIndex() == 2);
+    check(pad.isDown(GamepadButton::South));
+    check(!pad.isDown(GamepadButton::East));
+    check(pad.axis(GamepadAxis::RightX) == -1.0f);
+
+    for (auto index = 0; index < 20; ++index)
+        queue.mouseMoved({1.0f, 0.0f}, 1.4);
+
+    queue.gamepadDisconnected(5, 1.4);
+    const auto& gone = queue.snapshot(1.5);
+
+    check(gone.droppedEvents());
+    check(gone.gamepadsChanged());
+    check(gone.gamepads().empty());
+};
+
+auto tTwoGamepadsApart = test("GameInput/twoGamepadsAreKeptApartById") = []
+{
+    auto queue = GameInputQueue {};
+    queue.gamepadConnected(10, GamepadFamily::Xbox, 0, 1.0);
+    queue.gamepadConnected(11, GamepadFamily::PlayStation, 1, 1.0);
+
+    queue.gamepadButtonChanged(11, GamepadButton::South, true, 1.1);
+    queue.gamepadAxisChanged(10, GamepadAxis::LeftX, 0.5f);
+    const auto& frame = queue.snapshot(1.2);
+
+    check(frame.gamepads().size() == 2);
+
+    const auto& first = frame.gamepads()[0];
+    const auto& second = frame.gamepads()[1];
+
+    check(first.id() == 10);
+    check(second.id() == 11);
+    check(!first.isDown(GamepadButton::South));
+    check(second.isDown(GamepadButton::South));
+    check(first.axis(GamepadAxis::LeftX) == 0.5f);
+    check(second.axis(GamepadAxis::LeftX) == 0.0f);
+
+    queue.gamepadDisconnected(10, 1.3);
+    const auto& left = queue.snapshot(1.4);
+
+    check(left.gamepads().size() == 1);
+    check(left.gamepads()[0].id() == 11);
+    check(left.gamepads()[0].isDown(GamepadButton::South));
+};
+
+auto tManyGamepads = test("GameInput/eightGamepadsFitAndTheNinthIsIgnored") = []
+{
+    auto queue = GameInputQueue {};
+
+    for (auto id = 0; id < GameInputFrame::maxGamepads + 1; ++id)
+        queue.gamepadConnected(id, GamepadFamily::Generic, -1, 1.0);
+
+    for (auto id = 0; id < GameInputFrame::maxGamepads + 1; ++id)
+        queue.gamepadButtonChanged(id, GamepadButton::Start, true, 1.1);
+
+    const auto& frame = queue.snapshot(1.2);
+
+    check(frame.gamepads().size() == (size_t) GameInputFrame::maxGamepads);
+
+    for (const auto& pad: frame.gamepads())
+        check(pad.isDown(GamepadButton::Start));
+};
+
 auto tRacingProducersLeaveNothingStuck =
     test("GameInput/racingProducersOnOneKeyLeaveNothingStuck") = []
 {
@@ -410,6 +630,20 @@ auto tRepeatOfAHeldKey = test("GameInput/aRepeatOfAHeldKeyIsNoNewPress") = []
     check(input.snapshot().events().empty());
 };
 
+namespace
+{
+// A controller plugged into the machine announces itself to a new feed, which
+// is an event; nothing presses a key or a mouse button.
+bool noKeyOrMouseEvents(const GameInputFrame& frame)
+{
+    for (auto& event: frame.events())
+        if (!event.isGamepad())
+            return false;
+
+    return true;
+}
+} // namespace
+
 auto tPlatformFeedComesAndGoes = test("GameInput/thePlatformFeedComesAndGoes") = []
 {
     auto window = Window {};
@@ -418,7 +652,7 @@ auto tPlatformFeedComesAndGoes = test("GameInput/thePlatformFeedComesAndGoes") =
     {
         auto input = GameInput {window};
         check(!input.backendName().empty());
-        check(input.snapshot().events().empty());
+        check(noKeyOrMouseEvents(input.snapshot()));
     }
 };
 
@@ -470,14 +704,14 @@ auto tTwoPlatformFeedsCoexist =
     first.reset();
 
     check(second->backendName() == name);
-    check(second->snapshot().events().empty());
+    check(noKeyOrMouseEvents(second->snapshot()));
     check(windowKeyReachesSnapshot(secondWindow, *second, KeyCode::A));
 
     second.reset();
 
     auto third = GameInput {firstWindow};
     check(!third.backendName().empty());
-    check(third.snapshot().events().empty());
+    check(noKeyOrMouseEvents(third.snapshot()));
     check(windowKeyReachesSnapshot(firstWindow, third, KeyCode::D));
 };
 
@@ -490,4 +724,77 @@ auto tWindowKeysUntilPlatformDelivers =
     check(input.backendName() == "Window events"
           || input.backendName() == "window keys, GameController mouse");
     check(windowKeyReachesSnapshot(window, input, KeyCode::W));
+};
+
+namespace
+{
+// The platform feed announces a controller on joining (Apple) or on its first
+// poll tick (Windows); one that is not there never does. GameController tells
+// a process about a controller through the main run loop, so the wait pumps it.
+bool aGamepadArrives(GameInput& input, double seconds)
+{
+    const auto deadline = GameInput::now() + seconds;
+
+    while (input.snapshot().gamepads().empty())
+    {
+        if (GameInput::now() > deadline)
+            return false;
+
+        eacp::Threads::runEventLoopFor(eacp::Time::MS {10});
+    }
+
+    return true;
+}
+} // namespace
+
+// Reports whatever controller is plugged into this machine, and passes with
+// none unless EACP_REQUIRE_GAMEPAD=1 says one is expected.
+auto tAPluggedInGamepadIsReported =
+    test("GameInput/aPluggedInGamepadIsReported") = []
+{
+    auto window = Window {};
+    auto input = GameInput {window};
+    window.events.input.activationChanged(true);
+
+    const auto required = eacp::getEnvValue("EACP_REQUIRE_GAMEPAD") == "1";
+
+    if (!aGamepadArrives(input, required ? 3.0 : 0.25))
+    {
+        eacp::LOG("GameInput: no gamepad connected");
+        check(!required, "EACP_REQUIRE_GAMEPAD=1 but no controller was reported");
+        return;
+    }
+
+    const auto& frame = input.snapshot();
+
+    for (auto& pad: frame.gamepads())
+    {
+        eacp::LOG("GameInput: gamepad ",
+                  pad.id(),
+                  ", family ",
+                  (int) pad.family(),
+                  ", player ",
+                  pad.playerIndex(),
+                  ", left stick ",
+                  pad.leftStick().x,
+                  ", ",
+                  pad.leftStick().y);
+
+        check(pad.id() >= 0);
+        check(pad.playerIndex() >= -1);
+
+        for (auto axis = 0; axis < GamepadState::axisCount; ++axis)
+        {
+            const auto value = pad.axis((GamepadAxis) axis);
+            check(value >= -1.0f && value <= 1.0f);
+        }
+    }
+
+    window.events.input.activationChanged(false);
+    const auto& released = input.snapshot();
+
+    check(released.gamepads().size() == frame.gamepads().size());
+
+    for (auto& pad: released.gamepads())
+        check(pad.leftStick().x == 0.0f && pad.leftStick().y == 0.0f);
 };

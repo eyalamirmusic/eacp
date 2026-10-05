@@ -45,6 +45,12 @@ add_subdirectory(ResourceMonitor)
 # finger on a desktop.
 add_subdirectory(TouchDemo)
 
+# Every control of a game controller doing something visible, through
+# GameInput's gamepads: a disc the sticks move and aim, triggers that fire and
+# shield, buttons that each do a thing and announce it, and a panel of all
+# fifteen buttons and six axes named as the controller's family prints them.
+add_subdirectory(GamepadDemo)
+
 # A gallery of SVG documents through the component tier, one at a time, with
 # what each one costs the coverage atlas read out beneath it.
 add_subdirectory(SVGDocument)
