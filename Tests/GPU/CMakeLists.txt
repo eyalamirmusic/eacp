@@ -81,6 +81,7 @@ set(gpu_test_sources
         ProgramGraphTests.cpp
         RecordedCountsTests.cpp
         RenderBufferRangeTests.cpp
+        RenderScaleTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
         SamplerTests.cpp
