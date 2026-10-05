@@ -2203,6 +2203,45 @@ workaround by itself and an unknown driver with the same gap picks it up.
 `EACP_D3D12_QUIRKS=1` sets every flag without asking, which is how the
 fallback paths are run against WARP.
 
+## Rendering fewer pixels than the view covers
+
+`GPUView::setRenderScale(0.5f)` renders a quarter of the pixels and lets the
+compositor stretch them over the view. It is for content whose cost is fragment
+shading on a dense panel — a 3D scene on a phone — where resolution is the
+thing to give up. The scale is clamped to `[0.25, 1]` and defaults to 1.
+
+Bounds, layout, touch and mouse stay in points and do not move. What shrinks is
+the drawable, and with it everything that describes the drawable:
+`Frame::pixelSize()` is the smaller size, and `Frame::backingScale()` and
+`GPUView::backingScale()` are the display's scale times the render scale, so
+`logicalSize()` is still the view's size in points. A projection read off the
+frame, a scissor rect built from `backingScale()`, a glyph atlas or a
+`ComponentHost` all keep working unchanged, and `onBackingScaleChanged` fires
+when the scale moves, as it does when the view changes display. A change is a
+resize as far as the drawable is concerned — the next frame renders at the new
+size — and off-screen snapshots ignore it: `renderToImage(scale)` renders at the
+scale it was asked for.
+
+Where it is honoured:
+
+| Backend | How |
+| --- | --- |
+| Metal | `CAMetalLayer.drawableSize` is the bounds times the scale; the layer stretches it over its bounds. |
+| D3D12 | The composition swapchain is that size and its visual's transform stretches it back. |
+| Vulkan on Android | The swapchain is built at the scaled extent; Android's WSI sets the window's buffer size to it with scale-to-window, and SurfaceFlinger stretches it to the display. |
+| Vulkan on Wayland | The same, where the compositor has `wp_viewporter`: the subsurface's viewport destination is in points, so any buffer is stretched over it. |
+| Vulkan on X11, Wayland without a viewporter | Not honoured. A child window takes its own size and nothing else, and a buffer scale is a whole number. The drawable stays full size and `backingScale()` says so; `renderScale()` still reports what was asked for. |
+
+On Android this is the mechanism `ANativeWindow_setBuffersGeometry` drives, not
+a call to it: the WSI sets the buffers' size from the swapchain's extent
+whatever the window's user size says, and setting that size would make
+`ANativeWindow_getWidth` report the smaller figure to the window, which lays the
+content out in points from it. A surface whose `min`/`maxImageExtent` will not
+take the smaller extent — Android before 10 pins both to the window — keeps the
+full one. Measured on a Galaxy A40 (Mali-G71, Android 11): HelloGPU's swapchain
+is 1080x2254 at 1, 810x1691 at 0.75 and 540x1127 at 0.5, and SurfaceFlinger
+reports that crop stretched to the full 1080x2254 frame.
+
 ## Reading pixels back
 
 `View::renderToImage` renders off-screen and hands back a `Graphics::Image`. It
@@ -2539,6 +2578,13 @@ CI lane's second test step.
   `currentExtent` as `0xFFFFFFFF` — there is no server-side surface size — so the
   extent comes from the record's `pixelWidth`/`pixelHeight`; X11 reports the
   child window's real size and that is taken as it stands.
+- **The render scale** shrinks the extent after all of the above when the
+  record's `stretchesBuffer` says the window system will stretch a smaller
+  buffer over the surface (a Wayland subsurface with a viewport, every Android
+  surface), and only when the clamp to `min`/`maxImageExtent` leaves the
+  scaled extent alone; otherwise the full extent is built and the scale the
+  view reports stays 1. Changing it marks the swapchain stale, like a resize.
+  See "Rendering fewer pixels than the view covers".
 - **Rotation on Android** is the compositor's. The swapchain is built
   identity, the window's own size, and the frame is drawn upright in the
   window's coordinates; the compositor turns it. Pre-rotating instead would

@@ -178,13 +178,15 @@ struct GPUView::Native : DeviceResourceHolder
 
     static float dpiScale() { return static_cast<float>(GetDpiForSystem()) / 96.f; }
 
+    float drawableScale() const { return dpiScale() * renderScale; }
+
     void updateSize()
     {
         if (!compositionDevice || device == nullptr)
             return;
 
         auto bounds = view.getLocalBounds();
-        auto scale = dpiScale();
+        auto scale = drawableScale();
         width = static_cast<UINT>(bounds.w * scale);
         height = static_cast<UINT>(bounds.h * scale);
 
@@ -272,8 +274,9 @@ struct GPUView::Native : DeviceResourceHolder
     // DComp takes a swapchain as visual content directly — no interop surface and
     // no surface brush, which is what WinRT needed CreateCompositionSurfaceForSwap
     // Chain + CompositionStretch::Fill for. The swapchain is already sized in
-    // physical pixels, so the visual counter-scales by 1/dpiScale to cancel the
-    // root's DPI transform (see NativeLayer-Windows.h).
+    // physical pixels times the render scale, so the visual counter-scales by
+    // 1/drawableScale to cancel the root's DPI transform (see
+    // NativeLayer-Windows.h) and stretch a reduced swapchain over the view.
     void attachSwapChainToVisual()
     {
         if (!spriteVisual || !swapChain)
@@ -286,7 +289,7 @@ struct GPUView::Native : DeviceResourceHolder
 
     void applyContentScale()
     {
-        auto scale = dpiScale();
+        auto scale = drawableScale();
 
         if (spriteVisual && scale > 0.f)
             spriteVisual->SetTransform(
@@ -515,7 +518,7 @@ struct GPUView::Native : DeviceResourceHolder
                                &drawable,
                                useMsaa ? &msaa : nullptr,
                                useDepth ? &depth : nullptr,
-                               dpiScale());
+                               drawableScale());
             view.render(frame);
         }
 
@@ -603,6 +606,7 @@ struct GPUView::Native : DeviceResourceHolder
     // Device pixels per logical point, refreshed by updateSize(). Zero until the
     // first update, which is how the initial scale is told apart from a change.
     float backingScale = 0.f;
+    float renderScale = 1.f;
 
     IDCompositionDesktopDevice* compositionDevice = nullptr;
     Microsoft::WRL::ComPtr<IDCompositionVisual2> spriteVisual;
@@ -745,10 +749,30 @@ void GPUView::resizeFinished() {}
 
 float GPUView::backingScale() const
 {
-    if (renderScale > 0.f)
-        return renderScale;
+    if (snapshotScale > 0.f)
+        return snapshotScale;
 
-    return Native::dpiScale();
+    return impl->drawableScale();
+}
+
+void GPUView::setRenderScale(float scale)
+{
+    const auto clamped = clampRenderScale(scale);
+
+    if (clamped == impl->renderScale)
+        return;
+
+    impl->renderScale = clamped;
+    impl->updateSize();
+
+    // The visual's new stretch is not seen until the device commits it.
+    Graphics::commitComposition();
+    repaint();
+}
+
+float GPUView::renderScale() const
+{
+    return impl->renderScale;
 }
 
 void GPUView::paint(Graphics::Context& context)
@@ -949,9 +973,9 @@ Graphics::Image GPUView::renderNativeContent(float scale)
         auto frame = Frame(Device::shared(), target, scale);
 
         // Rendered as a view of this scale: see the Apple side.
-        renderScale = scale;
+        snapshotScale = scale;
         render(frame);
-        renderScale = 0.f;
+        snapshotScale = 0.f;
     }
     // The Frame destructor left the colour texture in COPY_SOURCE and ran the
     // GPU to completion.

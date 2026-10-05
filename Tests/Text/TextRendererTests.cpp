@@ -263,3 +263,64 @@ auto tDarkTextIsNoHeavier =
     if constexpr (Platform::isApple())
         check(lightInk > darkInk * 1.03f);
 };
+
+namespace
+{
+constexpr const char* proportionalFamily()
+{
+    if constexpr (Platform::isWindows())
+        return "Segoe UI";
+
+    if constexpr (Platform::isLinux())
+        return "DejaVu Sans";
+
+    if constexpr (Platform::isAndroid())
+        return "sans-serif";
+
+    return "Helvetica Neue";
+}
+
+bool familyResolves(const char* family)
+{
+    auto request = FontRequest {};
+    request.family = family;
+    request.pointSize = 15.f;
+
+    return GlyphRasterizer {request}.isValid();
+}
+
+float measuredAt(float scale, const char* family)
+{
+    auto text = TextRenderer {15.f, family};
+    text.setViewport({320.f, 240.f}, scale);
+
+    return text.measure("Tap the cow to start, drag to look around");
+}
+} // namespace
+
+// Layout is in points, so a width must not move with the pixels the atlas is
+// rasterized at - a footer that wraps at one render scale and fits at another
+// is the bug. 2.625 is a 420 dpi phone and 1.3125 is it at render scale 0.5.
+auto tMeasureIsScaleIndependent =
+    test("TextRenderer/measureIsTheSameAtEveryScale") = []
+{
+    for (const auto* family: {defaultMonospaceFamily(), proportionalFamily()})
+    {
+        if (!familyResolves(family))
+            continue;
+
+        const auto reference = measuredAt(1.f, family);
+
+        check(reference > 0.f);
+
+        for (auto scale: {2.f, 2.f * 0.5f, 2.625f, 2.625f * 0.5f, 3.f * 0.25f})
+        {
+            const auto width = measuredAt(scale, family);
+
+            check(std::abs(width - reference) <= reference * 0.002f,
+                  std::string {family} + " measured " + std::to_string(width)
+                      + " points at scale " + std::to_string(scale) + " against "
+                      + std::to_string(reference) + " at 1");
+        }
+    }
+};

@@ -116,6 +116,25 @@ public:
     void setFramesInFlight(int count);
     int framesInFlight() const;
 
+    // Renders fewer pixels than the view covers and lets the compositor stretch
+    // them over it: 0.5 draws a quarter of them. For content bound by fragment
+    // shading on a dense panel, this is the cost that drops.
+    //
+    // Clamped to [0.25, 1], 1 by default. Bounds, layout and touch stay in
+    // points and are unaffected; what shrinks is the drawable, and with it
+    // Frame::pixelSize() and backingScale(), which report the pixels a frame
+    // really has - so a projection read off the frame, a scissor rect in
+    // pixels and a glyph atlas sized from the scale all stay right, and
+    // onBackingScaleChanged fires when the scale moves. A change rebuilds the
+    // drawable like a resize, and the next frame renders at the new size.
+    //
+    // Honoured where the window system stretches a buffer over its surface:
+    // Metal, D3D12, Android, and Wayland with wp_viewporter. On X11, and on
+    // Wayland without a viewporter, the drawable stays the view's full size and
+    // renderScale() still reports what was asked for.
+    void setRenderScale(float scale);
+    float renderScale() const;
+
     // Device pixels per logical point for the display this view is on: 2 on a
     // Retina screen, 1 on a conventional one, and fractional under a Windows
     // display scale. The public geometry (Rect, Point, the view's bounds) is all
@@ -162,7 +181,9 @@ private:
     // backingScale() reports then, so the masks, glyphs and scissor rects of
     // that frame are built for the pixels it is rendered into rather than for
     // the display the view happens to be on. Zero between renders.
-    float renderScale = 0.f;
+    float snapshotScale = 0.f;
+
+    static float clampRenderScale(float scale);
 
     struct Native;
     Pimpl<Native> impl;
