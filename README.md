@@ -51,7 +51,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   framework off the main thread, so they are captured while the app is still
   drawing; elsewhere they come from the window's own events. Input counts
   only while the window has key focus, and losing it releases every key.
-  `Apps/GPU/Maze` is a first-person maze driven by it.
+  `frame.gamepads()` lists the connected controllers — buttons named by
+  position, sticks and triggers as raw axes — from GameController on Apple
+  and XInput on Windows, so an Xbox controller on USB or Bluetooth works on
+  both. `Apps/GPU/Maze` is a first-person maze driven by it.
 - **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
   Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
   struct rather than a string literal per backend. The same compute kernel also
@@ -129,7 +132,7 @@ Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
 | `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
 | `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
 | `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
-| `GameInput` — polled keyboard and mouse for a game loop | ✅ ‡ | ✅ | ✅ ‡ | ✅ |
+| `GameInput` — polled keyboard, mouse and gamepads for a game loop | ✅ ‡ | ✅ ‡ | ✅ ‡ | ✅ |
 | `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
 | `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ |
 | `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
@@ -148,8 +151,9 @@ fractional scaling and mouse lock. Audio-plugin hosting has what it needs
 can pump), and `EACP_HEADLESS=1` runs every window and every GPU test with no
 display server at all. [`Docs/Linux.md`](Docs/Linux.md) is the full account.
 
-‡ Fed by the GameController framework on Apple platforms, which times events
-off the main thread; fed by the window's own key and mouse events elsewhere.
+‡ Keys and mouse are fed by the GameController framework on Apple platforms,
+which times events off the main thread, and by the window's own events
+elsewhere; gamepads come from GameController on Apple and XInput on Windows.
 
 CI builds and tests macOS (universal), Windows x64 and ARM64 (MSVC and
 clang-cl) and Linux (GCC, Clang, and a lane that runs the graphics stack on

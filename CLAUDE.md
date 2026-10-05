@@ -698,16 +698,26 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   backend (`GameInput-Apple.mm`, GameController's `GCKeyboard`/`GCMouse` on a
   serial high-priority queue, shared through a ref-counted hub because the
   framework has one handler slot per device) owns a feed only once it has
-  delivered an event; `GameInput-Default.cpp` returns no backend on Windows,
-  Linux and Android, so those use `Window::events.input` alone. Input counts only
+  delivered an event; `GameInput-Default.cpp` returns no backend on Linux
+  and Android, so those use `Window::events.input` alone. Input counts only
   while the window is key. `GameInputSource::WindowEvents` forces the window
   feed. Gamepads (`GamepadState` in `frame.gamepads()`, buttons named by
   position, raw sticks -1..1 y up and triggers 0..1, up to eight by stable id)
-  come from `GCController` extended gamepads on Apple and nowhere else yet;
-  axes are state, buttons follow the key rules, and disconnecting or
+  come from `GCController` extended gamepads on Apple and from XInput on
+  Windows (`GameInput-Windows.cpp`: `xinput1_4.dll` loaded by name, the
+  ordinal-100 `XInputGetState` so the Guide button is `Home`, one poll
+  thread per process on a 4 ms high-resolution waitable timer feeding every
+  `GameInput`'s queue through a ref-counted hub like the Apple one; a
+  connected slot is read every tick, an empty one once a second, the
+  XInput user index is the player index, every pad is `GamepadFamily::Xbox`,
+  and keys and mouse stay the window's, so `backendName()` still says
+  "Window events"); Linux and Android have none yet.
+  Axes are state, buttons follow the key rules, and disconnecting or
   `releaseAll` releases the buttons and zeroes the axes.
-  `Tests/Graphics/GameInputTests.cpp` (27 `GameInput/` cases) drives the
-  queue directly and real windows; `Apps/GPU/Maze` is the demo
+  `Tests/Graphics/GameInputTests.cpp` (28 `GameInput/` cases) drives the
+  queue directly and real windows; the last one reports a controller that is
+  actually plugged in and passes without one unless `EACP_REQUIRE_GAMEPAD=1`.
+  `Apps/GPU/Maze` is the demo
 - `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
   layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a
   foreign toolkit parents its own editor into, for plugin hosts. The macOS

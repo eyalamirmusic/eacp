@@ -104,7 +104,7 @@ elseif (WIN32)
             Helpers/ImageConversion-Windows.cpp
             HotKey/GlobalHotKey-Windows.cpp
             Image/Image-Windows.cpp
-            Input/GameInput-Default.cpp
+            Input/GameInput-Windows.cpp
             Layers/Layer-Windows.cpp
             Layers/NativeLayer-Windows.cpp
             Layers/ShapeLayer-Windows.cpp

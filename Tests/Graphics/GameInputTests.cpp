@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Logging.h>
 #include <eacp/Graphics/Input/HidKeyCodes.h>
 
 #include <thread>
@@ -628,6 +630,20 @@ auto tRepeatOfAHeldKey = test("GameInput/aRepeatOfAHeldKeyIsNoNewPress") = []
     check(input.snapshot().events().empty());
 };
 
+namespace
+{
+// A controller plugged into the machine announces itself to a new feed, which
+// is an event; nothing presses a key or a mouse button.
+bool noKeyOrMouseEvents(const GameInputFrame& frame)
+{
+    for (auto& event: frame.events())
+        if (!event.isGamepad())
+            return false;
+
+    return true;
+}
+} // namespace
+
 auto tPlatformFeedComesAndGoes = test("GameInput/thePlatformFeedComesAndGoes") = []
 {
     auto window = Window {};
@@ -636,7 +652,7 @@ auto tPlatformFeedComesAndGoes = test("GameInput/thePlatformFeedComesAndGoes") =
     {
         auto input = GameInput {window};
         check(!input.backendName().empty());
-        check(input.snapshot().events().empty());
+        check(noKeyOrMouseEvents(input.snapshot()));
     }
 };
 
@@ -688,14 +704,14 @@ auto tTwoPlatformFeedsCoexist =
     first.reset();
 
     check(second->backendName() == name);
-    check(second->snapshot().events().empty());
+    check(noKeyOrMouseEvents(second->snapshot()));
     check(windowKeyReachesSnapshot(secondWindow, *second, KeyCode::A));
 
     second.reset();
 
     auto third = GameInput {firstWindow};
     check(!third.backendName().empty());
-    check(third.snapshot().events().empty());
+    check(noKeyOrMouseEvents(third.snapshot()));
     check(windowKeyReachesSnapshot(firstWindow, third, KeyCode::D));
 };
 
@@ -708,4 +724,76 @@ auto tWindowKeysUntilPlatformDelivers =
     check(input.backendName() == "Window events"
           || input.backendName() == "window keys, GameController mouse");
     check(windowKeyReachesSnapshot(window, input, KeyCode::W));
+};
+
+namespace
+{
+// The platform feed announces a controller on joining (Apple) or on its first
+// poll tick (Windows); one that is not there never does.
+bool aGamepadArrives(GameInput& input, double seconds)
+{
+    const auto deadline = GameInput::now() + seconds;
+
+    while (input.snapshot().gamepads().empty())
+    {
+        if (GameInput::now() > deadline)
+            return false;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds {10});
+    }
+
+    return true;
+}
+} // namespace
+
+// Reports whatever controller is plugged into this machine, and passes with
+// none unless EACP_REQUIRE_GAMEPAD=1 says one is expected.
+auto tAPluggedInGamepadIsReported =
+    test("GameInput/aPluggedInGamepadIsReported") = []
+{
+    auto window = Window {};
+    auto input = GameInput {window};
+    window.events.input.activationChanged(true);
+
+    const auto required = eacp::getEnvValue("EACP_REQUIRE_GAMEPAD") == "1";
+
+    if (!aGamepadArrives(input, required ? 3.0 : 0.25))
+    {
+        eacp::LOG("GameInput: no gamepad connected");
+        check(!required, "EACP_REQUIRE_GAMEPAD=1 but no controller was reported");
+        return;
+    }
+
+    const auto& frame = input.snapshot();
+
+    for (auto& pad: frame.gamepads())
+    {
+        eacp::LOG("GameInput: gamepad ",
+            pad.id(),
+            ", family ",
+            (int) pad.family(),
+            ", player ",
+            pad.playerIndex(),
+            ", left stick ",
+            pad.leftStick().x,
+            ", ",
+            pad.leftStick().y);
+
+        check(pad.id() >= 0);
+        check(pad.playerIndex() >= -1);
+
+        for (auto axis = 0; axis < GamepadState::axisCount; ++axis)
+        {
+            const auto value = pad.axis((GamepadAxis) axis);
+            check(value >= -1.0f && value <= 1.0f);
+        }
+    }
+
+    window.events.input.activationChanged(false);
+    const auto& released = input.snapshot();
+
+    check(released.gamepads().size() == frame.gamepads().size());
+
+    for (auto& pad: released.gamepads())
+        check(pad.leftStick().x == 0.0f && pad.leftStick().y == 0.0f);
 };
