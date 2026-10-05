@@ -46,13 +46,20 @@ struct ComputePass::Native
         if (set == VK_NULL_HANDLE)
             return false;
 
+        // Every slot the layout has is written: the device may not leave a
+        // slot the kernel uses empty, so one nothing was bound to - or whose
+        // bind was refused - takes a placeholder.
+        const auto& placeholders = getVulkanShared().getPlaceholders();
+        const auto placeholderSampler = getVulkanShared().getSampler({});
+
         VkWriteDescriptorSet writes[maxBufferSlots + maxTextureSlots + 1] = {};
+        VkDescriptorImageInfo placeholderImages[maxTextureSlots] = {};
+        const auto placeholderBuffer = placeholders.storageBuffer();
         auto writeCount = std::uint32_t {0};
 
         for (auto slot = 0; slot < maxBufferSlots; ++slot)
         {
-            if ((boundBuffers & (1u << slot)) == 0)
-                continue;
+            const auto isBound = (boundBuffers & (1u << slot)) != 0;
 
             auto& write = writes[writeCount++];
             write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -61,11 +68,11 @@ struct ComputePass::Native
                 static_cast<std::uint32_t>(vulkanComputeBufferBinding(slot));
             write.descriptorCount = 1;
             write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            write.pBufferInfo = &buffers[slot];
+            write.pBufferInfo = isBound ? &buffers[slot] : &placeholderBuffer;
         }
 
         // The type the kernel declared is the only type a write to that binding
-        // may name, so a bind made the other way is dropped.
+        // may name, so a bind made the other way is replaced.
         for (auto slot = 0; slot < maxTextureSlots; ++slot)
         {
             if (!pipeline->textures.has(slot))
@@ -77,8 +84,11 @@ struct ComputePass::Native
                 : type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE        ? storageTextures
                                                                   : 0u;
 
-            if ((bound & (1u << slot)) == 0)
-                continue;
+            const auto isBound = (bound & (1u << slot)) != 0;
+
+            if (!isBound)
+                placeholderImages[slot] = placeholders.image(
+                    type, pipeline->textures.viewTypeAt(slot), placeholderSampler);
 
             auto& write = writes[writeCount++];
             write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -87,34 +97,28 @@ struct ComputePass::Native
                 static_cast<std::uint32_t>(vulkanComputeTextureBinding(slot));
             write.descriptorCount = 1;
             write.descriptorType = type;
-            write.pImageInfo = &textures[slot];
+            write.pImageInfo = isBound ? &textures[slot] : &placeholderImages[slot];
         }
 
-        VkDescriptorBufferInfo uniformInfo = {};
+        // Offset zero; the dynamic offset below carries the block's place.
+        const auto uniformInfo =
+            uniforms.isValid()
+                ? VkDescriptorBufferInfo {uniforms.buffer, 0, uniforms.range}
+                : placeholders.uniformBuffer();
 
-        if (uniforms.isValid())
-        {
-            // Offset zero; the dynamic offset below carries the block's place.
-            uniformInfo.buffer = uniforms.buffer;
-            uniformInfo.offset = 0;
-            uniformInfo.range = uniforms.range;
+        auto& uniformWrite = writes[writeCount++];
+        uniformWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        uniformWrite.dstSet = set;
+        uniformWrite.dstBinding =
+            static_cast<std::uint32_t>(vulkanComputeUniformBinding);
+        uniformWrite.descriptorCount = 1;
+        uniformWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        uniformWrite.pBufferInfo = &uniformInfo;
 
-            auto& write = writes[writeCount++];
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = set;
-            write.dstBinding =
-                static_cast<std::uint32_t>(vulkanComputeUniformBinding);
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-            write.pBufferInfo = &uniformInfo;
-        }
+        vkUpdateDescriptorSets(
+            commands.context->getDevice(), writeCount, writes, 0, nullptr);
 
-        if (writeCount > 0)
-            vkUpdateDescriptorSets(
-                commands.context->getDevice(), writeCount, writes, 0, nullptr);
-
-        // The layout always declares one dynamic descriptor, so one offset has
-        // to be passed even with no uniform block bound.
+        // Zero for the placeholder, which is the invalid range's offset.
         const auto dynamicOffset = static_cast<std::uint32_t>(uniforms.offset);
 
         vkCmdBindDescriptorSets(commands.buffer,

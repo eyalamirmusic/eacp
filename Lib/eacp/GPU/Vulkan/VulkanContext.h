@@ -2,6 +2,7 @@
 
 #include "../Spirv/SpirvCompiler.h"
 #include "../Texture/Texture.h"
+#include "VulkanPlaceholders.h"
 
 #include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Containers.h>
@@ -219,7 +220,7 @@ public:
     VulkanShared(const VulkanShared&) = delete;
     VulkanShared& operator=(const VulkanShared&) = delete;
 
-    bool isValid() const { return device != VK_NULL_HANDLE; }
+    bool isValid() const { return device != VK_NULL_HANDLE && placeholdersReady; }
 
     VkInstance getInstance() const { return instance; }
     VkPhysicalDevice getPhysicalDevice() const { return physicalDevice; }
@@ -243,7 +244,8 @@ public:
     // record and submit through the Vulkan 1.0 calls.
     bool usesSynchronization2() const { return synchronization2Path; }
 
-    bool usesPartiallyBound() const { return partiallyBoundPath; }
+    // What a declared slot nothing was bound to is given.
+    const VulkanPlaceholders& getPlaceholders() const { return placeholders; }
 
     VulkanRenderPassCache& getRenderPasses() { return renderPasses; }
 
@@ -318,7 +320,6 @@ private:
     bool coreFloor = false;
     bool renderPassPath = false;
     bool synchronization2Path = false;
-    bool partiallyBoundPath = false;
     Spirv::Target spirvTarget = Spirv::Target::vulkan13Spirv16;
     VulkanRenderPassCache renderPasses;
     bool depthResolvesBySampleZero = false;
@@ -330,6 +331,9 @@ private:
 
     PipelineLayouts computeLayouts;
     PipelineLayouts renderLayouts;
+
+    VulkanPlaceholders placeholders;
+    bool placeholdersReady = false;
 
     std::mutex queueMutex;
 

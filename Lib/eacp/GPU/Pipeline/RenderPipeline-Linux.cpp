@@ -391,6 +391,7 @@ struct RenderPipeline::Native
             || program->fragment == VK_NULL_HANDLE)
             return;
 
+        state.textures = program->textures;
         build(*program, layouts, descriptor);
     }
 

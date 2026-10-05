@@ -313,7 +313,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL
 }
 
 // The floor the backend is written against - Vulkan 1.3 core, or 1.1 with
-// extensions - and the two capabilities it uses where a device has them.
+// extensions - and synchronization2, which it uses where a device has it.
 struct DeviceCapabilities
 {
     bool timelineSemaphore = false;
@@ -321,7 +321,6 @@ struct DeviceCapabilities
     bool shaderStorageImageWriteWithoutFormat = false;
 
     bool synchronization2 = false;
-    bool descriptorBindingPartiallyBound = false;
 
     // Empty when the floor is met.
     Vector<std::string> missingFloor() const
@@ -380,8 +379,6 @@ DeviceCapabilities probeCoreCapabilities(VkPhysicalDevice candidate)
     capabilities.shaderStorageImageWriteWithoutFormat =
         features.features.shaderStorageImageWriteWithoutFormat == VK_TRUE;
     capabilities.synchronization2 = features13.synchronization2 == VK_TRUE;
-    capabilities.descriptorBindingPartiallyBound =
-        features12.descriptorBindingPartiallyBound == VK_TRUE;
 
     return capabilities;
 }
@@ -394,8 +391,6 @@ DeviceCapabilities probeExtensionCapabilities(VkPhysicalDevice candidate)
         hasDeviceExtension(candidate, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
     const auto hasSynchronization2 =
         hasDeviceExtension(candidate, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
-    const auto hasIndexing =
-        hasDeviceExtension(candidate, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
 
     VkPhysicalDeviceFeatures2 features = {};
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -414,18 +409,11 @@ DeviceCapabilities probeExtensionCapabilities(VkPhysicalDevice candidate)
     synchronization2.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
 
-    VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing = {};
-    indexing.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-
     if (hasTimeline)
         chain(timeline);
 
     if (hasSynchronization2)
         chain(synchronization2);
-
-    if (hasIndexing)
-        chain(indexing);
 
     vkGetPhysicalDeviceFeatures2(candidate, &features);
 
@@ -438,8 +426,6 @@ DeviceCapabilities probeExtensionCapabilities(VkPhysicalDevice candidate)
     capabilities.shaderStorageImageWriteWithoutFormat =
         features.features.shaderStorageImageWriteWithoutFormat == VK_TRUE;
     capabilities.synchronization2 = synchronization2.synchronization2 == VK_TRUE;
-    capabilities.descriptorBindingPartiallyBound =
-        indexing.descriptorBindingPartiallyBound == VK_TRUE;
 
     return capabilities;
 }
@@ -545,25 +531,14 @@ void addLayoutBinding(Vector<VkDescriptorSetLayoutBinding>& bindings,
     bindings.add(entry);
 }
 
-// Partially bound where the device allows it, so a shader may leave declared
-// slots unwritten.
+// Fully bound: every slot a pipeline uses is written at each bind, with a
+// placeholder where the app bound nothing.
 bool makePipelineLayouts(VkDevice device,
                          const Vector<VkDescriptorSetLayoutBinding>& bindings,
-                         bool partiallyBound,
                          PipelineLayouts& layouts)
 {
-    auto flags = Vector<VkDescriptorBindingFlags> {};
-    flags.resize(bindings.size(), VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
-
-    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlags = {};
-    bindingFlags.sType =
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-    bindingFlags.bindingCount = static_cast<std::uint32_t>(flags.size());
-    bindingFlags.pBindingFlags = flags.data();
-
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.pNext = partiallyBound ? &bindingFlags : nullptr;
     layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
@@ -640,6 +615,8 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
     // written with the image instructions.
     constexpr auto sampledThroughASampler = std::uint32_t {1};
 
+    constexpr auto dimCube = std::uint32_t {3};
+
     const auto bound = static_cast<int>(words[3]);
 
     if (bound <= 0)
@@ -655,6 +632,14 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
 
     auto kinds = Vector<IdKind> {};
     kinds.resize(bound, IdKind::unknown);
+
+    // For an OpTypeImage, whether its Dim is Cube; for an OpTypeSampledImage,
+    // the image type it wraps.
+    auto isCube = Vector<std::uint8_t> {};
+    isCube.resize(bound, std::uint8_t {0});
+
+    auto wrappedImage = Vector<std::uint32_t> {};
+    wrappedImage.resize(bound, 0u);
 
     // For an OpTypePointer, the id of what it points at; 0 for everything else.
     auto pointee = Vector<std::uint32_t> {};
@@ -695,14 +680,18 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
         else if (opcode == opTypeImage && wordCount >= 9
                  && inRange(words[index + 1]))
         {
-            kinds[static_cast<int>(words[index + 1])] =
-                words[index + 7] == sampledThroughASampler ? IdKind::readImage
-                                                           : IdKind::storageImage;
+            const auto id = static_cast<int>(words[index + 1]);
+
+            kinds[id] = words[index + 7] == sampledThroughASampler
+                            ? IdKind::readImage
+                            : IdKind::storageImage;
+            isCube[id] = words[index + 3] == dimCube ? 1 : 0;
         }
         else if (opcode == opTypeSampledImage && wordCount >= 3
                  && inRange(words[index + 1]))
         {
             kinds[static_cast<int>(words[index + 1])] = IdKind::sampledImage;
+            wrappedImage[static_cast<int>(words[index + 1])] = words[index + 2];
         }
         else if (opcode == opTypePointer && wordCount >= 4
                  && inRange(words[index + 1]))
@@ -729,18 +718,27 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
         if (!inRange(pointed))
             continue;
 
-        switch (kinds[static_cast<int>(pointed)])
+        const auto kind = kinds[static_cast<int>(pointed)];
+        const auto image = kind == IdKind::sampledImage
+                               ? wrappedImage[static_cast<int>(pointed)]
+                               : pointed;
+        const auto viewType = inRange(image) && isCube[static_cast<int>(image)] != 0
+                                  ? VK_IMAGE_VIEW_TYPE_CUBE
+                                  : VK_IMAGE_VIEW_TYPE_2D;
+
+        switch (kind)
         {
             case IdKind::sampledImage:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                bindings.add(
+                    slot, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, viewType);
                 break;
 
             case IdKind::storageImage:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+                bindings.add(slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, viewType);
                 break;
 
             case IdKind::readImage:
-                bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+                bindings.add(slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, viewType);
                 break;
 
             case IdKind::unknown:
@@ -759,7 +757,10 @@ VulkanShared::VulkanShared()
 VulkanShared::~VulkanShared()
 {
     if (allocator != nullptr)
+    {
+        placeholders.destroy(device, allocator);
         vmaDestroyAllocator(allocator);
+    }
 
     if (device != VK_NULL_HANDLE)
     {
@@ -809,6 +810,15 @@ void VulkanShared::createAll()
     if (!selectPhysicalDevice() || !createDevice() || !createAllocator()
         || !createComputeLayouts() || !createRenderLayouts())
     {
+        return;
+    }
+
+    placeholdersReady = placeholders.create(
+        device, allocator, queue, queueFamily, properties.limits);
+
+    if (!placeholdersReady)
+    {
+        LOG("Vulkan: the placeholder descriptors could not be created");
         return;
     }
 
@@ -1010,7 +1020,6 @@ bool VulkanShared::selectPhysicalDevice()
         spirvTarget = Spirv::Target::vulkan11Spirv13;
 
     synchronization2Path = capabilities.synchronization2 && !forcesLegacySync();
-    partiallyBoundPath = capabilities.descriptorBindingPartiallyBound;
 
     LOG("Vulkan: ",
         adapterName,
@@ -1018,8 +1027,7 @@ bool VulkanShared::selectPhysicalDevice()
         apiVersionText(properties.apiVersion),
         coreFloor ? ", core 1.3" : ", 1.3 features through extensions",
         renderPassPath ? ", render passes" : ", dynamic rendering",
-        synchronization2Path ? ", synchronization2" : ", legacy barriers",
-        partiallyBoundPath ? ", partially bound)" : ", fully bound)");
+        synchronization2Path ? ", synchronization2)" : ", legacy barriers)");
 
     return true;
 }
@@ -1043,8 +1051,6 @@ bool VulkanShared::createDevice()
     VkPhysicalDeviceVulkan12Features features12 = {};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.timelineSemaphore = VK_TRUE;
-    features12.descriptorBindingPartiallyBound =
-        partiallyBoundPath ? VK_TRUE : VK_FALSE;
 
     VkPhysicalDeviceFeatures2 enabled = {};
     enabled.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -1059,11 +1065,6 @@ bool VulkanShared::createDevice()
     synchronization2.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
     synchronization2.synchronization2 = VK_TRUE;
-
-    VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing = {};
-    indexing.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    indexing.descriptorBindingPartiallyBound = VK_TRUE;
 
     const auto chain = [&enabled](auto& feature)
     {
@@ -1090,12 +1091,6 @@ bool VulkanShared::createDevice()
         {
             extensions.add(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
             chain(synchronization2);
-        }
-
-        if (partiallyBoundPath)
-        {
-            extensions.add(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
-            chain(indexing);
         }
 
         if (spirvTarget == Spirv::Target::vulkan11Spirv14)
@@ -1165,8 +1160,7 @@ bool VulkanShared::createAllocator()
 }
 
 PipelineLayouts makeComputeLayouts(VkDevice device,
-                                   const VulkanTextureBindings& textures,
-                                   bool partiallyBound)
+                                   const VulkanTextureBindings& textures)
 {
     // Laid out exactly as Codegen/ShaderBindings.h prints it. Only the texture
     // slots the module declares get a binding, at the type declared.
@@ -1188,7 +1182,7 @@ PipelineLayouts makeComputeLayouts(VkDevice device,
     addBinding(vulkanComputeUniformBinding,
                VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
 
-    if (!makePipelineLayouts(device, bindings, partiallyBound, layouts))
+    if (!makePipelineLayouts(device, bindings, layouts))
         return {};
 
     return layouts;
@@ -1217,13 +1211,13 @@ bool VulkanShared::createRenderLayouts()
     for (auto slot = 0; slot < maxBufferSlots; ++slot)
         addBinding(vulkanBufferBinding(slot), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-    return makePipelineLayouts(device, bindings, partiallyBoundPath, renderLayouts);
+    return makePipelineLayouts(device, bindings, renderLayouts);
 }
 
 bool VulkanShared::createComputeLayouts()
 {
     // The layout every kernel that declares no texture binds through.
-    computeLayouts = makeComputeLayouts(device, {}, partiallyBoundPath);
+    computeLayouts = makeComputeLayouts(device, {});
 
     return computeLayouts.isValid();
 }
