@@ -160,6 +160,7 @@ else ()
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
             Vulkan/VulkanContext-Linux.cpp
+            Vulkan/VulkanLegacySync-Linux.cpp
             Vulkan/VulkanRenderPass-Linux.cpp
             Vulkan/VulkanTypes-Linux.cpp)
 
