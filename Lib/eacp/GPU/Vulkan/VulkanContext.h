@@ -238,6 +238,13 @@ public:
 
     bool usesRenderPasses() const { return renderPassPath; }
 
+    // False on a device without VK_KHR_synchronization2, or under
+    // EACP_VK_LEGACY_SYNC=1: the *2 entry points are then eacp's own, which
+    // record and submit through the Vulkan 1.0 calls.
+    bool usesSynchronization2() const { return synchronization2Path; }
+
+    bool usesPartiallyBound() const { return partiallyBoundPath; }
+
     VulkanRenderPassCache& getRenderPasses() { return renderPasses; }
 
     VkRenderPass compatibleRenderPass(VkFormat colorFormat,
@@ -310,6 +317,8 @@ private:
     bool timestampsSupported = false;
     bool coreFloor = false;
     bool renderPassPath = false;
+    bool synchronization2Path = false;
+    bool partiallyBoundPath = false;
     Spirv::Target spirvTarget = Spirv::Target::vulkan13Spirv16;
     VulkanRenderPassCache renderPasses;
     bool depthResolvesBySampleZero = false;

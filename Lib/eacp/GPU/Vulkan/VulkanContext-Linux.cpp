@@ -304,36 +304,54 @@ VKAPI_ATTR VkBool32 VKAPI_CALL
     return VK_FALSE;
 }
 
-// The floor the backend is written against: Vulkan 1.3 core, or 1.1 with extensions.
-struct RequiredFeatures
+// The floor the backend is written against - Vulkan 1.3 core, or 1.1 with
+// extensions - and the two capabilities it uses where a device has them.
+struct DeviceCapabilities
 {
     bool timelineSemaphore = false;
-    bool descriptorBindingPartiallyBound = false;
-    bool synchronization2 = false;
-    bool rendering = false;
+    bool renderingOrRenderPass2 = false;
     bool shaderStorageImageWriteWithoutFormat = false;
 
-    bool allPresent() const
+    bool synchronization2 = false;
+    bool descriptorBindingPartiallyBound = false;
+
+    // Empty when the floor is met.
+    Vector<std::string> missingFloor() const
     {
-        return timelineSemaphore && descriptorBindingPartiallyBound
-               && synchronization2 && rendering
-               && shaderStorageImageWriteWithoutFormat;
+        auto missing = Vector<std::string> {};
+
+        if (!timelineSemaphore)
+            missing.add("timeline semaphores");
+
+        if (!renderingOrRenderPass2)
+            missing.add("dynamic rendering or VK_KHR_create_renderpass2 with "
+                        "VK_KHR_depth_stencil_resolve");
+
+        if (!shaderStorageImageWriteWithoutFormat)
+            missing.add("format-less storage image writes");
+
+        return missing;
     }
+
+    bool meetsFloor() const { return missingFloor().empty(); }
 };
+
+std::string joined(const Vector<std::string>& parts)
+{
+    auto text = std::string {};
+
+    for (const auto& part: parts)
+        text += (text.empty() ? "" : ", ") + part;
+
+    return text;
+}
 
 bool reachesCoreFloor(std::uint32_t apiVersion)
 {
     return apiVersion >= VK_API_VERSION_1_3;
 }
 
-constexpr auto floorExtensions =
-    std::array {VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-                VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
-                VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-                VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-                VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME};
-
-RequiredFeatures probeCoreFeatures(VkPhysicalDevice candidate)
+DeviceCapabilities probeCoreCapabilities(VkPhysicalDevice candidate)
 {
     VkPhysicalDeviceVulkan13Features features13 = {};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
@@ -348,62 +366,81 @@ RequiredFeatures probeCoreFeatures(VkPhysicalDevice candidate)
 
     vkGetPhysicalDeviceFeatures2(candidate, &features);
 
-    auto required = RequiredFeatures {};
-    required.timelineSemaphore = features12.timelineSemaphore == VK_TRUE;
-    required.descriptorBindingPartiallyBound =
-        features12.descriptorBindingPartiallyBound == VK_TRUE;
-    required.synchronization2 = features13.synchronization2 == VK_TRUE;
-    required.rendering = features13.dynamicRendering == VK_TRUE;
-    required.shaderStorageImageWriteWithoutFormat =
+    auto capabilities = DeviceCapabilities {};
+    capabilities.timelineSemaphore = features12.timelineSemaphore == VK_TRUE;
+    capabilities.renderingOrRenderPass2 = features13.dynamicRendering == VK_TRUE;
+    capabilities.shaderStorageImageWriteWithoutFormat =
         features.features.shaderStorageImageWriteWithoutFormat == VK_TRUE;
+    capabilities.synchronization2 = features13.synchronization2 == VK_TRUE;
+    capabilities.descriptorBindingPartiallyBound =
+        features12.descriptorBindingPartiallyBound == VK_TRUE;
 
-    return required;
+    return capabilities;
 }
 
 // A feature struct is only filled in for an extension the device offers, so
-// the extensions are checked first.
-RequiredFeatures probeExtensionFeatures(VkPhysicalDevice candidate)
+// each is chained only behind its extension.
+DeviceCapabilities probeExtensionCapabilities(VkPhysicalDevice candidate)
 {
-    for (const auto* name: floorExtensions)
-        if (!hasDeviceExtension(candidate, name))
-            return {};
+    const auto hasTimeline =
+        hasDeviceExtension(candidate, VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+    const auto hasSynchronization2 =
+        hasDeviceExtension(candidate, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+    const auto hasIndexing =
+        hasDeviceExtension(candidate, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+
+    VkPhysicalDeviceFeatures2 features = {};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+
+    const auto chain = [&features](auto& feature)
+    {
+        feature.pNext = features.pNext;
+        features.pNext = &feature;
+    };
+
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {};
+    timeline.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
 
     VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
     synchronization2.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
 
-    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timeline = {};
-    timeline.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
-    timeline.pNext = &synchronization2;
-
     VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing = {};
     indexing.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    indexing.pNext = &timeline;
 
-    VkPhysicalDeviceFeatures2 features = {};
-    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features.pNext = &indexing;
+    if (hasTimeline)
+        chain(timeline);
+
+    if (hasSynchronization2)
+        chain(synchronization2);
+
+    if (hasIndexing)
+        chain(indexing);
 
     vkGetPhysicalDeviceFeatures2(candidate, &features);
 
-    auto required = RequiredFeatures {};
-    required.timelineSemaphore = timeline.timelineSemaphore == VK_TRUE;
-    required.descriptorBindingPartiallyBound =
-        indexing.descriptorBindingPartiallyBound == VK_TRUE;
-    required.synchronization2 = synchronization2.synchronization2 == VK_TRUE;
-    required.rendering = true;
-    required.shaderStorageImageWriteWithoutFormat =
+    auto capabilities = DeviceCapabilities {};
+    capabilities.timelineSemaphore = timeline.timelineSemaphore == VK_TRUE;
+    capabilities.renderingOrRenderPass2 =
+        hasDeviceExtension(candidate, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME)
+        && hasDeviceExtension(candidate,
+                              VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+    capabilities.shaderStorageImageWriteWithoutFormat =
         features.features.shaderStorageImageWriteWithoutFormat == VK_TRUE;
+    capabilities.synchronization2 = synchronization2.synchronization2 == VK_TRUE;
+    capabilities.descriptorBindingPartiallyBound =
+        indexing.descriptorBindingPartiallyBound == VK_TRUE;
 
-    return required;
+    return capabilities;
 }
 
-RequiredFeatures probeFeatures(VkPhysicalDevice candidate, std::uint32_t apiVersion)
+DeviceCapabilities probeCapabilities(VkPhysicalDevice candidate,
+                                     std::uint32_t apiVersion)
 {
-    return reachesCoreFloor(apiVersion) ? probeCoreFeatures(candidate)
-                                        : probeExtensionFeatures(candidate);
+    return reachesCoreFloor(apiVersion) ? probeCoreCapabilities(candidate)
+                                        : probeExtensionCapabilities(candidate);
 }
 
 // VK_KHR_spirv_1_4 needs VK_KHR_shader_float_controls below 1.2.
@@ -415,17 +452,26 @@ bool offersSpirv14(VkPhysicalDevice candidate)
 }
 
 // The KHR structures and flags are the core ones; only the entry points differ.
-bool aliasExtensionEntryPoints()
+// The synchronization2 three are null on a device without the extension.
+bool aliasExtensionEntryPoints(bool withSynchronization2)
 {
-    vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
-    vkCmdWriteTimestamp2 = vkCmdWriteTimestamp2KHR;
-    vkQueueSubmit2 = vkQueueSubmit2KHR;
     vkWaitSemaphores = vkWaitSemaphoresKHR;
     vkGetSemaphoreCounterValue = vkGetSemaphoreCounterValueKHR;
     vkCreateRenderPass2 = vkCreateRenderPass2KHR;
 
-    return vkCmdPipelineBarrier2 != nullptr && vkCmdWriteTimestamp2 != nullptr
-           && vkQueueSubmit2 != nullptr && vkWaitSemaphores != nullptr
+    if (withSynchronization2)
+    {
+        vkCmdPipelineBarrier2 = vkCmdPipelineBarrier2KHR;
+        vkCmdWriteTimestamp2 = vkCmdWriteTimestamp2KHR;
+        vkQueueSubmit2 = vkQueueSubmit2KHR;
+    }
+
+    const auto synchronization2Loaded =
+        !withSynchronization2
+        || (vkCmdPipelineBarrier2 != nullptr && vkCmdWriteTimestamp2 != nullptr
+            && vkQueueSubmit2 != nullptr);
+
+    return synchronization2Loaded && vkWaitSemaphores != nullptr
            && vkGetSemaphoreCounterValue != nullptr
            && vkCreateRenderPass2 != nullptr;
 }
@@ -491,9 +537,11 @@ void addLayoutBinding(Vector<VkDescriptorSetLayoutBinding>& bindings,
     bindings.add(entry);
 }
 
-// Partially bound, so a shader may leave declared slots unwritten.
+// Partially bound where the device allows it, so a shader may leave declared
+// slots unwritten.
 bool makePipelineLayouts(VkDevice device,
                          const Vector<VkDescriptorSetLayoutBinding>& bindings,
+                         bool partiallyBound,
                          PipelineLayouts& layouts)
 {
     auto flags = Vector<VkDescriptorBindingFlags> {};
@@ -507,7 +555,7 @@ bool makePipelineLayouts(VkDevice device,
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.pNext = &bindingFlags;
+    layoutInfo.pNext = partiallyBound ? &bindingFlags : nullptr;
     layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
@@ -876,7 +924,7 @@ bool VulkanShared::selectPhysicalDevice()
 
     auto best = VkPhysicalDevice {VK_NULL_HANDLE};
     auto bestRank = -1;
-    auto sawIncompleteDevice = false;
+    auto capabilities = DeviceCapabilities {};
 
     for (auto candidate: candidates)
     {
@@ -893,14 +941,18 @@ bool VulkanShared::selectPhysicalDevice()
             continue;
         }
 
-        if (!probeFeatures(candidate, candidateProperties.apiVersion).allPresent())
+        const auto candidateCapabilities =
+            probeCapabilities(candidate, candidateProperties.apiVersion);
+
+        if (!candidateCapabilities.meetsFloor())
         {
             LOG("Vulkan: ",
                 candidateProperties.deviceName,
                 " (API ",
                 apiVersionText(candidateProperties.apiVersion),
-                ") lacks part of the feature set eacp needs, so it is skipped");
-            sawIncompleteDevice = true;
+                ") lacks ",
+                joined(candidateCapabilities.missingFloor()),
+                ", so it is skipped");
             continue;
         }
 
@@ -921,19 +973,12 @@ bool VulkanShared::selectPhysicalDevice()
             bestRank = rank;
             best = candidate;
             properties = candidateProperties;
+            capabilities = candidateCapabilities;
         }
     }
 
     if (best == VK_NULL_HANDLE)
-    {
-        if (sawIncompleteDevice)
-            LOG("Vulkan: no device offers the feature set eacp needs "
-                "(timeline semaphores, synchronization2, dynamic rendering or "
-                "VK_KHR_create_renderpass2 with VK_KHR_depth_stencil_resolve, "
-                "partially bound descriptors, format-less storage image writes)");
-
         return false;
-    }
 
     physicalDevice = best;
     queueFamily = static_cast<std::uint32_t>(findQueueFamily(physicalDevice));
@@ -956,12 +1001,17 @@ bool VulkanShared::selectPhysicalDevice()
     else
         spirvTarget = Spirv::Target::vulkan11Spirv13;
 
+    synchronization2Path = capabilities.synchronization2;
+    partiallyBoundPath = capabilities.descriptorBindingPartiallyBound;
+
     LOG("Vulkan: ",
         adapterName,
         " (API ",
         apiVersionText(properties.apiVersion),
         coreFloor ? ", core 1.3" : ", 1.3 features through extensions",
-        renderPassPath ? ", render passes)" : ", dynamic rendering)");
+        renderPassPath ? ", render passes" : ", dynamic rendering",
+        synchronization2Path ? ", synchronization2" : ", legacy barriers",
+        partiallyBoundPath ? ", partially bound)" : ", fully bound)");
 
     return true;
 }
@@ -976,48 +1026,69 @@ bool VulkanShared::createDevice()
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
-    // Exactly the five probeFeatures asked about.
+    // Exactly what selectPhysicalDevice found and chose to use, nothing more.
     VkPhysicalDeviceVulkan13Features features13 = {};
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-    features13.synchronization2 = VK_TRUE;
+    features13.synchronization2 = synchronization2Path ? VK_TRUE : VK_FALSE;
     features13.dynamicRendering = VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features features12 = {};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    features12.pNext = &features13;
     features12.timelineSemaphore = VK_TRUE;
-    features12.descriptorBindingPartiallyBound = VK_TRUE;
+    features12.descriptorBindingPartiallyBound =
+        partiallyBoundPath ? VK_TRUE : VK_FALSE;
+
+    VkPhysicalDeviceFeatures2 enabled = {};
+    enabled.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+
+    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures = {};
+    timelineFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
+    timelineFeatures.timelineSemaphore = VK_TRUE;
 
     VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
     synchronization2.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
     synchronization2.synchronization2 = VK_TRUE;
 
-    VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures = {};
-    timelineFeatures.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR;
-    timelineFeatures.pNext = &synchronization2;
-    timelineFeatures.timelineSemaphore = VK_TRUE;
-
     VkPhysicalDeviceDescriptorIndexingFeaturesEXT indexing = {};
     indexing.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
-    indexing.pNext = &timelineFeatures;
     indexing.descriptorBindingPartiallyBound = VK_TRUE;
 
-    VkPhysicalDeviceFeatures2 enabled = {};
-    enabled.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    enabled.pNext =
-        coreFloor ? static_cast<void*>(&features12) : static_cast<void*>(&indexing);
-    enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+    const auto chain = [&enabled](auto& feature)
+    {
+        feature.pNext = enabled.pNext;
+        enabled.pNext = &feature;
+    };
 
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};
 
-    if (!coreFloor)
+    if (coreFloor)
     {
-        for (const auto* name: floorExtensions)
-            extensions.add(name);
+        chain(features13);
+        chain(features12);
+    }
+    else
+    {
+        extensions.add(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+        extensions.add(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
+        extensions.add(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+        chain(timelineFeatures);
+
+        if (synchronization2Path)
+        {
+            extensions.add(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+            chain(synchronization2);
+        }
+
+        if (partiallyBoundPath)
+        {
+            extensions.add(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+            chain(indexing);
+        }
 
         if (spirvTarget == Spirv::Target::vulkan11Spirv14)
         {
@@ -1052,7 +1123,7 @@ bool VulkanShared::createDevice()
     // One device in the process, so the dispatch table can be volk's global one.
     volkLoadDevice(device);
 
-    if (!coreFloor && !aliasExtensionEntryPoints())
+    if (!coreFloor && !aliasExtensionEntryPoints(synchronization2Path))
     {
         LOG("Vulkan: ", adapterName, " did not load its extension entry points");
         vkDestroyDevice(device, nullptr);
@@ -1083,7 +1154,8 @@ bool VulkanShared::createAllocator()
 }
 
 PipelineLayouts makeComputeLayouts(VkDevice device,
-                                   const VulkanTextureBindings& textures)
+                                   const VulkanTextureBindings& textures,
+                                   bool partiallyBound)
 {
     // Laid out exactly as Codegen/ShaderBindings.h prints it. Only the texture
     // slots the module declares get a binding, at the type declared.
@@ -1105,7 +1177,7 @@ PipelineLayouts makeComputeLayouts(VkDevice device,
     addBinding(vulkanComputeUniformBinding,
                VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
 
-    if (!makePipelineLayouts(device, bindings, layouts))
+    if (!makePipelineLayouts(device, bindings, partiallyBound, layouts))
         return {};
 
     return layouts;
@@ -1134,13 +1206,13 @@ bool VulkanShared::createRenderLayouts()
     for (auto slot = 0; slot < maxBufferSlots; ++slot)
         addBinding(vulkanBufferBinding(slot), VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-    return makePipelineLayouts(device, bindings, renderLayouts);
+    return makePipelineLayouts(device, bindings, partiallyBoundPath, renderLayouts);
 }
 
 bool VulkanShared::createComputeLayouts()
 {
     // The layout every kernel that declares no texture binds through.
-    computeLayouts = makeComputeLayouts(device, {});
+    computeLayouts = makeComputeLayouts(device, {}, partiallyBoundPath);
 
     return computeLayouts.isValid();
 }
