@@ -2077,12 +2077,14 @@ VkDescriptorSet VulkanContext::allocateDescriptorSet(CommandContext& commands,
         ++commands.descriptorCursor;
     }
 
-    // Both image types at full width, which of the two a slot takes being per
-    // shader. The overcount is headroom, not memory.
+    // Every image type at full width, which one a slot takes being per shader.
+    // The overcount is headroom, not memory.
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxBufferSlots)},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
