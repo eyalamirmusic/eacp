@@ -196,6 +196,18 @@ jobs:
           EACP_VK_RENDER_PASSES: '1'
         run: Scripts/with-weston build/Tests/GPU/GPUTests
 
+      # And the Vulkan 1.0 barrier, timestamp and submit calls a device without
+      # VK_KHR_synchronization2 takes, on the render passes beside them: the
+      # combination a Mali-G71 runs.
+      - name: Test the GPU suite on legacy barriers
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_VK_RENDER_PASSES: '1'
+          EACP_VK_LEGACY_SYNC: '1'
+        run: Scripts/with-weston build/Tests/GPU/GPUTests
+
   build-ios:
     name: iOS Simulator
     runs-on: macos-latest
