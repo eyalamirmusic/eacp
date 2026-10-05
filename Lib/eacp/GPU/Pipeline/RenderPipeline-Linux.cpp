@@ -332,6 +332,97 @@ VkColorComponentFlags toVkWriteMask(const ColorWriteMask& mask)
     return value;
 }
 
+const char* pixelFormatName(PixelFormat format)
+{
+    switch (format)
+    {
+        case PixelFormat::BGRA8Unorm:
+            return "BGRA8Unorm";
+        case PixelFormat::RGBA8Unorm:
+            return "RGBA8Unorm";
+        case PixelFormat::RGBA16Float:
+            return "RGBA16Float";
+        case PixelFormat::RGBA32Float:
+            return "RGBA32Float";
+        case PixelFormat::R32Float:
+            return "R32Float";
+        case PixelFormat::R8Unorm:
+            return "R8Unorm";
+        case PixelFormat::RG8Unorm:
+            return "RG8Unorm";
+        case PixelFormat::R16Float:
+            return "R16Float";
+        case PixelFormat::RG16Float:
+            return "RG16Float";
+        case PixelFormat::RG32Float:
+            return "RG32Float";
+        case PixelFormat::R16Unorm:
+            return "R16Unorm";
+        case PixelFormat::R32Uint:
+            return "R32Uint";
+        case PixelFormat::RGBA8UnormSrgb:
+            return "RGBA8UnormSrgb";
+        case PixelFormat::BGRA8UnormSrgb:
+            return "BGRA8UnormSrgb";
+        case PixelFormat::RG16Unorm:
+            return "RG16Unorm";
+        case PixelFormat::RGBA16Unorm:
+            return "RGBA16Unorm";
+        case PixelFormat::RGB10A2Unorm:
+            return "RGB10A2Unorm";
+        case PixelFormat::RG11B10Float:
+            return "RG11B10Float";
+        case PixelFormat::R8Uint:
+            return "R8Uint";
+        case PixelFormat::RG8Uint:
+            return "RG8Uint";
+        case PixelFormat::RGBA8Uint:
+            return "RGBA8Uint";
+        case PixelFormat::R16Uint:
+            return "R16Uint";
+        case PixelFormat::RG16Uint:
+            return "RG16Uint";
+        case PixelFormat::RGBA16Uint:
+            return "RGBA16Uint";
+        case PixelFormat::RG32Uint:
+            return "RG32Uint";
+        case PixelFormat::RGBA32Uint:
+            return "RGBA32Uint";
+        case PixelFormat::R8Sint:
+            return "R8Sint";
+        case PixelFormat::RG8Sint:
+            return "RG8Sint";
+        case PixelFormat::RGBA8Sint:
+            return "RGBA8Sint";
+        case PixelFormat::R16Sint:
+            return "R16Sint";
+        case PixelFormat::RG16Sint:
+            return "RG16Sint";
+        case PixelFormat::RGBA16Sint:
+            return "RGBA16Sint";
+        case PixelFormat::R32Sint:
+            return "R32Sint";
+        case PixelFormat::RG32Sint:
+            return "RG32Sint";
+        case PixelFormat::RGBA32Sint:
+            return "RGBA32Sint";
+    }
+
+    return "an unknown format";
+}
+
+// Not every format blends: 32-bit float targets need not, and on Mali do not.
+bool formatBlends(VkFormat format)
+{
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(
+        getVulkanShared().getPhysicalDevice(), format, &properties);
+
+    return (properties.optimalTilingFeatures
+            & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT)
+           != 0;
+}
+
 VkPipelineColorBlendAttachmentState makeBlendAttachment(const ColorTargetState& from)
 {
     VkPipelineColorBlendAttachmentState attachment = {};
@@ -545,6 +636,20 @@ struct RenderPipeline::Native
             LOG("Vulkan: this device has no independentBlend, so a pipeline "
                 "whose colour targets blend differently is refused");
             return;
+        }
+
+        for (auto index = 0; index < state.colorCount; ++index)
+        {
+            if (attachments[index].blendEnable == VK_TRUE
+                && !formatBlends(state.colorFormats[index]))
+            {
+                LOG("Vulkan: no render pipeline blending into ",
+                    pixelFormatName(descriptor.colorTarget(index).format),
+                    " - ",
+                    getVulkanShared().getAdapterName(),
+                    " cannot blend it");
+                return;
+            }
         }
 
         VkPipelineColorBlendStateCreateInfo blend = {};
