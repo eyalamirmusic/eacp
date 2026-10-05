@@ -63,11 +63,8 @@ struct ComputePipeline::Native
             return true;
         }
 
-        const auto layouts =
-            makeComputeLayouts(context->getDevice(),
-                               vulkanComputeBufferSlots(),
-                               state.textures,
-                               getVulkanShared().usesPartiallyBound());
+        const auto layouts = makeComputeLayouts(
+            context->getDevice(), vulkanComputeBufferSlots(), state.textures);
 
         if (!layouts.isValid())
             return false;

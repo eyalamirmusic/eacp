@@ -384,12 +384,18 @@ struct VulkanTextureBindings
 
     VkDescriptorType typeAt(int slot) const { return types[slot]; }
 
-    void add(int slot, VkDescriptorType type);
+    // CUBE for a samplerCube, 2D for everything else the emitters write.
+    VkImageViewType viewTypeAt(int slot) const { return viewTypes[slot]; }
+
+    void add(int slot,
+             VkDescriptorType type,
+             VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
 
     void merge(const VulkanTextureBindings& other);
 
     std::uint32_t declared = 0;
     VkDescriptorType types[maxTextureSlots] = {};
+    VkImageViewType viewTypes[maxTextureSlots] = {};
 };
 
 // `firstBinding` is where the texture range starts: vulkanTextureBinding(0) for
@@ -400,8 +406,7 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
 // Built per pipeline; a kernel declaring no texture uses VulkanShared's.
 PipelineLayouts makeComputeLayouts(VkDevice device,
                                    int bufferSlots,
-                                   const VulkanTextureBindings& textures,
-                                   bool partiallyBound);
+                                   const VulkanTextureBindings& textures);
 
 // Pointed to by ShaderLibrary::nativeLibrary().
 struct VulkanShaderProgram
@@ -434,6 +439,10 @@ struct VulkanRenderPipeline
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
 
     Vector<std::uint32_t> strides;
+
+    // The texture slots the two stages declare, for the placeholders a draw
+    // writes into the ones nothing was bound to.
+    VulkanTextureBindings textures;
 
     // Also inside the VkPipeline, and not dynamic state here.
     VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
