@@ -69,6 +69,7 @@ set(gpu_test_sources
         PipelineStateTests.cpp
         ProgramGraphTests.cpp
         RenderBufferRangeTests.cpp
+        RenderScaleTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
         ScissorTests.cpp
