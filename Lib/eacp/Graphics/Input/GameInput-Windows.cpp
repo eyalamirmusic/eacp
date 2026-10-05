@@ -17,20 +17,15 @@ namespace eacp::Graphics
 {
 namespace
 {
-// XInput is poll-only, so one thread of the process polls it for every
-// GameInput. A connected slot is read every tick; an empty one is tried again
-// only every second, since XInputGetState takes milliseconds to answer that
-// nothing is there.
+// A connected slot is read every tick; an empty one only every second, since
+// XInputGetState takes milliseconds to answer that nothing is there.
 constexpr auto xinputPollPeriodMs = 4L;
-constexpr auto xinputProbeInterval = 1.0;
+constexpr auto xinputProbeIntervalSeconds = 1.0;
 
 // The Guide button, which the public header leaves out of wButtons.
 constexpr auto xinputGuideButton = WORD {0x0400};
 
 using XInputGetStateFunction = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
-using XInputGetCapabilitiesFunction = DWORD(WINAPI*)(DWORD,
-                                                     DWORD,
-                                                     XINPUT_CAPABILITIES*);
 
 // One GameInput's end of the process-wide feed. `wasAccepting` is the poll
 // thread's alone.
@@ -52,7 +47,7 @@ struct XInputSlot
     int id = -1;
     DWORD packet = 0;
     XINPUT_GAMEPAD gamepad {};
-    double nextProbe = 0.0;
+    double nextProbeSeconds = 0.0;
 };
 
 struct XInputPoll
@@ -66,157 +61,88 @@ struct XInputLibrary
 {
     HMODULE module = nullptr;
     XInputGetStateFunction getState = nullptr;
-    XInputGetCapabilitiesFunction getCapabilities = nullptr;
 
     bool isLoaded() const { return getState != nullptr; }
-
-    // Ordinal 100 is XInputGetState with the Guide button reported, which the
-    // named export masks off; xinput9_1_0 has only the named one.
-    static XInputLibrary load()
-    {
-        for (auto* name: {L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll"})
-        {
-            auto library = XInputLibrary {LoadLibraryW(name)};
-
-            if (library.module == nullptr)
-                continue;
-
-            library.getState = procAddress<XInputGetStateFunction>(
-                library.module, MAKEINTRESOURCEA(100));
-
-            if (library.getState == nullptr)
-                library.getState = procAddress<XInputGetStateFunction>(
-                    library.module, "XInputGetState");
-
-            library.getCapabilities = procAddress<XInputGetCapabilitiesFunction>(
-                library.module, "XInputGetCapabilities");
-
-            if (library.getState != nullptr)
-                return library;
-
-            FreeLibrary(library.module);
-        }
-
-        return {};
-    }
-
-    void unload()
-    {
-        if (module != nullptr)
-            FreeLibrary(module);
-
-        module = nullptr;
-        getState = nullptr;
-        getCapabilities = nullptr;
-    }
-
-    const char* subTypeName(DWORD user) const
-    {
-        auto capabilities = XINPUT_CAPABILITIES {};
-
-        if (getCapabilities == nullptr
-            || getCapabilities(user, XINPUT_FLAG_GAMEPAD, &capabilities)
-                   != ERROR_SUCCESS)
-            return "unknown";
-
-        switch (capabilities.SubType)
-        {
-            case XINPUT_DEVSUBTYPE_GAMEPAD:
-                return "gamepad";
-            case XINPUT_DEVSUBTYPE_WHEEL:
-                return "wheel";
-            case XINPUT_DEVSUBTYPE_ARCADE_STICK:
-                return "arcade stick";
-            case XINPUT_DEVSUBTYPE_FLIGHT_STICK:
-                return "flight stick";
-            case XINPUT_DEVSUBTYPE_DANCE_PAD:
-                return "dance pad";
-            case XINPUT_DEVSUBTYPE_GUITAR:
-            case XINPUT_DEVSUBTYPE_GUITAR_ALTERNATE:
-            case XINPUT_DEVSUBTYPE_GUITAR_BASS:
-                return "guitar";
-            case XINPUT_DEVSUBTYPE_DRUM_KIT:
-                return "drum kit";
-            case XINPUT_DEVSUBTYPE_ARCADE_PAD:
-                return "arcade pad";
-            default:
-                return "unknown";
-        }
-    }
 };
 
-float xinputStickAxis(SHORT value)
+// Ordinal 100 is XInputGetState with the Guide button reported, which the
+// named export masks off.
+XInputLibrary loadXInputLibrary()
+{
+    auto library = XInputLibrary {LoadLibraryW(L"xinput1_4.dll")};
+
+    if (library.module == nullptr)
+        return {};
+
+    library.getState =
+        procAddress<XInputGetStateFunction>(library.module, MAKEINTRESOURCEA(100));
+
+    if (library.getState == nullptr)
+        library.getState =
+            procAddress<XInputGetStateFunction>(library.module, "XInputGetState");
+
+    return library;
+}
+
+float stickAxisValue(SHORT value)
 {
     return std::clamp((float) value / 32767.0f, -1.0f, 1.0f);
 }
 
-float xinputTriggerAxis(BYTE value)
+float triggerAxisValue(BYTE value)
 {
     return (float) value / 255.0f;
 }
 
-void pushXInputButton(GameInputQueue& queue,
-                      int id,
-                      GamepadButton button,
-                      WORD buttons,
-                      WORD mask,
-                      double time)
+void pushButtonState(GameInputQueue& queue,
+                     int id,
+                     GamepadButton button,
+                     WORD buttons,
+                     WORD mask,
+                     double timestampSeconds)
 {
-    queue.gamepadButtonChanged(id, button, (buttons & mask) != 0, time);
+    queue.gamepadButtonChanged(id, button, (buttons & mask) != 0, timestampSeconds);
 }
 
-// The whole of a gamepad: the queue drops the buttons that did not change.
-void pushXInputGamepad(GameInputQueue& queue,
-                       int id,
-                       const XINPUT_GAMEPAD& pad,
-                       double time)
+// Every button and axis of the pad as XInput last reported it, stamped with
+// when that report was read. The queue drops the buttons that did not change.
+void pushWholeGamepadState(GameInputQueue& queue,
+                           int id,
+                           const XINPUT_GAMEPAD& pad,
+                           double timestampSeconds)
 {
     using Button = GamepadButton;
     const auto buttons = pad.wButtons;
+    const auto push = [&](Button button, WORD mask)
+    { pushButtonState(queue, id, button, buttons, mask, timestampSeconds); };
 
-    pushXInputButton(queue, id, Button::South, buttons, XINPUT_GAMEPAD_A, time);
-    pushXInputButton(queue, id, Button::East, buttons, XINPUT_GAMEPAD_B, time);
-    pushXInputButton(queue, id, Button::West, buttons, XINPUT_GAMEPAD_X, time);
-    pushXInputButton(queue, id, Button::North, buttons, XINPUT_GAMEPAD_Y, time);
-    pushXInputButton(queue,
-                     id,
-                     Button::LeftShoulder,
-                     buttons,
-                     XINPUT_GAMEPAD_LEFT_SHOULDER,
-                     time);
-    pushXInputButton(queue,
-                     id,
-                     Button::RightShoulder,
-                     buttons,
-                     XINPUT_GAMEPAD_RIGHT_SHOULDER,
-                     time);
-    pushXInputButton(
-        queue, id, Button::LeftStick, buttons, XINPUT_GAMEPAD_LEFT_THUMB, time);
-    pushXInputButton(
-        queue, id, Button::RightStick, buttons, XINPUT_GAMEPAD_RIGHT_THUMB, time);
-    pushXInputButton(queue, id, Button::Start, buttons, XINPUT_GAMEPAD_START, time);
-    pushXInputButton(queue, id, Button::Back, buttons, XINPUT_GAMEPAD_BACK, time);
-    pushXInputButton(queue, id, Button::Home, buttons, xinputGuideButton, time);
-    pushXInputButton(
-        queue, id, Button::DpadUp, buttons, XINPUT_GAMEPAD_DPAD_UP, time);
-    pushXInputButton(
-        queue, id, Button::DpadDown, buttons, XINPUT_GAMEPAD_DPAD_DOWN, time);
-    pushXInputButton(
-        queue, id, Button::DpadLeft, buttons, XINPUT_GAMEPAD_DPAD_LEFT, time);
-    pushXInputButton(
-        queue, id, Button::DpadRight, buttons, XINPUT_GAMEPAD_DPAD_RIGHT, time);
+    push(Button::South, XINPUT_GAMEPAD_A);
+    push(Button::East, XINPUT_GAMEPAD_B);
+    push(Button::West, XINPUT_GAMEPAD_X);
+    push(Button::North, XINPUT_GAMEPAD_Y);
+    push(Button::LeftShoulder, XINPUT_GAMEPAD_LEFT_SHOULDER);
+    push(Button::RightShoulder, XINPUT_GAMEPAD_RIGHT_SHOULDER);
+    push(Button::LeftStick, XINPUT_GAMEPAD_LEFT_THUMB);
+    push(Button::RightStick, XINPUT_GAMEPAD_RIGHT_THUMB);
+    push(Button::Start, XINPUT_GAMEPAD_START);
+    push(Button::Back, XINPUT_GAMEPAD_BACK);
+    push(Button::Home, xinputGuideButton);
+    push(Button::DpadUp, XINPUT_GAMEPAD_DPAD_UP);
+    push(Button::DpadDown, XINPUT_GAMEPAD_DPAD_DOWN);
+    push(Button::DpadLeft, XINPUT_GAMEPAD_DPAD_LEFT);
+    push(Button::DpadRight, XINPUT_GAMEPAD_DPAD_RIGHT);
 
-    queue.gamepadAxisChanged(id, GamepadAxis::LeftX, xinputStickAxis(pad.sThumbLX));
-    queue.gamepadAxisChanged(id, GamepadAxis::LeftY, xinputStickAxis(pad.sThumbLY));
-    queue.gamepadAxisChanged(id, GamepadAxis::RightX, xinputStickAxis(pad.sThumbRX));
-    queue.gamepadAxisChanged(id, GamepadAxis::RightY, xinputStickAxis(pad.sThumbRY));
+    queue.gamepadAxisChanged(id, GamepadAxis::LeftX, stickAxisValue(pad.sThumbLX));
+    queue.gamepadAxisChanged(id, GamepadAxis::LeftY, stickAxisValue(pad.sThumbLY));
+    queue.gamepadAxisChanged(id, GamepadAxis::RightX, stickAxisValue(pad.sThumbRX));
+    queue.gamepadAxisChanged(id, GamepadAxis::RightY, stickAxisValue(pad.sThumbRY));
     queue.gamepadAxisChanged(
-        id, GamepadAxis::LeftTrigger, xinputTriggerAxis(pad.bLeftTrigger));
+        id, GamepadAxis::LeftTrigger, triggerAxisValue(pad.bLeftTrigger));
     queue.gamepadAxisChanged(
-        id, GamepadAxis::RightTrigger, xinputTriggerAxis(pad.bRightTrigger));
+        id, GamepadAxis::RightTrigger, triggerAxisValue(pad.bRightTrigger));
 }
 
-HANDLE makeXInputTimer()
+HANDLE makePollTimer()
 {
     auto* timer = CreateWaitableTimerExW(
         nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -243,12 +169,12 @@ HANDLE makeXInputTimer()
 class XInputHub
 {
 public:
-    // Null when no XInput could be loaded.
+    // Null when XInput could not be loaded.
     static XInputHub* join(const Sink& sink)
     {
         if (instance == nullptr)
         {
-            auto library = XInputLibrary::load();
+            auto library = loadXInputLibrary();
 
             if (!library.isLoaded())
                 return nullptr;
@@ -285,20 +211,20 @@ private:
             CloseHandle(timer);
 
         CloseHandle(stopEvent);
-        library.unload();
+        FreeLibrary(library.module);
     }
 
     void add(const Sink& sink)
     {
         auto lock = std::scoped_lock {mutex};
-        const auto time = GameInputQueue::now();
+        const auto timestampSeconds = GameInputQueue::now();
 
         sinks.push_back(sink);
         sink->wasAccepting = sink->accepting();
 
         for (auto user = DWORD {0}; user < XUSER_MAX_COUNT; ++user)
             if (slots[user].connected)
-                connect(*sink, user, time);
+                connect(*sink, user, timestampSeconds);
 
         ++joined;
     }
@@ -336,14 +262,14 @@ private:
     // not wait on it.
     void tick()
     {
-        const auto time = GameInputQueue::now();
+        const auto timestampSeconds = GameInputQueue::now();
         auto polls = Array<XInputPoll, XUSER_MAX_COUNT> {};
 
         for (auto user = DWORD {0}; user < XUSER_MAX_COUNT; ++user)
         {
             auto& slot = slots[user];
 
-            if (!slot.connected && time < slot.nextProbe)
+            if (!slot.connected && timestampSeconds < slot.nextProbeSeconds)
                 continue;
 
             auto& poll = polls[user];
@@ -354,46 +280,47 @@ private:
         auto lock = std::scoped_lock {mutex};
 
         for (auto& sink: sinks)
-            resumeIfAccepting(*sink, time);
+            resumeIfAccepting(*sink, timestampSeconds);
 
         for (auto user = DWORD {0}; user < XUSER_MAX_COUNT; ++user)
             if (polls[user].polled)
-                apply(user, polls[user], time);
+                apply(user, polls[user], timestampSeconds);
     }
 
-    void resumeIfAccepting(XInputSink& sink, double time)
+    void resumeIfAccepting(XInputSink& sink, double timestampSeconds)
     {
         const auto accepting = sink.accepting();
 
         if (accepting && !sink.wasAccepting)
             for (auto& slot: slots)
                 if (slot.connected)
-                    pushXInputGamepad(*sink.queue, slot.id, slot.gamepad, time);
+                    pushWholeGamepadState(
+                        *sink.queue, slot.id, slot.gamepad, timestampSeconds);
 
         sink.wasAccepting = accepting;
     }
 
-    void apply(DWORD user, const XInputPoll& poll, double time)
+    void apply(DWORD user, const XInputPoll& poll, double timestampSeconds)
     {
         auto& slot = slots[user];
 
         if (poll.present)
         {
             if (!slot.connected)
-                attach(user, poll.state, time);
+                attach(user, poll.state, timestampSeconds);
             else if (poll.state.dwPacketNumber != slot.packet)
-                update(slot, poll.state, time);
+                update(slot, poll.state, timestampSeconds);
 
             return;
         }
 
         if (slot.connected)
-            detach(user, time);
+            detach(user, timestampSeconds);
 
-        slot.nextProbe = time + xinputProbeInterval;
+        slot.nextProbeSeconds = timestampSeconds + xinputProbeIntervalSeconds;
     }
 
-    void attach(DWORD user, const XINPUT_STATE& state, double time)
+    void attach(DWORD user, const XINPUT_STATE& state, double timestampSeconds)
     {
         auto& slot = slots[user];
         slot.connected = true;
@@ -405,38 +332,38 @@ private:
             slot.id,
             " connected: XInput user ",
             user,
-            " (",
-            library.subTypeName(user),
-            "), Xbox, player ",
+            ", Xbox, player ",
             user);
 
         for (auto& sink: sinks)
         {
-            connect(*sink, user, time);
+            connect(*sink, user, timestampSeconds);
 
             if (sink->accepting())
-                pushXInputGamepad(*sink->queue, slot.id, slot.gamepad, time);
+                pushWholeGamepadState(
+                    *sink->queue, slot.id, slot.gamepad, timestampSeconds);
         }
     }
 
-    void update(XInputSlot& slot, const XINPUT_STATE& state, double time)
+    void update(XInputSlot& slot, const XINPUT_STATE& state, double timestampSeconds)
     {
         slot.packet = state.dwPacketNumber;
         slot.gamepad = state.Gamepad;
 
         for (auto& sink: sinks)
             if (sink->accepting())
-                pushXInputGamepad(*sink->queue, slot.id, slot.gamepad, time);
+                pushWholeGamepadState(
+                    *sink->queue, slot.id, slot.gamepad, timestampSeconds);
     }
 
-    void detach(DWORD user, double time)
+    void detach(DWORD user, double timestampSeconds)
     {
         auto& slot = slots[user];
 
         LOG("GameInput: gamepad ", slot.id, " disconnected: XInput user ", user);
 
         for (auto& sink: sinks)
-            sink->queue->gamepadDisconnected(slot.id, time);
+            sink->queue->gamepadDisconnected(slot.id, timestampSeconds);
 
         slot.connected = false;
         slot.id = -1;
@@ -444,10 +371,10 @@ private:
     }
 
     // The user index is the light the controller shows, so it is the player.
-    void connect(XInputSink& sink, DWORD user, double time)
+    void connect(XInputSink& sink, DWORD user, double timestampSeconds)
     {
         sink.queue->gamepadConnected(
-            slots[user].id, GamepadFamily::Xbox, (int) user, time);
+            slots[user].id, GamepadFamily::Xbox, (int) user, timestampSeconds);
     }
 
     static inline XInputHub* instance = nullptr;
@@ -459,7 +386,7 @@ private:
     int nextGamepadId = 0;
     int joined = 0;
     HANDLE stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    HANDLE timer = makeXInputTimer();
+    HANDLE timer = makePollTimer();
     std::thread poller;
 };
 
