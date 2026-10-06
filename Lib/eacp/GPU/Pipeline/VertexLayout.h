@@ -101,27 +101,14 @@ struct VertexBufferLayout
 // name their slot via `bufferIndex`.
 struct VertexLayout
 {
-    VertexLayout& attribute(VertexFormat format, int offset, int bufferIndex = 0)
-    {
-        attributes.add({format, offset, bufferIndex});
-        return *this;
-    }
+    VertexLayout& attribute(VertexFormat format, int offset, int bufferIndex = 0);
 
     // Configure a slot's stride and step rate. Grows `buffers` up to
     // `bufferIndex` with defaults if needed, so callers can address slots
-    // out of order. The explicit VertexBufferLayout temporary (rather than
-    // `add({})`) is deliberate: `add({})` resolves to Vector's initializer_list
-    // overload with an empty list, and silently does nothing - the while
-    // loop would then spin forever.
+    // out of order.
     VertexLayout& buffer(int bufferIndex,
                          int slotStride,
-                         StepRate stepRate = StepRate::PerVertex)
-    {
-        while (buffers.size() <= bufferIndex)
-            buffers.add(VertexBufferLayout {});
-        buffers[bufferIndex] = {slotStride, stepRate};
-        return *this;
-    }
+                         StepRate stepRate = StepRate::PerVertex);
 
     Vector<VertexAttribute> attributes;
 

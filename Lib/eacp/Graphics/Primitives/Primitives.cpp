@@ -216,6 +216,22 @@ Point operator-(const Point& a, const Point& b)
     return {a.x - b.x, a.y - b.y};
 }
 
+Color Color::brighter(float amount) const
+{
+    return {std::min(r + amount, 1.f),
+            std::min(g + amount, 1.f),
+            std::min(b + amount, 1.f),
+            a};
+}
+
+Color Color::darker(float amount) const
+{
+    return {std::max(r - amount, 0.f),
+            std::max(g - amount, 0.f),
+            std::max(b - amount, 0.f),
+            a};
+}
+
 LinearGradient::LinearGradient(Point startToUse,
                                Point endToUse,
                                std::initializer_list<GradientStop> stopsToUse)

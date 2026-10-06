@@ -13,11 +13,18 @@ target_compile_options(eacp-gpu-codegen PUBLIC
         $<$<CXX_COMPILER_ID:MSVC>:/Zc:preprocessor>)
 
 target_sources(eacp-gpu-codegen PRIVATE
+        Codegen/ComputeKernel.cpp
         Codegen/KernelName.cpp
+        Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderBuilder.cpp
         Codegen/ShaderEmitter.cpp
-        Codegen/ShaderGraph.cpp)
+        Codegen/ShaderGraph.cpp
+        Codegen/ShaderMembers.cpp
+        Codegen/ShaderValue.cpp
+        Codegen/UniformLayout.cpp
+        Pipeline/VertexLayout.cpp
+        Shader/ShaderSource.cpp)
 
 # Which dialect build() calls the native one: selection only, no backend.
 if (APPLE)
@@ -48,7 +55,9 @@ target_sources(eacp-gpu PRIVATE
         Buffer/Buffer.cpp
         Buffer/BufferPool.cpp
         Buffer/StreamingBuffers.cpp
+        Codegen/ComputeProgram.cpp
         Codegen/KernelCache.cpp
+        Codegen/ShaderProgram.cpp
         CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
         Frame/Frame.cpp
@@ -58,7 +67,8 @@ target_sources(eacp-gpu PRIVATE
         Timing/CallCost.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
-        Texture/MipChain.cpp)
+        Texture/MipChain.cpp
+        View/GPUView.cpp)
 
 if (APPLE)
     # The Metal backend is shared across macOS and iOS (the -Apple files); only
@@ -138,7 +148,14 @@ else ()
             Texture/Texture-Linux.cpp
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
-            Vulkan/VulkanContext-Linux.cpp)
+            Vulkan/VulkanContext-Linux.cpp
+            Vulkan/VulkanRenderPass-Linux.cpp)
+
+    if (ANDROID)
+        target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Android.cpp)
+    else ()
+        target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Linux.cpp)
+    endif ()
 
     # Both PRIVATE: neither Vulkan nor glslang reaches past this library.
     target_link_libraries(eacp-gpu PRIVATE eacp-vulkan eacp-spirv)

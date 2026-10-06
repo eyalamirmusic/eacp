@@ -68,6 +68,32 @@ WebViewBridge::~WebViewBridge()
     scriptHost.removeScriptMessageHandler(bridgeChannel);
 }
 
+Miro::Bridge& WebViewBridge::getBridge()
+{
+    return bridge;
+}
+
+void WebViewBridge::setCommandExecution(CommandExecution mode)
+{
+    commandExecution = mode;
+}
+
+CommandExecution WebViewBridge::getCommandExecution() const
+{
+    return commandExecution;
+}
+
+void WebViewBridge::setCommandExecution(const std::string& command,
+                                        CommandExecution mode)
+{
+    commandModes[command] = mode;
+}
+
+void WebViewBridge::clearCommandExecution(const std::string& command)
+{
+    commandModes.erase(command);
+}
+
 namespace
 {
 struct Envelope
@@ -137,7 +163,9 @@ void WebViewBridge::onMessage(const std::string& body)
     // destroyed while a command is in flight: the dispatch below is queued, and
     // the delivery below that is queued behind it. A dead bridge simply drops
     // the command — the page it would have answered is going away with it.
-    auto invoke = [this, alive = alive, command = envelope->command,
+    auto invoke = [this,
+                   alive = alive,
+                   command = envelope->command,
                    payload = envelope->payload](const Miro::Resolve& resolve)
     {
         if (!alive->load())
@@ -183,6 +211,12 @@ Threads::Async<Miro::Json::Value>
     scriptHost.evaluateJavaScript(script);
 
     return promise.get();
+}
+
+Threads::Async<Miro::Json::Value>
+    WebViewBridge::call(const std::string& functionName)
+{
+    return call(functionName, Miro::Json::Value {});
 }
 
 bool WebViewBridge::handleCallReply(const Miro::Json::Value& message)

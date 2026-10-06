@@ -35,7 +35,7 @@ struct AppleEncoder final : Encoder
     bool appendNativeContent(Graphics::View& view, float scale, double pts) override;
     Threads::Async<void> finish() override;
 
-    bool valid() const { return writer && input && adaptor; }
+    bool valid() const;
 
     // Apple-only, used by the Screen tier: the pool the adaptor sources buffers
     // from, and a raw CVPixelBuffer append with an explicit PTS.

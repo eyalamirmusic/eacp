@@ -92,6 +92,21 @@ int GlyphAtlas::findOrAddFace(const std::string& family, float pointSize)
     return faces.size() - 1;
 }
 
+int GlyphAtlas::findOrAddFace(const Font& font)
+{
+    return findOrAddFace(font.family, font.pointSize);
+}
+
+int GlyphAtlas::faceCount() const
+{
+    return faces.size();
+}
+
+float GlyphAtlas::occupancy() const
+{
+    return maskPacker.occupancy();
+}
+
 void GlyphAtlas::setScale(float newScale)
 {
     const auto scale = newScale > 0.f ? newScale : 1.f;
@@ -156,6 +171,11 @@ FontMetrics GlyphAtlas::metrics(const FontVariant& variant, int face) const
             pixels.descent / scale,
             pixels.leading / scale,
             pixels.advance / scale};
+}
+
+FontMetrics GlyphAtlas::metrics(FontStyle style, int face) const
+{
+    return metrics(variantOf(style), face);
 }
 
 GlyphSlot GlyphAtlas::glyph(GlyphKey glyphKey,

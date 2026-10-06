@@ -1,27 +1,57 @@
 #include <eacp/SVG/SVG.h>
+#include <eacp/UI/UI.h>
+
+#include <ResEmbed/ResEmbed.h>
 
 using namespace eacp;
 
-struct MyApp
+namespace
 {
-    MyApp()
+struct DocumentView final : UI::ComponentHost
+{
+    DocumentView()
     {
-        auto path = Files::getBundleResourcePath("example.svg");
-        auto contents = Files::readFile(path);
-        result = SVG::parse(contents);
-        if (result.root)
-        {
-            result.root->setBounds({0, 0, result.width, result.height});
-            result.root->stretchToFit();
-            window.setContentView(*result.root);
-        }
+        setBackgroundColour(Graphics::Color::white());
+        loadDocument();
+        setRootComponent(document);
     }
 
-    SVG::ParseResult result;
-    Graphics::Window window;
+    void loadDocument()
+    {
+        auto file = ResEmbed::get("example.svg", "SVGAssets");
+
+        if (!file)
+        {
+            LOG("SVG: example.svg is not embedded");
+            return;
+        }
+
+        auto parsed = SVG::parseXML(file.toStringView());
+
+        if (!parsed.has_value())
+        {
+            LOG("SVG: example.svg did not parse");
+            return;
+        }
+
+        document.setDocument(*parsed);
+    }
+
+    SVG::SVGComponent document;
 };
+
+Graphics::WindowOptions makeOptions()
+{
+    auto options = Graphics::WindowOptions {};
+    options.width = 400;
+    options.height = 400;
+    options.title = "eacp SVG";
+
+    return options;
+}
+} // namespace
 
 int main()
 {
-    return Apps::run<MyApp>();
+    return Graphics::runWindowedApp<DocumentView>(makeOptions());
 }

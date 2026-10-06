@@ -1,6 +1,7 @@
 #include "VideoView.h"
 
 #include <eacp/GPU/GPU.h>
+#include <eacp/Video/Decode/Player.h>
 
 namespace eacp::Video
 {
@@ -115,6 +116,11 @@ void VideoView::setMirrored(bool mirroredToUse)
 void VideoView::setUploadMode(UploadMode mode)
 {
     uploadMode = mode;
+}
+
+bool VideoView::lastFrameWasZeroCopy() const
+{
+    return zeroCopyLastFrame;
 }
 
 void VideoView::update(Threads::FrameTime frameTime)

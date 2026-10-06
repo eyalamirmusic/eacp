@@ -167,15 +167,7 @@ public:
     // Whether a descriptor is one a Buffer can be made over at all, which every
     // backend asks before it either adopts or copies. Worth calling at the
     // point the memory is allocated, where the answer can still be acted on.
-    static bool isPageAligned(const ExternalMemory& memory)
-    {
-        const auto page = (std::uintptr_t) memoryPageSize();
-
-        if (memory.bytes == nullptr || memory.byteCount <= 0 || page == 0)
-            return false;
-
-        return reinterpret_cast<std::uintptr_t>(memory.bytes) % page == 0;
-    }
+    static bool isPageAligned(const ExternalMemory& memory);
 
     std::int64_t size() const;
     bool isValid() const;
@@ -298,10 +290,10 @@ struct BufferRange
 
     // The whole of a buffer, for the calls that take a range when what a
     // caller has is a buffer it means to bind from the start.
-    static BufferRange of(const Buffer& whole) { return {&whole, 0, whole.size()}; }
+    static BufferRange of(const Buffer& whole);
 
     // False for a default-constructed range and for one over a buffer that
     // never got storage, which is the same test a bind makes before encoding.
-    bool isValid() const { return buffer != nullptr && buffer->isValid(); }
+    bool isValid() const;
 };
 } // namespace eacp::GPU

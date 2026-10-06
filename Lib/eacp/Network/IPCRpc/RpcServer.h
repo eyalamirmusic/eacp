@@ -29,9 +29,9 @@ public:
     RpcServer& operator=(RpcServer&&) = delete;
 
     // Where incoming command handlers run; see Rpc::CommandExecution.
-    void setCommandExecution(Rpc::CommandExecution mode) { commandExecution = mode; }
+    void setCommandExecution(Rpc::CommandExecution mode);
 
-    [[nodiscard]] int connectedClients() const { return clients.size(); }
+    [[nodiscard]] int connectedClients() const;
 
     Callback onClientConnected = [] {};
     Callback onClientDisconnected = [] {};
@@ -53,6 +53,6 @@ private:
 };
 
 OwningPointer<RpcServer> createRPCServer(std::string_view name,
-                                      Miro::Bridge& bridgeToUse);
+                                         Miro::Bridge& bridgeToUse);
 
 } // namespace eacp::IPC

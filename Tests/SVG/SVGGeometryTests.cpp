@@ -116,8 +116,8 @@ auto tFlatnessIsTheCallers =
 
 // The bug the matrix form exists to fix. translate then rotate means rotate
 // first, because the translate moves the coordinate system the rotate is written
-// in - and the struct-of-fields parseTransform cannot tell this from its
-// reverse, since both leave the same translateX and the same rotateDeg.
+// in - and a struct of fields cannot tell this from its reverse, since both
+// leave the same translation and the same angle.
 auto tListComposes = test("SVGTransform/aListComposesRightToLeft") = []
 {
     auto forward = SVG::parseTransformMatrix("translate(100 0) rotate(90)");
@@ -125,13 +125,6 @@ auto tListComposes = test("SVGTransform/aListComposesRightToLeft") = []
 
     check(isNear(forward.apply({1.f, 0.f}), 100.f, 1.f));
     check(isNear(reversed.apply({1.f, 0.f}), 0.f, 101.f));
-
-    auto flattened = SVG::parseTransform("translate(100 0) rotate(90)");
-    auto flattenedReverse = SVG::parseTransform("rotate(90) translate(100 0)");
-
-    check(flattened.translateX == flattenedReverse.translateX
-              && flattened.rotateDeg == flattenedReverse.rotateDeg,
-          "the flattened form is expected to lose the ordering");
 };
 
 auto tRepeatedFunction = test("SVGTransform/aRepeatedFunctionAccumulates") = []
@@ -242,8 +235,8 @@ auto tXML = test("XMLParser/readsTagsAttributesAndText") = []
     check(root.children[1].textContent == "hi");
 };
 
-// SVGBuilder reads the third and fourth numbers of a viewBox and nothing else,
-// so a document with a non-zero origin renders shifted by it and says nothing.
+// A reader that takes only the third and fourth numbers of a viewBox renders a
+// document with a non-zero origin shifted by it and says nothing.
 auto tViewBoxOrigin =
     test("SVGComponent/readsTheViewBoxOriginRatherThanDiscardingIt") = []
 {

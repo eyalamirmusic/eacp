@@ -3,6 +3,8 @@
 #include "CoverageBatch.h"
 #include "Path.h"
 
+#include <eacp/GPU/Texture/Texture.h>
+
 namespace eacp::GPUWidgets
 {
 // How a path's interior is decided where its contours overlap: non-zero fills
@@ -63,7 +65,7 @@ public:
     // Device pixels per path unit - a view's backingScale, times whatever zoom
     // the path is drawn at. Takes effect on the next setPath.
     void setScale(float pixelsPerUnit);
-    float getScale() const { return scale; }
+    constexpr float getScale() const { return scale; }
 
     // Flattens the path into directed segments in coverage pixel space and
     // measures the room its rasterization will need. Every sub-path is closed,
@@ -77,26 +79,26 @@ public:
     // empty path, or one whose bounds hold no pixels at this scale.
     bool isEmpty() const;
 
-    int getCoverageWidth() const { return coverageWidth; }
-    int getCoverageHeight() const { return coverageHeight; }
+    constexpr int getCoverageWidth() const { return coverageWidth; }
+    constexpr int getCoverageHeight() const { return coverageHeight; }
 
     // The rect in path units the coverage spans: the path's bounds snapped out
     // to whole pixels and grown by one, so an edge landing on a pixel boundary
     // still has somewhere to spill its coverage.
-    Graphics::Rect getCoveredBounds() const { return covered; }
+    Graphics::Rect getCoveredBounds() const;
 
     // Directed segments the flattened path came to, closing ones included and
     // horizontal ones dropped. How complex this path is, in the only unit the
     // kernel counts in.
-    int getSegmentCount() const { return segments.size() / 4; }
+    int getSegmentCount() const;
 
     // Those segments, four floats each in coverage pixel space: what a batch
     // uploads, and what a test runs the binning stages over on the CPU.
-    const Vector<float>& getSegments() const { return segments; }
+    constexpr const Vector<float>& getSegments() const { return segments; }
 
     // Tiles across the coverage, which is what a batch adds up to size the count
     // and offset arrays the binning kernels work in.
-    int getTileCount() const { return tilesWide * tilesHigh; }
+    constexpr int getTileCount() const { return tilesWide * tilesHigh; }
 
     // What this path's backdrop costs a batch in cells - one integer per tile
     // column per pixel row. This is the only thing a batch allocates that grows
@@ -124,7 +126,7 @@ public:
     // clip finds, and the clip is on the GPU, so this is an upper bound taken
     // per segment in constant time - see measure(). It has to be one: a bound
     // that came up short would drop segments and say nothing.
-    int getEntryBound() const { return entryBound; }
+    constexpr int getEntryBound() const { return entryBound; }
 
     // Writes into a rect of someone else's texture, whose top-left texel is
     // given. The texture must have been created with computeWrite, must outlive
@@ -138,7 +140,7 @@ public:
     // The coverage mask, one texel per device pixel of getCoveredBounds(), with
     // the same value in all four channels. Valid after a dispatch, and only
     // while no target is set - with one, the coverage belongs to the target.
-    const GPU::Texture& getCoverage() const { return *coverageTexture; }
+    const GPU::Texture& getCoverage() const;
 
     // Runs the kernel over the covered rect. A no-op on an empty path. The pass
     // must end before the render pass that samples the coverage begins.

@@ -4,7 +4,9 @@
 add_library(eacp-cpu-compute STATIC)
 
 target_sources(eacp-cpu-compute PRIVATE
+        Bindings.cpp
         Builtins.cpp
+        CpuUniformVisitor.cpp
         Evaluate.cpp
         Executor.cpp
         Helpers.cpp

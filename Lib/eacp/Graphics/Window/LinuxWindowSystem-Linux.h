@@ -57,6 +57,10 @@ Point linuxPointerPosition();
 // Re-reads the cursor shape under the pointer and applies it.
 void linuxRefreshCursor();
 
+// A view took the keyboard focus: where there is an on-screen keyboard, show it
+// for a view that wants text input and put it away for one that does not.
+void linuxViewFocused(bool wantsTextInput);
+
 // The clipboard belongs to the preferred backend alone, so a second connection
 // opened for a window does not take the selection with it. Called as a
 // backend's connection comes up and again on the way down.

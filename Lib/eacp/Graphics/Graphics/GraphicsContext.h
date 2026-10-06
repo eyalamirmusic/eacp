@@ -14,7 +14,7 @@ public:
     // rather than a live on-screen frame. Lets paint() skip work that only makes
     // sense on screen -- a GPUView renders its content via renderNativeContent
     // and must not present a live frame while being snapshotted.
-    bool isSnapshot() const { return snapshotMode; }
+    constexpr bool isSnapshot() const { return snapshotMode; }
 
     virtual void saveState() = 0;
     virtual void restoreState() = 0;

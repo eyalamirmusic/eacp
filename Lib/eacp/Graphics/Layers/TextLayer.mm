@@ -3,6 +3,7 @@
 #include "TextLayer.h"
 #include "NativeLayer.h"
 #include "ImmediateLayerClass.h"
+#include "../Primitives/GraphicUtils.h"
 #include <eacp/Core/ObjC/Strings.h>
 
 namespace eacp::Graphics

@@ -69,8 +69,8 @@ public:
 
     struct Result
     {
-        const FilePath* operator->() const { return &path; }
-        const FilePath& operator*() const { return path; }
+        const FilePath* operator->() const;
+        const FilePath& operator*() const;
 
         bool ok = false;
         bool cancelled = false;
@@ -148,8 +148,8 @@ public:
     OnlineResource(const OnlineResource&) = delete;
     OnlineResource& operator=(const OnlineResource&) = delete;
 
-    const Info& info() const { return resource; }
-    const FilePath& directory() const { return folder; }
+    const Info& info() const;
+    const FilePath& directory() const;
 
     // Where the resource is, or will be, on disk.
     FilePath path() const;

@@ -283,6 +283,98 @@ static CFRef<CGColorRef> getColorRef(const Color& c)
     return CGColorCreate(colorSpace, components);
 }
 
+MacOSContext::MacOSContext(CGContextRef contextToUse, bool forSnapshot)
+    : context(contextToUse)
+    , currentColor {1.0f, 1.0f, 1.0f, 1.0f}
+{
+    snapshotMode = forSnapshot;
+    saveState();
+}
+
+MacOSContext::~MacOSContext()
+{
+    restoreState();
+}
+
+void MacOSContext::saveState()
+{
+    CGContextSaveGState(context);
+}
+
+void MacOSContext::restoreState()
+{
+    CGContextRestoreGState(context);
+}
+
+void MacOSContext::translate(float x, float y)
+{
+    CGContextTranslateCTM(context, x, y);
+}
+
+void MacOSContext::scale(float x, float y)
+{
+    CGContextScaleCTM(context, x, y);
+}
+
+void MacOSContext::rotate(float angle)
+{
+    CGContextRotateCTM(context, angle);
+}
+
+void MacOSContext::fillRect(const Rect& r)
+{
+    CGContextFillRect(context, toCGRect(r));
+}
+
+void MacOSContext::setColor(const Color& color)
+{
+    currentColor = color;
+    CGContextSetRGBFillColor(context, color.r, color.g, color.b, color.a);
+    CGContextSetRGBStrokeColor(context, color.r, color.g, color.b, color.a);
+}
+
+void MacOSContext::fillRoundedRect(const Rect& r, float radius)
+{
+    auto p = Path();
+    p.addRoundedRect(r, radius);
+    fillPath(p);
+}
+
+void MacOSContext::setCurrentPath(const Path& p)
+{
+    CGContextAddPath(context, (CGPathRef) p.getHandle());
+}
+
+void MacOSContext::fillPath(const Path& p)
+{
+    setCurrentPath(p);
+    CGContextFillPath(context);
+}
+
+void MacOSContext::setLineWidth(float width)
+{
+    CGContextSetLineWidth(context, width);
+}
+
+void MacOSContext::strokeRect(const Rect& r)
+{
+    CGContextStrokeRect(context, toCGRect(r));
+}
+
+void MacOSContext::strokePath(const Path& p)
+{
+    setCurrentPath(p);
+    CGContextStrokePath(context);
+}
+
+void MacOSContext::drawLine(const Point& start, const Point& end)
+{
+    auto p = Path();
+    p.moveTo(start);
+    p.lineTo(end);
+    strokePath(p);
+}
+
 void MacOSContext::drawText(const std::string& text,
                             const Point& position,
                             const Font& font)

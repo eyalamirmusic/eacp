@@ -15,13 +15,13 @@ class ShaderLibrary
 public:
     ShaderLibrary(Device& device, const ShaderSource& source);
 
-    const std::string& vertexEntry() const { return vertexEntryName; }
-    const std::string& fragmentEntry() const { return fragmentEntryName; }
-    const std::string& computeEntry() const { return computeEntryName; }
+    constexpr const std::string& vertexEntry() const { return vertexEntryName; }
+    constexpr const std::string& fragmentEntry() const { return fragmentEntryName; }
+    constexpr const std::string& computeEntry() const { return computeEntryName; }
 
     // The group the kernel was emitted for, carried to the pipeline the pass
     // dispatches through.
-    ThreadGroupShape threadGroupShape() const { return groupShape; }
+    constexpr ThreadGroupShape threadGroupShape() const { return groupShape; }
 
     bool isValid() const;
 

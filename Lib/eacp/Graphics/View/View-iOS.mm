@@ -138,6 +138,7 @@
         event.pos = {(float) position.x, (float) position.y};
         event.phase = phase;
         event.pressure = (float) touch.force;
+        event.radius = (float) touch.majorRadius;
         event.tapCount = (int) touch.tapCount;
         event.timestamp = touch.timestamp;
 

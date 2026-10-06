@@ -65,12 +65,12 @@ public:
     // this rounded out to whole device pixels, so a layer costs its own area
     // and not the tree's -- keep it to what is actually drawn.
     void setBounds(const Rect& newBounds);
-    Rect getBounds() const { return bounds; }
+    Rect getBounds() const;
 
     // Multiplied into the whole layer as it is composited, which is the point of
     // having one.
     void setOpacity(float newOpacity);
-    float getOpacity() const { return opacity; }
+    float getOpacity() const;
 
     // Applied to the quad as it is composited, so a layer can be rotated,
     // scaled or skewed where nothing else in the tier can: the clip is a
@@ -88,7 +88,7 @@ public:
     // an animated transform costs a frame and no pass of its own, which is what
     // makes it worth doing here rather than in the drawing.
     void setTransform(const GPUWidgets::AffineTransform& newTransform);
-    const GPUWidgets::AffineTransform& getTransform() const { return transform; }
+    const GPUWidgets::AffineTransform& getTransform() const;
 
     // What goes in it, drawn with the origin at the layer's own top-left -- so a
     // caller draws in the same coordinates it would have drawn in without a
@@ -105,9 +105,9 @@ public:
 
     // True once there is a texture with the content in it. Drawing an empty
     // layer is a no-op.
-    bool isEmpty() const { return !ready; }
+    bool isEmpty() const;
 
-    const GPU::Texture& getTexture() const { return *texture; }
+    const GPU::Texture& getTexture() const;
 
     // The part of that texture the content occupies, in normalised coordinates.
     // Not the whole of it: the texture is kept across a shrink, so a layer that
@@ -117,7 +117,7 @@ public:
 private:
     friend class ComponentHost;
 
-    bool isDirty() const { return dirty; }
+    bool isDirty() const;
 
     // Makes or grows the texture for the bounds at this scale. False when the
     // bounds hold no pixels, or the device could not give a texture -- either

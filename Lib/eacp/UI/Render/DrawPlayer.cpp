@@ -306,8 +306,8 @@ void DrawPlayer::playLayer(const DrawList& list,
     // four corners it was turned into, and not the untransformed rect the
     // renderer is handed to place the content in. The matrix is local to the
     // layer, so it is applied to a rect at the origin and put back afterwards.
-    auto turned = recorded.layer->getTransform().apply(
-        Rect {0.f, 0.f, target.w, target.h});
+    auto turned =
+        recorded.layer->getTransform().apply(Rect {0.f, 0.f, target.w, target.h});
 
     prepareToDraw(offsetBy(turned, {target.x, target.y}), Renderer::Layers);
 
@@ -388,5 +388,15 @@ void DrawPlayer::flush()
     images.flush();
     text.flush(pass);
     text.begin();
+}
+
+int DrawPlayer::getClipChangeCount() const
+{
+    return clipChanges;
+}
+
+int DrawPlayer::getRendererSwitchCount() const
+{
+    return rendererSwitches;
 }
 } // namespace eacp::UI

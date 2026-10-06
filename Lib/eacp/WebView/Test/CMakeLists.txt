@@ -10,15 +10,19 @@ if (NOT ((APPLE AND NOT IOS) OR WIN32))
     return ()
 endif ()
 
+find_package(NanoTest REQUIRED)
+
 add_library(eacp-webview-test STATIC)
 
 target_sources(eacp-webview-test PRIVATE
         AppDriver.cpp
         DomNode.cpp
-        TestAgent.cpp)
+        TestAgent.cpp
+        TestApp.cpp)
 
 # eacp-webview gives us WebView + WebViewBridge + Miro::Bridge.
-target_link_libraries(eacp-webview-test PUBLIC eacp-webview eacp-network-rpc)
+target_link_libraries(eacp-webview-test PUBLIC
+        eacp-webview eacp-network-rpc NanoTest)
 
 # Embed the JS test agent so loadTestAgentSource() can pull it out
 # at runtime. Lives at Resources/test-agent.js; consumers don't see
@@ -37,8 +41,6 @@ add_ide_sources(eacp-webview-test)
 # is in place before any test constructs a Window/WebView. NanoTest
 # itself is pulled in lazily because the rest of eacp doesn't need
 # it.
-find_package(NanoTest REQUIRED)
-
 add_library(eacp-webview-test-main STATIC TestMain.cpp)
 if (WIN32)
     target_sources(eacp-webview-test-main PRIVATE TestCrashGuard-Windows.cpp)
@@ -46,4 +48,6 @@ else ()
     target_sources(eacp-webview-test-main PRIVATE TestCrashGuard-Default.cpp)
 endif ()
 target_link_libraries(eacp-webview-test-main PUBLIC NanoTest eacp-core)
+# IPC::Lock serialises WebView test processes; see TestMain.cpp.
+target_link_libraries(eacp-webview-test-main PRIVATE eacp-network)
 set_default_target_setting(eacp-webview-test-main)

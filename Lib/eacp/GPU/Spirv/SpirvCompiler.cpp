@@ -8,6 +8,11 @@
 
 namespace eacp::GPU::Spirv
 {
+bool CompileResult::succeeded() const
+{
+    return !words.empty();
+}
+
 namespace
 {
 constexpr auto glslVersion = 450;
@@ -71,6 +76,27 @@ void initializeGlslang()
     std::call_once(once, [] { glslang::InitializeProcess(); });
 }
 
+glslang::EShTargetClientVersion clientVersion(Target target)
+{
+    return target == Target::vulkan13Spirv16 ? glslang::EShTargetVulkan_1_3
+                                             : glslang::EShTargetVulkan_1_1;
+}
+
+glslang::EShTargetLanguageVersion spirvVersion(Target target)
+{
+    switch (target)
+    {
+        case Target::vulkan11Spirv13:
+            return glslang::EShTargetSpv_1_3;
+        case Target::vulkan11Spirv14:
+            return glslang::EShTargetSpv_1_4;
+        case Target::vulkan13Spirv16:
+            break;
+    }
+
+    return glslang::EShTargetSpv_1_6;
+}
+
 std::string warmUpSource()
 {
     return "#version 450\n"
@@ -79,7 +105,7 @@ std::string warmUpSource()
 }
 } // namespace
 
-CompileResult compileGlsl(Stage stage, const std::string& source)
+CompileResult compileGlsl(Stage stage, const std::string& source, Target target)
 {
     initializeGlslang();
 
@@ -96,8 +122,8 @@ CompileResult compileGlsl(Stage stage, const std::string& source)
                        language,
                        glslang::EShClientVulkan,
                        inputSemanticsVersion);
-    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
-    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    shader.setEnvClient(glslang::EShClientVulkan, clientVersion(target));
+    shader.setEnvTarget(glslang::EShTargetSpv, spirvVersion(target));
 
     if (!shader.parse(GetDefaultResources(), glslVersion, false, spirvMessages()))
     {

@@ -93,6 +93,11 @@ MemoryMappedFile::MemoryMappedFile(const FilePath& path,
 {
 }
 
+const FilePath& MemoryMappedFile::path() const
+{
+    return filePath;
+}
+
 bool MemoryMappedFile::isValid() const
 {
     return impl->mapping.valid;

@@ -7,16 +7,21 @@ add_library(eacp-ui STATIC)
 target_link_libraries(eacp-ui PUBLIC eacp-gpu eacp-gpuwidgets eacp-text)
 
 target_sources(eacp-ui PRIVATE
+        Common.cpp
         Component/Component.cpp
         DragAndDrop/DragAndDrop.cpp
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp
+        Render/ClipShader.cpp
         Render/CoverageAtlas.cpp
         Render/DrawList.cpp
         Render/DrawPlayer.cpp
+        Render/Gradient.cpp
         Render/GradientRamps.cpp
+        Render/GradientShader.cpp
         Render/ImageBatch.cpp
         Render/ImageCache.cpp
+        Render/ImageTexture.cpp
         Render/Layer.cpp
         Render/LayerRenderer.cpp
         Render/MaskCache.cpp
@@ -26,6 +31,7 @@ target_sources(eacp-ui PRIVATE
         Widgets/ComboBox.cpp
         Widgets/ListBox.cpp
         Widgets/Tabs.cpp
+        Widgets/TouchScroller.cpp
         Widgets/Widgets.cpp)
 
 set_default_target_setting(eacp-ui)
@@ -35,10 +41,6 @@ add_ide_sources(eacp-ui)
 # The one widget that knows the network: a view of the OnlineResources
 # registry. Its own target so eacp-ui stays free of eacp-network, and an app
 # with no downloads links nothing for them.
-if (NOT EACP_HAS_NETWORK)
-    return ()
-endif ()
-
 add_library(eacp-ui-network STATIC)
 target_sources(eacp-ui-network PRIVATE
         Network/OnlineResourceMonitor.cpp

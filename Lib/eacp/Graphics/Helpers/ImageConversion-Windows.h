@@ -1,10 +1,11 @@
 #pragma once
 
 #include <eacp/Core/Utils/WinInclude.h>
-#include "../Image/Image.h"
 
 namespace eacp::Graphics
 {
+class Image;
+
 // Builds a 32bpp ARGB HICON from the Image's straight RGBA pixels. Returns
 // nullptr on an empty image or GDI failure. The caller owns the icon and
 // releases it with DestroyIcon.

@@ -27,14 +27,14 @@ struct Shape
     Shape(std::initializer_list<int> dimsToUse);
     explicit Shape(const Vector<int>& dimsToUse);
 
-    int rank() const { return dims.size(); }
-    int operator[](int axis) const { return dims[axis]; }
+    int rank() const;
+    int operator[](int axis) const;
 
     bool isFixed() const;
     std::int64_t count() const;
 
-    bool operator==(const Shape& other) const { return dims == other.dims; }
-    bool operator!=(const Shape& other) const { return !(*this == other); }
+    bool operator==(const Shape& other) const;
+    bool operator!=(const Shape& other) const;
 
     std::string toString() const;
 
@@ -46,7 +46,7 @@ struct Shape
 // after recording an error.
 struct Tensor
 {
-    bool isValid() const { return id >= 0; }
+    constexpr bool isValid() const { return id >= 0; }
 
     bool operator==(const Tensor& other) const = default;
 

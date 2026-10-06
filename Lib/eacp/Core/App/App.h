@@ -91,6 +91,17 @@ void setReopenHandler(const Callback& handler);
 // Internal: the handler above, invoked by the platform's app delegate.
 const Callback& getReopenHandler();
 
+// iOS and Android: called on the main thread with true when the app goes to the
+// background (on Android, paused or without its surface) and with false when it
+// comes back; where to stop and restart audio. Never fires on other platforms.
+void setSuspendHandler(std::function<void(bool suspended)> handler);
+
+namespace Detail
+{
+// What the platform calls; a repeat of the current state is dropped.
+void setSuspended(bool suspended);
+} // namespace Detail
+
 // Called when something asks the app to quit on the user's behalf: Cmd+Q,
 // the standard app menu's Quit, Dock ▸ Quit, a quit Apple Event. Return
 // false to refuse, leaving the app running — which is how a tray-resident

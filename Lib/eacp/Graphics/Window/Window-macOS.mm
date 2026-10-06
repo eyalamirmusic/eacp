@@ -131,6 +131,8 @@ void ensureAppBecomesActive()
 
 namespace eacp::Graphics
 {
+bool detail::cursorWasWarped = false;
+
 namespace
 {
 // Borderless NSWindows refuse key status by default, which would make a

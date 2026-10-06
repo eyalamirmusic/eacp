@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
+#include "TouchScroller.h"
 
 #include <optional>
 #include <string>
@@ -32,7 +33,7 @@ public:
     explicit Label(std::string textToUse = {});
 
     void setText(std::string newText);
-    const std::string& getText() const { return text; }
+    const std::string& getText() const;
 
     void setColour(const Color& colour);
     void setJustification(Justification newJustification);
@@ -72,7 +73,7 @@ public:
     // a mute or solo does. Off by default, when it is a momentary press.
     void setToggleable(bool shouldToggle);
     void setToggleState(bool shouldBeOn);
-    bool getToggleState() const { return toggledOn; }
+    bool getToggleState() const;
 
     void setAccentColour(const Color& colour);
 
@@ -84,6 +85,7 @@ public:
     void mouseExit(const MouseEvent&) override;
     void mouseDown(const MouseEvent&) override;
     void mouseUp(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
 
 private:
     std::string text;
@@ -101,10 +103,10 @@ public:
     explicit Checkbox(std::string textToUse = {});
 
     void setText(std::string newText);
-    const std::string& getText() const { return text; }
+    const std::string& getText() const;
 
     void setChecked(bool shouldBeChecked, bool notify = false);
-    bool isChecked() const { return checked; }
+    bool isChecked() const;
 
     void setAccentColour(const Color& colour);
 
@@ -149,14 +151,14 @@ public:
     // Setting the text moves the caret to the end and drops the selection, the
     // way handing someone a field with something already in it does.
     void setText(std::string newText, bool notify = false);
-    const std::string& getText() const { return text; }
+    const std::string& getText() const;
 
     // Shown in place of empty text, dimmed. Not part of the value: it is never
     // returned by getText and typing does not have to clear it.
     void setPlaceholder(std::string newPlaceholder);
 
     void setReadOnly(bool shouldBeReadOnly);
-    bool isReadOnly() const { return readOnly; }
+    bool isReadOnly() const;
 
     void setFont(const Font& font);
     void setColour(const Color& colour);
@@ -167,22 +169,22 @@ public:
     // control on a styled page has its border and background from the page,
     // and the editor is then the text, the selection and the caret alone.
     void setDrawsFrame(bool shouldDrawFrame);
-    bool getDrawsFrame() const { return drawsFrame; }
+    bool getDrawsFrame() const;
 
     // Drawn in place of every character, for a password field. The text is
     // kept and returned as typed; only the drawing, and the hit testing that
     // goes with it, use the mask. Empty -- the default -- draws the text.
     void setPasswordCharacter(std::string mask);
-    const std::string& getPasswordCharacter() const { return passwordCharacter; }
+    const std::string& getPasswordCharacter() const;
 
     // In bytes, clamped, and never inside a UTF-8 sequence -- so a caret can be
     // used as a substring boundary without splitting a character.
     void setCaretPosition(int position);
-    int getCaretPosition() const { return caret; }
+    int getCaretPosition() const;
 
     void selectAll();
     void deselect();
-    bool hasSelection() const { return selectionStart != caret; }
+    bool hasSelection() const;
     std::string getSelectedText() const;
 
     std::function<void(const std::string&)> onTextChange = [](const std::string&) {};
@@ -200,11 +202,16 @@ public:
 
     bool keyDown(const KeyEvent& event) override;
 
+    // A finger focuses the editor and places the caret when it lifts, and only
+    // if it was a tap: a press that turns into a scroll raises no keyboard.
     void mouseDown(const MouseEvent& event) override;
     void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent& event) override;
 
     void focusGained() override;
     void focusLost() override;
+
+    bool wantsTextInput() const override;
 
 private:
     Font fontToDrawIn() const;
@@ -213,8 +220,8 @@ private:
     int nextCharacter(int from) const;
     int previousCharacter(int from) const;
 
-    int selectionLeft() const { return std::min(selectionStart, caret); }
-    int selectionRight() const { return std::max(selectionStart, caret); }
+    int selectionLeft() const;
+    int selectionRight() const;
 
     void moveCaret(int position, bool extendSelection);
     void replaceSelection(const std::string& with);
@@ -238,7 +245,7 @@ private:
     // measures goes through here, so the caret and a click agree with what
     // is on screen whichever it is.
     std::string displayedPrefix(int bytes) const;
-    std::string displayed() const { return displayedPrefix((int) text.size()); }
+    std::string displayed() const;
 
     std::string text;
     std::string placeholder;
@@ -281,12 +288,12 @@ public:
     // preset loaded -- must not come back out as a change and be written to it
     // again. The mouse paths ask.
     void setValue(float newValue, bool notify = false);
-    float getValue() const { return value; }
+    float getValue() const;
 
     // Where a double-click puts the value. Unset by default, and then a second
     // click is an ordinary press: a control with no default has nowhere to go.
     void setDefaultValue(std::optional<float> newDefault);
-    const std::optional<float>& getDefaultValue() const { return defaultValue; }
+    const std::optional<float>& getDefaultValue() const;
 
     void setAccentColour(const Color& colour);
 
@@ -307,11 +314,18 @@ public:
     void mouseDrag(const MouseEvent& event) override;
     void mouseUp(const MouseEvent&) override;
 
+    // A finger moving along the track drags the thumb even inside something
+    // that scrolls; one moving across it is left to scroll. A cancelled press
+    // puts the value back where the press found it.
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
+
 private:
     void setValueFromPosition(Point position);
 
     Orientation orientation;
     float value = 0.5f;
+    float valueAtDragStart = 0.5f;
     std::optional<float> defaultValue;
     Color accent = defaultTheme().accent;
     bool dragging = false;
@@ -348,10 +362,10 @@ public:
     // Normalised 0-1, clamped, and silent unless asked -- see Slider::setValue,
     // which this matches in every respect.
     void setValue(float newValue, bool notify = false);
-    float getValue() const { return value; }
+    float getValue() const;
 
     void setDefaultValue(std::optional<float> newDefault);
-    const std::optional<float>& getDefaultValue() const { return defaultValue; }
+    const std::optional<float>& getDefaultValue() const;
 
     void setAccentColour(const Color& colour);
 
@@ -369,6 +383,11 @@ public:
     void mouseDrag(const MouseEvent& event) override;
     void mouseUp(const MouseEvent&) override;
 
+    // Up and down is how a knob turns, so a finger moving that way keeps it
+    // inside a panel that scrolls the same way. See Slider.
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
+
 private:
     void rebuildTrack();
     void rebuildArc();
@@ -383,12 +402,19 @@ private:
     PathShape arc {*this};
 };
 
-// A clipping viewport over a taller content component, scrolled by the wheel.
+// A clipping viewport over a taller content component, scrolled by the wheel
+// or by a finger.
 //
 // The clipping is not this component's code: paint() gives every component a
 // Graphics already clipped to its own bounds, so content taller than the
 // viewport is cut at the edge without the viewport asking. What it adds is the
-// scroll offset, the wheel handling and the position indicator.
+// scroll offset, the wheel and touch handling and the position indicator.
+//
+// A finger dragged up or down anywhere over it scrolls, even one that went
+// down on a button in the content: the button is cancelled once the finger
+// has moved past the slop (see TouchScroller), and a tap that never moved
+// still clicks it. Let go moving and the content coasts; a press while it
+// coasts stops it and clicks nothing. A mouse drag means what it always did.
 class ScrollPanel final : public Component
 {
 public:
@@ -399,17 +425,35 @@ public:
     void setContent(Component& newContent);
 
     void setScrollPosition(float newOffset);
-    float getScrollPosition() const { return scrollOffset; }
+    float getScrollPosition() const;
+
+    bool isFlinging() const;
 
     void paint(Graphics& g) override;
     void paintOverChildren(Graphics& g) override;
+
+    // Shrinking keeps the focused component in view, which is what a panel
+    // the on-screen keyboard has just covered half of needs.
     void resized() override;
     bool mouseWheelMove(const MouseEvent& event) override;
 
+    void mouseDown(const MouseEvent& event) override;
+    void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
+
+    bool interceptsTouch(const MouseEvent& event) override;
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    bool advanceAnimation(double seconds) override;
+
 private:
     float maximumScroll() const;
+    void keepFocusedInView();
 
     Component* content = nullptr;
     float scrollOffset = 0.f;
+    float lastHeight = 0.f;
+
+    TouchScrolling touchScroll {*this};
 };
 } // namespace eacp::UI

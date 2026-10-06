@@ -27,7 +27,7 @@ struct ClipRegion
     // nothing, and an element referencing one draws not at all.
     bool resolved = false;
 
-    bool isEmpty() const { return path.isEmpty(); }
+    bool isEmpty() const;
 };
 
 // The region a `clip-path="url(#id)"` refers to, in the referencing element's

@@ -3,16 +3,12 @@ set(CMAKE_FOLDER Tests)
 find_package(NanoTest REQUIRED)
 
 add_subdirectory(Core)
-add_subdirectory(SIMD)
 
 if (APPLE)
     add_subdirectory(ObjC)
 endif ()
 
-if (EACP_HAS_NETWORK)
-    add_subdirectory(Network)
-endif ()
-
+add_subdirectory(Network)
 add_subdirectory(Spirv)
 
 if (EACP_HAS_DRAW)
@@ -51,7 +47,9 @@ if (EACP_HAS_CAPTURE AND NOT IOS)
     # The video playback stack above the Decoder interface — frame queueing,
     # playhead-to-frame selection, the clock — is portable C++, so these run
     # against a synthetic decoder with no media file and no codec involved.
-    add_subdirectory(Video)
+    if (NOT ANDROID)
+        add_subdirectory(Video)
+    endif ()
 endif ()
 
 # Codegen tests exercise eacp's WebView events/hooks format registrations,
@@ -61,8 +59,6 @@ if (EACP_HAS_WEBVIEW)
     add_subdirectory(Codegen)
 endif ()
 
-# Wherever Network is: ScriptHostTests needs no web runtime and no graphics.
-# The directory returns after it unless EACP_HAS_WEBVIEW.
-if (EACP_HAS_NETWORK)
-    add_subdirectory(WebView)
-endif ()
+# Always added: ScriptHostTests needs no web runtime and no graphics. The
+# directory returns after it unless EACP_HAS_WEBVIEW.
+add_subdirectory(WebView)

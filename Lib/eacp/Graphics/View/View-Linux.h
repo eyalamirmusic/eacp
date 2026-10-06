@@ -18,20 +18,21 @@ struct NativeSurfaceHandle
     {
         None,
         Wayland,
-        X11
+        X11,
+        Android
     };
 
-    bool isValid() const { return kind != Kind::None; }
+    constexpr bool isValid() const { return kind != Kind::None; }
 
     Kind kind = Kind::None;
 
-    // wl_display* or xcb_connection_t*.
+    // wl_display* or xcb_connection_t*, and null on Android.
     void* connection = nullptr;
 
-    // wl_surface*, and null on X11.
+    // wl_surface* or ANativeWindow*, and null on X11.
     void* surface = nullptr;
 
-    // xcb_window_t, and zero on Wayland.
+    // xcb_window_t, and zero elsewhere.
     uint32_t window = 0;
 };
 

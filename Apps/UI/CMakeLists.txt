@@ -40,9 +40,17 @@ add_subdirectory(WidgetGallery)
 # that empties the folder both apps share.
 add_subdirectory(ResourceMonitor)
 
-# An SVG document drawn twice in one window: native shape layers on the left,
-# the component tier's coverage masks on the right, for comparing the two on
-# screen and for reading what a real document costs the atlas.
-if (EACP_HAS_CONTEXT)
-    add_subdirectory(SVGDocument)
-endif ()
+# Every finger as a disc labelled with its id, position and radius, the count
+# and the safe-area insets in a corner: View's touch API, with the mouse as one
+# finger on a desktop.
+add_subdirectory(TouchDemo)
+
+# Every control of a game controller doing something visible, through
+# GameInput's gamepads: a disc the sticks move and aim, triggers that fire and
+# shield, buttons that each do a thing and announce it, and a panel of all
+# fifteen buttons and six axes named as the controller's family prints them.
+add_subdirectory(GamepadDemo)
+
+# A gallery of SVG documents through the component tier, one at a time, with
+# what each one costs the coverage atlas read out beneath it.
+add_subdirectory(SVGDocument)

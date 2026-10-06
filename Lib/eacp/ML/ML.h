@@ -2,6 +2,7 @@
 
 #include "Graph/Graph.h"
 #include "MIL/Blob.h"
+#include "MIL/Half.h"
 #include "MIL/MILWriter.h"
 #include "MIL/Package.h"
 #include "MIL/Protobuf.h"

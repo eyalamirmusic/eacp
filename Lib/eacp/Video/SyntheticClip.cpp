@@ -3,6 +3,7 @@
 #include "Encoder.h"
 
 #include <eacp/Core/Utils/StdPath.h>
+#include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
 #include <cmath>
@@ -222,8 +223,8 @@ FilePath cachedSyntheticClip(const SyntheticClipOptions& options)
     //
     // The temporary keeps the .mp4 extension: the sink writer picks its
     // container from it, and refuses to open a path ending in anything else.
-    auto temp = FilePath::cacheDirectory()
-                / (stem + "." + uniqueSuffix() + ".partial.mp4");
+    auto temp =
+        FilePath::cacheDirectory() / (stem + "." + uniqueSuffix() + ".partial.mp4");
     auto ec = std::error_code {};
 
     if (!writeSyntheticClip(temp, options))

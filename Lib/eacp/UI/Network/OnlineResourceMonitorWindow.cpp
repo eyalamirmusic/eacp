@@ -24,4 +24,19 @@ OnlineResourceMonitorWindow::OnlineResourceMonitorWindow(
     : window(host, options)
 {
 }
+
+OnlineResourceMonitor& OnlineResourceMonitorHost::getMonitor()
+{
+    return monitor;
+}
+
+OnlineResourceMonitor& OnlineResourceMonitorWindow::getMonitor()
+{
+    return host.getMonitor();
+}
+
+eacp::Graphics::Window& OnlineResourceMonitorWindow::getWindow()
+{
+    return window;
+}
 } // namespace eacp::UI

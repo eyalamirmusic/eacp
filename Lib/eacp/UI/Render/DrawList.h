@@ -210,7 +210,7 @@ public:
     // that.
     void clear();
 
-    bool isEmpty() const { return commands.empty(); }
+    bool isEmpty() const;
 
     void addShape(const ShapeDraw& shape);
 
@@ -218,7 +218,7 @@ public:
     // where it will be replayed from rather than into a scratch buffer that is
     // then copied. The pair is one call in practice: take the size, lay out,
     // and close the run.
-    Vector<Text::PlacedGlyph>& glyphStorage() { return glyphs; }
+    Vector<Text::PlacedGlyph>& glyphStorage();
     void addGlyphRun(int first, const Color& colour);
 
     void addMesh(const Vector<GPUWidgets::MeshVertex>& mesh,
@@ -234,14 +234,14 @@ public:
     void addClip(const ClipDraw& clip);
     void addFence();
 
-    const Vector<DrawCommand>& getCommands() const { return commands; }
-    const Vector<ShapeDraw>& getShapes() const { return shapes; }
-    const Vector<Text::PlacedGlyph>& getGlyphs() const { return glyphs; }
-    const Vector<GlyphRun>& getGlyphRuns() const { return glyphRuns; }
-    const Vector<MeshDraw>& getMeshes() const { return meshes; }
-    const Vector<LayerDraw>& getLayers() const { return layers; }
-    const Vector<ImageDraw>& getImages() const { return images; }
-    const Vector<ClipDraw>& getClips() const { return clips; }
+    const Vector<DrawCommand>& getCommands() const;
+    const Vector<ShapeDraw>& getShapes() const;
+    const Vector<Text::PlacedGlyph>& getGlyphs() const;
+    const Vector<GlyphRun>& getGlyphRuns() const;
+    const Vector<MeshDraw>& getMeshes() const;
+    const Vector<LayerDraw>& getLayers() const;
+    const Vector<ImageDraw>& getImages() const;
+    const Vector<ClipDraw>& getClips() const;
 
 private:
     // Extends the last command when it is of `kind`, and starts one otherwise.

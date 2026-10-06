@@ -31,10 +31,10 @@ struct ListBoxModel
 
     // One cell, called for every column after paintRow has drawn the row it is
     // in. Never called in a list that has no columns.
-    virtual void paintCell(Graphics&, int, int, const Rect&, bool) {}
+    virtual void paintCell(Graphics&, int, int, const Rect&, bool);
 
-    virtual void selectedRowChanged(int) {}
-    virtual void rowDoubleClicked(int) {}
+    virtual void selectedRowChanged(int);
+    virtual void rowDoubleClicked(int);
 };
 
 // A scrolling list of rows painted by a model, with an optional header that
@@ -54,30 +54,30 @@ public:
     // Not owned, and has to outlive the list. Re-reads the row count, so a
     // model set after its data is ready needs no second call.
     void setModel(ListBoxModel* newModel);
-    ListBoxModel* getModel() const { return model; }
+    ListBoxModel* getModel() const;
 
     void setRowHeight(float newHeight);
-    float getRowHeight() const { return rowHeight; }
+    float getRowHeight() const;
 
     // Asks the model how many rows there are now, and puts the selection and
     // the scroll position back inside them. Silent: a selection dropped because
     // the row it named has gone is not the user changing it, and a model
     // rebuilding its data does not want to hear about the rows it destroyed.
     void updateContent();
-    int getNumRows() const { return numRows; }
+    int getNumRows() const;
 
     // -1 means nothing is selected, and is the only value outside the list that
     // is accepted. Does not scroll -- scrollToRow is separate, so a selection
     // arriving from elsewhere cannot move a list somebody is reading.
     void setSelectedRow(int row, bool notify = false);
-    int getSelectedRow() const { return selectedRow; }
+    int getSelectedRow() const;
 
     // As far as it has to be and no further, from whichever edge the row left:
     // a row already in view does not move the list at all.
     void scrollToRow(int row);
 
     void setScrollPosition(float newOffset);
-    float getScrollPosition() const { return scrollOffset; }
+    float getScrollPosition() const;
 
     // Which row is at `localPosition`, or -1 for the header, the gap under the
     // last row, or outside.
@@ -93,7 +93,7 @@ public:
     // Setting columns is what makes this a table: the header appears, and the
     // model is asked for cells as well as rows.
     void setColumns(Vector<Column> newColumns);
-    const Vector<Column>& getColumns() const { return columns; }
+    const Vector<Column>& getColumns() const;
 
     void setHeaderHeight(float newHeight);
 
@@ -107,15 +107,31 @@ public:
 
     void paint(Graphics& g) override;
 
+    // A mouse selects on the press. A finger selects on the release, and only
+    // if it neither moved past the slop -- which scrolls the list instead,
+    // coasting on when let go moving -- nor landed while the list was coasting,
+    // which stops it.
     void mouseDown(const MouseEvent& event) override;
+    void mouseDrag(const MouseEvent& event) override;
+    void mouseUp(const MouseEvent& event) override;
+    void mouseCancel(const MouseEvent&) override;
     bool mouseWheelMove(const MouseEvent& event) override;
+
+    bool claimsTouchDrag(const MouseEvent& event) override;
+    bool advanceAnimation(double seconds) override;
+
+    bool isFlinging() const;
 
 private:
     void paintHeader(Graphics& g);
     void paintRows(Graphics& g);
     void paintScrollIndicator(Graphics& g);
 
+    void selectRowAt(const MouseEvent& event);
+
     float maximumScroll() const;
+
+    TouchScrolling touchScroll {*this};
 
     ListBoxModel* model = nullptr;
 

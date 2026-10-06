@@ -4,7 +4,10 @@
 #include <eacp/UI/Widgets/ListBox.h>
 #include <eacp/UI/Widgets/Widgets.h>
 
-#include <eacp/Core/Threads/Timer.h>
+namespace eacp::Threads
+{
+class Timer;
+}
 
 namespace eacp::UI
 {
@@ -27,7 +30,7 @@ public:
     ~OnlineResourceMonitor() override;
 
     // A copy of what the list is showing, in row order.
-    const Vector<OnlineResources::Entry>& getRows() const { return rows; }
+    const Vector<OnlineResources::Entry>& getRows() const;
     std::optional<OnlineResources::Entry> getSelectedEntry() const;
 
     // Re-reads the registry. Called for you on every change; here for a test
@@ -42,7 +45,7 @@ public:
     void resized() override;
 
 private:
-    int getNumRows() override { return rows.size(); }
+    int getNumRows() override;
     void paintRow(Graphics& g, int row, const Rect& bounds, bool selected) override;
     void selectedRowChanged(int row) override;
     void rowDoubleClicked(int row) override;

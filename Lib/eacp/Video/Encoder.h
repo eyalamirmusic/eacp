@@ -3,15 +3,15 @@
 #include "Audio.h"
 
 #include <eacp/Core/Threads/Async.h>
-#include <eacp/Graphics/Image/Image.h>
 
 #include <cstdint>
 #include <optional>
 
 namespace eacp::Graphics
 {
+class Image;
 class View;
-}
+} // namespace eacp::Graphics
 
 namespace eacp::Video
 {
@@ -20,38 +20,11 @@ namespace eacp::Video
 // byte buffer, row by row honouring dstStride (which may exceed width*4 for a
 // padded target). Shared by both encoders so the snapshot tier's pixel
 // conversion is written once. The image must be at least width x height.
-inline void compositeOverBlackBGRA(const Graphics::Image& image,
-                                   std::uint8_t* dst,
-                                   int width,
-                                   int height,
-                                   int dstStride)
-{
-    const auto* src = image.pixels().data();
-    auto srcStride = image.width() * 4;
-
-    for (auto y = 0; y < height; ++y)
-    {
-        const auto* s = src + y * srcStride;
-        auto* d = dst + y * dstStride;
-
-        for (auto x = 0; x < width; ++x)
-        {
-            auto r = s[x * 4 + 0];
-            auto g = s[x * 4 + 1];
-            auto b = s[x * 4 + 2];
-            auto a = s[x * 4 + 3];
-
-            // Straight RGBA over black -> premultiplied, opaque BGRA.
-            auto overBlack = [&](std::uint8_t c) -> std::uint8_t
-            { return static_cast<std::uint8_t>((c * a + 127) / 255); };
-
-            d[x * 4 + 0] = overBlack(b);
-            d[x * 4 + 1] = overBlack(g);
-            d[x * 4 + 2] = overBlack(r);
-            d[x * 4 + 3] = 255;
-        }
-    }
-}
+void compositeOverBlackBGRA(const Graphics::Image& image,
+                            std::uint8_t* dst,
+                            int width,
+                            int height,
+                            int dstStride);
 
 // The pixel side of one output file, resolved: sizes are the exact ones the
 // stream will carry, not the request the caller made.
@@ -119,21 +92,18 @@ struct Encoder
     // behaviour it wants -- but a writer producing a file offline has no frames
     // to spare and waits here instead. Defaults to returning at once, for
     // backends that queue rather than drop.
-    virtual void waitUntilReady(Time::MS) {}
+    virtual void waitUntilReady(Time::MS timeout);
 
     // GpuDirect tier: whether `view` has native GPU content this encoder can
     // capture zero-copy at the given (already even-rounded) pixel size, and
     // appending one such frame straight from the GPU. Both default to
     // unsupported (the snapshot/screen tiers do not use them). The probe runs
     // before begin(), so it takes the size rather than reading it back.
-    virtual bool canCaptureNativeContent(Graphics::View&, float, int, int)
-    {
-        return false;
-    }
-    virtual bool appendNativeContent(Graphics::View&, float, double)
-    {
-        return false;
-    }
+    virtual bool canCaptureNativeContent(Graphics::View& view,
+                                         float scale,
+                                         int probeWidth,
+                                         int probeHeight);
+    virtual bool appendNativeContent(Graphics::View& view, float scale, double pts);
 
     // Finalizes the file. The returned Async resolves on the main thread once it
     // is fully written (immediately if nothing was opened).

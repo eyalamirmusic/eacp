@@ -1,4 +1,5 @@
 #include "GlyphRenderer.h"
+#include "GlyphAtlas.h"
 
 // No EACP_SHADER_VALUE declarations here: every field the shader reads is a
 // plain float[N], which the EDSL already maps to FloatN. The macro is only
@@ -10,6 +11,12 @@ using namespace eacp::GPU;
 
 namespace
 {
+// A unit-quad corner, each component 0 or 1, mapped onto each glyph's rect.
+struct GlyphQuadCorner
+{
+    float corner[2];
+};
+
 constexpr GlyphQuadCorner unitQuad[] = {
     {{0.f, 0.f}},
     {{1.f, 0.f}},
@@ -103,6 +110,17 @@ void GlyphRenderer::setViewportSize(Graphics::Point size)
     viewport = {size.x > 0.f ? size.x : 1.f, size.y > 0.f ? size.y : 1.f};
 }
 
+void GlyphRenderer::setSampleCount(int count)
+{
+    count = count > 0 ? count : 1;
+
+    if (count == sampleCount)
+        return;
+
+    sampleCount = count;
+    prepared = false;
+}
+
 void GlyphRenderer::begin()
 {
     masks.clear();
@@ -170,11 +188,11 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
         // then that texture faded, otherwise loses the coverage of every edge it
         // has. On a window's own drawable, where the destination is opaque
         // already, the two are the same picture.
-        maskProgram->prepare(1,
+        maskProgram->prepare(sampleCount,
                              false,
                              PrimitiveTopology::Triangles,
                              BlendMode::AlphaBlendOntoTransparent);
-        colorProgram->prepare(1,
+        colorProgram->prepare(sampleCount,
                               false,
                               PrimitiveTopology::Triangles,
                               BlendMode::AlphaBlendOntoTransparent);
@@ -195,6 +213,11 @@ void GlyphRenderer::flush(RenderPass& pass, GlyphAtlas& atlas)
 
     masks.clear();
     colors.clear();
+}
+
+int GlyphRenderer::queuedGlyphs() const
+{
+    return masks.size() + colors.size();
 }
 
 void GlyphRenderer::forEachShaderGraph(const ShaderGraphVisitor& visit)

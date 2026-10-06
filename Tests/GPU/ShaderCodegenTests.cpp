@@ -117,7 +117,7 @@ auto tCodegenNativeSourceBackend = test("GPU/codegenNativeSourceBackend") = []
     auto shader = builder.build();
     const auto& graph = builder.graph();
 
-    if constexpr (Platform::isLinux())
+    if constexpr (Platform::isLinuxFamily())
     {
         check(shader.source.backend == ShaderBackend::Vulkan);
         check(shader.source.source == emitGlsl(graph));

@@ -237,10 +237,7 @@ public:
     // than a defaulted callback argument: the one-argument call has to be
     // the virtual the bridge reaches through a ScriptHost&, and a default
     // argument on the two-argument overload would make that call ambiguous.
-    void evaluateJavaScript(const std::string& script) override
-    {
-        evaluateJavaScript(script, nullptr);
-    }
+    void evaluateJavaScript(const std::string& script) override;
 
     // Awaitable wrapper around evaluateJavaScript. The returned Async
     // resolves with the script result string, or rejects with the
@@ -262,7 +259,7 @@ public:
 
     // View snapshot hooks: the page is async-only, so renderToImageAsync folds it
     // in via takeSnapshot. renderToImage (sync) leaves the web region blank.
-    bool hasAsyncContent() const override { return true; }
+    bool hasAsyncContent() const override;
     void captureAsyncContent(float scale, std::function<void(Image)> done) override;
 
     void zoomIn();
@@ -383,11 +380,5 @@ private:
     std::shared_ptr<Native> impl;
 };
 
-inline WebView::Options embeddedOptions(std::string category)
-{
-    auto options = WebView::Options {};
-    options.embedded.enabled = true;
-    options.embedded.provider = fromResEmbed(std::move(category));
-    return options;
-}
+WebView::Options embeddedOptions(std::string category);
 } // namespace eacp::Graphics

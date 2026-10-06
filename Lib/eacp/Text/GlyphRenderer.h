@@ -1,14 +1,12 @@
 #pragma once
 
-#include "GlyphAtlas.h"
+#include "Common.h"
+
+#include <eacp/Core/Utils/Containers.h>
 
 namespace eacp::Text
 {
-// A unit-quad corner, each component 0 or 1, mapped onto each glyph's rect.
-struct GlyphQuadCorner
-{
-    float corner[2];
-};
+class GlyphAtlas;
 
 // One glyph to draw. Everything varying per glyph lives here so a whole screen
 // of text is a single draw call.
@@ -57,6 +55,10 @@ public:
     // size is baked at construction and forces a rebuild on every resize.
     void setViewportSize(Graphics::Point size);
 
+    // The pipelines are built for it: a multisampled pass rejects a
+    // single-sample pipeline.
+    void setSampleCount(int count);
+
     void begin();
 
     // Queues one glyph. Mask and colour glyphs go to separate queues because
@@ -70,7 +72,7 @@ public:
     // Submits the queued glyphs: at most two draw calls, one per atlas.
     void flush(GPU::RenderPass& pass, GlyphAtlas& atlas);
 
-    int queuedGlyphs() const { return masks.size() + colors.size(); }
+    int queuedGlyphs() const;
 
     // The two shaders this renderer builds, handed over as graphs so a test
     // can emit them in a dialect this platform does not itself compile.
@@ -91,6 +93,7 @@ private:
     Vector<GlyphInstance> colors;
 
     Graphics::Point viewport {1.f, 1.f};
+    int sampleCount = 1;
     bool prepared = false;
 };
 } // namespace eacp::Text

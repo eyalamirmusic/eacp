@@ -106,10 +106,7 @@ public:
 
     // A 2D texture sampled by the fragment expression. Returns the slot-indexed
     // handle sample() reads; bind the matching GPU::Texture at the same slot.
-    Texture2D texture(TextureSampling sampling = {})
-    {
-        return {&graphData, graphData.addTexture(sampling)};
-    }
+    Texture2D texture(TextureSampling sampling = {});
 
     // A cube texture, sampled with a Float3 direction rather than a Float2
     // coordinate - a sky, a reflection, anything looked up by where it points
@@ -118,10 +115,7 @@ public:
     // is the type of the handle and the width of what sample() takes. The
     // GPU::Texture bound at the slot has to have been created with
     // TextureDescriptor::cube.
-    TextureCube cubeTexture(TextureSampling sampling = {})
-    {
-        return {&graphData, graphData.addCubeTexture(sampling)};
-    }
+    TextureCube cubeTexture(TextureSampling sampling = {});
 
     // The depth buffer of a render target, sampled at a Float2 coordinate for
     // the one float it holds. Slots come from the same counter as the two above;
@@ -131,62 +125,31 @@ public:
     // The target has to have been created with
     // TextureDescriptor::sampleableDepth, and the pass that wrote the depth has
     // to have ended and kept it. See TextureDepth2D.
-    TextureDepth2D depthTexture(TextureSampling sampling = {})
-    {
-        return {&graphData, graphData.addDepthTexture(sampling)};
-    }
+    TextureDepth2D depthTexture(TextureSampling sampling = {});
 
     // Compute kernel authoring. Declaring buffers assigns slots in call order
     // (inputs and outputs share one slot space, matching Metal's flat buffer
     // indices); threadId() is the 1D work-item index; write() records a kernel
     // output, which is what marks the built shader as compute.
-    UInt threadId()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addThreadId();
-        return value;
-    }
+    UInt threadId();
 
     // The 2D work item, for a kernel over a grid rather than a flat count -
     // which is what anything image-shaped is. Asking for this is what makes the
     // kernel a 2D one, and it is dispatched with ComputePass::dispatch(width,
     // height) accordingly; a kernel takes one work item, never two.
-    ThreadPosition threadPosition()
-    {
-        auto position = ThreadPosition {};
-
-        position.x.graph = &graphData;
-        position.x.node = graphData.addThreadPosition(0);
-        position.y.graph = &graphData;
-        position.y.node = graphData.addThreadPosition(1);
-
-        return position;
-    }
+    ThreadPosition threadPosition();
 
     // The 3D work item, for a kernel over a volume. Asking for this fixes the
     // rank at 3D, and it is dispatched with ComputePass::dispatch(width,
     // height, depth).
-    ThreadPosition3 threadPosition3()
-    {
-        auto position = ThreadPosition3 {};
-
-        position.x.graph = &graphData;
-        position.x.node = graphData.addThreadPosition3(0);
-        position.y.graph = &graphData;
-        position.y.node = graphData.addThreadPosition3(1);
-        position.z.graph = &graphData;
-        position.z.node = graphData.addThreadPosition3(2);
-
-        return position;
-    }
+    ThreadPosition3 threadPosition3();
 
     // The same work item as one value rather than a struct of components: a
     // UInt2 over a grid, a UInt3 over a volume. Asking for one fixes the rank
     // as threadPosition() and threadPosition3() do, so either spelling of a
     // rank sits beside the other in one kernel.
-    UInt2 threadId2() { return indexValue<UInt2>(graphData.addThreadId2()); }
-    UInt3 threadId3() { return indexValue<UInt3>(graphData.addThreadId3()); }
+    UInt2 threadId2();
+    UInt3 threadId3();
 
     // Where a thread sits inside its threadgroup, and which group it belongs
     // to - the pair every shared-memory algorithm indexes with: the local id
@@ -194,129 +157,43 @@ public:
     // problem the group owns. 1D forms beside threadId(), 2D and 3D siblings
     // beside threadPosition() and threadPosition3(); asking for one fixes the
     // dispatch rank exactly as the global ids do.
-    UInt localId()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addLocalId();
-        return value;
-    }
+    UInt localId();
 
-    ThreadPosition localPosition()
-    {
-        auto position = ThreadPosition {};
+    ThreadPosition localPosition();
 
-        position.x.graph = &graphData;
-        position.x.node = graphData.addLocalPosition(0);
-        position.y.graph = &graphData;
-        position.y.node = graphData.addLocalPosition(1);
+    ThreadPosition3 localPosition3();
 
-        return position;
-    }
+    UInt groupId();
 
-    ThreadPosition3 localPosition3()
-    {
-        auto position = ThreadPosition3 {};
+    ThreadPosition groupPosition();
 
-        position.x.graph = &graphData;
-        position.x.node = graphData.addLocalPosition3(0);
-        position.y.graph = &graphData;
-        position.y.node = graphData.addLocalPosition3(1);
-        position.z.graph = &graphData;
-        position.z.node = graphData.addLocalPosition3(2);
-
-        return position;
-    }
-
-    UInt groupId()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addGroupId();
-        return value;
-    }
-
-    ThreadPosition groupPosition()
-    {
-        auto position = ThreadPosition {};
-
-        position.x.graph = &graphData;
-        position.x.node = graphData.addGroupPosition(0);
-        position.y.graph = &graphData;
-        position.y.node = graphData.addGroupPosition(1);
-
-        return position;
-    }
-
-    ThreadPosition3 groupPosition3()
-    {
-        auto position = ThreadPosition3 {};
-
-        position.x.graph = &graphData;
-        position.x.node = graphData.addGroupPosition3(0);
-        position.y.graph = &graphData;
-        position.y.node = graphData.addGroupPosition3(1);
-        position.z.graph = &graphData;
-        position.z.node = graphData.addGroupPosition3(2);
-
-        return position;
-    }
+    ThreadPosition3 groupPosition3();
 
     // Their whole-vector forms, beside threadId2() and threadId3(): a group
     // origin and a lane offset that add and swizzle as one value.
-    UInt2 localId2() { return indexValue<UInt2>(graphData.addLocalId2()); }
-    UInt3 localId3() { return indexValue<UInt3>(graphData.addLocalId3()); }
-    UInt2 groupId2() { return indexValue<UInt2>(graphData.addGroupId2()); }
-    UInt3 groupId3() { return indexValue<UInt3>(graphData.addGroupId3()); }
+    UInt2 localId2();
+    UInt3 localId3();
+    UInt2 groupId2();
+    UInt3 groupId3();
 
     // The implicit grid bound the dispatch supplied, readable in the body: the
     // very value the generated guard tests. A kernel that barriers has no such
     // guard - see barrier() - so this is what it bounds its own stores with.
-    UInt gridCount()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addGridExtent(DispatchRank::OneD, 0);
-        return value;
-    }
+    UInt gridCount();
 
-    UInt gridWidth()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addGridExtent(DispatchRank::TwoD, 0);
-        return value;
-    }
+    UInt gridWidth();
 
-    UInt gridHeight()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addGridExtent(DispatchRank::TwoD, 1);
-        return value;
-    }
+    UInt gridHeight();
 
     // The third extent, which only a 3D kernel has. gridWidth() and
     // gridHeight() serve a 3D kernel as they do a 2D one.
-    UInt gridDepth()
-    {
-        auto value = UInt {};
-        value.graph = &graphData;
-        value.node = graphData.addGridExtent(DispatchRank::ThreeD, 2);
-        return value;
-    }
+    UInt gridDepth();
 
     // The threadgroup the kernel is dispatched in. Left unset, the stock shape
     // for the kernel's rank is used.
-    void setThreadGroupShape(ThreadGroupShape shape)
-    {
-        graphData.setThreadGroupShape(shape);
-    }
+    void setThreadGroupShape(ThreadGroupShape shape);
 
-    ThreadGroupShape threadGroupShape() const
-    {
-        return graphData.threadGroupShape();
-    }
+    ThreadGroupShape threadGroupShape() const;
 
     // A threadgroup-shared array of count elements, its size a compile-time
     // constant in the emitted kernel. Size it against threadGroupShape(), which
@@ -333,18 +210,18 @@ public:
     // barrier below a return some threads took is undefined on both backends,
     // so every thread runs the whole body and the kernel bounds its own
     // stores instead, typically with ifThen(id < gridCount(), ...).
-    void barrier() { graphData.addBarrier(); }
+    void barrier();
 
     // The whole group's fold of what every thread contributed, handed back to
     // every thread. It barriers, so - like barrier() itself - every thread of
     // the group has to reach it or none of them.
-    Float groupSum(const Float& value) { return fold(GroupReduction::Sum, value); }
-    Float groupMax(const Float& value) { return fold(GroupReduction::Max, value); }
-    Float groupMin(const Float& value) { return fold(GroupReduction::Min, value); }
+    Float groupSum(const Float& value);
+    Float groupMax(const Float& value);
+    Float groupMin(const Float& value);
 
-    UInt groupSum(const UInt& value) { return fold(GroupReduction::Sum, value); }
-    UInt groupMax(const UInt& value) { return fold(GroupReduction::Max, value); }
-    UInt groupMin(const UInt& value) { return fold(GroupReduction::Min, value); }
+    UInt groupSum(const UInt& value);
+    UInt groupMax(const UInt& value);
+    UInt groupMin(const UInt& value);
 
     // The same three narrowed to one SIMD group. Every thread is handed the
     // fold of the simdWidth threads it shares a SIMD group with, so a group of
@@ -379,28 +256,19 @@ public:
     // correct-looking on the machine it was written on and a hang on the next
     // one. Hoist the condition to something uniform across the group, or bound
     // the loop by a uniform and guard the body's stores instead.
-    Float simdSum(const Float& value)
-    {
-        return simdFold(GroupReduction::Sum, value);
-    }
-    Float simdMax(const Float& value)
-    {
-        return simdFold(GroupReduction::Max, value);
-    }
-    Float simdMin(const Float& value)
-    {
-        return simdFold(GroupReduction::Min, value);
-    }
+    Float simdSum(const Float& value);
+    Float simdMax(const Float& value);
+    Float simdMin(const Float& value);
 
-    UInt simdSum(const UInt& value) { return simdFold(GroupReduction::Sum, value); }
-    UInt simdMax(const UInt& value) { return simdFold(GroupReduction::Max, value); }
-    UInt simdMin(const UInt& value) { return simdFold(GroupReduction::Min, value); }
+    UInt simdSum(const UInt& value);
+    UInt simdMax(const UInt& value);
+    UInt simdMin(const UInt& value);
 
     // Which SIMD group of the threadgroup this thread is in, which is what
     // places the block of the output that SIMD group owns. They are numbered
     // from the flat local index, so a group of simdGroupWidth * n threads holds
     // SIMD groups 0 to n - 1.
-    UInt simdGroupIndex() { return indexValue<UInt>(graphData.addSimdGroupIndex()); }
+    UInt simdGroupIndex();
 
     // An 8x8 fragment filled with one value - the zero an accumulator starts
     // from - or read from an 8x8 patch of a threadgroup tile or of a buffer.
@@ -410,43 +278,21 @@ public:
     //
     // Every thread of a SIMD group reaches these, and reaches them with the
     // same offset and the same stride. See SimdMatrix.
-    SimdMatrix simdMatrix(float fill = 0.f)
-    {
-        return {&graphData,
-                graphData.addSimdMatrixFill(graphData.addConstant(fill))};
-    }
+    SimdMatrix simdMatrix(float fill = 0.f);
 
     SimdMatrix simdMatrix(const Shared<Float>& tile,
                           const UInt& offset,
-                          const UInt& rowStride)
-    {
-        return {
-            &graphData,
-            graphData.addSimdMatrixLoad(
-                SimdMatrixMemory::Shared, tile.slot, offset.node, rowStride.node)};
-    }
+                          const UInt& rowStride);
 
     SimdMatrix simdMatrix(const InputBuffer& buffer,
                           const UInt& offset,
-                          const UInt& rowStride)
-    {
-        return {
-            &graphData,
-            graphData.addSimdMatrixLoad(
-                SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
-    }
+                          const UInt& rowStride);
 
     // An output is readable here as it is elementwise, which is what a product
     // accumulated across dispatches needs.
     SimdMatrix simdMatrix(const OutputBuffer& buffer,
                           const UInt& offset,
-                          const UInt& rowStride)
-    {
-        return {
-            &graphData,
-            graphData.addSimdMatrixLoad(
-                SimdMatrixMemory::Buffer, buffer.slot, offset.node, rowStride.node)};
-    }
+                          const UInt& rowStride);
 
     // The same 8x8 patch out of a buffer whose elements are packed sixteen-bit
     // values rather than floats - the layout a checkpoint ships a weight in,
@@ -473,36 +319,17 @@ public:
     // which is the narrower question of whether this one builds at all.
     SimdMatrix simdMatrixHalf(const InputBuffer& buffer,
                               const UInt& offset,
-                              const UInt& rowStride)
-    {
-        return {&graphData,
-                graphData.addSimdMatrixLoad(SimdMatrixMemory::Buffer,
-                                            buffer.slot,
-                                            offset.node,
-                                            rowStride.node,
-                                            SimdMatrixElement::Half)};
-    }
+                              const UInt& rowStride);
 
     SimdMatrix simdMatrixBFloat16(const InputBuffer& buffer,
                                   const UInt& offset,
-                                  const UInt& rowStride)
-    {
-        return {&graphData,
-                graphData.addSimdMatrixLoad(SimdMatrixMemory::Buffer,
-                                            buffer.slot,
-                                            offset.node,
-                                            rowStride.node,
-                                            SimdMatrixElement::BFloat16)};
-    }
+                                  const UInt& rowStride);
 
     // accumulator += left * right over the 8x8 fragments: the whole reason the
     // type exists, and one instruction on Metal.
     void multiplyAccumulate(const SimdMatrix& accumulator,
                             const SimdMatrix& left,
-                            const SimdMatrix& right)
-    {
-        graphData.addSimdMatrixMultiplyAdd(accumulator.slot, left.slot, right.slot);
-    }
+                            const SimdMatrix& right);
 
     // The fragment written back to an 8x8 patch, addressed the way the load
     // addresses one. Beside the element writes rather than named apart from
@@ -510,60 +337,28 @@ public:
     void write(const OutputBuffer& buffer,
                const UInt& offset,
                const UInt& rowStride,
-               const SimdMatrix& value)
-    {
-        graphData.addSimdMatrixStore(value.slot,
-                                     SimdMatrixMemory::Buffer,
-                                     buffer.slot,
-                                     offset.node,
-                                     rowStride.node);
-    }
+               const SimdMatrix& value);
 
     void write(const Shared<Float>& tile,
                const UInt& offset,
                const UInt& rowStride,
-               const SimdMatrix& value)
-    {
-        graphData.addSimdMatrixStore(value.slot,
-                                     SimdMatrixMemory::Shared,
-                                     tile.slot,
-                                     offset.node,
-                                     rowStride.node);
-    }
+               const SimdMatrix& value);
 
-    InputBuffer inputBuffer()
-    {
-        return {&graphData, graphData.addStorageBuffer(BufferAccess::Read)};
-    }
+    InputBuffer inputBuffer();
 
-    OutputBuffer outputBuffer()
-    {
-        return {&graphData, graphData.addStorageBuffer(BufferAccess::Write)};
-    }
+    OutputBuffer outputBuffer();
 
     // The integer pair, taking slots from the same counter and binding through
     // the same two calls: what changes is that a read yields a UInt and a write
     // takes one.
-    UIntInputBuffer uintInputBuffer()
-    {
-        return {&graphData,
-                graphData.addStorageBuffer(BufferAccess::Read, ValueType::UInt)};
-    }
+    UIntInputBuffer uintInputBuffer();
 
-    UIntOutputBuffer uintOutputBuffer()
-    {
-        return {&graphData,
-                graphData.addStorageBuffer(BufferAccess::Write, ValueType::UInt)};
-    }
+    UIntOutputBuffer uintOutputBuffer();
 
     // A buffer of unsigned integers threads share. It takes a slot from the same
     // counter the others do, and binds exactly as an output does - what differs
     // is the element type, and that only the emitted declaration knows.
-    AtomicBuffer atomicBuffer()
-    {
-        return {&graphData,
-                graphData.addStorageBuffer(BufferAccess::Atomic, ValueType::UInt)};
-    }
+    AtomicBuffer atomicBuffer();
 
     // Adds to one element and yields what it held *before* - so every thread
     // that adds one to the same counter gets a different number back, which is
@@ -574,46 +369,23 @@ public:
     // and nothing about how other memory either side of it is ordered. That is
     // all a counter needs and all this offers; a kernel that needs the second
     // thing needs a barrier, not a stronger atomic.
-    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
-    {
-        auto previous = graphData.addAtomicAdd(buffer.slot, index.node, value.node);
-
-        auto result = UInt {};
-        result.graph = &graphData;
-        result.node = graphData.addVarRead(previous);
-        return result;
-    }
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
 
     // Either argument as a literal, anchored on the buffer. Both are literals in
     // the commonest call there is - one thread taking one ticket from one shared
     // counter - so refusing them would make the plainest use the ugliest.
-    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value)
-    {
-        return atomicAdd(buffer, buffer.literal(index), value);
-    }
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, const UInt& value);
 
-    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value)
-    {
-        return atomicAdd(buffer, index, buffer.literal(value));
-    }
+    UInt atomicAdd(const AtomicBuffer& buffer, const UInt& index, unsigned value);
 
-    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value)
-    {
-        return atomicAdd(buffer, buffer.literal(index), buffer.literal(value));
-    }
+    UInt atomicAdd(const AtomicBuffer& buffer, unsigned index, unsigned value);
 
     // A texture a kernel writes. It takes a slot from the same counter
     // texture() does, so a kernel reading one texture and writing another
     // binds them at distinct indices.
-    WritableTexture2D writableTexture()
-    {
-        return {&graphData, graphData.addWritableTexture()};
-    }
+    WritableTexture2D writableTexture();
 
-    void write(const OutputBuffer& buffer, const UInt& index, const Float& value)
-    {
-        graphData.addStore(buffer.slot, index.node, value.node);
-    }
+    void write(const OutputBuffer& buffer, const UInt& index, const Float& value);
 
     // The vector writes, laying a record of N floats down at index * N - the
     // layout InputBuffer::read2/3/4 reads back, and the one a CPU struct of N
@@ -627,33 +399,11 @@ public:
     // an output written wide is still a run of floats and still bindable as a
     // per-instance vertex stream. These keep the callers that have them, and a
     // kernel bound by how fast it can issue stores reaches for the wide one.
-    void write(const OutputBuffer& buffer, const UInt& index, const Float2& value)
-    {
-        auto base = index * 2u;
-        graphData.addRecordStore(buffer.slot,
-                                 {base.node, (base + 1u).node},
-                                 {value.x().node, value.y().node},
-                                 value.node);
-    }
+    void write(const OutputBuffer& buffer, const UInt& index, const Float2& value);
 
-    void write(const OutputBuffer& buffer, const UInt& index, const Float3& value)
-    {
-        auto base = index * 3u;
-        graphData.addRecordStore(buffer.slot,
-                                 {base.node, (base + 1u).node, (base + 2u).node},
-                                 {value.x().node, value.y().node, value.z().node},
-                                 value.node);
-    }
+    void write(const OutputBuffer& buffer, const UInt& index, const Float3& value);
 
-    void write(const OutputBuffer& buffer, const UInt& index, const Float4& value)
-    {
-        auto base = index * 4u;
-        graphData.addRecordStore(
-            buffer.slot,
-            {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
-            {value.x().node, value.y().node, value.z().node, value.w().node},
-            value.node);
-    }
+    void write(const OutputBuffer& buffer, const UInt& index, const Float4& value);
 
     // The same record laid down as one store rather than as N. write4(out, i,
     // v) is elements 4i..4i+3, exactly the bytes InputBuffer::read4(i) reads
@@ -671,20 +421,11 @@ public:
     // Device::storageBufferOffsetAlignment allows a BufferRange to start at is
     // one these can write to. The index counts records, so the first element
     // written is index * N.
-    void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value)
-    {
-        graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
-    }
+    void write2(const OutputBuffer& buffer, const UInt& index, const Float2& value);
 
-    void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value)
-    {
-        graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
-    }
+    void write3(const OutputBuffer& buffer, const UInt& index, const Float3& value);
 
-    void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value)
-    {
-        graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
-    }
+    void write4(const OutputBuffer& buffer, const UInt& index, const Float4& value);
 
     // Two values narrowed to fp16 and stored in the single float slot that
     // holds them both - the store InputBuffer::readHalf2 reads back, and the
@@ -695,36 +436,25 @@ public:
     // means one.
     void writeHalf2(const OutputBuffer& buffer,
                     const UInt& index,
-                    const Float2& value)
-    {
-        write(buffer, index, asFloat(packHalf2(value)));
-    }
+                    const Float2& value);
 
     // The same store for bf16, which InputBuffer::readBFloat16x2 reads back at
     // the same index.
     void writeBFloat16x2(const OutputBuffer& buffer,
                          const UInt& index,
-                         const Float2& value)
-    {
-        write(buffer, index, asFloat(packBFloat16x2(value)));
-    }
+                         const Float2& value);
 
     // Four integers packed into the one float slot that holds them, which
     // InputBuffer::readInt8x4 and readUInt8x4 read back at the same index. The
     // value is an integer vector rather than a Float4 for the reason
     // packInt8x4 gives: the rounding is the caller's decision to make.
-    void
-        writeInt8x4(const OutputBuffer& buffer, const UInt& index, const Int4& value)
-    {
-        write(buffer, index, asFloat(packInt8x4(value)));
-    }
+    void writeInt8x4(const OutputBuffer& buffer,
+                     const UInt& index,
+                     const Int4& value);
 
     void writeUInt8x4(const OutputBuffer& buffer,
                       const UInt& index,
-                      const UInt4& value)
-    {
-        write(buffer, index, asFloat(packUInt8x4(value)));
-    }
+                      const UInt4& value);
 
     // The wide packed stores, one per wide read: each packs its values into the
     // two or four words that hold them and lays those down through write2 or
@@ -735,23 +465,11 @@ public:
     // index.
     void writeHalf4(const OutputBuffer& buffer,
                     const UInt& index,
-                    const Float4& value)
-    {
-        write2(
-            buffer,
-            index,
-            float2(asFloat(packHalf2(value.xy())), asFloat(packHalf2(value.zw()))));
-    }
+                    const Float4& value);
 
     void writeBFloat16x4(const OutputBuffer& buffer,
                          const UInt& index,
-                         const Float4& value)
-    {
-        write2(buffer,
-               index,
-               float2(asFloat(packBFloat16x2(value.xy())),
-                      asFloat(packBFloat16x2(value.zw()))));
-    }
+                         const Float4& value);
 
     // The byte ones take their values as integer vectors rather than as a
     // Float4Pair or a Float4Quad, which is what the reads hand back: the pair
@@ -762,127 +480,64 @@ public:
     void writeInt8x8(const OutputBuffer& buffer,
                      const UInt& index,
                      const Int4& low,
-                     const Int4& high)
-    {
-        write2(buffer,
-               index,
-               float2(asFloat(packInt8x4(low)), asFloat(packInt8x4(high))));
-    }
+                     const Int4& high);
 
     void writeUInt8x8(const OutputBuffer& buffer,
                       const UInt& index,
                       const UInt4& low,
-                      const UInt4& high)
-    {
-        write2(buffer,
-               index,
-               float2(asFloat(packUInt8x4(low)), asFloat(packUInt8x4(high))));
-    }
+                      const UInt4& high);
 
     void writeInt8x16(const OutputBuffer& buffer,
                       const UInt& index,
                       const Int4& a,
                       const Int4& b,
                       const Int4& c,
-                      const Int4& d)
-    {
-        write4(buffer,
-               index,
-               float4(asFloat(packInt8x4(a)),
-                      asFloat(packInt8x4(b)),
-                      asFloat(packInt8x4(c)),
-                      asFloat(packInt8x4(d))));
-    }
+                      const Int4& d);
 
     void writeUInt8x16(const OutputBuffer& buffer,
                        const UInt& index,
                        const UInt4& a,
                        const UInt4& b,
                        const UInt4& c,
-                       const UInt4& d)
-    {
-        write4(buffer,
-               index,
-               float4(asFloat(packUInt8x4(a)),
-                      asFloat(packUInt8x4(b)),
-                      asFloat(packUInt8x4(c)),
-                      asFloat(packUInt8x4(d))));
-    }
+                       const UInt4& d);
 
     // One element of an integer output, index or value spelled as a literal
     // where it is one.
-    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value)
-    {
-        graphData.addStore(buffer.slot, index.node, value.node);
-    }
+    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt& value);
 
-    void write(const UIntOutputBuffer& buffer, const UInt& index, unsigned value)
-    {
-        write(buffer, index, buffer.literal(value));
-    }
+    void write(const UIntOutputBuffer& buffer, const UInt& index, unsigned value);
 
-    void write(const UIntOutputBuffer& buffer, unsigned index, const UInt& value)
-    {
-        write(buffer, buffer.literal(index), value);
-    }
+    void write(const UIntOutputBuffer& buffer, unsigned index, const UInt& value);
 
-    void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value)
-    {
-        write(buffer, buffer.literal(index), buffer.literal(value));
-    }
+    void write(const UIntOutputBuffer& buffer, unsigned index, unsigned value);
 
     // The record writes, laying N integers down at index * N - the layout
     // UIntInputBuffer::read2/3/4 reads back. The index is in records rather
     // than in elements, on the terms the float ones set.
-    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
-    {
-        auto base = index * 2u;
-        graphData.addRecordStore(buffer.slot,
-                                 {base.node, (base + 1u).node},
-                                 {value.x().node, value.y().node},
-                                 value.node);
-    }
+    void
+        write(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value);
 
-    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
-    {
-        auto base = index * 3u;
-        graphData.addRecordStore(buffer.slot,
-                                 {base.node, (base + 1u).node, (base + 2u).node},
-                                 {value.x().node, value.y().node, value.z().node},
-                                 value.node);
-    }
+    void
+        write(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value);
 
-    void write(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
-    {
-        auto base = index * 4u;
-        graphData.addRecordStore(
-            buffer.slot,
-            {base.node, (base + 1u).node, (base + 2u).node, (base + 3u).node},
-            {value.x().node, value.y().node, value.z().node, value.w().node},
-            value.node);
-    }
+    void
+        write(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value);
 
     // The same records laid down as one store, pairing with
     // UIntInputBuffer::read2/3/4 the way the float ones pair with InputBuffer's:
     // a packed_uintN pointer on Metal, the N subscripts on the other two, and
     // the same four-byte alignment a ranged bind already guarantees.
-    void
-        write2(const UIntOutputBuffer& buffer, const UInt& index, const UInt2& value)
-    {
-        graphData.addVectorStore(buffer.slot, (index * 2u).node, value.node);
-    }
+    void write2(const UIntOutputBuffer& buffer,
+                const UInt& index,
+                const UInt2& value);
 
-    void
-        write3(const UIntOutputBuffer& buffer, const UInt& index, const UInt3& value)
-    {
-        graphData.addVectorStore(buffer.slot, (index * 3u).node, value.node);
-    }
+    void write3(const UIntOutputBuffer& buffer,
+                const UInt& index,
+                const UInt3& value);
 
-    void
-        write4(const UIntOutputBuffer& buffer, const UInt& index, const UInt4& value)
-    {
-        graphData.addVectorStore(buffer.slot, (index * 4u).node, value.node);
-    }
+    void write4(const UIntOutputBuffer& buffer,
+                const UInt& index,
+                const UInt4& value);
 
     // One element of an atomic buffer, set outright rather than added to. It
     // completes the trio - add, load, store - and it is what a kernel computing
@@ -892,25 +547,13 @@ public:
     // Ordinary Store underneath, because the buffer's own access is what decides
     // how it spells: only Metal needs anything, its atomic_uint having to be
     // stored through rather than assigned.
-    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value)
-    {
-        graphData.addStore(buffer.slot, index.node, value.node);
-    }
+    void write(const AtomicBuffer& buffer, const UInt& index, const UInt& value);
 
-    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value)
-    {
-        write(buffer, index, buffer.literal(value));
-    }
+    void write(const AtomicBuffer& buffer, const UInt& index, unsigned value);
 
-    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value)
-    {
-        write(buffer, buffer.literal(index), value);
-    }
+    void write(const AtomicBuffer& buffer, unsigned index, const UInt& value);
 
-    void write(const AtomicBuffer& buffer, unsigned index, unsigned value)
-    {
-        write(buffer, buffer.literal(index), buffer.literal(value));
-    }
+    void write(const AtomicBuffer& buffer, unsigned index, unsigned value);
 
     // One element of a threadgroup-shared array. A single wide store whatever
     // the element type - the array never crosses the CPU boundary, so there
@@ -927,73 +570,37 @@ public:
     void write(const WritableTexture2D& texture,
                const UInt& x,
                const UInt& y,
-               const Float4& color)
-    {
-        graphData.addTextureStore(texture.slot, x.node, y.node, color.node);
-    }
+               const Float4& color);
 
     // Non-templated siblings of vertexInput()/uniform() keyed on a runtime
     // ValueType. The reflection-driven ShaderProgram visitor walks erased member
     // handles, so it needs to add a slot from a ValueType it carries rather than a
     // compile-time T. The returned handle is adopted by the declaring member.
-    detail::ValueHandle addVertexInput(ValueType type)
-    {
-        return {&graphData, graphData.addInput(type)};
-    }
+    detail::ValueHandle addVertexInput(ValueType type);
 
     // Per-instance sibling of addVertexInput, keyed on a runtime ValueType for
     // the reflection-driven ShaderProgram path. Routes the input to the given
     // buffer slot with PerInstance step rate (see the templated instanceInput).
-    detail::ValueHandle addInstanceInput(ValueType type, int bufferIndex)
-    {
-        return {&graphData, graphData.addInstanceInput(type, bufferIndex)};
-    }
+    detail::ValueHandle addInstanceInput(ValueType type, int bufferIndex);
 
-    detail::ValueHandle addUniform(ValueType type)
-    {
-        return {&graphData, graphData.addUniform(type)};
-    }
+    detail::ValueHandle addUniform(ValueType type);
 
     // A scalar literal usable in expressions (e.g. an ambient term).
-    Float constant(float value)
-    {
-        auto result = Float {};
-        result.graph = &graphData;
-        result.node = graphData.addConstant(value);
-        return result;
-    }
+    Float constant(float value);
 
     // Its boolean sibling, for a flag a shader sets and later tests. Spelled
     // apart from constant() rather than overloaded on it: an integer literal
     // converts to both float and bool, so one name would make constant(1)
     // ambiguous.
-    Bool boolean(bool value)
-    {
-        auto result = Bool {};
-        result.graph = &graphData;
-        result.node = graphData.addBoolConstant(value);
-        return result;
-    }
+    Bool boolean(bool value);
 
     // And its integer one, for an index a shader starts from. Spelled apart for
     // the same reason: constant(1) would otherwise be ambiguous.
-    Int integer(int value)
-    {
-        auto result = Int {};
-        result.graph = &graphData;
-        result.node = graphData.addIntConstant(value);
-        return result;
-    }
+    Int integer(int value);
 
     // And its unsigned one, for the index or the mask a kernel starts from -
     // and for the handle a wholly literal uint2/3/4 needs to anchor its graph.
-    UInt unsignedInteger(unsigned value)
-    {
-        auto result = UInt {};
-        result.graph = &graphData;
-        result.node = graphData.addUIntConstant(value);
-        return result;
-    }
+    UInt unsignedInteger(unsigned value);
 
     // A constant array, its size taken from the pack. Every element is an
     // ordinary value - a literal vector, or something built from a uniform -
@@ -1031,25 +638,13 @@ public:
                 ShaderHandle<T>(initialValue).node};
     }
 
-    Var<Float> var(float initialValue)
-    {
-        return {graphData, ValueType::Float, graphData.addConstant(initialValue)};
-    }
+    Var<Float> var(float initialValue);
 
-    Var<Bool> var(bool initialValue)
-    {
-        return {graphData, ValueType::Bool, graphData.addBoolConstant(initialValue)};
-    }
+    Var<Bool> var(bool initialValue);
 
-    Var<Int> var(int initialValue)
-    {
-        return {graphData, ValueType::Int, graphData.addIntConstant(initialValue)};
-    }
+    Var<Int> var(int initialValue);
 
-    Var<UInt> var(unsigned initialValue)
-    {
-        return {graphData, ValueType::UInt, graphData.addUIntConstant(initialValue)};
-    }
+    Var<UInt> var(unsigned initialValue);
 
     // A matrix is a mutable local on the same terms - the orientation a shader
     // builds up over several steps before it goes through it - and it needs an
@@ -1104,20 +699,17 @@ public:
         graphData.addLoop(condition.node, block);
     }
 
-    void breakLoop() { graphData.addBreak(); }
-    void continueLoop() { graphData.addContinue(); }
+    void breakLoop();
+    void continueLoop();
 
     void position(const Float4& clipPosition);
     void fragment(const Float4& color);
 
-    void discardBelow(const Float& value, float threshold)
-    {
-        graphData.setDiscard(value.node, threshold);
-    }
+    void discardBelow(const Float& value, float threshold);
 
     GeneratedShader build() const;
 
-    const ShaderGraph& graph() const { return graphData; }
+    constexpr const ShaderGraph& graph() const { return graphData; }
 
 private:
     template <typename T>

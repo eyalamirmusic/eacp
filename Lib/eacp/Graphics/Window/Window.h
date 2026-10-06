@@ -66,72 +66,34 @@ struct WindowEvents
 
 struct WindowOptions
 {
-    WindowOptions()
-    {
-        flags.add({WindowFlags::Titled,
-                   WindowFlags::Closable,
-                   WindowFlags::Miniaturizable,
-                   WindowFlags::Resizable});
-    }
+    WindowOptions();
+    WindowOptions(const WindowOptions&);
+    WindowOptions(WindowOptions&&) noexcept;
+    WindowOptions& operator=(const WindowOptions&);
+    WindowOptions& operator=(WindowOptions&&) noexcept;
+    ~WindowOptions();
 
-    Callback effectiveOnQuit() const
-    {
-        if (onQuit)
-            return onQuit;
-        return isPrimary ? Callback {[] { Apps::quit(); }} : Callback {[] {}};
-    }
-
-    bool effectiveAllowsFullScreen() const
-    {
-        return allowsFullScreen.value_or(!hasAspectRatio());
-    }
+    Callback effectiveOnQuit() const;
+    bool effectiveAllowsFullScreen() const;
 
     // Whether aspectRatio carries a ratio worth enforcing - both sides have to
     // be positive for it to describe a shape at all.
-    bool hasAspectRatio() const
-    {
-        return aspectRatio && aspectRatio->x > 0.f && aspectRatio->y > 0.f;
-    }
+    bool hasAspectRatio() const;
 
     // The one rule the platforms enforce: onWillResize, then sizeConstraint,
     // then aspectRatio - the lock last, so the shape the window ends up with
     // is the locked one however the callbacks moved the size around.
-    SizeConstraint effectiveSizeConstraint() const
-    {
-        auto willResize = onWillResize;
-        auto custom = sizeConstraint;
-        auto lock = AspectRatioLock {aspectRatio.value_or(Point {})};
-
-        return [willResize, custom, lock](const ResizeRequest& request)
-        {
-            auto width = (int) request.size.x;
-            auto height = (int) request.size.y;
-            willResize(width, height);
-
-            auto size = custom({{(float) width, (float) height}, request.axis});
-            return lock({size, request.axis});
-        };
-    }
+    SizeConstraint effectiveSizeConstraint() const;
 
     // The content size the window opens at: width/height put through the
     // rule, so a window is never made in a shape it would refuse to be
     // dragged into. Width wins where the two disagree.
-    Point effectiveInitialSize() const
-    {
-        return effectiveSizeConstraint()(
-            {{(float) width, (float) height}, ResizeAxis::Both});
-    }
+    Point effectiveInitialSize() const;
 
     // The content size a programmatic resize (Window::setSize) lands on:
     // floored at minWidth/minHeight, as a drag is before the rule sees it,
     // then through the rule as a corner resize.
-    Point effectiveSize(Point size) const
-    {
-        auto floored = Point {std::max(size.x, (float) minWidth),
-                              std::max(size.y, (float) minHeight)};
-
-        return effectiveSizeConstraint()({floored, ResizeAxis::Both});
-    }
+    Point effectiveSize(Point size) const;
 
     // When the user closes the window. If left empty, falls back to
     // Apps::quit when isPrimary is true, or a no-op otherwise.
@@ -430,18 +392,9 @@ private:
     // window then reports no window instead of a dangling one.
     struct ContentViewLink
     {
-        ~ContentViewLink() { attach(nullptr, nullptr); }
+        ~ContentViewLink();
 
-        void attach(View* view, Window* window)
-        {
-            if (contentView != nullptr)
-                contentView->ownerWindow = nullptr;
-
-            contentView = view;
-
-            if (contentView != nullptr)
-                contentView->ownerWindow = window;
-        }
+        void attach(View* view, Window* window);
 
         View* contentView = nullptr;
     };

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <eacp/Core/Core.h>
+#include <eacp/Core/Utils/Common.h>
 
 namespace eacp::Graphics
 {
@@ -12,9 +12,20 @@ namespace eacp::Cameras
 enum class PixelFormat
 {
     BGRA8, // 32-bit BGRA, the byte order the capture path requests by default
-    NV12 // planar 4:2:0; not yet delivered, reserved for a later phase
+    NV12 // 4:2:0: a luma plane, then a half-height interleaved CbCr plane
 };
 
+// Which YCbCr matrix an NV12 frame's chroma was coded with, read alongside
+// fullRangeYuv (0-255 levels rather than video's 16-235). Camera2's
+// YUV_420_888 is BT.601 full range.
+enum class YuvMatrix
+{
+    BT601,
+    BT709
+};
+
+// Android reports Denied for anything not yet granted: whether the user was
+// ever asked is not visible without the activity's Java side.
 enum class PermissionStatus
 {
     Granted,
@@ -68,26 +79,46 @@ public:
                 int bytesPerRow,
                 double timestampSeconds,
                 const std::uint8_t* data,
-                void* nativeBuffer);
+                void* nativeBuffer,
+                int rotationDegrees = 0,
+                YuvMatrix yuvMatrix = YuvMatrix::BT601,
+                bool fullRangeYuv = true);
 
-    int width() const { return frameWidth; }
-    int height() const { return frameHeight; }
-    PixelFormat format() const { return pixelFormat; }
-    int bytesPerRow() const { return rowBytes; }
-    double timestampSeconds() const { return timestamp; }
+    constexpr int width() const { return frameWidth; }
+    constexpr int height() const { return frameHeight; }
+    constexpr PixelFormat format() const { return pixelFormat; }
+    constexpr int bytesPerRow() const { return rowBytes; }
+    constexpr double timestampSeconds() const { return timestamp; }
 
-    // The raw pixel bytes (BGRA for PixelFormat::BGRA8), rows bytesPerRow apart
-    // — which may exceed width * 4 when the row is padded. Null when the backend
-    // could not map the buffer.
-    const std::uint8_t* data() const { return pixels; }
+    // The clockwise quarter turn (0, 90, 180 or 270) that shows the frame
+    // upright on the current display. Always 0 on Apple and Windows, whose
+    // capture paths rotate for you; on Android frames arrive in sensor
+    // orientation.
+    constexpr int rotationDegrees() const { return rotation; }
+
+    // How to turn an NV12 frame's samples into RGB; unused for BGRA8.
+    constexpr YuvMatrix yuvMatrix() const { return matrix; }
+    constexpr bool fullRangeYuv() const { return fullRange; }
+
+    // The raw pixel bytes, rows bytesPerRow apart — which may exceed the row's
+    // own size when it is padded. Null when the backend could not map the
+    // buffer. BGRA8 is 4 bytes a pixel. NV12 is the luma plane, one byte a
+    // pixel, followed by chromaPlane().
+    constexpr const std::uint8_t* data() const { return pixels; }
+
+    // NV12's interleaved Cb,Cr plane: height / 2 rows of width / 2 pairs, the
+    // same bytesPerRow apart, starting at data() + bytesPerRow * height. Null
+    // for BGRA8.
+    const std::uint8_t* chromaPlane() const;
 
     // The platform pixel buffer (CVPixelBufferRef on macOS) for zero-copy GPU
     // upload. Null on backends that don't expose one.
-    void* nativeBuffer() const { return buffer; }
+    constexpr void* nativeBuffer() const { return buffer; }
 
     // A tightly packed RGBA copy of the frame (top-left origin), ready for
     // Graphics::Image consumers and GPU upload. Returns an empty image when the
-    // frame has no readable pixels. Defined in Camera.cpp (cross-platform).
+    // frame has no readable pixels. NV12 is converted on the CPU; neither
+    // format is rotated by rotationDegrees. Defined in Camera.cpp.
     Graphics::Image toImage() const;
 
     // As above, but converts into `reuse`, recycling its storage — no
@@ -104,6 +135,9 @@ private:
     double timestamp = 0.0;
     const std::uint8_t* pixels = nullptr;
     void* buffer = nullptr;
+    int rotation = 0;
+    YuvMatrix matrix = YuvMatrix::BT601;
+    bool fullRange = true;
 };
 
 // Invoked for each captured frame on a dedicated background capture thread (not
@@ -113,8 +147,11 @@ using FrameCallback = std::function<void(const CameraFrame&)>;
 
 // A CPU-side copy of a frame for the upload display path (used on backends
 // without a zero-copy native buffer, e.g. Windows) and other pull-based
-// consumers. data is tightly packed BGRA8 (stride == width * 4). sequence bumps
-// once per captured frame so a consumer can skip work when nothing is new.
+// consumers. data is tightly packed: BGRA8 with a stride of width * 4, or NV12
+// (Android) as width * height luma bytes followed by width * height / 2 bytes
+// of interleaved CbCr, both with a stride of width. sequence bumps once per
+// captured frame so a consumer can skip work when nothing is new. The rotation
+// and YUV fields mean what CameraFrame's do.
 struct FramePixels
 {
     int width = 0;
@@ -122,6 +159,9 @@ struct FramePixels
     PixelFormat format = PixelFormat::BGRA8;
     Vector<std::uint8_t> data;
     std::uint64_t sequence = 0;
+    int rotationDegrees = 0;
+    YuvMatrix yuvMatrix = YuvMatrix::BT601;
+    bool fullRangeYuv = true;
 };
 
 // Captures video from a camera. Raw frames go to the frame callback on a

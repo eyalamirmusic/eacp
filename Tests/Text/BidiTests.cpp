@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <eacp/Text/UnicodeBidi.h>
+
 #include <sstream>
 #include <string>
 

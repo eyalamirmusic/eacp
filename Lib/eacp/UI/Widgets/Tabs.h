@@ -23,14 +23,14 @@ public:
     void addTab(std::string name);
     void clearTabs();
 
-    int getNumTabs() const { return names.size(); }
+    int getNumTabs() const;
     const std::string& getTabName(int index) const;
 
     // Silent unless asked, as everywhere else in the tier. An index naming no
     // tab is ignored rather than clamped, so a caller cannot select something
     // it did not name.
     void setCurrentTabIndex(int index, bool notify = false);
-    int getCurrentTabIndex() const { return currentIndex; }
+    int getCurrentTabIndex() const;
 
     // Where a tab is drawn, in this component's own coordinates. Empty for an
     // index that names none.
@@ -73,19 +73,19 @@ public:
     void addTab(std::string name, Component& page);
 
     void setCurrentTabIndex(int index, bool notify = false);
-    int getCurrentTabIndex() const { return tabs.getCurrentTabIndex(); }
-    int getNumTabs() const { return tabs.getNumTabs(); }
+    int getCurrentTabIndex() const;
+    int getNumTabs() const;
 
     // The page being shown, or null while there are no tabs.
     Component* getCurrentPage() const;
 
     void setTabBarHeight(float newHeight);
-    float getTabBarHeight() const { return tabBarHeight; }
+    float getTabBarHeight() const;
 
     // For the colours and the tab names -- the bar is this component's own, so
     // its selection should be moved through setCurrentTabIndex above rather
     // than behind its back.
-    TabBar& getTabBar() { return tabs; }
+    TabBar& getTabBar();
 
     // Everything the bar leaves, which is where the current page goes.
     Rect getPageArea() const;

@@ -1,6 +1,10 @@
 #include "../GPU/CodegenCommon.h"
 
 #include <eacp/GPUWidgets/GPUWidgets.h>
+#include <eacp/GPUWidgets/Path/BackdropKernels.h>
+#include <eacp/GPUWidgets/Path/BinKernels.h>
+#include <eacp/GPUWidgets/Path/PrefixSumKernels.h>
+#include <eacp/Sprites/SpriteShaders.h>
 #include <eacp/Sprites/Sprites.h>
 #include <eacp/Text/Text.h>
 #include <eacp/UI/UI.h>

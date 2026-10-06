@@ -306,6 +306,16 @@ OnlineResource::Result
 }
 } // namespace
 
+const FilePath* OnlineResource::Result::operator->() const
+{
+    return &path;
+}
+
+const FilePath& OnlineResource::Result::operator*() const
+{
+    return path;
+}
+
 FilePath OnlineResource::defaultDirectory()
 {
     return OnlineResources::get().getDirectory();
@@ -336,6 +346,16 @@ OnlineResource::~OnlineResource()
     job->abandoned = true;
     job->transfer.cancel = true;
     job->promise.abandon();
+}
+
+const OnlineResource::Info& OnlineResource::info() const
+{
+    return resource;
+}
+
+const FilePath& OnlineResource::directory() const
+{
+    return folder;
 }
 
 FilePath OnlineResource::path() const

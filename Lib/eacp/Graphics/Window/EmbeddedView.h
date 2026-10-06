@@ -54,7 +54,7 @@ public:
 
     // Where the surface is, in that same space: what was last set, or the
     // options' size at the origin.
-    Rect getBounds() const { return bounds; }
+    constexpr Rect getBounds() const { return bounds; }
 
     // Resizes the surface about its top-left, leaving the automatic sizing
     // alone — the call a host that handed over its whole window makes when
@@ -72,7 +72,7 @@ public:
     // window, taking the mouse over its rectangle from whatever the host has
     // underneath.
     void setVisible(bool shouldBeVisible);
-    bool isVisible() const { return visible; }
+    constexpr bool isVisible() const { return visible; }
 
     // How many physical pixels the surface should put in a point.
     //

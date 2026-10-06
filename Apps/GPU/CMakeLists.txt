@@ -85,7 +85,6 @@ if (EACP_HAS_TEXT)
     add_subdirectory(VariableFont)
 endif ()
 
-# Links eacp-video (macOS-only: AVFoundation + ScreenCaptureKit).
 if (APPLE AND NOT IOS)
     add_subdirectory(VideoRecorderGpu)
 endif ()

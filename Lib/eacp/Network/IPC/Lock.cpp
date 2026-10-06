@@ -119,4 +119,14 @@ ScopedLock::~ScopedLock()
         lock.release();
 }
 
+bool ScopedLock::isLocked() const
+{
+    return locked;
+}
+
+ScopedLock::operator bool() const
+{
+    return locked;
+}
+
 } // namespace eacp::IPC

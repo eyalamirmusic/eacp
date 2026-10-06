@@ -1,8 +1,10 @@
 #include "Bidi.h"
 
+#include "UnicodeBidi.h"
 #include "Utf8.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace eacp::Text
 {
@@ -934,5 +936,64 @@ Vector<BidiRun> bidiRuns(std::string_view text, BidiBaseDirection base)
         visual.add(runs[run]);
 
     return visual;
+}
+
+char32_t bidiMirroredAt(char32_t codepoint, int level)
+{
+    return (level & 1) != 0 ? bidiMirroredGlyph(codepoint) : codepoint;
+}
+
+BidiClass bidiClassOf(char32_t codepoint)
+{
+    const auto* begin = std::begin(BidiTable::classRanges);
+    const auto* end = std::end(BidiTable::classRanges);
+
+    const auto* found =
+        std::upper_bound(begin,
+                         end,
+                         codepoint,
+                         [](char32_t value, const BidiTable::ClassRange& range)
+                         { return value < range.first; });
+
+    if (found != begin && codepoint <= (found - 1)->last)
+        return (found - 1)->value;
+
+    return BidiClass::L;
+}
+
+char32_t bidiMirroredGlyph(char32_t codepoint)
+{
+    const auto* begin = std::begin(BidiTable::mirrorPairs);
+    const auto* end = std::end(BidiTable::mirrorPairs);
+
+    const auto* found =
+        std::lower_bound(begin,
+                         end,
+                         codepoint,
+                         [](const BidiTable::MirrorPair& pair, char32_t value)
+                         { return pair.codepoint < value; });
+
+    if (found != end && found->codepoint == codepoint)
+        return found->mirrored;
+
+    return codepoint;
+}
+
+const BidiTable::BracketPair* bidiBracketOf(char32_t codepoint)
+{
+    const auto* begin = std::begin(BidiTable::bracketPairs);
+    const auto* end = std::end(BidiTable::bracketPairs);
+
+    const auto* found =
+        std::lower_bound(begin,
+                         end,
+                         codepoint,
+                         [](const BidiTable::BracketPair& pair, char32_t value)
+                         { return pair.codepoint < value; });
+
+    if (found != end && found->codepoint == codepoint)
+        return found;
+
+    return nullptr;
 }
 } // namespace eacp::Text

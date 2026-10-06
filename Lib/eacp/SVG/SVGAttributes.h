@@ -4,7 +4,6 @@
 #include "SVGElement.h"
 
 #include <eacp/GPUWidgets/Path/AffineTransform.h>
-#include <eacp/UI/Render/Gradient.h>
 
 namespace eacp::SVG
 {
@@ -16,23 +15,6 @@ struct ColorResult
 };
 
 ColorResult parseColor(const std::string& value);
-
-// A transform list flattened into fields, which loses what the list said.
-// Ordering is gone - translate(..) rotate(..) and its reverse land here
-// identically - a repeated function overwrites the one before it, and matrix,
-// skewX and skewY have nowhere to go at all. Kept because SVGBuilder's native
-// child views can only be moved, not transformed, so the translation is all it
-// can use. Anything building geometry should read parseTransformMatrix.
-struct Transform
-{
-    float translateX = 0.f;
-    float translateY = 0.f;
-    float scaleX = 1.f;
-    float scaleY = 1.f;
-    float rotateDeg = 0.f;
-};
-
-Transform parseTransform(const std::string& value);
 
 // The same list as the matrix it actually denotes: every function of the
 // specification, composed in the order written. Angles are degrees, as the
@@ -156,18 +138,9 @@ std::unordered_map<std::string, std::string>
 // the constructor: reading eight properties off one element is one parse.
 struct PropertyReader
 {
-    explicit PropertyReader(const SVGElement& elementToUse)
-        : element(elementToUse)
-        , declarations(parseStyleDeclarations(elementToUse.attr("style")))
-    {
-    }
+    explicit PropertyReader(const SVGElement& elementToUse);
 
-    std::string operator()(const std::string& name) const
-    {
-        auto found = declarations.find(name);
-
-        return found != declarations.end() ? found->second : element.attr(name);
-    }
+    std::string operator()(const std::string& name) const;
 
     const SVGElement& element;
     std::unordered_map<std::string, std::string> declarations;

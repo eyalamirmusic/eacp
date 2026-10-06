@@ -13,6 +13,7 @@ target_link_libraries(eacp-core PRIVATE miniz)
 
 target_sources(eacp-core PRIVATE
         App/App.cpp
+        Maths/Mat4.cpp
         Platform/AppInfo.cpp
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp
@@ -21,6 +22,7 @@ target_sources(eacp-core PRIVATE
         Threads/CallAfter.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
+        Threads/ThreadId.cpp
         Utils/Base64.cpp
         Utils/Environment.cpp
         Utils/File.cpp
@@ -67,6 +69,7 @@ if (APPLE)
                 App/Clipboard-macOS.mm
                 App/LoginItem-macOS.mm
                 Process/Process-Posix.cpp
+                Process/SpawnDirectory-Posix.cpp
                 Threads/EventLoop-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
@@ -95,8 +98,6 @@ elseif (WIN32)
             windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
-            App/App-Linux.cpp
-            App/Clipboard-Linux.cpp
             App/LoginItem-Linux.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Linux.cpp
@@ -108,12 +109,32 @@ elseif (UNIX AND NOT APPLE)
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
             Utils/Environment-Posix.cpp
-            Utils/FilePath-Linux.cpp
-            Utils/Files-Linux.cpp
-            Utils/Logging-Posix.cpp
             Utils/MemoryMappedFile-Posix.cpp)
     find_package(Threads ${EACP_FIND_QUIET} REQUIRED)
     target_link_libraries(eacp-core PRIVATE Threads::Threads)
+
+    if (ANDROID)
+        target_sources(eacp-core PRIVATE
+                Android/Jni-Android.cpp
+                Android/Permissions-Android.cpp
+                App/App-Android.cpp
+                App/Clipboard-Android.cpp
+                Process/SpawnDirectory-Android.cpp
+                Threads/EventLoop-Android.cpp
+                Utils/FilePath-Android.cpp
+                Utils/Files-Android.cpp
+                Utils/Logging-Android.cpp)
+        target_link_libraries(eacp-core PUBLIC android log)
+    else ()
+        target_sources(eacp-core PRIVATE
+                App/App-Linux.cpp
+                App/Clipboard-Linux.cpp
+                Process/SpawnDirectory-Posix.cpp
+                Threads/EventLoopWait-Linux.cpp
+                Utils/FilePath-Linux.cpp
+                Utils/Files-Linux.cpp
+                Utils/Logging-Posix.cpp)
+    endif ()
 endif ()
 
 set_default_target_setting(eacp-core)

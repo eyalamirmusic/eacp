@@ -1,4 +1,6 @@
-add_executable(ResourceMonitor Main.cpp)
+eacp_add_app(ResourceMonitor Main.cpp
+        DISPLAY_NAME "Resource Monitor"
+        ORIENTATION portrait)
 target_link_libraries(ResourceMonitor PRIVATE eacp-ui-network)
 
 # The same catalogue DownloadAndPlay offers, embedded from its directory so the
@@ -9,14 +11,9 @@ res_embed_add(ResourceMonitor
         NAMESPACE Clips
         CATEGORY  Clips)
 
-set(BUNDLE_ID "com.eacp.resourcemonitor")
-
 set_target_properties(ResourceMonitor PROPERTIES
         MACOSX_BUNDLE TRUE
-        EACP_COMPANY_NAME "eacp"
-        MACOSX_BUNDLE_BUNDLE_NAME "Resource Monitor"
-        MACOSX_BUNDLE_GUI_IDENTIFIER ${BUNDLE_ID}
-        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_ID})
+        EACP_COMPANY_NAME "eacp")
 
 eacp_set_gui_subsystem(ResourceMonitor)
 set_default_target_setting(ResourceMonitor)

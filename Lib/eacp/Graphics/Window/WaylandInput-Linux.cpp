@@ -854,6 +854,21 @@ std::string WaylandInput::characterForCode(uint32_t evdevCode) const
     return keyboardState.plainTextForKey(evdevCode);
 }
 
+WaylandWindowSurface* WaylandInput::getKeyboardFocus() const
+{
+    return keyboardWindow;
+}
+
+WaylandWindowSurface* WaylandInput::getPointerWindow() const
+{
+    return pointerWindow;
+}
+
+Point WaylandInput::getPointerPosition() const
+{
+    return pointerState.getPosition();
+}
+
 void WaylandInput::windowDestroyed(WaylandWindowSurface& window)
 {
     if (lockedWindow == &window)

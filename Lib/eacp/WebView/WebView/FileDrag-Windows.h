@@ -12,7 +12,6 @@
 
 #include <atomic>
 #include <functional>
-#include <utility>
 
 namespace eacp::Graphics
 {
@@ -23,32 +22,11 @@ namespace eacp::Graphics
 // is physical pixels and the WebView lays out at CSS pixels = physical / DPI,
 // so divide back down. `inside` is whether the cursor is over the window at
 // all — false once it leaves, which is the receiving app's half of the gesture.
-inline WebView::FileDragPoint toFileDragPoint(POINT cursorInClient,
-                                              const RECT& client,
-                                              float dpiScale)
-{
-    WebView::FileDragPoint point;
-    point.inside = PtInRect(&client, cursorInClient) != FALSE;
-
-    auto scale = dpiScale > 0.f ? dpiScale : 1.f;
-    point.x = cursorInClient.x / scale;
-    point.y = cursorInClient.y / scale;
-    return point;
-}
+WebView::FileDragPoint
+    toFileDragPoint(POINT cursorInClient, const RECT& client, float dpiScale);
 
 // The live cursor in the drag's host window, in page CSS pixels (see above).
-inline WebView::FileDragPoint fileDragPointFromCursor(HWND hostHwnd,
-                                                      float dpiScale)
-{
-    POINT cursor {};
-    if (!GetCursorPos(&cursor))
-        return {};
-
-    RECT client {};
-    GetClientRect(hostHwnd, &client);
-    ScreenToClient(hostHwnd, &cursor);
-    return toFileDragPoint(cursor, client, dpiScale);
-}
+WebView::FileDragPoint fileDragPointFromCursor(HWND hostHwnd, float dpiScale);
 
 // A Windows file drag-out is a blocking modal loop (SHDoDragDrop). This drop
 // source is how the app hears about it while it runs: QueryContinueDrag fires on
@@ -58,59 +36,19 @@ inline WebView::FileDragPoint fileDragPointFromCursor(HWND hostHwnd,
 // the drag without this. The cursor reader is injected so tests can drive the
 // verdict logic without a real cursor (the backend passes
 // fileDragPointFromCursor over its host window).
-class FileDragSource final: public IDropSource
+class FileDragSource final : public IDropSource
 {
 public:
     FileDragSource(std::function<WebView::FileDragPoint()> readPoint,
-                   std::function<void(WebView::FileDragPoint)> onMoved)
-        : readPoint(std::move(readPoint))
-        , onMoved(std::move(onMoved))
-    {
-    }
+                   std::function<void(WebView::FileDragPoint)> onMoved);
 
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override
-    {
-        if (riid == IID_IUnknown || riid == IID_IDropSource)
-        {
-            *object = static_cast<IDropSource*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *object = nullptr;
-        return E_NOINTERFACE;
-    }
-
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
-
-    ULONG STDMETHODCALLTYPE Release() override
-    {
-        auto remaining = --refCount;
-        if (remaining == 0)
-            delete this;
-        return remaining;
-    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override;
+    ULONG STDMETHODCALLTYPE AddRef() override;
+    ULONG STDMETHODCALLTYPE Release() override;
 
     HRESULT STDMETHODCALLTYPE QueryContinueDrag(BOOL escapePressed,
-                                                DWORD keyState) override
-    {
-        // Escape or the right button aborts; the left button coming up is the
-        // drop. Everything else is the drag in flight — report where it is.
-        if (escapePressed || (keyState & MK_RBUTTON) != 0)
-            return DRAGDROP_S_CANCEL;
-        if ((keyState & MK_LBUTTON) == 0)
-            return DRAGDROP_S_DROP;
-
-        onMoved(readPoint());
-        return S_OK;
-    }
-
-    HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD) override
-    {
-        // The drop target (see FileDragTarget) reports the effect, so the shell
-        // picks the right cursor from it. Over our own window that is a copy
-        // cursor; over Explorer / another app, whatever they return.
-        return DRAGDROP_S_USEDEFAULTCURSORS;
-    }
+                                                DWORD keyState) override;
+    HRESULT STDMETHODCALLTYPE GiveFeedback(DWORD effect) override;
 
 private:
     std::function<WebView::FileDragPoint()> readPoint;
@@ -126,52 +64,25 @@ private:
 // watching the cursor (onFileDragEnded, like the macOS path), not through OLE —
 // so Drop touches neither the data object nor the page; it only echoes the
 // effect to avoid a last-instant cursor flicker.
-class FileDragTarget final: public IDropTarget
+class FileDragTarget final : public IDropTarget
 {
 public:
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override
-    {
-        if (riid == IID_IUnknown || riid == IID_IDropTarget)
-        {
-            *object = static_cast<IDropTarget*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *object = nullptr;
-        return E_NOINTERFACE;
-    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override;
+    ULONG STDMETHODCALLTYPE AddRef() override;
+    ULONG STDMETHODCALLTYPE Release() override;
 
-    ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
-
-    ULONG STDMETHODCALLTYPE Release() override
-    {
-        auto remaining = --refCount;
-        if (remaining == 0)
-            delete this;
-        return remaining;
-    }
-
-    HRESULT STDMETHODCALLTYPE DragEnter(
-        IDataObject*, DWORD, POINTL, DWORD* effect) override
-    {
-        *effect = DROPEFFECT_COPY;
-        return S_OK;
-    }
-
-    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL, DWORD* effect) override
-    {
-        *effect = DROPEFFECT_COPY;
-        return S_OK;
-    }
-
-    HRESULT STDMETHODCALLTYPE DragLeave() override { return S_OK; }
-
-    HRESULT STDMETHODCALLTYPE Drop(
-        IDataObject*, DWORD, POINTL, DWORD* effect) override
-    {
-        *effect = DROPEFFECT_COPY;
-        return S_OK;
-    }
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data,
+                                        DWORD keyState,
+                                        POINTL point,
+                                        DWORD* effect) override;
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD keyState,
+                                       POINTL point,
+                                       DWORD* effect) override;
+    HRESULT STDMETHODCALLTYPE DragLeave() override;
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject* data,
+                                   DWORD keyState,
+                                   POINTL point,
+                                   DWORD* effect) override;
 
 private:
     std::atomic<ULONG> refCount {1};

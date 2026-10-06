@@ -60,8 +60,8 @@ struct GlyphBitmap
     // and advances the pen while rasterizing to nothing.
     bool valid = false;
 
-    bool isEmpty() const { return width <= 0 || height <= 0; }
+    constexpr bool isEmpty() const { return width <= 0 || height <= 0; }
 
-    int bytesPerRow() const { return width * bytesPerPixel(format); }
+    constexpr int bytesPerRow() const { return width * bytesPerPixel(format); }
 };
 } // namespace eacp::Text

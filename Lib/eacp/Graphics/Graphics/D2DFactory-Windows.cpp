@@ -308,6 +308,17 @@ void commitComposition()
     DCompCompositor::instance().commit();
 }
 
+HRESULT insertVisualAtTop(IDCompositionVisual2* parent, IDCompositionVisual2* child)
+{
+    return parent->AddVisual(child, FALSE, nullptr);
+}
+
+HRESULT insertVisualAtBottom(IDCompositionVisual2* parent,
+                             IDCompositionVisual2* child)
+{
+    return parent->AddVisual(child, TRUE, nullptr);
+}
+
 uint64_t getCompositionGeneration()
 {
     return DCompCompositor::instance().getGeneration();

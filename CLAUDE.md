@@ -11,30 +11,41 @@ the current conversation.
 
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
 
+`README.md` is written for users of the library — interface, capabilities and
+usage — and stays free of build-system and implementation detail. In-depth
+docs live under `Docs/` (`Build.md` for options, dependencies, capability
+variables and CI; `Linux.md` for the Linux backend) and beside the modules
+they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`). New
+implementation-level documentation goes there, not in the README.
+
 Platform coverage splits on whether a module draws, decided once in the
-top-level `CMakeLists.txt` by eight capability variables that `Lib`, `Apps` and
+top-level `CMakeLists.txt` by seven capability variables that `Lib`, `Apps` and
 `Tests` read instead of restating the platform test: `EACP_HAS_DRAW`
 (`Graphics` — `EmbeddedView` with it, since embedding is a windowing feature
 rather than a drawing one — and `Tests/Graphics`), `EACP_HAS_GPU` (`GPU`,
-`GPUWidgets`, `Sprites`, `Apps/GPU`, `Apps/Plugins`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG`,
-`Apps/UI` and the GPU examples that draw glyphs), `EACP_HAS_CONTEXT` (the
+`GPUWidgets`, `Sprites`, `Apps/GPU`, `Apps/Plugins`), `EACP_HAS_TEXT` (`Text`, `UI`, `SVG` — whose
+one renderer is `SVGComponent`, so the module has no Context half —
+`Apps/UI` with `SVGDocument`, `Apps/SVG` and the GPU examples that draw
+glyphs), `EACP_HAS_CONTEXT` (the
 platform's own 2D tier — `Graphics::Context`, `Font`, `TextMetrics`,
 `TextInput`, the retained `ShapeLayer`/`TextLayer` and their views, the image codecs — and so
-`SVGBuilder`, `Apps/Graphics`, `Apps/SVG`, `Apps/UI/SVGDocument` and the GPU
-examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
-`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS),
+`Apps/Graphics` and the GPU examples that paint a 2D overlay), `EACP_HAS_CAPTURE` (`Camera`,
+`CameraView`, `Video`, `VideoView`, the last two additionally off on iOS and
+Android),
 `EACP_HAS_WEBVIEW` (the native `WebView`) and `EACP_HAS_COREML` (`eacp-ml`,
 the Core ML runner, `MLTests` and `Apps/ML`). The first three are
-`APPLE OR WIN32 OR LINUX` — everywhere graphics builds at all — and stay
+`APPLE OR WIN32 OR LINUX OR ANDROID` — everywhere graphics builds at all — and stay
 nested (`TEXT` implies `GPU` implies `DRAW`) because each gates a different
 set of modules and a new port reaches them one at a time. The next three hang off
-`EACP_HAS_DRAW` and are Apple/Windows-only, so on those two platforms the first six
-are simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
+`EACP_HAS_DRAW`: `CONTEXT` and `WEBVIEW` are Apple/Windows-only and `CAPTURE`
+is Apple, Windows and Android, so on Apple and Windows the first six are
+simply what `EACP_HAS_DRAW` alone used to decide; `EACP_HAS_COREML` hangs
 off `EACP_HAS_GPU` and is Apple-only, and is a PUBLIC define on `eacp-ml`.
-An eighth, `EACP_HAS_NETWORK`, is on everywhere today and gates `Network`,
-the WebView page bridge over its RPC, `eacp-ui-network` and their tests, so a
-port without an HTTP client backend turns off one variable.
-`Core`, `Network` and `SIMD` build everywhere, Linux included, and so do four
+`Network` is gated by none of them: it builds everywhere — the HTTP client is
+NSURLSession on Apple, WinHTTP on Windows, libcurl on Linux and Java's
+`HttpURLConnection` and sockets through JNI on Android — and the WebView page
+bridge over its RPC, `eacp-ui-network` and their tests build with it.
+`Core` and `Network` build everywhere, Linux included, and so do four
 device-free pieces of the gated modules: `eacp-gpu-codegen`, the shader EDSL
 and the MSL/HLSL/GLSL emitters (`GPUCodegenTests`); `eacp-cpu-compute`, an
 interpreter that runs the same compute kernels on the CPU with no device
@@ -51,7 +62,7 @@ ships it, and macOS and Windows can opt in. Where it is built, every GLSL
 source the codegen tests emit — and every hand-written GLSL twin in `GPUTests` —
 is compiled by glslang inside the suite, so an emitter regression fails on every
 Linux CI lane, the two with no Vulkan device included, rather than only as a
-wrong pixel on the lane that has a device. See the table in `README.md`. CI
+wrong pixel on the lane that has a device. See the table in `Docs/Build.md`. CI
 builds and tests macOS, Windows (x64 and ARM64, MSVC and clang-cl) and Linux
 (GCC, Clang, and a Clang lane that runs the Vulkan backend on Mesa's lavapipe,
 with the tests inside a headless Weston session and then the window and present
@@ -59,10 +70,17 @@ ones again inside an Xvfb, so windows and swapchains are real on both window
 systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
-tests on), and builds iOS for the simulator.
+tests on), and builds iOS for the simulator and HelloGPU and HelloNetwork
+for Android (arm64-v8a, an NDK installed with `sdkmanager`).
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
-`ResEmbed` and, behind `EACP_BUILD_SPIRV` and so on Linux only by default,
+`ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the
+portable SIMD kernels — namespace `esimd`, `<ESIMD/ESIMD.h>` — that
+`Graphics`' image operations and `Camera`'s frame conversion run through; it
+was `Lib/eacp/SIMD` until it became a repo of its own so other projects can
+take it without eacp, its tests live there, and
+`-DCPM_ESIMD_SOURCE=$HOME/Code/ESIMD` builds against a local checkout) and,
+behind `EACP_BUILD_SPIRV` and so on Linux only by default,
 `glslang`; a Linux build adds
 `Vulkan-Headers`, `volk` and `VulkanMemoryAllocator` (`CMake/FindVulkanBackend.cmake`,
 one `eacp-vulkan` target, fetched on no other platform). Plus libcurl on Linux,
@@ -84,6 +102,103 @@ so it never joins a unity build and its warnings are silenced. Only `eacp-core`
 links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
 of it is reached through `eacp::Zip`. To update it, replace the files under
 `ThirdParty/miniz` and the version in its README.
+
+Android (API `EACP_ANDROID_MIN_SDK`+, Vulkan 1.1) is Linux without Wayland: CMake's
+`ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,
+the app is a NativeActivity shared library with its ordinary `main()`
+(`Window/AndroidMain-Android.c`), and text is `Text/GlyphRasterizer-Android.cpp`
+over `android.graphics` through JNI, as are the image codecs
+(`Image/Image-Android.cpp`), which Android has without `EACP_HAS_CONTEXT`. `Platform::isLinux()` is desktop Linux
+alone; the sites that mean the Vulkan backend and its GLSL ask
+`isLinuxFamily()`, and the font defaults are Android's own
+`sans-serif` and `monospace`. Keys go through `Graphics/Keyboard-Android.cpp`,
+an `AKEYCODE_*` table both ways (Back is `KeyCode::Back`), the text a key types
+from Java's `KeyEvent`, and the polled `Keyboard` state answered from the key
+events the window has seen. Focusing a view with `wantsTextInput` (a
+`ComponentHost` sets it from its focused component) shows the soft keyboard
+through `WindowInsetsController`, and focusing one without it hides it. A
+finger's `TouchEvent` carries its contact radius in points and a `tapCount`
+for quick taps in one spot; a mouse's motion with no button down is hover
+(`mouseMoved`/`mouseExited`) and its wheel is `mouseWheel`. The HTTP client is `Http-Android.cpp` over
+`java.net.HttpURLConnection` (the platform's TLS, certificate store, proxy and
+network security config; a watchdog makes `Request::timeout` a total deadline,
+as on WinHTTP) and `WebSocket-Android.cpp` is `java.net.Socket`, under an
+`SSLSocketFactory` for `wss://`, carrying `Protocol.h`'s own framing; the rest
+of `Network` is the POSIX files desktop Linux uses, and there is no libcurl.
+Every manifest asks for `INTERNET`, and `EACP_ANDROID_CLEARTEXT_TRAFFIC`
+(default `OFF`, `CMake/Android.cmake`) is its `usesCleartextTraffic`, which
+governs `http://` and `ws://` to any host, loopback included;
+`Apps/Android/HelloNetwork` runs the client, server, download, timeout,
+`OnlineResource` and WebSocket paths and turns green when all pass, red
+otherwise. `Camera` is `Camera/Camera-Android.cpp`, camera2ndk feeding an
+`AImageReader` whose YUV_420_888 is packed to tight NV12 on the reader's thread
+(BT.601 full range, `chromaPlane()` after the luma, no zero-copy, so
+`acquireLatestPixelBuffer` is null and `CameraView` uploads it as R8 luma and
+RG8 chroma through `SpriteRenderer::drawNv12Quad`), with `rotationDegrees`
+taken camera2's way from `ACAMERA_SENSOR_ORIENTATION` and `Display.getRotation()`
+and `nativeSession()` the `ACameraCaptureSession*`; `Video` and `VideoView`
+have no decoder or encoder there yet. The camera is a runtime permission:
+`Core/Android/Permissions-Android.h` is `Android::hasPermission` and
+`requestPermission`, which asks through `Jni::activity` (set by
+`Jni::setActivity`, a new local ref each call), keeps one system request in
+flight and queues the rest, and, since a NativeActivity is never handed
+`onRequestPermissionsResult`, reads the permission back when the activity
+resumes after the dialog (`Window-Android.cpp` calls
+`Detail::permissionsActivityPaused`/`Resumed`) and answers once on the main
+thread; `permissionStatus()` is `Granted` or `Denied`, never `NotDetermined`,
+and `start()` without it returns false. The manifest side is `eacp_add_app`'s
+`PERMISSIONS` (`CAMERA` is `android.permission.CAMERA`, a dotted name is taken
+as written, and `CAMERA` adds an optional `android.hardware.camera.any`
+`uses-feature`), which is how `Apps/Camera/CameraViewDemo` builds for Android.
+Tests compile for Android but nothing runs them there. `main()`
+runs once per activity: Android destroys and recreates one for a configuration
+change the manifest does not claim and when it reclaims a stopped app, and the
+recreated activity calls
+`android_main` again on a new thread in the same process, so the loop, the
+device and the app's statics all run a second time; only a `main()` that
+returns on its own ends the process. A debug build takes environment
+variables from the launch intent's string extras and from
+`debug.<package>.env`; a release build takes none.
+`Core` has Android files of its own where desktop Linux's would be wrong:
+`Clipboard-Android.cpp` is `ClipboardManager` (text only, no backend hook),
+`App-Android.cpp` opens a URL with an `ACTION_VIEW` intent and has no file
+pickers, and `Files-Android.cpp` takes the program from the app's own `.so`
+rather than `/proc/self/exe` (`app_process64`), with no resources directory
+since assets live in the APK; `FilePath`'s data and cache roots are
+`getFilesDir()` and `getCacheDir()`. The application `Context` they need is
+`Jni::applicationContext()` (see `Docs/Build.md`).
+`eacp_add_app` builds an example as an
+executable, or on Android as the shared library NativeActivity loads, with
+`BUNDLE_ID`, `DISPLAY_NAME`, `VERSION`, `VERSION_CODE`, `ICON`,
+`ORIENTATION` (`portrait` or `landscape`, applied on iOS and Android) and
+`PERMISSIONS` (Android's manifest permissions). The
+prerequisites are Android Studio with an NDK (the SDK Manager installs it),
+CMake and Ninja; eacp installs nothing and packages nothing itself. `cmake -G Ninja -B
+build-android -DCMAKE_SYSTEM_NAME=Android`, as `-DCMAKE_SYSTEM_NAME=iOS` is
+for iOS, configures: with no toolchain file given, the top-level
+`CMakeLists.txt` takes `CMake/AndroidToolchain.cmake`, which takes the
+`EACP_ANDROID_NDK_VERSION` an app locks to, else the NDK `$ANDROID_NDK_HOME`
+names, else the newest NDK in Studio's SDK (or `$ANDROID_HOME`), and includes its own
+`android.toolchain.cmake` for `arm64-v8a` at `EACP_ANDROID_MIN_SDK` unless
+`-DANDROID_ABI`/`-DANDROID_PLATFORM` say otherwise, while an explicit
+`-DCMAKE_TOOLCHAIN_FILE` is used as given. That configure also writes a Gradle
+project for Android Studio into `<build>/AndroidStudio`
+(`EACP_ANDROID_STUDIO_DIR` moves it, `-DEACP_ANDROID_STUDIO=OFF` skips it), as
+`-G Xcode` writes an Xcode one (`CMake/Android.cmake`, templates and the
+Gradle wrapper in `CMake/Android/`): one module per `eacp_add_app` whose
+`externalNativeBuild` runs this `CMakeLists.txt` for that target per ABI in
+`EACP_ANDROID_ABIS`, given every non-internal `EACP_*` and `CPM_*` cache
+variable of the generating configure, with `ndkVersion` the NDK the configure
+compiled with and the same SDK (`$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, else
+Studio's), found once. `CMake/AndroidVersions.cmake` pins `minSdk`
+(`EACP_ANDROID_MIN_SDK`, eacp's floor and the app's decision) and `targetSdk`
+(`EACP_ANDROID_TARGET_SDK`); `compileSdk` (`EACP_ANDROID_COMPILE_SDK`) floats
+to the newest platform installed, falling back to `targetSdk` with a warning
+and failing below it; the Android Gradle Plugin and Gradle are a tested pair
+an app may raise. Building, installing, running, debugging,
+signing and the App Bundle for Google Play are all Gradle's and Studio's;
+nothing in eacp makes an APK. `Apps/Android/README.md` is the step-by-step
+guide.
 
 ## Build Commands
 
@@ -480,9 +595,9 @@ Hebrew/Arabic/Latin line shapes in visual order. It is built on all three
 platforms and called on none of the others: CTLine and IDWriteTextLayout
 reorder inside themselves, so `GlyphRasterizer::shape()` returns visually
 ordered glyphs everywhere and nothing reorders twice. All of it makes
-`eacp-text` real on Linux and with it `eacp-ui`, the portable half of
-`eacp-svg`, `Apps/UI` (minus `SVGDocument`) and `Apps/GPU`'s `GlyphAtlas` and
-`VariableFont`. It needs font files as well as libraries — a font test asks
+`eacp-text` real on Linux and with it `eacp-ui`, `eacp-svg` (`SVGComponent`,
+the one SVG renderer everywhere, over `Path`'s recorded geometry), `Apps/UI`,
+`Apps/SVG` and `Apps/GPU`'s `GlyphAtlas` and `VariableFont`. It needs font files as well as libraries — a font test asks
 fontconfig for a family and self-skips when nothing resolves, so an
 installation with no fonts runs the Text suite as a silent green;
 `EACP_REQUIRE_FONTS=1` turns that skip into a failure, and the packages CI and
@@ -493,11 +608,11 @@ fonts-noto-color-emoji`.
 What stays absent is `EACP_HAS_CONTEXT`: no 2D `Context`, so `Font`,
 `TextMetrics`, `TextInput`, the retained layer classes and the image codecs are
 left out of the Linux source list rather than stubbed, and with them
-`SVGBuilder`/`SVG::parse`, `Apps/Graphics`, `Apps/SVG`, `Apps/UI/SVGDocument`
-and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
+`Apps/Graphics` and the `Apps/GPU` examples that paint a 2D overlay. `EACP_HAS_CONTEXT` is also a PUBLIC compile definition on
 `eacp-graphics`, and the `Graphics.h` umbrella leaves those headers out
 where it is 0. `Path` is there as recorded geometry only
-(`Primitives/Path-Linux.h`). Every GPU test but the Metal-only
+(`Primitives/Path-Linux.{h,cpp}`, Android's too), which is what
+`SVGPathParser` builds into. Every GPU test but the Metal-only
 `TextureInteropTests.mm` runs there on lavapipe.
 
 `-DEACP_BUILD_GRAPHICS=OFF` is the only way to build Linux without any of this;
@@ -588,12 +703,63 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Window window {view, options};`
 
 **Graphics/** - Rendering and UI
-- `Context`: Abstract base for drawing operations; `MacOSContext` is the Core Graphics implementation
-- `View`: UI component base class with `paint(Context&)` and `mouseDown(MouseEvent)` virtual methods
-- `Window`: macOS window wrapper with configurable flags
+- `Context`: Abstract base for drawing operations, backed by Core Graphics on
+  Apple platforms and Direct2D on Windows; absent on Linux (`EACP_HAS_CONTEXT`)
+- `View`: UI component base class with `paint(Context&)` and `mouseDown(MouseEvent)` virtual methods.
+  A `keyDown`/`keyUp` override keeps every key it is handed unless it calls
+  `passKeyOn()` (`dispatchKeyEvent` returns which); on Android a passed-on
+  `KeyCode::Back` — its own code, not `Escape` — leaves the activity, so a view
+  closes a popup on Back and passes every other press on
+- `Window`: the platform window (Cocoa, Win32, UIKit, Wayland or X11) with configurable flags
 - `Path`: Vector path drawing (rect, ellipse, curves)
-- `Font`: CoreText-based typography
+- `Font`: CoreText / DirectWrite typography, `EACP_HAS_CONTEXT` only
 - `Primitives.h`: Basic types (`Point`, `Rect`, `Color`)
+- `Input/GameInput`: keyboard, mouse and gamepad state for a game loop, polled
+  once a frame with `snapshot()` beside the `View` callbacks. `GameInputQueue` is a
+  bounded lock-free MPSC ring (no allocation after construction) that any
+  thread can push into; every snapshot reconciles against the per-key held
+  state so nothing sticks after an overflow or a producer race. The Apple
+  backend (`GameInput-Apple.mm`, GameController's `GCKeyboard`/`GCMouse` on a
+  serial high-priority queue, shared through a ref-counted hub because the
+  framework has one handler slot per device) owns a feed only once it has
+  delivered an event; `GameInput-Default.cpp` returns no backend on Linux
+  and Android, so those use `Window::events.input` alone. Input counts only
+  while the window is key. `GameInputSource::WindowEvents` forces the window
+  feed. Gamepads (`GamepadState` in `frame.gamepads()`, buttons named by
+  position, raw sticks -1..1 y up and triggers 0..1, up to eight by stable id)
+  come from `GCController` extended gamepads on Apple (the hub sets
+  `shouldMonitorBackgroundEvents`, since GameController otherwise shows a
+  controller only to the frontmost process; verified on macOS with a Switch
+  Pro Controller over USB, reported as `GamepadFamily::Nintendo`, digital
+  ZL/ZR, + as `Start`, - as `Back`, Capture unmapped) and from XInput on
+  Windows (`GameInput-Windows.cpp`: `xinput1_4.dll` loaded by name, the
+  ordinal-100 `XInputGetState` so the Guide button is `Home`, one poll
+  thread per process on a 4 ms high-resolution waitable timer feeding every
+  `GameInput`'s queue through a ref-counted hub like the Apple one; a
+  connected slot is read every tick, an empty one once a second, the
+  XInput user index is the player index, every pad is `GamepadFamily::Xbox`,
+  and keys and mouse stay the window's, so `backendName()` still says
+  "Window events"); Linux and Android have none yet.
+  Axes are state, buttons follow the key rules, and disconnecting or
+  `releaseAll` releases the buttons and zeroes the axes. Both feeds report
+  changes only, so when a `GameInput` starts accepting again - the window
+  took key focus back, `GameInputBackend::resumed()` - every pad's whole
+  state is pushed once more, and a stick held across the gap counts without
+  moving.
+  `Tests/Graphics/GameInputTests.cpp` (28 `GameInput/` cases) drives the
+  queue directly and real windows; the last one reports a controller that is
+  actually plugged in and passes without one unless `EACP_REQUIRE_GAMEPAD=1`.
+  `Apps/UI/GamepadDemo` is the controller tester: a disc the sticks move and aim, each of the fifteen buttons doing a
+  visible thing and announcing its press and release in a log, and a panel of
+  every button and axis named as the pad's `GamepadFamily` prints them
+- `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
+  layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a
+  foreign toolkit parents its own editor into, for plugin hosts. The macOS
+  container clips to its bounds since the macOS 14 SDK stopped doing so
+- `Window/KeyForwarding`, `KeyGrab`: `EmbedderKeyForwarder` sends the keys a
+  hosted editor leaves unhandled back to the host's main window; on macOS it
+  briefly makes that window key and dispatches through `NSApp` so a DAW's
+  shortcut hooks and menu equivalents see them
 
 **Threads/** - Event loop and timing
 - `EventLoop`: CFRunLoop wrapper with `run()`, `quit()`, `call(Callback)`
@@ -668,18 +834,25 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   app sets the directory, declares its resources and constructs one;
   `Apps/UI/ResourceMonitor` does exactly that over DownloadAndPlay's own
   folder.
-- `WebSocket::Connection` (`Network/WebSocket/`): a client over the same three
+- `WebSocket::Connection` (`Network/WebSocket/`): a client over the same
   platform stacks - Network.framework's `nw_ws` (`WebSocket.mm`;
   NSURLSessionWebSocketTask's cancelWithCloseCode: drops its close frame on
   GitHub's macOS runners), WinHTTP's WebSocket API,
   libcurl's `curl_ws_*` (`isSupported()` is false where libcurl lacks it, as on
-  Ubuntu 24.04's 8.5.0). `WebSocket.cpp` is the one state machine, marshalling
+  Ubuntu 24.04's 8.5.0), and on Android `java.net.Socket` through JNI with
+  `Protocol.h` framing it, a reader and a writer thread per connection, the
+  certificate checked against the host for `wss://` and `ws://` refused where
+  the network security config refuses cleartext. `WebSocket.cpp` is the one
+  state machine, marshalling
   every `Sink` report to the message thread through `Threads::callAsync`; each
   `WebSocket-<Platform>` file implements `Backend.h`'s `makeBackend` and
-  nothing else. `Protocol.h` is RFC 6455 framing, spoken by
+  nothing else. `Protocol.h` is RFC 6455 framing and the client handshake
+  (`parseUrl`, `randomClientKey`, `clientHandshakeRequest`,
+  `validateHandshakeResponse`, built everywhere), spoken by
   `WebSocket::Server` (`Server.h`: over `TCP::Listener`, an accept thread and
   one per client, clients addressed by `ClientId`, callbacks on the message
-  thread like the client's) and by the tests' misbehaving server.
+  thread like the client's), by the Android client and by the tests'
+  misbehaving server.
   `Apps/Network/WebSocketDemo` runs both ends in one process. The library is
   one translation unit under a unity build, so every file-scope name in
   `WebSocket/` is prefixed `webSocket`/`WebSocket`.
@@ -705,6 +878,22 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   or the variable of that name, and its level is omitted when empty); an app
   with no `AppInfo` is named after its executable (`Files::executablePath`).
   The two-argument overloads take the names instead
+- `Files::forEachEntry` / `listDirectory` / `listFiles` (`Utils/Files.h`):
+  the one directory walk. `forEachEntry` calls a `VisitingFunc` per
+  `DirectoryEntry` (path, `EntryKind` of the entry itself so a symlink is a
+  symlink, depth, hidden) and collects nothing; the visitor answers
+  `Visit::next`, `skipChildren` or `stop`. `DirectoryOptions` is recursion,
+  hidden entries (a leading '.', plus the hidden attribute on Windows and
+  Finder's `UF_HIDDEN` flag on Apple through the `Detail::hasHiddenAttribute`
+  seam in `FilesPlatform.h`; Linux has no such flag) and a `Symlinks`
+  policy — `skip` never descends a link, `follow` keeps the canonical path of
+  every directory entered and silently skips one seen before, so a cycle is a
+  dead end — plus a `TraversalErrorFunc` that defaults to skipping an
+  unreadable entry and can answer `stop`. Each directory is read whole and
+  sorted by name before any visitor call, so the order is deterministic and a
+  visitor may delete what it is shown. `Zip::Writer::addDirectory`, the
+  `OnlineResources` directory size and the Core ML cache's listing and sweep
+  all go through it rather than a `directory_iterator` of their own
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)
@@ -734,6 +923,34 @@ allocates, locks, logs or makes a syscall. Semantics, the undefined-case table
 and the realtime contract: `Lib/eacp/GPU/README.md`, "Running a kernel on the
 CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
+### ML (`Lib/eacp/ML`)
+
+Two targets. `eacp-ml-graph` (every platform but iOS; links `eacp-core` and
+`eacp-gpu-codegen`) is `ML::Graph` — inputs with fixed or enumerated shapes,
+fp16 constants that land in the weight blob, the transformer ops (`linear`,
+`matmul`, `softmax`, `layerNorm`, `conv`, `gather`, `concat`, `slice`,
+`scaledDotProductAttention` causal or with a run-time mask lowered to bool,
+`argmax`, `gelu`, `cast`) and `apply`, whose elementwise body is written over
+`GPU::Float` and lowered to MIL by `Graph/Elementwise.cpp` — plus the writers
+under `MIL/` (`MILWriter`, a hand-rolled `Protobuf::Writer`, `Blob::Writer`,
+`Half.h`) that `build()` turns into a `Package`, which `Package::write` lays
+out as an `.mlpackage`. Errors are recorded, not thrown: a failing op returns
+an invalid `Tensor`, `isValid()`/`errors()` report it, and `build()` is then
+empty. `MLGraphTests` (90 `MLGraph/` cases) runs on macOS, Windows and Linux.
+`eacp-ml` (`EACP_HAS_COREML`: `EACP_HAS_GPU` and Apple, a PUBLIC define) is
+`ML::Model` under `Model/`: `load` from a `Package`, an `.mlpackage` or an
+`.mlmodelc`, `ComputeUnits` selection, `predict` blocking or `predictAsync`
+on the model's serial queue resolving on the main thread, `computePlan()`,
+and `MultiArray` (fp16 is IOSurface-backed and zeroed; `copyTo`/`copyFrom` a
+`GPU::Buffer` converting fp16/fp32; `copyRows` into a fixed cache). Compiled
+models are cached at `<cacheDirectory>/<hash>.mlmodelc`, the hash over program
+bytes, `Options::weightsName`/`weightsVersion` (or the blob) and the OS build;
+a hit is never recompiled because Core ML ties its Neural Engine cache to the
+compiled path. `MLTests` (55 cases, `TestMain.cpp` of its own) builds Whisper
+tiny.en's encoder and decode step at real sizes against fp32 references;
+`EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners have none).
+`Apps/ML/Projection` is the worked example. `plan.md` is the design record.
+
 ### Key Design Patterns
 
 - **Pimpl**: Platform-specific implementations hidden behind abstract interfaces
@@ -743,12 +960,15 @@ CPU"; the GPU-against-CPU test helper is `Tests/GPU/CpuCrossCheck.h`.
 
 ### Framework Dependencies
 
-macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal.
+macOS: Foundation, Cocoa, CoreVideo, CoreGraphics, CoreText, Metal,
+GameController, and for `eacp-ml` Core ML and Accelerate.
 Windows: Direct2D, DirectWrite, D3D11/D3D12, DXGI, DirectComposition, WinHTTP.
 Linux: pthreads, libcurl, wayland-client, wayland-cursor, xkbcommon, libdecor,
 xcb with xcb-xkb, xkbcommon-x11, xcb-randr, xcb-xfixes, xcb-cursor,
 xcb-icccm and xcb-xinput, FreeType, HarfBuzz and fontconfig, plus the Vulkan
 loader, opened with `dlopen` rather than linked.
+Android: android, log, jnigraphics, the Vulkan loader the same way, and
+`java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
 
 ## Code Style
 

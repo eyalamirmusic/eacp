@@ -1,16 +1,9 @@
 #pragma once
 
-#include "../Texture/Texture.h"
-
 #include <string_view>
 
 namespace eacp::GPU
 {
-// TextureSampling, samplingConfigurations and samplingIndex live in Texture.h,
-// alongside the filter and address-mode enums they are built from: both
-// backends and the shader layer need them, and Texture.h is what they all
-// already include.
-
 // The value types the shader EDSL understands. Inputs, varyings and expression
 // results are all described with these, and they spell identically in MSL and
 // HLSL ("float2" etc.), so the emitters share one type vocabulary. UInt exists
@@ -156,7 +149,7 @@ constexpr int byteSize(ValueType type)
     return componentCount(type) * 4;
 }
 
-inline const char* typeName(ValueType type)
+constexpr const char* typeName(ValueType type)
 {
     switch (type)
     {
@@ -203,7 +196,7 @@ inline const char* typeName(ValueType type)
     return "float";
 }
 
-inline const char* glslTypeName(ValueType type)
+constexpr const char* glslTypeName(ValueType type)
 {
     switch (type)
     {
@@ -251,7 +244,7 @@ inline const char* glslTypeName(ValueType type)
 }
 
 // A constructor-style cast is a call under the target's canonical type name.
-inline const char* glslTypeNameFor(std::string_view canonicalName)
+constexpr const char* glslTypeNameFor(std::string_view canonicalName)
 {
     for (auto raw = 0; raw <= static_cast<int>(ValueType::Bool4); ++raw)
     {

@@ -1,5 +1,6 @@
 #include "Common.h"
 
+#include <eacp/Graphics/Image/Image.h>
 #include <eacp/Video/AudioRing.h>
 #include <eacp/Video/Encoder.h>
 

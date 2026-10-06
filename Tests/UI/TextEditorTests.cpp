@@ -295,6 +295,40 @@ auto tReturnAndEscape =
     check(harness.editor.getText() == "abc", "and neither changed the text");
 };
 
+auto tEscapeIsKept = test("TextEditor/escapeIsKeptAndTheEditorStaysFocused") = []
+{
+    auto harness = Harness {"abc"};
+
+    auto escapes = 0;
+    harness.editor.onEscapeKey = [&escapes] { ++escapes; };
+
+    check(harness.host.getProperties().wantsTextInput);
+    check(harness.host.dispatchKeyEvent(typed("d")), "typing is kept");
+
+    check(harness.host.dispatchKeyEvent(keyOf(eacp::Graphics::KeyCode::Escape)),
+          "escape is the editor's");
+    check(escapes == 1);
+    check(harness.editor.hasKeyboardFocus());
+    check(harness.host.getProperties().wantsTextInput);
+    check(harness.editor.getText() == "abcd");
+};
+
+// Android's soft keyboard takes the first Back itself and goes away; the second
+// reaches the app, and an editor that kept it would be why the app could never
+// be left.
+auto tBackPassesOn = test("TextEditor/backIsPassedOnByAFocusedEditor") = []
+{
+    auto harness = Harness {"abc"};
+
+    auto escapes = 0;
+    harness.editor.onEscapeKey = [&escapes] { ++escapes; };
+
+    check(!harness.host.dispatchKeyEvent(keyOf(eacp::Graphics::KeyCode::Back)),
+          "back is passed on");
+    check(escapes == 0, "and is not an escape");
+    check(harness.editor.getText() == "abc");
+};
+
 auto tReadOnlyRefusesEdits = test("TextEditor/aReadOnlyEditorTakesNoEdits") = []
 {
     auto harness = Harness {"abc"};

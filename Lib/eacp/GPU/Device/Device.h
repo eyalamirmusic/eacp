@@ -10,12 +10,13 @@
 #include "../Texture/Texture.h"
 #include "../Timing/FrameTimer.h"
 
+#include <eacp/Core/Threads/ThreadUtils.h>
+
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <typeindex>
 
 namespace eacp::Graphics
@@ -69,7 +70,7 @@ public:
     // can outlive. Asked in every build, unlike the assertion.
     struct ThreadOwner
     {
-        std::thread::id id;
+        std::uint64_t id = 0;
         bool followsMainThread = false;
 
         bool isCurrent() const;
@@ -80,12 +81,7 @@ public:
     Buffer makeBuffer(const void* data,
                       std::int64_t bytes,
                       BufferUsage usage = BufferUsage::Vertex,
-                      BufferStorage storage = BufferStorage::Device)
-    {
-        assertOwningThread();
-
-        return {*this, data, bytes, usage, storage};
-    }
+                      BufferStorage storage = BufferStorage::Device);
 
     template <typename T, std::size_t N>
     Buffer makeBuffer(const T (&array)[N], BufferUsage usage = BufferUsage::Vertex)
@@ -97,12 +93,7 @@ public:
     // Its contents are whatever was there: the storage may be recycled from a
     // buffer of the same size and usage that the GPU has finished with (see
     // BufferPool), so a kernel that needs zeros writes them.
-    Buffer makeBuffer(std::int64_t bytes, BufferUsage usage = BufferUsage::Storage)
-    {
-        assertOwningThread();
-
-        return BufferPool::of(*this).take(bytes, usage);
-    }
+    Buffer makeBuffer(std::int64_t bytes, BufferUsage usage = BufferUsage::Storage);
 
     // A buffer over memory the caller owns: shared with it where the backend
     // can, copied out of it where it cannot, which Buffer::canAdoptMemory
@@ -114,20 +105,12 @@ public:
     // BufferRange into one buffer, with nothing copied and nothing to keep in
     // step: the pages arrive as the GPU first touches them.
     Buffer makeBufferOverMemory(ExternalMemory memory,
-                                BufferUsage usage = BufferUsage::Storage)
-    {
-        assertOwningThread();
-
-        return {*this, std::move(memory), usage};
-    }
+                                BufferUsage usage = BufferUsage::Storage);
 
     // A 2D texture from tightly packed 4-byte pixels (row 0 at the top), or an
     // uninitialised texture when pixels is null.
     Texture makeTexture(const TextureDescriptor& descriptor,
-                        const void* pixels = nullptr)
-    {
-        return {*this, descriptor, pixels};
-    }
+                        const void* pixels = nullptr);
 
     // A 2D texture sized from a decoded image and uploaded from its RGBA8
     // pixels. The image is taken as tightly packed 8-bit RGBA (what
@@ -139,32 +122,15 @@ public:
     // sampleable texture without copying its pixels — the zero-copy path for
     // camera and video frames. Returns an invalid texture on backends without
     // zero-copy support (Windows for now), where Texture::update is the path.
-    Texture wrapPixelBuffer(void* nativePixelBuffer)
-    {
-        return {*this, nativePixelBuffer};
-    }
+    Texture wrapPixelBuffer(void* nativePixelBuffer);
 
-    ShaderLibrary makeShaderLibrary(const ShaderSource& source)
-    {
-        return {*this, source};
-    }
+    ShaderLibrary makeShaderLibrary(const ShaderSource& source);
 
-    RenderPipeline makeRenderPipeline(const RenderPipelineDescriptor& descriptor)
-    {
-        return {*this, descriptor};
-    }
+    RenderPipeline makeRenderPipeline(const RenderPipelineDescriptor& descriptor);
 
-    ComputePipeline makeComputePipeline(const ShaderLibrary& library)
-    {
-        return {*this, library};
-    }
+    ComputePipeline makeComputePipeline(const ShaderLibrary& library);
 
-    CommandBuffer makeCommandBuffer()
-    {
-        assertOwningThread();
-
-        return CommandBuffer {*this};
-    }
+    CommandBuffer makeCommandBuffer();
 
     bool isValid() const;
 
@@ -323,7 +289,7 @@ public:
     // of its pools to write into from this, so that a renderer streaming
     // per-frame data has nothing to call at the frame boundary and therefore
     // nothing to forget - see StreamingBuffers for why that matters.
-    std::uint64_t frameIndex() const { return frameCount; }
+    constexpr std::uint64_t frameIndex() const { return frameCount; }
 
     // Called by Frame's constructor on both backends, including the off-screen
     // one. An off-screen frame blocks until the GPU is done, so nothing it
@@ -346,7 +312,7 @@ public:
     // An unlabelled pass is not timed and costs nothing. The numbers are a few
     // frames behind whatever is being drawn now, and cannot be anything else -
     // see FrameTimings for why.
-    const FrameTimings& lastFrameTimings() const { return timer.lastTimings(); }
+    const FrameTimings& lastFrameTimings() const;
 
     // Whether this device can time individual passes. False says only that the
     // per-pass breakdown will be empty: FrameTimings::milliseconds, the frame
@@ -354,10 +320,10 @@ public:
     //
     // Answerable only once a frame has begun, since that is what builds the
     // timestamp resources - ask after rendering, not before.
-    bool supportsPassTimings() const { return timer.isSupported(); }
+    bool supportsPassTimings() const;
 
     // Internal: the timer Frame drives. Apps read lastFrameTimings().
-    FrameTimer& frameTimer() { return timer; }
+    constexpr FrameTimer& frameTimer() { return timer; }
 
     // How many GPU buffers have been created on this device since it came up.
     //
@@ -366,11 +332,11 @@ public:
     // while the drawing repeats is allocation churn in the frame loop -
     // newBufferWithBytes on Metal, a committed resource on D3D12 - which is
     // what the assertions in Tests/GPU are there to catch.
-    int buffersCreated() const { return bufferCount; }
+    constexpr int buffersCreated() const { return bufferCount; }
 
     // Called by Buffer's constructor on both backends, for buffers that got
     // real storage.
-    void noteBufferCreated() { ++bufferCount; }
+    constexpr void noteBufferCreated() { ++bufferCount; }
 
     // This Device's own T: one, made on first use and
     // destroyed with the Device, before the backend device itself. For state
@@ -394,7 +360,7 @@ private:
     // Makes this Device follow the main thread rather than the one that
     // constructed it. Private because Device::shared() is the only caller and
     // it is a member, so nothing outside can move a Device's ownership.
-    void followMainThread() { mainThreadOwned = true; }
+    constexpr void followMainThread() { mainThreadOwned = true; }
 
     struct Native;
     Pimpl<Native> impl;
@@ -404,7 +370,7 @@ private:
     // The thread this Device was constructed on, and therefore the one it may
     // be used from - unless followMainThread() said to track the main thread
     // instead, which Device::shared() does.
-    std::thread::id owningThread = std::this_thread::get_id();
+    std::uint64_t owningThread = Threads::currentThreadId();
     bool mainThreadOwned = false;
 
     std::uint64_t frameCount = 0;

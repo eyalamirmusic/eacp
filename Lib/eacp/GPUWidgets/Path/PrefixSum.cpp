@@ -1,7 +1,9 @@
 #include "PrefixSum.h"
 
 #include "CoverageKernel.h"
+#include "PrefixSumKernels.h"
 
+#include <algorithm>
 #include <cassert>
 
 namespace eacp::GPUWidgets

@@ -1,62 +1,17 @@
 #include "SpriteRenderer.h"
+#include "SpriteShaders.h"
+
+#include <eacp/GPU/Device/Device.h>
+
+#include <optional>
 
 namespace eacp::Sprites
 {
-// No EACP_SHADER_VALUE declaration for SpriteInstance: every field the shader
-// pulls from it is a plain float[N], which the EDSL already maps to FloatN. The
-// macro is only needed for structs with named components.
-
-void SpriteShader::define()
+struct SpriteRenderer::Programs
 {
-    auto corner = vertexInput(&SpriteVertex::corner);
-
-    auto origin = instanceInput(&SpriteInstance::origin, 1);
-    auto edgeX = instanceInput(&SpriteInstance::edgeX, 1);
-    auto edgeY = instanceInput(&SpriteInstance::edgeY, 1);
-    auto uv0 = instanceInput(&SpriteInstance::uv0, 1);
-    auto uv1 = instanceInput(&SpriteInstance::uv1, 1);
-    auto tint = instanceInput(&SpriteInstance::tint, 1);
-
-    auto game = origin + corner.x() * edgeX + corner.y() * edgeY;
-    auto ndcX = game.x() / screenSize.x() * 2.0f - 1.0f;
-    auto ndcY = 1.0f - game.y() / screenSize.y() * 2.0f;
-    setPosition(float4(ndcX, ndcY, 0.0f, 1.0f));
-
-    auto uv = uv0 + corner * (uv1 - uv0);
-    auto fragmentUv = varying(uv);
-    auto fragmentTint = varying(tint);
-    setFragment(sample(image, fragmentUv) * fragmentTint);
-}
-
-void Nv12Shader::define()
-{
-    auto corner = vertexInput(&SpriteVertex::corner);
-
-    auto game = origin + corner.x() * edgeX + corner.y() * edgeY;
-    auto ndcX = game.x() / screenSize.x() * 2.0f - 1.0f;
-    auto ndcY = 1.0f - game.y() / screenSize.y() * 2.0f;
-    setPosition(float4(ndcX, ndcY, 0.0f, 1.0f));
-
-    auto uv = varying(corner);
-
-    // Undo the coding range, then apply the track's matrix. Video::toImage runs
-    // the same arithmetic from the same constants, so a frame looks identical
-    // whether it reached the screen or an Image.
-    auto y = (sample(luma, uv).x() - yuvRange.x()) * yuvRange.y();
-    auto cbcr = sample(chroma, uv);
-    auto u = (cbcr.x() - yuvRange.z()) * yuvRange.w();
-    auto v = (cbcr.y() - yuvRange.z()) * yuvRange.w();
-
-    auto red = y + yuvMatrix.x() * v;
-    auto green = y - yuvMatrix.y() * u - yuvMatrix.z() * v;
-    auto blue = y + yuvMatrix.w() * u;
-
-    // Coding ranges overshoot 0-1 slightly at the extremes, and a colour
-    // outside it would blend wrong rather than simply clip.
-    auto rgb = clamp(float3(red, green, blue), 0.0f, 1.0f);
-
-    setFragment(float4(rgb.x(), rgb.y(), rgb.z(), 1.0f) * tint);
-}
+    Array<std::optional<SpriteShader>, GPU::samplingConfigurations> sprite;
+    Array<std::optional<Nv12Shader>, GPU::samplingConfigurations> nv12;
+};
 
 namespace
 {
@@ -119,7 +74,7 @@ SpriteRenderer::SpriteRenderer(Point logicalSizeToUse,
 
 SpriteShader& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 {
-    auto& slot = programs[GPU::samplingIndex(sampling)];
+    auto& slot = programs->sprite[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
         prepareBlended(slot.emplace(sampling), sampleCount, colorFormat);
@@ -129,7 +84,7 @@ SpriteShader& SpriteRenderer::programFor(GPU::TextureSampling sampling)
 
 Nv12Shader& SpriteRenderer::nv12ProgramFor(GPU::TextureSampling sampling)
 {
-    auto& slot = nv12Programs[GPU::samplingIndex(sampling)];
+    auto& slot = programs->nv12[GPU::samplingIndex(sampling)];
 
     if (!slot.has_value())
         prepareBlended(slot.emplace(sampling), sampleCount, colorFormat);
@@ -185,6 +140,11 @@ void SpriteRenderer::detach()
 
     pass->removeParticipant(*this);
     pass = nullptr;
+}
+
+Point SpriteRenderer::getLogicalSize() const
+{
+    return logicalSize;
 }
 
 void SpriteRenderer::setLogicalSize(Point size)

@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <algorithm>
+
 // The shape rule a window enforces, tested as the pure function it is. Every
 // platform hands it a proposed size and applies what comes back, so what is
 // worth checking is the arithmetic - which side gives way, how a fixed

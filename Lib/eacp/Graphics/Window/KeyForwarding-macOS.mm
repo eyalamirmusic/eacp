@@ -4,6 +4,7 @@
 #include "Window-macOS.h"
 #include "../Graphics/Keyboard-MacOS.h"
 #include "../View/View-MacOS.h"
+#include "../View/View.h"
 
 namespace eacp::Graphics
 {

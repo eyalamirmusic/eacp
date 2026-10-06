@@ -2,7 +2,11 @@
 
 #include "../Common.h"
 
-#include <eacp/Graphics/Graphics.h>
+#include <eacp/Core/Utils/Pimpl.h>
+#include <eacp/Graphics/Helpers/DisplayLink.h>
+#include <eacp/Graphics/View/View.h>
+
+#include <functional>
 
 namespace eacp::GPU
 {
@@ -24,12 +28,12 @@ public:
     GPUView();
     ~GPUView() override;
 
-    virtual void render(Frame&) {}
+    virtual void render(Frame&);
 
     // Called once per display refresh while continuous mode is on; the view
     // then redraws via render(). Advance animation state here, scaled by the
     // frame's delta time, so motion stays smooth and rate-independent.
-    virtual void update(Threads::FrameTime) {}
+    virtual void update(Threads::FrameTime);
 
     // The drawable is resized before the subclass answers the new size, and the
     // resize's own frame drawn after it on the backends that draw one -- so a

@@ -1,5 +1,100 @@
 include(AppleSetup)
 
+# Published at include time rather than from eacp_default_setup(), which only
+# runs when eacp is the top-level project: a project that fetches eacp gets
+# the same bundle templates its own apps do.
+set(EACP_MACOS_PLIST "${CMAKE_CURRENT_LIST_DIR}/macOSBundleInfo.plist.in"
+        CACHE INTERNAL "eacp macOS bundle Info.plist template")
+set(EACP_IOS_PLIST "${CMAKE_CURRENT_LIST_DIR}/iOSBundleInfo.plist.in"
+        CACHE INTERNAL "eacp iOS bundle Info.plist template")
+
+function(eacp_bundle_plist_template out_var)
+    if (IOS)
+        set(${out_var} "${EACP_IOS_PLIST}" PARENT_SCOPE)
+    else ()
+        set(${out_var} "${EACP_MACOS_PLIST}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
+if (ANDROID)
+    include("${CMAKE_CURRENT_LIST_DIR}/Android.cmake")
+endif ()
+
+# eacp_add_app(<target> <sources>... [BUNDLE_ID <id>] [DISPLAY_NAME <name>]
+#              [VERSION <x.y.z>] [VERSION_CODE <n>] [ICON <png>]
+#              [ORIENTATION portrait|landscape] [PERMISSIONS <name>...])
+#
+# One app with one identity everywhere: com.eacp.<target>, named <target>, at the
+# project's version, build 1, unless told otherwise. An executable whose bundle
+# properties and at-rest icon these set, or on Android the shared library
+# NativeActivity loads, with a module in the Android Studio project
+# (eacp_add_android_app, which reads the rest). ORIENTATION locks a phone app
+# to one orientation on iOS (UISupportedInterfaceOrientations) and Android
+# (screenOrientation); landscape is either way up. Unset, the device rotates it.
+# PERMISSIONS are Android's, CAMERA being android.permission.CAMERA and a name
+# with a dot taken as it is, and land in the manifest beside INTERNET; the
+# dangerous ones still have to be asked for at run time.
+function(eacp_add_app target)
+    cmake_parse_arguments(APP ""
+            "BUNDLE_ID;DISPLAY_NAME;VERSION;VERSION_CODE;ICON;ORIENTATION"
+            "PERMISSIONS" ${ARGN})
+
+    if (APP_ORIENTATION AND NOT APP_ORIENTATION MATCHES "^(portrait|landscape)$")
+        message(FATAL_ERROR "eacp_add_app(${target}): ORIENTATION is portrait or "
+                "landscape, not '${APP_ORIENTATION}'")
+    endif ()
+
+    string(TOLOWER "com.eacp.${target}" default_BUNDLE_ID)
+    set(default_DISPLAY_NAME "${target}")
+    set(default_VERSION "${PROJECT_VERSION}")
+    set(default_VERSION_CODE 1)
+
+    foreach (key BUNDLE_ID DISPLAY_NAME VERSION VERSION_CODE)
+        if (NOT APP_${key})
+            set(APP_${key} "${default_${key}}")
+        endif ()
+    endforeach ()
+
+    if (NOT APP_VERSION)
+        set(APP_VERSION 0.0.0)
+    endif ()
+
+    if (ANDROID)
+        add_library(${target} SHARED ${APP_UNPARSED_ARGUMENTS})
+    else ()
+        add_executable(${target} ${APP_UNPARSED_ARGUMENTS})
+    endif ()
+
+    set_target_properties(${target} PROPERTIES
+            MACOSX_BUNDLE_BUNDLE_NAME "${APP_DISPLAY_NAME}"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "${APP_BUNDLE_ID}"
+            XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${APP_BUNDLE_ID}"
+            XCODE_ATTRIBUTE_MARKETING_VERSION "${APP_VERSION}"
+            XCODE_ATTRIBUTE_CURRENT_PROJECT_VERSION "${APP_VERSION_CODE}"
+            EACP_APP_VERSION "${APP_VERSION}"
+            EACP_APP_VERSION_CODE "${APP_VERSION_CODE}")
+
+    if (ANDROID)
+        eacp_add_android_app(${target})
+    elseif (APP_ICON)
+        eacp_set_app_icon(${target} IMAGE "${APP_ICON}")
+    endif ()
+
+    set(orientations "")
+
+    if (IOS AND APP_ORIENTATION STREQUAL "portrait")
+        eacp_plist_array(orientations UIInterfaceOrientationPortrait)
+    elseif (IOS AND APP_ORIENTATION STREQUAL "landscape")
+        eacp_plist_array(orientations UIInterfaceOrientationLandscapeLeft
+                UIInterfaceOrientationLandscapeRight)
+    endif ()
+
+    if (orientations)
+        eacp_append_plist_xml(${target}
+                "\t<key>UISupportedInterfaceOrientations</key>\n\t${orientations}\n")
+    endif ()
+endfunction()
+
 function(set_default_warnings_level target)
     if (MSVC)
         target_compile_options(${target} PRIVATE /W4)
@@ -35,19 +130,123 @@ function(silence_target_warnings target)
     endif ()
 endfunction()
 
+# The bundle plist is eacp's template unless the target already has one, so
+# an app's own plist, or eacp_add_plist_entries, may come before or after.
 function(set_default_target_setting target)
     set_default_warnings_level(${target})
     set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-    if (IOS)
-        set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_IOS_PLIST}")
-    elseif (APPLE)
-        set_target_properties(${target} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${EACP_MACOS_PLIST}")
+
+    if (APPLE)
+        get_target_property(plist ${target} MACOSX_BUNDLE_INFO_PLIST)
+
+        if (NOT plist)
+            eacp_bundle_plist_template(template)
+            set_target_properties(${target} PROPERTIES
+                    MACOSX_BUNDLE_INFO_PLIST "${template}")
+        endif ()
     endif ()
+endfunction()
+
+function(eacp_plist_string value out_var)
+    string(REPLACE "&" "&amp;" value "${value}")
+    string(REPLACE "<" "&lt;" value "${value}")
+    string(REPLACE ">" "&gt;" value "${value}")
+    set(${out_var} "<string>${value}</string>" PARENT_SCOPE)
+endfunction()
+
+function(eacp_plist_array out_var)
+    set(array "<array>\n")
+
+    foreach (item IN LISTS ARGN)
+        eacp_plist_string("${item}" element)
+        string(APPEND array "\t\t${element}\n")
+    endforeach ()
+
+    set(${out_var} "${array}\t</array>" PARENT_SCOPE)
+endfunction()
+
+function(eacp_plist_element value out_var)
+    list(LENGTH value count)
+
+    if (value STREQUAL "TRUE")
+        set(${out_var} "<true/>" PARENT_SCOPE)
+    elseif (value STREQUAL "FALSE")
+        set(${out_var} "<false/>" PARENT_SCOPE)
+    elseif (count GREATER 1)
+        eacp_plist_array(array ${value})
+        set(${out_var} "${array}" PARENT_SCOPE)
+    else ()
+        eacp_plist_string("${value}" element)
+        set(${out_var} "${element}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# Adds keys to an app's Info.plist on top of eacp's template for the platform,
+# so an app that needs a usage description or LSUIElement does not carry a
+# copy of the whole file. TRUE and FALSE become booleans, a list of more than
+# one item an array of strings, anything else a string. Calls accumulate, and
+# may come before or after set_default_target_setting. A no-op off Apple.
+#
+#   eacp_add_plist_entries(MyApp
+#           NSCameraUsageDescription "Shows the camera in a GPU view."
+#           LSUIElement TRUE)
+function(eacp_add_plist_entries target)
+    if (NOT APPLE)
+        return()
+    endif ()
+
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "" "")
+    list(LENGTH ARG_UNPARSED_ARGUMENTS count)
+    math(EXPR remainder "${count} % 2")
+
+    if (count EQUAL 0 OR remainder)
+        message(FATAL_ERROR
+                "eacp_add_plist_entries(${target}): expects key value pairs")
+    endif ()
+
+    set(entries "")
+    math(EXPR last "${count} - 1")
+
+    foreach (i RANGE 0 ${last} 2)
+        math(EXPR j "${i} + 1")
+        list(GET ARG_UNPARSED_ARGUMENTS ${i} key)
+        list(GET ARG_UNPARSED_ARGUMENTS ${j} value)
+        eacp_plist_element("${value}" element)
+        string(APPEND entries "\t<key>${key}</key>\n\t${element}\n")
+    endforeach ()
+
+    eacp_append_plist_xml(${target} "${entries}")
+endfunction()
+
+# Appends raw <key>/value XML to the target's plist entries and rewrites its
+# Info.plist template: eacp_add_plist_entries, and eacp_add_app for the
+# orientations, which are an array even with one item.
+function(eacp_append_plist_xml target xml)
+    get_target_property(entries ${target} EACP_PLIST_ENTRIES)
+
+    if (NOT entries)
+        set(entries "")
+    endif ()
+
+    string(APPEND entries "${xml}")
+    set_target_properties(${target} PROPERTIES EACP_PLIST_ENTRIES "${entries}")
+
+    eacp_bundle_plist_template(template)
+    file(READ "${template}" plist)
+    string(REPLACE "</dict>\n</plist>" "${entries}</dict>\n</plist>" plist
+            "${plist}")
+
+    set(generated "${CMAKE_CURRENT_BINARY_DIR}/${target}-Info.plist.in")
+    file(WRITE "${generated}" "${plist}")
+    set_target_properties(${target} PROPERTIES
+            MACOSX_BUNDLE_INFO_PLIST "${generated}")
 endfunction()
 
 function(eacp_enable_unity_build target)
     if (EACP_UNITY_BUILD)
-        set_target_properties(${target} PROPERTIES UNITY_BUILD ON)
+        set_target_properties(${target} PROPERTIES
+                UNITY_BUILD ON
+                CXX_SCAN_FOR_MODULES OFF)
     endif ()
 endfunction()
 
@@ -103,7 +302,8 @@ endfunction()
 # runtime. The name comes from MACOSX_BUNDLE_BUNDLE_NAME (apps set it before
 # calling us) or the target name; the company from the target's
 # EACP_COMPANY_NAME property, else the EACP_COMPANY_NAME variable, else empty;
-# the version from ${PROJECT_VERSION}, defaulting to 0.0.0. Name and company
+# the version from eacp_add_app's VERSION, else ${PROJECT_VERSION}, else 0.0.0,
+# and the build from its VERSION_CODE, else the version. Name and company
 # are what FilePath::appSupportDirectory() puts the app's own folder under.
 function(eacp_embed_app_info target)
     get_target_property(app_name ${target} MACOSX_BUNDLE_BUNDLE_NAME)
@@ -116,36 +316,39 @@ function(eacp_embed_app_info target)
         set(company_name "${EACP_COMPANY_NAME}")
     endif ()
 
-    set(app_version "${PROJECT_VERSION}")
+    get_target_property(app_version ${target} EACP_APP_VERSION)
+    if (NOT app_version)
+        set(app_version "${PROJECT_VERSION}")
+    endif ()
     if (NOT app_version)
         set(app_version "0.0.0")
+    endif ()
+
+    get_target_property(build ${target} EACP_APP_VERSION_CODE)
+    if (NOT build)
+        set(build "${app_version}")
     endif ()
 
     if (APPLE)
         set_target_properties(${target} PROPERTIES
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "${app_version}"
-                MACOSX_BUNDLE_BUNDLE_VERSION "${app_version}"
+                MACOSX_BUNDLE_BUNDLE_VERSION "${build}"
                 MACOSX_BUNDLE_LONG_VERSION_STRING "${app_version}")
     elseif (WIN32)
         # VERSIONINFO's FILEVERSION/PRODUCTVERSION need four numeric fields; the
-        # project may set fewer, so pad the missing components with 0.
-        set(v_major "${PROJECT_VERSION_MAJOR}")
-        set(v_minor "${PROJECT_VERSION_MINOR}")
-        set(v_patch "${PROJECT_VERSION_PATCH}")
-        set(v_tweak "${PROJECT_VERSION_TWEAK}")
-        foreach (comp v_major v_minor v_patch v_tweak)
-            if (NOT ${comp})
-                set(${comp} 0)
-            endif ()
-        endforeach ()
+        # version may have fewer, so the missing ones are 0.
+        string(REGEX MATCHALL "[0-9]+" fields "${app_version}")
+        list(APPEND fields 0 0 0 0)
+        list(SUBLIST fields 0 4 fields)
+        list(JOIN fields "," numeric_version)
 
         # Resource ids are per-type, so id 1 here does not clash with the
         # id-1 ICON that eacp_set_app_icon emits.
         set(version_rc "${CMAKE_CURRENT_BINARY_DIR}/${target}-version.rc")
         file(CONFIGURE OUTPUT "${version_rc}" @ONLY CONTENT [==[
 1 VERSIONINFO
-FILEVERSION @v_major@,@v_minor@,@v_patch@,@v_tweak@
-PRODUCTVERSION @v_major@,@v_minor@,@v_patch@,@v_tweak@
+FILEVERSION @numeric_version@
+PRODUCTVERSION @numeric_version@
 FILEOS 0x40004L
 FILETYPE 0x1L
 BEGIN
@@ -294,7 +497,7 @@ function(add_ide_sources target)
 endfunction()
 
 function(eacp_default_setup)
-    set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+    set(CMAKE_CXX_SCAN_FOR_MODULES OFF PARENT_SCOPE)
     add_compile_definitions(_LIBCPP_REMOVE_TRANSITIVE_INCLUDES)
     eacp_setup_apple()
 

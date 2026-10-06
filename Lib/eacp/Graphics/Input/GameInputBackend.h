@@ -16,6 +16,9 @@ struct GameInputBackend
     // the window's own events for them are to be ignored.
     virtual bool ownsKeys() const = 0;
     virtual bool ownsMouse() const = 0;
+
+    // Main thread: the window took key focus again, so `active` is now true.
+    virtual void resumed() {}
 };
 
 // Null where the platform has no such feed.

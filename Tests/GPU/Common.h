@@ -14,7 +14,7 @@ inline eacp::GPU::ShaderSource
 {
     if constexpr (eacp::Platform::isWindows())
         return eacp::GPU::ShaderSource::hlsl(std::move(hlsl));
-    else if constexpr (eacp::Platform::isLinux())
+    else if constexpr (eacp::Platform::isLinuxFamily())
         return eacp::GPU::ShaderSource::glsl(std::move(glsl));
     else
         return eacp::GPU::ShaderSource::msl(std::move(msl));

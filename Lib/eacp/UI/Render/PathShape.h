@@ -1,11 +1,11 @@
 #pragma once
 
 #include "CoverageAtlas.h"
-#include "MaskCache.h"
 
 namespace eacp::UI
 {
 class Component;
+class MaskCache;
 
 // A vector shape a component draws: the path, the coverage a kernel rasterized
 // for it, and the slot of the shared atlas that coverage lives in.
@@ -81,17 +81,17 @@ public:
     // Takes effect at the next rasterization, so setting it before the path is
     // the usual order.
     void setBacking(Backing newBacking);
-    Backing getBacking() const { return backing; }
+    Backing getBacking() const;
 
     // Whether this shape ended up as triangles rather than a mask -- which is
     // worth being able to read, because it is the difference between costing the
     // atlas nothing and costing it the shape's whole area.
-    bool isMeshed() const { return !mesh.empty(); }
+    bool isMeshed() const;
 
     // Whether this shape draws through a mask somebody else rasterized. True of
     // every copy but the first of a shape an interface repeats, and the figure
     // that says how much of the atlas repetition is costing nothing.
-    bool isSharingMask() const { return sharing; }
+    bool isSharingMask() const;
 
     // The geometry, in the owning component's points. Marks the shape for
     // rasterization at the top of the next frame; cheap enough to call whenever
@@ -125,18 +125,18 @@ public:
     Rect getBounds() const;
 
     // The atlas rect the quad samples.
-    Rect getMaskUV() const { return maskUV; }
+    Rect getMaskUV() const;
 
     // The triangles, in the owning component's points, for a shape that ended up
     // meshed. Empty for one backed by a mask.
-    const Vector<GPUWidgets::MeshVertex>& getMesh() const { return mesh; }
+    const Vector<GPUWidgets::MeshVertex>& getMesh() const;
 
     // True when this shape has geometry and no mask, the atlas having had no
     // room for it. It stays true until the shape is rasterized again, which is
     // what makes it a count of what is missing from the picture rather than of
     // what happened during one frame -- the frame after a drop allocates
     // nothing at all, and the shape is just as absent.
-    bool wasDropped() const { return dropped; }
+    bool wasDropped() const;
 
 private:
     friend class ComponentHost;
@@ -162,13 +162,9 @@ private:
     // The atlas moved everything, or the display did: whatever was rasterized
     // is no longer where the uv says it is, and the slot it was in belongs to
     // somebody else now.
-    void invalidate()
-    {
-        dirty = true;
-        placed = false;
-    }
+    void invalidate();
 
-    bool isDirty() const { return dirty; }
+    bool isDirty() const;
 
     Component& owner;
 

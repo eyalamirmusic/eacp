@@ -156,6 +156,11 @@ std::string serializeResponse(const Response& response)
     return out.str();
 }
 
+Request& RequestParser::request()
+{
+    return parsed;
+}
+
 RequestParser::State RequestParser::feed(const char* data, int length)
 {
     buffer.append(data, (std::size_t) length);

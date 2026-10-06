@@ -4,6 +4,7 @@
 #include <eacp/GPUWidgets/Path/BinKernels.h>
 #include <eacp/GPUWidgets/Path/CoverageKernel.h>
 #include <eacp/GPUWidgets/Path/PrefixSum.h>
+#include <eacp/GPUWidgets/Path/PrefixSumKernels.h>
 #include <eacp/GPUWidgets/View/CoverageShader.h>
 #include <eacp/GPUWidgets/View/PathFillShader.h>
 #include <eacp/GPUWidgets/View/VertexColorShader.h>
@@ -16,6 +17,7 @@
 #include <eacp/ML/Kernels/SwiGLU.h>
 #include <eacp/ML/Kernels/TensorOps.h>
 #include <eacp/Sprites/SpriteRenderer.h>
+#include <eacp/Sprites/SpriteShaders.h>
 #include <eacp/Text/GlyphRenderer.h>
 #include <eacp/UI/Render/ImageBatch.h>
 #include <eacp/UI/Render/LayerRenderer.h>

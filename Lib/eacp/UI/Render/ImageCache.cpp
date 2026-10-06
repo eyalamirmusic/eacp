@@ -72,4 +72,9 @@ void ImageCache::releaseUnused()
             ++it;
     }
 }
+
+int ImageCache::size() const
+{
+    return (int) entries.size();
+}
 } // namespace eacp::UI

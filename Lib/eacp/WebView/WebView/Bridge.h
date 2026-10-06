@@ -43,30 +43,23 @@ public:
 
     ~WebViewBridge();
 
-    Miro::Bridge& getBridge() { return bridge; }
+    Miro::Bridge& getBridge();
 
     // Controls how incoming commands are executed. Every command is async
     // on the TypeScript side regardless; this chooses where the bridge
     // runs the synchronous C++ handler. Defaults to MainThreadDeferred —
     // switch to WorkerThread only for handlers that are safe to run off
     // the main thread. See CommandExecution.
-    void setCommandExecution(CommandExecution mode) { commandExecution = mode; }
-    CommandExecution getCommandExecution() const { return commandExecution; }
+    void setCommandExecution(CommandExecution mode);
+    CommandExecution getCommandExecution() const;
 
     // Per-command override of the execution mode, keyed by command name; takes
     // precedence over the global default, so one slow command can go to a
     // worker thread without affecting the rest. Governs synchronous handlers
     // only — an async handler owns its own threading. Configure before commands
     // start flowing; consulted on the main thread.
-    void setCommandExecution(const std::string& command, CommandExecution mode)
-    {
-        commandModes[command] = mode;
-    }
-
-    void clearCommandExecution(const std::string& command)
-    {
-        commandModes.erase(command);
-    }
+    void setCommandExecution(const std::string& command, CommandExecution mode);
+    void clearCommandExecution(const std::string& command);
 
     // Calls a JavaScript function the page registered with
     // `window.eacp.expose(name, fn)` — the reverse of a command. The JS
@@ -82,10 +75,7 @@ public:
     Threads::Async<Miro::Json::Value> call(const std::string& functionName,
                                            const Miro::Json::Value& payload);
 
-    Threads::Async<Miro::Json::Value> call(const std::string& functionName)
-    {
-        return call(functionName, Miro::Json::Value {});
-    }
+    Threads::Async<Miro::Json::Value> call(const std::string& functionName);
 
     template <typename Res, typename Req>
     Threads::Async<Res> call(const std::string& functionName, const Req& request)

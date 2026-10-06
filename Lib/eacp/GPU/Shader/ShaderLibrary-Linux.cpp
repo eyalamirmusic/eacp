@@ -43,19 +43,21 @@ Vector<std::uint32_t> wordsOf(const std::string& bytes)
     return words;
 }
 
-// SPIR-V for one stage of the source, from the disk cache where a previous
-// launch compiled it, and compiled and stored there otherwise.
-Vector<std::uint32_t> spirvFor(Spirv::Stage stage, const std::string& source)
+// SPIR-V for one stage of the source and target, from the disk cache where a
+// previous launch compiled it, and compiled and stored there otherwise.
+Vector<std::uint32_t>
+    spirvFor(Spirv::Stage stage, const std::string& source, Spirv::Target target)
 {
     const auto compiler = Spirv::compilerIdentity();
-    const auto key = std::to_string((int) stage) + '\n' + source;
+    const auto key = std::to_string((int) stage) + ' ' + std::to_string((int) target)
+                     + '\n' + source;
 
     if (auto cached = ShaderBinaryCache::load(compiler, key);
         cached.has_value() && !cached->empty()
         && cached->size() % sizeof(std::uint32_t) == 0)
         return wordsOf(*cached);
 
-    auto result = Spirv::compileGlsl(stage, source);
+    auto result = Spirv::compileGlsl(stage, source, target);
 
     if (!result.log.empty())
         LOG(result.log);
@@ -125,7 +127,8 @@ struct ShaderLibrary::Native
                       VkShaderModule& module,
                       int textureBindingBase)
     {
-        const auto words = spirvFor(stage, source);
+        const auto words =
+            spirvFor(stage, source, getVulkanShared().getSpirvTarget());
 
         if (words.empty())
             return;

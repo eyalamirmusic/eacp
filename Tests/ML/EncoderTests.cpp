@@ -1,6 +1,7 @@
 #include "EncoderReference.h"
 #include "ModelTestCommon.h"
 
+#include <algorithm>
 #include <chrono>
 
 using namespace nano;

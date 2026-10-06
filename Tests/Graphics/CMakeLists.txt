@@ -24,6 +24,7 @@ set(graphics_test_sources
         EventLoopTests.cpp
         GameInputTests.cpp
         ImageOpsTests.cpp
+        ImageTests.cpp
         KeyCodeTests.cpp
         MenuCommandsTests.cpp
         MenuTests.cpp
@@ -37,12 +38,15 @@ set(graphics_test_sources
         ViewWindowTests.cpp
         WindowTests.cpp)
 
-# The two that need a platform image codec or a 2D Context. Listed rather than
+# The ones that need a platform image codec or a 2D Context. Listed rather than
 # left to self-skip: a suite that skips every case still reports as a pass.
+# Android has a codec without a Context; desktop Linux has neither.
+if (EACP_HAS_CONTEXT OR ANDROID)
+    list(APPEND graphics_test_sources ImageCodecTests.cpp)
+endif ()
+
 if (EACP_HAS_CONTEXT)
-    list(APPEND graphics_test_sources
-            ImageTests.cpp
-            RenderToImageTests.cpp)
+    list(APPEND graphics_test_sources RenderToImageTests.cpp)
 endif ()
 
 # The two Linux tables with no portable half: the commands a Path records, and

@@ -538,7 +538,7 @@ accepted as a plain store.
 naming deviations: `errorFunction`/`complementaryErrorFunction`, because an
 unqualified `erf` under a using-directive is ambiguous with `::erf(float)`,
 and `widenHalf`/`narrowToHalf`, because `GPU::halfToFloat` already exists in
-`PackedVertex.h`; the rest are the shader names without `eacp`
+`PackedScalars.h`; the rest are the shader names without `eacp`
 (`packHalf2`, `readBFloat16`, `unpackInt4x4`, …). `packHalf2` follows Metal:
 nearest-even including subnormal ties, overflow to infinity — unlike
 `GPU::halfFromFloat` in `PackedVertex.cpp`, which rounds subnormal ties away

@@ -2,7 +2,6 @@
 
 #include "../Common.h"
 
-#include <algorithm>
 #include <initializer_list>
 
 namespace eacp::Graphics
@@ -141,21 +140,8 @@ struct Color
 
     constexpr Color withAlpha(float alpha) const { return {r, g, b, alpha}; }
 
-    constexpr Color brighter(float amount = 0.1f) const
-    {
-        return {std::min(r + amount, 1.f),
-                std::min(g + amount, 1.f),
-                std::min(b + amount, 1.f),
-                a};
-    }
-
-    constexpr Color darker(float amount = 0.1f) const
-    {
-        return {std::max(r - amount, 0.f),
-                std::max(g - amount, 0.f),
-                std::max(b - amount, 0.f),
-                a};
-    }
+    Color brighter(float amount = 0.1f) const;
+    Color darker(float amount = 0.1f) const;
 
     float r = 0.f;
     float g = 0.f;

@@ -77,16 +77,8 @@ namespace Detail
 // std::function<void()> per fixture type; the test() wrapper fires
 // all of them before each body. Lives as a process singleton so the
 // list survives static-init ordering quirks.
-inline Vector<std::function<void()>>& restartRegistry()
-{
-    return Singleton::get<Vector<std::function<void()>>>();
-}
-
-inline void runAllRestarts()
-{
-    for (auto& cb: restartRegistry())
-        cb();
-}
+Vector<std::function<void()>>& restartRegistry();
+void runAllRestarts();
 } // namespace Detail
 
 // Returns the process-singleton TestApp<T>. On first call, registers
@@ -148,9 +140,6 @@ struct TestProxy
     nano::TestProxy inner;
 };
 
-inline TestProxy test(std::string_view name)
-{
-    return {nano::test(name)};
-}
+TestProxy test(std::string_view name);
 
 } // namespace eacp::WebView::Test

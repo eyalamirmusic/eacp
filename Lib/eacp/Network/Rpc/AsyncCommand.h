@@ -82,13 +82,7 @@ Threads::Async<Miro::Json::Value> runCommand(CommandExecution mode, Invoke invok
 // Composes an Async<Json> onto a Miro::Resolve completion: when the work
 // settles (on the main thread) the completion fires with the JSON result
 // or the error message. Transports wire this to their reply delivery.
-inline void resolveWith(Threads::Async<Miro::Json::Value> work,
-                        Miro::Resolve completion)
-{
-    work.then([completion](Miro::Json::Value value) { completion(value, nullptr); },
-              [completion](const std::string& error)
-              { completion(Miro::Json::Value {}, &error); });
-}
+void resolveWith(Threads::Async<Miro::Json::Value> work, Miro::Resolve completion);
 
 // Maps an Async<Json> to a typed Async<Res> by deserializing the JSON
 // through Miro when it resolves. A deserialization failure becomes a

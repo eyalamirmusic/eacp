@@ -27,8 +27,13 @@ inline void expectStageCompiles(eacp::GPU::Spirv::Stage stage,
                                 const std::string& glsl,
                                 const std::source_location& location)
 {
-    const auto result = eacp::GPU::Spirv::compileGlsl(stage, glsl);
-    nano::check(result.succeeded(), result.log, location);
+    using eacp::GPU::Spirv::Target;
+
+    for (auto target: {Target::vulkan13Spirv16, Target::vulkan11Spirv13})
+    {
+        const auto result = eacp::GPU::Spirv::compileGlsl(stage, glsl, target);
+        nano::check(result.succeeded(), result.log, location);
+    }
 }
 #endif
 

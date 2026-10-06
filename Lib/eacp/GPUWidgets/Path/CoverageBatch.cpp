@@ -1,7 +1,10 @@
 #include "CoverageBatch.h"
 
+#include "BackdropKernels.h"
+#include "BinKernels.h"
 #include "PathRasterizer.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>

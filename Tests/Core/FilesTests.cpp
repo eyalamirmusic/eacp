@@ -1,6 +1,7 @@
 #include "AllocationCount.h"
 #include "Common.h"
 #include <eacp/Core/Utils/StdPath.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>
+#include <vector>
 
 using namespace nano;
 using eacp::File;
@@ -54,15 +56,10 @@ void writeAtomically(const std::filesystem::path& path, std::string_view content
 
 int entryCount(const std::filesystem::path& dir)
 {
-    auto count = 0;
+    auto options = eacp::Files::DirectoryOptions {};
+    options.includeHidden = true;
 
-    for (const auto& entry: std::filesystem::directory_iterator {dir})
-    {
-        (void) entry;
-        ++count;
-    }
-
-    return count;
+    return eacp::Files::listDirectory(FilePath {dir}, options).size();
 }
 } // namespace
 
@@ -280,6 +277,20 @@ auto tReadsEmbeddedNulBytes = test("Files/readsEmbeddedNulBytes") = []
     check(read(path).size() == 17);
 };
 
+// Text mode on Windows folds CRLF and stops at 0x1A, so a binary file came back
+// short; the read is byte-exact on every platform.
+auto tReadsBytesVerbatim = test("Files/readsBytesVerbatim") = []
+{
+    const auto dir = scratchDirectory("read-verbatim");
+    const auto path = dir / "data.bin";
+
+    const auto contents = std::string {"a\r\nb\032c\r\n", 7};
+    write(path, contents);
+
+    check(read(path) == contents);
+    check(read(path).size() == 7);
+};
+
 // --- resources beside the executable ----------------------------------------
 
 namespace
@@ -318,4 +329,223 @@ auto tResourcesDirectoryHoldsTheResource =
     check(eacp::Files::readFile(joined) == markerContents);
     check(std::filesystem::equivalent(eacp::toStdPath(joined),
                                       eacp::toStdPath(found)));
+};
+
+namespace
+{
+using eacp::Files::DirectoryEntry;
+using eacp::Files::DirectoryOptions;
+using eacp::Files::EntryKind;
+using eacp::Files::Visit;
+
+std::vector<std::string> relativeNames(const std::filesystem::path& root,
+                                       const eacp::Vector<DirectoryEntry>& entries)
+{
+    auto names = std::vector<std::string> {};
+
+    for (const auto& entry: entries)
+        names.push_back(
+            eacp::toStdPath(entry.path).lexically_relative(root).generic_string());
+
+    return names;
+}
+
+std::filesystem::path listingTree(const std::string& name)
+{
+    auto dir = scratchDirectory(name);
+
+    write(dir / "c.txt", "c");
+    write(dir / "a.txt", "a");
+    std::filesystem::create_directories(dir / "b" / "inner");
+    write(dir / "b" / "x.txt", "x");
+    write(dir / "b" / "inner" / "y.txt", "y");
+    write(dir / ".hidden", "h");
+    std::filesystem::create_directories(dir / ".config");
+    write(dir / ".config" / "z.txt", "z");
+
+    return dir;
+}
+
+DirectoryOptions recursive()
+{
+    auto options = DirectoryOptions {};
+    options.recursive = true;
+    return options;
+}
+} // namespace
+
+auto tListsInNameOrder = test("Files/listsADirectoryInNameOrder") = []
+{
+    auto dir = listingTree("list-order");
+
+    auto entries = eacp::Files::listDirectory(FilePath {dir});
+
+    check(relativeNames(dir, entries)
+          == std::vector<std::string> {"a.txt", "b", "c.txt"});
+    check(entries[0].kind == EntryKind::file);
+    check(entries[1].kind == EntryKind::directory);
+    check(entries[0].depth == 0);
+    check(!entries[0].isHidden);
+    check(entries[0].file().size() == 1);
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tListsRecursively =
+    test("Files/listsRecursivelyWithContentsAfterTheirDirectory") = []
+{
+    auto dir = listingTree("list-recursive");
+
+    auto entries = eacp::Files::listDirectory(FilePath {dir}, recursive());
+
+    check(relativeNames(dir, entries)
+          == std::vector<std::string> {
+              "a.txt", "b", "b/inner", "b/inner/y.txt", "b/x.txt", "c.txt"});
+    check(entries[2].depth == 1);
+    check(entries[3].depth == 2);
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tHidesDotfiles = test("Files/hidesDotEntriesUnlessAsked") = []
+{
+    auto dir = listingTree("list-hidden");
+
+    auto options = recursive();
+    options.includeHidden = true;
+    auto all = eacp::Files::listDirectory(FilePath {dir}, options);
+    auto names = relativeNames(dir, all);
+
+    check(names.front() == ".config");
+    check(names[1] == ".config/z.txt");
+    check(names[2] == ".hidden");
+    check(all[0].isHidden);
+    check(all[2].isHidden);
+    check(!all[1].isHidden);
+
+    auto visible =
+        relativeNames(dir, eacp::Files::listDirectory(FilePath {dir}, recursive()));
+
+    check(std::find(visible.begin(), visible.end(), ".config/z.txt")
+          == visible.end());
+    check(std::find(visible.begin(), visible.end(), ".hidden") == visible.end());
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tSkipChildren = test("Files/skipChildrenPrunesASubtree") = []
+{
+    auto dir = listingTree("list-prune");
+    auto seen = std::vector<std::string> {};
+
+    auto completed = eacp::Files::forEachEntry(
+        FilePath {dir},
+        recursive(),
+        [&](const DirectoryEntry& entry)
+        {
+            auto name =
+                eacp::toStdPath(entry.path).lexically_relative(dir).generic_string();
+            seen.push_back(name);
+
+            return name == "b" ? Visit::skipChildren : Visit::next;
+        });
+
+    check(completed);
+    check(seen == std::vector<std::string> {"a.txt", "b", "c.txt"});
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tStop = test("Files/stopEndsTheWalk") = []
+{
+    auto dir = listingTree("list-stop");
+    auto visits = 0;
+
+    eacp::Files::forEachEntry(FilePath {dir},
+                              recursive(),
+                              [&](const DirectoryEntry&)
+                              {
+                                  ++visits;
+                                  return Visit::stop;
+                              });
+
+    check(visits == 1);
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tListFiles = test("Files/listFilesIsRegularFilesOnly") = []
+{
+    auto dir = listingTree("list-files");
+
+    auto files = eacp::Files::listFiles(FilePath {dir}, recursive());
+    auto names = std::vector<std::string> {};
+
+    for (const auto& file: files)
+        names.push_back(
+            eacp::toStdPath(file).lexically_relative(dir).generic_string());
+
+    check(
+        names
+        == std::vector<std::string> {"a.txt", "b/inner/y.txt", "b/x.txt", "c.txt"});
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tMissingDirectory =
+    test("Files/missingDirectoryReachesOnErrorAndReturnsFalse") = []
+{
+    auto dir = scratchDirectory("list-missing");
+    auto missing = FilePath {dir / "nowhere"};
+
+    auto options = DirectoryOptions {};
+    auto reported = std::vector<eacp::Files::TraversalError> {};
+
+    options.onError = [&](const eacp::Files::TraversalError& error)
+    {
+        reported.push_back(error);
+        return Visit::next;
+    };
+
+    auto visits = 0;
+
+    auto completed = eacp::Files::forEachEntry(missing,
+                                               options,
+                                               [&](const DirectoryEntry&)
+                                               {
+                                                   ++visits;
+                                                   return Visit::next;
+                                               });
+
+    check(!completed);
+    check(visits == 0);
+    check(reported.size() == 1);
+    check(reported.front().path == missing);
+    check(reported.front().message.starts_with("cannot list"));
+    check(eacp::Files::listDirectory(missing).size() == 0);
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tDeleteWhileVisiting = test("Files/aVisitorMayDeleteWhatItIsShown") = []
+{
+    auto dir = listingTree("list-delete");
+    auto visits = 0;
+
+    eacp::Files::forEachEntry(FilePath {dir},
+                              recursive(),
+                              [&](const DirectoryEntry& entry)
+                              {
+                                  ++visits;
+
+                                  if (entry.kind == EntryKind::file)
+                                      eacp::Files::removeAll(entry.path);
+
+                                  return Visit::next;
+                              });
+
+    check(visits == 6);
+    check(eacp::Files::listFiles(FilePath {dir}, recursive()).size() == 0);
+
+    std::filesystem::remove_all(dir);
 };

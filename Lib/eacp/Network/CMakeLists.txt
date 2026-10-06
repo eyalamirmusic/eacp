@@ -10,6 +10,7 @@ target_sources(eacp-network PRIVATE
         IPC/Channel.cpp
         IPC/Lock.cpp
         IPC/Messenger.cpp
+        IPC/Names.cpp
         OnlineResource/OnlineResource.cpp
         OnlineResource/OnlineResources.cpp
         TCP/Connection.cpp
@@ -42,6 +43,15 @@ elseif (WIN32)
             TCP/Connection-Windows.cpp
             WebSocket/WebSocket-Windows.cpp)
     target_link_libraries(eacp-network PRIVATE winhttp ws2_32 advapi32)
+elseif (ANDROID)
+    target_sources(eacp-network PRIVATE
+            HTTP/Http-Android.cpp
+            HTTPServer/HttpServer-Linux.cpp
+            IPC/Channel-Linux.cpp
+            IPC/Channel-Posix.cpp
+            IPC/Lock-Posix.cpp
+            TCP/Connection-Posix.cpp
+            WebSocket/WebSocket-Android.cpp)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Linux.cpp
@@ -61,8 +71,16 @@ add_ide_sources(eacp-network)
 
 find_package(Miro REQUIRED)
 
-add_library(eacp-network-json INTERFACE)
-target_link_libraries(eacp-network-json INTERFACE eacp-network Miro)
+add_library(eacp-network-json STATIC)
+
+target_sources(eacp-network-json PRIVATE
+        HTTPServer/Json.cpp)
+
+target_link_libraries(eacp-network-json PUBLIC eacp-network Miro)
+
+set_default_target_setting(eacp-network-json)
+eacp_enable_unity_build(eacp-network-json)
+add_ide_sources(eacp-network-json)
 
 add_library(eacp-network-rpc STATIC)
 

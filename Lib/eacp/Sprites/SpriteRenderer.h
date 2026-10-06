@@ -1,9 +1,9 @@
 #pragma once
 
 #include <eacp/Core/Utils/Containers.h>
-#include <eacp/GPU/GPU.h>
-
-#include <optional>
+#include <eacp/Core/Utils/Pimpl.h>
+#include <eacp/GPU/Frame/RenderPass.h>
+#include <eacp/GPU/Pipeline/RenderPipeline.h>
 
 namespace eacp::Sprites
 {
@@ -41,29 +41,9 @@ struct SpriteInstance
     float tint[4];
 };
 
-// The sprite shader: a unit quad mapped onto a parallelogram (an origin plus two
-// edge vectors, in logical units), sampling a sub-rect of the bound texture,
-// multiplied by a tint. The parallelogram form lets one draw path cover both
-// axis-aligned rects (perpendicular edges) and arbitrarily oriented quads such
-// as thick lines.
-//
-// The quad itself is per-instance, so one draw covers as many of them as share a
-// texture; only the screen size and the texture are uniforms.
-struct SpriteShader final : GPU::ShaderProgram
-{
-    explicit SpriteShader(GPU::TextureSampling sampling)
-    {
-        image.sampling = sampling;
-        compile();
-    }
-
-    void define() override;
-
-    GPU::Uniform<GPU::Float2> screenSize;
-    GPU::Uniform<GPU::Texture2D> image;
-
-    EACP_SHADER(screenSize, image)
-};
+// The shaders that draw them, in SpriteShaders.h.
+struct SpriteShader;
+struct Nv12Shader;
 
 // How to turn NV12 samples into RGB, supplied per draw because the matrix and
 // coding range belong to the video track rather than to the renderer. The Video
@@ -84,52 +64,6 @@ struct YuvTransform
     float greenU = 0.0f;
     float greenV = 0.0f;
     float blueU = 0.0f;
-};
-
-// The same quad as SpriteShader, but sampling a video frame's two NV12 planes
-// and converting to RGB here rather than on the CPU.
-//
-// This lives with the sprite shader because it is the same parallelogram, the
-// same tint and the same pipeline machinery — only the fragment colour is
-// derived differently. Giving video its own renderer would duplicate all of
-// that to change one expression.
-//
-// Unlike the sprite shader this one is not instanced, and deliberately: a video
-// frame is one quad per draw, so the quad stays in uniforms, where a batch of
-// one would only add machinery.
-struct Nv12Shader final : GPU::ShaderProgram
-{
-    explicit Nv12Shader(GPU::TextureSampling sampling)
-    {
-        luma.sampling = sampling;
-        chroma.sampling = sampling;
-        compile();
-    }
-
-    void define() override;
-
-    GPU::Uniform<GPU::Float2> screenSize;
-    GPU::Uniform<GPU::Float2> origin;
-    GPU::Uniform<GPU::Float2> edgeX;
-    GPU::Uniform<GPU::Float2> edgeY;
-    GPU::Uniform<GPU::Float4> tint;
-
-    // (lumaOffset, lumaScale, chromaOffset, chromaScale) and
-    // (redV, greenU, greenV, blueU) — see Sprites::YuvTransform. Uniforms
-    // rather than shader constants because the matrix belongs to the track, and
-    // a player does not get to choose it.
-    GPU::Uniform<GPU::Float4> yuvRange;
-    GPU::Uniform<GPU::Float4> yuvMatrix;
-
-    // Full-resolution single-channel luma, and the half-resolution plane
-    // carrying Cb in r and Cr in g. Both are sampled with the same 0-1
-    // coordinates: the hardware handles the resolution difference, and the
-    // linear filter on the chroma plane is the upsampling.
-    GPU::Uniform<GPU::Texture2D> luma;
-    GPU::Uniform<GPU::Texture2D> chroma;
-
-    EACP_SHADER(
-        screenSize, origin, edgeX, edgeY, tint, yuvRange, yuvMatrix, luma, chroma)
 };
 
 // 2D sprite renderer: textured quads and untextured primitives (drawn with a
@@ -194,7 +128,7 @@ public:
     // and not anything compiled: a view that resizes sets it again rather than
     // rebuilding the renderer and recompiling its pipelines.
     void setLogicalSize(Point size);
-    Point getLogicalSize() const { return logicalSize; }
+    Point getLogicalSize() const;
 
     // Draws the queued quads and then clips the pass, so that what was issued
     // before the call escapes the clip. Same units as
@@ -288,11 +222,10 @@ private:
     int sampleCount = 1;
     GPU::PixelFormat colorFormat = GPU::PixelFormat::BGRA8Unorm;
 
-    Array<std::optional<SpriteShader>, GPU::samplingConfigurations> programs;
-
-    // Built on first use like the sprite programs, so an app that never draws
-    // video never compiles a YUV shader.
-    Array<std::optional<Nv12Shader>, GPU::samplingConfigurations> nv12Programs;
+    // A program per sampling configuration, sprite and NV12, each built on
+    // first use - so an app that never draws video never compiles a YUV shader.
+    struct Programs;
+    Pimpl<Programs> programs;
 
     // The open run: the quads queued so far, and what all of them share. The
     // texture is referred to and not retained, so it has to outlive the flush -

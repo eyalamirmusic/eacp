@@ -34,21 +34,17 @@ constexpr const char* defaultUIFontFamily()
     if constexpr (Platform::isLinux())
         return "DejaVu Sans";
 
+    if constexpr (Platform::isAndroid())
+        return "sans-serif";
+
     return "Helvetica Neue";
 }
 
 // True when `outer` covers every point of `inner`. The clip logic asks this of
 // every primitive drawn, and Rect offers contains(Point) only.
-inline bool contains(const Rect& outer, const Rect& inner)
-{
-    if (inner.isEmpty())
-        return true;
+bool contains(const Rect& outer, const Rect& inner);
 
-    return inner.left() >= outer.left() && inner.right() <= outer.right()
-           && inner.top() >= outer.top() && inner.bottom() <= outer.bottom();
-}
-
-inline bool sameRect(const Rect& a, const Rect& b)
+constexpr bool sameRect(const Rect& a, const Rect& b)
 {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
 }

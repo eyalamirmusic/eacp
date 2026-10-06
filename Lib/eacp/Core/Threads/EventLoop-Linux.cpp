@@ -1,4 +1,5 @@
 #include "EventLoop-Linux.h"
+#include "EventLoopWait-Linux.h"
 #include "ThreadUtils-Linux.h"
 #include "../Platform/Platform.h"
 #include "../Utils/Environment.h"
@@ -258,13 +259,6 @@ struct PumpScope
     LoopState& loop;
 };
 
-enum class WaitResult
-{
-    Ready,
-    TimedOut,
-    Failed
-};
-
 void drainPending(LoopState& loop)
 {
     auto pending = Vector<Callback>();
@@ -335,16 +329,7 @@ void pumpLoopOnce(LoopState& loop)
 
 WaitResult waitForLoopActivity(const LoopState& loop, int timeoutMs)
 {
-    auto fds = pollfd {loop.epollFd, POLLIN, 0};
-    auto r = ::poll(&fds, 1, timeoutMs);
-
-    if (r > 0)
-        return WaitResult::Ready;
-
-    if (r == 0)
-        return WaitResult::TimedOut;
-
-    return errno == EINTR ? WaitResult::Ready : WaitResult::Failed;
+    return waitForLoopFd(loop.epollFd, timeoutMs);
 }
 
 void pumpLoopState(LoopState& loop)

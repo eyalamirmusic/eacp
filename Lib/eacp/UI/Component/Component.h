@@ -53,14 +53,14 @@ public:
     // fraction of.
     void setPos(const Rect& ratio);
 
-    const Rect& getBounds() const { return bounds; }
+    const Rect& getBounds() const;
 
     // The bounds with the origin moved to zero -- what to lay children out
     // against, and what paint() draws in.
-    Rect getLocalBounds() const { return {0.f, 0.f, bounds.w, bounds.h}; }
+    Rect getLocalBounds() const;
 
-    float getWidth() const { return bounds.w; }
-    float getHeight() const { return bounds.h; }
+    float getWidth() const;
+    float getHeight() const;
 
     // Adds `child` on top of the existing children and shows it. The child is
     // not owned: it has to outlive this component, which is what holding
@@ -75,11 +75,11 @@ public:
 
     void removeChildComponent(Component& child);
 
-    const Vector<Component*>& getChildren() const { return children; }
-    Component* getParentComponent() const { return parent; }
+    const Vector<Component*>& getChildren() const;
+    Component* getParentComponent() const;
 
     void setVisible(bool shouldBeVisible);
-    bool isVisible() const { return visible; }
+    bool isVisible() const;
 
     // Z-order among siblings. Last painted is on top, and hit testing walks the
     // same order reversed, so the two can never disagree.
@@ -91,10 +91,10 @@ public:
     // making that the default means a decorative component is inert without
     // anyone remembering to say so.
     void setInterceptsMouseClicks(bool shouldIntercept);
-    bool getInterceptsMouseClicks() const { return interceptsMouseClicks; }
+    bool getInterceptsMouseClicks() const;
 
     void setMouseCursor(eacp::Graphics::MouseCursor cursorToUse);
-    eacp::Graphics::MouseCursor getMouseCursor() const { return cursor; }
+    eacp::Graphics::MouseCursor getMouseCursor() const;
 
     // Says that what this component draws has changed, so paint() has to be
     // asked again before the next frame.
@@ -131,40 +131,79 @@ public:
     // What the tier's redrawing policy looks like from outside, and the thing to
     // read when a change is not showing up: a component that reports false after
     // a frame and still looks wrong did not ask.
-    bool needsRepaint() const { return selfDirty; }
+    bool needsRepaint() const;
 
-    virtual void paint(Graphics&) {}
+    virtual void paint(Graphics&);
 
     // Drawn after the children, in this component's space -- a focus ring, a
     // drag overlay, anything that has to sit above a child.
-    virtual void paintOverChildren(Graphics&) {}
+    virtual void paintOverChildren(Graphics&);
 
-    virtual void resized() {}
+    virtual void resized();
 
     // Whether `localPoint` counts as inside. Rectangular by default; override
     // for a round knob, or for a component with a transparent margin that
     // should let clicks through to what is behind it.
     virtual bool hitTest(Point localPoint) const;
 
-    virtual void mouseEnter(const MouseEvent&) {}
-    virtual void mouseExit(const MouseEvent&) {}
-    virtual void mouseDown(const MouseEvent&) {}
-    virtual void mouseDrag(const MouseEvent&) {}
-    virtual void mouseUp(const MouseEvent&) {}
-    virtual void mouseMove(const MouseEvent&) {}
+    virtual void mouseEnter(const MouseEvent&);
+    virtual void mouseExit(const MouseEvent&);
+    virtual void mouseDown(const MouseEvent&);
+    virtual void mouseDrag(const MouseEvent&);
+    virtual void mouseUp(const MouseEvent&);
+    virtual void mouseMove(const MouseEvent&);
 
     // Return true to consume the wheel event. Unconsumed, it carries on up the
     // tree, which is what a list needs: the pointer is over a row, and the row
     // does not scroll but the list holding it does. Returning a verdict rather
     // than forwarding by hand means a component that ignores the wheel needs no
     // code at all to let its parent have it.
-    virtual bool mouseWheelMove(const MouseEvent&) { return false; }
+    virtual bool mouseWheelMove(const MouseEvent&);
+
+    // A finger, unlike a pointer, is how a list is scrolled, so a press on a
+    // button inside a scrolling panel may turn out to be the start of a scroll.
+    // These three settle which, for touches only; a mouse press always belongs
+    // to what it landed on.
+    //
+    // interceptsTouch is asked of every ancestor of the pressed component,
+    // nearest first, when the finger goes down and on every move until the
+    // gesture is settled. The first to say yes takes it: the pressed component
+    // is sent mouseCancel, and the ancestor a mouseDown where the finger went
+    // down followed by the drags and the release. When the finger goes down
+    // the pressed component is asked as well, and a yes from anything then --
+    // a list still coasting -- makes the press one that stops it rather than a
+    // tap, so it moves no focus.
+    //
+    // claimsTouchDrag is asked of the pressed component first, on every move
+    // until settled, and a yes keeps the gesture where it is -- what lets a
+    // slider inside a scrolling panel still be dragged along its own axis.
+    virtual bool interceptsTouch(const MouseEvent&);
+    virtual bool claimsTouchDrag(const MouseEvent&);
+
+    // The press this component was sent will get no release: something else
+    // took the gesture. Put back whatever the press started.
+    virtual void mouseCancel(const MouseEvent&);
+
+    // Asks the host to call advanceAnimation once a display frame until it
+    // answers false or stopAnimating is called. Does nothing outside a host.
+    void startAnimating();
+    void stopAnimating();
+    bool isAnimating() const;
+
+    // `seconds` since the host's clock last ticked: zero on the clock's first
+    // frame, and one frame's worth for a component that starts while the clock
+    // is already running. Answer whether to keep going.
+    virtual bool advanceAnimation(double);
 
     // Whether this component can hold keyboard focus. Off by default, the same
     // way mouse interception is and for the same reason: a panel that holds an
     // editor should not be able to take the keyboard away from it by accident.
     void setWantsKeyboardFocus(bool shouldWantFocus);
-    bool getWantsKeyboardFocus() const { return wantsKeyboardFocus; }
+    bool getWantsKeyboardFocus() const;
+
+    // Whether this component, once focused, types text: what brings up an
+    // on-screen keyboard where there is one, so a focused slider does not.
+    virtual bool wantsTextInput() const;
 
     // Makes this the host's focused component, and asks the native view for the
     // keyboard while it is at it -- a component tree only sees a key event if the
@@ -182,8 +221,8 @@ public:
 
     bool hasKeyboardFocus() const;
 
-    virtual void focusGained() {}
-    virtual void focusLost() {}
+    virtual void focusGained();
+    virtual void focusLost();
 
     // Return true to consume. Unconsumed, a key carries on up the parent chain
     // exactly as the wheel does -- so a shortcut on a root works while an editor
@@ -193,8 +232,8 @@ public:
     // The reply matters more here than it looks: an editor consuming everything
     // it types must *not* consume the keys it ignores, or the tab that should
     // move focus and the shortcut that should reach the window die in it.
-    virtual bool keyDown(const KeyEvent&) { return false; }
-    virtual bool keyUp(const KeyEvent&) { return false; }
+    virtual bool keyDown(const KeyEvent&);
+    virtual bool keyUp(const KeyEvent&);
 
     // The deepest visible, intercepting component under `localPoint`, or null.
     // Front-to-back, so the topmost sibling wins.
@@ -206,7 +245,7 @@ public:
     // The host this subtree is in, or null while it is not in one -- which is
     // the normal state of a component under construction, so a caller has to
     // check rather than assume.
-    ComponentHost* getHost() const { return findHost(); }
+    ComponentHost* getHost() const;
 
     // What `text` would take, in points, without a paint() to ask.
     //
@@ -223,7 +262,7 @@ public:
     // host's. Zero-initialized while there is no host.
     Font getHostFont() const;
 
-    bool isMouseOver() const { return mouseOver; }
+    bool isMouseOver() const;
 
     // The next component after this one that would take focus, in the order
     // children were added, wrapping at the end of the tree. What Tab moves to,
@@ -239,13 +278,13 @@ public:
     // its constructor, so the host can find every one in the tree and rasterize
     // the dirty ones before the frame opens its render pass - which is the only
     // point in a frame where a compute pass can run. See PathShape.
-    const Vector<PathShape*>& getPathShapes() const { return pathShapes; }
+    const Vector<PathShape*>& getPathShapes() const;
 
     // Where a drag can be dropped on this component, or null. Registered by a
     // DragAndDropTarget member in its constructor, the same way a PathShape
     // registers -- so a drag finds one by walking up from whatever the pointer
     // is over, and nothing has to be cast to find out what a component is.
-    DragAndDropTarget* getDropTarget() const { return dropTarget; }
+    DragAndDropTarget* getDropTarget() const;
 
     // The nearest ancestor running drags, including this one. Null in a tree
     // that has no DragAndDropContainer in it, which is most trees.
@@ -257,7 +296,7 @@ public:
     // another one. See Layer, and note its ordering rule -- these are rendered
     // in the order they registered, so a layer holding another has to be
     // constructed after it.
-    const Vector<Layer*>& getLayers() const { return layers; }
+    const Vector<Layer*>& getLayers() const;
 
 private:
     friend class ComponentHost;
@@ -266,11 +305,8 @@ private:
     friend class DragAndDropTarget;
     friend class DragAndDropContainer;
 
-    void setDropTarget(DragAndDropTarget* target) { dropTarget = target; }
-    void setDragContainer(DragAndDropContainer* container)
-    {
-        dragContainer = container;
-    }
+    void setDropTarget(DragAndDropTarget* target);
+    void setDragContainer(DragAndDropContainer* container);
 
     void addPathShape(PathShape& shape);
     void removePathShape(PathShape& shape);
@@ -294,7 +330,7 @@ private:
     // Whether the frame still has recording to do in this subtree. Only ever
     // true for a hidden one on its way in -- a visible subtree is recorded on
     // the frame it is marked.
-    bool needsRecording() const { return selfDirty || descendantDirty; }
+    bool needsRecording() const;
 
     Rect bounds;
 

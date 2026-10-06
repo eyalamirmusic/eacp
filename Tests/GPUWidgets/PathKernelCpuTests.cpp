@@ -1,6 +1,8 @@
 #include "CpuPathKernels.h"
 #include "PathShapes.h"
 
+#include <eacp/GPUWidgets/Path/BackdropKernels.h>
+
 #include <NanoTest/NanoTest.h>
 
 #include <algorithm>

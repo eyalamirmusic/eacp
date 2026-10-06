@@ -45,14 +45,10 @@ bool exists(const FilePath& path)
 
 int entriesIn(const FilePath& directory)
 {
-    auto count = 0;
-    auto ignored = std::error_code {};
+    auto options = eacp::Files::DirectoryOptions {};
+    options.includeHidden = true;
 
-    for ([[maybe_unused]] const auto& entry:
-         std::filesystem::directory_iterator(eacp::toStdPath(directory), ignored))
-        ++count;
-
-    return count;
+    return eacp::Files::listDirectory(directory, options).size();
 }
 
 Response okResponse(const std::string& body)

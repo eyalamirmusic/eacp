@@ -1,13 +1,17 @@
 #pragma once
 
-#include "GlyphAtlas.h"
+#include "GlyphRasterizer.h"
 #include "GlyphRenderer.h"
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace eacp::Text
 {
+class GlyphAtlas;
+
 // One glyph a layout placed: its pen in the caller's own points, and which
 // glyph of which face to draw there.
 //
@@ -82,14 +86,19 @@ public:
     // scale rebuilds the atlas; a changed size is free.
     void setViewport(Graphics::Point size, float scale);
 
+    // The samples per pixel of the pass flush() draws into: one, the default,
+    // for a plain view, and the view's own sampleCount() for text drawn inside
+    // a multisampled scene.
+    void setSampleCount(int count);
+
     // The face used by the calls that name none. Changing it costs nothing but
     // the glyphs of the new face: sizes coexist in one atlas, so the old one is
     // still there for whatever is still drawing in it.
     void setFont(const Font& font);
-    const Font& getFont() const { return defaultFont; }
+    constexpr const Font& getFont() const { return defaultFont; }
 
     void setPointSize(float pointSizeToUse);
-    float pointSize() const { return defaultFont.pointSize; }
+    constexpr float pointSize() const { return defaultFont.pointSize; }
 
     // Distance between baselines, in logical points.
     float lineHeight();
@@ -181,6 +190,7 @@ private:
 
     Graphics::Point viewportSize {0.0f, 0.0f};
     float deviceScale = 1.0f;
+    int sampleCount = 1;
 
     OwningPointer<GlyphAtlas> atlas;
     std::optional<GlyphRenderer> glyphs;

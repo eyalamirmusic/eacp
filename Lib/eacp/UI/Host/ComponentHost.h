@@ -3,7 +3,9 @@
 #include "../Component/Component.h"
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
+#include "../Render/MaskCache.h"
 
+#include <memory>
 #include <optional>
 
 namespace eacp::UI
@@ -32,9 +34,24 @@ public:
     ~ComponentHost() override;
 
     // The tree to draw. The component is not owned and has to outlive the host.
-    // It is resized to fill the host, so its own bounds are ignored.
+    // It is resized to fill the host -- inside the safe area, see below -- so
+    // its own bounds are ignored.
     void setRootComponent(Component& newRoot);
-    Component* getRootComponent() const { return root; }
+    Component* getRootComponent() const;
+
+    // Whether the root is laid out inside the view's safe area -- clear of the
+    // status bar, a display cutout, the gesture bar and an on-screen keyboard
+    // -- rather than over the whole view. On by default. Zero on a desktop, so
+    // nothing moves there.
+    //
+    // The background colour fills the whole view either way, so the edges the
+    // root leaves are the host's colour. Off is for a root that paints its own
+    // full-bleed backdrop and reads the insets itself.
+    void setRespectsSafeArea(bool shouldRespect);
+    bool getRespectsSafeArea() const;
+
+    // Where the root is placed, in the view's coordinates.
+    Rect getRootBounds() const;
 
     void setBackgroundColour(const Color& colour);
 
@@ -42,7 +59,7 @@ public:
     // for its own paint(), and they share one glyph atlas, so what this decides
     // is what the tree looks like rather than what it costs.
     void setFont(const Font& font);
-    const Font& getFont() const { return font; }
+    const Font& getFont() const;
 
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
@@ -58,39 +75,39 @@ public:
     // Where an image a component draws comes from: the host turns a decoded
     // image into a texture once, and the reference it hands back is what
     // Graphics::drawImage takes. See ImageCache for who keeps it alive.
-    ImageCache& getImageCache() { return imageCache; }
+    ImageCache& getImageCache();
 
     // How many image textures the host is holding: everything some recording
     // in the tree, or some caller, still draws. What a screen of pictures
     // costs in memory, one entry per distinct image.
-    int getCachedImageCount() const { return imageCache.size(); }
+    int getCachedImageCount() const;
 
     // Image draws in the last frame's own pass: one per run of quads out of
     // one texture, so a row of icons out of one image is one and a page of
     // photographs is one apiece. See ImageBatch.
-    int getLastImageDrawCount() const { return lastImageDraws; }
+    int getLastImageDrawCount() const;
 
     // What the last frame cost. `clipChanges` is the number of batch breaks:
     // between two of them every quad goes out as one instanced draw, so this is
     // the figure that should stay flat as the tree grows.
-    int getLastClipChangeCount() const { return lastClipChanges; }
-    int getLastComponentCount() const { return lastComponentCount; }
+    int getLastClipChangeCount() const;
+    int getLastComponentCount() const;
 
     // How many components were actually painted, as against how many were drawn.
     // The figure this tier's redrawing policy is judged by: it is the count of
     // repaint()s the frame answered, so a settled interface reports zero however
     // many components it has, and an animation reports the one that is moving.
-    int getLastPaintedComponentCount() const { return lastPaintedComponents; }
+    int getLastPaintedComponentCount() const;
 
     // Draws spent alternating between masked and meshed shapes. See
     // DrawPlayer::getRendererSwitchCount.
-    int getLastRendererSwitchCount() const { return lastRendererSwitches; }
+    int getLastRendererSwitchCount() const;
 
     // Layers in the tree that were rendered into a texture of their own this
     // frame, each one a render pass before the frame's. Zero once nothing is
     // changing: a layer whose content is unchanged is drawn from the texture it
     // already has, which is what makes an animated opacity cheap.
-    int getLastRenderedLayerCount() const { return lastRenderedLayers; }
+    int getLastRenderedLayerCount() const;
 
     // Vector shapes in the tree that have no mask, the coverage atlas having had
     // no room for them: each one draws as nothing. Zero unless an interface has
@@ -101,7 +118,7 @@ public:
     // Worth reading somewhere, because nothing else says it happened. A shape
     // dropped this way comes back the next time the atlas is rebuilt -- a
     // resize, a display change, or any later allocation that compacts it.
-    int getLastDroppedPathCount() const { return lastDroppedPaths; }
+    int getLastDroppedPathCount() const;
 
     // Called when that figure changes, for a client that would rather be told
     // than poll. Once on the way up and once on the way back down.
@@ -112,14 +129,14 @@ public:
     // whose shapes are widget-sized; artwork is what meets the threshold, and
     // this is the figure that says how much of a document stopped competing for
     // the atlas. See PathShape::Backing.
-    int getLastMeshedPathCount() const { return lastMeshedPaths; }
+    int getLastMeshedPathCount() const;
 
     // Shapes in the tree drawing through a mask somebody else rasterized. A
     // census like the meshed count beside it rather than a tally of what this
     // frame did, since what is worth knowing is how much of the tree is costing
     // the atlas nothing: an interface built out of repeated parts reports every
     // copy but the first of each shape it repeats.
-    int getLastSharedMaskCount() const { return lastSharedMasks; }
+    int getLastSharedMaskCount() const;
 
     // How full the coverage atlas is, and how large it has grown, as the
     // distance to that ceiling while there is still distance to it. Room
@@ -138,6 +155,18 @@ public:
 
     void resized() override;
     void render(GPU::Frame& frame) override;
+    void safeAreaInsetsChanged() override;
+
+    // Steps every animating component by `seconds` (see
+    // Component::startAnimating). The host calls it from a display link of its
+    // own while anything animates; public so a test can step time by hand.
+    void advanceAnimations(double seconds);
+    bool isAnimating() const;
+
+    // Whether the host runs that display link. On by default; off leaves
+    // advanceAnimations to the caller, which is what makes an animation
+    // deterministic under test.
+    void setAnimationClockEnabled(bool shouldRun);
 
     // The component keys are offered to first. Null means none has been focused,
     // and the tree's keys go to the root -- which is what makes a shortcut work
@@ -147,12 +176,12 @@ public:
     // and asks the window for the keyboard, a component tree only hearing a key
     // at all if the one native view it lives in is the first responder.
     void setFocusedComponent(Component* component);
-    Component* getFocusedComponent() const { return focusedComponent; }
+    Component* getFocusedComponent() const;
 
     // Whether Tab moves focus through the tree. On by default; off for a tree
     // where Tab means something else, an editor that indents being the case that
     // wants it.
-    void setTabMovesFocus(bool shouldMoveFocus) { tabMovesFocus = shouldMoveFocus; }
+    void setTabMovesFocus(bool shouldMoveFocus);
 
     void keyDown(const eacp::Graphics::KeyEvent& event) override;
     void keyUp(const eacp::Graphics::KeyEvent& event) override;
@@ -174,6 +203,35 @@ private:
     // own base, so the host would otherwise write through a dead pointer on its
     // way out.
     void componentDeleted(Component& component);
+
+    void startAnimating(Component& component);
+    void stopAnimating(Component& component);
+    bool isAnimating(const Component& component) const;
+    void forgetAnimationsIn(Component& subtree);
+    void startAnimationClock();
+    void retireAnimationClockWhenIdle();
+
+    // The event as the root sees it: the root sits inside the safe area, and
+    // everything below the host measures from the root's corner.
+    eacp::Graphics::MouseEvent
+        inRootSpace(const eacp::Graphics::MouseEvent& event) const;
+
+    // `from` or the nearest ancestor of it that takes the touch gesture, or
+    // null.
+    Component* findTouchInterceptor(Component* from,
+                                    const eacp::Graphics::MouseEvent& event);
+
+    // Moves the gesture from the pressed component to `interceptor`: the first
+    // is cancelled, the second is pressed where the finger went down.
+    void handTouchTo(Component& interceptor,
+                     const eacp::Graphics::MouseEvent& event);
+
+    // Settles whether the moving finger stays with what it pressed or goes to
+    // an ancestor that scrolls.
+    void settleTouchDrag(const eacp::Graphics::MouseEvent& event);
+
+    // A finger lifting where it went down, from a press nothing took away.
+    bool wasTouchTap(const eacp::Graphics::MouseEvent& event) const;
 
     // Paints every component in the tree whose drawing is stale, into a list of
     // its own, and steps over every subtree that has nothing to record. Returns
@@ -243,8 +301,13 @@ private:
     // The pressed component, or the nearest ancestor of it, that wants the
     // keyboard. A press on something that wants nothing leaves focus alone
     // rather than clearing it, so clicking a panel does not silently disarm the
-    // editor next to it.
-    void moveFocusToPressed(Component* pressed);
+    // editor next to it. Returns the component that wanted it, or null.
+    Component* moveFocusToPressed(Component* pressed);
+
+    // A finger's moveFocusToPressed. A tap on the component that already has
+    // focus asks for the keyboard again, which is how an editor whose
+    // on-screen keyboard Back put away gets it back.
+    void focusTapped(Component* pressed);
 
     bool moveFocusByTab(const eacp::Graphics::KeyEvent& event);
 
@@ -329,6 +392,32 @@ private:
     Component* focusedComponent = nullptr;
 
     bool tabMovesFocus = true;
+    bool respectsSafeArea = true;
+
+    // A press made by a finger, which an ancestor may still take as a scroll
+    // until it is settled one way or the other.
+    struct TouchGesture
+    {
+        bool active = false;
+        bool settled = false;
+        double downTime = 0.0;
+        bool handedOff = false;
+    };
+
+    TouchGesture touch;
+
+    // Null entries are components that stopped while the list was being
+    // walked, swept once the walk is over.
+    Vector<Component*> animating;
+    bool advancingAnimations = false;
+
+    OwningPointer<Threads::DisplayLink> animationClock;
+    bool animationClockEnabled = true;
+    bool animationClockRetiring = false;
+
+    // What a deferred retirement checks before touching the host, since the
+    // link cannot be destroyed from inside its own tick.
+    std::shared_ptr<bool> alive = std::make_shared<bool>(true);
 
     int lastClipChanges = 0;
     int lastRendererSwitches = 0;

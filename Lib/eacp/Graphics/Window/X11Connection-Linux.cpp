@@ -13,10 +13,12 @@
 #include <xcb/xinput.h>
 #include <xkbcommon/xkbcommon-x11.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <poll.h>
 #include <string>
 #include <string_view>
@@ -336,6 +338,21 @@ bool x11ServerIsReachable()
 }
 } // namespace
 
+int16_t x11ClampPosition(long value)
+{
+    constexpr auto lowest = (long) std::numeric_limits<int16_t>::min();
+    constexpr auto highest = (long) std::numeric_limits<int16_t>::max();
+
+    return (int16_t) std::clamp(value, lowest, highest);
+}
+
+uint16_t x11ClampSize(long value)
+{
+    constexpr auto highest = (long) std::numeric_limits<uint16_t>::max();
+
+    return (uint16_t) std::clamp(value, 1L, highest);
+}
+
 X11WindowSurface::X11WindowSurface()
 {
     viewSurfaces = makeX11ViewSurfaceBackend(*this);
@@ -537,6 +554,16 @@ void X11Connection::setupXinput()
 
     if (usable)
         xinputOpcode = extension->major_opcode;
+}
+
+X11Input* X11Connection::getInput() const
+{
+    return input.get();
+}
+
+X11Clipboard* X11Connection::getClipboard() const
+{
+    return clipboard.get();
 }
 
 uint32_t X11Connection::getWindowEventMask() const

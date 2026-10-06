@@ -67,6 +67,7 @@ constexpr LinuxKeyMapping linuxKeyMappings[] = {
     {KeyCode::ForwardDelete, KEY_DELETE},
 
     {KeyCode::Escape, KEY_ESC},
+    {KeyCode::Back, KEY_BACK},
 
     {KeyCode::LeftArrow, KEY_LEFT},
     {KeyCode::RightArrow, KEY_RIGHT},

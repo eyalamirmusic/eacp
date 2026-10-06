@@ -2,21 +2,18 @@
 
 #include <eacp/Core/Utils/Containers.h>
 
-#include <algorithm>
 #include <array>
-#include <bit>
-#include <functional>
+#include <iterator>
 
 #include "../Buffer/StreamingBuffers.h"
 #include "../Device/Device.h"
 #include "../Frame/RenderPass.h"
+#include "Forward.h"
 #include "GeneratedShader.h"
-#include "PackedVertex.h"
 #include "ShaderBuilder.h"
 #include "ShaderMembers.h"
 #include "ShaderTypes.h"
 #include "ShaderValue.h"
-#include "UniformLayout.h"
 
 // A shader authored as a struct. Uniforms are named, typed members you set by
 // name; vertex inputs are pulled straight out of the CPU vertex struct inside
@@ -126,150 +123,14 @@ constexpr int expectedAttributeBytes()
         return (int) sizeof(typename CpuValueOf<Handle>::type);
 }
 
-// Texture bind walk: hand each assigned texture member to the render pass at
-// the slot its handle was declared with.
-class ShaderTextureBindVisitor final : public ShaderVisitor
-{
-public:
-    explicit ShaderTextureBindVisitor(RenderPass& passToUse)
-        : pass(passToUse)
-    {
-    }
-
-    void
-        onUniform(const char*, ValueType, detail::ValueHandle&, const void*) override
-    {
-    }
-
-    void onTexture(const char*,
-                   Texture2D& handle,
-                   const Texture* texture,
-                   TextureSampling sampling) override
-    {
-        if (texture != nullptr)
-            pass.setFragmentTexture(*texture, handle.slot, sampling);
-    }
-
-    // The same call, and that is the point rather than an economy: a cube is one
-    // texture on one slot of one index space on both backends, so nothing about
-    // binding it differs from binding a 2D image. The dimensionality was settled
-    // when the texture was created and when the shader was compiled.
-    void onCubeTexture(const char*,
-                       TextureCube& handle,
-                       const Texture* texture,
-                       TextureSampling sampling) override
-    {
-        if (texture != nullptr)
-            pass.setFragmentTexture(*texture, handle.slot, sampling);
-    }
-
-    // The one member whose bind is a different call, because what was assigned
-    // is a render target and what is wanted is the depth buffer inside it.
-    void onDepthTexture(const char*,
-                        TextureDepth2D& handle,
-                        const Texture* renderTarget,
-                        TextureSampling sampling) override
-    {
-        if (renderTarget != nullptr)
-            pass.setFragmentDepthTexture(*renderTarget, handle.slot, sampling);
-    }
-
-private:
-    RenderPass& pass;
-};
-
-// Storage-buffer bind walk: hand each assigned input-buffer member to the
-// render pass at the slot its handle was declared with.
-//
-// Bound to both stages, for the reason the uniform block is: which stage reads
-// the buffer is a property of define(), not of the member, and a stage whose
-// generated function never declares it ignores the bind.
-class ShaderBufferBindVisitor final : public ShaderVisitor
-{
-public:
-    explicit ShaderBufferBindVisitor(RenderPass& passToUse)
-        : pass(passToUse)
-    {
-    }
-
-    void
-        onUniform(const char*, ValueType, detail::ValueHandle&, const void*) override
-    {
-    }
-
-    void onInputBuffer(const char*,
-                       InputBuffer& handle,
-                       const BufferRange& range) override
-    {
-        if (!range.isValid())
-            return;
-
-        pass.setVertexStorageBuffer(range, handle.slot);
-        pass.setFragmentStorageBuffer(range, handle.slot);
-    }
-
-    // The integer input reads exactly as the float one does: one storage
-    // binding, and only the element type the generated stage declares differs.
-    void onUIntInputBuffer(const char*,
-                           UIntInputBuffer& handle,
-                           const BufferRange& range) override
-    {
-        if (!range.isValid())
-            return;
-
-        assert(range.offset == 0
-               && "eacp: a render program's Uniform<UIntInputBuffer> binds the "
-                  "whole buffer - RenderPass has no ranged storage bind");
-
-        pass.setVertexStorageBuffer(*range.buffer, handle.slot);
-        pass.setFragmentStorageBuffer(*range.buffer, handle.slot);
-    }
-
-    void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&) override
-    {
-        assert(false
-               && "eacp: a render program cannot write a buffer - "
-                  "Uniform<OutputBuffer> belongs to a ComputeProgram");
-    }
-
-    void onUIntOutputBuffer(const char*,
-                            UIntOutputBuffer&,
-                            const BufferRange&) override
-    {
-        assert(false
-               && "eacp: a render program cannot write a buffer - "
-                  "Uniform<UIntOutputBuffer> belongs to a ComputeProgram");
-    }
-
-    void onAtomicBuffer(const char*, AtomicBuffer&, const BufferRange&) override
-    {
-        assert(false
-               && "eacp: a render program cannot write a buffer - "
-                  "Uniform<AtomicBuffer> belongs to a ComputeProgram");
-    }
-
-    void onWritableTexture(const char*, WritableTexture2D&, const Texture*) override
-    {
-        assert(false
-               && "eacp: a render program cannot write a texture - "
-                  "Uniform<WritableTexture2D> belongs to a ComputeProgram");
-    }
-
-private:
-    RenderPass& pass;
-};
-
-// How a module hands over a shader whose program type is nested in a .cpp.
-using ShaderGraphVisitor = std::function<void(const ShaderGraph&)>;
-
 // Base for struct-authored shaders. Derive, declare uniform members, list them
 // with EACP_SHADER, write define() (pulling vertex inputs from the CPU vertex
 // struct), and call compile() from the constructor.
 class ShaderProgram
 {
 public:
-    ShaderProgram() = default;
-    virtual ~ShaderProgram() = default;
+    ShaderProgram();
+    virtual ~ShaderProgram();
 
     // Uniform members and pulled vertex handles point into the owned builder's
     // graph, and the owned GPU resources are non-copyable, so a program is pinned
@@ -277,12 +138,12 @@ public:
     ShaderProgram(const ShaderProgram&) = delete;
     ShaderProgram& operator=(const ShaderProgram&) = delete;
 
-    const ShaderSource& source() const { return generated.source; }
+    const ShaderSource& source() const;
 
-    const VertexLayout& vertexLayout() const { return generated.vertexLayout; }
+    const VertexLayout& vertexLayout() const;
 
     // The shader as the EDSL recorded it; source() is one platform's spelling.
-    const ShaderGraph& graph() const { return builder.graph(); }
+    const ShaderGraph& graph() const;
 
     // Uploads the typed vertex data and owns the resulting buffer. The element
     // type's size must match the layout pulled from it in define().
@@ -290,6 +151,16 @@ public:
     void setVertices(const V (&data)[N])
     {
         setVertices(data, (int) N);
+    }
+
+    template <typename Range>
+        requires requires(const Range& range) {
+            std::data(range);
+            std::size(range);
+        }
+    void setVertices(const Range& data)
+    {
+        setVertices(std::data(data), (int) std::size(data));
     }
 
     template <typename V>
@@ -320,15 +191,8 @@ public:
         setIndices(data, (int) N);
     }
 
-    void setIndices(const std::uint32_t* data, int count)
-    {
-        uploadIndices(data, (int) sizeof(std::uint32_t), count, IndexFormat::UInt32);
-    }
-
-    void setIndices(const std::uint16_t* data, int count)
-    {
-        uploadIndices(data, (int) sizeof(std::uint16_t), count, IndexFormat::UInt16);
-    }
+    void setIndices(const std::uint32_t* data, int count);
+    void setIndices(const std::uint16_t* data, int count);
 
     // Uploads typed per-instance data for a buffer slot and owns the storage.
     // bufferIndex must match the slot an instanceInput() pulled into; the
@@ -386,14 +250,7 @@ public:
     // GPU, and the CPU never sees a byte of it. The buffer must outlive the
     // draw, and its elements must match the per-instance stride that
     // instanceInput() declared for this slot.
-    void setInstanceBuffer(int bufferIndex, const Buffer& buffer, int count)
-    {
-        assert(bufferIndex >= 0 && bufferIndex < vertexLayout().buffers.size()
-               && "instance buffer slot was not declared via instanceInput");
-
-        setExternalInstanceBuffer(bufferIndex, &buffer);
-        instanceCountValue = count;
-    }
+    void setInstanceBuffer(int bufferIndex, const Buffer& buffer, int count);
 
     // Builds the shader library and render pipeline. sampleCount must match the
     // render target (GPUView::sampleCount()); set depth when the view has a depth
@@ -414,17 +271,7 @@ public:
                  bool depth = false,
                  PrimitiveTopology topology = PrimitiveTopology::Triangles,
                  BlendMode blendMode = BlendMode::None,
-                 PixelFormat colorFormat = PixelFormat::BGRA8Unorm)
-    {
-        auto descriptor = RenderPipelineDescriptor {};
-        descriptor.sampleCount = sampleCount;
-        descriptor.depth = depth;
-        descriptor.topology = topology;
-        descriptor.blendMode = blendMode;
-        descriptor.colorFormat = colorFormat;
-
-        prepare(descriptor);
-    }
+                 PixelFormat colorFormat = PixelFormat::BGRA8Unorm);
 
     // The named form of the same thing, and what to reach for once more than
     // one of these is not the shader's own choice: a program drawing into a
@@ -436,41 +283,29 @@ public:
     // The program's own library and vertex layout are what they always were and
     // are filled in here; whatever the caller left in those two fields is
     // ignored.
-    void prepare(RenderPipelineDescriptor descriptor)
-    {
-        shaderLibrary.emplace(Device::shared(), generated.source);
+    void prepare(RenderPipelineDescriptor descriptor);
 
-        descriptor.library = &*shaderLibrary;
-        descriptor.vertexLayout = generated.vertexLayout;
-
-        pipelineState.emplace(Device::shared(), descriptor);
-    }
-
-    const RenderPipeline& pipeline() const { return *pipelineState; }
-    const Buffer& vertices() const { return *vertexBufferData; }
-    int vertexCount() const { return vertexCountValue; }
+    const RenderPipeline& pipeline() const;
+    const Buffer& vertices() const;
+    constexpr int vertexCount() const { return vertexCountValue; }
 
     // Whether setVertices ever gave this program geometry of its own. A program
     // only ever drawn through RenderPass::bind(program, vertices) has none, and
     // asking it for vertices() would dereference an empty optional - which is
     // why that overload does not.
-    bool hasVertices() const { return vertexBufferData.has_value(); }
+    bool hasVertices() const;
 
-    bool hasIndices() const { return indexBufferData.has_value(); }
-    const Buffer& indices() const { return *indexBufferData; }
-    int indexCount() const { return indexCountValue; }
-    IndexFormat indexFormat() const { return indexFormatValue; }
+    bool hasIndices() const;
+    const Buffer& indices() const;
+    constexpr int indexCount() const { return indexCountValue; }
+    constexpr IndexFormat indexFormat() const { return indexFormatValue; }
 
     // Re-packs the current uniform values and returns the block, ready for
     // RenderPass::setVertexBytes. Cheap - the block is a handful of floats.
-    const void* packedUniforms()
-    {
-        packUniforms();
-        return uniformBytes.data();
-    }
+    const void* packedUniforms();
 
-    int uniformByteSize() const { return uniformBytes.size(); }
-    bool hasUniforms() const { return !uniformBytes.empty(); }
+    int uniformByteSize() const;
+    bool hasUniforms() const;
 
     // Which stage define() actually read a uniform from, answered by the same
     // walk that decided whether to declare the block in that stage's generated
@@ -478,8 +313,8 @@ public:
     // leaves the other alone; a program declaring uniforms neither stage reads
     // binds to nobody. Ask these rather than hasUniforms() when hand-rolling a
     // draw over app-owned geometry.
-    bool vertexReadsUniforms() const { return generated.vertexReadsUniforms; }
-    bool fragmentReadsUniforms() const { return generated.fragmentReadsUniforms; }
+    bool vertexReadsUniforms() const;
+    bool fragmentReadsUniforms() const;
 
     // Binds every assigned texture member to the pass; a no-op for programs
     // without textures. RenderPass::bind and RenderPass::draw(program) call it
@@ -487,73 +322,31 @@ public:
     // by their texture, which is what this is public for: after bind(), the
     // per-draw state is the caller's to restate, and a texture is the commonest
     // thing it is.
-    void bindTextures(RenderPass& pass)
-    {
-        auto bindVisitor = ShaderTextureBindVisitor {pass};
-        reflectMembers(bindVisitor);
-    }
+    void bindTextures(RenderPass& pass);
 
     // Its storage-buffer sibling: binds every assigned Uniform<InputBuffer> so
     // define() can subscript it at an index the shader computed - reading a
     // record a kernel produced, rather than receiving it as an attribute. A
     // no-op for programs without buffers. RenderPass::draw(program) calls this.
-    void bindBuffers(RenderPass& pass)
-    {
-        auto bindVisitor = ShaderBufferBindVisitor {pass};
-        reflectMembers(bindVisitor);
-    }
+    void bindBuffers(RenderPass& pass);
 
     // True once any instanceInput() was pulled: the program feeds one or more
     // per-instance buffers and is drawn with drawInstanced(program, ...).
-    bool isInstanced() const { return usesInstancing; }
+    constexpr bool isInstanced() const { return usesInstancing; }
 
     // The element count last uploaded via setInstances - the number of
     // instances the owned per-instance buffers hold.
-    int instanceCount() const { return instanceCountValue; }
+    constexpr int instanceCount() const { return instanceCountValue; }
 
     // Binds every per-instance buffer at the slot it was given to, whether the
     // program uploaded it or a kernel filled it. RenderPass::drawInstanced(
     // program, ...) calls this after binding the per-vertex buffer at slot 0.
-    void bindInstances(RenderPass& pass)
-    {
-        // Over both lists: a program fed only by kernels has no owned uploads
-        // at all, so bounding this by instanceBuffers alone would bind nothing
-        // and leave the draw missing its per-instance stream.
-        auto slots =
-            std::max(instanceBuffers.size(), externalInstanceBuffers.size());
-
-        for (auto slot = 0; slot < slots; ++slot)
-            if (auto range = instanceBufferAt(slot); range.buffer != nullptr)
-                pass.setVertexBuffer(range, slot);
-    }
+    void bindInstances(RenderPass& pass);
 
 protected:
     // Runs the uniform build walk, the user's define() (which pulls vertex inputs),
     // then emits source + layouts. Called from the most-derived constructor.
-    void compile()
-    {
-        auto buildVisitor = ShaderBuildVisitor {builder};
-        reflectMembers(buildVisitor);
-        define();
-        generated = builder.build();
-
-        // define() assembled the vertex layout from the pulled fields' real
-        // offsets; use it when any input was pulled.
-        if (vertexLayoutData.attributes.size() > 0)
-        {
-            // instanceInput populated the per-instance slots; publish the
-            // per-vertex slot 0 too so every bound buffer carries a stride and
-            // step rate. Single-buffer programs keep the pre-instancing shape
-            // (empty buffers + stride) untouched.
-            if (usesInstancing)
-                vertexLayoutData.buffer(
-                    0, vertexLayoutData.stride, StepRate::PerVertex);
-
-            generated.vertexLayout = vertexLayoutData;
-        }
-
-        packUniforms();
-    }
+    void compile();
 
     // Pulls a vertex attribute out of the CPU vertex struct. The field's type maps
     // to a shader value via ShaderValueOf, the attribute takes the field's real
@@ -605,24 +398,15 @@ protected:
         return handle;
     }
 
-    Float varying(const Float& vertexValue) { return builder.varying(vertexValue); }
-    Float2 varying(const Float2& vertexValue)
-    {
-        return builder.varying(vertexValue);
-    }
-    Float3 varying(const Float3& vertexValue)
-    {
-        return builder.varying(vertexValue);
-    }
-    Float4 varying(const Float4& vertexValue)
-    {
-        return builder.varying(vertexValue);
-    }
+    Float varying(const Float& vertexValue);
+    Float2 varying(const Float2& vertexValue);
+    Float3 varying(const Float3& vertexValue);
+    Float4 varying(const Float4& vertexValue);
 
-    Float constant(float value) { return builder.constant(value); }
-    Bool boolean(bool value) { return builder.boolean(value); }
-    Int integer(int value) { return builder.integer(value); }
-    UInt unsignedInteger(unsigned value) { return builder.unsignedInteger(value); }
+    Float constant(float value);
+    Bool boolean(bool value);
+    Int integer(int value);
+    UInt unsignedInteger(unsigned value);
 
     template <ShaderValueLike T, SameShaderShape<T>... Rest>
     ConstantArray<ShaderBase<T>, 1 + (int) sizeof...(Rest)>
@@ -653,10 +437,10 @@ protected:
         return builder.var(initialValue);
     }
 
-    Var<Float> var(float initialValue) { return builder.var(initialValue); }
-    Var<Bool> var(bool initialValue) { return builder.var(initialValue); }
-    Var<Int> var(int initialValue) { return builder.var(initialValue); }
-    Var<UInt> var(unsigned initialValue) { return builder.var(initialValue); }
+    Var<Float> var(float initialValue);
+    Var<Bool> var(bool initialValue);
+    Var<Int> var(int initialValue);
+    Var<UInt> var(unsigned initialValue);
 
     template <typename Body>
     void ifThen(const Bool& condition, Body&& body)
@@ -677,91 +461,29 @@ protected:
         builder.loop(condition, std::forward<Body>(body));
     }
 
-    void breakLoop() { builder.breakLoop(); }
-    void continueLoop() { builder.continueLoop(); }
+    void breakLoop();
+    void continueLoop();
 
     // In-shader transform builders, matching column-major / right-handed [0,1]
     // depth conventions. Build the model/view/projection inside define() from
     // scalar uniforms instead of uploading prebuilt matrices.
-    Float4x4 translate(float x, float y, float z)
-    {
-        auto o = constant(1.0f);
-        auto z0 = constant(0.0f);
-        return float4x4(float4(o, z0, z0, z0),
-                        float4(z0, o, z0, z0),
-                        float4(z0, z0, o, z0),
-                        float4(constant(x), constant(y), constant(z), o));
-    }
-
-    Float4x4 translate(const Float& x, const Float& y, const Float& z)
-    {
-        auto o = constant(1.0f);
-        auto z0 = constant(0.0f);
-        return float4x4(float4(o, z0, z0, z0),
-                        float4(z0, o, z0, z0),
-                        float4(z0, z0, o, z0),
-                        float4(x, y, z, o));
-    }
-
-    Float4x4 rotateY(const Float& angle)
-    {
-        auto c = cos(angle);
-        auto s = sin(angle);
-        auto z0 = constant(0.0f);
-        auto o = constant(1.0f);
-        return float4x4(float4(c, z0, -s, z0),
-                        float4(z0, o, z0, z0),
-                        float4(s, z0, c, z0),
-                        float4(z0, z0, z0, o));
-    }
-
-    Float4x4 rotateZ(const Float& angle)
-    {
-        auto c = cos(angle);
-        auto s = sin(angle);
-        auto z0 = constant(0.0f);
-        auto o = constant(1.0f);
-        return float4x4(float4(c, s, z0, z0),
-                        float4(-s, c, z0, z0),
-                        float4(z0, z0, o, z0),
-                        float4(z0, z0, z0, o));
-    }
-
-    Float4x4 rotateX(float radians)
-    {
-        auto c = constant(std::cos(radians));
-        auto s = constant(std::sin(radians));
-        auto z0 = constant(0.0f);
-        auto o = constant(1.0f);
-        return float4x4(float4(o, z0, z0, z0),
-                        float4(z0, c, s, z0),
-                        float4(z0, -s, c, z0),
-                        float4(z0, z0, z0, o));
-    }
+    Float4x4 translate(float x, float y, float z);
+    Float4x4 translate(const Float& x, const Float& y, const Float& z);
+    Float4x4 rotateY(const Float& angle);
+    Float4x4 rotateZ(const Float& angle);
+    Float4x4 rotateX(float radians);
 
     // aspect is a live uniform; the field of view, near and far are baked in.
-    Float4x4 perspective(const Float& aspect, float fovY, float nearZ, float farZ)
-    {
-        auto f = constant(1.0f / std::tan(fovY * 0.5f));
-        auto z0 = constant(0.0f);
-        return float4x4(
-            float4(f / aspect, z0, z0, z0),
-            float4(z0, f, z0, z0),
-            float4(z0, z0, constant(farZ / (nearZ - farZ)), constant(-1.0f)),
-            float4(z0, z0, constant((farZ * nearZ) / (nearZ - farZ)), z0));
-    }
+    Float4x4 perspective(const Float& aspect, float fovY, float nearZ, float farZ);
 
-    void setPosition(const Float4& clipPosition) { builder.position(clipPosition); }
-    void setFragment(const Float4& color) { builder.fragment(color); }
+    void setPosition(const Float4& clipPosition);
+    void setFragment(const Float4& color);
 
     // Kills the fragment when value falls below threshold, before any colour or
     // depth is written — the alpha test a masked texture needs, so a sprite's
     // transparent pixels or the holes in a grate leave what is behind them
     // visible instead of occluding it.
-    void setDiscardBelow(const Float& value, float threshold)
-    {
-        builder.discardBelow(value, threshold);
-    }
+    void setDiscardBelow(const Float& value, float threshold);
 
     // Generated by EACP_SHADER: visits each declared uniform member in order.
     virtual void reflectMembers(ShaderVisitor& visitor) = 0;
@@ -770,38 +492,16 @@ protected:
     virtual void define() = 0;
 
 private:
-    void packUniforms()
-    {
-        uniformBytes.clear();
-        auto uploadVisitor = ShaderUploadVisitor {uniformBytes};
-        reflectMembers(uploadVisitor);
-        uploadVisitor.finish();
-    }
+    void packUniforms();
 
-    void setExternalInstanceBuffer(int bufferIndex, const Buffer* buffer)
-    {
-        if (externalInstanceBuffers.size() <= bufferIndex)
-            externalInstanceBuffers.resize(bufferIndex + 1);
-
-        externalInstanceBuffers[bufferIndex] = buffer;
-    }
+    void setExternalInstanceBuffer(int bufferIndex, const Buffer* buffer);
 
     // A slot carries either an owned upload or a borrowed buffer; the last call
     // for that slot wins, so a program can be re-pointed between the two. A
     // borrowed buffer is bound whole, from its start; an owned upload is the
     // slice of the stream's arena that setInstances was given. A slot holding
     // neither comes back with a null buffer.
-    BufferRange instanceBufferAt(int slot) const
-    {
-        if (slot < externalInstanceBuffers.size()
-            && externalInstanceBuffers[slot] != nullptr)
-            return BufferRange::of(*externalInstanceBuffers[slot]);
-
-        if (slot < instanceBuffers.size())
-            return instanceBuffers[slot];
-
-        return {};
-    }
+    BufferRange instanceBufferAt(int slot) const;
 
     // A buffer per call, deliberately, and not something to "optimise" into
     // reuse. A program is routinely drawn more than once in a frame with
@@ -819,15 +519,7 @@ private:
     void uploadIndices(const void* data,
                        int elementSize,
                        int count,
-                       IndexFormat format)
-    {
-        indexBufferData.emplace(Device::shared(),
-                                data,
-                                (std::int64_t) elementSize * count,
-                                BufferUsage::Index);
-        indexCountValue = count;
-        indexFormatValue = format;
-    }
+                       IndexFormat format);
 
     ShaderBuilder builder;
     GeneratedShader generated;

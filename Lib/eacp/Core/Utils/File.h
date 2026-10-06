@@ -15,7 +15,7 @@ class File
 public:
     explicit File(FilePath path);
 
-    const FilePath& path() const { return filePath; }
+    const FilePath& path() const;
 
     bool exists() const;
     bool isRegularFile() const;

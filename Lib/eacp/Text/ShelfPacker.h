@@ -49,8 +49,8 @@ public:
     // not supported and is ignored.
     void grow(int width, int height);
 
-    int width() const { return atlasWidth; }
-    int height() const { return atlasHeight; }
+    constexpr int width() const { return atlasWidth; }
+    constexpr int height() const { return atlasHeight; }
 
     // Fraction of the atlas handed out, padding included. Only meaningful as a
     // rough occupancy signal, since shelves leave gaps this does not model.

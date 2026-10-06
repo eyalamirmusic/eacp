@@ -186,6 +186,16 @@ jobs:
           Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
           -R '^(X11|EmbeddedView|Present)/'
 
+      # lavapipe is a 1.3 device; this forces the render-pass path a Vulkan 1.1
+      # device takes, so both paths stay covered.
+      - name: Test the GPU suite on render passes
+        if: matrix.vulkan
+        env:
+          EACP_HEADLESS: '0'
+          EACP_REQUIRE_DISPLAY: '1'
+          EACP_VK_RENDER_PASSES: '1'
+        run: Scripts/with-weston build/Tests/GPU/GPUTests
+
   build-ios:
     name: iOS Simulator
     runs-on: macos-latest
@@ -204,3 +214,44 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Debug -- -sdk iphonesimulator
+
+  # The one Android build anything is checked against: the NDK it installs, the
+  # toolchain file -DCMAKE_SYSTEM_NAME=Android alone selects, and HelloGPU,
+  # which pulls Core, Graphics, GPU, Text and the SPIR-V compiler through the
+  # NDK's clang, with HelloNetwork beside it for the JNI network backend. The
+  # configure also writes the Android Studio project, so the Gradle templates
+  # are exercised; nothing runs it. Debug, so the build is what a device gets
+  # from Studio's Run.
+  build-android:
+    name: Android arm64-v8a
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 30.0.16248370
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # The runner's SDK carries sdkmanager and a few older NDKs, and names
+      # one of them in ANDROID_NDK_HOME; the configure names the one it
+      # installed, which an app locking its NDK does the same way. Ninja is
+      # the generator; the resource embedder's generator is built for the host
+      # with the runner's own compiler.
+      - name: Install Ninja, the NDK and a platform
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-35"
+
+      - name: Configure
+        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+
+      # What a configure that names nothing picks: the newest NDK and the
+      # newest platform in the SDK, with no NDK variable to point elsewhere.
+      - name: Configure with the newest NDK and platform
+        run: |
+          unset ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK
+          cmake -G Ninja -B build-floating -DCMAKE_SYSTEM_NAME=Android -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+          grep -A2 "compileSdk" build-floating/AndroidStudio/HelloGPU/build.gradle.kts
+
+      - name: Build
+        run: cmake --build build --target HelloGPU HelloNetwork

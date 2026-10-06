@@ -63,8 +63,10 @@ public:
         // Set while status is failed.
         std::string error;
 
-        bool isFetching() const { return status == Status::fetching; }
+        bool isFetching() const;
     };
+
+    OnlineResources();
 
     static OnlineResources& get();
 
@@ -144,7 +146,7 @@ private:
     void reportRemoved(const FilePath& path);
 
     mutable std::mutex mutex;
-    FilePath directory = FilePath::appSupportDirectory() / "Resources";
+    FilePath directory;
     Vector<Record> records;
     Vector<Listener> listeners;
     ListenerId nextListenerId = 1;

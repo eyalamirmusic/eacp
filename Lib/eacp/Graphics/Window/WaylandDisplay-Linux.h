@@ -53,10 +53,7 @@ struct WaylandWindowSurface : LinuxWindowSurface
     WaylandWindowSurface();
 
     // Null while the window is headless or the connection failed.
-    wl_surface* getSurface() const
-    {
-        return static_cast<wl_surface*>(nativeSurface.surface);
-    }
+    wl_surface* getSurface() const;
 
     void setSurface(wl_surface* surface);
 };
@@ -85,9 +82,9 @@ public:
 
     void destroy();
 
-    wl_buffer* get() const { return buffer; }
-    int getWidth() const { return width; }
-    int getHeight() const { return height; }
+    constexpr wl_buffer* get() const { return buffer; }
+    constexpr int getWidth() const { return width; }
+    constexpr int getHeight() const { return height; }
 
 private:
     wl_buffer* buffer = nullptr;
@@ -106,37 +103,42 @@ public:
     WaylandDisplay(const WaylandDisplay&) = delete;
     WaylandDisplay& operator=(const WaylandDisplay&) = delete;
 
-    bool isValid() const { return display != nullptr; }
+    constexpr bool isValid() const { return display != nullptr; }
 
-    wl_display* getDisplay() const { return display; }
-    wl_compositor* getCompositor() const { return compositor; }
-    wl_subcompositor* getSubcompositor() const { return subcompositor; }
-    wl_shm* getShm() const { return shm; }
-    wp_viewporter* getViewporter() const { return viewporter; }
-    wl_seat* getSeat() const { return seat; }
-    wl_data_device_manager* getDataDeviceManager() const { return dataDevices; }
-    libdecor* getDecorations() const { return decorations; }
+    constexpr wl_display* getDisplay() const { return display; }
+    constexpr wl_compositor* getCompositor() const { return compositor; }
+    constexpr wl_subcompositor* getSubcompositor() const { return subcompositor; }
+    constexpr wl_shm* getShm() const { return shm; }
+    constexpr wp_viewporter* getViewporter() const { return viewporter; }
+    constexpr wl_seat* getSeat() const { return seat; }
 
-    wp_fractional_scale_manager_v1* getFractionalScales() const
+    constexpr wl_data_device_manager* getDataDeviceManager() const
+    {
+        return dataDevices;
+    }
+
+    constexpr libdecor* getDecorations() const { return decorations; }
+
+    constexpr wp_fractional_scale_manager_v1* getFractionalScales() const
     {
         return fractionalScales;
     }
 
-    zwp_pointer_constraints_v1* getPointerConstraints() const
+    constexpr zwp_pointer_constraints_v1* getPointerConstraints() const
     {
         return pointerConstraints;
     }
 
-    zwp_relative_pointer_manager_v1* getRelativePointers() const
+    constexpr zwp_relative_pointer_manager_v1* getRelativePointers() const
     {
         return relativePointers;
     }
 
-    WaylandInput* getInput() const { return input.get(); }
+    WaylandInput* getInput() const;
 
     // False once the compositor has gone: every global is dropped then, so
     // windows made afterwards come up surfaceless, exactly as headless ones do.
-    bool isConnected() const { return compositor != nullptr; }
+    constexpr bool isConnected() const { return compositor != nullptr; }
 
     // Null when the compositor advertised no output.
     const WaylandOutputInfo* getPrimaryOutput() const;

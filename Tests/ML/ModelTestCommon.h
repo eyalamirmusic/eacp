@@ -4,6 +4,7 @@
 #include "TestPrograms.h"
 
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
 #include <eacp/ML/ML.h>
 
@@ -24,6 +25,7 @@ using eacp::FilePath;
 using eacp::getEnvValue;
 using eacp::LOG;
 using eacp::toStdPath;
+namespace Files = eacp::Files;
 using eacp::Vector;
 using MLSuiteCommon::arrayOf;
 using namespace eacp::ML;
@@ -68,11 +70,12 @@ inline FilePath freshCacheDirectory(const std::string& name)
 inline Vector<std::string> entriesOf(const FilePath& directory)
 {
     auto names = Vector<std::string> {};
-    auto error = std::error_code {};
 
-    for (const auto& entry:
-         std::filesystem::directory_iterator {toStdPath(directory), error})
-        names.add(entry.path().filename().string());
+    auto options = Files::DirectoryOptions {};
+    options.includeHidden = true;
+
+    for (const auto& entry: Files::listDirectory(directory, options))
+        names.add(Files::filenameFromPath(entry.path.str()));
 
     return names;
 }

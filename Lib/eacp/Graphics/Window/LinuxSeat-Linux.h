@@ -32,7 +32,7 @@ public:
     // Null while the keys are going somewhere that is not ours.
     virtual LinuxWindowSurface* getKeyboardFocus() const = 0;
 
-    bool hasKeyboardFocus() const { return getKeyboardFocus() != nullptr; }
+    bool hasKeyboardFocus() const;
 
     // Null and {} until the pointer has entered a window of ours.
     virtual LinuxWindowSurface* getPointerWindow() const = 0;
