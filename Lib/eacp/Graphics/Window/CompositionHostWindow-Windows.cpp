@@ -21,6 +21,7 @@ void redrawAllCompositionHosts();
 // (KeyCode::Unknown when unmapped), so KeyEvent::keyCode means the same thing
 // on every platform.
 uint16_t keyCodeFromVirtualKey(int vk);
+uint16_t keyCodeFromKeyMessage(int vk, LPARAM lParam);
 
 namespace
 {
@@ -633,6 +634,14 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
     if (event.type == MouseEventType::Moved || event.type == MouseEventType::Dragged)
     {
+        // A locked move already carries its delta: the pointer is put back in
+        // the middle after every report, so its position says nothing.
+        if (!mouseLockEngaged)
+            event.delta =
+                lastPointerPosition ? event.pos - *lastPointerPosition : Point {};
+
+        lastPointerPosition = event.pos;
+
         // Whatever Raw Input has gathered since the last movement was reported.
         // A device that cannot report its own movement (a tablet, a remote
         // desktop) leaves this empty, and the pointer's movement stands in.
@@ -640,6 +649,14 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
         event.rawDelta = moved ? rawMouseMovement : event.delta;
         rawMouseMovement = {};
+    }
+    else if (event.type == MouseEventType::Down || event.type == MouseEventType::Up)
+    {
+        lastPointerPosition = event.pos;
+    }
+    else if (event.type == MouseEventType::Exited)
+    {
+        lastPointerPosition.reset();
     }
 
     contentView->dispatchMouseEvent(event);
@@ -828,9 +845,13 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 event.type = MouseEventType::Wheel;
                 event.modifiers = getModifiers();
 
-                auto wheelDelta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
-                event.delta = (msg == WM_MOUSEWHEEL) ? Point {0.f, wheelDelta}
-                                                     : Point {wheelDelta, 0.f};
+                // In lines, as the other platforms report a notched wheel: a
+                // detent is WHEEL_DELTA, and a precision touchpad sends
+                // fractions of one.
+                auto lines = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam))
+                             / static_cast<float>(WHEEL_DELTA);
+                event.delta =
+                    (msg == WM_MOUSEWHEEL) ? Point {0.f, lines} : Point {lines, 0.f};
                 dispatchMouseToContentView(event);
             }
             return 0;
@@ -864,7 +885,7 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
         return;
 
     KeyEvent event;
-    event.keyCode = keyCodeFromVirtualKey(vk);
+    event.keyCode = keyCodeFromKeyMessage(vk, lParam);
     event.type = down ? KeyEventType::Down : KeyEventType::Up;
     event.modifiers = getModifiers();
 
@@ -872,12 +893,9 @@ void CompositionHostWindow::dispatchKeyEvent(UINT msg, WPARAM wParam, LPARAM lPa
     {
         event.characters = takePendingCharacters();
         event.isRepeat = (lParam & 0x40000000) != 0;
-        contentView->keyDown(event);
     }
-    else
-    {
-        contentView->keyUp(event);
-    }
+
+    contentView->dispatchKeyEvent(event);
 
     ensureAllLayersRendered(contentView);
 }

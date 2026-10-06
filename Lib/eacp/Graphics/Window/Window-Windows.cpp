@@ -796,6 +796,9 @@ LRESULT CALLBACK Window::Native::windowProc(HWND hwnd,
             break;
 
         case WM_ACTIVATE:
+            if (self->events)
+                self->events->input.activationChanged(LOWORD(wParam) != WA_INACTIVE);
+
             if (self->events && self->events->onActivationChanged)
                 self->events->onActivationChanged(LOWORD(wParam) != WA_INACTIVE);
             break;

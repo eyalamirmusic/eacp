@@ -22,6 +22,7 @@ set(graphics_test_sources
         CursorTests.cpp
         DisplayTests.cpp
         EventLoopTests.cpp
+        GameInputTests.cpp
         ImageOpsTests.cpp
         KeyCodeTests.cpp
         MenuCommandsTests.cpp
@@ -82,6 +83,8 @@ if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
             KeyForwardingTests-Windows.cpp
+            MouseDeltaTests-Windows.cpp
+            MouseWheelTests-Windows.cpp
             WindowGeometryTests-Windows.cpp
             WindowLayoutTests-Windows.cpp)
 endif ()

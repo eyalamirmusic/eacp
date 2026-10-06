@@ -831,10 +831,7 @@ void WaylandInput::deliverKey(uint32_t code, bool down, bool isRepeat)
     event.characters = keyboardState.textForKey(code);
     event.charactersIgnoringModifiers = keyboardState.plainTextForKey(code);
 
-    if (down)
-        keyboardWindow->contentView->keyDown(event);
-    else
-        keyboardWindow->contentView->keyUp(event);
+    keyboardWindow->contentView->dispatchKeyEvent(event);
 }
 
 bool WaylandInput::isKeyPressed(uint32_t evdevCode) const
