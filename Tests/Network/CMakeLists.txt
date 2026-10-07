@@ -3,7 +3,9 @@ set(network_test_sources
         HttpDownloadProgressTests.cpp
         HttpJsonTests.cpp
         HttpParallelDownloadTests.cpp
+        HttpRedirectTests.cpp
         HttpRequestTests.cpp
+        HttpResponseSizeTests.cpp
         HttpRpcTests.cpp
         HttpServerTests.cpp
         HttpTimeoutTests.cpp

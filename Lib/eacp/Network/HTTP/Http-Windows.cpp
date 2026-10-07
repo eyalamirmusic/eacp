@@ -314,6 +314,15 @@ void sendRequest(const Request& req, OpenedRequest& opened)
                      &decompression,
                      sizeof(decompression));
 
+    if (!req.followRedirects)
+    {
+        auto policy = DWORD {WINHTTP_OPTION_REDIRECT_POLICY_NEVER};
+        WinHttpSetOption(opened.request.get(),
+                         WINHTTP_OPTION_REDIRECT_POLICY,
+                         &policy,
+                         sizeof(policy));
+    }
+
     auto headerLines = std::string();
     for (const auto& [key, value]: req.headers)
     {
@@ -431,8 +440,26 @@ std::int64_t queryContentLength(HINTERNET request)
     }
 }
 
+void throwIfTooLarge(ResponseSizeLimit& limit, std::int64_t more)
+{
+    if (!limit.add(more))
+        throw std::runtime_error(responseTooLargeError(limit.maxBytes));
+}
+
+void throwIfDeclaredTooLarge(HINTERNET request,
+                             const Request& req,
+                             const ResponseSizeLimit& limit)
+{
+    if (req.type == "HEAD")
+        return;
+
+    if (limit.exceeds(queryContentLength(request)))
+        throw std::runtime_error(responseTooLargeError(limit.maxBytes));
+}
+
 std::string readBodyToString(const TimedRequestHandle& request,
-                             const RequestTimeout& timeout)
+                             const RequestTimeout& timeout,
+                             ResponseSizeLimit& limit)
 {
     auto body = std::string();
 
@@ -449,6 +476,8 @@ std::string readBodyToString(const TimedRequestHandle& request,
 
         if (available == 0)
             return body;
+
+        throwIfTooLarge(limit, available);
 
         auto offset = body.size();
         body.resize(offset + available);
@@ -487,7 +516,8 @@ void streamBodyToFile(const TimedRequestHandle& request,
                       HANDLE file,
                       const Request& req,
                       const std::string& filePath,
-                      const RequestTimeout& timeout)
+                      const RequestTimeout& timeout,
+                      ResponseSizeLimit& limit)
 {
     auto buffer = std::string(64 * 1024, '\0');
     auto received = std::int64_t {0};
@@ -520,6 +550,8 @@ void streamBodyToFile(const TimedRequestHandle& request,
         if (read == 0)
             return;
 
+        throwIfTooLarge(limit, read);
+
         auto written = DWORD {0};
         if (!WriteFile(file, buffer.data(), read, &written, nullptr))
             throw std::runtime_error("Failed to write file: " + filePath);
@@ -540,7 +572,12 @@ Response httpRequestInternal(const Request& req)
     auto response = Response();
     response.statusCode = queryStatusCode(opened.request.get());
     copyResponseHeaders(opened.request.get(), response);
-    response.content = readBodyToString(opened.request, timeout);
+
+    auto limit = ResponseSizeLimit {};
+    limit.maxBytes = req.maxResponseSize;
+    throwIfDeclaredTooLarge(opened.request.get(), req, limit);
+
+    response.content = readBodyToString(opened.request, timeout, limit);
     return response;
 }
 
@@ -555,6 +592,10 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     response.statusCode = queryStatusCode(opened.request.get());
     copyResponseHeaders(opened.request.get(), response);
 
+    auto limit = ResponseSizeLimit {};
+    limit.maxBytes = req.maxResponseSize;
+    throwIfDeclaredTooLarge(opened.request.get(), req, limit);
+
     if (req.progress)
         req.progress->totalBytes.store(queryContentLength(opened.request.get()));
 
@@ -562,7 +603,7 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
 
     try
     {
-        streamBodyToFile(opened.request, file, req, filePath, timeout);
+        streamBodyToFile(opened.request, file, req, filePath, timeout, limit);
     }
     catch (...)
     {

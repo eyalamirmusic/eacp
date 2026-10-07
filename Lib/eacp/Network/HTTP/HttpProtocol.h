@@ -18,6 +18,17 @@ void addHeaderLine(std::string_view line,
 
 bool acceptsByteRanges(const std::string& acceptRangesHeaderValue);
 
+struct ResponseSizeLimit
+{
+    int64_t maxBytes = 0;
+    int64_t received = 0;
+
+    bool exceeds(int64_t bytes) const;
+    bool add(int64_t more);
+};
+
+std::string responseTooLargeError(int64_t maxBytes);
+
 std::string serializeResponse(const Response& response);
 
 class RequestParser

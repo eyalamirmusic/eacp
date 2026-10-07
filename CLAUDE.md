@@ -795,7 +795,13 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   (`plan.md` D1, D9, D10)
 
 **Network/** - HTTP and WebSocket abstraction
-- `Request`/`Response` structs with `httpRequest()` function (NSURLSession backed)
+- `Request`/`Response` structs with `httpRequest()` function (NSURLSession on
+  Apple, WinHTTP on Windows, libcurl on Linux, `HttpURLConnection` on Android)
+- `Request::followRedirects` (default on; off returns the 3xx itself and sends
+  nothing to its Location) and `Request::maxResponseSize` (0 = no limit; the
+  transfer is aborted as the body arrives and reported as an error with status
+  0), for both `httpRequest` and `downloadFile`. Backends share
+  `ResponseSizeLimit` and `responseTooLargeError` from `HttpProtocol.h`
 - Multipart parts come from a path (`addFileField`) or from bytes already in
   memory (`addFileBytes`/`FileField::fromBytes`, no temporary file needed)
 - `urlEncode`/`urlDecode` and `parseQueryString` (`HTTP/Http.h`)

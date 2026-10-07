@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "Http.h"
+#include "HttpProtocol.h"
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/TaskSemaphore.h>
 #include <eacp/Core/ObjC/AutoReleasePool.h>
@@ -8,8 +9,27 @@
 
 namespace eacp::HTTP
 {
+struct TransferRules
+{
+    explicit TransferRules(const Request& req)
+        : followRedirects(req.followRedirects)
+    {
+        limit.maxBytes = req.maxResponseSize;
+    }
+
+    bool followRedirects = true;
+    ResponseSizeLimit limit;
+    bool tooLarge = false;
+};
+
 struct DownloadContext
 {
+    explicit DownloadContext(const Request& req)
+        : rules(req)
+    {
+    }
+
+    TransferRules rules;
     DownloadProgress* progress = nullptr;
     Threads::TaskSemaphore* semaphore = nullptr;
     std::string filePath;
@@ -18,11 +38,49 @@ struct DownloadContext
     ObjC::Ptr<NSError> error;
 };
 
+struct DataContext
+{
+    explicit DataContext(const Request& req)
+        : rules(req)
+    {
+    }
+
+    TransferRules rules;
+    Threads::TaskSemaphore* semaphore = nullptr;
+    std::string body;
+    ObjC::Ptr<NSURLResponse> response;
+    ObjC::Ptr<NSError> error;
+};
+
 namespace
 {
+template <typename Context>
+Context* delegateContext(id self)
+{
+    return (Context*) ObjC::getIvar<void*>(self, "ctx");
+}
+
 DownloadContext* downloadDelegateContext(id self)
 {
-    return (DownloadContext*) ObjC::getIvar<void*>(self, "ctx");
+    return delegateContext<DownloadContext>(self);
+}
+
+DataContext* dataDelegateContext(id self)
+{
+    return delegateContext<DataContext>(self);
+}
+
+template <typename Context>
+void delegateWillRedirect(id self,
+                          SEL,
+                          NSURLSession*,
+                          NSURLSessionTask*,
+                          NSHTTPURLResponse*,
+                          NSURLRequest* newRequest,
+                          void (^completionHandler)(NSURLRequest*))
+{
+    auto follow = delegateContext<Context>(self)->rules.followRedirects;
+    completionHandler(follow ? newRequest : nil);
 }
 
 void downloadDelegateDidWriteData(id self,
@@ -33,7 +91,18 @@ void downloadDelegateDidWriteData(id self,
                                   int64_t totalBytesWritten,
                                   int64_t totalBytesExpectedToWrite)
 {
-    if (auto* p = downloadDelegateContext(self)->progress)
+    auto* ctx = downloadDelegateContext(self);
+    auto& rules = ctx->rules;
+
+    if (rules.limit.exceeds(totalBytesWritten)
+        || rules.limit.exceeds(totalBytesExpectedToWrite))
+    {
+        rules.tooLarge = true;
+        [task cancel];
+        return;
+    }
+
+    if (auto* p = ctx->progress)
     {
         p->bytesReceived.store(totalBytesWritten);
         p->totalBytes.store(totalBytesExpectedToWrite);
@@ -50,6 +119,9 @@ void downloadDelegateDidFinishDownloading(id self,
                                           NSURL* location)
 {
     auto* ctx = downloadDelegateContext(self);
+
+    if (ctx->rules.tooLarge)
+        return;
 
     ctx->response.reset(task.response);
 
@@ -94,6 +166,96 @@ Class getDownloadDelegateClass()
             downloadDelegateDidFinishDownloading);
         builder->addMethod(@selector(URLSession:task:didCompleteWithError:),
                            downloadDelegateDidComplete);
+        builder->addMethod(
+            @selector(URLSession:
+                            task:willPerformHTTPRedirection:newRequest
+                                :completionHandler:),
+            delegateWillRedirect<DownloadContext>);
+
+        builder->registerClass();
+        return builder;
+    }();
+
+    return instance->get();
+}
+
+void dataDelegateDidReceiveResponse(
+    id self,
+    SEL,
+    NSURLSession*,
+    NSURLSessionDataTask*,
+    NSURLResponse* response,
+    void (^completionHandler)(NSURLSessionResponseDisposition))
+{
+    auto& rules = dataDelegateContext(self)->rules;
+    auto expected = response.expectedContentLength;
+
+    if (expected != NSURLResponseUnknownLength && rules.limit.exceeds(expected))
+    {
+        rules.tooLarge = true;
+        completionHandler(NSURLSessionResponseCancel);
+        return;
+    }
+
+    completionHandler(NSURLSessionResponseAllow);
+}
+
+void dataDelegateDidReceiveData(
+    id self, SEL, NSURLSession*, NSURLSessionDataTask* task, NSData* data)
+{
+    auto* ctx = dataDelegateContext(self);
+
+    if (ctx->rules.tooLarge)
+        return;
+
+    if (!ctx->rules.limit.add((int64_t) data.length))
+    {
+        ctx->rules.tooLarge = true;
+        [task cancel];
+        return;
+    }
+
+    auto* body = &ctx->body;
+
+    [data enumerateByteRangesUsingBlock:^(
+              const void* bytes, NSRange range, BOOL*) {
+      body->append((const char*) bytes, range.length);
+    }];
+}
+
+void dataDelegateDidComplete(
+    id self, SEL, NSURLSession*, NSURLSessionTask* task, NSError* error)
+{
+    auto* ctx = dataDelegateContext(self);
+
+    if (error)
+        ctx->error.reset(error);
+
+    ctx->response.reset(task.response);
+    ctx->semaphore->signal();
+}
+
+Class getDataDelegateClass()
+{
+    static auto instance = []
+    {
+        auto builder = new ObjC::RuntimeClass<NSObject>("EacpDataDelegate");
+
+        builder->addIvar<void*>("ctx");
+        builder->addProtocol(@protocol(NSURLSessionDataDelegate));
+
+        builder->addMethod(
+            @selector(URLSession:dataTask:didReceiveResponse:completionHandler:),
+            dataDelegateDidReceiveResponse);
+        builder->addMethod(@selector(URLSession:dataTask:didReceiveData:),
+                           dataDelegateDidReceiveData);
+        builder->addMethod(@selector(URLSession:task:didCompleteWithError:),
+                           dataDelegateDidComplete);
+        builder->addMethod(
+            @selector(URLSession:
+                            task:willPerformHTTPRedirection:newRequest
+                                :completionHandler:),
+            delegateWillRedirect<DataContext>);
 
         builder->registerClass();
         return builder;
@@ -246,11 +408,54 @@ SafeResult performSyncRequest(NSURLRequest* request, NSURLSession* session)
     return result;
 }
 
+SafeResult performUndelegatedRequest(NSURLRequest* request, const Request& req)
+{
+    auto session = SessionForRequest(req);
+    return performSyncRequest(request, session.get());
+}
+
+bool needsDataDelegate(const Request& req)
+{
+    return !req.followRedirects || req.maxResponseSize > 0;
+}
+
+SafeResult performDelegatedRequest(NSURLRequest* request, const Request& req)
+{
+    auto semaphore = Threads::TaskSemaphore();
+
+    auto ctx = DataContext(req);
+    ctx.semaphore = &semaphore;
+
+    auto delegate = ObjC::Ptr<NSObject>([[getDataDelegateClass() alloc] init]);
+    ObjC::getIvar<void*>(delegate.get(), "ctx") = &ctx;
+
+    auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
+    applyTimeout(config, req);
+
+    auto session = ObjC::attachPtr([NSURLSession
+        sessionWithConfiguration:config
+                        delegate:(id<NSURLSessionDelegate>) delegate.get()
+                   delegateQueue:nil]);
+
+    [[session.get() dataTaskWithRequest:request] resume];
+    semaphore.wait();
+    [session.get() finishTasksAndInvalidate];
+
+    if (ctx.rules.tooLarge)
+        throw std::runtime_error(responseTooLargeError(ctx.rules.limit.maxBytes));
+
+    auto result = SafeResult();
+    result.data.reset(Strings::toNSData(ctx.body));
+    result.response = ctx.response;
+    result.error = ctx.error;
+    return result;
+}
+
 Response httpRequestInternal(const Request& req)
 {
     auto request = getRequest(req);
-    auto session = SessionForRequest(req);
-    auto raw = performSyncRequest(request, session.get());
+    auto raw = needsDataDelegate(req) ? performDelegatedRequest(request, req)
+                                      : performUndelegatedRequest(request, req);
 
     if (raw.error)
         throw std::runtime_error(Strings::toStdString(raw.error.get()));
@@ -294,7 +499,7 @@ Response downloadFileInternal(const Request& req,
 
     auto semaphore = Threads::TaskSemaphore();
 
-    auto ctx = DownloadContext();
+    auto ctx = DownloadContext(req);
     ctx.progress = req.progress;
     ctx.semaphore = &semaphore;
     ctx.filePath = filePath;
@@ -315,6 +520,9 @@ Response downloadFileInternal(const Request& req,
     [task resume];
     semaphore.wait();
     [session.get() finishTasksAndInvalidate];
+
+    if (ctx.rules.tooLarge)
+        throw std::runtime_error(responseTooLargeError(ctx.rules.limit.maxBytes));
 
     if (ctx.error)
         throw std::runtime_error(Strings::toStdString(ctx.error.get()));
