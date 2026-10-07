@@ -39,7 +39,6 @@ struct FormField
 // which would otherwise need a temporary file just to be uploaded.
 struct FileField
 {
-
     static FileField
         fromBytes(const std::string& fieldName,
                   const std::string& fileName,
@@ -92,6 +91,17 @@ struct Request
     // backend's own behaviour in place. A parallel download applies it to
     // every chunk separately.
     Time::MS timeout {0};
+
+    // Whether a 3xx answer is followed to its Location. Off, the redirect
+    // itself is the response - its status, headers and body - and nothing
+    // is sent to the new URL, so a header such as an API key never leaves
+    // the host it was meant for.
+    bool followRedirects = true;
+
+    // Most bytes of body accepted, zero for no limit. A response that grows
+    // past it is aborted as it arrives - not buffered and measured after -
+    // and reported as an error with no status.
+    int64_t maxResponseSize = 0;
 
     Vector<FormField> formFields;
     Vector<FileField> fileFields;

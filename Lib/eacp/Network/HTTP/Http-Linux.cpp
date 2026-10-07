@@ -21,11 +21,55 @@ void initCurlOnce()
     (void) once;
 }
 
+struct BodyToString
+{
+    std::string* body = nullptr;
+    ResponseSizeLimit limit;
+    bool tooLarge = false;
+};
+
+struct BodyToFile
+{
+    std::FILE* file = nullptr;
+    ResponseSizeLimit limit;
+    bool tooLarge = false;
+};
+
 size_t writeToString(void* contents, size_t size, size_t nmemb, void* userp)
 {
     auto total = size * nmemb;
-    static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total);
+    auto& sink = *static_cast<BodyToString*>(userp);
+
+    if (!sink.limit.add((int64_t) total))
+    {
+        sink.tooLarge = true;
+        return 0;
+    }
+
+    sink.body->append(static_cast<char*>(contents), total);
     return total;
+}
+
+size_t writeToFile(void* contents, size_t size, size_t nmemb, void* userp)
+{
+    auto total = size * nmemb;
+    auto& sink = *static_cast<BodyToFile*>(userp);
+
+    if (!sink.limit.add((int64_t) total))
+    {
+        sink.tooLarge = true;
+        return 0;
+    }
+
+    return std::fwrite(contents, 1, total, sink.file);
+}
+
+[[noreturn]] void throwTransferError(CURLcode rc, bool tooLarge, const Request& req)
+{
+    if (tooLarge)
+        throw std::runtime_error(responseTooLargeError(req.maxResponseSize));
+
+    throw std::runtime_error(curl_easy_strerror(rc));
 }
 
 size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userp)
@@ -78,7 +122,7 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
 
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.type.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
     if (req.timeout.count > 0)
@@ -99,7 +143,8 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
 
     for (const auto& [k, v]: req.headers)
     {
-        auto line = k + ": " + v;
+        auto line = k;
+        line.append(": ").append(v);
         headers.list = curl_slist_append(headers.list, line.c_str());
     }
     if (headers.list)
@@ -117,22 +162,23 @@ Response httpRequestInternal(const Request& req)
     auto headers = CurlSlist();
     applyCommonOptions(curl.handle, req, headers);
 
-    auto body = std::string();
-    curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToString);
-    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &body);
-
     auto response = Response();
+    auto sink = BodyToString {};
+    sink.body = &response.content;
+    sink.limit.maxBytes = req.maxResponseSize;
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToString);
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &sink);
+
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
 
     auto rc = curl_easy_perform(curl.handle);
     if (rc != CURLE_OK)
-        throw std::runtime_error(curl_easy_strerror(rc));
+        throwTransferError(rc, sink.tooLarge, req);
 
     long status = 0;
     curl_easy_getinfo(curl.handle, CURLINFO_RESPONSE_CODE, &status);
     response.statusCode = (int) status;
-    response.content = std::move(body);
     return response;
 }
 
@@ -151,7 +197,11 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     if (!file)
         throw std::runtime_error("Failed to open destination file");
 
-    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, file);
+    auto sink = BodyToFile {};
+    sink.file = file;
+    sink.limit.maxBytes = req.maxResponseSize;
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToFile);
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &sink);
 
     auto response = Response();
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
@@ -168,7 +218,7 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     std::fclose(file);
 
     if (rc != CURLE_OK)
-        throw std::runtime_error(curl_easy_strerror(rc));
+        throwTransferError(rc, sink.tooLarge, req);
 
     long status = 0;
     curl_easy_getinfo(curl.handle, CURLINFO_RESPONSE_CODE, &status);

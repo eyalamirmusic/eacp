@@ -272,6 +272,11 @@ req.headers["Content-Type"] = "application/json";
 auto res = req.perform();
 ```
 
+Redirects are followed unless `req.followRedirects = false`, which hands back
+the 3xx itself and sends nothing to the new address. `req.maxResponseSize`
+caps the body: a response that grows past it is cut off as it arrives and
+comes back as an error.
+
 More examples live under [`Apps/`](Apps), grouped by the module they exercise:
 `Console`, `Network`, `Graphics`, `GPU`, `UI`, `SVG`, `WebView`, `Camera`,
 `Video`, `Plugins` and `Mixed`.

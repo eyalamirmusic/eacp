@@ -145,6 +145,22 @@ bool acceptsByteRanges(const std::string& acceptRangesHeaderValue)
            != std::string::npos;
 }
 
+bool ResponseSizeLimit::exceeds(int64_t bytes) const
+{
+    return maxBytes > 0 && bytes > maxBytes;
+}
+
+bool ResponseSizeLimit::add(int64_t more)
+{
+    received += more;
+    return !exceeds(received);
+}
+
+std::string responseTooLargeError(int64_t maxBytes)
+{
+    return "The response exceeded " + std::to_string(maxBytes) + " bytes";
+}
+
 std::string serializeResponse(const Response& response)
 {
     auto out = std::stringstream();

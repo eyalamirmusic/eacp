@@ -232,6 +232,15 @@ public:
     Exchange(const Exchange&) = delete;
     Exchange& operator=(const Exchange&) = delete;
 
+    void throwIfDeclaredTooLarge(const ResponseSizeLimit& limit)
+    {
+        if (isHead || limit.maxBytes <= 0)
+            return;
+
+        if (limit.exceeds(contentLength()))
+            throw std::runtime_error(responseTooLargeError(limit.maxBytes));
+    }
+
     std::int64_t contentLength()
     {
         auto length = env->CallLongMethod(connection, java.getContentLengthLong);
@@ -312,7 +321,8 @@ private:
         if (!env->IsInstanceOf(connection, java.connection))
             throw std::runtime_error("Not an HTTP URL: " + req.url);
 
-        env->CallVoidMethod(connection, java.setInstanceFollowRedirects, JNI_TRUE);
+        auto follow = req.followRedirects ? JNI_TRUE : JNI_FALSE;
+        env->CallVoidMethod(connection, java.setInstanceFollowRedirects, follow);
         env->CallVoidMethod(connection, java.setUseCaches, JNI_FALSE);
         check();
 
@@ -500,13 +510,33 @@ void throwIfCancelled(const Request& req)
         throw std::runtime_error("Download cancelled");
 }
 
+ResponseSizeLimit sizeLimitFor(const Request& req)
+{
+    auto limit = ResponseSizeLimit {};
+    limit.maxBytes = req.maxResponseSize;
+    return limit;
+}
+
+void countChunk(ResponseSizeLimit& limit, std::string_view chunk)
+{
+    if (!limit.add((std::int64_t) chunk.size()))
+        throw std::runtime_error(responseTooLargeError(limit.maxBytes));
+}
+
 Response httpRequestInternal(const Request& req)
 {
     auto [env, net] = javaContext();
     auto exchange = Exchange {env, *net, req};
 
+    auto limit = sizeLimitFor(req);
+    exchange.throwIfDeclaredTooLarge(limit);
+
     auto& body = exchange.response.content;
-    auto appendToBody = [&body](std::string_view chunk) { body.append(chunk); };
+    auto appendToBody = [&body, &limit](std::string_view chunk)
+    {
+        countChunk(limit, chunk);
+        body.append(chunk);
+    };
     exchange.readBody(appendToBody);
 
     return exchange.response;
@@ -516,6 +546,9 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
 {
     auto [env, net] = javaContext();
     auto exchange = Exchange {env, *net, req};
+
+    auto limit = sizeLimitFor(req);
+    exchange.throwIfDeclaredTooLarge(limit);
 
     if (req.progress != nullptr)
         req.progress->totalBytes.store(exchange.contentLength());
@@ -527,6 +560,8 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
 
     auto writeToFile = [&](std::string_view chunk)
     {
+        countChunk(limit, chunk);
+
         if (std::fwrite(chunk.data(), 1, chunk.size(), file.get()) != chunk.size())
             throw std::runtime_error("Failed to write file: " + filePath);
 
