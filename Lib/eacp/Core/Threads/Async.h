@@ -18,6 +18,8 @@ struct AsyncError : std::runtime_error
 
 namespace detail
 {
+std::string messageOf(const std::exception_ptr& error);
+
 template <typename T>
 struct AsyncValue
 {
@@ -59,7 +61,7 @@ struct AsyncState : AsyncValue<T>
     }
 
     Status status = Status::Pending;
-    std::string error;
+    std::exception_ptr error;
     Vector<Callback> continuations;
 };
 } // namespace detail
@@ -103,10 +105,15 @@ public:
 
     void reject(std::string message) const
     {
+        reject(std::make_exception_ptr(AsyncError {std::move(message)}));
+    }
+
+    void reject(std::exception_ptr error) const
+    {
         assertMainThread();
         if (state->status != detail::AsyncState<T>::Status::Pending)
             return;
-        state->error = std::move(message);
+        state->error = std::move(error);
         state->status = detail::AsyncState<T>::Status::Rejected;
         state->settle();
     }
@@ -183,7 +190,7 @@ public:
             }
             else if (onError)
             {
-                onError(s->error);
+                onError(detail::messageOf(s->error));
             }
         };
 
@@ -224,18 +231,7 @@ public:
 
         void unhandled_exception()
         {
-            try
-            {
-                std::rethrow_exception(std::current_exception());
-            }
-            catch (const std::exception& e)
-            {
-                this->promise.reject(e.what());
-            }
-            catch (...)
-            {
-                this->promise.reject("Unknown exception in Async coroutine");
-            }
+            this->promise.reject(std::current_exception());
         }
     };
 
@@ -284,7 +280,7 @@ private:
     void throwIfRejected()
     {
         if (state->status == detail::AsyncState<T>::Status::Rejected)
-            throw AsyncError {state->error};
+            std::rethrow_exception(state->error);
     }
 
     std::shared_ptr<detail::AsyncState<T>> state;
