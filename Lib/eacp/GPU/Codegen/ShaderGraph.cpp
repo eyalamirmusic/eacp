@@ -1105,7 +1105,10 @@ int ShaderGraph::addStatement(Statement newStatement)
 {
     auto isCompound = newStatement.kind == StatementKind::If
                       || newStatement.kind == StatementKind::Loop;
-    newStatement.sequence = isCompound ? blocks[newStatement.body].opened : sequence;
+    auto namesABlock = newStatement.body >= 0 && newStatement.body < blocks.size();
+    newStatement.sequence = !isCompound   ? sequence
+                            : namesABlock ? blocks[newStatement.body].opened
+                                          : -1;
     ++sequence;
     statementList.add(newStatement);
     auto index = statementList.size() - 1;
