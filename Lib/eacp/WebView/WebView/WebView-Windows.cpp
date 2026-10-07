@@ -1930,6 +1930,15 @@ void WebView::addScriptMessageHandler(const std::string& name,
         + name + "={postMessage:send};})();");
 
     impl->ensureInitialized();
+
+    // A document-start script only reaches documents created after it, but
+    // WKWebView exposes a handler to the page already loaded too. Mirror that:
+    // a handler added after the first navigation (e.g. a channel attached on
+    // demand) must work without a reload. The script is idempotent, so
+    // running it on the live page as well as on later loads is harmless.
+    if (impl->initialized && impl->webView)
+        impl->webView->ExecuteScript(script.c_str(), nullptr);
+
     impl->queueDocStartScript(std::move(script));
 }
 
