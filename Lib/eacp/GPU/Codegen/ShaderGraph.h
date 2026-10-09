@@ -290,6 +290,10 @@ struct Statement
     // it
     SimdMatrixElement element = SimdMatrixElement::Float; // SimdMatrixLoad:
     // what the patch's elements are in memory, and so what the fragment is
+    int sequence = -1; // where the statement begins among the graph's
+    // sequence points: a node whose sequenceOf is at most this was built
+    // before the statement ran. For an if or a loop it is where the first
+    // body opened, which is after the condition was built.
 };
 
 // A run of statements, held by index so a nested body is an int on the
@@ -297,6 +301,7 @@ struct Statement
 struct Block
 {
     Vector<int> statements; // indices into the graph's statement store
+    int opened = -1; // the sequence point the block was opened at
 };
 
 // A constant array the shader subscripts: the palette a procedural shader picks
@@ -591,6 +596,13 @@ public:
     }
 
     const Expr& expr(int node) const;
+
+    // Where a node was built among the statements: the number of sequence
+    // points - statements recorded, blocks opened and closed - before it. A
+    // node built before a statement stands for the value it had there, which
+    // is how the emitter keeps `auto p = f(buffer[i]); write(buffer, i, p);`
+    // meaning one evaluation of f however often p is used afterwards.
+    int sequenceOf(int node) const;
     int nodeCount() const;
     constexpr const Vector<ValueType>& inputs() const { return inputTypes; }
     constexpr const Vector<StepRate>& inputStepRates() const { return inputRates; }
@@ -771,6 +783,8 @@ private:
 
     SharingCaches sharing;
     Vector<char> pureFlags; // parallel to nodes
+    Vector<int> nodeSequences; // parallel to nodes
+    int sequence = 0;
 
     Vector<Expr> nodes;
     Vector<ValueType> inputTypes;
@@ -813,4 +827,20 @@ private:
     int discardNode = -1;
     float discardValue = 0.0f;
 };
+
+// What running a statement can leave holding something else, following the
+// bodies of an if or a loop: the variables, the storage-buffer slots, and
+// whether threadgroup memory may have moved. A handle built before such a
+// statement that reads what it changes is a value to be held across it - the
+// rule the emitter names one by and the CPU executor evaluates one by, so both
+// read it from here.
+void collectWrites(const ShaderGraph& graph,
+                   const Statement& statement,
+                   Vector<char>& written);
+
+void collectBufferWrites(const ShaderGraph& graph,
+                         const Statement& statement,
+                         Vector<char>& written);
+
+bool touchesShared(const ShaderGraph& graph, const Statement& statement);
 } // namespace eacp::GPU

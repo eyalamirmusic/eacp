@@ -5,6 +5,8 @@
 #include <eacp/Core/Threads/Async.h>
 #include <eacp/Core/Utils/FilePath.h>
 
+#include <map>
+
 namespace eacp
 {
 // A file an app needs from the network, kept on disk and fetched at most
@@ -47,6 +49,10 @@ public:
         // Wall-clock limit on the transfer, after which it fails. Zero
         // leaves the platform's own limit in place.
         Time::MS timeout {0};
+
+        // Sent on every request the resource makes, the conditional GET
+        // included: an Authorization header for a gated server, say.
+        std::map<std::string, std::string> headers {};
     };
 
     enum class Freshness

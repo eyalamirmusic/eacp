@@ -36,6 +36,11 @@ CompileResult compileGlsl(Stage stage,
                           const std::string& source,
                           Target target = Target::vulkan13Spirv16);
 
+// What produces the words compileGlsl returns: glslang's version and the target
+// it compiles for. Changes whenever the same source could compile differently,
+// so it is what a cache of those words is keyed by.
+std::string compilerIdentity();
+
 // Builds glslang's symbol tables, a one-time 90 ms the first compileGlsl would
 // otherwise pay. Idempotent and thread-safe.
 void warmUp();

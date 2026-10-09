@@ -14,6 +14,7 @@ target_compile_options(eacp-gpu-codegen PUBLIC
 
 target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ComputeKernel.cpp
+        Codegen/KernelName.cpp
         Codegen/PackedScalars.cpp
         Codegen/PackedVertex.cpp
         Codegen/ShaderBuilder.cpp
@@ -52,13 +53,18 @@ target_link_libraries(eacp-gpu PUBLIC eacp-graphics eacp-gpu-codegen)
 
 target_sources(eacp-gpu PRIVATE
         Buffer/Buffer.cpp
+        Buffer/BufferPool.cpp
         Buffer/StreamingBuffers.cpp
         Codegen/ComputeProgram.cpp
+        Codegen/KernelCache.cpp
         Codegen/ShaderProgram.cpp
         CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
         Frame/Frame.cpp
         Frame/RenderPass.cpp
+        Pipeline/ComputePipelineCache.cpp
+        Shader/ShaderBinaryCache.cpp
+        Timing/CallCost.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp

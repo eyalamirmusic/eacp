@@ -8,6 +8,9 @@
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/Environment.h>
 
+#include <deque>
+#include <utility>
+
 namespace eacp::GPU
 {
 namespace
@@ -95,7 +98,24 @@ struct Device::Native
     // Retained rather than held weakly: the command buffer is autoreleased, and
     // the pool it came from may well have drained by the time a read waits.
     ObjC::Ptr<NSObject<MTLCommandBuffer>> lastSubmitted;
+
+    // The submissions that may still be running, oldest first, each beside
+    // its serial. Metal has no queue-wide fence to read, so whether a serial
+    // has finished is asked of the command buffers themselves.
+    std::uint64_t submissionCount = 0;
+    std::deque<std::pair<std::uint64_t, ObjC::Ptr<NSObject<MTLCommandBuffer>>>> inFlight;
 };
+
+namespace
+{
+bool hasCommandBufferFinished(NSObject<MTLCommandBuffer>* buffer)
+{
+    auto status = ((id<MTLCommandBuffer>) buffer).status;
+
+    return status == MTLCommandBufferStatusCompleted
+           || status == MTLCommandBufferStatusError;
+}
+} // namespace
 
 Device::Device()
     : impl()
@@ -181,6 +201,19 @@ int Device::maxThreadgroupMemory() const
     return (int) metalDevice.maxThreadgroupMemoryLength;
 }
 
+// What Metal itself recommends staying under, which on a unified-memory Mac is
+// a share of system RAM rather than a card's own, and already accounts for what
+// else is resident. Zero from a device that will not say.
+std::int64_t Device::memoryBudget() const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil)
+        return 0;
+
+    return (std::int64_t) metalDevice.recommendedMaxWorkingSetSize;
+}
+
 // The family is the gate both packed fragment types share. MTLGPUFamilyApple7
 // is the first with the SIMD-group matrix instructions, and it is also where
 // the SIMD group is the 32 threads the EDSL's fragment layout is written
@@ -257,6 +290,34 @@ void Device::trackSubmittedWork(void* nativeCommandBuffer)
 {
     impl->lastSubmitted.reset(
         (__bridge NSObject<MTLCommandBuffer>*) nativeCommandBuffer);
+
+    while (!impl->inFlight.empty()
+           && hasCommandBufferFinished(impl->inFlight.front().second.get()))
+        impl->inFlight.pop_front();
+
+    impl->inFlight.emplace_back(++impl->submissionCount, impl->lastSubmitted);
+}
+
+std::uint64_t Device::lastSubmission() const
+{
+    return impl->submissionCount;
+}
+
+bool Device::hasFinished(std::uint64_t submission) const
+{
+    if (submission > impl->submissionCount)
+        return false;
+
+    for (const auto& [serial, buffer]: impl->inFlight)
+    {
+        if (serial > submission)
+            break;
+
+        if (!hasCommandBufferFinished((NSObject<MTLCommandBuffer>*) buffer.get()))
+            return false;
+    }
+
+    return true;
 }
 
 void Device::waitForSubmittedWork()

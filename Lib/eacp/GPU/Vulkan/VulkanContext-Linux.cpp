@@ -68,8 +68,11 @@ bool wantsValidation()
     return vulkanEnvironmentFlag("EACP_VK_VALIDATION");
 }
 
-// $XDG_CACHE_HOME/eacp, and $HOME/.cache/eacp where the first is unset. Empty
-// when neither is, which turns the pipeline cache off rather than guessing.
+// The app's own cache folder, FilePath::appCacheDirectory() - under
+// $XDG_CACHE_HOME, or $HOME/.cache where it is unset - beside the compiled
+// shaders ShaderBinaryCache keeps there. On Android the platform's cache
+// directory, and empty before it is known, which turns the pipeline cache off
+// rather than guessing.
 std::string vulkanCacheDirectory()
 {
     if constexpr (Platform::isAndroid())
@@ -78,17 +81,7 @@ std::string vulkanCacheDirectory()
         return cache.empty() ? std::string {} : (cache / "eacp").str();
     }
 
-    const auto xdg = getEnvValue("XDG_CACHE_HOME");
-
-    if (!xdg.empty())
-        return xdg + "/eacp";
-
-    const auto home = getEnvValue("HOME");
-
-    if (home.empty())
-        return {};
-
-    return home + "/.cache/eacp";
+    return FilePath::appCacheDirectory().str();
 }
 
 std::string toHex(const std::uint8_t* bytes, int count)

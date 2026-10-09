@@ -15,6 +15,22 @@ if (TARGET eacp-ml)
     target_link_libraries(MLGraphTests PRIVATE eacp-ml)
 endif ()
 
+if (TARGET eacp-ml-kernels)
+    nano_add_executable(MLKernelTests
+            SOURCES
+                ActivationTests.cpp
+                AttentionTests.cpp
+                BandedAttentionTests.cpp
+                LinearTests.cpp
+                NormTests.cpp
+                RoPETests.cpp
+                SafetensorsFileTests.cpp
+                SwiGLUTests.cpp
+                TensorOpsTests.cpp
+                TensorTests.cpp
+            TARGETS eacp-ml-kernels)
+endif ()
+
 if (NOT EACP_HAS_COREML)
     return ()
 endif ()

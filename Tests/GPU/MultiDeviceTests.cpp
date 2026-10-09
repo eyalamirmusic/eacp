@@ -210,3 +210,38 @@ auto tWorkerDevicesRunConcurrently = test("GPU/workerDevicesRunConcurrently") = 
     check(results[0]);
     check(results[1]);
 };
+
+// The rule assertOwningThread asserts, asked as a question so both answers can
+// be checked: Device::shared() belongs to the main thread whichever thread asks,
+// and a Device made on a worker belongs to that worker and to nothing else.
+auto tOwningThreadIsAnswerable = test("GPU/owningThreadIsAnswerable") = []
+{
+    auto& shared = Device::shared();
+
+    if (!shared.isValid())
+        return;
+
+    check(shared.threadOwner().followsMainThread);
+    check(shared.threadOwner().isCurrent());
+
+    auto sharedOwnedOffMain = true;
+    auto workerOwnedOnWorker = false;
+    auto workerOwner = Device::ThreadOwner {};
+
+    auto worker = std::thread(
+        [&]
+        {
+            sharedOwnedOffMain = shared.threadOwner().isCurrent();
+
+            auto device = Device();
+            workerOwner = device.threadOwner();
+            workerOwnedOnWorker = workerOwner.isCurrent();
+        });
+
+    worker.join();
+
+    check(!sharedOwnedOffMain);
+    check(workerOwnedOnWorker);
+    check(!workerOwner.followsMainThread);
+    check(!workerOwner.isCurrent());
+};

@@ -413,6 +413,10 @@ public:
         chooseBatchWidth();
         markRamps();
         buildSchedules();
+
+        if (failed())
+            return;
+
         layOut();
     }
 
@@ -583,6 +587,7 @@ private:
             auto stepId = plan.steps.size();
             plan.steps.add(Plan::Step {});
             pending.add(PendingSchedule {});
+            stepStatements.add(statementId);
             stepIds.add(stepId);
 
             auto step = Plan::Step {};
@@ -2341,11 +2346,14 @@ private:
 
     // A node evaluated in a statement's schedule, whose scratch is free again
     // once its last use has read it.
+    //
+    // A frozen node is not: it is read by every later step of its block, a
+    // loop's iterations included, so it keeps a slot of its own.
     bool isPooled(int id) const
     {
         const auto& node = plan.nodes[id];
         return node.used && node.op != Op::Leaf && levels[id] == PlanLevel::Lane
-               && ownsScratch(graph.expr(id).kind);
+               && ownsScratch(graph.expr(id).kind) && freezeSites[id].empty();
     }
 
     // Times: schedule position p is 2p, and a step's commit, which reads its
@@ -2445,6 +2453,7 @@ private:
         for (auto stepId = 0; stepId < plan.steps.size(); ++stepId)
         {
             const auto& step = plan.steps[stepId];
+            noteScheduled(stepId, step.freezeBegin, step.freezeEnd);
             noteScheduled(stepId, step.scheduleBegin, step.scheduleEnd);
 
             for (auto root: pending[stepId].roots)
@@ -2513,7 +2522,217 @@ private:
         if (levels[id] != PlanLevel::Lane)
             return levels[id] != planSiteLevel(site);
 
+        if (isFrozenOver(id, site, freezing))
+            return true;
+
         return hoistSites[id] != planUnhoisted && hoistSites[id] != site;
+    }
+
+    // Whether a freeze ahead of an earlier step of the block - or of this one,
+    // once its own freeze range has run - already holds the node at site.
+    bool isFrozenOver(int id, int site, bool inOwnFreeze) const
+    {
+        if (site < 0)
+            return false;
+
+        for (auto frozenAt: freezeSites[id])
+            if (site <= freezeRegionEnds[frozenAt]
+                && (frozenAt < site || (frozenAt == site && !inOwnFreeze)))
+                return true;
+
+        return false;
+    }
+
+    // The statements a freeze ahead of a step answers to: its own bodies, and
+    // every later statement of its block with theirs - the step ids from it to
+    // the last of its block's subtree, since ids run in program order.
+    int freezeRegionEnd(int stepId) const
+    {
+        const auto& range = plan.blocks[stepBlocks[stepId]];
+        return subtreeLasts[plan.blockSteps[range.end - 1]];
+    }
+
+    // The expressions a statement evaluates, as the emitter counts them: a
+    // loop's condition is left out, since it is evaluated again on every test.
+    static void addStatementRoots(const Statement& statement, Vector<int>& roots)
+    {
+        if (statement.kind != StatementKind::Loop)
+            roots.add(statement.value);
+
+        roots.add(statement.index);
+        roots.add(statement.indexY);
+        roots.add(statement.stride);
+    }
+
+    bool readsStale(int node, int site, bool sharedMoved)
+    {
+        if (node < 0 || marks[node] == stamp)
+            return false;
+
+        marks[node] = stamp;
+
+        if (isFrozenOver(node, site, false))
+            return false;
+
+        const auto& expr = graph.expr(node);
+
+        if (expr.kind == ExprKind::VarRead && writtenVariables[expr.index] != 0)
+            return true;
+
+        if (sharedMoved && expr.kind == ExprKind::SharedRead)
+            return true;
+
+        if ((expr.kind == ExprKind::BufferRead
+             || expr.kind == ExprKind::BufferVectorRead
+             || expr.kind == ExprKind::AtomicLoad)
+            && writtenBuffers[expr.index] != 0)
+            return true;
+
+        for (auto argument: expr.args)
+            if (readsStale(argument, site, sharedMoved))
+                return true;
+
+        return false;
+    }
+
+    static bool dependsOnState(ExprKind kind)
+    {
+        return kind == ExprKind::VarRead || kind == ExprKind::BufferRead
+               || kind == ExprKind::BufferVectorRead || kind == ExprKind::AtomicLoad
+               || kind == ExprKind::SharedRead;
+    }
+
+    void markConditionReads(int node)
+    {
+        if (node < 0 || marks[node] == stamp)
+            return;
+
+        marks[node] = stamp;
+
+        if (dependsOnState(graph.expr(node).kind))
+            conditionReads[node] = 1;
+
+        for (auto argument: graph.expr(node).args)
+            markConditionReads(argument);
+    }
+
+    bool readsLoopCondition(int node)
+    {
+        if (node < 0 || marks[node] == stamp)
+            return false;
+
+        marks[node] = stamp;
+
+        if (conditionReads[node] != 0)
+            return true;
+
+        for (auto argument: graph.expr(node).args)
+            if (readsLoopCondition(argument))
+                return true;
+
+        return false;
+    }
+
+    // The reads a loop condition makes - of the step's own loop and of every
+    // loop around it - which stay evaluated where they are used.
+    void markEnclosingConditions(int stepId)
+    {
+        std::fill(conditionReads.begin(), conditionReads.end(), 0);
+        ++stamp;
+
+        for (auto site = stepId; site >= 0;)
+        {
+            if (plan.steps[site].kind == StatementKind::Loop)
+                markConditionReads(plan.steps[site].value);
+
+            site = blockOwners[stepBlocks[site]];
+        }
+    }
+
+    void freezeUnder(int node, int stepId, int sequence, bool sharedMoved)
+    {
+        if (node < 0 || walked[node] != 0 || failed())
+            return;
+
+        walked[node] = 1;
+
+        if (isFrozenOver(node, stepId, false))
+            return;
+
+        ++stamp;
+
+        if (graph.sequenceOf(node) <= sequence && !readsLoopCondition(node))
+        {
+            ++stamp;
+
+            if (readsStale(node, stepId, sharedMoved))
+                freeze(node, stepId);
+
+            return;
+        }
+
+        for (auto argument: graph.expr(node).args)
+            freezeUnder(argument, stepId, sequence, sharedMoved);
+    }
+
+    void freeze(int node, int stepId)
+    {
+        if (graph.expr(node).kind == ExprKind::VarRead)
+        {
+            fail("a read of variable " + std::to_string(graph.expr(node).index)
+                 + " is used after an assignment to it; the CPU executor holds "
+                   "a handle across a write only when it is an expression over "
+                   "the variable, not the bare read");
+            return;
+        }
+
+        freezeSites[node].add(stepId);
+        frozenAt[stepId].add(node);
+    }
+
+    // Ahead of each step that writes a variable, a buffer element or
+    // threadgroup memory, every expression built before it that reads what it
+    // writes and that it or a later statement of its block still evaluates is
+    // frozen: evaluated once there and read back afterwards. The outermost
+    // such expression is the one frozen, and a loop condition's reads are left
+    // to be evaluated where used - the emitter's freezeBefore, step for step.
+    void computeFreezes()
+    {
+        auto stepCount = plan.steps.size();
+        freezeSites.resize(graph.nodeCount());
+        frozenAt.resize(stepCount);
+        freezeRegionEnds.resize(stepCount, 0);
+        conditionReads.resize(graph.nodeCount(), 0);
+        walked.resize(graph.nodeCount(), 0);
+
+        for (auto stepId = 0; stepId < stepCount && !failed(); ++stepId)
+        {
+            freezeRegionEnds[stepId] = freezeRegionEnd(stepId);
+
+            const auto& statement = graph.statement(stepStatements[stepId]);
+            auto sharedMoved = touchesShared(graph, statement);
+
+            writtenVariables.assign(graph.variables().size(), 0);
+            collectWrites(graph, statement, writtenVariables);
+
+            writtenBuffers.assign(graph.storageBuffers().size(), 0);
+            collectBufferWrites(graph, statement, writtenBuffers);
+
+            if (!writtenVariables.contains(1) && !writtenBuffers.contains(1)
+                && !sharedMoved)
+                continue;
+
+            auto roots = Vector<int> {};
+
+            for (auto later = stepId + 1; later <= freezeRegionEnds[stepId]; ++later)
+                addStatementRoots(graph.statement(stepStatements[later]), roots);
+
+            markEnclosingConditions(stepId);
+            std::fill(walked.begin(), walked.end(), 0);
+
+            for (auto root: roots)
+                freezeUnder(root, stepId, statement.sequence, sharedMoved);
+        }
     }
 
     template <typename Emit>
@@ -2713,6 +2932,13 @@ private:
         for (auto stepId = 0; stepId < plan.steps.size(); ++stepId)
         {
             ++stamp;
+            freezing = true;
+
+            for (auto frozen: frozenAt[stepId])
+                visit(frozen, stepId, -1, countAt(stepId));
+
+            freezing = false;
+            ++stamp;
 
             for (auto root: pending[stepId].roots)
                 visit(root, stepId, pending[stepId].pinned, countAt(stepId));
@@ -2794,6 +3020,16 @@ private:
             ++stamp;
 
             auto& step = plan.steps[stepId];
+            step.freezeBegin = plan.scheduleList.size();
+            freezing = true;
+
+            for (auto frozen: frozenAt[stepId])
+                visit(frozen, stepId, -1, append);
+
+            freezing = false;
+            step.freezeEnd = plan.scheduleList.size();
+            ++stamp;
+
             step.scheduleBegin = plan.scheduleList.size();
 
             for (auto root: roots.roots)
@@ -2811,6 +3047,11 @@ private:
         describeArrays();
         mapBlocks();
         computeLevels();
+        computeFreezes();
+
+        if (failed())
+            return;
+
         collectUses();
         chooseHoistSites();
 
@@ -2831,6 +3072,7 @@ private:
     Plan::Options options;
     int groupLimit = 1;
     Vector<PendingSchedule> pending;
+    Vector<int> stepStatements;
     Vector<int> marks;
     Vector<LaneForm> forms;
     Vector<char> arrayUsed;
@@ -2849,6 +3091,14 @@ private:
     Vector<int> definitions;
     Vector<int> lastUses;
     Vector<int> lastDefinitions;
+    Vector<Vector<int>> freezeSites;
+    Vector<Vector<int>> frozenAt;
+    Vector<int> freezeRegionEnds;
+    Vector<char> conditionReads;
+    Vector<char> walked;
+    Vector<char> writtenVariables;
+    Vector<char> writtenBuffers;
+    bool freezing = false;
     int stamp = 0;
     std::size_t cursor = 0;
 };

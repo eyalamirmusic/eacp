@@ -35,7 +35,10 @@ set(gpu_test_sources
         BlendStateTests.cpp
         BufferAccessTests.cpp
         BufferFillTests.cpp
+        BufferPoolTests.cpp
         BufferRangeTests.cpp
+        CallCostTests.cpp
+        ShaderBinaryCacheTests.cpp
         CommandBufferTimingTests.cpp
         CommandBufferWaitTests.cpp
         CompressedTextureTests.cpp
@@ -48,6 +51,7 @@ set(gpu_test_sources
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
+        DispatchTimingTests.cpp
         ExternalGeometryTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp
@@ -59,6 +63,7 @@ set(gpu_test_sources
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp
+        KernelCacheTests.cpp
         LargeBufferTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp

@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Containers.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
@@ -13,6 +14,10 @@ struct PassTiming
 {
     std::string label;
     double milliseconds = 0.0;
+
+    // How many regions were timed under this label: 1 for a pass, the number
+    // of dispatches in a total from FrameTimings::totalsByLabel().
+    int count = 1;
 };
 
 // What one frame cost the GPU - every pass that was given a label, in the order
@@ -36,5 +41,36 @@ struct FrameTimings
     // Device::frameIndex() as it was when this frame was encoded. Zero until
     // the first frame's numbers have come back.
     std::uint64_t frameIndex = 0;
+
+    // The passes summed by label, largest first: what a pass timed with
+    // TimingScope::EachDispatch reads as a per-kernel profile.
+    Vector<PassTiming> totalsByLabel() const
+    {
+        auto totals = Vector<PassTiming> {};
+
+        for (const auto& pass: passes)
+        {
+            auto found = std::find_if(totals.begin(),
+                                      totals.end(),
+                                      [&](const PassTiming& total)
+                                      { return total.label == pass.label; });
+
+            if (found == totals.end())
+            {
+                totals.add(pass);
+                continue;
+            }
+
+            found->milliseconds += pass.milliseconds;
+            found->count += pass.count;
+        }
+
+        std::sort(totals.begin(),
+                  totals.end(),
+                  [](const PassTiming& a, const PassTiming& b)
+                  { return a.milliseconds > b.milliseconds; });
+
+        return totals;
+    }
 };
 } // namespace eacp::GPU

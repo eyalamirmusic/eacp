@@ -674,7 +674,8 @@ auto tCommitAsyncMatchesCommit = test("FrameCompute/commitAsyncMatchesCommit") =
 };
 
 // A 2D dispatch: every cell of the grid runs exactly once, and no thread
-// outside it writes anything. The buffer starts at zero and the value each cell
+// outside it writes anything. The buffer is filled with zeros, since makeBuffer's
+// storage may be recycled, and the value each cell
 // writes is a function of both its coordinates, so an off-by-one grid, a
 // swapped pair of extents and a guard that never fired are all distinguishable
 // from the numbers that come back.
@@ -695,6 +696,7 @@ auto tGridDispatchCoversTheGrid = test("FrameCompute/gridDispatchCoversTheGrid")
 
     {
         auto commands = device.makeCommandBuffer();
+        commands.fill(output);
 
         {
             auto pass = commands.beginCompute();

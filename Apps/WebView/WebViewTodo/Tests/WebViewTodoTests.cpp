@@ -212,7 +212,7 @@ auto tInputAttributesReadable =
 
 auto tCallJsResolvesWithResult = test("WebViewTodo/callJsResolvesWithResult") = []
 {
-    auto result = callJS("1 + 2").waitFor(eacp::Time::MS {2000});
+    auto result = callJS("1 + 2").waitFor(defaultCommandTimeout);
     check(result == "3");
 };
 
@@ -221,7 +221,7 @@ auto tCallJsRejectsOnError = test("WebViewTodo/callJsRejectsOnJsException") = []
     auto threw = false;
     try
     {
-        callJS("throw new Error('boom')").waitFor(eacp::Time::MS {2000});
+        callJS("throw new Error('boom')").waitFor(defaultCommandTimeout);
     }
     catch (const AsyncError& e)
     {
@@ -269,7 +269,7 @@ auto tCallsExposedAsyncPageFunction =
 {
     auto rendered = transport()
                         .call<RenderedTodos>("getRenderedTodos")
-                        .waitFor(eacp::Time::MS {5000});
+                        .waitFor(defaultCommandTimeout);
 
     check(rendered.count == 3);
     check(rendered.texts.size() == 3);
@@ -284,7 +284,7 @@ auto tExposedPageFunctionReflectsUiUpdates =
 
     auto rendered = transport()
                         .call<RenderedTodos>("getRenderedTodos")
-                        .waitFor(eacp::Time::MS {5000});
+                        .waitFor(defaultCommandTimeout);
 
     check(rendered.count == 4);
     check(rendered.texts.back() == "Call me from C++");

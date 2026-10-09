@@ -1,7 +1,48 @@
 #include "Buffer.h"
 
+#include "BufferPool.h"
+
+#include <utility>
+
 namespace eacp::GPU
 {
+Buffer::~Buffer()
+{
+    giveBackToPool();
+}
+
+Buffer::Buffer(Buffer&& other) noexcept
+    : impl(std::move(other.impl))
+    , pool(std::exchange(other.pool, {}))
+    , pooledUsage(other.pooledUsage)
+{
+}
+
+Buffer& Buffer::operator=(Buffer&& other) noexcept
+{
+    if (this == &other)
+        return *this;
+
+    giveBackToPool();
+
+    impl = std::move(other.impl);
+    pool = std::exchange(other.pool, {});
+    pooledUsage = other.pooledUsage;
+
+    return *this;
+}
+
+void Buffer::giveBackToPool()
+{
+    auto link = std::exchange(pool, {});
+
+    if (link.expired() || impl.get() == nullptr)
+        return;
+
+    auto key = BufferPool::Key {size(), pooledUsage};
+    BufferPool::giveBack(link, std::move(*this), key);
+}
+
 bool Buffer::isPageAligned(const ExternalMemory& memory)
 {
     const auto page = (std::uintptr_t) memoryPageSize();

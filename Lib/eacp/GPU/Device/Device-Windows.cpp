@@ -128,6 +128,43 @@ int Device::maxThreadgroupMemory() const
     return isValid() ? 32 * 1024 : 0;
 }
 
+// DXGI's own answer rather than the adapter's total: QueryVideoMemoryInfo
+// reports a Budget that already accounts for what else is resident on the
+// card, so it shrinks when another process takes memory and is the number a
+// driver means by "stay under this". The local segment is device memory; the
+// non-local one is system memory an adapter may reach over the bus, and a
+// pool wants nothing to do with that.
+std::int64_t Device::memoryBudget() const
+{
+    if (!isValid())
+        return 0;
+
+    auto* d3dDevice = static_cast<ID3D12Device*>(nativeDevice());
+
+    if (d3dDevice == nullptr)
+        return 0;
+
+    auto factory = winrt::com_ptr<IDXGIFactory4>();
+
+    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void())))
+        return 0;
+
+    auto adapter = winrt::com_ptr<IDXGIAdapter3>();
+
+    if (FAILED(factory->EnumAdapterByLuid(d3dDevice->GetAdapterLuid(),
+                                          __uuidof(IDXGIAdapter3),
+                                          adapter.put_void())))
+        return 0;
+
+    auto info = DXGI_QUERY_VIDEO_MEMORY_INFO {};
+
+    if (FAILED(adapter->QueryVideoMemoryInfo(
+            0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info)))
+        return 0;
+
+    return (std::int64_t) info.Budget;
+}
+
 // No, and it says nothing about the adapter: eacp compiles HLSL at cs_5_0 under
 // FXC, which has no wave matrix operation to lower a fragment to, so one is the
 // two-floats-per-lane emulation on every Direct3D device. The packed loads work
@@ -182,5 +219,17 @@ void Device::trackSubmittedWork(void*)
 void Device::waitForSubmittedWork()
 {
     impl->context.waitFor(impl->context.lastSubmitted());
+}
+
+// The queue's fence values are the serials: every submission signals the next
+// one, and the fence's completed value is how far the GPU has got.
+std::uint64_t Device::lastSubmission() const
+{
+    return impl->context.lastSubmitted();
+}
+
+bool Device::hasFinished(std::uint64_t submission) const
+{
+    return impl->context.hasCompleted(submission);
 }
 } // namespace eacp::GPU

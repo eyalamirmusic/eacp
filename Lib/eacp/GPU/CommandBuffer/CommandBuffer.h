@@ -32,8 +32,15 @@ public:
     //
     // DispatchOrder::Concurrent lets the pass's dispatches overlap, and leaves
     // the ordering between dependent ones to ComputePass::barrier().
+    //
+    // TimingScope::EachDispatch times every kernel the pass dispatches on its
+    // own instead, each named label/Kernel in timings() - Kernel alone for an
+    // unlabelled pass. It is for finding where the time goes, not for shipping:
+    // on Metal each timed dispatch is an encoder of its own, and the dispatches
+    // of a Concurrent pass stop overlapping.
     ComputePass beginCompute(std::string_view label = {},
-                             DispatchOrder order = DispatchOrder::Serial);
+                             DispatchOrder order = DispatchOrder::Serial,
+                             TimingScope scope = TimingScope::Pass);
 
     // Fills every byte of the range with value on the GPU, in order with the
     // passes either side of it. The offset and the length must be multiples of

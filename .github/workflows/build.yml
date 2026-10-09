@@ -143,6 +143,7 @@ jobs:
 
       - name: Test
         if: ${{ !matrix.vulkan }}
+        timeout-minutes: 30
         run: ctest --test-dir build --output-on-failure -j 4
 
       # A test binary that crashes on macOS logs only its signal; the stack is

@@ -4,6 +4,8 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
+#include <stdexcept>
+
 namespace eacp::GPU
 {
 Uniform<InputBuffer>& Uniform<InputBuffer>::operator=(const Buffer& newBuffer)
@@ -48,10 +50,23 @@ namespace
 // compute pass at the slot its handle was declared with. One walk rather than
 // one per resource kind - the members are visited in declaration order either
 // way, and the slots are already carried by the handles.
+//
+// A member nothing was assigned to is recorded rather than skipped, so the
+// dispatch can refuse it: a kernel that runs with a slot left over from
+// whatever the pass bound last reads memory nobody meant it to. A member
+// assigned a buffer that never got storage is still skipped, as the pass's own
+// bind would skip it.
+//
+// With releasing on, every member is cleared once it is bound, so the pointer
+// it held into a buffer the caller is about to free does not outlive the
+// dispatch. That is what makes a shared kernel safe: see sharedKernel.
 class ComputeBindVisitor final : public ShaderVisitor
 {
 public:
-    explicit ComputeBindVisitor(ComputePass& passToUse);
+    ComputeBindVisitor(ComputePass& passToUse, bool releaseAfterBinding);
+
+    // The first member the walk found with nothing assigned, or null.
+    const char* unassigned() const { return firstUnassigned; }
 
     void onUniform(const char*,
                    ValueType,
@@ -103,12 +118,39 @@ public:
                            const Texture* texture) override;
 
 private:
+    bool isAssigned(const char* name, const void* resource);
+
+    // Every handle the walk is given is the base of the Uniform member that
+    // holds its binding - ShaderVisitor's operator() hands the member itself
+    // over - so the member is reached back through it.
+    template <typename Handle>
+    void release(Handle& handle)
+    {
+        if (releasing)
+            static_cast<Uniform<Handle>&>(handle).value = {};
+    }
+
     ComputePass& pass;
+    bool releasing = false;
+    const char* firstUnassigned = nullptr;
 };
 
-ComputeBindVisitor::ComputeBindVisitor(ComputePass& passToUse)
+ComputeBindVisitor::ComputeBindVisitor(ComputePass& passToUse,
+                                       bool releaseAfterBinding)
     : pass(passToUse)
+    , releasing(releaseAfterBinding)
 {
+}
+
+bool ComputeBindVisitor::isAssigned(const char* name, const void* resource)
+{
+    if (resource != nullptr)
+        return true;
+
+    if (firstUnassigned == nullptr)
+        firstUnassigned = name;
+
+    return false;
 }
 
 void ComputeBindVisitor::onUniform(const char*,
@@ -118,70 +160,86 @@ void ComputeBindVisitor::onUniform(const char*,
 {
 }
 
-void ComputeBindVisitor::onInputBuffer(const char*,
+void ComputeBindVisitor::onInputBuffer(const char* name,
                                        InputBuffer& handle,
                                        const BufferRange& range)
 {
-    if (range.isValid())
+    if (isAssigned(name, range.buffer) && range.isValid())
         pass.setInputBuffer(range, handle.slot);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onOutputBuffer(const char*,
+void ComputeBindVisitor::onOutputBuffer(const char* name,
                                         OutputBuffer& handle,
                                         const BufferRange& range)
 {
-    if (range.isValid())
+    if (isAssigned(name, range.buffer) && range.isValid())
         pass.setOutputBuffer(range, handle.slot);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onUIntInputBuffer(const char*,
+void ComputeBindVisitor::onUIntInputBuffer(const char* name,
                                            UIntInputBuffer& handle,
                                            const BufferRange& range)
 {
-    if (range.isValid())
+    if (isAssigned(name, range.buffer) && range.isValid())
         pass.setInputBuffer(range, handle.slot);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onUIntOutputBuffer(const char*,
+void ComputeBindVisitor::onUIntOutputBuffer(const char* name,
                                             UIntOutputBuffer& handle,
                                             const BufferRange& range)
 {
-    if (range.isValid())
+    if (isAssigned(name, range.buffer) && range.isValid())
         pass.setOutputBuffer(range, handle.slot);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onAtomicBuffer(const char*,
+void ComputeBindVisitor::onAtomicBuffer(const char* name,
                                         AtomicBuffer& handle,
                                         const BufferRange& range)
 {
-    if (range.isValid())
+    if (isAssigned(name, range.buffer) && range.isValid())
         pass.setOutputBuffer(range, handle.slot);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onTexture(const char*,
+void ComputeBindVisitor::onTexture(const char* name,
                                    Texture2D& handle,
                                    const Texture* texture,
                                    TextureSampling sampling)
 {
-    if (texture != nullptr)
+    if (isAssigned(name, texture))
         pass.setInputTexture(*texture, handle.slot, sampling);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onCubeTexture(const char*,
+void ComputeBindVisitor::onCubeTexture(const char* name,
                                        TextureCube& handle,
                                        const Texture* texture,
                                        TextureSampling sampling)
 {
-    if (texture != nullptr)
+    if (isAssigned(name, texture))
         pass.setInputTexture(*texture, handle.slot, sampling);
+
+    release(handle);
 }
 
-void ComputeBindVisitor::onWritableTexture(const char*,
+void ComputeBindVisitor::onWritableTexture(const char* name,
                                            WritableTexture2D& handle,
                                            const Texture* texture)
 {
-    if (texture != nullptr)
+    if (isAssigned(name, texture))
         pass.setOutputTexture(*texture, handle.slot);
+
+    release(handle);
 }
 } // namespace
 
@@ -205,8 +263,7 @@ void ComputeProgram::prepare(Device& device)
         return;
     }
 
-    shaderLibrary.emplace(device, source());
-    pipelineState.emplace(device, *shaderLibrary);
+    compiled = compileComputeCached(device, source());
 
     reportSimdWidthMismatch();
 }
@@ -237,18 +294,21 @@ bool ComputeProgram::fitsPackedSimdMatrix(const Device& device) const
 
 const ComputePipeline& ComputeProgram::pipeline() const
 {
-    return *pipelineState;
+    return compiled->pipeline;
 }
 
 bool ComputeProgram::isValid() const
 {
-    return pipelineState.has_value() && pipelineState->isValid();
+    return compiled != nullptr && compiled->pipeline.isValid();
 }
 
 void ComputeProgram::bindResources(ComputePass& pass)
 {
-    auto bindVisitor = ComputeBindVisitor {pass};
+    auto bindVisitor = ComputeBindVisitor {pass, releasesBindings};
     reflectMembers(bindVisitor);
+
+    if (bindVisitor.unassigned() != nullptr)
+        throwUnassigned(bindVisitor.unassigned());
 }
 
 void ComputeProgram::reportSimdWidthMismatch() const
@@ -256,7 +316,7 @@ void ComputeProgram::reportSimdWidthMismatch() const
     if (!graph().usesSimdReduction() && !graph().usesSimdGroups())
         return;
 
-    auto width = pipelineState->threadExecutionWidth();
+    auto width = compiled->pipeline.threadExecutionWidth();
 
     if (width <= 0 || width == ComputeProgram::simdWidth)
         return;
@@ -272,8 +332,20 @@ void ComputeProgram::reportSimdWidthMismatch() const
 
 void ComputeProgram::buildRefusedPipeline(Device& device)
 {
-    shaderLibrary.emplace(device, ShaderSource {});
-    pipelineState.emplace(device, *shaderLibrary);
+    compiled = std::make_shared<const CompiledCompute>(device, ShaderSource {});
+}
+
+void ComputeProgram::throwUnassigned(const char* member) const
+{
+    auto message = "eacp: " + name() + " was dispatched with nothing assigned "
+                   + "to its '" + member + "' member.";
+
+    if (releasesBindings)
+        message += " It is a shared kernel, which lets go of every buffer "
+                   "and texture after each dispatch, so each call assigns "
+                   "all of them.";
+
+    throw std::logic_error {message};
 }
 
 void ComputeProgram::reportUnsupportedPackedSimdMatrix(const Device& device) const

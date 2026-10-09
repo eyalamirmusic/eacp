@@ -1,8 +1,12 @@
 #pragma once
 
 #include "../Pipeline/ComputePipeline.h"
+#include "../Pipeline/ComputePipelineCache.h"
 #include "ComputeKernel.h"
 #include "ShaderProgram.h"
+
+#include <memory>
+#include <string>
 
 // A compute kernel authored as a struct, the compute sibling of ShaderProgram.
 // Uniforms are named, typed members set by name; storage buffers are members
@@ -67,6 +71,11 @@ public:
     // on the Device whose passes will dispatch it. A pipeline belongs to the
     // device that compiled it, so a kernel a worker Device dispatches is
     // compiled on that Device rather than on the process-wide one.
+    //
+    // Only the first kernel with a given source compiles it: every later one,
+    // this program's type or another that emitted the same text, shares that
+    // library and pipeline (compileComputeCached). Safe to call from a thread
+    // other than the Device's, as compiling a kernel always has been.
     void prepare(Device& device);
 
     void prepare();
@@ -101,9 +110,22 @@ public:
     // would rather know than find out asks here.
     bool isValid() const;
 
-    // Binds every assigned buffer and texture member to the pass at its
-    // declared slot. ComputePass::dispatch(program, ...) calls this.
+    // Binds every buffer and texture member to the pass at its declared slot.
+    // ComputePass::dispatch(program, ...) calls this. A member nothing was
+    // assigned to throws std::logic_error naming the kernel and the member, so
+    // the dispatch never runs against a slot the kernel did not fill.
     void bindResources(ComputePass& pass);
+
+    // Makes every dispatch clear the kernel's buffer and texture members once
+    // it has bound them, so each dispatch binds only what was assigned for it
+    // and a member left unassigned throws instead of reaching for a buffer an
+    // earlier caller has since freed. sharedKernel turns this on for the
+    // instances it hands out; a kernel its owner dispatches again and again
+    // with the same buffers leaves it off. Uniform values are copied into the
+    // dispatch and are kept either way.
+    void releaseBindingsAfterEachDispatch() { releasesBindings = true; }
+
+    bool releasesBindingsAfterEachDispatch() const { return releasesBindings; }
 
 private:
     // The one thing a kernel using simdSum/simdMax/simdMin or a SIMD-group
@@ -136,7 +158,9 @@ private:
     // after the library compiled clean, which points at the wrong thing.
     void reportThreadgroupMemoryOverBudget(const Device& device) const;
 
-    std::optional<ShaderLibrary> shaderLibrary;
-    std::optional<ComputePipeline> pipelineState;
+    [[noreturn]] void throwUnassigned(const char* member) const;
+
+    std::shared_ptr<const CompiledCompute> compiled;
+    bool releasesBindings = false;
 };
 } // namespace eacp::GPU

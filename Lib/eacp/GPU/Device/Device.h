@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Buffer/Buffer.h"
+#include "../Buffer/BufferPool.h"
 #include "../CommandBuffer/CommandBuffer.h"
 #include "../Pipeline/ComputePipeline.h"
 #include "../Pipeline/RenderPipeline.h"
@@ -12,7 +13,11 @@
 #include <eacp/Core/Threads/ThreadUtils.h>
 
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <typeindex>
 
 namespace eacp::Graphics
 {
@@ -60,6 +65,19 @@ public:
     // an app may call it at the top of its own, on the same terms.
     void assertOwningThread() const;
 
+    // The owning thread as a value, for state that has to answer the same
+    // question after the Device is gone - BufferPool's link, which a Buffer
+    // can outlive. Asked in every build, unlike the assertion.
+    struct ThreadOwner
+    {
+        std::uint64_t id = 0;
+        bool followsMainThread = false;
+
+        bool isCurrent() const;
+    };
+
+    ThreadOwner threadOwner() const { return {owningThread, mainThreadOwned}; }
+
     Buffer makeBuffer(const void* data,
                       std::int64_t bytes,
                       BufferUsage usage = BufferUsage::Vertex,
@@ -72,6 +90,9 @@ public:
     }
 
     // An uninitialised buffer of the given size, e.g. a compute output target.
+    // Its contents are whatever was there: the storage may be recycled from a
+    // buffer of the same size and usage that the GPU has finished with (see
+    // BufferPool), so a kernel that needs zeros writes them.
     Buffer makeBuffer(std::int64_t bytes, BufferUsage usage = BufferUsage::Storage);
 
     // A buffer over memory the caller owns: shared with it where the backend
@@ -181,6 +202,15 @@ public:
     // zero, and a check against zero stands down.
     int maxThreadgroupMemory() const;
 
+    // How many bytes of device-local memory this device would rather we kept
+    // resident, or zero where it will not say. Not how much exists and not how
+    // much is free: the number a driver answers when asked what a well-behaved
+    // process should stay under, which is what anything holding storage of its
+    // own - BufferPool here, a caller's allocator just as much - wants to size
+    // itself against. A discrete card answers its own memory; a unified one
+    // answers a share of the system's.
+    std::int64_t memoryBudget() const;
+
     // Whether this device loads an 8x8 SIMD-group matrix fragment out of a
     // buffer of packed sixteen-bit elements **natively** - one instruction, no
     // widening - which is what ComputeProgram::simdMatrixHalf and
@@ -246,6 +276,15 @@ public:
     void trackSubmittedWork(void* nativeCommandBuffer);
     void waitForSubmittedWork();
 
+    // Every submission to this Device's queue - a CommandBuffer's, a Frame's -
+    // gets a serial, counting up from 1 in the order they were submitted. These
+    // two are what lets something the GPU may still be using be kept exactly as
+    // long as it has to be: note lastSubmission() when you are done with it,
+    // and it is free once hasFinished() says so for the next one. BufferPool is
+    // built on them. Neither blocks.
+    std::uint64_t lastSubmission() const;
+    bool hasFinished(std::uint64_t submission) const;
+
     // How many frames have begun on this device. StreamingBuffers picks which
     // of its pools to write into from this, so that a renderer streaming
     // per-frame data has nothing to call at the frame boundary and therefore
@@ -299,6 +338,24 @@ public:
     // real storage.
     constexpr void noteBufferCreated() { ++bufferCount; }
 
+    // This Device's own T: one, made on first use and
+    // destroyed with the Device, before the backend device itself. For state
+    // that is only valid on this Device - compiled pipelines, recycled buffers
+    // - and must neither outlive it nor be found again by a later Device at
+    // the same address. The lookup is safe from any thread; what T does with
+    // that is T's own business.
+    template <typename T>
+    T& perDevice()
+    {
+        auto lock = std::scoped_lock {perDeviceMutex};
+        auto& slot = perDeviceObjects[std::type_index {typeid(T)}];
+
+        if (slot == nullptr)
+            slot = std::make_shared<T>();
+
+        return *static_cast<T*>(slot.get());
+    }
+
 private:
     // Makes this Device follow the main thread rather than the one that
     // constructed it. Private because Device::shared() is the only caller and
@@ -318,5 +375,8 @@ private:
 
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
+
+    std::mutex perDeviceMutex;
+    std::map<std::type_index, std::shared_ptr<void>> perDeviceObjects;
 };
 } // namespace eacp::GPU

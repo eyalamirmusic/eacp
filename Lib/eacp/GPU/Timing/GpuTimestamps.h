@@ -103,10 +103,11 @@ public:
     // it would have and is simply not timed - see FrameTimer::beginPass, which
     // is where that is decided and where it would be noticed.
     //
-    // High enough to give every kernel of a net a label of its own: the whole
-    // pool is two timestamps a pass, so 128 costs a slot 2 KB of samples and
-    // the resolve one 1 KB stack array.
-    static constexpr int maxTimedPasses = 128;
+    // High enough to time every dispatch of a network step on its own
+    // (TimingScope::EachDispatch): the pool is two timestamps a pass, so 2048
+    // is a slot's 32 KB of samples - the most one Metal counter sample buffer
+    // holds - and the resolve one 16 KB array.
+    static constexpr int maxTimedPasses = 2048;
 
 private:
     struct Native;
