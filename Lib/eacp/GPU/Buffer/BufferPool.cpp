@@ -6,6 +6,27 @@
 
 namespace eacp::GPU
 {
+BufferPool::ScopedUnusedBudget::ScopedUnusedBudget(BufferPool& poolToUse,
+                                                  std::int64_t ceiling)
+    : pool(poolToUse), previous(pool.unusedCeiling)
+{
+    pool.setUnusedCeiling(ceiling);
+}
+
+BufferPool::ScopedUnusedBudget::~ScopedUnusedBudget()
+{
+    pool.setUnusedCeiling(previous);
+}
+
+void BufferPool::setUnusedCeiling(std::int64_t bytes)
+{
+    unusedCeiling = std::max(std::int64_t {0}, bytes);
+    bound = -1;
+    // Only completed storage can be evicted; in-flight buffers remain guarded
+    // by their submission fence when a scope ends.
+    promoteFinished();
+}
+
 // What a pooled Buffer holds instead of the pool: who may give storage back,
 // and where to. Only the pool owns it, so it expires with the pool, and the
 // owner is a copy so a thread holding the link a moment can ask it safely
@@ -106,12 +127,12 @@ std::int64_t BufferPool::bytesKeptUnused() const
     // Asked once. Every take() checks the bound, and on D3D12 the answer costs
     // a DXGI factory and an adapter enumeration - which, asked per allocation,
     // is far more than the allocation it is there to save.
-    if (bound == 0)
+    if (bound < 0)
     {
         auto recommended = device != nullptr ? device->memoryBudget() : 0;
 
-        bound = recommended > 0 ? std::min(bytesKeptUnusedCeiling, recommended / 4)
-                                : bytesKeptUnusedCeiling;
+        bound = recommended > 0 ? std::min(unusedCeiling, recommended / 4)
+                                : unusedCeiling;
     }
 
     return bound;

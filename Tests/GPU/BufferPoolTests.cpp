@@ -13,6 +13,39 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+auto tScopedBudgetRestoresAndNests = test("GPU/bufferPoolScopedBudgetRestoresAndNests") = []
+{
+    auto& device = Device::shared();
+    if (!device.isValid())
+        return;
+    auto& pool = BufferPool::of(device);
+    auto original = pool.bytesKeptUnused();
+    {
+        auto outer = pool.keepUnusedUpTo(1024 * 1024);
+        auto outerLimit = pool.bytesKeptUnused();
+        check(outerLimit <= 1024 * 1024);
+        {
+            auto inner = pool.keepUnusedUpTo(0);
+            check(pool.bytesKeptUnused() == 0);
+        }
+        check(pool.bytesKeptUnused() == outerLimit);
+    }
+    check(pool.bytesKeptUnused() == original);
+};
+
+auto tScopedBudgetRespectsDeviceLimit = test("GPU/bufferPoolScopedBudgetRespectsDeviceLimit") = []
+{
+    auto& device = Device::shared();
+    if (!device.isValid())
+        return;
+    auto& pool = BufferPool::of(device);
+    auto memory = device.memoryBudget();
+    auto scope = pool.keepUnusedUpTo(8ll * 1024 * 1024 * 1024);
+    check(pool.bytesKeptUnused() <= 8ll * 1024 * 1024 * 1024);
+    if (memory > 0)
+        check(pool.bytesKeptUnused() <= memory / 4);
+};
+
 namespace
 {
 constexpr auto count = 1024;
@@ -111,6 +144,30 @@ auto tFinishedStorageIsReused = test("GPU/bufferPoolReusesFinishedStorage") = []
 
     check(storageOf(second) == first);
     check(device.buffersCreated() == created);
+};
+
+auto tScopedBudgetEvictsCompletedStorage = test("GPU/bufferPoolScopedBudgetEvictsCompletedStorage") = []
+{
+    auto& device = Device::shared();
+    if (!device.isValid())
+        return;
+    auto& pool = BufferPool::of(device);
+    auto idle = pool.keepUnusedUpTo(0);
+    {
+        auto working = pool.keepUnusedUpTo(1024 * 1024);
+        {
+            auto buffer = device.makeBuffer(sizeFor(8));
+            auto commands = device.makeCommandBuffer();
+            writeRampInto(device, commands, buffer);
+            commands.commit();
+        }
+        submitSomethingElse(device);
+        auto touch = device.makeBuffer(8); // promote the completed test buffer
+    }
+    auto created = device.buffersCreated();
+    auto again = device.makeBuffer(sizeFor(8));
+    check(again.isValid());
+    check(device.buffersCreated() == created + 1);
 };
 
 // Destroyed while the command buffer that writes it is still being recorded:

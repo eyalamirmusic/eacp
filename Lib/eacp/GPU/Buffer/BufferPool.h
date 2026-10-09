@@ -50,6 +50,27 @@ public:
 
     Buffer take(std::int64_t bytes, BufferUsage usage);
 
+    // A compute workload can temporarily retain its working set, then restore
+    // the idle budget. Always bounded by a quarter of the device memory budget.
+    // Scopes are nested on the Device's owning thread and must not outlive it.
+    class ScopedUnusedBudget
+    {
+    public:
+        ScopedUnusedBudget(BufferPool& pool, std::int64_t ceiling);
+        ~ScopedUnusedBudget();
+        ScopedUnusedBudget(const ScopedUnusedBudget&) = delete;
+        ScopedUnusedBudget& operator=(const ScopedUnusedBudget&) = delete;
+
+    private:
+        BufferPool& pool;
+        std::int64_t previous;
+    };
+
+    ScopedUnusedBudget keepUnusedUpTo(std::int64_t bytes)
+    {
+        return ScopedUnusedBudget {*this, bytes};
+    }
+
     // How many submissions storage nobody asks for again is kept through
     // before it is let go. Long enough to outlive one round of the work,
     // which is the thing a pool exists to serve: a sampling step submits
@@ -68,11 +89,10 @@ public:
     // whatever it last used for ever. Generating one medium clip left 6.0 GB
     // in the pool before this, which is not memory an idle app should keep.
     //
-    // Two gigabytes is what the work here actually reuses (a decode turns over
-    // about 1.5 GB), and holding more than it reuses buys nothing - so this is
-    // a ceiling and not a target. A device too small to spare that gets a
-    // quarter of what it recommends instead, which is the number that matters
-    // on a 4 GB card and never binds on a large one.
+    // Two gigabytes is the default idle ceiling. A larger repeated compute
+    // workload can keep its working set with a ScopedUnusedBudget; restoring
+    // the old ceiling evicts only completed, unused buffers. A device too small
+    // to spare the requested ceiling gets a quarter of its budget instead.
     std::int64_t bytesKeptUnused() const;
 
     static constexpr std::int64_t bytesKeptUnusedCeiling = 2ll * 1024 * 1024 * 1024;
@@ -118,11 +138,13 @@ private:
     void promoteFinished();
     void freeUnused();
     void freeOldestBeyondBudget();
+    void setUnusedCeiling(std::int64_t bytes);
 
     Device* device = nullptr;
     std::uint64_t lastTrimmed = 0;
     std::int64_t availableBytes = 0;
-    mutable std::int64_t bound = 0;
+    std::int64_t unusedCeiling = bytesKeptUnusedCeiling;
+    mutable std::int64_t bound = -1;
     std::deque<Waiting> waiting;
     std::multimap<Key, Available> available;
 
