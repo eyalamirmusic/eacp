@@ -279,6 +279,17 @@ public:
         return features.samplerAnisotropy == VK_TRUE;
     }
 
+    // Several records per vkCmdDrawIndirect, and a non-zero firstInstance in a
+    // record; each enabled wherever the device offers it.
+    bool supportsMultiDrawIndirect() const
+    {
+        return features.multiDrawIndirect == VK_TRUE;
+    }
+
+    // vkCmdDrawIndirectCount: the Vulkan 1.2 feature on the core floor, the
+    // VK_KHR_draw_indirect_count extension below it.
+    bool supportsIndirectCount() const { return indirectCountSupported; }
+
     // Null before the device came up.
     VkSampler getSampler(const TextureSampling& sampling) const
     {
@@ -321,6 +332,7 @@ private:
     Spirv::Target spirvTarget = Spirv::Target::vulkan13Spirv16;
     VulkanRenderPassCache renderPasses;
     bool depthResolvesBySampleZero = false;
+    bool indirectCountSupported = false;
 
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 

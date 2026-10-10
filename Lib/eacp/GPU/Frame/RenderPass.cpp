@@ -37,4 +37,25 @@ void RenderPass::drainParticipants()
     // closing.
     participants.clear();
 }
+
+void RenderPass::drawIndirect(const Buffer& arguments, std::int64_t offset)
+{
+    drawIndirect(arguments, offset, 1);
+}
+
+void RenderPass::drawIndexedIndirect(const Buffer& indices,
+                                     IndexFormat format,
+                                     const Buffer& arguments,
+                                     std::int64_t offset)
+{
+    drawIndexedIndirect(BufferRange::of(indices), format, arguments, offset, 1);
+}
+
+void RenderPass::drawIndexedIndirect(const BufferRange& indices,
+                                     IndexFormat format,
+                                     const Buffer& arguments,
+                                     std::int64_t offset)
+{
+    drawIndexedIndirect(indices, format, arguments, offset, 1);
+}
 } // namespace eacp::GPU

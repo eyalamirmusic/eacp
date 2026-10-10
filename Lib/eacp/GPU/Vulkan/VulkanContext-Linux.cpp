@@ -406,6 +406,33 @@ RequiredFeatures probeFeatures(VkPhysicalDevice candidate, std::uint32_t apiVers
                                         : probeExtensionFeatures(candidate);
 }
 
+bool probeDrawIndirectCount(VkPhysicalDevice candidate, bool coreFloor)
+{
+    if (!coreFloor)
+        return hasDeviceExtension(candidate,
+                                  VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+
+    VkPhysicalDeviceVulkan12Features features12 = {};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
+    VkPhysicalDeviceFeatures2 features = {};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = &features12;
+
+    vkGetPhysicalDeviceFeatures2(candidate, &features);
+
+    return features12.drawIndirectCount == VK_TRUE;
+}
+
+bool aliasDrawIndirectCount()
+{
+    vkCmdDrawIndirectCount = vkCmdDrawIndirectCountKHR;
+    vkCmdDrawIndexedIndirectCount = vkCmdDrawIndexedIndirectCountKHR;
+
+    return vkCmdDrawIndirectCount != nullptr
+           && vkCmdDrawIndexedIndirectCount != nullptr;
+}
+
 // VK_KHR_spirv_1_4 needs VK_KHR_shader_float_controls below 1.2.
 bool offersSpirv14(VkPhysicalDevice candidate)
 {
@@ -948,6 +975,7 @@ bool VulkanShared::selectPhysicalDevice()
 
     coreFloor = reachesCoreFloor(properties.apiVersion);
     renderPassPath = !coreFloor || forcesRenderPasses();
+    indirectCountSupported = probeDrawIndirectCount(physicalDevice, coreFloor);
 
     if (coreFloor)
         spirvTarget = Spirv::Target::vulkan13Spirv16;
@@ -987,6 +1015,7 @@ bool VulkanShared::createDevice()
     features12.pNext = &features13;
     features12.timelineSemaphore = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
+    features12.drawIndirectCount = indirectCountSupported ? VK_TRUE : VK_FALSE;
 
     VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
     synchronization2.sType =
@@ -1012,6 +1041,8 @@ bool VulkanShared::createDevice()
     enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
     enabled.features.samplerAnisotropy = features.samplerAnisotropy;
     enabled.features.independentBlend = features.independentBlend;
+    enabled.features.multiDrawIndirect = features.multiDrawIndirect;
+    enabled.features.drawIndirectFirstInstance = features.drawIndirectFirstInstance;
 
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};
@@ -1026,6 +1057,9 @@ bool VulkanShared::createDevice()
             extensions.add(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
             extensions.add(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
         }
+
+        if (indirectCountSupported)
+            extensions.add(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
     }
 
     const auto swapchainOffered =
@@ -1061,6 +1095,9 @@ bool VulkanShared::createDevice()
         device = VK_NULL_HANDLE;
         return false;
     }
+
+    if (!coreFloor && indirectCountSupported)
+        indirectCountSupported = aliasDrawIndirectCount();
 
     vkGetDeviceQueue(device, queueFamily, 0, &queue);
 

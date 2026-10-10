@@ -188,6 +188,14 @@ public:
     // hand-written kernel that needs more. An invalid Device answers zero.
     int maxComputeBufferSlots() const;
 
+    // Whether RenderPass::drawIndirectCount and drawIndexedIndirectCount, whose
+    // number of draws is read from a buffer, reach the GPU. False on Metal,
+    // which has no such draw; true on D3D12; on Vulkan where the device has
+    // drawIndirectCount (core 1.2) or VK_KHR_draw_indirect_count. Where it is
+    // false those calls are refused with a trace. The other indirect draws work
+    // everywhere.
+    bool supportsIndirectCount() const;
+
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,
     // the emitter's own reduction and SIMD-matrix scratch included.

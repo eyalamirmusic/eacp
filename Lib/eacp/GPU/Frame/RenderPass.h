@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Buffer/Buffer.h"
+#include "IndirectDraw.h"
 #include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
@@ -311,6 +312,62 @@ public:
                               int firstIndex = 0,
                               int firstInstance = 0,
                               int baseVertex = 0);
+
+    // A draw whose counts the GPU decided: a DrawArguments record read out of
+    // `arguments` at `offset`, typically written by a kernel earlier in the
+    // frame. Any buffer works - a Storage buffer is what a kernel writes - and
+    // the transition a kernel's write needs before it is read as arguments is
+    // made here. The offset must be a multiple of four and leave a whole record
+    // in the buffer; one that does not is refused with a trace.
+    void drawIndirect(const Buffer& arguments, std::int64_t offset = 0);
+
+    // drawCount records, stride bytes apart (zero meaning tightly packed): one
+    // vkCmdDrawIndirect or ExecuteIndirect, a loop of single draws on Metal. A
+    // record with instanceCount or vertexCount zero draws nothing.
+    void drawIndirect(const Buffer& arguments,
+                      std::int64_t offset,
+                      int drawCount,
+                      std::int64_t stride = 0);
+
+    // The same with the number of draws also on the GPU: the first uint32 at
+    // countOffset in `count`, clamped to maxDrawCount. Only where
+    // Device::supportsIndirectCount() says so - Vulkan's vkCmdDrawIndirectCount
+    // and D3D12's ExecuteIndirect with a count buffer; Metal has no such draw,
+    // and the call is refused there with a trace.
+    void drawIndirectCount(const Buffer& arguments,
+                           std::int64_t offset,
+                           const Buffer& count,
+                           std::int64_t countOffset,
+                           int maxDrawCount,
+                           std::int64_t stride = 0);
+
+    // The indexed forms, reading DrawIndexedArguments. indices is bound as in
+    // drawIndexed, and each record's firstIndex counts from its start.
+    void drawIndexedIndirect(const Buffer& indices,
+                             IndexFormat format,
+                             const Buffer& arguments,
+                             std::int64_t offset = 0);
+
+    void drawIndexedIndirect(const BufferRange& indices,
+                             IndexFormat format,
+                             const Buffer& arguments,
+                             std::int64_t offset = 0);
+
+    void drawIndexedIndirect(const BufferRange& indices,
+                             IndexFormat format,
+                             const Buffer& arguments,
+                             std::int64_t offset,
+                             int drawCount,
+                             std::int64_t stride = 0);
+
+    void drawIndexedIndirectCount(const BufferRange& indices,
+                                  IndexFormat format,
+                                  const Buffer& arguments,
+                                  std::int64_t offset,
+                                  const Buffer& count,
+                                  std::int64_t countOffset,
+                                  int maxDrawCount,
+                                  std::int64_t stride = 0);
 
     // Binds a program's uniform block to the stage that reads it, and to no
     // other. The program answers per stage from the same walk that decided

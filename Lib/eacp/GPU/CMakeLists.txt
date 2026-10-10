@@ -59,6 +59,7 @@ target_sources(eacp-gpu PRIVATE
         CommandBuffer/CopyPlan.cpp
         Device/Device.cpp
         Frame/Frame.cpp
+        Frame/IndirectDrawPlan.cpp
         Frame/RenderPass.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp

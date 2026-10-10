@@ -471,9 +471,8 @@ std::string describeAdapter(ID3D12Device* device)
 
     auto adapter = winrt::com_ptr<IDXGIAdapter1>();
 
-    if (FAILED(factory->EnumAdapterByLuid(device->GetAdapterLuid(),
-                                          __uuidof(IDXGIAdapter1),
-                                          adapter.put_void())))
+    if (FAILED(factory->EnumAdapterByLuid(
+            device->GetAdapterLuid(), __uuidof(IDXGIAdapter1), adapter.put_void())))
         return "unknown adapter";
 
     auto description = DXGI_ADAPTER_DESC1 {};
@@ -798,6 +797,31 @@ ID3D12CommandSignature* D3D12Shared::getDispatchSignature()
     return dispatchSignature.get();
 }
 
+ID3D12CommandSignature* D3D12Shared::getDrawSignature(bool indexed, UINT stride)
+{
+    if (device == nullptr)
+        return nullptr;
+
+    auto& signature = drawSignatures[{indexed, stride}];
+
+    if (signature != nullptr)
+        return signature.get();
+
+    D3D12_INDIRECT_ARGUMENT_DESC argument = {};
+    argument.Type = indexed ? D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED
+                            : D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
+
+    D3D12_COMMAND_SIGNATURE_DESC desc = {};
+    desc.ByteStride = stride;
+    desc.NumArgumentDescs = 1;
+    desc.pArgumentDescs = &argument;
+
+    device->CreateCommandSignature(
+        &desc, nullptr, __uuidof(ID3D12CommandSignature), signature.put_void());
+
+    return signature.get();
+}
+
 namespace
 {
 // The stand-in for a depth resolve, in HLSL: a triangle that covers the target
@@ -911,6 +935,7 @@ void D3D12Shared::recreateAfterDeviceLoss()
     renderRootSignature = nullptr;
     computeRootSignature = nullptr;
     dispatchSignature = nullptr;
+    drawSignatures.clear();
 
     for (auto& shader: depthResolveShaders)
         shader = {};

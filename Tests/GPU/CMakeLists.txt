@@ -58,6 +58,7 @@ set(gpu_test_sources
         GroupReductionTests.cpp
         HoistingTests.cpp
         IndirectDispatchTests.cpp
+        IndirectDrawTests.cpp
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp

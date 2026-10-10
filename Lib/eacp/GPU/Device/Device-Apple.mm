@@ -246,6 +246,11 @@ int Device::storageBufferOffsetAlignment() const
     return 4;
 }
 
+bool Device::supportsIndirectCount() const
+{
+    return false;
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? ComputePass::maxBufferSlots : 0;

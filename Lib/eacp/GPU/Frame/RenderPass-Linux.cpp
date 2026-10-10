@@ -1,5 +1,7 @@
 #include "RenderPass.h"
 
+#include "IndirectDrawPlan.h"
+
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
 #include "../Texture/Texture.h"
@@ -174,6 +176,43 @@ struct RenderPass::Native
                              format == IndexFormat::UInt16 ? VK_INDEX_TYPE_UINT16
                                                            : VK_INDEX_TYPE_UINT32);
         return true;
+    }
+
+    VulkanBufferData* noteIndirectRead(const Buffer& buffer)
+    {
+        auto* data = static_cast<VulkanBufferData*>(buffer.nativeBuffer());
+
+        if (data == nullptr || data->buffer == VK_NULL_HANDLE)
+            return nullptr;
+
+        noteBufferUse(*encoder->commands, *data, bufferIndirectRead);
+        return data;
+    }
+
+    // One call for the whole run where the device has multiDrawIndirect, in
+    // runs no longer than its maxDrawIndirectCount; one call per record where it
+    // does not.
+    template <typename Record>
+    void recordIndirectRuns(const IndirectDrawPlan& plan, Record&& record)
+    {
+        auto& shared = getVulkanShared();
+        const auto runLimit =
+            shared.supportsMultiDrawIndirect()
+                ? std::max(1,
+                           static_cast<int>(std::min(
+                               shared.getProperties().limits.maxDrawIndirectCount,
+                               static_cast<std::uint32_t>(plan.drawCount))))
+                : 1;
+
+        for (auto first = 0; first < plan.drawCount; first += runLimit)
+        {
+            const auto count = std::min(runLimit, plan.drawCount - first);
+            const auto offset = plan.offset + first * plan.stride;
+
+            record(static_cast<VkDeviceSize>(offset),
+                   static_cast<std::uint32_t>(count),
+                   static_cast<std::uint32_t>(plan.stride));
+        }
     }
 
     void bindStorageBuffer(const BufferRange& range, int slot)
@@ -514,6 +553,130 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                      static_cast<std::uint32_t>(firstIndex),
                      baseVertex,
                      static_cast<std::uint32_t>(firstInstance));
+}
+
+void RenderPass::drawIndirect(const Buffer& arguments,
+                              std::int64_t offset,
+                              int drawCount,
+                              std::int64_t stride)
+{
+    const auto plan = planIndirectDraws(
+        arguments, offset, drawCount, stride, sizeof(DrawArguments));
+
+    if (!plan || !impl->canRecord())
+        return;
+
+    auto* data = impl->noteIndirectRead(arguments);
+
+    if (data == nullptr || !impl->bindDescriptors())
+        return;
+
+    impl->recordIndirectRuns(
+        *plan,
+        [&](VkDeviceSize first, std::uint32_t count, std::uint32_t step)
+        {
+            vkCmdDrawIndirect(
+                impl->commandBuffer(), data->buffer, first, count, step);
+        });
+}
+
+void RenderPass::drawIndirectCount(const Buffer& arguments,
+                                   std::int64_t offset,
+                                   const Buffer& count,
+                                   std::int64_t countOffset,
+                                   int maxDrawCount,
+                                   std::int64_t stride)
+{
+    if (!getVulkanShared().supportsIndirectCount())
+    {
+        traceIndirectCountUnsupported();
+        return;
+    }
+
+    const auto plan = planIndirectDraws(
+        arguments, offset, maxDrawCount, stride, sizeof(DrawArguments));
+
+    if (!plan || !isValidDrawCountBuffer(count, countOffset) || !impl->canRecord())
+        return;
+
+    auto* data = impl->noteIndirectRead(arguments);
+    auto* countData = impl->noteIndirectRead(count);
+
+    if (data == nullptr || countData == nullptr || !impl->bindDescriptors())
+        return;
+
+    vkCmdDrawIndirectCount(impl->commandBuffer(),
+                           data->buffer,
+                           static_cast<VkDeviceSize>(plan->offset),
+                           countData->buffer,
+                           static_cast<VkDeviceSize>(countOffset),
+                           static_cast<std::uint32_t>(plan->drawCount),
+                           static_cast<std::uint32_t>(plan->stride));
+}
+
+void RenderPass::drawIndexedIndirect(const BufferRange& indices,
+                                     IndexFormat format,
+                                     const Buffer& arguments,
+                                     std::int64_t offset,
+                                     int drawCount,
+                                     std::int64_t stride)
+{
+    const auto plan = planIndirectDraws(
+        arguments, offset, drawCount, stride, sizeof(DrawIndexedArguments));
+
+    if (!plan || !impl->canRecord())
+        return;
+
+    auto* data = impl->noteIndirectRead(arguments);
+
+    if (data == nullptr || !impl->bindIndexRange(indices, format)
+        || !impl->bindDescriptors())
+        return;
+
+    impl->recordIndirectRuns(
+        *plan,
+        [&](VkDeviceSize first, std::uint32_t count, std::uint32_t step)
+        {
+            vkCmdDrawIndexedIndirect(
+                impl->commandBuffer(), data->buffer, first, count, step);
+        });
+}
+
+void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
+                                          IndexFormat format,
+                                          const Buffer& arguments,
+                                          std::int64_t offset,
+                                          const Buffer& count,
+                                          std::int64_t countOffset,
+                                          int maxDrawCount,
+                                          std::int64_t stride)
+{
+    if (!getVulkanShared().supportsIndirectCount())
+    {
+        traceIndirectCountUnsupported();
+        return;
+    }
+
+    const auto plan = planIndirectDraws(
+        arguments, offset, maxDrawCount, stride, sizeof(DrawIndexedArguments));
+
+    if (!plan || !isValidDrawCountBuffer(count, countOffset) || !impl->canRecord())
+        return;
+
+    auto* data = impl->noteIndirectRead(arguments);
+    auto* countData = impl->noteIndirectRead(count);
+
+    if (data == nullptr || countData == nullptr
+        || !impl->bindIndexRange(indices, format) || !impl->bindDescriptors())
+        return;
+
+    vkCmdDrawIndexedIndirectCount(impl->commandBuffer(),
+                                  data->buffer,
+                                  static_cast<VkDeviceSize>(plan->offset),
+                                  countData->buffer,
+                                  static_cast<VkDeviceSize>(countOffset),
+                                  static_cast<std::uint32_t>(plan->drawCount),
+                                  static_cast<std::uint32_t>(plan->stride));
 }
 
 void RenderPass::end()

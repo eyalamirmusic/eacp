@@ -209,6 +209,11 @@ int Device::storageBufferOffsetAlignment() const
     return alignment > 0 ? (int) alignment : 4;
 }
 
+bool Device::supportsIndirectCount() const
+{
+    return isValid() && getVulkanShared().supportsIndirectCount();
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? vulkanComputeBufferSlots() : 0;

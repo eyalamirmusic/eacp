@@ -2,6 +2,8 @@
 
 #include "RenderPass.h"
 
+#include "IndirectDrawPlan.h"
+
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
 #include "../Texture/Texture.h"
@@ -426,6 +428,126 @@ bool bindIndexRange(CommandContext& commands,
     return true;
 }
 } // namespace
+
+namespace
+{
+D3D12BufferData* indirectArgumentsOf(CommandContext& commands, const Buffer& buffer)
+{
+    auto* data = static_cast<D3D12BufferData*>(buffer.nativeBuffer());
+
+    if (data == nullptr || data->resource == nullptr)
+        return nullptr;
+
+    transitionForUse(commands, *data, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+    return data;
+}
+
+// One ExecuteIndirect for the whole run: the stride is the signature's, and
+// the count buffer, where there is one, caps the run at the GPU's own number.
+void executeIndirectDraws(CommandContext& commands,
+                          bool indexed,
+                          const IndirectDrawPlan& plan,
+                          const Buffer& arguments,
+                          const Buffer* count,
+                          std::int64_t countOffset)
+{
+    auto* signature =
+        commands.context->getDrawSignature(indexed, static_cast<UINT>(plan.stride));
+    auto* data = indirectArgumentsOf(commands, arguments);
+    auto* countData =
+        count != nullptr ? indirectArgumentsOf(commands, *count) : nullptr;
+
+    if (signature == nullptr || data == nullptr
+        || (count != nullptr && countData == nullptr))
+        return;
+
+    commands.list->ExecuteIndirect(signature,
+                                   static_cast<UINT>(plan.drawCount),
+                                   data->resource.get(),
+                                   static_cast<UINT64>(plan.offset),
+                                   countData != nullptr ? countData->resource.get()
+                                                        : nullptr,
+                                   static_cast<UINT64>(countOffset));
+}
+} // namespace
+
+void RenderPass::drawIndirect(const Buffer& arguments,
+                              std::int64_t offset,
+                              int drawCount,
+                              std::int64_t stride)
+{
+    const auto plan = planIndirectDraws(
+        arguments, offset, drawCount, stride, sizeof(DrawArguments));
+
+    if (!plan || !impl->encoder || !impl->pipelineBound)
+        return;
+
+    executeIndirectDraws(
+        *impl->encoder->commands, false, *plan, arguments, nullptr, 0);
+}
+
+void RenderPass::drawIndirectCount(const Buffer& arguments,
+                                   std::int64_t offset,
+                                   const Buffer& count,
+                                   std::int64_t countOffset,
+                                   int maxDrawCount,
+                                   std::int64_t stride)
+{
+    const auto plan = planIndirectDraws(
+        arguments, offset, maxDrawCount, stride, sizeof(DrawArguments));
+
+    if (!plan || !isValidDrawCountBuffer(count, countOffset) || !impl->encoder
+        || !impl->pipelineBound)
+        return;
+
+    executeIndirectDraws(
+        *impl->encoder->commands, false, *plan, arguments, &count, countOffset);
+}
+
+void RenderPass::drawIndexedIndirect(const BufferRange& indices,
+                                     IndexFormat format,
+                                     const Buffer& arguments,
+                                     std::int64_t offset,
+                                     int drawCount,
+                                     std::int64_t stride)
+{
+    const auto plan = planIndirectDraws(
+        arguments, offset, drawCount, stride, sizeof(DrawIndexedArguments));
+
+    if (!plan || !impl->encoder || !impl->pipelineBound)
+        return;
+
+    auto& commands = *impl->encoder->commands;
+
+    if (!bindIndexRange(commands, indices, format))
+        return;
+
+    executeIndirectDraws(commands, true, *plan, arguments, nullptr, 0);
+}
+
+void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
+                                          IndexFormat format,
+                                          const Buffer& arguments,
+                                          std::int64_t offset,
+                                          const Buffer& count,
+                                          std::int64_t countOffset,
+                                          int maxDrawCount,
+                                          std::int64_t stride)
+{
+    const auto plan = planIndirectDraws(
+        arguments, offset, maxDrawCount, stride, sizeof(DrawIndexedArguments));
+
+    if (!plan || !isValidDrawCountBuffer(count, countOffset) || !impl->encoder
+        || !impl->pipelineBound)
+        return;
+
+    auto& commands = *impl->encoder->commands;
+
+    if (!bindIndexRange(commands, indices, format))
+        return;
+
+    executeIndirectDraws(commands, true, *plan, arguments, &count, countOffset);
+}
 
 void RenderPass::drawIndexed(const Buffer& indices,
                              int indexCount,

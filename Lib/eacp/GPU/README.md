@@ -1079,6 +1079,51 @@ later dispatch — a later pass, as above, or a later dispatch in the same one.
 1D only. A 2D or 3D indirect dispatch would take its extents beside an offset
 and could not be told apart from this one; nothing has needed it.
 
+### Indirect draws
+
+A draw can take its counts from a buffer the GPU wrote, the render-side twin of
+`dispatchIndirect`: a kernel fills `DrawArguments` (or `DrawIndexedArguments`)
+records, and the next pass draws from them without the CPU learning a number.
+
+```cpp
+{
+    auto compute = frame.beginCompute();
+    compute.dispatch(cull, objectCount);     // writes DrawArguments records
+}
+
+auto pass = frame.beginPass();
+pass.setPipeline(pipeline);
+pass.setVertexBuffer(vertices);
+pass.drawIndirect(arguments);                       // one record at offset 0
+pass.drawIndirect(arguments, 0, objectCount, 32);   // a run, 32 bytes apart
+pass.drawIndexedIndirect(indices, IndexFormat::UInt16, arguments, offset);
+```
+
+The records are Metal's `MTLDraw(Indexed)PrimitivesIndirectArguments`, Vulkan's
+`VkDraw(Indexed)IndirectCommand` and D3D12's `D3D12_DRAW(_INDEXED)_ARGUMENTS`:
+four 32-bit integers (vertex count, instance count, first vertex, first
+instance), or five for the indexed form (index count, instance count, first
+index, a signed base vertex, first instance) — 16 and 20 bytes, the same on all
+three. Any buffer holds them; a `Storage` buffer is what a kernel writes. The
+transition from a kernel's write to an argument read is made for you: D3D12
+moves the buffer to `INDIRECT_ARGUMENT`, Vulkan's barrier before rendering
+already covers the draw-indirect stage, Metal tracks it itself.
+
+A run of `drawCount` records `stride` bytes apart (zero meaning packed) is one
+`vkCmdDrawIndirect` where the device has `multiDrawIndirect`, one
+`ExecuteIndirect` on D3D12 (a command signature per argument type and stride,
+made once and kept), and a loop of single draws on Metal. A record with zero
+instances or vertices draws nothing. Offsets and strides are multiples of four,
+the stride is at least one record, and every record lies inside the buffer;
+anything else is refused with a trace and draws nothing.
+
+`drawIndirectCount` and `drawIndexedIndirectCount` also read the number of
+draws from a buffer (a `uint32`, clamped to `maxDrawCount`):
+`vkCmdDrawIndirectCount` on Vulkan where the device has it, `ExecuteIndirect`
+with a count buffer on D3D12. Metal has no such draw, so
+`Device::supportsIndirectCount()` is false there and the calls are refused with
+a trace.
+
 ### How many buffers a kernel binds
 
 A kernel the codegen layer writes binds at most

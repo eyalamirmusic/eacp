@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -214,6 +215,10 @@ public:
     // rather than per context, beside the root signatures it is built like.
     ID3D12CommandSignature* getDispatchSignature();
 
+    // The draw siblings, one per argument type and record stride, since a
+    // signature fixes its ByteStride. Null root signature for the same reason.
+    ID3D12CommandSignature* getDrawSignature(bool indexed, UINT stride);
+
     // Bumped every time the device is rebuilt. A context whose own copy is
     // behind this is holding a queue, heaps and pools that belong to a device
     // that no longer exists, and renews them the next time its owning thread
@@ -238,6 +243,8 @@ private:
     winrt::com_ptr<ID3D12RootSignature> renderRootSignature;
     winrt::com_ptr<ID3D12RootSignature> computeRootSignature;
     winrt::com_ptr<ID3D12CommandSignature> dispatchSignature;
+    std::map<std::pair<bool, UINT>, winrt::com_ptr<ID3D12CommandSignature>>
+        drawSignatures;
     DepthResolveShader depthResolveShaders[2];
 
     std::uint64_t generation = 1;
@@ -278,6 +285,11 @@ public:
     ID3D12CommandSignature* getDispatchSignature()
     {
         return getD3D12Shared().getDispatchSignature();
+    }
+
+    ID3D12CommandSignature* getDrawSignature(bool indexed, UINT stride)
+    {
+        return getD3D12Shared().getDrawSignature(indexed, stride);
     }
 
     ID3D12DescriptorHeap* getTextureHeap() const

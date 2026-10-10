@@ -2,6 +2,8 @@
 
 #include "RenderPass.h"
 
+#include "IndirectDrawPlan.h"
+
 #include "../Buffer/Buffer.h"
 #include "../Device/Device.h"
 #include "../Pipeline/RenderPipeline.h"
@@ -506,6 +508,79 @@ void RenderPass::drawIndexedInstanced(const BufferRange& indices,
                            instanceCount:(NSUInteger) instanceCount
                               baseVertex:(NSInteger) baseVertex
                             baseInstance:(NSUInteger) firstInstance];
+}
+
+void RenderPass::drawIndirect(const Buffer& arguments,
+                              std::int64_t offset,
+                              int drawCount,
+                              std::int64_t stride)
+{
+    auto plan = planIndirectDraws(
+        arguments, offset, drawCount, stride, sizeof(DrawArguments));
+    auto activeEncoder = impl->encoder.get();
+    auto metalArguments = (__bridge id<MTLBuffer>) arguments.nativeBuffer();
+
+    if (!plan || !impl->pipelineBound || activeEncoder == nil
+        || metalArguments == nil)
+        return;
+
+    for (auto draw = 0; draw < plan->drawCount; ++draw)
+        [activeEncoder drawPrimitives:impl->primitiveType
+                       indirectBuffer:metalArguments
+                 indirectBufferOffset:(NSUInteger) (plan->offset
+                                                    + draw * plan->stride)];
+}
+
+void RenderPass::drawIndirectCount(const Buffer&,
+                                   std::int64_t,
+                                   const Buffer&,
+                                   std::int64_t,
+                                   int,
+                                   std::int64_t)
+{
+    traceIndirectCountUnsupported();
+}
+
+void RenderPass::drawIndexedIndirect(const BufferRange& indices,
+                                     IndexFormat format,
+                                     const Buffer& arguments,
+                                     std::int64_t offset,
+                                     int drawCount,
+                                     std::int64_t stride)
+{
+    auto plan = planIndirectDraws(
+        arguments, offset, drawCount, stride, sizeof(DrawIndexedArguments));
+    auto activeEncoder = impl->encoder.get();
+    auto metalArguments = (__bridge id<MTLBuffer>) arguments.nativeBuffer();
+    auto metalIndices = metalBufferOf(indices);
+
+    if (!plan || !impl->pipelineBound || activeEncoder == nil
+        || metalArguments == nil || metalIndices == nil)
+        return;
+
+    auto indexType = format == IndexFormat::UInt16 ? MTLIndexTypeUInt16
+                                                   : MTLIndexTypeUInt32;
+
+    for (auto draw = 0; draw < plan->drawCount; ++draw)
+        [activeEncoder drawIndexedPrimitives:impl->primitiveType
+                                   indexType:indexType
+                                 indexBuffer:metalIndices
+                           indexBufferOffset:(NSUInteger) indices.offset
+                              indirectBuffer:metalArguments
+                        indirectBufferOffset:(NSUInteger) (plan->offset
+                                                           + draw * plan->stride)];
+}
+
+void RenderPass::drawIndexedIndirectCount(const BufferRange&,
+                                          IndexFormat,
+                                          const Buffer&,
+                                          std::int64_t,
+                                          const Buffer&,
+                                          std::int64_t,
+                                          int,
+                                          std::int64_t)
+{
+    traceIndirectCountUnsupported();
 }
 
 void RenderPass::end()
