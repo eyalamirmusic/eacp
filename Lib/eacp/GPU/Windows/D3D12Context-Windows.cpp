@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 
 namespace eacp::GPU
 {
@@ -266,6 +267,56 @@ bool acceptsRecording(ID3D12Device* device, Record&& record)
     return SUCCEEDED(list->Close());
 }
 
+// The PCI id and the four-character code ("QCOM") Qualcomm adapters report.
+constexpr UINT qualcommVendorIds[] = {0x5143, 0x4D4F4351};
+
+UINT adapterVendorId(ID3D12Device* device)
+{
+    auto factory = winrt::com_ptr<IDXGIFactory4>();
+    auto adapter = winrt::com_ptr<IDXGIAdapter1>();
+    auto description = DXGI_ADAPTER_DESC1 {};
+
+    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory4), factory.put_void()))
+        || FAILED(factory->EnumAdapterByLuid(
+            device->GetAdapterLuid(), __uuidof(IDXGIAdapter1), adapter.put_void()))
+        || FAILED(adapter->GetDesc1(&description)))
+        return 0;
+
+    return description.VendorId;
+}
+
+// Unset, the adapter decides; "1" forces per-bind sampler tables (to check
+// whether an affected driver has been fixed) and "0" forces the static
+// fallback anywhere.
+std::optional<bool> samplerTablesOverride()
+{
+    std::size_t length = 0;
+    char value[8] = {};
+
+    if (getenv_s(&length, value, sizeof(value), "EACP_D3D12_SAMPLER_TABLES") != 0
+        || length <= 1)
+        return std::nullopt;
+
+    return value[0] != '0';
+}
+
+// The sampler-table bug is not one a recording can reveal: the table binds and
+// draws, through the wrong sampler. Finding it by trial would mean rendering and
+// reading back on a throwaway device at every start, so it is found by adapter
+// instead - every Qualcomm adapter, which is where it was seen (Adreno, Windows
+// 11 26200) - with EACP_D3D12_SAMPLER_TABLES to overrule the guess either way.
+bool detectsSamplerTableBug(ID3D12Device* device)
+{
+    if (auto forced = samplerTablesOverride())
+        return !*forced;
+
+    const auto vendor = device != nullptr ? adapterVendorId(device) : 0;
+
+    return std::find(
+               std::begin(qualcommVendorIds), std::end(qualcommVendorIds), vendor)
+           != std::end(qualcommVendorIds);
+}
+
 // Asks the hardware driver, on a device made for the purpose, whether it will
 // take the two recordings the flags in DriverQuirks describe.
 //
@@ -290,11 +341,15 @@ DriverQuirks probeDriverQuirks()
     {
         quirks.noDepthResolve = true;
         quirks.noBoxedTextureCopy = true;
+        quirks.samplerTablesIgnoreOffset = !samplerTablesOverride().value_or(false);
         return quirks;
     }
 
     if (forcesWarp())
+    {
+        quirks.samplerTablesIgnoreOffset = detectsSamplerTableBug(nullptr);
         return quirks;
+    }
 
     auto device = winrt::com_ptr<ID3D12Device>();
 
@@ -304,6 +359,7 @@ DriverQuirks probeDriverQuirks()
                                  device.put_void())))
         return quirks;
 
+    quirks.samplerTablesIgnoreOffset = detectsSamplerTableBug(device.get());
     quirks.noDepthResolve = !acceptsRecording(device.get(), recordDepthResolve);
     quirks.noBoxedTextureCopy =
         !acceptsRecording(device.get(), recordBoxedTextureCopy);
@@ -315,6 +371,10 @@ DriverQuirks probeDriverQuirks()
     if (quirks.noBoxedTextureCopy)
         LOG("D3D12: this driver refuses a boxed texture read-back; "
             "reading whole textures and cropping instead");
+
+    if (quirks.samplerTablesIgnoreOffset)
+        LOG("D3D12: sampler descriptor tables are not trusted on this adapter; "
+            "per-bind samplers fall back to a fixed static sampler");
 
     return quirks;
 }
@@ -424,6 +484,25 @@ std::string describeAdapter(ID3D12Device* device)
     return Strings::narrow(description.Description);
 }
 
+// What a per-bind sampler register holds when the driver cannot be given a
+// sampler table: linear filtering with repeat on every axis, which is bgfx's
+// default sampler state and so what most draws through such a register ask for.
+D3D12_STATIC_SAMPLER_DESC fallbackPerBindSampler(int slot,
+                                                 D3D12_SHADER_VISIBILITY visibility)
+{
+    D3D12_STATIC_SAMPLER_DESC sampler = {};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+    sampler.ShaderRegister = samplerRegister(slot);
+    sampler.ShaderVisibility = visibility;
+    return sampler;
+}
+
 winrt::com_ptr<ID3D12RootSignature>
     makeRootSignature(ID3D12Device* device, const D3D12_ROOT_SIGNATURE_DESC& desc)
 {
@@ -510,9 +589,11 @@ void D3D12Shared::createDevice()
 
 void D3D12Shared::createRootSignatures()
 {
+    const auto samplerTables = !quirks.samplerTablesIgnoreOffset;
+
     D3D12_DESCRIPTOR_RANGE srvRanges[maxTextureSlots] = {};
-    D3D12_ROOT_PARAMETER
-    renderParams[2 * maxUniformSlots + maxTextureSlots + 2 * maxBufferSlots];
+    D3D12_DESCRIPTOR_RANGE samplerRanges[maxTextureSlots] = {};
+    D3D12_ROOT_PARAMETER renderParams[renderParamCount] = {};
 
     for (auto slot = 0; slot < maxUniformSlots; ++slot)
     {
@@ -557,7 +638,8 @@ void D3D12Shared::createRootSignatures()
     // to descriptor 0 of the bound heap, so all textures in the process sample
     // through whichever sampler happens to be first. Static samplers never reach
     // a heap and are unaffected. See TextureSampling.
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[samplingConfigurations] = {};
+    D3D12_STATIC_SAMPLER_DESC
+    staticSamplers[samplingConfigurations + maxTextureSlots] = {};
 
     for (auto configuration = 0; configuration < samplingConfigurations;
          ++configuration)
@@ -585,10 +667,37 @@ void D3D12Shared::createRootSignatures()
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     }
 
+    // The per-bind samplers, at s<samplerRegisterBase + slot>: a one-descriptor
+    // sampler table per texture slot that RenderPass::setFragmentTexture points
+    // at a Sampler's descriptor - or, where the driver mishandles sampler
+    // tables, a fixed static sampler at the same register, so a shader declaring
+    // one still compiles against this signature and samples something sane.
+    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+    {
+        if (samplerTables)
+        {
+            samplerRanges[slot].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+            samplerRanges[slot].NumDescriptors = 1;
+            samplerRanges[slot].BaseShaderRegister = samplerRegister(slot);
+
+            renderParams[renderSamplerParam(slot)] = rootTable(&samplerRanges[slot]);
+        }
+        else
+        {
+            staticSamplers[samplingConfigurations + slot] =
+                fallbackPerBindSampler(slot, D3D12_SHADER_VISIBILITY_PIXEL);
+        }
+    }
+
+    const auto perBindParams = samplerTables ? maxTextureSlots : 0;
+    const auto perBindStatics = samplerTables ? 0 : maxTextureSlots;
+
     D3D12_ROOT_SIGNATURE_DESC renderDesc = {};
-    renderDesc.NumParameters = static_cast<UINT>(std::size(renderParams));
+    renderDesc.NumParameters =
+        static_cast<UINT>(renderParamCount - maxTextureSlots + perBindParams);
     renderDesc.pParameters = renderParams;
-    renderDesc.NumStaticSamplers = static_cast<UINT>(std::size(staticSamplers));
+    renderDesc.NumStaticSamplers =
+        static_cast<UINT>(samplingConfigurations + perBindStatics);
     renderDesc.pStaticSamplers = staticSamplers;
     renderDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -596,8 +705,7 @@ void D3D12Shared::createRootSignatures()
 
     D3D12_DESCRIPTOR_RANGE computeSrvRanges[maxTextureSlots] = {};
     D3D12_DESCRIPTOR_RANGE computeUavRanges[maxTextureSlots] = {};
-    D3D12_ROOT_PARAMETER
-    computeParams[maxUniformSlots + 2 * maxBufferSlots + 2 * maxTextureSlots];
+    D3D12_ROOT_PARAMETER computeParams[computeParamCount] = {};
 
     for (auto slot = 0; slot < maxUniformSlots; ++slot)
         computeParams[computeCBVParam(slot)] =
@@ -636,18 +744,26 @@ void D3D12Shared::createRootSignatures()
     // one read the identical emitted source. Only the visibility differs, for
     // the reason rootTable takes one: a compute root signature accepts nothing
     // but ALL.
-    D3D12_STATIC_SAMPLER_DESC computeSamplers[samplingConfigurations] = {};
+    D3D12_STATIC_SAMPLER_DESC
+    computeSamplers[samplingConfigurations + maxTextureSlots] = {};
 
-    for (auto i = 0; i < samplingConfigurations; ++i)
+    for (auto i = 0; i < samplingConfigurations + perBindStatics; ++i)
     {
         computeSamplers[i] = staticSamplers[i];
         computeSamplers[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
+    if (samplerTables)
+        for (auto slot = 0; slot < maxTextureSlots; ++slot)
+            computeParams[computeSamplerParam(slot)] =
+                rootTable(&samplerRanges[slot], D3D12_SHADER_VISIBILITY_ALL);
+
     D3D12_ROOT_SIGNATURE_DESC computeDesc = {};
-    computeDesc.NumParameters = static_cast<UINT>(std::size(computeParams));
+    computeDesc.NumParameters =
+        static_cast<UINT>(computeParamCount - maxTextureSlots + perBindParams);
     computeDesc.pParameters = computeParams;
-    computeDesc.NumStaticSamplers = static_cast<UINT>(std::size(computeSamplers));
+    computeDesc.NumStaticSamplers =
+        static_cast<UINT>(samplingConfigurations + perBindStatics);
     computeDesc.pStaticSamplers = computeSamplers;
 
     computeRootSignature = makeRootSignature(device.get(), computeDesc);

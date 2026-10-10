@@ -3,6 +3,11 @@
 #include "Device.h"
 
 #include "../Windows/D3D12Context.h"
+#include "../Windows/D3D12Types.h"
+
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 // Windows/D3D12 backend. A Device owns its D3D12Context — its command queue,
 // fence, command-list pool, staging and readback pools, constant ring and
@@ -17,11 +22,117 @@
 
 namespace eacp::GPU
 {
+namespace
+{
+D3D12_TEXTURE_ADDRESS_MODE toD3D12AddressMode(SamplerAddressMode mode)
+{
+    switch (mode)
+    {
+        case SamplerAddressMode::ClampToEdge:
+            return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        case SamplerAddressMode::Repeat:
+            return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        case SamplerAddressMode::MirrorRepeat:
+            return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
+        case SamplerAddressMode::ClampToBorder:
+            return D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+    }
+
+    return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+}
+
+D3D12_COMPARISON_FUNC toD3D12Comparison(CompareFunction compare)
+{
+    switch (compare)
+    {
+        case CompareFunction::Never:
+            return D3D12_COMPARISON_FUNC_NEVER;
+        case CompareFunction::Less:
+            return D3D12_COMPARISON_FUNC_LESS;
+        case CompareFunction::LessEqual:
+            return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        case CompareFunction::Equal:
+            return D3D12_COMPARISON_FUNC_EQUAL;
+        case CompareFunction::NotEqual:
+            return D3D12_COMPARISON_FUNC_NOT_EQUAL;
+        case CompareFunction::GreaterEqual:
+            return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        case CompareFunction::Greater:
+            return D3D12_COMPARISON_FUNC_GREATER;
+        case CompareFunction::Always:
+            return D3D12_COMPARISON_FUNC_ALWAYS;
+    }
+
+    return D3D12_COMPARISON_FUNC_NEVER;
+}
+
+D3D12_FILTER_TYPE toD3D12FilterType(SamplerFilter filter)
+{
+    return filter == SamplerFilter::Linear ? D3D12_FILTER_TYPE_LINEAR
+                                           : D3D12_FILTER_TYPE_POINT;
+}
+
+D3D12_FILTER toD3D12Filter(const SamplerDescriptor& descriptor)
+{
+    const auto reduction = descriptor.compare
+                               ? D3D12_FILTER_REDUCTION_TYPE_COMPARISON
+                               : D3D12_FILTER_REDUCTION_TYPE_STANDARD;
+
+    if (descriptor.maxAnisotropy > 1 && descriptor.isFullyLinear())
+        return static_cast<D3D12_FILTER>(D3D12_ENCODE_ANISOTROPIC_FILTER(reduction));
+
+    const auto mip = descriptor.mipFilter == SamplerMipFilter::Linear
+                         ? D3D12_FILTER_TYPE_LINEAR
+                         : D3D12_FILTER_TYPE_POINT;
+
+    return static_cast<D3D12_FILTER>(
+        D3D12_ENCODE_BASIC_FILTER(toD3D12FilterType(descriptor.minFilter),
+                                  toD3D12FilterType(descriptor.magFilter),
+                                  mip,
+                                  reduction));
+}
+
+void setBorderColor(D3D12_SAMPLER_DESC& desc, SamplerBorderColor color)
+{
+    const auto white = color == SamplerBorderColor::OpaqueWhite ? 1.f : 0.f;
+    const auto alpha = color == SamplerBorderColor::TransparentBlack ? 0.f : 1.f;
+
+    desc.BorderColor[0] = white;
+    desc.BorderColor[1] = white;
+    desc.BorderColor[2] = white;
+    desc.BorderColor[3] = alpha;
+}
+
+// D3D12 has no "not mipmapped" filter, so None pins the LOD range to level 0.
+D3D12_SAMPLER_DESC toD3D12SamplerDesc(const SamplerDescriptor& descriptor)
+{
+    const auto mipmapped = descriptor.mipFilter != SamplerMipFilter::None;
+
+    D3D12_SAMPLER_DESC desc = {};
+    desc.Filter = toD3D12Filter(descriptor);
+    desc.AddressU = toD3D12AddressMode(descriptor.addressU);
+    desc.AddressV = toD3D12AddressMode(descriptor.addressV);
+    desc.AddressW = toD3D12AddressMode(descriptor.addressW);
+    desc.MaxAnisotropy =
+        static_cast<UINT>(std::clamp(descriptor.maxAnisotropy, 1, 16));
+    desc.ComparisonFunc = descriptor.compare ? toD3D12Comparison(*descriptor.compare)
+                                             : D3D12_COMPARISON_FUNC_NEVER;
+    desc.MinLOD = mipmapped ? descriptor.lodMinClamp : 0.f;
+    desc.MaxLOD = mipmapped ? descriptor.lodMaxClamp : 0.f;
+    setBorderColor(desc, descriptor.borderColor);
+    return desc;
+}
+} // namespace
+
 struct Device::Native
 {
     // Mutable because the accessors that reach it are const — a const Device
     // still submits, the way a const Buffer still reads.
     mutable D3D12Context context;
+
+    // Each holds a descriptor in this context's sampler heap, which lives as
+    // long as the context does; a Sampler handle points at one of these.
+    std::vector<std::unique_ptr<D3D12SamplerData>> samplers;
 };
 
 Device::Device()
@@ -171,6 +282,33 @@ void* Device::nativeSampler(TextureSampling) const
     // the root signature, and the shader picks one by the register it declares
     // its SamplerState on. See TextureSampling.
     return nullptr;
+}
+
+// Written into the heap whether or not the root signatures carry sampler
+// tables, so a Sampler is valid and cached the same way everywhere; only the
+// bind looks at the quirk.
+void* Device::createNativeSampler(const SamplerDescriptor& descriptor)
+{
+    auto& context = impl->context;
+    auto slot = context.allocateSamplerDescriptor();
+
+    if (slot.cpu.ptr == 0)
+        return nullptr;
+
+    const auto desc = toD3D12SamplerDesc(descriptor);
+    context.getDevice()->CreateSampler(&desc, slot.cpu);
+
+    auto data = std::make_unique<D3D12SamplerData>();
+    data->slot = slot;
+
+    auto* native = data.get();
+    impl->samplers.push_back(std::move(data));
+    return native;
+}
+
+bool Device::supportsPerBindSamplers() const
+{
+    return isValid() && hasSamplerTables();
 }
 
 void Device::trackSubmittedWork(void*)

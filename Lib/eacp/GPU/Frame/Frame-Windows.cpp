@@ -121,10 +121,8 @@ struct Frame::Native
         // showed up on an Arm laptop: no text drew, and nothing was logged
         // without the D3D12 validation layer installed.
         //
-        // Only the SRV tables need this. The root signature declares no sampler
-        // tables at all any more - samplers are static samplers baked into it,
-        // picked by the register the shader emitted its sampler at. See
-        // TextureSampling.
+        // The per-bind sampler tables get the same treatment, with the null
+        // sampler; the TextureSampling samplers are static and need none.
         const auto nullTexture = context.getNullTextureDescriptor();
 
         if (nullTexture.ptr == 0)
@@ -133,6 +131,15 @@ struct Frame::Native
         for (auto slot = 0; slot < maxTextureSlots; ++slot)
             list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
                                                  nullTexture);
+
+        const auto nullSampler = context.getNullSamplerDescriptor();
+
+        if (!hasSamplerTables() || nullSampler.ptr == 0)
+            return;
+
+        for (auto slot = 0; slot < maxTextureSlots; ++slot)
+            list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
+                                                 nullSampler);
     }
 
     Device* device = nullptr;

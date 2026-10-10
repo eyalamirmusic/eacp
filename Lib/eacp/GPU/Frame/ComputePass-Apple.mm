@@ -82,24 +82,41 @@ void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
     setInputBuffer(range, slot);
 }
 
+namespace
+{
+void bindInputTexture(NSObject<MTLComputeCommandEncoder>* encoder,
+                      const Texture& texture,
+                      int slot,
+                      void* nativeSampler)
+{
+    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
+    auto metalSampler = (__bridge id<MTLSamplerState>) nativeSampler;
+
+    if (encoder == nil || metalTexture == nil || metalSampler == nil)
+        return;
+
+    [encoder setTexture:metalTexture atIndex:(NSUInteger) slot];
+    [encoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+} // namespace
+
+// The state for the sampling the shader declared, not one the texture carries -
+// the same rule the render pass follows.
 void ComputePass::setInputTexture(const Texture& texture,
                                   int slot,
                                   TextureSampling sampling)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
+    bindInputTexture(impl->encoder.get(),
+                     texture,
+                     slot,
+                     Device::shared().nativeSampler(sampling));
+}
 
-    // The state for the sampling the shader declared, not one the texture
-    // carries - the same rule the render pass follows, and the one D3D12's
-    // static samplers leave no alternative to.
-    auto metalSampler =
-        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
-
-    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
-        return;
-
-    [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
-    [activeEncoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+void ComputePass::setInputTexture(const Texture& texture,
+                                  int slot,
+                                  const Sampler& sampler)
+{
+    bindInputTexture(impl->encoder.get(), texture, slot, sampler.nativeSampler());
 }
 
 void ComputePass::setOutputTexture(const Texture& texture, int slot)

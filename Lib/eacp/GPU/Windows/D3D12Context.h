@@ -151,6 +151,14 @@ struct DriverQuirks
     // the device. A region read copies the whole subresource and crops on the
     // CPU instead; see Texture::read.
     bool noBoxedTextureCopy = false;
+
+    // A sampler descriptor table resolves to descriptor 0 of the bound heap
+    // whatever its offset (the Windows-on-Arm bug in SAMPLERS.md). The root
+    // signatures then declare a fixed static sampler at each per-bind sampler
+    // register instead of a table, and Device::supportsPerBindSamplers is false.
+    // Found by adapter rather than by trial, unlike the two above; see
+    // detectsSamplerTableBug.
+    bool samplerTablesIgnoreOffset = false;
 };
 
 // The process-wide half. Created on first use by getD3D12Shared().

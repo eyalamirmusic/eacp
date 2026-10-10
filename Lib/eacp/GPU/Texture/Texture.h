@@ -254,7 +254,8 @@ enum class TextureAddressMode
 // than when a texture is bound: one shader samples one slot exactly one way.
 // A renderer that must do both - Sprites::SpriteRenderer draws smoothly scaled
 // camera frames and crisp pixel art through the same code - compiles one
-// program per configuration and picks between them.
+// program per configuration and picks between them. A hand-written shader that
+// takes its sampler per draw binds a Sampler instead (Sampler.h).
 struct TextureSampling
 {
     TextureFilter filter = TextureFilter::Nearest;

@@ -8,49 +8,118 @@
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/Environment.h>
 
+#include <algorithm>
+
 namespace eacp::GPU
 {
 namespace
 {
-MTLSamplerMinMagFilter toMetalFilter(TextureFilter filter)
+MTLSamplerMinMagFilter toMetalFilter(SamplerFilter filter)
 {
-    return filter == TextureFilter::Nearest ? MTLSamplerMinMagFilterNearest
+    return filter == SamplerFilter::Nearest ? MTLSamplerMinMagFilterNearest
                                             : MTLSamplerMinMagFilterLinear;
 }
 
-MTLSamplerAddressMode toMetalAddressMode(TextureAddressMode mode)
+MTLSamplerMipFilter toMetalMipFilter(SamplerMipFilter filter)
 {
-    return mode == TextureAddressMode::Repeat ? MTLSamplerAddressModeRepeat
-                                              : MTLSamplerAddressModeClampToEdge;
+    switch (filter)
+    {
+        case SamplerMipFilter::None:
+            return MTLSamplerMipFilterNotMipmapped;
+        case SamplerMipFilter::Nearest:
+            return MTLSamplerMipFilterNearest;
+        case SamplerMipFilter::Linear:
+            return MTLSamplerMipFilterLinear;
+    }
+
+    return MTLSamplerMipFilterNotMipmapped;
 }
 
-ObjC::Ptr<NSObject<MTLSamplerState>> makeSampler(id<MTLDevice> metalDevice,
-                                                 TextureSampling sampling)
+MTLSamplerAddressMode toMetalAddressMode(SamplerAddressMode mode)
+{
+    switch (mode)
+    {
+        case SamplerAddressMode::ClampToEdge:
+            return MTLSamplerAddressModeClampToEdge;
+        case SamplerAddressMode::Repeat:
+            return MTLSamplerAddressModeRepeat;
+        case SamplerAddressMode::MirrorRepeat:
+            return MTLSamplerAddressModeMirrorRepeat;
+        case SamplerAddressMode::ClampToBorder:
+            return MTLSamplerAddressModeClampToBorderColor;
+    }
+
+    return MTLSamplerAddressModeClampToEdge;
+}
+
+MTLSamplerBorderColor toMetalBorderColor(SamplerBorderColor color)
+{
+    switch (color)
+    {
+        case SamplerBorderColor::TransparentBlack:
+            return MTLSamplerBorderColorTransparentBlack;
+        case SamplerBorderColor::OpaqueBlack:
+            return MTLSamplerBorderColorOpaqueBlack;
+        case SamplerBorderColor::OpaqueWhite:
+            return MTLSamplerBorderColorOpaqueWhite;
+    }
+
+    return MTLSamplerBorderColorTransparentBlack;
+}
+
+MTLCompareFunction toMetalCompareFunction(CompareFunction compare)
+{
+    switch (compare)
+    {
+        case CompareFunction::Never:
+            return MTLCompareFunctionNever;
+        case CompareFunction::Less:
+            return MTLCompareFunctionLess;
+        case CompareFunction::LessEqual:
+            return MTLCompareFunctionLessEqual;
+        case CompareFunction::Equal:
+            return MTLCompareFunctionEqual;
+        case CompareFunction::NotEqual:
+            return MTLCompareFunctionNotEqual;
+        case CompareFunction::GreaterEqual:
+            return MTLCompareFunctionGreaterEqual;
+        case CompareFunction::Greater:
+            return MTLCompareFunctionGreater;
+        case CompareFunction::Always:
+            return MTLCompareFunctionAlways;
+    }
+
+    return MTLCompareFunctionNever;
+}
+
+// The four TextureSampling configurations come through here too, as
+// SamplerDescriptor::from(sampling): mip filtering follows the min/mag filter
+// rather than Metal's NotMipmapped default, which is what D3D12's static
+// samplers have always declared.
+ObjC::Ptr<NSObject<MTLSamplerState>>
+    makeMetalSampler(id<MTLDevice> metalDevice, const SamplerDescriptor& descriptor)
 {
     auto samplerDescriptor = ObjC::makePtr<MTLSamplerDescriptor>();
-    samplerDescriptor.get().minFilter = toMetalFilter(sampling.filter);
-    samplerDescriptor.get().magFilter = toMetalFilter(sampling.filter);
-    samplerDescriptor.get().sAddressMode = toMetalAddressMode(sampling.addressMode);
-    samplerDescriptor.get().tAddressMode = toMetalAddressMode(sampling.addressMode);
+    auto* metal = samplerDescriptor.get();
 
-    // Set rather than left at its default, which is NotMipmapped - "sample level
-    // 0, whatever other levels exist".
-    //
-    // D3D12's static samplers have declared MIN_MAG_MIP_LINEAR and
-    // MIN_MAG_MIP_POINT since they were written, so the two backends have
-    // disagreed here from the start and nothing could tell: no texture had a
-    // second level to sample. The first mipmapped one would have been filtered
-    // across levels on Windows and read at full size on Apple, from the same
-    // TextureSampling and with no way to see it but the picture.
-    //
-    // This needs no new sampling configuration, which is why the count stays at
-    // four: mip filtering on a single-level texture is what both APIs do anyway,
-    // so it is invisible to every texture without a chain.
-    samplerDescriptor.get().mipFilter = sampling.filter == TextureFilter::Linear
-                                            ? MTLSamplerMipFilterLinear
-                                            : MTLSamplerMipFilterNearest;
+    metal.minFilter = toMetalFilter(descriptor.minFilter);
+    metal.magFilter = toMetalFilter(descriptor.magFilter);
+    metal.mipFilter = toMetalMipFilter(descriptor.mipFilter);
+    metal.sAddressMode = toMetalAddressMode(descriptor.addressU);
+    metal.tAddressMode = toMetalAddressMode(descriptor.addressV);
+    metal.rAddressMode = toMetalAddressMode(descriptor.addressW);
+    metal.borderColor = toMetalBorderColor(descriptor.borderColor);
+    metal.lodMinClamp = descriptor.lodMinClamp;
+    metal.lodMaxClamp = descriptor.lodMaxClamp;
 
-    return [metalDevice newSamplerStateWithDescriptor:samplerDescriptor.get()];
+    if (descriptor.isFullyLinear())
+        metal.maxAnisotropy =
+            (NSUInteger) std::clamp(descriptor.maxAnisotropy, 1, 16);
+
+    if (descriptor.compare)
+        metal.compareFunction = toMetalCompareFunction(*descriptor.compare);
+
+    return [metalDevice newSamplerStateWithDescriptor:metal];
 }
 } // namespace
 
@@ -78,12 +147,12 @@ struct Device::Native
     // const lookup that any thread can make without a lazy-init race.
     void buildSamplers()
     {
-        for (auto filter : {TextureFilter::Nearest, TextureFilter::Linear})
-            for (auto mode : {TextureAddressMode::Clamp, TextureAddressMode::Repeat})
+        for (auto filter: {TextureFilter::Nearest, TextureFilter::Linear})
+            for (auto mode: {TextureAddressMode::Clamp, TextureAddressMode::Repeat})
             {
                 const auto sampling = TextureSampling {filter, mode};
                 samplers[samplingIndex(sampling)] =
-                    makeSampler(device.get(), sampling);
+                    makeMetalSampler(device.get(), SamplerDescriptor::from(sampling));
             }
     }
 
@@ -91,6 +160,10 @@ struct Device::Native
     ObjC::Ptr<NSObject<MTLCommandQueue>> queue;
     CFRef<CVMetalTextureCacheRef> textureCache;
     Array<ObjC::Ptr<NSObject<MTLSamplerState>>, samplingConfigurations> samplers;
+
+    // Every other sampler Device::makeSampler made, kept for the device's
+    // lifetime because a Sampler handle does not own its state.
+    Vector<ObjC::Ptr<NSObject<MTLSamplerState>>> describedSamplers;
 
     // Retained rather than held weakly: the command buffer is autoreleased, and
     // the pool it came from may well have drained by the time a read waits.
@@ -251,6 +324,23 @@ void* Device::nativeTextureCache() const
 void* Device::nativeSampler(TextureSampling sampling) const
 {
     return (__bridge void*) impl->samplers[samplingIndex(sampling)].get();
+}
+
+void* Device::createNativeSampler(const SamplerDescriptor& descriptor)
+{
+    auto sampler = makeMetalSampler(impl->device.get(), descriptor);
+
+    if (sampler.get() == nil)
+        return nullptr;
+
+    auto* native = (__bridge void*) sampler.get();
+    impl->describedSamplers.add(std::move(sampler));
+    return native;
+}
+
+bool Device::supportsPerBindSamplers() const
+{
+    return isValid();
 }
 
 void Device::trackSubmittedWork(void* nativeCommandBuffer)

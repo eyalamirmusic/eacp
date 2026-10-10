@@ -2,10 +2,134 @@
 
 #include "../Vulkan/VulkanContext.h"
 
+#include <algorithm>
+
 namespace eacp::GPU
 {
+namespace
+{
+VkSamplerAddressMode toVkAddressMode(SamplerAddressMode mode)
+{
+    switch (mode)
+    {
+        case SamplerAddressMode::ClampToEdge:
+            return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        case SamplerAddressMode::Repeat:
+            return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        case SamplerAddressMode::MirrorRepeat:
+            return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+        case SamplerAddressMode::ClampToBorder:
+            return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    }
+
+    return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+}
+
+VkBorderColor toVkBorderColor(SamplerBorderColor color)
+{
+    switch (color)
+    {
+        case SamplerBorderColor::TransparentBlack:
+            return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+        case SamplerBorderColor::OpaqueBlack:
+            return VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+        case SamplerBorderColor::OpaqueWhite:
+            return VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    }
+
+    return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+}
+
+VkCompareOp toVkCompareOp(CompareFunction compare)
+{
+    switch (compare)
+    {
+        case CompareFunction::Never:
+            return VK_COMPARE_OP_NEVER;
+        case CompareFunction::Less:
+            return VK_COMPARE_OP_LESS;
+        case CompareFunction::LessEqual:
+            return VK_COMPARE_OP_LESS_OR_EQUAL;
+        case CompareFunction::Equal:
+            return VK_COMPARE_OP_EQUAL;
+        case CompareFunction::NotEqual:
+            return VK_COMPARE_OP_NOT_EQUAL;
+        case CompareFunction::GreaterEqual:
+            return VK_COMPARE_OP_GREATER_OR_EQUAL;
+        case CompareFunction::Greater:
+            return VK_COMPARE_OP_GREATER;
+        case CompareFunction::Always:
+            return VK_COMPARE_OP_ALWAYS;
+    }
+
+    return VK_COMPARE_OP_NEVER;
+}
+
+VkFilter toVkFilter(SamplerFilter filter)
+{
+    return filter == SamplerFilter::Linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+}
+
+// Vulkan has no "not mipmapped" mode; the spec's own recipe is a nearest mip
+// mode with maxLod 0.25, which keeps level 0 while still telling minification
+// from magnification.
+VkSamplerCreateInfo toVkSamplerInfo(const SamplerDescriptor& descriptor)
+{
+    const auto& shared = getVulkanShared();
+    const auto mipmapped = descriptor.mipFilter != SamplerMipFilter::None;
+    const auto anisotropic = descriptor.maxAnisotropy > 1
+                             && descriptor.isFullyLinear()
+                             && shared.supportsSamplerAnisotropy();
+
+    VkSamplerCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = toVkFilter(descriptor.magFilter);
+    info.minFilter = toVkFilter(descriptor.minFilter);
+    info.mipmapMode = descriptor.mipFilter == SamplerMipFilter::Linear
+                          ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                          : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    info.addressModeU = toVkAddressMode(descriptor.addressU);
+    info.addressModeV = toVkAddressMode(descriptor.addressV);
+    info.addressModeW = toVkAddressMode(descriptor.addressW);
+    info.anisotropyEnable = anisotropic ? VK_TRUE : VK_FALSE;
+    info.maxAnisotropy =
+        anisotropic ? std::min((float) descriptor.maxAnisotropy,
+                               shared.getProperties().limits.maxSamplerAnisotropy)
+                    : 1.f;
+    info.compareEnable = descriptor.compare ? VK_TRUE : VK_FALSE;
+    info.compareOp = descriptor.compare ? toVkCompareOp(*descriptor.compare)
+                                        : VK_COMPARE_OP_NEVER;
+    info.minLod = mipmapped ? descriptor.lodMinClamp : 0.f;
+    info.maxLod =
+        mipmapped ? std::min(descriptor.lodMaxClamp, VK_LOD_CLAMP_NONE) : 0.25f;
+    info.borderColor = toVkBorderColor(descriptor.borderColor);
+    return info;
+}
+
+// The samplers makeSampler created beyond the four VulkanShared owns. Declared
+// before the context in Native so they are destroyed after it has waited for
+// the GPU to go idle.
+struct OwnedSamplers
+{
+    ~OwnedSamplers()
+    {
+        const auto device = getVulkanShared().getDevice();
+
+        if (device == VK_NULL_HANDLE)
+            return;
+
+        for (auto sampler: samplers)
+            vkDestroySampler(device, sampler, nullptr);
+    }
+
+    Vector<VkSampler> samplers;
+};
+} // namespace
+
 struct Device::Native
 {
+    OwnedSamplers samplers;
+
     // Mutable because the accessors that reach it are const, and a const Device
     // still submits.
     mutable VulkanContext context;
@@ -136,6 +260,24 @@ void* Device::nativeSampler(TextureSampling sampling) const
         return nullptr;
 
     return getVulkanShared().getSampler(sampling);
+}
+
+void* Device::createNativeSampler(const SamplerDescriptor& descriptor)
+{
+    const auto info = toVkSamplerInfo(descriptor);
+    auto sampler = VkSampler {VK_NULL_HANDLE};
+
+    if (vkCreateSampler(getVulkanShared().getDevice(), &info, nullptr, &sampler)
+        != VK_SUCCESS)
+        return nullptr;
+
+    impl->samplers.samplers.add(sampler);
+    return reinterpret_cast<void*>(sampler);
+}
+
+bool Device::supportsPerBindSamplers() const
+{
+    return isValid();
 }
 
 void Device::trackSubmittedWork(void*)

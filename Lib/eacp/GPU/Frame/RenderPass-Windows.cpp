@@ -216,6 +216,39 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
 }
 
+namespace
+{
+void bindPerBindSampler(D3D12Encoder* encoder, int slot, const Sampler& sampler)
+{
+    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    const auto descriptor = perBindSamplerDescriptor(sampler);
+
+    if (descriptor.ptr == 0)
+        return;
+
+    encoder->commands->list->SetGraphicsRootDescriptorTable(renderSamplerParam(slot),
+                                                            descriptor);
+}
+} // namespace
+
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    const Sampler& sampler)
+{
+    setFragmentTexture(texture, slot, TextureSampling {});
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
+void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
+                                         int slot,
+                                         const Sampler& sampler)
+{
+    setFragmentDepthTexture(renderTarget, slot, TextureSampling {});
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
 void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          TextureSampling)

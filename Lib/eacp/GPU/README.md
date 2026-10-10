@@ -2190,6 +2190,37 @@ How a texture is sampled belongs to the *shader*, not to the `Texture`, which is
 a deliberate break from the obvious design and has a Windows driver bug behind
 it. See [`SAMPLERS.md`](SAMPLERS.md).
 
+A shader written by hand, or imported from another engine, can instead take its
+sampler per draw. `Device::makeSampler(SamplerDescriptor)` describes one — wrap
+per axis (clamp, repeat, mirror, border), min/mag/mip filter, anisotropy, a
+comparison function for shadow lookups, border colour, LOD clamp — and returns a
+`Sampler` the device keeps: an equal descriptor gives back the same native
+object, so asking per draw costs a hash lookup. The overloads taking one bind it
+beside the texture:
+
+```cpp
+auto tiled = device.makeSampler({.addressU = SamplerAddressMode::Repeat,
+                                 .addressV = SamplerAddressMode::Repeat,
+                                 .minFilter = SamplerFilter::Linear,
+                                 .magFilter = SamplerFilter::Linear,
+                                 .mipFilter = SamplerMipFilter::Linear});
+
+pass.setFragmentTexture(floor, 0, tiled);
+pass.setFragmentDepthTexture(shadowMap, 1, shadowCompare);
+```
+
+The shader declares the sampler where the slot puts it: an MSL
+`sampler s [[sampler(slot)]]` argument, an HLSL
+`SamplerState s : register(s<8 + slot>)` (`RenderPass::samplerRegisterBase`; a
+`SamplerComparisonState` for a comparison sampler), or on Vulkan the combined
+`sampler2D` / `sampler2DShadow` at the texture's own binding. Shaders built with
+the codegen layer keep sampling the way they declared, and the `TextureSampling`
+overloads are the same cache under four fixed descriptors
+(`SamplerDescriptor::from`). `Device::supportsPerBindSamplers()` is false on the
+one D3D12 driver whose sampler tables cannot be trusted, where the per-bind
+registers hold a fixed linear/repeat sampler instead; `SAMPLERS.md` says which
+and how to override it.
+
 ## Driver quirks
 
 Two more D3D12 operations are known to be refused by a shipping driver — the

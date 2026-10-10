@@ -256,26 +256,63 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
                                atIndex:(NSUInteger) index];
 }
 
+namespace
+{
+void bindFragmentTexture(NSObject<MTLRenderCommandEncoder>* encoder,
+                         id<MTLTexture> texture,
+                         int slot,
+                         void* nativeSampler)
+{
+    auto metalSampler = (__bridge id<MTLSamplerState>) nativeSampler;
+
+    if (encoder == nil || texture == nil || metalSampler == nil)
+        return;
+
+    [encoder setFragmentTexture:texture atIndex:(NSUInteger) slot];
+    [encoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
+// The resolve on a multisampled target and the attachment itself on a
+// single-sampled one. A depth2d_ms is not what the shader declared and Metal
+// will not bind one to a depth2d, which is why a multisampled target carries a
+// single-sampled twin at all - see TextureDescriptor::sampleCount.
+id<MTLTexture> sampleableDepthOf(const Texture& renderTarget)
+{
+    auto resolved =
+        (__bridge id<MTLTexture>) renderTarget.nativeResolvedDepthTexture();
+
+    return resolved != nil
+               ? resolved
+               : (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
+}
+} // namespace
+
+// The state for the sampling the shader declared, not one the texture carries -
+// that is what keeps this backend agreeing with D3D12, where the declaration is
+// the only thing that can pick a sampler for a codegen shader.
 void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
                                     TextureSampling sampling)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
-
-    // The state for the sampling the shader declared, not one the texture
-    // carries — that is what keeps this backend agreeing with D3D12, where the
-    // declaration is the only thing that can pick a sampler at all.
-    auto metalSampler =
-        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
-
-    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
-        return;
-
-    [activeEncoder setFragmentTexture:metalTexture atIndex:(NSUInteger) slot];
-    [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+    bindFragmentTexture(impl->encoder.get(),
+                        (__bridge id<MTLTexture>) texture.nativeTexture(),
+                        slot,
+                        Device::shared().nativeSampler(sampling));
 }
 
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    const Sampler& sampler)
+{
+    bindFragmentTexture(impl->encoder.get(),
+                        (__bridge id<MTLTexture>) texture.nativeTexture(),
+                        slot,
+                        sampler.nativeSampler());
+}
+
+// A depth texture goes on a texture index like any other; what makes it a
+// depth2d rather than a texture2d is the declaration the shader was compiled
+// with.
 void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          TextureSampling sampling)
@@ -283,32 +320,23 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
     if (!renderTarget.hasSampleableDepth())
         return;
 
-    auto activeEncoder = impl->encoder.get();
+    bindFragmentTexture(impl->encoder.get(),
+                        sampleableDepthOf(renderTarget),
+                        slot,
+                        Device::shared().nativeSampler(sampling));
+}
 
-    // The resolve on a multisampled target and the attachment itself on a
-    // single-sampled one. A depth2d_ms is not what the shader declared and Metal
-    // will not bind one to a depth2d, which is why a multisampled target carries
-    // a single-sampled twin at all - see TextureDescriptor::sampleCount.
-    auto resolved =
-        (__bridge id<MTLTexture>) renderTarget.nativeResolvedDepthTexture();
-
-    auto metalTexture =
-        resolved != nil
-            ? resolved
-            : (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
-
-    auto metalSampler =
-        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
-
-    if (activeEncoder == nil || metalTexture == nil || metalSampler == nil)
+void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
+                                         int slot,
+                                         const Sampler& sampler)
+{
+    if (!renderTarget.hasSampleableDepth())
         return;
 
-    // The same two calls the colour bind makes, which is the whole of the
-    // difference on this backend: a depth texture goes on a texture index like
-    // any other, and what makes it a depth2d rather than a texture2d is the
-    // declaration the shader was compiled with.
-    [activeEncoder setFragmentTexture:metalTexture atIndex:(NSUInteger) slot];
-    [activeEncoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+    bindFragmentTexture(impl->encoder.get(),
+                        sampleableDepthOf(renderTarget),
+                        slot,
+                        sampler.nativeSampler());
 }
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)

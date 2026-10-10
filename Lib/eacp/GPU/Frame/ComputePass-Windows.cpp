@@ -161,6 +161,24 @@ void ComputePass::setInputTexture(const Texture& texture, int slot, TextureSampl
     list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), data->srv.gpu);
 }
 
+void ComputePass::setInputTexture(const Texture& texture,
+                                  int slot,
+                                  const Sampler& sampler)
+{
+    setInputTexture(texture, slot, TextureSampling {});
+
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    const auto descriptor = perBindSamplerDescriptor(sampler);
+
+    if (descriptor.ptr == 0)
+        return;
+
+    impl->encoder->commands->list->SetComputeRootDescriptorTable(
+        computeSamplerParam(slot), descriptor);
+}
+
 void ComputePass::setOutputTexture(const Texture& texture, int slot)
 {
     if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)

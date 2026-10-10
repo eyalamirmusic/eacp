@@ -71,6 +71,7 @@ set(gpu_test_sources
         RenderBufferRangeTests.cpp
         RenderTargetDepthTests.cpp
         RenderTargetTests.cpp
+        SamplerTests.cpp
         ScissorTests.cpp
         SelectTests.cpp
         ShaderBlendTests.cpp

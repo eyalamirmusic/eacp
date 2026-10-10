@@ -4,6 +4,8 @@
 #include <eacp/Graphics/Image/Image.h>
 
 #include <cassert>
+#include <mutex>
+#include <unordered_map>
 
 // Portable Device members. The platform backends (Device-macOS.mm /
 // Device-Windows.cpp) own construction and the native handles; anything that
@@ -66,6 +68,55 @@ Texture Device::makeTexture(const TextureDescriptor& descriptor, const void* pix
 Texture Device::wrapPixelBuffer(void* nativePixelBuffer)
 {
     return {*this, nativePixelBuffer};
+}
+
+struct Device::SamplerCache
+{
+    std::mutex mutex;
+    std::unordered_map<SamplerDescriptor, Sampler, SamplerDescriptorHash> samplers;
+};
+
+std::shared_ptr<Device::SamplerCache> Device::makeSamplerCache()
+{
+    return std::make_shared<SamplerCache>();
+}
+
+namespace
+{
+constexpr TextureSampling samplingConfigurationsInOrder[] = {
+    {TextureFilter::Nearest, TextureAddressMode::Clamp},
+    {TextureFilter::Nearest, TextureAddressMode::Repeat},
+    {TextureFilter::Linear, TextureAddressMode::Clamp},
+    {TextureFilter::Linear, TextureAddressMode::Repeat},
+};
+} // namespace
+
+Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
+{
+    if (!isValid())
+        return {};
+
+    auto lock = std::scoped_lock(samplers->mutex);
+    auto& cache = samplers->samplers;
+
+    if (auto found = cache.find(descriptor); found != cache.end())
+        return found->second;
+
+    auto native = static_cast<void*>(nullptr);
+
+    for (const auto& sampling: samplingConfigurationsInOrder)
+        if (SamplerDescriptor::from(sampling) == descriptor)
+            native = nativeSampler(sampling);
+
+    if (native == nullptr)
+        native = createNativeSampler(descriptor);
+
+    if (native == nullptr)
+        return {};
+
+    auto sampler = Sampler {native, descriptor};
+    cache.emplace(descriptor, sampler);
+    return sampler;
 }
 
 ShaderLibrary Device::makeShaderLibrary(const ShaderSource& source)

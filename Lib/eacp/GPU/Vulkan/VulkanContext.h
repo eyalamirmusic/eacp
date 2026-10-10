@@ -271,6 +271,12 @@ public:
     // Serialises vkQueueSubmit; the queue is shared by every Device.
     std::mutex& getQueueMutex() { return queueMutex; }
 
+    // Enabled at device creation wherever the device offers it.
+    bool supportsSamplerAnisotropy() const
+    {
+        return features.samplerAnisotropy == VK_TRUE;
+    }
+
     // Null before the device came up.
     VkSampler getSampler(const TextureSampling& sampling) const
     {

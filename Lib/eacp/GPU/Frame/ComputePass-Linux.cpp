@@ -22,6 +22,25 @@ struct ComputePass::Native
 
     VkCommandBuffer commandBuffer() const { return encoder->commands->buffer; }
 
+    void bindInputTexture(const Texture& texture, int slot, VkSampler sampler)
+    {
+        if (!encoder || slot < 0 || slot >= maxTextureSlots
+            || sampler == VK_NULL_HANDLE)
+            return;
+
+        auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
+
+        if (data == nullptr || !data->isValid())
+            return;
+
+        const auto& target = data->restingUse();
+        transitionTextureForUse(commandBuffer(), *data, target);
+
+        textures[slot] = {sampler, data->sampledView, target.layout};
+        sampledTextures |= 1u << slot;
+        storageTextures &= ~(1u << slot);
+    }
+
     void orderAfterDispatch(VkCommandBuffer buffer) const
     {
         if (!isConcurrent())
@@ -219,29 +238,26 @@ void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
     impl->boundBuffers |= 1u << slot;
 }
 
+namespace
+{
+VkSampler toVkSampler(const Sampler& sampler)
+{
+    return reinterpret_cast<VkSampler>(sampler.nativeSampler());
+}
+} // namespace
+
 void ComputePass::setInputTexture(const Texture& texture,
                                   int slot,
                                   TextureSampling sampling)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
-        return;
+    impl->bindInputTexture(texture, slot, getVulkanShared().getSampler(sampling));
+}
 
-    auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
-
-    if (data == nullptr || !data->isValid())
-        return;
-
-    const auto sampler = getVulkanShared().getSampler(sampling);
-
-    if (sampler == VK_NULL_HANDLE)
-        return;
-
-    const auto& target = data->restingUse();
-    transitionTextureForUse(impl->commandBuffer(), *data, target);
-
-    impl->textures[slot] = {sampler, data->sampledView, target.layout};
-    impl->sampledTextures |= 1u << slot;
-    impl->storageTextures &= ~(1u << slot);
+void ComputePass::setInputTexture(const Texture& texture,
+                                  int slot,
+                                  const Sampler& sampler)
+{
+    impl->bindInputTexture(texture, slot, toVkSampler(sampler));
 }
 
 void ComputePass::setOutputTexture(const Texture& texture, int slot)

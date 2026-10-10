@@ -6,12 +6,14 @@
 #include "../Pipeline/RenderPipeline.h"
 #include "../Shader/ShaderLibrary.h"
 #include "../Shader/ShaderSource.h"
+#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 #include "../Timing/FrameTimer.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace eacp::Graphics
@@ -102,6 +104,23 @@ public:
     // camera and video frames. Returns an invalid texture on backends without
     // zero-copy support (Windows for now), where Texture::update is the path.
     Texture wrapPixelBuffer(void* nativePixelBuffer);
+
+    // The sampler a descriptor describes, made once per distinct descriptor and
+    // kept for this Device's lifetime: asking again with an equal descriptor
+    // returns the same native object, so a renderer can call this per draw. Safe
+    // from any thread. Invalid on a device that is not, or when the backend
+    // refused the descriptor.
+    //
+    // The four TextureSampling configurations are among these:
+    // makeSampler(SamplerDescriptor::from(sampling)) is the sampler the
+    // TextureSampling overloads bind.
+    Sampler makeSampler(const SamplerDescriptor& descriptor);
+
+    // Whether a Sampler bound per draw reaches the shader. True on Metal and
+    // Vulkan; on D3D12 false where the driver ignores the offset of a sampler
+    // descriptor table (see SAMPLERS.md), in which case the per-bind sampler
+    // registers hold one fixed static sampler and a Sampler bind is dropped.
+    bool supportsPerBindSamplers() const;
 
     ShaderLibrary makeShaderLibrary(const ShaderSource& source);
 
@@ -307,6 +326,14 @@ private:
 
     struct Native;
     Pimpl<Native> impl;
+
+    // Builds the backend's sampler for a descriptor and keeps it in Native.
+    // Called by makeSampler for a descriptor not yet cached.
+    void* createNativeSampler(const SamplerDescriptor& descriptor);
+
+    struct SamplerCache;
+    static std::shared_ptr<SamplerCache> makeSamplerCache();
+    std::shared_ptr<SamplerCache> samplers = makeSamplerCache();
 
     FrameTimer timer;
 

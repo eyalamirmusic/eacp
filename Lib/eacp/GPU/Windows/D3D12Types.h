@@ -7,6 +7,8 @@
 #include "../Frame/ComputePass.h"
 #include "../Frame/RenderPass.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 // Internal shared types for the Windows/D3D12 GPU backend. The public GPU
 // classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
 // ...); these structs are what those handles point to, so the separate
@@ -75,8 +77,27 @@ constexpr UINT renderBufferRegister(int slot)
     return static_cast<UINT>(RenderPass::bufferRegisterBase + slot);
 }
 
-// There is deliberately no renderSamplerParam: samplers are static samplers in
-// the root signature, not descriptor tables. See TextureSampling.
+// The per-bind sampler tables come last, one per texture slot, so that a root
+// signature built without them - the static-sampler fallback, see
+// DriverQuirks::samplerTablesIgnoreOffset - keeps every other index. The
+// TextureSampling samplers are static samplers at s0.., never a table; see
+// TextureSampling.
+constexpr UINT renderSamplerParam(int slot)
+{
+    return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots
+                             + 2 * maxBufferSlots + slot);
+}
+
+constexpr int renderParamCount =
+    2 * maxUniformSlots + maxTextureSlots + 2 * maxBufferSlots + maxTextureSlots;
+
+static_assert(samplingConfigurations <= RenderPass::samplerRegisterBase,
+              "per-bind sampler registers must start above the static samplers");
+
+constexpr UINT samplerRegister(int slot)
+{
+    return static_cast<UINT>(RenderPass::samplerRegisterBase + slot);
+}
 
 // Compute root signature parameter layout: root CBVs, then root SRVs and root
 // UAVs for the storage buffers, then one single-descriptor table per texture
@@ -106,6 +127,21 @@ constexpr UINT computeTextureUAVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots + maxTextureSlots
                              + slot);
+}
+
+constexpr UINT computeSamplerParam(int slot)
+{
+    return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots
+                             + 2 * maxTextureSlots + slot);
+}
+
+constexpr int computeParamCount =
+    maxUniformSlots + 2 * maxBufferSlots + 3 * maxTextureSlots;
+
+// Whether the root signatures carry the per-bind sampler tables above.
+inline bool hasSamplerTables()
+{
+    return !getD3D12Shared().getDriverQuirks().samplerTablesIgnoreOffset;
 }
 
 // A kernel's textures share the t/u register spaces with its storage buffers,
@@ -181,10 +217,46 @@ struct D3D12BufferData
     bool uploadHeap = false;
 };
 
+// What Sampler::nativeSampler() points to: a descriptor in the owning Device's
+// sampler heap, written once when Device::makeSampler first saw the
+// descriptor, and held for that Device's lifetime.
+struct D3D12SamplerData
+{
+    DescriptorSlot slot;
+};
+
+// The descriptor a per-bind sampler table is pointed at, or a null handle
+// where there is nothing to bind - an invalid Sampler, or a root signature
+// without the tables, in which case the drop is logged once.
+inline D3D12_GPU_DESCRIPTOR_HANDLE perBindSamplerDescriptor(const Sampler& sampler)
+{
+    if (!hasSamplerTables())
+    {
+        static auto reported = false;
+
+        if (!reported)
+        {
+            reported = true;
+            LOG("D3D12: this driver ignores sampler table offsets; per-bind "
+                "samplers are dropped and their registers hold a fixed "
+                "linear/repeat static sampler. See SAMPLERS.md.");
+        }
+
+        return {};
+    }
+
+    auto* data = static_cast<D3D12SamplerData*>(sampler.nativeSampler());
+
+    if (data == nullptr)
+        return {};
+
+    return data->slot.gpu;
+}
+
 // What Texture::nativeTexture()/nativeReadView() point to. The SRV slot lives
 // in the context's shader-visible heap for the texture's whole lifetime;
-// binding is just a root-table pointer update. There is no sampler slot: every
-// sampler is static in the root signature. See TextureSampling.
+// binding is just a root-table pointer update. There is no sampler slot: a
+// texture carries no sampler state. See TextureSampling and D3D12SamplerData.
 // The one format a depth attachment is created, cleared, viewed and compiled
 // against. Kept in one place because those four have to name the same value:
 // a resource, its optimised clear value, its DSV and the pipeline's DSVFormat
@@ -580,6 +652,14 @@ inline void bindComputeRootState(D3D12Context& context,
         list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), nullSrv);
         list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), nullUav);
     }
+
+    const auto nullSampler = context.getNullSamplerDescriptor();
+
+    if (!hasSamplerTables() || nullSampler.ptr == 0)
+        return;
+
+    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+        list->SetComputeRootDescriptorTable(computeSamplerParam(slot), nullSampler);
 }
 
 // A plain transition barrier for resources with externally known states (back

@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Shader/ShaderSource.h"
+#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
 namespace eacp::GPU
@@ -83,6 +84,12 @@ public:
     void setInputTexture(const Texture& texture,
                          int slot,
                          TextureSampling sampling = {});
+
+    // The per-bind sampler form, as RenderPass::setFragmentTexture describes:
+    // MSL `sampler [[sampler(slot)]]`, HLSL
+    // `register(s<RenderPass::samplerRegisterBase + slot>)`, Vulkan the combined
+    // sampler at the texture's binding.
+    void setInputTexture(const Texture& texture, int slot, const Sampler& sampler);
     void setOutputTexture(const Texture& texture, int slot);
 
     // Uploads a small uniform block without a buffer object, like the render

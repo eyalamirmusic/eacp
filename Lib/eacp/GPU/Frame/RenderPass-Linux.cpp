@@ -115,6 +115,46 @@ struct RenderPass::Native
         return true;
     }
 
+    // A combined image sampler at the texture's binding: the sampler travels in
+    // the descriptor write, whichever overload picked it.
+    void bindTexture(int slot,
+                     VkSampler sampler,
+                     VkImageView view,
+                     VkImageLayout layout)
+    {
+        textures[slot] = {sampler, view, layout};
+        boundTextures |= 1u << slot;
+        descriptorsDirty = true;
+    }
+
+    void bindColorTexture(const Texture& texture, int slot, VkSampler sampler)
+    {
+        if (!encoder || slot < 0 || slot >= maxTextureSlots
+            || sampler == VK_NULL_HANDLE)
+            return;
+
+        auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
+
+        if (data == nullptr || !data->isValid())
+            return;
+
+        bindTexture(slot, sampler, data->sampledView, data->restingUse().layout);
+    }
+
+    void bindDepthTexture(const Texture& renderTarget, int slot, VkSampler sampler)
+    {
+        if (!encoder || slot < 0 || slot >= maxTextureSlots
+            || sampler == VK_NULL_HANDLE)
+            return;
+
+        auto* data = static_cast<VulkanTextureData*>(renderTarget.nativeTexture());
+
+        if (data == nullptr || !data->hasSampleableDepth())
+            return;
+
+        bindTexture(slot, sampler, data->depthReadView, imageDepthSampled.layout);
+    }
+
     bool bindIndexRange(const BufferRange& indices, IndexFormat format)
     {
         if (indices.buffer == nullptr)
@@ -331,50 +371,43 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
                            &offset);
 }
 
+namespace
+{
+VkSampler toVkSampler(const Sampler& sampler)
+{
+    return reinterpret_cast<VkSampler>(sampler.nativeSampler());
+}
+} // namespace
+
 // No barrier: Vulkan forbids one inside a render pass instance, and the
 // resting-layout rule on VulkanTextureData leaves the image ready to sample.
 void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
                                     TextureSampling sampling)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
-        return;
+    impl->bindColorTexture(texture, slot, getVulkanShared().getSampler(sampling));
+}
 
-    auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
-
-    if (data == nullptr || !data->isValid())
-        return;
-
-    const auto sampler = getVulkanShared().getSampler(sampling);
-
-    if (sampler == VK_NULL_HANDLE)
-        return;
-
-    impl->textures[slot] = {sampler, data->sampledView, data->restingUse().layout};
-    impl->boundTextures |= 1u << slot;
-    impl->descriptorsDirty = true;
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    const Sampler& sampler)
+{
+    impl->bindColorTexture(texture, slot, toVkSampler(sampler));
 }
 
 void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          TextureSampling sampling)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
-        return;
+    impl->bindDepthTexture(
+        renderTarget, slot, getVulkanShared().getSampler(sampling));
+}
 
-    auto* data = static_cast<VulkanTextureData*>(renderTarget.nativeTexture());
-
-    if (data == nullptr || !data->hasSampleableDepth())
-        return;
-
-    const auto sampler = getVulkanShared().getSampler(sampling);
-
-    if (sampler == VK_NULL_HANDLE)
-        return;
-
-    impl->textures[slot] = {sampler, data->depthReadView, imageDepthSampled.layout};
-    impl->boundTextures |= 1u << slot;
-    impl->descriptorsDirty = true;
+void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
+                                         int slot,
+                                         const Sampler& sampler)
+{
+    impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler));
 }
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)

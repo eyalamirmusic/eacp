@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Buffer/Buffer.h"
+#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
 #include <eacp/Core/Utils/Containers.h>
@@ -157,6 +158,15 @@ public:
                             int slot = 0,
                             TextureSampling sampling = {});
 
+    // The same bind with the sampler chosen here rather than by the shader, for
+    // a shader that takes its sampler per draw: an MSL `sampler [[sampler(slot)]]`
+    // argument, an HLSL `SamplerState : register(s<samplerRegisterBase + slot>)`,
+    // or on Vulkan the combined `sampler2D` at the texture's own binding. A
+    // shader built with the codegen layer samples the way it declared on D3D12
+    // whatever is bound here. An invalid sampler binds nothing.
+    void
+        setFragmentTexture(const Texture& texture, int slot, const Sampler& sampler);
+
     // Binds the *depth buffer* of a render target to the fragment stage, on the
     // same slot space and with the same sampling rule as the call above. The
     // shader's matching declaration is ShaderBuilder::depthTexture, whose
@@ -178,6 +188,12 @@ public:
     void setFragmentDepthTexture(const Texture& renderTarget,
                                  int slot = 0,
                                  TextureSampling sampling = {});
+
+    // The per-bind sampler form, as for setFragmentTexture. A comparison
+    // sampler (SamplerDescriptor::compare) is what a shadow lookup binds here.
+    void setFragmentDepthTexture(const Texture& renderTarget,
+                                 int slot,
+                                 const Sampler& sampler);
 
     // Binds a Storage buffer for indexed reads in a shader stage - the thing a
     // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
@@ -443,6 +459,11 @@ public:
     // emitter and the root signature to this number, and static_asserts that it
     // is not below maxTextureSlots.
     static constexpr int bufferRegisterBase = 8;
+
+    // The D3D12 sampler register a per-bind sampler for texture slot n sits at:
+    // s<samplerRegisterBase + n>. Above the static samplers the codegen layer's
+    // TextureSampling declarations use, which hold s0..s3.
+    static constexpr int samplerRegisterBase = 8;
 
 private:
     // Flushes every participant, once. Called by end() on both backends before
