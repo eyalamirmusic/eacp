@@ -41,8 +41,12 @@ struct RenderPass::Native
     bool pipelineBound = false;
 };
 
-RenderPass::RenderPass(void* encoder, int targetWidth, int targetHeight)
-    : impl(encoder, targetWidth, targetHeight)
+RenderPass::RenderPass(void* encoder,
+                       int targetWidth,
+                       int targetHeight,
+                       OcclusionQueries* queries)
+    : occlusionQueries(queries)
+    , impl(encoder, targetWidth, targetHeight)
 {
 }
 
@@ -818,11 +822,68 @@ void resolveDepthWithShader(CommandContext& commands, D3D12TextureData& texture)
     texture.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 }
 
+// OCCLUSION counts samples and BINARY_OCCLUSION says whether any passed, both
+// out of the one OCCLUSION heap the set owns.
+static D3D12_QUERY_TYPE d3d12OcclusionType(OcclusionMode mode)
+{
+    return mode == OcclusionMode::AnySamples ? D3D12_QUERY_TYPE_BINARY_OCCLUSION
+                                             : D3D12_QUERY_TYPE_OCCLUSION;
+}
+
+void RenderPass::nativeBeginOcclusionQuery(int index, OcclusionMode mode)
+{
+    auto* heap = static_cast<ID3D12QueryHeap*>(occlusionQueries->nativeQueries());
+
+    if (impl->encoder && impl->encoder->commands != nullptr && heap != nullptr)
+        impl->encoder->commands->list->BeginQuery(
+            heap, d3d12OcclusionType(mode), static_cast<UINT>(index));
+}
+
+void RenderPass::nativeEndOcclusionQuery(int index, OcclusionMode mode)
+{
+    auto* heap = static_cast<ID3D12QueryHeap*>(occlusionQueries->nativeQueries());
+
+    if (impl->encoder && impl->encoder->commands != nullptr && heap != nullptr)
+        impl->encoder->commands->list->EndQuery(
+            heap, d3d12OcclusionType(mode), static_cast<UINT>(index));
+}
+
+// Each query the pass used, resolved into its eight bytes of the set's
+// readback buffer, which rests in COPY_DEST as a readback heap's resources
+// must. Only those: a query this pass did not begin keeps what an earlier
+// frame resolved for it.
+void RenderPass::resolveOcclusionQueries()
+{
+    if (occlusionQueries == nullptr || !impl->encoder
+        || impl->encoder->commands == nullptr)
+        return;
+
+    auto* heap = static_cast<ID3D12QueryHeap*>(occlusionQueries->nativeQueries());
+    auto* readback = static_cast<ID3D12Resource*>(occlusionQueries->nativeResults());
+
+    if (heap == nullptr || readback == nullptr)
+        return;
+
+    for (const auto& used: usedQueries)
+        impl->encoder->commands->list->ResolveQueryData(
+            heap,
+            d3d12OcclusionType(used.mode),
+            static_cast<UINT>(used.index),
+            1,
+            readback,
+            static_cast<UINT64>(used.index) * sizeof(std::uint64_t));
+}
+
 void RenderPass::end()
 {
     // Before the encoder goes, so a batching renderer's queued draws still get
     // recorded. See RenderPass::Participant.
     drainParticipants();
+
+    // After them, so a participant's draws inside an open query count, and the
+    // resolve after that, every query of the pass now closed.
+    endOcclusionQuery();
+    resolveOcclusionQueries();
 
     // After them, so what a participant flushed is inside the pass being timed
     // rather than after it.

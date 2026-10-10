@@ -277,6 +277,13 @@ struct Frame::Native
 
         timePass(*encoder, descriptor.label);
 
+        // Before rendering begins, the set's first reset being illegal inside
+        // it.
+        auto* queries = Frame::occlusionQueriesFor(descriptor);
+
+        if (queries != nullptr)
+            queries->notePass(commands);
+
         if (usesRenderPasses)
             beginVulkanRenderPass(buffer, renderPass);
         else
@@ -302,7 +309,7 @@ struct Frame::Native
         vkCmdSetStencilReference(buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 0);
 
         return RenderPass(
-            encoder, static_cast<int>(width), static_cast<int>(height));
+            encoder, static_cast<int>(width), static_cast<int>(height), queries);
     }
 
     // A VkQueue is externally synchronized: presenting takes the submit mutex.

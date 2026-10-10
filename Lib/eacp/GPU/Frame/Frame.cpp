@@ -118,6 +118,23 @@ RenderPass Frame::beginMultiTargetPass(std::span<const Texture* const> targets,
         descriptor);
 }
 
+OcclusionQueries* Frame::occlusionQueriesFor(const RenderPassDescriptor& descriptor)
+{
+    auto* queries = descriptor.occlusionQueries;
+
+    if (queries == nullptr)
+        return nullptr;
+
+    if (!queries->isValid())
+    {
+        LOG("eacp: a pass names an OcclusionQueries that is not valid; its "
+            "queries are refused");
+        return nullptr;
+    }
+
+    return queries;
+}
+
 ColorTarget Frame::depthSource(std::span<const ColorTarget> targets,
                                const RenderPassDescriptor& descriptor)
 {

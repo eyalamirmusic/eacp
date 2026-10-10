@@ -244,6 +244,23 @@ struct Frame::Native
         attachment.endOfFragmentSampleIndex = (NSUInteger) (pass * 2 + 1);
     }
 
+    // Names the set's buffer as the pass's visibility results, which Metal only
+    // takes on the descriptor, and tells the set which command buffer will
+    // write it. Returns the set, or null when the pass counts nothing.
+    OcclusionQueries* countOcclusionInto(MTLRenderPassDescriptor* passDescriptor,
+                                         const RenderPassDescriptor& descriptor) const
+    {
+        auto* queries = Frame::occlusionQueriesFor(descriptor);
+
+        if (queries == nullptr)
+            return nullptr;
+
+        passDescriptor.visibilityResultBuffer =
+            (__bridge id<MTLBuffer>) queries->nativeResults();
+        queries->notePass((__bridge void*) commandBuffer.get());
+        return queries;
+    }
+
     // The texture the pass stores into: the drawable's on-screen texture, or the
     // app-owned off-screen colour texture for a snapshot.
     id<MTLTexture> storeTexture() const
@@ -391,6 +408,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                            descriptor.depthAction);
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
+    auto* queries = impl->countOcclusionInto(passDescriptor, descriptor);
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
@@ -398,7 +416,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     // the MSAA texture, when there is one, matches the resolve target's size.
     return RenderPass((__bridge void*) encoder,
                       (int) target.width,
-                      (int) target.height);
+                      (int) target.height,
+                      queries);
 }
 
 // Rendering into app-owned textures. Depth comes from the first target when it
@@ -445,12 +464,14 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
         passDescriptor.renderTargetArrayLength = (NSUInteger) targets[0].layerCount;
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
+    auto* queries = impl->countOcclusionInto(passDescriptor, descriptor);
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
     return RenderPass((__bridge void*) encoder,
                       levelWidth(first, targets[0].level),
-                      levelHeight(first, targets[0].level));
+                      levelHeight(first, targets[0].level),
+                      queries);
 }
 
 // A compute pass samples at the encoder's own boundaries rather than at a

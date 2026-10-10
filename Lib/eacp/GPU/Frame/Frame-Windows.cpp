@@ -96,6 +96,18 @@ struct Frame::Native
         encoder.endQuery = pass * 2 + 1;
     }
 
+    // The set the pass counts into, told which recording will write it, or
+    // null. The queries themselves are begun and resolved by the pass.
+    OcclusionQueries* countOcclusionInto(const RenderPassDescriptor& descriptor) const
+    {
+        auto* queries = Frame::occlusionQueriesFor(descriptor);
+
+        if (queries != nullptr)
+            queries->notePass(commands);
+
+        return queries;
+    }
+
     bool useMsaa() const { return msaa != nullptr && msaa->texture != nullptr; }
 
     // The state every render pass needs bound before it can draw, whether it
@@ -376,11 +388,13 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 
     auto* encoder = new D3D12Encoder {impl->commands, {}};
     impl->timePass(*encoder, descriptor.label);
+    auto* queries = impl->countOcclusionInto(descriptor);
 
     // The pass carries the target's pixel size so it can clamp scissor rects.
     return RenderPass(encoder,
                       static_cast<int>(impl->drawable->width),
-                      static_cast<int>(impl->drawable->height));
+                      static_cast<int>(impl->drawable->height),
+                      queries);
 }
 
 // Rendering into app-owned textures. Depth is the first target's own, from
@@ -520,8 +534,9 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
                                     nullptr);
 
     impl->timePass(*encoder, descriptor.label);
+    auto* queries = impl->countOcclusionInto(descriptor);
 
-    return RenderPass(encoder, width, height);
+    return RenderPass(encoder, width, height, queries);
 }
 
 // A compute pass on the frame's own recording. The graphics and compute root

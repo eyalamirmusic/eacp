@@ -1290,6 +1290,63 @@ with a count buffer on D3D12. Metal has no such draw, so
 `Device::supportsIndirectCount()` is false there and the calls are refused with
 a trace.
 
+### Occlusion queries
+
+A query counts how many samples the draws inside it got past the depth and
+stencil tests, which is what a renderer asks of an object's bounding box before
+deciding whether to draw the object itself. The counts land in an
+`OcclusionQueries` set — N 64-bit results — that the pass's descriptor names,
+because Metal binds them to the pass as it begins:
+
+```cpp
+auto queries = OcclusionQueries {device, 64};   // all zero to start
+
+auto pass = frame.beginPass({.occlusionQueries = &queries});
+pass.draw(scene);
+
+pass.beginOcclusionQuery(7);                     // OcclusionMode::SampleCount
+pass.draw(boundingBox);
+pass.endOcclusionQuery();
+
+pass.beginOcclusionQuery(8, OcclusionMode::AnySamples);
+pass.draw(otherBox);
+pass.endOcclusionQuery();
+```
+
+**The results are written as the pass ends and are readable once the GPU has
+finished that frame**, which in a frame loop is a frame or more later.
+`isComplete()` asks without blocking; `read(span, first)` and `result(index)`
+wait for the frame that last wrote the set, where it has been submitted — a
+frame still being recorded is not waited for, and a read inside it sees the
+previous results. A query no pass began keeps what it held, so one set can be
+filled a few indices at a time across passes and frames; bgfx's
+`setCondition`, which decides on the CPU from last frame's answer, needs nothing
+more. The set is one buffer, not a ring: a renderer reading frame N while frame
+N+1 writes the same indices keeps a set per frame in flight, as the frame timer
+keeps a slot per frame, or `isComplete()` is asking about the frame still
+running.
+
+`SampleCount` is the number of samples — pixels times the target's sample
+count — and exact where `Device::supportsOcclusionSampleCounts()` says so: Metal,
+D3D12, and Vulkan with `occlusionQueryPrecise`, which eacp enables wherever it
+is offered. `AnySamples` is zero or not zero, and the not-zero is not a count.
+`Device::supportsOcclusionQueries()` is true on every device of all three.
+
+One query is open at a time, and an index is begun at most once per pass; a
+second `begin` while one is open, an index already counted in the pass, one
+outside the set, and any query on a pass whose descriptor named no valid set are
+refused with a trace and count nothing. A query still open at the end of the
+pass is closed there. Metal sets `setVisibilityResultMode` Counting or Boolean
+at the query's offset of the pass's `visibilityResultBuffer` and Disabled at the
+same offset — Metal writes every offset a mode was set at, so closing at zero
+would zero query 0 in every pass. D3D12 begins `OCCLUSION` or
+`BINARY_OCCLUSION` queries out of one occlusion heap and resolves the ones the
+pass used into a mapped readback buffer as it ends. Vulkan begins queries of an
+occlusion pool, with `VK_QUERY_CONTROL_PRECISE_BIT` for a count, copies the ones
+the pass used into a host buffer once rendering has ended, and resets them
+there for the next use; the first pass naming a set resets the whole pool
+before it begins rendering.
+
 ### How many buffers a kernel binds
 
 A kernel the codegen layer writes binds at most

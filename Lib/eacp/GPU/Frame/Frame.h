@@ -111,6 +111,13 @@ struct RenderPassDescriptor
     // texture (the default), and the named target's image otherwise. See
     // DepthTarget. The drawable pass ignores it.
     DepthTarget depthTarget = {};
+
+    // The set RenderPass::beginOcclusionQuery counts into, for every query of
+    // the pass. Named here rather than per query because Metal binds the
+    // results to the pass as it begins; a set that is not valid is ignored,
+    // and the queries of such a pass are refused. The set must outlive the
+    // frame. See OcclusionQueries.
+    OcclusionQueries* occlusionQueries = nullptr;
 };
 
 // One colour attachment of a pass over several targets: the texture, and what
@@ -387,6 +394,10 @@ private:
     // first target's layerCount.
     static ColorTarget depthSource(std::span<const ColorTarget> targets,
                                    const RenderPassDescriptor& descriptor);
+
+    // The set a pass counts its occlusion queries into: the descriptor's, when
+    // it is valid, and null otherwise.
+    static OcclusionQueries* occlusionQueriesFor(const RenderPassDescriptor& descriptor);
 
     void* nativeRecording() const;
 

@@ -205,6 +205,19 @@ public:
     // everywhere.
     bool supportsIndirectCount() const;
 
+    // Whether OcclusionQueries can be made and a pass counts into them: every
+    // device on all three backends - Metal's visibility result buffer, D3D12's
+    // occlusion query heap and Vulkan's occlusion query pool are all core. An
+    // invalid Device answers false.
+    bool supportsOcclusionQueries() const;
+
+    // Whether OcclusionMode::SampleCount is an exact count of the samples that
+    // passed, rather than only zero or not zero. True on Metal and D3D12; on
+    // Vulkan where the device has occlusionQueryPrecise, which is enabled
+    // wherever it is offered. Where it is false a SampleCount query still
+    // answers whether anything passed.
+    bool supportsOcclusionSampleCounts() const;
+
     // How many texture slots a render stage may bind on this device, each with
     // its per-bind sampler: RenderPass::maxStageTextureSlots (16) on Metal,
     // whose sixteen sampler indices are the ceiling though it has 31 texture

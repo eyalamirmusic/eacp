@@ -292,6 +292,13 @@ public:
     // VK_KHR_draw_indirect_count extension below it.
     bool supportsIndirectCount() const { return indirectCountSupported; }
 
+    // An occlusion query that counts samples exactly, VK_QUERY_CONTROL_PRECISE_BIT;
+    // enabled wherever the device offers it.
+    bool supportsPreciseOcclusionQueries() const
+    {
+        return features.occlusionQueryPrecise == VK_TRUE;
+    }
+
     // gl_Layer from a vertex shader: shaderOutputLayer on the core floor,
     // VK_EXT_shader_viewport_index_layer below it.
     bool supportsLayeredRendering() const { return layeredRenderingSupported; }
@@ -441,6 +448,15 @@ public:
 
     void deferReleaseBuffer(VkBuffer buffer, VmaAllocation allocation);
 
+    // A host-visible, coherent buffer mapped for its whole life; cached where
+    // it is read back. Released with deferReleaseBuffer.
+    bool makeHostBuffer(std::size_t bytes,
+                        VkBufferUsageFlags usage,
+                        bool readBack,
+                        VkBuffer& buffer,
+                        VmaAllocation& allocation,
+                        std::byte*& mapped);
+
     // Follows the main thread rather than the one that constructed this.
     void followMainThread() { mainThreadOwned = true; }
 
@@ -500,13 +516,6 @@ private:
 
     ConstantPage* pageFor(CommandContext& commands, std::size_t bytes);
 
-    // Mapped for its whole life.
-    bool makeHostBuffer(std::size_t bytes,
-                        VkBufferUsageFlags usage,
-                        bool readBack,
-                        VkBuffer& buffer,
-                        VmaAllocation& allocation,
-                        std::byte*& mapped);
 
     VkBuffer acquirePooled(Vector<PooledBuffer>& pool,
                            Vector<int>& taken,

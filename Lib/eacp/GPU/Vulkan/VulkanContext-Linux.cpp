@@ -1067,6 +1067,7 @@ bool VulkanShared::createDevice()
     enabled.features.independentBlend = features.independentBlend;
     enabled.features.multiDrawIndirect = features.multiDrawIndirect;
     enabled.features.drawIndirectFirstInstance = features.drawIndirectFirstInstance;
+    enabled.features.occlusionQueryPrecise = features.occlusionQueryPrecise;
 
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};

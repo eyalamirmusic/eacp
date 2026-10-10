@@ -236,6 +236,18 @@ bool Device::supportsIndirectCount() const
     return isValid();
 }
 
+// D3D12_QUERY_TYPE_OCCLUSION counts samples on every device; BINARY_OCCLUSION
+// is the AnySamples form.
+bool Device::supportsOcclusionQueries() const
+{
+    return isValid();
+}
+
+bool Device::supportsOcclusionSampleCounts() const
+{
+    return isValid();
+}
+
 int Device::maxTextureSlots() const
 {
     return isValid() ? GPU::maxTextureSlots : 0;

@@ -252,6 +252,17 @@ bool Device::supportsIndirectCount() const
     return false;
 }
 
+// Visibility results are on every Metal device, counting included.
+bool Device::supportsOcclusionQueries() const
+{
+    return isValid();
+}
+
+bool Device::supportsOcclusionSampleCounts() const
+{
+    return isValid();
+}
+
 int Device::maxTextureSlots() const
 {
     return isValid() ? RenderPass::maxStageTextureSlots : 0;

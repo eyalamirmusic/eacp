@@ -2,6 +2,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "IndirectDraw.h"
+#include "OcclusionQueries.h"
 #include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
@@ -51,7 +52,13 @@ public:
     // that leaves the render target (Metal API validation aborts), so a caller
     // scrolling a region partly off-screen would otherwise have to clamp by
     // hand at every call site.
-    explicit RenderPass(void* encoder, int targetWidth = 0, int targetHeight = 0);
+    //
+    // occlusionQueries is the set the pass's descriptor named, already checked
+    // valid by Frame, or null.
+    explicit RenderPass(void* encoder,
+                        int targetWidth = 0,
+                        int targetHeight = 0,
+                        OcclusionQueries* occlusionQueries = nullptr);
     ~RenderPass();
 
     RenderPass(const RenderPass&) = delete;
@@ -548,6 +555,26 @@ public:
             drawInstanced(program.vertexCount(), instanceCount, 0, firstInstance);
     }
 
+    // Counts the samples that the draws from here to endOcclusionQuery() pass
+    // the depth and stencil tests with into query `index` of the set this
+    // pass's descriptor named (RenderPassDescriptor::occlusionQueries). The
+    // result is written as the pass ends and read off the set once the frame
+    // has finished - see OcclusionQueries.
+    //
+    // One query is open at a time, and one index is begun at most once per
+    // pass. Refused with a trace, counting nothing: a pass whose descriptor
+    // named no valid set, an index the set lacks, a query begun while another
+    // is open, and an index this pass already counted. A query still open when
+    // the pass ends is ended there.
+    //
+    // A query around no draws, or around draws that are all hidden, counts
+    // zero; a draw skipped for want of a valid pipeline counts nothing either.
+    void beginOcclusionQuery(int index,
+                             OcclusionMode mode = OcclusionMode::SampleCount);
+
+    // Closes the open query. Nothing to do when none is open.
+    void endOcclusionQuery();
+
     void end();
 
     // The Metal buffer index the first uniform block binds to. Vertex buffers
@@ -594,6 +621,27 @@ private:
     // participant gets its last chance to draw.
     Vector<Participant*> participants;
     bool drained = false;
+
+    // The occlusion bookkeeping, shared by the backends like the participants:
+    // which set the pass counts into, the query open now, and every query the
+    // pass has begun, which D3D12 and Vulkan resolve once the pass has ended.
+    // Each backend supplies the three native steps.
+    struct UsedQuery
+    {
+        int index = 0;
+        OcclusionMode mode = OcclusionMode::SampleCount;
+    };
+
+    void nativeBeginOcclusionQuery(int index, OcclusionMode mode);
+    void nativeEndOcclusionQuery(int index, OcclusionMode mode);
+
+    // Records the copy of every used query's result out to the set, after the
+    // encoder has closed. Nothing on Metal, whose pass writes them itself.
+    void resolveOcclusionQueries();
+
+    OcclusionQueries* occlusionQueries = nullptr;
+    Vector<UsedQuery> usedQueries;
+    int openQuery = -1;
 
     struct Native;
     Pimpl<Native> impl;

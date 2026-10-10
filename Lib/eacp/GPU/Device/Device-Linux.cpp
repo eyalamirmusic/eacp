@@ -214,6 +214,17 @@ bool Device::supportsIndirectCount() const
     return isValid() && getVulkanShared().supportsIndirectCount();
 }
 
+// Occlusion query pools are core; an exact count needs occlusionQueryPrecise.
+bool Device::supportsOcclusionQueries() const
+{
+    return isValid();
+}
+
+bool Device::supportsOcclusionSampleCounts() const
+{
+    return isValid() && getVulkanShared().supportsPreciseOcclusionQueries();
+}
+
 int Device::maxTextureSlots() const
 {
     return isValid() ? vulkanTextureSlots() : 0;

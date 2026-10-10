@@ -271,8 +271,12 @@ struct RenderPass::Native
     bool descriptorsDirty = true;
 };
 
-RenderPass::RenderPass(void* encoder, int targetWidth, int targetHeight)
-    : impl(encoder, targetWidth, targetHeight)
+RenderPass::RenderPass(void* encoder,
+                       int targetWidth,
+                       int targetHeight,
+                       OcclusionQueries* queries)
+    : occlusionQueries(queries)
+    , impl(encoder, targetWidth, targetHeight)
 {
 }
 
@@ -736,6 +740,84 @@ void RenderPass::drawIndexedIndirectCount(const BufferRange& indices,
                                   static_cast<std::uint32_t>(plan->stride));
 }
 
+// PRECISE for a count where the device has occlusionQueryPrecise, which was
+// enabled with it; without the bit a query promises only zero or not zero,
+// which is all AnySamples asks.
+void RenderPass::nativeBeginOcclusionQuery(int index, OcclusionMode mode)
+{
+    auto pool = static_cast<VkQueryPool>(occlusionQueries->nativeQueries());
+
+    if (!impl->encoder || pool == VK_NULL_HANDLE)
+        return;
+
+    const auto precise = mode == OcclusionMode::SampleCount
+                         && getVulkanShared().supportsPreciseOcclusionQueries();
+
+    vkCmdBeginQuery(impl->commandBuffer(),
+                    pool,
+                    static_cast<std::uint32_t>(index),
+                    precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
+}
+
+void RenderPass::nativeEndOcclusionQuery(int index, OcclusionMode)
+{
+    auto pool = static_cast<VkQueryPool>(occlusionQueries->nativeQueries());
+
+    if (impl->encoder && pool != VK_NULL_HANDLE)
+        vkCmdEndQuery(
+            impl->commandBuffer(), pool, static_cast<std::uint32_t>(index));
+}
+
+// Once rendering has ended: each used query copied into its eight bytes of the
+// set's host buffer, waiting on its availability, and then reset so the next
+// pass or frame may begin it - query commands on one pool execute in order, so
+// the reset lands after the copy has read it. The barrier orders this pass's
+// copies after an earlier pass's into the same bytes.
+void RenderPass::resolveOcclusionQueries()
+{
+    if (occlusionQueries == nullptr || usedQueries.empty() || !impl->encoder)
+        return;
+
+    auto pool = static_cast<VkQueryPool>(occlusionQueries->nativeQueries());
+    auto results = static_cast<VkBuffer>(occlusionQueries->nativeResults());
+
+    if (pool == VK_NULL_HANDLE || results == VK_NULL_HANDLE)
+        return;
+
+    auto buffer = impl->commandBuffer();
+
+    VkMemoryBarrier2 barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+
+    VkDependencyInfo dependency = {};
+    dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.memoryBarrierCount = 1;
+    dependency.pMemoryBarriers = &barrier;
+
+    vkCmdPipelineBarrier2(buffer, &dependency);
+
+    for (const auto& used: usedQueries)
+    {
+        const auto query = static_cast<std::uint32_t>(used.index);
+
+        vkCmdCopyQueryPoolResults(
+            buffer,
+            pool,
+            query,
+            1,
+            results,
+            static_cast<VkDeviceSize>(used.index) * sizeof(std::uint64_t),
+            sizeof(std::uint64_t),
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+        vkCmdResetQueryPool(buffer, pool, query, 1);
+    }
+}
+
 void RenderPass::end()
 {
     // Before vkCmdEndRendering: a participant's queued draws are still draws.
@@ -743,6 +825,10 @@ void RenderPass::end()
 
     if (!impl->encoder)
         return;
+
+    // After them, so a participant's draws inside an open query count; a query
+    // may not stay active past the end of rendering.
+    endOcclusionQuery();
 
     endTimedPass(*impl->encoder);
 
@@ -754,6 +840,9 @@ void RenderPass::end()
         vkCmdEndRendering(buffer);
 
     impl->encoder->commands->context->setRenderPassOpen(false);
+
+    // Outside rendering, where a copy and a reset are legal.
+    resolveOcclusionQueries();
 
     // Barriers are legal only now that vkCmdEndRendering has run.
     for (auto* target: impl->encoder->targets)

@@ -70,6 +70,7 @@ set(gpu_test_sources
         MultisampledTargetTests.cpp
         MipGenerationTests.cpp
         MultiTargetTests.cpp
+        OcclusionQueryTests.cpp
         PackedBFloat16Tests.cpp
         PackedHalfTests.cpp
         PackedQuantizedTests.cpp

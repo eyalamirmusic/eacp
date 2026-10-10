@@ -108,8 +108,12 @@ struct RenderPass::Native
     bool pipelineBound = false;
 };
 
-RenderPass::RenderPass(void* encoder, int targetWidth, int targetHeight)
-    : impl(encoder, targetWidth, targetHeight)
+RenderPass::RenderPass(void* encoder,
+                       int targetWidth,
+                       int targetHeight,
+                       OcclusionQueries* queries)
+    : occlusionQueries(queries)
+    , impl(encoder, targetWidth, targetHeight)
 {
 }
 
@@ -700,6 +704,33 @@ void RenderPass::drawIndexedIndirectCount(const BufferRange&,
     traceIndirectCountUnsupported();
 }
 
+// A query is a mode set at an offset of the pass's visibility buffer: every
+// draw until the mode changes counts into those eight bytes. Disabled is set at
+// the same offset rather than at zero, since naming an offset is what makes
+// Metal write it - closing at zero would zero query 0 in every pass.
+void RenderPass::nativeBeginOcclusionQuery(int index, OcclusionMode mode)
+{
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder
+            setVisibilityResultMode:mode == OcclusionMode::AnySamples
+                                        ? MTLVisibilityResultModeBoolean
+                                        : MTLVisibilityResultModeCounting
+                             offset:(NSUInteger) index * sizeof(std::uint64_t)];
+}
+
+void RenderPass::nativeEndOcclusionQuery(int index, OcclusionMode)
+{
+    if (auto activeEncoder = impl->encoder.get())
+        [activeEncoder
+            setVisibilityResultMode:MTLVisibilityResultModeDisabled
+                             offset:(NSUInteger) index * sizeof(std::uint64_t)];
+}
+
+void RenderPass::resolveOcclusionQueries()
+{
+    // Nothing to record: the pass writes the buffer as it ends.
+}
+
 void RenderPass::end()
 {
     if (impl->ended)
@@ -708,6 +739,9 @@ void RenderPass::end()
     // Before endEncoding, so a batching renderer's queued draws still reach
     // this encoder. See RenderPass::Participant.
     drainParticipants();
+
+    // After them, so a participant's draws inside an open query count.
+    endOcclusionQuery();
 
     if (auto activeEncoder = impl->encoder.get())
         [activeEncoder endEncoding];

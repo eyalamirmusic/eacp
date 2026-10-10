@@ -60,6 +60,7 @@ target_sources(eacp-gpu PRIVATE
         Device/Device.cpp
         Frame/Frame.cpp
         Frame/IndirectDrawPlan.cpp
+        Frame/OcclusionQueries.cpp
         Frame/RenderPass.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
@@ -77,6 +78,7 @@ if (APPLE)
             Device/Device-Apple.mm
             Frame/ComputePass-Apple.mm
             Frame/Frame-Apple.mm
+            Frame/OcclusionQueries-Apple.mm
             Frame/RenderPass-Apple.mm
             Pipeline/ComputePipeline-Apple.mm
             Pipeline/RenderPipeline-Apple.mm
@@ -105,6 +107,7 @@ elseif (WIN32)
             Device/Device-Windows.cpp
             Frame/ComputePass-Windows.cpp
             Frame/Frame-Windows.cpp
+            Frame/OcclusionQueries-Windows.cpp
             Frame/RenderPass-Windows.cpp
             Pipeline/ComputePipeline-Windows.cpp
             Pipeline/RenderPipeline-Windows.cpp
@@ -141,6 +144,7 @@ else ()
             Device/Device-Linux.cpp
             Frame/ComputePass-Linux.cpp
             Frame/Frame-Linux.cpp
+            Frame/OcclusionQueries-Linux.cpp
             Frame/RenderPass-Linux.cpp
             Pipeline/ComputePipeline-Linux.cpp
             Pipeline/RenderPipeline-Linux.cpp
