@@ -50,6 +50,72 @@ VkFormat toVkVertexFormat(VertexFormat format)
             return VK_FORMAT_R16G16_SNORM;
         case VertexFormat::Short4Norm:
             return VK_FORMAT_R16G16B16A16_SNORM;
+
+        // Every format here is one the spec makes mandatory for
+        // VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT. A2B10G10R10 names its channels
+        // from the top bit down, so R is in the low ten bits as on the others.
+        case VertexFormat::UByte:
+            return VK_FORMAT_R8_UINT;
+        case VertexFormat::UByte2:
+            return VK_FORMAT_R8G8_UINT;
+        case VertexFormat::UByte4:
+            return VK_FORMAT_R8G8B8A8_UINT;
+        case VertexFormat::UByteNorm:
+            return VK_FORMAT_R8_UNORM;
+        case VertexFormat::UByte2Norm:
+            return VK_FORMAT_R8G8_UNORM;
+        case VertexFormat::Byte:
+            return VK_FORMAT_R8_SINT;
+        case VertexFormat::Byte2:
+            return VK_FORMAT_R8G8_SINT;
+        case VertexFormat::Byte4:
+            return VK_FORMAT_R8G8B8A8_SINT;
+        case VertexFormat::ByteNorm:
+            return VK_FORMAT_R8_SNORM;
+        case VertexFormat::Byte2Norm:
+            return VK_FORMAT_R8G8_SNORM;
+        case VertexFormat::Byte4Norm:
+            return VK_FORMAT_R8G8B8A8_SNORM;
+        case VertexFormat::UShort:
+            return VK_FORMAT_R16_UINT;
+        case VertexFormat::UShort2:
+            return VK_FORMAT_R16G16_UINT;
+        case VertexFormat::UShort4:
+            return VK_FORMAT_R16G16B16A16_UINT;
+        case VertexFormat::UShortNorm:
+            return VK_FORMAT_R16_UNORM;
+        case VertexFormat::UShort2Norm:
+            return VK_FORMAT_R16G16_UNORM;
+        case VertexFormat::UShort4Norm:
+            return VK_FORMAT_R16G16B16A16_UNORM;
+        case VertexFormat::Short:
+            return VK_FORMAT_R16_SINT;
+        case VertexFormat::Short2:
+            return VK_FORMAT_R16G16_SINT;
+        case VertexFormat::Short4:
+            return VK_FORMAT_R16G16B16A16_SINT;
+        case VertexFormat::ShortNorm:
+            return VK_FORMAT_R16_SNORM;
+        case VertexFormat::Half:
+            return VK_FORMAT_R16_SFLOAT;
+        case VertexFormat::UInt1010102Norm:
+            return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        case VertexFormat::UInt:
+            return VK_FORMAT_R32_UINT;
+        case VertexFormat::UInt2:
+            return VK_FORMAT_R32G32_UINT;
+        case VertexFormat::UInt3:
+            return VK_FORMAT_R32G32B32_UINT;
+        case VertexFormat::UInt4:
+            return VK_FORMAT_R32G32B32A32_UINT;
+        case VertexFormat::Int:
+            return VK_FORMAT_R32_SINT;
+        case VertexFormat::Int2:
+            return VK_FORMAT_R32G32_SINT;
+        case VertexFormat::Int3:
+            return VK_FORMAT_R32G32B32_SINT;
+        case VertexFormat::Int4:
+            return VK_FORMAT_R32G32B32A32_SINT;
     }
 
     return VK_FORMAT_R32G32B32_SFLOAT;

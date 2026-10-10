@@ -28,8 +28,99 @@ enum class VertexFormat
     Half2, // 4 bytes -> Float2
     Half4, // 8 bytes -> Float4
     Short2Norm, // 4 bytes -> Float2; -32767..32767 maps onto -1..1
-    Short4Norm // 8 bytes -> Float4
+    Short4Norm, // 8 bytes -> Float4
+
+    // The rest of what a mesh format ships: every 8- and 16-bit integer
+    // attribute at one, two or four components, normalised or not, a single
+    // half, 10-10-10-2, and the 32-bit integers. Hand-written shaders and
+    // renderers translating someone else's vertex layout (bgfx's AttribType,
+    // glTF's accessor types) need them; the EDSL's packed types above stay the
+    // short list.
+    //
+    // A Norm format is read as a float, 0..1 unsigned and -1..1 signed, exactly
+    // as UByte4Norm and Short2Norm are. **A format without Norm is read as an
+    // integer**, and the shader declares it as one: uint, uint2 or uint4 for the
+    // unsigned formats (uvec in GLSL), int, int2 or int4 for the signed. That is
+    // the rule D3D12 and Vulkan hold a pipeline to - a UINT format feeding a
+    // float input is undefined there - so it is the rule here. Metal alone also
+    // converts an integer format into a float input (UByte4 read as float4 is
+    // 0..255), which a pipeline written for Metal may lean on and one meant for
+    // three backends must not. isIntegerVertexFormat says which is which.
+    //
+    // Fewer components in the format than the shader declares fill in as 0 for
+    // y and z and 1 for w, on every backend. Three components are still
+    // absent below 32 bits, for the D3D12 reason given above: pad to four.
+    UByte, // 1 byte -> uint
+    UByte2, // 2 bytes -> uint2
+    UByte4, // 4 bytes -> uint4; a bone index per byte
+    UByteNorm, // 1 byte -> Float; 0..255 maps onto 0..1
+    UByte2Norm, // 2 bytes -> Float2
+    Byte, // 1 byte -> int
+    Byte2, // 2 bytes -> int2
+    Byte4, // 4 bytes -> int4
+    ByteNorm, // 1 byte -> Float; -127..127 maps onto -1..1
+    Byte2Norm, // 2 bytes -> Float2
+    Byte4Norm, // 4 bytes -> Float4; a packed normal
+    UShort, // 2 bytes -> uint
+    UShort2, // 4 bytes -> uint2
+    UShort4, // 8 bytes -> uint4
+    UShortNorm, // 2 bytes -> Float; 0..65535 maps onto 0..1
+    UShort2Norm, // 4 bytes -> Float2
+    UShort4Norm, // 8 bytes -> Float4
+    Short, // 2 bytes -> int
+    Short2, // 4 bytes -> int2
+    Short4, // 8 bytes -> int4
+    ShortNorm, // 2 bytes -> Float
+    Half, // 2 bytes -> Float
+
+    // Four bytes holding x, y and z in ten bits each from the lowest, and w in
+    // the top two: 0..1023 and 0..3 map onto 0..1. Normalised only, Metal
+    // having no integer form of it; a packed normal or tangent at full sign is
+    // stored biased (n * 0.5 + 0.5) and unbiased in the shader, as bgfx does.
+    UInt1010102Norm, // 4 bytes -> Float4
+
+    UInt, // 4 bytes -> uint
+    UInt2, // 8 bytes -> uint2
+    UInt3, // 12 bytes -> uint3
+    UInt4, // 16 bytes -> uint4
+    Int, // 4 bytes -> int
+    Int2, // 8 bytes -> int2
+    Int3, // 12 bytes -> int3
+    Int4 // 16 bytes -> int4
 };
+
+// Whether the shader reads this format as an integer (uint or int) rather than
+// a float. See the note above UByte.
+constexpr bool isIntegerVertexFormat(VertexFormat format)
+{
+    switch (format)
+    {
+        case VertexFormat::UByte:
+        case VertexFormat::UByte2:
+        case VertexFormat::UByte4:
+        case VertexFormat::Byte:
+        case VertexFormat::Byte2:
+        case VertexFormat::Byte4:
+        case VertexFormat::UShort:
+        case VertexFormat::UShort2:
+        case VertexFormat::UShort4:
+        case VertexFormat::Short:
+        case VertexFormat::Short2:
+        case VertexFormat::Short4:
+        case VertexFormat::UInt:
+        case VertexFormat::UInt2:
+        case VertexFormat::UInt3:
+        case VertexFormat::UInt4:
+        case VertexFormat::Int:
+        case VertexFormat::Int2:
+        case VertexFormat::Int3:
+        case VertexFormat::Int4:
+            return true;
+
+        default:
+            return false;
+    }
+}
 
 // How many bytes one attribute of this format occupies in the buffer. This is
 // what a packed CPU field is checked against, so a struct member that does not
@@ -57,6 +148,43 @@ constexpr int bytesPerAttribute(VertexFormat format)
             return 4;
         case VertexFormat::Short4Norm:
             return 8;
+        case VertexFormat::UByte:
+        case VertexFormat::UByteNorm:
+        case VertexFormat::Byte:
+        case VertexFormat::ByteNorm:
+            return 1;
+        case VertexFormat::UByte2:
+        case VertexFormat::UByte2Norm:
+        case VertexFormat::Byte2:
+        case VertexFormat::Byte2Norm:
+        case VertexFormat::UShort:
+        case VertexFormat::UShortNorm:
+        case VertexFormat::Short:
+        case VertexFormat::ShortNorm:
+        case VertexFormat::Half:
+            return 2;
+        case VertexFormat::UByte4:
+        case VertexFormat::Byte4:
+        case VertexFormat::Byte4Norm:
+        case VertexFormat::UShort2:
+        case VertexFormat::UShort2Norm:
+        case VertexFormat::Short2:
+        case VertexFormat::UInt1010102Norm:
+        case VertexFormat::UInt:
+        case VertexFormat::Int:
+            return 4;
+        case VertexFormat::UShort4:
+        case VertexFormat::UShort4Norm:
+        case VertexFormat::Short4:
+        case VertexFormat::UInt2:
+        case VertexFormat::Int2:
+            return 8;
+        case VertexFormat::UInt3:
+        case VertexFormat::Int3:
+            return 12;
+        case VertexFormat::UInt4:
+        case VertexFormat::Int4:
+            return 16;
     }
 
     return 0;

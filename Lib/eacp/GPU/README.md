@@ -128,6 +128,44 @@ the CPU and one assembled inside `define()` mean the same thing. Apps/GPU has
 both: `Teapot` and `Maze` send scalars and let the shader build the matrices,
 `CubeMap` and `StencilShadows` build them here and send the result.
 
+### Vertex formats past the packed five
+
+The EDSL's packed field types (`UNorm8x4`, `Float16x2`, `Float16x4`,
+`SNorm16x2`, `SNorm16x4`, in `Codegen/PackedVertex.h`) are the short list, and
+each one still reads as a float in `define()`. A hand-written shader — or a
+renderer translating someone else's layout, which is what the bgfx backend does
+with `AttribType` — names its attributes in a `VertexLayout` instead, and has
+the rest of what mesh formats ship: every 8- and 16-bit integer at one, two or
+four components, normalised (`UByte2Norm`, `Byte4Norm`, `UShort4Norm`,
+`ShortNorm`, ...) or not (`UByte4`, `Short2`, `UShort`, ...), a lone `Half`,
+`UInt1010102Norm`, and the 32-bit `UInt`/`Int` at one to four.
+
+```cpp
+descriptor.vertexLayout.attribute(VertexFormat::Float3, 0)          // position
+    .attribute(VertexFormat::Byte4Norm, 12)                          // packed normal
+    .attribute(VertexFormat::UByte4, 16)                             // bone indices
+    .attribute(VertexFormat::UByte4Norm, 20);                        // bone weights
+descriptor.vertexLayout.stride = 24;
+```
+
+**A format without `Norm` is an integer, and the shader declares it as one**:
+`uint4 indices [[attribute(2)]]`, `uint4 indices : TEXCOORD2`,
+`layout(location = 2) in uvec4 indices` — `int` for the signed ones.
+`isIntegerVertexFormat` says which formats those are. That is what D3D12 and
+Vulkan hold a pipeline to, a UINT format feeding a float input being undefined
+there; Metal also converts an integer format into a float input (`UByte4` as
+`float4` reads 0..255), which a shader meant for one backend may lean on and one
+meant for three must not. The other way round — a `Norm` format into a `uint4`
+— Metal refuses outright, which is the pipeline `29-debugdraw` lost.
+
+A format with fewer components than the shader declares fills in 0, 0, 1, on
+every backend. There is still no three-component format below 32 bits, D3D12
+having none: pad to four, which is the size bgfx gives such an attribute anyway.
+`UInt1010102Norm` holds x, y and z in ten bits each from the lowest and w in the
+top two, all normalised; Metal has no integer form of it, so neither does eacp.
+`VertexFormatTests` draws every format into an RGBA32F target and reads each
+value back exactly.
+
 ### Naming the pipeline's state
 
 `prepare` also takes a `RenderPipelineDescriptor`, which is the form to reach for

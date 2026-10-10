@@ -37,6 +37,72 @@ static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
             return MTLVertexFormatShort2Normalized;
         case VertexFormat::Short4Norm:
             return MTLVertexFormatShort4Normalized;
+
+        // The integer formats are the plain ones and the Norm ones the
+        // Normalized ones, as above; D3D12's UINT/SINT against UNORM/SNORM and
+        // Vulkan's the same. See VertexLayout.h for which a shader reads how.
+        case VertexFormat::UByte:
+            return MTLVertexFormatUChar;
+        case VertexFormat::UByte2:
+            return MTLVertexFormatUChar2;
+        case VertexFormat::UByte4:
+            return MTLVertexFormatUChar4;
+        case VertexFormat::UByteNorm:
+            return MTLVertexFormatUCharNormalized;
+        case VertexFormat::UByte2Norm:
+            return MTLVertexFormatUChar2Normalized;
+        case VertexFormat::Byte:
+            return MTLVertexFormatChar;
+        case VertexFormat::Byte2:
+            return MTLVertexFormatChar2;
+        case VertexFormat::Byte4:
+            return MTLVertexFormatChar4;
+        case VertexFormat::ByteNorm:
+            return MTLVertexFormatCharNormalized;
+        case VertexFormat::Byte2Norm:
+            return MTLVertexFormatChar2Normalized;
+        case VertexFormat::Byte4Norm:
+            return MTLVertexFormatChar4Normalized;
+        case VertexFormat::UShort:
+            return MTLVertexFormatUShort;
+        case VertexFormat::UShort2:
+            return MTLVertexFormatUShort2;
+        case VertexFormat::UShort4:
+            return MTLVertexFormatUShort4;
+        case VertexFormat::UShortNorm:
+            return MTLVertexFormatUShortNormalized;
+        case VertexFormat::UShort2Norm:
+            return MTLVertexFormatUShort2Normalized;
+        case VertexFormat::UShort4Norm:
+            return MTLVertexFormatUShort4Normalized;
+        case VertexFormat::Short:
+            return MTLVertexFormatShort;
+        case VertexFormat::Short2:
+            return MTLVertexFormatShort2;
+        case VertexFormat::Short4:
+            return MTLVertexFormatShort4;
+        case VertexFormat::ShortNorm:
+            return MTLVertexFormatShortNormalized;
+        case VertexFormat::Half:
+            return MTLVertexFormatHalf;
+        case VertexFormat::UInt1010102Norm:
+            return MTLVertexFormatUInt1010102Normalized;
+        case VertexFormat::UInt:
+            return MTLVertexFormatUInt;
+        case VertexFormat::UInt2:
+            return MTLVertexFormatUInt2;
+        case VertexFormat::UInt3:
+            return MTLVertexFormatUInt3;
+        case VertexFormat::UInt4:
+            return MTLVertexFormatUInt4;
+        case VertexFormat::Int:
+            return MTLVertexFormatInt;
+        case VertexFormat::Int2:
+            return MTLVertexFormatInt2;
+        case VertexFormat::Int3:
+            return MTLVertexFormatInt3;
+        case VertexFormat::Int4:
+            return MTLVertexFormatInt4;
     }
 
     return MTLVertexFormatFloat3;

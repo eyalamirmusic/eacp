@@ -1,6 +1,15 @@
 #include "Common.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
+#include <functional>
+#include <limits>
+#include <string>
 
 // Packed vertex formats, checked by rendering the same picture twice - once
 // with the attribute unpacked to floats, once packed - and comparing the two
@@ -389,4 +398,366 @@ auto tHalfHandlesTheEdges = test("VertexFormat/halfSaturatesAndUnderflows") = []
     check(halfToFloat(halfFromFloat(std::ldexp(1.f, -20))) > 0.f);
 
     check(std::isnan(halfToFloat(halfFromFloat(std::nanf("")))));
+};
+
+// Every format past the EDSL's packed five, each fed to a hand-written shader
+// that writes the attribute it read straight out as the colour of an RGBA32F
+// target, read back exactly. The integer formats go into uint4 or int4 inputs
+// and the normalised ones into float4, which is the rule VertexLayout.h states
+// and the one D3D12 and Vulkan hold a pipeline to; components the format lacks
+// read as 0, 0, 1.
+namespace
+{
+constexpr auto attributeTargetSize = 4;
+
+enum class InputKind
+{
+    Float,
+    UInt,
+    Int
+};
+
+std::string attributeMsl(InputKind kind)
+{
+    const auto* type = kind == InputKind::Float  ? "float4"
+                       : kind == InputKind::UInt ? "uint4"
+                                                 : "int4";
+
+    return std::string(R"(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float2 position [[attribute(0)]];
+    )") + type + R"( value [[attribute(1)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+    float4 colour [[flat]];
+};
+
+vertex VertexOut vertexMain(VertexIn in [[stage_in]])
+{
+    VertexOut out;
+    out.position = float4(in.position, 0.0, 1.0);
+    out.colour = float4(in.value);
+    return out;
+}
+
+fragment float4 fragmentMain(VertexOut in [[stage_in]])
+{
+    return in.colour;
+}
+)";
+}
+
+std::string attributeHlsl(InputKind kind)
+{
+    const auto* type = kind == InputKind::Float  ? "float4"
+                       : kind == InputKind::UInt ? "uint4"
+                                                 : "int4";
+
+    return std::string(R"(
+struct VertexOut
+{
+    float4 position : SV_Position;
+    nointerpolation float4 colour : TEXCOORD0;
+};
+
+VertexOut vertexMain(float2 position : TEXCOORD0, )")
+           + type + R"( value : TEXCOORD1)
+{
+    VertexOut o;
+    o.position = float4(position, 0.0, 1.0);
+    o.colour = float4(value);
+    return o;
+}
+
+float4 fragmentMain(VertexOut input) : SV_Target { return input.colour; }
+)";
+}
+
+std::string attributeGlsl(InputKind kind)
+{
+    const auto* type = kind == InputKind::Float  ? "vec4"
+                       : kind == InputKind::UInt ? "uvec4"
+                                                 : "ivec4";
+
+    return std::string(R"(#version 450
+
+#ifdef EACP_VERTEX
+layout(location = 0) in vec2 attr0;
+layout(location = 1) in )")
+           + type + R"( attr1;
+layout(location = 0) flat out vec4 colour;
+
+void main()
+{
+    gl_Position = vec4(attr0, 0.0, 1.0);
+    colour = vec4(attr1);
+}
+#endif
+
+#ifdef EACP_FRAGMENT
+layout(location = 0) flat in vec4 colour;
+layout(location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = colour;
+}
+#endif
+)";
+}
+
+struct AttributeRunner final : GPUView
+{
+    AttributeRunner() { setSampleCount(1); }
+
+    void render(Frame& frame) override
+    {
+        draw(frame);
+        frame.beginPass({Graphics::Color::black()});
+    }
+
+    std::function<void(Frame&)> draw = [](Frame&) {};
+};
+
+// A position and then 16 bytes of attribute, of which the format reads its
+// own size from the start.
+struct AttributeVertex
+{
+    float position[2];
+    std::uint8_t value[16];
+};
+
+struct AttributeCase
+{
+    VertexFormat format;
+    InputKind kind;
+    std::uint8_t bytes[16];
+    float expected[4];
+    const char* name;
+};
+
+template <typename T, std::size_t N>
+AttributeCase attributeCase(VertexFormat format,
+                            InputKind kind,
+                            const T (&values)[N],
+                            std::array<float, 4> expected,
+                            const char* name)
+{
+    static_assert(sizeof(T) * N <= 16);
+
+    auto result = AttributeCase {format, kind, {}, {}, name};
+    std::memcpy(result.bytes, values, sizeof(T) * N);
+
+    for (auto i = 0; i < 4; ++i)
+        result.expected[i] = expected[(std::size_t) i];
+
+    return result;
+}
+
+Vector<AttributeCase> attributeCases()
+{
+    using F = VertexFormat;
+    using K = InputKind;
+
+    const std::uint8_t ubytes[] = {7, 200, 0, 255};
+    const std::int8_t bytes[] = {-5, 100, -128, 127};
+    const std::uint8_t ubyteNorms[] = {51, 255};
+    const std::int8_t byteNorms[] = {-127, 127, 0, 127};
+    const std::uint16_t ushorts[] = {60000, 3, 0, 65535};
+    const std::uint16_t ushortNorms[] = {65535, 0, 65535, 0};
+    const std::int16_t shorts[] = {-30000, 30000, -1, 1};
+    const std::int16_t shortNorms[] = {-32767};
+    const std::uint16_t half[] = {0x3800}; // 0.5
+    const std::uint32_t packed[] = {1023u | (0u << 10) | (341u << 20) | (1u << 30)};
+    const std::uint32_t uints[] = {123456u, 7u, 0u, 4000000000u};
+    const std::int32_t ints[] = {-123456, 7, 0, 2000000000};
+
+    auto cases = Vector<AttributeCase> {};
+
+    cases.add(attributeCase(F::UByte, K::UInt, ubytes, {7, 0, 0, 1}, "UByte"));
+    cases.add(attributeCase(F::UByte2, K::UInt, ubytes, {7, 200, 0, 1}, "UByte2"));
+    cases.add(
+        attributeCase(F::UByte4, K::UInt, ubytes, {7, 200, 0, 255}, "UByte4"));
+    cases.add(attributeCase(
+        F::UByteNorm, K::Float, ubyteNorms, {0.2f, 0, 0, 1}, "UByteNorm"));
+    cases.add(attributeCase(
+        F::UByte2Norm, K::Float, ubyteNorms, {0.2f, 1, 0, 1}, "UByte2Norm"));
+    cases.add(attributeCase(F::Byte, K::Int, bytes, {-5, 0, 0, 1}, "Byte"));
+    cases.add(attributeCase(F::Byte2, K::Int, bytes, {-5, 100, 0, 1}, "Byte2"));
+    cases.add(
+        attributeCase(F::Byte4, K::Int, bytes, {-5, 100, -128, 127}, "Byte4"));
+    cases.add(
+        attributeCase(F::ByteNorm, K::Float, byteNorms, {-1, 0, 0, 1}, "ByteNorm"));
+    cases.add(attributeCase(
+        F::Byte2Norm, K::Float, byteNorms, {-1, 1, 0, 1}, "Byte2Norm"));
+    cases.add(attributeCase(
+        F::Byte4Norm, K::Float, byteNorms, {-1, 1, 0, 1}, "Byte4Norm"));
+    cases.add(attributeCase(F::UShort, K::UInt, ushorts, {60000, 0, 0, 1}, "UShort"));
+    cases.add(
+        attributeCase(F::UShort2, K::UInt, ushorts, {60000, 3, 0, 1}, "UShort2"));
+    cases.add(attributeCase(
+        F::UShort4, K::UInt, ushorts, {60000, 3, 0, 65535}, "UShort4"));
+    cases.add(attributeCase(
+        F::UShortNorm, K::Float, ushortNorms, {1, 0, 0, 1}, "UShortNorm"));
+    cases.add(attributeCase(
+        F::UShort2Norm, K::Float, ushortNorms, {1, 0, 0, 1}, "UShort2Norm"));
+    cases.add(attributeCase(
+        F::UShort4Norm, K::Float, ushortNorms, {1, 0, 1, 0}, "UShort4Norm"));
+    cases.add(attributeCase(F::Short, K::Int, shorts, {-30000, 0, 0, 1}, "Short"));
+    cases.add(
+        attributeCase(F::Short2, K::Int, shorts, {-30000, 30000, 0, 1}, "Short2"));
+    cases.add(attributeCase(
+        F::Short4, K::Int, shorts, {-30000, 30000, -1, 1}, "Short4"));
+    cases.add(attributeCase(
+        F::ShortNorm, K::Float, shortNorms, {-1, 0, 0, 1}, "ShortNorm"));
+    cases.add(attributeCase(F::Half, K::Float, half, {0.5f, 0, 0, 1}, "Half"));
+    cases.add(attributeCase(F::UInt1010102Norm,
+                            K::Float,
+                            packed,
+                            {1, 0, 341.f / 1023.f, 1.f / 3.f},
+                            "UInt1010102Norm"));
+    cases.add(attributeCase(F::UInt, K::UInt, uints, {123456, 0, 0, 1}, "UInt"));
+    cases.add(attributeCase(F::UInt2, K::UInt, uints, {123456, 7, 0, 1}, "UInt2"));
+    cases.add(attributeCase(F::UInt3, K::UInt, uints, {123456, 7, 0, 1}, "UInt3"));
+    cases.add(attributeCase(
+        F::UInt4, K::UInt, uints, {123456, 7, 0, 4000000000.f}, "UInt4"));
+    cases.add(attributeCase(F::Int, K::Int, ints, {-123456, 0, 0, 1}, "Int"));
+    cases.add(attributeCase(F::Int2, K::Int, ints, {-123456, 7, 0, 1}, "Int2"));
+    cases.add(attributeCase(F::Int3, K::Int, ints, {-123456, 7, 0, 1}, "Int3"));
+    cases.add(attributeCase(
+        F::Int4, K::Int, ints, {-123456, 7, 0, 2000000000.f}, "Int4"));
+
+    return cases;
+}
+
+// What the attribute read as, at one texel in the middle of the target, or
+// NaNs where nothing could be drawn.
+std::array<float, 4> drawAttribute(const ShaderLibrary& library,
+                                   const AttributeCase& entry)
+{
+    auto none = std::numeric_limits<float>::quiet_NaN();
+    auto result = std::array<float, 4> {none, none, none, none};
+
+    auto vertices = std::array<AttributeVertex, 6> {};
+
+    for (auto i = 0; i < 6; ++i)
+    {
+        vertices[(std::size_t) i].position[0] = quadCorners[i][0];
+        vertices[(std::size_t) i].position[1] = quadCorners[i][1];
+        std::memcpy(vertices[(std::size_t) i].value, entry.bytes, 16);
+    }
+
+    auto quad = Device::shared().makeBuffer(vertices.data(), sizeof(vertices));
+
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = attributeTargetSize;
+    descriptor.height = attributeTargetSize;
+    descriptor.format = TextureFormat::RGBA32Float;
+    descriptor.renderTarget = true;
+
+    auto texture = Device::shared().makeTexture(descriptor);
+
+    auto pipelineDescriptor = RenderPipelineDescriptor {};
+    pipelineDescriptor.library = &library;
+    pipelineDescriptor.colorFormat = pixelFormatFor(TextureFormat::RGBA32Float);
+    pipelineDescriptor.vertexLayout.attribute(VertexFormat::Float2, 0);
+    pipelineDescriptor.vertexLayout.attribute(
+        entry.format, (int) offsetof(AttributeVertex, value));
+    pipelineDescriptor.vertexLayout.stride = sizeof(AttributeVertex);
+
+    auto pipeline = Device::shared().makeRenderPipeline(pipelineDescriptor);
+
+    if (!texture.isValid() || !pipeline.isValid())
+        return result;
+
+    auto view = AttributeRunner {};
+    view.draw = [&](Frame& frame)
+    {
+        auto pass = frame.beginPass(texture, {Graphics::Color::black()});
+        pass.setPipeline(pipeline);
+        pass.setVertexBuffer(quad);
+        pass.draw(6);
+    };
+    view.setBounds({0.f, 0.f, 4.f, 4.f});
+    view.renderToImage(1.f);
+
+    float texels[attributeTargetSize * attributeTargetSize * 4] = {};
+    texture.read(texels);
+
+    const auto centre = (attributeTargetSize + 1) * (attributeTargetSize / 2) * 4;
+
+    for (auto i = 0; i < 4; ++i)
+        result[(std::size_t) i] = texels[centre + i];
+
+    return result;
+}
+
+bool readAsExpected(const std::array<float, 4>& read, const AttributeCase& entry)
+{
+    for (auto i = 0; i < 4; ++i)
+    {
+        const auto want = entry.expected[i];
+        const auto slack = std::max(1e-3f, std::abs(want) * 1e-6f);
+
+        if (!(std::abs(read[(std::size_t) i] - want) <= slack))
+        {
+            LOG("VertexFormat ",
+                entry.name,
+                ": component ",
+                i,
+                " read ",
+                read[(std::size_t) i],
+                ", expected ",
+                want);
+            return false;
+        }
+    }
+
+    return true;
+}
+} // namespace
+
+static_assert(isIntegerVertexFormat(VertexFormat::UByte4));
+static_assert(isIntegerVertexFormat(VertexFormat::Int3));
+static_assert(!isIntegerVertexFormat(VertexFormat::UByte4Norm));
+static_assert(!isIntegerVertexFormat(VertexFormat::UInt1010102Norm));
+static_assert(bytesPerAttribute(VertexFormat::UInt1010102Norm) == 4);
+static_assert(bytesPerAttribute(VertexFormat::UShort4) == 8);
+static_assert(bytesPerAttribute(VertexFormat::Int3) == 12);
+
+auto tEveryFormatReadsItsValue = test("VertexFormat/everyFormatReadsItsValue") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto makeLibrary = [](InputKind kind)
+    {
+        return Device::shared().makeShaderLibrary(
+            nativeShaderSource(
+                attributeMsl(kind), attributeHlsl(kind), attributeGlsl(kind))
+                .withVertex("vertexMain")
+                .withFragment("fragmentMain"));
+    };
+
+    auto floatLibrary = makeLibrary(InputKind::Float);
+    auto uintLibrary = makeLibrary(InputKind::UInt);
+    auto intLibrary = makeLibrary(InputKind::Int);
+
+    for (const auto& entry: attributeCases())
+    {
+        check(isIntegerVertexFormat(entry.format) == (entry.kind != InputKind::Float));
+
+        const auto& library = entry.kind == InputKind::Float  ? floatLibrary
+                              : entry.kind == InputKind::UInt ? uintLibrary
+                                                              : intLibrary;
+
+        check(readAsExpected(drawAttribute(library, entry), entry));
+    }
 };
