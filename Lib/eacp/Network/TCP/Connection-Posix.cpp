@@ -53,12 +53,11 @@ int pendingSocketError(int fd)
 
 void armTimeouts(int fd, Time::MS ioTimeout)
 {
-    if (ioTimeout.count > 0) // otherwise leave the socket blocking forever
-    {
-        auto tv = toTimeval(ioTimeout);
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    }
+    // A zero timeval is "block forever" to setsockopt, so clearing a timeout
+    // is the same call as setting one.
+    auto tv = toTimeval(ioTimeout.count > 0 ? ioTimeout : Time::MS {});
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
 #ifdef SO_NOSIGPIPE
     auto on = 1;
@@ -162,6 +161,11 @@ void socketClose(NativeSocket socket) noexcept
 {
     if (socket != invalidSocket)
         ::close((int) socket);
+}
+
+void socketSetIoTimeout(NativeSocket socket, Time::MS ioTimeout)
+{
+    armTimeouts((int) socket, ioTimeout);
 }
 
 int socketSend(NativeSocket socket, const char* data, int length)
