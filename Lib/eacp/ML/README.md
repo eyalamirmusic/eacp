@@ -147,8 +147,33 @@ is not hashed on every run; empty hashes the blob. A fresh compile moves into
 place by atomic rename, so two processes racing to the same key both end up
 loading one copy; a hit that fails to load twice is treated as damaged, moved
 aside and compiled again. `wasCacheHit()` and `compiledPath()` say what
-happened, and `defaultCacheDirectory()` is `CoreML` under the app's own
-cache folder (`FilePath::appCacheDirectory()`).
+happened.
+
+`defaultCacheDirectory()` is `CoreML` at the company level of the per-user
+cache root — `FilePath::appCacheDirectory(company, "")`, the parent of every
+app folder of that vendor — so all of one vendor's binaries share their
+compiles with nothing named; the entries are keyed by content, so sharing is
+safe. When the embedded AppInfo names no company there is no level to share
+under, and the default is `CoreML` in the app's own cache folder.
+`defaultCacheDirectory(company, app)` is the same mapping from names, and
+`Options::cacheDirectory` overrides both.
+
+A shared directory would only grow, so it is kept to a budget. Every use of a
+cached model touches a `<hash>.used` stamp beside it — a stamp rather than the
+model directory's own time, so the directory Core ML keys its engine cache on
+is never written to after it is installed — and a loaded model touches it
+again every ten minutes it predicts. After a miss has installed its compile,
+models are evicted least recently used first until the directory is within
+`Options::cacheBudgetBytes`: 2 GiB by default (a product's compiled models
+run from tens to hundreds of megabytes, so that holds its working set and the
+versions an update has just replaced, while bounding what a long-lived shared
+directory can reach), and 0 never evicts. A model a live `Model` of this
+process holds is never evicted, nor one whose stamp is under an hour old, so
+another process that has just taken a hit keeps its directory. Eviction
+renames the model to a `.trash` name with `RENAME_EXCL` before removing it,
+the path the temporaries take, so two processes evicting at once cannot both
+remove one model and a crash leaves only a `.trash` the next miss sweeps.
+Eviction never fails a load: what goes wrong there is logged.
 
 ## What was measured
 
@@ -165,7 +190,7 @@ open.
 `MLGraphTests` (90 `MLGraph/` cases: shapes, text, protobuf, blob, package,
 `apply`, and the encoder and decoder graphs) runs on every lane but iOS, and
 where `eacp-ml` exists every package it builds is also compiled and loaded by
-Core ML. `MLTests` (55 cases over `MLMultiArray`, `MLAsync`, `MLCache`,
+Core ML. `MLTests` (62 cases over `MLMultiArray`, `MLAsync`, `MLCache`,
 `MLPlacement`, `MLPrograms`, `MLEncoder` and `MLDecoderStep`) needs Core ML;
 `EACP_REQUIRE_ANE=1` makes it assert Neural Engine placement, which CI leaves
 unset because its macOS runners have none. `Apps/ML/Projection` builds the

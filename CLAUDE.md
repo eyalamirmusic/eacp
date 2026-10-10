@@ -951,7 +951,14 @@ and `MultiArray` (fp16 is IOSurface-backed and zeroed; `copyTo`/`copyFrom` a
 models are cached at `<cacheDirectory>/<hash>.mlmodelc`, the hash over program
 bytes, `Options::weightsName`/`weightsVersion` (or the blob) and the OS build;
 a hit is never recompiled because Core ML ties its Neural Engine cache to the
-compiled path. `MLTests` (55 cases, `TestMain.cpp` of its own) builds Whisper
+compiled path. The default directory is `CoreML` at the company level of the
+cache root (`<Caches>/<Company>/CoreML`, the app's own folder when AppInfo
+names no company), so a vendor's binaries share compiles; each use touches a
+`<hash>.used` stamp, and a compile evicts least-recently-used models past
+`Options::cacheBudgetBytes` (2 GiB, 0 unlimited), never one a live `Model` of
+the process holds or one used within the hour, through the same
+rename-to-`.trash` the temporaries take. `MLTests` (62 cases, `TestMain.cpp`
+of its own) builds Whisper
 tiny.en's encoder and decode step at real sizes against fp32 references;
 `EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners have none).
 `Apps/ML/Projection` is the worked example. `plan.md` is the design record.

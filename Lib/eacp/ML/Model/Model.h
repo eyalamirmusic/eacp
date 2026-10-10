@@ -28,7 +28,12 @@ bool hasComputePlan();
 // simulator.
 bool hasNeuralEngine();
 
+// Where compiled models are kept when Options names no directory: CoreML in
+// the company's cache folder, FilePath::appCacheDirectory(company, ""), so
+// every app of one vendor shares them, or in the app's own when the AppInfo
+// names no company. The overload takes the names instead.
 FilePath defaultCacheDirectory();
+FilePath defaultCacheDirectory(std::string_view company, std::string_view app);
 
 // Named arrays, the names exactly those given to Graph::input and output.
 using Features = EA::MapVector<std::string, MultiArray>;
@@ -74,7 +79,9 @@ struct Prediction : Result
 // model afterwards a few. A miss compiles into a temporary directory and
 // renames it into place; one that loses that race to another process loads
 // the winner's copy and deletes its own. A hit that fails to load twice is
-// taken for damaged, moved out of the way and recompiled.
+// taken for damaged, moved out of the way and recompiled. Each use touches a
+// <hash>.used stamp beside the model, and a compile then evicts the least
+// recently used models beyond Options::cacheBudgetBytes.
 //
 // The blocking forms run on the caller's thread and pump no loop, so a worker
 // thread or a console app can use them. The async forms run on a serial queue

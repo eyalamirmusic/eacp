@@ -701,6 +701,33 @@ spells the label it is not giving: `beginCompute({}, DispatchOrder::Concurrent)`
 This is not the `barrier()` a kernel body calls. That one is inside a single
 dispatch, across the threads of one group — see **Threadgroup memory** below.
 
+### What a pass recorded
+
+`ComputePass::recorded()` is the pass's own tally: a `Recorded` of
+`pipelineSets`, `dispatches` (1D, 2D and 3D alike, the program forms included),
+`indirectDispatches` and `barriers`. It counts what was asked for, not what the
+backend emitted — a `barrier()` in a serial pass, which records nothing, still
+counts, and so does a dispatch the pass dropped for want of a pipeline — so a
+chain written once and switched between the two orders counts the same either
+way:
+
+```cpp
+auto pass = commands.beginCompute({}, DispatchOrder::Concurrent);
+chain.recordInto(pass);
+
+check(pass.recorded() == ComputePass::Recorded {.pipelineSets = 3,
+                                                .dispatches = 3,
+                                                .barriers = 2});
+```
+
+The counting is in `ComputePass.cpp`, built on every platform: each public
+call bumps an integer and hands over to the backend's `encode*` half, so it is
+the same number on Metal, D3D12 and Vulkan and costs a dispatch nothing worth
+measuring. It is what a
+test pins a net's structure with, where the alternative was faking an encoder.
+`CommandBuffer` keeps no total across its passes; a test sums the passes it
+began. `Tests/GPU/RecordedCountsTests.cpp` is the suite.
+
 ### In place
 
 An elementwise stage rewrites the buffer it was handed rather than filling a

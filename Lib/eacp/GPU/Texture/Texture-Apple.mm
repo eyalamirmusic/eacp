@@ -19,7 +19,7 @@ namespace
 // **The guard is for iOS, and is inert on macOS as eacp configures it.** The
 // four constants and Device::supportsBlockCompression carry the same
 // availability the query does - macOS 11 and iOS 16.4 - and the macOS
-// deployment target is already 11.0, while the iOS one is 14.0. So on macOS
+// deployment target is already 11.0, while the iOS one is 15.0. So on macOS
 // this compiles to the branch being taken, and on iOS it is what keeps the
 // constants from warning against a target that predates them.
 //

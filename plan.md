@@ -1212,10 +1212,24 @@ eacp itself:
   too; only the cache's directory walks still use `std::filesystem`.
 - EA's `Span` refuses a temporary `Vector`, so
   `fromFloats(Vector<float> {...})` does not compile and the caller names the
-  vector first. Still open.
+  vector first. Still open, and deliberate upstream: `Span`'s
+  rvalue-container constructor is deleted outright ("a view must never be
+  bound to a temporary container"), where `std::span`'s range constructor
+  admits a temporary when the element type is const, since a
+  `Span<const T>` parameter outlives no call it is passed to. The fix is that
+  refinement in cpp_data_structures, not in eacp.
 - The iOS deployment target of 14.0 is refused by Xcode 27's simulator, whose
   floor is 15.0, and `CMake/AppleSetup.cmake` forces 14.0 over a command-line
-  override; the whole project moves when CI's Xcode does. Still open.
+  override; the whole project moves when CI's Xcode does. Closed,
+  2026-10-10: the iOS branch now defaults the deployment target to 15.0 and
+  claims the cache entry the way the macOS branch does, only when nothing
+  has filled it, rather than forcing it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=`
+  on the command line wins on iOS as it already did on macOS. The CI iOS
+  configure gives `IPHONEOS_DEPLOYMENT_TARGET = 15.0` and builds the whole
+  simulator job under Xcode 27.0, an explicit 16.0 comes through untouched,
+  and the macOS default stays 11.0. The only places the old figure was
+  stated were three comments in the Metal backend, which now say 15.0, and
+  `Docs/Build.md` now states both floors.
 - Nothing swept the `<hash>.<pid>-<n>.mlpackage` and `.tmp` directories a
   process that dies mid-compile leaves in the Core ML cache. Closed in this
   phase: a miss sweeps them, and `.trash`, once older than an hour.
@@ -1225,7 +1239,22 @@ Phase 2 surfaced one more:
 - `GPU::ComputePass` has no way to observe what it recorded, so the check that
   phase 2 left the dispatches and barriers unchanged had to fake a Metal
   compute encoder. A recording or counting hook on the pass would let a
-  portable test pin dispatch and barrier counts on every backend. Still open.
+  portable test pin dispatch and barrier counts on every backend. Closed,
+  2026-10-10: `ComputePass::recorded()` reports a `ComputePass::Recorded` of
+  `pipelineSets`, `dispatches`, `indirectDispatches` and `barriers`, counted
+  as asked for, so a `barrier()` in a Serial pass and a dispatch dropped for
+  want of a pipeline both count. The counting sits in a `ComputePass.cpp`
+  built on every platform: each public call increments a counter and
+  forwards to a private `encode*`
+  method that each backend file implements in place of the old public
+  definition, so Metal, D3D12 and Vulkan report the same numbers with no
+  counting of their own. `Tests/GPU/RecordedCountsTests.cpp` (three
+  `RecordedCounts/` cases) pins the counts of 1D, 2D and indirect dispatches
+  with barriers in both a Concurrent and a Serial pass and reads the outputs
+  back, so a structure check no longer needs a fake Metal encoder.
+  `CommandBuffer` keeps no total across its passes; a test sums the passes it
+  began. The D3D12 and Vulkan files took the rename by inspection; CI is
+  what compiles them.
 
 Phase 3 surfaced these, in eacp before WhisperEACP was touched:
 
@@ -1265,7 +1294,31 @@ WhisperEACP's side of phase 3 surfaced two more:
   machine. What remains open is smaller: the default has no level above the
   app, so a product's binaries share only if each names the directory, and
   nothing evicts a compiled model once no program or weights key to it, so a
-  long-lived shared directory only grows.
+  long-lived shared directory only grows. Closed, 2026-10-10:
+  `defaultCacheDirectory()` now sits at the company level,
+  `FilePath::appCacheDirectory(company, "") / "CoreML"`, so every binary of
+  one vendor shares compiled models with nothing named, and it falls back to
+  the app's own folder only when AppInfo names no company;
+  `defaultCacheDirectory(company, app)` is the same mapping from names. Every
+  use touches a `<hash>.used` stamp beside the model rather than the
+  `.mlmodelc` directory Core ML keys its engine cache on, and a loaded model
+  refreshes it every ten minutes it predicts. After a miss installs its
+  compile, least-recently-used models are evicted until the directory is
+  within `Options::cacheBudgetBytes`, 2 GiB by default and 0 for no limit,
+  sparing any model a live `Model` of the process holds and any used within
+  the hour. Eviction goes through the same `RENAME_EXCL` rename to `.trash`
+  that the temporaries take, and an error there is logged and never fails the
+  load. Seven `MLCache/` cases cover the stamp on a hit, eviction of the older
+  model on a miss over budget, a held model surviving as the oldest, a recent
+  model surviving, a zero budget, the orphaned-stamp sweep and the
+  company-level default; `MLTests` is 62 cases. Two cross-process windows
+  stay, both healed by one compile rather than guarded: a hit's exists check
+  and its stamp touch are not one step, so an eviction between them makes
+  `loadHit` recompile; and a model another process loaded over an hour ago
+  and has not predicted since has a stale stamp, so a compile here may evict
+  the directory under it. Closing either would take a cross-process lock
+  such as `flock`. The per-app `CoreML` folders earlier builds left are not
+  evicted, since they are in another directory; Caches is purgeable.
 - G7: `CoreMLEncoder`, and so `Whisper::transcribeAsync`, cannot time the
   prediction on its own once it goes through `predictAsync`: the Async gives
   the result, not how long the queue waited or the prediction ran, so an

@@ -154,7 +154,7 @@ ComputePass::~ComputePass()
     end();
 }
 
-void ComputePass::setPipeline(const ComputePipeline& pipeline)
+void ComputePass::encodePipeline(const ComputePipeline& pipeline)
 {
     boundGroup = pipeline.threadGroupShape();
     boundPipeline = false;
@@ -271,7 +271,7 @@ void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
         commands.context->uploadConstants(commands, data, (std::size_t) bytes);
 }
 
-void ComputePass::dispatch(int count)
+void ComputePass::encodeDispatch(int count)
 {
     if (!impl->canRecord() || !boundPipeline || count <= 0)
         return;
@@ -287,7 +287,7 @@ void ComputePass::dispatch(int count)
     impl->orderAfterDispatch(commandBuffer);
 }
 
-void ComputePass::dispatch(int width, int height)
+void ComputePass::encodeDispatch(int width, int height)
 {
     if (!impl->canRecord() || !boundPipeline || width <= 0 || height <= 0)
         return;
@@ -306,7 +306,7 @@ void ComputePass::dispatch(int width, int height)
     impl->orderAfterDispatch(commandBuffer);
 }
 
-void ComputePass::dispatch(int width, int height, int depth)
+void ComputePass::encodeDispatch(int width, int height, int depth)
 {
     if (!impl->canRecord() || !boundPipeline || width <= 0 || height <= 0
         || depth <= 0)
@@ -328,8 +328,8 @@ void ComputePass::dispatch(int width, int height, int depth)
     impl->orderAfterDispatch(commandBuffer);
 }
 
-void ComputePass::dispatchIndirect(const Buffer& arguments,
-                                   std::int64_t offsetInBytes)
+void ComputePass::encodeDispatchIndirect(const Buffer& arguments,
+                                         std::int64_t offsetInBytes)
 {
     if (!impl->canRecord() || !boundPipeline || offsetInBytes < 0
         || offsetInBytes % 4 != 0
@@ -359,7 +359,7 @@ void ComputePass::dispatchIndirect(const Buffer& arguments,
     impl->orderAfterDispatch(commandBuffer);
 }
 
-void ComputePass::barrier()
+void ComputePass::encodeBarrier()
 {
     if (impl->isConcurrent())
         impl->recordBarrier();
