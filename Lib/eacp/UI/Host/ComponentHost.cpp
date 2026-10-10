@@ -591,7 +591,7 @@ void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
         renderLayers(*child, frame);
 
     for (auto* layer: component.getLayers())
-        if (layer->isDirty())
+        if (layer->needsRendering(backingScale()))
             renderLayer(*layer, frame);
 }
 
@@ -610,6 +610,11 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     descriptor.clearColor = Color::black(0.f);
 
     auto pass = frame.beginPass(layer.getTexture(), descriptor);
+
+    // The texture is kept across a shrink, so it may be larger than the content.
+    // Mapped onto the whole of it, the bounds would be stretched across texels
+    // the composite never samples.
+    pass.setViewport(layer.getContentArea());
 
     setSurfaceSize({bounds.w, bounds.h});
 

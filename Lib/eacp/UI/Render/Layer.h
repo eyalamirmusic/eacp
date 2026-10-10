@@ -117,7 +117,14 @@ public:
 private:
     friend class ComponentHost;
 
-    bool isDirty() const;
+    // Dirty, or last rendered at another scale -- the texture is in device
+    // pixels, so content drawn for one display is the wrong resolution on the next.
+    bool needsRendering(float scale) const;
+
+    // The top-left run of the texture the content was rendered into, in texels:
+    // what a pass filling the layer has to confine itself to, since the texture
+    // may be larger than the content after a shrink.
+    Rect getContentArea() const;
 
     // Makes or grows the texture for the bounds at this scale. False when the
     // bounds hold no pixels, or the device could not give a texture -- either

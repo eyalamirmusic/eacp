@@ -155,8 +155,13 @@ const GPU::Texture& Layer::getTexture() const
     return *texture;
 }
 
-bool Layer::isDirty() const
+bool Layer::needsRendering(float scale) const
 {
-    return dirty;
+    return dirty || scale != renderedScale;
+}
+
+Rect Layer::getContentArea() const
+{
+    return {0.f, 0.f, (float) contentWidth, (float) contentHeight};
 }
 } // namespace eacp::UI

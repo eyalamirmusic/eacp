@@ -2,6 +2,8 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <cmath>
+
 // A layer's contract with the component that owns it and the host that renders
 // it, which is the part nothing on screen would report.
 //
@@ -234,12 +236,129 @@ auto tRotatedLayerTurns = test("Layer/aRotatedLayerIsCutByAnUprightScissor") = [
     // A quarter turn about the middle of a 60-point square at (70, 70) leaves
     // it where it was, being square -- so what this reports is that a rotation
     // composites at all, and where a corner of it went.
-    auto centred = GPUWidgets::AffineTransform::rotationAbout(
-        3.14159265f / 4.f, {30.f, 30.f});
+    auto centred =
+        GPUWidgets::AffineTransform::rotationAbout(3.14159265f / 4.f, {30.f, 30.f});
 
     auto image = renderSquare({70.f, 70.f, 60.f, 60.f}, centred);
 
     check(isRed(image, 100, 100), "the middle stays put");
     check(isRed(image, 100, 65), "and a corner comes round to the top");
     check(isEmpty(image, 75, 75), "leaving the old corner behind");
+};
+
+namespace
+{
+// A square inset from the layer's own corner on a fill of its bounds, so a
+// layer rendered at the wrong size shows as the square moved and grown.
+struct InsetSquare final : Component
+{
+    InsetSquare()
+        : layer(*this)
+    {
+        layer.onPaint = [this](UI::Graphics& g)
+        {
+            auto bounds = layer.getBounds();
+
+            g.setColour(Color {0.f, 0.f, 1.f, 1.f});
+            g.fillRect(bounds);
+            g.setColour(Color {1.f, 0.f, 0.f, 1.f});
+            g.fillRect({bounds.x + 10.f, bounds.y + 10.f, 20.f, 20.f});
+        };
+    }
+
+    void paint(UI::Graphics& g) override { g.drawLayer(layer); }
+
+    Layer layer;
+};
+
+struct LayerHost
+{
+    LayerHost()
+    {
+        host.setBackgroundColour({0.f, 0.f, 0.f, 0.f});
+        host.setBounds({0.f, 0.f, 200.f, 200.f});
+        host.resized();
+        host.setRootComponent(content);
+    }
+
+    eacp::Graphics::Image render(const Rect& bounds, float scale)
+    {
+        content.layer.setBounds(bounds);
+        return host.renderToImage(scale);
+    }
+
+    InsetSquare content;
+    ComponentHost host;
+};
+
+eacp::Graphics::Image renderFresh(const Rect& bounds, float scale)
+{
+    return LayerHost {}.render(bounds, scale);
+}
+
+bool samePixels(const eacp::Graphics::Image& a, const eacp::Graphics::Image& b)
+{
+    if (a.width() != b.width() || a.height() != b.height())
+        return false;
+
+    for (auto y = 0; y < a.height(); ++y)
+    {
+        for (auto x = 0; x < a.width(); ++x)
+        {
+            auto p = a.at(x, y);
+            auto q = b.at(x, y);
+
+            if (std::abs(p.r - q.r) > 0.02f || std::abs(p.g - q.g) > 0.02f
+                || std::abs(p.b - q.b) > 0.02f || std::abs(p.a - q.a) > 0.02f)
+                return false;
+        }
+    }
+
+    return true;
+}
+} // namespace
+
+// The texture is kept across a shrink, and the content has to land 1:1 in the
+// corner of it that is composited -- not be stretched over the whole of it and
+// then shown magnified.
+auto tShrunkLayerMatchesAFreshOne =
+    test("Layer/aShrunkLayerDrawsAsAFreshOneOfItsNewSize") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto wide = Rect {20.f, 20.f, 150.f, 150.f};
+    auto narrow = Rect {20.f, 20.f, 60.f, 60.f};
+
+    auto layered = LayerHost {};
+
+    check(samePixels(layered.render(wide, 1.f), renderFresh(wide, 1.f)));
+
+    auto shrunk = layered.render(narrow, 1.f);
+
+    check(isRed(shrunk, 35, 35), "the square where it was drawn");
+    check(!isRed(shrunk, 60, 60), "at the size it was drawn");
+    check(samePixels(shrunk, renderFresh(narrow, 1.f)), "pixel for pixel");
+
+    check(samePixels(layered.render(wide, 1.f), renderFresh(wide, 1.f)),
+          "and grown back again");
+};
+
+// Texels are device pixels, so content rendered for one scale is the wrong
+// resolution at another and is rendered again rather than resampled.
+auto tLayerFollowsTheScale = test("Layer/aLayerIsRenderedAgainAtANewScale") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto wide = Rect {20.f, 20.f, 150.f, 150.f};
+    auto narrow = Rect {20.f, 20.f, 60.f, 60.f};
+
+    auto layered = LayerHost {};
+
+    layered.render(wide, 1.f);
+
+    check(samePixels(layered.render(wide, 2.f), renderFresh(wide, 2.f)));
+    check(samePixels(layered.render(narrow, 1.f), renderFresh(narrow, 1.f)),
+          "and kept the larger texture across the change");
 };
