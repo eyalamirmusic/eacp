@@ -5,6 +5,7 @@
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 #include "MipChain.h"
+#include "TextureShape.h"
 
 #include <cmath>
 
@@ -81,44 +82,37 @@ bool supportsTypedUAVStore(ID3D12Device* device, DXGI_FORMAT format)
 
 struct Texture::Native
 {
-    Native(Device& device, const TextureDescriptor& descriptor, const void* pixels)
+    Native(Device& device,
+           const TextureDescriptor& descriptor,
+           const void* pixels,
+           InitialData initialData)
         : context(getD3D12Context(device))
         , width(descriptor.width)
         , height(descriptor.height)
         , format(descriptor.format)
-        , cube(descriptor.cube)
     {
-        if (!context.isValid() || width <= 0 || height <= 0)
+        if (!context.isValid())
             return;
 
-        // A cube's faces are square and there are six of them, so a rectangle -
-        // or a cube something on the GPU would write - has nothing this could
-        // create. Refused in the same words the Metal backend uses, so the two
-        // agree on what is not a texture. See TextureDescriptor::cube.
-        if (cube
-            && (width != height || descriptor.renderTarget
-                || descriptor.computeWrite))
+        const auto resolved = resolveTextureShape(descriptor, initialData);
+
+        if (!resolved)
             return;
+
+        shape = *resolved;
+        levels = shape.levels;
 
         // Refused before anything is created, in the same words the Metal
-        // backend uses: a target the device cannot multisample is an invalid
-        // texture rather than one drawing at a count the pipelines compiled for
-        // it do not carry. See TextureDescriptor::sampleCount.
+        // backend uses. See TextureDescriptor::sampleCount.
         if (descriptor.renderTarget && descriptor.sampleCount > 1)
         {
-            if (cube || !device.supportsSampleCount(descriptor.sampleCount))
+            if (!device.supportsSampleCount(descriptor.sampleCount))
                 return;
 
             data.sampleCount = descriptor.sampleCount;
         }
 
-        // A compressed texture is a block of bytes the sampler decodes and
-        // nothing else, so there is no per-texel address for a pass or a kernel
-        // to write to. Refused in the same words the Metal backend uses, and the
-        // device is asked for the format because a caller has a choice to make
-        // when the answer is no - Device::supportsBlockCompression says yes on
-        // every Direct3D device, and that is a fact about D3D rather than about
-        // this call. See the block formats in Texture.h.
+        // See the block formats in Texture.h.
         if (isCompressedFormat(format))
         {
             if (descriptor.renderTarget || descriptor.computeWrite)
@@ -128,46 +122,12 @@ struct Texture::Native
                 return;
         }
 
-        if (descriptor.mipLevels < 0)
-            return;
-
-        // A caller-supplied chain is taken as it is, and everything that would
-        // make it a chain nobody could have supplied is refused rather than
-        // reconciled - see TextureDescriptor::mipLevels, and the Metal backend,
-        // which refuses the same six things.
-        if (descriptor.mipLevels > 0)
-        {
-            if (descriptor.mipmapped || descriptor.renderTarget
-                || descriptor.computeWrite || cube)
-                return;
-
-            // Nothing was handed over, so there is no chain to take - refused
-            // rather than created empty, in the same words the Metal backend
-            // uses.
-            if (pixels == nullptr)
-                return;
-
-            if (descriptor.mipLevels > mipLevelCount(width, height))
-                return;
-
-            levels = descriptor.mipLevels;
-            suppliedChain = true;
-        }
-        // A chain eacp builds needs pixels to build it from and a format it can
-        // average: a render target or a kernel output has none at creation, and
-        // a compressed one has no average, so either would get levels nothing
-        // ever writes and the sampler would read them.
-        else if (descriptor.mipmapped && pixels != nullptr
-                 && canBuildMipChain(format))
-        {
-            levels = mipLevelCount(width, height);
-        }
-
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
         D3D12_RESOURCE_DESC desc = {};
-        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Dimension = shape.isVolume() ? D3D12_RESOURCE_DIMENSION_TEXTURE3D
+                                          : D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         desc.Width = static_cast<UINT64>(width);
         desc.Height = static_cast<UINT>(height);
 
@@ -175,8 +135,10 @@ struct Texture::Native
         // it a cube - D3D12 has no cube resource dimension, only
         // D3D12_SRV_DIMENSION_TEXTURECUBE over six array slices, which
         // createDescriptors builds below. The slice order is the array order,
-        // which is the same +X, -X, +Y, -Y, +Z, -Z the Metal backend uploads in.
-        desc.DepthOrArraySize = static_cast<UINT16>(cube ? 6 : 1);
+        // which is the same +X, -X, +Y, -Y, +Z, -Z the Metal backend uploads in;
+        // a cube array is layers of six.
+        desc.DepthOrArraySize =
+            static_cast<UINT16>(shape.isVolume() ? shape.depth : shape.slices());
         desc.MipLevels = static_cast<UINT16>(levels);
         desc.Format = toDXGIFormat(descriptor.format);
         desc.SampleDesc.Count = 1;
@@ -220,6 +182,13 @@ struct Texture::Native
             createDescriptors(context, descriptor);
     }
 
+    // D3D12CalcSubresource, spelled out: the levels of one array slice are
+    // consecutive, and the slices follow one another. A volume has one slice.
+    UINT subresourceIndex(int level, int slice) const
+    {
+        return static_cast<UINT>(level + slice * levels);
+    }
+
     // Zero-copy wrapping of a shared D3D11/DXGI surface into the D3D12 backend
     // is a planned optimisation; until then the camera/video path uploads via
     // update(). A null resource yields an invalid texture, which the higher
@@ -245,48 +214,27 @@ struct Texture::Native
         context.deferRelease(std::move(data.resource));
     }
 
-    // Maps a staging buffer, copies each source row's pixels (advancing the
-    // source by sourcePitch to skip any padding) into the
-    // 256-byte-aligned staging rows GetCopyableFootprints reports, then records
-    // the copy and the transition back to PIXEL_SHADER_RESOURCE. The resource
-    // must already be in COPY_DEST. Returns false on a staging failure, having
-    // recorded nothing.
+    // Maps a staging buffer, copies the source's rows (and a volume's images)
+    // into the 256-byte-aligned rows GetCopyableFootprints reports, and records
+    // the copy. The resource must already be in COPY_DEST. Returns false on a
+    // staging failure, having recorded nothing.
     //
     // **Rows here are whatever GetCopyableFootprints says a row is**, which for
-    // a block-compressed format is a row of 4x4 blocks: NumRows comes back as
-    // the level's height in blocks and RowSizeInBytes as its width in blocks
-    // times the block's size. So this loop needs no block arithmetic of its own -
-    // only a sourcePitch measured the same way, which is what levelBytesPerRow
-    // gives its callers. Every compressed copy covers a whole subresource at
-    // (0, 0), which is what keeps it inside D3D12's rule that a BC copy be
-    // block-aligned or cover the level.
+    // a block-compressed format is a row of 4x4 blocks, so the source pitch is
+    // measured the same way: levelBytesPerRow, which is what the plan carries.
     bool copyPixels(D3D12Context& context,
                     CommandContext* commands,
-                    const void* pixels,
-                    int sourcePitch,
-                    int destX,
-                    int destY,
-                    int regionWidth,
-                    int regionHeight,
-                    int mipLevel = 0,
-                    bool transitionAfterwards = true,
-                    int face = 0)
+                    const SubresourceUpload& upload)
     {
-        auto desc = data.resource->GetDesc();
+        auto regionDesc = data.resource->GetDesc();
 
-        // Footprints are asked for at the *region's* size, not the texture's, so
-        // the staging buffer and its row pitch describe only what is being
-        // uploaded. The copy is then placed at destX/destY in the destination.
-        auto regionDesc = desc;
-        regionDesc.Width = static_cast<UINT64>(regionWidth);
-        regionDesc.Height = static_cast<UINT>(regionHeight);
-
-        // One level and one slice, always: this describes the *staging* side,
-        // which is a flat rectangle of pixels. Leaving the resource's own counts
-        // here would ask for the footprint of a chain a region this size cannot
-        // have, and - on a cube - of six faces where one is being uploaded.
+        // Footprints at the *region's* size, one level and one slice: this
+        // describes the staging side, a flat box of pixels.
+        regionDesc.Width = static_cast<UINT64>(upload.width);
+        regionDesc.Height = static_cast<UINT>(upload.height);
         regionDesc.MipLevels = 1;
-        regionDesc.DepthOrArraySize = 1;
+        regionDesc.DepthOrArraySize =
+            static_cast<UINT16>(shape.isVolume() ? upload.depth : 1);
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
@@ -306,56 +254,58 @@ struct Texture::Native
         if (FAILED(staging->Map(0, &noRead, &mapped)))
             return false;
 
-        auto copyBytes = static_cast<std::size_t>(rowBytes);
+        const auto copyBytes = static_cast<std::size_t>(rowBytes);
+        const auto rowPitch = static_cast<std::size_t>(footprint.Footprint.RowPitch);
+        const auto* source = static_cast<const unsigned char*>(upload.pixels);
 
-        for (auto row = UINT {0}; row < rows; ++row)
-            std::memcpy(static_cast<unsigned char*>(mapped)
-                            + row * footprint.Footprint.RowPitch,
-                        static_cast<const unsigned char*>(pixels)
-                            + static_cast<std::size_t>(row)
-                                  * static_cast<std::size_t>(sourcePitch),
-                        copyBytes);
+        for (auto image = 0; image < upload.depth; ++image)
+            for (auto row = UINT {0}; row < rows; ++row)
+                std::memcpy(
+                    static_cast<unsigned char*>(mapped)
+                        + (static_cast<std::size_t>(image) * rows + row) * rowPitch,
+                    source
+                        + static_cast<std::size_t>(image)
+                              * static_cast<std::size_t>(upload.bytesPerImage)
+                        + static_cast<std::size_t>(row)
+                              * static_cast<std::size_t>(upload.bytesPerRow),
+                    copyBytes);
 
         staging->Unmap(0, nullptr);
 
         D3D12_TEXTURE_COPY_LOCATION destination = {};
         destination.pResource = data.resource.get();
         destination.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destination.SubresourceIndex = subresourceIndex(upload.level, upload.slice);
 
-        // D3D12CalcSubresource, spelled out: the mip levels of one array slice
-        // are consecutive, and the slices follow one another. On a 2D texture
-        // the face is 0 and this is the level, which is what it was before cube
-        // textures existed.
-        destination.SubresourceIndex = static_cast<UINT>(mipLevel + face * levels);
-
-        D3D12_TEXTURE_COPY_LOCATION source = {};
-        source.pResource = staging;
-        source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        source.PlacedFootprint = footprint;
+        D3D12_TEXTURE_COPY_LOCATION sourceLocation = {};
+        sourceLocation.pResource = staging;
+        sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        sourceLocation.PlacedFootprint = footprint;
 
         commands->list->CopyTextureRegion(&destination,
-                                          static_cast<UINT>(destX),
-                                          static_cast<UINT>(destY),
-                                          0,
-                                          &source,
+                                          static_cast<UINT>(upload.x),
+                                          static_cast<UINT>(upload.y),
+                                          static_cast<UINT>(upload.z),
+                                          &sourceLocation,
                                           nullptr);
-
-        // Held back while a chain is mid-upload: every level goes into the same
-        // resource, so transitioning after each one would move it out of
-        // COPY_DEST and straight back for the next - a pair of barriers per
-        // level, for nothing.
-        if (transitionAfterwards)
-            transitionTextureForUse(commands->list.get(),
-                                    data,
-                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         // Not parked in transients: the staging pool owns the buffer and takes
         // it back once this recording's fence passes.
         return true;
     }
 
+    // At creation: the resource was created in COPY_DEST, so the copies record
+    // with no leading barrier.
     void upload(D3D12Context& context, const void* pixels)
     {
+        const auto plan = planWholeUpload(shape, format, pixels, 0);
+
+        if (!plan.valid)
+        {
+            data.resource = nullptr;
+            return;
+        }
+
         auto* commands = context.acquire();
 
         if (commands == nullptr)
@@ -364,184 +314,39 @@ struct Texture::Native
             return;
         }
 
-        // The resource was created in COPY_DEST, so the copies record with no
-        // leading barrier.
-        if (!recordLevels(
-                context, commands, pixels, levelBytesPerRow(format, width)))
+        if (!recordUploads(context, commands, plan.uploads))
         {
             context.discard(commands);
             data.resource = nullptr;
             return;
         }
 
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         context.submit(commands);
     }
 
-    // The whole texture: one face or six, as one level or as a chain. Every
-    // subresource is copied before the resource moves back to
-    // PIXEL_SHADER_RESOURCE, so the transition happens once however many there
-    // are.
-    //
-    // A cube's faces follow one another in the source block, each of them
-    // sourcePitch * height bytes on from the last - the layout
-    // TextureDescriptor::cube describes, and the same one the Metal backend
-    // walks.
-    bool recordLevels(D3D12Context& context,
-                      CommandContext* commands,
-                      const void* pixels,
-                      int sourcePitch)
+    bool recordUploads(D3D12Context& context,
+                       CommandContext* commands,
+                       const Vector<SubresourceUpload>& uploads)
     {
-        const auto faces = cube ? 6 : 1;
-        const auto faceBytes = static_cast<std::size_t>(sourcePitch)
-                               * static_cast<std::size_t>(levelRows(format, height));
-
-        for (auto face = 0; face < faces; ++face)
-        {
-            const auto* facePixels = static_cast<const unsigned char*>(pixels)
-                                     + static_cast<std::size_t>(face) * faceBytes;
-
-            // The very last subresource of the very last face is what puts the
-            // resource back where a bind expects it, and nothing before it does.
-            const auto isLast = face == faces - 1;
-
-            if (!recordFace(
-                    context, commands, facePixels, sourcePitch, face, isLast))
+        for (const auto& each: uploads)
+            if (!copyPixels(context, commands, each))
                 return false;
-        }
 
         return true;
     }
 
-    // One face - which on a 2D texture is the whole texture - as one level, as a
-    // chain built from that face's own pixels, or as the chain the caller
-    // supplied. The three differ only in where each level's bytes come from.
-    bool recordFace(D3D12Context& context,
-                    CommandContext* commands,
-                    const void* pixels,
-                    int sourcePitch,
-                    int face,
-                    bool transitionAfterwards)
-    {
-        if (levels <= 1)
-            return copyPixels(context,
-                              commands,
-                              pixels,
-                              sourcePitch,
-                              0,
-                              0,
-                              width,
-                              height,
-                              0,
-                              transitionAfterwards,
-                              face);
-
-        if (suppliedChain)
-            return recordSuppliedChain(
-                context, commands, pixels, face, transitionAfterwards);
-
-        const auto chain = buildMipChain(pixels, width, height, format, sourcePitch);
-
-        if (!chain.isValid())
-            return false;
-
-        for (auto level = 0; level < levels; ++level)
-        {
-            const auto levelWidth = mipExtent(width, level);
-            const auto levelHeight = mipExtent(height, level);
-
-            if (!copyPixels(context,
-                            commands,
-                            chain.level(level),
-                            levelBytesPerRow(format, levelWidth),
-                            0,
-                            0,
-                            levelWidth,
-                            levelHeight,
-                            level,
-                            transitionAfterwards && level == levels - 1,
-                            face))
-                return false;
-        }
-
-        return true;
-    }
-
-    // The same loop with the source walked rather than produced: the levels are
-    // already in the block MipChain packs, so each one starts levelBytes past
-    // the last. No filter runs anywhere here, which is the whole of what
-    // TextureDescriptor::mipLevels is for.
-    bool recordSuppliedChain(D3D12Context& context,
-                             CommandContext* commands,
-                             const void* pixels,
-                             int face,
-                             bool transitionAfterwards)
-    {
-        const auto* bytes = static_cast<const unsigned char*>(pixels);
-
-        for (auto level = 0; level < levels; ++level)
-        {
-            const auto levelWidth = mipExtent(width, level);
-            const auto levelHeight = mipExtent(height, level);
-
-            if (!copyPixels(context,
-                            commands,
-                            bytes,
-                            levelBytesPerRow(format, levelWidth),
-                            0,
-                            0,
-                            levelWidth,
-                            levelHeight,
-                            level,
-                            transitionAfterwards && level == levels - 1,
-                            face))
-                return false;
-
-            bytes += levelBytes(format, levelWidth, levelHeight);
-        }
-
-        return true;
-    }
-
-    void update(const void* pixels, int bytesPerRow)
-    {
-        // Tightly packed by definition, so a stride is a number that can only be
-        // wrong - dropped rather than used as a pitch it cannot be, in the same
-        // words the Metal backend uses. See Texture::update.
-        if (bytesPerRow != 0 && (suppliedChain || isCompressedFormat(format)))
-            return;
-
-        // A cube goes the same way a mipmapped texture does, and for the same
-        // reason: more than one subresource to fill, so the resource has to be
-        // moved back to COPY_DEST once and every face written before it returns.
-        // A compressed texture joins them whatever its level count, because the
-        // other path is the region one and a region of blocks is refused there.
-        if (levels > 1 || cube || isCompressedFormat(format))
-        {
-            updateWholeTexture(pixels, bytesPerRow);
-            return;
-        }
-
-        updateRegion(0, 0, width, height, pixels, bytesPerRow);
-    }
-
-    // The re-upload path for everything the region one cannot take - a mip
-    // chain, six cube faces, blocks, or any combination. Unlike updateRegion it
-    // has to move the resource back to COPY_DEST first, since by now it is being
-    // sampled.
+    // Every later upload: the resource moves to COPY_DEST from wherever it is
+    // resting, every subresource is copied, and it moves back once.
     //
     // **The tracked state goes back where it was if nothing is submitted.**
     // transitionTextureForUse records a barrier *and* advances data.state, but a
-    // discarded list is closed without ever executing - so the resource is still
-    // resting where it was while the tracking says COPY_DEST, and the next
-    // transition would name a StateBefore the resource is not in: a debug-layer
-    // error, and undefined behaviour without one. The shape predates this change
-    // - updateRegion below avoids it by submitting either way - but every
-    // compressed and every supplied-chain update now comes through here, so it
-    // is worth closing rather than leaving on a path only staging failure
-    // reaches.
-    void updateWholeTexture(const void* pixels, int bytesPerRow)
+    // discarded list never executes, so the next transition would otherwise
+    // name a StateBefore the resource is not in.
+    void submitUploads(const Vector<SubresourceUpload>& uploads)
     {
-        if (data.resource == nullptr || pixels == nullptr)
+        if (data.resource == nullptr || uploads.empty() || !context.isValid())
             return;
 
         auto* commands = context.acquire();
@@ -554,21 +359,43 @@ struct Texture::Native
         transitionTextureForUse(
             commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
 
-        const auto pitch =
-            bytesPerRow > 0 ? bytesPerRow : levelBytesPerRow(format, width);
-
-        if (!recordLevels(context, commands, pixels, pitch))
+        if (!recordUploads(context, commands, uploads))
         {
             data.state = stateBefore;
             context.discard(commands);
             return;
         }
 
+        transitionTextureForUse(
+            commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         context.submit(commands);
     }
 
-    // Both update() overloads land here; the whole-texture one is just the full
-    // rect, so there is a single upload path to reason about.
+    void update(const void* pixels, int bytesPerRow)
+    {
+        const auto plan = planWholeUpload(shape, format, pixels, bytesPerRow);
+
+        if (plan.valid)
+            submitUploads(plan.uploads);
+    }
+
+    // The two old region forms reach level 0 of an uncompressed 2D texture
+    // alone, in the same words the Metal backend uses - see the header.
+    bool takesLevelZeroRegions() const
+    {
+        return shape.kind == TextureType::TwoD && !isCompressedFormat(format);
+    }
+
+    static TextureRegion levelZeroRegion(
+        int x, int y, int regionWidth, int regionHeight, int bytesPerRow)
+    {
+        auto region = TextureRegion {};
+        region.origin = {x, y, 0};
+        region.size = {regionWidth, regionHeight, 1};
+        region.bytesPerRow = bytesPerRow;
+        return region;
+    }
+
     void updateRegion(int x,
                       int y,
                       int regionWidth,
@@ -576,73 +403,19 @@ struct Texture::Native
                       const void* pixels,
                       int bytesPerRow)
     {
-        if (data.resource == nullptr || pixels == nullptr || width <= 0
-            || height <= 0)
+        if (regionWidth <= 0 || regionHeight <= 0 || !takesLevelZeroRegions())
             return;
 
-        if (regionWidth <= 0 || regionHeight <= 0)
-            return;
-
-        // A cube has six rectangles this could mean, and nothing here says
-        // which - see the header. Dropped rather than sent to +X.
-        if (cube)
-            return;
-
-        // A compressed rectangle would have to land on the 4x4 block grid, so
-        // the rect asked for and the rect written would differ by up to three
-        // texels a side. Dropped rather than rounded, in the same words the
-        // Metal backend uses.
-        if (isCompressedFormat(format))
-            return;
-
-        // Out-of-bounds is dropped rather than clamped — see the header for why
-        // clamping would silently upload skewed pixels.
-        if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
-            return;
-
-        if (!context.isValid())
-            return;
-
-        auto* commands = context.acquire();
-
-        if (commands == nullptr)
-            return;
-
-        auto sourcePitch =
-            bytesPerRow != 0 ? bytesPerRow : levelBytesPerRow(format, regionWidth);
-
-        // The resource rests in PIXEL_SHADER_RESOURCE between frames - or in
-        // RENDER_TARGET, if it is one a pass last drew into - so the move to
-        // COPY_DEST goes through the tracked state rather than assuming which.
-        // Staging failing puts it back, so the next bind still sees a sampleable
-        // resource.
-        transitionTextureForUse(
-            commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
-
-        if (!copyPixels(context,
-                        commands,
-                        pixels,
-                        sourcePitch,
-                        x,
-                        y,
-                        regionWidth,
-                        regionHeight))
-            transitionTextureForUse(commands->list.get(),
-                                    data,
-                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-        context.submit(commands);
+        update(levelZeroRegion(x, y, regionWidth, regionHeight, bytesPerRow),
+               pixels);
     }
 
-    // Both read() overloads land here, as the update() pair land in
-    // updateRegion. The download side of copyPixels, and the same three pieces:
-    // the footprint of the *region*, a pooled staging resource in the read-back
-    // heap, and the row pitch it reports, which is 256-byte aligned and almost
-    // never the row the caller wants.
-    //
-    // The submission is waited on rather than left running - the pixels are
-    // wanted now, which is what a read-back is - and the resource is put back
-    // where the rest of this file expects to find it.
+    void update(const TextureRegion& region, const void* pixels)
+    {
+        if (auto upload = planRegionUpload(shape, format, region, pixels))
+            submitUploads(Vector<SubresourceUpload> {*upload});
+    }
+
     void readRegion(int x,
                     int y,
                     int regionWidth,
@@ -650,38 +423,47 @@ struct Texture::Native
                     void* dst,
                     int bytesPerRow) const
     {
-        if (data.resource == nullptr || dst == nullptr || !context.isValid())
+        if (regionWidth <= 0 || regionHeight <= 0 || !takesLevelZeroRegions())
             return;
 
-        if (regionWidth <= 0 || regionHeight <= 0)
+        read(levelZeroRegion(x, y, regionWidth, regionHeight, bytesPerRow), dst);
+    }
+
+    // Every read lands here. The download side of copyPixels, and the same
+    // three pieces: the footprint of the *region*, a pooled staging resource in
+    // the read-back heap, and the row pitch it reports, which is 256-byte
+    // aligned and almost never the row the caller wants.
+    //
+    // The submission is waited on rather than left running - the pixels are
+    // wanted now, which is what a read-back is - and the resource is put back
+    // where the rest of this file expects to find it.
+    void read(const TextureRegion& region, void* dst) const
+    {
+        if (data.resource == nullptr || !context.isValid())
             return;
 
-        // Six faces and no argument to name one, exactly as the region upload
-        // has none - see the header.
-        if (cube)
-            return;
+        const auto plan = planRegionRead(shape, format, region, dst);
 
-        // Blocks rather than pixels, and no decoder at either end - see the
-        // header for why a compressed read-back has nothing to hand back.
-        if (isCompressedFormat(format))
-            return;
-
-        // Dropped rather than clamped, exactly as the upload side drops it.
-        if (x < 0 || y < 0 || x + regionWidth > width || y + regionHeight > height)
+        if (!plan)
             return;
 
         // A driver that will not copy a box out of a texture
         // (DriverQuirks::noBoxedTextureCopy) is asked for the whole subresource
-        // and the region is cut out of it below - the same bytes, one texture's
-        // worth of read-back later.
+        // and the region is cut out of it below.
         const auto wholeCopy = getD3D12Shared().getDriverQuirks().noBoxedTextureCopy;
-        const auto copyWidth = wholeCopy ? width : regionWidth;
-        const auto copyHeight = wholeCopy ? height : regionHeight;
+        const auto copyWidth =
+            wholeCopy ? shape.levelWidth(plan->level) : plan->width;
+        const auto copyHeight =
+            wholeCopy ? shape.levelHeight(plan->level) : plan->height;
+        const auto copyDepth =
+            wholeCopy ? shape.levelDepth(plan->level) : plan->depth;
 
         auto copyDesc = data.resource->GetDesc();
         copyDesc.Width = static_cast<UINT64>(copyWidth);
         copyDesc.Height = static_cast<UINT>(copyHeight);
         copyDesc.MipLevels = 1;
+        copyDesc.DepthOrArraySize =
+            static_cast<UINT16>(shape.isVolume() ? copyDepth : 1);
 
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
         UINT rows = 0;
@@ -714,27 +496,24 @@ struct Texture::Native
         D3D12_TEXTURE_COPY_LOCATION source = {};
         source.pResource = data.resource.get();
         source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        source.SubresourceIndex = 0;
+        source.SubresourceIndex = subresourceIndex(plan->level, plan->slice);
 
         D3D12_BOX box = {};
-        box.left = static_cast<UINT>(x);
-        box.top = static_cast<UINT>(y);
-        box.front = 0;
-        box.right = static_cast<UINT>(x + regionWidth);
-        box.bottom = static_cast<UINT>(y + regionHeight);
-        box.back = 1;
+        box.left = static_cast<UINT>(plan->x);
+        box.top = static_cast<UINT>(plan->y);
+        box.front = static_cast<UINT>(plan->z);
+        box.right = static_cast<UINT>(plan->x + plan->width);
+        box.bottom = static_cast<UINT>(plan->y + plan->height);
+        box.back = static_cast<UINT>(plan->z + plan->depth);
 
         commands->list->CopyTextureRegion(
             &destination, 0, 0, 0, &source, wholeCopy ? nullptr : &box);
 
-        // Back to where a texture rests between frames, so the next bind finds
-        // a sampleable resource whatever this one was doing before the read.
         transitionTextureForUse(
             commands->list.get(), data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
         // The copy went onto the same queue as the writes, so waiting for this
-        // submission's fence also waits for them - which is the rule the header
-        // states, and the same one Buffer::read leans on.
+        // submission's fence also waits for them.
         context.waitFor(context.submit(commands));
 
         void* mapped = nullptr;
@@ -743,31 +522,33 @@ struct Texture::Native
         if (FAILED(staging->Map(0, &readRange, &mapped)) || mapped == nullptr)
             return;
 
-        // Exact for every format that reaches here, the compressed ones having
-        // been turned away above: rowBytes is the copied width's texels and
-        // nothing else.
         const auto texelBytes =
             static_cast<std::size_t>(rowBytes) / static_cast<std::size_t>(copyWidth);
         const auto regionRowBytes =
-            texelBytes * static_cast<std::size_t>(regionWidth);
-        const auto stride = bytesPerRow != 0 ? static_cast<std::size_t>(bytesPerRow)
-                                             : regionRowBytes;
+            texelBytes * static_cast<std::size_t>(plan->width);
+        const auto rowPitch = static_cast<std::size_t>(footprint.Footprint.RowPitch);
+        const auto imagePitch = rowPitch * rows;
 
-        // Where the region starts inside what was copied: the origin unless the
-        // whole subresource came back.
-        const auto skipRows = wholeCopy ? static_cast<std::size_t>(y) : 0;
+        const auto skipImages = wholeCopy ? static_cast<std::size_t>(plan->z) : 0;
+        const auto skipRows = wholeCopy ? static_cast<std::size_t>(plan->y) : 0;
         const auto skipBytes =
-            wholeCopy ? texelBytes * static_cast<std::size_t>(x) : 0;
+            wholeCopy ? texelBytes * static_cast<std::size_t>(plan->x) : 0;
 
         auto* out = static_cast<unsigned char*>(dst);
         const auto* in = static_cast<const unsigned char*>(mapped) + skipBytes;
 
-        for (auto row = std::size_t {0};
-             row < static_cast<std::size_t>(regionHeight);
-             ++row)
-            std::memcpy(out + row * stride,
-                        in + (row + skipRows) * footprint.Footprint.RowPitch,
-                        regionRowBytes);
+        for (auto image = std::size_t {0};
+             image < static_cast<std::size_t>(plan->depth);
+             ++image)
+            for (auto row = std::size_t {0};
+                 row < static_cast<std::size_t>(plan->height);
+                 ++row)
+                std::memcpy(
+                    out + image * static_cast<std::size_t>(plan->bytesPerImage)
+                        + row * static_cast<std::size_t>(plan->bytesPerRow),
+                    in + (image + skipImages) * imagePitch
+                        + (row + skipRows) * rowPitch,
+                    regionRowBytes);
 
         const D3D12_RANGE noWrite = {0, 0};
         staging->Unmap(0, &noWrite);
@@ -791,6 +572,14 @@ struct Texture::Native
         D3D12_RENDER_TARGET_VIEW_DESC viewDesc = {};
         viewDesc.Format = toDXGIFormat(descriptor.format);
         viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+
+        // Level 0 of slice 0, which is what a pass without a level or slice
+        // renders into; an array resource needs an array view to name it.
+        if (shape.kind != TextureType::TwoD)
+        {
+            viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+            viewDesc.Texture2DArray.ArraySize = 1;
+        }
 
         auto handle = data.rtvHeap->GetCPUDescriptorHandleForHeapStart();
         context.getDevice()->CreateRenderTargetView(
@@ -883,12 +672,14 @@ struct Texture::Native
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
+        // The colour target's levels and slices, so a pass into any level or
+        // layer of it finds a depth plane of the same size there.
         D3D12_RESOURCE_DESC desc = {};
         desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         desc.Width = static_cast<UINT64>(width);
         desc.Height = static_cast<UINT>(height);
-        desc.DepthOrArraySize = 1;
-        desc.MipLevels = 1;
+        desc.DepthOrArraySize = static_cast<UINT16>(shape.slices());
+        desc.MipLevels = static_cast<UINT16>(levels);
         // At the colour attachment's count, because both APIs require every
         // attachment of one pass to agree - a multisampled target with a
         // single-sampled depth buffer is not a pass either of them will run.
@@ -939,6 +730,12 @@ struct Texture::Native
         viewDesc.Format = format;
         viewDesc.ViewDimension = multisampled ? D3D12_DSV_DIMENSION_TEXTURE2DMS
                                               : D3D12_DSV_DIMENSION_TEXTURE2D;
+
+        if (shape.kind != TextureType::TwoD)
+        {
+            viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+            viewDesc.Texture2DArray.ArraySize = 1;
+        }
 
         auto handle = data.dsvHeap->GetCPUDescriptorHandleForHeapStart();
         context.getDevice()->CreateDepthStencilView(
@@ -1066,6 +863,15 @@ struct Texture::Native
         viewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         viewDesc.Texture2D.MipLevels = 1;
 
+        // An array target's depth reads as the array it is, level 0 of every
+        // slice.
+        if (shape.kind != TextureType::TwoD)
+        {
+            viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            viewDesc.Texture2DArray.MipLevels = 1;
+            viewDesc.Texture2DArray.ArraySize = static_cast<UINT>(shape.slices());
+        }
+
         context.getDevice()->CreateShaderResourceView(
             data.sampledDepthResource(), &viewDesc, data.depthSrv.cpu);
     }
@@ -1084,12 +890,91 @@ struct Texture::Native
             return;
         }
 
-        D3D12_UNORDERED_ACCESS_VIEW_DESC viewDesc = {};
-        viewDesc.Format = toDXGIFormat(descriptor.format);
-        viewDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        const auto viewDesc =
+            describeUnorderedAccess(toDXGIFormat(descriptor.format), 0);
 
         context.getDevice()->CreateUnorderedAccessView(
             data.resource.get(), nullptr, &viewDesc, data.uav.cpu);
+    }
+
+    // One level, every slice: a cube or an array as a RWTexture2DArray, a
+    // volume as a RWTexture3D of all its images.
+    D3D12_UNORDERED_ACCESS_VIEW_DESC describeUnorderedAccess(DXGI_FORMAT viewFormat,
+                                                             int level) const
+    {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC viewDesc = {};
+        viewDesc.Format = viewFormat;
+
+        if (shape.isVolume())
+        {
+            viewDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+            viewDesc.Texture3D.MipSlice = static_cast<UINT>(level);
+            viewDesc.Texture3D.WSize = static_cast<UINT>(shape.levelDepth(level));
+        }
+        else if (shape.kind != TextureType::TwoD)
+        {
+            viewDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+            viewDesc.Texture2DArray.MipSlice = static_cast<UINT>(level);
+            viewDesc.Texture2DArray.ArraySize = static_cast<UINT>(shape.slices());
+        }
+        else
+        {
+            viewDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            viewDesc.Texture2D.MipSlice = static_cast<UINT>(level);
+        }
+
+        return viewDesc;
+    }
+
+    // Every level from `level` down, every slice, with the dimension the
+    // shader declares for the kind.
+    D3D12_SHADER_RESOURCE_VIEW_DESC describeShaderResource(DXGI_FORMAT viewFormat,
+                                                           int level,
+                                                           int levelCount) const
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
+        viewDesc.Format = viewFormat;
+        viewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+        const auto mostDetailed = static_cast<UINT>(level);
+        const auto count = static_cast<UINT>(levelCount);
+
+        switch (shape.kind)
+        {
+            case TextureType::TwoD:
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                viewDesc.Texture2D.MostDetailedMip = mostDetailed;
+                viewDesc.Texture2D.MipLevels = count;
+                break;
+
+            case TextureType::Cube:
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+                viewDesc.TextureCube.MostDetailedMip = mostDetailed;
+                viewDesc.TextureCube.MipLevels = count;
+                break;
+
+            case TextureType::TwoDArray:
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+                viewDesc.Texture2DArray.MostDetailedMip = mostDetailed;
+                viewDesc.Texture2DArray.MipLevels = count;
+                viewDesc.Texture2DArray.ArraySize = static_cast<UINT>(shape.layers);
+                break;
+
+            case TextureType::CubeArray:
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
+                viewDesc.TextureCubeArray.MostDetailedMip = mostDetailed;
+                viewDesc.TextureCubeArray.MipLevels = count;
+                viewDesc.TextureCubeArray.NumCubes = static_cast<UINT>(shape.layers);
+                break;
+
+            case TextureType::ThreeD:
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+                viewDesc.Texture3D.MostDetailedMip = mostDetailed;
+                viewDesc.Texture3D.MipLevels = count;
+                break;
+        }
+
+        return viewDesc;
     }
 
     void createDescriptors(D3D12Context& context,
@@ -1126,36 +1011,16 @@ struct Texture::Native
         if (data.srv.cpu.ptr == 0)
             return;
 
-        // **The view is what makes a cube a cube on this backend.** The resource
-        // underneath is a six-slice 2D array and nothing about it says
-        // otherwise, so a null description - which is what every 2D texture here
-        // takes, and what covers every level a resource has - would hand the
-        // shader a Texture2DArray. A TextureCube declaration reading one is a
-        // dimension mismatch: the debug layer says so, and a release runtime
-        // samples nothing at all.
-        //
-        // MipLevels is spelled out because the description is no longer the
-        // null one: -1 is D3D12's "all of them from MostDetailedMip down", and
-        // is what the null description was giving before.
-        if (cube)
-        {
-            D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
-            viewDesc.Format = toDXGIFormat(descriptor.format);
-            viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-            viewDesc.Shader4ComponentMapping =
-                D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            viewDesc.TextureCube.MostDetailedMip = 0;
-            viewDesc.TextureCube.MipLevels = static_cast<UINT>(-1);
-            viewDesc.TextureCube.ResourceMinLODClamp = 0.f;
+        // **The view is what makes a cube, an array or a volume what it is on
+        // this backend.** A cube's resource is a six-slice 2D array and nothing
+        // about it says otherwise, so a TextureCube declaration needs the
+        // TEXTURECUBE view; an array declared Texture2DArray needs the array
+        // view even with one layer. Every level, as the null description gave.
+        const auto viewDesc =
+            describeShaderResource(toDXGIFormat(descriptor.format), 0, levels);
 
-            context.getDevice()->CreateShaderResourceView(
-                data.resource.get(), &viewDesc, data.srv.cpu);
-        }
-        else
-        {
-            context.getDevice()->CreateShaderResourceView(
-                data.resource.get(), nullptr, data.srv.cpu);
-        }
+        context.getDevice()->CreateShaderResourceView(
+            data.resource.get(), &viewDesc, data.srv.cpu);
 
         // No sampler descriptor is created, and TextureDescriptor::filter and
         // ::addressMode are unused on this backend: the sampler comes from the
@@ -1180,25 +1045,13 @@ struct Texture::Native
     // carry.
     TextureFormat format = TextureFormat::RGBA8Unorm;
 
-    // 1 unless a chain was asked for and there were pixels to build one from, or
-    // the caller supplied one of its own. It is the resource's MipLevels, the
-    // stride between one face's subresources and the next in copyPixels, and the
-    // bound of every upload loop; the SRV alone does not need it, being built
-    // from a null description that covers whatever levels the resource has -
-    // except on a cube, where createDescriptors spells the TEXTURECUBE view out.
+    TextureShape shape;
+
+    // The resource's MipLevels, and the stride between one slice's
+    // subresources and the next.
     int levels = 1;
 
-    // Whether those levels arrived with the pixels rather than being built from
-    // level 0, which changes where each level's bytes come from and nothing
-    // else. See TextureDescriptor::mipLevels.
-    bool suppliedChain = false;
-
     bool computeWrite = false;
-
-    // Six array slices under a cube view rather than one 2D image, which changes
-    // the resource's array size, the subresource each upload lands on, the SRV,
-    // and what the two region-shaped entry points do - and nothing else.
-    bool cube = false;
 
     // Mutable because the state tracking advances inside the const read(): the
     // copy to the read-back buffer is a use like any other, and Buffer's
@@ -1209,8 +1062,31 @@ struct Texture::Native
 Texture::Texture(Device& device,
                  const TextureDescriptor& descriptor,
                  const void* pixels)
-    : impl(device, descriptor, pixels)
+    : impl(device,
+           descriptor,
+           pixels,
+           pixels != nullptr ? InitialData::Pixels : InitialData::None)
 {
+}
+
+Texture::Texture(Device& device,
+                 const TextureDescriptor& descriptor,
+                 std::span<const TextureSubresource> subresources)
+    : impl(device, descriptor, nullptr, InitialData::Subresources)
+{
+    if (!isValid())
+        return;
+
+    const auto plan =
+        planSubresourceUploads(impl->shape, impl->format, subresources);
+
+    if (!plan.valid)
+    {
+        impl->context.deferRelease(std::move(impl->data.resource));
+        return;
+    }
+
+    impl->submitUploads(plan.uploads);
 }
 
 Texture::Texture(Device& device, void* nativePixelBuffer)
@@ -1243,6 +1119,11 @@ void Texture::update(const Graphics::Rect& region,
                        bytesPerRow);
 }
 
+void Texture::updateSubresource(const TextureRegion& region, const void* pixels)
+{
+    impl->update(region, pixels);
+}
+
 void Texture::read(void* dst, int bytesPerRow) const
 {
     if (bytesPerRow < 0)
@@ -1263,6 +1144,36 @@ void Texture::read(const Graphics::Rect& region, void* dst, int bytesPerRow) con
                      static_cast<int>(std::lround(region.h)),
                      dst,
                      bytesPerRow);
+}
+
+void Texture::readSubresource(const TextureRegion& region, void* dst) const
+{
+    impl->read(region, dst);
+}
+
+TextureType Texture::kind() const
+{
+    return impl->shape.kind;
+}
+
+int Texture::arrayLength() const
+{
+    return impl->shape.layers;
+}
+
+int Texture::volumeDepth() const
+{
+    return impl->shape.depth;
+}
+
+int Texture::slices() const
+{
+    return impl->shape.slices();
+}
+
+void* Texture::nativeSubresourceView(int, int, int, int) const
+{
+    return nullptr;
 }
 
 int Texture::width() const
@@ -1297,7 +1208,7 @@ bool Texture::isRenderTarget() const
 
 bool Texture::isCube() const
 {
-    return isValid() && impl->cube;
+    return isValid() && impl->shape.kind == TextureType::Cube;
 }
 
 bool Texture::isComputeWritable() const

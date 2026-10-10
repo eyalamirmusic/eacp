@@ -259,7 +259,11 @@ struct VulkanTextureData
     int height = 0;
 
     int mipLevels = 1;
-    bool cube = false;
+
+    // 2D slices (layers times six on a cube kind), and a volume's images.
+    TextureType kind = TextureType::TwoD;
+    int slices = 1;
+    int depth = 1;
 
     // The VkImage then belongs to the swapchain, and nothing samples it.
     bool presentable = false;

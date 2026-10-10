@@ -860,12 +860,10 @@ auto tCompressedCube = test("Compressed/aCubeOfBlocks") = []
         check(isColor(sampleAlong(cube, 0.f, 0.f, -1.f), 1.f, 0.f, 1.f));
     }
 
-    // A supplied chain on a cube is the one combination refused: the faces would
-    // each carry one, and nothing here can hold a cube's level selection still
-    // long enough to say which level a direction read. See
-    // TextureDescriptor::mipLevels.
+    // A cube takes a supplied chain like any other kind (G31), so the refusal
+    // left is the one every kind has: more levels than the size holds.
     auto withChain = descriptor;
-    withChain.mipLevels = 3;
+    withChain.mipLevels = mipLevelCount(descriptor.width, descriptor.height) + 1;
 
     check(!Device::shared().makeTexture(withChain, faces).isValid());
 };

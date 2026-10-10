@@ -38,7 +38,7 @@ bool coversWholeLevel(const Texture& texture, int level, int x, int y, int w, in
 
 int textureSlices(const Texture& texture)
 {
-    return texture.isCube() ? 6 : 1;
+    return texture.slices();
 }
 
 int levelWidth(const Texture& texture, int level)
@@ -146,7 +146,9 @@ Vector<TextureCopyPlan> planWholeTextureCopy(const Texture& source,
     if (source.width() != destination.width()
         || source.height() != destination.height()
         || source.mipLevels() != destination.mipLevels()
-        || source.isCube() != destination.isCube())
+        || source.kind() != destination.kind()
+        || source.slices() != destination.slices()
+        || source.volumeDepth() != destination.volumeDepth())
     {
         LOG("eacp: a whole-texture copy needs two textures of one size, level "
             "count and shape");

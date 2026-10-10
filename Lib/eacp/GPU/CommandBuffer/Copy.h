@@ -4,8 +4,8 @@
 
 namespace eacp::GPU
 {
-// A texel position inside one level of one slice. z is the depth into a 3D
-// texture, and is 0 until those exist.
+// A texel position inside one level of one slice. z is the image of a volume
+// (TextureType::ThreeD), and 0 on every other kind.
 struct TextureOrigin
 {
     int x = 0;
@@ -13,9 +13,9 @@ struct TextureOrigin
     int z = 0;
 };
 
-// How many texels a copy covers. A width or height of 0 means "to the edge of
-// the source level from the origin", so a default size copies the rest of the
-// level. depth is 1 until 3D textures exist.
+// How many texels a copy covers. A width, height or depth of 0 means "to the
+// edge of the source level from the origin", so a default size copies the rest
+// of the level. depth counts a volume's images and is 1 on every other kind.
 struct TextureExtent
 {
     int width = 0;
@@ -25,7 +25,8 @@ struct TextureExtent
 
 // Part of one texture copied into another: a level and a slice on each side
 // (a cube's face is its slice, 0 to 5 in +X, -X, +Y, -Y, +Z, -Z order; an
-// array layer will be one too), an origin on each side, and one size.
+// array's layer is one too, and a cube array's layer * 6 + face), an origin on
+// each side, and one size. A volume has the one slice and copies a range of z.
 struct TextureCopyRegion
 {
     int sourceLevel = 0;
@@ -52,8 +53,9 @@ struct TextureCopyRegion
 
 // The texture half of a copy between a buffer and a texture, and how the
 // buffer lays the texels out: rows of bytesPerRow (0 for tightly packed)
-// starting bufferOffset bytes in. The offset is a multiple of the texel size
-// and of four, and bytesPerRow a multiple of the texel size.
+// starting bufferOffset bytes in, a volume's images bytesPerImage apart (0 for
+// bytesPerRow times the rows). The offset is a multiple of the texel size and
+// of four, and bytesPerRow a multiple of the texel size.
 struct BufferTextureCopy
 {
     std::int64_t bufferOffset = 0;
@@ -63,5 +65,7 @@ struct BufferTextureCopy
     int slice = 0;
     TextureOrigin origin;
     TextureExtent size;
+
+    int bytesPerImage = 0;
 };
 } // namespace eacp::GPU

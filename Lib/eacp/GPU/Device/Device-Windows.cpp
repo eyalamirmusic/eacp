@@ -256,6 +256,21 @@ int Device::maxComputeBufferSlots() const
     return isValid() ? maxBufferSlots : 0;
 }
 
+int Device::maxTextureLayers() const
+{
+    return isValid() ? D3D12_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION : 0;
+}
+
+int Device::maxTextureSize3D() const
+{
+    return isValid() ? D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION : 0;
+}
+
+bool Device::supportsCubeArrays() const
+{
+    return isValid();
+}
+
 // A shader-model constant rather than an adapter's answer: Direct3D gives a
 // thread group 32 KB of groupshared memory at cs_5_0 on every device that runs
 // the model at all, so there is nothing to query and nothing that varies.

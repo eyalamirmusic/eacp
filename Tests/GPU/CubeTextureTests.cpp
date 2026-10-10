@@ -208,10 +208,9 @@ auto tCubeSaysItIsOne = test("CubeTexture/aCubeKnowsItIsACube") = []
     check(!plain.isCube());
 };
 
-// Six faces of a rectangle is a shape neither API has, and a cube something on
-// the GPU writes has no way to say which face it writes. Both are refused at
-// creation rather than half-built, and both backends refuse them in the same
-// words - see TextureDescriptor::cube.
+// Six faces of a rectangle is a shape neither API has, so it is refused at
+// creation rather than half-built. A cube the GPU writes is not refused any
+// more: a pass names its face with ColorTarget::slice.
 auto tCubeRefusesWhatItCannotBe = test("CubeTexture/aCubeRefusesWhatItCannotBe") = []
 {
     if (!Device::shared().isValid())
@@ -232,7 +231,12 @@ auto tCubeRefusesWhatItCannotBe = test("CubeTexture/aCubeRefusesWhatItCannotBe")
     target.cube = true;
     target.renderTarget = true;
 
-    check(!Device::shared().makeTexture(target, nullptr).isValid());
+    check(Device::shared().makeTexture(target, nullptr).isValid());
+
+    auto multisampled = target;
+    multisampled.sampleCount = 4;
+
+    check(!Device::shared().makeTexture(multisampled, nullptr).isValid());
 };
 
 // **The face order.** Each axis reads the face that was uploaded at its index,

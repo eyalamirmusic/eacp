@@ -234,6 +234,27 @@ int Device::maxComputeBufferSlots() const
     return isValid() ? vulkanComputeBufferSlots() : 0;
 }
 
+int Device::maxTextureLayers() const
+{
+    if (!isValid())
+        return 0;
+
+    return (int) getVulkanShared().getProperties().limits.maxImageArrayLayers;
+}
+
+int Device::maxTextureSize3D() const
+{
+    if (!isValid())
+        return 0;
+
+    return (int) getVulkanShared().getProperties().limits.maxImageDimension3D;
+}
+
+bool Device::supportsCubeArrays() const
+{
+    return isValid() && getVulkanShared().getFeatures().imageCubeArray == VK_TRUE;
+}
+
 int Device::maxThreadgroupMemory() const
 {
     if (!isValid())

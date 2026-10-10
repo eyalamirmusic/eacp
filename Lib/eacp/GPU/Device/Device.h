@@ -93,6 +93,15 @@ public:
     Texture makeTexture(const TextureDescriptor& descriptor,
                         const void* pixels = nullptr);
 
+    // Any kind of texture, filled level by level and slice by slice: the
+    // shape a container file (.dds, .ktx) hands over. See Texture's
+    // constructor of the same shape. A name of its own rather than a
+    // makeTexture overload, which a C array of subresources would decay past
+    // into the pixel pointer.
+    Texture makeTextureFromSubresources(
+        const TextureDescriptor& descriptor,
+        std::span<const TextureSubresource> subresources);
+
     // A 2D texture sized from a decoded image and uploaded from its RGBA8
     // pixels. The image is taken as tightly packed 8-bit RGBA (what
     // Graphics::Image holds), so the format is always RGBA8Unorm. An invalid or
@@ -218,6 +227,19 @@ public:
     // every stage, and on Vulkan, whose combined image samplers are declared
     // for both. Portable code binds one texture per slot across the two stages.
     bool stagesShareTextureSlots() const;
+
+    // The most layers a TwoDArray, or cubes times six a CubeArray, may have:
+    // 2048 on all three backends (Metal's, D3D12's required limit, Vulkan's
+    // maxImageArrayLayers). 0 on an invalid Device.
+    int maxTextureLayers() const;
+
+    // The largest width, height or depth of a ThreeD texture: 2048 on Metal
+    // and D3D12, maxImageDimension3D on Vulkan. 0 on an invalid Device.
+    int maxTextureSize3D() const;
+
+    // Whether TextureType::CubeArray textures can be created: every Mac and
+    // Apple4 and later on Metal, every D3D12 device, Vulkan's imageCubeArray.
+    bool supportsCubeArrays() const;
 
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,

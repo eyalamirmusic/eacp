@@ -267,6 +267,27 @@ bool Device::stagesShareTextureSlots() const
     return false;
 }
 
+int Device::maxTextureLayers() const
+{
+    return isValid() ? 2048 : 0;
+}
+
+int Device::maxTextureSize3D() const
+{
+    return isValid() ? 2048 : 0;
+}
+
+bool Device::supportsCubeArrays() const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil)
+        return false;
+
+    return [metalDevice supportsFamily:MTLGPUFamilyMac2] == YES
+           || [metalDevice supportsFamily:MTLGPUFamilyApple4] == YES;
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? ComputePass::maxBufferSlots : 0;

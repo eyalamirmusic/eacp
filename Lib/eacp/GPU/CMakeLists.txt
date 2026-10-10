@@ -64,6 +64,7 @@ target_sources(eacp-gpu PRIVATE
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp
+        Texture/TextureShape.cpp
         View/GPUView.cpp)
 
 if (APPLE)

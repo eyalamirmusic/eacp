@@ -3,6 +3,7 @@
 #include "../Device/Device.h"
 #include "../Vulkan/VulkanTypes.h"
 #include "MipChain.h"
+#include "TextureShape.h"
 
 #include <cmath>
 #include <cstring>
@@ -258,21 +259,64 @@ void releaseVulkanCompanions(VulkanContext& context, VulkanTextureData& data)
     data.depthReadView = VK_NULL_HANDLE;
 }
 
+VkImageViewType sampledViewType(TextureType kind)
+{
+    switch (kind)
+    {
+        case TextureType::TwoD:
+            return VK_IMAGE_VIEW_TYPE_2D;
+        case TextureType::Cube:
+            return VK_IMAGE_VIEW_TYPE_CUBE;
+        case TextureType::TwoDArray:
+            return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        case TextureType::CubeArray:
+            return VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
+        case TextureType::ThreeD:
+            return VK_IMAGE_VIEW_TYPE_3D;
+    }
+
+    return VK_IMAGE_VIEW_TYPE_2D;
+}
+
+// What a kernel writes: a 2D image, a cube or an array as a 2D array of its
+// slices, a volume as itself.
+VkImageViewType storageViewType(TextureType kind)
+{
+    if (kind == TextureType::TwoD)
+        return VK_IMAGE_VIEW_TYPE_2D;
+
+    return kind == TextureType::ThreeD ? VK_IMAGE_VIEW_TYPE_3D
+                                       : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+}
+
 struct Texture::Native
 {
-    Native(Device& device, const TextureDescriptor& descriptor, const void* pixels)
+    Native(Device& device,
+           const TextureDescriptor& descriptor,
+           const void* pixels,
+           InitialData initialData)
         : context(getVulkanContext(device))
         , format(descriptor.format)
     {
         data.width = descriptor.width;
         data.height = descriptor.height;
-        data.cube = descriptor.cube;
         data.format = toVkFormat(descriptor.format);
 
-        if (!context.isValid() || data.width <= 0 || data.height <= 0)
+        if (!context.isValid())
             return;
 
-        if (!descriptorIsPossible(device, descriptor, pixels))
+        const auto resolved = resolveTextureShape(descriptor, initialData);
+
+        if (!resolved)
+            return;
+
+        shape = *resolved;
+        data.kind = shape.kind;
+        data.slices = shape.slices();
+        data.depth = shape.depth;
+        data.mipLevels = shape.levels;
+
+        if (!descriptorIsPossible(device, descriptor))
             return;
 
         if (!createImage(descriptor) || !createViews(descriptor))
@@ -310,20 +354,17 @@ struct Texture::Native
 
     ~Native() { release(); }
 
-    bool descriptorIsPossible(Device& device,
-                              const TextureDescriptor& descriptor,
-                              const void* pixels)
+    bool descriptorIsPossible(Device& device, const TextureDescriptor& descriptor)
     {
-        if (data.cube
-            && (data.width != data.height || descriptor.renderTarget
-                || descriptor.computeWrite))
+        if (shape.kind == TextureType::CubeArray && !device.supportsCubeArrays())
+        {
+            LOG("Vulkan: the device has no imageCubeArray, so a cube array is "
+                "invalid here");
             return false;
+        }
 
         if (descriptor.renderTarget && descriptor.sampleCount > 1)
         {
-            if (data.cube)
-                return false;
-
             if (!device.supportsSampleCount(descriptor.sampleCount))
             {
                 LOG("Vulkan: the device refuses ",
@@ -374,25 +415,6 @@ struct Texture::Native
             computeWrite = true;
         }
 
-        if (descriptor.mipLevels < 0)
-            return false;
-
-        if (descriptor.mipLevels > 0)
-        {
-            if (descriptor.mipmapped || descriptor.renderTarget
-                || descriptor.computeWrite || data.cube || pixels == nullptr
-                || descriptor.mipLevels > mipLevelCount(data.width, data.height))
-                return false;
-
-            data.mipLevels = descriptor.mipLevels;
-            suppliedChain = true;
-        }
-        else if (descriptor.mipmapped && pixels != nullptr
-                 && canBuildMipChain(format))
-        {
-            data.mipLevels = mipLevelCount(data.width, data.height);
-        }
-
         return true;
     }
 
@@ -400,16 +422,16 @@ struct Texture::Native
     {
         VkImageCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        info.imageType = VK_IMAGE_TYPE_2D;
+        info.imageType = shape.isVolume() ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
         info.format = data.format;
         info.extent = {static_cast<std::uint32_t>(data.width),
                        static_cast<std::uint32_t>(data.height),
-                       1};
+                       static_cast<std::uint32_t>(shape.depth)};
         info.mipLevels = static_cast<std::uint32_t>(data.mipLevels);
 
         // Vulkan has no cube image type, only a cube view: six layers in the
-        // order +X, -X, +Y, -Y, +Z, -Z.
-        info.arrayLayers = static_cast<std::uint32_t>(data.cube ? 6 : 1);
+        // order +X, -X, +Y, -Y, +Z, -Z, a cube array layers of six.
+        info.arrayLayers = static_cast<std::uint32_t>(data.slices);
         info.samples = VK_SAMPLE_COUNT_1_BIT;
         info.tiling = VK_IMAGE_TILING_OPTIMAL;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -424,7 +446,7 @@ struct Texture::Native
         if (computeWrite)
             info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
 
-        if (data.cube)
+        if (shape.isCubeKind())
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 
         VmaAllocationCreateInfo allocationInfo = {};
@@ -464,13 +486,12 @@ struct Texture::Native
 
     bool createViews(const TextureDescriptor& descriptor)
     {
-        data.sampledView =
-            makeView(data.image,
-                     data.format,
-                     data.cube ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D,
-                     VK_IMAGE_ASPECT_COLOR_BIT,
-                     data.mipLevels,
-                     data.cube ? 6 : 1);
+        data.sampledView = makeView(data.image,
+                                    data.format,
+                                    sampledViewType(shape.kind),
+                                    VK_IMAGE_ASPECT_COLOR_BIT,
+                                    data.mipLevels,
+                                    data.slices);
 
         if (data.sampledView == VK_NULL_HANDLE)
             return false;
@@ -492,10 +513,10 @@ struct Texture::Native
         {
             data.storageView = makeView(data.image,
                                         data.format,
-                                        VK_IMAGE_VIEW_TYPE_2D,
+                                        storageViewType(shape.kind),
                                         VK_IMAGE_ASPECT_COLOR_BIT,
                                         1,
-                                        1);
+                                        data.slices);
 
             if (data.storageView == VK_NULL_HANDLE)
                 return false;
@@ -557,44 +578,39 @@ struct Texture::Native
 
     // Repacked tight: the caller's stride is in bytes where a bufferRowLength
     // is in texels. A row is a row of blocks on a compressed format.
-    bool copyPixels(CommandContext& commands,
-                    const void* pixels,
-                    int sourcePitch,
-                    int destX,
-                    int destY,
-                    int regionWidth,
-                    int regionHeight,
-                    int mipLevel,
-                    int face)
+    bool copyPixels(CommandContext& commands, const SubresourceUpload& upload)
     {
         const auto rowBytes =
-            static_cast<std::size_t>(levelBytesPerRow(format, regionWidth));
-        const auto rows = levelRows(format, regionHeight);
-        const auto pitch = static_cast<std::size_t>(sourcePitch);
+            static_cast<std::size_t>(levelBytesPerRow(format, upload.width));
+        const auto rows = static_cast<std::size_t>(levelRows(format, upload.height));
+        const auto images = static_cast<std::size_t>(upload.depth);
 
-        auto source = context.allocateUpload(
-            commands, rowBytes * static_cast<std::size_t>(rows));
+        auto source = context.allocateUpload(commands, rowBytes * rows * images);
 
         if (!source.isValid())
             return false;
 
-        const auto* in = static_cast<const std::byte*>(pixels);
+        const auto* in = static_cast<const std::byte*>(upload.pixels);
 
-        for (auto row = 0; row < rows; ++row)
-            std::memcpy(source.mapped + static_cast<std::size_t>(row) * rowBytes,
-                        in + static_cast<std::size_t>(row) * pitch,
-                        rowBytes);
+        for (auto image = std::size_t {0}; image < images; ++image)
+            for (auto row = std::size_t {0}; row < rows; ++row)
+                std::memcpy(
+                    source.mapped + (image * rows + row) * rowBytes,
+                    in + image * static_cast<std::size_t>(upload.bytesPerImage)
+                        + row * static_cast<std::size_t>(upload.bytesPerRow),
+                    rowBytes);
 
         VkBufferImageCopy region = {};
         region.bufferOffset = source.offset;
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.mipLevel = static_cast<std::uint32_t>(mipLevel);
-        region.imageSubresource.baseArrayLayer = static_cast<std::uint32_t>(face);
+        region.imageSubresource.mipLevel = static_cast<std::uint32_t>(upload.level);
+        region.imageSubresource.baseArrayLayer =
+            static_cast<std::uint32_t>(upload.slice);
         region.imageSubresource.layerCount = 1;
-        region.imageOffset = {destX, destY, 0};
-        region.imageExtent = {static_cast<std::uint32_t>(regionWidth),
-                              static_cast<std::uint32_t>(regionHeight),
-                              1};
+        region.imageOffset = {upload.x, upload.y, upload.z};
+        region.imageExtent = {static_cast<std::uint32_t>(upload.width),
+                              static_cast<std::uint32_t>(upload.height),
+                              static_cast<std::uint32_t>(upload.depth)};
 
         vkCmdCopyBufferToImage(commands.buffer,
                                source.buffer,
@@ -605,99 +621,29 @@ struct Texture::Native
         return true;
     }
 
-    bool recordLevels(CommandContext& commands, const void* pixels, int sourcePitch)
+    bool submitUploads(const Vector<SubresourceUpload>& uploads)
     {
-        const auto faces = data.cube ? 6 : 1;
-        const auto faceBytes =
-            static_cast<std::size_t>(sourcePitch)
-            * static_cast<std::size_t>(levelRows(format, data.height));
-
-        for (auto face = 0; face < faces; ++face)
-        {
-            const auto* facePixels = static_cast<const std::byte*>(pixels)
-                                     + static_cast<std::size_t>(face) * faceBytes;
-
-            if (!recordFace(commands, facePixels, sourcePitch, face))
-                return false;
-        }
-
-        return true;
-    }
-
-    bool recordFace(CommandContext& commands,
-                    const void* pixels,
-                    int sourcePitch,
-                    int face)
-    {
-        if (data.mipLevels <= 1)
-            return copyPixels(commands,
-                              pixels,
-                              sourcePitch,
-                              0,
-                              0,
-                              data.width,
-                              data.height,
-                              0,
-                              face);
-
-        if (suppliedChain)
-            return recordChain(commands, pixels, nullptr, face);
-
-        const auto chain =
-            buildMipChain(pixels, data.width, data.height, format, sourcePitch);
-
-        if (!chain.isValid())
+        if (!data.isValid() || uploads.empty())
             return false;
-
-        return recordChain(commands, nullptr, &chain, face);
-    }
-
-    bool recordChain(CommandContext& commands,
-                     const void* packed,
-                     const MipChain* chain,
-                     int face)
-    {
-        const auto* bytes = static_cast<const std::byte*>(packed);
-
-        for (auto level = 0; level < data.mipLevels; ++level)
-        {
-            const auto levelWidth = mipExtent(data.width, level);
-            const auto levelHeight = mipExtent(data.height, level);
-
-            if (!copyPixels(commands,
-                            chain != nullptr ? chain->level(level) : bytes,
-                            levelBytesPerRow(format, levelWidth),
-                            0,
-                            0,
-                            levelWidth,
-                            levelHeight,
-                            level,
-                            face))
-                return false;
-
-            if (bytes != nullptr)
-                bytes += levelBytes(format, levelWidth, levelHeight);
-        }
-
-        return true;
-    }
-
-    bool upload(const void* pixels, int bytesPerRow)
-    {
-        const auto pitch =
-            bytesPerRow != 0 ? bytesPerRow : levelBytesPerRow(format, data.width);
 
         return onARecording(
             [&](CommandContext& commands)
             {
                 transitionTextureForUse(commands.buffer, data, imageTransferDst);
 
-                if (!recordLevels(commands, pixels, pitch))
-                    return false;
+                for (const auto& each: uploads)
+                    if (!copyPixels(commands, each))
+                        return false;
 
                 transitionTextureForUse(commands.buffer, data, data.restingUse());
                 return true;
             });
+    }
+
+    bool upload(const void* pixels, int bytesPerRow)
+    {
+        const auto plan = planWholeUpload(shape, format, pixels, bytesPerRow);
+        return plan.valid && submitUploads(plan.uploads);
     }
 
     // UNDEFINED is not a layout anything may be bound at, and an image no
@@ -723,19 +669,25 @@ struct Texture::Native
 
     void update(const void* pixels, int bytesPerRow)
     {
-        if (!data.isValid() || pixels == nullptr)
-            return;
-
-        if (bytesPerRow != 0 && (suppliedChain || isCompressedFormat(format)))
-            return;
-
-        if (data.mipLevels > 1 || data.cube || isCompressedFormat(format))
-        {
+        if (data.isValid())
             upload(pixels, bytesPerRow);
-            return;
-        }
+    }
 
-        updateRegion(0, 0, data.width, data.height, pixels, bytesPerRow);
+    // The two old region forms reach level 0 of an uncompressed 2D texture
+    // alone, in the same words the Metal backend uses - see the header.
+    bool takesLevelZeroRegions() const
+    {
+        return shape.kind == TextureType::TwoD && !isCompressedFormat(format);
+    }
+
+    static TextureRegion levelZeroRegion(
+        int x, int y, int regionWidth, int regionHeight, int bytesPerRow)
+    {
+        auto region = TextureRegion {};
+        region.origin = {x, y, 0};
+        region.size = {regionWidth, regionHeight, 1};
+        region.bytesPerRow = bytesPerRow;
+        return region;
     }
 
     void updateRegion(int x,
@@ -745,48 +697,19 @@ struct Texture::Native
                       const void* pixels,
                       int bytesPerRow)
     {
-        if (!data.isValid() || pixels == nullptr)
+        if (regionWidth <= 0 || regionHeight <= 0 || !takesLevelZeroRegions())
             return;
 
-        if (regionWidth <= 0 || regionHeight <= 0)
-            return;
-
-        if (data.cube)
-            return;
-
-        // A compressed rect would have to land on the 4x4 block grid.
-        if (isCompressedFormat(format))
-            return;
-
-        if (x < 0 || y < 0 || x + regionWidth > data.width
-            || y + regionHeight > data.height)
-            return;
-
-        const auto pitch =
-            bytesPerRow != 0 ? bytesPerRow : levelBytesPerRow(format, regionWidth);
-
-        onARecording(
-            [&](CommandContext& commands)
-            {
-                transitionTextureForUse(commands.buffer, data, imageTransferDst);
-
-                if (!copyPixels(commands,
-                                pixels,
-                                pitch,
-                                x,
-                                y,
-                                regionWidth,
-                                regionHeight,
-                                0,
-                                0))
-                    return false;
-
-                transitionTextureForUse(commands.buffer, data, data.restingUse());
-                return true;
-            });
+        update(levelZeroRegion(x, y, regionWidth, regionHeight, bytesPerRow),
+               pixels);
     }
 
-    // A recording of its own: an open one cannot be waited on.
+    void update(const TextureRegion& region, const void* pixels)
+    {
+        if (auto upload = planRegionUpload(shape, format, region, pixels))
+            submitUploads(Vector<SubresourceUpload> {*upload});
+    }
+
     void readRegion(int x,
                     int y,
                     int regionWidth,
@@ -794,17 +717,21 @@ struct Texture::Native
                     void* dst,
                     int bytesPerRow) const
     {
-        if (!data.isValid() || dst == nullptr || !context.isValid())
+        if (regionWidth <= 0 || regionHeight <= 0 || !takesLevelZeroRegions())
             return;
 
-        if (regionWidth <= 0 || regionHeight <= 0)
+        read(levelZeroRegion(x, y, regionWidth, regionHeight, bytesPerRow), dst);
+    }
+
+    // A recording of its own: an open one cannot be waited on.
+    void read(const TextureRegion& region, void* dst) const
+    {
+        if (!data.isValid() || !context.isValid())
             return;
 
-        if (data.cube || isCompressedFormat(format))
-            return;
+        const auto plan = planRegionRead(shape, format, region, dst);
 
-        if (x < 0 || y < 0 || x + regionWidth > data.width
-            || y + regionHeight > data.height)
+        if (!plan)
             return;
 
         auto* commands = context.acquire();
@@ -813,8 +740,10 @@ struct Texture::Native
             return;
 
         const auto rowBytes =
-            static_cast<std::size_t>(levelBytesPerRow(format, regionWidth));
-        const auto bytes = rowBytes * static_cast<std::size_t>(regionHeight);
+            static_cast<std::size_t>(levelBytesPerRow(format, plan->width));
+        const auto rows = static_cast<std::size_t>(plan->height);
+        const auto images = static_cast<std::size_t>(plan->depth);
+        const auto bytes = rowBytes * rows * images;
 
         std::byte* mapped = nullptr;
         auto staging = context.acquireReadbackBuffer(*commands, bytes, mapped);
@@ -827,41 +756,45 @@ struct Texture::Native
 
         transitionTextureForUse(commands->buffer, data, imageTransferSrc);
 
-        VkBufferImageCopy region = {};
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {x, y, 0};
-        region.imageExtent = {static_cast<std::uint32_t>(regionWidth),
-                              static_cast<std::uint32_t>(regionHeight),
-                              1};
+        VkBufferImageCopy copy = {};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.mipLevel = static_cast<std::uint32_t>(plan->level);
+        copy.imageSubresource.baseArrayLayer =
+            static_cast<std::uint32_t>(plan->slice);
+        copy.imageSubresource.layerCount = 1;
+        copy.imageOffset = {plan->x, plan->y, plan->z};
+        copy.imageExtent = {static_cast<std::uint32_t>(plan->width),
+                            static_cast<std::uint32_t>(plan->height),
+                            static_cast<std::uint32_t>(plan->depth)};
 
         vkCmdCopyImageToBuffer(commands->buffer,
                                data.image,
                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                staging,
                                1,
-                               &region);
+                               &copy);
 
         transitionTextureForUse(commands->buffer, data, data.restingUse());
 
         context.waitFor(context.submit(commands));
 
         // Coherent memory, so no invalidate before the CPU reads.
-        const auto stride =
-            bytesPerRow != 0 ? static_cast<std::size_t>(bytesPerRow) : rowBytes;
         auto* out = static_cast<std::byte*>(dst);
 
-        for (auto row = 0; row < regionHeight; ++row)
-            std::memcpy(out + static_cast<std::size_t>(row) * stride,
-                        mapped + static_cast<std::size_t>(row) * rowBytes,
-                        rowBytes);
+        for (auto image = std::size_t {0}; image < images; ++image)
+            for (auto row = std::size_t {0}; row < rows; ++row)
+                std::memcpy(
+                    out + image * static_cast<std::size_t>(plan->bytesPerImage)
+                        + row * static_cast<std::size_t>(plan->bytesPerRow),
+                    mapped + (image * rows + row) * rowBytes,
+                    rowBytes);
     }
 
     VulkanContext& context;
 
     TextureFormat format = TextureFormat::RGBA8Unorm;
 
-    bool suppliedChain = false;
+    TextureShape shape;
 
     bool computeWrite = false;
 
@@ -871,8 +804,31 @@ struct Texture::Native
 Texture::Texture(Device& device,
                  const TextureDescriptor& descriptor,
                  const void* pixels)
-    : impl(device, descriptor, pixels)
+    : impl(device,
+           descriptor,
+           pixels,
+           pixels != nullptr ? InitialData::Pixels : InitialData::None)
 {
+}
+
+Texture::Texture(Device& device,
+                 const TextureDescriptor& descriptor,
+                 std::span<const TextureSubresource> subresources)
+    : impl(device, descriptor, nullptr, InitialData::Subresources)
+{
+    if (!isValid())
+        return;
+
+    const auto plan =
+        planSubresourceUploads(impl->shape, impl->format, subresources);
+
+    if (!plan.valid)
+    {
+        impl->release();
+        return;
+    }
+
+    impl->submitUploads(plan.uploads);
 }
 
 Texture::Texture(Device& device, void* nativePixelBuffer)
@@ -903,6 +859,11 @@ void Texture::update(const Graphics::Rect& region,
                        bytesPerRow);
 }
 
+void Texture::updateSubresource(const TextureRegion& region, const void* pixels)
+{
+    impl->update(region, pixels);
+}
+
 void Texture::read(void* dst, int bytesPerRow) const
 {
     if (bytesPerRow < 0)
@@ -922,6 +883,36 @@ void Texture::read(const Graphics::Rect& region, void* dst, int bytesPerRow) con
                      static_cast<int>(std::lround(region.h)),
                      dst,
                      bytesPerRow);
+}
+
+void Texture::readSubresource(const TextureRegion& region, void* dst) const
+{
+    impl->read(region, dst);
+}
+
+TextureType Texture::kind() const
+{
+    return impl->shape.kind;
+}
+
+int Texture::arrayLength() const
+{
+    return impl->shape.layers;
+}
+
+int Texture::volumeDepth() const
+{
+    return impl->shape.depth;
+}
+
+int Texture::slices() const
+{
+    return impl->shape.slices();
+}
+
+void* Texture::nativeSubresourceView(int, int, int, int) const
+{
+    return nullptr;
 }
 
 int Texture::width() const
@@ -956,7 +947,7 @@ bool Texture::isRenderTarget() const
 
 bool Texture::isCube() const
 {
-    return isValid() && impl->data.cube;
+    return isValid() && impl->shape.kind == TextureType::Cube;
 }
 
 bool Texture::isComputeWritable() const

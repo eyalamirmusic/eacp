@@ -91,6 +91,7 @@ set(gpu_test_sources
         TextureCreationTests.cpp
         TextureReadTests.cpp
         TextureRegionTests.cpp
+        TextureArrayTests.cpp
         TextureSamplingTests.cpp
         TextureUpdateTests.cpp
         ThreadGroupSizeTests.cpp

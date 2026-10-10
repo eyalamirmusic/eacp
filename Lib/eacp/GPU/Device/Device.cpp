@@ -65,6 +65,13 @@ Texture Device::makeTexture(const TextureDescriptor& descriptor, const void* pix
     return {*this, descriptor, pixels};
 }
 
+Texture Device::makeTextureFromSubresources(
+    const TextureDescriptor& descriptor,
+    std::span<const TextureSubresource> subresources)
+{
+    return {*this, descriptor, subresources};
+}
+
 Texture Device::wrapPixelBuffer(void* nativePixelBuffer)
 {
     return {*this, nativePixelBuffer};

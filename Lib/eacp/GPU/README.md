@@ -2239,8 +2239,11 @@ past it.
 It is a descriptor field rather than an `update()` overload because both APIs fix
 a texture's level count when the resource is created. `mipmapped` beside it is
 refused rather than resolved — the two say opposite things about who builds the
-chain — as are a count above `mipLevelCount`, null pixels, a render target, a
-kernel output and a cube.
+chain — as are a count above `mipLevelCount` and null pixels on a texture only
+the CPU fills. A render target or a kernel output may ask for levels with no
+pixels at all, since the GPU fills them (a pass at `ColorTarget::level`, a
+kernel at `setOutputTexture(texture, slot, level)`), and a cube takes a chain
+per face, slice-major: face 0's levels, then face 1's.
 
 No new `TextureSampling` configuration is involved: mip filtering on a
 single-level texture is what both APIs do anyway, so the four configurations
@@ -2250,6 +2253,64 @@ left `mipFilter` at its default of `NotMipmapped`. Nothing could see it while no
 texture had a second level — and neither could `sample(t, uv, level)`, which
 names a level instead of letting the hardware pick one from the derivatives, and
 read level 0 whatever it asked for because level 0 was all there was.
+
+## Arrays, cube arrays and volumes
+
+```cpp
+auto descriptor = TextureDescriptor {};
+descriptor.width = 256;
+descriptor.height = 256;
+descriptor.kind = TextureType::TwoDArray;   // or CubeArray, ThreeD
+descriptor.arrayLength = 8;                 // layers; cubes of a CubeArray
+descriptor.mipLevels = mipLevelCount(256, 256);
+
+auto layers = Device::shared().makeTextureFromSubresources(descriptor, subresources);
+```
+
+`TextureType` is the shape: `TwoD`, `Cube` (the same as `cube = true`),
+`TwoDArray`, `CubeArray` and `ThreeD`, with `arrayLength` layers (cubes, for a
+cube array) and `volumeDepth` images. The shader declares the matching type —
+`texture2d_array`, `texturecube_array`, `texture3d` in MSL, `Texture2DArray`,
+`TextureCubeArray`, `Texture3D` in HLSL, `sampler2DArray`, `samplerCubeArray`,
+`sampler3D` in GLSL — and binds through the same `setFragmentTexture`,
+`setVertexTexture` and `setInputTexture` as a 2D one. The shader graph has no
+array or volume type yet; hand-written shaders do.
+
+A **slice** is one 2D image of one level: a layer, a face (`layer * 6 + face`
+on a cube array) — the index `TextureRegion`, `TextureCopyRegion`,
+`ColorTarget` and `Texture::slices()` speak. A volume has one slice and
+addresses its images by z.
+
+Three ways in:
+
+- `makeTexture(descriptor, pixels)` with every slice tightly packed one after
+  another, each slice's levels together when `mipLevels` says there are any
+  (a volume is level after level instead, each level its depth's worth of
+  images). `mipmapped` builds every slice's chain from its level 0.
+- `makeTextureFromSubresources(descriptor, subresources)`, a
+  `TextureSubresource {level, slice, pixels, bytesPerRow, bytesPerImage}` per
+  level of each slice — what a `.dds` or `.ktx` container hands over. With
+  `mipmapped` and level 0 alone, eacp builds the rest. Subresources not named
+  are left unwritten, so `mipLevels` with an empty list is allowed here.
+- `updateSubresource(region, pixels)` afterwards, a `TextureRegion {level,
+  slice, origin, size, bytesPerRow, bytesPerImage}` naming any box of any level
+  of any slice (z and depth on a volume); `readSubresource(region, dst)` is its
+  mirror. A compressed region is block-aligned or runs to the level's edge.
+  Neither rebuilds a chain eacp built.
+
+Refused at creation: `arrayLength` on a kind without layers, `volumeDepth` on
+anything but a volume, `cube` beside a kind other than `TwoD` or `Cube`, a
+multisampled kind other than `TwoD`, a volume that is a render target or
+compressed, and a cube array where `Device::supportsCubeArrays()` says no.
+`Device::maxTextureLayers()` and `maxTextureSize3D()` are the limits (2048 on
+Metal and D3D12, the device's own on Vulkan).
+
+On Metal a render target's pixels are in private storage, so an upload to one
+goes through a staging buffer and a blit on the queue rather than
+`replaceRegion`. D3D12 creates the resource with the kind's array size (a
+`TEXTURE3D` for a volume) and the matching SRV and UAV dimension; Vulkan an
+image of `slices` layers (`CUBE_COMPATIBLE` for the cube kinds, `imageCubeArray`
+enabled where offered) with a view of the kind's type.
 
 ## Texture formats
 

@@ -391,27 +391,20 @@ auto tRefusals = test("SuppliedMipChain/refusesWhatItCannotMean") = []
     }
 
     {
-        // A render target's pixels come from the GPU, so there was never a chain
-        // to supply - and a kernel output is the same case.
+        // A render target's or a kernel output's levels come from the GPU, so
+        // asking for them with no pixels is not refused: the GPU fills them.
         auto target = base;
         target.renderTarget = true;
 
-        check(!Device::shared().makeTexture(target, nullptr).isValid());
+        auto targetTexture = Device::shared().makeTexture(target, nullptr);
+
+        check(targetTexture.isValid());
+        check(targetTexture.mipLevels() == base.mipLevels);
 
         auto kernelOutput = base;
         kernelOutput.computeWrite = true;
 
-        check(!Device::shared().makeTexture(kernelOutput, nullptr).isValid());
-    }
-
-    {
-        auto cube = base;
-        cube.cube = true;
-        cube.width = 4;
-        cube.height = 4;
-        cube.mipLevels = 3;
-
-        check(!Device::shared().makeTexture(cube, pixels.data()).isValid());
+        check(Device::shared().makeTexture(kernelOutput, nullptr).isValid());
     }
 
     // And the shape that is *not* refused, so the cases above are refusing what

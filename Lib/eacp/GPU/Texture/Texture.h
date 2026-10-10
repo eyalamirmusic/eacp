@@ -1,8 +1,10 @@
 #pragma once
 
+#include "../CommandBuffer/Copy.h"
 #include "../Common.h"
 
 #include <cstddef>
+#include <span>
 
 namespace eacp::GPU
 {
@@ -274,6 +276,25 @@ constexpr int samplingIndex(const TextureSampling& sampling)
            + (sampling.addressMode == TextureAddressMode::Repeat ? 1 : 0);
 }
 
+// The shape of a texture: one 2D image, a cube, an array of either, or a
+// volume. A shader declares the matching type - texture2d, texturecube,
+// texture2d_array, texturecube_array, texture3d in MSL; Texture2D,
+// TextureCube, Texture2DArray, TextureCubeArray, Texture3D in HLSL; sampler2D,
+// samplerCube, sampler2DArray, samplerCubeArray, sampler3D in GLSL.
+//
+// A *slice* is one 2D image of one level: a layer of an array, a face of a
+// cube (layer * 6 + face of a cube array, faces in the +X, -X, +Y, -Y, +Z, -Z
+// order TextureDescriptor::cube gives). A volume has one slice and addresses
+// its images by z instead.
+enum class TextureType
+{
+    TwoD,
+    Cube,
+    TwoDArray,
+    CubeArray,
+    ThreeD
+};
+
 // How the texture is created. Sampler state is deliberately absent: it comes
 // from the shader that samples the texture, as a TextureSampling declared on
 // its texture member.
@@ -357,15 +378,23 @@ struct TextureDescriptor
     // the default and becomes one way of getting a chain rather than the only
     // one.
     //
+    // On an array, a cube or a volume the block holds every level of every
+    // slice: slice-major, each slice's chain level 0 first (a cube's six faces
+    // each carry their own chain, a cube array's layers each six), and on a
+    // volume level-major, each level being its depth's worth of images.
+    //
+    // A render target or a computeWrite texture may ask for levels with null
+    // pixels: the GPU fills them, a pass at ColorTarget::level or a kernel at
+    // ComputePass::setOutputTexture(texture, slot, level). Any texture may
+    // ask for them through Device::makeTextureFromSubresources, which names
+    // what it uploads and so may upload nothing yet.
+    //
     // Refused rather than reconciled, each yielding an invalid texture: with
     // `mipmapped`, which says the opposite thing about who builds the chain;
-    // above mipLevelCount(width, height), which is more levels than the size
-    // has; with null pixels, there being no chain to take and nothing to fill
-    // the levels with; on a renderTarget or a computeWrite texture, whose pixels
-    // come from the GPU so there was never a chain to hand over; and on a cube,
-    // whose faces would each carry one and where nothing here can pin which
-    // level a direction sampled. And bytesPerRow must be 0 on such a texture's
-    // update(), the levels being tightly packed by definition.
+    // above mipLevelCount of the largest extent, which is more levels than the
+    // size has; and with null pixels on a texture only the CPU fills, there
+    // being no chain to take. bytesPerRow must be 0 on such a texture's
+    // update(pixels), the levels being tightly packed by definition.
     int mipLevels = 0;
 
     // Whether a pass rendering into this texture gets a depth buffer, which is
@@ -451,16 +480,76 @@ struct TextureDescriptor
     // reads, and which way u and v run inside one.
     //
     // width and height must be equal; six faces of a rectangle is a shape
-    // neither API has. A cube asking for renderTarget or computeWrite is refused
-    // rather than half-supported, there being no way here to say which face a
-    // pass or a kernel would write. A cube may be compressed - the six faces are
-    // each levelBytes of blocks, in the same order - but not with a supplied
-    // mipLevels, for the reason that field gives.
+    // neither API has. A cube may be a renderTarget, a pass naming its face as
+    // ColorTarget::slice, or computeWrite, a kernel writing it as a 2D array of
+    // six. It may not be multisampled. A cube may be compressed - the six faces
+    // are each levelBytes of blocks, in the same order.
     //
     // mipmapped builds a chain per face out of that face's own pixels, which is
     // what both APIs' own generators do: no level is ever averaged across a
     // seam.
+    //
+    // The same as kind = TextureType::Cube, kept because every cube written
+    // before TextureType existed says it this way. Set with any kind but TwoD
+    // or Cube it is refused.
     bool cube = false;
+
+    // TwoD unless this is a cube (see `cube`), an array or a volume. Arrays
+    // and volumes upload and update like every other kind, slice by slice or
+    // image by image (TextureRegion), and may carry mipLevels.
+    //
+    // Refused, each yielding an invalid texture: a multisampled kind other
+    // than TwoD; a ThreeD texture that is a renderTarget or compressed; a
+    // CubeArray on a device without Device::supportsCubeArrays().
+    TextureType kind = TextureType::TwoD;
+
+    // The number of layers of a TwoDArray, or of cubes in a CubeArray, up to
+    // Device::maxTextureLayers(). 1 for every other kind.
+    int arrayLength = 1;
+
+    // The number of images of a ThreeD texture, up to
+    // Device::maxTextureSize3D() like its width and height. 1 for every other
+    // kind.
+    int volumeDepth = 1;
+};
+
+// Where an update or a read lands: one level, one slice (0 on a volume), and a
+// box inside them. A size of 0 runs from the origin to the edge of the level,
+// in all three directions; a volume's z and depth pick its images, and every
+// other kind keeps z 0 and depth 1.
+//
+// bytesPerRow is the source's stride between rows (rows of 4x4 blocks on a
+// compressed format), 0 for tightly packed; bytesPerImage the stride between a
+// volume's images, 0 for bytesPerRow times the rows. A compressed region starts
+// on the block grid and ends on it or at the edge of the level.
+struct TextureRegion
+{
+    int level = 0;
+    int slice = 0;
+    TextureOrigin origin;
+    TextureExtent size = {0, 0, 0};
+    int bytesPerRow = 0;
+    int bytesPerImage = 0;
+
+    static TextureRegion wholeLevel(int level, int slice = 0)
+    {
+        auto region = TextureRegion {};
+        region.level = level;
+        region.slice = slice;
+        return region;
+    }
+};
+
+// One level of one slice of a texture's initial contents, for
+// Device::makeTextureFromSubresources. Strides as TextureRegion has
+// them. Subresources not named are left unwritten.
+struct TextureSubresource
+{
+    int level = 0;
+    int slice = 0;
+    const void* pixels = nullptr;
+    int bytesPerRow = 0;
+    int bytesPerImage = 0;
 };
 
 // A texture sampled by the fragment stage (MTLTexture on Metal, a D3D12
@@ -471,18 +560,26 @@ struct TextureDescriptor
 // **What "tightly packed" means is levelBytes of the format**, which is the
 // format's bytesPerPixel per texel for the ordinary formats and one 8- or
 // 16-byte record per 4x4 block for the compressed ones. The block is one level
-// of one face unless the descriptor asked for more: six faces in a row for a
-// cube, mipLevels levels in a row for a chain the caller built.
+// of one slice unless the descriptor asked for more: every slice in a row for a
+// cube or an array, each slice's mipLevels levels together for a chain the
+// caller built (see TextureDescriptor::mipLevels).
 //
-// Two dimensionalities, decided by TextureDescriptor::cube: a 2D image sampled
-// with a Float2, or six square faces sampled with a Float3 direction. They are
-// one class because everything below the sample is the same - one resource, one
+// Five shapes, decided by TextureDescriptor::kind: a 2D image, six square faces
+// sampled with a direction, an array of either, or a volume. They are one class
+// because everything below the sample is the same - one resource, one
 // descriptor, one upload path, one bind - and the difference lives where it is
 // actually visible, which is the shader's declaration.
 class Texture
 {
 public:
     Texture(Device& device, const TextureDescriptor& descriptor, const void* pixels);
+
+    // Created empty and filled subresource by subresource. With `mipmapped`
+    // and level 0 alone named for each slice, eacp builds every slice's chain
+    // from it; with mipLevels, the levels named are uploaded as they are.
+    Texture(Device& device,
+            const TextureDescriptor& descriptor,
+            std::span<const TextureSubresource> subresources);
 
     // Wraps an existing platform pixel buffer (a CVPixelBuffer on macOS) as a
     // sampleable texture without copying its pixels — the zero-copy path for
@@ -504,6 +601,20 @@ public:
     // dimension, so this is the only thing that can tell the two apart at the
     // bind.
     bool isCube() const;
+
+    TextureType kind() const;
+
+    // Layers of an array, cubes of a cube array, 1 otherwise.
+    int arrayLength() const;
+
+    // Images of a volume, 1 otherwise.
+    int volumeDepth() const;
+
+    // The 2D slices a level holds: arrayLength() times six on a cube kind,
+    // arrayLength() on a TwoDArray, 1 on TwoD and ThreeD. What
+    // TextureRegion::slice, ColorTarget::slice and TextureCopyRegion's slices
+    // index.
+    int slices() const;
 
     // Whether this texture was created able to be rendered into, which is what
     // Frame::beginPass(texture) needs and what makes an ordinary one a no-op
@@ -553,10 +664,9 @@ public:
     // bytesPerPixel), matching the padded rows capture buffers often carry. A
     // no-op on a wrapped or invalid texture, or when pixels is null.
     //
-    // On a cube this takes all six faces, in the order and layout the
-    // descriptor's `cube` describes - the same block of pixels the texture was
-    // created from. There is no way to replace one face, for the reason there
-    // is no region form below.
+    // On a cube, an array or a volume this takes every slice, in the layout the
+    // texture was created from. updateSubresource replaces one face, layer,
+    // level or box.
     //
     // On a compressed texture, or one created with TextureDescriptor::mipLevels,
     // it takes the same block the constructor took - the blocks of every level,
@@ -585,9 +695,8 @@ public:
     // source rows at the original width and silently upload skewed pixels,
     // which is far harder to spot than nothing appearing.
     //
-    // A no-op on a cube, which has six rectangles this could mean and no
-    // argument to say which. Quietly writing +X would be exactly the kind of
-    // silent wrong answer the out-of-bounds rule above exists to avoid.
+    // A no-op on any kind but TwoD, which has several rectangles this could
+    // mean and no argument to say which; updateSubresource names one.
     //
     // A no-op on a compressed texture too. A region there would have to start
     // and end on a 4x4 block boundary, so the rect a caller wrote and the rect
@@ -620,9 +729,9 @@ public:
     // put in a frame loop.
     //
     // A no-op on an invalid texture, a null dst, or a region that is not wholly
-    // inside the texture — not clamped, for the reason update() gives. Also on a
-    // cube, which has six faces and no way here to name one, exactly as the
-    // region update has not.
+    // inside the texture — not clamped, for the reason update() gives. Also on
+    // any kind but TwoD, as the region update is; readSubresource names a
+    // slice.
     //
     // And a no-op on a compressed texture. Handing back the blocks would need a
     // layout of its own and a decoder at the other end, and handing back texels
@@ -631,6 +740,17 @@ public:
     // cannot be.
     void read(void* dst, int bytesPerRow = 0) const;
     void read(const Graphics::Rect& region, void* dst, int bytesPerRow = 0) const;
+
+    // Any level of any slice, or a box of a volume's images: the whole of what
+    // the two forms above cannot name. A region that leaves the level, names a
+    // level or slice the texture lacks, or is off a compressed format's block
+    // grid is a no-op. The rest of the texture, its other levels included, is
+    // left as it was; a chain eacp built is not rebuilt.
+    //
+    // readSubresource() takes the same region, bytesPerRow and bytesPerImage
+    // describing dst, and refuses a compressed texture as read() does.
+    void updateSubresource(const TextureRegion& region, const void* pixels);
+    void readSubresource(const TextureRegion& region, void* dst) const;
 
     // Opaque native handles for cross-translation-unit use by the render pass.
     // There is no sampler handle: the render pass gets that from the sampling
@@ -660,6 +780,17 @@ public:
     // attachment is already sampleable and nativeDepthTexture is the answer -
     // and null on D3D12 for the reason above.
     void* nativeResolvedDepthTexture() const;
+
+    // A view of `levelCount` levels from `level` and `sliceCount` slices from
+    // `slice` (images of a volume: all of them), made once and kept for the
+    // texture's life: an MTLTexture on Metal, for a pass rendering to a range
+    // of layers or a kernel writing one level. Null on D3D12 and Vulkan, whose
+    // views live in the texture data nativeTexture hands back, and null for a
+    // range the texture does not have.
+    void* nativeSubresourceView(int level,
+                                int levelCount,
+                                int slice,
+                                int sliceCount) const;
 
 private:
     struct Native;

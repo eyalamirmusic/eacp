@@ -1040,6 +1040,7 @@ bool VulkanShared::createDevice()
         coreFloor ? static_cast<void*>(&features12) : static_cast<void*>(&indexing);
     enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
     enabled.features.samplerAnisotropy = features.samplerAnisotropy;
+    enabled.features.imageCubeArray = features.imageCubeArray;
     enabled.features.independentBlend = features.independentBlend;
     enabled.features.multiDrawIndirect = features.multiDrawIndirect;
     enabled.features.drawIndirectFirstInstance = features.drawIndirectFirstInstance;
