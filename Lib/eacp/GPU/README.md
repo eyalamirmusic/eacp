@@ -2451,8 +2451,12 @@ Notes worth having:
   `clearViewport`, and nowhere else — so `Winding::CounterClockwise` maps
   straight to `VK_FRONT_FACE_COUNTER_CLOCKWISE`, cull mode and front face are
   baked into the pipeline, and `CullModeTests`, `ViewportTests` and
-  `CoordinateSpaceTests` pass unchanged. See `plan.md` §3.5 for why the two
-  other fixes are wrong.
+  `CoordinateSpaceTests` pass unchanged. The two other fixes are wrong:
+  negating `gl_Position.y` reverses the winding, so `CullModeTests` fail
+  unless the front face is inverted with it, and negating y in the
+  projection breaks the CPU/shader equivalence of `Mat4`, which `CubeMap`
+  and `StencilShadows` build on the CPU while `Teapot` and `Maze` build
+  in-shader.
 
 ### The swapchain
 
