@@ -84,8 +84,7 @@ res_embed_add(eacp-webview
 
 if (APPLE)
     target_sources(eacp-webview PRIVATE
-            WebView/WebView.mm
-            WebView/DevServerProbe-Posix.cpp)
+            WebView/WebView.mm)
     target_link_libraries(eacp-webview PRIVATE
             "-framework Foundation"
             "-framework WebKit")
@@ -106,17 +105,13 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-webview PRIVATE
             WebView/WebView-Windows.cpp
-            WebView/FileDrag-Windows.cpp
-            WebView/DevServerProbe-Windows.cpp)
+            WebView/FileDrag-Windows.cpp)
 
     find_package(WebView2 REQUIRED)
 
     target_link_libraries(eacp-webview PRIVATE
             WebView2::WebView2
-            ws2_32
             shlwapi)
-else ()
-    target_sources(eacp-webview PRIVATE WebView/DevServerProbe-Posix.cpp)
 endif ()
 
 set_default_target_setting(eacp-webview)

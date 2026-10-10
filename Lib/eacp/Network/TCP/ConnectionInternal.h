@@ -24,6 +24,10 @@ NativeSocket socketConnect(const Address& address,
 // Closes the handle. A no-op on invalidSocket, so it is always safe to call.
 void socketClose(NativeSocket socket) noexcept;
 
+// Sets the timeout each later send/receive obeys; zero or negative leaves the
+// socket blocking forever.
+void socketSetIoTimeout(NativeSocket socket, Time::MS ioTimeout);
+
 // Writes once, returning the number of bytes accepted (always > 0). Throws
 // TCP::Error on timeout or failure.
 int socketSend(NativeSocket socket, const char* data, int length);

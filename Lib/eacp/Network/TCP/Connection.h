@@ -64,6 +64,11 @@ public:
 
     [[nodiscard]] const Address& address() const;
 
+    // Re-arms the per-call io timeout on an open stream. A server reads a
+    // request under a short one so stop() can interrupt an idle peer, then
+    // lets the reply block for as long as the peer takes to drain it.
+    void setIoTimeout(Time::MS timeout);
+
     // Writes every byte, looping past partial writes. Throws on failure.
     void send(std::string_view bytes);
 

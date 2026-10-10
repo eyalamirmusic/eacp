@@ -37,7 +37,7 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Windows.cpp
-            HTTPServer/HttpServer-Windows.cpp
+            HTTPServer/HttpServer-Threaded.cpp
             IPC/Channel-Windows.cpp
             IPC/Lock-Windows.cpp
             TCP/Connection-Windows.cpp
@@ -46,7 +46,7 @@ elseif (WIN32)
 elseif (ANDROID)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Android.cpp
-            HTTPServer/HttpServer-Linux.cpp
+            HTTPServer/HttpServer-Threaded.cpp
             IPC/Channel-Linux.cpp
             IPC/Channel-Posix.cpp
             IPC/Lock-Posix.cpp
@@ -55,7 +55,7 @@ elseif (ANDROID)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http-Linux.cpp
-            HTTPServer/HttpServer-Linux.cpp
+            HTTPServer/HttpServer-Threaded.cpp
             IPC/Channel-Linux.cpp
             IPC/Channel-Posix.cpp
             IPC/Lock-Posix.cpp

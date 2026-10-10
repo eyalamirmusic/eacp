@@ -65,10 +65,9 @@ int pendingSocketError(SOCKET socket)
 
 void armTimeouts(SOCKET socket, Time::MS ioTimeout)
 {
-    if (ioTimeout.count <= 0) // otherwise leave the socket blocking forever
-        return;
-
-    auto millis = (DWORD) ioTimeout.count;
+    // Zero milliseconds is "block forever" to setsockopt, so clearing a
+    // timeout is the same call as setting one.
+    auto millis = (DWORD) (ioTimeout.count > 0 ? ioTimeout.count : 0);
     ::setsockopt(
         socket, SOL_SOCKET, SO_RCVTIMEO, (const char*) &millis, sizeof(millis));
     ::setsockopt(
@@ -165,6 +164,11 @@ void socketClose(NativeSocket socket) noexcept
 {
     if (socket != invalidSocket)
         ::closesocket((SOCKET) socket);
+}
+
+void socketSetIoTimeout(NativeSocket socket, Time::MS ioTimeout)
+{
+    armTimeouts((SOCKET) socket, ioTimeout);
 }
 
 int socketSend(NativeSocket socket, const char* data, int length)
