@@ -936,6 +936,153 @@ const D3D12Shared::DepthResolveShader&
     return shader;
 }
 
+namespace
+{
+// Level n from level n - 1, each output texel the mean of the two, four or
+// eight under it, an odd edge clamped onto its last texel. Read and written
+// through UAVs because D3D12 tracks the resource's state whole: one level
+// cannot be a shader resource while the next is unordered access.
+constexpr auto mipSource = R"(
+#if MIP_KIND == 2
+RWTexture3D<float4> source : register(MIP_SOURCE);
+RWTexture3D<float4> target : register(MIP_TARGET);
+
+[numthreads(4, 4, 4)]
+void computeMain(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height, depth;
+    target.GetDimensions(width, height, depth);
+
+    if (id.x >= width || id.y >= height || id.z >= depth)
+        return;
+
+    uint sourceWidth, sourceHeight, sourceDepth;
+    source.GetDimensions(sourceWidth, sourceHeight, sourceDepth);
+    uint3 last = uint3(sourceWidth, sourceHeight, sourceDepth) - 1;
+
+    float4 sum = 0.0;
+
+    for (uint corner = 0; corner < 8; ++corner)
+    {
+        uint3 offset = uint3(corner & 1, (corner >> 1) & 1, corner >> 2);
+        sum += source[min(id * 2 + offset, last)];
+    }
+
+    target[id] = sum * 0.125;
+}
+#elif MIP_KIND == 1
+RWTexture2DArray<float4> source : register(MIP_SOURCE);
+RWTexture2DArray<float4> target : register(MIP_TARGET);
+
+[numthreads(8, 8, 1)]
+void computeMain(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height, slices;
+    target.GetDimensions(width, height, slices);
+
+    if (id.x >= width || id.y >= height || id.z >= slices)
+        return;
+
+    uint sourceWidth, sourceHeight, sourceSlices;
+    source.GetDimensions(sourceWidth, sourceHeight, sourceSlices);
+    uint2 last = uint2(sourceWidth, sourceHeight) - 1;
+    uint2 at = id.xy * 2;
+
+    float4 sum = source[uint3(min(at, last), id.z)]
+                 + source[uint3(min(at + uint2(1, 0), last), id.z)]
+                 + source[uint3(min(at + uint2(0, 1), last), id.z)]
+                 + source[uint3(min(at + uint2(1, 1), last), id.z)];
+
+    target[id] = sum * 0.25;
+}
+#else
+RWTexture2D<float4> source : register(MIP_SOURCE);
+RWTexture2D<float4> target : register(MIP_TARGET);
+
+[numthreads(8, 8, 1)]
+void computeMain(uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    target.GetDimensions(width, height);
+
+    if (id.x >= width || id.y >= height)
+        return;
+
+    uint sourceWidth, sourceHeight;
+    source.GetDimensions(sourceWidth, sourceHeight);
+    uint2 last = uint2(sourceWidth, sourceHeight) - 1;
+    uint2 at = id.xy * 2;
+
+    float4 sum = source[min(at, last)] + source[min(at + uint2(1, 0), last)]
+                 + source[min(at + uint2(0, 1), last)]
+                 + source[min(at + uint2(1, 1), last)];
+
+    target[id.xy] = sum * 0.25;
+}
+#endif
+)";
+
+winrt::com_ptr<ID3DBlob> compileMipKernel(int kind)
+{
+    const auto kindName = std::to_string(kind);
+    const auto sourceRegister = "u" + std::to_string(computeTextureRegister(0));
+    const auto targetRegister = "u" + std::to_string(computeTextureRegister(1));
+
+    const D3D_SHADER_MACRO defines[] = {{"MIP_KIND", kindName.c_str()},
+                                        {"MIP_SOURCE", sourceRegister.c_str()},
+                                        {"MIP_TARGET", targetRegister.c_str()},
+                                        {nullptr, nullptr}};
+
+    auto code = winrt::com_ptr<ID3DBlob>();
+    auto errors = winrt::com_ptr<ID3DBlob>();
+
+    if (FAILED(D3DCompile(mipSource,
+                          std::strlen(mipSource),
+                          nullptr,
+                          defines,
+                          nullptr,
+                          "computeMain",
+                          "cs_5_0",
+                          D3DCOMPILE_ENABLE_STRICTNESS,
+                          0,
+                          code.put(),
+                          errors.put())))
+    {
+        if (errors != nullptr)
+            LOG(static_cast<const char*>(errors->GetBufferPointer()));
+
+        return nullptr;
+    }
+
+    return code;
+}
+} // namespace
+
+ID3D12PipelineState* D3D12Shared::getMipShader(int kind)
+{
+    if (kind < 0 || kind > 2 || device == nullptr || computeRootSignature == nullptr)
+        return nullptr;
+
+    auto& state = mipShaders[kind];
+
+    if (state != nullptr)
+        return state.get();
+
+    const auto code = compileMipKernel(kind);
+
+    if (code == nullptr)
+        return nullptr;
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC desc = {};
+    desc.pRootSignature = computeRootSignature.get();
+    desc.CS = {code->GetBufferPointer(), code->GetBufferSize()};
+
+    device->CreateComputePipelineState(
+        &desc, __uuidof(ID3D12PipelineState), state.put_void());
+
+    return state.get();
+}
+
 void D3D12Shared::recreateAfterDeviceLoss()
 {
     renderRootSignature = nullptr;
@@ -945,6 +1092,9 @@ void D3D12Shared::recreateAfterDeviceLoss()
 
     for (auto& shader: depthResolveShaders)
         shader = {};
+
+    for (auto& state: mipShaders)
+        state = nullptr;
 
     device = nullptr;
 

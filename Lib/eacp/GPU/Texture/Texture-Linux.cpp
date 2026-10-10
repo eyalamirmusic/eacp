@@ -58,6 +58,12 @@ bool makeDepthImage(VulkanContext& context,
     info.samples = toVkSampleCount(samples);
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+    // So the read view can be the cube the colour image is.
+    if (!single
+        && (data.kind == TextureType::Cube || data.kind == TextureType::CubeArray))
+        info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -164,6 +170,8 @@ bool createVulkanMultisampleCompanion(VulkanContext& context,
     return data.msaaView != VK_NULL_HANDLE;
 }
 
+VkImageViewType sampledViewType(TextureType kind);
+
 void createVulkanDepthCompanion(VulkanContext& context,
                                 VulkanTextureData& data,
                                 bool withStencil,
@@ -222,14 +230,20 @@ void createVulkanDepthCompanion(VulkanContext& context,
             return;
     }
 
-    // Depth alone: Vulkan refuses a sampled view over two aspects.
+    // Depth alone: Vulkan refuses a sampled view over two aspects. Level 0 of
+    // every layer, as the kind's own view type - a 2D array, a cube, a cube
+    // array - so the plane reads as Metal's and D3D12's do; a multisampled
+    // target's resolve has the one layer.
+    const auto whole = !multisampled && data.kind != TextureType::TwoD;
+
     data.depthReadView = makeVulkanImageView(context.getDevice(),
                                              data.sampledDepthImage(),
                                              data.depthFormat,
-                                             VK_IMAGE_VIEW_TYPE_2D,
+                                             whole ? sampledViewType(data.kind)
+                                                   : VK_IMAGE_VIEW_TYPE_2D,
                                              VK_IMAGE_ASPECT_DEPTH_BIT,
                                              1,
-                                             1);
+                                             whole ? data.slices : 1);
 }
 
 void releaseVulkanCompanions(VulkanContext& context, VulkanTextureData& data)
@@ -434,6 +448,35 @@ VkImageView vulkanSampledArrayView(VulkanTextureData& data, int level)
                                           data.slices);
 
     return keepSubresourceView(data, Use::SampledArray, level, 0, data.slices, view);
+}
+
+VkImageView vulkanDepthSliceView(VulkanTextureData& data, int slice)
+{
+    using Use = VulkanSubresourceView::Use;
+
+    if (!data.hasSampleableDepth() || slice < 0)
+        return VK_NULL_HANDLE;
+
+    if (data.kind == TextureType::TwoD || data.isMultisampled())
+        return slice == 0 ? data.depthReadView : VK_NULL_HANDLE;
+
+    if (slice >= data.slices)
+        return VK_NULL_HANDLE;
+
+    if (auto view = findSubresourceView(data, Use::DepthSlice, 0, slice, 1))
+        return view;
+
+    const auto view = makeVulkanImageView(getVulkanShared().getDevice(),
+                                          data.sampledDepthImage(),
+                                          data.depthFormat,
+                                          VK_IMAGE_VIEW_TYPE_2D,
+                                          VK_IMAGE_ASPECT_DEPTH_BIT,
+                                          0,
+                                          1,
+                                          slice,
+                                          1);
+
+    return keepSubresourceView(data, Use::DepthSlice, 0, slice, 1, view);
 }
 
 void releaseVulkanSubresourceViews(VulkanContext& context, VulkanTextureData& data)
@@ -1083,6 +1126,16 @@ void* Texture::nativeSubresourceView(int, int, int, int) const
 }
 
 void* Texture::nativeLevelView(int) const
+{
+    return nullptr;
+}
+
+void* Texture::nativeArrayView(int) const
+{
+    return nullptr;
+}
+
+void* Texture::nativeDepthSliceView(int) const
 {
     return nullptr;
 }

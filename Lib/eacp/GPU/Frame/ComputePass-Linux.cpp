@@ -56,7 +56,11 @@ struct ComputePass::Native
         storageTextures &= ~(1u << slot);
     }
 
-    void bindDepthTexture(const Texture& renderTarget, int slot, VkSampler sampler)
+    // The whole plane at slice -1, one slice's 2D view otherwise.
+    void bindDepthTexture(const Texture& renderTarget,
+                          int slot,
+                          VkSampler sampler,
+                          int slice = -1)
     {
         if (!encoder || slot < 0 || slot >= maxTextureSlots
             || sampler == VK_NULL_HANDLE)
@@ -67,7 +71,13 @@ struct ComputePass::Native
         if (data == nullptr || !data->hasSampleableDepth())
             return;
 
-        textures[slot] = {sampler, data->depthReadView, imageDepthSampled.layout};
+        const auto view =
+            slice < 0 ? data->depthReadView : vulkanDepthSliceView(*data, slice);
+
+        if (view == VK_NULL_HANDLE)
+            return;
+
+        textures[slot] = {sampler, view, imageDepthSampled.layout};
         sampledTextures |= 1u << slot;
         storageTextures &= ~(1u << slot);
     }
@@ -373,8 +383,8 @@ void ComputePass::setOutputTextureAsArray(const Texture& texture,
         setOutputTextureLevel(texture, slot, level);
 }
 
-// The read view the render pass's depth binds use, level 0 of layer 0, in the
-// layout the pass that drew it left it in.
+// The read view the render pass's depth binds use, level 0 of every layer as
+// the kind's view type, in the layout the pass that drew it left it in.
 void ComputePass::setInputDepthTexture(const Texture& renderTarget,
                                        int slot,
                                        TextureSampling sampling)
@@ -388,6 +398,23 @@ void ComputePass::setInputDepthTexture(const Texture& renderTarget,
                                        const Sampler& sampler)
 {
     impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler));
+}
+
+void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            TextureSampling sampling)
+{
+    impl->bindDepthTexture(
+        renderTarget, slot, getVulkanShared().getSampler(sampling), slice);
+}
+
+void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            const Sampler& sampler)
+{
+    impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler), slice);
 }
 
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)

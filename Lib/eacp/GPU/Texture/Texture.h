@@ -394,6 +394,9 @@ struct TextureDescriptor
     // chain. update() rebuilds it; update(region, ...) does not - a partial
     // upload has no way to know what the rest of the texture holds, so it
     // refreshes level 0 and leaves the levels below it as they were.
+    // Frame::generateMipmaps is the GPU's chain: from whatever level 0 holds,
+    // a pass's picture or an update, for a texture with mipLevels and no
+    // pixels as much as for one this built.
     //
     // A block-compressed format gets exactly one level whatever this says. The
     // filter averages texels and a 4x4 block is not four numbers to take a mean
@@ -856,6 +859,14 @@ public:
     // on a TwoD or ThreeD texture, and on D3D12 and Vulkan, whose array views
     // live in the texture data.
     void* nativeArrayView(int level) const;
+
+    // Level 0 of one slice of the sampleable depth plane as a plain 2D depth
+    // texture - what the ...DepthTextureSlice binds hand a shader that
+    // declared depth2d. An MTLTexture view on Metal, kept for the texture's
+    // life (the plane itself on a 2D target's slice 0); null without
+    // sampleableDepth, for a slice the plane lacks, and on D3D12 and Vulkan,
+    // whose slice views live in the texture data.
+    void* nativeDepthSliceView(int slice) const;
 
 private:
     struct Native;

@@ -255,6 +255,17 @@ struct Texture::Native
             computeWrite = true;
         }
 
+        // Frame::generateMipmaps reads and writes the levels through UAVs, so
+        // a texture whose chain the GPU may fill is created able to have them;
+        // a texture of one level, or in a format the kernel cannot load and
+        // store, is not.
+        if (levels > 1 && data.sampleCount <= 1
+            && device.supportsMipGeneration(descriptor.format))
+        {
+            desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            generatesMips = true;
+        }
+
         auto initialState = pixels != nullptr
                                 ? D3D12_RESOURCE_STATE_COPY_DEST
                                 : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -308,6 +319,9 @@ struct Texture::Native
             context.freeTextureDescriptor(slot);
 
         for (auto& slot: data.arraySrvs)
+            context.freeTextureDescriptor(slot);
+
+        for (auto& slot: data.depthSliceSrvs)
             context.freeTextureDescriptor(slot);
 
         for (auto& view: data.targetViews)
@@ -987,6 +1001,34 @@ struct Texture::Native
 
         context.getDevice()->CreateShaderResourceView(
             data.sampledDepthResource(), &viewDesc, data.depthSrv.cpu);
+
+        if (shape.kind != TextureType::TwoD)
+            createDepthSliceViews(context, viewDesc.Format);
+    }
+
+    void createDepthSliceViews(D3D12Context& context, DXGI_FORMAT viewFormat)
+    {
+        for (auto slice = 0; slice < shape.slices(); ++slice)
+        {
+            auto read = context.allocateTextureDescriptor();
+
+            if (read.cpu.ptr != 0)
+            {
+                D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
+                viewDesc.Format = viewFormat;
+                viewDesc.Shader4ComponentMapping =
+                    D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+                viewDesc.Texture2DArray.MipLevels = 1;
+                viewDesc.Texture2DArray.FirstArraySlice = static_cast<UINT>(slice);
+                viewDesc.Texture2DArray.ArraySize = 1;
+
+                context.getDevice()->CreateShaderResourceView(
+                    data.sampledDepthResource(), &viewDesc, read.cpu);
+            }
+
+            data.depthSliceSrvs.add(read);
+        }
     }
 
     // The view a kernel writes through. It comes out of the same shader-visible
@@ -1109,7 +1151,7 @@ struct Texture::Native
 
             data.levelSrvs.add(read);
 
-            if (!computeWrite)
+            if (!computeWrite && !generatesMips)
                 continue;
 
             auto write = context.allocateTextureDescriptor();
@@ -1200,7 +1242,7 @@ struct Texture::Native
 
         // Only where the GPU fills the levels, so a mipmapped texture that is
         // only ever sampled does not spend a descriptor per level.
-        if (levels > 1 && (computeWrite || descriptor.renderTarget))
+        if (levels > 1 && (computeWrite || descriptor.renderTarget || generatesMips))
             createLevelViews(context, toDXGIFormat(descriptor.format));
 
         if (shape.kind == TextureType::Cube || shape.kind == TextureType::CubeArray)
@@ -1236,6 +1278,9 @@ struct Texture::Native
     int levels = 1;
 
     bool computeWrite = false;
+
+    // Created with per-level UAVs for Frame::generateMipmaps' kernel.
+    bool generatesMips = false;
 
     // Mutable because the state tracking advances inside the const read(): the
     // copy to the read-back buffer is a use like any other, and Buffer's
@@ -1361,6 +1406,16 @@ void* Texture::nativeSubresourceView(int, int, int, int) const
 }
 
 void* Texture::nativeLevelView(int) const
+{
+    return nullptr;
+}
+
+void* Texture::nativeArrayView(int) const
+{
+    return nullptr;
+}
+
+void* Texture::nativeDepthSliceView(int) const
 {
     return nullptr;
 }

@@ -393,6 +393,24 @@ struct D3D12TextureData
     DescriptorSlot depthSrv;
     D3D12_RESOURCE_STATES depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
+    // On an array, cube or cube-array target with sampleableDepth, a read view
+    // of each slice of level 0 alone, out of the same heap: a one-slice
+    // TEXTURE2DARRAY, D3D12 having no TEXTURE2D view past slice 0. What the
+    // ...DepthTextureSlice binds point the table at; depthSrv serves slice 0
+    // of a 2D target.
+    Vector<DescriptorSlot> depthSliceSrvs;
+
+    D3D12_GPU_DESCRIPTOR_HANDLE depthSliceView(int slice) const
+    {
+        if (slice == 0 && depthSliceSrvs.empty())
+            return depthSrv.gpu;
+
+        if (slice < 0 || slice >= static_cast<int>(depthSliceSrvs.size()))
+            return {};
+
+        return depthSliceSrvs[static_cast<std::size_t>(slice)].gpu;
+    }
+
     // The single-sampled buffer a multisampled target's depth plane resolves
     // into, and the resource depthSrv actually views on that path. Null
     // everywhere else, where the attachment is what a shader reads.

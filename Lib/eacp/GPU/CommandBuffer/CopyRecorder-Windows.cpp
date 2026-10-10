@@ -369,4 +369,95 @@ void recordCopyToBuffer(void* recording, const BufferTextureCopyPlan& plan)
              pitch,
              plan);
 }
+
+namespace
+{
+UINT groupsFor(int size, int groupSize)
+{
+    return static_cast<UINT>((size + groupSize - 1) / groupSize);
+}
+
+int mipKernelKind(const Texture& texture)
+{
+    switch (texture.kind())
+    {
+        case TextureType::TwoD:
+            return 0;
+        case TextureType::ThreeD:
+            return 2;
+        case TextureType::Cube:
+        case TextureType::TwoDArray:
+        case TextureType::CubeArray:
+            break;
+    }
+
+    return 1;
+}
+} // namespace
+
+// A dispatch per level, reading the level above through its UAV and writing
+// this one through its own, with a UAV barrier between levels so each reads
+// what the last wrote. The whole resource is in UNORDERED_ACCESS for it and
+// goes back to PIXEL_SHADER_RESOURCE after, as a copy leaves it.
+void recordMipGeneration(void* recording, const Texture& texture)
+{
+    auto* commands = static_cast<CommandContext*>(recording);
+    auto* data = textureDataOf(texture);
+
+    if (commands == nullptr || commands->context == nullptr || data == nullptr)
+        return;
+
+    const auto levels = texture.mipLevels();
+
+    if (static_cast<int>(data->levelUavs.size()) < levels)
+    {
+        LOG("D3D12: generateMipmaps on a texture created without per-level UAVs "
+            "is dropped");
+        return;
+    }
+
+    const auto kind = mipKernelKind(texture);
+    auto* state = getD3D12Shared().getMipShader(kind);
+
+    if (state == nullptr)
+        return;
+
+    auto* list = commands->list.get();
+
+    bindComputeRootState(*commands->context, list);
+    list->SetPipelineState(state);
+
+    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    for (auto level = 1; level < levels; ++level)
+    {
+        const auto& source = data->levelUavs[(std::size_t) (level - 1)];
+        const auto& target = data->levelUavs[(std::size_t) level];
+
+        if (source.gpu.ptr == 0 || target.gpu.ptr == 0)
+            break;
+
+        list->SetComputeRootDescriptorTable(computeTextureUAVParam(0), source.gpu);
+        list->SetComputeRootDescriptorTable(computeTextureUAVParam(1), target.gpu);
+
+        const auto width = levelWidth(texture, level);
+        const auto height = levelHeight(texture, level);
+
+        if (kind == 2)
+            list->Dispatch(groupsFor(width, 4),
+                           groupsFor(height, 4),
+                           groupsFor(levelSlices(texture, level), 4));
+        else
+            list->Dispatch(groupsFor(width, 8),
+                           groupsFor(height, 8),
+                           static_cast<UINT>(texture.slices()));
+
+        D3D12_RESOURCE_BARRIER barrier = {};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = data->resource.get();
+        list->ResourceBarrier(1, &barrier);
+    }
+
+    restAfterCopy(list, *data);
+}
 } // namespace eacp::GPU

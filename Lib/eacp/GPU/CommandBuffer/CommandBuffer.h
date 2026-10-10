@@ -83,6 +83,26 @@ public:
               const Buffer& destination,
               const BufferTextureCopy& layout = {});
 
+    // Fills every level below 0 of every slice of `texture` from level 0, on
+    // the GPU and in order with the passes: what an earlier pass or kernel
+    // drew into level 0, or what update() or updateSubresource() last put
+    // there, is what the chain is built from, and a later pass samples the
+    // result. Each level is the one above it filtered down by two (a box
+    // filter; the exact weights are each API's own), on a 2D texture, a cube
+    // face by face, an array or a cube array slice by slice, and a volume in
+    // all three directions.
+    //
+    // **No pass may be open**, as for copy. A texture of one level is nothing
+    // to do. A format Device::supportsMipGeneration refuses - every block-
+    // compressed and integer format, and some others per device - is refused
+    // with a trace and nothing recorded. A multisampled target has one level.
+    //
+    // Metal records generateMipmapsForTexture on a blit encoder; D3D12 a
+    // compute dispatch per level through the texture's per-level UAVs, which
+    // any texture of more than one level in such a format is created with;
+    // Vulkan a vkCmdBlitImage per level with a linear filter.
+    void generateMipmaps(const Texture& texture);
+
     // Submits the recorded work and waits for completion.
     void commit();
 

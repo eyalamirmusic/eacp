@@ -71,4 +71,10 @@ void CommandBuffer::copy(const Texture& source,
     if (auto plan = planBufferTextureCopy(destination, source, layout))
         recordCopyToBuffer(nativeRecording(), *plan);
 }
+
+void CommandBuffer::generateMipmaps(const Texture& texture)
+{
+    if (planMipGeneration(texture))
+        recordMipGeneration(nativeRecording(), texture);
+}
 } // namespace eacp::GPU

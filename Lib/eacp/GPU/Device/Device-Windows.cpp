@@ -313,6 +313,13 @@ bool Device::supportsComputeReadWrite(TextureFormat format) const
            && (formatSupport2(format) & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) != 0;
 }
 
+// eacp's box-filter kernel reads one level and writes the next through two
+// UAVs of the one resource, so the format needs both typed UAV operations.
+bool Device::supportsMipGeneration(TextureFormat format) const
+{
+    return !isIntegerFormat(format) && supportsComputeReadWrite(format);
+}
+
 // The D3D11.3 option that lets a vertex shader write
 // SV_RenderTargetArrayIndex, rather than a geometry shader eacp does not have.
 bool Device::supportsLayeredRendering() const

@@ -143,7 +143,11 @@ struct RenderPass::Native
         bindTexture(slot, sampler, data->sampledView, data->restingUse().layout);
     }
 
-    void bindDepthTexture(const Texture& renderTarget, int slot, VkSampler sampler)
+    // The whole plane at slice -1, one slice's 2D view otherwise.
+    void bindDepthTexture(const Texture& renderTarget,
+                          int slot,
+                          VkSampler sampler,
+                          int slice = -1)
     {
         if (!encoder || slot < 0 || slot >= maxStageTextureSlots
             || sampler == VK_NULL_HANDLE)
@@ -154,7 +158,13 @@ struct RenderPass::Native
         if (data == nullptr || !data->hasSampleableDepth())
             return;
 
-        bindTexture(slot, sampler, data->depthReadView, imageDepthSampled.layout);
+        const auto view =
+            slice < 0 ? data->depthReadView : vulkanDepthSliceView(*data, slice);
+
+        if (view == VK_NULL_HANDLE)
+            return;
+
+        bindTexture(slot, sampler, view, imageDepthSampled.layout);
     }
 
     bool bindIndexRange(const BufferRange& indices, IndexFormat format)
@@ -449,6 +459,23 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
     impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler));
 }
 
+void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
+                                              int slice,
+                                              int slot,
+                                              TextureSampling sampling)
+{
+    impl->bindDepthTexture(
+        renderTarget, slot, getVulkanShared().getSampler(sampling), slice);
+}
+
+void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
+                                              int slice,
+                                              int slot,
+                                              const Sampler& sampler)
+{
+    impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler), slice);
+}
+
 // The layout declares every combined image sampler for both stages, so the
 // vertex binds land on the same binding as the fragment ones.
 void RenderPass::setVertexTexture(const Texture& texture,
@@ -732,13 +759,28 @@ void RenderPass::end()
     for (auto* target: impl->encoder->targets)
         transitionTextureForUse(buffer, *target, target->restingUse());
 
-    if (!impl->encoder->targets.empty())
+    if (auto* depth = impl->encoder->depthTarget)
     {
-        auto& first = *impl->encoder->targets[0];
-        transitionDepthForUse(buffer, first, first.depthRestingUse());
-        transitionResolvedDepthForUse(buffer, first, imageDepthSampled);
+        transitionDepthForUse(buffer, *depth, depth->depthRestingUse());
+        transitionResolvedDepthForUse(buffer, *depth, imageDepthSampled);
     }
 
     impl->encoder.reset();
+}
+
+void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            TextureSampling sampling)
+{
+    setFragmentDepthTextureSlice(renderTarget, slice, slot, sampling);
+}
+
+void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            const Sampler& sampler)
+{
+    setFragmentDepthTextureSlice(renderTarget, slice, slot, sampler);
 }
 } // namespace eacp::GPU

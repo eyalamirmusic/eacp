@@ -420,7 +420,7 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
 {
     auto buffer = impl->commandBuffer.get();
 
-    if (buffer == nil || !canRenderInto(targets))
+    if (buffer == nil || !canRenderInto(targets, descriptor))
         return RenderPass(nullptr);
 
     auto passDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -429,15 +429,17 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
         attachColor(passDescriptor.colorAttachments[index], targets[index]);
 
     const auto& first = *targets[0].texture;
+    const auto depthFrom = depthSource(targets, descriptor);
+    const auto& depthOwner = *depthFrom.texture;
 
-    if (auto depth = (__bridge id<MTLTexture>) first.nativeDepthTexture())
+    if (auto depth = (__bridge id<MTLTexture>) depthOwner.nativeDepthTexture())
         attachDepthStencil(
             passDescriptor,
             depth,
-            (__bridge id<MTLTexture>) first.nativeResolvedDepthTexture(),
+            (__bridge id<MTLTexture>) depthOwner.nativeResolvedDepthTexture(),
             descriptor.clearStencil,
             descriptor.depthAction,
-            targets[0]);
+            depthFrom);
 
     if (targets[0].layerCount > 1)
         passDescriptor.renderTargetArrayLength = (NSUInteger) targets[0].layerCount;

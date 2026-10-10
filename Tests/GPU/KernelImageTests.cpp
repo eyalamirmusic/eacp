@@ -10,10 +10,12 @@
 // to on the device (Device::supportsComputeWrite), a texel read and written
 // back through one bind where the device takes that
 // (Device::supportsComputeReadWrite), a render target's depth plane read by a
-// kernel (ComputePass::setInputDepthTexture), and a cube written and read as
-// the 2D array of its faces (ComputePass::setOutputTextureAsArray and
-// setInputTextureAsArray) and then sampled as a cube by a draw. The shaders are
-// hand-written, the way bgfx's are.
+// kernel (ComputePass::setInputDepthTexture) whole or one slice at a time as a
+// depth2d (the ...DepthTextureSlice binds), a pass taking its depth plane from
+// another target (RenderPassDescriptor::depthTarget), and a cube written and
+// read as the 2D array of its faces (ComputePass::setOutputTextureAsArray and
+// setInputTextureAsArray) and then sampled as a cube by a draw. The shaders
+// are hand-written, the way bgfx's are.
 //
 // Self-skips without a device.
 
@@ -1130,8 +1132,8 @@ auto tKernelImageReadsDepth = test("KernelImage/aKernelReadsATargetsDepth") = []
     check(holdsHalfAndHalf(readFloats(values, texelCount), 0.25f));
 };
 
-// Vulkan reads layer 0 of an array target's depth only (see the README's
-// "Depth"), so this one runs on Metal and D3D12.
+// Every backend reads an array target's depth as the array, level 0 of each
+// layer.
 auto tKernelImageReadsDepthLayer =
     test("KernelImage/aKernelReadsOneLayerOfAnArraysDepth") = []
 {
@@ -1150,9 +1152,6 @@ auto tKernelImageReadsDepthLayer =
 
     check(scene.isValid() && scene.hasSampleableDepth());
     check(pipeline.isValid() && kernel.isValid());
-
-    if constexpr (Platform::isLinuxFamily())
-        return;
 
     runFrame(
         [&](Frame& frame)
@@ -1262,4 +1261,440 @@ auto tKernelImageCubeAsArray =
         if ((int) read.size() == 6 * 4)
             check(isNear(packColor(read.data() + face * 4), faceColor(face)));
     }
+};
+
+namespace
+{
+// The 2D kernel above, for D3D12, whose view of one slice is a one-slice
+// Texture2DArray rather than a Texture2D.
+constexpr auto hlslCopyDepthSlice = R"(
+Texture2DArray<float> depth : register(t8);
+RWStructuredBuffer<float> values : register(u0);
+
+[numthreads(8, 8, 1)]
+void computeMain(uint3 gid : SV_DispatchThreadID)
+{
+    uint width, height, layers;
+    depth.GetDimensions(width, height, layers);
+
+    if (gid.x >= width || gid.y >= height)
+        return;
+
+    values[gid.y * width + gid.x] = depth.Load(int4(gid.xy, 0, 0));
+}
+)";
+
+// A full-screen quad whose fragment shader writes the depth2d at its pixel
+// into an R32Float target.
+constexpr auto mslDepthToColor = R"(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn
+{
+    float2 position [[attribute(0)]];
+};
+
+struct VertexOut
+{
+    float4 position [[position]];
+};
+
+vertex VertexOut vertexMain(VertexIn in [[stage_in]])
+{
+    VertexOut out;
+    out.position = float4(in.position, 0.5, 1.0);
+    return out;
+}
+
+fragment float4 fragmentMain(VertexOut in [[stage_in]],
+                             depth2d<float, access::read> depth [[texture(0)]])
+{
+    return float4(depth.read(uint2(in.position.xy)), 0.0, 0.0, 1.0);
+}
+)";
+
+constexpr auto hlslDepthToColor = R"(
+Texture2DArray<float> depth : register(t0);
+
+float4 vertexMain(float2 position : TEXCOORD0) : SV_Position
+{
+    return float4(position, 0.5, 1.0);
+}
+
+float4 fragmentMain(float4 position : SV_Position) : SV_Target
+{
+    return float4(depth.Load(int4(position.xy, 0, 0)), 0.0, 0.0, 1.0);
+}
+)";
+
+constexpr auto glslDepthToColor = R"(#version 450
+
+#ifdef EACP_VERTEX
+layout(location = 0) in vec2 attr0;
+
+void main()
+{
+    gl_Position = vec4(attr0, 0.5, 1.0);
+}
+#endif
+
+#ifdef EACP_FRAGMENT
+layout(set = 0, binding = 8) uniform sampler2D depth;
+layout(location = 0) out vec4 fragColor;
+
+void main()
+{
+    fragColor = vec4(texelFetch(depth, ivec2(gl_FragCoord.xy), 0).r, 0.0, 0.0, 1.0);
+}
+#endif
+)";
+
+ComputePipeline makeSliceKernel()
+{
+    return makeKernel(mslCopyDepth, hlslCopyDepthSlice, glslCopyDepth);
+}
+
+// Every slice of `scene` has the far plane but `nearSlice`, whose left half
+// is at 0.25; a kernel then copies each slice through its own 2D bind.
+bool eachSliceReadsAs2D(TextureType kind, int layers, int nearSlice)
+{
+    auto scene = Device::shared().makeTexture(describeDepthScene(kind, layers));
+    auto pipeline = makeDepthPipeline();
+    auto kernel = makeSliceKernel();
+    auto nearQuad = makeDepthQuad(0.f, 0.25f);
+    auto nothing = makeDepthQuad(-1.f, 0.25f);
+
+    check(scene.isValid() && scene.hasSampleableDepth());
+    check(pipeline.isValid() && kernel.isValid());
+
+    if (!scene.isValid())
+        return false;
+
+    auto slices = Vector<Buffer> {};
+
+    for (auto slice = 0; slice < scene.slices(); ++slice)
+        slices.add(Device::shared().makeBuffer(texelCount * (int) sizeof(float)));
+
+    runFrame(
+        [&](Frame& frame)
+        {
+            for (auto slice = 0; slice < scene.slices(); ++slice)
+                drawDepth(frame,
+                          pipeline,
+                          scene,
+                          slice,
+                          slice == nearSlice ? nearQuad : nothing);
+
+            auto pass = frame.beginCompute();
+            pass.setPipeline(kernel);
+
+            for (auto slice = 0; slice < scene.slices(); ++slice)
+            {
+                pass.setInputDepthTextureSlice(scene, slice, 0);
+                pass.setOutputBuffer(slices[(std::size_t) slice], 0);
+                pass.dispatch(imageSize, imageSize);
+            }
+        });
+
+    auto all = true;
+
+    for (auto slice = 0; slice < scene.slices(); ++slice)
+    {
+        const auto values = readFloats(slices[(std::size_t) slice], texelCount);
+        all = all && holdsHalfAndHalf(values, slice == nearSlice ? 0.25f : 1.f);
+    }
+
+    return all;
+}
+} // namespace
+
+auto tKernelImageDepthSliceOfArray =
+    test("KernelImage/aKernelReadsOneLayerOfAnArraysDepthAs2D") = []
+{
+    if (!canTest())
+        return;
+
+    check(eachSliceReadsAs2D(TextureType::TwoDArray, 3, 1));
+};
+
+auto tKernelImageDepthSliceOfCube =
+    test("KernelImage/aKernelReadsOneFaceOfACubesDepthAs2D") = []
+{
+    if (!canTest())
+        return;
+
+    check(eachSliceReadsAs2D(TextureType::Cube, 1, 4));
+};
+
+// The fragment stage's slice bind: layer 1 of an array's depth drawn into an
+// R32Float target through a depth2d declaration.
+auto tKernelImageFragmentDepthSlice =
+    test("KernelImage/aFragmentShaderReadsOneLayerOfAnArraysDepthAs2D") = []
+{
+    if (!canTest())
+        return;
+
+    auto scene =
+        Device::shared().makeTexture(describeDepthScene(TextureType::TwoDArray, 2));
+    auto depthPipeline = makeDepthPipeline();
+    auto nearQuad = makeDepthQuad(0.f, 0.25f);
+    auto farQuad = makeDepthQuad(0.f, 0.75f);
+
+    auto targetDescriptor = TextureDescriptor {};
+    targetDescriptor.width = imageSize;
+    targetDescriptor.height = imageSize;
+    targetDescriptor.format = TextureFormat::R32Float;
+    targetDescriptor.renderTarget = true;
+
+    auto copy = Device::shared().makeTexture(targetDescriptor);
+
+    auto source =
+        nativeShaderSource(mslDepthToColor, hlslDepthToColor, glslDepthToColor);
+    auto library = Device::shared().makeShaderLibrary(
+        source.withVertex("vertexMain").withFragment("fragmentMain"));
+
+    auto pipelineDescriptor = RenderPipelineDescriptor {};
+    pipelineDescriptor.library = &library;
+    pipelineDescriptor.colorFormat = pixelFormatFor(TextureFormat::R32Float);
+    pipelineDescriptor.vertexLayout.attribute(VertexFormat::Float2, 0);
+    pipelineDescriptor.vertexLayout.stride = sizeof(PositionVertex);
+
+    auto readDepth = Device::shared().makeRenderPipeline(pipelineDescriptor);
+    auto quad = Device::shared().makeBuffer(fullQuad, sizeof(fullQuad));
+
+    check(scene.isValid() && copy.isValid());
+    check(depthPipeline.isValid() && readDepth.isValid());
+
+    if (!scene.isValid() || !copy.isValid())
+        return;
+
+    runFrame(
+        [&](Frame& frame)
+        {
+            drawDepth(frame, depthPipeline, scene, 0, farQuad);
+            drawDepth(frame, depthPipeline, scene, 1, nearQuad);
+
+            auto pass = frame.beginPass(copy);
+            pass.setPipeline(readDepth);
+            pass.setFragmentDepthTextureSlice(scene, 1, 0);
+            pass.setVertexBuffer(quad);
+            pass.draw(6);
+        });
+
+    auto values = Vector<float> {};
+    values.resize((std::size_t) texelCount);
+    copy.read(values.data());
+
+    check(holdsHalfAndHalf(values, 0.25f));
+};
+
+namespace
+{
+TextureDescriptor describeColorOnly(TextureType kind, int layers, int depth = 1)
+{
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = imageSize;
+    descriptor.height = imageSize;
+    descriptor.kind = kind;
+    descriptor.arrayLength = layers;
+    descriptor.volumeDepth = depth;
+    descriptor.renderTarget = true;
+    return descriptor;
+}
+
+// One image of `colour` with its depth plane from `depth` at `depthSlice`,
+// the near quad drawn over the left half and kept.
+bool drawWithDepthFrom(Frame& frame,
+                       const RenderPipeline& pipeline,
+                       const Texture& colour,
+                       int slice,
+                       const Texture& depth,
+                       int depthSlice,
+                       const Buffer& quad)
+{
+    auto target = ColorTarget {&colour};
+    target.slice = slice;
+
+    auto descriptor = RenderPassDescriptor {};
+    descriptor.depthAction = DepthAction::Keep;
+    descriptor.depthTarget = {&depth, 0, depthSlice};
+
+    auto pass = frame.beginMultiTargetPass(std::span<const ColorTarget> {&target, 1},
+                                           descriptor);
+
+    if (pass.targetWidth() == 0)
+        return false;
+
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(quad);
+    pass.draw(6);
+    return true;
+}
+
+Vector<std::uint32_t> readColorImage(const Texture& texture, int slice)
+{
+    const auto volume = texture.kind() == TextureType::ThreeD;
+    auto region = TextureRegion::wholeLevel(0, volume ? 0 : slice);
+
+    if (volume)
+    {
+        region.origin.z = slice;
+        region.size.depth = 1;
+    }
+
+    auto values = Vector<std::uint32_t> {};
+    values.resize((std::size_t) texelCount);
+    texture.readSubresource(region, values.data());
+    return values;
+}
+
+// The left half red, which is what the depth pipeline draws, and the right
+// half the black the pass cleared to.
+bool holdsRedLeftHalf(const Vector<std::uint32_t>& values)
+{
+    if ((int) values.size() != texelCount)
+        return false;
+
+    for (auto y = 0; y < imageSize; ++y)
+        for (auto x = 0; x < imageSize; ++x)
+        {
+            const auto expected = x < imageSize / 2 ? 0xff0000ffu : 0xff000000u;
+
+            if (values[(std::size_t) (y * imageSize + x)] != expected)
+                return false;
+        }
+
+    return true;
+}
+} // namespace
+
+// Layer 1 of a colour-only array, and one image of a volume, each tested
+// against a plain 2D depth target named by RenderPassDescriptor::depthTarget;
+// the 2D target's plane holds what was drawn and samples as depth2d.
+auto tKernelImageSeparateDepthTarget =
+    test("KernelImage/aPassTakesItsDepthFromAnother2DTarget") = []
+{
+    if (!canTest())
+        return;
+
+    auto array =
+        Device::shared().makeTexture(describeColorOnly(TextureType::TwoDArray, 2));
+    auto volume =
+        Device::shared().makeTexture(describeColorOnly(TextureType::ThreeD, 1, 4));
+    auto arrayDepth =
+        Device::shared().makeTexture(describeDepthScene(TextureType::TwoD, 1));
+    auto volumeDepth =
+        Device::shared().makeTexture(describeDepthScene(TextureType::TwoD, 1));
+    auto pipeline = makeDepthPipeline();
+    auto kernel = makeKernel(mslCopyDepth, hlslCopyDepth, glslCopyDepth);
+    auto nearQuad = makeDepthQuad(0.f, 0.25f);
+    auto arrayValues = Device::shared().makeBuffer(texelCount * (int) sizeof(float));
+    auto volumeValues =
+        Device::shared().makeBuffer(texelCount * (int) sizeof(float));
+
+    check(array.isValid() && volume.isValid());
+    check(arrayDepth.hasSampleableDepth() && volumeDepth.hasSampleableDepth());
+    check(pipeline.isValid() && kernel.isValid());
+
+    if (!array.isValid() || !volume.isValid())
+        return;
+
+    auto drawn = Vector<int> {};
+
+    runFrame(
+        [&](Frame& frame)
+        {
+            drawn.add(drawWithDepthFrom(
+                frame, pipeline, array, 1, arrayDepth, 0, nearQuad));
+            drawn.add(drawWithDepthFrom(
+                frame, pipeline, volume, 2, volumeDepth, 0, nearQuad));
+
+            auto pass = frame.beginCompute();
+            pass.setPipeline(kernel);
+            pass.setInputDepthTexture(arrayDepth, 0);
+            pass.setOutputBuffer(arrayValues, 0);
+            pass.dispatch(imageSize, imageSize);
+            pass.setInputDepthTexture(volumeDepth, 0);
+            pass.setOutputBuffer(volumeValues, 0);
+            pass.dispatch(imageSize, imageSize);
+        });
+
+    check(drawn.size() == 2 && drawn[0] && drawn[1]);
+    check(holdsRedLeftHalf(readColorImage(array, 1)));
+    check(holdsRedLeftHalf(readColorImage(volume, 2)));
+    check(holdsHalfAndHalf(readFloats(arrayValues, texelCount), 0.25f));
+    check(holdsHalfAndHalf(readFloats(volumeValues, texelCount), 0.25f));
+};
+
+// The depth plane of an array target at another slice than its colour's
+// (layer 0's colour, layer 1's depth), and the refusals: a depth target of
+// another size, one with no depth, and a slice the plane lacks.
+auto tKernelImageDepthAtAnotherSlice =
+    test("KernelImage/aPassTakesItsDepthAtAnotherSlice") = []
+{
+    if (!canTest())
+        return;
+
+    auto scene =
+        Device::shared().makeTexture(describeDepthScene(TextureType::TwoDArray, 2));
+    auto colourOnly =
+        Device::shared().makeTexture(describeColorOnly(TextureType::TwoD, 1));
+
+    auto largerDescriptor = describeDepthScene(TextureType::TwoD, 1);
+    largerDescriptor.width = imageSize * 2;
+    largerDescriptor.height = imageSize * 2;
+    auto larger = Device::shared().makeTexture(largerDescriptor);
+
+    auto pipeline = makeDepthPipeline();
+    auto kernel = makeSliceKernel();
+    auto nearQuad = makeDepthQuad(0.f, 0.25f);
+    auto nothing = makeDepthQuad(-1.f, 0.25f);
+    auto layerZero = Device::shared().makeBuffer(texelCount * (int) sizeof(float));
+    auto layerOne = Device::shared().makeBuffer(texelCount * (int) sizeof(float));
+
+    check(scene.isValid() && colourOnly.isValid() && larger.isValid());
+    check(pipeline.isValid() && kernel.isValid());
+
+    if (!scene.isValid())
+        return;
+
+    auto drawn = Vector<int> {};
+
+    runFrame(
+        [&](Frame& frame)
+        {
+            drawDepth(frame, pipeline, scene, 0, nothing);
+            drawDepth(frame, pipeline, scene, 1, nothing);
+
+            drawn.add(
+                drawWithDepthFrom(frame, pipeline, scene, 0, scene, 1, nearQuad));
+            drawn.add(
+                drawWithDepthFrom(frame, pipeline, scene, 0, larger, 0, nearQuad));
+            drawn.add(drawWithDepthFrom(
+                frame, pipeline, scene, 0, colourOnly, 0, nearQuad));
+            drawn.add(
+                drawWithDepthFrom(frame, pipeline, scene, 0, scene, 2, nearQuad));
+
+            auto pass = frame.beginCompute();
+            pass.setPipeline(kernel);
+            pass.setInputDepthTextureSlice(scene, 0, 0);
+            pass.setOutputBuffer(layerZero, 0);
+            pass.dispatch(imageSize, imageSize);
+            pass.setInputDepthTextureSlice(scene, 1, 0);
+            pass.setOutputBuffer(layerOne, 0);
+            pass.dispatch(imageSize, imageSize);
+        });
+
+    check(drawn.size() == 4);
+
+    if (drawn.size() == 4)
+    {
+        check(drawn[0]);
+        check(!drawn[1] && !drawn[2] && !drawn[3]);
+    }
+
+    check(holdsRedLeftHalf(readColorImage(scene, 0)));
+    check(holdsHalfAndHalf(readFloats(layerZero, texelCount), 1.f));
+    check(holdsHalfAndHalf(readFloats(layerOne, texelCount), 0.25f));
 };

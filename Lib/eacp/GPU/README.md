@@ -434,7 +434,52 @@ there whether or not anything attached it. Do not read that as permission;
 
 With `sampleableDepth` too, a later pass reads the plane with
 `setFragmentDepthTexture` and a kernel with `ComputePass::setInputDepthTexture`,
-once the pass that drew it has ended with `DepthAction::Keep`.
+once the pass that drew it has ended with `DepthAction::Keep`. The plane has
+the target's shape, so an array, cube or cube-array target's reads as one —
+`depth2d_array`, `depthcube`, `depthcube_array` in MSL, the matching
+`Texture2DArray<float>` on D3D12, `sampler2DArray`, `samplerCube`,
+`samplerCubeArray` on Vulkan — level 0 of every slice, the same on all three.
+
+**One slice of it as a 2D depth texture** is the `...Slice` bind:
+
+```cpp
+pass.setFragmentDepthTextureSlice(shadowArray, 3, 0);        // layer 3, slot 0
+pass.setVertexDepthTextureSlice(cubeTarget, 4, 1, sampler);  // +Z face
+compute.setInputDepthTextureSlice(shadowArray, 1, 0);
+```
+
+The shader declares a plain `depth2d` (`Texture2D<float>`, `sampler2D`), which
+is what a shader written for one shadow map at a time wants when the maps live
+in one array. Slice 0 of a 2D target is the ordinary bind; a slice the plane
+lacks binds nothing. Metal hands a 2D view of the slice and Vulkan a 2D image
+view of the layer, each made on first use and kept; D3D12 has no `TEXTURE2D`
+view past slice 0, so it binds a one-slice `TEXTURE2DARRAY` view made with the
+target, which a strict driver wants declared `Texture2DArray<float>` and read
+at layer 0.
+
+**A depth plane from another target.** A depth plane belongs to the first
+colour target and follows its level and slice, which is no help to a pass into
+one layer of an array that tests against a plain 2D depth buffer, or into a
+volume, which has no depth plane at all. `RenderPassDescriptor::depthTarget`
+names the render target whose plane to attach instead, and which image of it:
+
+```cpp
+auto shadow = RenderPassDescriptor {};
+shadow.depthAction = DepthAction::Keep;
+shadow.depthTarget = {&depthOnly, 0, 0};      // texture, level, slice
+
+auto face = ColorTarget {&layers};
+face.slice = 2;                                // colour into layer 2
+
+auto pass = frame.beginMultiTargetPass(std::span {&face, 1}, shadow);
+```
+
+The depth target is a render target with depth, single-sampled (and so then is
+the pass), with that level the pass's size; a layered pass covers its
+`layerCount` slices of it from `slice`. Anything else is refused like a
+mismatched colour target. It is also how a pass takes an array target's own
+plane at another slice than its colour's. A later pass samples the plane
+through the depth target, whole or a slice at a time.
 
 ### Depth without a fragment stage
 
@@ -513,11 +558,21 @@ auto pass = frame.beginMultiTargetPass(targets, {.label = "gbuffer"});
 
 The overload over `std::span<const Texture* const>` clears every target as the
 descriptor says, one colour for all. Every target must be a render target, and
-all must share a size and a sample count; anything else, a texture named twice,
-or more than eight is refused with a trace and the pass records nothing. Depth,
-stencil and multisampling are the first target's, as for one target; every
-multisampled target resolves into itself as the pass ends. A Vulkan device
-offering fewer attachments than asked for refuses the pass too.
+all must share a size and a sample count; anything else, one image of a texture
+named twice, or more than eight is refused with a trace and the pass records
+nothing. Depth, stencil and multisampling are the first target's, as for one
+target, unless `RenderPassDescriptor::depthTarget` names another (see "Depth");
+every multisampled target resolves into itself as the pass ends. A Vulkan
+device offering fewer attachments than asked for refuses the pass too.
+
+One texture may be two targets of a pass when they name different images of it
+(see the next section): two layers of an array — a deferred renderer's
+G-buffer kept in one — two faces of a cube, two images of a volume, or runs of
+slices that do not meet. The same image twice, or two runs sharing a slice, is
+refused, and so is a multisampled texture twice, having one image. Metal
+attaches each image of the one texture, D3D12 binds an RTV per image, and
+Vulkan puts two views of the one image in the rendering info or framebuffer,
+the layout tracker moving the image once.
 
 The pipeline describes attachment 0 with the fields it always had
 (`colorFormat`, `blendMode`/`blend`, `colorWriteMask`) and attachments 1 and up
@@ -571,7 +626,8 @@ the image and of its depth companion (a volume is created
 framebuffer. A pass rendering into one level while sampling another of the
 same texture is not supported: D3D12 and Vulkan track a texture's state and
 layout whole rather than per level, so a downscale chain built from passes goes
-through a second texture, or runs as kernels (below).
+through a second texture, or runs as kernels (below); a plain filtered chain is
+`Frame::generateMipmaps` (see "Mipmaps").
 
 ## Compute
 
@@ -1755,9 +1811,11 @@ A kernel reads a render target's **depth** with
 `sampleableDepth`, the pass that drew it ended with `DepthAction::Keep`, and the
 kernel declares the target's kind as a depth texture (`depth2d`,
 `depth2d_array`, `depthcube`; `Texture2D<float>`, `Texture2DArray<float>`;
-`sampler2D`) and gets one float per read. That is how a hi-Z pyramid's first
-level is copied out of the scene and how an ambient-occlusion pass starts. As
-for the fragment stage, Vulkan reads layer 0 of an array target's depth only.
+`sampler2D`, `sampler2DArray`, `samplerCube`) and gets one float per read. That
+is how a hi-Z pyramid's first level is copied out of the scene and how an
+ambient-occlusion pass starts. `setInputDepthTextureSlice(renderTarget, slice,
+slot)` hands it one slice of an array or cube target's plane as a `depth2d`
+instead, as the fragment stage's slice binds do (see "Depth").
 
 **A cube is written as a 2D array.** No shading language has a writable cube
 type, so a kernel declares `texture2d_array<float, access::write>`
@@ -2323,19 +2381,69 @@ thrown away before the filter saw it. Off by default: a UI atlas or a video fram
 is never drawn smaller than it is and would pay a third more memory for levels
 nothing reads.
 
-**The chain is built on the CPU, by eacp, for both backends.** Metal has
-`generateMipmapsForTexture` and D3D12 has no equivalent at all — a chain there
-means a compute shader, a UAV per level and a root signature to bind them. So the
-choice was a GPU chain on one backend against a hand-written one on the other,
-which is two filters producing two pictures for the same texture, or one filter
-producing the same bytes for both. Only the second can be checked by a test, and
-this library has been wrong about a cross-backend detail often enough to prefer
-the version that can be.
+**The chain `mipmapped` builds is built on the CPU, by eacp, for every
+backend.** Metal has `generateMipmapsForTexture` and D3D12 has no equivalent at
+all — a chain there means a compute shader, a UAV per level and a root signature
+to bind them. So for pixels the CPU already holds the choice was a GPU chain on
+one backend against a hand-written one on the other, which is two filters
+producing two pictures for the same texture, or one filter producing the same
+bytes for both. Only the second can be checked by a test, and this library has
+been wrong about a cross-backend detail often enough to prefer the version that
+can be.
 
-A texture created with no pixels — a render target, a kernel output — gets no
-chain, since there is nothing to build one from. `update()` rebuilds it;
-`update(region, ...)` does not, because a partial upload cannot know what the
-rest of the texture holds. Ask a texture what it got with `mipLevels()`.
+`mipmapped` on a texture created with no pixels — a render target, a kernel
+output — builds nothing, since there is nothing to build from. `update()`
+rebuilds the CPU chain; `update(region, ...)` and `updateSubresource` do not,
+because a partial upload cannot know what the rest of the texture holds. Ask a
+texture what it got with `mipLevels()`.
+
+### On the GPU
+
+When level 0 is the GPU's — what a pass drew into a render target, what a
+kernel wrote — or has just been replaced, `Frame::generateMipmaps` fills every
+level below it from it, in order with the frame's passes:
+
+```cpp
+auto descriptor = TextureDescriptor {};
+descriptor.width = 512;
+descriptor.height = 512;
+descriptor.renderTarget = true;
+descriptor.mipLevels = mipLevelCount(512, 512);   // levels, no pixels
+
+auto scene = Device::shared().makeTexture(descriptor);
+
+{
+    auto into = frame.beginPass(scene);
+    into.draw(writer);                            // level 0
+}
+
+frame.generateMipmaps(scene);                     // levels 1 to 9 from it
+
+auto pass = frame.beginPass();
+pass.draw(reader);                                // samples the chain
+```
+
+Every slice gets its own chain — each face of a cube, each layer of an array or
+a cube array — and a volume is filtered in z as well. `CommandBuffer` has the
+same call off-screen, and either follows an `update()` or `updateSubresource()`
+of level 0 to rebuild a stale chain where the CPU's would cost the upload of
+every level: a streamed texture, a `.ktx` whose chain was not shipped
+(`makeTextureFromSubresources` with level 0 alone and `mipLevels`).
+
+No pass may be open, as for a copy. A texture of one level is nothing to do.
+`Device::supportsMipGeneration(format)` says which formats a device filters
+into a chain: never a block-compressed or an integer one, and a format it
+refuses is refused with a trace, nothing recorded. Metal records
+`generateMipmapsForTexture` on a blit encoder and takes every other format, the
+32-bit floats where the device filters them. D3D12 dispatches eacp's own
+kernel, a 2×2 (2×2×2 on a volume) box filter level by level through the
+texture's per-level UAVs, which any texture of more than one level in a format
+with typed UAV loads and stores is created with — it costs the resource
+`ALLOW_UNORDERED_ACCESS` and a descriptor per level. Vulkan blits level to
+level with `vkCmdBlitImage` and a linear filter, where the format has the blit
+and linear-filter features. The weights are each API's own, so the three agree
+to within a filter's rounding rather than to the byte; the CPU chain above is
+the one that does.
 
 **Or hand over a chain of your own**, which is `TextureDescriptor::mipLevels`:
 
@@ -2420,7 +2528,8 @@ Three ways in:
   slice, origin, size, bytesPerRow, bytesPerImage}` naming any box of any level
   of any slice (z and depth on a volume); `readSubresource(region, dst)` is its
   mirror. A compressed region is block-aligned or runs to the level's edge.
-  Neither rebuilds a chain eacp built.
+  Neither rebuilds a chain eacp built; `Frame::generateMipmaps` after an update
+  of level 0 does, on the GPU (see "Mipmaps").
 
 Refused at creation: `arrayLength` on a kind without layers, `volumeDepth` on
 anything but a volume, `cube` beside a kind other than `TwoD` or `Cube`, a

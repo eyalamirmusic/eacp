@@ -12,4 +12,8 @@ void recordCopy(void* recording, const TextureCopyPlan& plan);
 void recordCopy(void* recording, const BufferCopyPlan& plan);
 void recordCopyToTexture(void* recording, const BufferTextureCopyPlan& plan);
 void recordCopyToBuffer(void* recording, const BufferTextureCopyPlan& plan);
+
+// Every level below 0 of every slice filled from the one above it, for a
+// texture planMipGeneration has passed.
+void recordMipGeneration(void* recording, const Texture& texture);
 } // namespace eacp::GPU

@@ -716,6 +716,48 @@ struct Texture::Native
         return view;
     }
 
+    // The sampleable plane - the resolve on a multisampled target - as a 2D
+    // texture of one slice, so a shader declaring depth2d reads a layer or a
+    // face of an array or a cube target's depth.
+    id<MTLTexture> depthSliceView(int slice) const
+    {
+        auto plane = resolvedDepthTexture.get() != nil
+                         ? (id<MTLTexture>) resolvedDepthTexture.get()
+                         : (id<MTLTexture>) depthTexture.get();
+
+        if (!sampleableDepth || plane == nil || slice < 0
+            || slice >= (int) plane.arrayLength * sliceFactor(plane))
+            return nil;
+
+        if (plane.textureType == MTLTextureType2D)
+            return plane;
+
+        for (const auto& [cached, view]: depthSliceViews)
+            if (cached == slice)
+                return (id<MTLTexture>) view.get();
+
+        auto view = [plane newTextureViewWithPixelFormat:plane.pixelFormat
+                                             textureType:MTLTextureType2D
+                                                  levels:NSMakeRange(0, 1)
+                                                  slices:NSMakeRange((NSUInteger) slice, 1)];
+
+        if (view == nil)
+            return nil;
+
+        auto owned = ObjC::Ptr<NSObject<MTLTexture>> {};
+        owned = (NSObject<MTLTexture>*) view;
+        depthSliceViews.add({slice, owned});
+        return view;
+    }
+
+    static int sliceFactor(id<MTLTexture> texture)
+    {
+        return texture.textureType == MTLTextureTypeCube
+                       || texture.textureType == MTLTextureTypeCubeArray
+                   ? 6
+                   : 1;
+    }
+
     // A cube or a cube array retyped as the 2D array of slices it is stored as;
     // an array is that already, and its level view is the answer.
     id<MTLTexture> arrayView(int level) const
@@ -789,6 +831,9 @@ struct Texture::Native
 
     mutable Vector<std::pair<SubresourceViewKey, ObjC::Ptr<NSObject<MTLTexture>>>>
         views;
+
+    // Level 0 of each depth slice as a 2D texture, by slice, made on first use.
+    mutable Vector<std::pair<int, ObjC::Ptr<NSObject<MTLTexture>>>> depthSliceViews;
 };
 
 Texture::Texture(Device& device,
@@ -917,6 +962,11 @@ void* Texture::nativeLevelView(int level) const
 void* Texture::nativeArrayView(int level) const
 {
     return (__bridge void*) impl->arrayView(level);
+}
+
+void* Texture::nativeDepthSliceView(int slice) const
+{
+    return (__bridge void*) impl->depthSliceView(slice);
 }
 
 int Texture::width() const

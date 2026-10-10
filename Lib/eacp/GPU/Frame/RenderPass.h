@@ -219,6 +219,38 @@ public:
                                int slot,
                                const Sampler& sampler);
 
+    // One slice of a target's depth plane - a layer of an array target, a
+    // face of a cube (layer * 6 + face on a cube array) - bound as a plain 2D
+    // depth texture, level 0, for a shader that declares depth2d (Texture2D
+    // <float>, sampler2D) rather than the array or cube the whole-plane binds
+    // above hand it. Slice 0 of a 2D target is the same bind as those. A slice
+    // the plane lacks, or a target without sampleableDepth, binds nothing.
+    //
+    // Metal binds a 2D view of the slice, Vulkan a 2D image view of the
+    // layer, each made on first use; D3D12 a one-slice Texture2DArray SRV,
+    // since a TEXTURE2D view cannot start past slice 0 - an HLSL Texture2D
+    // reads it where the driver lets the two dimensions differ, and a strict
+    // one wants the shader to declare Texture2DArray and read layer 0.
+    void setFragmentDepthTextureSlice(const Texture& renderTarget,
+                                      int slice,
+                                      int slot = 0,
+                                      TextureSampling sampling = {});
+
+    void setFragmentDepthTextureSlice(const Texture& renderTarget,
+                                      int slice,
+                                      int slot,
+                                      const Sampler& sampler);
+
+    void setVertexDepthTextureSlice(const Texture& renderTarget,
+                                    int slice,
+                                    int slot = 0,
+                                    TextureSampling sampling = {});
+
+    void setVertexDepthTextureSlice(const Texture& renderTarget,
+                                    int slice,
+                                    int slot,
+                                    const Sampler& sampler);
+
     // Binds a Storage buffer for indexed reads in a shader stage - the thing a
     // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
     // one element per vertex or per instance; this binds the buffer so the

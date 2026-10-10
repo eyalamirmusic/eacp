@@ -275,6 +275,18 @@ public:
     // this: any format a texture has is readable there.
     bool supportsComputeReadWrite(TextureFormat format) const;
 
+    // Whether Frame::generateMipmaps (and CommandBuffer's) can fill a
+    // texture of this format's chain on the GPU. Never a block-compressed or
+    // an integer format, there being nothing to average in either. Metal's
+    // blit filters every other one, the 32-bit floats only where the device
+    // filters them (supports32BitFloatFiltering, every Apple-silicon Mac);
+    // D3D12 runs eacp's own box-filter kernel through typed UAV loads and
+    // stores, so it asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD and _STORE
+    // (BGRA8Unorm has neither); Vulkan blits level to level and asks
+    // VK_FORMAT_FEATURE_BLIT_SRC_BIT, BLIT_DST_BIT and
+    // SAMPLED_IMAGE_FILTER_LINEAR_BIT. An invalid Device answers no.
+    bool supportsMipGeneration(TextureFormat format) const;
+
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,
     // the emitter's own reduction and SIMD-matrix scratch included.

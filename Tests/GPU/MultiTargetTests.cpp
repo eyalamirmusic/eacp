@@ -363,6 +363,45 @@ float readR32FloatAt(const Texture& texture, int x, int y)
     return values[y * texture.width() + x];
 }
 
+Texture makeLayeredTarget(TextureType kind, int layers, bool depth = false)
+{
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = targetSize;
+    descriptor.height = targetSize;
+    descriptor.kind = kind;
+    descriptor.arrayLength = layers;
+    descriptor.renderTarget = true;
+    descriptor.depth = depth;
+
+    return Device::shared().makeTexture(descriptor);
+}
+
+Vector<Rgba8> readSlice(const Texture& texture, int slice)
+{
+    auto pixels = Vector<Rgba8> {};
+    pixels.resize((std::size_t) (texture.width() * texture.height()));
+    texture.readSubresource(TextureRegion::wholeLevel(0, slice), pixels.data());
+    return pixels;
+}
+
+ColorTarget sliceOf(const Texture& texture, int slice, bool clear = true)
+{
+    auto target = ColorTarget {&texture};
+    target.slice = slice;
+    target.clear = clear;
+    target.clearColor = {0.5f, 0.5f, 0.5f, 1.f};
+    return target;
+}
+
+void clearSlices(Frame& frame, const Texture& texture)
+{
+    for (auto slice = 0; slice < texture.slices(); ++slice)
+    {
+        const auto target = sliceOf(texture, slice);
+        frame.beginMultiTargetPass(std::span<const ColorTarget> {&target, 1});
+    }
+}
+
 bool canDraw()
 {
     return Device::shared().isValid();
@@ -669,8 +708,9 @@ auto tMultisampledTargets = test("MultiTarget/multisampledTargetsAllResolve") = 
 };
 
 // Targets that disagree in size or sample count, a texture that is not a
-// render target, one texture twice, none at all and too many are each refused:
-// the pass records nothing, so the target keeps the red an earlier pass left.
+// render target, one image of a texture twice, none at all and too many are
+// each refused: the pass records nothing, so the target keeps the red an
+// earlier pass left.
 auto tMismatchRefused = test("MultiTarget/mismatchedTargetsAreRefused") = []
 {
     if (!canDraw())
@@ -762,4 +802,121 @@ auto tTooManyPipelineTargets =
         targets.add(opaque(PixelFormat::RGBA8Unorm));
 
     check(!makePipeline(library, targets).isValid());
+};
+
+// Layers 0 and 2 of one array are the pass's two targets, each taking its own
+// output, and layer 1 between them keeps the grey it was cleared to. The same
+// layer twice, or two runs that share one, is still refused.
+auto tLayersOfOneArray = test("MultiTarget/twoLayersOfOneArrayAreTwoTargets") = []
+{
+    if (!canDraw())
+        return;
+
+    auto array = makeLayeredTarget(TextureType::TwoDArray, 3);
+    auto library = makeLibrary(2);
+    auto pipeline = makePipeline(
+        library, {opaque(PixelFormat::RGBA8Unorm), opaque(PixelFormat::RGBA8Unorm)});
+
+    check(array.isValid() && pipeline.isValid());
+
+    if (!array.isValid())
+        return;
+
+    constexpr float color[] = {1.f, 0.5f, 0.f, 1.f};
+    auto quad = makeFullQuad(color);
+    auto widths = Vector<int> {};
+
+    runFrame(
+        [&](Frame& frame)
+        {
+            clearSlices(frame, array);
+
+            const ColorTarget targets[] = {sliceOf(array, 0, false),
+                                           sliceOf(array, 2, false)};
+            auto pass = frame.beginMultiTargetPass(targets);
+            widths.add(pass.targetWidth());
+            pass.setPipeline(pipeline);
+            pass.setVertexBuffer(quad);
+            pass.draw(6);
+            pass.end();
+
+            const ColorTarget sameLayer[] = {sliceOf(array, 1), sliceOf(array, 1)};
+            widths.add(frame.beginMultiTargetPass(sameLayer).targetWidth());
+
+            ColorTarget sharedRun[] = {sliceOf(array, 0), sliceOf(array, 1)};
+            sharedRun[0].layerCount = 2;
+            sharedRun[1].layerCount = 2;
+            widths.add(frame.beginMultiTargetPass(sharedRun).targetWidth());
+        });
+
+    check(widths.size() == 3);
+
+    if (widths.size() == 3)
+    {
+        check(widths[0] == targetSize);
+        check(widths[1] == 0);
+        check(widths[2] == 0);
+    }
+
+    for (const auto& pixel: readSlice(array, 0))
+        check(matches(pixel, 255, 128, 0));
+
+    for (const auto& pixel: readSlice(array, 1))
+        check(matches(pixel, 128, 128, 128));
+
+    for (const auto& pixel: readSlice(array, 2))
+        check(matches(pixel, 0, 128, 255));
+};
+
+// Two faces of one cube as two targets, the depth plane the first face's: the
+// near half of each face holds the near quad's output and the far half the
+// far quad's, so both attachments were tested against the one plane.
+auto tFacesOfOneCube = test("MultiTarget/twoFacesOfOneCubeAreTwoTargets") = []
+{
+    if (!canDraw())
+        return;
+
+    auto cube = makeLayeredTarget(TextureType::Cube, 1, true);
+    auto library = makeLibrary(2);
+    auto pipeline = makePipeline(
+        library,
+        {opaque(PixelFormat::RGBA8Unorm), opaque(PixelFormat::RGBA8Unorm)},
+        true);
+
+    check(cube.isValid() && cube.hasDepth() && pipeline.isValid());
+
+    if (!cube.isValid())
+        return;
+
+    constexpr float nearColor[] = {1.f, 0.f, 0.f, 1.f};
+    constexpr float farColor[] = {0.f, 1.f, 0.f, 1.f};
+    auto nearQuad = makeQuad(-1.f, 0.f, 0.25f, nearColor);
+    auto farQuad = makeFullQuad(farColor, 0.75f);
+
+    runFrame(
+        [&](Frame& frame)
+        {
+            clearSlices(frame, cube);
+
+            const ColorTarget targets[] = {sliceOf(cube, 1, false),
+                                           sliceOf(cube, 4, false)};
+            auto pass = frame.beginMultiTargetPass(targets);
+            pass.setPipeline(pipeline);
+            pass.setVertexBuffer(nearQuad);
+            pass.draw(6);
+            pass.setVertexBuffer(farQuad);
+            pass.draw(6);
+        });
+
+    const auto row = targetSize * (targetSize / 2);
+    const auto faceOne = readSlice(cube, 1);
+    const auto faceFour = readSlice(cube, 4);
+
+    check(matches(faceOne[row], 255, 0, 0));
+    check(matches(faceOne[row + targetSize - 1], 0, 255, 0));
+    check(matches(faceFour[row], 0, 0, 255));
+    check(matches(faceFour[row + targetSize - 1], 0, 255, 0));
+
+    for (auto face: {0, 2, 3, 5})
+        check(matches(readSlice(cube, face)[0], 128, 128, 128));
 };

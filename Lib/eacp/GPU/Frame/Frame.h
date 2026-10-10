@@ -49,6 +49,29 @@ enum class DepthAction
     Resume
 };
 
+// The image of another render target whose depth plane a pass attaches in
+// place of its first colour target's - RenderPassDescriptor::depthTarget. A
+// depth plane belongs to a colour target and has its shape, so this is how a
+// pass into one layer of an array, one face of a cube or one image of a
+// volume (which has no depth plane at all) tests against a plain 2D depth
+// buffer, and how a pass takes its depth at another level or slice than its
+// colour's.
+//
+// `texture` is a render target created with depth; the pass attaches its
+// plane at `level` and from `slice` (the run's first slice on a layered
+// pass, which covers ColorTarget::layerCount slices of it too). That level is
+// the pass's size, and the texture is single-sampled, as the pass's colour
+// targets then are. Anything else is refused like a mismatched colour
+// target. What the pass does with the plane is still depthAction, and a
+// later pass samples it through `texture` - setFragmentDepthTexture, or
+// ...Slice for one slice of an array's.
+struct DepthTarget
+{
+    const Texture* texture = nullptr;
+    int level = 0;
+    int slice = 0;
+};
+
 struct RenderPassDescriptor
 {
     Graphics::Color clearColor = Graphics::Color::black();
@@ -82,6 +105,12 @@ struct RenderPassDescriptor
     // what every pass did before this existed and what a pass drawing a scene
     // wants.
     DepthAction depthAction = DepthAction::Clear;
+
+    // Where the depth and stencil planes come from on a texture-target pass:
+    // the first colour target's, at its level and slice, when this names no
+    // texture (the default), and the named target's image otherwise. See
+    // DepthTarget. The drawable pass ignores it.
+    DepthTarget depthTarget = {};
 };
 
 // One colour attachment of a pass over several targets: the texture, and what
@@ -215,8 +244,14 @@ public:
     //
     // Depth, stencil and multisampling are the first target's, exactly as the
     // single-target pass takes them: its depth buffer is attached and the
-    // others' are ignored. Every multisampled target resolves into itself at
+    // others' are ignored, unless descriptor.depthTarget names another target
+    // whose plane to attach. Every multisampled target resolves into itself at
     // the end of the pass.
+    //
+    // One texture may be two targets of the pass when they name different
+    // images of it - two levels, two layers of an array, two faces of a cube,
+    // two images of a volume, runs of slices that do not meet. The same image
+    // twice is refused.
     //
     // Each target names its own level and slice (ColorTarget), and the sizes
     // compared are those levels' sizes, so level 1 of a 64-wide target and
@@ -321,10 +356,37 @@ public:
               const Buffer& destination,
               const BufferTextureCopy& layout = {});
 
+    // Fills every level below 0 of every slice of `texture` from level 0, on
+    // the GPU and in order with the passes: what an earlier pass or kernel
+    // drew into level 0, or what update() or updateSubresource() last put
+    // there, is what the chain is built from, and a later pass samples the
+    // result. Each level is the one above it filtered down by two (a box
+    // filter; the exact weights are each API's own), on a 2D texture, a cube
+    // face by face, an array or a cube array slice by slice, and a volume in
+    // all three directions.
+    //
+    // **No pass may be open**, as for copy. A texture of one level is nothing
+    // to do. A format Device::supportsMipGeneration refuses - every block-
+    // compressed and integer format, and some others per device - is refused
+    // with a trace and nothing recorded. A multisampled target has one level.
+    //
+    // Metal records generateMipmapsForTexture on a blit encoder; D3D12 a
+    // compute dispatch per level through the texture's per-level UAVs, which
+    // any texture of more than one level in such a format is created with;
+    // Vulkan a vkCmdBlitImage per level with a linear filter.
+    void generateMipmaps(const Texture& texture);
+
     bool isValid() const;
 
 private:
-    static bool canRenderInto(std::span<const ColorTarget> targets);
+    static bool canRenderInto(std::span<const ColorTarget> targets,
+                              const RenderPassDescriptor& descriptor);
+
+    // The render target whose depth plane the pass attaches and the image of
+    // it: the first colour target's own, or descriptor.depthTarget's, with the
+    // first target's layerCount.
+    static ColorTarget depthSource(std::span<const ColorTarget> targets,
+                                   const RenderPassDescriptor& descriptor);
 
     void* nativeRecording() const;
 

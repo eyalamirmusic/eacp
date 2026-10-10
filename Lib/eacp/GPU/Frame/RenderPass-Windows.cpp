@@ -268,6 +268,34 @@ void bindStageDepthTexture(D3D12Encoder* encoder,
                                          data->depthSrv.gpu);
 }
 
+// The same transition, through one slice's view rather than the whole plane's.
+void bindStageDepthSlice(D3D12Encoder* encoder,
+                         ShaderStage stage,
+                         const Texture& renderTarget,
+                         int slice,
+                         int slot)
+{
+    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+
+    if (data == nullptr || !data->hasSampleableDepth())
+        return;
+
+    const auto view = data->depthSliceView(slice);
+
+    if (view.ptr == 0)
+        return;
+
+    auto* list = encoder->commands->list.get();
+
+    if (!hasReadState(data->depthState, readStateFor(stage)))
+        transitionDepthForUse(list, *data, readStateFor(stage));
+
+    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), view);
+}
+
 void bindPerBindSampler(D3D12Encoder* encoder, int slot, const Sampler& sampler)
 {
     if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
@@ -312,6 +340,44 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
 {
     bindStageDepthTexture(
         impl->encoder.get(), ShaderStage::Fragment, renderTarget, slot);
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
+void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
+                                              int slice,
+                                              int slot,
+                                              TextureSampling)
+{
+    bindStageDepthSlice(
+        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slice, slot);
+}
+
+void RenderPass::setFragmentDepthTextureSlice(const Texture& renderTarget,
+                                              int slice,
+                                              int slot,
+                                              const Sampler& sampler)
+{
+    bindStageDepthSlice(
+        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slice, slot);
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
+
+void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            TextureSampling)
+{
+    bindStageDepthSlice(
+        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slice, slot);
+}
+
+void RenderPass::setVertexDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            const Sampler& sampler)
+{
+    bindStageDepthSlice(
+        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slice, slot);
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 

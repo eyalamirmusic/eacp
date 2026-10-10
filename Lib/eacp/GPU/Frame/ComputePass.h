@@ -137,15 +137,27 @@ public:
     // declares the target's kind as a depth texture - depth2d,
     // depth2d_array, depthcube in MSL, Texture2D<float> or Texture2DArray<float>
     // in HLSL, sampler2D in GLSL - and reads it with read() or a sample, one
-    // float. Level 0 of every slice, as the fragment bind gives; on Vulkan
-    // layer 0 only (see "Depth" in the README). What a hi-Z pyramid copies its
-    // first level out of, and what an ambient-occlusion pass starts from.
+    // float. Level 0 of every slice, as the fragment bind gives. What a hi-Z
+    // pyramid copies its first level out of, and what an ambient-occlusion
+    // pass starts from.
     void setInputDepthTexture(const Texture& renderTarget,
                               int slot,
                               TextureSampling sampling = {});
     void setInputDepthTexture(const Texture& renderTarget,
                               int slot,
                               const Sampler& sampler);
+
+    // One slice of that depth plane as a plain 2D depth texture, for a kernel
+    // that declares depth2d: the compute twin of
+    // RenderPass::setFragmentDepthTextureSlice, under its rules.
+    void setInputDepthTextureSlice(const Texture& renderTarget,
+                                   int slice,
+                                   int slot,
+                                   TextureSampling sampling = {});
+    void setInputDepthTextureSlice(const Texture& renderTarget,
+                                   int slice,
+                                   int slot,
+                                   const Sampler& sampler);
 
     // Uploads a small uniform block without a buffer object, like the render
     // pass's setVertexBytes. slot is the uniform-block slot (0 = first block).

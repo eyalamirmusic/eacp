@@ -286,7 +286,8 @@ void VulkanShared::destroyImageView(VkImageView view)
 
 VulkanRenderPassBegin
     prepareVulkanRenderPass(const VkRenderingInfo& rendering,
-                            std::span<VulkanTextureData* const> targets)
+                            std::span<VulkanTextureData* const> targets,
+                            VkFormat depthFormat)
 {
     auto& shared = getVulkanShared();
 
@@ -324,7 +325,7 @@ VulkanRenderPassBegin
 
     if (depth != nullptr)
     {
-        key.depthFormat = first.depthFormat;
+        key.depthFormat = depthFormat;
         key.stencil = rendering.pStencilAttachment != nullptr;
         key.depthLoad = depth->loadOp;
         key.depthStore = depth->storeOp;

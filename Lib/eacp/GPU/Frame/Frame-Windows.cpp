@@ -405,7 +405,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
                                        const RenderPassDescriptor& descriptor)
 {
-    if (impl->commands == nullptr || !canRenderInto(targets))
+    if (impl->commands == nullptr || !canRenderInto(targets, descriptor))
         return RenderPass(nullptr);
 
     auto& context = impl->context();
@@ -458,11 +458,12 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
         }
     }
 
-    auto* first =
-        static_cast<D3D12TextureData*>(targets[0].texture->nativeTexture());
     const auto& firstTarget = targets[0];
+    const auto depthFrom = depthSource(targets, descriptor);
+    auto* depthOwner =
+        static_cast<D3D12TextureData*>(depthFrom.texture->nativeTexture());
     const auto dsv = d3d12DepthTargetView(
-        *first, firstTarget.level, firstTarget.slice, firstTarget.layerCount);
+        *depthOwner, depthFrom.level, depthFrom.slice, depthFrom.layerCount);
     auto hasDepth = dsv.ptr != 0;
 
     // The return half of the pair RenderPass::setFragmentDepthTexture opens: a
@@ -470,7 +471,7 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
     // PIXEL_SHADER_RESOURCE, and attaching it needs it back in DEPTH_WRITE. A
     // target whose depth was never made sampleable has never left that state and
     // the helper records nothing.
-    transitionDepthForUse(list, *first, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    transitionDepthForUse(list, *depthOwner, D3D12_RESOURCE_STATE_DEPTH_WRITE);
 
     list->OMSetRenderTargets(static_cast<UINT>(targets.size()),
                              attachments.data(),
@@ -512,7 +513,7 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
     // to decide, the resource keeping what was written to it either way.
     if (hasDepth && descriptor.depthAction != DepthAction::Resume)
         list->ClearDepthStencilView(dsv,
-                                    depthClearFlags(first->hasStencil()),
+                                    depthClearFlags(depthOwner->hasStencil()),
                                     1.0f,
                                     descriptor.clearStencil,
                                     0,

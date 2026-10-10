@@ -141,4 +141,18 @@ void recordCopyToBuffer(void* recording, const BufferTextureCopyPlan& plan)
                                          * (NSUInteger) plan.height];
         });
 }
+
+// Every slice, cube face and volume image at once; Metal filters each level
+// from the one above it.
+void recordMipGeneration(void* recording, const Texture& texture)
+{
+    auto metalTexture = metalTextureOf(texture);
+
+    if (metalTexture == nil)
+        return;
+
+    withBlitEncoder(recording,
+                    [&](id<MTLBlitCommandEncoder> blit)
+                    { [blit generateMipmapsForTexture:metalTexture]; });
+}
 } // namespace eacp::GPU

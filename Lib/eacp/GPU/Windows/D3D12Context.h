@@ -198,6 +198,13 @@ public:
 
     const DepthResolveShader& getDepthResolveShader(bool withStencil);
 
+    // The box-filter kernels Frame::generateMipmaps dispatches, one level from
+    // the one above it through two UAVs of one resource: kind 0 a 2D texture
+    // (RWTexture2D), 1 any arrayed kind, cubes included (RWTexture2DArray, a
+    // dispatch layer per slice), 2 a volume (RWTexture3D). Against the shared
+    // compute root signature, at texture slots 0 and 1; built on first use.
+    ID3D12PipelineState* getMipShader(int kind);
+
     ID3D12RootSignature* getRenderRootSignature() const
     {
         return renderRootSignature.get();
@@ -246,6 +253,7 @@ private:
     std::map<std::pair<bool, UINT>, winrt::com_ptr<ID3D12CommandSignature>>
         drawSignatures;
     DepthResolveShader depthResolveShaders[2];
+    winrt::com_ptr<ID3D12PipelineState> mipShaders[3];
 
     std::uint64_t generation = 1;
 };

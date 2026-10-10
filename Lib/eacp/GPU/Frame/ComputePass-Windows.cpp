@@ -351,6 +351,50 @@ void ComputePass::setInputDepthTexture(const Texture& renderTarget,
         computeSamplerParam(slot), descriptor);
 }
 
+void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            TextureSampling)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+
+    if (data == nullptr || !data->hasSampleableDepth())
+        return;
+
+    const auto view = data->depthSliceView(slice);
+
+    if (view.ptr == 0)
+        return;
+
+    auto* list = impl->encoder->commands->list.get();
+
+    transitionDepthForUse(
+        list, *data, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), view);
+}
+
+void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            const Sampler& sampler)
+{
+    setInputDepthTextureSlice(renderTarget, slice, slot, TextureSampling {});
+
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    const auto descriptor = perBindSamplerDescriptor(sampler);
+
+    if (descriptor.ptr == 0)
+        return;
+
+    impl->encoder->commands->list->SetComputeRootDescriptorTable(
+        computeSamplerParam(slot), descriptor);
+}
+
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     // The `bytes <= 0` half is what keeps the cast below honest: a negative

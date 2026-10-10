@@ -341,6 +341,20 @@ bool Device::supportsComputeReadWrite(TextureFormat format) const
     return false;
 }
 
+bool Device::supportsMipGeneration(TextureFormat format) const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil || isCompressedFormat(format) || isIntegerFormat(format))
+        return false;
+
+    const auto fullFloat = format == TextureFormat::R32Float
+                           || format == TextureFormat::RG32Float
+                           || format == TextureFormat::RGBA32Float;
+
+    return !fullFloat || metalDevice.supports32BitFloatFiltering;
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? ComputePass::maxBufferSlots : 0;

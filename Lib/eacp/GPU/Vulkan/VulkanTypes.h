@@ -284,7 +284,8 @@ struct VulkanSubresourceView
         DepthAttachment,
         Sampled,
         Storage,
-        SampledArray
+        SampledArray,
+        DepthSlice
     };
 
     Use use = Use::ColorAttachment;
@@ -465,7 +466,8 @@ struct VulkanRenderPassBegin
 
 VulkanRenderPassBegin
     prepareVulkanRenderPass(const VkRenderingInfo& rendering,
-                            std::span<VulkanTextureData* const> targets);
+                            std::span<VulkanTextureData* const> targets,
+                            VkFormat depthFormat);
 
 void beginVulkanRenderPass(VkCommandBuffer commandBuffer,
                            const VulkanRenderPassBegin& begin);
@@ -504,6 +506,11 @@ VkImageView vulkanLevelView(VulkanTextureData& data, bool storage, int level);
 // One level of a cube or a cube array, every slice, sampled as a 2D array.
 // Null on any other kind; a storage view of a cube is a 2D array already.
 VkImageView vulkanSampledArrayView(VulkanTextureData& data, int level);
+
+// Level 0 of one slice of the sampleable depth plane as a 2D view, for the
+// ...DepthTextureSlice binds; depthReadView for slice 0 of a 2D target. Null
+// without sampleableDepth or for a slice the plane lacks.
+VkImageView vulkanDepthSliceView(VulkanTextureData& data, int slice);
 
 // Hands every view in subresourceViews to `context`'s deferred release.
 void releaseVulkanSubresourceViews(VulkanContext& context, VulkanTextureData& data);
@@ -642,6 +649,10 @@ struct VulkanRenderEncoder
 
     VkQueryPool queryPool = VK_NULL_HANDLE;
     int endQuery = -1;
+
+    // The target whose depth plane is attached: targets[0], or the pass's
+    // DepthTarget. Its plane goes back to its resting use with the colours.
+    VulkanTextureData* depthTarget = nullptr;
 };
 
 inline void recordPassEndTimestamp(CommandContext* commands,

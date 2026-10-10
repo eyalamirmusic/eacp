@@ -91,6 +91,12 @@ std::optional<BufferCopyPlan> planBufferCopy(const Buffer& source,
                                              std::int64_t destinationOffset,
                                              std::int64_t bytes);
 
+// Whether Frame::generateMipmaps has work to record for `texture`: true for a
+// valid texture of more than one level in a format the device generates a
+// chain for (Device::supportsMipGeneration). A single level is nothing to do,
+// silently; anything else is refused with a trace.
+bool planMipGeneration(const Texture& texture);
+
 std::optional<BufferTextureCopyPlan> planBufferTextureCopy(
     const Buffer& buffer, const Texture& texture, const BufferTextureCopy& layout);
 } // namespace eacp::GPU

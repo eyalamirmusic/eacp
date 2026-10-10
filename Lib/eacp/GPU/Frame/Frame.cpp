@@ -42,6 +42,38 @@ bool namesImagesItHas(const ColorTarget& target)
 
     return target.slice + target.layerCount <= levelSlices(texture, target.level);
 }
+
+// Two targets on one texture are two attachments when they name different
+// levels, or runs of slices that do not meet: two layers of an array, two faces
+// of a cube, two images of a volume. A multisampled texture has one image.
+bool overlaps(const ColorTarget& a, const ColorTarget& b)
+{
+    if (a.texture != b.texture)
+        return false;
+
+    if (a.texture->sampleCount() > 1)
+        return true;
+
+    if (a.level != b.level)
+        return false;
+
+    return a.slice < b.slice + b.layerCount && b.slice < a.slice + a.layerCount;
+}
+
+// A single-sampled target with a depth plane, at an image it has, the size of
+// the first colour target's level; the run is the first target's.
+bool canTakeDepthFrom(const ColorTarget& depth, const ColorTarget& first)
+{
+    const auto& texture = *depth.texture;
+
+    return texture.isValid() && texture.isRenderTarget() && texture.hasDepth()
+           && texture.sampleCount() == 1 && first.texture->sampleCount() == 1
+           && namesImagesItHas(depth)
+           && levelWidth(texture, depth.level)
+                  == levelWidth(*first.texture, first.level)
+           && levelHeight(texture, depth.level)
+                  == levelHeight(*first.texture, first.level);
+}
 } // namespace
 
 float Frame::backingScale() const
@@ -86,7 +118,24 @@ RenderPass Frame::beginMultiTargetPass(std::span<const Texture* const> targets,
         descriptor);
 }
 
-bool Frame::canRenderInto(std::span<const ColorTarget> targets)
+ColorTarget Frame::depthSource(std::span<const ColorTarget> targets,
+                               const RenderPassDescriptor& descriptor)
+{
+    auto source = targets[0];
+    const auto& depth = descriptor.depthTarget;
+
+    if (depth.texture != nullptr)
+    {
+        source.texture = depth.texture;
+        source.level = depth.level;
+        source.slice = depth.slice;
+    }
+
+    return source;
+}
+
+bool Frame::canRenderInto(std::span<const ColorTarget> targets,
+                          const RenderPassDescriptor& descriptor)
 {
     if (targets.empty() || targets.size() > (std::size_t) maxColorAttachments)
     {
@@ -126,12 +175,21 @@ bool Frame::canRenderInto(std::span<const ColorTarget> targets)
 
         for (auto other = std::size_t {0}; other < index; ++other)
         {
-            if (targets[other].texture == texture)
+            if (overlaps(targets[other], targets[index]))
             {
-                LOG("eacp: a pass names one texture as two colour targets");
+                LOG("eacp: a pass names one image of a texture as two colour "
+                    "targets");
                 return false;
             }
         }
+    }
+
+    if (descriptor.depthTarget.texture != nullptr
+        && !canTakeDepthFrom(depthSource(targets, descriptor), targets[0]))
+    {
+        LOG("eacp: a pass's depth target is not a single-sampled render target "
+            "with depth at an image of the pass's size");
+        return false;
     }
 
     return true;
@@ -181,5 +239,11 @@ void Frame::copy(const Texture& source,
 {
     if (auto plan = planBufferTextureCopy(destination, source, layout))
         recordCopyToBuffer(nativeRecording(), *plan);
+}
+
+void Frame::generateMipmaps(const Texture& texture)
+{
+    if (planMipGeneration(texture))
+        recordMipGeneration(nativeRecording(), texture);
 }
 } // namespace eacp::GPU

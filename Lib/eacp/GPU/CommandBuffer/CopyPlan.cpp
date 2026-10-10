@@ -1,5 +1,7 @@
 #include "CopyPlan.h"
 
+#include "../Device/Device.h"
+
 #include <eacp/Core/Utils/Logging.h>
 
 #include <algorithm>
@@ -324,5 +326,26 @@ std::optional<BufferTextureCopyPlan> planBufferTextureCopy(
     }
 
     return plan;
+}
+bool planMipGeneration(const Texture& texture)
+{
+    if (!texture.isValid())
+    {
+        LOG("eacp: generateMipmaps on an invalid texture is refused");
+        return false;
+    }
+
+    if (texture.mipLevels() < 2)
+        return false;
+
+    if (!Device::shared().supportsMipGeneration(texture.format()))
+    {
+        LOG("eacp: generateMipmaps is refused for a texture whose format the "
+            "device does not filter into a chain; see "
+            "Device::supportsMipGeneration");
+        return false;
+    }
+
+    return true;
 }
 } // namespace eacp::GPU

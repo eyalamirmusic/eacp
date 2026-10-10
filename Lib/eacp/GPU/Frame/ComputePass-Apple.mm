@@ -228,6 +228,28 @@ void ComputePass::setInputDepthTexture(const Texture& renderTarget,
                      sampler.nativeSampler());
 }
 
+void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            TextureSampling sampling)
+{
+    bindInputTexture(impl->encoder.get(),
+                     (__bridge id<MTLTexture>) renderTarget.nativeDepthSliceView(slice),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
+}
+
+void ComputePass::setInputDepthTextureSlice(const Texture& renderTarget,
+                                            int slice,
+                                            int slot,
+                                            const Sampler& sampler)
+{
+    bindInputTexture(impl->encoder.get(),
+                     (__bridge id<MTLTexture>) renderTarget.nativeDepthSliceView(slice),
+                     slot,
+                     sampler.nativeSampler());
+}
+
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     if (auto activeEncoder = impl->encoder.get())

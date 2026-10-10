@@ -282,6 +282,23 @@ bool Device::supportsComputeReadWrite(TextureFormat format) const
     return supportsComputeWrite(format);
 }
 
+// A chain of vkCmdBlitImage with a linear filter, level to level.
+bool Device::supportsMipGeneration(TextureFormat format) const
+{
+    if (!isValid() || isCompressedFormat(format) || isIntegerFormat(format))
+        return false;
+
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(
+        getVulkanShared().getPhysicalDevice(), toVkFormat(format), &properties);
+
+    constexpr auto needed = VkFormatFeatureFlags {
+        VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT
+        | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT};
+
+    return (properties.optimalTilingFeatures & needed) == needed;
+}
+
 int Device::maxThreadgroupMemory() const
 {
     if (!isValid())

@@ -125,12 +125,18 @@ struct Frame::Native
         VulkanTextureData* const targets[] = {&data};
         const VulkanClear clears[] = {{descriptor.clearColor, descriptor.clear}};
 
-        return beginPassOn(targets, clears, descriptor);
+        return beginPassOn(targets, clears, descriptor, data, 0, 0);
     }
 
+    // `depthData` is the target whose depth plane is attached, at `depthLevel`
+    // and from `depthSlice`: the first colour target's own unless the pass
+    // named a DepthTarget.
     RenderPass beginPassOn(std::span<VulkanTextureData* const> targets,
                            std::span<const VulkanClear> clears,
-                           const RenderPassDescriptor& descriptor)
+                           const RenderPassDescriptor& descriptor,
+                           VulkanTextureData& depthData,
+                           int depthLevel,
+                           int depthSlice)
     {
         if (commands == nullptr)
             return RenderPass(nullptr);
@@ -167,8 +173,8 @@ struct Frame::Native
         }
 
         const auto& first = clears[0];
-        const auto depthView =
-            vulkanDepthTargetView(data, first.level, first.slice, first.layerCount);
+        const auto depthView = vulkanDepthTargetView(
+            depthData, depthLevel, depthSlice, first.layerCount);
         const auto width = levelExtent(data.width, first.level);
         const auto height = levelExtent(data.height, first.level);
 
@@ -211,8 +217,8 @@ struct Frame::Native
             }
         }
 
-        transitionDepthForUse(buffer, data, imageDepthAttachment);
-        transitionResolvedDepthForUse(buffer, data, imageDepthAttachment);
+        transitionDepthForUse(buffer, depthData, imageDepthAttachment);
+        transitionResolvedDepthForUse(buffer, depthData, imageDepthAttachment);
 
         VkRenderingAttachmentInfo depthAttachment = {};
         depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -227,10 +233,10 @@ struct Frame::Native
         // identically, so the stencil attachment shares this mode and view.
         // Texture refuses such a target where the device cannot resolve it, so
         // a resolve view here always has a mode to be resolved with.
-        if (data.resolvedDepthAttachmentView != VK_NULL_HANDLE)
+        if (depthData.resolvedDepthAttachmentView != VK_NULL_HANDLE)
         {
             depthAttachment.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
-            depthAttachment.resolveImageView = data.resolvedDepthAttachmentView;
+            depthAttachment.resolveImageView = depthData.resolvedDepthAttachmentView;
             depthAttachment.resolveImageLayout = imageDepthAttachment.layout;
         }
 
@@ -245,7 +251,7 @@ struct Frame::Native
         {
             rendering.pDepthAttachment = &depthAttachment;
 
-            if (data.hasStencil())
+            if (depthData.hasStencil())
                 rendering.pStencilAttachment = &depthAttachment;
         }
 
@@ -254,7 +260,8 @@ struct Frame::Native
 
         if (usesRenderPasses)
         {
-            renderPass = prepareVulkanRenderPass(rendering, targets);
+            renderPass =
+                prepareVulkanRenderPass(rendering, targets, depthData.depthFormat);
 
             if (!renderPass.isValid())
                 return RenderPass(nullptr);
@@ -265,6 +272,8 @@ struct Frame::Native
 
         for (auto* target: targets)
             encoder->targets.add(target);
+
+        encoder->depthTarget = &depthData;
 
         timePass(*encoder, descriptor.label);
 
@@ -428,7 +437,7 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
                                        const RenderPassDescriptor& descriptor)
 {
-    if (!canRenderInto(targets))
+    if (!canRenderInto(targets, descriptor))
         return RenderPass(nullptr);
 
     auto data = std::array<VulkanTextureData*, maxColorAttachments> {};
@@ -449,9 +458,19 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
             return RenderPass(nullptr);
     }
 
+    const auto depthFrom = depthSource(targets, descriptor);
+    auto* depthData =
+        static_cast<VulkanTextureData*>(depthFrom.texture->nativeTexture());
+
+    if (depthData == nullptr)
+        return RenderPass(nullptr);
+
     return impl->beginPassOn(std::span {data.data(), targets.size()},
                              std::span {clears.data(), targets.size()},
-                             descriptor);
+                             descriptor,
+                             *depthData,
+                             depthFrom.level,
+                             depthFrom.slice);
 }
 
 ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
