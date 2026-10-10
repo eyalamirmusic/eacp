@@ -384,6 +384,112 @@ auto tOneChannelWhereWritable =
 // A path rasterized into a slot of the atlas, read back, against the same path
 // rasterized into a texture of its own: the coverage an atlas-backed shape
 // samples is the coverage the path has, whichever format the atlas is in.
+
+auto tCompactsBeforeGrowing =
+    test("CoverageAtlas/compactsRatherThanGrowsWhenLittleOfItIsLive") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+
+    atlas.allocate(600, 600);
+    atlas.takeMovedFlag();
+    atlas.forgetAllocations();
+
+    auto size = atlas.getWidth();
+    auto tall = atlas.allocate(20, size - 24);
+
+    atlas.release(tall);
+
+    auto generation = atlas.generation();
+    auto slot = atlas.allocate(size - 16, 40);
+
+    check(atlas.takeMovedFlag(), "every slot handed out has moved");
+    check(atlas.getWidth() == size, "compacted in place, not grown");
+    check(atlas.generation() != generation);
+    check(slot.width == size - 16);
+    check(insideAtlas(atlas, slot));
+};
+
+auto tGrowsWhenCompactionCannotHelp =
+    test("CoverageAtlas/growsWhenTheLiveSlotsStillDoNotFitAfterCompacting") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+
+    atlas.allocate(600, 600);
+    atlas.takeMovedFlag();
+    atlas.forgetAllocations();
+
+    auto size = atlas.getWidth();
+
+    atlas.allocate(20, size - 24);
+    atlas.allocate(size - 16, 40);
+
+    check(atlas.takeMovedFlag());
+    check(atlas.getWidth() == size, "little is reserved, so it compacts first");
+
+    atlas.forgetAllocations();
+    atlas.allocate(20, size - 24);
+    atlas.allocate(size - 16, 40);
+
+    check(atlas.takeMovedFlag());
+    check(atlas.getWidth() == size * 2,
+          "and grows once the compaction was not enough");
+};
+
+auto tGrowsWhenFull =
+    test("CoverageAtlas/growsRatherThanCompactsWhenMostOfItIsLive") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+
+    atlas.allocate(600, 600);
+    atlas.takeMovedFlag();
+    atlas.forgetAllocations();
+
+    auto size = atlas.getWidth();
+    auto quarter = size / 2 - 12;
+
+    for (auto i = 0; i < 4; ++i)
+        check(atlas.allocate(quarter, quarter).width == quarter);
+
+    check(!atlas.takeMovedFlag(), "four quarters fit");
+    check(atlas.getFillFraction() > 0.5f);
+
+    atlas.allocate(quarter, quarter);
+
+    check(atlas.takeMovedFlag());
+    check(atlas.getWidth() == size * 2);
+};
+
+auto tShelvesByHeight = test("CoverageAtlas/slotsOfOneHeightShareAShelf") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+
+    atlas.allocate(600, 600);
+    atlas.takeMovedFlag();
+    atlas.forgetAllocations();
+
+    auto size = atlas.getWidth();
+
+    for (auto i = 0; i < 8; ++i)
+    {
+        atlas.allocate(size / 2 - 8, 200);
+        atlas.allocate(size / 4, 20);
+    }
+
+    check(!atlas.takeMovedFlag(), "short masks do not each take a tall row");
+};
+
 auto tSlotReadsLikeSolo = test("CoverageAtlas/aPathReadsTheSameThroughTheAtlas") = []
 {
     if (!hasDevice())
@@ -955,4 +1061,189 @@ auto tHostShrinkDrawsTheSameFrame =
     check(isRedAt(*shrankOn, 500, 25),
           "the strip, drawn on the frame of the shrink");
     check(!isRedAt(*shrankOn, 500, 60), "and nothing else");
+};
+
+namespace
+{
+struct Panel final : Component
+{
+    explicit Panel(int index)
+    {
+        add({30.f, 200.f + (float) index});
+
+        for (auto i = 0; i < 10; ++i)
+        {
+            auto step = (float) (index * 10 + i);
+
+            add({60.f + step * 0.5f, 60.f + step * 0.5f});
+            add({20.f + step * 0.25f, 20.f + step * 0.25f});
+        }
+    }
+
+    void add(Point size)
+    {
+        sizes.add(size);
+        addAndMakeVisible(shapes.createNew(Rect {0.f, 0.f, size.x, size.y}));
+    }
+
+    void scaleShapes(float factor)
+    {
+        for (auto i = 0; i < shapes.size(); ++i)
+            shapes[i]->shape.setPath(
+                rectPath({0.f, 0.f, sizes[i].x * factor, sizes[i].y * factor}));
+    }
+
+    Vector<Point> sizes;
+    OwnedVector<Filled> shapes;
+};
+
+struct Panels final : Component
+{
+    explicit Panels(int count)
+    {
+        for (auto i = 0; i < count; ++i)
+            addAndMakeVisible(panels.createNew(i));
+    }
+
+    void resized() override
+    {
+        for (auto& panel: panels)
+            panel->setBounds(getLocalBounds());
+    }
+
+    void scaleShapes(float factor)
+    {
+        for (auto& panel: panels)
+            panel->scaleShapes(factor);
+    }
+
+    OwnedVector<Panel> panels;
+};
+
+GPUWidgets::Path ellipsePath(const Rect& area)
+{
+    auto path = GPUWidgets::Path {};
+    path.addEllipse(area);
+    return path;
+}
+
+bool sameRegion(const eacp::Graphics::Image& a,
+                const eacp::Graphics::Image& b,
+                const Rect& area)
+{
+    for (auto y = (int) area.y; y < (int) (area.y + area.h); ++y)
+    {
+        for (auto x = (int) area.x; x < (int) (area.x + area.w); ++x)
+        {
+            auto p = a.at(x, y);
+            auto q = b.at(x, y);
+
+            if (p.r != q.r || p.g != q.g || p.b != q.b || p.a != q.a)
+                return false;
+        }
+    }
+
+    return true;
+}
+} // namespace
+
+auto tResizedTreeCompacts =
+    test("CoverageAtlas/aResizedTreeCompactsRatherThanGrowingPastWhatItHolds") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto root = Panels {4};
+    auto host = ComponentHost {};
+    settle(host, root, 818.f);
+
+    (void) host.renderToImage(2.f);
+
+    check(host.getAtlasSize() == 2048);
+
+    root.scaleShapes(1.2f);
+    (void) host.renderToImage(2.f);
+
+    check(host.getAtlasSize() == 2048,
+          "grown to " + std::to_string(host.getAtlasSize()) + " at "
+              + std::to_string(host.getAtlasFillFraction()) + " full");
+    check(host.getLastDroppedPathCount() == 0);
+};
+
+auto tSeveralGrowsInOneWalk =
+    test("CoverageAtlas/aTreeThatGrowsTheAtlasSeveralTimesDropsNothing") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto root = Panels {6};
+    auto host = ComponentHost {};
+    settle(host, root, 818.f);
+
+    (void) host.renderToImage(2.f);
+
+    check(host.getLastDroppedPathCount() == 0,
+          std::to_string(host.getLastDroppedPathCount()) + " dropped");
+};
+
+auto tCompactionKeepsUVs =
+    test("CoverageAtlas/aShapeDrawsTheSamePixelsAfterTheAtlasCompacts") = []
+{
+    if (!hasDevice())
+        return;
+
+    struct Root final : Component
+    {
+        Root()
+            : growing(rectPath({0.f, 0.f, 10.f, 10.f}))
+            , kept(ellipsePath({0.f, 0.f, 97.f, 61.f}))
+        {
+            addAndMakeVisible(growing);
+            addAndMakeVisible(kept);
+        }
+
+        void resized() override
+        {
+            growing.setBounds({0.f, 100.f, 400.f, 300.f});
+            kept.setBounds({10.f, 10.f, 97.f, 61.f});
+        }
+
+        Filled growing;
+        Filled kept;
+    };
+
+    auto root = Root {};
+    auto host = ComponentHost {};
+    settle(host, root, 400.f);
+
+    auto before = host.renderToImage(1.f);
+    auto keptArea = Rect {10.f, 10.f, 97.f, 61.f};
+
+    check(isRedAt(before, 58, 40), "the ellipse is drawn");
+
+    auto compactedOn = std::optional<eacp::Graphics::Image> {};
+    auto size = host.getAtlasSize();
+    auto fill = host.getAtlasFillFraction();
+
+    for (auto step = 1; step < 200 && !compactedOn; ++step)
+    {
+        auto edge = 10.f + (float) step * 2.f;
+        root.growing.shape.setPath(rectPath({0.f, 0.f, edge, edge * 0.5f}));
+
+        auto image = host.renderToImage(1.f);
+
+        if (host.getAtlasSize() == size && host.getAtlasFillFraction() < fill)
+            compactedOn = image;
+
+        size = host.getAtlasSize();
+        fill = host.getAtlasFillFraction();
+    }
+
+    check(compactedOn.has_value(), "the atlas compacted");
+
+    if (!compactedOn)
+        return;
+
+    check(sameRegion(before, *compactedOn, keptArea),
+          "the ellipse reads its own texels through its new uv");
 };

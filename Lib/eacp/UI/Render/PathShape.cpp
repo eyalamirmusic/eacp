@@ -235,6 +235,9 @@ void PathShape::rasterize(CoverageAtlas& atlas,
     // steady state allocates nothing at all.
     if (!placed || width > slot.width || height > slot.height)
     {
+        if (placed)
+            atlas.release(slot);
+
         slot = atlas.allocate(width, height);
         placed = slot.width > 0;
 

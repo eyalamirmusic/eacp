@@ -35,6 +35,19 @@ constexpr auto maximumSize = 4096;
 constexpr auto quietWalksToShrink = 120;
 constexpr auto maximumQuietWalks = quietWalksToShrink * 16;
 
+constexpr auto shelfRounding = 8;
+
+int shelfHeightFor(int height)
+{
+    return (height + shelfRounding - 1) / shelfRounding * shelfRounding;
+}
+
+bool shelfSuits(int shelfHeight, int height)
+{
+    return height <= shelfHeight
+           && shelfHeight - height < std::max(shelfRounding, height / 4);
+}
+
 // Where a mask lands on an empty shelf: beside the opaque corner if the room
 // left in the first row is wide enough, and on the row below it otherwise. A
 // mask that fits neither does not fit an *empty* atlas of this size, which is
@@ -79,6 +92,16 @@ int CoverageAtlas::getHeight() const
     return texture->height();
 }
 
+void CoverageAtlas::repackAt(int size)
+{
+    if (size == texture->width())
+        reset();
+    else
+        resizeTo(size);
+
+    ++atlasGeneration;
+}
+
 void CoverageAtlas::resizeTo(int size)
 {
     auto descriptor = describeAtlas(size);
@@ -105,10 +128,10 @@ void CoverageAtlas::reset()
 {
     // The opaque corner is part of the texture rather than an allocation, so the
     // first shelf starts beside it and no slot can ever be handed it by mistake.
-    cursorX = opaqueSize;
-    cursorY = 0;
-    rowHeight = opaqueSize;
+    shelves.clear();
+    shelves.add({0, opaqueSize, opaqueSize, true});
     usedTexels = opaqueSize * opaqueSize;
+    releasedTexels = 0;
     widestSlot = 0;
     tallestSlot = 0;
 }
@@ -150,7 +173,46 @@ Rect CoverageAtlas::uvFor(int x, int y, int width, int height) const
 
 bool CoverageAtlas::isShelfEmpty() const
 {
-    return cursorY == 0 && cursorX == opaqueSize;
+    return shelves.size() == 1 && shelves[0].empty;
+}
+
+CoverageAtlas::Shelf* CoverageAtlas::findShelf(int width, int height)
+{
+    auto size = texture->width();
+    auto* best = (Shelf*) nullptr;
+
+    for (auto& shelf: shelves)
+        if (shelf.x + width <= size && shelfSuits(shelf.height, height)
+            && (best == nullptr || shelf.height < best->height))
+            best = &shelf;
+
+    if (best != nullptr)
+        return best;
+
+    auto& last = shelves.back();
+
+    if (last.empty && last.x + width <= size && last.y + height <= size)
+    {
+        last.height =
+            std::max(last.height, std::min(shelfHeightFor(height), size - last.y));
+        return &last;
+    }
+
+    auto below = last.y + last.height;
+
+    if (width <= size && below + height <= size)
+    {
+        shelves.add(
+            {below, std::min(shelfHeightFor(height), size - below), 0, true});
+        return &shelves.back();
+    }
+
+    for (auto& shelf: shelves)
+        if (shelf.x + width <= size && height <= shelf.height
+            && (best == nullptr || shelf.height < best->height))
+            best = &shelf;
+
+    return best;
 }
 
 std::optional<CoverageAtlas::Slot> CoverageAtlas::placeOnShelf(int width, int height)
@@ -160,35 +222,20 @@ std::optional<CoverageAtlas::Slot> CoverageAtlas::placeOnShelf(int width, int he
     if (width > size || height > size)
         return {};
 
-    auto x = cursorX;
-    auto y = cursorY;
-    auto row = rowHeight;
+    auto* shelf = findShelf(width, height);
 
-    // The current row is out of width, so the next one starts below the tallest
-    // thing on this one. Worked out before anything is committed, because a row
-    // that turns out to run off the bottom must leave the shelf as it was --
-    // the caller is about to move the whole atlas, and it will start again from
-    // an empty one anyway.
-    if (x + width > size)
-    {
-        x = 0;
-        y += row;
-        row = 0;
-    }
-
-    if (y + height > size)
+    if (shelf == nullptr)
         return {};
 
     auto slot = Slot {};
-    slot.x = x;
-    slot.y = y;
+    slot.x = shelf->x;
+    slot.y = shelf->y;
     slot.width = width;
     slot.height = height;
-    slot.uv = uvFor(x, y, width, height);
+    slot.uv = uvFor(slot.x, slot.y, width, height);
 
-    cursorX = x + width;
-    cursorY = y;
-    rowHeight = std::max(row, height);
+    shelf->x += width;
+    shelf->empty = false;
     usedTexels += (std::int64_t) width * height;
     widestSlot = std::max(widestSlot, width);
     tallestSlot = std::max(tallestSlot, height);
@@ -208,44 +255,49 @@ bool CoverageAtlas::makeRoomFor(int width, int height)
     if (!fitsEmptyShelf(width, height, maximumSize))
         return false;
 
-    auto size = texture->width();
-
-    // Growing is the first answer while there is anywhere to grow to, being the
-    // one that ends with more room than it started with -- an interface that
-    // keeps needing a little more settles at a size instead of compacting every
-    // frame. Straight to a size that holds this mask rather than one doubling
-    // per attempt, so the caller's next placement cannot fail for want of room
-    // that another doubling would have found.
-    if (size < maximumSize)
+    if (shouldCompactFor(width, height))
     {
-        auto grown = size * 2;
-
-        while (grown < maximumSize && !fitsEmptyShelf(width, height, grown))
-            grown *= 2;
-
-        resizeTo(grown);
+        repackAt(texture->width());
         moved = true;
-        ++atlasGeneration;
-
-        // A grow inside the window after a shrink is the shrink having been
-        // wrong, so the next one waits twice as long.
-        if (walksSinceShrink < quietWalksNeeded)
-            quietWalksNeeded = std::min(quietWalksNeeded * 2, maximumQuietWalks);
-
-        walksSinceGrow = 0;
+        compactedThisWalk = true;
         return true;
     }
 
-    // As large as it goes, so compacting is what is left -- and only if there is
-    // something to compact. An empty shelf at the largest size has already given
-    // everything it has.
-    if (isShelfEmpty())
+    auto size = texture->width();
+
+    if (size >= maximumSize)
         return false;
 
-    reset();
+    auto grown = size * 2;
+
+    while (grown < maximumSize && !fitsEmptyShelf(width, height, grown))
+        grown *= 2;
+
+    repackAt(grown);
     moved = true;
-    ++atlasGeneration;
+
+    // A grow inside the window after a shrink is the shrink having been
+    // wrong, so the next one waits twice as long.
+    if (walksSinceShrink < quietWalksNeeded)
+        quietWalksNeeded = std::min(quietWalksNeeded * 2, maximumQuietWalks);
+
+    walksSinceGrow = 0;
     return true;
+}
+
+bool CoverageAtlas::shouldCompactFor(int width, int height) const
+{
+    auto size = texture->width();
+
+    if (isShelfEmpty() || compactionReplayed || !fitsEmptyShelf(width, height, size))
+        return false;
+
+    if (size >= maximumSize)
+        return true;
+
+    auto live = usedTexels - releasedTexels + (std::int64_t) width * height;
+
+    return live * 2 <= (std::int64_t) size * size;
 }
 
 CoverageAtlas::Slot CoverageAtlas::allocate(int width, int height)
@@ -282,6 +334,8 @@ bool CoverageAtlas::shrinkToFit()
 {
     walksSinceGrow = std::min(walksSinceGrow + 1, maximumQuietWalks);
     walksSinceShrink = std::min(walksSinceShrink + 1, maximumQuietWalks);
+    compactedThisWalk = false;
+    compactionReplayed = false;
 
     if (!relocationAllowed || walksSinceGrow < quietWalksNeeded)
         return false;
@@ -297,8 +351,7 @@ bool CoverageAtlas::shrinkToFit()
     if (target >= size)
         return false;
 
-    resizeTo(target);
-    ++atlasGeneration;
+    repackAt(target);
 
     // A resize as much as a grow is, so the next one waits its own window.
     walksSinceGrow = 0;
@@ -328,7 +381,14 @@ void CoverageAtlas::setRelocationAllowed(bool allowed)
 
 void CoverageAtlas::forgetAllocations()
 {
+    compactionReplayed = compactedThisWalk;
     reset();
+}
+
+void CoverageAtlas::release(const Slot& slot)
+{
+    releasedTexels = std::min(
+        releasedTexels + (std::int64_t) slot.width * slot.height, usedTexels);
 }
 
 std::uint32_t CoverageAtlas::generation() const

@@ -25,12 +25,13 @@ namespace eacp::UI
 // it multiplies by one. It costs a fetch of a texel that is in the cache for the
 // whole frame, against the batch break a second pipeline would cost.
 //
-// Allocation is a shelf: rows filled left to right, a new row started below the
-// tallest so far. There is no free list, because there is nothing sensible to
-// do with a hole a widget-sized mask leaves behind. Instead a shape keeps the
-// slot it was given for as long as its mask still fits in it - which for a knob
-// being dragged is always, since the arc only shrinks - and when the shelf does
-// run out the atlas grows, or compacts if it is already as large as it goes.
+// Allocation is a set of shelves: rows filled left to right, each holding
+// masks of about its own height, a new one started below the last. There is no
+// free list, because there is nothing sensible to do with a hole a widget-sized
+// mask leaves behind. Instead a shape keeps the slot it was given for as long
+// as its mask still fits in it - which for a knob being dragged is always,
+// since the arc only shrinks - and when the shelves do run out the atlas
+// compacts if little of what it holds is still in use, and grows otherwise.
 //
 // Either of those moves every slot already handed out, which hasMoved() reports
 // so the caller can re-rasterize the lot. That is the expensive frame, and it is
@@ -69,6 +70,7 @@ public:
     // there is nowhere it can go: a mask larger than the largest atlas, or any
     // mask that needs room while relocation is not allowed.
     Slot allocate(int width, int height);
+    void release(const Slot& slot);
 
     // Whether an allocation may grow or compact to make room. Both move every
     // slot already handed out, so a caller can only survive one while it can
@@ -148,15 +150,26 @@ public:
     int getQuietWalksToShrink() const;
 
 private:
+    struct Shelf
+    {
+        int y = 0;
+        int height = 0;
+        int x = 0;
+        bool empty = true;
+    };
+
     // The two halves of an allocation: where it goes on the shelf as it stands,
     // and what can be done when the answer is nowhere. Separated because that is
     // what bounds the work -- one of each, in that order, and the second failure
     // is final.
     std::optional<Slot> placeOnShelf(int width, int height);
+    Shelf* findShelf(int width, int height);
     bool makeRoomFor(int width, int height);
+    bool shouldCompactFor(int width, int height) const;
 
     bool isShelfEmpty() const;
 
+    void repackAt(int size);
     void resizeTo(int size);
     void seedOpaqueTexel();
 
@@ -165,15 +178,12 @@ private:
 
     std::optional<GPU::Texture> texture;
 
-    // The shelf cursor: where the next slot goes, and how far down the next row
-    // starts.
-    int cursorX = 0;
-    int cursorY = 0;
-    int rowHeight = 0;
+    Vector<Shelf> shelves;
 
     // Texels handed out, including the opaque corner, which is reserved in the
     // same sense even though no allocation produced it.
     std::int64_t usedTexels = 0;
+    std::int64_t releasedTexels = 0;
 
     // The largest mask placed since the shelf was last emptied, which a smaller
     // atlas still has to hold.
@@ -189,6 +199,9 @@ private:
     int walksSinceGrow = 0;
     int walksSinceShrink = std::numeric_limits<int>::max() / 2;
     int quietWalksNeeded = 0;
+
+    bool compactedThisWalk = false;
+    bool compactionReplayed = false;
 
     bool relocationAllowed = true;
     bool moved = false;

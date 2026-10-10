@@ -8,6 +8,8 @@ namespace eacp::UI
 {
 namespace
 {
+constexpr auto maximumPathPasses = 9;
+
 bool isWithin(const Component* component, const Component& subtree)
 {
     for (; component != nullptr; component = component->getParentComponent())
@@ -724,20 +726,20 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
 
     auto walk = PathWalk {};
 
-    // Twice at most. The first pass may move the atlas under what it has already
-    // placed, and the second runs against the layout that came out of it. A
-    // third would only be needed if the whole tree's masks could not fit in one
-    // atlas at all, and then the honest outcome is that the ones that did not
-    // fit are missing rather than that the frame never ends.
-    for (auto attempt = 0; attempt < 2; ++attempt)
+    // Until a pass moves nothing. A pass may move the atlas under what it has
+    // already placed, and the next runs against the layout that came out of it.
+    // If the whole tree's masks cannot fit in one atlas at all, the honest
+    // outcome is that the ones that did not fit are missing rather than that the
+    // frame never ends.
+    for (auto attempt = 0; attempt < maximumPathPasses; ++attempt)
     {
-        // Which is only the honest outcome if the second pass is forbidden to
-        // move anything. A move there is unanswerable -- there is no third pass
-        // to rebuild what it displaced -- so a shape placed early would keep a
-        // uv into texels a later shape has since been handed, and draw that
+        // Which is only the honest outcome if the last pass is forbidden to
+        // move anything. A move there is unanswerable -- there is no pass after
+        // it to rebuild what it displaced -- so a shape placed early would keep
+        // a uv into texels a later shape has since been handed, and draw that
         // shape's coverage instead of its own. Wrong rather than missing, and
         // silent either way. Refused, the mask is simply absent and counted.
-        paths->setRelocationAllowed(attempt == 0);
+        paths->setRelocationAllowed(attempt < maximumPathPasses - 1);
 
         walk = PathWalk {};
 
