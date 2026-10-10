@@ -27,4 +27,5 @@
 #include "Widgets/PopupMenu.h"
 #include "Widgets/Tabs.h"
 #include "Widgets/TouchScroller.h"
+#include "Widgets/Viewport.h"
 #include "Widgets/Widgets.h"

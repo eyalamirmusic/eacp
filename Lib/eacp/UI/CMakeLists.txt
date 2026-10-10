@@ -33,6 +33,7 @@ target_sources(eacp-ui PRIVATE
         Widgets/PopupMenu.cpp
         Widgets/Tabs.cpp
         Widgets/TouchScroller.cpp
+        Widgets/Viewport.cpp
         Widgets/Widgets.cpp)
 
 set_default_target_setting(eacp-ui)

@@ -21,6 +21,7 @@ nano_add_executable(UITests
             TabsTests.cpp
             TextEditorTests.cpp
             TouchScrollTests.cpp
+            ViewportTests.cpp
         TARGETS eacp-ui eacp-sprites eacp-ui-network)
 
 # ModuleShaderTests emits every shader this tier builds as GLSL and compiles it
