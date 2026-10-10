@@ -1,5 +1,6 @@
 #include "ImagePatterns.h"
 
+#include <cstring>
 #include <filesystem>
 
 using namespace nano;
@@ -155,4 +156,127 @@ auto tLoadMissingFileReturnsInvalid =
                               &error);
     check(!loaded);
     check(!error.empty());
+};
+
+auto tCopySharesPixels = test("Image/copySharesPixels") = []
+{
+    auto original = makeOpaquePattern(4, 4);
+    auto copy = original;
+
+    check(copy.pixels().data() == original.pixels().data());
+    check(copy == original);
+};
+
+auto tSetOnCopyDetaches = test("Image/setOnCopyLeavesOriginalUnchanged") = []
+{
+    auto original = makeOpaquePattern(4, 4);
+    auto before = original.at(0, 0);
+    auto copy = original;
+
+    copy.set(0, 0, eacp::Graphics::Color {0.9f, 0.1f, 0.1f, 1.f});
+
+    check(copy.pixels().data() != original.pixels().data());
+    check(original.at(0, 0).r == before.r);
+    check(std::abs(copy.at(0, 0).r - 0.9f) < 0.01f);
+    check(copy != original);
+};
+
+auto tSetOnUnsharedKeepsBuffer = test("Image/setOnUnsharedImageKeepsBuffer") = []
+{
+    auto image = Image(4, 4);
+    const auto* before = image.pixels().data();
+
+    image.set(1, 1, eacp::Graphics::Color::white());
+
+    check(image.pixels().data() == before);
+};
+
+auto tSetAfterCopyDestroyedKeepsBuffer =
+    test("Image/setAfterLastCopyGoneKeepsBuffer") = []
+{
+    auto image = Image(4, 4);
+    const auto* before = image.pixels().data();
+
+    {
+        auto copy = image;
+        (void) copy;
+    }
+
+    image.set(1, 1, eacp::Graphics::Color::white());
+    check(image.pixels().data() == before);
+};
+
+auto tPrepareUnsharedReuses =
+    test("Image/prepareForOverwriteReusesUnsharedBuffer") = []
+{
+    auto image = Image(4, 4);
+    const auto* before = image.pixels().data();
+
+    auto* out = image.prepareForOverwrite(4, 4);
+
+    check(out == before);
+    check(image.pixels().data() == before);
+};
+
+auto tPrepareSharedTakesFreshBuffer =
+    test("Image/prepareForOverwriteOnSharedTakesFreshBuffer") = []
+{
+    auto original = makeOpaquePattern(4, 4);
+    auto copy = original;
+    auto expected = makeOpaquePattern(4, 4);
+
+    auto* out = copy.prepareForOverwrite(4, 4);
+    check(out != nullptr);
+    check(out != original.pixels().data());
+    std::memset(out, 0, 4 * 4 * 4);
+
+    check(original == expected);
+    check(copy.pixels().data() == out);
+    check(copy.pixels().size() == 4 * 4 * 4);
+    check(copy != original);
+};
+
+auto tNullImageAccessorsAreSafe = test("Image/emptyImageAccessorsAreSafe") = []
+{
+    auto image = Image {};
+
+    check(image.pixels().empty());
+    check(image.at(0, 0).a == 0.f);
+    image.set(0, 0, eacp::Graphics::Color::white());
+    check(image.isEmpty());
+    check(image == Image {});
+
+    auto copy = image;
+    check(copy.isEmpty());
+    check(copy.prepareForOverwrite(0, 0) == nullptr);
+    check(copy.prepareForOverwrite(2, 2) != nullptr);
+    check(copy.isValid());
+    check(image.isEmpty());
+};
+
+auto tMoveLeavesSourceEmpty = test("Image/moveLeavesSourceEmpty") = []
+{
+    auto source = makeOpaquePattern(4, 4);
+    const auto* data = source.pixels().data();
+
+    auto moved = std::move(source);
+
+    check(moved.pixels().data() == data);
+    check(moved.isValid());
+    check(source.isEmpty());
+    check(!source.isValid());
+    check(source.at(0, 0).a == 0.f);
+    source.set(0, 0, eacp::Graphics::Color::white());
+    check(source.isEmpty());
+};
+
+auto tEqualsAcrossSharedCopies = test("Image/equalsAcrossSharedCopies") = []
+{
+    auto a = makeOpaquePattern(4, 4);
+    auto b = a;
+    auto c = makeOpaquePattern(4, 4);
+
+    check(a.equals(b));
+    check(b.equals(c));
+    check(a == c);
 };
