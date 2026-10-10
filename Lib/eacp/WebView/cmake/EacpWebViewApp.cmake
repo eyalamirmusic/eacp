@@ -49,7 +49,7 @@
 #   )
 #
 # LINK_LIBRARIES is for native libraries the app's API/command headers
-# reference (e.g. a TamberLib carrying CLAP types). They are linked onto the
+# reference (e.g. a plugin library carrying CLAP types). They are linked onto the
 # app target (PUBLIC on the static lib in library mode so the exe + tests
 # inherit them, PRIVATE on the exe in legacy mode) AND onto the schema codegen
 # tool. The codegen tool default-constructs each API to walk reflect(), so it
