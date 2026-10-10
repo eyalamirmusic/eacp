@@ -221,8 +221,12 @@ auto tRawCallsCount = test("RecordedCounts/rawCallsCountAsAskedFor") = []
 
         pass.setPipeline(stages.gridKernel.pipeline());
         stages.gridKernel.bindResources(pass);
-        pass.setBytes(stages.gridKernel.packedUniforms(gridColumns, gridRows),
-                      stages.gridKernel.uniformByteSize());
+
+        // Sequenced as ComputePass::dispatch(Program&) sequences them: the size
+        // is of the packed block, and MSVC evaluates arguments right to left.
+        const auto* uniforms =
+            stages.gridKernel.packedUniforms(gridColumns, gridRows);
+        pass.setBytes(uniforms, stages.gridKernel.uniformByteSize());
         pass.dispatch(gridColumns, gridRows);
 
         check(pass.recorded()
