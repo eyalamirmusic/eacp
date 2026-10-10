@@ -53,10 +53,12 @@ struct ShaderLibrary::Native
                      source.source,
                      program.vertex,
                      vulkanTextureBinding(0));
-        compileStage(Spirv::Stage::Fragment,
-                     source.source,
-                     program.fragment,
-                     vulkanTextureBinding(0));
+
+        if (source.hasFragment())
+            compileStage(Spirv::Stage::Fragment,
+                         source.source,
+                         program.fragment,
+                         vulkanTextureBinding(0));
     }
 
     // Deferred, a pipeline holding no reference to the module it was built from.
@@ -118,7 +120,7 @@ bool ShaderLibrary::isValid() const
         return true;
 
     return impl->program.vertex != VK_NULL_HANDLE
-           && impl->program.fragment != VK_NULL_HANDLE;
+           && (!hasFragment() || impl->program.fragment != VK_NULL_HANDLE);
 }
 
 void* ShaderLibrary::nativeLibrary() const

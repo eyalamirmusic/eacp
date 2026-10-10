@@ -289,11 +289,22 @@ struct RenderPipeline::Native
         if (library == nil)
             return;
 
+        const auto hasFragment = descriptor.library->hasFragment();
         auto vertexName = @(descriptor.library->vertexEntry().c_str());
         auto fragmentName = @(descriptor.library->fragmentEntry().c_str());
 
         id<MTLFunction> vertexFunction = [library newFunctionWithName:vertexName];
-        id<MTLFunction> fragmentFunction = [library newFunctionWithName:fragmentName];
+        id<MTLFunction> fragmentFunction =
+            hasFragment ? [library newFunctionWithName:fragmentName] : nil;
+
+        if (hasFragment && fragmentFunction == nil)
+        {
+            LOG("eacp: no fragment function named ",
+                descriptor.library->fragmentEntry(),
+                " in the library");
+            [vertexFunction release];
+            return;
+        }
 
         auto pipelineDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
         pipelineDescriptor.vertexFunction = vertexFunction;
@@ -365,7 +376,7 @@ struct RenderPipeline::Native
 
         for (auto index = 0; index < descriptor.colorTargetCount(); ++index)
             describeColorTarget(pipelineDescriptor.colorAttachments[(NSUInteger) index],
-                                descriptor.colorTarget(index));
+                                writtenColorTarget(descriptor, index, hasFragment));
 
         NSError* error = nil;
         state = [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor

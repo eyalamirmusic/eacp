@@ -432,6 +432,30 @@ D3D12 — and on Apple silicon it *appears* to work, because the tile memory is
 there whether or not anything attached it. Do not read that as permission;
 `Texture::hasDepth()` is what a pipeline should be built from.
 
+### Depth without a fragment stage
+
+A depth prepass, a shadow map or an occluder pass runs no fragment shader at
+all. A source whose fragment entry is empty builds a vertex-only library, and a
+pipeline over it has a vertex stage alone:
+
+```cpp
+auto library = device.makeShaderLibrary(
+    ShaderSource::msl(source).withVertex("vertexMain").withFragment({}));
+
+auto pipeline = RenderPipelineDescriptor {};
+pipeline.library = &library;
+pipeline.depth = true;
+pipeline.colorFormat = pixelFormatFor(texture.format);
+```
+
+It writes depth and stencil and nothing else: Metal's `fragmentFunction` is
+nil, D3D12's `PS` is empty and Vulkan's pipeline has one stage, and on all
+three every colour attachment's write mask is forced to none. Depth is a plane
+of a colour target, so the pass still has that target and the pipeline still
+names its format; it is left as the pass's load found it. A named fragment
+entry the source does not have is still an invalid library or pipeline, as
+before.
+
 ### Multisampling a target
 
 `TextureDescriptor::sampleCount` above 1 grows a multisampled colour texture

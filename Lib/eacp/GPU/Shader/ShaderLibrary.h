@@ -19,6 +19,10 @@ public:
     constexpr const std::string& fragmentEntry() const { return fragmentEntryName; }
     constexpr const std::string& computeEntry() const { return computeEntryName; }
 
+    // False for a vertex-only library (ShaderSource::withFragment with an empty
+    // entry), whose pipelines have no fragment stage.
+    bool hasFragment() const { return !fragmentEntryName.empty(); }
+
     // The group the kernel was emitted for, carried to the pipeline the pass
     // dispatches through.
     constexpr ThreadGroupShape threadGroupShape() const { return groupShape; }

@@ -51,6 +51,11 @@ bool ShaderSource::isCompute() const
     return !computeEntry.empty();
 }
 
+bool ShaderSource::hasFragment() const
+{
+    return !fragmentEntry.empty();
+}
+
 ShaderSource& ShaderSource::withBinding(ResourceBinding binding)
 {
     bindings.add(std::move(binding));

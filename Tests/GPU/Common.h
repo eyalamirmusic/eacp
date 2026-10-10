@@ -39,3 +39,20 @@ inline eacp::GPU::ShaderSource nativeComputeShaderSource(
     expectGlslCompiles(glsl, true, location);
     return nativeDialect(std::move(msl), std::move(hlsl), std::move(glsl));
 }
+
+// A vertex-only source: no fragment entry, so only the vertex stage is checked.
+inline eacp::GPU::ShaderSource nativeVertexOnlySource(
+    std::string msl,
+    std::string hlsl,
+    std::string glsl,
+    const std::source_location& location = std::source_location::current())
+{
+#ifdef EACP_HAS_SPIRV
+    expectStageCompiles(eacp::GPU::Spirv::Stage::Vertex, glsl, location);
+#else
+    (void) location;
+#endif
+    auto source = nativeDialect(std::move(msl), std::move(hlsl), std::move(glsl));
+    source.withVertex("vertexMain").withFragment({});
+    return source;
+}

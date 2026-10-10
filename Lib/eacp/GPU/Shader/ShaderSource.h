@@ -65,6 +65,9 @@ struct ShaderSource
 
     ShaderSource& withVertex(std::string entry);
 
+    // An empty entry makes a vertex-only source: the pipeline built from it has
+    // no fragment stage, so it writes depth and stencil and no colour - a depth
+    // prepass, a shadow map, an occluder pass.
     ShaderSource& withFragment(std::string entry);
 
     // Names the kernel entry point and marks this as a compute source: a library
@@ -73,6 +76,8 @@ struct ShaderSource
     ShaderSource& withCompute(std::string entry);
 
     bool isCompute() const;
+
+    bool hasFragment() const;
 
     // The group the kernel's entry point was emitted for, which is the group
     // the pass has to dispatch it in. Left unset for a hand-written source, and

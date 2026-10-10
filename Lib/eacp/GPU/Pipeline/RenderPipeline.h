@@ -488,6 +488,24 @@ struct RenderPipelineDescriptor
     }
 };
 
+// Attachment `index` as a pipeline compiles it: as described, unless the
+// pipeline has no fragment stage, when nothing reaches any attachment and the
+// format alone is kept to match the pass.
+inline ColorTargetState writtenColorTarget(
+    const RenderPipelineDescriptor& descriptor, int index, bool hasFragment)
+{
+    auto target = descriptor.colorTarget(index);
+
+    if (!hasFragment)
+    {
+        target.writeMask = ColorWriteMask::none();
+        target.blendMode = BlendMode::None;
+        target.blend.reset();
+    }
+
+    return target;
+}
+
 // The blend an attachment ends up with: the written-out equation when there is
 // one, the named mode's otherwise.
 inline BlendState resolvedBlend(const ColorTargetState& target)

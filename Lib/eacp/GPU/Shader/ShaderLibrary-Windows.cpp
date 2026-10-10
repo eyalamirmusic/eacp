@@ -70,8 +70,10 @@ struct ShaderLibrary::Native
         {
             program.vertexBytecode =
                 compileStage(source.source, source.vertexEntry, "vs_5_0");
-            program.pixelBytecode =
-                compileStage(source.source, source.fragmentEntry, "ps_5_0");
+
+            if (source.hasFragment())
+                program.pixelBytecode =
+                    compileStage(source.source, source.fragmentEntry, "ps_5_0");
         }
     }
 
@@ -93,7 +95,7 @@ bool ShaderLibrary::isValid() const
         return true;
 
     return impl->program.vertexBytecode != nullptr
-           && impl->program.pixelBytecode != nullptr;
+           && (!hasFragment() || impl->program.pixelBytecode != nullptr);
 }
 
 void* ShaderLibrary::nativeLibrary() const

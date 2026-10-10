@@ -424,7 +424,8 @@ struct RenderPipeline::Native
             static_cast<VulkanShaderProgram*>(descriptor.library->nativeLibrary());
 
         if (program == nullptr || program->vertex == VK_NULL_HANDLE
-            || program->fragment == VK_NULL_HANDLE)
+            || (descriptor.library->hasFragment()
+                && program->fragment == VK_NULL_HANDLE))
             return;
 
         build(*program, layouts, descriptor);
@@ -488,11 +489,13 @@ struct RenderPipeline::Native
             static_cast<VkSampleCountFlagBits>(state.sampleCount);
 
         auto depthStencil = makeDepthStencilState(descriptor);
+        const auto hasFragment = program.fragment != VK_NULL_HANDLE;
         auto attachments =
             std::array<VkPipelineColorBlendAttachmentState, maxColorAttachments> {};
 
         for (auto index = 0; index < state.colorCount; ++index)
-            attachments[index] = makeBlendAttachment(descriptor.colorTarget(index));
+            attachments[index] = makeBlendAttachment(
+                writtenColorTarget(descriptor, index, hasFragment));
 
         if (!blendsAlike(attachments, state.colorCount)
             && !getVulkanShared().getFeatures().independentBlend)
@@ -551,7 +554,7 @@ struct RenderPipeline::Native
         {
             info.pNext = &rendering;
         }
-        info.stageCount = 2;
+        info.stageCount = hasFragment ? 2 : 1;
         info.pStages = stages;
         info.pVertexInputState = &vertexInput;
         info.pInputAssemblyState = &inputAssembly;

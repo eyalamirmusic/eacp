@@ -355,13 +355,15 @@ D3D12_RENDER_TARGET_BLEND_DESC makeTargetBlendDesc(const ColorTargetState& from)
 // Independent whenever there is more than one target: D3D12 otherwise applies
 // RenderTarget[0] to every attachment, and eacp's attachments each blend as
 // their own ColorTargetState says.
-D3D12_BLEND_DESC makeBlendDesc(const RenderPipelineDescriptor& from)
+D3D12_BLEND_DESC makeBlendDesc(const RenderPipelineDescriptor& from,
+                               bool hasFragment)
 {
     D3D12_BLEND_DESC desc = {};
     desc.IndependentBlendEnable = from.colorTargetCount() > 1 ? TRUE : FALSE;
 
     for (auto index = 0; index < from.colorTargetCount(); ++index)
-        desc.RenderTarget[index] = makeTargetBlendDesc(from.colorTarget(index));
+        desc.RenderTarget[index] =
+            makeTargetBlendDesc(writtenColorTarget(from, index, hasFragment));
 
     return desc;
 }
@@ -457,8 +459,10 @@ struct RenderPipeline::Native
         auto* program =
             static_cast<D3D12ShaderProgram*>(descriptor.library->nativeLibrary());
 
+        const auto hasFragment = descriptor.library->hasFragment();
+
         if (program == nullptr || program->vertexBytecode == nullptr
-            || program->pixelBytecode == nullptr)
+            || (hasFragment && program->pixelBytecode == nullptr))
             return;
 
         if (descriptor.colorTargetCount() > maxColorAttachments)
@@ -476,9 +480,13 @@ struct RenderPipeline::Native
         desc.pRootSignature = context.getRenderRootSignature();
         desc.VS.pShaderBytecode = program->vertexBytecode->GetBufferPointer();
         desc.VS.BytecodeLength = program->vertexBytecode->GetBufferSize();
-        desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
-        desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
-        desc.BlendState = makeBlendDesc(descriptor);
+        if (hasFragment)
+        {
+            desc.PS.pShaderBytecode = program->pixelBytecode->GetBufferPointer();
+            desc.PS.BytecodeLength = program->pixelBytecode->GetBufferSize();
+        }
+
+        desc.BlendState = makeBlendDesc(descriptor, hasFragment);
         desc.SampleMask = UINT_MAX;
         desc.RasterizerState = makeRasterizerDesc(descriptor);
         desc.DepthStencilState = makeDepthStencilDesc(descriptor);
