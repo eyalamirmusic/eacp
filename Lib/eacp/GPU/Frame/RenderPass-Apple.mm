@@ -7,6 +7,7 @@
 #include "../Buffer/Buffer.h"
 #include "../Device/Device.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -260,18 +261,29 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
 
 namespace
 {
-void bindFragmentTexture(NSObject<MTLRenderCommandEncoder>* encoder,
-                         id<MTLTexture> texture,
-                         int slot,
-                         void* nativeSampler)
+void bindStageTexture(NSObject<MTLRenderCommandEncoder>* encoder,
+                      ShaderStage stage,
+                      id<MTLTexture> texture,
+                      int slot,
+                      void* nativeSampler)
 {
     auto metalSampler = (__bridge id<MTLSamplerState>) nativeSampler;
 
-    if (encoder == nil || texture == nil || metalSampler == nil)
+    if (encoder == nil || texture == nil || metalSampler == nil || slot < 0
+        || slot >= RenderPass::maxStageTextureSlots)
         return;
 
-    [encoder setFragmentTexture:texture atIndex:(NSUInteger) slot];
-    [encoder setFragmentSamplerState:metalSampler atIndex:(NSUInteger) slot];
+    const auto index = (NSUInteger) slot;
+
+    if (stage == ShaderStage::Vertex)
+    {
+        [encoder setVertexTexture:texture atIndex:index];
+        [encoder setVertexSamplerState:metalSampler atIndex:index];
+        return;
+    }
+
+    [encoder setFragmentTexture:texture atIndex:index];
+    [encoder setFragmentSamplerState:metalSampler atIndex:index];
 }
 
 // The resolve on a multisampled target and the attachment itself on a
@@ -287,6 +299,16 @@ id<MTLTexture> sampleableDepthOf(const Texture& renderTarget)
                ? resolved
                : (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
 }
+
+id<MTLTexture> colorTextureOf(const Texture& texture)
+{
+    return (__bridge id<MTLTexture>) texture.nativeTexture();
+}
+
+id<MTLTexture> depthTextureOf(const Texture& renderTarget)
+{
+    return renderTarget.hasSampleableDepth() ? sampleableDepthOf(renderTarget) : nil;
+}
 } // namespace
 
 // The state for the sampling the shader declared, not one the texture carries -
@@ -296,20 +318,22 @@ void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
                                     TextureSampling sampling)
 {
-    bindFragmentTexture(impl->encoder.get(),
-                        (__bridge id<MTLTexture>) texture.nativeTexture(),
-                        slot,
-                        Device::shared().nativeSampler(sampling));
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Fragment,
+                     colorTextureOf(texture),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
 }
 
 void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
                                     const Sampler& sampler)
 {
-    bindFragmentTexture(impl->encoder.get(),
-                        (__bridge id<MTLTexture>) texture.nativeTexture(),
-                        slot,
-                        sampler.nativeSampler());
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Fragment,
+                     colorTextureOf(texture),
+                     slot,
+                     sampler.nativeSampler());
 }
 
 // A depth texture goes on a texture index like any other; what makes it a
@@ -319,26 +343,66 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          TextureSampling sampling)
 {
-    if (!renderTarget.hasSampleableDepth())
-        return;
-
-    bindFragmentTexture(impl->encoder.get(),
-                        sampleableDepthOf(renderTarget),
-                        slot,
-                        Device::shared().nativeSampler(sampling));
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Fragment,
+                     depthTextureOf(renderTarget),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
 }
 
 void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          const Sampler& sampler)
 {
-    if (!renderTarget.hasSampleableDepth())
-        return;
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Fragment,
+                     depthTextureOf(renderTarget),
+                     slot,
+                     sampler.nativeSampler());
+}
 
-    bindFragmentTexture(impl->encoder.get(),
-                        sampleableDepthOf(renderTarget),
-                        slot,
-                        sampler.nativeSampler());
+void RenderPass::setVertexTexture(const Texture& texture,
+                                  int slot,
+                                  TextureSampling sampling)
+{
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Vertex,
+                     colorTextureOf(texture),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
+}
+
+void RenderPass::setVertexTexture(const Texture& texture,
+                                  int slot,
+                                  const Sampler& sampler)
+{
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Vertex,
+                     colorTextureOf(texture),
+                     slot,
+                     sampler.nativeSampler());
+}
+
+void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       TextureSampling sampling)
+{
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Vertex,
+                     depthTextureOf(renderTarget),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
+}
+
+void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       const Sampler& sampler)
+{
+    bindStageTexture(impl->encoder.get(),
+                     ShaderStage::Vertex,
+                     depthTextureOf(renderTarget),
+                     slot,
+                     sampler.nativeSampler());
 }
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)

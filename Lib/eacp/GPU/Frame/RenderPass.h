@@ -196,6 +196,29 @@ public:
                                  int slot,
                                  const Sampler& sampler);
 
+    // The vertex-stage siblings of the four binds above, for a vertex shader
+    // that samples - a height map displacing a terrain grid, a shadow map read
+    // per vertex. Metal binds the vertex function's texture(slot) and
+    // sampler(slot), an index space of its own beside the fragment one. On
+    // D3D12 and Vulkan a slot is one binding both stages see - t<slot> with its
+    // sampler registers, combined image sampler 8 + slot - so a bind here and
+    // a fragment bind at the same slot are the same bind, the last one winning;
+    // Device::stagesShareTextureSlots() says which model the device has.
+    // Slots run to Device::maxTextureSlots(), and a bind past it is dropped.
+    void setVertexTexture(const Texture& texture,
+                          int slot = 0,
+                          TextureSampling sampling = {});
+
+    void setVertexTexture(const Texture& texture, int slot, const Sampler& sampler);
+
+    void setVertexDepthTexture(const Texture& renderTarget,
+                               int slot = 0,
+                               TextureSampling sampling = {});
+
+    void setVertexDepthTexture(const Texture& renderTarget,
+                               int slot,
+                               const Sampler& sampler);
+
     // Binds a Storage buffer for indexed reads in a shader stage - the thing a
     // vertex attribute stream is not. setVertexBuffer feeds the input assembler,
     // one element per vertex or per instance; this binds the buffer so the
@@ -516,6 +539,13 @@ public:
     // emitter and the root signature to this number, and static_asserts that it
     // is not below maxTextureSlots.
     static constexpr int bufferRegisterBase = 8;
+
+    // The most texture slots a stage has on any backend: Metal's sixteen
+    // sampler indices, and the sixteen combined image samplers Vulkan places at
+    // bindings 8 to 23 under the storage buffers. D3D12 has eight
+    // (maxTextureSlots in Codegen/ShaderBindings.h, which the codegen layer and
+    // compute also keep to). Device::maxTextureSlots() is the device's own.
+    static constexpr int maxStageTextureSlots = 16;
 
     // The D3D12 sampler register a per-bind sampler for texture slot n sits at:
     // s<samplerRegisterBase + n>. Above the static samplers the codegen layer's

@@ -6,6 +6,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Shader/ShaderSource.h"
 #include "../Texture/Texture.h"
 #include "../Windows/D3D12Types.h"
 
@@ -194,11 +195,31 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
     commands.list->IASetVertexBuffers(static_cast<UINT>(index), 1, &view);
 }
 
-void RenderPass::setFragmentTexture(const Texture& texture,
-                                    int slot,
-                                    TextureSampling)
+namespace
 {
-    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+const auto anyShaderRead = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+                           | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+// A vertex read needs NON_PIXEL_SHADER_RESOURCE, and asks for both read states
+// so that a fragment bind of the same texture in the same draw finds its own
+// already there rather than barriering the vertex one away.
+bool hasReadState(D3D12_RESOURCE_STATES state, D3D12_RESOURCE_STATES wanted)
+{
+    return (state & wanted) == wanted;
+}
+
+D3D12_RESOURCE_STATES readStateFor(ShaderStage stage)
+{
+    return stage == ShaderStage::Vertex ? anyShaderRead
+                                        : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+}
+
+void bindStageTexture(D3D12Encoder* encoder,
+                      ShaderStage stage,
+                      const Texture& texture,
+                      int slot)
+{
+    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
         return;
 
     auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
@@ -206,20 +227,47 @@ void RenderPass::setFragmentTexture(const Texture& texture,
     if (data == nullptr || data->srv.gpu.ptr == 0)
         return;
 
-    auto* list = impl->encoder->commands->list.get();
+    auto* list = encoder->commands->list.get();
 
     // A render target an earlier pass on this frame drew into is still in
     // RENDER_TARGET, and this is where it goes back. A plain texture is already
     // in the state this asks for and the helper records nothing.
-    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (!hasReadState(data->state, readStateFor(stage)))
+        transitionTextureForUse(list, *data, readStateFor(stage));
 
     // Only the SRV: the sampler is a static sampler in the root signature, chosen
     // by the register the shader's sampler was emitted at. See TextureSampling.
     list->SetGraphicsRootDescriptorTable(renderTextureParam(slot), data->srv.gpu);
 }
 
-namespace
+void bindStageDepthTexture(D3D12Encoder* encoder,
+                           ShaderStage stage,
+                           const Texture& renderTarget,
+                           int slot)
 {
+    if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+
+    if (data == nullptr || !data->hasSampleableDepth()
+        || data->depthSrv.gpu.ptr == 0)
+        return;
+
+    auto* list = encoder->commands->list.get();
+
+    // The depth resource rests in DEPTH_WRITE, which is where the pass that drew
+    // it left it and where the next pass to attach it expects to find it - so
+    // this is the outward half of the pair, and Frame::beginPass records the
+    // return. The two states are two views of one resource, which is why they
+    // are one tracked value rather than a flag per view.
+    if (!hasReadState(data->depthState, readStateFor(stage)))
+        transitionDepthForUse(list, *data, readStateFor(stage));
+
+    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
+                                         data->depthSrv.gpu);
+}
+
 void bindPerBindSampler(D3D12Encoder* encoder, int slot, const Sampler& sampler)
 {
     if (encoder == nullptr || slot < 0 || slot >= maxTextureSlots)
@@ -237,17 +285,16 @@ void bindPerBindSampler(D3D12Encoder* encoder, int slot, const Sampler& sampler)
 
 void RenderPass::setFragmentTexture(const Texture& texture,
                                     int slot,
-                                    const Sampler& sampler)
+                                    TextureSampling)
 {
-    setFragmentTexture(texture, slot, TextureSampling {});
-    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+    bindStageTexture(impl->encoder.get(), ShaderStage::Fragment, texture, slot);
 }
 
-void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
-                                         int slot,
-                                         const Sampler& sampler)
+void RenderPass::setFragmentTexture(const Texture& texture,
+                                    int slot,
+                                    const Sampler& sampler)
 {
-    setFragmentDepthTexture(renderTarget, slot, TextureSampling {});
+    bindStageTexture(impl->encoder.get(), ShaderStage::Fragment, texture, slot);
     bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
@@ -255,26 +302,49 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          int slot,
                                          TextureSampling)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
-        return;
+    bindStageDepthTexture(
+        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slot);
+}
 
-    auto* data = static_cast<D3D12TextureData*>(renderTarget.nativeTexture());
+void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
+                                         int slot,
+                                         const Sampler& sampler)
+{
+    bindStageDepthTexture(
+        impl->encoder.get(), ShaderStage::Fragment, renderTarget, slot);
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
 
-    if (data == nullptr || !data->hasSampleableDepth()
-        || data->depthSrv.gpu.ptr == 0)
-        return;
+// The tables are visible to every stage (see createRootSignatures), so these
+// bind the same root parameters the fragment calls do.
+void RenderPass::setVertexTexture(const Texture& texture, int slot, TextureSampling)
+{
+    bindStageTexture(impl->encoder.get(), ShaderStage::Vertex, texture, slot);
+}
 
-    auto* list = impl->encoder->commands->list.get();
+void RenderPass::setVertexTexture(const Texture& texture,
+                                  int slot,
+                                  const Sampler& sampler)
+{
+    bindStageTexture(impl->encoder.get(), ShaderStage::Vertex, texture, slot);
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
+}
 
-    // The depth resource rests in DEPTH_WRITE, which is where the pass that drew
-    // it left it and where the next pass to attach it expects to find it - so
-    // this is the outward half of the pair, and Frame::beginPass records the
-    // return. The two states are two views of one resource, which is why they
-    // are one tracked value rather than a flag per view.
-    transitionDepthForUse(list, *data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       TextureSampling)
+{
+    bindStageDepthTexture(
+        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slot);
+}
 
-    list->SetGraphicsRootDescriptorTable(renderTextureParam(slot),
-                                         data->depthSrv.gpu);
+void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       const Sampler& sampler)
+{
+    bindStageDepthTexture(
+        impl->encoder.get(), ShaderStage::Vertex, renderTarget, slot);
+    bindPerBindSampler(impl->encoder.get(), slot, sampler);
 }
 
 namespace

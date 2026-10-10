@@ -4,6 +4,7 @@
 #include "Device.h"
 
 #include "../Frame/ComputePass.h"
+#include "../Frame/RenderPass.h"
 
 #include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/ObjC/ObjC.h>
@@ -247,6 +248,21 @@ int Device::storageBufferOffsetAlignment() const
 }
 
 bool Device::supportsIndirectCount() const
+{
+    return false;
+}
+
+int Device::maxTextureSlots() const
+{
+    return isValid() ? RenderPass::maxStageTextureSlots : 0;
+}
+
+bool Device::supportsVertexTextures() const
+{
+    return isValid();
+}
+
+bool Device::stagesShareTextureSlots() const
 {
     return false;
 }

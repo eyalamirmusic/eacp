@@ -128,14 +128,14 @@ its sampler with each draw, and eacp now does that too:
   behave exactly as before on every backend.
 - `RenderPass::setFragmentTexture(texture, slot, sampler)`,
   `setFragmentDepthTexture(target, slot, sampler)` and
-  `ComputePass::setInputTexture(texture, slot, sampler)` bind it. eacp has no
-  vertex-stage texture binding, so there is no vertex overload (gap G17).
+  `ComputePass::setInputTexture(texture, slot, sampler)` bind it, and
+  `setVertexTexture`/`setVertexDepthTexture` do the same for a vertex shader.
 
 Where the shader finds it, per backend:
 
 | | Shader declares | Bind |
 |---|---|---|
-| Metal | `sampler s [[sampler(slot)]]` — what the MSL emitter already writes | `setFragmentSamplerState:atIndex:slot` |
+| Metal | `sampler s [[sampler(slot)]]` — what the MSL emitter already writes | `setFragmentSamplerState:atIndex:slot`, or `setVertexSamplerState:` for the vertex stage |
 | D3D12 | `SamplerState s : register(s<8 + slot>)` (`RenderPass::samplerRegisterBase`) | a one-descriptor sampler table per slot, pointed at the `Sampler`'s descriptor in the device's sampler heap |
 | Vulkan | the combined `sampler2D` / `sampler2DShadow` at the texture's binding (`8 + slot`) | the `VkSampler` goes in the combined image sampler's descriptor write |
 
@@ -157,6 +157,23 @@ with the sampler on a binding of its own — needs layout bindings the
 fixed render layout does not have; that belongs with the SPIR-V intake (G1),
 whose reflection (`spirvTextureBindings`) can build per-pipeline layouts the way
 compute already does.
+
+### Vertex stages and the slot ceiling
+
+Metal has sixteen sampler indices per stage against thirty-one texture ones,
+so sixteen is its texture slot count too (`Device::maxTextureSlots()`), with
+the vertex and fragment stages each holding their own sixteen. Vulkan matches
+it: the combined image samplers run from binding 8 to 23, under the storage
+buffers at 24, and are declared for both stages. D3D12 stays at eight: the
+texture registers stop at `t8`, where the storage buffers start, and the render
+root signature spends 56 of its 64 DWORDs - four root CBVs, sixteen root SRVs,
+eight SRV tables and eight sampler tables. A vertex table and a vertex sampler
+table per slot would be sixteen more, so instead the existing tables, the four
+static samplers and the fallback statics are all visible to every stage: a
+vertex shader reads `t<n>` and `s<8 + n>` exactly as a pixel shader does, the
+two stages share each slot, and `Device::stagesShareTextureSlots()` is true
+there as it is on Vulkan. The fallback route's per-bind statics serve the
+vertex stage the same fixed linear/repeat sampler.
 
 Anisotropy is clamped to 16 on Metal and D3D12 and to the device limit on
 Vulkan, where `samplerAnisotropy` is now enabled whenever the device offers it;

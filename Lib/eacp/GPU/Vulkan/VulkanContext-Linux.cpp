@@ -1167,7 +1167,7 @@ bool VulkanShared::createRenderLayouts()
 
     addBinding(vulkanUniformBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
 
-    for (auto slot = 0; slot < maxTextureSlots; ++slot)
+    for (auto slot = 0; slot < RenderPass::maxStageTextureSlots; ++slot)
         addBinding(vulkanTextureBinding(slot),
                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
@@ -2048,7 +2048,8 @@ VkDescriptorSet VulkanContext::allocateDescriptorSet(CommandContext& commands,
          vulkanSetsPerDescriptorPool
              * static_cast<std::uint32_t>(maxComputeBufferSlots)},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
+         vulkanSetsPerDescriptorPool
+             * static_cast<std::uint32_t>(RenderPass::maxStageTextureSlots)},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, vulkanSetsPerDescriptorPool}};

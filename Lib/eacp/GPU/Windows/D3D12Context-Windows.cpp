@@ -602,13 +602,18 @@ void D3D12Shared::createRootSignatures()
             rootCBV(static_cast<UINT>(slot), D3D12_SHADER_VISIBILITY_PIXEL);
     }
 
+    // Visible to every stage, so a vertex shader samples through the same tables
+    // and a slot is one binding the two stages share. The signature spends 56 of
+    // its 64 DWORDs - four root CBVs, sixteen root SRVs and sixteen tables - so a
+    // vertex table and sampler table per slot, sixteen more, do not fit.
     for (auto slot = 0; slot < maxTextureSlots; ++slot)
     {
         srvRanges[slot].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         srvRanges[slot].NumDescriptors = 1;
         srvRanges[slot].BaseShaderRegister = static_cast<UINT>(slot);
 
-        renderParams[renderTextureParam(slot)] = rootTable(&srvRanges[slot]);
+        renderParams[renderTextureParam(slot)] =
+            rootTable(&srvRanges[slot], D3D12_SHADER_VISIBILITY_ALL);
     }
 
     // The storage buffers a vertex or fragment stage subscripts. Root
@@ -663,7 +668,7 @@ void D3D12Shared::createRootSignatures()
         sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
         sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
         sampler.ShaderRegister = static_cast<UINT>(configuration);
-        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
     // The per-bind samplers, at s<samplerRegisterBase + slot>: a one-descriptor
@@ -679,12 +684,13 @@ void D3D12Shared::createRootSignatures()
             samplerRanges[slot].NumDescriptors = 1;
             samplerRanges[slot].BaseShaderRegister = samplerRegister(slot);
 
-            renderParams[renderSamplerParam(slot)] = rootTable(&samplerRanges[slot]);
+            renderParams[renderSamplerParam(slot)] =
+                rootTable(&samplerRanges[slot], D3D12_SHADER_VISIBILITY_ALL);
         }
         else
         {
             staticSamplers[samplingConfigurations + slot] =
-                fallbackPerBindSampler(slot, D3D12_SHADER_VISIBILITY_PIXEL);
+                fallbackPerBindSampler(slot, D3D12_SHADER_VISIBILITY_ALL);
         }
     }
 

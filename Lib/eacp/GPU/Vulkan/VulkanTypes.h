@@ -37,6 +37,23 @@ inline int vulkanComputeBufferSlots()
     return vulkanComputeBufferSlots(getVulkanShared().getProperties().limits);
 }
 
+// The render layout declares all sixteen; the spec's floor for both limits is
+// sixteen, so the clamp is for a device reporting less than it should.
+inline int vulkanTextureSlots(const VkPhysicalDeviceLimits& limits)
+{
+    const auto limit =
+        std::min({limits.maxPerStageDescriptorSamplers,
+                  limits.maxPerStageDescriptorSampledImages,
+                  static_cast<std::uint32_t>(RenderPass::maxStageTextureSlots)});
+
+    return std::max(static_cast<int>(limit), maxTextureSlots);
+}
+
+inline int vulkanTextureSlots()
+{
+    return vulkanTextureSlots(getVulkanShared().getProperties().limits);
+}
+
 static_assert(vulkanComputeUniformBinding
                   == ComputePass::textureRegisterBase + maxTextureSlots,
               "the compute uniform block must sit above every texture binding");
@@ -142,13 +159,15 @@ struct ImageUse
 // Barriers are illegal inside a render pass, so every image has a resting use.
 inline constexpr auto imageSampled = ImageUse {
     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+    VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+        | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
 
 // GENERAL, Vulkan having no storage-image layout; a sampler reads it too.
 inline constexpr auto imageStorage = ImageUse {
     VK_IMAGE_LAYOUT_GENERAL,
-    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT
+        | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
     VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT};
 
 inline constexpr auto imageTransferSrc =
@@ -187,10 +206,10 @@ inline constexpr auto imageDepthAttachment =
                   | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
 
 // The one layout legal for both aspects of a depth buffer carrying stencil.
-inline constexpr auto imageDepthSampled =
-    ImageUse {VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-              VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+inline constexpr auto imageDepthSampled = ImageUse {
+    VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+    VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
 
 // Tracked for the image's whole life: a layout survives a submission.
 inline void recordImageBarrier(VkCommandBuffer commandBuffer,

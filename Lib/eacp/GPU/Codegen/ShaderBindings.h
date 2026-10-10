@@ -6,14 +6,18 @@
 namespace eacp::GPU
 {
 // A shader model limit, not a hardware one: each D3D12 slot costs a root DWORD.
+// The codegen layer, compute and D3D12 keep to it; a hand-written render shader
+// on Metal or Vulkan may go to RenderPass::maxStageTextureSlots.
 constexpr int maxTextureSlots = 8;
 
 // Bound as a UNIFORM_BUFFER_DYNAMIC, its offset supplied per draw.
 constexpr int vulkanUniformBinding = 0;
 
+constexpr int vulkanTextureBindingBase = 8;
+
 constexpr int vulkanTextureBinding(int slot)
 {
-    return maxTextureSlots + slot;
+    return vulkanTextureBindingBase + slot;
 }
 
 constexpr int vulkanBufferBinding(int slot)
@@ -21,7 +25,8 @@ constexpr int vulkanBufferBinding(int slot)
     return RenderPass::bufferBase + slot;
 }
 
-static_assert(vulkanTextureBinding(maxTextureSlots - 1) < RenderPass::bufferBase,
+static_assert(vulkanTextureBinding(RenderPass::maxStageTextureSlots - 1)
+                  < RenderPass::bufferBase,
               "every texture binding must stay below the storage buffers");
 
 constexpr int vulkanComputeTextureBinding(int slot)

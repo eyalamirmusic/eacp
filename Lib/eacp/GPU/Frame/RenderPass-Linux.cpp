@@ -46,10 +46,10 @@ struct RenderPass::Native
         if (set == VK_NULL_HANDLE)
             return false;
 
-        VkWriteDescriptorSet writes[maxBufferSlots + maxTextureSlots + 1] = {};
+        VkWriteDescriptorSet writes[maxBufferSlots + maxStageTextureSlots + 1] = {};
         auto writeCount = std::uint32_t {0};
 
-        for (auto slot = 0; slot < maxTextureSlots; ++slot)
+        for (auto slot = 0; slot < maxStageTextureSlots; ++slot)
         {
             if ((boundTextures & (1u << slot)) == 0)
                 continue;
@@ -131,7 +131,7 @@ struct RenderPass::Native
 
     void bindColorTexture(const Texture& texture, int slot, VkSampler sampler)
     {
-        if (!encoder || slot < 0 || slot >= maxTextureSlots
+        if (!encoder || slot < 0 || slot >= maxStageTextureSlots
             || sampler == VK_NULL_HANDLE)
             return;
 
@@ -145,7 +145,7 @@ struct RenderPass::Native
 
     void bindDepthTexture(const Texture& renderTarget, int slot, VkSampler sampler)
     {
-        if (!encoder || slot < 0 || slot >= maxTextureSlots
+        if (!encoder || slot < 0 || slot >= maxStageTextureSlots
             || sampler == VK_NULL_HANDLE)
             return;
 
@@ -253,7 +253,7 @@ struct RenderPass::Native
     VkDescriptorBufferInfo buffers[maxBufferSlots] = {};
     std::uint32_t boundBuffers = 0;
 
-    VkDescriptorImageInfo textures[maxTextureSlots] = {};
+    VkDescriptorImageInfo textures[maxStageTextureSlots] = {};
     std::uint32_t boundTextures = 0;
 
     ConstantRange uniforms;
@@ -447,6 +447,36 @@ void RenderPass::setFragmentDepthTexture(const Texture& renderTarget,
                                          const Sampler& sampler)
 {
     impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler));
+}
+
+// The layout declares every combined image sampler for both stages, so the
+// vertex binds land on the same binding as the fragment ones.
+void RenderPass::setVertexTexture(const Texture& texture,
+                                  int slot,
+                                  TextureSampling sampling)
+{
+    setFragmentTexture(texture, slot, sampling);
+}
+
+void RenderPass::setVertexTexture(const Texture& texture,
+                                  int slot,
+                                  const Sampler& sampler)
+{
+    setFragmentTexture(texture, slot, sampler);
+}
+
+void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       TextureSampling sampling)
+{
+    setFragmentDepthTexture(renderTarget, slot, sampling);
+}
+
+void RenderPass::setVertexDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       const Sampler& sampler)
+{
+    setFragmentDepthTexture(renderTarget, slot, sampler);
 }
 
 void RenderPass::setVertexStorageBuffer(const Buffer& buffer, int slot)

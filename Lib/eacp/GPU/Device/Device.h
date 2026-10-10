@@ -196,6 +196,29 @@ public:
     // everywhere.
     bool supportsIndirectCount() const;
 
+    // How many texture slots a render stage may bind on this device, each with
+    // its per-bind sampler: RenderPass::maxStageTextureSlots (16) on Metal,
+    // whose sixteen sampler indices are the ceiling though it has 31 texture
+    // ones; the same on Vulkan, clamped to the device's per-stage sampler and
+    // sampled-image limits (which the spec puts at 16 or more); and eight on
+    // D3D12, whose texture registers stop under the storage buffers at t8 and
+    // whose root signature has no room for more tables. A bind at a slot at or
+    // past it is dropped. The codegen layer and compute keep to eight
+    // everywhere. An invalid Device answers zero.
+    int maxTextureSlots() const;
+
+    // Whether RenderPass::setVertexTexture and setVertexDepthTexture reach a
+    // vertex shader. True on every backend with a device.
+    bool supportsVertexTextures() const;
+
+    // Whether the vertex and fragment stages share one set of texture slots, so
+    // that a vertex bind at slot n and a fragment bind at slot n are the same
+    // binding and the last one wins. False on Metal, which has an index space
+    // per stage; true on D3D12, whose texture and sampler tables are visible to
+    // every stage, and on Vulkan, whose combined image samplers are declared
+    // for both. Portable code binds one texture per slot across the two stages.
+    bool stagesShareTextureSlots() const;
+
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,
     // the emitter's own reduction and SIMD-matrix scratch included.

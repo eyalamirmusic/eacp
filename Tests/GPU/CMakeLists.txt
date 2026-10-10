@@ -101,6 +101,7 @@ set(gpu_test_sources
         UIntVectorTests.cpp
         VertexFormatTests.cpp
         VertexOnlyPipelineTests.cpp
+        VertexTextureTests.cpp
         ViewportTests.cpp
         TestMain.cpp)
 

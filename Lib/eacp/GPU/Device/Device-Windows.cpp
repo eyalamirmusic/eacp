@@ -236,6 +236,21 @@ bool Device::supportsIndirectCount() const
     return isValid();
 }
 
+int Device::maxTextureSlots() const
+{
+    return isValid() ? GPU::maxTextureSlots : 0;
+}
+
+bool Device::supportsVertexTextures() const
+{
+    return isValid();
+}
+
+bool Device::stagesShareTextureSlots() const
+{
+    return true;
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? maxBufferSlots : 0;

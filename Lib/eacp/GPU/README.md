@@ -2339,6 +2339,40 @@ one D3D12 driver whose sampler tables cannot be trusted, where the per-bind
 registers hold a fixed linear/repeat sampler instead; `SAMPLERS.md` says which
 and how to override it.
 
+### Textures in the vertex stage, and how many slots
+
+A vertex shader samples too - a height map raising a terrain grid, a shadow map
+read per vertex. `setVertexTexture` and `setVertexDepthTexture` are the
+fragment binds' siblings, with the same `TextureSampling` and `Sampler`
+overloads:
+
+```cpp
+pass.setVertexTexture(heightMap, 0, nearest);
+pass.setVertexDepthTexture(shadowMap, 1, shadowCompare);
+```
+
+The vertex function samples with an explicit level - `sample(s, uv, level(0))`
+in MSL, `SampleLevel` or `SampleCmpLevelZero` in HLSL, `textureLod` in GLSL. The
+codegen layer still binds textures in the fragment stage only.
+
+| | texture slot `n` | its per-bind sampler | slots per stage | stages share a slot |
+| --- | --- | --- | --- | --- |
+| Metal | `texture(n)` in each stage | `sampler(n)` in each stage | 16 (16 sampler indices; 31 texture ones) | no |
+| D3D12 | `t<n>` | `s<8 + n>` | 8 (buffers start at `t8`) | yes |
+| Vulkan | binding `8 + n`, a combined image sampler | the same binding | 16 (bindings 8 to 23) | yes |
+
+`Device::maxTextureSlots()` is the device's own count and a bind past it is
+dropped; `RenderPass::maxStageTextureSlots` (16) is the most any backend has, and
+the codegen layer and compute keep to eight everywhere. On D3D12 and Vulkan a
+slot is one binding both stages see: the D3D12 texture and sampler tables are
+visible to every stage, which costs no root-signature space where a table per
+stage would need sixteen DWORDs it does not have, and Vulkan declares each
+combined image sampler for both stages. A vertex bind and a fragment bind at
+one slot are then the same bind, the last winning, and
+`Device::stagesShareTextureSlots()` says so; Metal keeps an index space per
+stage. Portable code binds one texture per slot across the two stages, which is
+bgfx's model too.
+
 ## Driver quirks
 
 Two more D3D12 operations are known to be refused by a shipping driver — the
