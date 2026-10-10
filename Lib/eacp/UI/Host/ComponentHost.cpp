@@ -3,12 +3,38 @@
 #include "../Widgets/TouchScroller.h"
 
 #include <algorithm>
+#include <ranges>
 
 namespace eacp::UI
 {
 namespace
 {
 constexpr auto maximumPathPasses = 9;
+
+FileDropTarget* asInterestedFileDropTarget(Component& component,
+                                           const Vector<std::string>& files)
+{
+    auto* target = dynamic_cast<FileDropTarget*>(&component);
+    return target != nullptr && target->isInterestedInFileDrop(files) ? target
+                                                                      : nullptr;
+}
+
+Component* visibleChildAt(Component& parent, Point& localPoint)
+{
+    for (auto* child: std::ranges::reverse_view(parent.getChildren()))
+    {
+        auto bounds = child->getBounds();
+        auto childPoint = Point {localPoint.x - bounds.x, localPoint.y - bounds.y};
+
+        if (child->isVisible() && child->hitTest(childPoint))
+        {
+            localPoint = childPoint;
+            return child;
+        }
+    }
+
+    return nullptr;
+}
 
 bool isWithin(const Component* component, const Component& subtree)
 {
@@ -36,6 +62,8 @@ ComponentHost::ComponentHost()
     // what a press on any part of the tree should do anyway -- clicking an
     // interface is how a user says the keyboard belongs to it.
     setGrabsFocusOnMouseDown(true);
+
+    setAcceptsFileDrops(true);
 }
 
 ComponentHost::~ComponentHost()
@@ -51,6 +79,9 @@ void ComponentHost::componentDeleted(Component& component)
 {
     if (isWithin(hoveredComponent, component))
         hoveredComponent = nullptr;
+
+    if (isWithin(fileDragTarget, component))
+        fileDragTarget = nullptr;
 
     if (isWithin(mouseDownTarget, component))
     {
@@ -1209,6 +1240,104 @@ void ComponentHost::mouseWheel(const eacp::Graphics::MouseEvent& hostEvent)
 
         target = target->getParentComponent();
     }
+}
+
+Point ComponentHost::toRootSpace(Point position) const
+{
+    if (root == nullptr)
+        return position;
+
+    return {position.x - root->getBounds().x, position.y - root->getBounds().y};
+}
+
+Component* ComponentHost::findFileDropTarget(const Vector<std::string>& files,
+                                             Point positionInRoot) const
+{
+    if (root == nullptr || files.empty() || !root->isVisible()
+        || !root->hitTest(positionInRoot))
+        return nullptr;
+
+    auto* found = static_cast<Component*>(nullptr);
+    auto localPoint = positionInRoot;
+
+    for (auto* component = root; component != nullptr;
+         component = visibleChildAt(*component, localPoint))
+        if (asInterestedFileDropTarget(*component, files) != nullptr)
+            found = component;
+
+    return found;
+}
+
+void ComponentHost::setFileDragTarget(Component* target, Point positionInRoot)
+{
+    if (fileDragTarget == target)
+        return;
+
+    if (fileDragTarget != nullptr)
+        if (auto* previous = dynamic_cast<FileDropTarget*>(fileDragTarget))
+            previous->fileDragExit(fileDragFiles);
+
+    fileDragTarget = target;
+
+    if (fileDragTarget != nullptr)
+        if (auto* next = dynamic_cast<FileDropTarget*>(fileDragTarget))
+            next->fileDragEnter(fileDragFiles,
+                                fileDragTarget->rootPointToLocal(positionInRoot));
+}
+
+bool ComponentHost::updateFileDrag(const Vector<std::string>& files, Point position)
+{
+    auto positionInRoot = toRootSpace(position);
+    auto* target = findFileDropTarget(files, positionInRoot);
+
+    fileDragFiles = files;
+
+    if (target != fileDragTarget)
+    {
+        setFileDragTarget(target, positionInRoot);
+        return target != nullptr;
+    }
+
+    if (target == nullptr)
+        return false;
+
+    if (auto* current = dynamic_cast<FileDropTarget*>(target))
+        current->fileDragMove(files, target->rootPointToLocal(positionInRoot));
+
+    return true;
+}
+
+bool ComponentHost::fileDragEnter(const Vector<std::string>& files, Point position)
+{
+    return updateFileDrag(files, position);
+}
+
+bool ComponentHost::fileDragMove(const Vector<std::string>& files, Point position)
+{
+    return updateFileDrag(files, position);
+}
+
+void ComponentHost::fileDragExit()
+{
+    setFileDragTarget(nullptr, {});
+    fileDragFiles.clear();
+}
+
+void ComponentHost::filesDropped(const Vector<std::string>& files, Point position)
+{
+    auto positionInRoot = toRootSpace(position);
+    auto* target = findFileDropTarget(files, positionInRoot);
+
+    if (target != fileDragTarget)
+        setFileDragTarget(nullptr, positionInRoot);
+
+    fileDragTarget = nullptr;
+    fileDragFiles.clear();
+
+    if (target != nullptr)
+        if (auto* dropTarget = dynamic_cast<FileDropTarget*>(target))
+            dropTarget->filesDropped(files,
+                                     target->rootPointToLocal(positionInRoot));
 }
 
 Component* ComponentHost::getRootComponent() const

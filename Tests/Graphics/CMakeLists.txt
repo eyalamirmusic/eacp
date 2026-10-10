@@ -75,6 +75,7 @@ if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
             EmbeddedViewTests-macOS.mm
+            FileDropTests-macOS.mm
             KeyForwardingTests-macOS.mm
             MenuTests-macOS.mm
             NativeChildSurfaceTests-macOS.mm

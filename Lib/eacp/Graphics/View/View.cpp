@@ -96,6 +96,19 @@ void View::mouseEntered(const MouseEvent&) {}
 void View::mouseExited(const MouseEvent&) {}
 void View::mouseWheel(const MouseEvent&) {}
 
+bool View::fileDragEnter(const Vector<std::string>&, Point)
+{
+    return false;
+}
+
+bool View::fileDragMove(const Vector<std::string>&, Point)
+{
+    return false;
+}
+
+void View::fileDragExit() {}
+void View::filesDropped(const Vector<std::string>&, Point) {}
+
 void View::touchBegan(const TouchEvent&) {}
 void View::touchMoved(const TouchEvent&) {}
 void View::touchEnded(const TouchEvent&) {}

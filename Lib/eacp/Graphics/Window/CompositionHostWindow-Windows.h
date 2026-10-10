@@ -4,6 +4,8 @@
 
 #include "../View/View.h"
 
+#include <ole2.h>
+
 #include <bitset>
 #include <memory>
 #include <optional>
@@ -86,6 +88,13 @@ struct CompositionHostWindow
     // owning surface's destructor.
     void teardown();
 
+    // OS file drags over the HWND, in screen pixels, handed to the deepest
+    // view under the pointer that accepts file drops. Called by the IDropTarget
+    // the host registers for its HWND.
+    bool fileDragOver(const Vector<std::string>& files, POINT screenPixels);
+    void fileDragLeave();
+    bool fileDrop(const Vector<std::string>& files, POINT screenPixels);
+
     // Handles the messages shared by both surfaces (paint, size, mouse buttons,
     // move/drag with capture, wheel, mouse-leave, keyboard). Returns nullopt for
     // messages it doesn't own, so the surface's WndProc can fall back to its own
@@ -132,6 +141,13 @@ private:
     void clipCursorToClient() const;
     POINT clientCenter() const;
     void handleLockedMouseMove(LPARAM lParam);
+
+    void registerFileDrops();
+    void revokeFileDrops();
+    View* fileDropViewAt(Point position) const;
+
+    IDropTarget* fileDropTarget = nullptr;
+    View* fileDragView = nullptr;
 
     void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();

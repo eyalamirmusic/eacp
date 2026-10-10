@@ -6,6 +6,7 @@
 #include "MouseCursor.h"
 
 #include <functional>
+#include <string>
 
 namespace eacp::Threads
 {
@@ -147,6 +148,9 @@ struct ViewProperties
     // the platform has one (Android). Focusing a view without it puts that
     // keyboard away, so a tap on a button does not raise it.
     bool wantsTextInput = false;
+
+    // Whether files dragged from the OS can be dropped here. See fileDragEnter.
+    bool acceptsFileDrops = false;
 };
 
 class View
@@ -248,6 +252,18 @@ public:
     // passKeyOn(); one that does not override them keeps none.
     virtual void keyDown(const KeyEvent&);
     virtual void keyUp(const KeyEvent&);
+
+    // Files dragged in from the OS (Finder, Explorer, a DAW's browser), for a
+    // view that called setAcceptsFileDrops(). Paths are UTF-8, positions in
+    // this view's points. Enter and move answer whether the view would take
+    // the files there, which is what decides the copy or the refusal cursor.
+    // A drag that is dropped is not exited first; one that leaves is.
+    // macOS and Windows; nothing calls them on Linux or iOS.
+    virtual bool fileDragEnter(const Vector<std::string>& files, Point position);
+    virtual bool fileDragMove(const Vector<std::string>& files, Point position);
+    virtual void fileDragExit();
+    virtual void filesDropped(const Vector<std::string>& files, Point position);
+
     virtual void resized();
 
     //Internal helpers to deal with scaling
@@ -313,6 +329,11 @@ public:
 
     // Applied at once when this view already has focus.
     View& setWantsTextInput(bool value = true);
+
+    // Registers this view with the OS as a place files can be dropped. Off by
+    // default: a view that registers and then refuses a drag shows the refusal
+    // cursor rather than letting whatever is behind it take the files.
+    View& setAcceptsFileDrops(bool value = true);
 
     Point getMousePosition() const;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
+#include "../DragAndDrop/FileDropTarget.h"
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
 #include "../Render/MaskCache.h"
@@ -199,6 +200,18 @@ public:
     void mouseExited(const eacp::Graphics::MouseEvent& event) override;
     void mouseWheel(const eacp::Graphics::MouseEvent& event) override;
 
+    // Files dragged in from the OS, handed to the FileDropTarget components in
+    // the tree. The host accepts file drops from construction; turn it off with
+    // setAcceptsFileDrops(false) for a tree that should let them pass.
+    bool fileDragEnter(const Vector<std::string>& files, Point position) override;
+    bool fileDragMove(const Vector<std::string>& files, Point position) override;
+    void fileDragExit() override;
+    void filesDropped(const Vector<std::string>& files, Point position) override;
+
+    // The component a file dragged over `positionInRoot` would go to, or null.
+    Component* findFileDropTarget(const Vector<std::string>& files,
+                                  Point positionInRoot) const;
+
 private:
     friend class Component;
 
@@ -295,6 +308,10 @@ private:
     // space, and the fields the native event already carries.
     MouseEvent makeEvent(const Component& target,
                          const eacp::Graphics::MouseEvent& event) const;
+
+    Point toRootSpace(Point position) const;
+    void setFileDragTarget(Component* target, Point positionInRoot);
+    bool updateFileDrag(const Vector<std::string>& files, Point position);
 
     void updateHover(Component* target, const eacp::Graphics::MouseEvent& event);
     void setHoveredComponent(Component* component,
@@ -396,6 +413,9 @@ private:
     Component* mouseDownTarget = nullptr;
     Component* hoveredComponent = nullptr;
     Component* focusedComponent = nullptr;
+
+    Component* fileDragTarget = nullptr;
+    Vector<std::string> fileDragFiles;
 
     bool tabMovesFocus = true;
     bool respectsSafeArea = true;

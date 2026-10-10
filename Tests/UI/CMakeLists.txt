@@ -7,6 +7,7 @@ nano_add_executable(UITests
             CursorTests.cpp
             DrawListTests.cpp
             DragAndDropTests.cpp
+            FileDropTests.cpp
             GradientRampsTests.cpp
             ImageBatchTests.cpp
             KeyboardTests.cpp

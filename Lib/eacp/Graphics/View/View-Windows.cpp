@@ -738,6 +738,12 @@ void View::setMouseCursor(const MouseCursor& cursor)
     refreshHostCursor(findHostHwndForView(this));
 }
 
+View& View::setAcceptsFileDrops(bool value)
+{
+    properties.acceptsFileDrops = value;
+    return *this;
+}
+
 void View::focus()
 {
     impl->focus();

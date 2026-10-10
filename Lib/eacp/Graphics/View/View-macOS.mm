@@ -400,6 +400,76 @@ void cursorUpdate(id self, SEL, id)
         [toNSCursor(view->getMouseCursor()) set];
 }
 
+Vector<std::string> draggedFilePaths(id<NSDraggingInfo> info)
+{
+    auto paths = Vector<std::string> {};
+
+    NSArray* urls = [[info draggingPasteboard]
+        readObjectsForClasses:@[ [NSURL class] ]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+
+    for (NSURL* url in urls)
+        if (url.isFileURL && url.path != nil)
+            paths.add(url.path.UTF8String);
+
+    return paths;
+}
+
+Point dragPosition(id self, id<NSDraggingInfo> info)
+{
+    auto local = [(NSView*) self convertPoint:[info draggingLocation] fromView:nil];
+    return {(float) local.x, (float) local.y};
+}
+
+NSDragOperation dragOperationFor(bool accepted)
+{
+    return accepted ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+NSDragOperation draggingEntered(id self, SEL, id<NSDraggingInfo> info)
+{
+    auto* view = getView(self);
+
+    if (view == nullptr)
+        return NSDragOperationNone;
+
+    return dragOperationFor(
+        view->fileDragEnter(draggedFilePaths(info), dragPosition(self, info)));
+}
+
+NSDragOperation draggingUpdated(id self, SEL, id<NSDraggingInfo> info)
+{
+    auto* view = getView(self);
+
+    if (view == nullptr)
+        return NSDragOperationNone;
+
+    return dragOperationFor(
+        view->fileDragMove(draggedFilePaths(info), dragPosition(self, info)));
+}
+
+void draggingExited(id self, SEL, id<NSDraggingInfo>)
+{
+    if (auto* view = getView(self))
+        view->fileDragExit();
+}
+
+BOOL performDragOperation(id self, SEL, id<NSDraggingInfo> info)
+{
+    auto* view = getView(self);
+
+    if (view == nullptr)
+        return NO;
+
+    view->filesDropped(draggedFilePaths(info), dragPosition(self, info));
+    return YES;
+}
+
+BOOL wantsPeriodicDraggingUpdates(id, SEL)
+{
+    return NO;
+}
+
 void updateTrackingAreas(id self, SEL)
 {
     ObjC::sendSuper<void>(self, [NSView class], @selector(updateTrackingAreas));
@@ -433,6 +503,7 @@ Class getNativeViewClass()
         builder->addIvar<NSPoint>("mouseDownScreenPosition");
 
         builder->addProtocol(@protocol(CALayerDelegate));
+        builder->addProtocol(@protocol(NSDraggingDestination));
 
         builder->addMethod(@selector(drawRect:), drawRect);
         builder->addMethod(@selector(drawLayer:inContext:), drawLayerInContext);
@@ -465,6 +536,13 @@ Class getNativeViewClass()
         builder->addMethod(@selector(cursorUpdate:), cursorUpdate);
         builder->addMethod(@selector(updateTrackingAreas),
                            updateTrackingAreas);
+
+        builder->addMethod(@selector(draggingEntered:), draggingEntered);
+        builder->addMethod(@selector(draggingUpdated:), draggingUpdated);
+        builder->addMethod(@selector(draggingExited:), draggingExited);
+        builder->addMethod(@selector(performDragOperation:), performDragOperation);
+        builder->addMethod(@selector(wantsPeriodicDraggingUpdates),
+                           wantsPeriodicDraggingUpdates);
 
         builder->registerClass();
         return builder;
@@ -633,6 +711,20 @@ Threads::Async<Image> View::renderToImageAsync(float scale)
 Point View::getMousePosition() const
 {
     return impl->getMousePosition();
+}
+
+View& View::setAcceptsFileDrops(bool value)
+{
+    properties.acceptsFileDrops = value;
+
+    auto* native = (NSView*) impl->nativeView.get();
+
+    if (value)
+        [native registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+    else
+        [native unregisterDraggedTypes];
+
+    return *this;
 }
 
 void View::setMouseCursor(const MouseCursor& cursor)
