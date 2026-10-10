@@ -65,10 +65,11 @@ struct ComputePass::Native
         if (set == VK_NULL_HANDLE)
             return false;
 
-        VkWriteDescriptorSet writes[maxBufferSlots + maxTextureSlots + 1] = {};
+        VkWriteDescriptorSet writes[maxComputeBufferSlots + maxTextureSlots + 1] =
+            {};
         auto writeCount = std::uint32_t {0};
 
-        for (auto slot = 0; slot < maxBufferSlots; ++slot)
+        for (auto slot = 0; slot < maxComputeBufferSlots; ++slot)
         {
             if ((boundBuffers & (1u << slot)) == 0)
                 continue;
@@ -153,7 +154,7 @@ struct ComputePass::Native
 
     const VulkanComputePipeline* pipeline = nullptr;
 
-    VkDescriptorBufferInfo buffers[maxBufferSlots] = {};
+    VkDescriptorBufferInfo buffers[maxComputeBufferSlots] = {};
     std::uint32_t boundBuffers = 0;
 
     VkDescriptorImageInfo textures[maxTextureSlots] = {};
@@ -199,7 +200,7 @@ void ComputePass::setInputBuffer(const Buffer& buffer, int slot)
 
 void ComputePass::setInputBuffer(const BufferRange& range, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots
+    if (!impl->encoder || slot < 0 || slot >= vulkanComputeBufferSlots()
         || range.buffer == nullptr)
         return;
 
@@ -222,7 +223,7 @@ void ComputePass::setOutputBuffer(const Buffer& buffer, int slot)
 
 void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
 {
-    if (!impl->encoder || slot < 0 || slot >= maxBufferSlots
+    if (!impl->encoder || slot < 0 || slot >= vulkanComputeBufferSlots()
         || range.buffer == nullptr)
         return;
 

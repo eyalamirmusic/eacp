@@ -63,8 +63,8 @@ struct ComputePipeline::Native
             return true;
         }
 
-        const auto layouts =
-            makeComputeLayouts(context->getDevice(), state.textures);
+        const auto layouts = makeComputeLayouts(
+            context->getDevice(), vulkanComputeBufferSlots(), state.textures);
 
         if (!layouts.isValid())
             return false;

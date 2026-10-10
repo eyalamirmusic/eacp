@@ -1085,6 +1085,7 @@ bool VulkanShared::createAllocator()
 }
 
 PipelineLayouts makeComputeLayouts(VkDevice device,
+                                   int bufferSlots,
                                    const VulkanTextureBindings& textures)
 {
     // Laid out exactly as Codegen/ShaderBindings.h prints it. Only the texture
@@ -1096,7 +1097,7 @@ PipelineLayouts makeComputeLayouts(VkDevice device,
     const auto addBinding = [&](int binding, VkDescriptorType type)
     { addLayoutBinding(bindings, binding, type, VK_SHADER_STAGE_COMPUTE_BIT); };
 
-    for (auto slot = 0; slot < maxBufferSlots; ++slot)
+    for (auto slot = 0; slot < bufferSlots; ++slot)
         addBinding(vulkanComputeBufferBinding(slot),
                    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
@@ -1142,7 +1143,8 @@ bool VulkanShared::createRenderLayouts()
 bool VulkanShared::createComputeLayouts()
 {
     // The layout every kernel that declares no texture binds through.
-    computeLayouts = makeComputeLayouts(device, {});
+    computeLayouts =
+        makeComputeLayouts(device, vulkanComputeBufferSlots(properties.limits), {});
 
     return computeLayouts.isValid();
 }
@@ -2006,7 +2008,8 @@ VkDescriptorSet VulkanContext::allocateDescriptorSet(CommandContext& commands,
     // shader. The overcount is headroom, not memory.
     const VkDescriptorPoolSize sizes[] = {
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxBufferSlots)},
+         vulkanSetsPerDescriptorPool
+             * static_cast<std::uint32_t>(maxComputeBufferSlots)},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          vulkanSetsPerDescriptorPool * static_cast<std::uint32_t>(maxTextureSlots)},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,

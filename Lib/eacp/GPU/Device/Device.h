@@ -179,6 +179,15 @@ public:
     // ranges are four-byte everywhere, this backend included.
     int storageBufferOffsetAlignment() const;
 
+    // How many storage-buffer slots a compute kernel may bind on this device:
+    // ComputePass::maxBufferSlots (16) on Metal, the same or the device's own
+    // per-stage storage-buffer limit on Vulkan, and
+    // ComputePass::portableBufferSlots (8) on D3D12, whose root signature has no
+    // room for more. A ComputePass bind at a slot at or past it is dropped. The
+    // codegen layer stays inside the portable eight everywhere; this is for a
+    // hand-written kernel that needs more. An invalid Device answers zero.
+    int maxComputeBufferSlots() const;
+
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,
     // the emitter's own reduction and SIMD-matrix scratch included.

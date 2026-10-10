@@ -164,7 +164,7 @@ struct PlanOptions
 class Plan
 {
 public:
-    static constexpr int maxSlots = ComputePass::maxBufferSlots;
+    static constexpr int maxSlots = ComputePass::portableBufferSlots;
 
     // Metal's setBytes limit: the uniforms tightly packed, a word per scalar.
     static constexpr int maxUniformWords = 1024;

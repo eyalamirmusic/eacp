@@ -1079,6 +1079,20 @@ later dispatch — a later pass, as above, or a later dispatch in the same one.
 1D only. A 2D or 3D indirect dispatch would take its extents beside an offset
 and could not be told apart from this one; nothing has needed it.
 
+### How many buffers a kernel binds
+
+A kernel the codegen layer writes binds at most
+`ComputePass::portableBufferSlots` (eight) storage buffers, which every backend
+has. A hand-written kernel may bind up to `Device::maxComputeBufferSlots()`:
+sixteen (`ComputePass::maxBufferSlots`) on Metal, where storage buffers are
+`buffer(0)` … `buffer(15)` under the uniform block at `buffer(16)`; sixteen on
+Vulkan unless the device's per-stage storage-buffer limit is lower, with slots
+8 … 15 at bindings 17 … 24, above the uniform block, so no binding the first
+eight use moved (`vulkanComputeBufferBinding`); and eight on D3D12, whose
+compute root signature spends 60 of its 64 DWORDs on two root CBVs, a root SRV
+and a root UAV per slot and the texture and sampler tables. A bind at a slot
+the device does not have is dropped.
+
 ### Threadgroup memory
 
 `shared<T>(count)` is memory one dispatch group has in common: every thread in
@@ -1951,8 +1965,9 @@ executor.dispatch(bindings, static_cast<int>(frames));
 
 ### Binding and dispatching
 
-`Bindings` is a fixed table of `ComputePass::maxBufferSlots` slots — eight, the
-GPU's limit, kept so a kernel that runs here also runs there — filled by typed
+`Bindings` is a fixed table of `ComputePass::portableBufferSlots` slots — eight,
+the limit every GPU backend shares, kept so a kernel that runs here also runs
+there — filled by typed
 `set` overloads that take the kernel's own member, so the slot comes from its
 handle: a `std::span<const float>` for an `InputBuffer`, `std::span<float>` for
 an `OutputBuffer`, and `std::uint32_t` spans for `UIntInputBuffer`,

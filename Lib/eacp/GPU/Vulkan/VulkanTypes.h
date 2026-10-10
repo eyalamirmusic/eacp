@@ -6,6 +6,7 @@
 #include "../Frame/ComputePass.h"
 #include "../Pipeline/RenderPipeline.h"
 
+#include <algorithm>
 #include <memory>
 
 // The concrete types the public GPU classes' opaque native handles point to.
@@ -16,7 +17,25 @@ namespace eacp::GPU
 // One: the GLSL emitter writes exactly one uniform block.
 constexpr int maxUniformSlots = 1;
 
-constexpr int maxBufferSlots = ComputePass::maxBufferSlots;
+// A render stage's storage buffers, which every backend binds the same eight of.
+constexpr int maxBufferSlots = ComputePass::portableBufferSlots;
+
+constexpr int maxComputeBufferSlots = ComputePass::maxBufferSlots;
+
+// The compute layout declares every slot, so a device whose per-stage
+// storage-buffer limit is below maxComputeBufferSlots gets that many and no more.
+inline int vulkanComputeBufferSlots(const VkPhysicalDeviceLimits& limits)
+{
+    const auto limit = std::min(limits.maxPerStageDescriptorStorageBuffers,
+                                static_cast<std::uint32_t>(maxComputeBufferSlots));
+
+    return std::max(static_cast<int>(limit), maxBufferSlots);
+}
+
+inline int vulkanComputeBufferSlots()
+{
+    return vulkanComputeBufferSlots(getVulkanShared().getProperties().limits);
+}
 
 static_assert(vulkanComputeUniformBinding
                   == ComputePass::textureRegisterBase + maxTextureSlots,
@@ -437,6 +456,7 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
 
 // Built per pipeline; a kernel declaring no texture uses VulkanShared's.
 PipelineLayouts makeComputeLayouts(VkDevice device,
+                                   int bufferSlots,
                                    const VulkanTextureBindings& textures);
 
 // Pointed to by ShaderLibrary::nativeLibrary().

@@ -3389,8 +3389,8 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
     const auto& buffers = graph.storageBuffers();
 
-    assert(buffers.size() <= ComputePass::maxBufferSlots
-           && "eacp: a kernel may bind ComputePass::maxBufferSlots storage "
+    assert(buffers.size() <= ComputePass::portableBufferSlots
+           && "eacp: a kernel may bind ComputePass::portableBufferSlots storage "
               "buffers. A slot past that has no register the root signature "
               "declares, so it binds nowhere and reads zeroes.");
 

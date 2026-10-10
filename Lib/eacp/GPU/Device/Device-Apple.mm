@@ -3,6 +3,8 @@
 
 #include "Device.h"
 
+#include "../Frame/ComputePass.h"
+
 #include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Containers.h>
@@ -242,6 +244,11 @@ bool Device::supportsBlockCompression() const
 int Device::storageBufferOffsetAlignment() const
 {
     return 4;
+}
+
+int Device::maxComputeBufferSlots() const
+{
+    return isValid() ? ComputePass::maxBufferSlots : 0;
 }
 
 int Device::maxThreadgroupMemory() const

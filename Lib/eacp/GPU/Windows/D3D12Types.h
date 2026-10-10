@@ -28,7 +28,7 @@ namespace eacp::GPU
 // one its declared sampling picks, so a slot count costs no sampler registers.
 // See TextureSampling.
 constexpr int maxUniformSlots = 2;
-constexpr int maxBufferSlots = ComputePass::maxBufferSlots;
+constexpr int maxBufferSlots = ComputePass::portableBufferSlots;
 
 // maxTextureSlots is in Codegen/ShaderBindings.h: the shader emitter needs the
 // same ceiling, and it has no business including a D3D12 header to read it.

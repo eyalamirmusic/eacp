@@ -231,6 +231,11 @@ int Device::storageBufferOffsetAlignment() const
     return 4;
 }
 
+int Device::maxComputeBufferSlots() const
+{
+    return isValid() ? maxBufferSlots : 0;
+}
+
 // A shader-model constant rather than an adapter's answer: Direct3D gives a
 // thread group 32 KB of groupshared memory at cs_5_0 on every device that runs
 // the model at all, so there is nothing to query and nothing that varies.

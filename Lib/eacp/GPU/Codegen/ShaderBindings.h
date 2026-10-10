@@ -24,15 +24,21 @@ constexpr int vulkanBufferBinding(int slot)
 static_assert(vulkanTextureBinding(maxTextureSlots - 1) < RenderPass::bufferBase,
               "every texture binding must stay below the storage buffers");
 
-constexpr int vulkanComputeBufferBinding(int slot)
-{
-    return slot;
-}
-
 constexpr int vulkanComputeTextureBinding(int slot)
 {
     return ComputePass::textureRegisterBase + slot;
 }
 
 constexpr int vulkanComputeUniformBinding = ComputePass::uniformBase;
+
+// The portable slots hold the low bindings, under the textures; the slots only
+// Metal and Vulkan have sit above the uniform block, so that adding them moved
+// no binding an existing shader names.
+constexpr int vulkanComputeBufferBinding(int slot)
+{
+    if (slot < ComputePass::portableBufferSlots)
+        return slot;
+
+    return vulkanComputeUniformBinding + 1 + slot - ComputePass::portableBufferSlots;
+}
 } // namespace eacp::GPU

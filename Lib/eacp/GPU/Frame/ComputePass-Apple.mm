@@ -56,7 +56,8 @@ void ComputePass::setInputBuffer(const BufferRange& range, int slot)
 {
     auto activeEncoder = impl->encoder.get();
 
-    if (activeEncoder == nil || !range.isValid() || range.offset < 0
+    if (activeEncoder == nil || slot < 0 || slot >= maxBufferSlots
+        || !range.isValid() || range.offset < 0
         || range.offset >= range.buffer->size())
         return;
 

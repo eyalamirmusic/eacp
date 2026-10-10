@@ -1,6 +1,7 @@
 #include "Device.h"
 
 #include "../Vulkan/VulkanContext.h"
+#include "../Vulkan/VulkanTypes.h"
 
 #include <algorithm>
 
@@ -206,6 +207,11 @@ int Device::storageBufferOffsetAlignment() const
         getVulkanShared().getProperties().limits.minStorageBufferOffsetAlignment;
 
     return alignment > 0 ? (int) alignment : 4;
+}
+
+int Device::maxComputeBufferSlots() const
+{
+    return isValid() ? vulkanComputeBufferSlots() : 0;
 }
 
 int Device::maxThreadgroupMemory() const

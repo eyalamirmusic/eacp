@@ -19,7 +19,7 @@ namespace eacp::GPU::CpuCompute
 class Bindings
 {
 public:
-    static constexpr int maxSlots = ComputePass::maxBufferSlots;
+    static constexpr int maxSlots = ComputePass::portableBufferSlots;
 
     struct Slot
     {
