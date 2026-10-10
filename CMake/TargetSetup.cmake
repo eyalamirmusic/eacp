@@ -8,6 +8,15 @@ set(EACP_MACOS_PLIST "${CMAKE_CURRENT_LIST_DIR}/macOSBundleInfo.plist.in"
 set(EACP_IOS_PLIST "${CMAKE_CURRENT_LIST_DIR}/iOSBundleInfo.plist.in"
         CACHE INTERNAL "eacp iOS bundle Info.plist template")
 
+# Include-time too: eacp's libraries take INTERPROCEDURAL_OPTIMIZATION_RELEASE,
+# which under Clang makes their archives bitcode that GNU ld reads only on a -flto
+# link. Fat objects let a plain executable link them (ELF only, so Linux).
+if (LINUX AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    foreach (lang C CXX)
+        set(CMAKE_${lang}_COMPILE_OPTIONS_IPO "-flto=thin;-ffat-lto-objects")
+    endforeach ()
+endif ()
+
 function(eacp_bundle_plist_template out_var)
     if (IOS)
         set(${out_var} "${EACP_IOS_PLIST}" PARENT_SCOPE)
