@@ -67,6 +67,42 @@ public:
     void addRoundedRect(const Graphics::Rect& rect, float cornerRadius);
     void addEllipse(const Graphics::Rect& rect);
 
+    // Elliptical arcs, with juce::Path's semantics so a JUCE port maps one to
+    // one. Angles are in radians measured clockwise from the 12 o'clock
+    // position: 0 is the top of the ellipse, pi / 2 its right-hand side. The
+    // arc runs from fromRadians to toRadians in whichever direction that is,
+    // so a reversed pair sweeps anticlockwise and a span of 2 pi or more goes
+    // the whole way round. With startAsNewSubPath false the arc joins the
+    // current sub-path with a line to its first point; true starts a new one.
+    //
+    // Each quarter turn or less of the sweep is one cubic Bezier, so the arc
+    // is flattened to the same tolerance as any other curve.
+    void addArc(const Graphics::Rect& ellipseBounds,
+                float fromRadians,
+                float toRadians,
+                bool startAsNewSubPath = false);
+
+    // The same, about a centre, with the ellipse turned clockwise by
+    // rotationOfEllipse radians about it before the arc is traced.
+    void addCentredArc(float centreX,
+                       float centreY,
+                       float radiusX,
+                       float radiusY,
+                       float rotationOfEllipse,
+                       float fromRadians,
+                       float toRadians,
+                       bool startAsNewSubPath = false);
+
+    // A closed wedge of the ellipse between the two angles, as a new sub-path.
+    // innerCircleProportionalSize 0 runs it to the centre; between 0 and 1 it
+    // is a ring segment whose inner edge is the ellipse scaled by that much.
+    // A full turn with a hole is two sub-paths, the inner one wound the other
+    // way so the non-zero rule leaves it empty.
+    void addPieSegment(const Graphics::Rect& ellipseBounds,
+                       float fromRadians,
+                       float toRadians,
+                       float innerCircleProportionalSize);
+
     // The same geometry with every point mapped through `transform`.
     //
     // It maps the polyline, not the curves it was flattened from, so the segment
@@ -84,6 +120,9 @@ public:
     void append(const Path& other);
 
     Path transformed(const AffineTransform& transform) const;
+
+    // transformed, in place - juce::Path::applyTransform.
+    void applyTransform(const AffineTransform& transform);
     Path scaled(float scaleX, float scaleY) const;
 
     // The smallest rectangle containing every point; an empty rect for an empty

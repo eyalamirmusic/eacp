@@ -24,6 +24,7 @@
 #include "Render/ShapeBatch.h"
 #include "Widgets/ComboBox.h"
 #include "Widgets/ListBox.h"
+#include "Widgets/PopupMenu.h"
 #include "Widgets/Tabs.h"
 #include "Widgets/TouchScroller.h"
 #include "Widgets/Widgets.h"
