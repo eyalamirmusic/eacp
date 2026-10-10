@@ -911,12 +911,17 @@ void ComponentHost::setHoveredComponent(Component* component,
     {
         hoveredComponent->mouseOver = true;
         hoveredComponent->mouseEnter(makeEvent(*hoveredComponent, event));
+    }
+
+    updateMouseCursor();
+}
+
+void ComponentHost::updateMouseCursor()
+{
+    if (hoveredComponent != nullptr)
         setMouseCursor(hoveredComponent->getMouseCursor());
-    }
     else
-    {
         setMouseCursor(eacp::Graphics::MouseCursor::Default);
-    }
 }
 
 void ComponentHost::updateHover(Component* target,

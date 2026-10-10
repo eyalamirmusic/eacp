@@ -6,7 +6,12 @@
 namespace eacp::Graphics
 {
 
-HICON toHIcon(const Image& image)
+namespace
+{
+HICON createIconFromImage(const Image& image,
+                          bool isIcon,
+                          int hotspotX,
+                          int hotspotY)
 {
     auto width = image.width();
     auto height = image.height();
@@ -51,7 +56,9 @@ HICON toHIcon(const Image& image)
     auto maskBitmap = CreateBitmap(width, height, 1, 1, nullptr);
 
     ICONINFO iconInfo = {};
-    iconInfo.fIcon = TRUE;
+    iconInfo.fIcon = isIcon ? TRUE : FALSE;
+    iconInfo.xHotspot = static_cast<DWORD>(hotspotX);
+    iconInfo.yHotspot = static_cast<DWORD>(hotspotY);
     iconInfo.hbmColor = colorBitmap;
     iconInfo.hbmMask = maskBitmap;
 
@@ -61,6 +68,18 @@ HICON toHIcon(const Image& image)
     DeleteObject(maskBitmap);
 
     return icon;
+}
+} // namespace
+
+HICON toHIcon(const Image& image)
+{
+    return createIconFromImage(image, true, 0, 0);
+}
+
+HCURSOR toHCursor(const Image& image, int hotspotX, int hotspotY)
+{
+    return static_cast<HCURSOR>(
+        createIconFromImage(image, false, hotspotX, hotspotY));
 }
 
 } // namespace eacp::Graphics

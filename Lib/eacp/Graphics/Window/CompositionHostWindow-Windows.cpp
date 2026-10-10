@@ -1,11 +1,15 @@
 #include "CompositionHostWindow-Windows.h"
 #include <eacp/Core/Utils/Strings.h>
+#include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
+#include "../Image/ImageOps.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
 
+#include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
 namespace eacp::Graphics
@@ -79,6 +83,97 @@ MouseEvent makeMouseEvent(LPARAM lParam,
     return event;
 }
 
+HCURSOR systemCursorFor(MouseCursor::Shape shape)
+{
+    switch (shape)
+    {
+        case MouseCursor::IBeam:
+            return LoadCursorW(nullptr, IDC_IBEAM);
+        case MouseCursor::PointingHand:
+            return LoadCursorW(nullptr, IDC_HAND);
+        case MouseCursor::ResizeLeftRight:
+            return LoadCursorW(nullptr, IDC_SIZEWE);
+        case MouseCursor::ResizeUpDown:
+            return LoadCursorW(nullptr, IDC_SIZENS);
+        case MouseCursor::Crosshair:
+            return LoadCursorW(nullptr, IDC_CROSS);
+        case MouseCursor::Default:
+            break;
+    }
+
+    return LoadCursorW(nullptr, IDC_ARROW);
+}
+
+struct ImageCursorHandle
+{
+    ImageCursorHandle(HCURSOR handleToUse, int widthToUse, int heightToUse)
+        : handle(handleToUse)
+        , width(widthToUse)
+        , height(heightToUse)
+    {
+    }
+
+    ~ImageCursorHandle()
+    {
+        if (handle != nullptr)
+            DestroyIcon(handle);
+    }
+
+    ImageCursorHandle(const ImageCursorHandle&) = delete;
+    ImageCursorHandle& operator=(const ImageCursorHandle&) = delete;
+
+    HCURSOR handle = nullptr;
+    int width = 0;
+    int height = 0;
+};
+
+int scaledCursorExtent(int pixels, float factor)
+{
+    return std::max(1, static_cast<int>(std::lround(static_cast<float>(pixels) * factor)));
+}
+
+int scaledHotspot(float pixels, float factor, int extent)
+{
+    return std::clamp(static_cast<int>(std::lround(pixels * factor)), 0, extent - 1);
+}
+
+HCURSOR imageCursorFor(const MouseCursor& cursor, float dpiScale)
+{
+    auto image = cursor.getImage();
+    auto factor = dpiScale / cursor.getScale();
+    auto width = scaledCursorExtent(image.width(), factor);
+    auto height = scaledCursorExtent(image.height(), factor);
+
+    auto& cache = *cursor.getNativeCache();
+    auto* cached = static_cast<ImageCursorHandle*>(cache.get());
+
+    if (cached != nullptr && cached->width == width && cached->height == height)
+        return cached->handle;
+
+    auto sized = width == image.width() && height == image.height()
+                     ? image
+                     : resizeBilinear(image, width, height);
+
+    auto hotspot = cursor.getHotspot();
+    auto handle = toHCursor(sized,
+                            scaledHotspot(hotspot.x, factor, width),
+                            scaledHotspot(hotspot.y, factor, height));
+
+    if (handle == nullptr)
+        return systemCursorFor(MouseCursor::Default);
+
+    cache = std::make_shared<ImageCursorHandle>(handle, width, height);
+    return handle;
+}
+
+HCURSOR cursorHandleFor(const MouseCursor& cursor, float dpiScale)
+{
+    if (cursor.isImage())
+        return imageCursorFor(cursor, dpiScale);
+
+    return systemCursorFor(cursor.getShape());
+}
+
 void registerContentViewHwnd(View* root, HWND hwnd)
 {
     contentViewToHwnd()[root] = hwnd;
@@ -102,6 +197,16 @@ HWND findHostHwndForView(View* view)
     auto& map = contentViewToHwnd();
     auto it = map.find(root);
     return it == map.end() ? nullptr : it->second;
+}
+
+void refreshHostCursor(HWND hwnd)
+{
+    if (hwnd == nullptr)
+        return;
+
+    for (auto* host: compositionHosts())
+        if (host->hwnd == hwnd)
+            host->refreshCursor();
 }
 
 void repaintViewTree(View* view)
@@ -387,6 +492,37 @@ void CompositionHostWindow::setMouseLocked(bool locked)
         engageMouseLock();
     else if (!locked)
         disengageMouseLock();
+}
+
+bool CompositionHostWindow::applyCursorUnderPointer()
+{
+    if (contentView == nullptr || mouseLockEngaged)
+        return false;
+
+    auto screen = POINT {};
+    GetCursorPos(&screen);
+
+    auto* hit = contentView->hitTest(fromScreenPixels(screen));
+    const auto& cursor =
+        hit != nullptr ? hit->getMouseCursor() : contentView->getMouseCursor();
+
+    SetCursor(cursorHandleFor(cursor, getDpiScale()));
+
+    auto* cache = cursor.getNativeCache();
+    appliedImageCursor = cache != nullptr ? *cache : nullptr;
+
+    return true;
+}
+
+void CompositionHostWindow::refreshCursor()
+{
+    auto screen = POINT {};
+    GetCursorPos(&screen);
+
+    auto capture = GetCapture();
+
+    if (capture == hwnd || (capture == nullptr && WindowFromPoint(screen) == hwnd))
+        applyCursorUnderPointer();
 }
 
 void CompositionHostWindow::engageMouseLock()
@@ -725,6 +861,12 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             // The matching key-ups go to whoever took focus (e.g. Alt+Tab), so
             // tracked state would otherwise report keys stuck down forever.
             keyState.reset();
+            return std::nullopt;
+
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT && reinterpret_cast<HWND>(wParam) == hwnd
+                && applyCursorUnderPointer())
+                return TRUE;
             return std::nullopt;
 
         case WM_ERASEBKGND:

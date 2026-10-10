@@ -186,6 +186,12 @@ public:
     void keyDown(const eacp::Graphics::KeyEvent& event) override;
     void keyUp(const eacp::Graphics::KeyEvent& event) override;
 
+    // Shows the cursor of the component under the pointer again, for a cursor
+    // that changed without the pointer moving. Component::setMouseCursor calls
+    // it for the hovered component, so this is only needed by hand where
+    // something else decides the shape.
+    void updateMouseCursor();
+
     void mouseDown(const eacp::Graphics::MouseEvent& event) override;
     void mouseUp(const eacp::Graphics::MouseEvent& event) override;
     void mouseDragged(const eacp::Graphics::MouseEvent& event) override;

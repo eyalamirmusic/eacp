@@ -93,8 +93,11 @@ public:
     void setInterceptsMouseClicks(bool shouldIntercept);
     bool getInterceptsMouseClicks() const;
 
-    void setMouseCursor(eacp::Graphics::MouseCursor cursorToUse);
-    eacp::Graphics::MouseCursor getMouseCursor() const;
+    // Shown while the pointer is over this component, and at once when it
+    // already is: a tool whose pointer changes with the tool chosen does not
+    // wait for the pointer to move.
+    void setMouseCursor(const eacp::Graphics::MouseCursor& cursorToUse);
+    const eacp::Graphics::MouseCursor& getMouseCursor() const;
 
     // Says that what this component draws has changed, so paint() has to be
     // asked again before the next frame.

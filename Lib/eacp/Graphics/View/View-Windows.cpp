@@ -16,6 +16,7 @@ namespace eacp::Graphics
 
 // Defined in Window-Windows.cpp: the HWND hosting `view`'s root.
 HWND findHostHwndForView(View* view);
+void refreshHostCursor(HWND hwnd);
 
 namespace
 {
@@ -726,19 +727,15 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
-// Stored but not yet applied. Windows re-asks for the pointer on every
-// WM_SETCURSOR, so a bare SetCursor here would be overwritten by the default on
-// the very next mouse move; doing it properly means handling WM_SETCURSOR in the
-// host window and resolving the view under the pointer there, which is a change
-// to CompositionHostWindow rather than to this file.
-//
-// Left undone deliberately rather than written blind: there is no Windows
-// machine in the loop to see the result on, and a cursor that flickers between
-// two shapes is worse than one that never changes. getMouseCursor() still
-// answers, so everything portable about the feature is testable here.
-void View::setMouseCursor(MouseCursor cursor)
+// Windows asks again on every WM_SETCURSOR, which the host answers from the
+// view under the pointer; this applies a change made between two of them.
+void View::setMouseCursor(const MouseCursor& cursor)
 {
+    if (currentCursor == cursor)
+        return;
+
     currentCursor = cursor;
+    refreshHostCursor(findHostHwndForView(this));
 }
 
 void View::focus()

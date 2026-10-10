@@ -176,9 +176,16 @@ void Component::setInterceptsMouseClicks(bool shouldIntercept)
     interceptsMouseClicks = shouldIntercept;
 }
 
-void Component::setMouseCursor(eacp::Graphics::MouseCursor cursorToUse)
+void Component::setMouseCursor(const eacp::Graphics::MouseCursor& cursorToUse)
 {
+    if (cursor == cursorToUse)
+        return;
+
     cursor = cursorToUse;
+
+    if (mouseOver)
+        if (auto* owner = getHost())
+            owner->updateMouseCursor();
 }
 
 void Component::setWantsKeyboardFocus(bool shouldWantFocus)
@@ -452,7 +459,7 @@ bool Component::getInterceptsMouseClicks() const
     return interceptsMouseClicks;
 }
 
-eacp::Graphics::MouseCursor Component::getMouseCursor() const
+const eacp::Graphics::MouseCursor& Component::getMouseCursor() const
 {
     return cursor;
 }

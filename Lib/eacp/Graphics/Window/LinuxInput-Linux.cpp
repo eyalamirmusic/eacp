@@ -59,7 +59,7 @@ MouseButton linuxButtonFromEvdev(uint32_t code)
     }
 }
 
-std::span<const char* const> linuxCursorNames(MouseCursor cursor)
+std::span<const char* const> linuxCursorNames(MouseCursor::Shape cursor)
 {
     static const char* const arrow[] = {"left_ptr", "default", "arrow"};
     static const char* const iBeam[] = {"xterm", "text", "ibeam"};
@@ -336,7 +336,7 @@ void WheelTracker::endFrame()
     stopped = false;
 }
 
-bool CursorTracker::setShape(MouseCursor newShape)
+bool CursorTracker::setShape(MouseCursor::Shape newShape)
 {
     if (newShape == shape && !hidden)
         return false;

@@ -9,6 +9,7 @@ target_sources(eacp-graphics PRIVATE
         Layers/Layer.cpp
         Menu/Menu.cpp
         Menu/MenuCommands.cpp
+        View/MouseCursor.cpp
         Primitives/FontOptions.cpp
         Primitives/Primitives.cpp
         View/View.cpp

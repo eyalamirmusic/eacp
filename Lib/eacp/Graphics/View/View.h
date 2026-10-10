@@ -3,6 +3,7 @@
 #include "../Graphics/GraphicsContext.h"
 #include "../Layers/Layer.h"
 #include "../Graphics/Keyboard.h"
+#include "MouseCursor.h"
 
 #include <functional>
 
@@ -35,33 +36,6 @@ enum class MouseButton
     Right = 1,
     Middle = 2,
     Other = 3
-};
-
-// The shape the pointer takes over a view.
-//
-// Deliberately a small set of the shapes every platform names the same way. An
-// app wanting something else is asking for a custom image, which is a different
-// feature with a different lifetime problem — and none of these needs it: the
-// point of a cursor shape is that it is a convention the person already knows.
-enum class MouseCursor
-{
-    // The arrow. What a view has until it says otherwise.
-    Default,
-
-    // Over text that can be selected.
-    IBeam,
-
-    // Over something clickable that is not a control — a link.
-    PointingHand,
-
-    // Over a vertical splitter, so a draggable divider reads as draggable
-    // before anyone tries dragging it. This is the one an IDE cannot do without.
-    ResizeLeftRight,
-
-    // Over a horizontal splitter.
-    ResizeUpDown,
-
-    Crosshair
 };
 
 // Where a wheel event sits in a scroll gesture. A notched wheel has no gesture
@@ -352,8 +326,8 @@ public:
     //
     // Setting the same shape twice is free, so a handler can call this on every
     // move without checking first.
-    void setMouseCursor(MouseCursor cursor);
-    constexpr MouseCursor getMouseCursor() const { return currentCursor; }
+    void setMouseCursor(const MouseCursor& cursor);
+    const MouseCursor& getMouseCursor() const { return currentCursor; }
 
     virtual View* hitTest(const Point& point);
 

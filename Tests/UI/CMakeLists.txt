@@ -4,6 +4,7 @@ nano_add_executable(UITests
             ClippedFillTests.cpp
             ComboBoxTests.cpp
             CoverageAtlasTests.cpp
+            CursorTests.cpp
             DrawListTests.cpp
             DragAndDropTests.cpp
             GradientRampsTests.cpp

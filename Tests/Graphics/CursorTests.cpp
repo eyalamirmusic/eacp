@@ -91,3 +91,97 @@ auto tEveryShapeRoundTrips = test("Cursor/everyShapeRoundTrips") = []
         check(view.getMouseCursor() == shape);
     }
 };
+
+namespace
+{
+Image checkerImage(int size)
+{
+    auto image = Image {size, size};
+
+    for (auto y = 0; y < size; ++y)
+        for (auto x = 0; x < size; ++x)
+            image.set(x,
+                      y,
+                      (x + y) % 2 == 0 ? Color {1.f, 0.f, 0.f, 1.f}
+                                       : Color {0.f, 0.f, 1.f, 0.5f});
+
+    return image;
+}
+} // namespace
+
+// An image cursor keeps what it was made with, and is not one of the shapes.
+auto tImageCursorCarriesItsGeometry =
+    test("Cursor/anImageCursorCarriesItsHotspotAndScale") = []
+{
+    const auto image = checkerImage(32);
+    const auto cursor = MouseCursor {image, {2.f, 5.f}, 4.f};
+
+    check(cursor.isImage());
+    check(cursor.getShape() == MouseCursor::Default);
+    check(cursor.getHotspot().x == 2.f);
+    check(cursor.getHotspot().y == 5.f);
+    check(cursor.getScale() == 4.f);
+    check(cursor.getImage().width() == 32);
+    check(cursor.getImage() == image);
+    check(!(cursor == MouseCursor::Default));
+};
+
+// Nothing to draw is the arrow, rather than an invisible pointer.
+auto tInvalidImageIsTheArrow = test("Cursor/anInvalidImageIsTheArrow") = []
+{
+    const auto cursor = MouseCursor {Image {}, {0.f, 0.f}};
+
+    check(!cursor.isImage());
+    check(cursor == MouseCursor::Default);
+};
+
+// Two cursors made from the same pixels are the same cursor, which is what lets
+// a host skip re-applying one a component sets on every move.
+auto tImageCursorsCompareByIdentity =
+    test("Cursor/imageCursorsCompareByTheirPixelsIdentity") = []
+{
+    const auto image = checkerImage(8);
+    const auto cursor = MouseCursor {image, {1.f, 1.f}, 2.f};
+    const auto copy = cursor;
+
+    check(copy == cursor);
+    check(MouseCursor {image, {1.f, 1.f}, 2.f} == cursor);
+
+    check(!(MouseCursor {image, {2.f, 1.f}, 2.f} == cursor), "another hotspot");
+    check(!(MouseCursor {image, {1.f, 1.f}, 1.f} == cursor), "another scale");
+
+    auto samePixelsElsewhere = Image {8, 8, image.pixels()};
+    check(!(MouseCursor {samePixelsElsewhere, {1.f, 1.f}, 2.f} == cursor),
+          "equal pixels in another buffer are another cursor");
+};
+
+// The cursor holds its own copy: a later write to the caller's image detaches
+// that image, so the cursor already made keeps its pixels and a cursor made
+// after the write is a different one.
+auto tWritingTheSourceDoesNotReachTheCursor =
+    test("Cursor/writingTheSourceImageLeavesTheCursorAlone") = []
+{
+    auto image = checkerImage(8);
+    const auto before = MouseCursor {image, {0.f, 0.f}};
+    const auto original = before.getImage().at(0, 0);
+
+    image.set(0, 0, Color {0.f, 1.f, 0.f, 1.f});
+
+    check(before.getImage().at(0, 0).r == original.r);
+    check(before.getImage().at(0, 0).g == original.g);
+    check(!(MouseCursor {image, {0.f, 0.f}} == before));
+};
+
+auto tViewRemembersAnImageCursor = test("Cursor/aViewRemembersAnImageCursor") = []
+{
+    auto view = View {};
+    const auto cursor = MouseCursor {checkerImage(16), {5.f, 5.f}};
+
+    view.setMouseCursor(cursor);
+
+    check(view.getMouseCursor() == cursor);
+    check(view.getMouseCursor().getHotspot().x == 5.f);
+
+    view.setMouseCursor(MouseCursor::IBeam);
+    check(view.getMouseCursor() == MouseCursor::IBeam);
+};

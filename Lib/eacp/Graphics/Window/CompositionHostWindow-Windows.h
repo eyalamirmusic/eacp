@@ -18,6 +18,11 @@ namespace eacp::Graphics
 // needed.
 HWND findHostHwndForView(View* view);
 
+// Re-applies the cursor of the view under the pointer, when the pointer is over
+// `hwnd` or `hwnd` holds the capture. What View::setMouseCursor calls, so a
+// shape changed from a handler shows without waiting for the next move.
+void refreshHostCursor(HWND hwnd);
+
 // Whether `hwnd` hosts a WindowOptions::transparentBackground surface. Content
 // that composites straight to the screen (a GPUView's swapchain) must respect
 // its own alpha there — an opaque swapchain would paint the black box the
@@ -70,6 +75,11 @@ struct CompositionHostWindow
     // The lock expresses intent: it engages while the HWND has focus and
     // WM_SETFOCUS / WM_KILLFOCUS re-engage / suspend it.
     void setMouseLocked(bool locked);
+
+    // Sets the pointer to the cursor of the view under it. False when there is
+    // nothing to ask or the mouse lock is hiding the pointer.
+    bool applyCursorUnderPointer();
+    void refreshCursor();
     constexpr bool isMouseLocked() const { return mouseLockIntent; }
 
     // Tears down the visual tree, registry entry, and HWND. Call from the
@@ -162,6 +172,9 @@ private:
 
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;
+
+    // The native cursor last handed to SetCursor, kept alive while it shows.
+    std::shared_ptr<void> appliedImageCursor;
 
     // A minimized window is reported to the view tree as hidden, so the restore
     // that follows has to report it visible again. Nothing else distinguishes

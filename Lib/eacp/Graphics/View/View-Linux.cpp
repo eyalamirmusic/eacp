@@ -303,7 +303,7 @@ Point View::getMousePosition() const
 }
 
 // Applied at once, so a shape set from a mouseMoved handler takes effect now.
-void View::setMouseCursor(MouseCursor cursor)
+void View::setMouseCursor(const MouseCursor& cursor)
 {
     currentCursor = cursor;
 

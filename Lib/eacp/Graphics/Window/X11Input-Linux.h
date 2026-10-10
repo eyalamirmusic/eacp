@@ -161,7 +161,7 @@ private:
     X11WindowSurface* windowForXinputEvent(const xcb_generic_event_t& event);
 
     void applyCursor();
-    xcb_cursor_t cursorForShape(MouseCursor shape);
+    xcb_cursor_t cursorForShape(MouseCursor::Shape shape);
 
     void takeFocusOnClick(X11WindowSurface& window, xcb_timestamp_t time);
 
@@ -174,7 +174,7 @@ private:
 
     struct CachedCursor
     {
-        MouseCursor shape = MouseCursor::Default;
+        MouseCursor::Shape shape = MouseCursor::Default;
         xcb_cursor_t cursor = XCB_CURSOR_NONE;
     };
 

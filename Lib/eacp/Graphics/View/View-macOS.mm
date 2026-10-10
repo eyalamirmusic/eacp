@@ -10,6 +10,8 @@
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
 
+#include <cstring>
+
 namespace eacp::Graphics
 {
 namespace
@@ -314,9 +316,61 @@ void keyUp(id self, SEL, NSEvent* event)
         view->dispatchKeyEvent(keyEventFrom(event, KeyEventType::Up));
 }
 
-NSCursor* toNSCursor(MouseCursor cursor)
+NSCursor* createImageCursor(const MouseCursor& cursor)
 {
-    switch (cursor)
+    auto image = cursor.getImage();
+    auto scale = (CGFloat) cursor.getScale();
+    auto hotspot = cursor.getHotspot();
+
+    auto* rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:nullptr
+                      pixelsWide:image.width()
+                      pixelsHigh:image.height()
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSDeviceRGBColorSpace
+                    bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
+                     bytesPerRow:image.width() * 4
+                    bitsPerPixel:32];
+
+    std::memcpy(rep.bitmapData, image.pixels().data(), image.pixels().size());
+
+    auto size = NSMakeSize(image.width() / scale, image.height() / scale);
+    rep.size = size;
+
+    auto* nsImage = [[NSImage alloc] initWithSize:size];
+    [nsImage addRepresentation:rep];
+
+    auto* result = [[NSCursor alloc]
+        initWithImage:nsImage
+              hotSpot:NSMakePoint(hotspot.x / scale, hotspot.y / scale)];
+
+    [nsImage release];
+    [rep release];
+
+    return result;
+}
+
+NSCursor* imageCursorFor(const MouseCursor& cursor)
+{
+    auto* cache = cursor.getNativeCache();
+
+    if (*cache == nullptr)
+        *cache = std::shared_ptr<void>((void*) createImageCursor(cursor),
+                                       [](void* native)
+                                       { [(NSCursor*) native release]; });
+
+    return (NSCursor*) cache->get();
+}
+
+NSCursor* toNSCursor(const MouseCursor& cursor)
+{
+    if (cursor.isImage())
+        return imageCursorFor(cursor);
+
+    switch (cursor.getShape())
     {
         case MouseCursor::IBeam:
             return [NSCursor IBeamCursor];
@@ -581,7 +635,7 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
-void View::setMouseCursor(MouseCursor cursor)
+void View::setMouseCursor(const MouseCursor& cursor)
 {
     if (currentCursor == cursor)
         return;

@@ -31,7 +31,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
   and work area in points, so an app can pick a first window size that fits;
   `View::getWindow()` lets a view reach the window it is in rather than be
-  handed it. On a touch screen a view that calls `setHandlesTouchEvents()`
+  handed it. `setMouseCursor` takes one of the named shapes or a `MouseCursor`
+  made from an `Image`, a hotspot and how many of its pixels make a point, so
+  a 32-pixel brush can be an 8-point pointer that stays sharp on a Retina
+  screen (macOS and Windows; the arrow elsewhere). On a touch screen a view that calls `setHandlesTouchEvents()`
   gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
   `touchEnded`, one id per finger, held by the view it came down on, with its contact
   `radius` in points), and any

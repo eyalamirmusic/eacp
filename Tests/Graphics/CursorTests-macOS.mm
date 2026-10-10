@@ -155,3 +155,38 @@ auto tShapesMapToDistinctCursors = test("Cursor/shapesMapToDistinctCursors") = [
 
     check(seen.count == 6);
 };
+
+// An image cursor reaches AppKit at its size in points, with the hotspot
+// measured the same way, and is built once rather than on every update.
+auto tImageCursorReachesAppKit = test("Cursor/anImageCursorReachesAppKitInPoints") =
+    []
+{
+    auto view = View {};
+    auto* native = nativeViewOf(view);
+
+    check(native != nil);
+
+    auto image = Image {32, 32};
+
+    for (auto y = 0; y < 32; ++y)
+        for (auto x = 0; x < 32; ++x)
+            image.set(x, y, Color {0.f, 0.f, 0.f, x < 16 ? 1.f : 0.f});
+
+    view.setMouseCursor(MouseCursor {image, {8.f, 4.f}, 4.f});
+    sendCursorUpdate(native);
+
+    auto* first = [NSCursor currentCursor];
+
+    check(first != [NSCursor arrowCursor]);
+    check(first.image.size.width == 8.0);
+    check(first.image.size.height == 8.0);
+    check(first.hotSpot.x == 2.0);
+    check(first.hotSpot.y == 1.0);
+
+    sendCursorUpdate(native);
+    check([NSCursor currentCursor] == first, "the native cursor is cached");
+
+    view.setMouseCursor(MouseCursor::Default);
+    sendCursorUpdate(native);
+    check([NSCursor currentCursor] == [NSCursor arrowCursor]);
+};
