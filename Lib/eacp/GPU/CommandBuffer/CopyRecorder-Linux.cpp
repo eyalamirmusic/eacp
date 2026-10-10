@@ -39,13 +39,13 @@ VulkanBufferData* bufferDataOf(const Buffer& buffer)
     return data != nullptr && data->buffer != VK_NULL_HANDLE ? data : nullptr;
 }
 
-VkImageSubresourceLayers colorLayer(int level, int slice)
+VkImageSubresourceLayers colorLayer(int level, int slice, int count = 1)
 {
     VkImageSubresourceLayers layers = {};
     layers.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     layers.mipLevel = static_cast<std::uint32_t>(level);
     layers.baseArrayLayer = static_cast<std::uint32_t>(slice);
-    layers.layerCount = 1;
+    layers.layerCount = static_cast<std::uint32_t>(count);
     return layers;
 }
 
@@ -83,14 +83,18 @@ void recordCopy(void* recording, const TextureCopyPlan& plan)
     transitionTextureForUse(buffer, *source, imageTransferSrc);
     transitionTextureForUse(buffer, *destination, imageTransferDst);
 
+    // A run of layers is one region of that many; a volume's images are the
+    // extent's depth.
     VkImageCopy region = {};
-    region.srcSubresource = colorLayer(plan.sourceLevel, plan.sourceSlice);
-    region.srcOffset = {plan.sourceX, plan.sourceY, 0};
-    region.dstSubresource = colorLayer(plan.destinationLevel, plan.destinationSlice);
-    region.dstOffset = {plan.destinationX, plan.destinationY, 0};
+    region.srcSubresource =
+        colorLayer(plan.sourceLevel, plan.sourceSlice, plan.sliceCount);
+    region.srcOffset = {plan.sourceX, plan.sourceY, plan.sourceZ};
+    region.dstSubresource =
+        colorLayer(plan.destinationLevel, plan.destinationSlice, plan.sliceCount);
+    region.dstOffset = {plan.destinationX, plan.destinationY, plan.destinationZ};
     region.extent = {static_cast<std::uint32_t>(plan.width),
                      static_cast<std::uint32_t>(plan.height),
-                     1};
+                     static_cast<std::uint32_t>(plan.depth)};
 
     vkCmdCopyImage(buffer,
                    source->image,

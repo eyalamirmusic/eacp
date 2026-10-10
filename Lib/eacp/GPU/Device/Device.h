@@ -241,6 +241,16 @@ public:
     // Apple4 and later on Metal, every D3D12 device, Vulkan's imageCubeArray.
     bool supportsCubeArrays() const;
 
+    // Whether a vertex shader may choose the layer a primitive lands in, which
+    // is what a pass with ColorTarget::layerCount above 1 needs: every Mac and
+    // Apple5 and later on Metal ([[render_target_array_index]]), D3D12's
+    // VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation
+    // (SV_RenderTargetArrayIndex), and Vulkan's shaderOutputLayer or
+    // VK_EXT_shader_viewport_index_layer (gl_Layer). Without it a shader
+    // writing the index is not a pipeline the device builds; a layered pass
+    // still runs, its primitives landing in the first layer.
+    bool supportsLayeredRendering() const;
+
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,
     // the emitter's own reduction and SIMD-matrix scratch included.

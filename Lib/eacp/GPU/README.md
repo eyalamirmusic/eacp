@@ -525,6 +525,50 @@ attachment: `[[color(n)]]` members of a returned struct in MSL, `SV_Target<n>`
 in HLSL, `layout(location = n) out` in GLSL. The shader graph emits one output
 today, so a multi-target program is a hand-written `ShaderSource`.
 
+### A level, a slice, or several layers at once
+
+A `ColorTarget` also names which image of its texture the pass draws into:
+`level` is the mip, `slice` the layer, the cube face (`layer * 6 + face` on a
+cube array) or, on a volume, the z of that level. The pass is that level's size
+— `targetWidth()` says so — and the target's depth buffer is attached at the
+same level and slice, so a cube's caller-sized chain, a shadow map array or a
+volume is rendered one image at a time:
+
+```cpp
+auto face = ColorTarget {&environment};    // a Cube with mipLevels and depth
+face.level = 2;
+face.slice = 4;                            // +Z
+
+auto pass = frame.beginMultiTargetPass(std::span {&face, 1});
+```
+
+`layerCount` above 1 is layered rendering: one pass covers that many slices
+from `slice`, and the vertex shader picks the layer of each primitive —
+`[[render_target_array_index]]` in MSL, `SV_RenderTargetArrayIndex` in HLSL,
+`gl_Layer` in GLSL (`GL_ARB_shader_viewport_layer_array`) — counting from
+`slice`, so the same shader fills any run. A primitive that writes none lands in
+the first. `Device::supportsLayeredRendering()` says whether a vertex shader
+may write the index: every Mac and Apple5 on Metal, D3D12's
+`VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation`,
+Vulkan's `shaderOutputLayer` on the core floor and
+`VK_EXT_shader_viewport_index_layer` below it, each enabled where offered.
+
+Every target of one pass takes the same `layerCount`, and the sizes compared
+across targets are their levels' sizes. A level, a slice or a run the texture
+lacks is refused like a mismatched size, and so is a run on a volume that does
+not start at z 0. A volume may now be a render target, without depth: no API
+has a 3D depth buffer. A multisampled target has the one level and slice.
+
+Metal attaches the level, slice or depth plane directly and a run through a 2D
+array view of it; D3D12 makes an RTV and a DSV per image or run the first time a
+pass names it, a `TEXTURE3D` RTV on a volume; Vulkan a 2D or 2D array view of
+the image and of its depth companion (a volume is created
+`2D_ARRAY_COMPATIBLE`), with `layerCount` on the rendering info and the
+framebuffer. A pass rendering into one level while sampling another of the
+same texture is not supported: D3D12 and Vulkan track a texture's state and
+layout whole rather than per level, so a downscale chain built from passes goes
+through a second texture, or runs as kernels (below).
+
 ## Compute
 
 A kernel is a `ComputeProgram`: storage buffers and uniforms as members, the
@@ -1680,7 +1724,32 @@ struct PaintPlasma final : ComputeProgram
 
 Read and written textures take slots from one counter — Metal binds both to one
 texture index space — so a kernel reading one and writing another gives them
-distinct indices. `Apps/GPU/ComputeImage` is the worked example: a kernel paints
+distinct indices.
+
+A kernel can read and write single mip levels too, which is what a hi-Z or bloom
+downscale is made of: `setInputTextureLevel(texture, slot, level)` and
+`setOutputTextureLevel(texture, slot, level)` bind one level and every slice, as
+the kind's own type, so level 0 of what the shader sees is `level` of the
+texture. One dispatch per level, reading N - 1 and writing N:
+
+```cpp
+for (auto level = 1; level < hiZ.mipLevels(); ++level)
+{
+    auto pass = frame.beginCompute();
+    pass.setPipeline(downscale);
+    pass.setInputTextureLevel(hiZ, 0, level - 1);
+    pass.setOutputTextureLevel(hiZ, 1, level);
+    pass.dispatch(mipExtent(hiZ.width(), level), mipExtent(hiZ.height(), level));
+}
+```
+
+Metal binds a texture view of the level, Vulkan a sampled or storage view of it,
+D3D12 an SRV and a UAV of each level made with the texture (a render target or a
+`computeWrite` one; anything else binds level 0 only). On D3D12 a read and a
+write of one texture in a dispatch put one resource in two states, which its
+whole-resource tracking cannot express: there the lower level is read
+through a second `setOutputTextureLevel` and an `RWTexture2D` load, which
+Metal and Vulkan take as well. `Apps/GPU/ComputeImage` is the worked example: a kernel paints
 a 512×512 texture every frame and the next pass samples it full-screen.
 
 ### Buffers a shader stage reads
@@ -2242,7 +2311,7 @@ refused rather than resolved — the two say opposite things about who builds th
 chain — as are a count above `mipLevelCount` and null pixels on a texture only
 the CPU fills. A render target or a kernel output may ask for levels with no
 pixels at all, since the GPU fills them (a pass at `ColorTarget::level`, a
-kernel at `setOutputTexture(texture, slot, level)`), and a cube takes a chain
+kernel at `setOutputTextureLevel(texture, slot, level)`), and a cube takes a chain
 per face, slice-major: face 0's levels, then face 1's.
 
 No new `TextureSampling` configuration is involved: mip filtering on a
@@ -2279,7 +2348,10 @@ array or volume type yet; hand-written shaders do.
 A **slice** is one 2D image of one level: a layer, a face (`layer * 6 + face`
 on a cube array) — the index `TextureRegion`, `TextureCopyRegion`,
 `ColorTarget` and `Texture::slices()` speak. A volume has one slice and
-addresses its images by z.
+addresses its images by z, which is what `ColorTarget::slice` names on one.
+A pass renders into any level and slice of a target, or a run of slices at once
+(see "A level, a slice, or several layers at once"), and a kernel reads and
+writes any level.
 
 Three ways in:
 
@@ -2300,8 +2372,9 @@ Three ways in:
 
 Refused at creation: `arrayLength` on a kind without layers, `volumeDepth` on
 anything but a volume, `cube` beside a kind other than `TwoD` or `Cube`, a
-multisampled kind other than `TwoD`, a volume that is a render target or
-compressed, and a cube array where `Device::supportsCubeArrays()` says no.
+multisampled kind other than `TwoD`, a volume that is compressed or a render
+target with depth, stencil or `sampleableDepth`, and a cube array where
+`Device::supportsCubeArrays()` says no.
 `Device::maxTextureLayers()` and `maxTextureSize3D()` are the limits (2048 on
 Metal and D3D12, the device's own on Vulkan).
 
@@ -2503,6 +2576,15 @@ region.sourceOrigin = {8, 8};
 region.size = {16, 16};                                    // 0 runs to the edge
 frame.copy(cube, faces, region);
 
+auto box = TextureCopyRegion {};
+box.sourceOrigin = {0, 0, 4};                              // z on a volume
+box.size = {0, 0, 8};                                      // eight images
+frame.copy(volume, otherVolume, box);
+
+auto layers = TextureCopyRegion::wholeLevel(0, 2);
+layers.sliceCount = 3;                                     // slices 2, 3, 4
+frame.copy(array, otherArray, layers);
+
 frame.copy(vertices, scratch, 0, 256, 1024);               // buffer to buffer
 frame.copy(staging, texture, {.bytesPerRow = 64});         // buffer to texture
 frame.copy(texture, readback, {.origin = {2, 2}, .size = {4, 4}});
@@ -2516,16 +2598,22 @@ the region inside both levels; a compressed texture copies whole levels only; a
 multisampled target copies its resolved picture and the depth plane is never
 copied; buffer offsets and lengths are multiples of four; a buffer layout's
 offset is on the texel grid and its rows at least a row of texels long, and the
-rows it describes fit the buffer. `z` and `depth` exist for 3D textures and are
-refused until those do.
+rows it describes fit the buffer. Between two volumes the origins' `z` and the
+size's `depth` pick a box of images (`wholeLevel` and the two-argument copy take
+every image); a volume copies only to and from another volume; `sliceCount`
+copies that many consecutive slices from each side's slice, the same box of
+each. A buffer-texture copy is still one image: `z` and `depth` are refused
+there.
 
-Metal records a blit encoder per copy. D3D12 records `CopyTextureRegion` and
-`CopyBufferRegion` through the resource state tracking, handing a plain texture
+Metal records a blit encoder per copy, one blit per slice of a run. D3D12
+records `CopyTextureRegion` (one per slice, the box's `front` and `back` a
+volume's images) and `CopyBufferRegion` through the resource state tracking, handing a plain texture
 back to `PIXEL_SHADER_RESOURCE` after; a buffer layout off D3D12's 256-byte row
 and 512-byte offset grid goes through a scratch buffer row by row, and a driver
 with `noBoxedTextureCopy` takes whole subresources only. Vulkan records
-`vkCmdCopyImage`, `vkCmdCopyBuffer` and the buffer-image pair through the
-layout tracker, each image returned to its resting layout after.
+`vkCmdCopyImage` (a run as one region's `layerCount`, a box's depth as its
+extent), `vkCmdCopyBuffer` and the buffer-image pair through the layout
+tracker, each image returned to its resting layout after.
 
 ## Windows
 

@@ -26,7 +26,11 @@ struct TextureExtent
 // Part of one texture copied into another: a level and a slice on each side
 // (a cube's face is its slice, 0 to 5 in +X, -X, +Y, -Y, +Z, -Z order; an
 // array's layer is one too, and a cube array's layer * 6 + face), an origin on
-// each side, and one size. A volume has the one slice and copies a range of z.
+// each side, and one size. A volume has the one slice and copies a box: the
+// origins' z and the size's depth pick its images, a depth of 0 running to the
+// edge of the source level. sliceCount copies that many consecutive slices
+// from each side's slice at once, the same box of each; it is 1 on a volume.
+// A volume copies to and from volumes only.
 struct TextureCopyRegion
 {
     int sourceLevel = 0;
@@ -39,7 +43,10 @@ struct TextureCopyRegion
 
     TextureExtent size;
 
-    // The whole of one level, the same level and slice on both sides.
+    int sliceCount = 1;
+
+    // The whole of one level, the same level and slice on both sides: every
+    // image of it on a volume.
     static TextureCopyRegion wholeLevel(int level, int slice = 0)
     {
         auto region = TextureCopyRegion {};
@@ -47,6 +54,7 @@ struct TextureCopyRegion
         region.sourceSlice = slice;
         region.destinationLevel = level;
         region.destinationSlice = slice;
+        region.size.depth = 0;
         return region;
     }
 };

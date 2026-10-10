@@ -668,6 +668,40 @@ struct Texture::Native
         return view;
     }
 
+    id<MTLTexture> levelView(int level) const
+    {
+        auto whole = (id<MTLTexture>) texture.get();
+
+        if (whole == nil || level < 0 || level >= shape.levels)
+            return nil;
+
+        if (shape.levels == 1)
+            return whole;
+
+        // Keyed apart from subresourceView's ranges by a negative slice count.
+        const auto key = SubresourceViewKey {level, 1, 0, -1};
+
+        for (const auto& [cached, view]: views)
+            if (cached == key)
+                return (id<MTLTexture>) view.get();
+
+        const auto slices = shape.isVolume() ? 1 : shape.slices();
+
+        auto view = [whole
+            newTextureViewWithPixelFormat:whole.pixelFormat
+                              textureType:whole.textureType
+                                   levels:NSMakeRange((NSUInteger) level, 1)
+                                   slices:NSMakeRange(0, (NSUInteger) slices)];
+
+        if (view == nil)
+            return nil;
+
+        auto owned = ObjC::Ptr<NSObject<MTLTexture>> {};
+        owned = (NSObject<MTLTexture>*) view;
+        views.add({key, owned});
+        return view;
+    }
+
     // The Device these belong to, for the queue a read-back's blit is committed
     // on. Held rather than passed in because a Texture is read through its own
     // handle, with no Device in sight.
@@ -823,6 +857,11 @@ void* Texture::nativeSubresourceView(int level,
                                      int sliceCount) const
 {
     return (__bridge void*) impl->subresourceView(level, levelCount, slice, sliceCount);
+}
+
+void* Texture::nativeLevelView(int level) const
+{
+    return (__bridge void*) impl->levelView(level);
 }
 
 int Texture::width() const

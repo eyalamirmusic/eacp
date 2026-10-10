@@ -78,7 +78,102 @@ bool supportsTypedUAVStore(ID3D12Device* device, DXGI_FORMAT format)
 
     return (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
 }
+
+bool isLevelZeroOfSliceZero(int level, int slice, int count)
+{
+    return level == 0 && slice == 0 && count == 1;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE makeTargetView(
+    D3D12TextureData& texture, bool depth, int level, int slice, int count)
+{
+    for (const auto& view: texture.targetViews)
+        if (view.depth == depth && view.level == level && view.slice == slice
+            && view.count == count)
+            return view.handle;
+
+    auto* device = getD3D12Shared().getDevice();
+    auto* resource = depth ? texture.depthResource.get() : texture.resource.get();
+
+    if (device == nullptr || resource == nullptr)
+        return {};
+
+    auto view = D3D12SubresourceTargetView {level, slice, count, depth};
+
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+    heapDesc.Type =
+        depth ? D3D12_DESCRIPTOR_HEAP_TYPE_DSV : D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    heapDesc.NumDescriptors = 1;
+
+    if (FAILED(device->CreateDescriptorHeap(
+            &heapDesc, __uuidof(ID3D12DescriptorHeap), view.heap.put_void())))
+        return {};
+
+    view.handle = view.heap->GetCPUDescriptorHandleForHeapStart();
+
+    const auto first = static_cast<UINT>(slice);
+    const auto size = static_cast<UINT>(count);
+    const auto mip = static_cast<UINT>(level);
+
+    if (depth)
+    {
+        D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc = {};
+        viewDesc.Format = depthAttachmentFormat(texture.depthHasStencil);
+        viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+        viewDesc.Texture2DArray.MipSlice = mip;
+        viewDesc.Texture2DArray.FirstArraySlice = first;
+        viewDesc.Texture2DArray.ArraySize = size;
+        device->CreateDepthStencilView(resource, &viewDesc, view.handle);
+    }
+    else
+    {
+        D3D12_RENDER_TARGET_VIEW_DESC viewDesc = {};
+        viewDesc.Format = texture.colorFormat;
+
+        if (resource->GetDesc().Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+        {
+            viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE3D;
+            viewDesc.Texture3D.MipSlice = mip;
+            viewDesc.Texture3D.FirstWSlice = first;
+            viewDesc.Texture3D.WSize = size;
+        }
+        else
+        {
+            viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+            viewDesc.Texture2DArray.MipSlice = mip;
+            viewDesc.Texture2DArray.FirstArraySlice = first;
+            viewDesc.Texture2DArray.ArraySize = size;
+        }
+
+        device->CreateRenderTargetView(resource, &viewDesc, view.handle);
+    }
+
+    const auto handle = view.handle;
+    texture.targetViews.add(std::move(view));
+    return handle;
+}
 } // namespace
+
+D3D12_CPU_DESCRIPTOR_HANDLE
+d3d12ColorTargetView(D3D12TextureData& texture, int level, int slice, int count)
+{
+    if (isLevelZeroOfSliceZero(level, slice, count) || texture.isMultisampled())
+        return texture.attachmentView();
+
+    return makeTargetView(texture, false, level, slice, count);
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE
+d3d12DepthTargetView(D3D12TextureData& texture, int level, int slice, int count)
+{
+    if (!texture.hasDepth())
+        return {};
+
+    if (isLevelZeroOfSliceZero(level, slice, count) || texture.isMultisampled())
+        return texture.dsv;
+
+    return makeTargetView(texture, true, level, slice, count);
+}
 
 struct Texture::Native
 {
@@ -204,6 +299,15 @@ struct Texture::Native
         context.freeTextureDescriptor(data.uav);
         context.freeTextureDescriptor(data.depthSrv);
         context.freeTextureDescriptor(data.msaaDepthSrv);
+
+        for (auto& slot: data.levelSrvs)
+            context.freeTextureDescriptor(slot);
+
+        for (auto& slot: data.levelUavs)
+            context.freeTextureDescriptor(slot);
+
+        for (auto& view: data.targetViews)
+            context.deferRelease(std::move(view.heap));
         context.deferRelease(std::move(data.rtvHeap));
         context.deferRelease(std::move(data.msaaRtvHeap));
         context.deferRelease(std::move(data.dsvHeap));
@@ -575,7 +679,12 @@ struct Texture::Native
 
         // Level 0 of slice 0, which is what a pass without a level or slice
         // renders into; an array resource needs an array view to name it.
-        if (shape.kind != TextureType::TwoD)
+        if (shape.isVolume())
+        {
+            viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE3D;
+            viewDesc.Texture3D.WSize = 1;
+        }
+        else if (shape.kind != TextureType::TwoD)
         {
             viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
             viewDesc.Texture2DArray.ArraySize = 1;
@@ -977,6 +1086,41 @@ struct Texture::Native
         return viewDesc;
     }
 
+    // A read view and, on a computeWrite texture, a write view of each level
+    // alone, for ComputePass's level binds. A slot that fails to allocate
+    // leaves that level unbindable rather than the texture invalid. A texture
+    // without them binds level 0 only, through its whole views.
+    void createLevelViews(D3D12Context& context, DXGI_FORMAT viewFormat)
+    {
+        for (auto level = 0; level < levels; ++level)
+        {
+            auto read = context.allocateTextureDescriptor();
+
+            if (read.cpu.ptr != 0)
+            {
+                const auto readDesc = describeShaderResource(viewFormat, level, 1);
+                context.getDevice()->CreateShaderResourceView(
+                    data.resource.get(), &readDesc, read.cpu);
+            }
+
+            data.levelSrvs.add(read);
+
+            if (!computeWrite)
+                continue;
+
+            auto write = context.allocateTextureDescriptor();
+
+            if (write.cpu.ptr != 0)
+            {
+                const auto writeDesc = describeUnorderedAccess(viewFormat, level);
+                context.getDevice()->CreateUnorderedAccessView(
+                    data.resource.get(), nullptr, &writeDesc, write.cpu);
+            }
+
+            data.levelUavs.add(write);
+        }
+    }
+
     void createDescriptors(D3D12Context& context,
                            const TextureDescriptor& descriptor)
     {
@@ -1021,6 +1165,11 @@ struct Texture::Native
 
         context.getDevice()->CreateShaderResourceView(
             data.resource.get(), &viewDesc, data.srv.cpu);
+
+        // Only where the GPU fills the levels, so a mipmapped texture that is
+        // only ever sampled does not spend a descriptor per level.
+        if (levels > 1 && (computeWrite || descriptor.renderTarget))
+            createLevelViews(context, toDXGIFormat(descriptor.format));
 
         // No sampler descriptor is created, and TextureDescriptor::filter and
         // ::addressMode are unused on this backend: the sampler comes from the
@@ -1172,6 +1321,11 @@ int Texture::slices() const
 }
 
 void* Texture::nativeSubresourceView(int, int, int, int) const
+{
+    return nullptr;
+}
+
+void* Texture::nativeLevelView(int) const
 {
     return nullptr;
 }

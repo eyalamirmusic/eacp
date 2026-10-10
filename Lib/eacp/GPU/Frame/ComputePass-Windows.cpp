@@ -195,6 +195,73 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), data->uav.gpu);
 }
 
+namespace
+{
+// The level's own view where the texture has several, the whole one where it
+// has only the one; empty for a level it lacks.
+D3D12_GPU_DESCRIPTOR_HANDLE levelView(const Vector<DescriptorSlot>& levels,
+                                      const DescriptorSlot& whole,
+                                      int level)
+{
+    if (levels.empty())
+        return level == 0 ? whole.gpu : D3D12_GPU_DESCRIPTOR_HANDLE {};
+
+    if (level < 0 || level >= (int) levels.size())
+        return {};
+
+    return levels[level].gpu;
+}
+} // namespace
+
+// Whole-resource state tracking, so a read of one level and a write of
+// another of the same texture in one pass leave it in whichever state the
+// later bind asked for: see ComputePass::setInputTextureLevel.
+void ComputePass::setInputTextureLevel(const Texture& texture,
+                                       int slot,
+                                       int level,
+                                       TextureSampling)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
+
+    if (data == nullptr)
+        return;
+
+    const auto view = levelView(data->levelSrvs, data->srv, level);
+
+    if (view.ptr == 0)
+        return;
+
+    auto* list = impl->encoder->commands->list.get();
+
+    transitionTextureForUse(
+        list, *data, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), view);
+}
+
+void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int level)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<D3D12TextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || !data->isComputeWritable())
+        return;
+
+    const auto view = levelView(data->levelUavs, data->uav, level);
+
+    if (view.ptr == 0)
+        return;
+
+    auto* list = impl->encoder->commands->list.get();
+
+    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), view);
+}
+
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     // The `bytes <= 0` half is what keeps the cast below honest: a negative

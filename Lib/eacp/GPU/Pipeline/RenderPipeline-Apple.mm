@@ -198,6 +198,26 @@ static MTLStencilDescriptor* makeStencilDescriptor(
     return descriptor;
 }
 
+// Named on every pipeline because a vertex shader writing
+// [[render_target_array_index]] needs it on macOS, and naming the class the
+// draws already use costs nothing anywhere else.
+static MTLPrimitiveTopologyClass toMetalTopologyClass(PrimitiveTopology topology)
+{
+    switch (topology)
+    {
+        case PrimitiveTopology::Triangles:
+        case PrimitiveTopology::TriangleStrip:
+            return MTLPrimitiveTopologyClassTriangle;
+        case PrimitiveTopology::Lines:
+        case PrimitiveTopology::LineStrip:
+            return MTLPrimitiveTopologyClassLine;
+        case PrimitiveTopology::Points:
+            return MTLPrimitiveTopologyClassPoint;
+    }
+
+    return MTLPrimitiveTopologyClassTriangle;
+}
+
 static MTLVertexStepFunction toMetalStepFunction(StepRate rate)
 {
     switch (rate)
@@ -314,6 +334,8 @@ struct RenderPipeline::Native
             pipelineDescriptor.vertexDescriptor = vertexDescriptor;
 
         pipelineDescriptor.rasterSampleCount = (NSUInteger) descriptor.sampleCount;
+        pipelineDescriptor.inputPrimitiveTopology =
+            toMetalTopologyClass(descriptor.topology);
 
         // One attachment carries both planes, so its format is decided by
         // whether either test is on and the stencilled one is a superset. The

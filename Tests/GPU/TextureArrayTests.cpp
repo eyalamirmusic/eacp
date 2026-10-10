@@ -703,9 +703,10 @@ auto tArrayRefusals = test("TextureArray/refusesWhatItCannotMean") = []
     oblongCubes.height = 2;
     check(refused(oblongCubes));
 
-    auto volumeTarget = describe(TextureType::ThreeD, 4, 1, 4);
-    volumeTarget.renderTarget = true;
-    check(refused(volumeTarget));
+    auto volumeTargetWithDepth = describe(TextureType::ThreeD, 4, 1, 4);
+    volumeTargetWithDepth.renderTarget = true;
+    volumeTargetWithDepth.depth = true;
+    check(!Device::shared().makeTexture(volumeTargetWithDepth).isValid());
 
     auto multisampledArray = describe(TextureType::TwoDArray, 4, 2);
     multisampledArray.renderTarget = true;

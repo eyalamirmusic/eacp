@@ -60,8 +60,13 @@ bool makeDepthImage(VulkanContext& context,
     info.extent = {static_cast<std::uint32_t>(data.width),
                    static_cast<std::uint32_t>(data.height),
                    1};
-    info.mipLevels = 1;
-    info.arrayLayers = 1;
+
+    // The colour image's levels and slices, so a pass into any level or layer
+    // of it finds a depth plane of the same size there. A multisampled target
+    // and a resolve have one of each.
+    const auto single = samples > 1 || data.sampleCount > 1;
+    info.mipLevels = single ? 1u : static_cast<std::uint32_t>(data.mipLevels);
+    info.arrayLayers = single ? 1u : static_cast<std::uint32_t>(data.slices);
     info.samples = toVkSampleCount(samples);
     info.tiling = VK_IMAGE_TILING_OPTIMAL;
     info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
@@ -92,13 +97,29 @@ VkImageView makeVulkanImageView(VkDevice device,
                                 int levels,
                                 int layers)
 {
+    return makeVulkanImageView(
+        device, image, viewFormat, type, aspect, 0, levels, 0, layers);
+}
+
+VkImageView makeVulkanImageView(VkDevice device,
+                                VkImage image,
+                                VkFormat viewFormat,
+                                VkImageViewType type,
+                                VkImageAspectFlags aspect,
+                                int baseLevel,
+                                int levels,
+                                int baseLayer,
+                                int layers)
+{
     VkImageViewCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     info.image = image;
     info.viewType = type;
     info.format = viewFormat;
     info.subresourceRange.aspectMask = aspect;
+    info.subresourceRange.baseMipLevel = static_cast<std::uint32_t>(baseLevel);
     info.subresourceRange.levelCount = static_cast<std::uint32_t>(levels);
+    info.subresourceRange.baseArrayLayer = static_cast<std::uint32_t>(baseLayer);
     info.subresourceRange.layerCount = static_cast<std::uint32_t>(layers);
 
     auto view = VkImageView {VK_NULL_HANDLE};
@@ -289,6 +310,134 @@ VkImageViewType storageViewType(TextureType kind)
                                        : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 }
 
+namespace
+{
+VkImageView findSubresourceView(const VulkanTextureData& data,
+                                VulkanSubresourceView::Use use,
+                                int level,
+                                int slice,
+                                int count)
+{
+    for (const auto& each: data.subresourceViews)
+        if (each.use == use && each.level == level && each.slice == slice
+            && each.count == count)
+            return each.view;
+
+    return VK_NULL_HANDLE;
+}
+
+VkImageView keepSubresourceView(VulkanTextureData& data,
+                                VulkanSubresourceView::Use use,
+                                int level,
+                                int slice,
+                                int count,
+                                VkImageView view)
+{
+    if (view != VK_NULL_HANDLE)
+        data.subresourceViews.add({use, level, slice, count, view});
+
+    return view;
+}
+
+bool isLevelZeroOfSliceZero(int level, int slice, int count)
+{
+    return level == 0 && slice == 0 && count == 1;
+}
+
+VkImageView makeTargetView(
+    VulkanTextureData& data, bool depth, int level, int slice, int count)
+{
+    using Use = VulkanSubresourceView::Use;
+    const auto use = depth ? Use::DepthAttachment : Use::ColorAttachment;
+
+    if (auto view = findSubresourceView(data, use, level, slice, count))
+        return view;
+
+    const auto image = depth ? data.depthImage : data.image;
+
+    if (image == VK_NULL_HANDLE)
+        return VK_NULL_HANDLE;
+
+    const auto view = makeVulkanImageView(
+        getVulkanShared().getDevice(),
+        image,
+        depth ? data.depthFormat : data.format,
+        count > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D,
+        depth ? depthAspectMask(data.depthHasStencil) : VK_IMAGE_ASPECT_COLOR_BIT,
+        level,
+        1,
+        slice,
+        count);
+
+    return keepSubresourceView(data, use, level, slice, count, view);
+}
+} // namespace
+
+VkImageView
+    vulkanColorTargetView(VulkanTextureData& data, int level, int slice, int count)
+{
+    if (isLevelZeroOfSliceZero(level, slice, count) || data.isMultisampled())
+        return data.colorAttachmentView();
+
+    return makeTargetView(data, false, level, slice, count);
+}
+
+VkImageView
+    vulkanDepthTargetView(VulkanTextureData& data, int level, int slice, int count)
+{
+    if (!data.hasDepth())
+        return VK_NULL_HANDLE;
+
+    if (isLevelZeroOfSliceZero(level, slice, count) || data.isMultisampled())
+        return data.depthAttachmentView;
+
+    return makeTargetView(data, true, level, slice, count);
+}
+
+VkImageView vulkanLevelView(VulkanTextureData& data, bool storage, int level)
+{
+    using Use = VulkanSubresourceView::Use;
+
+    if (level < 0 || level >= data.mipLevels)
+        return VK_NULL_HANDLE;
+
+    if (data.mipLevels == 1)
+        return storage ? data.storageView : data.sampledView;
+
+    const auto use = storage ? Use::Storage : Use::Sampled;
+
+    if (auto view = findSubresourceView(data, use, level, 0, data.slices))
+        return view;
+
+    const auto view = makeVulkanImageView(getVulkanShared().getDevice(),
+                                          data.image,
+                                          data.format,
+                                          storage ? storageViewType(data.kind)
+                                                  : sampledViewType(data.kind),
+                                          VK_IMAGE_ASPECT_COLOR_BIT,
+                                          level,
+                                          1,
+                                          0,
+                                          data.slices);
+
+    return keepSubresourceView(data, use, level, 0, data.slices, view);
+}
+
+void releaseVulkanSubresourceViews(VulkanContext& context, VulkanTextureData& data)
+{
+    if (data.subresourceViews.empty())
+        return;
+
+    context.deferRelease(
+        [views = data.subresourceViews]
+        {
+            for (const auto& each: views)
+                getVulkanShared().destroyImageView(each.view);
+        });
+
+    data.subresourceViews.clear();
+}
+
 struct Texture::Native
 {
     Native(Device& device,
@@ -449,6 +598,11 @@ struct Texture::Native
         if (shape.isCubeKind())
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
 
+        // A pass renders into one image of a volume, or a run of them, through
+        // a 2D or 2D array view of its z range.
+        if (shape.isVolume() && descriptor.renderTarget)
+            info.flags |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;
+
         VmaAllocationCreateInfo allocationInfo = {};
         allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
 
@@ -540,6 +694,7 @@ struct Texture::Native
                 [device = context.getDevice(), view = data.storageView]
                 { vkDestroyImageView(device, view, nullptr); });
 
+        releaseVulkanSubresourceViews(context, data);
         releaseVulkanCompanions(context, data);
 
         data = {};
@@ -911,6 +1066,11 @@ int Texture::slices() const
 }
 
 void* Texture::nativeSubresourceView(int, int, int, int) const
+{
+    return nullptr;
+}
+
+void* Texture::nativeLevelView(int) const
 {
     return nullptr;
 }

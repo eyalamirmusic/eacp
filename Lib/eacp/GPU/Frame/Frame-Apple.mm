@@ -3,6 +3,7 @@
 
 #include "Frame.h"
 
+#include "../CommandBuffer/CopyPlan.h"
 #include "../Device/Device.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -18,6 +19,59 @@ namespace
 bool hasStencilPlane(MTLPixelFormat format)
 {
     return format == MTLPixelFormatDepth32Float_Stencil8;
+}
+
+// Where an attachment points inside its texture. One image is the
+// attachment's own level, slice and depthPlane; a run of layers is a 2D array
+// view of them, so the vertex shader's layer index counts from the run's first
+// slice on every backend - Metal's own slice would be ignored by a layered
+// pass, which addresses the whole texture from 0.
+struct AttachmentImage
+{
+    id<MTLTexture> texture = nil;
+    NSUInteger level = 0;
+    NSUInteger slice = 0;
+    NSUInteger depthPlane = 0;
+};
+
+AttachmentImage attachmentImage(id<MTLTexture> texture,
+                                int level,
+                                int slice,
+                                int layerCount)
+{
+    auto image = AttachmentImage {texture};
+
+    if (texture == nil)
+        return image;
+
+    if (layerCount > 1 && texture.textureType != MTLTextureType3D)
+    {
+        image.texture = [texture
+            newTextureViewWithPixelFormat:texture.pixelFormat
+                              textureType:MTLTextureType2DArray
+                                   levels:NSMakeRange((NSUInteger) level, 1)
+                                   slices:NSMakeRange((NSUInteger) slice,
+                                                      (NSUInteger) layerCount)];
+        [image.texture autorelease];
+        return image;
+    }
+
+    image.level = (NSUInteger) level;
+
+    if (texture.textureType == MTLTextureType3D)
+        image.depthPlane = (NSUInteger) slice;
+    else
+        image.slice = (NSUInteger) slice;
+
+    return image;
+}
+
+void point(MTLRenderPassAttachmentDescriptor* attachment, const AttachmentImage& image)
+{
+    attachment.texture = image.texture;
+    attachment.level = image.level;
+    attachment.slice = image.slice;
+    attachment.depthPlane = image.depthPlane;
 }
 
 // Attaches the frame's depth buffer, and its stencil plane when the format has
@@ -42,8 +96,11 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
                         id<MTLTexture> depth,
                         id<MTLTexture> resolved,
                         unsigned char clearStencil,
-                        DepthAction action)
+                        DepthAction action,
+                        const ColorTarget& at = {})
 {
+    const auto image = attachmentImage(depth, at.level, at.slice, at.layerCount);
+
     const auto load =
         action == DepthAction::Resume ? MTLLoadActionLoad : MTLLoadActionClear;
 
@@ -54,7 +111,7 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
                                                     : MTLStoreActionStore;
 
     auto depthAttachment = passDescriptor.depthAttachment;
-    depthAttachment.texture = depth;
+    point(depthAttachment, image);
     depthAttachment.loadAction = load;
     depthAttachment.storeAction = store;
     depthAttachment.clearDepth = 1.0;
@@ -79,7 +136,7 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
         return;
 
     auto stencilAttachment = passDescriptor.stencilAttachment;
-    stencilAttachment.texture = depth;
+    point(stencilAttachment, image);
     stencilAttachment.loadAction = load;
     stencilAttachment.storeAction = store;
     stencilAttachment.clearStencil = (uint32_t) clearStencil;
@@ -98,7 +155,8 @@ void attachColor(MTLRenderPassColorAttachmentDescriptor* attachment,
     }
     else
     {
-        attachment.texture = texture;
+        point(attachment,
+              attachmentImage(texture, target.level, target.slice, target.layerCount));
         attachment.storeAction = MTLStoreActionStore;
     }
 
@@ -378,13 +436,19 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
             depth,
             (__bridge id<MTLTexture>) first.nativeResolvedDepthTexture(),
             descriptor.clearStencil,
-            descriptor.depthAction);
+            descriptor.depthAction,
+            targets[0]);
+
+    if (targets[0].layerCount > 1)
+        passDescriptor.renderTargetArrayLength = (NSUInteger) targets[0].layerCount;
 
     impl->timeRenderPass(passDescriptor, descriptor.label);
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
-    return RenderPass((__bridge void*) encoder, first.width(), first.height());
+    return RenderPass((__bridge void*) encoder,
+                      levelWidth(first, targets[0].level),
+                      levelHeight(first, targets[0].level));
 }
 
 // A compute pass samples at the encoder's own boundaries rather than at a

@@ -32,6 +32,14 @@ struct TextureCopyPlan
 
     int width = 0;
     int height = 0;
+
+    // A volume's images: z on each side and how many. 0, 0 and 1 elsewhere.
+    int sourceZ = 0;
+    int destinationZ = 0;
+    int depth = 1;
+
+    // Consecutive slices from each side's, the same box of each.
+    int sliceCount = 1;
 };
 
 struct BufferCopyPlan
@@ -66,6 +74,9 @@ struct BufferTextureCopyPlan
 int textureSlices(const Texture& texture);
 int levelWidth(const Texture& texture, int level);
 int levelHeight(const Texture& texture, int level);
+
+// The 2D images a level holds: its slices, or a volume's images at that level.
+int levelSlices(const Texture& texture, int level);
 
 std::optional<TextureCopyPlan> planTextureCopy(const Texture& source,
                                                const Texture& destination,

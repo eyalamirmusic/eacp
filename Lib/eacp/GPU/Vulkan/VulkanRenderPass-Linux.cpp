@@ -178,13 +178,15 @@ VkFramebuffer VulkanRenderPassCache::getFramebuffer(VkDevice device,
                                                     VkRenderPass renderPass,
                                                     const Vector<VkImageView>& views,
                                                     std::uint32_t width,
-                                                    std::uint32_t height)
+                                                    std::uint32_t height,
+                                                    std::uint32_t layers)
 {
     auto lock = std::lock_guard<std::mutex> {mutex};
 
     for (const auto& entry: framebuffers)
         if (entry.renderPass == renderPass && entry.width == width
-            && entry.height == height && entry.views == views)
+            && entry.height == height && entry.layers == layers
+            && entry.views == views)
             return entry.framebuffer;
 
     VkFramebufferCreateInfo info = {};
@@ -194,7 +196,7 @@ VkFramebuffer VulkanRenderPassCache::getFramebuffer(VkDevice device,
     info.pAttachments = views.data();
     info.width = width;
     info.height = height;
-    info.layers = 1;
+    info.layers = layers;
 
     auto framebuffer = VkFramebuffer {VK_NULL_HANDLE};
 
@@ -206,7 +208,7 @@ VkFramebuffer VulkanRenderPassCache::getFramebuffer(VkDevice device,
         return VK_NULL_HANDLE;
     }
 
-    framebuffers.add({renderPass, views, width, height, framebuffer});
+    framebuffers.add({renderPass, views, width, height, layers, framebuffer});
     return framebuffer;
 }
 
@@ -348,7 +350,8 @@ VulkanRenderPassBegin
                                                 begin.renderPass,
                                                 views,
                                                 rendering.renderArea.extent.width,
-                                                rendering.renderArea.extent.height);
+                                                rendering.renderArea.extent.height,
+                                                rendering.layerCount);
 
     return begin;
 }

@@ -288,6 +288,17 @@ bool Device::supportsCubeArrays() const
            || [metalDevice supportsFamily:MTLGPUFamilyApple4] == YES;
 }
 
+bool Device::supportsLayeredRendering() const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil)
+        return false;
+
+    return [metalDevice supportsFamily:MTLGPUFamilyMac2] == YES
+           || [metalDevice supportsFamily:MTLGPUFamilyApple5] == YES;
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? ComputePass::maxBufferSlots : 0;

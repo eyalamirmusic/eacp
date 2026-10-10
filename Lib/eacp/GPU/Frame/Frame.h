@@ -88,11 +88,28 @@ struct RenderPassDescriptor
 // the pass does with what is already in it. Each attachment clears to its own
 // colour, which is what a G-buffer wants - normals cleared to zero beside an
 // albedo cleared to the sky.
+//
+// level and slice pick the 2D image of the texture the pass renders into: any
+// mip of any layer, cube face (layer * 6 + face on a cube array) or, on a
+// volume, z of that level. The pass is that level's size, and the target's
+// depth buffer is attached at the same level and slice, so a cube's caller-
+// built chain or a shadow map array is rendered one image at a time.
+//
+// layerCount above 1 is layered rendering: the pass covers layerCount slices
+// from `slice` at once and the vertex shader picks each primitive's -
+// [[render_target_array_index]] in MSL, SV_RenderTargetArrayIndex in HLSL,
+// gl_Layer in GLSL, counted from `slice` - where Device::supportsLayeredRendering()
+// says so. A primitive that writes none lands in the first. Every target of
+// one pass takes the same layerCount, and a volume's run starts at z 0.
 struct ColorTarget
 {
     const Texture* texture = nullptr;
     Graphics::Color clearColor = Graphics::Color::black();
     bool clear = true;
+
+    int level = 0;
+    int slice = 0;
+    int layerCount = 1;
 };
 
 // Off-screen render target for snapshots: a colour texture the app owns instead
@@ -200,6 +217,11 @@ public:
     // single-target pass takes them: its depth buffer is attached and the
     // others' are ignored. Every multisampled target resolves into itself at
     // the end of the pass.
+    //
+    // Each target names its own level and slice (ColorTarget), and the sizes
+    // compared are those levels' sizes, so level 1 of a 64-wide target and
+    // level 0 of a 32-wide one are one pass. A level, slice or run of layers
+    // the texture lacks is refused like a mismatched size.
     //
     // Each target clears or loads by its own ColorTarget; the descriptor's
     // clearColor and clear are not read, and the rest of it is.

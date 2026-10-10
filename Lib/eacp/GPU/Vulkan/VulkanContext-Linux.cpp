@@ -424,6 +424,27 @@ bool probeDrawIndirectCount(VkPhysicalDevice candidate, bool coreFloor)
     return features12.drawIndirectCount == VK_TRUE;
 }
 
+// glslang writes gl_Layer from a vertex shader as the ShaderLayer capability
+// at SPIR-V 1.5 and up, which is the core floor's shaderOutputLayer, and as
+// SPV_EXT_shader_viewport_index_layer below it, which is the extension.
+bool probeLayeredRendering(VkPhysicalDevice candidate, bool coreFloor)
+{
+    if (!coreFloor)
+        return hasDeviceExtension(candidate,
+                                  VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
+
+    VkPhysicalDeviceVulkan12Features features12 = {};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
+    VkPhysicalDeviceFeatures2 features = {};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = &features12;
+
+    vkGetPhysicalDeviceFeatures2(candidate, &features);
+
+    return features12.shaderOutputLayer == VK_TRUE;
+}
+
 bool aliasDrawIndirectCount()
 {
     vkCmdDrawIndirectCount = vkCmdDrawIndirectCountKHR;
@@ -976,6 +997,7 @@ bool VulkanShared::selectPhysicalDevice()
     coreFloor = reachesCoreFloor(properties.apiVersion);
     renderPassPath = !coreFloor || forcesRenderPasses();
     indirectCountSupported = probeDrawIndirectCount(physicalDevice, coreFloor);
+    layeredRenderingSupported = probeLayeredRendering(physicalDevice, coreFloor);
 
     if (coreFloor)
         spirvTarget = Spirv::Target::vulkan13Spirv16;
@@ -1016,6 +1038,7 @@ bool VulkanShared::createDevice()
     features12.timelineSemaphore = VK_TRUE;
     features12.descriptorBindingPartiallyBound = VK_TRUE;
     features12.drawIndirectCount = indirectCountSupported ? VK_TRUE : VK_FALSE;
+    features12.shaderOutputLayer = layeredRenderingSupported ? VK_TRUE : VK_FALSE;
 
     VkPhysicalDeviceSynchronization2FeaturesKHR synchronization2 = {};
     synchronization2.sType =
@@ -1061,6 +1084,9 @@ bool VulkanShared::createDevice()
 
         if (indirectCountSupported)
             extensions.add(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+
+        if (layeredRenderingSupported)
+            extensions.add(VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
     }
 
     const auto swapchainOffered =

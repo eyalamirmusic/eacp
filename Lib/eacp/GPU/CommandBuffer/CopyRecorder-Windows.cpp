@@ -6,6 +6,8 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
+#include <algorithm>
+
 namespace eacp::GPU
 {
 namespace
@@ -56,16 +58,23 @@ D3D12_TEXTURE_COPY_LOCATION footprintLocation(ID3D12Resource* buffer,
     return location;
 }
 
-D3D12_BOX boxOf(int x, int y, int width, int height)
+D3D12_BOX boxOf(int x, int y, int width, int height, int z = 0, int depth = 1)
 {
     D3D12_BOX box = {};
     box.left = static_cast<UINT>(x);
     box.top = static_cast<UINT>(y);
-    box.front = 0;
+    box.front = static_cast<UINT>(z);
     box.right = static_cast<UINT>(x + width);
     box.bottom = static_cast<UINT>(y + height);
-    box.back = 1;
+    box.back = static_cast<UINT>(z + depth);
     return box;
+}
+
+int depthOf(const Texture& texture, int level)
+{
+    return texture.kind() == TextureType::ThreeD
+               ? std::max(1, texture.volumeDepth() >> level)
+               : 1;
 }
 
 bool isWholeLevel(const Texture& texture, int level, int x, int y, int w, int h)
@@ -161,7 +170,9 @@ void recordCopy(void* recording, const TextureCopyPlan& plan)
                                     plan.sourceY,
                                     plan.width,
                                     plan.height)
-                       && plan.destinationX == 0 && plan.destinationY == 0;
+                       && plan.destinationX == 0 && plan.destinationY == 0
+                       && plan.sourceZ == 0 && plan.destinationZ == 0
+                       && plan.depth == depthOf(*plan.source, plan.sourceLevel);
 
     if (!whole && getD3D12Shared().getDriverQuirks().noBoxedTextureCopy)
     {
@@ -175,18 +186,28 @@ void recordCopy(void* recording, const TextureCopyPlan& plan)
     transitionTextureForUse(list, *source, D3D12_RESOURCE_STATE_COPY_SOURCE);
     transitionTextureForUse(list, *destination, D3D12_RESOURCE_STATE_COPY_DEST);
 
-    const auto from =
-        subresourceLocation(*source, plan.sourceLevel, plan.sourceSlice);
-    const auto to = subresourceLocation(
-        *destination, plan.destinationLevel, plan.destinationSlice);
-    const auto box = boxOf(plan.sourceX, plan.sourceY, plan.width, plan.height);
+    const auto box = boxOf(plan.sourceX,
+                           plan.sourceY,
+                           plan.width,
+                           plan.height,
+                           plan.sourceZ,
+                           plan.depth);
 
-    list->CopyTextureRegion(&to,
-                            static_cast<UINT>(plan.destinationX),
-                            static_cast<UINT>(plan.destinationY),
-                            0,
-                            &from,
-                            whole ? nullptr : &box);
+    // One subresource per slice; a volume's images are the box's depth.
+    for (auto slice = 0; slice < plan.sliceCount; ++slice)
+    {
+        const auto from =
+            subresourceLocation(*source, plan.sourceLevel, plan.sourceSlice + slice);
+        const auto to = subresourceLocation(
+            *destination, plan.destinationLevel, plan.destinationSlice + slice);
+
+        list->CopyTextureRegion(&to,
+                                static_cast<UINT>(plan.destinationX),
+                                static_cast<UINT>(plan.destinationY),
+                                static_cast<UINT>(plan.destinationZ),
+                                &from,
+                                whole ? nullptr : &box);
+    }
 
     restAfterCopy(list, *source);
     restAfterCopy(list, *destination);

@@ -255,6 +255,11 @@ bool Device::supportsCubeArrays() const
     return isValid() && getVulkanShared().getFeatures().imageCubeArray == VK_TRUE;
 }
 
+bool Device::supportsLayeredRendering() const
+{
+    return isValid() && getVulkanShared().supportsLayeredRendering();
+}
+
 int Device::maxThreadgroupMemory() const
 {
     if (!isValid())

@@ -19,14 +19,22 @@ bool hasLevelAndSlice(const Texture& texture, int level, int slice)
            && slice < textureSlices(texture);
 }
 
+// A depth of 0 runs to the edge, which is 1 on anything flat.
 bool isFlat(const TextureOrigin& origin, const TextureExtent& size)
 {
-    return origin.z == 0 && size.depth == 1;
+    return origin.z == 0 && (size.depth == 1 || size.depth == 0);
 }
 
 int resolvedExtent(int requested, int origin, int levelExtent)
 {
     return requested > 0 ? requested : levelExtent - origin;
+}
+
+int levelDepth(const Texture& texture, int level)
+{
+    return texture.kind() == TextureType::ThreeD
+               ? std::max(1, texture.volumeDepth() >> level)
+               : 1;
 }
 
 bool coversWholeLevel(const Texture& texture, int level, int x, int y, int w, int h)
@@ -51,6 +59,14 @@ int levelHeight(const Texture& texture, int level)
     return std::max(1, texture.height() >> level);
 }
 
+int levelSlices(const Texture& texture, int level)
+{
+    if (texture.kind() == TextureType::ThreeD)
+        return std::max(1, texture.volumeDepth() >> level);
+
+    return texture.slices();
+}
+
 std::optional<TextureCopyPlan> planTextureCopy(const Texture& source,
                                                const Texture& destination,
                                                const TextureCopyRegion& region)
@@ -67,17 +83,32 @@ std::optional<TextureCopyPlan> planTextureCopy(const Texture& source,
         return {};
     }
 
-    if (!hasLevelAndSlice(source, region.sourceLevel, region.sourceSlice)
+    const auto sliceCount = region.sliceCount;
+
+    if (sliceCount < 1
+        || !hasLevelAndSlice(source, region.sourceLevel, region.sourceSlice)
         || !hasLevelAndSlice(
-            destination, region.destinationLevel, region.destinationSlice))
+            destination, region.destinationLevel, region.destinationSlice)
+        || region.sourceSlice + sliceCount > textureSlices(source)
+        || region.destinationSlice + sliceCount > textureSlices(destination))
     {
         LOG("eacp: a texture copy names a level or slice the texture lacks");
         return {};
     }
 
-    if (!isFlat(region.sourceOrigin, region.size) || region.destinationOrigin.z != 0)
+    const auto volumes = source.kind() == TextureType::ThreeD;
+
+    if (volumes != (destination.kind() == TextureType::ThreeD))
     {
-        LOG("eacp: a texture copy with depth needs 3D textures, which eacp lacks");
+        LOG("eacp: a texture copy between a volume and another kind is refused");
+        return {};
+    }
+
+    if (!volumes
+        && (!isFlat(region.sourceOrigin, region.size)
+            || region.destinationOrigin.z != 0))
+    {
+        LOG("eacp: a texture copy with depth needs two volumes");
         return {};
     }
 
@@ -96,6 +127,20 @@ std::optional<TextureCopyPlan> planTextureCopy(const Texture& source,
         region.size.width, plan.sourceX, levelWidth(source, plan.sourceLevel));
     plan.height = resolvedExtent(
         region.size.height, plan.sourceY, levelHeight(source, plan.sourceLevel));
+    plan.sourceZ = region.sourceOrigin.z;
+    plan.destinationZ = region.destinationOrigin.z;
+    plan.depth = resolvedExtent(
+        region.size.depth, plan.sourceZ, levelDepth(source, plan.sourceLevel));
+    plan.sliceCount = sliceCount;
+
+    if (!isWithin(plan.sourceZ, plan.depth, levelDepth(source, plan.sourceLevel))
+        || !isWithin(plan.destinationZ,
+                     plan.depth,
+                     levelDepth(destination, plan.destinationLevel)))
+    {
+        LOG("eacp: a texture copy's images leave the source or destination volume");
+        return {};
+    }
 
     if (!isWithin(plan.sourceX, plan.width, levelWidth(source, plan.sourceLevel))
         || !isWithin(

@@ -14,10 +14,33 @@ ColorTarget colorTargetFor(const Texture* texture,
     return {texture, descriptor.clearColor, descriptor.clear};
 }
 
-bool sharesShapeWith(const Texture& texture, const Texture& first)
+bool sharesShapeWith(const ColorTarget& target, const ColorTarget& first)
 {
-    return texture.width() == first.width() && texture.height() == first.height()
-           && texture.sampleCount() == first.sampleCount();
+    const auto& texture = *target.texture;
+    const auto& other = *first.texture;
+
+    return levelWidth(texture, target.level) == levelWidth(other, first.level)
+           && levelHeight(texture, target.level) == levelHeight(other, first.level)
+           && texture.sampleCount() == other.sampleCount()
+           && target.layerCount == first.layerCount;
+}
+
+// The level, the slice and the run of layers from it, all inside the texture;
+// a volume's run starts at z 0, Metal having no way to begin a layered pass
+// part-way through one.
+bool namesImagesItHas(const ColorTarget& target)
+{
+    const auto& texture = *target.texture;
+
+    if (target.level < 0 || target.level >= texture.mipLevels() || target.slice < 0
+        || target.layerCount < 1)
+        return false;
+
+    if (texture.kind() == TextureType::ThreeD && target.layerCount > 1
+        && target.slice != 0)
+        return false;
+
+    return target.slice + target.layerCount <= levelSlices(texture, target.level);
 }
 } // namespace
 
@@ -84,11 +107,20 @@ bool Frame::canRenderInto(std::span<const ColorTarget> targets)
             return false;
         }
 
-        if (!sharesShapeWith(*texture, *targets[0].texture))
+        if (!namesImagesItHas(targets[index]))
         {
             LOG("eacp: colour target ",
                 index,
-                " of a pass differs from target 0 in size or sample count");
+                " of a pass names a level, slice or layer run its texture lacks");
+            return false;
+        }
+
+        if (!sharesShapeWith(targets[index], targets[0]))
+        {
+            LOG("eacp: colour target ",
+                index,
+                " of a pass differs from target 0 in size, sample count or layer "
+                "count");
             return false;
         }
 

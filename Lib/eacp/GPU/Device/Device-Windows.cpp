@@ -271,6 +271,31 @@ bool Device::supportsCubeArrays() const
     return isValid();
 }
 
+// The D3D11.3 option that lets a vertex shader write
+// SV_RenderTargetArrayIndex, rather than a geometry shader eacp does not have.
+bool Device::supportsLayeredRendering() const
+{
+    if (!isValid())
+        return false;
+
+    auto* device = getD3D12Shared().getDevice();
+
+    if (device == nullptr)
+        return false;
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
+
+    if (FAILED(device->CheckFeatureSupport(
+            D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options))))
+        return false;
+
+    const auto fromVertexShader =
+        options
+            .VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation;
+
+    return fromVertexShader == TRUE;
+}
+
 // A shader-model constant rather than an adapter's answer: Direct3D gives a
 // thread group 32 KB of groupshared memory at cs_5_0 on every device that runs
 // the model at all, so there is nothing to query and nothing that varies.

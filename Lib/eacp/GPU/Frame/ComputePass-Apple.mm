@@ -134,6 +134,34 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
 }
 
+void ComputePass::setInputTextureLevel(const Texture& texture,
+                                       int slot,
+                                       int level,
+                                       TextureSampling sampling)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto view = (__bridge id<MTLTexture>) texture.nativeLevelView(level);
+    auto metalSampler =
+        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
+
+    if (activeEncoder == nil || view == nil || metalSampler == nil)
+        return;
+
+    [activeEncoder setTexture:view atIndex:(NSUInteger) slot];
+    [activeEncoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
+void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int level)
+{
+    auto activeEncoder = impl->encoder.get();
+    auto view = (__bridge id<MTLTexture>) texture.nativeLevelView(level);
+
+    if (activeEncoder == nil || view == nil || !texture.isComputeWritable())
+        return;
+
+    [activeEncoder setTexture:view atIndex:(NSUInteger) slot];
+}
+
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
 {
     if (auto activeEncoder = impl->encoder.get())

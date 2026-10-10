@@ -92,6 +92,26 @@ public:
     void setInputTexture(const Texture& texture, int slot, const Sampler& sampler);
     void setOutputTexture(const Texture& texture, int slot);
 
+    // One mip level of a texture, every slice of it, bound as the shader
+    // declares the kind - texture2d, texture2d_array, texture3d and so on, a
+    // volume with that level's images - so level 0 of the view is `level` of
+    // the texture. What a hi-Z or bloom downscale is built from: a kernel
+    // reading level N - 1 through setInputTextureLevel and writing level N
+    // through setOutputTextureLevel of the same texture, one dispatch per
+    // level.
+    //
+    // A level the texture lacks binds nothing, as does an output on a texture
+    // that is not computeWrite. On D3D12 a read and a write of one texture put
+    // one resource in two states, which its whole-resource tracking cannot
+    // express: there the lower level is read through a second
+    // setOutputTextureLevel and an RWTexture2D load. Metal and Vulkan take
+    // either.
+    void setInputTextureLevel(const Texture& texture,
+                              int slot,
+                              int level,
+                              TextureSampling sampling = {});
+    void setOutputTextureLevel(const Texture& texture, int slot, int level);
+
     // Uploads a small uniform block without a buffer object, like the render
     // pass's setVertexBytes. slot is the uniform-block slot (0 = first block).
     void setBytes(const void* data, std::int64_t bytes, int slot = 0);

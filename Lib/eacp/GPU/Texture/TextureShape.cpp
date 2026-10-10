@@ -50,8 +50,13 @@ bool shapeIsPossible(const TextureDescriptor& descriptor, TextureType kind)
         && (kind != TextureType::TwoD || descriptor.mipLevels > 1))
         return false;
 
-    if (kind == TextureType::ThreeD
-        && (descriptor.renderTarget || isCompressedFormat(descriptor.format)))
+    if (kind == TextureType::ThreeD && isCompressedFormat(descriptor.format))
+        return false;
+
+    // A volume is rendered into one z at a time and has no depth plane to go
+    // with it: no API makes a 3D depth texture.
+    if (kind == TextureType::ThreeD && descriptor.renderTarget
+        && (descriptor.depth || descriptor.stencil || descriptor.sampleableDepth))
         return false;
 
     return true;

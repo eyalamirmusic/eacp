@@ -176,7 +176,8 @@ public:
                                  VkRenderPass renderPass,
                                  const Vector<VkImageView>& views,
                                  std::uint32_t width,
-                                 std::uint32_t height);
+                                 std::uint32_t height,
+                                 std::uint32_t layers = 1);
 
     void forgetView(VkDevice device, VkImageView view);
 
@@ -195,6 +196,7 @@ private:
         Vector<VkImageView> views;
         std::uint32_t width = 0;
         std::uint32_t height = 0;
+        std::uint32_t layers = 1;
         VkFramebuffer framebuffer = VK_NULL_HANDLE;
     };
 
@@ -290,6 +292,10 @@ public:
     // VK_KHR_draw_indirect_count extension below it.
     bool supportsIndirectCount() const { return indirectCountSupported; }
 
+    // gl_Layer from a vertex shader: shaderOutputLayer on the core floor,
+    // VK_EXT_shader_viewport_index_layer below it.
+    bool supportsLayeredRendering() const { return layeredRenderingSupported; }
+
     // Null before the device came up.
     VkSampler getSampler(const TextureSampling& sampling) const
     {
@@ -333,6 +339,7 @@ private:
     VulkanRenderPassCache renderPasses;
     bool depthResolvesBySampleZero = false;
     bool indirectCountSupported = false;
+    bool layeredRenderingSupported = false;
 
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 

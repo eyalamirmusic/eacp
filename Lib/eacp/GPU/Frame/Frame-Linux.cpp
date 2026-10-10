@@ -3,6 +3,8 @@
 #include "../Device/Device.h"
 #include "../Vulkan/VulkanTypes.h"
 
+#include <algorithm>
+
 namespace eacp::GPU
 {
 namespace
@@ -18,11 +20,22 @@ VkAttachmentStoreOp vulkanDepthStoreOp(DepthAction action)
     return action == DepthAction::Clear ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                                         : VK_ATTACHMENT_STORE_OP_STORE;
 }
+
+// What a pass does with one attachment and which of its images it draws
+// into: ColorTarget's level, slice and layerCount.
 struct VulkanClear
 {
     Graphics::Color color = Graphics::Color::black();
     bool clear = true;
+    int level = 0;
+    int slice = 0;
+    int layerCount = 1;
 };
+
+std::uint32_t levelExtent(int size, int level)
+{
+    return static_cast<std::uint32_t>(std::max(1, size >> level));
+}
 } // namespace
 
 struct Frame::Native
@@ -141,6 +154,24 @@ struct Frame::Native
         auto& data = *targets[0];
         auto buffer = commands->buffer;
 
+        auto views = std::array<VkImageView, maxColorAttachments> {};
+
+        for (auto index = std::size_t {0}; index < targets.size(); ++index)
+        {
+            const auto& at = clears[index];
+            views[index] = vulkanColorTargetView(
+                *targets[index], at.level, at.slice, at.layerCount);
+
+            if (views[index] == VK_NULL_HANDLE)
+                return RenderPass(nullptr);
+        }
+
+        const auto& first = clears[0];
+        const auto depthView =
+            vulkanDepthTargetView(data, first.level, first.slice, first.layerCount);
+        const auto width = levelExtent(data.width, first.level);
+        const auto height = levelExtent(data.height, first.level);
+
         // Barriers are illegal once vkCmdBeginRendering has run.
         barrierBeforeRendering(buffer);
 
@@ -160,7 +191,7 @@ struct Frame::Native
 
             auto& colorAttachment = colorAttachments[index];
             colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-            colorAttachment.imageView = target.colorAttachmentView();
+            colorAttachment.imageView = views[index];
             colorAttachment.imageLayout = imageColorAttachment.layout;
             colorAttachment.loadOp = clears[index].clear
                                          ? VK_ATTACHMENT_LOAD_OP_CLEAR
@@ -185,7 +216,7 @@ struct Frame::Native
 
         VkRenderingAttachmentInfo depthAttachment = {};
         depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        depthAttachment.imageView = data.depthAttachmentView;
+        depthAttachment.imageView = depthView;
         depthAttachment.imageLayout = imageDepthAttachment.layout;
         depthAttachment.loadOp = vulkanDepthLoadOp(descriptor.depthAction);
         depthAttachment.storeOp = vulkanDepthStoreOp(descriptor.depthAction);
@@ -205,13 +236,12 @@ struct Frame::Native
 
         VkRenderingInfo rendering = {};
         rendering.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        rendering.renderArea.extent = {static_cast<std::uint32_t>(data.width),
-                                       static_cast<std::uint32_t>(data.height)};
-        rendering.layerCount = 1;
+        rendering.renderArea.extent = {width, height};
+        rendering.layerCount = static_cast<std::uint32_t>(first.layerCount);
         rendering.colorAttachmentCount = static_cast<std::uint32_t>(targets.size());
         rendering.pColorAttachments = colorAttachments.data();
 
-        if (data.hasDepth())
+        if (depthView != VK_NULL_HANDLE)
         {
             rendering.pDepthAttachment = &depthAttachment;
 
@@ -230,8 +260,8 @@ struct Frame::Native
                 return RenderPass(nullptr);
         }
 
-        auto* encoder =
-            new VulkanRenderEncoder {commands, {}, data.width, data.height};
+        auto* encoder = new VulkanRenderEncoder {
+            commands, {}, static_cast<int>(width), static_cast<int>(height)};
 
         for (auto* target: targets)
             encoder->targets.add(target);
@@ -248,15 +278,13 @@ struct Frame::Native
         context().setRenderPassOpen(true);
 
         const VkViewport viewport {0.f,
-                                   static_cast<float>(data.height),
-                                   static_cast<float>(data.width),
-                                   -static_cast<float>(data.height),
+                                   static_cast<float>(height),
+                                   static_cast<float>(width),
+                                   -static_cast<float>(height),
                                    0.f,
                                    1.f};
 
-        const VkRect2D scissor {{0, 0},
-                                {static_cast<std::uint32_t>(data.width),
-                                 static_cast<std::uint32_t>(data.height)}};
+        const VkRect2D scissor {{0, 0}, {width, height}};
 
         vkCmdSetViewport(buffer, 0, 1, &viewport);
         vkCmdSetScissor(buffer, 0, 1, &scissor);
@@ -264,7 +292,8 @@ struct Frame::Native
         // Command-buffer state, so it would otherwise carry into the next pass.
         vkCmdSetStencilReference(buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 0);
 
-        return RenderPass(encoder, data.width, data.height);
+        return RenderPass(
+            encoder, static_cast<int>(width), static_cast<int>(height));
     }
 
     // A VkQueue is externally synchronized: presenting takes the submit mutex.
@@ -409,7 +438,12 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
     {
         data[index] =
             static_cast<VulkanTextureData*>(targets[index].texture->nativeTexture());
-        clears[index] = {targets[index].clearColor, targets[index].clear};
+        const auto& target = targets[index];
+        clears[index] = {target.clearColor,
+                         target.clear,
+                         target.level,
+                         target.slice,
+                         target.layerCount};
 
         if (data[index] == nullptr)
             return RenderPass(nullptr);

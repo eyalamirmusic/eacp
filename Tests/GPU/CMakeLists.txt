@@ -87,6 +87,7 @@ set(gpu_test_sources
         StorePlacementTests.cpp
         StreamedRangeDrawTests.cpp
         StreamingBufferTests.cpp
+        SubresourceTargetTests.cpp
         SuppliedMipChainTests.cpp
         TextureCreationTests.cpp
         TextureReadTests.cpp

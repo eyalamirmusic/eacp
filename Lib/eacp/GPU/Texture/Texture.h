@@ -385,7 +385,7 @@ struct TextureDescriptor
     //
     // A render target or a computeWrite texture may ask for levels with null
     // pixels: the GPU fills them, a pass at ColorTarget::level or a kernel at
-    // ComputePass::setOutputTexture(texture, slot, level). Any texture may
+    // ComputePass::setOutputTextureLevel(texture, slot, level). Any texture may
     // ask for them through Device::makeTextureFromSubresources, which names
     // what it uploads and so may upload nothing yet.
     //
@@ -499,8 +499,10 @@ struct TextureDescriptor
     // image by image (TextureRegion), and may carry mipLevels.
     //
     // Refused, each yielding an invalid texture: a multisampled kind other
-    // than TwoD; a ThreeD texture that is a renderTarget or compressed; a
-    // CubeArray on a device without Device::supportsCubeArrays().
+    // than TwoD; a ThreeD texture that is compressed, or a renderTarget with
+    // depth, stencil or sampleableDepth (a pass renders into one z of it, a
+    // ColorTarget::slice, and no API has a 3D depth buffer); a CubeArray on a
+    // device without Device::supportsCubeArrays().
     TextureType kind = TextureType::TwoD;
 
     // The number of layers of a TwoDArray, or of cubes in a CubeArray, up to
@@ -791,6 +793,13 @@ public:
                                 int levelCount,
                                 int slice,
                                 int sliceCount) const;
+
+    // One level and every slice, as the texture's own kind: an MTLTexture view
+    // on Metal, kept for the texture's life, what ComputePass's level binds
+    // hand a kernel. The texture itself on a one-level texture, and null for a
+    // level it lacks and on D3D12 and Vulkan, whose per-level views live in
+    // the texture data.
+    void* nativeLevelView(int level) const;
 
 private:
     struct Native;

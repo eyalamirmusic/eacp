@@ -2,6 +2,7 @@
 
 #include "Frame.h"
 
+#include "../CommandBuffer/CopyPlan.h"
 #include "../Device/Device.h"
 #include "../Windows/D3D12Types.h"
 
@@ -446,12 +447,23 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
             transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RENDER_TARGET);
         }
 
-        attachments[index] = data->attachmentView();
+        const auto& target = targets[index];
+        attachments[index] = d3d12ColorTargetView(
+            *data, target.level, target.slice, target.layerCount);
+
+        if (attachments[index].ptr == 0)
+        {
+            delete encoder;
+            return RenderPass(nullptr);
+        }
     }
 
     auto* first =
         static_cast<D3D12TextureData*>(targets[0].texture->nativeTexture());
-    auto hasDepth = first->hasDepth();
+    const auto& firstTarget = targets[0];
+    const auto dsv = d3d12DepthTargetView(
+        *first, firstTarget.level, firstTarget.slice, firstTarget.layerCount);
+    auto hasDepth = dsv.ptr != 0;
 
     // The return half of the pair RenderPass::setFragmentDepthTexture opens: a
     // depth buffer an earlier pass on this frame *read* is in
@@ -463,10 +475,10 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
     list->OMSetRenderTargets(static_cast<UINT>(targets.size()),
                              attachments.data(),
                              FALSE,
-                             hasDepth ? &first->dsv : nullptr);
+                             hasDepth ? &dsv : nullptr);
 
-    auto width = targets[0].texture->width();
-    auto height = targets[0].texture->height();
+    auto width = levelWidth(*targets[0].texture, firstTarget.level);
+    auto height = levelHeight(*targets[0].texture, firstTarget.level);
 
     D3D12_VIEWPORT viewport = {};
     viewport.Width = static_cast<float>(width);
@@ -499,7 +511,7 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
     // resuming, matching the drawable pass above - and, as there, with no store
     // to decide, the resource keeping what was written to it either way.
     if (hasDepth && descriptor.depthAction != DepthAction::Resume)
-        list->ClearDepthStencilView(first->dsv,
+        list->ClearDepthStencilView(dsv,
                                     depthClearFlags(first->hasStencil()),
                                     1.0f,
                                     descriptor.clearStencil,

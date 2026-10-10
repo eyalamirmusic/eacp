@@ -22,7 +22,11 @@ struct ComputePass::Native
 
     VkCommandBuffer commandBuffer() const { return encoder->commands->buffer; }
 
-    void bindInputTexture(const Texture& texture, int slot, VkSampler sampler)
+    // level < 0 is every level, the texture's own sampled view.
+    void bindInputTexture(const Texture& texture,
+                          int slot,
+                          VkSampler sampler,
+                          int level = -1)
     {
         if (!encoder || slot < 0 || slot >= maxTextureSlots
             || sampler == VK_NULL_HANDLE)
@@ -33,10 +37,19 @@ struct ComputePass::Native
         if (data == nullptr || !data->isValid())
             return;
 
+        const auto view =
+            level < 0 ? data->sampledView : vulkanLevelView(*data, false, level);
+
+        if (view == VK_NULL_HANDLE)
+            return;
+
+        // A computeWrite texture rests in GENERAL, which a sampled read is legal
+        // in, so a kernel reading one level and writing another needs no second
+        // layout.
         const auto& target = data->restingUse();
         transitionTextureForUse(commandBuffer(), *data, target);
 
-        textures[slot] = {sampler, data->sampledView, target.layout};
+        textures[slot] = {sampler, view, target.layout};
         sampledTextures |= 1u << slot;
         storageTextures &= ~(1u << slot);
     }
@@ -274,6 +287,40 @@ void ComputePass::setOutputTexture(const Texture& texture, int slot)
     transitionTextureForUse(impl->commandBuffer(), *data, imageStorage);
 
     impl->textures[slot] = {VK_NULL_HANDLE, data->storageView, imageStorage.layout};
+    impl->storageTextures |= 1u << slot;
+    impl->sampledTextures &= ~(1u << slot);
+}
+
+void ComputePass::setInputTextureLevel(const Texture& texture,
+                                       int slot,
+                                       int level,
+                                       TextureSampling sampling)
+{
+    if (level < 0)
+        return;
+
+    impl->bindInputTexture(
+        texture, slot, getVulkanShared().getSampler(sampling), level);
+}
+
+void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int level)
+{
+    if (!impl->encoder || slot < 0 || slot >= maxTextureSlots)
+        return;
+
+    auto* data = static_cast<VulkanTextureData*>(texture.nativeTexture());
+
+    if (data == nullptr || !data->isValid() || !data->isComputeWritable())
+        return;
+
+    const auto view = vulkanLevelView(*data, true, level);
+
+    if (view == VK_NULL_HANDLE)
+        return;
+
+    transitionTextureForUse(impl->commandBuffer(), *data, imageStorage);
+
+    impl->textures[slot] = {VK_NULL_HANDLE, view, imageStorage.layout};
     impl->storageTextures |= 1u << slot;
     impl->sampledTextures &= ~(1u << slot);
 }

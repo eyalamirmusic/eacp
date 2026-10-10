@@ -317,6 +317,19 @@ inline D3D12_CLEAR_FLAGS depthClearFlags(bool withStencil)
                        : D3D12_CLEAR_FLAG_DEPTH;
 }
 
+// A render-target or depth view of one level and a run of slices (images of a
+// volume), in a one-descriptor heap of its own like the target's first view,
+// made the first time a pass names that image and kept for the texture's life.
+struct D3D12SubresourceTargetView
+{
+    int level = 0;
+    int slice = 0;
+    int count = 1;
+    bool depth = false;
+    winrt::com_ptr<ID3D12DescriptorHeap> heap;
+    D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
+};
+
 struct D3D12TextureData
 {
     winrt::com_ptr<ID3D12Resource> resource;
@@ -420,6 +433,16 @@ struct D3D12TextureData
     // helper below rather than reasoning about it locally.
     D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
+    // Every view past level 0 of slice 0 a pass has rendered into, colour and
+    // depth: see d3d12ColorTargetView.
+    Vector<D3D12SubresourceTargetView> targetViews;
+
+    // On a texture of more than one level, a read view and (computeWrite) a
+    // write view of each level alone, every slice, out of the shader-visible
+    // heap - what ComputePass's level binds point the table at.
+    Vector<DescriptorSlot> levelSrvs;
+    Vector<DescriptorSlot> levelUavs;
+
     bool isRenderTarget() const { return rtv.ptr != 0; }
     bool isComputeWritable() const { return uav.cpu.ptr != 0; }
     bool hasDepth() const { return dsv.ptr != 0; }
@@ -439,6 +462,16 @@ struct D3D12TextureData
         return isMultisampled() ? msaaRtv : rtv;
     }
 };
+
+// Where a pass into `level` and `count` slices from `slice` of this target
+// draws and tests: the views created with the target for level 0 of slice 0,
+// and a view made on first use for anything else, kept in targetViews. A
+// volume's slices are its images at that level. Zero handles when the view
+// cannot be made, which the pass refuses. Implemented in Texture-Windows.cpp.
+D3D12_CPU_DESCRIPTOR_HANDLE
+d3d12ColorTargetView(D3D12TextureData& texture, int level, int slice, int count);
+D3D12_CPU_DESCRIPTOR_HANDLE
+d3d12DepthTargetView(D3D12TextureData& texture, int level, int slice, int count);
 
 // The depth resource moved between the two states it can be in. The colour
 // resource's helper is transitionTextureForUse below; this is its depth twin,

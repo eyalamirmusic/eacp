@@ -48,20 +48,29 @@ void recordCopy(void* recording, const TextureCopyPlan& plan)
     if (source == nil || destination == nil)
         return;
 
-    withBlitEncoder(recording,
-                    [&](id<MTLBlitCommandEncoder> blit)
-                    {
-                        [blit copyFromTexture:source
-                                     sourceSlice:(NSUInteger) plan.sourceSlice
-                                     sourceLevel:(NSUInteger) plan.sourceLevel
-                                    sourceOrigin:originOf(plan.sourceX, plan.sourceY)
-                                      sourceSize:sizeOf(plan.width, plan.height)
-                                       toTexture:destination
-                                destinationSlice:(NSUInteger) plan.destinationSlice
-                                destinationLevel:(NSUInteger) plan.destinationLevel
-                               destinationOrigin:originOf(plan.destinationX,
-                                                          plan.destinationY)];
-                    });
+    // One blit per slice: the box form takes one slice, and a volume's
+    // images are the box's depth.
+    withBlitEncoder(
+        recording,
+        [&](id<MTLBlitCommandEncoder> blit)
+        {
+            for (auto slice = 0; slice < plan.sliceCount; ++slice)
+                [blit copyFromTexture:source
+                             sourceSlice:(NSUInteger) (plan.sourceSlice + slice)
+                             sourceLevel:(NSUInteger) plan.sourceLevel
+                            sourceOrigin:MTLOriginMake((NSUInteger) plan.sourceX,
+                                                       (NSUInteger) plan.sourceY,
+                                                       (NSUInteger) plan.sourceZ)
+                              sourceSize:MTLSizeMake((NSUInteger) plan.width,
+                                                     (NSUInteger) plan.height,
+                                                     (NSUInteger) plan.depth)
+                               toTexture:destination
+                        destinationSlice:(NSUInteger) (plan.destinationSlice + slice)
+                        destinationLevel:(NSUInteger) plan.destinationLevel
+                       destinationOrigin:MTLOriginMake((NSUInteger) plan.destinationX,
+                                                       (NSUInteger) plan.destinationY,
+                                                       (NSUInteger) plan.destinationZ)];
+        });
 }
 
 void recordCopy(void* recording, const BufferCopyPlan& plan)

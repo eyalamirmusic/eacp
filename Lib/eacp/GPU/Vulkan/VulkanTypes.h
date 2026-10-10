@@ -246,6 +246,27 @@ inline void recordImageBarrier(VkCommandBuffer commandBuffer,
     use = target;
 }
 
+// A view of one level and a run of layers of a texture or its depth
+// companion, made the first time a pass or a kernel names it: a colour or
+// depth attachment of `count` layers from `slice`, or (`perLevel`) a sampled or
+// storage view of one level and every slice.
+struct VulkanSubresourceView
+{
+    enum class Use
+    {
+        ColorAttachment,
+        DepthAttachment,
+        Sampled,
+        Storage
+    };
+
+    Use use = Use::ColorAttachment;
+    int level = 0;
+    int slice = 0;
+    int count = 1;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
 // What Texture::nativeTexture() and nativeReadView() point to.
 struct VulkanTextureData
 {
@@ -298,6 +319,9 @@ struct VulkanTextureData
 
     // Depth aspect alone: Vulkan refuses a sampled view of two aspects at once.
     VkImageView depthReadView = VK_NULL_HANDLE;
+
+    // Every view past the ones above that a pass or a kernel has asked for.
+    Vector<VulkanSubresourceView> subresourceViews;
 
     bool isValid() const
     {
@@ -426,6 +450,32 @@ VkImageView makeVulkanImageView(VkDevice device,
                                 VkImageAspectFlags aspect,
                                 int levels,
                                 int layers);
+
+// The same from a base level and layer.
+VkImageView makeVulkanImageView(VkDevice device,
+                                VkImage image,
+                                VkFormat viewFormat,
+                                VkImageViewType type,
+                                VkImageAspectFlags aspect,
+                                int baseLevel,
+                                int levels,
+                                int baseLayer,
+                                int layers);
+
+// Where a pass into `count` layers from `slice` of `level` draws and tests:
+// the views made with the target for level 0 of slice 0, and a view made on
+// first use otherwise, kept in subresourceViews. A volume's layers are its
+// images at that level. Null when the view cannot be made.
+VkImageView
+    vulkanColorTargetView(VulkanTextureData& data, int level, int slice, int count);
+VkImageView
+    vulkanDepthTargetView(VulkanTextureData& data, int level, int slice, int count);
+
+// One level and every slice, as the kind's sampled or storage view type.
+VkImageView vulkanLevelView(VulkanTextureData& data, bool storage, int level);
+
+// Hands every view in subresourceViews to `context`'s deferred release.
+void releaseVulkanSubresourceViews(VulkanContext& context, VulkanTextureData& data);
 
 // False means the caller must refuse the target.
 bool createVulkanMultisampleCompanion(VulkanContext& context,
