@@ -266,3 +266,203 @@ auto tTransformedBounds = test("GPUWidgets/aTurnedRectIsBoundedByItsCorners") = 
     check(std::abs(turned.x - (20.f - halfDiagonal)) < 0.01f,
           "and a quarter of a turn grows them to the diagonal");
 };
+
+namespace
+{
+bool near(const Point& a, const Point& b, float tolerance = 1e-3f)
+{
+    return std::abs(a.x - b.x) < tolerance && std::abs(a.y - b.y) < tolerance;
+}
+
+float ellipseRadius(const Point& point, const Point& centre, float rx, float ry)
+{
+    auto dx = (point.x - centre.x) / rx;
+    auto dy = (point.y - centre.y) / ry;
+    return std::sqrt(dx * dx + dy * dy);
+}
+} // namespace
+
+// juce::Path's convention: zero is 12 o'clock and angles grow clockwise, so a
+// quarter turn from 0 runs from the top of the circle to its right-hand side,
+// through the upper-right quadrant.
+auto tArcConvention = test("GPUWidgets/anArcFromZeroToAQuarterGoesTopToRight") = []
+{
+    auto path = Path {};
+    path.addArc({0.0f, 0.0f, 100.0f, 100.0f}, 0.0f, pi * 0.5f, true);
+
+    const auto& points = path.getSubPaths()[0].points;
+
+    check(near(points.front(), {50.0f, 0.0f}), "starts at the top");
+    check(near(points.back(), {100.0f, 50.0f}), "and ends at the right");
+
+    for (const auto& point: points)
+        check(point.x >= 50.0f - 1e-3f && point.y <= 50.0f + 1e-3f);
+};
+
+// Every flattened point of a quarter of an ellipse lies on that ellipse, to
+// the path's flatness.
+auto tArcOnEllipse = test("GPUWidgets/aQuarterArcStaysOnItsEllipse") = []
+{
+    auto path = Path {};
+    path.addArc({10.0f, 20.0f, 200.0f, 100.0f}, pi * 0.5f, pi, true);
+
+    const auto& points = path.getSubPaths()[0].points;
+
+    check(points.size() > 4);
+    check(near(points.front(), {210.0f, 70.0f}), "starts at 3 o'clock");
+    check(near(points.back(), {110.0f, 120.0f}), "and ends at 6 o'clock");
+
+    for (const auto& point: points)
+        check(std::abs(ellipseRadius(point, {110.0f, 70.0f}, 100.0f, 50.0f) - 1.0f)
+              < 1e-3f);
+};
+
+// A reversed pair of angles sweeps the other way round rather than wrapping.
+auto tArcReversed = test("GPUWidgets/aReversedArcSweepsAnticlockwise") = []
+{
+    auto path = Path {};
+    path.addArc({0.0f, 0.0f, 100.0f, 100.0f}, 0.0f, -pi * 0.5f, true);
+
+    const auto& points = path.getSubPaths()[0].points;
+
+    check(near(points.front(), {50.0f, 0.0f}));
+    check(near(points.back(), {0.0f, 50.0f}));
+
+    for (const auto& point: points)
+        check(point.x <= 50.0f + 1e-3f && point.y <= 50.0f + 1e-3f);
+};
+
+// A whole turn comes back to where it began.
+auto tArcFullTurn = test("GPUWidgets/aFullTurnArcClosesOnItsStart") = []
+{
+    auto path = Path {};
+    path.addArc({0.0f, 0.0f, 100.0f, 100.0f}, 0.0f, 2.0f * pi, true);
+
+    const auto& points = path.getSubPaths()[0].points;
+    auto bounds = path.getBounds();
+
+    check(near(points.front(), points.back()), "ends where it started");
+    check(std::abs(bounds.w - 100.0f) < 0.05f && std::abs(bounds.h - 100.0f) < 0.05f,
+          "and goes all the way round");
+};
+
+// Without startAsNewSubPath the arc joins the current sub-path with a straight
+// line to its first point, as juce::Path does.
+auto tArcContinues = test("GPUWidgets/anArcContinuesTheCurrentSubPath") = []
+{
+    auto path = Path {};
+    path.moveTo({0.0f, 0.0f});
+    path.addArc({0.0f, 0.0f, 100.0f, 100.0f}, 0.0f, pi * 0.5f);
+
+    check(path.getSubPaths().size() == 1);
+
+    const auto& points = path.getSubPaths()[0].points;
+
+    check(near(points[0], {0.0f, 0.0f}));
+    check(near(points[1], {50.0f, 0.0f}), "a line to the arc's start");
+    check(near(points.back(), {100.0f, 50.0f}));
+
+    path.addArc({0.0f, 0.0f, 100.0f, 100.0f}, 0.0f, pi * 0.5f, true);
+    check(path.getSubPaths().size() == 2, "and a new one when asked");
+};
+
+// A rotated ellipse turns clockwise about its centre: a wide ellipse turned a
+// quarter is a tall one, so its 12 o'clock point is where 3 o'clock was.
+auto tCentredArcRotation = test("GPUWidgets/aCentredArcTurnsItsEllipse") = []
+{
+    auto path = Path {};
+    path.addCentredArc(50.0f, 50.0f, 40.0f, 20.0f, pi * 0.5f, 0.0f, pi * 0.5f, true);
+
+    const auto& points = path.getSubPaths()[0].points;
+
+    check(near(points.front(), {70.0f, 50.0f}));
+    check(near(points.back(), {50.0f, 90.0f}));
+};
+
+// A ring segment is one closed sub-path wholly between its two radii, and
+// tessellates to the area of the annular sector it is.
+auto tPieRing = test("GPUWidgets/aPieSegmentWithAHoleLiesBetweenItsRadii") = []
+{
+    auto path = Path {};
+    path.addPieSegment({0.0f, 0.0f, 200.0f, 200.0f}, 0.0f, pi * 0.5f, 0.5f);
+
+    check(path.getSubPaths().size() == 1);
+
+    const auto& sub = path.getSubPaths()[0];
+    check(sub.closed);
+
+    for (const auto& point: sub.points)
+    {
+        auto radius = ellipseRadius(point, {100.0f, 100.0f}, 100.0f, 100.0f);
+        check(radius > 0.5f - 1e-3f && radius < 1.0f + 1e-3f);
+    }
+
+    auto expected = (100.0f * 100.0f - 50.0f * 50.0f) * pi * 0.25f;
+    check(std::abs(meshArea(tessellateFill(path)) - expected) < expected * 0.01f);
+};
+
+// With no hole it is a wedge back to the centre.
+auto tPieWedge = test("GPUWidgets/aPieSegmentWithoutAHoleIsAWedge") = []
+{
+    auto path = Path {};
+    path.addPieSegment({0.0f, 0.0f, 200.0f, 200.0f}, 0.0f, pi * 0.5f, 0.0f);
+
+    const auto& sub = path.getSubPaths()[0];
+
+    check(path.getSubPaths().size() == 1 && sub.closed);
+    check(near(sub.points.front(), {100.0f, 0.0f}));
+    check(near(sub.points.back(), {100.0f, 100.0f}), "closes through the centre");
+
+    auto expected = 100.0f * 100.0f * pi * 0.25f;
+    check(std::abs(meshArea(tessellateFill(path)) - expected) < expected * 0.01f);
+};
+
+// A full ring is two closed sub-paths, the hole wound against the outline.
+auto tPieFullRing = test("GPUWidgets/aFullTurnPieSegmentIsARing") = []
+{
+    auto path = Path {};
+    path.addPieSegment({0.0f, 0.0f, 200.0f, 200.0f}, 0.0f, 2.0f * pi, 0.5f);
+
+    check(path.getSubPaths().size() == 2);
+    check(path.getSubPaths()[0].closed && path.getSubPaths()[1].closed);
+
+    auto signedArea = [](const Vector<Point>& polygon)
+    {
+        auto sum = 0.0f;
+
+        for (auto i = 0; i < polygon.size(); ++i)
+        {
+            const auto& a = polygon[i];
+            const auto& b = polygon[(i + 1) % polygon.size()];
+            sum += a.x * b.y - b.x * a.y;
+        }
+
+        return sum * 0.5f;
+    };
+
+    auto outer = signedArea(path.getSubPaths()[0].points);
+    auto inner = signedArea(path.getSubPaths()[1].points);
+
+    check(outer * inner < 0.0f, "the hole winds the other way");
+    check(std::abs(std::abs(inner) - 50.0f * 50.0f * pi)
+          < 50.0f * 50.0f * pi * 0.01f);
+};
+
+// applyTransform is transformed in place.
+auto tApplyTransform = test("GPUWidgets/applyTransformMatchesTransformed") = []
+{
+    auto path = Path {};
+    path.addArc({0.0f, 0.0f, 100.0f, 100.0f}, 0.0f, pi, true);
+
+    auto transform = AffineTransform::rotationAbout(0.3f, {10.0f, 20.0f});
+    auto expected = path.transformed(transform);
+    path.applyTransform(transform);
+
+    const auto& got = path.getSubPaths()[0].points;
+    const auto& want = expected.getSubPaths()[0].points;
+
+    check(got.size() == want.size());
+
+    for (auto i = 0; i < got.size(); ++i)
+        check(near(got[i], want[i], 1e-6f));
+};
