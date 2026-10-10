@@ -71,6 +71,7 @@ ImageRef ImageCache::get(const eacp::Graphics::Image& image)
     descriptor.height = image.height();
     descriptor.format = GPU::TextureFormat::RGBA8Unorm;
     descriptor.mipmapped = true;
+    descriptor.mipmapsOnDevice = true;
 
     auto entry =
         std::make_shared<ImageTexture>(descriptor, image.pixels().data(), hash);

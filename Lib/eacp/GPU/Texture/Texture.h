@@ -332,6 +332,7 @@ struct TextureDescriptor
     // with an encoder eacp does not have. mipLevels below is how such a texture
     // gets a chain - the one its compressor already built.
     bool mipmapped = false;
+    bool mipmapsOnDevice = false;
 
     // How many levels the pixels passed in already hold, for a caller that
     // built its own chain. 0 - the default - is exactly what it was before this
