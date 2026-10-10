@@ -170,7 +170,8 @@ Frame::Frame(Device& device,
              void* msaaTexture,
              void* depthTexture,
              float backingScaleToUse)
-    : impl(device, drawable, msaaTexture, depthTexture)
+    : nesting(device, *this)
+    , impl(device, drawable, msaaTexture, depthTexture)
     , scale(backingScaleToUse)
 {
     device.beginFrame();
@@ -178,7 +179,8 @@ Frame::Frame(Device& device,
 }
 
 Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleToUse)
-    : impl(device, target)
+    : nesting(device, *this)
+    , impl(device, target)
     , scale(backingScaleToUse)
 {
     device.beginFrame();
@@ -649,6 +651,12 @@ bool Frame::isValid() const
 {
     return impl->commands != nullptr && impl->drawable != nullptr
            && impl->drawable->backBuffer != nullptr;
+}
+
+void Frame::resumeRecording()
+{
+    if (impl->commands != nullptr)
+        impl->context().setOpenRecording(impl->commands);
 }
 
 void* Frame::nativeRecording() const

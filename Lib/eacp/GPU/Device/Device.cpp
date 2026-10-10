@@ -1,5 +1,7 @@
 #include "Device.h"
 
+#include "../Frame/Frame.h"
+
 #include <eacp/Core/Threads/ThreadUtils.h>
 #include <eacp/Graphics/Image/Image.h>
 
@@ -174,11 +176,45 @@ void Device::beginFrame()
     // that covers the render and compute passes a Frame goes on to open.
     assertOwningThread();
 
+    // A nested frame's passes belong to the frame it is nested in.
+    if (openFrames > 1)
+        return;
+
     ++frameCount;
 
     // The timer takes its slot from the counter, the same way StreamingBuffers
     // takes its pool from it - one advance, driven by whoever built the Frame,
     // and nothing for either of them to be told separately.
     timer.beginFrame(frameCount, *this);
+}
+
+FrameNesting Device::enterFrame(Frame& frame)
+{
+    assertOwningThread();
+
+    auto nesting = FrameNesting {openFrame};
+
+    if (nesting.outer != nullptr)
+    {
+        nesting.outer->flush();
+        nesting.timerSlot = timer.suspend();
+    }
+
+    openFrame = &frame;
+    ++openFrames;
+
+    return nesting;
+}
+
+void Device::leaveFrame(const FrameNesting& nesting)
+{
+    openFrame = nesting.outer;
+    --openFrames;
+
+    if (nesting.outer == nullptr)
+        return;
+
+    timer.resume(nesting.timerSlot);
+    nesting.outer->resumeRecording();
 }
 } // namespace eacp::GPU

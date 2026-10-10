@@ -176,6 +176,10 @@ struct GPUView::Native
     int framesInFlight = 3;
     bool continuous = false;
     bool transparent = false;
+
+    // Set while a frame of this view is open, so one nested in it on the same
+    // view is refused rather than taking a second drawable of the layer.
+    bool rendering = false;
     bool depthEnabled = false;
     bool stencilEnabled = false;
 
@@ -342,25 +346,38 @@ void GPUView::paint(Graphics::Context& context)
 
 void GPUView::renderNow()
 {
+    renderFrame([this](Frame& frame) { render(frame); });
+}
+
+bool GPUView::renderFrame(const std::function<void(Frame&)>& draw)
+{
     auto* layer = impl->metalLayer.get();
 
-    if (layer.drawableSize.width <= 0)
-        return;
+    if (impl->rendering || layer.drawableSize.width <= 0)
+        return false;
 
     @autoreleasepool
     {
         id<CAMetalDrawable> drawable = [layer nextDrawable];
 
         if (drawable == nil)
-            return;
+            return false;
 
-        auto frame = Frame(Device::shared(),
-                           (__bridge void*) drawable,
-                           (__bridge void*) impl->msaaTexture.get(),
-                           (__bridge void*) impl->depthTexture.get(),
-                           backingScale());
-        render(frame);
+        impl->rendering = true;
+
+        {
+            auto frame = Frame(Device::shared(),
+                               (__bridge void*) drawable,
+                               (__bridge void*) impl->msaaTexture.get(),
+                               (__bridge void*) impl->depthTexture.get(),
+                               backingScale());
+            draw(frame);
+        }
+
+        impl->rendering = false;
     }
+
+    return true;
 }
 
 Graphics::Image GPUView::renderNativeContent(float scale)

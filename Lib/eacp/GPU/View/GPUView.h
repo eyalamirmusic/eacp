@@ -147,6 +147,25 @@ public:
     // resources created on the lost device no longer render.
     std::function<void()> onDeviceRestored = [] {};
 
+    // Renders one frame of this view right now, with `draw` in place of
+    // render(): takes the view's next drawable, opens a Frame on it, calls
+    // draw, and presents when draw returns. Returns whether there was a
+    // drawable to render into - false for a view with no size yet, no
+    // swapchain (headless Linux and Windows), or a frame of its own already
+    // open.
+    //
+    // **Callable from inside another view's render()**, which is how one
+    // renderer draws into several windows in one go - bgfx's frame into each
+    // of its swapchains. The frame open on the device is flushed first, so
+    // everything it recorded before the call reaches the queue ahead of this
+    // frame's work, and it carries on recording when this returns, behind it:
+    // what the outer frame drew into a texture before the call, this frame
+    // sees, and what this frame drew, the outer one's later passes see. **No
+    // pass may be open** on the outer frame, the rule Frame::flush states.
+    // The nested frame is presented as it ends, before the outer one, is not
+    // timed, and streams into the outer frame's pools (Device::enterFrame).
+    bool renderFrame(const std::function<void(Frame&)>& draw);
+
 protected:
     // Renders and presents one frame right now, on the caller's (main)
     // thread. For subclasses whose content is driven by an external source

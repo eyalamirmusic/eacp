@@ -51,6 +51,18 @@ int FrameTimer::beginPass(std::string_view label)
     return passCount++;
 }
 
+int FrameTimer::suspend()
+{
+    const auto slot = current;
+    current = -1;
+    return slot;
+}
+
+void FrameTimer::resume(int slot)
+{
+    current = slot;
+}
+
 void FrameTimer::beginRecording(void* nativeCommandBuffer)
 {
     if (current >= 0)

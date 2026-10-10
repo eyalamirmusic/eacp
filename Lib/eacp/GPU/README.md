@@ -29,7 +29,7 @@ an `assert`, so a release build pays for nothing but the call.
 | | |
 | --- | --- |
 | `Device` | The process-wide device and queue. `Device::shared()`, and `isValid()` on a machine with no GPU |
-| `GPUView` | A `View` that owns a swapchain and hands you a `Frame` each tick |
+| `GPUView` | A `View` that owns a swapchain and hands you a `Frame` each tick, or on demand from inside another view's render (`renderFrame`) |
 | `Frame` | One frame's command buffer. Presents and commits on destruction |
 | `RenderPass` | Records draws. Ends its encoder on destruction |
 | `Buffer` | Vertex, index and storage buffers |
@@ -2909,6 +2909,53 @@ always copies. Metal records a blit on the frame's command buffer; D3D12 a
 multisample target, whose picture only reaches the back buffer as the frame
 ends; Vulkan a `vkCmdCopyImage` out of the swapchain image, which a multisampled
 pass has already resolved into.
+
+## Several views in one render
+
+One renderer drawing into several windows in one go — bgfx's frame into each of
+its swapchains, an editor's viewports — calls `GPUView::renderFrame` on each
+other view from inside the render that is running. It takes that view's next
+drawable, opens a `Frame` on it, calls the function in place of `render()`, and
+presents when the function returns:
+
+```cpp
+void render(Frame& frame) override        // the main window's view
+{
+    { auto pass = frame.beginPass(target); pass.draw(shadows); }
+
+    for (auto* other: otherWindows)
+        other->renderFrame([&](Frame& theirs)
+        {
+            auto pass = theirs.beginPass();
+            pass.draw(sceneFrom(other->camera));   // may sample `target`
+        });
+
+    auto pass = frame.beginPass();
+    pass.draw(sceneFrom(camera));
+}
+```
+
+**The frames on a device are a stack.** A frame opened while another is open is
+nested in it: the open one is flushed first (`Frame::flush`, so **no pass may be
+open** on it), the nested frame records, submits and presents, and the outer one
+carries on recording behind it. So the order of the work is the order of the
+code — the nested frame sees everything the outer one drew before the call, and
+the outer one's later passes see everything the nested one drew — and each
+window is presented by its own frame, the nested ones first. A nested frame is
+not timed (`Device::lastFrameTimings` is the outer frame's) and does not advance
+`Device::frameIndex`, so what it streams goes into the outer frame's pools,
+which are not recycled until that frame is off the GPU. `Device::isFrameOpen()`
+says whether a frame is open.
+
+`renderFrame` returns whether there was a drawable: false for a view with no
+size yet, a view with no swapchain — on Linux and Windows a view in no window
+has none — and a view whose own frame is already open, which cannot nest in
+itself. On Metal a `CAMetalLayer` hands out drawables whether or not it is on
+screen, which is what the `MultiView/` tests ride. A view presenting this way is
+driven by its caller: leave it out of continuous mode, or its display link
+renders it a second time. Each present waits on its own swapchain, so on D3D12,
+where a present at sync interval 1 can wait for a vertical blank, `n` windows
+can cost up to `n` refreshes a frame.
 
 ## Copies
 

@@ -285,14 +285,16 @@ Frame::Frame(Device& device,
              void* msaaTexture,
              void* depthTexture,
              float backingScaleToUse)
-    : impl(device, drawable, msaaTexture, depthTexture)
+    : nesting(device, *this)
+    , impl(device, drawable, msaaTexture, depthTexture)
     , scale(backingScaleToUse)
 {
     device.beginFrame();
 }
 
 Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleToUse)
-    : impl(device, target)
+    : nesting(device, *this)
+    , impl(device, target)
     , scale(backingScaleToUse)
 {
     device.beginFrame();
@@ -575,6 +577,12 @@ bool Frame::copyDrawable(const Texture& destination)
 bool Frame::isValid() const
 {
     return impl->storeTexture() != nil && impl->commandBuffer.get() != nil;
+}
+
+// Metal has no open recording for an upload to go onto: Texture::update and
+// Buffer::update order themselves on the queue.
+void Frame::resumeRecording()
+{
 }
 
 void* Frame::nativeRecording() const

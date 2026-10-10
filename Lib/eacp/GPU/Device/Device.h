@@ -23,6 +23,8 @@ class Image;
 
 namespace eacp::GPU
 {
+class Frame;
+struct FrameNesting;
 // The GPU device (MTLDevice + command queue on Metal). Owns the resource
 // factories. Most apps use the process-wide Device::shared().
 //
@@ -407,6 +409,23 @@ public:
     // thing both backends want done identically at this moment.
     void beginFrame();
 
+    // Called by Frame's constructor before anything else, and by its
+    // destructor after everything else: the frames open on this device are a
+    // stack, so a Frame opened while another is open - GPUView::renderFrame
+    // called from inside a render() - is nested in it. Entering a nested frame
+    // flushes the open one, so what it recorded reaches the queue first, and
+    // suspends the frame timer, so the nested frame is not timed and
+    // beginFrame does not advance frameIndex for it: its streamed data and its
+    // timestamps are the outer frame's. Leaving gives the outer frame its
+    // recording and its timer back. What enterFrame returns is what
+    // leaveFrame takes: the outer frame, null for one opened on its own, and
+    // the timer slot it was timing into.
+    FrameNesting enterFrame(Frame& frame);
+    void leaveFrame(const FrameNesting& nesting);
+
+    // Whether a Frame is open on this device.
+    constexpr bool isFrameOpen() const { return openFrame != nullptr; }
+
     // What the GPU spent on the most recent frame it has finished: every pass
     // that was given a label, plus the frame end to end.
     //
@@ -470,5 +489,8 @@ private:
 
     std::uint64_t frameCount = 0;
     int bufferCount = 0;
+
+    Frame* openFrame = nullptr;
+    int openFrames = 0;
 };
 } // namespace eacp::GPU

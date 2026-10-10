@@ -45,6 +45,13 @@ public:
     // name it when the pass begins. Null when this frame is not being timed.
     void* nativeSamples() const;
 
+    // Stops timing the frame in progress and hands back the slot it was timing
+    // into, for resume to restore: what a frame nested in another
+    // (Device::enterFrame) does, so its passes are timed by no one rather than
+    // by the frame around it.
+    int suspend();
+    void resume(int slot);
+
     // See GpuTimestamps::beginRecording.
     void beginRecording(void* nativeCommandBuffer);
 

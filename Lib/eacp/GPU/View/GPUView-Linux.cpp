@@ -697,15 +697,22 @@ struct GPUView::Native
     // acquire against a semaphore the first is still waiting on.
     void render()
     {
-        if (rendering || !readyToRender())
-            return;
-
-        rendering = true;
-        renderOneFrame();
-        rendering = false;
+        render([this](Frame& frame) { view.render(frame); });
     }
 
-    void renderOneFrame()
+    bool render(const std::function<void(Frame&)>& draw)
+    {
+        if (rendering || !readyToRender())
+            return false;
+
+        rendering = true;
+        const auto rendered = renderOneFrame(draw);
+        rendering = false;
+
+        return rendered;
+    }
+
+    bool renderOneFrame(const std::function<void(Frame&)>& draw)
     {
         auto& gpu = Device::shared();
         auto& context = getVulkanContext(gpu);
@@ -726,18 +733,18 @@ struct GPUView::Native
         if (acquired == VK_ERROR_DEVICE_LOST)
         {
             noteDeviceLost();
-            return;
+            return false;
         }
 
         // Out of date signalled nothing, so there is nothing to undo.
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
         {
             swapchainStale = true;
-            return;
+            return false;
         }
 
         if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
-            return;
+            return false;
 
         // Suboptimal did hand over an image and did signal, so dropping the
         // frame here would leave a signalled semaphore behind.
@@ -763,7 +770,7 @@ struct GPUView::Native
 
         {
             auto frame = Frame(gpu, &drawable, nullptr, nullptr, surfaceScale());
-            view.render(frame);
+            draw(frame);
         }
 
         reclaimCompanions(target);
@@ -772,6 +779,7 @@ struct GPUView::Native
         currentSlot = (currentSlot + 1) % acquireSemaphores.size();
 
         handlePresentResult(drawable.presentResult);
+        return true;
     }
 
     void handlePresentResult(VkResult result)
@@ -1015,6 +1023,11 @@ void GPUView::paint(Graphics::Context&)
 void GPUView::renderNow()
 {
     impl->render();
+}
+
+bool GPUView::renderFrame(const std::function<void(Frame&)>& draw)
+{
+    return impl->render(draw);
 }
 
 // Touches no swapchain, so this is also what runs headless.

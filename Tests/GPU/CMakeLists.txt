@@ -54,6 +54,7 @@ set(gpu_test_sources
         FormatTargetTests.cpp
         TextureFormatTests.cpp
         DrawableCopyTests.cpp
+        MultiViewFrameTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp
         GPUSmokeTests.cpp

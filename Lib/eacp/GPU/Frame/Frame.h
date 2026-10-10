@@ -10,6 +10,7 @@
 namespace eacp::GPU
 {
 class Device;
+class Frame;
 
 // What a pass does with the depth and stencil planes it is handed - the load at
 // its start and the store at its end, which are one decision because the second
@@ -161,6 +162,15 @@ struct OffscreenTarget
     // the pass does with the stencil plane follows from the buffer's format, so
     // there is nothing further to pass here.
     void* depthTexture = nullptr;
+};
+
+// Internal: a frame's place on its Device's stack of open frames - the frame
+// it is nested in, null for one opened on its own, and the timer slot that
+// frame was timing into. See Device::enterFrame.
+struct FrameNesting
+{
+    Frame* outer = nullptr;
+    int timerSlot = -1;
 };
 
 // One renderable frame: owns the drawable being rendered to plus its command
@@ -427,6 +437,29 @@ private:
     bool canCopyDrawableInto(const Texture& destination) const;
 
     void* nativeRecording() const;
+
+    // Publishes this frame's recording again as the one CPU uploads go onto,
+    // after a frame nested in it has ended and withdrawn its own (D3D12 and
+    // Vulkan; nothing on Metal). Device::leaveFrame calls it.
+    void resumeRecording();
+    friend class Device;
+
+    // Entered before impl is built and left after it is gone, so a nested
+    // frame's whole life - its acquire, its recording, its submit and present -
+    // falls between the outer frame's flush and its resumption.
+    struct Nesting
+    {
+        Nesting(Device& device, Frame& frame);
+        ~Nesting();
+
+        Nesting(const Nesting&) = delete;
+        Nesting& operator=(const Nesting&) = delete;
+
+        Device* device;
+        FrameNesting place;
+    };
+
+    Nesting nesting;
 
     struct Native;
     Pimpl<Native> impl;

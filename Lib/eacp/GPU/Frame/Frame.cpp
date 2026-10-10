@@ -1,6 +1,7 @@
 #include "Frame.h"
 
 #include "../CommandBuffer/CopyRecorder.h"
+#include "../Device/Device.h"
 
 #include <eacp/Core/Utils/Logging.h>
 
@@ -75,6 +76,17 @@ bool canTakeDepthFrom(const ColorTarget& depth, const ColorTarget& first)
                   == levelHeight(*first.texture, first.level);
 }
 } // namespace
+
+Frame::Nesting::Nesting(Device& deviceToUse, Frame& frame)
+    : device(&deviceToUse)
+    , place(deviceToUse.enterFrame(frame))
+{
+}
+
+Frame::Nesting::~Nesting()
+{
+    device->leaveFrame(place);
+}
 
 float Frame::backingScale() const
 {
