@@ -436,4 +436,9 @@ bool Frame::isValid() const
     return impl->commands != nullptr && impl->target != nullptr
            && impl->target->isValid();
 }
+
+void* Frame::nativeRecording() const
+{
+    return impl->commands;
+}
 } // namespace eacp::GPU

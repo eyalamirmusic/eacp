@@ -934,6 +934,11 @@ int Texture::height() const
     return impl->data.height;
 }
 
+TextureFormat Texture::format() const
+{
+    return impl->format;
+}
+
 bool Texture::isValid() const
 {
     return impl->data.isValid();

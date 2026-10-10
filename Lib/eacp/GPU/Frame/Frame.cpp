@@ -1,5 +1,7 @@
 #include "Frame.h"
 
+#include "../CommandBuffer/CopyRecorder.h"
+
 #include <eacp/Core/Utils/Logging.h>
 
 namespace eacp::GPU
@@ -101,5 +103,51 @@ bool Frame::canRenderInto(std::span<const ColorTarget> targets)
     }
 
     return true;
+}
+
+void Frame::copy(const Texture& source, const Texture& destination)
+{
+    for (const auto& plan: planWholeTextureCopy(source, destination))
+        recordCopy(nativeRecording(), plan);
+}
+
+void Frame::copy(const Texture& source,
+                 const Texture& destination,
+                 const TextureCopyRegion& region)
+{
+    if (auto plan = planTextureCopy(source, destination, region))
+        recordCopy(nativeRecording(), *plan);
+}
+
+void Frame::copy(const Buffer& source, const Buffer& destination)
+{
+    copy(source, destination, 0, 0, source.size());
+}
+
+void Frame::copy(const Buffer& source,
+                 const Buffer& destination,
+                 std::int64_t sourceOffset,
+                 std::int64_t destinationOffset,
+                 std::int64_t bytes)
+{
+    if (auto plan = planBufferCopy(
+            source, destination, sourceOffset, destinationOffset, bytes))
+        recordCopy(nativeRecording(), *plan);
+}
+
+void Frame::copy(const Buffer& source,
+                 const Texture& destination,
+                 const BufferTextureCopy& layout)
+{
+    if (auto plan = planBufferTextureCopy(source, destination, layout))
+        recordCopyToTexture(nativeRecording(), *plan);
+}
+
+void Frame::copy(const Texture& source,
+                 const Buffer& destination,
+                 const BufferTextureCopy& layout)
+{
+    if (auto plan = planBufferTextureCopy(destination, source, layout))
+        recordCopyToBuffer(nativeRecording(), *plan);
 }
 } // namespace eacp::GPU

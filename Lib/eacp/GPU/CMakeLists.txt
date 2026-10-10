@@ -56,6 +56,7 @@ target_sources(eacp-gpu PRIVATE
         Codegen/ComputeProgram.cpp
         Codegen/ShaderProgram.cpp
         CommandBuffer/CommandBuffer.cpp
+        CommandBuffer/CopyPlan.cpp
         Device/Device.cpp
         Frame/Frame.cpp
         Frame/RenderPass.cpp
@@ -70,6 +71,7 @@ if (APPLE)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Apple.mm
             CommandBuffer/CommandBuffer-Apple.mm
+            CommandBuffer/CopyRecorder-Apple.mm
             Device/Device-Apple.mm
             Frame/ComputePass-Apple.mm
             Frame/Frame-Apple.mm
@@ -97,6 +99,7 @@ elseif (WIN32)
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Windows.cpp
             CommandBuffer/CommandBuffer-Windows.cpp
+            CommandBuffer/CopyRecorder-Windows.cpp
             Device/Device-Windows.cpp
             Frame/ComputePass-Windows.cpp
             Frame/Frame-Windows.cpp
@@ -132,6 +135,7 @@ else ()
     target_sources(eacp-gpu PRIVATE
             Buffer/Buffer-Linux.cpp
             CommandBuffer/CommandBuffer-Linux.cpp
+            CommandBuffer/CopyRecorder-Linux.cpp
             Device/Device-Linux.cpp
             Frame/ComputePass-Linux.cpp
             Frame/Frame-Linux.cpp

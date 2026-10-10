@@ -553,4 +553,9 @@ bool Frame::isValid() const
     return impl->commands != nullptr && impl->drawable != nullptr
            && impl->drawable->backBuffer != nullptr;
 }
+
+void* Frame::nativeRecording() const
+{
+    return impl->commands;
+}
 } // namespace eacp::GPU

@@ -430,4 +430,9 @@ bool Frame::isValid() const
 {
     return impl->storeTexture() != nil && impl->commandBuffer.get() != nil;
 }
+
+void* Frame::nativeRecording() const
+{
+    return (__bridge void*) impl->commandBuffer.get();
+}
 } // namespace eacp::GPU

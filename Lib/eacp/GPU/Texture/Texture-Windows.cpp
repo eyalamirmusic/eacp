@@ -1275,6 +1275,11 @@ int Texture::height() const
     return impl->height;
 }
 
+TextureFormat Texture::format() const
+{
+    return impl->format;
+}
+
 bool Texture::isValid() const
 {
     return impl->data.resource != nullptr && impl->data.srv.cpu.ptr != 0;

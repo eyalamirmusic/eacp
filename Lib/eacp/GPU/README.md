@@ -2307,6 +2307,47 @@ other's results without it.
 Both calls block until the GPU has finished. That is what a read-back is; it is
 not something to put in a frame loop.
 
+## Copies
+
+`Frame::copy` records a copy onto the frame's command buffer, in order with its
+passes, and `CommandBuffer::copy` does the same off-screen. What an earlier pass
+wrote is what gets copied, and a later pass sees the copy:
+
+```cpp
+frame.beginPass(scene, {{1.f, 0.f, 0.f, 1.f}});
+frame.copy(scene, history);                                // whole texture
+frame.copy(mips, other, TextureCopyRegion::wholeLevel(1)); // one level
+
+auto region = TextureCopyRegion {};
+region.sourceSlice = 3;                                    // a cube face
+region.sourceOrigin = {8, 8};
+region.size = {16, 16};                                    // 0 runs to the edge
+frame.copy(cube, faces, region);
+
+frame.copy(vertices, scratch, 0, 256, 1024);               // buffer to buffer
+frame.copy(staging, texture, {.bytesPerRow = 64});         // buffer to texture
+frame.copy(texture, readback, {.origin = {2, 2}, .size = {4, 4}});
+```
+
+The rules, each refused with a trace and nothing recorded when broken: no pass
+may be open (a command buffer has one encoder at a time, as `flush()` and
+`beginCompute` already say); texture to texture is between two textures of one
+format, two resources rather than one, with a level and a slice on each side and
+the region inside both levels; a compressed texture copies whole levels only; a
+multisampled target copies its resolved picture and the depth plane is never
+copied; buffer offsets and lengths are multiples of four; a buffer layout's
+offset is on the texel grid and its rows at least a row of texels long, and the
+rows it describes fit the buffer. `z` and `depth` exist for 3D textures and are
+refused until those do.
+
+Metal records a blit encoder per copy. D3D12 records `CopyTextureRegion` and
+`CopyBufferRegion` through the resource state tracking, handing a plain texture
+back to `PIXEL_SHADER_RESOURCE` after; a buffer layout off D3D12's 256-byte row
+and 512-byte offset grid goes through a scratch buffer row by row, and a driver
+with `noBoxedTextureCopy` takes whole subresources only. Vulkan records
+`vkCmdCopyImage`, `vkCmdCopyBuffer` and the buffer-image pair through the
+layout tracker, each image returned to its resting layout after.
+
 ## Windows
 
 The D3D12 backend is less exercised than the Metal one. Notes worth having:

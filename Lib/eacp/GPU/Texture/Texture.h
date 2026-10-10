@@ -493,6 +493,8 @@ public:
 
     int width() const;
     int height() const;
+    TextureFormat format() const;
+
     bool isValid() const;
 
     // Whether this texture is the six-faced kind, which is what a shader

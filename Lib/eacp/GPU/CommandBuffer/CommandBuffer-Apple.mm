@@ -219,4 +219,12 @@ bool CommandBuffer::isValid() const
 {
     return impl->commandBuffer.get() != nil;
 }
+
+void* CommandBuffer::nativeRecording() const
+{
+    if (impl->committed)
+        return nullptr;
+
+    return (__bridge void*) impl->commandBuffer.get();
+}
 } // namespace eacp::GPU

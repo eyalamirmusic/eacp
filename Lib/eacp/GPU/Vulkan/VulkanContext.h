@@ -370,6 +370,7 @@ public:
     }
 
     void setRenderPassOpen(bool open) { renderPassOpen = open; }
+    bool isRenderPassOpen() const { return renderPassOpen; }
 
     // An image no upload wrote is in UNDEFINED, which nothing may be bound at,
     // so it needs one barrier into its resting layout. Recording it here rather

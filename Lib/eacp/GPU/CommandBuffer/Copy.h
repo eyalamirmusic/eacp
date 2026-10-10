@@ -1,0 +1,67 @@
+#pragma once
+
+#include <cstdint>
+
+namespace eacp::GPU
+{
+// A texel position inside one level of one slice. z is the depth into a 3D
+// texture, and is 0 until those exist.
+struct TextureOrigin
+{
+    int x = 0;
+    int y = 0;
+    int z = 0;
+};
+
+// How many texels a copy covers. A width or height of 0 means "to the edge of
+// the source level from the origin", so a default size copies the rest of the
+// level. depth is 1 until 3D textures exist.
+struct TextureExtent
+{
+    int width = 0;
+    int height = 0;
+    int depth = 1;
+};
+
+// Part of one texture copied into another: a level and a slice on each side
+// (a cube's face is its slice, 0 to 5 in +X, -X, +Y, -Y, +Z, -Z order; an
+// array layer will be one too), an origin on each side, and one size.
+struct TextureCopyRegion
+{
+    int sourceLevel = 0;
+    int sourceSlice = 0;
+    TextureOrigin sourceOrigin;
+
+    int destinationLevel = 0;
+    int destinationSlice = 0;
+    TextureOrigin destinationOrigin;
+
+    TextureExtent size;
+
+    // The whole of one level, the same level and slice on both sides.
+    static TextureCopyRegion wholeLevel(int level, int slice = 0)
+    {
+        auto region = TextureCopyRegion {};
+        region.sourceLevel = level;
+        region.sourceSlice = slice;
+        region.destinationLevel = level;
+        region.destinationSlice = slice;
+        return region;
+    }
+};
+
+// The texture half of a copy between a buffer and a texture, and how the
+// buffer lays the texels out: rows of bytesPerRow (0 for tightly packed)
+// starting bufferOffset bytes in. The offset is a multiple of the texel size
+// and of four, and bytesPerRow a multiple of the texel size.
+struct BufferTextureCopy
+{
+    std::int64_t bufferOffset = 0;
+    int bytesPerRow = 0;
+
+    int level = 0;
+    int slice = 0;
+    TextureOrigin origin;
+    TextureExtent size;
+};
+} // namespace eacp::GPU

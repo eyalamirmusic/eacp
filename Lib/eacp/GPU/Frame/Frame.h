@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../CommandBuffer/Copy.h"
 #include "ComputePass.h"
 #include "RenderPass.h"
 
@@ -259,10 +260,51 @@ public:
     // total, which is a pair of queries rather than a property of a list.
     void flush();
 
+    // Copies recorded onto this frame's command buffer, in order with its
+    // passes: what an earlier pass wrote is what is copied, and a later pass
+    // sees the copy. Each is refused with a trace, recording nothing, when it
+    // does not fit both resources - see CommandBuffer/Copy.h for the region
+    // types.
+    //
+    // **No pass may be open**, as for beginCompute and flush: end the pass first, and begin
+    // another after the copy if more drawing follows.
+    //
+    // Texture to texture is between two textures of one format, a level and a
+    // slice (a cube's face) on each side; a multisampled target copies its
+    // resolved picture, and the depth plane is never copied. A compressed
+    // texture copies whole levels only. Source and destination are two
+    // resources, never one, for buffers too. The two-argument form copies every
+    // level and slice of two textures of one size, level count and shape.
+    void copy(const Texture& source, const Texture& destination);
+    void copy(const Texture& source,
+              const Texture& destination,
+              const TextureCopyRegion& region);
+
+    // Buffer to buffer: offsets and length multiples of four, inside both.
+    // The two-argument form
+    // copies the whole source to the start of the destination.
+    void copy(const Buffer& source, const Buffer& destination);
+    void copy(const Buffer& source,
+              const Buffer& destination,
+              std::int64_t sourceOffset,
+              std::int64_t destinationOffset,
+              std::int64_t bytes);
+
+    // Between a buffer and one level of one slice of an uncompressed texture,
+    // the buffer laid out as `layout` says.
+    void copy(const Buffer& source,
+              const Texture& destination,
+              const BufferTextureCopy& layout = {});
+    void copy(const Texture& source,
+              const Buffer& destination,
+              const BufferTextureCopy& layout = {});
+
     bool isValid() const;
 
 private:
     static bool canRenderInto(std::span<const ColorTarget> targets);
+
+    void* nativeRecording() const;
 
     struct Native;
     Pimpl<Native> impl;
