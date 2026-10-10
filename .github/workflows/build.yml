@@ -136,7 +136,7 @@ jobs:
       # No target uses C++20 modules; the scan pass is dead weight. Remove
       # this flag if modules are ever adopted.
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF ${{ matrix.cmake-flags }}
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF ${{ matrix.cmake-flags }}
 
       - name: Build
         run: cmake --build build
@@ -213,15 +213,15 @@ jobs:
           -DEACP_CI_BUILD=ON
 
       - name: Build
-        run: cmake --build build --config Release -- -sdk iphonesimulator
+        run: cmake --build build --config RelWithDebInfo -- -sdk iphonesimulator
 
   # The one Android build anything is checked against: the NDK it installs, the
   # toolchain file -DCMAKE_SYSTEM_NAME=Android alone selects, and HelloGPU,
   # which pulls Core, Graphics, GPU, Text and the SPIR-V compiler through the
   # NDK's clang, with HelloNetwork beside it for the JNI network backend. The
   # configure also writes the Android Studio project, so the Gradle templates
-  # are exercised; nothing runs it. Release, like every other lane; Studio's Run
-  # builds its own Debug.
+  # are exercised; nothing runs it. RelWithDebInfo, like every lane;
+  # Studio's Run builds its own Debug.
   build-android:
     name: Android arm64-v8a
     runs-on: ubuntu-latest
@@ -243,14 +243,14 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "platforms;android-35"
 
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=Release -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+        run: cmake -G Ninja -B build -DCMAKE_SYSTEM_NAME=Android -DEACP_ANDROID_NDK_VERSION=$NDK_VERSION -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
 
       # What a configure that names nothing picks: the newest NDK and the
       # newest platform in the SDK, with no NDK variable to point elsewhere.
       - name: Configure with the newest NDK and platform
         run: |
           unset ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK
-          cmake -G Ninja -B build-floating -DCMAKE_SYSTEM_NAME=Android -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+          cmake -G Ninja -B build-floating -DCMAKE_SYSTEM_NAME=Android -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
           grep -A2 "compileSdk" build-floating/AndroidStudio/HelloGPU/build.gradle.kts
 
       - name: Build

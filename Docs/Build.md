@@ -58,7 +58,7 @@ files under `ThirdParty/miniz` and the version in its README.
   is for reproducing CI, not for LSP-backed development.
 
   ```bash
-  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DEACP_CI_BUILD=ON
+  cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
   ```
 
 - `EACP_PCH` (default `OFF`, on under `EACP_CI_BUILD`) — shares one
@@ -330,10 +330,12 @@ against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
 `HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
 the network backend included, then configures once
 more with no NDK named, which exercises the newest-installed path. Every lane
-configures with `EACP_CI_BUILD=ON` and builds `Release`: the tests run
-optimized code, as a shipped build does, and the `NDEBUG`-only paths — the
-D3D12 debug layer, `Device::assertOwningThread`, the Android JNI local-reference
-check — are exercised by a local Debug build, not by CI.
+configures with `EACP_CI_BUILD=ON` and builds `RelWithDebInfo`: the tests run
+optimized code, as a shipped build does, while the link-time optimization
+eacp's targets take under `Release` stays off — it roughly tripled the macOS
+and MSVC build steps for a few seconds of test time. The `NDEBUG`-only paths —
+the D3D12 debug layer, `Device::assertOwningThread`, the Android JNI
+local-reference check — are exercised by a local Debug build, not by CI.
 
 The Linux lanes install the packages listed in [Linux.md](Linux.md), and the
 `Dockerfile` reproduces their three steps — a headless build, the suite under
