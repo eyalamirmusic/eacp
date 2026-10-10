@@ -30,6 +30,7 @@ target_sources(eacp-ui PRIVATE
         Render/ShapeBatch.cpp
         Widgets/ComboBox.cpp
         Widgets/ListBox.cpp
+        Widgets/PopupMenu.cpp
         Widgets/Tabs.cpp
         Widgets/TouchScroller.cpp
         Widgets/Widgets.cpp)
