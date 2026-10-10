@@ -520,12 +520,13 @@ struct D3D12Encoder
     ID3D12QueryHeap* queryHeap = nullptr;
     int endQuery = -1;
 
-    // The multisampled target this pass is drawing into, or null. Held so the
-    // resolve happens when the pass *ends* rather than when the frame does: what
-    // the target holds has to be right for whatever reads it next, and a read
-    // between two passes is the case the whole thing exists for. See
-    // TextureDescriptor::sampleCount, and resolveMultisampledTarget below.
-    D3D12TextureData* resolveTarget = nullptr;
+    // The multisampled targets this pass is drawing into, none on a
+    // single-sampled pass. Held so the resolve happens when the pass *ends*
+    // rather than when the frame does: what a target holds has to be right for
+    // whatever reads it next, and a read between two passes is the case the
+    // whole thing exists for. See TextureDescriptor::sampleCount, and
+    // resolveMultisampledTarget below.
+    Vector<D3D12TextureData*> resolveTargets;
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the

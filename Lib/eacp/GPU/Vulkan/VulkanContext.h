@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 
 // VulkanShared is one per process, VulkanContext one per GPU::Device. Nothing
@@ -149,9 +150,10 @@ struct VulkanRenderPassKey
 {
     bool operator==(const VulkanRenderPassKey& other) const = default;
 
-    VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+    int colorCount = 1;
+    std::array<VkFormat, maxColorAttachments> colorFormats {};
+    std::array<VkAttachmentLoadOp, maxColorAttachments> colorLoads {};
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
-    VkAttachmentLoadOp colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     VkAttachmentStoreOp colorStore = VK_ATTACHMENT_STORE_OP_STORE;
     bool colorResolve = false;
 
@@ -240,7 +242,7 @@ public:
 
     VulkanRenderPassCache& getRenderPasses() { return renderPasses; }
 
-    VkRenderPass compatibleRenderPass(VkFormat colorFormat,
+    VkRenderPass compatibleRenderPass(std::span<const VkFormat> colorFormats,
                                       int samples,
                                       VkFormat depthFormat,
                                       bool stencil);

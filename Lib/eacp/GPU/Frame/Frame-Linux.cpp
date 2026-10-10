@@ -18,6 +18,11 @@ VkAttachmentStoreOp vulkanDepthStoreOp(DepthAction action)
     return action == DepthAction::Clear ? VK_ATTACHMENT_STORE_OP_DONT_CARE
                                         : VK_ATTACHMENT_STORE_OP_STORE;
 }
+struct VulkanClear
+{
+    Graphics::Color color = Graphics::Color::black();
+    bool clear = true;
+};
 } // namespace
 
 struct Frame::Native
@@ -104,41 +109,79 @@ struct Frame::Native
     RenderPass beginPassOn(VulkanTextureData& data,
                            const RenderPassDescriptor& descriptor)
     {
-        if (commands == nullptr || !data.isValid() || !data.isRenderTarget())
+        VulkanTextureData* const targets[] = {&data};
+        const VulkanClear clears[] = {{descriptor.clearColor, descriptor.clear}};
+
+        return beginPassOn(targets, clears, descriptor);
+    }
+
+    RenderPass beginPassOn(std::span<VulkanTextureData* const> targets,
+                           std::span<const VulkanClear> clears,
+                           const RenderPassDescriptor& descriptor)
+    {
+        if (commands == nullptr)
             return RenderPass(nullptr);
 
+        for (auto* target: targets)
+            if (!target->isValid() || !target->isRenderTarget())
+                return RenderPass(nullptr);
+
+        const auto limit =
+            getVulkanShared().getProperties().limits.maxColorAttachments;
+
+        if (targets.size() > limit)
+        {
+            LOG("Vulkan: a pass over ",
+                targets.size(),
+                " targets is refused; this device offers ",
+                limit);
+            return RenderPass(nullptr);
+        }
+
+        auto& data = *targets[0];
         auto buffer = commands->buffer;
 
         // Barriers are illegal once vkCmdBeginRendering has run.
         barrierBeforeRendering(buffer);
 
-        // COLOR_ATTACHMENT either way: the texture is the resolve destination
-        // when the target is multisampled.
-        transitionMultisampleForUse(buffer, data, imageColorAttachment);
-        transitionTextureForUse(buffer, data, imageColorAttachment);
+        auto colorAttachments =
+            std::array<VkRenderingAttachmentInfo, maxColorAttachments> {};
+
+        for (auto index = std::size_t {0}; index < targets.size(); ++index)
+        {
+            auto& target = *targets[index];
+
+            // COLOR_ATTACHMENT either way: the texture is the resolve
+            // destination when the target is multisampled.
+            transitionMultisampleForUse(buffer, target, imageColorAttachment);
+            transitionTextureForUse(buffer, target, imageColorAttachment);
+
+            const auto& color = clears[index].color;
+
+            auto& colorAttachment = colorAttachments[index];
+            colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            colorAttachment.imageView = target.colorAttachmentView();
+            colorAttachment.imageLayout = imageColorAttachment.layout;
+            colorAttachment.loadOp = clears[index].clear
+                                         ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                         : VK_ATTACHMENT_LOAD_OP_LOAD;
+
+            // Stored even when the samples are resolved away: a second pass into
+            // the target loads the multisample image, not the resolve.
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colorAttachment.clearValue.color = {
+                {color.r, color.g, color.b, color.a}};
+
+            if (target.isMultisampled())
+            {
+                colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+                colorAttachment.resolveImageView = target.colorResolveView();
+                colorAttachment.resolveImageLayout = imageColorAttachment.layout;
+            }
+        }
+
         transitionDepthForUse(buffer, data, imageDepthAttachment);
         transitionResolvedDepthForUse(buffer, data, imageDepthAttachment);
-
-        const auto& color = descriptor.clearColor;
-
-        VkRenderingAttachmentInfo colorAttachment = {};
-        colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        colorAttachment.imageView = data.colorAttachmentView();
-        colorAttachment.imageLayout = imageColorAttachment.layout;
-        colorAttachment.loadOp = descriptor.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
-                                                  : VK_ATTACHMENT_LOAD_OP_LOAD;
-
-        // Stored even when the samples are resolved away: a second pass into
-        // the target loads the multisample image, not the resolve.
-        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        colorAttachment.clearValue.color = {{color.r, color.g, color.b, color.a}};
-
-        if (data.isMultisampled())
-        {
-            colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-            colorAttachment.resolveImageView = data.colorResolveView();
-            colorAttachment.resolveImageLayout = imageColorAttachment.layout;
-        }
 
         VkRenderingAttachmentInfo depthAttachment = {};
         depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
@@ -165,8 +208,8 @@ struct Frame::Native
         rendering.renderArea.extent = {static_cast<std::uint32_t>(data.width),
                                        static_cast<std::uint32_t>(data.height)};
         rendering.layerCount = 1;
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachments = &colorAttachment;
+        rendering.colorAttachmentCount = static_cast<std::uint32_t>(targets.size());
+        rendering.pColorAttachments = colorAttachments.data();
 
         if (data.hasDepth())
         {
@@ -181,14 +224,18 @@ struct Frame::Native
 
         if (usesRenderPasses)
         {
-            renderPass = prepareVulkanRenderPass(rendering, data);
+            renderPass = prepareVulkanRenderPass(rendering, targets);
 
             if (!renderPass.isValid())
                 return RenderPass(nullptr);
         }
 
         auto* encoder =
-            new VulkanRenderEncoder {commands, &data, data.width, data.height};
+            new VulkanRenderEncoder {commands, {}, data.width, data.height};
+
+        for (auto* target: targets)
+            encoder->targets.add(target);
+
         timePass(*encoder, descriptor.label);
 
         if (usesRenderPasses)
@@ -349,15 +396,28 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
     return impl->beginPassOn(*impl->target, descriptor);
 }
 
-RenderPass Frame::beginPass(const Texture& target,
-                            const RenderPassDescriptor& descriptor)
+RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
+                                       const RenderPassDescriptor& descriptor)
 {
-    auto* data = static_cast<VulkanTextureData*>(target.nativeTexture());
-
-    if (data == nullptr || !target.isRenderTarget())
+    if (!canRenderInto(targets))
         return RenderPass(nullptr);
 
-    return impl->beginPassOn(*data, descriptor);
+    auto data = std::array<VulkanTextureData*, maxColorAttachments> {};
+    auto clears = std::array<VulkanClear, maxColorAttachments> {};
+
+    for (auto index = std::size_t {0}; index < targets.size(); ++index)
+    {
+        data[index] =
+            static_cast<VulkanTextureData*>(targets[index].texture->nativeTexture());
+        clears[index] = {targets[index].clearColor, targets[index].clear};
+
+        if (data[index] == nullptr)
+            return RenderPass(nullptr);
+    }
+
+    return impl->beginPassOn(std::span {data.data(), targets.size()},
+                             std::span {clears.data(), targets.size()},
+                             descriptor);
 }
 
 ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)

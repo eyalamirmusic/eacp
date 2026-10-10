@@ -1011,6 +1011,7 @@ bool VulkanShared::createDevice()
         coreFloor ? static_cast<void*>(&features12) : static_cast<void*>(&indexing);
     enabled.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
     enabled.features.samplerAnisotropy = features.samplerAnisotropy;
+    enabled.features.independentBlend = features.independentBlend;
 
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};

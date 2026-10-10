@@ -467,6 +467,40 @@ second depth buffer here: the shaders eacp generates declare a `depth2d`, so the
 depth plane is resolved into a single-sampled twin and that is what
 `setFragmentDepthTexture` binds.
 
+### Several targets at once
+
+`Frame::beginMultiTargetPass` renders into up to `maxColorAttachments` (8)
+textures in one pass — a G-buffer, an OIT accumulation pair — each target its
+own attachment, with its own clear:
+
+```cpp
+const ColorTarget targets[] = {
+    {&albedo, {0.f, 0.f, 0.f, 1.f}},
+    {&normals, {0.5f, 0.5f, 1.f, 0.f}},
+    {&history, {}, false},                 // loads what was there
+};
+
+auto pass = frame.beginMultiTargetPass(targets, {.label = "gbuffer"});
+```
+
+The overload over `std::span<const Texture* const>` clears every target as the
+descriptor says, one colour for all. Every target must be a render target, and
+all must share a size and a sample count; anything else, a texture named twice,
+or more than eight is refused with a trace and the pass records nothing. Depth,
+stencil and multisampling are the first target's, as for one target; every
+multisampled target resolves into itself as the pass ends. A Vulkan device
+offering fewer attachments than asked for refuses the pass too.
+
+The pipeline describes attachment 0 with the fields it always had
+(`colorFormat`, `blendMode`/`blend`, `colorWriteMask`) and attachments 1 and up
+in `extraColorTargets`, a `ColorTargetState` each — format, blend and write mask
+per attachment, so one attachment can accumulate while the next replaces
+(independent blend; on Vulkan a device without `independentBlend` refuses a
+pipeline whose attachments differ). The fragment shader writes one output per
+attachment: `[[color(n)]]` members of a returned struct in MSL, `SV_Target<n>`
+in HLSL, `layout(location = n) out` in GLSL. The shader graph emits one output
+today, so a multi-target program is a hand-written `ShaderSource`.
+
 ## Compute
 
 A kernel is a `ComputeProgram`: storage buffers and uniforms as members, the

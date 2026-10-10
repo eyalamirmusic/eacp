@@ -84,6 +84,29 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
     stencilAttachment.storeAction = store;
     stencilAttachment.clearStencil = (uint32_t) clearStencil;
 }
+void attachColor(MTLRenderPassColorAttachmentDescriptor* attachment,
+                 const ColorTarget& target)
+{
+    auto texture = (__bridge id<MTLTexture>) target.texture->nativeTexture();
+
+    if (auto multisample =
+            (__bridge id<MTLTexture>) target.texture->nativeMultisampleTexture())
+    {
+        attachment.texture = multisample;
+        attachment.resolveTexture = texture;
+        attachment.storeAction = MTLStoreActionStoreAndMultisampleResolve;
+    }
+    else
+    {
+        attachment.texture = texture;
+        attachment.storeAction = MTLStoreActionStore;
+    }
+
+    attachment.loadAction = target.clear ? MTLLoadActionClear : MTLLoadActionLoad;
+
+    const auto& color = target.clearColor;
+    attachment.clearColor = MTLClearColorMake(color.r, color.g, color.b, color.a);
+}
 } // namespace
 
 struct Frame::Native
@@ -320,8 +343,8 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
                       (int) target.height);
 }
 
-// Rendering into an app-owned texture. Depth comes from the target when it was
-// created with one, loaded and stored exactly as the drawable pass does it.
+// Rendering into app-owned textures. Depth comes from the first target when it
+// was created with one, loaded and stored exactly as the drawable pass does it.
 // Passes on one command buffer are ordered by the queue, so nothing here has to
 // say that a later pass may sample what this one wrote.
 //
@@ -334,43 +357,26 @@ RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
 // loads the *multisample* texture, which is the attachment, rather than the
 // flattened picture it has been resolving into. See
 // TextureDescriptor::sampleCount.
-RenderPass Frame::beginPass(const Texture& target,
+RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
                             const RenderPassDescriptor& descriptor)
 {
     auto buffer = impl->commandBuffer.get();
-    auto texture = (__bridge id<MTLTexture>) target.nativeTexture();
 
-    if (buffer == nil || texture == nil || !target.isRenderTarget())
+    if (buffer == nil || !canRenderInto(targets))
         return RenderPass(nullptr);
 
     auto passDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
-    auto colorAttachment = passDescriptor.colorAttachments[0];
 
-    if (auto multisample =
-            (__bridge id<MTLTexture>) target.nativeMultisampleTexture())
-    {
-        colorAttachment.texture = multisample;
-        colorAttachment.resolveTexture = texture;
-        colorAttachment.storeAction = MTLStoreActionStoreAndMultisampleResolve;
-    }
-    else
-    {
-        colorAttachment.texture = texture;
-        colorAttachment.storeAction = MTLStoreActionStore;
-    }
+    for (auto index = std::size_t {0}; index < targets.size(); ++index)
+        attachColor(passDescriptor.colorAttachments[index], targets[index]);
 
-    colorAttachment.loadAction =
-        descriptor.clear ? MTLLoadActionClear : MTLLoadActionLoad;
+    const auto& first = *targets[0].texture;
 
-    const auto& color = descriptor.clearColor;
-    colorAttachment.clearColor =
-        MTLClearColorMake(color.r, color.g, color.b, color.a);
-
-    if (auto depth = (__bridge id<MTLTexture>) target.nativeDepthTexture())
+    if (auto depth = (__bridge id<MTLTexture>) first.nativeDepthTexture())
         attachDepthStencil(
             passDescriptor,
             depth,
-            (__bridge id<MTLTexture>) target.nativeResolvedDepthTexture(),
+            (__bridge id<MTLTexture>) first.nativeResolvedDepthTexture(),
             descriptor.clearStencil,
             descriptor.depthAction);
 
@@ -378,9 +384,7 @@ RenderPass Frame::beginPass(const Texture& target,
 
     auto encoder = [buffer renderCommandEncoderWithDescriptor:passDescriptor];
 
-    return RenderPass((__bridge void*) encoder,
-                      (int) texture.width,
-                      (int) texture.height);
+    return RenderPass((__bridge void*) encoder, first.width(), first.height());
 }
 
 // A compute pass samples at the encoder's own boundaries rather than at a

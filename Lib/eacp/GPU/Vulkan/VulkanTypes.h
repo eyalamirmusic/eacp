@@ -370,8 +370,9 @@ struct VulkanRenderPassBegin
     Vector<VkClearValue> clearValues;
 };
 
-VulkanRenderPassBegin prepareVulkanRenderPass(const VkRenderingInfo& rendering,
-                                              const VulkanTextureData& data);
+VulkanRenderPassBegin
+    prepareVulkanRenderPass(const VkRenderingInfo& rendering,
+                            std::span<VulkanTextureData* const> targets);
 
 void beginVulkanRenderPass(VkCommandBuffer commandBuffer,
                            const VulkanRenderPassBegin& begin);
@@ -488,7 +489,8 @@ struct VulkanRenderPipeline
     bool depth = false;
     bool stencil = false;
     int sampleCount = 1;
-    VkFormat colorFormat = VK_FORMAT_UNDEFINED;
+    int colorCount = 1;
+    std::array<VkFormat, maxColorAttachments> colorFormats {};
 };
 
 struct VulkanComputeEncoder
@@ -504,7 +506,10 @@ struct VulkanComputeEncoder
 struct VulkanRenderEncoder
 {
     CommandContext* commands = nullptr;
-    VulkanTextureData* target = nullptr;
+
+    // Every colour target of the pass, the first being the one whose depth is
+    // attached; each goes back to its resting use when the pass ends.
+    Vector<VulkanTextureData*> targets;
 
     int targetWidth = 0;
     int targetHeight = 0;

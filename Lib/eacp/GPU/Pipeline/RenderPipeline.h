@@ -370,6 +370,18 @@ struct StencilFace
     StencilOp pass = StencilOp::Keep;
 };
 
+// What a pipeline writes to one colour attachment of a pass over several
+// targets: the attachment's format, its blend and its write mask, each meaning
+// what the field of the same name on RenderPipelineDescriptor means for
+// attachment 0. Every attachment blends independently.
+struct ColorTargetState
+{
+    PixelFormat format = PixelFormat::RGBA8Unorm;
+    BlendMode blendMode = BlendMode::None;
+    std::optional<BlendState> blend;
+    ColorWriteMask writeMask;
+};
+
 struct RenderPipelineDescriptor
 {
     const ShaderLibrary* library = nullptr;
@@ -456,7 +468,32 @@ struct RenderPipelineDescriptor
     // than of a facing.
     unsigned char stencilReadMask = 0xff;
     unsigned char stencilWriteMask = 0xff;
+
+    // Attachments 1 and up, for a pipeline drawing into a pass over several
+    // targets (Frame::beginMultiTargetPass). Attachment 0 is colorFormat,
+    // blendMode, blend and colorWriteMask above, so a pipeline drawing into one
+    // target leaves this empty and means what it always meant. The attachment
+    // count and every format have to match the pass, as colorFormat does.
+    Vector<ColorTargetState> extraColorTargets;
+
+    int colorTargetCount() const { return 1 + (int) extraColorTargets.size(); }
+
+    // Attachment `index` as one shape, the first included.
+    ColorTargetState colorTarget(int index) const
+    {
+        if (index > 0)
+            return extraColorTargets[index - 1];
+
+        return {colorFormat, blendMode, blend, colorWriteMask};
+    }
 };
+
+// The blend an attachment ends up with: the written-out equation when there is
+// one, the named mode's otherwise.
+inline BlendState resolvedBlend(const ColorTargetState& target)
+{
+    return target.blend ? *target.blend : blendStateFor(target.blendMode);
+}
 
 // A compiled render pipeline state (MTLRenderPipelineState on Metal). Create via
 // Device::makeRenderPipeline.

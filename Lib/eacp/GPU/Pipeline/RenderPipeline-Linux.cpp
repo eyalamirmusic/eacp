@@ -291,13 +291,12 @@ VkColorComponentFlags toVkWriteMask(const ColorWriteMask& mask)
     return value;
 }
 
-VkPipelineColorBlendAttachmentState
-    makeBlendAttachment(const RenderPipelineDescriptor& from)
+VkPipelineColorBlendAttachmentState makeBlendAttachment(const ColorTargetState& from)
 {
     VkPipelineColorBlendAttachmentState attachment = {};
-    attachment.colorWriteMask = toVkWriteMask(from.colorWriteMask);
+    attachment.colorWriteMask = toVkWriteMask(from.writeMask);
 
-    const auto blend = from.blend ? *from.blend : blendStateFor(from.blendMode);
+    const auto blend = resolvedBlend(from);
 
     if (!blend.enabled)
         return attachment;
@@ -311,6 +310,30 @@ VkPipelineColorBlendAttachmentState
     attachment.alphaBlendOp = toVkBlendOperation(blend.alphaOperation);
 
     return attachment;
+}
+
+bool sameBlend(const VkPipelineColorBlendAttachmentState& a,
+               const VkPipelineColorBlendAttachmentState& b)
+{
+    return a.blendEnable == b.blendEnable
+           && a.srcColorBlendFactor == b.srcColorBlendFactor
+           && a.dstColorBlendFactor == b.dstColorBlendFactor
+           && a.colorBlendOp == b.colorBlendOp
+           && a.srcAlphaBlendFactor == b.srcAlphaBlendFactor
+           && a.dstAlphaBlendFactor == b.dstAlphaBlendFactor
+           && a.alphaBlendOp == b.alphaBlendOp
+           && a.colorWriteMask == b.colorWriteMask;
+}
+
+bool blendsAlike(const std::array<VkPipelineColorBlendAttachmentState,
+                                  maxColorAttachments>& attachments,
+                 int count)
+{
+    for (auto index = 1; index < count; ++index)
+        if (!sameBlend(attachments[index], attachments[0]))
+            return false;
+
+    return true;
 }
 
 VkPipelineRasterizationStateCreateInfo
@@ -364,7 +387,20 @@ struct RenderPipeline::Native
         state.depth = descriptor.depth;
         state.stencil = descriptor.stencil;
         state.sampleCount = descriptor.sampleCount > 1 ? descriptor.sampleCount : 1;
-        state.colorFormat = toVkFormat(descriptor.colorFormat);
+        state.colorCount = descriptor.colorTargetCount();
+
+        if (state.colorCount > maxColorAttachments)
+        {
+            LOG("Vulkan: a pipeline writing ",
+                state.colorCount,
+                " colour targets is refused; the most is ",
+                maxColorAttachments);
+            return;
+        }
+
+        for (auto index = 0; index < state.colorCount; ++index)
+            state.colorFormats[index] =
+                toVkFormat(descriptor.colorTarget(index).format);
 
         if (!device.isValid() || descriptor.library == nullptr)
             return;
@@ -452,12 +488,24 @@ struct RenderPipeline::Native
             static_cast<VkSampleCountFlagBits>(state.sampleCount);
 
         auto depthStencil = makeDepthStencilState(descriptor);
-        auto attachment = makeBlendAttachment(descriptor);
+        auto attachments =
+            std::array<VkPipelineColorBlendAttachmentState, maxColorAttachments> {};
+
+        for (auto index = 0; index < state.colorCount; ++index)
+            attachments[index] = makeBlendAttachment(descriptor.colorTarget(index));
+
+        if (!blendsAlike(attachments, state.colorCount)
+            && !getVulkanShared().getFeatures().independentBlend)
+        {
+            LOG("Vulkan: this device has no independentBlend, so a pipeline "
+                "whose colour targets blend differently is refused");
+            return;
+        }
 
         VkPipelineColorBlendStateCreateInfo blend = {};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        blend.attachmentCount = 1;
-        blend.pAttachments = &attachment;
+        blend.attachmentCount = static_cast<std::uint32_t>(state.colorCount);
+        blend.pAttachments = attachments.data();
 
         const VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
                                                 VK_DYNAMIC_STATE_SCISSOR,
@@ -475,8 +523,9 @@ struct RenderPipeline::Native
 
         VkPipelineRenderingCreateInfo rendering = {};
         rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachmentFormats = &state.colorFormat;
+        rendering.colorAttachmentCount =
+            static_cast<std::uint32_t>(state.colorCount);
+        rendering.pColorAttachmentFormats = state.colorFormats.data();
         rendering.depthAttachmentFormat =
             hasDepthAttachment ? depthAttachmentFormat(descriptor.stencil)
                                : VK_FORMAT_UNDEFINED;
@@ -489,7 +538,8 @@ struct RenderPipeline::Native
         if (getVulkanShared().usesRenderPasses())
         {
             info.renderPass = getVulkanShared().compatibleRenderPass(
-                state.colorFormat,
+                std::span {state.colorFormats.data(),
+                           static_cast<std::size_t>(state.colorCount)},
                 state.sampleCount,
                 rendering.depthAttachmentFormat,
                 descriptor.stencil);

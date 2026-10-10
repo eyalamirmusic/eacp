@@ -329,19 +329,17 @@ UINT8 toD3DWriteMask(const ColorWriteMask& mask)
 }
 
 // One path for the named modes and for a written-out equation, because
-// blendStateFor turns the first into the second. A preset's meaning is stated
+// resolvedBlend turns the first into the second. A preset's meaning is stated
 // once, in the header, rather than once per backend.
-D3D12_BLEND_DESC makeBlendDesc(const RenderPipelineDescriptor& from)
+D3D12_RENDER_TARGET_BLEND_DESC makeTargetBlendDesc(const ColorTargetState& from)
 {
-    D3D12_BLEND_DESC desc = {};
-    auto& target = desc.RenderTarget[0];
+    D3D12_RENDER_TARGET_BLEND_DESC target = {};
+    target.RenderTargetWriteMask = toD3DWriteMask(from.writeMask);
 
-    target.RenderTargetWriteMask = toD3DWriteMask(from.colorWriteMask);
-
-    const auto blend = from.blend ? *from.blend : blendStateFor(from.blendMode);
+    const auto blend = resolvedBlend(from);
 
     if (!blend.enabled)
-        return desc;
+        return target;
 
     target.BlendEnable = TRUE;
     target.SrcBlend = toD3DBlendFactor(blend.sourceColor);
@@ -350,6 +348,20 @@ D3D12_BLEND_DESC makeBlendDesc(const RenderPipelineDescriptor& from)
     target.SrcBlendAlpha = toD3DAlphaBlendFactor(blend.sourceAlpha);
     target.DestBlendAlpha = toD3DAlphaBlendFactor(blend.destinationAlpha);
     target.BlendOpAlpha = toD3DBlendOperation(blend.alphaOperation);
+
+    return target;
+}
+
+// Independent whenever there is more than one target: D3D12 otherwise applies
+// RenderTarget[0] to every attachment, and eacp's attachments each blend as
+// their own ColorTargetState says.
+D3D12_BLEND_DESC makeBlendDesc(const RenderPipelineDescriptor& from)
+{
+    D3D12_BLEND_DESC desc = {};
+    desc.IndependentBlendEnable = from.colorTargetCount() > 1 ? TRUE : FALSE;
+
+    for (auto index = 0; index < from.colorTargetCount(); ++index)
+        desc.RenderTarget[index] = makeTargetBlendDesc(from.colorTarget(index));
 
     return desc;
 }
@@ -449,6 +461,15 @@ struct RenderPipeline::Native
             || program->pixelBytecode == nullptr)
             return;
 
+        if (descriptor.colorTargetCount() > maxColorAttachments)
+        {
+            LOG("D3D12: a pipeline writing ",
+                descriptor.colorTargetCount(),
+                " colour targets is refused; the most is ",
+                maxColorAttachments);
+            return;
+        }
+
         auto inputLayout = makeInputLayout(descriptor.vertexLayout);
 
         D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
@@ -464,8 +485,11 @@ struct RenderPipeline::Native
         desc.InputLayout.pInputElementDescs = inputLayout.data();
         desc.InputLayout.NumElements = static_cast<UINT>(inputLayout.size());
         desc.PrimitiveTopologyType = toTopologyType(descriptor.topology);
-        desc.NumRenderTargets = 1;
-        desc.RTVFormats[0] = toDXGIFormat(descriptor.colorFormat);
+        desc.NumRenderTargets = static_cast<UINT>(descriptor.colorTargetCount());
+
+        for (auto index = 0; index < descriptor.colorTargetCount(); ++index)
+            desc.RTVFormats[index] =
+                toDXGIFormat(descriptor.colorTarget(index).format);
         desc.DSVFormat = descriptor.depth || descriptor.stencil
                              ? depthAttachmentFormat(descriptor.stencil)
                              : DXGI_FORMAT_UNKNOWN;

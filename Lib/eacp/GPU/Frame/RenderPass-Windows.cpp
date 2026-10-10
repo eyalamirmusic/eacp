@@ -575,10 +575,9 @@ void RenderPass::end()
     // work: it belongs to the target rather than to what was drawn. Metal spells
     // this as a store action on the attachment and records nothing at all here -
     // see resolveMultisampledTarget for why it happens per pass on both.
-    if (impl->encoder && impl->encoder->resolveTarget != nullptr
-        && impl->encoder->commands != nullptr)
-        resolveMultisampledTarget(*impl->encoder->commands,
-                                  *impl->encoder->resolveTarget);
+    if (impl->encoder && impl->encoder->commands != nullptr)
+        for (auto* target: impl->encoder->resolveTargets)
+            resolveMultisampledTarget(*impl->encoder->commands, *target);
 
     // Commands are recorded onto the frame's list, which submits when the
     // frame is destroyed; releasing the encoder marks the pass finished.

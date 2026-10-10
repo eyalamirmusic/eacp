@@ -536,11 +536,14 @@ void RenderPass::end()
     impl->encoder->commands->context->setRenderPassOpen(false);
 
     // Barriers are legal only now that vkCmdEndRendering has run.
-    if (auto* target = impl->encoder->target)
-    {
+    for (auto* target: impl->encoder->targets)
         transitionTextureForUse(buffer, *target, target->restingUse());
-        transitionDepthForUse(buffer, *target, target->depthRestingUse());
-        transitionResolvedDepthForUse(buffer, *target, imageDepthSampled);
+
+    if (!impl->encoder->targets.empty())
+    {
+        auto& first = *impl->encoder->targets[0];
+        transitionDepthForUse(buffer, first, first.depthRestingUse());
+        transitionResolvedDepthForUse(buffer, first, imageDepthSampled);
     }
 
     impl->encoder.reset();

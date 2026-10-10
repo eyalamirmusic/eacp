@@ -3,6 +3,7 @@
 #include "ComputePass.h"
 #include "RenderPass.h"
 
+#include <span>
 #include <string_view>
 
 namespace eacp::GPU
@@ -80,6 +81,17 @@ struct RenderPassDescriptor
     // what every pass did before this existed and what a pass drawing a scene
     // wants.
     DepthAction depthAction = DepthAction::Clear;
+};
+
+// One colour attachment of a pass over several targets: the texture, and what
+// the pass does with what is already in it. Each attachment clears to its own
+// colour, which is what a G-buffer wants - normals cleared to zero beside an
+// albedo cleared to the sky.
+struct ColorTarget
+{
+    const Texture* texture = nullptr;
+    Graphics::Color clearColor = Graphics::Color::black();
+    bool clear = true;
 };
 
 // Off-screen render target for snapshots: a colour texture the app owns instead
@@ -175,6 +187,29 @@ public:
     RenderPass beginPass(const Texture& target,
                          const RenderPassDescriptor& descriptor = {});
 
+    // The same over several textures at once, attachment n of the pass being
+    // targets[n] and the fragment shader's [[color(n)]], SV_Target<n> or
+    // `layout(location = n) out`. Up to maxColorAttachments, each created with
+    // TextureDescriptor::renderTarget, and all of one size and one sample
+    // count; anything else is refused with a trace and yields a pass that
+    // records nothing. The pipeline drawing here names a format per attachment
+    // (RenderPipelineDescriptor::extraColorTargets).
+    //
+    // Depth, stencil and multisampling are the first target's, exactly as the
+    // single-target pass takes them: its depth buffer is attached and the
+    // others' are ignored. Every multisampled target resolves into itself at
+    // the end of the pass.
+    //
+    // Each target clears or loads by its own ColorTarget; the descriptor's
+    // clearColor and clear are not read, and the rest of it is.
+    RenderPass beginMultiTargetPass(std::span<const ColorTarget> targets,
+                                    const RenderPassDescriptor& descriptor = {});
+
+    // The same with every target cleared or loaded as the descriptor says, one
+    // colour for all of them, which is bgfx's shape for a framebuffer's clear.
+    RenderPass beginMultiTargetPass(std::span<const Texture* const> targets,
+                                    const RenderPassDescriptor& descriptor = {});
+
     // Records a compute pass onto this frame's command buffer, in order with
     // its render passes and with nothing waiting in between.
     //
@@ -227,6 +262,8 @@ public:
     bool isValid() const;
 
 private:
+    static bool canRenderInto(std::span<const ColorTarget> targets);
+
     struct Native;
     Pimpl<Native> impl;
 

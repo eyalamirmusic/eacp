@@ -49,19 +49,31 @@ VkRenderPass makeRenderPass(VkDevice device, const VulkanRenderPassKey& key)
     const auto depthLayout = imageDepthAttachment.layout;
     const auto depthAspect = depthAspectMask(key.stencil);
 
-    auto attachments = std::array<VkAttachmentDescription2, 4> {};
+    auto attachments =
+        std::array<VkAttachmentDescription2, 2 * maxColorAttachments + 2> {};
     auto count = std::uint32_t {0};
 
-    const auto colorIndex = count;
-    attachments[count++] = makeAttachment(
-        key.colorFormat, key.samples, key.colorLoad, key.colorStore, colorLayout);
+    auto colorReferences =
+        std::array<VkAttachmentReference2, maxColorAttachments> {};
+    auto resolveReferences =
+        std::array<VkAttachmentReference2, maxColorAttachments> {};
 
-    auto resolveIndex = VK_ATTACHMENT_UNUSED;
-
-    if (key.colorResolve)
+    for (auto index = 0; index < key.colorCount; ++index)
     {
-        resolveIndex = count;
-        attachments[count++] = makeAttachment(key.colorFormat,
+        colorReferences[index] =
+            makeReference(count, colorLayout, VK_IMAGE_ASPECT_COLOR_BIT);
+        attachments[count++] = makeAttachment(key.colorFormats[index],
+                                              key.samples,
+                                              key.colorLoads[index],
+                                              key.colorStore,
+                                              colorLayout);
+
+        if (!key.colorResolve)
+            continue;
+
+        resolveReferences[index] =
+            makeReference(count, colorLayout, VK_IMAGE_ASPECT_COLOR_BIT);
+        attachments[count++] = makeAttachment(key.colorFormats[index],
                                               VK_SAMPLE_COUNT_1_BIT,
                                               VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                               VK_ATTACHMENT_STORE_OP_STORE,
@@ -104,10 +116,6 @@ VkRenderPass makeRenderPass(VkDevice device, const VulkanRenderPassKey& key)
         }
     }
 
-    const auto colorReference =
-        makeReference(colorIndex, colorLayout, VK_IMAGE_ASPECT_COLOR_BIT);
-    const auto resolveReference =
-        makeReference(resolveIndex, colorLayout, VK_IMAGE_ASPECT_COLOR_BIT);
     const auto depthReference = makeReference(depthIndex, depthLayout, depthAspect);
     const auto depthResolveReference =
         makeReference(depthResolveIndex, depthLayout, depthAspect);
@@ -123,9 +131,10 @@ VkRenderPass makeRenderPass(VkDevice device, const VulkanRenderPassKey& key)
     subpass.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
     subpass.pNext = key.depthResolve ? &depthResolve : nullptr;
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorReference;
-    subpass.pResolveAttachments = key.colorResolve ? &resolveReference : nullptr;
+    subpass.colorAttachmentCount = static_cast<std::uint32_t>(key.colorCount);
+    subpass.pColorAttachments = colorReferences.data();
+    subpass.pResolveAttachments =
+        key.colorResolve ? resolveReferences.data() : nullptr;
     subpass.pDepthStencilAttachment = hasDepth ? &depthReference : nullptr;
 
     VkRenderPassCreateInfo2 info = {};
@@ -234,17 +243,24 @@ void VulkanRenderPassCache::destroyAll(VkDevice device)
 
 // Load and store ops and resolves do not decide compatibility for a render pass
 // of one subpass, so one pass per set of formats serves every pipeline.
-VkRenderPass VulkanShared::compatibleRenderPass(VkFormat colorFormat,
-                                                int samples,
-                                                VkFormat depthFormat,
-                                                bool stencil)
+VkRenderPass
+    VulkanShared::compatibleRenderPass(std::span<const VkFormat> colorFormats,
+                                       int samples,
+                                       VkFormat depthFormat,
+                                       bool stencil)
 {
     auto key = VulkanRenderPassKey {};
-    key.colorFormat = colorFormat;
+    key.colorCount = static_cast<int>(colorFormats.size());
     key.samples = toVkSampleCount(samples);
     key.colorResolve = samples > 1;
     key.depthFormat = depthFormat;
     key.stencil = stencil;
+
+    for (auto index = 0; index < key.colorCount; ++index)
+    {
+        key.colorFormats[index] = colorFormats[index];
+        key.colorLoads[index] = VK_ATTACHMENT_LOAD_OP_LOAD;
+    }
 
     if (depthFormat != VK_FORMAT_UNDEFINED)
     {
@@ -266,38 +282,47 @@ void VulkanShared::destroyImageView(VkImageView view)
     vkDestroyImageView(device, view, nullptr);
 }
 
-VulkanRenderPassBegin prepareVulkanRenderPass(const VkRenderingInfo& rendering,
-                                              const VulkanTextureData& data)
+VulkanRenderPassBegin
+    prepareVulkanRenderPass(const VkRenderingInfo& rendering,
+                            std::span<VulkanTextureData* const> targets)
 {
     auto& shared = getVulkanShared();
 
-    const auto& color = rendering.pColorAttachments[0];
+    const auto& first = *targets[0];
     const auto* depth = rendering.pDepthAttachment;
 
     auto key = VulkanRenderPassKey {};
-    key.colorFormat = data.format;
-    key.samples = toVkSampleCount(data.isMultisampled() ? data.sampleCount : 1);
-    key.colorLoad = color.loadOp;
-    key.colorStore = color.storeOp;
-    key.colorResolve = color.resolveImageView != VK_NULL_HANDLE;
+    key.colorCount = static_cast<int>(rendering.colorAttachmentCount);
+    key.samples = toVkSampleCount(first.isMultisampled() ? first.sampleCount : 1);
+    key.colorStore = rendering.pColorAttachments[0].storeOp;
+    key.colorResolve =
+        rendering.pColorAttachments[0].resolveImageView != VK_NULL_HANDLE;
 
     auto begin = VulkanRenderPassBegin {};
     begin.renderArea = rendering.renderArea;
 
     auto views = Vector<VkImageView> {};
 
-    views.add(color.imageView);
-    begin.clearValues.add(color.clearValue);
-
-    if (key.colorResolve)
+    for (auto index = 0; index < key.colorCount; ++index)
     {
-        views.add(color.resolveImageView);
-        begin.clearValues.add(VkClearValue {});
+        const auto& color = rendering.pColorAttachments[index];
+
+        key.colorFormats[index] = targets[(std::size_t) index]->format;
+        key.colorLoads[index] = color.loadOp;
+
+        views.add(color.imageView);
+        begin.clearValues.add(color.clearValue);
+
+        if (key.colorResolve)
+        {
+            views.add(color.resolveImageView);
+            begin.clearValues.add(VkClearValue {});
+        }
     }
 
     if (depth != nullptr)
     {
-        key.depthFormat = data.depthFormat;
+        key.depthFormat = first.depthFormat;
         key.stencil = rendering.pStencilAttachment != nullptr;
         key.depthLoad = depth->loadOp;
         key.depthStore = depth->storeOp;

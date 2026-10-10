@@ -246,6 +246,32 @@ static MTLVertexDescriptor* makeVertexDescriptor(const VertexLayout& layout)
     return descriptor;
 }
 
+// One path for the named modes and for a written-out equation, because
+// resolvedBlend turns the first into the second. A preset's meaning is
+// therefore stated once, in the header, rather than once per backend.
+static void describeColorTarget(MTLRenderPipelineColorAttachmentDescriptor* attachment,
+                                const ColorTargetState& target)
+{
+    attachment.pixelFormat = toMetalPixelFormat(target.format);
+
+    const auto blend = resolvedBlend(target);
+
+    if (blend.enabled)
+    {
+        attachment.blendingEnabled = YES;
+        attachment.sourceRGBBlendFactor = toMetalBlendFactor(blend.sourceColor);
+        attachment.destinationRGBBlendFactor =
+            toMetalBlendFactor(blend.destinationColor);
+        attachment.rgbBlendOperation = toMetalBlendOperation(blend.colorOperation);
+        attachment.sourceAlphaBlendFactor = toMetalBlendFactor(blend.sourceAlpha);
+        attachment.destinationAlphaBlendFactor =
+            toMetalBlendFactor(blend.destinationAlpha);
+        attachment.alphaBlendOperation = toMetalBlendOperation(blend.alphaOperation);
+    }
+
+    attachment.writeMask = toMetalWriteMask(target.writeMask);
+}
+
 struct RenderPipeline::Native
 {
     Native(Device& device, const RenderPipelineDescriptor& descriptor)
@@ -325,34 +351,21 @@ struct RenderPipeline::Native
             [depthDescriptor release];
         }
 
-        auto colorAttachment = pipelineDescriptor.colorAttachments[0];
-        colorAttachment.pixelFormat = toMetalPixelFormat(descriptor.colorFormat);
-
-        // One path for the named modes and for a written-out equation, because
-        // blendStateFor turns the first into the second. A preset's meaning is
-        // therefore stated once, in the header, rather than once per backend.
-        const auto blend = descriptor.blend
-                               ? *descriptor.blend
-                               : blendStateFor(descriptor.blendMode);
-
-        if (blend.enabled)
+        if (descriptor.colorTargetCount() > maxColorAttachments)
         {
-            colorAttachment.blendingEnabled = YES;
-            colorAttachment.sourceRGBBlendFactor =
-                toMetalBlendFactor(blend.sourceColor);
-            colorAttachment.destinationRGBBlendFactor =
-                toMetalBlendFactor(blend.destinationColor);
-            colorAttachment.rgbBlendOperation =
-                toMetalBlendOperation(blend.colorOperation);
-            colorAttachment.sourceAlphaBlendFactor =
-                toMetalBlendFactor(blend.sourceAlpha);
-            colorAttachment.destinationAlphaBlendFactor =
-                toMetalBlendFactor(blend.destinationAlpha);
-            colorAttachment.alphaBlendOperation =
-                toMetalBlendOperation(blend.alphaOperation);
+            LOG("eacp: a pipeline writing ",
+                descriptor.colorTargetCount(),
+                " colour targets is refused; the most is ",
+                maxColorAttachments);
+            [vertexFunction release];
+            [fragmentFunction release];
+            [pipelineDescriptor release];
+            return;
         }
 
-        colorAttachment.writeMask = toMetalWriteMask(descriptor.colorWriteMask);
+        for (auto index = 0; index < descriptor.colorTargetCount(); ++index)
+            describeColorTarget(pipelineDescriptor.colorAttachments[(NSUInteger) index],
+                                descriptor.colorTarget(index));
 
         NSError* error = nil;
         state = [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor
