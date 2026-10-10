@@ -108,37 +108,13 @@ static MTLVertexFormat toMetalVertexFormat(VertexFormat format)
     return MTLVertexFormatFloat3;
 }
 
+// Defined in Texture-Apple.mm: one table of Metal formats, which every
+// attachment format reaches through the texture format it is the attachment of.
+MTLPixelFormat metalTextureFormat(TextureFormat format);
+
 static MTLPixelFormat toMetalPixelFormat(PixelFormat format)
 {
-    switch (format)
-    {
-        case PixelFormat::BGRA8Unorm:
-            return MTLPixelFormatBGRA8Unorm;
-        case PixelFormat::RGBA8Unorm:
-            return MTLPixelFormatRGBA8Unorm;
-        case PixelFormat::RGBA16Float:
-            return MTLPixelFormatRGBA16Float;
-        case PixelFormat::RGBA32Float:
-            return MTLPixelFormatRGBA32Float;
-        case PixelFormat::R32Float:
-            return MTLPixelFormatR32Float;
-        case PixelFormat::R8Unorm:
-            return MTLPixelFormatR8Unorm;
-        case PixelFormat::RG8Unorm:
-            return MTLPixelFormatRG8Unorm;
-        case PixelFormat::R16Float:
-            return MTLPixelFormatR16Float;
-        case PixelFormat::RG16Float:
-            return MTLPixelFormatRG16Float;
-        case PixelFormat::RG32Float:
-            return MTLPixelFormatRG32Float;
-        case PixelFormat::R16Unorm:
-            return MTLPixelFormatR16Unorm;
-        case PixelFormat::R32Uint:
-            return MTLPixelFormatR32Uint;
-    }
-
-    return MTLPixelFormatBGRA8Unorm;
+    return metalTextureFormat(textureFormatFor(format));
 }
 
 static MTLBlendFactor toMetalBlendFactor(BlendFactor factor)

@@ -74,6 +74,65 @@ enum class TextureFormat
     R16Unorm,
     R32Uint,
 
+    // sRGB: the same bytes as RGBA8Unorm and BGRA8Unorm, stored as sRGB-encoded
+    // colour rather than as numbers. A shader sampling one gets *linear* light -
+    // the sampler decodes before it filters - and a pass rendering into one
+    // writes linear light that the hardware encodes on the way out, blending in
+    // linear first. Which is the only way a lit scene comes out with the right
+    // gamma: lighting is arithmetic on light, and an 8-bit target holding the
+    // light itself spends its 256 steps where the eye cannot tell them apart and
+    // bands where it can.
+    //
+    // read() and update() move the encoded bytes, untouched in both
+    // directions. A kernel cannot write one (Device::supportsComputeWrite
+    // refuses every sRGB format: no API promises a typed store that encodes).
+    // A chain eacp builds on the CPU is averaged in linear light - decoded,
+    // averaged, encoded - which is what every GPU's own generator does with
+    // these formats and why they look right at distance.
+    RGBA8UnormSrgb,
+    BGRA8UnormSrgb,
+
+    // Sixteen bits per channel, unsigned normalised: R16Unorm's two- and
+    // four-channel shapes. A normal map or a motion buffer that eight bits
+    // band, a 16-bit PNG.
+    RG16Unorm,
+    RGBA16Unorm,
+
+    // Packed into 32 bits. RGB10A2Unorm is ten bits of red, green and blue and
+    // two of alpha, red in the lowest bits of the little-endian word (DXGI's
+    // R10G10B10A2, Vulkan's A2B10G10R10_PACK32 - one layout under two names).
+    // RG11B10Float is three *unsigned* floats with a five-bit exponent and six,
+    // six and five bits of mantissa, red lowest again: an HDR colour at half
+    // the cost of RGBA16Float, and the shape a lit scene's intermediate target
+    // is usually kept in. Neither has a sign; a negative value written to
+    // RG11B10Float is stored as 0. Both filter and render everywhere.
+    RGB10A2Unorm,
+    RG11B10Float,
+
+    // The integer formats beside R32Uint, each read as integers - texture2d<uint>
+    // or texture2d<int>, Texture2D<uint4> or Texture2D<int4>, usampler2D or
+    // isampler2D - with read(), Load or texelFetch rather than a filtering
+    // sample, rendered into by a pass whose fragment returns uint or int, and
+    // never blended or mipmapped. An 8-bit Uint is the stored number, not a
+    // fraction of 255; a Sint is two's complement.
+    R8Uint,
+    RG8Uint,
+    RGBA8Uint,
+    R16Uint,
+    RG16Uint,
+    RGBA16Uint,
+    RG32Uint,
+    RGBA32Uint,
+    R8Sint,
+    RG8Sint,
+    RGBA8Sint,
+    R16Sint,
+    RG16Sint,
+    RGBA16Sint,
+    R32Sint,
+    RG32Sint,
+    RGBA32Sint,
+
     // Block-compressed: a 4x4 block of texels stored as one 8- or 16-byte
     // record that the sampler decodes on its way out. The picture costs a
     // quarter or an eighth of what it does uncompressed - in memory, over the
@@ -95,7 +154,14 @@ enum class TextureFormat
     // alpha endpoints and a three-bit index. BC7 is 16 and is the modern one -
     // eight modes, and near-lossless where the older three band visibly.
     //
-    // No sRGB variants, because eacp has no sRGB formats at all.
+    // Each of the four has an sRGB twin, the same blocks decoded to linear
+    // light on the way out, for the reason RGBA8UnormSrgb gives. BC4 is BC3's
+    // alpha half on its own - 8 bytes, one channel - and BC5 two of them, 16
+    // bytes, which is what a tangent-space normal map is compressed into; each
+    // comes unsigned (0..1) and signed (-1..1). BC6H is 16 bytes of unsigned
+    // half-float RGB, the HDR one - an environment map, a baked light probe.
+    // BC4 samples as (r, 0, 0, 1), BC5 as (r, g, 0, 1), BC6H with an alpha of
+    // 1.
     //
     // **What a compressed texture cannot be**, refused rather than
     // half-supported and in the same words on both backends: a renderTarget or
@@ -115,8 +181,150 @@ enum class TextureFormat
     BC1RGBA,
     BC2RGBA,
     BC3RGBA,
-    BC7RGBA
+    BC7RGBA,
+    BC1RGBASrgb,
+    BC2RGBASrgb,
+    BC3RGBASrgb,
+    BC7RGBASrgb,
+    BC4RUnorm,
+    BC4RSnorm,
+    BC5RGUnorm,
+    BC5RGSnorm,
+    BC6HRGBUfloat
 };
+
+// What a format's texels are, as the shader sees them once they are sampled
+// or read: a fraction (Unorm 0..1, Snorm -1..1), a float, or an integer. The
+// last two pick the shader's declaration - texture2d<float>, <uint> or <int>.
+enum class TextureFormatKind
+{
+    Unorm,
+    Snorm,
+    Float,
+    Uint,
+    Sint
+};
+
+// Everything the helpers below answer, in one place. texelBytes is 0 on a
+// block-compressed format and blockBytes 0 on every other one; channels is how
+// many components a texel carries (a BC1 block decodes to four).
+struct TextureFormatTraits
+{
+    int texelBytes = 0;
+    int blockBytes = 0;
+    int channels = 0;
+    TextureFormatKind kind = TextureFormatKind::Unorm;
+    bool srgb = false;
+};
+
+// Exhaustive on purpose, and the only switch over every format in this header:
+// a format added without its traits is a -Wswitch warning here rather than a
+// texture uploaded at someone else's stride. bytesPerPixel answered 4 for
+// anything it did not recognise until the block formats arrived, which is a
+// wrong number rather than a missing case.
+constexpr TextureFormatTraits textureFormatTraits(TextureFormat format)
+{
+    using Kind = TextureFormatKind;
+
+    switch (format)
+    {
+        case TextureFormat::RGBA8Unorm:
+        case TextureFormat::BGRA8Unorm:
+            return {4, 0, 4, Kind::Unorm};
+        case TextureFormat::R8Unorm:
+            return {1, 0, 1, Kind::Unorm};
+        case TextureFormat::RG8Unorm:
+            return {2, 0, 2, Kind::Unorm};
+        case TextureFormat::RGBA16Float:
+            return {8, 0, 4, Kind::Float};
+        case TextureFormat::RGBA32Float:
+            return {16, 0, 4, Kind::Float};
+        case TextureFormat::R32Float:
+            return {4, 0, 1, Kind::Float};
+        case TextureFormat::R16Float:
+            return {2, 0, 1, Kind::Float};
+        case TextureFormat::RG16Float:
+            return {4, 0, 2, Kind::Float};
+        case TextureFormat::RG32Float:
+            return {8, 0, 2, Kind::Float};
+        case TextureFormat::R16Unorm:
+            return {2, 0, 1, Kind::Unorm};
+        case TextureFormat::R32Uint:
+            return {4, 0, 1, Kind::Uint};
+
+        case TextureFormat::RGBA8UnormSrgb:
+        case TextureFormat::BGRA8UnormSrgb:
+            return {4, 0, 4, Kind::Unorm, true};
+        case TextureFormat::RG16Unorm:
+            return {4, 0, 2, Kind::Unorm};
+        case TextureFormat::RGBA16Unorm:
+            return {8, 0, 4, Kind::Unorm};
+        case TextureFormat::RGB10A2Unorm:
+            return {4, 0, 4, Kind::Unorm};
+        case TextureFormat::RG11B10Float:
+            return {4, 0, 3, Kind::Float};
+
+        case TextureFormat::R8Uint:
+            return {1, 0, 1, Kind::Uint};
+        case TextureFormat::RG8Uint:
+            return {2, 0, 2, Kind::Uint};
+        case TextureFormat::RGBA8Uint:
+            return {4, 0, 4, Kind::Uint};
+        case TextureFormat::R16Uint:
+            return {2, 0, 1, Kind::Uint};
+        case TextureFormat::RG16Uint:
+            return {4, 0, 2, Kind::Uint};
+        case TextureFormat::RGBA16Uint:
+            return {8, 0, 4, Kind::Uint};
+        case TextureFormat::RG32Uint:
+            return {8, 0, 2, Kind::Uint};
+        case TextureFormat::RGBA32Uint:
+            return {16, 0, 4, Kind::Uint};
+        case TextureFormat::R8Sint:
+            return {1, 0, 1, Kind::Sint};
+        case TextureFormat::RG8Sint:
+            return {2, 0, 2, Kind::Sint};
+        case TextureFormat::RGBA8Sint:
+            return {4, 0, 4, Kind::Sint};
+        case TextureFormat::R16Sint:
+            return {2, 0, 1, Kind::Sint};
+        case TextureFormat::RG16Sint:
+            return {4, 0, 2, Kind::Sint};
+        case TextureFormat::RGBA16Sint:
+            return {8, 0, 4, Kind::Sint};
+        case TextureFormat::R32Sint:
+            return {4, 0, 1, Kind::Sint};
+        case TextureFormat::RG32Sint:
+            return {8, 0, 2, Kind::Sint};
+        case TextureFormat::RGBA32Sint:
+            return {16, 0, 4, Kind::Sint};
+
+        case TextureFormat::BC1RGBA:
+            return {0, 8, 4, Kind::Unorm};
+        case TextureFormat::BC2RGBA:
+        case TextureFormat::BC3RGBA:
+        case TextureFormat::BC7RGBA:
+            return {0, 16, 4, Kind::Unorm};
+        case TextureFormat::BC1RGBASrgb:
+            return {0, 8, 4, Kind::Unorm, true};
+        case TextureFormat::BC2RGBASrgb:
+        case TextureFormat::BC3RGBASrgb:
+        case TextureFormat::BC7RGBASrgb:
+            return {0, 16, 4, Kind::Unorm, true};
+        case TextureFormat::BC4RUnorm:
+            return {0, 8, 1, Kind::Unorm};
+        case TextureFormat::BC4RSnorm:
+            return {0, 8, 1, Kind::Snorm};
+        case TextureFormat::BC5RGUnorm:
+            return {0, 16, 2, Kind::Unorm};
+        case TextureFormat::BC5RGSnorm:
+            return {0, 16, 2, Kind::Snorm};
+        case TextureFormat::BC6HRGBUfloat:
+            return {0, 16, 3, Kind::Float};
+    }
+
+    return {};
+}
 
 // Whether one record of this format covers a 4x4 block of texels rather than a
 // single one. The formats that do are sized differently from the rest all the
@@ -124,8 +332,7 @@ enum class TextureFormat
 // from everything that only wants the size of a level.
 constexpr bool isCompressedFormat(TextureFormat format)
 {
-    return format == TextureFormat::BC1RGBA || format == TextureFormat::BC2RGBA
-           || format == TextureFormat::BC3RGBA || format == TextureFormat::BC7RGBA;
+    return textureFormatTraits(format).blockBytes > 0;
 }
 
 // Bytes one 4x4 block occupies, and 0 for a format that has no blocks. Both
@@ -133,76 +340,22 @@ constexpr bool isCompressedFormat(TextureFormat format)
 // is still one block of this size and a 1x1 level is too.
 constexpr int bytesPerBlock(TextureFormat format)
 {
-    switch (format)
-    {
-        case TextureFormat::BC1RGBA:
-            return 8;
-
-        case TextureFormat::BC2RGBA:
-        case TextureFormat::BC3RGBA:
-        case TextureFormat::BC7RGBA:
-            return 16;
-
-        case TextureFormat::RGBA8Unorm:
-        case TextureFormat::BGRA8Unorm:
-        case TextureFormat::R8Unorm:
-        case TextureFormat::RG8Unorm:
-        case TextureFormat::RGBA16Float:
-        case TextureFormat::RGBA32Float:
-        case TextureFormat::R32Float:
-        case TextureFormat::R16Float:
-        case TextureFormat::RG16Float:
-        case TextureFormat::RG32Float:
-        case TextureFormat::R16Unorm:
-        case TextureFormat::R32Uint:
-            break;
-    }
-
-    return 0;
+    return textureFormatTraits(format).blockBytes;
 }
 
 // Bytes one texel occupies, and 0 for a block-compressed format, which has no
 // per-texel size at all - levelBytesPerRow is the number a compressed upload
 // wants.
-//
-// Exhaustive on purpose. This answered 4 for anything it did not recognise
-// until the block formats arrived, which is a wrong number rather than a
-// missing case: a format added without a size here is now a -Wswitch warning
-// instead of a texture uploaded at someone else's stride.
 constexpr int bytesPerPixel(TextureFormat format)
 {
-    switch (format)
-    {
-        case TextureFormat::R8Unorm:
-            return 1;
+    return textureFormatTraits(format).texelBytes;
+}
 
-        case TextureFormat::RG8Unorm:
-        case TextureFormat::R16Float:
-        case TextureFormat::R16Unorm:
-            return 2;
-
-        case TextureFormat::RGBA8Unorm:
-        case TextureFormat::BGRA8Unorm:
-        case TextureFormat::R32Float:
-        case TextureFormat::RG16Float:
-        case TextureFormat::R32Uint:
-            return 4;
-
-        case TextureFormat::RGBA16Float:
-        case TextureFormat::RG32Float:
-            return 8;
-
-        case TextureFormat::RGBA32Float:
-            return 16;
-
-        case TextureFormat::BC1RGBA:
-        case TextureFormat::BC2RGBA:
-        case TextureFormat::BC3RGBA:
-        case TextureFormat::BC7RGBA:
-            break;
-    }
-
-    return 0;
+// How many components a texel carries: what a shader reading it gets in
+// r, rg, rgb or rgba, the rest being 0 and an alpha of 1.
+constexpr int formatChannels(TextureFormat format)
+{
+    return textureFormatTraits(format).channels;
 }
 
 // A level's row pitch when it is tightly packed: bytes per row of texels, or
@@ -231,20 +384,83 @@ constexpr int levelBytes(TextureFormat format, int width, int height)
     return levelBytesPerRow(format, width) * levelRows(format, height);
 }
 
+// Whether a texel holds floats: the half and full float formats, RG11B10Float
+// and BC6H.
 constexpr bool isFloatFormat(TextureFormat format)
 {
-    return format == TextureFormat::RGBA16Float
-           || format == TextureFormat::RGBA32Float
-           || format == TextureFormat::R32Float || format == TextureFormat::R16Float
-           || format == TextureFormat::RG16Float
-           || format == TextureFormat::RG32Float;
+    return textureFormatTraits(format).kind == TextureFormatKind::Float;
 }
 
-// Whether a shader reads this format as unsigned integers rather than as
-// floats: texture2d<uint>, Texture2D<uint>, usampler2D.
+// Whether a shader reads this format as integers rather than as floats:
+// texture2d<uint> or <int>, Texture2D<uint> or <int>, usampler2D or isampler2D.
+// Unsigned and signed alike; the two below tell them apart.
 constexpr bool isIntegerFormat(TextureFormat format)
 {
-    return format == TextureFormat::R32Uint;
+    const auto kind = textureFormatTraits(format).kind;
+    return kind == TextureFormatKind::Uint || kind == TextureFormatKind::Sint;
+}
+
+constexpr bool isUnsignedIntegerFormat(TextureFormat format)
+{
+    return textureFormatTraits(format).kind == TextureFormatKind::Uint;
+}
+
+constexpr bool isSignedIntegerFormat(TextureFormat format)
+{
+    return textureFormatTraits(format).kind == TextureFormatKind::Sint;
+}
+
+// Whether the sampler decodes this format from sRGB, and a pass rendering
+// into it encodes.
+constexpr bool isSrgbFormat(TextureFormat format)
+{
+    return textureFormatTraits(format).srgb;
+}
+
+// The sRGB twin of a format that has one, and the format itself otherwise -
+// and the way back. Same bytes, same size, decoded differently; a caller that
+// learns late whether its content is colour or data (bgfx's sampler flag)
+// picks between them with these.
+constexpr TextureFormat srgbFormatFor(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::RGBA8Unorm:
+            return TextureFormat::RGBA8UnormSrgb;
+        case TextureFormat::BGRA8Unorm:
+            return TextureFormat::BGRA8UnormSrgb;
+        case TextureFormat::BC1RGBA:
+            return TextureFormat::BC1RGBASrgb;
+        case TextureFormat::BC2RGBA:
+            return TextureFormat::BC2RGBASrgb;
+        case TextureFormat::BC3RGBA:
+            return TextureFormat::BC3RGBASrgb;
+        case TextureFormat::BC7RGBA:
+            return TextureFormat::BC7RGBASrgb;
+        default:
+            return format;
+    }
+}
+
+constexpr TextureFormat linearFormatFor(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::RGBA8UnormSrgb:
+            return TextureFormat::RGBA8Unorm;
+        case TextureFormat::BGRA8UnormSrgb:
+            return TextureFormat::BGRA8Unorm;
+        case TextureFormat::BC1RGBASrgb:
+            return TextureFormat::BC1RGBA;
+        case TextureFormat::BC2RGBASrgb:
+            return TextureFormat::BC2RGBA;
+        case TextureFormat::BC3RGBASrgb:
+            return TextureFormat::BC3RGBA;
+        case TextureFormat::BC7RGBASrgb:
+            return TextureFormat::BC7RGBA;
+        default:
+            return format;
+    }
 }
 
 // Whether a kernel may write this format on **every** device eacp runs on. The
@@ -254,8 +470,8 @@ constexpr bool isIntegerFormat(TextureFormat format)
 //
 // Device::supportsComputeWrite is the answer for one device, and the one a
 // texture is created against: it takes every format here and, on most
-// hardware, the one- and two-channel ones beside them. Portable code that
-// cannot ask keeps to these three.
+// hardware, the one- and two-channel ones beside them, the packed ones and the
+// integer ones. Portable code that cannot ask keeps to these three.
 //
 // A texture asked for computeWrite in a format its device refuses fails to
 // create rather than binding as a kernel output that quietly does nothing.

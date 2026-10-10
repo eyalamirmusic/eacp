@@ -268,21 +268,24 @@ public:
     // texture asked for computeWrite in it is created rather than invalid, and
     // ComputePass::setOutputTexture and its siblings bind it. Every format
     // the portable supportsComputeWrite() set names, and past it the device's
-    // own answer: every uncompressed format but BGRA8Unorm on Metal; on D3D12
-    // the driver's D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE; on Vulkan
-    // VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT. BGRA8Unorm and the block formats
-    // are refused everywhere, so the drawable's format as a kernel output is a
-    // mistake the Mac catches too. An invalid Device answers no.
+    // own answer: every uncompressed format but BGRA8Unorm and the sRGB ones
+    // on Metal, the packed and integer formats included; on D3D12 the driver's
+    // D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE; on Vulkan
+    // VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT. BGRA8Unorm, every sRGB format and
+    // the block formats are refused everywhere, so the drawable's format as a
+    // kernel output is a mistake the Mac catches too. An invalid Device
+    // answers no.
     bool supportsComputeWrite(TextureFormat format) const;
 
     // Whether a kernel can also *read* such a texture through the bind it
     // writes with - access::read_write in MSL, a load from an RWTexture2D in
     // HLSL, imageLoad from an image declared with the format's qualifier in
     // GLSL - so it can read a texel and write it back in one dispatch. Metal's
-    // read-write tier decides there: tier 1 takes R32Float and R32Uint, tier 2
-    // (every Apple-silicon Mac) adds RGBA8Unorm, RGBA16Float, RGBA32Float,
-    // R16Float and R8Unorm, and no tier takes a two-channel format or
-    // R16Unorm. D3D12 asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD, which the
+    // read-write tier decides there: tier 1 takes R32Float, R32Uint and
+    // R32Sint, tier 2 (every Apple-silicon Mac) adds RGBA8Unorm, RGBA16Float,
+    // RGBA32Float, R16Float and R8Unorm and the Uint and Sint formats of
+    // those shapes, and no tier takes a two-channel, packed or 16-bit unorm
+    // format. D3D12 asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD, which the
     // R32 formats always have and the rest have on most hardware; Vulkan
     // answers as for a write. Reading through setInputTexture needs none of
     // this: any format a texture has is readable there.
@@ -295,7 +298,8 @@ public:
     // filters them (supports32BitFloatFiltering, every Apple-silicon Mac);
     // D3D12 runs eacp's own box-filter kernel through typed UAV loads and
     // stores, so it asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD and _STORE
-    // (BGRA8Unorm has neither); Vulkan blits level to level and asks
+    // (BGRA8Unorm and every sRGB format have neither, so an sRGB chain on
+    // D3D12 is the CPU's, from `mipmapped`); Vulkan blits level to level and asks
     // VK_FORMAT_FEATURE_BLIT_SRC_BIT, BLIT_DST_BIT and
     // SAMPLED_IMAGE_FILTER_LINEAR_BIT. An invalid Device answers no.
     bool supportsMipGeneration(TextureFormat format) const;

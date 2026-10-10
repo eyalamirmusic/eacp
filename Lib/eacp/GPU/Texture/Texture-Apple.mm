@@ -44,6 +44,24 @@ MTLPixelFormat toMetalBlockFormat(TextureFormat format)
                 return MTLPixelFormatBC3_RGBA;
             case TextureFormat::BC7RGBA:
                 return MTLPixelFormatBC7_RGBAUnorm;
+            case TextureFormat::BC1RGBASrgb:
+                return MTLPixelFormatBC1_RGBA_sRGB;
+            case TextureFormat::BC2RGBASrgb:
+                return MTLPixelFormatBC2_RGBA_sRGB;
+            case TextureFormat::BC3RGBASrgb:
+                return MTLPixelFormatBC3_RGBA_sRGB;
+            case TextureFormat::BC7RGBASrgb:
+                return MTLPixelFormatBC7_RGBAUnorm_sRGB;
+            case TextureFormat::BC4RUnorm:
+                return MTLPixelFormatBC4_RUnorm;
+            case TextureFormat::BC4RSnorm:
+                return MTLPixelFormatBC4_RSnorm;
+            case TextureFormat::BC5RGUnorm:
+                return MTLPixelFormatBC5_RGUnorm;
+            case TextureFormat::BC5RGSnorm:
+                return MTLPixelFormatBC5_RGSnorm;
+            case TextureFormat::BC6HRGBUfloat:
+                return MTLPixelFormatBC6H_RGBUfloat;
 
             case TextureFormat::RGBA8Unorm:
             case TextureFormat::BGRA8Unorm:
@@ -57,6 +75,29 @@ MTLPixelFormat toMetalBlockFormat(TextureFormat format)
             case TextureFormat::RG32Float:
             case TextureFormat::R16Unorm:
             case TextureFormat::R32Uint:
+            case TextureFormat::RGBA8UnormSrgb:
+            case TextureFormat::BGRA8UnormSrgb:
+            case TextureFormat::RG16Unorm:
+            case TextureFormat::RGBA16Unorm:
+            case TextureFormat::RGB10A2Unorm:
+            case TextureFormat::RG11B10Float:
+            case TextureFormat::R8Uint:
+            case TextureFormat::RG8Uint:
+            case TextureFormat::RGBA8Uint:
+            case TextureFormat::R16Uint:
+            case TextureFormat::RG16Uint:
+            case TextureFormat::RGBA16Uint:
+            case TextureFormat::RG32Uint:
+            case TextureFormat::RGBA32Uint:
+            case TextureFormat::R8Sint:
+            case TextureFormat::RG8Sint:
+            case TextureFormat::RGBA8Sint:
+            case TextureFormat::R16Sint:
+            case TextureFormat::RG16Sint:
+            case TextureFormat::RGBA16Sint:
+            case TextureFormat::R32Sint:
+            case TextureFormat::RG32Sint:
+            case TextureFormat::RGBA32Sint:
                 break;
         }
     }
@@ -95,11 +136,66 @@ MTLPixelFormat toMetalFormat(TextureFormat format)
             return MTLPixelFormatR16Unorm;
         case TextureFormat::R32Uint:
             return MTLPixelFormatR32Uint;
+        case TextureFormat::RGBA8UnormSrgb:
+            return MTLPixelFormatRGBA8Unorm_sRGB;
+        case TextureFormat::BGRA8UnormSrgb:
+            return MTLPixelFormatBGRA8Unorm_sRGB;
+        case TextureFormat::RG16Unorm:
+            return MTLPixelFormatRG16Unorm;
+        case TextureFormat::RGBA16Unorm:
+            return MTLPixelFormatRGBA16Unorm;
+        case TextureFormat::RGB10A2Unorm:
+            return MTLPixelFormatRGB10A2Unorm;
+        case TextureFormat::RG11B10Float:
+            return MTLPixelFormatRG11B10Float;
+        case TextureFormat::R8Uint:
+            return MTLPixelFormatR8Uint;
+        case TextureFormat::RG8Uint:
+            return MTLPixelFormatRG8Uint;
+        case TextureFormat::RGBA8Uint:
+            return MTLPixelFormatRGBA8Uint;
+        case TextureFormat::R16Uint:
+            return MTLPixelFormatR16Uint;
+        case TextureFormat::RG16Uint:
+            return MTLPixelFormatRG16Uint;
+        case TextureFormat::RGBA16Uint:
+            return MTLPixelFormatRGBA16Uint;
+        case TextureFormat::RG32Uint:
+            return MTLPixelFormatRG32Uint;
+        case TextureFormat::RGBA32Uint:
+            return MTLPixelFormatRGBA32Uint;
+        case TextureFormat::R8Sint:
+            return MTLPixelFormatR8Sint;
+        case TextureFormat::RG8Sint:
+            return MTLPixelFormatRG8Sint;
+        case TextureFormat::RGBA8Sint:
+            return MTLPixelFormatRGBA8Sint;
+        case TextureFormat::R16Sint:
+            return MTLPixelFormatR16Sint;
+        case TextureFormat::RG16Sint:
+            return MTLPixelFormatRG16Sint;
+        case TextureFormat::RGBA16Sint:
+            return MTLPixelFormatRGBA16Sint;
+        case TextureFormat::R32Sint:
+            return MTLPixelFormatR32Sint;
+        case TextureFormat::RG32Sint:
+            return MTLPixelFormatRG32Sint;
+        case TextureFormat::RGBA32Sint:
+            return MTLPixelFormatRGBA32Sint;
 
         case TextureFormat::BC1RGBA:
         case TextureFormat::BC2RGBA:
         case TextureFormat::BC3RGBA:
         case TextureFormat::BC7RGBA:
+        case TextureFormat::BC1RGBASrgb:
+        case TextureFormat::BC2RGBASrgb:
+        case TextureFormat::BC3RGBASrgb:
+        case TextureFormat::BC7RGBASrgb:
+        case TextureFormat::BC4RUnorm:
+        case TextureFormat::BC4RSnorm:
+        case TextureFormat::BC5RGUnorm:
+        case TextureFormat::BC5RGSnorm:
+        case TextureFormat::BC6HRGBUfloat:
             return toMetalBlockFormat(format);
     }
 
@@ -165,6 +261,13 @@ struct SubresourceViewKey
     bool operator==(const SubresourceViewKey&) const = default;
 };
 } // namespace
+
+// What RenderPipeline-Apple.mm maps a PixelFormat through, by way of
+// textureFormatFor: one table of Metal formats rather than two.
+MTLPixelFormat metalTextureFormat(TextureFormat format)
+{
+    return toMetalFormat(format);
+}
 
 struct Texture::Native
 {

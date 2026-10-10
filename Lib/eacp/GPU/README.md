@@ -1852,15 +1852,16 @@ same frame.
 
 A texture opts in the way a render target does, and only in a format the
 device can store to. `Device::supportsComputeWrite(format)` is the answer:
-every uncompressed format on Metal, the driver's typed-UAV-store bit on D3D12,
-`VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT` on Vulkan — so `R8Unorm`, `RG8Unorm`,
-`R16Float`, `RG16Float`, `R32Float`, `RG32Float`, `R16Unorm` and the integer
-`R32Uint` on most hardware, beside the three every device takes
+every uncompressed format but the sRGB ones on Metal, the driver's
+typed-UAV-store bit on D3D12, `VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT` on Vulkan —
+so `R8Unorm`, `RG8Unorm`, `R16Float`, `RG16Float`, `R32Float`, `RG32Float`,
+the 16-bit unorms, `RGB10A2Unorm`, `RG11B10Float` and the `Uint` and `Sint`
+formats on most hardware, beside the three every device takes
 (`RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, which the free
 `supportsComputeWrite(format)` names for code that cannot ask). Notably
 **never** `BGRA8Unorm`, the drawable's own format and the first one most
-people reach for, nor a block format; asking for one the device refuses yields
-an invalid texture rather than a kernel whose writes go nowhere.
+people reach for, nor an sRGB or a block format; asking for one the device
+refuses yields an invalid texture rather than a kernel whose writes go nowhere.
 
 ```cpp
 auto descriptor = TextureDescriptor {};
@@ -1892,9 +1893,10 @@ kernel is about to write *through the bind it writes with* — `access::read_wri
 in MSL, a load from an `RWTexture2D` in HLSL, `imageLoad` from an `image2D`
 declared with the format's qualifier in GLSL — is a second question, and
 `Device::supportsComputeReadWrite(format)` answers it: Metal's read-write tier
-decides there (tier 1 is `R32Float` and `R32Uint`; tier 2, every Apple-silicon
-Mac, adds `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, `R16Float` and
-`R8Unorm`; no tier takes a two-channel format), D3D12's
+decides there (tier 1 is `R32Float`, `R32Uint` and `R32Sint`; tier 2, every
+Apple-silicon Mac, adds `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, `R16Float`
+and `R8Unorm` and the `Uint` and `Sint` formats of those shapes; no tier takes a
+two-channel or a packed format), D3D12's
 `D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD`, and on Vulkan the storage-image bit
 again. That is the per-format `IMAGE_READ`/`IMAGE_WRITE` pair bgfx's caps
 want. An integer image is declared `texture2d<uint, ...>`,
@@ -2656,7 +2658,15 @@ enabled where offered) with a view of the kind's type.
 | `RG32Float` | Two full floats |
 | `R16Unorm` | One 16-bit normalised channel — a height map, a 16-bit depth copy |
 | `R32Uint` | One 32-bit unsigned integer — an id, a count; read, never filtered |
+| `RGBA8UnormSrgb`, `BGRA8UnormSrgb` | The ordinary ones holding colour: decoded to light when sampled, encoded when rendered into |
+| `RG16Unorm`, `RGBA16Unorm` | Sixteen normalised bits a channel — a normal map, a 16-bit PNG |
+| `RGB10A2Unorm` | 10:10:10:2 in one word, red lowest |
+| `RG11B10Float` | Three unsigned small floats in one word — an HDR colour at half `RGBA16Float`'s cost |
+| `R8Uint` … `RGBA32Uint`, `R8Sint` … `RGBA32Sint` | Every 8-, 16- and 32-bit integer shape in one, two and four channels; read, never filtered |
 | `BC1RGBA`, `BC2RGBA`, `BC3RGBA`, `BC7RGBA` | Block-compressed — DXT1/3/5 and BC7 |
+| `BC1RGBASrgb` … `BC7RGBASrgb` | The same four, decoded from sRGB |
+| `BC4RUnorm`, `BC4RSnorm`, `BC5RGUnorm`, `BC5RGSnorm` | One and two block-compressed channels — a mask, a normal map |
+| `BC6HRGBUfloat` | Block-compressed unsigned half-float RGB — an environment map |
 
 The float formats are not an optimisation. Eight bits per channel cannot hold a
 value above 1 and quantise everything below it, so a pass that feeds back into
@@ -2691,17 +2701,50 @@ quietly something else, exactly as a refused `sampleCount` is. Every Mac and
 every Direct3D device answers yes; an Apple-family iOS GPU mostly does not.
 
 Every uncompressed format is a render target, its `PixelFormat` the one
-`pixelFormatFor` hands back; `R32Uint` is an integer attachment, written as a
-`uint` by the fragment function and never blended. Which formats a kernel can
-write is the device's answer (see "Textures a kernel writes"). `R32Uint` gets no
-mip chain from `mipmapped`, there being nothing to average in an id.
+`pixelFormatFor` hands back (and `textureFormatFor` the way back). The `Uint`
+and `Sint` formats are integer attachments, written as a `uint` or an `int` by
+the fragment function and never blended — a blend preset left on a pipeline
+writing one is dropped rather than failing it — and read by a shader that
+declares `texture2d<uint>` or `<int>`, `Texture2D<uint4>` or `<int4>`,
+`usampler2D` or `isampler2D`, through `read`, `Load` or `texelFetch`. None of
+them gets a mip chain from `mipmapped`, there being nothing to average in an id.
+Which formats a kernel can write is the device's answer (see "Textures a kernel
+writes"); no sRGB format is one of them anywhere. `textureFormatTraits` is the
+whole of what eacp knows about a format in one table — bytes per texel or per
+block, channels, `TextureFormatKind` (`Unorm`, `Snorm`, `Float`, `Uint`,
+`Sint`) and whether it is sRGB — and `isIntegerFormat`, `isSrgbFormat`,
+`formatChannels` and the rest answer from it.
+
+**sRGB is how a format says its bytes are colour rather than numbers.** A shader
+sampling `RGBA8UnormSrgb` gets linear light, decoded per texel *before* the
+filter, so the texel between a black one and a white one is half the light (0.5)
+rather than the decode of half the code value (0.21). A pass rendering into one
+writes linear light and the hardware encodes it, blending in light first: two
+additive draws of 0.25 store 188, the encoding of 0.5, not 137 + 137. That is
+the gamma a lit scene needs, and the only way an 8-bit target holds one without
+banding the darks. `read()` and `update()` move the encoded bytes untouched;
+`srgbFormatFor` and `linearFormatFor` swap a format for its twin, the same
+bytes decoded the other way. A chain eacp builds for one on the CPU averages in
+light — decoded, averaged, encoded — as `generateMipmaps` does on Metal and
+Vulkan; D3D12's chain kernel needs a typed UAV no sRGB format has, so there
+`supportsMipGeneration` answers no and `mipmapped` is the way.
 
 A compressed texture cannot be a render target or a kernel output, `read()` and
 `update(region, ...)` are no-ops on one, `update(pixels)` takes the same packed
 block the constructor took with `bytesPerRow` at 0, and `mipmapped` gives it
 exactly one level — the CPU filter averages texels and a block is not four
-numbers to average. `mipLevels` is how it gets a chain. There are no sRGB
-variants, eacp having no sRGB formats at all.
+numbers to average. `mipLevels` is how it gets a chain. BC4 is 8 bytes a
+block and one channel, BC5 16 bytes and two (each unsigned or signed), BC6H 16
+bytes of unsigned half-float RGB; the BC sRGB twins decode like
+`RGBA8UnormSrgb`.
+
+Depth as a texture format the caller chooses — `D16`, `D24S8`, `D32FS8` beside
+the `D32F` eacp always makes — is not here yet. Depth is a plane of a render
+target (`TextureDescriptor::depth`, `stencil`), its format fixed at `D32F` or
+`D32F` with stencil, and the pipeline's attachment format is derived from the
+same two flags, so a chosen format is a field on the descriptor, on the
+pipeline and on `GPUView` together, and a D24S8 refusal on every Apple-silicon
+Mac.
 
 ## Sampling
 

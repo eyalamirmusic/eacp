@@ -100,6 +100,52 @@ inline VkFormat toVkFormat(TextureFormat format)
             return VK_FORMAT_R16_UNORM;
         case TextureFormat::R32Uint:
             return VK_FORMAT_R32_UINT;
+        case TextureFormat::RGBA8UnormSrgb:
+            return VK_FORMAT_R8G8B8A8_SRGB;
+        case TextureFormat::BGRA8UnormSrgb:
+            return VK_FORMAT_B8G8R8A8_SRGB;
+        case TextureFormat::RG16Unorm:
+            return VK_FORMAT_R16G16_UNORM;
+        case TextureFormat::RGBA16Unorm:
+            return VK_FORMAT_R16G16B16A16_UNORM;
+        case TextureFormat::RGB10A2Unorm:
+            return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        case TextureFormat::RG11B10Float:
+            return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        case TextureFormat::R8Uint:
+            return VK_FORMAT_R8_UINT;
+        case TextureFormat::RG8Uint:
+            return VK_FORMAT_R8G8_UINT;
+        case TextureFormat::RGBA8Uint:
+            return VK_FORMAT_R8G8B8A8_UINT;
+        case TextureFormat::R16Uint:
+            return VK_FORMAT_R16_UINT;
+        case TextureFormat::RG16Uint:
+            return VK_FORMAT_R16G16_UINT;
+        case TextureFormat::RGBA16Uint:
+            return VK_FORMAT_R16G16B16A16_UINT;
+        case TextureFormat::RG32Uint:
+            return VK_FORMAT_R32G32_UINT;
+        case TextureFormat::RGBA32Uint:
+            return VK_FORMAT_R32G32B32A32_UINT;
+        case TextureFormat::R8Sint:
+            return VK_FORMAT_R8_SINT;
+        case TextureFormat::RG8Sint:
+            return VK_FORMAT_R8G8_SINT;
+        case TextureFormat::RGBA8Sint:
+            return VK_FORMAT_R8G8B8A8_SINT;
+        case TextureFormat::R16Sint:
+            return VK_FORMAT_R16_SINT;
+        case TextureFormat::RG16Sint:
+            return VK_FORMAT_R16G16_SINT;
+        case TextureFormat::RGBA16Sint:
+            return VK_FORMAT_R16G16B16A16_SINT;
+        case TextureFormat::R32Sint:
+            return VK_FORMAT_R32_SINT;
+        case TextureFormat::RG32Sint:
+            return VK_FORMAT_R32G32_SINT;
+        case TextureFormat::RGBA32Sint:
+            return VK_FORMAT_R32G32B32A32_SINT;
         case TextureFormat::BC1RGBA:
             return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
         case TextureFormat::BC2RGBA:
@@ -108,42 +154,34 @@ inline VkFormat toVkFormat(TextureFormat format)
             return VK_FORMAT_BC3_UNORM_BLOCK;
         case TextureFormat::BC7RGBA:
             return VK_FORMAT_BC7_UNORM_BLOCK;
+        case TextureFormat::BC1RGBASrgb:
+            return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+        case TextureFormat::BC2RGBASrgb:
+            return VK_FORMAT_BC2_SRGB_BLOCK;
+        case TextureFormat::BC3RGBASrgb:
+            return VK_FORMAT_BC3_SRGB_BLOCK;
+        case TextureFormat::BC7RGBASrgb:
+            return VK_FORMAT_BC7_SRGB_BLOCK;
+        case TextureFormat::BC4RUnorm:
+            return VK_FORMAT_BC4_UNORM_BLOCK;
+        case TextureFormat::BC4RSnorm:
+            return VK_FORMAT_BC4_SNORM_BLOCK;
+        case TextureFormat::BC5RGUnorm:
+            return VK_FORMAT_BC5_UNORM_BLOCK;
+        case TextureFormat::BC5RGSnorm:
+            return VK_FORMAT_BC5_SNORM_BLOCK;
+        case TextureFormat::BC6HRGBUfloat:
+            return VK_FORMAT_BC6H_UFLOAT_BLOCK;
     }
 
     return VK_FORMAT_UNDEFINED;
 }
 
+// Through the texture format the attachment is the attachment of, so the two
+// cannot disagree.
 inline VkFormat toVkFormat(PixelFormat format)
 {
-    switch (format)
-    {
-        case PixelFormat::BGRA8Unorm:
-            return VK_FORMAT_B8G8R8A8_UNORM;
-        case PixelFormat::RGBA8Unorm:
-            return VK_FORMAT_R8G8B8A8_UNORM;
-        case PixelFormat::RGBA16Float:
-            return VK_FORMAT_R16G16B16A16_SFLOAT;
-        case PixelFormat::RGBA32Float:
-            return VK_FORMAT_R32G32B32A32_SFLOAT;
-        case PixelFormat::R32Float:
-            return VK_FORMAT_R32_SFLOAT;
-        case PixelFormat::R8Unorm:
-            return VK_FORMAT_R8_UNORM;
-        case PixelFormat::RG8Unorm:
-            return VK_FORMAT_R8G8_UNORM;
-        case PixelFormat::R16Float:
-            return VK_FORMAT_R16_SFLOAT;
-        case PixelFormat::RG16Float:
-            return VK_FORMAT_R16G16_SFLOAT;
-        case PixelFormat::RG32Float:
-            return VK_FORMAT_R32G32_SFLOAT;
-        case PixelFormat::R16Unorm:
-            return VK_FORMAT_R16_UNORM;
-        case PixelFormat::R32Uint:
-            return VK_FORMAT_R32_UINT;
-    }
-
-    return VK_FORMAT_UNDEFINED;
+    return toVkFormat(textureFormatFor(format));
 }
 
 // D32 rather than D24_UNORM_S8_UINT: precision does not change with stencil.

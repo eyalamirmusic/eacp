@@ -108,11 +108,12 @@ struct MipChain
 // refuses, which is what keeps a texture from being created with levels full of
 // nothing.
 //
-// The average is of the stored values, not of light: an 8-bit texture holding
-// sRGB is averaged in sRGB, which darkens a mip slightly against the physically
-// correct answer. That is what every GPU's own mip generator does, eacp has no
-// sRGB formats to distinguish the two cases with, and doing otherwise here
-// would make eacp's mips disagree with every other tool that produced them.
+// The average is of the stored values, except in the sRGB formats, whose
+// colour channels are averaged in light - decoded, averaged, encoded - as every
+// GPU's own generator averages them. An sRGB picture kept in RGBA8Unorm is
+// averaged in code values, which darkens a mip slightly against the physically
+// correct answer; choosing RGBA8UnormSrgb is how to say the bytes are colour.
+// RGB10A2Unorm and RG11B10Float are unpacked, averaged per channel and packed.
 MipChain buildMipChain(const void* pixels,
                        int width,
                        int height,

@@ -310,25 +310,48 @@ bool Device::supportsLayeredRendering() const
            || [metalDevice supportsFamily:MTLGPUFamilyApple5] == YES;
 }
 
+// BGRA8 by policy (G79: the hardware can, the other APIs cannot), sRGB because
+// Metal has no shader write that encodes.
 bool Device::supportsComputeWrite(TextureFormat format) const
 {
-    return isValid() && !isCompressedFormat(format)
+    return isValid() && !isCompressedFormat(format) && !isSrgbFormat(format)
            && format != TextureFormat::BGRA8Unorm;
 }
 
 namespace
 {
+// Metal's own lists: tier 1 is the three 32-bit single-channel formats, tier 2
+// adds the four-channel 8-, 16- and 32-bit ones and the one-channel 8- and
+// 16-bit ones, float, unorm and integer alike - and no two-channel format.
 bool readWritesAtTierOne(TextureFormat format)
 {
-    return format == TextureFormat::R32Float || format == TextureFormat::R32Uint;
+    return format == TextureFormat::R32Float || format == TextureFormat::R32Uint
+           || format == TextureFormat::R32Sint;
 }
 
 bool readWritesAtTierTwo(TextureFormat format)
 {
-    return readWritesAtTierOne(format) || format == TextureFormat::RGBA8Unorm
-           || format == TextureFormat::RGBA16Float
-           || format == TextureFormat::RGBA32Float
-           || format == TextureFormat::R16Float || format == TextureFormat::R8Unorm;
+    switch (format)
+    {
+        case TextureFormat::RGBA8Unorm:
+        case TextureFormat::RGBA8Uint:
+        case TextureFormat::RGBA8Sint:
+        case TextureFormat::RGBA16Float:
+        case TextureFormat::RGBA16Uint:
+        case TextureFormat::RGBA16Sint:
+        case TextureFormat::RGBA32Float:
+        case TextureFormat::RGBA32Uint:
+        case TextureFormat::RGBA32Sint:
+        case TextureFormat::R16Float:
+        case TextureFormat::R16Uint:
+        case TextureFormat::R16Sint:
+        case TextureFormat::R8Unorm:
+        case TextureFormat::R8Uint:
+        case TextureFormat::R8Sint:
+            return true;
+        default:
+            return readWritesAtTierOne(format);
+    }
 }
 } // namespace
 

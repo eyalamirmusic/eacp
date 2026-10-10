@@ -52,6 +52,7 @@ set(gpu_test_sources
         Dispatch3DTests.cpp
         ExternalGeometryTests.cpp
         FormatTargetTests.cpp
+        TextureFormatTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp
         GPUSmokeTests.cpp

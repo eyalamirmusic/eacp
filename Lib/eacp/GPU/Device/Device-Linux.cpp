@@ -276,7 +276,7 @@ bool Device::supportsLayeredRendering() const
 // image2D - leans on shaderStorageImageWriteWithoutFormat instead.
 bool Device::supportsComputeWrite(TextureFormat format) const
 {
-    if (!isValid() || isCompressedFormat(format)
+    if (!isValid() || isCompressedFormat(format) || isSrgbFormat(format)
         || format == TextureFormat::BGRA8Unorm)
         return false;
 

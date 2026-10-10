@@ -158,35 +158,7 @@ DXGI_FORMAT toDXGIFormat(VertexFormat format)
 // TextureDescriptor::renderTarget.
 DXGI_FORMAT toDXGIFormat(PixelFormat format)
 {
-    switch (format)
-    {
-        case PixelFormat::RGBA8Unorm:
-            return DXGI_FORMAT_R8G8B8A8_UNORM;
-        case PixelFormat::RGBA16Float:
-            return DXGI_FORMAT_R16G16B16A16_FLOAT;
-        case PixelFormat::RGBA32Float:
-            return DXGI_FORMAT_R32G32B32A32_FLOAT;
-        case PixelFormat::R32Float:
-            return DXGI_FORMAT_R32_FLOAT;
-        case PixelFormat::R8Unorm:
-            return DXGI_FORMAT_R8_UNORM;
-        case PixelFormat::RG8Unorm:
-            return DXGI_FORMAT_R8G8_UNORM;
-        case PixelFormat::R16Float:
-            return DXGI_FORMAT_R16_FLOAT;
-        case PixelFormat::RG16Float:
-            return DXGI_FORMAT_R16G16_FLOAT;
-        case PixelFormat::RG32Float:
-            return DXGI_FORMAT_R32G32_FLOAT;
-        case PixelFormat::R16Unorm:
-            return DXGI_FORMAT_R16_UNORM;
-        case PixelFormat::R32Uint:
-            return DXGI_FORMAT_R32_UINT;
-        case PixelFormat::BGRA8Unorm:
-            break;
-    }
-
-    return DXGI_FORMAT_B8G8R8A8_UNORM;
+    return d3d12TextureFormat(textureFormatFor(format));
 }
 
 // Vertex attributes are matched to the HLSL input by a TEXCOORD semantic

@@ -51,10 +51,52 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_R16_UNORM;
         case TextureFormat::R32Uint:
             return DXGI_FORMAT_R32_UINT;
-
-        // No sRGB variants here for the reason Texture.h gives: eacp has no
-        // sRGB formats at all, so DXT1 with or without punch-through alpha is
-        // this one BC1_UNORM either way.
+        case TextureFormat::RGBA8UnormSrgb:
+            return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        case TextureFormat::BGRA8UnormSrgb:
+            return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        case TextureFormat::RG16Unorm:
+            return DXGI_FORMAT_R16G16_UNORM;
+        case TextureFormat::RGBA16Unorm:
+            return DXGI_FORMAT_R16G16B16A16_UNORM;
+        case TextureFormat::RGB10A2Unorm:
+            return DXGI_FORMAT_R10G10B10A2_UNORM;
+        case TextureFormat::RG11B10Float:
+            return DXGI_FORMAT_R11G11B10_FLOAT;
+        case TextureFormat::R8Uint:
+            return DXGI_FORMAT_R8_UINT;
+        case TextureFormat::RG8Uint:
+            return DXGI_FORMAT_R8G8_UINT;
+        case TextureFormat::RGBA8Uint:
+            return DXGI_FORMAT_R8G8B8A8_UINT;
+        case TextureFormat::R16Uint:
+            return DXGI_FORMAT_R16_UINT;
+        case TextureFormat::RG16Uint:
+            return DXGI_FORMAT_R16G16_UINT;
+        case TextureFormat::RGBA16Uint:
+            return DXGI_FORMAT_R16G16B16A16_UINT;
+        case TextureFormat::RG32Uint:
+            return DXGI_FORMAT_R32G32_UINT;
+        case TextureFormat::RGBA32Uint:
+            return DXGI_FORMAT_R32G32B32A32_UINT;
+        case TextureFormat::R8Sint:
+            return DXGI_FORMAT_R8_SINT;
+        case TextureFormat::RG8Sint:
+            return DXGI_FORMAT_R8G8_SINT;
+        case TextureFormat::RGBA8Sint:
+            return DXGI_FORMAT_R8G8B8A8_SINT;
+        case TextureFormat::R16Sint:
+            return DXGI_FORMAT_R16_SINT;
+        case TextureFormat::RG16Sint:
+            return DXGI_FORMAT_R16G16_SINT;
+        case TextureFormat::RGBA16Sint:
+            return DXGI_FORMAT_R16G16B16A16_SINT;
+        case TextureFormat::R32Sint:
+            return DXGI_FORMAT_R32_SINT;
+        case TextureFormat::RG32Sint:
+            return DXGI_FORMAT_R32G32_SINT;
+        case TextureFormat::RGBA32Sint:
+            return DXGI_FORMAT_R32G32B32A32_SINT;
         case TextureFormat::BC1RGBA:
             return DXGI_FORMAT_BC1_UNORM;
         case TextureFormat::BC2RGBA:
@@ -63,6 +105,24 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_BC3_UNORM;
         case TextureFormat::BC7RGBA:
             return DXGI_FORMAT_BC7_UNORM;
+        case TextureFormat::BC1RGBASrgb:
+            return DXGI_FORMAT_BC1_UNORM_SRGB;
+        case TextureFormat::BC2RGBASrgb:
+            return DXGI_FORMAT_BC2_UNORM_SRGB;
+        case TextureFormat::BC3RGBASrgb:
+            return DXGI_FORMAT_BC3_UNORM_SRGB;
+        case TextureFormat::BC7RGBASrgb:
+            return DXGI_FORMAT_BC7_UNORM_SRGB;
+        case TextureFormat::BC4RUnorm:
+            return DXGI_FORMAT_BC4_UNORM;
+        case TextureFormat::BC4RSnorm:
+            return DXGI_FORMAT_BC4_SNORM;
+        case TextureFormat::BC5RGUnorm:
+            return DXGI_FORMAT_BC5_UNORM;
+        case TextureFormat::BC5RGSnorm:
+            return DXGI_FORMAT_BC5_SNORM;
+        case TextureFormat::BC6HRGBUfloat:
+            return DXGI_FORMAT_BC6H_UF16;
     }
 
     return DXGI_FORMAT_UNKNOWN;
