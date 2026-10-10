@@ -445,7 +445,31 @@ struct GPUView::Native
         suboptimalIsExpected = transform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
                                && isQuarterTurn(capabilities.supportedTransforms);
 
+        logFirstSwapchain(info);
+
         return createImages() && createCompanions() && createSemaphores();
+    }
+
+    // Once per process: the line that says presentation came up on a device,
+    // without one per resize.
+    static void logFirstSwapchain(const VkSwapchainCreateInfoKHR& info)
+    {
+        static auto logged = false;
+
+        if (logged)
+            return;
+
+        logged = true;
+        LOG("Vulkan: swapchain ",
+            info.imageExtent.width,
+            "x",
+            info.imageExtent.height,
+            ", ",
+            info.minImageCount,
+            " images, format ",
+            static_cast<int>(info.imageFormat),
+            info.presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? ", mailbox"
+                                                            : ", FIFO");
     }
 
     bool createImages()

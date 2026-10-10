@@ -2319,26 +2319,63 @@ Notes worth having:
   what every GPU test already self-skips on. The headers, `volk` and
   VulkanMemoryAllocator are CPM-fetched (`CMake/FindVulkanBackend.cmake`) and
   fetched on no other platform.
-- **Vulkan 1.3 core is the floor**, plus five features asked for by name:
-  `timelineSemaphore`, `synchronization2`, `dynamicRendering`,
-  `descriptorBindingPartiallyBound` and `shaderStorageImageWriteWithoutFormat`
+- **The floor is Vulkan 1.1 with three things beside it**: timeline
+  semaphores, dynamic rendering or `VK_KHR_create_renderpass2` with
+  `VK_KHR_depth_stencil_resolve`, and `shaderStorageImageWriteWithoutFormat`
   (the emitter declares a written texture as a `writeonly image2D` with no
   format qualifier). A device missing one is not used, rather than used until it
-  fails.
-- **A 1.1 or 1.2 device reaches the same floor through extensions.** Phone
-  drivers lag the hardware: a Galaxy S22's Adreno 730 reports 1.1 under a 1.4
-  loader. Such a device is taken when it offers `VK_KHR_synchronization2`,
-  `VK_KHR_timeline_semaphore` and `VK_EXT_descriptor_indexing` with the same
-  features, plus `VK_KHR_create_renderpass2` and `VK_KHR_depth_stencil_resolve`
-  in place of dynamic rendering. `createDevice` enables them, chains their
-  feature structs in place of `VkPhysicalDeviceVulkan12/13Features`, and points
-  volk's core entry points (`vkCmdPipelineBarrier2`, `vkQueueSubmit2`,
-  `vkCmdWriteTimestamp2`, `vkWaitSemaphores`, `vkGetSemaphoreCounterValue`,
-  `vkCreateRenderPass2`) at the `KHR` ones, so no call site branches: the
+  fails, and the log names exactly what it lacks.
+- **A 1.1 or 1.2 device reaches it through extensions.** Phone drivers lag the
+  hardware: a Galaxy S22's Adreno 730 reports 1.1 under a 1.4 loader. Each
+  extension is probed on its own — `VK_KHR_timeline_semaphore`,
+  `VK_KHR_create_renderpass2`, `VK_KHR_depth_stencil_resolve` and the optional
+  `VK_KHR_synchronization2` — and `createDevice` enables what it found and will
+  use, chains those feature structs in place of
+  `VkPhysicalDeviceVulkan12/13Features`, and points volk's core entry points
+  (`vkWaitSemaphores`, `vkGetSemaphoreCounterValue`, `vkCreateRenderPass2`, and
+  with synchronization2 `vkCmdPipelineBarrier2`, `vkQueueSubmit2` and
+  `vkCmdWriteTimestamp2`) at the `KHR` ones, so no call site branches: the
   structures and `_2_` flags are the same values. The instance asks for the
   loader's version capped at 1.3, VMA for 1.1, and glslang writes SPIR-V 1.3 for
   Vulkan 1.1 — 1.4 where `VK_KHR_spirv_1_4` is offered and enabled.
   The log line at device creation says which path was taken.
+- **synchronization2 is used where a device has it.** Where it has not, the
+  three entry points above are eacp's own (`Vulkan/VulkanLegacySync-Linux.cpp`):
+  a dependency becomes one `vkCmdPipelineBarrier` whose two scopes are the
+  unions of its barriers', a timestamp `vkCmdWriteTimestamp`, and a submit
+  `vkQueueSubmit` with a `VkTimelineSemaphoreSubmitInfo` (a binary semaphore's
+  value is zero, and a signal's stage is dropped because a legacy signal waits
+  for the whole batch). The flags go through a table, never a cast: the bits
+  only synchronization2 has, at and above bit 32, go to the legacy stage or
+  access that contains them — `COPY` to `TRANSFER`, `SHADER_SAMPLED_READ` and
+  `SHADER_STORAGE_READ` to `SHADER_READ` — the lower 32 are shared, and `NONE`
+  is `TOP_OF_PIPE` as a source and `BOTTOM_OF_PIPE` as a destination.
+  `EACP_VK_LEGACY_SYNC=1` takes this path on a device that has the extension,
+  and leaves the feature disabled so the validation layer reports anything that
+  slips past it; `LegacySyncTests` pins the table with no device.
+- **Every slot a pipeline uses holds a descriptor.** A slot the shader declares
+  and nothing was bound to — or whose bind was refused, a misaligned storage
+  offset or a compute texture bound as the other type — takes a placeholder
+  (`Vulkan/VulkanPlaceholders-Linux.cpp`): a 1x1 sampled 2D image and a 1x1 cube
+  in `SHADER_READ_ONLY_OPTIMAL`, a 1x1 storage image in `GENERAL`, a storage
+  buffer and a uniform buffer, all zero, made by one submission at device
+  creation. Both bind paths write every buffer slot, every texture slot the
+  module declares (`spirvTextureBindings` records each one's dimension, so a
+  `samplerCube` gets the cube) and the uniform binding on every bind, on every
+  device: one path, no measurable cost, and the validation layer checks it on
+  every lavapipe run. So `VK_EXT_descriptor_indexing`'s partially bound slots
+  are not used, and a read of an unbound slot is zero or transparent black
+  rather than undefined (`PlaceholderTests`).
+- **A device's limits are checked where a driver might not.** A compute
+  pipeline whose group exceeds `maxComputeWorkGroupInvocations` or a
+  per-dimension `maxComputeWorkGroupSize` is refused with the numbers in the
+  log, and a render pipeline that blends into a format without
+  `COLOR_ATTACHMENT_BLEND` (`R32Float` and `RGBA32Float` on Mali) is refused
+  rather than built with blending off.
+- **Verified on a Galaxy A40** (Mali-G71, Vulkan 1.1.131, Mali r26p0, Android
+  11): no synchronization2, no descriptor indexing, 384 threads per group.
+  HelloGPU runs and presents there on render passes and the legacy barrier
+  path, with SPIR-V 1.4 accepted as it is.
 - **eacp ships its own shader compiler here**, which it does on neither other
   backend: GLSL 450 through glslang into SPIR-V, at a fixed ~2 MB per binary and
   a one-time ~90 ms symbol-table build that `VulkanShared` pays at device

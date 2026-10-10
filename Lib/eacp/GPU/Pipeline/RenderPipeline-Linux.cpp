@@ -291,6 +291,37 @@ VkColorComponentFlags toVkWriteMask(const ColorWriteMask& mask)
     return value;
 }
 
+const char* pixelFormatName(PixelFormat format)
+{
+    switch (format)
+    {
+        case PixelFormat::BGRA8Unorm:
+            return "BGRA8Unorm";
+        case PixelFormat::RGBA8Unorm:
+            return "RGBA8Unorm";
+        case PixelFormat::RGBA16Float:
+            return "RGBA16Float";
+        case PixelFormat::RGBA32Float:
+            return "RGBA32Float";
+        case PixelFormat::R32Float:
+            return "R32Float";
+    }
+
+    return "an unknown format";
+}
+
+// Not every format blends: 32-bit float targets need not, and on Mali do not.
+bool formatBlends(VkFormat format)
+{
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(
+        getVulkanShared().getPhysicalDevice(), format, &properties);
+
+    return (properties.optimalTilingFeatures
+            & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT)
+           != 0;
+}
+
 VkPipelineColorBlendAttachmentState
     makeBlendAttachment(const RenderPipelineDescriptor& from)
 {
@@ -391,6 +422,7 @@ struct RenderPipeline::Native
             || program->fragment == VK_NULL_HANDLE)
             return;
 
+        state.textures = program->textures;
         build(*program, layouts, descriptor);
     }
 
@@ -453,6 +485,16 @@ struct RenderPipeline::Native
 
         auto depthStencil = makeDepthStencilState(descriptor);
         auto attachment = makeBlendAttachment(descriptor);
+
+        if (attachment.blendEnable == VK_TRUE && !formatBlends(state.colorFormat))
+        {
+            LOG("Vulkan: no render pipeline blending into ",
+                pixelFormatName(descriptor.colorFormat),
+                " - ",
+                getVulkanShared().getAdapterName(),
+                " cannot blend it");
+            return;
+        }
 
         VkPipelineColorBlendStateCreateInfo blend = {};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

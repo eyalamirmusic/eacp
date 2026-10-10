@@ -580,8 +580,19 @@ unchanged beside it. The GPU module knows the window system only as the
 `NativeSurfaceHandle` it branches on in `createSurface()` and neither links
 nor includes it. Under `EACP_HEADLESS=1`, with neither `WAYLAND_DISPLAY` nor
 `DISPLAY` to reach, or when the preferred backend cannot connect, a window is
-built with no surface, exactly the headless backend this grew out of. Device loss is terminal (no `VkDevice`
-rebuild; `onDeviceRestored` never fires).
+built with no surface, exactly the headless backend this grew out of.
+The floor is Vulkan 1.1 with timeline semaphores, dynamic rendering or
+renderpass2 with depth-stencil resolve, and format-less storage image writes,
+each probed on its own so a refused device is logged with exactly what it
+lacks. `VK_KHR_synchronization2` is used where present; without it (or under
+`EACP_VK_LEGACY_SYNC=1`) the `vkCmdPipelineBarrier2`, `vkCmdWriteTimestamp2`
+and `vkQueueSubmit2` every call site uses are eacp's own
+(`Vulkan/VulkanLegacySync-Linux.cpp`), translating the flags by table. Partially
+bound descriptors are not used at all: every slot a pipeline uses is written at
+each bind, with a zeroed placeholder (`Vulkan/VulkanPlaceholders-Linux.cpp`)
+where nothing was bound. A Galaxy A40 (Mali-G71, Vulkan 1.1, Android 11), which
+has neither extension, runs HelloGPU on that path. Device loss is terminal (no
+`VkDevice` rebuild; `onDeviceRestored` never fires).
 
 The text half is `Text/GlyphRasterizer-Linux.cpp` on FreeType, HarfBuzz and
 fontconfig, found by pkg-config through `CMake/FindLinuxText.cmake` into one
@@ -637,7 +648,10 @@ docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISP
 `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
 `EACP_D3D12_WARP`; `EACP_REQUIRE_GPU=1` makes `GPUTests` fail rather than
 self-skip when no device came up; `EACP_VK_VALIDATION=1` turns on
-`VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs. The
+`VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs.
+`EACP_VK_RENDER_PASSES=1` and `EACP_VK_LEGACY_SYNC=1` put lavapipe, a 1.3
+device, on the render-pass and Vulkan 1.0 barrier paths a 1.1 device takes;
+CI runs `GPUTests` under Weston with the first alone and with both. The
 second and third commands are how the window and present tests run for real,
 one window system each: `Scripts/with-weston` (also `with-weston` in the image)
 wraps a command in a headless Weston session, which is where
