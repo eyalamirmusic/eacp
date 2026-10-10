@@ -1,4 +1,5 @@
 #include "EventLoop.h"
+#include "CallAfter.h"
 
 namespace eacp::Threads
 {
@@ -17,5 +18,12 @@ void stopEventLoop()
 // hosted eacp copy's callAsync and timers already reach the host's loop
 // without any setup.
 void attachCurrentThreadAsMain() {}
+
+// Only the scheduler thread is this copy's own here, and a host that unloads
+// the image cannot be left with it running.
+void detachCurrentThreadAsMain()
+{
+    stopCallAfterScheduler();
+}
 
 } // namespace eacp::Threads

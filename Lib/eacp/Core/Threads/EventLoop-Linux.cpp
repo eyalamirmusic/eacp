@@ -1,4 +1,5 @@
 #include "EventLoop-Linux.h"
+#include "CallAfter.h"
 #include "EventLoopWait-Linux.h"
 #include "ThreadUtils-Linux.h"
 #include "../Platform/Platform.h"
@@ -623,6 +624,22 @@ void attachCurrentThreadAsMain()
     loop.hosted = true;
     attachToRootLoop(loop);
     loop.waker.wake();
+}
+
+// The root copy's pointer into this one goes now rather than with the LoopState
+// destructor, which runs only once the image's statics do. The descriptor stays
+// open: a foreign host may still hold it until it removes its handler, and it
+// reads nothing more from it.
+void detachCurrentThreadAsMain()
+{
+    stopCallAfterScheduler();
+
+    auto& loop = getLoop();
+    loop.detachFromRootLoop();
+    loop.hosted = false;
+
+    auto lock = std::lock_guard(loop.mutex);
+    loop.queue.clear();
 }
 
 void stopProcessRootLoop()

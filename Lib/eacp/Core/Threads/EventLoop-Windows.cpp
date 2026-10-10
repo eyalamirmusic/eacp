@@ -1,6 +1,7 @@
 #include "../Utils/WinInclude.h"
 
 #include "EventLoop.h"
+#include "CallAfter.h"
 #include "ThreadUtils-Windows.h"
 #include "../App/App.h"
 #include "../Plugins/ModuleInfo.h"
@@ -76,6 +77,12 @@ struct PendingCallbacks
         pendingCallbacks.add(cb);
     }
 
+    void clear()
+    {
+        auto guard = std::lock_guard {mutex};
+        pendingCallbacks.clear();
+    }
+
     std::recursive_mutex mutex;
     Vector<Callback> pendingCallbacks;
 };
@@ -99,28 +106,42 @@ static LRESULT CALLBACK messageWindowProc(HWND hwnd,
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// The message-only window's class: registered once per copy against this
+// image's HINSTANCE, and unregistered by detachCurrentThreadAsMain, since a class
+// whose procedure lives in an unloaded image would otherwise stay registered
+// under this copy's name and a reloaded copy would dispatch into the old one.
+struct MessageWindowClass
+{
+    std::wstring name =
+        Plugins::getUniqueWindowClassName(L"EACPEventLoopMessageWindow");
+    bool registered = false;
+};
+
+static MessageWindowClass& getMessageWindowClass()
+{
+    return Singleton::get<MessageWindowClass>();
+}
+
 static void ensureMessageWindow()
 {
     if (getEventLoopState().messageWindow.load())
         return;
 
-    static const auto className =
-        Plugins::getUniqueWindowClassName(L"EACPEventLoopMessageWindow");
-    static auto classRegistered = false;
+    auto& windowClass = getMessageWindowClass();
 
-    if (!classRegistered)
+    if (!windowClass.registered)
     {
         auto wc = WNDCLASSEXW {};
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.lpfnWndProc = messageWindowProc;
         wc.hInstance = (HINSTANCE) Plugins::getCurrentModuleHandle();
-        wc.lpszClassName = className.c_str();
-        classRegistered = RegisterClassExW(&wc) != 0;
+        wc.lpszClassName = windowClass.name.c_str();
+        windowClass.registered = RegisterClassExW(&wc) != 0;
     }
 
     getEventLoopState().messageWindow =
         CreateWindowExW(0,
-                        className.c_str(),
+                        windowClass.name.c_str(),
                         L"",
                         0,
                         0,
@@ -137,6 +158,18 @@ static void destroyMessageWindow()
 {
     if (auto hwnd = getEventLoopState().messageWindow.exchange(nullptr))
         DestroyWindow(hwnd);
+}
+
+static void unregisterMessageWindowClass()
+{
+    auto& windowClass = getMessageWindowClass();
+
+    if (!windowClass.registered)
+        return;
+
+    UnregisterClassW(windowClass.name.c_str(),
+                     (HINSTANCE) Plugins::getCurrentModuleHandle());
+    windowClass.registered = false;
 }
 
 // An IDE like CLion, when NOT emulating a terminal, launches the app under a
@@ -426,6 +459,19 @@ void attachCurrentThreadAsMain()
     // Drain anything buffered before the wake channel existed.
     if (auto hwnd = getEventLoopState().messageWindow.load())
         PostMessageW(hwnd, WM_EACP_RUN_PENDING, 0, 0);
+}
+
+// The scheduler first, so no thread of ours posts to the window while it goes;
+// a message already posted to a destroyed window is discarded by the system.
+// The main-thread marker stays: destructors that run while the image unloads
+// still assert they are on it.
+void detachCurrentThreadAsMain()
+{
+    stopCallAfterScheduler();
+    stopLiveTimers();
+    destroyMessageWindow();
+    unregisterMessageWindowClass();
+    getPendingCallbacks().clear();
 }
 
 } // namespace eacp::Threads
