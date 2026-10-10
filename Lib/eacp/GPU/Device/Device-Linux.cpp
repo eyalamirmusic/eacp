@@ -1,6 +1,7 @@
 #include "Device.h"
 
 #include "../Vulkan/VulkanContext.h"
+#include "../Vulkan/VulkanTypes.h"
 
 namespace eacp::GPU
 {
@@ -69,6 +70,28 @@ bool Device::supportsBlockCompression() const
 {
     return isValid()
            && getVulkanShared().getFeatures().textureCompressionBC == VK_TRUE;
+}
+
+// Asked rather than assumed, for the guaranteed set as well, since dropped
+// stores are far harder to find than a texture that refused to be created; this
+// is what the texture asks when it is created. R8Unorm storage is optional in
+// Vulkan, though most devices have it. The image is declared with no format
+// qualifier (shaderStorageImageWriteWithoutFormat is required of every device
+// eacp takes), so the format feature is the whole question.
+bool Device::supportsComputeWrite(TextureFormat format) const
+{
+    if (!isValid())
+        return false;
+
+    if (!GPU::supportsComputeWrite(format) && format != TextureFormat::R8Unorm)
+        return false;
+
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(
+        getVulkanShared().getPhysicalDevice(), toVkFormat(format), &properties);
+
+    return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+           != 0;
 }
 
 // The one range rule that is a device property rather than a constant: a

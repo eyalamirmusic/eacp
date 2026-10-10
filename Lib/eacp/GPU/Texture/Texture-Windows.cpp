@@ -62,7 +62,7 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
 // D3D12Context::createRootSignatures, which builds the static samplers.
 
 // Whether this device can take a typed UAV store to the format. The formats
-// supportsComputeWrite() allows are the ones the specification guarantees, but
+// Device::supportsComputeWrite() allows are guaranteed or asked for, but
 // a guarantee is not a driver, so it is asked rather than assumed - a kernel
 // whose stores are silently dropped is a great deal harder to find than a
 // texture that refused to be created.
@@ -189,7 +189,7 @@ struct Texture::Native
         // that writes nothing.
         if (descriptor.computeWrite)
         {
-            if (!supportsComputeWrite(descriptor.format)
+            if (!device.supportsComputeWrite(descriptor.format)
                 || !supportsTypedUAVStore(context.getDevice(), desc.Format))
                 return;
 

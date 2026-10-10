@@ -531,6 +531,13 @@ void ComponentHost::rasterizeDirtyPaths(Component& component,
                                         GPUWidgets::CoverageBatch& batch,
                                         PathWalk& walk)
 {
+    // A hidden subtree is not drawn, so it takes no room in the atlas either.
+    // Its shapes keep their dirty flag rather than losing it -- this walk visits
+    // the whole tree every frame, so the first one after the subtree is shown
+    // again is the one that rasterizes them, before anything records their uv.
+    if (!component.isVisible())
+        return;
+
     for (auto* shape: component.getPathShapes())
     {
         if (shape->isDirty())
@@ -587,6 +594,13 @@ void ComponentHost::renderLayers(GPU::Frame& frame)
 
 void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
 {
+    // Skipped while hidden, as its paths are: a layer rendered now would draw
+    // shapes that have not been rasterized, and be marked rendered with nothing
+    // in it. Left dirty, it renders on the frame the subtree is shown -- after
+    // rasterizePaths has given its shapes masks in the atlas as it is then.
+    if (!component.isVisible())
+        return;
+
     for (auto* child: component.getChildren())
         renderLayers(*child, frame);
 
@@ -696,6 +710,17 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
     }
 
     auto generationBefore = paths->generation();
+
+    // Room the tree no longer needs goes back before the walk, which then
+    // rasterizes everything into the smaller atlas -- the same answer a grow
+    // gets, a frame early rather than mid-walk.
+    paths->setRelocationAllowed(true);
+
+    if (paths->shrinkToFit())
+    {
+        markAllPathsDirty(*root);
+        masks.clear();
+    }
 
     auto walk = PathWalk {};
 

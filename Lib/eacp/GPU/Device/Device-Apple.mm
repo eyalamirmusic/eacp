@@ -162,6 +162,18 @@ bool Device::supportsBlockCompression() const
     return false;
 }
 
+// Nothing to ask the device beyond whether there is one: R8Unorm is in the
+// write column of Metal's feature tables for every GPU family eacp runs on, so
+// the one format added to the guaranteed set is added unconditionally. See
+// Device::supportsComputeWrite.
+bool Device::supportsComputeWrite(TextureFormat format) const
+{
+    if (!isValid())
+        return false;
+
+    return GPU::supportsComputeWrite(format) || format == TextureFormat::R8Unorm;
+}
+
 // Nothing to ask the device. Metal aligns a setBuffer offset to four bytes on
 // every GPU eacp runs on, so the grid is the API's own and a range on it binds
 // here whatever the hardware. Vulkan is where this varies, which is why it is a

@@ -1567,6 +1567,14 @@ store is guaranteed for — `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`. Notably
 reach for; asking for it yields an invalid texture rather than a kernel whose
 writes go nowhere.
 
+Past that set the device decides, and `Device::supportsComputeWrite(format)`
+says what it decided: `R8Unorm` is writable on Metal, on a Vulkan device
+reporting storage-image support for it, and on a D3D12 device whose driver
+reports a typed UAV store to it (which feature level 11.0 requires). A kernel
+writes a `float4` either way and a one-channel texture keeps the first
+component, which is how the UI's coverage atlas holds one byte per texel where
+it can and four where it cannot.
+
 ```cpp
 auto descriptor = TextureDescriptor {};
 descriptor.width = 512;

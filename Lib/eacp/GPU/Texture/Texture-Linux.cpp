@@ -11,18 +11,6 @@ namespace eacp::GPU
 {
 namespace
 {
-// Asked rather than assumed: dropped stores are far harder to find than a
-// texture that refused to be created.
-bool supportsStorageImage(VkFormat format)
-{
-    VkFormatProperties properties = {};
-    vkGetPhysicalDeviceFormatProperties(
-        getVulkanShared().getPhysicalDevice(), format, &properties);
-
-    return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
-           != 0;
-}
-
 // Deferred: a command buffer still recording may name these handles.
 void retireImage(VulkanContext& context,
                  VkImage image,
@@ -360,14 +348,15 @@ struct Texture::Native
 
         if (descriptor.computeWrite)
         {
-            if (!supportsComputeWrite(descriptor.format))
-                return false;
-
-            if (!supportsStorageImage(data.format))
+            // Which asks the driver for storage-image support, so a format it
+            // cannot store to is refused here rather than silently unwritable.
+            if (!device.supportsComputeWrite(descriptor.format))
             {
-                LOG("Vulkan: the device reports no storage-image support for "
-                    "this format, so a computeWrite texture is invalid rather "
-                    "than silently unwritable");
+                if (supportsComputeWrite(descriptor.format))
+                    LOG("Vulkan: the device reports no storage-image support for "
+                        "this format, so a computeWrite texture is invalid rather "
+                        "than silently unwritable");
+
                 return false;
             }
 

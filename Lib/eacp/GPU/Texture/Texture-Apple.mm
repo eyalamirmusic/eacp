@@ -141,12 +141,13 @@ struct Texture::Native
             samples = descriptor.sampleCount;
         }
 
-        // Refused here rather than at the bind, so a format D3D12 cannot take a
-        // typed store to fails the same way on both backends instead of working
-        // on one of them. Nothing is created, so the texture is invalid rather
-        // than a kernel output that quietly does nothing. See
-        // supportsComputeWrite.
-        if (computeWrite && !supportsComputeWrite(descriptor.format))
+        // Refused here rather than at the bind, by the same question a caller
+        // can ask first: a format outside the guaranteed set is written only
+        // where the device says it can be, which is why R8Unorm is taken here
+        // and BGRA8Unorm is refused on every backend. Nothing is created, so the
+        // texture is invalid rather than a kernel output that quietly does
+        // nothing. See Device::supportsComputeWrite.
+        if (computeWrite && !deviceToUse.supportsComputeWrite(descriptor.format))
             return;
 
         // A cube's faces are square and there are six of them, so a rectangle or

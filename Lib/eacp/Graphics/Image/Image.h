@@ -109,12 +109,40 @@ public:
     bool operator==(const Image& other) const;
     bool operator!=(const Image& other) const;
 
+    // The pixel buffer this image reads, as an identity for a cache keyed on it
+    // rather than on the pixels: every copy sharing the buffer names the same
+    // one, and a write that detaches moves the writer to a new one. Empty for
+    // an image holding nothing. Weak, so that keeping it neither keeps the
+    // pixels alive nor counts as a copy -- a strong reference would turn every
+    // later write into a detach -- and so that once it has expired it says its
+    // address may now belong to a different buffer. Lock it only for as long
+    // as it takes to read the address.
+    std::weak_ptr<const void> pixelBuffer() const;
+
+    // Bumped by every write that changes the buffer in place (set(),
+    // prepareForOverwrite() on an unshared image), which a buffer's identity
+    // alone cannot show. Together with pixelBuffer() it names these exact
+    // pixels without reading them. 0 for an image holding nothing.
+    //
+    // prepareForOverwrite() bumps it when it is called, not when the writer
+    // finishes, so the pointer it returns has to be written in full before the
+    // image is next handed to anything keyed on the pair -- a cache that saw
+    // the image half-written would keep the half it saw.
+    std::uint64_t pixelGeneration() const;
+
 private:
+    // The pixels, and how many times they have been written in place.
+    struct Buffer
+    {
+        ImageData pixels;
+        std::uint64_t generation = 0;
+    };
+
     ImageData& writablePixels();
 
     int w = 0;
     int h = 0;
-    std::shared_ptr<ImageData> rgba;
+    std::shared_ptr<Buffer> rgba;
 };
 
 } // namespace eacp::Graphics

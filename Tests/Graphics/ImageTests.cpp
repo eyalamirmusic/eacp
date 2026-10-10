@@ -280,3 +280,49 @@ auto tEqualsAcrossSharedCopies = test("Image/equalsAcrossSharedCopies") = []
     check(b.equals(c));
     check(a == c);
 };
+
+auto tCopiesShareOneBufferIdentity = test("Image/copiesShareOneBufferIdentity") = []
+{
+    auto original = makeOpaquePattern(4, 4);
+    auto copy = original;
+
+    check(original.pixelBuffer().lock() != nullptr);
+    check(copy.pixelBuffer().lock() == original.pixelBuffer().lock());
+    check(copy.pixelGeneration() == original.pixelGeneration());
+    check(Image {}.pixelBuffer().expired());
+    check(Image {}.pixelGeneration() == 0);
+
+    copy.set(0, 0, eacp::Graphics::Color::white());
+
+    check(copy.pixelBuffer().lock() != original.pixelBuffer().lock(),
+          "a write detaches");
+};
+
+auto tInPlaceWritesMoveTheGeneration =
+    test("Image/aWriteInPlaceMovesTheGenerationAndNotTheBuffer") = []
+{
+    auto image = Image(4, 4);
+    const auto* before = image.pixels().data();
+    auto generation = image.pixelGeneration();
+
+    // Kept across the writes: weak, so it is not a copy they detach from.
+    auto buffer = image.pixelBuffer();
+
+    image.set(1, 1, eacp::Graphics::Color::white());
+
+    check(image.pixels().data() == before, "held weakly, nothing detached");
+    check(buffer.lock() == image.pixelBuffer().lock());
+    check(image.pixelGeneration() != generation);
+
+    auto afterSet = image.pixelGeneration();
+
+    check(image.prepareForOverwrite(4, 4) == before);
+    check(image.pixelGeneration() != afterSet);
+
+    // A read changes nothing.
+    auto afterOverwrite = image.pixelGeneration();
+    (void) image.at(0, 0);
+    (void) image.pixels();
+
+    check(image.pixelGeneration() == afterOverwrite);
+};

@@ -2,6 +2,24 @@
 
 namespace eacp::GPUWidgets
 {
+GPU::TextureFormat coverageFormat()
+{
+    // Asked once: the answer is the shared device's and does not change, and
+    // on Vulkan and D3D12 asking is a driver call, which every atlas resize and
+    // every path rasterized on its own would otherwise make again.
+    static const auto format = []
+    {
+        auto mask = GPU::TextureFormat::R8Unorm;
+
+        if (GPU::Device::shared().supportsComputeWrite(mask))
+            return mask;
+
+        return GPU::TextureFormat::RGBA8Unorm;
+    }();
+
+    return format;
+}
+
 GPU::UInt PathIndexedKernel::pathAt(const GPU::UInt& item)
 {
     auto wanted = toFloat(item);
@@ -101,10 +119,10 @@ void CoverageKernel::define()
                                        place.x());
 
                // The same coverage in all four channels. A one-channel mask is
-               // what this is, but R8Unorm is outside the set a typed UAV store
-               // is guaranteed for - see supportsComputeWrite - so the texture
-               // is RGBA8 and whoever samples it reads whichever channel it
-               // likes.
+               // what this is, and where the device can store to R8Unorm the
+               // texture is one (see coverageFormat) and keeps only the first;
+               // elsewhere it is RGBA8, and whoever samples it reads the first
+               // channel either way.
                //
                // The origin is what lets several paths share one texture: the
                // segments arrive in each path's own space, so only the write

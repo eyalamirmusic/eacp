@@ -1,8 +1,12 @@
+#include "../GPUWidgets/CoverageProbe.h"
+
+#include <eacp/GPUWidgets/Path/CoverageKernel.h>
 #include <eacp/UI/UI.h>
 
 #include <NanoTest/NanoTest.h>
 
 #include <cmath>
+#include <optional>
 #include <string>
 
 // What the shelf hands out, and what it does when it cannot.
@@ -341,4 +345,614 @@ auto tFillFraction = test("CoverageAtlas/fillFractionCountsTheRoomReserved") = [
     atlas.forgetAllocations();
 
     check(std::abs(atlas.getFillFraction() - empty) < 0.001f);
+};
+
+// One channel where the device can store to one, which is a quarter of the
+// memory of the RGBA8 it used to be at every size -- 16 MB rather than 64 at
+// the ceiling. Asked of the device rather than assumed, so a D3D12 lane checks
+// the fallback and a Metal one the R8.
+auto tOneChannelWhereWritable =
+    test("CoverageAtlas/isOneChannelWhereTheDeviceCanWriteOne") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+    auto oneChannel =
+        GPU::Device::shared().supportsComputeWrite(GPU::TextureFormat::R8Unorm);
+
+    check(atlas.getFormat()
+          == (oneChannel ? GPU::TextureFormat::R8Unorm
+                         : GPU::TextureFormat::RGBA8Unorm));
+    check(atlas.getTexture().isValid());
+    check(atlas.getTexture().isComputeWritable());
+
+#if defined(__APPLE__)
+    check(atlas.getFormat() == GPU::TextureFormat::R8Unorm, "every Metal GPU");
+#endif
+
+    // The opaque corner is a CPU upload at the texture's own stride, so it is
+    // the part a change of format could get wrong without the kernel noticing.
+    auto opaque = GPUWidgets::probe::readRegion(atlas.getTexture(), 0, 0, 4, 4);
+
+    check(opaque.size() == 16);
+
+    for (auto value: opaque)
+        check(value == 1.f, "every texel of the opaque corner");
+};
+
+// A path rasterized into a slot of the atlas, read back, against the same path
+// rasterized into a texture of its own: the coverage an atlas-backed shape
+// samples is the coverage the path has, whichever format the atlas is in.
+auto tSlotReadsLikeSolo = test("CoverageAtlas/aPathReadsTheSameThroughTheAtlas") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto path = GPUWidgets::Path {};
+    path.addEllipse({0.f, 0.f, 37.f, 23.f});
+
+    auto solo = GPUWidgets::PathRasterizer {};
+    auto alone = GPUWidgets::probe::rasterize(solo, path, 2.f);
+
+    check(!alone.empty());
+
+    auto atlas = CoverageAtlas {};
+    auto rasterizer = GPUWidgets::PathRasterizer {};
+    rasterizer.setScale(2.f);
+    rasterizer.setPath(path);
+
+    auto width = rasterizer.getCoverageWidth();
+    auto height = rasterizer.getCoverageHeight();
+
+    auto slot = atlas.allocate(width, height);
+    atlas.takeMovedFlag();
+
+    check(slot.width == width);
+
+    rasterizer.setTarget(atlas.getTexture(), slot.x, slot.y);
+
+    auto batch = GPUWidgets::CoverageBatch {};
+    batch.begin(atlas.getTexture());
+    batch.add(rasterizer);
+
+    auto commands = GPU::Device::shared().makeCommandBuffer();
+
+    {
+        auto pass = commands.beginCompute();
+        batch.dispatch(pass);
+    }
+
+    commands.commit();
+
+    auto through = GPUWidgets::probe::readRegion(
+        atlas.getTexture(), slot.x, slot.y, width, height);
+
+    check(through.size() == alone.size());
+
+    if (through.size() != alone.size())
+        return;
+
+    for (auto i = 0; i < through.size(); ++i)
+        check(through[i] == alone[i], "texel " + std::to_string(i));
+};
+
+namespace
+{
+// Asks once a walk, as the host does, until the quiet window has passed: true
+// if the atlas shrank on any of those asks.
+bool shrinkOnceQuiet(CoverageAtlas& atlas)
+{
+    auto walks = atlas.getQuietWalksToShrink();
+
+    for (auto walk = 0; walk <= walks; ++walk)
+        if (atlas.shrinkToFit())
+            return true;
+
+    return false;
+}
+} // namespace
+
+// Room the shelf no longer needs goes back -- to the smallest size that holds
+// the largest mask placed since it was emptied, with an eighth of it reserved
+// at most -- and saying so the way a grow does, through the generation. Only
+// after the quiet window, though: a grow just now is a reason to wait.
+auto tShrinksToFit = test("CoverageAtlas/shrinksToWhatItHolds") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+    auto initial = atlas.getWidth();
+
+    atlas.allocate(600, 600);
+    atlas.takeMovedFlag();
+
+    auto grown = atlas.getWidth();
+
+    check(grown == 1024);
+    check(!shrinkOnceQuiet(atlas), "full enough to keep");
+
+    atlas.forgetAllocations();
+    atlas.allocate(20, 20);
+
+    auto generation = atlas.generation();
+
+    atlas.setRelocationAllowed(false);
+    check(!shrinkOnceQuiet(atlas), "a move, so not while moves are refused");
+    check(atlas.getWidth() == grown);
+
+    atlas.setRelocationAllowed(true);
+    check(atlas.shrinkToFit(), "the window has long passed");
+    check(atlas.getWidth() == initial, "an eighth of the smallest is room enough");
+    check(atlas.generation() != generation, "every uv handed out is stale");
+    check(!atlas.takeMovedFlag(), "nothing was placed in the new one to move");
+    check(atlas.getTexture().isValid());
+
+    // The largest mask is what bounds it, however little is reserved: a strip
+    // as wide as a large atlas cannot go in a small one.
+    atlas.allocate(700, 2);
+    atlas.takeMovedFlag();
+
+    check(atlas.getWidth() == 1024, "grown for the strip");
+
+    atlas.forgetAllocations();
+    atlas.allocate(700, 2);
+
+    check(!shrinkOnceQuiet(atlas), "nothing smaller holds it");
+    check(atlas.getWidth() == 1024);
+};
+
+// A slot churning under an animation -- a new mask every walk, the old one
+// abandoned -- fills a small atlas in a few walks and makes it grow. A shrink
+// right after every grow would be a resize, and a whole tree rasterized again,
+// every few frames for as long as the animation runs. Played the way the host
+// plays it: shrinkToFit before the walk, and the live set placed again after
+// anything moves.
+auto tChurnDoesNotCycle = test("CoverageAtlas/aChurningSlotDoesNotCycleTheSize") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+
+    auto placeLive = [&] { atlas.allocate(30, 30); };
+
+    auto grows = 0;
+    auto shrinks = 0;
+    auto width = atlas.getWidth();
+
+    placeLive();
+
+    for (auto walk = 0; walk < 300; ++walk)
+    {
+        atlas.setRelocationAllowed(true);
+
+        if (atlas.shrinkToFit())
+            placeLive();
+
+        atlas.allocate(60, 60);
+
+        if (atlas.takeMovedFlag())
+        {
+            atlas.forgetAllocations();
+            placeLive();
+            atlas.allocate(60, 60);
+            atlas.takeMovedFlag();
+        }
+
+        if (atlas.getWidth() > width)
+            ++grows;
+        else if (atlas.getWidth() < width)
+            ++shrinks;
+
+        width = atlas.getWidth();
+    }
+
+    check(shrinks == 0,
+          std::to_string(shrinks) + " shrinks, each one grown straight out of");
+    check(grows <= 5, std::to_string(grows) + " grows, one a doubling at most");
+};
+
+// And a shrink that is outgrown inside its window makes the next one wait
+// twice as long, rather than none ever happening again.
+auto tOutgrownShrinkBacksOff =
+    test("CoverageAtlas/aShrinkOutgrownInsideItsWindowWaitsLongerNextTime") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto atlas = CoverageAtlas {};
+    auto window = atlas.getQuietWalksToShrink();
+
+    atlas.allocate(200, 200);
+    atlas.takeMovedFlag();
+
+    auto grown = atlas.getWidth();
+
+    atlas.forgetAllocations();
+    atlas.allocate(10, 10);
+
+    check(shrinkOnceQuiet(atlas));
+    check(atlas.getWidth() < grown);
+
+    atlas.allocate(200, 200);
+    atlas.takeMovedFlag();
+
+    check(atlas.getWidth() == grown, "grown straight back");
+    check(atlas.getQuietWalksToShrink() == window * 2, "so the next waits longer");
+
+    atlas.forgetAllocations();
+    atlas.allocate(10, 10);
+
+    for (auto walk = 0; walk < window + 1; ++walk)
+        check(!atlas.shrinkToFit(), "not inside the old window");
+
+    check(shrinkOnceQuiet(atlas), "but still once the new one has passed");
+};
+
+namespace
+{
+// A component that fills one path, held as a mask whatever its size so it is
+// always the atlas that pays for it.
+GPUWidgets::Path rectPath(const Rect& area)
+{
+    auto path = GPUWidgets::Path {};
+    path.addRect(area);
+    return path;
+}
+
+struct Filled final : Component
+{
+    explicit Filled(const Rect& area)
+        : Filled(rectPath(area))
+    {
+    }
+
+    explicit Filled(const GPUWidgets::Path& path,
+                    GPUWidgets::FillRule rule = GPUWidgets::FillRule::NonZero)
+        : shape(*this)
+    {
+        shape.setBacking(PathShape::Backing::Mask);
+        shape.setPath(path, rule);
+    }
+
+    void paint(UI::Graphics& g) override
+    {
+        g.setColour(Color {1.f, 0.f, 0.f, 1.f});
+        g.fillPath(shape);
+    }
+
+    PathShape shape;
+};
+
+struct HiddenPage final : Component
+{
+    HiddenPage()
+        : shown({0.f, 0.f, 10.f, 10.f})
+        , hidden({0.f, 0.f, 300.f, 300.f})
+    {
+        addAndMakeVisible(shown);
+        addChildComponent(hidden);
+        hidden.setVisible(false);
+    }
+
+    void resized() override
+    {
+        shown.setBounds({0.f, 0.f, 10.f, 10.f});
+        hidden.setBounds({20.f, 20.f, 300.f, 300.f});
+    }
+
+    Filled shown;
+    Filled hidden;
+};
+} // namespace
+
+// A hidden subtree is not drawn, so it takes no room in the atlas -- a page
+// nobody has opened, five of six states of a toggle. And it is not forgotten
+// either: the frame it is shown on rasterizes it, before anything records it.
+auto tHiddenTakesNoSlot =
+    test("CoverageAtlas/aHiddenSubtreeTakesNoRoomUntilItIsShown") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto page = HiddenPage {};
+    auto host = ComponentHost {};
+
+    host.setBackgroundColour(Color::white());
+    host.setBounds({0.f, 0.f, 400.f, 400.f});
+    host.resized();
+    host.setRootComponent(page);
+    page.setBounds({0.f, 0.f, 400.f, 400.f});
+
+    (void) host.renderToImage(1.f);
+
+    check(!page.shown.shape.isEmpty(), "the visible one is rasterized");
+    check(page.hidden.shape.isEmpty(), "the hidden one is not");
+    check(host.getAtlasSize() < 512,
+          "and the atlas has not grown to hold 300 pixels square nobody sees");
+
+    page.hidden.setVisible(true);
+
+    auto image = host.renderToImage(1.f);
+
+    check(!page.hidden.shape.isEmpty(), "rasterized on the frame it is shown");
+    check(host.getAtlasSize() >= 512);
+
+    auto pixel = image.at(170, 170);
+
+    check(pixel.r > 0.9f && pixel.g < 0.1f, "and drawn on that frame too");
+};
+
+namespace
+{
+// A component whose only drawing is a layer, filled with its own path -- the
+// shape an SVG opacity group is.
+struct Layered final : Component
+{
+    Layered()
+        : shape(*this)
+        , layer(*this)
+    {
+        shape.setBacking(PathShape::Backing::Mask);
+        shape.setPath(rectPath({0.f, 0.f, 20.f, 20.f}));
+
+        layer.setBounds({0.f, 0.f, 20.f, 20.f});
+        layer.onPaint = [this](UI::Graphics& g)
+        {
+            g.setColour(Color {1.f, 0.f, 0.f, 1.f});
+            g.fillPath(shape);
+        };
+    }
+
+    void paint(UI::Graphics& g) override { g.drawLayer(layer); }
+
+    PathShape shape;
+    Layer layer;
+};
+
+bool isRedAt(const eacp::Graphics::Image& image, int x, int y)
+{
+    auto pixel = image.at(x, y);
+    return pixel.r > 0.9f && pixel.g < 0.1f && pixel.b < 0.1f;
+}
+
+void settle(ComponentHost& host, Component& root, float size)
+{
+    host.setBackgroundColour(Color::white());
+    host.setBounds({0.f, 0.f, size, size});
+    host.resized();
+    host.setRootComponent(root);
+    root.setBounds({0.f, 0.f, size, size});
+}
+} // namespace
+
+// A layer belonging to a hidden component is not rendered while its shapes have
+// no masks: rendered then, it would be empty and marked done, and showing the
+// component would rasterize the shapes and leave the layer as it was.
+auto tHiddenLayerRendersWhenShown =
+    test("CoverageAtlas/aHiddenComponentsLayerIsRenderedOnTheFrameItIsShown") = []
+{
+    if (!hasDevice())
+        return;
+
+    struct Root final : Component
+    {
+        Root()
+        {
+            addAndMakeVisible(group);
+            group.setVisible(false);
+        }
+
+        void resized() override { group.setBounds({10.f, 10.f, 20.f, 20.f}); }
+
+        Layered group;
+    };
+
+    auto root = Root {};
+    auto host = ComponentHost {};
+    settle(host, root, 64.f);
+
+    (void) host.renderToImage(1.f);
+
+    root.group.setVisible(true);
+
+    auto image = host.renderToImage(1.f);
+
+    check(isRedAt(image, 20, 20), "the group, filled, on the frame it is shown");
+};
+
+// The other way a hidden layer goes stale: rendered while visible, hidden, the
+// atlas moves under its shape, and then the layer is dirtied while still hidden.
+// Rendered then, it would draw through the uv its shape had before the move --
+// into texels that now belong to a shape with a hole there.
+auto tHiddenLayerSurvivesAMove =
+    test("CoverageAtlas/aLayerDirtiedWhileHiddenAcrossAMoveDrawsItsOwnShape") = []
+{
+    if (!hasDevice())
+        return;
+
+    struct Root final : Component
+    {
+        Root()
+            : small({0.f, 0.f, 10.f, 10.f})
+            , ring(ringPath(), GPUWidgets::FillRule::EvenOdd)
+        {
+            addAndMakeVisible(group);
+            addAndMakeVisible(small);
+            addAndMakeVisible(ring);
+            ring.setVisible(false);
+        }
+
+        static GPUWidgets::Path ringPath()
+        {
+            auto path = GPUWidgets::Path {};
+            path.addRect({0.f, 0.f, 600.f, 600.f});
+            path.addRect({20.f, 20.f, 560.f, 560.f});
+            return path;
+        }
+
+        void resized() override
+        {
+            group.setBounds({10.f, 10.f, 30.f, 30.f});
+            small.setBounds({50.f, 10.f, 10.f, 10.f});
+            ring.setBounds({100.f, 100.f, 600.f, 600.f});
+        }
+
+        Layered group;
+        Filled small;
+        Filled ring;
+    };
+
+    auto root = Root {};
+    auto host = ComponentHost {};
+    settle(host, root, 720.f);
+
+    auto first = host.renderToImage(1.f);
+    auto before = host.getAtlasSize();
+
+    check(isRedAt(first, 20, 20), "drawn while it was visible");
+
+    root.group.setVisible(false);
+    root.ring.setVisible(true);
+    (void) host.renderToImage(1.f);
+
+    check(host.getAtlasSize() > before, "the atlas grew, and everything moved");
+
+    root.group.layer.setBounds({0.f, 0.f, 22.f, 22.f});
+    (void) host.renderToImage(1.f);
+
+    root.group.setVisible(true);
+
+    auto image = host.renderToImage(1.f);
+
+    check(isRedAt(image, 20, 20), "its own coverage, not the ring's hole");
+};
+
+// A hidden subtree whose shapes held slots before the atlas moved: shown again,
+// they are rasterized into the atlas as it is now and drawn from there.
+auto tHiddenShapesSurviveAMove =
+    test("CoverageAtlas/aSubtreeHiddenAcrossAMoveDrawsWhenShown") = []
+{
+    if (!hasDevice())
+        return;
+
+    struct Root final : Component
+    {
+        Root()
+            : held({0.f, 0.f, 20.f, 20.f})
+            , ring(ringPath(), GPUWidgets::FillRule::EvenOdd)
+        {
+            addAndMakeVisible(held);
+            addAndMakeVisible(ring);
+            ring.setVisible(false);
+        }
+
+        static GPUWidgets::Path ringPath()
+        {
+            auto path = GPUWidgets::Path {};
+            path.addRect({0.f, 0.f, 600.f, 600.f});
+            path.addRect({20.f, 20.f, 560.f, 560.f});
+            return path;
+        }
+
+        void resized() override
+        {
+            held.setBounds({10.f, 10.f, 20.f, 20.f});
+            ring.setBounds({100.f, 100.f, 600.f, 600.f});
+        }
+
+        Filled held;
+        Filled ring;
+    };
+
+    auto root = Root {};
+    auto host = ComponentHost {};
+    settle(host, root, 720.f);
+
+    (void) host.renderToImage(1.f);
+    auto before = host.getAtlasSize();
+
+    root.held.setVisible(false);
+    root.ring.setVisible(true);
+    (void) host.renderToImage(1.f);
+
+    check(host.getAtlasSize() > before);
+
+    root.held.setVisible(true);
+
+    auto image = host.renderToImage(1.f);
+
+    check(isRedAt(image, 20, 20));
+    check(isRedAt(image, 105, 105), "and the ring that moved it");
+    check(!isRedAt(image, 400, 400), "with its hole");
+};
+
+// The shrink as the host plays it: once the window has passed with a small live
+// set, the atlas is rebuilt smaller before the walk, every shape is rasterized
+// into it on that same frame and the tree recorded again -- so the frame it
+// happens on draws what it should.
+auto tHostShrinkDrawsTheSameFrame =
+    test("CoverageAtlas/aHostShrinksTheAtlasAndDrawsTheFrameItDoesSoOn") = []
+{
+    if (!hasDevice())
+        return;
+
+    struct Root final : Component
+    {
+        Root()
+            : tall({0.f, 0.f, 600.f, 1000.f})
+            , strip({0.f, 0.f, 1000.f, 30.f})
+        {
+            addAndMakeVisible(tall);
+        }
+
+        void resized() override
+        {
+            tall.setBounds({0.f, 0.f, 600.f, 1000.f});
+            strip.setBounds({10.f, 10.f, 1000.f, 30.f});
+        }
+
+        Filled tall;
+        Filled strip;
+    };
+
+    auto root = Root {};
+    auto host = ComponentHost {};
+    settle(host, root, 1040.f);
+
+    (void) host.renderToImage(1.f);
+
+    check(host.getAtlasSize() == 1024);
+
+    // The tall shape goes and the strip arrives, which does not fit beside the
+    // tall one's slot -- so the atlas grows and is filled again with the strip
+    // alone, a sixteenth of the grown size.
+    root.removeChildComponent(root.tall);
+    root.addAndMakeVisible(root.strip);
+
+    (void) host.renderToImage(1.f);
+
+    check(host.getAtlasSize() == 2048);
+
+    auto shrankOn = std::optional<eacp::Graphics::Image> {};
+
+    for (auto frame = 0; frame < 200 && !shrankOn; ++frame)
+    {
+        auto image = host.renderToImage(1.f);
+
+        if (host.getAtlasSize() < 2048)
+            shrankOn = image;
+    }
+
+    check(shrankOn.has_value(), "shrunk once the window passed");
+    check(host.getAtlasSize() == 1024, "to the size the strip needs");
+
+    if (!shrankOn)
+        return;
+
+    check(isRedAt(*shrankOn, 500, 25),
+          "the strip, drawn on the frame of the shrink");
+    check(!isRedAt(*shrankOn, 500, 60), "and nothing else");
 };

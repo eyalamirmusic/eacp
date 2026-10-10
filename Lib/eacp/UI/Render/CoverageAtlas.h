@@ -5,6 +5,7 @@
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
 #include <cstdint>
+#include <limits>
 
 namespace eacp::UI
 {
@@ -112,6 +113,40 @@ public:
     int getWidth() const;
     int getHeight() const;
 
+    // The format the texture was created in: R8Unorm where the device can
+    // store to it, RGBA8Unorm where it cannot. See GPUWidgets::coverageFormat.
+    GPU::TextureFormat getFormat() const;
+
+    // Gives back room the shelf has stopped needing. The atlas only grows while
+    // it allocates, so an interface that once needed the ceiling -- every page
+    // rasterized at startup, say, or a compaction that found most of it
+    // abandoned -- would otherwise keep the whole texture for good.
+    //
+    // Shrinks to the smallest size that holds the largest mask placed since the
+    // shelf was last emptied with what has been reserved filling an eighth of it
+    // at most, and only when that is smaller than the atlas is now. Like a grow,
+    // it moves every slot, so it is only for a caller that is about to
+    // rasterize everything again (the generation says so); unlike one, it does
+    // not raise the moved flag, since nothing has been placed in the new atlas
+    // yet. Refused while relocation is not allowed.
+    //
+    // Meant to be asked once a walk, and that is what it counts: it shrinks
+    // only once that many walks have passed without the atlas growing (see
+    // getQuietWalksToShrink), so a slot churning under an animation cannot turn
+    // it into a resize every few frames.
+    //
+    // The reservation counts every slot placed since the shelf was last
+    // emptied -- abandoned ones, and those of shapes that have since been
+    // hidden or removed -- so hiding a page gives nothing back by itself. The
+    // shelf is emptied only by a grow or a compaction, and it is after one of
+    // those that this has something to return.
+    bool shrinkToFit();
+
+    // The walks without a grow a shrink currently waits for. It starts at 120
+    // and doubles, up to sixteen times that, each time a shrink is outgrown
+    // inside its window.
+    int getQuietWalksToShrink() const;
+
 private:
     // The two halves of an allocation: where it goes on the shelf as it stands,
     // and what can be done when the answer is nowhere. Separated because that is
@@ -139,6 +174,21 @@ private:
     // Texels handed out, including the opaque corner, which is reserved in the
     // same sense even though no allocation produced it.
     std::int64_t usedTexels = 0;
+
+    // The largest mask placed since the shelf was last emptied, which a smaller
+    // atlas still has to hold.
+    int widestSlot = 0;
+    int tallestSlot = 0;
+
+    GPU::TextureFormat format = GPU::TextureFormat::RGBA8Unorm;
+
+    // The hysteresis: walks since the atlas last grew and since it last shrank,
+    // and how many quiet walks a shrink waits for. Since-shrink starts out of
+    // any window, so the first grows of a new atlas -- the tree arriving -- do
+    // not count against a shrink that never happened.
+    int walksSinceGrow = 0;
+    int walksSinceShrink = std::numeric_limits<int>::max() / 2;
+    int quietWalksNeeded = 0;
 
     bool relocationAllowed = true;
     bool moved = false;

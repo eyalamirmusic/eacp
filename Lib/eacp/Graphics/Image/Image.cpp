@@ -87,16 +87,17 @@ ImageData readFileBytes(const FilePath& path, std::string& error)
 Image::Image(int widthToUse, int heightToUse)
     : w(widthToUse)
     , h(heightToUse)
-    , rgba(std::make_shared<ImageData>(validatedByteCount(widthToUse, heightToUse)))
+    , rgba(std::make_shared<Buffer>(
+          Buffer {ImageData(validatedByteCount(widthToUse, heightToUse))}))
 {
 }
 
 Image::Image(int widthToUse, int heightToUse, ImageData pixelsToUse)
     : w(widthToUse)
     , h(heightToUse)
-    , rgba(std::make_shared<ImageData>(std::move(pixelsToUse)))
+    , rgba(std::make_shared<Buffer>(Buffer {std::move(pixelsToUse)}))
 {
-    if (rgba->size() != validatedByteCount(w, h))
+    if (rgba->pixels.size() != validatedByteCount(w, h))
         throw std::invalid_argument("Image: pixel buffer size does not match "
                                     "width * height * 4");
 }
@@ -158,15 +159,16 @@ int Image::height() const
 
 const ImageData& Image::pixels() const
 {
-    return rgba != nullptr ? *rgba : emptyPixels();
+    return rgba != nullptr ? rgba->pixels : emptyPixels();
 }
 
 ImageData& Image::writablePixels()
 {
     if (rgba.use_count() > 1)
-        rgba = std::make_shared<ImageData>(*rgba);
+        rgba = std::make_shared<Buffer>(Buffer {rgba->pixels});
 
-    return *rgba;
+    ++rgba->generation;
+    return rgba->pixels;
 }
 
 Color Image::at(int x, int y) const
@@ -213,12 +215,16 @@ std::uint8_t* Image::prepareForOverwrite(int width, int height)
     // resize only on a size change: a same-size call is a no-op, so a recycled
     // image skips both the reallocation and std::vector's zero-fill of the new
     // bytes -- which the writer would immediately overwrite anyway.
+    //
+    // Either way the bytes are about to change under whoever reads this buffer,
+    // so the generation moves even when the buffer itself does not.
     if (rgba == nullptr || rgba.use_count() > 1)
-        rgba = std::make_shared<ImageData>(bytes);
-    else if (rgba->size() != bytes)
-        rgba->resize(bytes);
+        rgba = std::make_shared<Buffer>(Buffer {ImageData(bytes)});
+    else if (rgba->pixels.size() != bytes)
+        rgba->pixels.resize(bytes);
 
-    return rgba->data();
+    ++rgba->generation;
+    return rgba->pixels.data();
 }
 
 ImageData Image::encode(ImageFormat format, float quality) const
@@ -263,6 +269,16 @@ bool Image::equals(const Image& other) const
         return false;
 
     return rgba == other.rgba || pixels() == other.pixels();
+}
+
+std::weak_ptr<const void> Image::pixelBuffer() const
+{
+    return rgba;
+}
+
+std::uint64_t Image::pixelGeneration() const
+{
+    return rgba != nullptr ? rgba->generation : 0;
 }
 
 bool Image::operator==(const Image& other) const

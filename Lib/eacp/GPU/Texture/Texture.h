@@ -208,7 +208,8 @@ constexpr bool isFloatFormat(TextureFormat format)
 // not in the guaranteed set, which is exactly the trap this exists to close.
 //
 // A texture asked for computeWrite in another format fails to create rather
-// than binding as a kernel output that quietly does nothing.
+// than binding as a kernel output that quietly does nothing - unless the device
+// takes it anyway, which Device::supportsComputeWrite answers per format.
 constexpr bool supportsComputeWrite(TextureFormat format)
 {
     return format == TextureFormat::RGBA8Unorm
@@ -298,11 +299,11 @@ struct TextureDescriptor
     // renderTarget is: the resource has to be created able to be one, which on
     // D3D12 also costs a UAV descriptor.
     //
-    // Only the formats supportsComputeWrite() allows may ask for this, and only
-    // on a device whose driver reports a typed UAV store for the format; a
-    // texture that asks for it anywhere else is invalid rather than silently
-    // unwritable. Unlike a render target this leaves update() alone, so a
-    // kernel that accumulates can still be seeded from the CPU.
+    // Only the formats Device::supportsComputeWrite() allows may ask for this,
+    // and only on a device whose driver reports a typed UAV store for the
+    // format; a texture that asks for it anywhere else is invalid rather than
+    // silently unwritable. Unlike a render target this leaves update() alone, so
+    // a kernel that accumulates can still be seeded from the CPU.
     bool computeWrite = false;
 
     // Whether to build the full chain of half-size levels down to 1x1, so the

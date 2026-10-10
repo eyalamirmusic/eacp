@@ -15,6 +15,13 @@ namespace eacp::GPUWidgets
 // step.
 constexpr float backdropFixedScale = 1048576.f;
 
+// The format a texture the coverage kernel writes into is created in: one
+// channel where the device takes a typed store to R8Unorm, a quarter of the
+// memory of the RGBA8 it falls back to everywhere else. The kernel writes the
+// same value to all four channels and every reader samples the first, so the
+// two are interchangeable to everything but the memory they take.
+GPU::TextureFormat coverageFormat();
+
 // One kernel of each sort for every batch there will ever be. It is the same
 // program in all of them, and building one costs a shader library and a compute
 // pipeline.

@@ -176,6 +176,99 @@ auto tReleaseKeepsWhatIsHeld =
     check(cache.size() == 0, "and now nobody does");
 };
 
+// The pixels are hashed once per buffer, not once per ask. Shown by changing
+// the bytes behind the image's back -- something no caller may do, and the one
+// way to tell a lookup that reads no pixels from one that reads them all: the
+// old content key would hash the new bytes and upload a second texture.
+auto tHitReadsNoPixels =
+    test("ImageCache/askingAgainForAnUnchangedImageReadsNoPixels") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto cache = ImageCache {};
+    auto image = solid(4, red);
+
+    auto first = cache.get(image);
+
+    auto* bytes = const_cast<std::uint8_t*>(image.pixels().data());
+    bytes[0] = 0;
+
+    auto second = cache.get(image);
+
+    check(first != nullptr);
+    check(second == first, "found by the buffer, not by hashing it again");
+    check(cache.size() == 1, "and nothing uploaded");
+};
+
+// A write through prepareForOverwrite keeps the buffer -- it is unshared and
+// the size matches -- so the identity alone would find the old texture. The
+// write count is what says these are other pixels.
+auto tOverwriteInvalidates =
+    test("ImageCache/anImageOverwrittenInPlaceIsUploadedAgain") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto cache = ImageCache {};
+    auto image = solid(4, red);
+
+    auto first = cache.get(image);
+    const auto* before = image.pixels().data();
+
+    auto* out = image.prepareForOverwrite(4, 4);
+
+    for (auto i = 0; i < 4 * 4; ++i)
+    {
+        out[i * 4 + 0] = 0;
+        out[i * 4 + 1] = 0;
+        out[i * 4 + 2] = 255;
+        out[i * 4 + 3] = 255;
+    }
+
+    check(out == before, "the same buffer, written in place");
+
+    auto second = cache.get(image);
+
+    check(second != nullptr);
+    check(second != first, "the new pixels, not the texture of the old ones");
+    check(second == cache.get(solid(4, blue)), "and found by their content");
+
+    // And the same through set(), which writes in place too.
+    image.set(0, 0, red);
+
+    auto third = cache.get(image);
+
+    check(third != second);
+};
+
+// A copy shares the buffer, so it is the same entry -- found by identity,
+// without hashing the copy.
+auto tCopySharesEntry = test("ImageCache/aCopyOfAnImageIsTheSameTexture") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto cache = ImageCache {};
+    auto image = solid(4, red);
+
+    auto first = cache.get(image);
+    auto copy = image;
+
+    check(cache.get(copy) == first);
+    check(cache.size() == 1);
+
+    // Until the copy is written, which detaches it and leaves the original's
+    // texture where it was.
+    copy.set(0, 0, blue);
+
+    auto detached = cache.get(copy);
+
+    check(detached != first);
+    check(cache.get(image) == first);
+    check(cache.size() == 2);
+};
+
 auto tImageRecordsInOwnPoints = test("DrawList/anImageIsRecordedInItsOwnPoints") = []
 {
     if (!hasDevice())

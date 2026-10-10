@@ -1,5 +1,7 @@
 #include "CoverageAtlas.h"
 
+#include <eacp/GPUWidgets/Path/CoverageKernel.h>
+
 #include <algorithm>
 
 namespace eacp::UI
@@ -17,6 +19,21 @@ constexpr auto opaqueSize = 4;
 // past it the answer is to stop rasterizing whole paths and start binning them.
 constexpr auto initialSize = 64;
 constexpr auto maximumSize = 4096;
+
+// How many walks without a grow a shrink waits for. Counted in walks rather than
+// in time, because a walk is what a resize costs -- a whole tree rasterized
+// again -- and an interface that is not drawing is not paying for the room it
+// holds any more than it would pay to give it back. 120 is two seconds of a
+// 60 Hz animation: long enough that a slot churning under one (a path being
+// dragged, a menu rebuilt per open) has shown whether it needs the room, short
+// enough that an interface done with it gets it back while it is still drawing.
+//
+// Doubled each time a shrink is outgrown inside its window, up to the cap, and
+// not latched: an interface that keeps needing the room pays for one wasted
+// resize per doubling, and one that grew back by coincidence -- a page switch
+// on the frame after -- has only made the next shrink wait longer.
+constexpr auto quietWalksToShrink = 120;
+constexpr auto maximumQuietWalks = quietWalksToShrink * 16;
 
 // Where a mask lands on an empty shelf: beside the opaque corner if the room
 // left in the first row is wide enough, and on the row below it otherwise. A
@@ -40,13 +57,14 @@ GPU::TextureDescriptor describeAtlas(int size)
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = size;
     descriptor.height = size;
-    descriptor.format = GPU::TextureFormat::RGBA8Unorm;
+    descriptor.format = GPUWidgets::coverageFormat();
     descriptor.computeWrite = true;
     return descriptor;
 }
 } // namespace
 
 CoverageAtlas::CoverageAtlas()
+    : quietWalksNeeded(quietWalksToShrink)
 {
     resizeTo(initialSize);
 }
@@ -63,7 +81,9 @@ int CoverageAtlas::getHeight() const
 
 void CoverageAtlas::resizeTo(int size)
 {
-    texture.emplace(GPU::Device::shared(), describeAtlas(size), nullptr);
+    auto descriptor = describeAtlas(size);
+    format = descriptor.format;
+    texture.emplace(GPU::Device::shared(), descriptor, nullptr);
 
     seedOpaqueTexel();
     reset();
@@ -71,6 +91,8 @@ void CoverageAtlas::resizeTo(int size)
 
 void CoverageAtlas::seedOpaqueTexel()
 {
+    // Sized for the widest format the atlas can be, and uploaded at the one it
+    // is - R8 takes the first quarter of it.
     std::uint8_t white[opaqueSize * opaqueSize * 4];
     std::fill(std::begin(white), std::end(white), (std::uint8_t) 255);
 
@@ -87,6 +109,8 @@ void CoverageAtlas::reset()
     cursorY = 0;
     rowHeight = opaqueSize;
     usedTexels = opaqueSize * opaqueSize;
+    widestSlot = 0;
+    tallestSlot = 0;
 }
 
 float CoverageAtlas::getFillFraction() const
@@ -166,6 +190,8 @@ std::optional<CoverageAtlas::Slot> CoverageAtlas::placeOnShelf(int width, int he
     cursorY = y;
     rowHeight = std::max(row, height);
     usedTexels += (std::int64_t) width * height;
+    widestSlot = std::max(widestSlot, width);
+    tallestSlot = std::max(tallestSlot, height);
 
     return slot;
 }
@@ -200,6 +226,13 @@ bool CoverageAtlas::makeRoomFor(int width, int height)
         resizeTo(grown);
         moved = true;
         ++atlasGeneration;
+
+        // A grow inside the window after a shrink is the shrink having been
+        // wrong, so the next one waits twice as long.
+        if (walksSinceShrink < quietWalksNeeded)
+            quietWalksNeeded = std::min(quietWalksNeeded * 2, maximumQuietWalks);
+
+        walksSinceGrow = 0;
         return true;
     }
 
@@ -243,6 +276,44 @@ CoverageAtlas::Slot CoverageAtlas::allocate(int width, int height)
 
     ++dropped;
     return empty;
+}
+
+bool CoverageAtlas::shrinkToFit()
+{
+    walksSinceGrow = std::min(walksSinceGrow + 1, maximumQuietWalks);
+    walksSinceShrink = std::min(walksSinceShrink + 1, maximumQuietWalks);
+
+    if (!relocationAllowed || walksSinceGrow < quietWalksNeeded)
+        return false;
+
+    auto size = texture->width();
+    auto target = initialSize;
+
+    while (target < size
+           && (!fitsEmptyShelf(widestSlot, tallestSlot, target)
+               || usedTexels * 8 > (std::int64_t) target * target))
+        target *= 2;
+
+    if (target >= size)
+        return false;
+
+    resizeTo(target);
+    ++atlasGeneration;
+
+    // A resize as much as a grow is, so the next one waits its own window.
+    walksSinceGrow = 0;
+    walksSinceShrink = 0;
+    return true;
+}
+
+int CoverageAtlas::getQuietWalksToShrink() const
+{
+    return quietWalksNeeded;
+}
+
+GPU::TextureFormat CoverageAtlas::getFormat() const
+{
+    return format;
 }
 
 const GPU::Texture& CoverageAtlas::getTexture() const

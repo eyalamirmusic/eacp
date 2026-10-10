@@ -144,6 +144,19 @@ public:
     // finding out afterwards.
     bool supportsBlockCompression() const;
 
+    // Whether a kernel may write a texture of this format on this device -
+    // TextureDescriptor::computeWrite. The free supportsComputeWrite() is the
+    // set eacp holds every backend to, and outside it this answers no except
+    // for R8Unorm: writable on every Metal GPU, and on a Vulkan or D3D12 device
+    // whose driver reports a storage image or a typed UAV store for it. Vulkan
+    // asks the driver about the guaranteed set too, so a device that refuses
+    // one of those is answered no here as well. False on an invalid device.
+    //
+    // Here so a caller that would rather hold one channel than four - a mask -
+    // can ask before it creates the texture, rather than finding an invalid one
+    // afterwards.
+    bool supportsComputeWrite(TextureFormat format) const;
+
     // The grid a ranged storage-buffer bind's offset has to sit on, in bytes -
     // ComputePass::setInputBuffer/setOutputBuffer over a BufferRange, and
     // RenderPass::setVertexStorageBuffer/setFragmentStorageBuffer over one. An

@@ -597,6 +597,88 @@ auto tComputeWriteRefusesUnsupportedFormat =
     check(!texture.isComputeWritable());
 };
 
+// Past the guaranteed set the device decides, and what it says is what
+// creation does: a format it answers yes for makes a writable texture, and one
+// it answers no for makes nothing. R8Unorm is the one that varies -- every Mac
+// and most Vulkan devices take it, D3D12 is held to the guaranteed set -- and
+// where it is taken, a kernel's store lands in the one channel there is.
+auto tComputeWriteFollowsTheDevice =
+    test("FrameCompute/computeWriteFollowsTheDevice") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    for (auto format: {TextureFormat::RGBA8Unorm,
+                       TextureFormat::RGBA16Float,
+                       TextureFormat::RGBA32Float,
+                       TextureFormat::BGRA8Unorm,
+                       TextureFormat::R8Unorm,
+                       TextureFormat::RG8Unorm,
+                       TextureFormat::R32Float})
+    {
+        auto descriptor = computeTarget();
+        descriptor.format = format;
+
+        auto texture = device.makeTexture(descriptor);
+        auto supported = device.supportsComputeWrite(format);
+
+        check(texture.isValid() == supported, "creation agrees with the device");
+        check(texture.isComputeWritable() == supported);
+
+        if (supportsComputeWrite(format))
+            check(supported, "and the guaranteed set is always taken");
+    }
+
+    check(!device.supportsComputeWrite(TextureFormat::BGRA8Unorm));
+
+#if defined(__APPLE__)
+    check(device.supportsComputeWrite(TextureFormat::R8Unorm),
+          "in the write column of every Metal GPU family");
+#endif
+
+    if (!device.supportsComputeWrite(TextureFormat::R8Unorm))
+        return;
+
+    auto descriptor = computeTarget();
+    descriptor.format = TextureFormat::R8Unorm;
+
+    auto target = device.makeTexture(descriptor);
+
+    auto kernel = ImageKernel {};
+    kernel.target = target;
+    kernel.prepare();
+
+    {
+        auto commands = device.makeCommandBuffer();
+
+        {
+            auto pass = commands.beginCompute();
+            pass.dispatch(kernel, viewWidth, viewHeight);
+        }
+
+        commands.commit();
+    }
+
+    std::uint8_t texels[viewWidth * viewHeight] = {};
+    target.read(texels);
+
+    // The red channel of what the kernel wrote: rising across the width, the
+    // same in every row.
+    for (auto y = 0; y < viewHeight; ++y)
+    {
+        for (auto x = 0; x < viewWidth; ++x)
+        {
+            auto expected = (float) x / (float) (viewWidth - 1) * 255.f;
+            auto actual = (float) texels[y * viewWidth + x];
+
+            check(std::abs(actual - expected) <= 1.f,
+                  "texel " + std::to_string(x) + ", " + std::to_string(y));
+        }
+    }
+};
+
 // And a plain texture is not one either, so setOutputTexture has something to
 // refuse rather than binding a resource with no view to bind through.
 auto tPlainTextureIsNotComputeWritable =

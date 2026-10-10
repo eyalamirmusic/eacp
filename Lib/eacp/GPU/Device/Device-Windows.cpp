@@ -112,6 +112,37 @@ bool Device::supportsBlockCompression() const
     return isValid();
 }
 
+// The guaranteed set, and R8Unorm where the driver reports a typed UAV store to
+// it -- which feature level 11.0 requires (the optional formats are the ones a
+// typed UAV *load* needs), so this is a question to the driver rather than to
+// the hardware, asked the way the texture asks it when it is created. See
+// Device::supportsComputeWrite.
+bool Device::supportsComputeWrite(TextureFormat format) const
+{
+    if (!isValid())
+        return false;
+
+    if (GPU::supportsComputeWrite(format))
+        return true;
+
+    if (format != TextureFormat::R8Unorm)
+        return false;
+
+    auto* device = getD3D12Shared().getDevice();
+
+    if (device == nullptr)
+        return false;
+
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+    support.Format = DXGI_FORMAT_R8_UNORM;
+
+    if (FAILED(device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))))
+        return false;
+
+    return (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
+}
+
 // Nothing to ask the device either. A D3D12 shader-resource or unordered-access
 // view over a raw buffer starts at an element index, and the element is four
 // bytes, so the grid is four on every adapter. Vulkan is where this varies.
