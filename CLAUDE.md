@@ -957,7 +957,11 @@ names no company), so a vendor's binaries share compiles; each use touches a
 `<hash>.used` stamp, and a compile evicts least-recently-used models past
 `Options::cacheBudgetBytes` (2 GiB, 0 unlimited), never one a live `Model` of
 the process holds or one used within the hour, through the same
-rename-to-`.trash` the temporaries take. `MLTests` (62 cases, `TestMain.cpp`
+rename-to-`.trash` the temporaries take. Before macOS 27 a model with
+enumerated input shapes placed on the CPU traps in BNNS on its first
+prediction, so `load` refuses one where the CPU is certain (`isCpuOnly`:
+`cpu`, or `cpuAndNeuralEngine` with no engine) unless
+`enumeratedShapesRunOnTheCpu()`. `MLTests` (63 cases, `TestMain.cpp`
 of its own) builds Whisper
 tiny.en's encoder and decode step at real sizes against fp32 references;
 `EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners have none).

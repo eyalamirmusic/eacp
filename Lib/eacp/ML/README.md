@@ -116,6 +116,17 @@ of where each op was placed and what it costs, which `Apps/ML/Projection`
 prints per op. `isSupported()`, `hasComputePlan()` and `hasNeuralEngine()`
 answer before anything is loaded.
 
+Placement is Core ML's and nothing here falls back for it: `cpuAndNeuralEngine`
+on a machine with no engine is the CPU, and `all` is the GPU wherever there is
+one, engine or not. One placement is refused rather than allowed. Before macOS
+27 the first prediction of a model with enumerated input shapes placed on the
+CPU traps in BNNS, a SIGTRAP nothing catches, so where the CPU is certain -
+`isCpuOnly(units)`: `cpu`, or `cpuAndNeuralEngine` with no engine - and
+`enumeratedShapesRunOnTheCpu()` is false, `load` fails with a message instead
+of loading; a caller that wants Core ML there chooses units that reach the GPU,
+and one that wants the CPU builds the model fixed at one shape, which does not
+trap.
+
 An output array passed in `Outputs` is bound, so Core ML writes straight into
 memory the caller keeps; an output left out is allocated and returned. A
 `MultiArray` is a handle: copying one shares its storage. An fp16 array is an
@@ -190,7 +201,7 @@ open.
 `MLGraphTests` (90 `MLGraph/` cases: shapes, text, protobuf, blob, package,
 `apply`, and the encoder and decoder graphs) runs on every lane but iOS, and
 where `eacp-ml` exists every package it builds is also compiled and loaded by
-Core ML. `MLTests` (62 cases over `MLMultiArray`, `MLAsync`, `MLCache`,
+Core ML. `MLTests` (63 cases over `MLMultiArray`, `MLAsync`, `MLCache`,
 `MLPlacement`, `MLPrograms`, `MLEncoder` and `MLDecoderStep`) needs Core ML;
 `EACP_REQUIRE_ANE=1` makes it assert Neural Engine placement, which CI leaves
 unset because its macOS runners have none. `Apps/ML/Projection` builds the

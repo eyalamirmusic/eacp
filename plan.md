@@ -1311,7 +1311,7 @@ WhisperEACP's side of phase 3 surfaced two more:
   load. Seven `MLCache/` cases cover the stamp on a hit, eviction of the older
   model on a miss over budget, a held model surviving as the oldest, a recent
   model surviving, a zero budget, the orphaned-stamp sweep and the
-  company-level default; `MLTests` is 62 cases. Two cross-process windows
+  company-level default; `MLTests` is 63 cases with G12's below. Two cross-process windows
   stay, both healed by one compile rather than guarded: a hit's exists check
   and its stamp touch are not one step, so an eviction between them makes
   `loadHit` recompile; and a model another process loaded over an hour ago
@@ -1449,7 +1449,23 @@ and G11 for eacp itself; G12, which CI surfaced after it, is Apple's:
   while one program fixed per context, the fallback under "Risks" at about a
   second to compile at each context's first use, runs there. The encoder
   should take that fallback, or refuse the backend, before macOS 27 when the
-  plan reports the CPU; neither is built.
+  plan reports the CPU; neither is built. Closed in eacp, 2026-10-10, as a
+  refusal rather than a fallback: `ML::enumeratedShapesRunOnTheCpu()` is
+  macOS 27 (and iOS, where it is unmeasured and every device has an engine),
+  `ML::isCpuOnly(units)` is `cpu` or `cpuAndNeuralEngine` with no engine,
+  and `Model::load` fails with a message naming the trap when a model with
+  an enumerated input would be placed on the CPU alone before macOS 27, so
+  a caller that forgets gets an error where it got a SIGTRAP. Under `all`
+  and `cpuAndGPU` nothing is refused, since Core ML prefers the GPU where
+  there is one. The fixed-program fallback is not built: a CPU-placed Core
+  ML encoder is slower than the kernels, so refusing and letting WhisperEACP
+  run the kernels is the better outcome, and `supportsEncoderBackend` there
+  should ask these two predicates. `MLPrograms/anEnumeratedModelIsRefusedWhereTheCpuWouldTrap`
+  loads an enumerated program under `cpu`, `cpuAndGPU` and the fixed one
+  under `cpu`, expecting the refusal exactly where the predicates say; on
+  this machine the refusal branch was exercised by forcing the predicate
+  false, and the gated encoder tests now expect the refusal for a CPU-only
+  setting before macOS 27 rather than loading it.
 
 A Core ML decoder with its KV cache as inputs and outputs surfaced one more:
 

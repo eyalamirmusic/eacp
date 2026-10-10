@@ -93,6 +93,24 @@ bool hasNeuralEngine()
 #endif
 }
 
+bool enumeratedShapesRunOnTheCpu()
+{
+#if TARGET_OS_IPHONE
+    return true;
+#else
+    if (@available(macOS 27.0, *))
+        return true;
+
+    return false;
+#endif
+}
+
+bool isCpuOnly(ComputeUnits units)
+{
+    return units == ComputeUnits::cpu
+           || (units == ComputeUnits::cpuAndNeuralEngine && !hasNeuralEngine());
+}
+
 FilePath defaultCacheDirectory(std::string_view company, std::string_view app)
 {
     if (company.empty())
@@ -897,7 +915,29 @@ LoadOutcome loadHit(const Source& source,
     return loadCompiled(rebuilt.path, rebuilt.hit, units);
 }
 
-LoadOutcome loadFromSource(const Source& source, const Options& options)
+bool hasEnumeratedInput(const Loaded& loaded)
+{
+    for (const auto& input: loaded.inputs)
+        if (!input.enumeratedShapes.empty())
+            return true;
+
+    return false;
+}
+
+LoadOutcome refuseWhereTheCpuWouldTrap(LoadOutcome outcome)
+{
+    if (!outcome.loaded || enumeratedShapesRunOnTheCpu()
+        || !isCpuOnly(outcome.loaded->units) || !hasEnumeratedInput(*outcome.loaded))
+        return outcome;
+
+    return {Result::failure("Core ML would run this model, whose input shapes are "
+                            "enumerated, on the CPU alone, which traps before "
+                            "macOS 27; choose compute units that reach the GPU "
+                            "or the Neural Engine"),
+            {}};
+}
+
+LoadOutcome loadFromSourceUnchecked(const Source& source, const Options& options)
 {
     auto pool = ObjC::AutoReleasePool {};
 
@@ -928,6 +968,11 @@ LoadOutcome loadFromSource(const Source& source, const Options& options)
         outcome.loaded->cacheUse = cacheUse;
 
     return outcome;
+}
+
+LoadOutcome loadFromSource(const Source& source, const Options& options)
+{
+    return refuseWhereTheCpuWouldTrap(loadFromSourceUnchecked(source, options));
 }
 
 ComputePlan::Device toDevice(id<MLComputeDeviceProtocol> device)

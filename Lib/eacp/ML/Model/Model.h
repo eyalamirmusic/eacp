@@ -28,6 +28,17 @@ bool hasComputePlan();
 // simulator.
 bool hasNeuralEngine();
 
+// Whether a model with enumerated input shapes may run on Core ML's CPU path:
+// macOS 27, and iOS. Before macOS 27 the first prediction of one placed on the
+// CPU traps in BNNS, a SIGTRAP nothing catches, so Model::load refuses such a
+// model where the CPU is certain (isCpuOnly) rather than let it load.
+bool enumeratedShapesRunOnTheCpu();
+
+// Whether these units leave Core ML nothing but the CPU on this machine: cpu,
+// or cpuAndNeuralEngine where hasNeuralEngine() is false. Under all and
+// cpuAndGPU Core ML prefers the GPU where there is one.
+bool isCpuOnly(ComputeUnits units);
+
 // Where compiled models are kept when Options names no directory: CoreML in
 // the company's cache folder, FilePath::appCacheDirectory(company, ""), so
 // every app of one vendor shares them, or in the app's own when the AppInfo
