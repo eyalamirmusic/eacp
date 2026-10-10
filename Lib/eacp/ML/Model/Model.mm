@@ -15,8 +15,10 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <fcntl.h>
 #include <filesystem>
 #include <mutex>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 
@@ -91,8 +93,37 @@ bool hasNeuralEngine()
 #endif
 }
 
+bool enumeratedShapesRunOnTheCpu()
+{
+#if TARGET_OS_IPHONE
+    return true;
+#else
+    if (@available(macOS 27.0, *))
+        return true;
+
+    return false;
+#endif
+}
+
+bool isCpuOnly(ComputeUnits units)
+{
+    return units == ComputeUnits::cpu
+           || (units == ComputeUnits::cpuAndNeuralEngine && !hasNeuralEngine());
+}
+
+FilePath defaultCacheDirectory(std::string_view company, std::string_view app)
+{
+    if (company.empty())
+        return FilePath::appCacheDirectory({}, app) / "CoreML";
+
+    return FilePath::appCacheDirectory(company, {}) / "CoreML";
+}
+
 FilePath defaultCacheDirectory()
 {
+    if (auto company = Platform::getCompanyName(); !company.empty())
+        return defaultCacheDirectory(company, {});
+
     return FilePath::appCacheDirectory() / "CoreML";
 }
 
@@ -120,6 +151,13 @@ constexpr auto keyLength = 32;
 constexpr auto modelPath = "Data/com.apple.CoreML/model.mlmodel";
 constexpr auto weightsPath = "Data/com.apple.CoreML/weights/weight.bin";
 constexpr auto manifestPath = "Manifest.json";
+constexpr auto compiledSuffix = ".mlmodelc";
+constexpr auto stampSuffix = ".used";
+constexpr auto recentUse = std::chrono::hours {1};
+constexpr auto stampRefreshInterval = std::chrono::minutes {10};
+
+using Clock = std::chrono::steady_clock;
+using FileClock = std::filesystem::file_time_type::clock;
 
 std::string osBuild()
 {
@@ -292,23 +330,45 @@ bool startsWithCacheKey(const std::string& name)
     return true;
 }
 
+bool isOlderThanAnHour(const FilePath& path)
+{
+    auto error = std::error_code {};
+    auto modified = std::filesystem::last_write_time(toStdPath(path), error);
+    return !error && FileClock::now() - modified > recentUse;
+}
+
+FilePath compiledPathFor(const FilePath& directory, const std::string& key)
+{
+    return directory / (key + compiledSuffix);
+}
+
+FilePath stampPathFor(const FilePath& directory, const std::string& key)
+{
+    return directory / (key + stampSuffix);
+}
+
+bool isOrphanedStamp(const FilePath& path, const std::string& name)
+{
+    return name.size() == keyLength + std::string_view {stampSuffix}.size()
+           && name.ends_with(stampSuffix)
+           && !exists(compiledPathFor(path.parentDirectory(),
+                                      name.substr(0, keyLength)));
+}
+
 bool isStaleTemporary(const FilePath& path)
 {
     auto name = Files::filenameFromPath(path.str());
+
+    if (!startsWithCacheKey(name))
+        return false;
+
     auto isTemporary =
         name.ends_with(".mlpackage") || name.ends_with(".tmp") || name.ends_with(".trash");
 
-    if (!isTemporary || !startsWithCacheKey(name))
+    if (!isTemporary && !isOrphanedStamp(path, name))
         return false;
 
-    auto error = std::error_code {};
-    auto modified = std::filesystem::last_write_time(toStdPath(path), error);
-
-    if (error)
-        return false;
-
-    auto age = std::filesystem::file_time_type::clock::now() - modified;
-    return age > std::chrono::hours {1};
+    return isOlderThanAnHour(path);
 }
 
 void sweepStaleTemporaries(const FilePath& directory)
@@ -321,12 +381,243 @@ void sweepStaleTemporaries(const FilePath& directory)
             Files::removeAll(entry.path);
 }
 
+FilePath trashPathFor(const FilePath& target)
+{
+    return FilePath {target.str() + "." + uniqueSuffix() + ".trash"};
+}
+
 void discardDamaged(const FilePath& target)
 {
-    auto trash = FilePath {target.str() + "." + uniqueSuffix() + ".trash"};
+    auto trash = trashPathFor(target);
 
     if (renamex_np(target.c_str(), trash.c_str(), RENAME_EXCL) == 0)
         Files::removeAll(trash);
+}
+
+void touchStamp(const FilePath& stamp)
+{
+    auto descriptor = open(stamp.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+
+    if (descriptor < 0)
+        return;
+
+    futimens(descriptor, nullptr);
+    close(descriptor);
+}
+
+// The compiled models a live Model of this process holds, counted, so a
+// compile never evicts one. Eviction checks it and renames under the lock a
+// load pins under, so a load either pins first or finds the entry gone and
+// compiles it again.
+class PinnedModels
+{
+public:
+    static PinnedModels& get()
+    {
+        static auto pinned = PinnedModels {};
+        return pinned;
+    }
+
+    void pin(const std::string& path)
+    {
+        auto guard = std::lock_guard {lock};
+        ++counts[path];
+    }
+
+    void unpin(const std::string& path)
+    {
+        auto guard = std::lock_guard {lock};
+        auto count = counts.getValue(path);
+
+        if (count != nullptr && --*count == 0)
+            counts.remove(path);
+    }
+
+    template <typename Work>
+    bool runIfUnpinned(const std::string& path, const Work& work)
+    {
+        auto guard = std::lock_guard {lock};
+        return counts.getValue(path) == nullptr && work();
+    }
+
+private:
+    std::mutex lock;
+    EA::MapVector<std::string, int> counts;
+};
+
+// One load's hold on its cache entry: pinned for as long as the model lives,
+// its stamp touched on the load and again every few minutes of predictions,
+// so another process's compile sees it in use.
+class CacheUse
+{
+public:
+    CacheUse(const FilePath& compiledToUse, const FilePath& stampToUse)
+        : compiled(compiledToUse)
+        , stamp(stampToUse)
+    {
+        PinnedModels::get().pin(compiled.str());
+    }
+
+    ~CacheUse() { PinnedModels::get().unpin(compiled.str()); }
+
+    CacheUse(const CacheUse&) = delete;
+    CacheUse& operator=(const CacheUse&) = delete;
+
+    void markUsed()
+    {
+        touchStamp(stamp);
+        lastMarked = Clock::now().time_since_epoch().count();
+    }
+
+    void markUsedIfStale()
+    {
+        auto marked = Clock::time_point {Clock::duration {lastMarked.load()}};
+
+        if (Clock::now() - marked > stampRefreshInterval)
+            markUsed();
+    }
+
+private:
+    FilePath compiled;
+    FilePath stamp;
+    std::atomic<Clock::rep> lastMarked {0};
+};
+
+struct CachedModel
+{
+    FilePath path;
+    std::string key;
+    std::uint64_t bytes = 0;
+    FileClock::time_point lastUse;
+};
+
+bool isCachedModel(const Files::DirectoryEntry& entry)
+{
+    auto name = Files::filenameFromPath(entry.path.str());
+    return entry.kind == Files::EntryKind::directory && startsWithCacheKey(name)
+           && name.size() == keyLength + std::string_view {compiledSuffix}.size()
+           && name.ends_with(compiledSuffix);
+}
+
+std::uint64_t bytesUnder(const FilePath& directory)
+{
+    auto total = std::uint64_t {0};
+
+    auto options = Files::DirectoryOptions {};
+    options.recursive = true;
+    options.includeHidden = true;
+
+    auto addFile = [&total](const Files::DirectoryEntry& entry)
+    {
+        if (entry.kind == Files::EntryKind::file)
+            total += entry.file().size();
+
+        return Files::Visit::next;
+    };
+
+    Files::forEachEntry(directory, options, addFile);
+    return total;
+}
+
+// The stamp's time when there is one, else the directory's, which is when it
+// was compiled. Unreadable counts as now, so it is never evicted.
+FileClock::time_point lastUseOf(const FilePath& compiled, const FilePath& stamp)
+{
+    for (const auto& path: {stamp, compiled})
+    {
+        auto error = std::error_code {};
+        auto time = std::filesystem::last_write_time(toStdPath(path), error);
+
+        if (!error)
+            return time;
+    }
+
+    return FileClock::now();
+}
+
+Vector<CachedModel> cachedModelsIn(const FilePath& directory)
+{
+    auto models = Vector<CachedModel> {};
+
+    for (const auto& entry: Files::listDirectory(directory))
+    {
+        if (!isCachedModel(entry))
+            continue;
+
+        auto model = CachedModel {};
+        model.path = entry.path;
+        model.key = Files::filenameFromPath(entry.path.str()).substr(0, keyLength);
+        model.bytes = bytesUnder(entry.path);
+        model.lastUse = lastUseOf(model.path, stampPathFor(directory, model.key));
+        models.add(model);
+    }
+
+    return models;
+}
+
+// Renamed aside before it is removed, so two processes evicting at once
+// cannot both delete it and a crash leaves only a .trash the sweep takes.
+bool evict(const FilePath& directory, const CachedModel& model)
+{
+    auto stamp = stampPathFor(directory, model.key);
+    auto trash = trashPathFor(model.path);
+
+    auto renameAside = [&]
+    {
+        if (FileClock::now() - lastUseOf(model.path, stamp) < recentUse)
+            return false;
+
+        return renamex_np(model.path.c_str(), trash.c_str(), RENAME_EXCL) == 0;
+    };
+
+    if (!PinnedModels::get().runIfUnpinned(model.path.str(), renameAside))
+        return false;
+
+    if (!Files::removeAll(trash))
+        LOG("Could not remove the evicted compiled model ", trash.str());
+
+    Files::removeAll(stamp);
+    return true;
+}
+
+void evictBeyondBudget(const FilePath& directory, std::uint64_t budget)
+{
+    if (budget == 0)
+        return;
+
+    auto models = cachedModelsIn(directory);
+    auto total = std::uint64_t {0};
+
+    for (const auto& model: models)
+        total += model.bytes;
+
+    auto byLastUse = [](const CachedModel& a, const CachedModel& b)
+    { return a.lastUse < b.lastUse; };
+    models.sort(byLastUse);
+
+    for (const auto& model: models)
+    {
+        if (total <= budget)
+            return;
+
+        if (evict(directory, model))
+            total -= model.bytes;
+    }
+}
+
+void evictQuietly(const FilePath& directory, std::uint64_t budget)
+{
+    try
+    {
+        evictBeyondBudget(directory, budget);
+    }
+    catch (const std::exception& error)
+    {
+        LOG("Could not evict from the Core ML cache at ",
+            directory.str(),
+            ": ",
+            error.what());
+    }
 }
 
 struct Compiled
@@ -412,17 +703,20 @@ bool isCompiledModel(const FilePath& directory)
 
 struct CacheEntry
 {
+    FilePath target() const { return compiledPathFor(directory, key); }
+    FilePath stamp() const { return stampPathFor(directory, key); }
+
     Result result;
     FilePath directory;
     std::string key;
-
-    FilePath target() const { return directory / (key + ".mlmodelc"); }
+    std::uint64_t budget = 0;
 };
 
 CacheEntry locate(const Source& source, const Options& options)
 {
     auto entry = CacheEntry {};
     entry.directory = cacheDirectoryFor(options);
+    entry.budget = options.cacheBudgetBytes;
 
     if (source.package != nullptr)
     {
@@ -446,7 +740,7 @@ CacheEntry locate(const Source& source, const Options& options)
     return entry;
 }
 
-Compiled compileMiss(const Source& source, const CacheEntry& entry)
+Compiled compileUncached(const Source& source, const CacheEntry& entry)
 {
     if (!Files::createDirectories(entry.directory))
         return {Result::failure("Could not create " + entry.directory.str()),
@@ -472,6 +766,16 @@ Compiled compileMiss(const Source& source, const CacheEntry& entry)
 
     auto compiled = compileInto(packageDirectory, entry.target());
     Files::removeAll(packageDirectory);
+    return compiled;
+}
+
+Compiled compileMiss(const Source& source, const CacheEntry& entry)
+{
+    auto compiled = compileUncached(source, entry);
+
+    if (compiled.result)
+        evictQuietly(entry.directory, entry.budget);
+
     return compiled;
 }
 
@@ -548,6 +852,7 @@ Vector<FeatureInfo> describeAll(NSDictionary<NSString*, MLFeatureDescription*>* 
 struct Loaded
 {
     ObjC::Ptr<MLModel> model;
+    std::shared_ptr<CacheUse> cacheUse;
     FilePath compiled;
     bool cacheHit = false;
     ComputeUnits units = ComputeUnits::all;
@@ -610,7 +915,29 @@ LoadOutcome loadHit(const Source& source,
     return loadCompiled(rebuilt.path, rebuilt.hit, units);
 }
 
-LoadOutcome loadFromSource(const Source& source, const Options& options)
+bool hasEnumeratedInput(const Loaded& loaded)
+{
+    for (const auto& input: loaded.inputs)
+        if (!input.enumeratedShapes.empty())
+            return true;
+
+    return false;
+}
+
+LoadOutcome refuseWhereTheCpuWouldTrap(LoadOutcome outcome)
+{
+    if (!outcome.loaded || enumeratedShapesRunOnTheCpu()
+        || !isCpuOnly(outcome.loaded->units) || !hasEnumeratedInput(*outcome.loaded))
+        return outcome;
+
+    return {Result::failure("Core ML would run this model, whose input shapes are "
+                            "enumerated, on the CPU alone, which traps before "
+                            "macOS 27; choose compute units that reach the GPU "
+                            "or the Neural Engine"),
+            {}};
+}
+
+LoadOutcome loadFromSourceUnchecked(const Source& source, const Options& options)
 {
     auto pool = ObjC::AutoReleasePool {};
 
@@ -626,15 +953,26 @@ LoadOutcome loadFromSource(const Source& source, const Options& options)
     if (!entry.result)
         return {entry.result, {}};
 
+    auto cacheUse = std::make_shared<CacheUse>(entry.target(), entry.stamp());
     auto compiled = compileThroughCache(source, entry);
 
     if (!compiled.result)
         return {compiled.result, {}};
 
-    if (compiled.hit)
-        return loadHit(source, entry, options.units);
+    cacheUse->markUsed();
 
-    return loadCompiled(compiled.path, false, options.units);
+    auto outcome = compiled.hit ? loadHit(source, entry, options.units)
+                                : loadCompiled(compiled.path, false, options.units);
+
+    if (outcome.loaded)
+        outcome.loaded->cacheUse = cacheUse;
+
+    return outcome;
+}
+
+LoadOutcome loadFromSource(const Source& source, const Options& options)
+{
+    return refuseWhereTheCpuWouldTrap(loadFromSourceUnchecked(source, options));
 }
 
 ComputePlan::Device toDevice(id<MLComputeDeviceProtocol> device)
@@ -746,8 +1084,6 @@ ComputePlan readPlan(const Loaded& loaded) API_AVAILABLE(macos(14.4), ios(17.4))
     [plan release];
     return result;
 }
-
-using Clock = std::chrono::steady_clock;
 
 double secondsSince(Clock::time_point start)
 {
@@ -875,6 +1211,9 @@ struct Shared
 
         auto guard = std::lock_guard {predicting};
         auto queueWaitSeconds = secondsSince(queued);
+
+        if (model->cacheUse)
+            model->cacheUse->markUsedIfStale();
         auto prediction = runPrediction(*model, inputs, bound);
         prediction.queueWaitSeconds = queueWaitSeconds;
         return prediction;

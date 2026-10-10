@@ -57,6 +57,7 @@ target_sources(eacp-gpu PRIVATE
         Codegen/ShaderProgram.cpp
         CommandBuffer/CommandBuffer.cpp
         Device/Device.cpp
+        Frame/ComputePass.cpp
         Frame/Frame.cpp
         Frame/RenderPass.cpp
         Timing/CommandTimer.cpp

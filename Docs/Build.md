@@ -257,6 +257,11 @@ The generated template lands in the target's binary directory as
 included, so a project that fetches eacp reads them without running
 `eacp_default_setup()`.
 
+The deployment floors are macOS 11.0 and iOS 15.0, Xcode 27's simulator
+floor. `CMake/AppleSetup.cmake` claims `CMAKE_OSX_DEPLOYMENT_TARGET` only
+when nothing has filled it, so `-DCMAKE_OSX_DEPLOYMENT_TARGET=...` on the
+command line wins on both.
+
 ## Capability variables
 
 The top-level `CMakeLists.txt` decides this once, in seven capability variables

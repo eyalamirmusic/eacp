@@ -144,7 +144,7 @@ bool Device::supportsSampleCount(int count) const
 
 // One property, and the guard around it is the whole of the platform story: the
 // query is macOS 11 and iOS 16.4, and eacp's deployment targets are 11.0 and
-// 14.0 - so the guard is inert on macOS as configured and real on iOS.
+// 15.0 - so the guard is inert on macOS as configured and real on iOS.
 //
 // The false below is not a claim about the hardware. On iOS it is very nearly
 // one, BC having reached the platform in the same release the query did; on a
@@ -201,7 +201,7 @@ bool Device::supportsHalfSimdMatrix() const
 }
 
 // Everything above plus the OS: simdgroup_bfloat8x8 is Metal 3.1, which is
-// macOS 14 and iOS 17, and eacp's deployment targets are 11.0 and 14.0. The
+// macOS 14 and iOS 17, and eacp's deployment targets are 11.0 and 15.0. The
 // guard is therefore real on both platforms rather than inert on one.
 //
 // Known risk, stated rather than hidden: this pairs the OS with Apple7, and

@@ -376,7 +376,7 @@ keyboard focus on one of our windows), a compositor disconnect that fires
 `onLost` on every view surface and leaves the process headless, and stubs for
 image codecs, menus, tray and system appearance.
 
-The X11 half is its twin, on xcb with no Xlib symbol anywhere (`plan.md` D2).
+The X11 half is its twin, on xcb with no Xlib symbol anywhere.
 `Window/X11Connection-Linux.{h,cpp}` is one connection per copy, opened lazily
 and deliberately *not* gated on the preference — stage 3's `EmbeddedView` is
 X11 whichever backend a toplevel prefers: the atoms interned in one batch, XKB
@@ -420,7 +420,7 @@ a process-wide `X11FramePacer` — a `Threads::Timer` at the RandR mode's rate,
 (a `Timer`'s interval is fixed at construction), dropped as soon as nothing is
 armed, so no pacing thread outlives the last presenting view —
 firing `onFrameDone` where Wayland has `wl_surface.frame`: a pacer, not a
-compositor signal (`plan.md` D7). `Window/X11Input-Linux.cpp` feeds the
+compositor signal. `Window/X11Input-Linux.cpp` feeds the
 pointer and key events into the shared state machines, with the keymap taken
 from the server (`xkb_x11_keymap_new_from_device`) and kept current through the
 XKB state, map and new-keyboard events, so layouts and dead keys behave as they
@@ -792,7 +792,6 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   copy's callbacks, timers and windows run off the host's loop and
   `stopProcessRootLoop` is real (see "The Linux Backend"). No plugin SDK
   enters eacp; the VST3/CLAP/LV2 wrapper lives in the plugin project
-  (`plan.md` D1, D9, D10)
 
 **Network/** - HTTP and WebSocket abstraction
 - `Request`/`Response` structs with `httpRequest()` function (NSURLSession on
@@ -951,10 +950,22 @@ and `MultiArray` (fp16 is IOSurface-backed and zeroed; `copyTo`/`copyFrom` a
 models are cached at `<cacheDirectory>/<hash>.mlmodelc`, the hash over program
 bytes, `Options::weightsName`/`weightsVersion` (or the blob) and the OS build;
 a hit is never recompiled because Core ML ties its Neural Engine cache to the
-compiled path. `MLTests` (55 cases, `TestMain.cpp` of its own) builds Whisper
+compiled path. The default directory is `CoreML` at the company level of the
+cache root (`<Caches>/<Company>/CoreML`, the app's own folder when AppInfo
+names no company), so a vendor's binaries share compiles; each use touches a
+`<hash>.used` stamp, and a compile evicts least-recently-used models past
+`Options::cacheBudgetBytes` (2 GiB, 0 unlimited), never one a live `Model` of
+the process holds or one used within the hour, through the same
+rename-to-`.trash` the temporaries take. Before macOS 27 a model with
+enumerated input shapes placed on the CPU traps in BNNS on its first
+prediction, so `load` refuses one where the CPU is certain (`isCpuOnly`:
+`cpu`, or `cpuAndNeuralEngine` with no engine) unless
+`enumeratedShapesRunOnTheCpu()`. `MLTests` (63 cases, `TestMain.cpp`
+of its own) builds Whisper
 tiny.en's encoder and decode step at real sizes against fp32 references;
 `EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners have none).
-`Apps/ML/Projection` is the worked example. `plan.md` is the design record.
+`Apps/ML/Projection` is the worked example, and the design record, decisions
+and measurements are under "Design record" in `Lib/eacp/ML/README.md`.
 
 ### Key Design Patterns
 

@@ -64,8 +64,9 @@ auto tSecondLoadIsAHit = test("MLCache/aSecondLoadOfAPackageIsAHitInPlace") = []
     check(inodeOf(compiled) == inode);
 
     auto entries = entriesOf(cache);
-    check(entries.size() == 1, "one compiled model and nothing else");
+    check(entries.size() == 2, "one compiled model, its stamp and nothing else");
     check(countEndingWith(entries, ".mlmodelc") == 1);
+    check(countEndingWith(entries, ".used") == 1);
 };
 
 auto tChangedWeightVersionMisses =
@@ -157,8 +158,9 @@ auto tRaceLeavesOneDirectory =
     }
 
     auto entries = entriesOf(cache);
-    check(entries.size() == 1, "the losers deleted their own copies");
+    check(entries.size() == 2, "the losers deleted their own copies");
     check(countEndingWith(entries, ".mlmodelc") == 1);
+    check(countEndingWith(entries, ".used") == 1);
 };
 
 auto tPackageDirectoryGoesThroughTheCache =
@@ -202,4 +204,201 @@ auto tNotAPackageFails = test("MLCache/aDirectoryThatIsNoPackageFails") = []
     check(!result.ok);
     check(!result.error.empty());
     check(!model.isLoaded());
+};
+
+// Eviction. Each use touches <hash>.used beside the model; a compile then
+// trims the directory to the budget, oldest use first, sparing what a live
+// Model holds and anything used in the last hour. Backdating the stamp and
+// the directory stands in for the hour passing.
+namespace
+{
+constexpr auto tinyBudget = std::uint64_t {1};
+
+FilePath stampOf(const FilePath& compiled)
+{
+    auto text = compiled.str();
+    return FilePath {text.substr(0, text.size() - std::string {".mlmodelc"}.size())
+                     + ".used"};
+}
+
+std::filesystem::file_time_type modifiedAt(const FilePath& path)
+{
+    auto error = std::error_code {};
+    return std::filesystem::last_write_time(toStdPath(path), error);
+}
+
+void backdateByHours(const FilePath& path, int hours)
+{
+    auto error = std::error_code {};
+    std::filesystem::last_write_time(toStdPath(path),
+                                     std::filesystem::file_time_type::clock::now()
+                                         - std::chrono::hours {hours},
+                                     error);
+}
+
+void makeOld(const FilePath& compiled)
+{
+    backdateByHours(compiled, 2);
+    backdateByHours(stampOf(compiled), 2);
+}
+
+Options withBudget(Options options, std::uint64_t budget)
+{
+    options.cacheBudgetBytes = budget;
+    return options;
+}
+
+FilePath compileAndRelease(const FilePath& cache, const std::string& version)
+{
+    auto model = Model {};
+    auto result = model.load(TestPrograms::elementwiseChain(8, 16),
+                             namedWeights(cache, version));
+    check(result.ok, result.error);
+    return model.compiledPath();
+}
+
+bool exists(const FilePath& path)
+{
+    return eacp::File {path}.exists();
+}
+} // namespace
+
+auto tHitTouchesTheStamp = test("MLCache/aHitTouchesTheStamp") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("stamp");
+    auto compiled = compileAndRelease(cache, "1");
+    check(exists(stampOf(compiled)), "a compile stamps its model");
+
+    makeOld(compiled);
+    auto backdated = modifiedAt(stampOf(compiled));
+    auto directoryTime = modifiedAt(compiled);
+
+    auto model = Model {};
+    check(model.load(TestPrograms::elementwiseChain(8, 16), namedWeights(cache, "1"))
+              .ok);
+    check(model.wasCacheHit());
+    check(modifiedAt(stampOf(compiled)) - backdated > std::chrono::hours {1});
+    check(modifiedAt(compiled) == directoryTime, "the model's own directory");
+};
+
+auto tMissEvictsTheOlder =
+    test("MLCache/aMissBeyondTheBudgetEvictsTheOlderModelAndKeepsTheNewer") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("evict");
+    auto older = compileAndRelease(cache, "1");
+    makeOld(older);
+
+    auto newer = Model {};
+    auto result = newer.load(TestPrograms::elementwiseChain(8, 16),
+                             withBudget(namedWeights(cache, "2"), tinyBudget));
+    check(result.ok, result.error);
+    check(!newer.wasCacheHit());
+
+    check(!exists(older), "the older model was evicted");
+    check(!exists(stampOf(older)), "and its stamp with it");
+    check(exists(newer.compiledPath()), "the newer one is kept");
+
+    auto entries = entriesOf(cache);
+    check(entries.size() == 2, "one model and its stamp, no trash left");
+    check(countEndingWith(entries, ".mlmodelc") == 1);
+};
+
+auto tHeldModelIsKept =
+    test("MLCache/aModelThisProcessHoldsIsKeptEvenWhenOldest") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("held");
+    auto held = Model {};
+    check(held.load(TestPrograms::elementwiseChain(8, 16), namedWeights(cache, "1"))
+              .ok);
+    makeOld(held.compiledPath());
+
+    auto newer = Model {};
+    check(newer
+              .load(TestPrograms::elementwiseChain(8, 16),
+                    withBudget(namedWeights(cache, "2"), tinyBudget))
+              .ok);
+
+    check(exists(held.compiledPath()));
+    check(countEndingWith(entriesOf(cache), ".mlmodelc") == 2);
+};
+
+auto tRecentlyUsedIsKept = test("MLCache/aModelUsedInTheLastHourIsKept") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("recent");
+    auto recent = compileAndRelease(cache, "1");
+
+    auto newer = Model {};
+    check(newer
+              .load(TestPrograms::elementwiseChain(8, 16),
+                    withBudget(namedWeights(cache, "2"), tinyBudget))
+              .ok);
+
+    check(exists(recent), "another process may have just taken a hit on it");
+    check(countEndingWith(entriesOf(cache), ".mlmodelc") == 2);
+};
+
+auto tZeroBudgetEvictsNothing = test("MLCache/aBudgetOfZeroEvictsNothing") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("unlimited");
+    auto older = compileAndRelease(cache, "1");
+    makeOld(older);
+
+    auto newer = Model {};
+    check(newer
+              .load(TestPrograms::elementwiseChain(8, 16),
+                    withBudget(namedWeights(cache, "2"), 0))
+              .ok);
+
+    check(exists(older));
+    check(countEndingWith(entriesOf(cache), ".mlmodelc") == 2);
+};
+
+auto tOrphanedStampIsSwept =
+    test("MLCache/aStaleStampWithNoModelIsSweptOnAMiss") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("orphan");
+    auto orphan = cache / "0123456789abcdef0123456789abcdef.used";
+    check(Files::createDirectories(cache));
+    Files::writeFile(orphan, eacp::Span<const std::uint8_t> {});
+    backdateByHours(orphan, 2);
+
+    compileAndRelease(cache, "1");
+    check(!exists(orphan));
+};
+
+auto tDefaultIsAtTheCompanyLevel =
+    test("MLCache/theDefaultDirectoryIsTheCompanysWhenOneIsNamed") = []
+{
+    auto shared = defaultCacheDirectory("Acme", "Tool");
+    check(shared
+          == FilePath::appCacheDirectory("Acme", "Tool").parentDirectory()
+                 / "CoreML");
+    check(shared == defaultCacheDirectory("Acme", "Other"), "one per vendor");
+
+    check(defaultCacheDirectory("", "Tool")
+          == FilePath::appCacheDirectory("", "Tool") / "CoreML");
+
+    auto company = eacp::Platform::getCompanyName();
+    auto expected = company.empty()
+                        ? FilePath::appCacheDirectory() / "CoreML"
+                        : FilePath::appCacheDirectory(company, {}) / "CoreML";
+    check(defaultCacheDirectory() == expected);
 };

@@ -56,6 +56,24 @@ public:
     ComputePass(const ComputePass&) = delete;
     ComputePass& operator=(const ComputePass&) = delete;
 
+    // What this pass was asked to record so far, counted call by call: every
+    // setPipeline, every dispatch (1D, 2D and 3D, the program forms included) and
+    // every indirect one, and every barrier(). It is what was asked for, not what
+    // the backend emitted - a barrier() in a Serial pass, which records nothing,
+    // still counts, and so does a dispatch the pass dropped for having no
+    // pipeline - so a test can pin a chain's structure on any backend.
+    struct Recorded
+    {
+        bool operator==(const Recorded&) const = default;
+
+        int pipelineSets = 0;
+        int dispatches = 0;
+        int indirectDispatches = 0;
+        int barriers = 0;
+    };
+
+    const Recorded& recorded() const;
+
     // Binds the pipeline and adopts the threadgroup it was compiled for, which
     // is what every dispatch below is then encoded with.
     void setPipeline(const ComputePipeline& pipeline);
@@ -236,6 +254,15 @@ public:
     static constexpr int textureRegisterBase = maxBufferSlots;
 
 private:
+    // The backend half of each call above, one per platform file; the public
+    // forms count and forward, so the counting is written once.
+    void encodePipeline(const ComputePipeline& pipeline);
+    void encodeDispatch(int count);
+    void encodeDispatch(int width, int height);
+    void encodeDispatch(int width, int height, int depth);
+    void encodeDispatchIndirect(const Buffer& arguments, std::int64_t offsetInBytes);
+    void encodeBarrier();
+
     // The group each dispatch is encoded with: the bound pipeline's own, or the
     // stock shape for the dispatch's rank when it carried none.
     constexpr ThreadGroupShape groupFor1D() const
@@ -270,6 +297,8 @@ private:
     // False until something is bound, which makes a pass that dispatches
     // before it binds a no-op rather than whatever the encoder held.
     bool boundPipeline = false;
+
+    Recorded counts;
 
     struct Native;
     Pimpl<Native> impl;
