@@ -239,7 +239,7 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
   `-DEACP_UNITY_BUILD=OFF` for normal work.
 
 ```bash
-cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_CI_BUILD=ON
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DEACP_CI_BUILD=ON
 ```
 
 - `EACP_PCH` (default `OFF`, on under `EACP_CI_BUILD`): shares one precompiled
