@@ -594,6 +594,10 @@ struct GPUView::Native : DeviceResourceHolder
     HANDLE frameLatencyWaitable = nullptr;
 
     bool continuous = false;
+
+    // Recorded for hasReadableDrawable: a back buffer is a copy source as it
+    // is, so nothing on this backend changes with it.
+    bool readableDrawable = false;
     bool transparent = false;
     bool depthEnabled = false;
     bool stencilEnabled = false;
@@ -689,6 +693,16 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+void GPUView::setReadableDrawable(bool readable)
+{
+    impl->readableDrawable = readable;
+}
+
+bool GPUView::hasReadableDrawable() const
+{
+    return impl->readableDrawable;
 }
 
 void GPUView::setTransparent(bool shouldBeTransparent)

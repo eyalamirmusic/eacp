@@ -98,7 +98,8 @@ struct Frame::Native
 
     // The set the pass counts into, told which recording will write it, or
     // null. The queries themselves are begun and resolved by the pass.
-    OcclusionQueries* countOcclusionInto(const RenderPassDescriptor& descriptor) const
+    OcclusionQueries*
+        countOcclusionInto(const RenderPassDescriptor& descriptor) const
     {
         auto* queries = Frame::occlusionQueriesFor(descriptor);
 
@@ -313,6 +314,74 @@ void Frame::flush()
     // when the frame ends. Both are queries on one heap, executed in order, so
     // unlike Metal's the total still means the whole frame.
     impl->open(context.acquire());
+}
+
+// Every view's target is B8G8R8A8: the swapchain's and the snapshot's.
+TextureFormat Frame::drawableFormat() const
+{
+    return TextureFormat::BGRA8Unorm;
+}
+
+// A multisampled view's picture is still in the multisample target until the
+// frame ends, so it resolves straight into the destination; a single-sampled
+// one is copied out of the back buffer, which is in RENDER_TARGET once a pass
+// has begun on it (always, off screen) and in PRESENT before, and goes back to
+// that state after.
+bool Frame::copyDrawable(const Texture& destination)
+{
+    if (impl->commands == nullptr || impl->drawable == nullptr
+        || impl->drawable->backBuffer == nullptr
+        || !canCopyDrawableInto(destination))
+        return false;
+
+    auto* data = static_cast<D3D12TextureData*>(destination.nativeTexture());
+
+    if (data == nullptr || data->resource == nullptr)
+        return false;
+
+    auto* list = impl->commands->list.get();
+    auto* backBuffer = impl->drawable->backBuffer;
+
+    if (impl->useMsaa())
+    {
+        transition(list,
+                   impl->msaa->texture,
+                   D3D12_RESOURCE_STATE_RENDER_TARGET,
+                   D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+        transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+
+        list->ResolveSubresource(
+            data->resource.get(), 0, impl->msaa->texture, 0, impl->msaa->format);
+
+        transition(list,
+                   impl->msaa->texture,
+                   D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
+                   D3D12_RESOURCE_STATE_RENDER_TARGET);
+    }
+    else
+    {
+        const auto resting = impl->offscreen || impl->passBegun
+                                 ? D3D12_RESOURCE_STATE_RENDER_TARGET
+                                 : D3D12_RESOURCE_STATE_PRESENT;
+
+        transition(list, backBuffer, resting, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_COPY_DEST);
+
+        D3D12_TEXTURE_COPY_LOCATION source = {};
+        source.pResource = backBuffer;
+        source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+
+        D3D12_TEXTURE_COPY_LOCATION target = {};
+        target.pResource = data->resource.get();
+        target.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+
+        list->CopyTextureRegion(&target, 0, 0, 0, &source, nullptr);
+
+        transition(list, backBuffer, D3D12_RESOURCE_STATE_COPY_SOURCE, resting);
+    }
+
+    transitionTextureForUse(list, *data, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    return true;
 }
 
 RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)

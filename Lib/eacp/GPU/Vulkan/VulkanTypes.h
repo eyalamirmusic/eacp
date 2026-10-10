@@ -447,6 +447,10 @@ struct VulkanDrawable
     VkSemaphore acquired = VK_NULL_HANDLE;
     VkSemaphore renderFinished = VK_NULL_HANDLE;
 
+    // Whether the swapchain was created with TRANSFER_SRC, which is what
+    // Frame::copyDrawable needs (GPUView::setReadableDrawable).
+    bool readable = false;
+
     // VK_NOT_READY marks a frame that never presented.
     VkResult presentResult = VK_NOT_READY;
 };

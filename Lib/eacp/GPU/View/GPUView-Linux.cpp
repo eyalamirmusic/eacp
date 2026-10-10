@@ -417,8 +417,17 @@ struct GPUView::Native
         info.imageExtent = extent;
         info.imageArrayLayers = 1;
 
-        // Every extra usage bit is one a compositor is allowed to refuse.
+        // Every extra usage bit is one a compositor is allowed to refuse, so
+        // TRANSFER_SRC is asked for only by a readable view and only where
+        // the surface offers it.
         info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        const auto canTransfer =
+            (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+            != 0;
+
+        if (readableDrawable && canTransfer)
+            info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         info.preTransform = transform;
@@ -440,6 +449,7 @@ struct GPUView::Native
 
         swapchain = created;
         swapchainFormat = format.format;
+        swapchainReadable = readableDrawable && canTransfer;
         swapchainWidth = static_cast<int>(extent.width);
         swapchainHeight = static_cast<int>(extent.height);
         suboptimalIsExpected = transform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
@@ -746,6 +756,7 @@ struct GPUView::Native
         drawable.target = &target;
         drawable.acquired = acquireSemaphores[currentSlot];
         drawable.renderFinished = renderFinished[static_cast<int>(imageIndex)];
+        drawable.readable = swapchainReadable;
 
         // The first one rides on this present; after that it commits itself.
         record.requestFrameCallback();
@@ -816,6 +827,8 @@ struct GPUView::Native
     int maxFps = 0;
     int framesInFlight = 2;
     bool depthEnabled = false;
+    bool readableDrawable = false;
+    bool swapchainReadable = false;
     bool stencilEnabled = false;
     bool continuous = false;
     bool transparent = false;
@@ -917,6 +930,21 @@ void GPUView::setContinuous(bool continuous)
 bool GPUView::isContinuous() const
 {
     return impl->continuous;
+}
+
+// A swapchain's usage is fixed at creation, so a change rebuilds it.
+void GPUView::setReadableDrawable(bool readable)
+{
+    if (impl->readableDrawable == readable)
+        return;
+
+    impl->readableDrawable = readable;
+    impl->swapchainStale = true;
+}
+
+bool GPUView::hasReadableDrawable() const
+{
+    return impl->readableDrawable;
 }
 
 void GPUView::setMaxFps(int fps)

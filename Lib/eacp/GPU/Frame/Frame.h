@@ -383,6 +383,28 @@ public:
     // Vulkan a vkCmdBlitImage per level with a linear filter.
     void generateMipmaps(const Texture& texture);
 
+    // The format of the target beginPass() renders into: the drawable's on
+    // screen, the snapshot's texture off it. BGRA8Unorm wherever eacp makes
+    // the target itself, which is every view; a Vulkan surface that offers
+    // only RGBA8 answers RGBA8Unorm, and an sRGB swapchain its sRGB twin.
+    TextureFormat drawableFormat() const;
+
+    // Copies what beginPass() has drawn into this frame's own target so far -
+    // the drawable on screen, the snapshot texture off it - into level 0 of
+    // `destination`, in order with the passes. It is the window's screenshot:
+    // the drawable lives only as long as the frame, and this is the one way its
+    // pixels reach a texture that outlives it, for Texture::read to hand back
+    // once the frame has ended (or after flush()).
+    //
+    // Call it after the last pass that draws into the drawable, **with no pass
+    // open**, as for copy. A multisampled view copies the resolved picture.
+    // `destination` is a TwoD, single-sampled texture of drawableFormat() and
+    // exactly pixelSize(); anything else is refused with a trace, and so is a
+    // drawable the view did not make readable (GPUView::setReadableDrawable),
+    // which on Metal and Vulkan is created able to be presented and nothing
+    // else. Returns whether the copy was recorded.
+    bool copyDrawable(const Texture& destination);
+
     bool isValid() const;
 
 private:
@@ -397,7 +419,12 @@ private:
 
     // The set a pass counts its occlusion queries into: the descriptor's, when
     // it is valid, and null otherwise.
-    static OcclusionQueries* occlusionQueriesFor(const RenderPassDescriptor& descriptor);
+    static OcclusionQueries*
+        occlusionQueriesFor(const RenderPassDescriptor& descriptor);
+
+    // Whether `destination` is a texture copyDrawable may write: TwoD,
+    // single-sampled, drawableFormat() and pixelSize(). Traces the refusal.
+    bool canCopyDrawableInto(const Texture& destination) const;
 
     void* nativeRecording() const;
 

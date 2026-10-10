@@ -3,6 +3,8 @@
 #include "../Device/Device.h"
 #include "../Vulkan/VulkanTypes.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 #include <algorithm>
 
 namespace eacp::GPU
@@ -489,6 +491,80 @@ ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
     impl->timePass(*encoder, label);
 
     return ComputePass(encoder, order);
+}
+
+TextureFormat Frame::drawableFormat() const
+{
+    if (impl->target == nullptr)
+        return TextureFormat::BGRA8Unorm;
+
+    switch (impl->target->format)
+    {
+        case VK_FORMAT_R8G8B8A8_UNORM:
+            return TextureFormat::RGBA8Unorm;
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            return TextureFormat::RGBA8UnormSrgb;
+        case VK_FORMAT_B8G8R8A8_SRGB:
+            return TextureFormat::BGRA8UnormSrgb;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            return TextureFormat::RGBA16Float;
+        default:
+            return TextureFormat::BGRA8Unorm;
+    }
+}
+
+// A vkCmdCopyImage on the frame's recording, outside any pass. A multisampled
+// view's pass resolves into the swapchain image as it ends, so the image holds
+// the picture either way. The image is left where the copy put it; the next
+// pass or the present moves it from there.
+bool Frame::copyDrawable(const Texture& destination)
+{
+    if (impl->commands == nullptr || impl->target == nullptr
+        || !canCopyDrawableInto(destination))
+        return false;
+
+    if (impl->drawable != nullptr && !impl->drawable->readable)
+    {
+        LOG("Vulkan: copyDrawable on a view whose swapchain is not a transfer "
+            "source; see GPUView::setReadableDrawable");
+        return false;
+    }
+
+    if (impl->context().isRenderPassOpen())
+    {
+        LOG("eacp: copyDrawable while a pass is open; end the pass first");
+        return false;
+    }
+
+    auto* data = static_cast<VulkanTextureData*>(destination.nativeTexture());
+
+    if (data == nullptr || data->image == VK_NULL_HANDLE)
+        return false;
+
+    auto buffer = impl->commands->buffer;
+    auto& source = *impl->target;
+
+    transitionTextureForUse(buffer, source, imageTransferSrc);
+    transitionTextureForUse(buffer, *data, imageTransferDst);
+
+    VkImageCopy region = {};
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.layerCount = 1;
+    region.dstSubresource = region.srcSubresource;
+    region.extent = {static_cast<std::uint32_t>(source.width),
+                     static_cast<std::uint32_t>(source.height),
+                     1};
+
+    vkCmdCopyImage(buffer,
+                   source.image,
+                   imageTransferSrc.layout,
+                   data->image,
+                   imageTransferDst.layout,
+                   1,
+                   &region);
+
+    transitionTextureForUse(buffer, *data, data->restingUse());
+    return true;
 }
 
 bool Frame::isValid() const

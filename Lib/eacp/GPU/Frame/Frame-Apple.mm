@@ -7,6 +7,7 @@
 #include "../Device/Device.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
+#include <eacp/Core/Utils/Logging.h>
 
 namespace eacp::GPU
 {
@@ -511,6 +512,64 @@ ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
     return ComputePass((__bridge void*) [(id<MTLCommandBuffer>) buffer
                            computeCommandEncoderWithDescriptor:passDescriptor],
                        order);
+}
+
+TextureFormat Frame::drawableFormat() const
+{
+    auto target = impl->storeTexture();
+
+    if (target == nil)
+        return TextureFormat::BGRA8Unorm;
+
+    switch (target.pixelFormat)
+    {
+        case MTLPixelFormatRGBA8Unorm:
+            return TextureFormat::RGBA8Unorm;
+        case MTLPixelFormatRGBA8Unorm_sRGB:
+            return TextureFormat::RGBA8UnormSrgb;
+        case MTLPixelFormatBGRA8Unorm_sRGB:
+            return TextureFormat::BGRA8UnormSrgb;
+        case MTLPixelFormatRGBA16Float:
+            return TextureFormat::RGBA16Float;
+        default:
+            return TextureFormat::BGRA8Unorm;
+    }
+}
+
+// A blit on the frame's own command buffer, so it lands after the passes
+// recorded before it and before whatever follows. A drawable's texture is
+// only a blit source when its layer is not framebufferOnly, which is what
+// GPUView::setReadableDrawable turns off; a snapshot's texture always is.
+bool Frame::copyDrawable(const Texture& destination)
+{
+    auto target = impl->storeTexture();
+    auto buffer = impl->commandBuffer.get();
+
+    if (target == nil || buffer == nil || !canCopyDrawableInto(destination))
+        return false;
+
+    if (target.framebufferOnly)
+    {
+        LOG("eacp: copyDrawable on a view whose drawable is not readable; see "
+            "GPUView::setReadableDrawable");
+        return false;
+    }
+
+    auto copyTarget = (__bridge id<MTLTexture>) destination.nativeTexture();
+    auto blit = [(id<MTLCommandBuffer>) buffer blitCommandEncoder];
+
+    [blit copyFromTexture:target
+                 sourceSlice:0
+                 sourceLevel:0
+                sourceOrigin:MTLOriginMake(0, 0, 0)
+                  sourceSize:MTLSizeMake(target.width, target.height, 1)
+                   toTexture:copyTarget
+            destinationSlice:0
+            destinationLevel:0
+           destinationOrigin:MTLOriginMake(0, 0, 0)];
+    [blit endEncoding];
+
+    return true;
 }
 
 bool Frame::isValid() const

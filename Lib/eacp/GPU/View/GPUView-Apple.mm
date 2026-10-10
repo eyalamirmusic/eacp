@@ -254,6 +254,16 @@ bool GPUView::isContinuous() const
     return impl->continuous;
 }
 
+void GPUView::setReadableDrawable(bool readable)
+{
+    impl->metalLayer.get().framebufferOnly = readable ? NO : YES;
+}
+
+bool GPUView::hasReadableDrawable() const
+{
+    return impl->metalLayer.get().framebufferOnly == NO;
+}
+
 void GPUView::setMaxFps(int fps)
 {
     impl->maxFps = fps;

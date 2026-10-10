@@ -2869,6 +2869,47 @@ other's results without it.
 Both calls block until the GPU has finished. That is what a read-back is; it is
 not something to put in a frame loop.
 
+### The drawable itself
+
+A window's screenshot is the third case, and neither of the two above reaches
+it: `renderToImage` renders the frame again into a target of its own, and the
+drawable is not a `Texture`. `Frame::copyDrawable` copies what the frame's
+passes have drawn into its own target so far — the drawable on screen, the
+snapshot's texture off it — into a texture of `Frame::drawableFormat()`
+(`BGRA8Unorm` on every view eacp makes) and `pixelSize()`, in order with the
+passes, and that texture is then read like any other once the frame has gone:
+
+```cpp
+view.setReadableDrawable(true);   // once, before the frames that copy
+
+void render(Frame& frame) override
+{
+    { auto pass = frame.beginPass(); pass.draw(scene); }
+
+    const auto size = frame.pixelSize();
+
+    if (!screenshot.isValid())
+        screenshot = Device::shared().makeTexture({.width = (int) size.x,
+                                                   .height = (int) size.y,
+                                                   .format = frame.drawableFormat()});
+
+    frame.copyDrawable(screenshot);   // after the last pass, none open
+}
+// ... after the frame: screenshot.read(pixels.data());
+```
+
+A multisampled view copies the resolved picture. A texture of another format,
+size, kind or sample count is refused with a trace, as is a drawable the view
+was not made readable for: on Metal `setReadableDrawable` is the layer's
+`framebufferOnly` turned off, and on Vulkan the swapchain rebuilt with
+`TRANSFER_SRC` where the surface offers it (where it does not, the copy is
+refused); a D3D12 back buffer copies either way. An off-screen frame's target
+always copies. Metal records a blit on the frame's command buffer; D3D12 a
+`CopyTextureRegion` out of the back buffer, or a `ResolveSubresource` from the
+multisample target, whose picture only reaches the back buffer as the frame
+ends; Vulkan a `vkCmdCopyImage` out of the swapchain image, which a multisampled
+pass has already resolved into.
+
 ## Copies
 
 `Frame::copy` records a copy onto the frame's command buffer, in order with its

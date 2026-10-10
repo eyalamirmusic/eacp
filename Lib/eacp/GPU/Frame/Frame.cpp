@@ -212,6 +212,35 @@ bool Frame::canRenderInto(std::span<const ColorTarget> targets,
     return true;
 }
 
+bool Frame::canCopyDrawableInto(const Texture& destination) const
+{
+    const auto size = pixelSize();
+
+    if (!destination.isValid() || destination.kind() != TextureType::TwoD
+        || destination.sampleCount() != 1)
+    {
+        LOG("eacp: copyDrawable needs a valid single-sampled 2D texture");
+        return false;
+    }
+
+    if (destination.format() != drawableFormat())
+    {
+        LOG("eacp: copyDrawable needs a texture of the drawable's format, "
+            "Frame::drawableFormat()");
+        return false;
+    }
+
+    if ((float) destination.width() != size.x
+        || (float) destination.height() != size.y)
+    {
+        LOG("eacp: copyDrawable needs a texture of the drawable's size, "
+            "Frame::pixelSize()");
+        return false;
+    }
+
+    return true;
+}
+
 void Frame::copy(const Texture& source, const Texture& destination)
 {
     for (const auto& plan: planWholeTextureCopy(source, destination))

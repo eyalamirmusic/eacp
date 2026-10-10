@@ -66,6 +66,16 @@ public:
     void setContinuous(bool continuous);
     bool isContinuous() const;
 
+    // Whether the drawable can be copied out of as well as presented -
+    // Frame::copyDrawable, a window's screenshot. Off by default, because on
+    // Metal it costs the layer's framebufferOnly, which lets the drawable be
+    // kept in a form only the display reads, and on Vulkan a TRANSFER_SRC
+    // usage bit the swapchain is rebuilt with (and that a compositor is free
+    // not to offer, in which case the copy is refused). D3D12's back buffers
+    // copy either way. An off-screen frame's target is always readable.
+    void setReadableDrawable(bool readable);
+    bool hasReadableDrawable() const;
+
     // Whether the view's alpha reaches what is beneath it, so a pass cleared
     // to alpha 0 shows the views and windows behind it rather than black. The
     // colour a pass leaves is premultiplied. Off by default, which is opaque:
