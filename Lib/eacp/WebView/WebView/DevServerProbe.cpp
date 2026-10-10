@@ -1,7 +1,8 @@
 #include "DevServerProbe.h"
 
 #include "../Common.h"
-#include "DevServerProbeInternal.h"
+
+#include <eacp/Network/TCP/Connection.h>
 
 namespace eacp::Graphics
 {
@@ -47,6 +48,27 @@ std::optional<HostPort> parseHostPort(const std::string& url)
         return std::nullopt;
     result.port = *parsedPort;
     return result;
+}
+
+// A connect that completes is the whole answer; nothing is sent. A timeout of
+// zero would be "wait forever" to TCP::Connection, so the shortest wait a
+// caller can ask for is one millisecond.
+bool probeTCP(const std::string& host, int port, int timeoutMs)
+{
+    if (port <= 0 || port > 65535)
+        return false;
+
+    auto wait = Time::MS {std::max(1, timeoutMs)};
+
+    try
+    {
+        TCP::Connection::connect({host, (std::uint16_t) port}, {wait, wait});
+        return true;
+    }
+    catch (const TCP::Error&)
+    {
+        return false;
+    }
 }
 } // namespace
 
