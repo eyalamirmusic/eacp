@@ -920,7 +920,7 @@ the calling thread over plain arrays, linking `eacp-gpu-codegen` alone. It rests
 on `ComputeKernel` (`Codegen/ComputeKernel.h`), the device-free half that
 `ComputeProgram` derives from, so every existing kernel runs unchanged and a
 CPU-only one derives from `ComputeKernel`. `Bindings` is a fixed table of
-`ComputePass::maxBufferSlots` spans set through the kernel's own members;
+`ComputePass::portableBufferSlots` spans (the eight every backend has; `maxBufferSlots` is the Metal and Vulkan ceiling of sixteen) set through the kernel's own members;
 `Executor` is a `Plan` plus a `Workspace`, allocated and validated at
 construction (`isValid()`/`reason()`), with `ComputePass`'s dispatch forms and
 `prepareDispatch`/`dispatchGroups` for the caller's threads. No dispatch
