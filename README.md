@@ -90,8 +90,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `SVG::SVGComponent`, a `UI` component, or rendered off-screen to an image
   (`SVG::renderToImage`), the same on every platform: linear and radial
   gradients, clip paths, element and group opacity, `<use>`/`<symbol>`, nested
-  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute and text. Not
-  `<mask>`, `<style>` selectors, filters or `<image>`.
+  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute, text, and
+  `<image>` from a base64 PNG or JPEG data URI, drawn directly or as a
+  `<pattern>` fill. Not `<mask>`, `<style>` selectors or filters.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
   and unload shared libraries at runtime (`DynamicLibrary`). Both directions of
