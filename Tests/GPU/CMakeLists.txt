@@ -51,6 +51,7 @@ set(gpu_test_sources
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
         ExternalGeometryTests.cpp
+        FormatTargetTests.cpp
         FrameComputeTests.cpp
         FrameTimingTests.cpp
         GPUSmokeTests.cpp
@@ -62,6 +63,7 @@ set(gpu_test_sources
         InPlaceComputeTests.cpp
         InPlaceRecordTests.cpp
         IntrinsicTests.cpp
+        KernelImageTests.cpp
         LargeBufferTests.cpp
         MipmapTests.cpp
         MultiDeviceTests.cpp

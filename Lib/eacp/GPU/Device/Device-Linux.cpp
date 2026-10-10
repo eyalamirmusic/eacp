@@ -260,6 +260,28 @@ bool Device::supportsLayeredRendering() const
     return isValid() && getVulkanShared().supportsLayeredRendering();
 }
 
+// One answer for both: an image declared with the format's qualifier loads
+// wherever it stores. A shader that declares none - the emitter's writeonly
+// image2D - leans on shaderStorageImageWriteWithoutFormat instead.
+bool Device::supportsComputeWrite(TextureFormat format) const
+{
+    if (!isValid() || isCompressedFormat(format)
+        || format == TextureFormat::BGRA8Unorm)
+        return false;
+
+    VkFormatProperties properties = {};
+    vkGetPhysicalDeviceFormatProperties(
+        getVulkanShared().getPhysicalDevice(), toVkFormat(format), &properties);
+
+    return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+           != 0;
+}
+
+bool Device::supportsComputeReadWrite(TextureFormat format) const
+{
+    return supportsComputeWrite(format);
+}
+
 int Device::maxThreadgroupMemory() const
 {
     if (!isValid())

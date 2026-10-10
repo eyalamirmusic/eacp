@@ -112,6 +112,41 @@ public:
                               TextureSampling sampling = {});
     void setOutputTextureLevel(const Texture& texture, int slot, int level);
 
+    // A cube or a cube array as the plain 2D array of slices it is stored as -
+    // six faces, or layer * 6 + face - at one level, for a kernel that declared
+    // texture2d_array (Texture2DArray / RWTexture2DArray, sampler2DArray /
+    // image2DArray). That is how a kernel writes a cube at all, there being no
+    // writable cube type in any of the three languages, and how bgfx's
+    // IMAGE2D_ARRAY reaches one; the draw that samples the result binds the
+    // cube as a cube. A TwoDArray binds as setInputTextureLevel and
+    // setOutputTextureLevel would; a TwoD or ThreeD texture, or a level the
+    // texture lacks, binds nothing, as does an output that is not
+    // computeWrite.
+    void setInputTextureAsArray(const Texture& texture,
+                                int slot,
+                                int level = 0,
+                                TextureSampling sampling = {});
+    void setOutputTextureAsArray(const Texture& texture, int slot, int level = 0);
+
+    // The *depth buffer* of a render target, for a kernel to read: the compute
+    // sibling of RenderPass::setFragmentDepthTexture, on this pass's input
+    // texture slots and under the same rules. `renderTarget` is the colour
+    // texture the buffer belongs to, created with
+    // TextureDescriptor::sampleableDepth (one that was not binds nothing), and
+    // the pass that drew it has ended with DepthAction::Keep. The kernel
+    // declares the target's kind as a depth texture - depth2d,
+    // depth2d_array, depthcube in MSL, Texture2D<float> or Texture2DArray<float>
+    // in HLSL, sampler2D in GLSL - and reads it with read() or a sample, one
+    // float. Level 0 of every slice, as the fragment bind gives; on Vulkan
+    // layer 0 only (see "Depth" in the README). What a hi-Z pyramid copies its
+    // first level out of, and what an ambient-occlusion pass starts from.
+    void setInputDepthTexture(const Texture& renderTarget,
+                              int slot,
+                              TextureSampling sampling = {});
+    void setInputDepthTexture(const Texture& renderTarget,
+                              int slot,
+                              const Sampler& sampler);
+
     // Uploads a small uniform block without a buffer object, like the render
     // pass's setVertexBytes. slot is the uniform-block slot (0 = first block).
     void setBytes(const void* data, std::int64_t bytes, int slot = 0);

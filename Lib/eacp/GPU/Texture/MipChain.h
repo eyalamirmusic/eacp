@@ -58,10 +58,12 @@ constexpr int mipChainBytes(TextureFormat format, int width, int height, int lev
 // a texture asking to be mipmapped actually turns on. False for every
 // block-compressed format: a 4x4 block is a decode, not four numbers to take a
 // mean of, so such a texture gets one level rather than lower ones nothing ever
-// wrote. Both backends ask this rather than each deciding for itself.
+// wrote. False for an integer format too, whose texels are ids and counts
+// rather than samples of anything. Both backends ask this rather than each
+// deciding for itself.
 constexpr bool canBuildMipChain(TextureFormat format)
 {
-    return !isCompressedFormat(format);
+    return !isCompressedFormat(format) && !isIntegerFormat(format);
 }
 
 // Every level of a texture, tightly packed, level 0 first.

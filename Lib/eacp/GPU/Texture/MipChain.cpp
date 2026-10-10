@@ -35,6 +35,43 @@ TexelBlock texelBlockFor(int x, int y, int sourceWidth, int sourceHeight)
             y0 + 1 < sourceHeight ? y0 + 1 : y0};
 }
 
+// 16-bit unsigned normalised channels, rounded to nearest as the bytes are.
+void halveShorts(const std::uint8_t* source,
+                 int sourcePitch,
+                 int sourceWidth,
+                 int sourceHeight,
+                 std::uint8_t* destination,
+                 int destinationWidth,
+                 int destinationHeight,
+                 int channels)
+{
+    for (auto y = 0; y < destinationHeight; ++y)
+        for (auto x = 0; x < destinationWidth; ++x)
+        {
+            const auto block = texelBlockFor(x, y, sourceWidth, sourceHeight);
+
+            for (auto channel = 0; channel < channels; ++channel)
+            {
+                const auto at = [&](int sx, int sy)
+                {
+                    const auto* row = source + sy * sourcePitch;
+                    const auto* texel = reinterpret_cast<const std::uint16_t*>(row);
+                    return (std::uint32_t) texel[sx * channels + channel];
+                };
+
+                const auto sum = at(block.x0, block.y0) + at(block.x1, block.y0)
+                                 + at(block.x0, block.y1) + at(block.x1, block.y1);
+
+                auto* row =
+                    destination
+                    + y * destinationWidth * channels * (int) sizeof(std::uint16_t);
+
+                reinterpret_cast<std::uint16_t*>(row)[x * channels + channel] =
+                    (std::uint16_t) ((sum + 2) / 4);
+            }
+        }
+}
+
 // Byte channels - R8, RG8, RGBA8 and BGRA8 alike. The channel order does not
 // matter to an average, which is why one function covers both RGBA and BGRA:
 // averaging four texels channel by channel gives the same answer whichever
@@ -115,10 +152,9 @@ void halveHalves(const std::uint8_t* source,
                  int sourceHeight,
                  std::uint8_t* destination,
                  int destinationWidth,
-                 int destinationHeight)
+                 int destinationHeight,
+                 int channels)
 {
-    constexpr auto channels = 4;
-
     for (auto y = 0; y < destinationHeight; ++y)
         for (auto x = 0; x < destinationWidth; ++x)
         {
@@ -228,16 +264,31 @@ MipChain buildMipChain(
                 break;
 
             case TextureFormat::RGBA16Float:
+            case TextureFormat::RG16Float:
+            case TextureFormat::R16Float:
                 halveHalves(source,
                             pitch,
                             sourceWidth,
                             sourceHeight,
                             destination.data(),
                             destinationWidth,
-                            destinationHeight);
+                            destinationHeight,
+                            texelBytes / (int) sizeof(std::uint16_t));
+                break;
+
+            case TextureFormat::R16Unorm:
+                halveShorts(source,
+                            pitch,
+                            sourceWidth,
+                            sourceHeight,
+                            destination.data(),
+                            destinationWidth,
+                            destinationHeight,
+                            1);
                 break;
 
             case TextureFormat::RGBA32Float:
+            case TextureFormat::RG32Float:
             case TextureFormat::R32Float:
                 halveFloats(source,
                             pitch,
@@ -257,6 +308,7 @@ MipChain buildMipChain(
             case TextureFormat::BC2RGBA:
             case TextureFormat::BC3RGBA:
             case TextureFormat::BC7RGBA:
+            case TextureFormat::R32Uint:
                 break;
         }
     }

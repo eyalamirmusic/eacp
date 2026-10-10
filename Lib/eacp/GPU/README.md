@@ -432,6 +432,10 @@ D3D12 — and on Apple silicon it *appears* to work, because the tile memory is
 there whether or not anything attached it. Do not read that as permission;
 `Texture::hasDepth()` is what a pipeline should be built from.
 
+With `sampleableDepth` too, a later pass reads the plane with
+`setFragmentDepthTexture` and a kernel with `ComputePass::setInputDepthTexture`,
+once the pass that drew it has ended with `DepthAction::Keep`.
+
 ### Depth without a fragment stage
 
 A depth prepass, a shadow map or an occluder pass runs no fragment shader at
@@ -1695,11 +1699,17 @@ with no new machinery at all: once a `Texture` is written by a kernel, the
 `setFragmentTexture` that was always there samples it in a later pass on the
 same frame.
 
-A texture opts in the way a render target does, and only in a format a typed
-store is guaranteed for — `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`. Notably
-**not** `BGRA8Unorm`, the drawable's own format and the first one most people
-reach for; asking for it yields an invalid texture rather than a kernel whose
-writes go nowhere.
+A texture opts in the way a render target does, and only in a format the
+device can store to. `Device::supportsComputeWrite(format)` is the answer:
+every uncompressed format on Metal, the driver's typed-UAV-store bit on D3D12,
+`VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT` on Vulkan — so `R8Unorm`, `RG8Unorm`,
+`R16Float`, `RG16Float`, `R32Float`, `RG32Float`, `R16Unorm` and the integer
+`R32Uint` on most hardware, beside the three every device takes
+(`RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, which the free
+`supportsComputeWrite(format)` names for code that cannot ask). Notably
+**never** `BGRA8Unorm`, the drawable's own format and the first one most
+people reach for, nor a block format; asking for one the device refuses yields
+an invalid texture rather than a kernel whose writes go nowhere.
 
 ```cpp
 auto descriptor = TextureDescriptor {};
@@ -1725,6 +1735,48 @@ struct PaintPlasma final : ComputeProgram
 Read and written textures take slots from one counter — Metal binds both to one
 texture index space — so a kernel reading one and writing another gives them
 distinct indices.
+
+Reading goes through `setInputTexture` in any format. Reading the texel a
+kernel is about to write *through the bind it writes with* — `access::read_write`
+in MSL, a load from an `RWTexture2D` in HLSL, `imageLoad` from an `image2D`
+declared with the format's qualifier in GLSL — is a second question, and
+`Device::supportsComputeReadWrite(format)` answers it: Metal's read-write tier
+decides there (tier 1 is `R32Float` and `R32Uint`; tier 2, every Apple-silicon
+Mac, adds `RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, `R16Float` and
+`R8Unorm`; no tier takes a two-channel format), D3D12's
+`D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD`, and on Vulkan the storage-image bit
+again. That is the per-format `IMAGE_READ`/`IMAGE_WRITE` pair bgfx's caps
+want. An integer image is declared `texture2d<uint, ...>`,
+`RWTexture2D<uint>` or `uimage2D` with `r32ui`, and never filtered.
+
+A kernel reads a render target's **depth** with
+`setInputDepthTexture(renderTarget, slot)` — the compute twin of
+`setFragmentDepthTexture`, on the input slots: the target was created with
+`sampleableDepth`, the pass that drew it ended with `DepthAction::Keep`, and the
+kernel declares the target's kind as a depth texture (`depth2d`,
+`depth2d_array`, `depthcube`; `Texture2D<float>`, `Texture2DArray<float>`;
+`sampler2D`) and gets one float per read. That is how a hi-Z pyramid's first
+level is copied out of the scene and how an ambient-occlusion pass starts. As
+for the fragment stage, Vulkan reads layer 0 of an array target's depth only.
+
+**A cube is written as a 2D array.** No shading language has a writable cube
+type, so a kernel declares `texture2d_array<float, access::write>`
+(`RWTexture2DArray`, `image2DArray`) and the pass binds the cube through
+`setOutputTextureAsArray(cube, slot, level)` — its six faces, or a cube
+array's `layer * 6 + face`, as array slices at one level. A plain
+`setOutputTexture` binds the cube *as a cube*, which a 2D-array declaration does
+not match (a Metal validation error). `setInputTextureAsArray` is the read
+twin, and the draw that samples the result binds it as the cube it is:
+
+```cpp
+auto pass = frame.beginCompute();
+pass.setPipeline(paintFaces);
+pass.setOutputTextureAsArray(sky, 0);
+pass.dispatch(sky.width(), sky.height(), 6);   // gid.z is the face
+```
+
+A `TwoDArray` binds through these as through the level binds; a `TwoD` or
+`ThreeD` texture binds nothing.
 
 A kernel can read and write single mip levels too, which is what a hi-Z or bloom
 downscale is made of: `setInputTextureLevel(texture, slot, level)` and
@@ -2374,7 +2426,8 @@ Refused at creation: `arrayLength` on a kind without layers, `volumeDepth` on
 anything but a volume, `cube` beside a kind other than `TwoD` or `Cube`, a
 multisampled kind other than `TwoD`, a volume that is compressed or a render
 target with depth, stencil or `sampleableDepth`, and a cube array where
-`Device::supportsCubeArrays()` says no.
+`Device::supportsCubeArrays()` says no. A kernel writes a cube or a cube array
+as the 2D array of its slices, through `ComputePass::setOutputTextureAsArray`.
 `Device::maxTextureLayers()` and `maxTextureSize3D()` are the limits (2048 on
 Metal and D3D12, the device's own on Vulkan).
 
@@ -2395,6 +2448,10 @@ enabled where offered) with a view of the kind's type.
 | `RGBA16Float` | The float format to reach for |
 | `RGBA32Float` | When the mantissa really is the point |
 | `R32Float` | One full-precision channel — a depth copy, a distance field |
+| `R16Float`, `RG16Float` | One or two half channels — an occlusion term, a motion vector |
+| `RG32Float` | Two full floats |
+| `R16Unorm` | One 16-bit normalised channel — a height map, a 16-bit depth copy |
+| `R32Uint` | One 32-bit unsigned integer — an id, a count; read, never filtered |
 | `BC1RGBA`, `BC2RGBA`, `BC3RGBA`, `BC7RGBA` | Block-compressed — DXT1/3/5 and BC7 |
 
 The float formats are not an optimisation. Eight bits per channel cannot hold a
@@ -2428,6 +2485,12 @@ if (Device::shared().supportsBlockCompression())
 Ask the device first: a texture in a format it refuses is invalid rather than
 quietly something else, exactly as a refused `sampleCount` is. Every Mac and
 every Direct3D device answers yes; an Apple-family iOS GPU mostly does not.
+
+Every uncompressed format is a render target, its `PixelFormat` the one
+`pixelFormatFor` hands back; `R32Uint` is an integer attachment, written as a
+`uint` by the fragment function and never blended. Which formats a kernel can
+write is the device's answer (see "Textures a kernel writes"). `R32Uint` gets no
+mip chain from `mipmapped`, there being nothing to average in an id.
 
 A compressed texture cannot be a render target or a kernel output, `read()` and
 `update(region, ...)` are no-ops on one, `update(pixels)` takes the same packed

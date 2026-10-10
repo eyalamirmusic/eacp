@@ -90,6 +90,16 @@ inline VkFormat toVkFormat(TextureFormat format)
             return VK_FORMAT_R32G32B32A32_SFLOAT;
         case TextureFormat::R32Float:
             return VK_FORMAT_R32_SFLOAT;
+        case TextureFormat::R16Float:
+            return VK_FORMAT_R16_SFLOAT;
+        case TextureFormat::RG16Float:
+            return VK_FORMAT_R16G16_SFLOAT;
+        case TextureFormat::RG32Float:
+            return VK_FORMAT_R32G32_SFLOAT;
+        case TextureFormat::R16Unorm:
+            return VK_FORMAT_R16_UNORM;
+        case TextureFormat::R32Uint:
+            return VK_FORMAT_R32_UINT;
         case TextureFormat::BC1RGBA:
             return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
         case TextureFormat::BC2RGBA:
@@ -117,6 +127,20 @@ inline VkFormat toVkFormat(PixelFormat format)
             return VK_FORMAT_R32G32B32A32_SFLOAT;
         case PixelFormat::R32Float:
             return VK_FORMAT_R32_SFLOAT;
+        case PixelFormat::R8Unorm:
+            return VK_FORMAT_R8_UNORM;
+        case PixelFormat::RG8Unorm:
+            return VK_FORMAT_R8G8_UNORM;
+        case PixelFormat::R16Float:
+            return VK_FORMAT_R16_SFLOAT;
+        case PixelFormat::RG16Float:
+            return VK_FORMAT_R16G16_SFLOAT;
+        case PixelFormat::RG32Float:
+            return VK_FORMAT_R32G32_SFLOAT;
+        case PixelFormat::R16Unorm:
+            return VK_FORMAT_R16_UNORM;
+        case PixelFormat::R32Uint:
+            return VK_FORMAT_R32_UINT;
     }
 
     return VK_FORMAT_UNDEFINED;
@@ -206,9 +230,11 @@ inline constexpr auto imageDepthAttachment =
                   | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
 
 // The one layout legal for both aspects of a depth buffer carrying stencil.
+// Compute among the stages, for ComputePass::setInputDepthTexture.
 inline constexpr auto imageDepthSampled = ImageUse {
     VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-    VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+    VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
+        | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
 
 // Tracked for the image's whole life: a layout survives a submission.
@@ -257,7 +283,8 @@ struct VulkanSubresourceView
         ColorAttachment,
         DepthAttachment,
         Sampled,
-        Storage
+        Storage,
+        SampledArray
     };
 
     Use use = Use::ColorAttachment;
@@ -473,6 +500,10 @@ VkImageView
 
 // One level and every slice, as the kind's sampled or storage view type.
 VkImageView vulkanLevelView(VulkanTextureData& data, bool storage, int level);
+
+// One level of a cube or a cube array, every slice, sampled as a 2D array.
+// Null on any other kind; a storage view of a cube is a 2D array already.
+VkImageView vulkanSampledArrayView(VulkanTextureData& data, int level);
 
 // Hands every view in subresourceViews to `context`'s deferred release.
 void releaseVulkanSubresourceViews(VulkanContext& context, VulkanTextureData& data);

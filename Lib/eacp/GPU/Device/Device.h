@@ -251,6 +251,30 @@ public:
     // still runs, its primitives landing in the first layer.
     bool supportsLayeredRendering() const;
 
+    // Whether a kernel can write a texture of this format on this device: a
+    // texture asked for computeWrite in it is created rather than invalid, and
+    // ComputePass::setOutputTexture and its siblings bind it. Every format
+    // the portable supportsComputeWrite() set names, and past it the device's
+    // own answer: every uncompressed format but BGRA8Unorm on Metal; on D3D12
+    // the driver's D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE; on Vulkan
+    // VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT. BGRA8Unorm and the block formats
+    // are refused everywhere, so the drawable's format as a kernel output is a
+    // mistake the Mac catches too. An invalid Device answers no.
+    bool supportsComputeWrite(TextureFormat format) const;
+
+    // Whether a kernel can also *read* such a texture through the bind it
+    // writes with - access::read_write in MSL, a load from an RWTexture2D in
+    // HLSL, imageLoad from an image declared with the format's qualifier in
+    // GLSL - so it can read a texel and write it back in one dispatch. Metal's
+    // read-write tier decides there: tier 1 takes R32Float and R32Uint, tier 2
+    // (every Apple-silicon Mac) adds RGBA8Unorm, RGBA16Float, RGBA32Float,
+    // R16Float and R8Unorm, and no tier takes a two-channel format or
+    // R16Unorm. D3D12 asks D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD, which the
+    // R32 formats always have and the rest have on most hardware; Vulkan
+    // answers as for a write. Reading through setInputTexture needs none of
+    // this: any format a texture has is readable there.
+    bool supportsComputeReadWrite(TextureFormat format) const;
+
     // How many bytes of threadgroup memory one group may declare on this
     // device - the budget every `shared<>` array in a kernel is spent out of,
     // the emitter's own reduction and SIMD-matrix scratch included.

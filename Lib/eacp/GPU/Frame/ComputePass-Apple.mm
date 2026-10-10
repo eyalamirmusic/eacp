@@ -86,11 +86,10 @@ void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
 namespace
 {
 void bindInputTexture(NSObject<MTLComputeCommandEncoder>* encoder,
-                      const Texture& texture,
+                      id<MTLTexture> metalTexture,
                       int slot,
                       void* nativeSampler)
 {
-    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
     auto metalSampler = (__bridge id<MTLSamplerState>) nativeSampler;
 
     if (encoder == nil || metalTexture == nil || metalSampler == nil)
@@ -98,6 +97,44 @@ void bindInputTexture(NSObject<MTLComputeCommandEncoder>* encoder,
 
     [encoder setTexture:metalTexture atIndex:(NSUInteger) slot];
     [encoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+}
+
+void bindInputTexture(NSObject<MTLComputeCommandEncoder>* encoder,
+                      const Texture& texture,
+                      int slot,
+                      void* nativeSampler)
+{
+    bindInputTexture(encoder,
+                     (__bridge id<MTLTexture>) texture.nativeTexture(),
+                     slot,
+                     nativeSampler);
+}
+
+void bindOutputTexture(NSObject<MTLComputeCommandEncoder>* encoder,
+                       const Texture& texture,
+                       id<MTLTexture> metalTexture,
+                       int slot)
+{
+    if (encoder == nil || metalTexture == nil || !texture.isComputeWritable())
+        return;
+
+    [encoder setTexture:metalTexture atIndex:(NSUInteger) slot];
+}
+
+// The resolve on a multisampled target and the attachment on a single-sampled
+// one, exactly as the render pass's depth binds pick it; nil without
+// sampleableDepth.
+id<MTLTexture> kernelDepthOf(const Texture& renderTarget)
+{
+    if (!renderTarget.hasSampleableDepth())
+        return nil;
+
+    auto resolved =
+        (__bridge id<MTLTexture>) renderTarget.nativeResolvedDepthTexture();
+
+    return resolved != nil
+               ? resolved
+               : (__bridge id<MTLTexture>) renderTarget.nativeDepthTexture();
 }
 } // namespace
 
@@ -120,18 +157,15 @@ void ComputePass::setInputTexture(const Texture& texture,
     bindInputTexture(impl->encoder.get(), texture, slot, sampler.nativeSampler());
 }
 
+// Metal binds a texture the same way whether the kernel reads or writes it;
+// what separates the two is the usage it was created with and the access
+// qualifier the kernel declared. No sampler: a written texture has none.
 void ComputePass::setOutputTexture(const Texture& texture, int slot)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto metalTexture = (__bridge id<MTLTexture>) texture.nativeTexture();
-
-    if (activeEncoder == nil || metalTexture == nil || !texture.isComputeWritable())
-        return;
-
-    // Metal binds a texture the same way whether the kernel reads or writes it;
-    // what separates the two is the usage it was created with and the access
-    // qualifier the kernel declared. No sampler: a written texture has none.
-    [activeEncoder setTexture:metalTexture atIndex:(NSUInteger) slot];
+    bindOutputTexture(impl->encoder.get(),
+                      texture,
+                      (__bridge id<MTLTexture>) texture.nativeTexture(),
+                      slot);
 }
 
 void ComputePass::setInputTextureLevel(const Texture& texture,
@@ -139,27 +173,59 @@ void ComputePass::setInputTextureLevel(const Texture& texture,
                                        int level,
                                        TextureSampling sampling)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto view = (__bridge id<MTLTexture>) texture.nativeLevelView(level);
-    auto metalSampler =
-        (__bridge id<MTLSamplerState>) Device::shared().nativeSampler(sampling);
-
-    if (activeEncoder == nil || view == nil || metalSampler == nil)
-        return;
-
-    [activeEncoder setTexture:view atIndex:(NSUInteger) slot];
-    [activeEncoder setSamplerState:metalSampler atIndex:(NSUInteger) slot];
+    bindInputTexture(impl->encoder.get(),
+                     (__bridge id<MTLTexture>) texture.nativeLevelView(level),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
 }
 
 void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int level)
 {
-    auto activeEncoder = impl->encoder.get();
-    auto view = (__bridge id<MTLTexture>) texture.nativeLevelView(level);
+    bindOutputTexture(impl->encoder.get(),
+                      texture,
+                      (__bridge id<MTLTexture>) texture.nativeLevelView(level),
+                      slot);
+}
 
-    if (activeEncoder == nil || view == nil || !texture.isComputeWritable())
-        return;
+void ComputePass::setInputTextureAsArray(const Texture& texture,
+                                         int slot,
+                                         int level,
+                                         TextureSampling sampling)
+{
+    bindInputTexture(impl->encoder.get(),
+                     (__bridge id<MTLTexture>) texture.nativeArrayView(level),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
+}
 
-    [activeEncoder setTexture:view atIndex:(NSUInteger) slot];
+void ComputePass::setOutputTextureAsArray(const Texture& texture, int slot, int level)
+{
+    bindOutputTexture(impl->encoder.get(),
+                      texture,
+                      (__bridge id<MTLTexture>) texture.nativeArrayView(level),
+                      slot);
+}
+
+// A depth2d, depth2d_array or depthcube by the declaration the kernel was
+// compiled with, as in the render pass.
+void ComputePass::setInputDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       TextureSampling sampling)
+{
+    bindInputTexture(impl->encoder.get(),
+                     kernelDepthOf(renderTarget),
+                     slot,
+                     Device::shared().nativeSampler(sampling));
+}
+
+void ComputePass::setInputDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       const Sampler& sampler)
+{
+    bindInputTexture(impl->encoder.get(),
+                     kernelDepthOf(renderTarget),
+                     slot,
+                     sampler.nativeSampler());
 }
 
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)

@@ -52,6 +52,11 @@ MTLPixelFormat toMetalBlockFormat(TextureFormat format)
             case TextureFormat::RGBA16Float:
             case TextureFormat::RGBA32Float:
             case TextureFormat::R32Float:
+            case TextureFormat::R16Float:
+            case TextureFormat::RG16Float:
+            case TextureFormat::RG32Float:
+            case TextureFormat::R16Unorm:
+            case TextureFormat::R32Uint:
                 break;
         }
     }
@@ -80,6 +85,16 @@ MTLPixelFormat toMetalFormat(TextureFormat format)
             return MTLPixelFormatRGBA32Float;
         case TextureFormat::R32Float:
             return MTLPixelFormatR32Float;
+        case TextureFormat::R16Float:
+            return MTLPixelFormatR16Float;
+        case TextureFormat::RG16Float:
+            return MTLPixelFormatRG16Float;
+        case TextureFormat::RG32Float:
+            return MTLPixelFormatRG32Float;
+        case TextureFormat::R16Unorm:
+            return MTLPixelFormatR16Unorm;
+        case TextureFormat::R32Uint:
+            return MTLPixelFormatR32Uint;
 
         case TextureFormat::BC1RGBA:
         case TextureFormat::BC2RGBA:
@@ -187,9 +202,8 @@ struct Texture::Native
             samples = descriptor.sampleCount;
         }
 
-        // Refused so a format D3D12 cannot take a typed store to fails the same
-        // way on every backend. See supportsComputeWrite.
-        if (computeWrite && !supportsComputeWrite(descriptor.format))
+        // Refused rather than created unwritable. See Device::supportsComputeWrite.
+        if (computeWrite && !deviceToUse.supportsComputeWrite(descriptor.format))
             return;
 
         if (isCompressedFormat(format))
@@ -702,6 +716,42 @@ struct Texture::Native
         return view;
     }
 
+    // A cube or a cube array retyped as the 2D array of slices it is stored as;
+    // an array is that already, and its level view is the answer.
+    id<MTLTexture> arrayView(int level) const
+    {
+        if (shape.kind == TextureType::TwoDArray)
+            return levelView(level);
+
+        auto whole = (id<MTLTexture>) texture.get();
+
+        if (whole == nil || level < 0 || level >= shape.levels
+            || (shape.kind != TextureType::Cube
+                && shape.kind != TextureType::CubeArray))
+            return nil;
+
+        // Keyed apart from the level views by a slice count of -2.
+        const auto key = SubresourceViewKey {level, 1, 0, -2};
+
+        for (const auto& [cached, view]: views)
+            if (cached == key)
+                return (id<MTLTexture>) view.get();
+
+        auto view = [whole
+            newTextureViewWithPixelFormat:whole.pixelFormat
+                              textureType:MTLTextureType2DArray
+                                   levels:NSMakeRange((NSUInteger) level, 1)
+                                   slices:NSMakeRange(0, (NSUInteger) shape.slices())];
+
+        if (view == nil)
+            return nil;
+
+        auto owned = ObjC::Ptr<NSObject<MTLTexture>> {};
+        owned = (NSObject<MTLTexture>*) view;
+        views.add({key, owned});
+        return view;
+    }
+
     // The Device these belong to, for the queue a read-back's blit is committed
     // on. Held rather than passed in because a Texture is read through its own
     // handle, with no Device in sight.
@@ -862,6 +912,11 @@ void* Texture::nativeSubresourceView(int level,
 void* Texture::nativeLevelView(int level) const
 {
     return (__bridge void*) impl->levelView(level);
+}
+
+void* Texture::nativeArrayView(int level) const
+{
+    return (__bridge void*) impl->arrayView(level);
 }
 
 int Texture::width() const

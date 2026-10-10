@@ -26,7 +26,8 @@ struct ComputePass::Native
     void bindInputTexture(const Texture& texture,
                           int slot,
                           VkSampler sampler,
-                          int level = -1)
+                          int level = -1,
+                          bool asArray = false)
     {
         if (!encoder || slot < 0 || slot >= maxTextureSlots
             || sampler == VK_NULL_HANDLE)
@@ -37,8 +38,9 @@ struct ComputePass::Native
         if (data == nullptr || !data->isValid())
             return;
 
-        const auto view =
-            level < 0 ? data->sampledView : vulkanLevelView(*data, false, level);
+        const auto view = asArray     ? vulkanSampledArrayView(*data, level)
+                          : level < 0 ? data->sampledView
+                                      : vulkanLevelView(*data, false, level);
 
         if (view == VK_NULL_HANDLE)
             return;
@@ -50,6 +52,22 @@ struct ComputePass::Native
         transitionTextureForUse(commandBuffer(), *data, target);
 
         textures[slot] = {sampler, view, target.layout};
+        sampledTextures |= 1u << slot;
+        storageTextures &= ~(1u << slot);
+    }
+
+    void bindDepthTexture(const Texture& renderTarget, int slot, VkSampler sampler)
+    {
+        if (!encoder || slot < 0 || slot >= maxTextureSlots
+            || sampler == VK_NULL_HANDLE)
+            return;
+
+        auto* data = static_cast<VulkanTextureData*>(renderTarget.nativeTexture());
+
+        if (data == nullptr || !data->hasSampleableDepth())
+            return;
+
+        textures[slot] = {sampler, data->depthReadView, imageDepthSampled.layout};
         sampledTextures |= 1u << slot;
         storageTextures &= ~(1u << slot);
     }
@@ -323,6 +341,53 @@ void ComputePass::setOutputTextureLevel(const Texture& texture, int slot, int le
     impl->textures[slot] = {VK_NULL_HANDLE, view, imageStorage.layout};
     impl->storageTextures |= 1u << slot;
     impl->sampledTextures &= ~(1u << slot);
+}
+
+void ComputePass::setInputTextureAsArray(const Texture& texture,
+                                         int slot,
+                                         int level,
+                                         TextureSampling sampling)
+{
+    if (texture.kind() == TextureType::TwoDArray)
+    {
+        setInputTextureLevel(texture, slot, level, sampling);
+        return;
+    }
+
+    if (level < 0)
+        return;
+
+    impl->bindInputTexture(
+        texture, slot, getVulkanShared().getSampler(sampling), level, true);
+}
+
+// A cube's storage view is a 2D array of its slices already.
+void ComputePass::setOutputTextureAsArray(const Texture& texture,
+                                          int slot,
+                                          int level)
+{
+    const auto kind = texture.kind();
+
+    if (kind == TextureType::TwoDArray || kind == TextureType::Cube
+        || kind == TextureType::CubeArray)
+        setOutputTextureLevel(texture, slot, level);
+}
+
+// The read view the render pass's depth binds use, level 0 of layer 0, in the
+// layout the pass that drew it left it in.
+void ComputePass::setInputDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       TextureSampling sampling)
+{
+    impl->bindDepthTexture(
+        renderTarget, slot, getVulkanShared().getSampler(sampling));
+}
+
+void ComputePass::setInputDepthTexture(const Texture& renderTarget,
+                                       int slot,
+                                       const Sampler& sampler)
+{
+    impl->bindDepthTexture(renderTarget, slot, toVkSampler(sampler));
 }
 
 void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)

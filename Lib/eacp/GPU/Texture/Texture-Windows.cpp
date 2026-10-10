@@ -41,6 +41,16 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_R32G32B32A32_FLOAT;
         case TextureFormat::R32Float:
             return DXGI_FORMAT_R32_FLOAT;
+        case TextureFormat::R16Float:
+            return DXGI_FORMAT_R16_FLOAT;
+        case TextureFormat::RG16Float:
+            return DXGI_FORMAT_R16G16_FLOAT;
+        case TextureFormat::RG32Float:
+            return DXGI_FORMAT_R32G32_FLOAT;
+        case TextureFormat::R16Unorm:
+            return DXGI_FORMAT_R16_UNORM;
+        case TextureFormat::R32Uint:
+            return DXGI_FORMAT_R32_UINT;
 
         // No sRGB variants here for the reason Texture.h gives: eacp has no
         // sRGB formats at all, so DXT1 with or without punch-through alpha is
@@ -58,26 +68,18 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
     return DXGI_FORMAT_UNKNOWN;
 }
 
+} // namespace
+
+DXGI_FORMAT d3d12TextureFormat(TextureFormat format)
+{
+    return toDXGIFormat(format);
+}
+
+namespace
+{
 // The filter/address translations that used to live here are gone with the
 // sampler descriptors they filled in; the equivalent mapping is now in
 // D3D12Context::createRootSignatures, which builds the static samplers.
-
-// Whether this device can take a typed UAV store to the format. The formats
-// supportsComputeWrite() allows are the ones the specification guarantees, but
-// a guarantee is not a driver, so it is asked rather than assumed - a kernel
-// whose stores are silently dropped is a great deal harder to find than a
-// texture that refused to be created.
-bool supportsTypedUAVStore(ID3D12Device* device, DXGI_FORMAT format)
-{
-    D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
-    support.Format = format;
-
-    if (FAILED(device->CheckFeatureSupport(
-            D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))))
-        return false;
-
-    return (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
-}
 
 bool isLevelZeroOfSliceZero(int level, int slice, int count)
 {
@@ -246,8 +248,7 @@ struct Texture::Native
         // that writes nothing.
         if (descriptor.computeWrite)
         {
-            if (!supportsComputeWrite(descriptor.format)
-                || !supportsTypedUAVStore(context.getDevice(), desc.Format))
+            if (!device.supportsComputeWrite(descriptor.format))
                 return;
 
             desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
@@ -304,6 +305,9 @@ struct Texture::Native
             context.freeTextureDescriptor(slot);
 
         for (auto& slot: data.levelUavs)
+            context.freeTextureDescriptor(slot);
+
+        for (auto& slot: data.arraySrvs)
             context.freeTextureDescriptor(slot);
 
         for (auto& view: data.targetViews)
@@ -1121,6 +1125,34 @@ struct Texture::Native
         }
     }
 
+    // A cube or a cube array read as the 2D array of slices it is stored as,
+    // one view per level, for ComputePass::setInputTextureAsArray.
+    void createArrayViews(D3D12Context& context, DXGI_FORMAT viewFormat)
+    {
+        for (auto level = 0; level < levels; ++level)
+        {
+            auto read = context.allocateTextureDescriptor();
+
+            if (read.cpu.ptr != 0)
+            {
+                D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc = {};
+                viewDesc.Format = viewFormat;
+                viewDesc.Shader4ComponentMapping =
+                    D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                viewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+                viewDesc.Texture2DArray.MostDetailedMip = static_cast<UINT>(level);
+                viewDesc.Texture2DArray.MipLevels = 1;
+                viewDesc.Texture2DArray.ArraySize =
+                    static_cast<UINT>(shape.slices());
+
+                context.getDevice()->CreateShaderResourceView(
+                    data.resource.get(), &viewDesc, read.cpu);
+            }
+
+            data.arraySrvs.add(read);
+        }
+    }
+
     void createDescriptors(D3D12Context& context,
                            const TextureDescriptor& descriptor)
     {
@@ -1170,6 +1202,9 @@ struct Texture::Native
         // only ever sampled does not spend a descriptor per level.
         if (levels > 1 && (computeWrite || descriptor.renderTarget))
             createLevelViews(context, toDXGIFormat(descriptor.format));
+
+        if (shape.kind == TextureType::Cube || shape.kind == TextureType::CubeArray)
+            createArrayViews(context, toDXGIFormat(descriptor.format));
 
         // No sampler descriptor is created, and TextureDescriptor::filter and
         // ::addressMode are unused on this backend: the sampler comes from the

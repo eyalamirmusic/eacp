@@ -443,6 +443,11 @@ struct D3D12TextureData
     Vector<DescriptorSlot> levelSrvs;
     Vector<DescriptorSlot> levelUavs;
 
+    // On a cube or a cube array, a read view of each level as the 2D array of
+    // slices it is stored as, for ComputePass::setInputTextureAsArray. Its
+    // UAVs are 2D arrays already.
+    Vector<DescriptorSlot> arraySrvs;
+
     bool isRenderTarget() const { return rtv.ptr != 0; }
     bool isComputeWritable() const { return uav.cpu.ptr != 0; }
     bool hasDepth() const { return dsv.ptr != 0; }
@@ -462,6 +467,10 @@ struct D3D12TextureData
         return isMultisampled() ? msaaRtv : rtv;
     }
 };
+
+// The resource format a texture of this format is created in. Implemented in
+// Texture-Windows.cpp, beside the one table every view there is made from.
+DXGI_FORMAT d3d12TextureFormat(TextureFormat format);
 
 // Where a pass into `level` and `count` slices from `slice` of this target
 // draws and tests: the views created with the target for level 0 of slice 0,

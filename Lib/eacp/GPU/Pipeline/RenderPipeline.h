@@ -22,15 +22,24 @@ enum class PixelFormat
     RGBA8Unorm,
     RGBA16Float,
     RGBA32Float,
-    R32Float
+    R32Float,
+
+    // Every uncompressed TextureFormat has its attachment format. R32Uint is
+    // an integer attachment: the fragment function returns a uint, and it
+    // takes no blending.
+    R8Unorm,
+    RG8Unorm,
+    R16Float,
+    RG16Float,
+    RG32Float,
+    R16Unorm,
+    R32Uint
 };
 
 // Exhaustive rather than defaulted, so that a texture format added without an
 // attachment format is a -Wswitch warning here rather than a pipeline silently
-// built against RGBA8. The formats that fall through are the ones no pass can
-// render into anyway: the one- and two-channel byte formats, which PixelFormat
-// has no member for, and every block-compressed one, which cannot be a render
-// target at all.
+// built against RGBA8. The formats that fall through are the block-compressed
+// ones, which cannot be a render target at all.
 constexpr PixelFormat pixelFormatFor(TextureFormat format)
 {
     switch (format)
@@ -45,9 +54,21 @@ constexpr PixelFormat pixelFormatFor(TextureFormat format)
             return PixelFormat::RGBA32Float;
         case TextureFormat::R32Float:
             return PixelFormat::R32Float;
-
         case TextureFormat::R8Unorm:
+            return PixelFormat::R8Unorm;
         case TextureFormat::RG8Unorm:
+            return PixelFormat::RG8Unorm;
+        case TextureFormat::R16Float:
+            return PixelFormat::R16Float;
+        case TextureFormat::RG16Float:
+            return PixelFormat::RG16Float;
+        case TextureFormat::RG32Float:
+            return PixelFormat::RG32Float;
+        case TextureFormat::R16Unorm:
+            return PixelFormat::R16Unorm;
+        case TextureFormat::R32Uint:
+            return PixelFormat::R32Uint;
+
         case TextureFormat::BC1RGBA:
         case TextureFormat::BC2RGBA:
         case TextureFormat::BC3RGBA:

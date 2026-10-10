@@ -299,6 +299,48 @@ bool Device::supportsLayeredRendering() const
            || [metalDevice supportsFamily:MTLGPUFamilyApple5] == YES;
 }
 
+bool Device::supportsComputeWrite(TextureFormat format) const
+{
+    return isValid() && !isCompressedFormat(format)
+           && format != TextureFormat::BGRA8Unorm;
+}
+
+namespace
+{
+bool readWritesAtTierOne(TextureFormat format)
+{
+    return format == TextureFormat::R32Float || format == TextureFormat::R32Uint;
+}
+
+bool readWritesAtTierTwo(TextureFormat format)
+{
+    return readWritesAtTierOne(format) || format == TextureFormat::RGBA8Unorm
+           || format == TextureFormat::RGBA16Float
+           || format == TextureFormat::RGBA32Float
+           || format == TextureFormat::R16Float || format == TextureFormat::R8Unorm;
+}
+} // namespace
+
+bool Device::supportsComputeReadWrite(TextureFormat format) const
+{
+    auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
+
+    if (metalDevice == nil || !supportsComputeWrite(format))
+        return false;
+
+    switch (metalDevice.readWriteTextureSupport)
+    {
+        case MTLReadWriteTextureTier2:
+            return readWritesAtTierTwo(format);
+        case MTLReadWriteTextureTier1:
+            return readWritesAtTierOne(format);
+        case MTLReadWriteTextureTierNone:
+            break;
+    }
+
+    return false;
+}
+
 int Device::maxComputeBufferSlots() const
 {
     return isValid() ? ComputePass::maxBufferSlots : 0;

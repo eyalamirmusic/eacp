@@ -271,6 +271,48 @@ bool Device::supportsCubeArrays() const
     return isValid();
 }
 
+namespace
+{
+// What the driver reports for a format, past the guarantees: zero where it
+// cannot be asked.
+UINT formatSupport2(TextureFormat format)
+{
+    auto* device = getD3D12Shared().getDevice();
+
+    if (device == nullptr)
+        return 0;
+
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+    support.Format = d3d12TextureFormat(format);
+
+    if (FAILED(device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support))))
+        return 0;
+
+    return static_cast<UINT>(support.Support2);
+}
+
+bool canBeComputeWritten(TextureFormat format)
+{
+    return !isCompressedFormat(format) && format != TextureFormat::BGRA8Unorm;
+}
+} // namespace
+
+// Asked rather than assumed even for the guaranteed formats: a guarantee is not
+// a driver, and a kernel whose stores are silently dropped is a great deal
+// harder to find than a texture that refused to be created.
+bool Device::supportsComputeWrite(TextureFormat format) const
+{
+    return isValid() && canBeComputeWritten(format)
+           && (formatSupport2(format) & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) != 0;
+}
+
+bool Device::supportsComputeReadWrite(TextureFormat format) const
+{
+    return supportsComputeWrite(format)
+           && (formatSupport2(format) & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) != 0;
+}
+
 // The D3D11.3 option that lets a vertex shader write
 // SV_RenderTargetArrayIndex, rather than a geometry shader eacp does not have.
 bool Device::supportsLayeredRendering() const

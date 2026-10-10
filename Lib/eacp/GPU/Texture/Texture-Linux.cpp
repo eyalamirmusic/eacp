@@ -12,18 +12,6 @@ namespace eacp::GPU
 {
 namespace
 {
-// Asked rather than assumed: dropped stores are far harder to find than a
-// texture that refused to be created.
-bool supportsStorageImage(VkFormat format)
-{
-    VkFormatProperties properties = {};
-    vkGetPhysicalDeviceFormatProperties(
-        getVulkanShared().getPhysicalDevice(), format, &properties);
-
-    return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
-           != 0;
-}
-
 // Deferred: a command buffer still recording may name these handles.
 void retireImage(VulkanContext& context,
                  VkImage image,
@@ -423,6 +411,31 @@ VkImageView vulkanLevelView(VulkanTextureData& data, bool storage, int level)
     return keepSubresourceView(data, use, level, 0, data.slices, view);
 }
 
+VkImageView vulkanSampledArrayView(VulkanTextureData& data, int level)
+{
+    using Use = VulkanSubresourceView::Use;
+
+    if (level < 0 || level >= data.mipLevels
+        || (data.kind != TextureType::Cube && data.kind != TextureType::CubeArray))
+        return VK_NULL_HANDLE;
+
+    if (auto view =
+            findSubresourceView(data, Use::SampledArray, level, 0, data.slices))
+        return view;
+
+    const auto view = makeVulkanImageView(getVulkanShared().getDevice(),
+                                          data.image,
+                                          data.format,
+                                          VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                                          VK_IMAGE_ASPECT_COLOR_BIT,
+                                          level,
+                                          1,
+                                          0,
+                                          data.slices);
+
+    return keepSubresourceView(data, Use::SampledArray, level, 0, data.slices, view);
+}
+
 void releaseVulkanSubresourceViews(VulkanContext& context, VulkanTextureData& data)
 {
     if (data.subresourceViews.empty())
@@ -550,10 +563,9 @@ struct Texture::Native
 
         if (descriptor.computeWrite)
         {
-            if (!supportsComputeWrite(descriptor.format))
-                return false;
-
-            if (!supportsStorageImage(data.format))
+            // Asked rather than assumed: dropped stores are far harder to
+            // find than a texture that refused to be created.
+            if (!device.supportsComputeWrite(descriptor.format))
             {
                 LOG("Vulkan: the device reports no storage-image support for "
                     "this format, so a computeWrite texture is invalid rather "

@@ -50,6 +50,30 @@ enum class TextureFormat
     // RGBA32Float says so.
     R32Float,
 
+    // The rest of the shapes a kernel or a pass produces a measurement in, each
+    // at the size it names: a half or a full float per channel, one 16-bit
+    // unsigned normalised channel, one 32-bit unsigned integer. What an
+    // ambient-occlusion chain, a hi-Z pyramid, a motion-vector or an id buffer
+    // is kept in, at the memory and precision it was designed for rather than
+    // widened into four channels or into a full float.
+    //
+    // R16Float samples as (r, 0, 0, 1) and RG16Float as (r, g, 0, 1), and both
+    // filter everywhere, as RGBA16Float does. RG32Float filters nowhere it is
+    // promised to, like the other full floats. R16Unorm is R8Unorm with 65536
+    // steps rather than 256: a height map, a 16-bit depth copy.
+    //
+    // R32Uint is an *integer* texture: the shader declares it texture2d<uint>,
+    // Texture2D<uint> or usampler2D/uimage2D and reads it with read(), Load or
+    // texelFetch, never through a filtering sample, and a pass rendering into
+    // one writes a uint. It has no mip chain eacp could average - an id is not
+    // a number to take a mean of - so `mipmapped` gives it one level, exactly
+    // as it does a compressed format.
+    R16Float,
+    RG16Float,
+    RG32Float,
+    R16Unorm,
+    R32Uint,
+
     // Block-compressed: a 4x4 block of texels stored as one 8- or 16-byte
     // record that the sampler decodes on its way out. The picture costs a
     // quarter or an eighth of what it does uncompressed - in memory, over the
@@ -126,6 +150,11 @@ constexpr int bytesPerBlock(TextureFormat format)
         case TextureFormat::RGBA16Float:
         case TextureFormat::RGBA32Float:
         case TextureFormat::R32Float:
+        case TextureFormat::R16Float:
+        case TextureFormat::RG16Float:
+        case TextureFormat::RG32Float:
+        case TextureFormat::R16Unorm:
+        case TextureFormat::R32Uint:
             break;
     }
 
@@ -148,14 +177,19 @@ constexpr int bytesPerPixel(TextureFormat format)
             return 1;
 
         case TextureFormat::RG8Unorm:
+        case TextureFormat::R16Float:
+        case TextureFormat::R16Unorm:
             return 2;
 
         case TextureFormat::RGBA8Unorm:
         case TextureFormat::BGRA8Unorm:
         case TextureFormat::R32Float:
+        case TextureFormat::RG16Float:
+        case TextureFormat::R32Uint:
             return 4;
 
         case TextureFormat::RGBA16Float:
+        case TextureFormat::RG32Float:
             return 8;
 
         case TextureFormat::RGBA32Float:
@@ -201,16 +235,30 @@ constexpr bool isFloatFormat(TextureFormat format)
 {
     return format == TextureFormat::RGBA16Float
            || format == TextureFormat::RGBA32Float
-           || format == TextureFormat::R32Float;
+           || format == TextureFormat::R32Float || format == TextureFormat::R16Float
+           || format == TextureFormat::RG16Float
+           || format == TextureFormat::RG32Float;
 }
 
-// Whether a kernel may write this format. The restriction is D3D12's: a typed
-// UAV store is only guaranteed for a small set of formats, and everything
-// outside it depends on the device. BGRA8Unorm - the drawable's own format - is
-// not in the guaranteed set, which is exactly the trap this exists to close.
+// Whether a shader reads this format as unsigned integers rather than as
+// floats: texture2d<uint>, Texture2D<uint>, usampler2D.
+constexpr bool isIntegerFormat(TextureFormat format)
+{
+    return format == TextureFormat::R32Uint;
+}
+
+// Whether a kernel may write this format on **every** device eacp runs on. The
+// restriction is D3D12's: a typed UAV store is only promised for a small set,
+// and past it the answer is the device's. BGRA8Unorm - the drawable's own
+// format - is not in the set, which is exactly the trap this exists to close.
 //
-// A texture asked for computeWrite in another format fails to create rather
-// than binding as a kernel output that quietly does nothing.
+// Device::supportsComputeWrite is the answer for one device, and the one a
+// texture is created against: it takes every format here and, on most
+// hardware, the one- and two-channel ones beside them. Portable code that
+// cannot ask keeps to these three.
+//
+// A texture asked for computeWrite in a format its device refuses fails to
+// create rather than binding as a kernel output that quietly does nothing.
 constexpr bool supportsComputeWrite(TextureFormat format)
 {
     return format == TextureFormat::RGBA8Unorm
@@ -320,10 +368,10 @@ struct TextureDescriptor
     // renderTarget is: the resource has to be created able to be one, which on
     // D3D12 also costs a UAV descriptor.
     //
-    // Only the formats supportsComputeWrite() allows may ask for this, and only
-    // on a device whose driver reports a typed UAV store for the format; a
-    // texture that asks for it anywhere else is invalid rather than silently
-    // unwritable. Unlike a render target this leaves update() alone, so a
+    // Only a format Device::supportsComputeWrite() allows may ask for this -
+    // the device's own answer, which the portable supportsComputeWrite() set is
+    // always inside; a texture that asks for it anywhere else is invalid
+    // rather than silently unwritable. Unlike a render target this leaves update() alone, so a
     // kernel that accumulates can still be seeded from the CPU.
     bool computeWrite = false;
 
@@ -482,7 +530,7 @@ struct TextureDescriptor
     // width and height must be equal; six faces of a rectangle is a shape
     // neither API has. A cube may be a renderTarget, a pass naming its face as
     // ColorTarget::slice, or computeWrite, a kernel writing it as a 2D array of
-    // six. It may not be multisampled. A cube may be compressed - the six faces
+    // six through ComputePass::setOutputTextureAsArray. It may not be multisampled. A cube may be compressed - the six faces
     // are each levelBytes of blocks, in the same order.
     //
     // mipmapped builds a chain per face out of that face's own pixels, which is
@@ -800,6 +848,14 @@ public:
     // level it lacks and on D3D12 and Vulkan, whose per-level views live in
     // the texture data.
     void* nativeLevelView(int level) const;
+
+    // One level and every slice as a plain 2D array - a cube's six faces, a
+    // cube array's layer * 6 + face - which is what ComputePass's array binds
+    // hand a kernel that declared texture2d_array. An MTLTexture view on
+    // Metal, kept for the texture's life; null for a level the texture lacks,
+    // on a TwoD or ThreeD texture, and on D3D12 and Vulkan, whose array views
+    // live in the texture data.
+    void* nativeArrayView(int level) const;
 
 private:
     struct Native;
