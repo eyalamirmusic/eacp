@@ -463,6 +463,8 @@ bool ComponentHost::recordComponent(Component& component)
     if (!component.isVisible())
         return component.needsRecording();
 
+    auto paintedBefore = paintedThisWalk;
+
     if (component.selfDirty)
         record(component);
 
@@ -476,6 +478,21 @@ bool ComponentHost::recordComponent(Component& component)
     // sound: a component below here that is still owed a recording leaves the
     // chain of ancestors marked all the way to the root.
     component.descendantDirty = pending;
+
+    // A captured subtree recorded anywhere but just before its layer renders --
+    // by hand through paintDirtyComponents, or again because the glyph atlas
+    // was cleared under this walk -- leaves the layer holding a picture of the
+    // recordings it replaced, and the layer has already been rendered for this
+    // frame. So it is marked, and the frame after this one draws it again.
+    //
+    // Judged by what was painted rather than by what is still owed, which a
+    // hidden child never recorded goes on owing for as long as it is hidden.
+    if (component.capturingLayer != nullptr && &component != recordingContent
+        && paintedThisWalk != paintedBefore)
+    {
+        component.capturingLayer->contentChanged();
+        repaint();
+    }
 
     return pending;
 }
@@ -538,6 +555,17 @@ void ComponentHost::playComponent(Component& component,
                                   DrawPlayer& player,
                                   Point origin,
                                   const Rect& clip)
+{
+    if (component.capturingLayer != nullptr)
+        return;
+
+    playSubtree(component, player, origin, clip);
+}
+
+void ComponentHost::playSubtree(Component& component,
+                                DrawPlayer& player,
+                                Point origin,
+                                const Rect& clip)
 {
     if (!component.isVisible())
         return;
@@ -636,6 +664,7 @@ void ComponentHost::renderLayers(GPU::Frame& frame)
         return;
 
     lastRenderedLayers = 0;
+    paintedThisWalk = 0;
     renderLayers(*root, frame);
 }
 
@@ -651,9 +680,54 @@ void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
     for (auto* child: component.getChildren())
         renderLayers(*child, frame);
 
+    // An onRender layer samples whatever it likes, and what it is most likely
+    // to sample is a layer registered before it -- so one rendering again is
+    // taken to mean every onRender layer after it has to as well.
+    auto earlierLayerRendered = false;
+
     for (auto* layer: component.getLayers())
+    {
+        if (recordContent(*layer))
+            layer->contentChanged();
+
+        if (earlierLayerRendered && layer->rendersOwnPass())
+            layer->contentChanged();
+
         if (layer->needsRendering(backingScale()))
+        {
             renderLayer(*layer, frame);
+            earlierLayerRendered = true;
+        }
+    }
+}
+
+bool ComponentHost::recordContent(Layer& layer)
+{
+    auto* content = layer.getContent();
+
+    if (layer.rendersOwnPass() || content == nullptr || !content->isVisible()
+        || !content->needsRecording())
+        return false;
+
+    recordingContent = content;
+
+    auto paintedBefore = paintedThisWalk;
+    auto before = renderer().generation();
+
+    recordComponent(*content);
+
+    // The glyph atlas filled and was cleared, as recordDirtyTree has to allow
+    // for -- and answered the same way, against the whole tree, since every
+    // recording made before this one names texels that are somebody else's.
+    if (renderer().generation() != before)
+    {
+        markTreeDirty(*root);
+        recordComponent(*content);
+    }
+
+    recordingContent = nullptr;
+
+    return paintedThisWalk != paintedBefore;
 }
 
 void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
@@ -662,6 +736,12 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 
     if (!layer.ensureTexture(backingScale()))
         return;
+
+    if (layer.rendersOwnPass())
+    {
+        renderOwnPass(layer, frame);
+        return;
+    }
 
     // The renderers are the tree's own, pointed at this pass and told the
     // layer's size. One set rather than a second, because a pipeline is
@@ -687,23 +767,6 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     text->begin();
 
     {
-        // Recorded and played straight away rather than kept. A layer already
-        // has a cache -- its own texture, which is only rebuilt when the layer
-        // is dirty -- so a second one for the drawing that fills it would be a
-        // list that is written and read once.
-        auto list = DrawList {};
-
-        {
-            auto g =
-                Graphics {list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
-
-            // So the content draws in the coordinates it was authored in and the
-            // layer's own top-left lands on the texture's.
-            g.translate(-bounds.x, -bounds.y);
-
-            layer.onPaint(g);
-        }
-
         auto player = DrawPlayer {*shapes,
                                   *meshes,
                                   *images,
@@ -713,7 +776,32 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
                                   {0.f, 0.f, bounds.w, bounds.h},
                                   backingScale()};
 
-        player.play(list, {}, {0.f, 0.f, bounds.w, bounds.h});
+        if (layer.getContent() != nullptr)
+        {
+            playContent(layer, player);
+        }
+        else
+        {
+            // Recorded and played straight away rather than kept. A layer
+            // already has a cache -- its own texture, which is only rebuilt
+            // when the layer is dirty -- so a second one for the drawing that
+            // fills it would be a list that is written and read once.
+            auto list = DrawList {};
+
+            {
+                auto g = Graphics {
+                    list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
+
+                // So the content draws in the coordinates it was authored in and
+                // the layer's own top-left lands on the texture's.
+                g.translate(-bounds.x, -bounds.y);
+
+                layer.onPaint(g);
+            }
+
+            player.play(list, {}, {0.f, 0.f, bounds.w, bounds.h});
+        }
+
         player.flush();
     }
 
@@ -724,6 +812,55 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
     // Back to the frame's own space for whatever draws into the drawable after
     // this layer's pass.
     setSurfaceSize(frame.logicalSize());
+
+    layer.markRendered();
+    ++lastRenderedLayers;
+}
+
+// The captured subtree's own recordings, played as the frame would have played
+// them, from where the content sits in the owner less the layer's corner. A
+// content that is hidden, or no longer below the owner, draws nothing.
+void ComponentHost::playContent(Layer& layer, DrawPlayer& player)
+{
+    auto& content = *layer.getContent();
+    auto bounds = layer.getBounds();
+    auto origin = Point {-bounds.x, -bounds.y};
+
+    auto* ancestor = content.getParentComponent();
+
+    for (; ancestor != nullptr && ancestor != &layer.owner;
+         ancestor = ancestor->getParentComponent())
+    {
+        if (!ancestor->isVisible())
+            return;
+
+        origin.x += ancestor->getBounds().x;
+        origin.y += ancestor->getBounds().y;
+    }
+
+    if (ancestor == nullptr)
+        return;
+
+    playSubtree(content, player, origin, {0.f, 0.f, bounds.w, bounds.h});
+}
+
+// A pass of the caller's own, onto the layer's texture and nothing else. The
+// tier's renderers are not involved, so neither is the surface size they
+// project from.
+void ComponentHost::renderOwnPass(Layer& layer, GPU::Frame& frame)
+{
+    auto descriptor = GPU::RenderPassDescriptor {};
+    descriptor.clearColor = Color::black(0.f);
+    descriptor.depthAction = GPU::DepthAction::Clear;
+
+    auto area = layer.getContentArea();
+
+    {
+        auto pass = frame.beginPass(layer.getTexture(), descriptor);
+        pass.setViewport(area);
+
+        layer.onRender(pass, area);
+    }
 
     layer.markRendered();
     ++lastRenderedLayers;
@@ -893,7 +1030,13 @@ void ComponentHost::render(GPU::Frame& frame)
     // there being nothing to tell it the layer had arrived.
     renderLayers(frame);
 
+    // A captured subtree is recorded as its layer renders, so what was painted
+    // there is this frame's painting as much as what the walk paints.
+    auto paintedForLayers = paintedThisWalk;
+
     recordTree();
+
+    lastPaintedComponents += paintedForLayers;
 
     text->setViewport({bounds.w, bounds.h}, backingScale());
     text->begin();

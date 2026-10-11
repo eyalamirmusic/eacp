@@ -264,11 +264,17 @@ private:
     void record(Component& component);
 
     // Draws the recorded lists, in tree order, offsetting each by where its
-    // component sits and clipping it to what its ancestors left of it.
+    // component sits and clipping it to what its ancestors left of it. Steps
+    // over a subtree a Layer captures, which is drawn into that layer instead
+    // -- by playSubtree, the same walk without that one check at its root.
     void playComponent(Component& component,
                        DrawPlayer& player,
                        Point origin,
                        const Rect& clip);
+    void playSubtree(Component& component,
+                     DrawPlayer& player,
+                     Point origin,
+                     const Rect& clip);
 
     // Everything in the subtree has to be painted again: the scale changed, the
     // atlas moved under the uvs, or the tree's default face did.
@@ -295,6 +301,14 @@ private:
     void renderLayers(GPU::Frame& frame);
     void renderLayers(Component& component, GPU::Frame& frame);
     void renderLayer(Layer& layer, GPU::Frame& frame);
+    void renderOwnPass(Layer& layer, GPU::Frame& frame);
+    void playContent(Layer& layer, DrawPlayer& player);
+
+    // Records the subtree a layer captures, if anything in it is stale, so the
+    // layer is drawn from this frame's recordings rather than the last one's.
+    // Returns whether anything was painted, which is what makes the layer
+    // dirty.
+    bool recordContent(Layer& layer);
 
     // Rasterizing every PathShape in the tree whose geometry changed, before
     // the render pass opens. See the definition for why it can only happen here.
@@ -457,6 +471,10 @@ private:
     // Shapes that drew through a mask somebody else had already rasterized.
     int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
+
+    // The captured subtree recordContent is recording, whose layer is about to
+    // be rendered and so needs no telling that its content changed.
+    Component* recordingContent = nullptr;
     int lastImageDraws = 0;
 };
 } // namespace eacp::UI

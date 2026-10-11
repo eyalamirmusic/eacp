@@ -337,7 +337,12 @@ private:
     // Asks the host for a frame without saying that anything this component
     // draws has changed -- what a move, a reorder or a visibility change needs,
     // all of which change the picture without changing any recording in it.
+    //
+    // Which is also the one place every change to a subtree passes through, so
+    // it is where a Layer capturing this component, or any ancestor of it, is
+    // told its texture is out of date. See Layer::setContent.
     void invalidateHost();
+    void markCapturingLayersStale();
 
     // Every ancestor is told that something below it has to be recorded, which
     // is what lets the frame skip a clean subtree without visiting it. Stops at
@@ -376,6 +381,11 @@ private:
 
     DragAndDropTarget* dropTarget = nullptr;
     DragAndDropContainer* dragContainer = nullptr;
+
+    // The layer drawing this subtree into its texture instead of the frame, or
+    // null. Set by Layer::setContent, and what tells the frame's own walk to
+    // step over the subtree.
+    Layer* capturingLayer = nullptr;
 
     // Set on a root only, by ComponentHost::setRootComponent. Everything else
     // walks up to find it, so a subtree moved between hosts needs no fixing up.

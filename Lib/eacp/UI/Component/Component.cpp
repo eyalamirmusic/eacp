@@ -2,6 +2,7 @@
 
 #include "../DragAndDrop/DragAndDrop.h"
 #include "../Host/ComponentHost.h"
+#include "../Render/Layer.h"
 
 #include <ranges>
 
@@ -11,6 +12,9 @@ Component::Component() = default;
 
 Component::~Component()
 {
+    if (capturingLayer != nullptr)
+        capturingLayer->setContent(nullptr);
+
     // Before unlinking, while walking up to the host still reaches it: the host
     // may be holding this as its root, its hover or its press capture, and any
     // of those outliving the component is a dangling write later.
@@ -101,6 +105,12 @@ void Component::removeChildComponent(Component& child)
     // tell the host when one of those components is later destroyed.
     if (auto* found = findHost())
         found->forgetAnimationsIn(child);
+
+    // A captured subtree leaving the tree is let go of rather than followed:
+    // the layer drew it in its place below the owner, and there is no such
+    // place any more.
+    if (child.capturingLayer != nullptr)
+        child.capturingLayer->setContent(nullptr);
 
     child.parent = nullptr;
     children.removeAllMatches(&child);
@@ -347,8 +357,20 @@ void Component::markAncestorsDirty()
 
 void Component::invalidateHost()
 {
+    markCapturingLayersStale();
+
     if (auto* found = findHost())
         found->repaint();
+}
+
+// Up from here rather than only here, since a layer capturing an ancestor
+// draws this component too -- and every layer on the way, since one captured
+// inside another is part of what the outer one drew.
+void Component::markCapturingLayersStale()
+{
+    for (auto* current = this; current != nullptr; current = current->parent)
+        if (current->capturingLayer != nullptr)
+            current->capturingLayer->contentChanged();
 }
 
 float Component::measureText(std::string_view text, const Font& font) const
