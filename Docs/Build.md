@@ -346,7 +346,10 @@ preprocessed text, compiler and flags match an earlier run is restored rather
 than compiled, which is every third-party object on every run — glslang, Miro,
 NanoTest's generated registrations — and most of eacp's own on a change that
 stays inside one module; under the unity build a batch misses as a whole when
-any file in it changed. Each lane's cache is capped at 1 GB and trimmed after
+any file in it changed. It runs in depend mode (`CCACHE_DEPEND`), hashing the
+include files the compiler's own dependency output names rather than running
+the preprocessor a second time, so a miss costs the compile and nothing more.
+Each lane's cache is capped at 1 GB and trimmed after
 the build to what that build touched, so the eight stay inside the repository's
 10 GB. Two configure flags go with it: the Windows lanes pass
 `-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` (`/Z7`), because the default

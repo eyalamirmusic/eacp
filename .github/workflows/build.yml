@@ -66,7 +66,14 @@ jobs:
     # DevicePresenceTests fail rather than let the whole GPU suite self-skip
     # into a silent green, and EACP_VK_SOFTWARE picks the CPU device, which on
     # a runner is the only one there is.
+    #
+    # CCACHE_DEPEND: ccache hashes the source and the include files the
+    # compiler's own dependency output names (-MD, /showIncludes) instead of
+    # running the preprocessor a second time, so a miss costs the compile and
+    # nothing more. What it gives up - a hit after a change the preprocessor
+    # would have erased - never happens on a runner.
     env:
+      CCACHE_DEPEND: '1'
       EACP_HEADLESS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_FONTS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_GPU: ${{ matrix.vulkan && '1' || '' }}
@@ -81,13 +88,17 @@ jobs:
       # earlier run is restored rather than compiled: every third-party object
       # on every run, and most of eacp's own on a change inside one module.
       # The eviction keeps each saved cache to what this build touched, so
-      # eight lanes at 1 GB apiece stay inside the repository's 10 GB.
+      # eight lanes at 1 GB apiece stay inside the repository's 10 GB. The
+      # Windows x64 image carries Strawberry Perl's ccache 4.9.1 on PATH, which
+      # the default detection would take; the binary install is ccache's own
+      # current release on every Windows lane instead.
       - name: Set up the compiler cache
         uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: ${{ matrix.cache-key }}
           max-size: 1G
           evict-old-files: job
+          install: ${{ runner.os == 'Windows' && 'binary' || 'detect' }}
 
       # Everything a Linux build links or generates code with, on every Linux
       # lane: libwayland-client, xkbcommon and libdecor are linked and
