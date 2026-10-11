@@ -11,6 +11,10 @@ namespace
 {
 constexpr auto maximumPathPasses = 9;
 
+// How far an unclipped component's recording reaches either way, in points:
+// past any surface, and well inside what a float holds exactly.
+constexpr auto unclippedReach = 1.0e6f;
+
 FileDropTarget* asInterestedFileDropTarget(Component& component,
                                            const Vector<std::string>& files)
 {
@@ -421,6 +425,14 @@ void ComponentHost::record(Component& component)
 {
     auto local = component.getLocalBounds();
 
+    // Recorded against no edge at all when the component may paint past its
+    // own: the walk that plays it back is what cuts it, to its parent's clip.
+    if (component.isPaintingUnclipped())
+        local = {-unclippedReach,
+                 -unclippedReach,
+                 unclippedReach * 2.f,
+                 unclippedReach * 2.f};
+
     component.paintList.clear();
     component.overList.clear();
 
@@ -534,8 +546,10 @@ void ComponentHost::playComponent(Component& component,
     auto position = Point {origin.x + bounds.x, origin.y + bounds.y};
 
     // Where this component may draw, in surface points: its own bounds, narrowed
-    // by everything its ancestors left of them.
-    auto visible = clip.intersection({position.x, position.y, bounds.w, bounds.h});
+    // by everything its ancestors left of them -- or, for one painting
+    // unclipped, everything they left whatever its bounds.
+    auto own = Rect {position.x, position.y, bounds.w, bounds.h};
+    auto visible = component.isPaintingUnclipped() ? clip : clip.intersection(own);
 
     // A component scrolled out of its parent, or entirely behind an opaque
     // ancestor's clip, costs nothing at all. The whole subtree goes with it,

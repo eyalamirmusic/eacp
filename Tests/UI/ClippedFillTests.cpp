@@ -59,6 +59,24 @@ struct ClippedFills final : Component
 
     PathShape shape {*this};
 };
+
+struct Overhang final : Component
+{
+    void paint(UI::Graphics& g) override
+    {
+        g.setColour(red);
+        g.fillRect({-20.f, 0.f, getWidth() + 40.f, getHeight()});
+    }
+};
+
+struct OverhangParent final : Component
+{
+    OverhangParent() { addAndMakeVisible(child); }
+
+    void resized() override { child.setBounds({100.f, 50.f, 100.f, 50.f}); }
+
+    Overhang child;
+};
 } // namespace
 
 auto tClippedFills = test("ClippedFill/aFillUnderAClipAwayFromTheOriginDraws") = []
@@ -85,4 +103,34 @@ auto tClippedFills = test("ClippedFill/aFillUnderAClipAwayFromTheOriginDraws") =
         check(at(75.f, 30.f).a < 0.1f, "and nothing above the clip");
         check(at(225.f, 30.f).a < 0.1f);
     }
+};
+
+auto tUnclipped = test("ClippedFill/anUnclippedComponentPaintsPastItsBounds") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto host = ComponentHost {};
+    auto parent = OverhangParent {};
+
+    host.setBackgroundColour({0.f, 0.f, 0.f, 0.f});
+    host.setBounds({0.f, 0.f, 300.f, 150.f});
+    host.resized();
+    host.setRootComponent(parent);
+    parent.setBounds({0.f, 0.f, 300.f, 150.f});
+
+    auto at = [](const auto& image, float x, float y)
+    { return image.at((int) x, (int) y); };
+
+    auto clipped = host.renderToImage(1.f);
+
+    check(isColour(at(clipped, 150.f, 75.f), red));
+    check(at(clipped, 90.f, 75.f).a < 0.1f, "cut at its bounds by default");
+
+    parent.child.setPaintingIsUnclipped(true);
+    auto unclipped = host.renderToImage(1.f);
+
+    check(isColour(at(unclipped, 90.f, 75.f), red), "past its left edge");
+    check(isColour(at(unclipped, 210.f, 75.f), red), "and its right");
+    check(at(unclipped, 150.f, 30.f).a < 0.1f, "and nowhere it did not paint");
 };

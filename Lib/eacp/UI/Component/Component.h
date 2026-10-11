@@ -93,6 +93,13 @@ public:
     void setInterceptsMouseClicks(bool shouldIntercept);
     bool getInterceptsMouseClicks() const;
 
+    // Whether paint() may draw past this component's bounds, as
+    // juce::Component::setPaintingIsUnclipped. What it draws is still cut by
+    // the clip its parent was left with, and its children are still cut by
+    // their own bounds. Off by default.
+    void setPaintingIsUnclipped(bool shouldBeUnclipped);
+    bool isPaintingUnclipped() const;
+
     // Shown while the pointer is over this component, and at once when it
     // already is: a tool whose pointer changes with the tool chosen does not
     // wait for the pointer to move.
@@ -376,6 +383,7 @@ private:
 
     bool visible = true;
     bool interceptsMouseClicks = false;
+    bool paintingIsUnclipped = false;
     bool wantsKeyboardFocus = false;
     bool mouseOver = false;
 

@@ -459,6 +459,20 @@ bool Component::getInterceptsMouseClicks() const
     return interceptsMouseClicks;
 }
 
+void Component::setPaintingIsUnclipped(bool shouldBeUnclipped)
+{
+    if (paintingIsUnclipped == shouldBeUnclipped)
+        return;
+
+    paintingIsUnclipped = shouldBeUnclipped;
+    repaint();
+}
+
+bool Component::isPaintingUnclipped() const
+{
+    return paintingIsUnclipped;
+}
+
 const eacp::Graphics::MouseCursor& Component::getMouseCursor() const
 {
     return cursor;
