@@ -72,8 +72,16 @@ jobs:
     # running the preprocessor a second time, so a miss costs the compile and
     # nothing more. What it gives up - a hit after a change the preprocessor
     # would have erased - never happens on a runner.
+    #
+    # The npm_config_* three shape the `npm install` the configure runs for
+    # each WebView example's Vite frontend: resolve from the cache below while
+    # it holds the package, and skip the audit and the funding notice, which
+    # are a registry round trip per app for nothing a runner acts on.
     env:
       CCACHE_DEPEND: '1'
+      npm_config_prefer_offline: 'true'
+      npm_config_audit: 'false'
+      npm_config_fund: 'false'
       EACP_HEADLESS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_FONTS: ${{ startsWith(matrix.os, 'ubuntu') && '1' || '' }}
       EACP_REQUIRE_GPU: ${{ matrix.vulkan && '1' || '' }}
@@ -99,6 +107,25 @@ jobs:
           max-size: 1G
           evict-old-files: job
           install: ${{ runner.os == 'Windows' && 'binary' || 'detect' }}
+
+      # The configure installs each WebView example's Vite frontend with one
+      # `npm install` after another, which on the windows-11-arm runners takes
+      # 20 seconds apiece against 3 on x64 - two thirds of that lane's
+      # configure. npm's own cache, keyed on the lock files, lets each install
+      # take its packages from disk. Where the cache lives is npm's to say
+      # (~/.npm on Linux and macOS, %LocalAppData%\npm-cache on Windows), so it is
+      # asked.
+      - name: Find the npm cache
+        id: npm-cache
+        shell: bash
+        run: echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up the npm cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.npm-cache.outputs.dir }}
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Apps/**/web/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
 
       # Everything a Linux build links or generates code with, on every Linux
       # lane: libwayland-client, xkbcommon and libdecor are linked and
