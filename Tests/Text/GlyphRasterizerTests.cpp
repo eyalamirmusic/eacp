@@ -194,6 +194,39 @@ auto tStylesProduceDifferentGlyphs =
     check(ink(bold) > ink(regular));
 };
 
+// A face asked for by its PostScript name is that face at the regular style,
+// not whichever face of its family sits nearest the regular weight.
+auto tPostScriptNameKeepsItsFace =
+    test("GlyphRasterizer/aPostScriptNameDrawsThatFace") = []
+{
+    if constexpr (!Platform::isApple())
+        return;
+
+    auto named = monospaceRequest(32.f);
+    named.family = "Menlo-Bold";
+
+    const auto byName = GlyphRasterizer {named};
+    const auto family = GlyphRasterizer {monospaceRequest(32.f)};
+
+    if (!byName.isValid() || !family.isValid())
+        return;
+
+    const auto ink = [](const GlyphBitmap& bitmap)
+    {
+        long long total = 0;
+
+        for (const auto value: bitmap.pixels)
+            total += value;
+
+        return total;
+    };
+
+    const auto drawn = ink(byName.rasterize(U'H', FontStyle::Regular));
+
+    check(drawn == ink(family.rasterize(U'H', FontStyle::Bold)));
+    check(drawn > ink(family.rasterize(U'H', FontStyle::Regular)));
+};
+
 // An unassigned codepoint must come back describing itself honestly rather than
 // crashing or lying about its size.
 //
