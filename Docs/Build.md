@@ -357,12 +357,7 @@ the build to what that build touched, so the eight stay inside the repository's
 no per-object cache can restore, and `EACP_PCH` stays off (see above). CPM's
 sources are not cached: every dependency but glslang and the Vulkan trio is
 pinned to `main`, and a cached checkout of a moving branch is never
-re-fetched. npm's cache is, keyed on the WebView examples' lock files
-(`actions/cache`): the configure runs one `npm install` per example's Vite
-frontend, serially, and on the Windows ARM64 runners each took 20 seconds
-against the registry; the installs run with `prefer-offline`, so a package the
-cache holds is never asked about again, and with the audit and funding notices
-off.
+re-fetched.
 
 The Linux lanes install the packages listed in [Linux.md](Linux.md), and the
 `Dockerfile` reproduces their three steps — a headless build, the suite under
