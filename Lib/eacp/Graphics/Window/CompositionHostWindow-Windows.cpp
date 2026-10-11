@@ -1017,7 +1017,7 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
     // dragged, an embedded editor a plugin host is resizing), and a start point
     // kept in client space would report that movement as pointer travel. A
     // wheel event has no drag behind it, so it reports itself.
-    if (event.type == MouseEventType::Wheel)
+    if (event.type == MouseEventType::Wheel || event.type == MouseEventType::Magnify)
     {
         event.downPos = event.pos;
     }
@@ -1058,6 +1058,44 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
     contentView->dispatchMouseEvent(event);
     ensureAllLayersRendered(contentView);
+}
+
+bool CompositionHostWindow::dispatchZoomGesture(LPARAM lParam)
+{
+    auto handle = reinterpret_cast<HGESTUREINFO>(lParam);
+    auto info = GESTUREINFO {};
+    info.cbSize = sizeof(info);
+
+    if (!GetGestureInfo(handle, &info) || info.dwID != GID_ZOOM)
+        return false;
+
+    const auto distance =
+        static_cast<double>(static_cast<DWORD>(info.ullArguments));
+    const auto began = (info.dwFlags & GF_BEGIN) != 0;
+
+    MouseEvent event;
+    event.type = MouseEventType::Magnify;
+    event.button = MouseButton::Other;
+    event.modifiers = getModifiers();
+    event.pos = fromScreenPixels(POINT {info.ptsLocation.x, info.ptsLocation.y});
+
+    if (began)
+    {
+        event.scrollPhase = ScrollPhase::Began;
+    }
+    else
+    {
+        event.scrollPhase = (info.dwFlags & GF_END) != 0 ? ScrollPhase::Ended
+                                                         : ScrollPhase::Changed;
+        event.magnifyScale =
+            magnifyScaleBetweenDistances(zoomGestureDistance, distance);
+    }
+
+    zoomGestureDistance = distance;
+
+    dispatchMouseToContentView(event);
+    CloseGestureInfoHandle(handle);
+    return true;
 }
 
 std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
@@ -1258,6 +1296,11 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 dispatchMouseToContentView(event);
             }
             return 0;
+
+        case WM_GESTURE:
+            if (contentView && dispatchZoomGesture(lParam))
+                return 0;
+            return std::nullopt;
 
         case WM_KEYDOWN:
         case WM_KEYUP:

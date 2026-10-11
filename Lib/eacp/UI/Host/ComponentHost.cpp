@@ -918,6 +918,7 @@ MouseEvent ComponentHost::makeEvent(const Component& target,
     result.clickCount = event.clickCount;
     result.wheelDelta = event.delta;
     result.preciseWheel = event.preciseScrolling;
+    result.magnifyScale = event.magnifyScale;
     result.fromTouch = event.fromTouch;
     result.timestamp = event.timestamp;
 
@@ -1236,6 +1237,23 @@ void ComponentHost::mouseWheel(const eacp::Graphics::MouseEvent& hostEvent)
     while (target != nullptr)
     {
         if (target->mouseWheelMove(makeEvent(*target, event)))
+            return;
+
+        target = target->getParentComponent();
+    }
+}
+
+void ComponentHost::mouseMagnify(const eacp::Graphics::MouseEvent& hostEvent)
+{
+    if (root == nullptr)
+        return;
+
+    auto event = inRootSpace(hostEvent);
+    auto* target = root->getComponentAt(event.pos);
+
+    while (target != nullptr)
+    {
+        if (target->mouseMagnify(makeEvent(*target, event)))
             return;
 
         target = target->getParentComponent();

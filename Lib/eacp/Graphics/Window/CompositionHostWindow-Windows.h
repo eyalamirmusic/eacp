@@ -154,6 +154,7 @@ private:
     void layOutContentView();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(MouseEvent event);
+    bool dispatchZoomGesture(LPARAM lParam);
 
     POINT toScreenPixels(Point position) const;
     Point fromScreenPixels(POINT screenPixels) const;
@@ -166,6 +167,8 @@ private:
     // MouseEvent::delta is the difference. Empty until the pointer is seen,
     // and again once it has left, so a return does not report the jump.
     std::optional<Point> lastPointerPosition;
+
+    double zoomGestureDistance = 0.0;
 
     // The mouse's own movement, which the ordinary pointer messages cannot
     // report: they carry the pointer's position after the system's acceleration

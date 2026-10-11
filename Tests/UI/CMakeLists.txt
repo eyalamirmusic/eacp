@@ -13,6 +13,7 @@ nano_add_executable(UITests
             ImageBatchTests.cpp
             KeyboardTests.cpp
             ListBoxTests.cpp
+            MagnifyTests.cpp
             MaskCacheTests.cpp
             LayerTests.cpp
             ModuleShaderTests.cpp

@@ -137,6 +137,23 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
     }
 }
 
+ScrollPhase gesturePhaseFromEvent(NSEvent* event)
+{
+    switch (event.phase)
+    {
+        case NSEventPhaseBegan:
+        case NSEventPhaseMayBegin:
+            return ScrollPhase::Began;
+        case NSEventPhaseChanged:
+            return ScrollPhase::Changed;
+        case NSEventPhaseEnded:
+        case NSEventPhaseCancelled:
+            return ScrollPhase::Ended;
+        default:
+            return ScrollPhase::None;
+    }
+}
+
 ScrollPhase scrollPhaseFromEvent(NSEvent* event)
 {
     // Momentum is reported on its own phase mask; it is checked first because an
@@ -153,22 +170,8 @@ ScrollPhase scrollPhaseFromEvent(NSEvent* event)
             break;
     }
 
-    switch (event.phase)
-    {
-        case NSEventPhaseBegan:
-        case NSEventPhaseMayBegin:
-            return ScrollPhase::Began;
-        case NSEventPhaseChanged:
-            return ScrollPhase::Changed;
-        case NSEventPhaseEnded:
-        case NSEventPhaseCancelled:
-            return ScrollPhase::Ended;
-        default:
-            break;
-    }
-
     // A notched wheel reports no phase at all.
-    return ScrollPhase::None;
+    return gesturePhaseFromEvent(event);
 }
 
 void scrollWheel(id self, SEL, NSEvent* event)
@@ -194,6 +197,26 @@ void scrollWheel(id self, SEL, NSEvent* event)
     e.rawDelta = e.delta;
 
     e.downPos = e.pos;
+
+    if (auto* view = getView(root))
+        view->dispatchMouseEvent(e);
+}
+
+void magnifyWithEvent(id self, SEL, NSEvent* event)
+{
+    auto* root = getRootView(self);
+    auto localPos = [root convertPoint:[event locationInWindow] fromView:nil];
+
+    auto e = MouseEvent();
+
+    e.pos = {(float) localPos.x, (float) localPos.y};
+    e.downPos = e.pos;
+    e.type = MouseEventType::Magnify;
+    e.button = MouseButton::Other;
+    e.modifiers = modifierKeysFromEvent(event);
+    e.timestamp = event.timestamp;
+    e.scrollPhase = gesturePhaseFromEvent(event);
+    e.magnifyScale = magnifyScaleFromMagnification(event.magnification);
 
     if (auto* view = getView(root))
         view->dispatchMouseEvent(e);
@@ -628,6 +651,7 @@ Class getNativeViewClass()
         builder->addMethod(@selector(mouseEntered:), mouseEntered);
         builder->addMethod(@selector(mouseExited:), mouseExited);
         builder->addMethod(@selector(scrollWheel:), scrollWheel);
+        builder->addMethod(@selector(magnifyWithEvent:), magnifyWithEvent);
         builder->addMethod(@selector(rightMouseDown:), mouseDown);
         builder->addMethod(@selector(rightMouseUp:), mouseUp);
         builder->addMethod(@selector(rightMouseDragged:), mouseDragged);

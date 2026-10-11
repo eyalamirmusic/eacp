@@ -492,6 +492,11 @@ bool Component::mouseWheelMove(const MouseEvent&)
     return false;
 }
 
+bool Component::mouseMagnify(const MouseEvent&)
+{
+    return false;
+}
+
 bool Component::interceptsTouch(const MouseEvent&)
 {
     return false;

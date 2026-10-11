@@ -43,7 +43,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
   the other way, `startFileDrag(paths, options)` from a view's or a
   component's mouse handler drags files out to Finder, Explorer or a DAW,
   optionally letting the receiver move them and reporting `Cancelled`,
-  `Copied` or `Moved` once it ends (macOS and Windows). On a
+  `Copied` or `Moved` once it ends (macOS and Windows). A trackpad pinch
+  reaches the view under the pointer as `mouseMagnify`, each step a
+  `magnifyScale` to multiply the zoom by (1.25 is a quarter larger) with the
+  gesture's Began / Changed / Ended in `scrollPhase`, and a
+  `UI::ComponentHost` hands it to the component under the pointer and up the
+  tree until a `Component::mouseMagnify` returns true, as it does the wheel
+  (macOS, and touch-screen zoom gestures on Windows). On a
   touch screen a view that calls `setHandlesTouchEvents()`
   gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
   `touchEnded`, one id per finger, held by the view it came down on, with its contact

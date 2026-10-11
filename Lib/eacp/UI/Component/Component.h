@@ -166,6 +166,11 @@ public:
     // code at all to let its parent have it.
     virtual bool mouseWheelMove(const MouseEvent&);
 
+    // A trackpad pinch, event.magnifyScale being the step's zoom factor. Goes
+    // where the wheel goes and, like it, up the tree until something returns
+    // true.
+    virtual bool mouseMagnify(const MouseEvent&);
+
     // A finger, unlike a pointer, is how a list is scrolled, so a press on a
     // button inside a scrolling panel may turn out to be the start of a scroll.
     // These three settle which, for touches only; a mouse press always belongs

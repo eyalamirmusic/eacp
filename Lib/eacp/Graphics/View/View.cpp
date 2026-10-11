@@ -95,6 +95,7 @@ void View::mouseMoved(const MouseEvent&) {}
 void View::mouseEntered(const MouseEvent&) {}
 void View::mouseExited(const MouseEvent&) {}
 void View::mouseWheel(const MouseEvent&) {}
+void View::mouseMagnify(const MouseEvent&) {}
 
 bool View::fileDragEnter(const Vector<std::string>&, Point)
 {
@@ -399,6 +400,9 @@ void View::handleMouseEvent(const MouseEvent& event)
             break;
         case MouseEventType::Wheel:
             mouseWheel(event);
+            break;
+        case MouseEventType::Magnify:
+            mouseMagnify(event);
             break;
     }
 }

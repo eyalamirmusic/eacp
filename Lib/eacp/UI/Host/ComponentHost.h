@@ -199,6 +199,7 @@ public:
     void mouseMoved(const eacp::Graphics::MouseEvent& event) override;
     void mouseExited(const eacp::Graphics::MouseEvent& event) override;
     void mouseWheel(const eacp::Graphics::MouseEvent& event) override;
+    void mouseMagnify(const eacp::Graphics::MouseEvent& event) override;
 
     // Files dragged in from the OS, handed to the FileDropTarget components in
     // the tree. The host accepts file drops from construction; turn it off with

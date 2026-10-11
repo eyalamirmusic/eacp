@@ -5,6 +5,7 @@
 #include "../Graphics/Keyboard.h"
 #include "MouseCursor.h"
 #include "FileDrag.h"
+#include "Magnify.h"
 
 #include <functional>
 #include <string>
@@ -29,7 +30,8 @@ enum class MouseEventType
     Moved,
     Entered,
     Exited,
-    Wheel
+    Wheel,
+    Magnify
 };
 
 enum class MouseButton
@@ -104,8 +106,13 @@ struct MouseEvent
     // preference, so this is intent, not raw device motion — do not invert it.
     bool preciseScrolling = false;
 
-    // Wheel events only. See ScrollPhase.
+    // Wheel and magnify events. See ScrollPhase; a magnify gesture runs
+    // Began -> Changed -> Ended and never reports Momentum.
     ScrollPhase scrollPhase = ScrollPhase::None;
+
+    // Magnify events only: how much this step of the pinch zooms, as a factor
+    // to multiply the current zoom by. 1 is no change, above 1 zooms in.
+    float magnifyScale = 1.0f;
 
     // A finger rather than a pointer: a touch the view did not take as touches
     // and was handed as the left button instead. What lets a scrolling list
@@ -241,6 +248,12 @@ public:
     // x horizontal): lines for a notched wheel, points for a trackpad, and
     // event.preciseScrolling says which.
     virtual void mouseWheel(const MouseEvent&);
+
+    // Trackpad pinch, delivered like the wheel to the view under the pointer.
+    // event.magnifyScale is the step's zoom factor, event.scrollPhase where the
+    // gesture is. macOS and Windows; nothing calls it on Linux or iOS.
+    virtual void mouseMagnify(const MouseEvent&);
+
     // Only for views that set handlesTouchEvents; a finger stays with the view it
     // came down on. Other views get the first finger as mouse events.
     virtual void touchBegan(const TouchEvent&);
