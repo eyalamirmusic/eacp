@@ -137,7 +137,7 @@ private:
     // Segments a curve or an arc needs to stay within flatness of the real
     // thing. Both fall out of the same fact: uniform subdivision cuts the
     // deviation by the square of the count.
-    int segmentsForCurve(float secondDifference) const;
+    int segmentsForCurve(float secondDifference, int degree) const;
     int segmentsForArc(float radius, float sweep) const;
 
     Vector<SubPath> subPaths;

@@ -97,6 +97,29 @@ auto tPathFlatten = test("GPUWidgets/pathCurveFlattening") = []
     }
 };
 
+// A quarter circle written as the usual cubic is held to the path's flatness:
+// no chord of its polyline cuts further inside the circle than that.
+auto tCubicFlatness = test("GPUWidgets/aCubicQuarterCircleHoldsItsFlatness") = []
+{
+    const auto radius = 30.0f;
+    const auto reach = radius * 0.5522847f;
+
+    auto path = Path {};
+    path.moveTo({radius, 0.0f});
+    path.cubicTo(radius, reach, reach, radius, 0.0f, radius);
+
+    const auto& points = path.getSubPaths()[0].points;
+    const auto allowed = path.getFlatness() + radius * 3e-4f;
+
+    for (auto i = 1; i < points.size(); ++i)
+    {
+        auto midX = (points[i - 1].x + points[i].x) * 0.5f;
+        auto midY = (points[i - 1].y + points[i].y) * 0.5f;
+
+        check(radius - std::sqrt(midX * midX + midY * midY) <= allowed);
+    }
+};
+
 // A convex quad triangulates into exactly two triangles (six vertices) and the
 // triangle list covers the same area as the quad.
 auto tTessellateRect = test("GPUWidgets/tessellateRectangle") = []

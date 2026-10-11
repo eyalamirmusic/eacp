@@ -36,12 +36,14 @@ void Path::setFlatness(float toleranceInPathUnits)
     flatness = std::max(toleranceInPathUnits, epsilon);
 }
 
-// A Bezier split into n uniform pieces strays from its polyline by at most
-// d / (8 n^2), where d is the largest second difference of its control points.
-// Turned around, that is the count which holds the error to flatness.
-int Path::segmentsForCurve(float difference) const
+// A Bezier of degree k split into n uniform pieces strays from its polyline by
+// at most k (k - 1) d / (8 n^2), where d is the largest second difference of its
+// control points (Wang's bound). Turned around, that is the count which holds
+// the error to flatness.
+int Path::segmentsForCurve(float difference, int degree) const
 {
-    auto needed = std::ceil(std::sqrt(difference / (8.0f * flatness)));
+    auto spread = (float) (degree * (degree - 1)) * difference;
+    auto needed = std::ceil(std::sqrt(spread / (8.0f * flatness)));
     return std::clamp((int) needed, 1, maxCurveSegments);
 }
 
@@ -102,7 +104,7 @@ void Path::quadTo(float controlX, float controlY, float endX, float endY)
     auto control = Graphics::Point {controlX, controlY};
     auto end = Graphics::Point {endX, endY};
     auto& points = currentSubPath().points;
-    auto steps = segmentsForCurve(secondDifference(start, control, end));
+    auto steps = segmentsForCurve(secondDifference(start, control, end), 2);
 
     for (auto i = 1; i <= steps; ++i)
     {
@@ -131,7 +133,7 @@ void Path::cubicTo(float control1X,
     // A cubic bows about either of its two second differences, so the tighter
     // of the two decides the count.
     auto steps = segmentsForCurve(
-        std::max(secondDifference(p0, p1, p2), secondDifference(p1, p2, p3)));
+        std::max(secondDifference(p0, p1, p2), secondDifference(p1, p2, p3)), 3);
 
     for (auto i = 1; i <= steps; ++i)
     {
