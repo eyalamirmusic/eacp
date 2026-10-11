@@ -81,6 +81,7 @@ MTLPixelFormat toMetalBlockFormat(TextureFormat format)
             case TextureFormat::RGBA16Unorm:
             case TextureFormat::RGB10A2Unorm:
             case TextureFormat::RG11B10Float:
+            case TextureFormat::RGB9E5Float:
             case TextureFormat::R8Uint:
             case TextureFormat::RG8Uint:
             case TextureFormat::RGBA8Uint:
@@ -148,6 +149,8 @@ MTLPixelFormat toMetalFormat(TextureFormat format)
             return MTLPixelFormatRGB10A2Unorm;
         case TextureFormat::RG11B10Float:
             return MTLPixelFormatRG11B10Float;
+        case TextureFormat::RGB9E5Float:
+            return MTLPixelFormatRGB9E5Float;
         case TextureFormat::R8Uint:
             return MTLPixelFormatR8Uint;
         case TextureFormat::RG8Uint:
@@ -309,14 +312,12 @@ struct Texture::Native
         if (computeWrite && !deviceToUse.supportsComputeWrite(descriptor.format))
             return;
 
-        if (isCompressedFormat(format))
-        {
-            if (renderTarget || computeWrite)
-                return;
+        // See the block formats and RGB9E5Float in Texture.h: sampled only.
+        if (!isRenderableFormat(format) && (renderTarget || computeWrite))
+            return;
 
-            if (!deviceToUse.supportsBlockCompression())
-                return;
-        }
+        if (isCompressedFormat(format) && !deviceToUse.supportsBlockCompression())
+            return;
 
         if (shape.kind == TextureType::CubeArray && !deviceToUse.supportsCubeArrays())
             return;

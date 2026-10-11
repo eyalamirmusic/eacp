@@ -270,13 +270,13 @@ public:
     // texture asked for computeWrite in it is created rather than invalid, and
     // ComputePass::setOutputTexture and its siblings bind it. Every format
     // the portable supportsComputeWrite() set names, and past it the device's
-    // own answer: every uncompressed format but BGRA8Unorm and the sRGB ones
-    // on Metal, the packed and integer formats included; on D3D12 the driver's
-    // D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE; on Vulkan
-    // VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT. BGRA8Unorm, every sRGB format and
-    // the block formats are refused everywhere, so the drawable's format as a
-    // kernel output is a mistake the Mac catches too. An invalid Device
-    // answers no.
+    // own answer: every uncompressed format but BGRA8Unorm, the sRGB ones and
+    // RGB9E5Float on Metal, the packed and integer formats included; on D3D12
+    // the driver's D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE; on Vulkan
+    // VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT. BGRA8Unorm, every sRGB format,
+    // RGB9E5Float and the block formats are refused everywhere, so the
+    // drawable's format as a kernel output is a mistake the Mac catches too.
+    // An invalid Device answers no.
     bool supportsComputeWrite(TextureFormat format) const;
 
     // Whether a kernel can also *read* such a texture through the bind it
@@ -295,7 +295,9 @@ public:
 
     // Whether Frame::generateMipmaps (and CommandBuffer's) can fill a
     // texture of this format's chain on the GPU. Never a block-compressed or
-    // an integer format, there being nothing to average in either. Metal's
+    // an integer format, there being nothing to average in either, nor
+    // RGB9E5Float, which no API's generator promises to write (its chain is
+    // the CPU's, from `mipmapped`). Metal's
     // blit filters every other one, the 32-bit floats only where the device
     // filters them (supports32BitFloatFiltering, every Apple-silicon Mac);
     // D3D12 runs eacp's own box-filter kernel through typed UAV loads and

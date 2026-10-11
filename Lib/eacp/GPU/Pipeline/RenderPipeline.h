@@ -24,7 +24,8 @@ enum class PixelFormat
     RGBA32Float,
     R32Float,
 
-    // Every uncompressed TextureFormat has its attachment format. The integer
+    // Every renderable TextureFormat (isRenderableFormat: all but the block
+    // formats and RGB9E5Float) has its attachment format. The integer
     // ones - R32Uint and the Uint and Sint members below - are integer
     // attachments: the fragment function returns a uint or an int of the
     // target's width, and they take no blending. The sRGB ones encode what
@@ -64,7 +65,7 @@ enum class PixelFormat
 // Exhaustive rather than defaulted, so that a texture format added without an
 // attachment format is a -Wswitch warning here rather than a pipeline silently
 // built against RGBA8. The formats that fall through are the block-compressed
-// ones, which cannot be a render target at all.
+// ones and RGB9E5Float, which cannot be a render target at all.
 constexpr PixelFormat pixelFormatFor(TextureFormat format)
 {
     switch (format)
@@ -153,6 +154,7 @@ constexpr PixelFormat pixelFormatFor(TextureFormat format)
         case TextureFormat::BC5RGUnorm:
         case TextureFormat::BC5RGSnorm:
         case TextureFormat::BC6HRGBUfloat:
+        case TextureFormat::RGB9E5Float:
             break;
     }
 
@@ -160,7 +162,7 @@ constexpr PixelFormat pixelFormatFor(TextureFormat format)
 }
 
 // The way back: the texture format an attachment format is the attachment of.
-// Total, every PixelFormat being an uncompressed TextureFormat, which is what
+// Total, every PixelFormat being a renderable TextureFormat, which is what
 // lets each backend map one table of native formats rather than two.
 constexpr TextureFormat textureFormatFor(PixelFormat format)
 {

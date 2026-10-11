@@ -276,7 +276,7 @@ bool Device::supportsLayeredRendering() const
 // image2D - leans on shaderStorageImageWriteWithoutFormat instead.
 bool Device::supportsComputeWrite(TextureFormat format) const
 {
-    if (!isValid() || isCompressedFormat(format) || isSrgbFormat(format)
+    if (!isValid() || !isRenderableFormat(format) || isSrgbFormat(format)
         || format == TextureFormat::BGRA8Unorm)
         return false;
 
@@ -296,7 +296,9 @@ bool Device::supportsComputeReadWrite(TextureFormat format) const
 // A chain of vkCmdBlitImage with a linear filter, level to level.
 bool Device::supportsMipGeneration(TextureFormat format) const
 {
-    if (!isValid() || isCompressedFormat(format) || isIntegerFormat(format))
+    // A blit into E5B9G9R9 is not something Vulkan promises (BLIT_DST rides
+    // on the colour-attachment feature), so it is refused without asking.
+    if (!isValid() || !isRenderableFormat(format) || isIntegerFormat(format))
         return false;
 
     VkFormatProperties properties = {};

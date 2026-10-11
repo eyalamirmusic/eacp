@@ -113,7 +113,9 @@ struct MipChain
 // GPU's own generator averages them. An sRGB picture kept in RGBA8Unorm is
 // averaged in code values, which darkens a mip slightly against the physically
 // correct answer; choosing RGBA8UnormSrgb is how to say the bytes are colour.
-// RGB10A2Unorm and RG11B10Float are unpacked, averaged per channel and packed.
+// RGB10A2Unorm and RG11B10Float are unpacked, averaged per channel and packed;
+// RGB9E5Float is decoded to float, averaged and encoded at the brightest
+// channel's exponent again.
 MipChain buildMipChain(const void* pixels,
                        int width,
                        int height,

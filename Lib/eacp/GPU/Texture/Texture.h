@@ -109,6 +109,25 @@ enum class TextureFormat
     RGB10A2Unorm,
     RG11B10Float,
 
+    // Three unsigned floats sharing one exponent: nine bits of mantissa each
+    // for red, green and blue (red lowest) and a five-bit exponent at the top
+    // of the word, bias 15 - DXGI's R9G9B9E5_SHAREDEXP, Vulkan's
+    // E5B9G9R9_UFLOAT_PACK32, Metal's RGB9E5Float. HDR colour at a quarter of
+    // RGBA32Float's cost with more mantissa than RG11B10Float, at the price of
+    // a channel far darker than the brightest losing its low bits: a light
+    // probe, an irradiance map, a baked environment. Samples with an alpha of
+    // 1 and filters everywhere.
+    //
+    // **A sampled format only.** No API promises to render into it (Metal
+    // does on Apple GPUs and not on the Mac2 family, D3D12 and Vulkan never),
+    // nor a kernel to store to it, so a renderTarget or a computeWrite texture
+    // in it is invalid, as a block format's is, and it has no PixelFormat;
+    // isRenderableFormat says so. Uploaded, updated, read back and copied like
+    // any 32-bit format, and `mipmapped` builds its chain on the CPU through
+    // float; generateMipmaps refuses it (supportsMipGeneration), the GPU's
+    // generators wanting a format they can render into.
+    RGB9E5Float,
+
     // The integer formats beside R32Uint, each read as integers - texture2d<uint>
     // or texture2d<int>, Texture2D<uint4> or Texture2D<int4>, usampler2D or
     // isampler2D - with read(), Load or texelFetch rather than a filtering
@@ -262,6 +281,7 @@ constexpr TextureFormatTraits textureFormatTraits(TextureFormat format)
         case TextureFormat::RGB10A2Unorm:
             return {4, 0, 4, Kind::Unorm};
         case TextureFormat::RG11B10Float:
+        case TextureFormat::RGB9E5Float:
             return {4, 0, 3, Kind::Float};
 
         case TextureFormat::R8Uint:
@@ -335,6 +355,15 @@ constexpr bool isCompressedFormat(TextureFormat format)
     return textureFormatTraits(format).blockBytes > 0;
 }
 
+// Whether a pass can render into this format and a kernel can be asked to
+// store to it: every format but the block-compressed ones and RGB9E5Float,
+// which are sampled only. Each such format has its PixelFormat
+// (pixelFormatFor), and textureFormatFor is its way back.
+constexpr bool isRenderableFormat(TextureFormat format)
+{
+    return !isCompressedFormat(format) && format != TextureFormat::RGB9E5Float;
+}
+
 // Bytes one 4x4 block occupies, and 0 for a format that has no blocks. Both
 // APIs round a level up to whole blocks, so a 2x2 level of a compressed texture
 // is still one block of this size and a 1x1 level is too.
@@ -384,8 +413,8 @@ constexpr int levelBytes(TextureFormat format, int width, int height)
     return levelBytesPerRow(format, width) * levelRows(format, height);
 }
 
-// Whether a texel holds floats: the half and full float formats, RG11B10Float
-// and BC6H.
+// Whether a texel holds floats: the half and full float formats, RG11B10Float,
+// RGB9E5Float and BC6H.
 constexpr bool isFloatFormat(TextureFormat format)
 {
     return textureFormatTraits(format).kind == TextureFormatKind::Float;
@@ -575,7 +604,8 @@ struct TextureDescriptor
     // uploaded to and sampled should not pay for either.
     //
     // A render target's pixels come from the GPU, so update() is not the way to
-    // fill one and a null `pixels` is the only thing to create one with.
+    // fill one and a null `pixels` is the only thing to create one with. Only a
+    // format isRenderableFormat() takes may ask for it.
     bool renderTarget = false;
 
     // Whether a compute kernel can write into this texture - the other way its

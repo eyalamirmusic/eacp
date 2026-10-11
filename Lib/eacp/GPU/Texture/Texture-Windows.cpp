@@ -63,6 +63,8 @@ DXGI_FORMAT toDXGIFormat(TextureFormat format)
             return DXGI_FORMAT_R10G10B10A2_UNORM;
         case TextureFormat::RG11B10Float:
             return DXGI_FORMAT_R11G11B10_FLOAT;
+        case TextureFormat::RGB9E5Float:
+            return DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
         case TextureFormat::R8Uint:
             return DXGI_FORMAT_R8_UINT;
         case TextureFormat::RG8Uint:
@@ -269,15 +271,13 @@ struct Texture::Native
             data.sampleCount = descriptor.sampleCount;
         }
 
-        // See the block formats in Texture.h.
-        if (isCompressedFormat(format))
-        {
-            if (descriptor.renderTarget || descriptor.computeWrite)
-                return;
+        // See the block formats and RGB9E5Float in Texture.h: sampled only.
+        if (!isRenderableFormat(format)
+            && (descriptor.renderTarget || descriptor.computeWrite))
+            return;
 
-            if (!device.supportsBlockCompression())
-                return;
-        }
+        if (isCompressedFormat(format) && !device.supportsBlockCompression())
+            return;
 
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;

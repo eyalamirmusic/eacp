@@ -2,6 +2,7 @@
 
 #include "../Codegen/PackedScalars.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -369,6 +370,98 @@ void halvePackedFloats(const std::uint8_t* source,
             std::memcpy(destination + (y * destinationWidth + x) * 4, &packed, 4);
         }
 }
+
+// RGB9E5Float: nine bits of mantissa per channel, red lowest, and one five-bit
+// exponent (bias 15) at the top that all three are scaled by, with no implied
+// leading one - so a value is mantissa * 2^(exponent - 24). Encoded the way
+// the D3D and GL specifications write it: the exponent is the brightest
+// channel's, each channel rounded to the nearest mantissa at that scale, the
+// exponent raised once if the brightest rounded up past nine bits, negatives
+// and NaN stored as 0 and everything clamped to the largest finite value.
+float sharedExponentChannel(std::uint32_t word, int channel)
+{
+    const auto mantissa = (word >> (9 * channel)) & 0x1ffu;
+    const auto exponent = (int) (word >> 27);
+
+    return std::ldexp((float) mantissa, exponent - 24);
+}
+
+std::uint32_t packSharedExponent(const float (&rgb)[3])
+{
+    constexpr auto largest = 511.f / 512.f * 65536.f;
+
+    float clamped[3];
+
+    for (auto channel = 0; channel < 3; ++channel)
+    {
+        const auto value = rgb[channel];
+        clamped[channel] = value > 0.f ? (value < largest ? value : largest) : 0.f;
+    }
+
+    const auto brightest = std::max(clamped[0], std::max(clamped[1], clamped[2]));
+
+    if (brightest <= 0.f)
+        return 0;
+
+    auto binary = 0;
+    std::frexp(brightest, &binary);
+
+    auto exponent = std::max(0, binary + 15);
+
+    if (std::floor(std::ldexp(brightest, 24 - exponent) + 0.5f) >= 512.f)
+        ++exponent;
+
+    auto packed = (std::uint32_t) exponent << 27;
+
+    for (auto channel = 0; channel < 3; ++channel)
+    {
+        const auto mantissa =
+            std::floor(std::ldexp(clamped[channel], 24 - exponent) + 0.5f);
+        packed |= (std::uint32_t) std::min(mantissa, 511.f) << (9 * channel);
+    }
+
+    return packed;
+}
+
+void halveSharedExponent(const std::uint8_t* source,
+                         int sourcePitch,
+                         int sourceWidth,
+                         int sourceHeight,
+                         std::uint8_t* destination,
+                         int destinationWidth,
+                         int destinationHeight)
+{
+    for (auto y = 0; y < destinationHeight; ++y)
+        for (auto x = 0; x < destinationWidth; ++x)
+        {
+            const auto block = texelBlockFor(x, y, sourceWidth, sourceHeight);
+
+            const auto word = [&](int sx, int sy)
+            {
+                auto value = std::uint32_t {};
+                std::memcpy(&value, source + sy * sourcePitch + sx * 4, 4);
+                return value;
+            };
+
+            const std::uint32_t texels[] = {word(block.x0, block.y0),
+                                            word(block.x1, block.y0),
+                                            word(block.x0, block.y1),
+                                            word(block.x1, block.y1)};
+
+            float average[3] = {};
+
+            for (auto channel = 0; channel < 3; ++channel)
+            {
+                for (const auto texel: texels)
+                    average[channel] += sharedExponentChannel(texel, channel);
+
+                average[channel] *= 0.25f;
+            }
+
+            const auto packed = packSharedExponent(average);
+            std::memcpy(destination + (y * destinationWidth + x) * 4, &packed, 4);
+        }
+}
 } // namespace
 
 // mipExtent, mipLevelCount and mipChainBytes are constexpr in the header: they
@@ -504,6 +597,16 @@ MipChain buildMipChain(
                                   destination.data(),
                                   destinationWidth,
                                   destinationHeight);
+                break;
+
+            case TextureFormat::RGB9E5Float:
+                halveSharedExponent(source,
+                                    pitch,
+                                    sourceWidth,
+                                    sourceHeight,
+                                    destination.data(),
+                                    destinationWidth,
+                                    destinationHeight);
                 break;
 
             case TextureFormat::RGBA32Float:

@@ -1852,7 +1852,7 @@ same frame.
 
 A texture opts in the way a render target does, and only in a format the
 device can store to. `Device::supportsComputeWrite(format)` is the answer:
-every uncompressed format but the sRGB ones on Metal, the driver's
+every uncompressed format but the sRGB ones and `RGB9E5Float` on Metal, the driver's
 typed-UAV-store bit on D3D12, `VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT` on Vulkan —
 so `R8Unorm`, `RG8Unorm`, `R16Float`, `RG16Float`, `R32Float`, `RG32Float`,
 the 16-bit unorms, `RGB10A2Unorm`, `RG11B10Float` and the `Uint` and `Sint`
@@ -1860,7 +1860,7 @@ formats on most hardware, beside the three every device takes
 (`RGBA8Unorm`, `RGBA16Float`, `RGBA32Float`, which the free
 `supportsComputeWrite(format)` names for code that cannot ask). Notably
 **never** `BGRA8Unorm`, the drawable's own format and the first one most
-people reach for, nor an sRGB or a block format; asking for one the device
+people reach for, nor an sRGB or a block format, nor `RGB9E5Float`; asking for one the device
 refuses yields an invalid texture rather than a kernel whose writes go nowhere.
 
 ```cpp
@@ -2529,7 +2529,8 @@ every level: a streamed texture, a `.ktx` whose chain was not shipped
 
 No pass may be open, as for a copy. A texture of one level is nothing to do.
 `Device::supportsMipGeneration(format)` says which formats a device filters
-into a chain: never a block-compressed or an integer one, and a format it
+into a chain: never a block-compressed or an integer one, nor `RGB9E5Float`
+(its chain is `mipmapped`'s, on the CPU), and a format it
 refuses is refused with a trace, nothing recorded. Metal records
 `generateMipmapsForTexture` on a blit encoder and takes every other format, the
 32-bit floats where the device filters them. D3D12 dispatches eacp's own
@@ -2662,6 +2663,7 @@ enabled where offered) with a view of the kind's type.
 | `RG16Unorm`, `RGBA16Unorm` | Sixteen normalised bits a channel — a normal map, a 16-bit PNG |
 | `RGB10A2Unorm` | 10:10:10:2 in one word, red lowest |
 | `RG11B10Float` | Three unsigned small floats in one word — an HDR colour at half `RGBA16Float`'s cost |
+| `RGB9E5Float` | Three nine-bit mantissas sharing a five-bit exponent — HDR colour, sampled only |
 | `R8Uint` … `RGBA32Uint`, `R8Sint` … `RGBA32Sint` | Every 8-, 16- and 32-bit integer shape in one, two and four channels; read, never filtered |
 | `BC1RGBA`, `BC2RGBA`, `BC3RGBA`, `BC7RGBA` | Block-compressed — DXT1/3/5 and BC7 |
 | `BC1RGBASrgb` … `BC7RGBASrgb` | The same four, decoded from sRGB |
@@ -2700,8 +2702,9 @@ Ask the device first: a texture in a format it refuses is invalid rather than
 quietly something else, exactly as a refused `sampleCount` is. Every Mac and
 every Direct3D device answers yes; an Apple-family iOS GPU mostly does not.
 
-Every uncompressed format is a render target, its `PixelFormat` the one
-`pixelFormatFor` hands back (and `textureFormatFor` the way back). The `Uint`
+Every uncompressed format but `RGB9E5Float` is a render target, its
+`PixelFormat` the one `pixelFormatFor` hands back (and `textureFormatFor` the
+way back); `isRenderableFormat` answers which. The `Uint`
 and `Sint` formats are integer attachments, written as a `uint` or an `int` by
 the fragment function and never blended — a blend preset left on a pipeline
 writing one is dropped rather than failing it — and read by a shader that
@@ -2728,6 +2731,17 @@ bytes decoded the other way. A chain eacp builds for one on the CPU averages in
 light — decoded, averaged, encoded — as `generateMipmaps` does on Metal and
 Vulkan; D3D12's chain kernel needs a typed UAV no sRGB format has, so there
 `supportsMipGeneration` answers no and `mipmapped` is the way.
+
+**`RGB9E5Float` is sampled, never rendered into.** Three nine-bit mantissas,
+red lowest, scaled by one five-bit exponent at the top of the word
+(`mantissa × 2^(exponent − 24)`, no implied leading one): HDR colour in four
+bytes with more precision than `RG11B10Float`, for a light probe or an
+irradiance map baked offline. All three APIs sample and filter it; none
+promises to render into it (Metal does on Apple GPUs only) or to store to it
+from a kernel, so a `renderTarget` or `computeWrite` texture in it is invalid,
+like a block format's, and it has no `PixelFormat`. It uploads, updates, reads
+back and copies as any 32-bit format does, and `mipmapped` builds its chain on
+the CPU, decoding to float, averaging and encoding again.
 
 A compressed texture cannot be a render target or a kernel output, `read()` and
 `update(region, ...)` are no-ops on one, `update(pixels)` takes the same packed

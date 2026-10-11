@@ -10,8 +10,8 @@
 
 // The rest of the format table: the sRGB twins of RGBA8, BGRA8 and the four
 // older BC formats, BC4, BC5 and BC6H, RG16Unorm and RGBA16Unorm, the packed
-// RGB10A2Unorm and RG11B10Float, and the 8-, 16- and 32-bit Uint and Sint
-// formats. Each is created, uploaded and read back byte for byte; sampled (or
+// RGB10A2Unorm and RG11B10Float, the shared-exponent RGB9E5Float, and the 8-,
+// 16- and 32-bit Uint and Sint formats. Each is created, uploaded and read back byte for byte; sampled (or
 // read, for the integer ones) by a draw whose answer lands in a 32-bit target
 // and is compared with a decode written down here; rendered into and read
 // back where it is renderable; written by a kernel where the device says it
@@ -683,9 +683,21 @@ auto tFormatTraits = test("Formats/everyFormatDescribesItself") = []
         check(!isSrgbFormat(linearFormatFor(format)));
         check(bytesPerBlock(srgbFormatFor(format)) == bytesPerBlock(format));
 
-        if (!isCompressedFormat(format))
+        if (isRenderableFormat(format))
             check(textureFormatFor(pixelFormatFor(format)) == format);
     }
+
+    // RGB9E5Float: a 32-bit word of three channels, float, sampled only.
+    check(bytesPerPixel(TextureFormat::RGB9E5Float) == 4);
+    check(formatChannels(TextureFormat::RGB9E5Float) == 3);
+    check(isFloatFormat(TextureFormat::RGB9E5Float));
+    check(!isCompressedFormat(TextureFormat::RGB9E5Float));
+    check(!isRenderableFormat(TextureFormat::RGB9E5Float));
+    check(!isRenderableFormat(TextureFormat::BC1RGBA));
+    check(isRenderableFormat(TextureFormat::RG11B10Float));
+    check(isRenderableFormat(TextureFormat::RGBA32Sint));
+    check(canBuildMipChain(TextureFormat::RGB9E5Float));
+    check(srgbFormatFor(TextureFormat::RGB9E5Float) == TextureFormat::RGB9E5Float);
 
     check(srgbFormatFor(TextureFormat::BC7RGBA) == TextureFormat::BC7RGBASrgb);
     check(srgbFormatFor(TextureFormat::RG16Unorm) == TextureFormat::RG16Unorm);
@@ -1222,8 +1234,9 @@ auto tFormatKernelAnswers =
     {
         const auto format = (TextureFormat) value;
 
-        // No API stores into an sRGB or a block format from a kernel.
-        if (isSrgbFormat(format) || isCompressedFormat(format))
+        // No API stores into an sRGB, a block or a shared-exponent format from
+        // a kernel.
+        if (isSrgbFormat(format) || !isRenderableFormat(format))
         {
             check(!device.supportsComputeWrite(format));
             check(!device.supportsComputeReadWrite(format));
@@ -1232,8 +1245,9 @@ auto tFormatKernelAnswers =
         if (device.supportsComputeReadWrite(format))
             check(device.supportsComputeWrite(format));
 
-        // Nothing to average in an integer or a block.
-        if (isIntegerFormat(format) || isCompressedFormat(format))
+        // Nothing to average in an integer or a block, and no generator that
+        // writes RGB9E5Float.
+        if (isIntegerFormat(format) || !isRenderableFormat(format))
             check(!device.supportsMipGeneration(format));
     }
 
@@ -1716,4 +1730,196 @@ auto tFormatGpuSrgbChain =
     // The API's own box filter, in light; a little looser than the CPU's.
     for (auto channel = 0; channel < 3; ++channel)
         check(std::abs((int) generated[channel] - expected) <= 3);
+};
+
+namespace
+{
+// RGB9E5Float written down independently of eacp's encoder: nine-bit
+// mantissas, red lowest, and the shared exponent in the top five bits, a value
+// being mantissa * 2^(exponent - 24).
+std::uint32_t
+    packRGB9E5(std::uint32_t r, std::uint32_t g, std::uint32_t b, std::uint32_t e)
+{
+    return r | (g << 9) | (b << 18) | (e << 27);
+}
+
+double rgb9e5Channel(std::uint32_t word, int channel)
+{
+    const auto mantissa = (word >> (9 * channel)) & 0x1ffu;
+    return std::ldexp((double) mantissa, (int) (word >> 27) - 24);
+}
+
+// One texel per exponent region: small, around 1, large, the largest finite
+// value, and zero.
+const std::uint32_t rgb9e5Texels[] = {
+    packRGB9E5(256, 64, 32, 18), // 4, 1, 0.5
+    packRGB9E5(384, 192, 0, 17), // 3, 1.5, 0
+    packRGB9E5(511, 1, 300, 31), // 65408, 128, 38400
+    packRGB9E5(1, 2, 3, 0), // 2^-24, 2^-23, 3 * 2^-24
+    packRGB9E5(0, 0, 0, 0), // 0
+    packRGB9E5(500, 250, 125, 10), // 500, 250, 125 over 16384
+    packRGB9E5(17, 33, 65, 24), // 17, 33, 65
+    packRGB9E5(256, 256, 256, 16), // 1, 1, 1
+};
+} // namespace
+
+auto tFormatSharedExponentRoundTrip =
+    test("Formats/rgb9e5UploadsReadsBackAndIsNoTarget") = []
+{
+    if (!canTest())
+        return;
+
+    auto bytes = Vector<std::uint8_t> {};
+    bytes.resize((std::size_t) (texelCount * 4));
+
+    for (auto texel = 0; texel < texelCount; ++texel)
+    {
+        const auto word = rgb9e5Texels[texel % std::size(rgb9e5Texels)];
+        std::memcpy(bytes.data() + texel * 4, &word, 4);
+    }
+
+    auto texture = makeTexture(
+        TextureFormat::RGB9E5Float, targetSize, targetSize, bytes.data());
+
+    check(texture.isValid());
+    check(texture.format() == TextureFormat::RGB9E5Float);
+
+    if (texture.isValid())
+    {
+        auto back = Vector<std::uint8_t> {};
+        back.resize(bytes.size());
+        texture.read(back.data());
+        check(std::memcmp(back.data(), bytes.data(), bytes.size()) == 0);
+
+        // A region update moves the words untouched too.
+        const auto word = packRGB9E5(7, 8, 9, 20);
+        texture.update({1.f, 2.f, 1.f, 1.f}, &word);
+        texture.read(back.data());
+
+        auto got = std::uint32_t {};
+        std::memcpy(&got, back.data() + (2 * targetSize + 1) * 4, 4);
+        check(got == word);
+    }
+
+    // Sampled only: no render target, no kernel output, on any device.
+    check(!makeTexture(
+               TextureFormat::RGB9E5Float, targetSize, targetSize, nullptr, true)
+               .isValid());
+
+    auto written = TextureDescriptor {};
+    written.width = targetSize;
+    written.height = targetSize;
+    written.format = TextureFormat::RGB9E5Float;
+    written.computeWrite = true;
+    check(!Device::shared().makeTexture(written).isValid());
+
+    check(!Device::shared().supportsComputeWrite(TextureFormat::RGB9E5Float));
+    check(!Device::shared().supportsMipGeneration(TextureFormat::RGB9E5Float));
+};
+
+auto tFormatSharedExponentSample = test("Formats/rgb9e5SamplesAsItsDecode") = []
+{
+    if (!canTest())
+        return;
+
+    auto library = makeLibrary(mslSample, hlslSample(0), glslSample);
+    auto pipeline = makePipeline(library, PixelFormat::RGBA32Float);
+
+    auto pixels = Vector<std::uint8_t> {};
+    pixels.resize((std::size_t) (texelCount * 4));
+
+    for (auto texel = 0; texel < texelCount; ++texel)
+    {
+        const auto word = rgb9e5Texels[texel % std::size(rgb9e5Texels)];
+        std::memcpy(pixels.data() + texel * 4, &word, 4);
+    }
+
+    auto source = makeTexture(
+        TextureFormat::RGB9E5Float, targetSize, targetSize, pixels.data());
+    check(source.isValid());
+
+    const auto out = drawInto(
+        pipeline, TextureFormat::RGBA32Float, targetSize, targetSize, &source);
+    check(out.size() == (std::size_t) (texelCount * 16));
+
+    if (out.empty())
+        return;
+
+    for (auto texel = 0; texel < texelCount; ++texel)
+    {
+        const auto word = rgb9e5Texels[texel % std::size(rgb9e5Texels)];
+
+        // Every value the format holds is a float exactly, so the sample is
+        // the decode to the bit.
+        for (auto channel = 0; channel < 3; ++channel)
+        {
+            const auto expected = rgb9e5Channel(word, channel);
+            check(near(floatAt(out, texel, channel), expected, expected * 1e-6));
+        }
+
+        check(floatAt(out, texel, 3) == 1.f);
+    }
+};
+
+auto tFormatSharedExponentChain =
+    test("Formats/rgb9e5ChainIsAveragedThroughFloat") = []
+{
+    // Two texels whose averages are exact: (4, 1, 0.5) and (3, 1.5, 0) make
+    // (3.5, 1.25, 0.25), stored at the brightest channel's exponent (2^1 <=
+    // 3.5 < 2^2, so 2^-7 a step: 448, 160, 32 at exponent 17).
+    {
+        const std::uint32_t pixels[] = {rgb9e5Texels[0], rgb9e5Texels[1]};
+        const auto chain = buildMipChain(pixels, 2, 1, TextureFormat::RGB9E5Float);
+
+        check(chain.levelCount() == 2);
+
+        if (chain.levelCount() == 2)
+        {
+            auto word = std::uint32_t {};
+            std::memcpy(&word, chain.level(1), 4);
+            check(word == packRGB9E5(448, 160, 32, 17));
+            check(rgb9e5Channel(word, 0) == 3.5 && rgb9e5Channel(word, 1) == 1.25
+                  && rgb9e5Channel(word, 2) == 0.25);
+        }
+    }
+
+    // A mean that rounds its brightest mantissa up past nine bits moves to the
+    // next exponent: 511 * 2^-8 and 256 * 2^-7 (2.0) average to 511.5 * 2^-8,
+    // which rounds to 512 at exponent 16 and so is stored as 256 at 17.
+    {
+        const std::uint32_t pixels[] = {packRGB9E5(511, 0, 0, 16),
+                                        packRGB9E5(256, 0, 0, 17)};
+        const auto chain = buildMipChain(pixels, 2, 1, TextureFormat::RGB9E5Float);
+
+        if (chain.levelCount() == 2)
+        {
+            auto word = std::uint32_t {};
+            std::memcpy(&word, chain.level(1), 4);
+            check(word == packRGB9E5(256, 0, 0, 17));
+        }
+    }
+
+    if (!canTest())
+        return;
+
+    // Through `mipmapped`: a 2x2 of the first two texels twice over keeps the
+    // CPU's 1x1 level, and the GPU samples that level as its decode.
+    const std::uint32_t pixels[] = {
+        rgb9e5Texels[0], rgb9e5Texels[1], rgb9e5Texels[1], rgb9e5Texels[0]};
+
+    auto descriptor = TextureDescriptor {};
+    descriptor.width = 2;
+    descriptor.height = 2;
+    descriptor.format = TextureFormat::RGB9E5Float;
+    descriptor.mipmapped = true;
+
+    auto texture = Device::shared().makeTexture(descriptor, pixels);
+    check(texture.isValid() && texture.mipLevels() == 2);
+
+    if (texture.mipLevels() != 2)
+        return;
+
+    auto word = std::uint32_t {};
+    texture.readSubresource(TextureRegion::wholeLevel(1), &word);
+    check(word == packRGB9E5(448, 160, 32, 17));
 };

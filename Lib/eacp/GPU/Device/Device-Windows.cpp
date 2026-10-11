@@ -304,11 +304,11 @@ UINT formatSupport2(TextureFormat format)
     return static_cast<UINT>(support.Support2);
 }
 
-// An sRGB format has no UAV at all on D3D12; the caps query would say so, and
-// this says it without asking.
+// An sRGB format has no UAV at all on D3D12, nor has R9G9B9E5_SHAREDEXP; the
+// caps query would say so, and this says it without asking.
 bool canBeComputeWritten(TextureFormat format)
 {
-    return !isCompressedFormat(format) && !isSrgbFormat(format)
+    return isRenderableFormat(format) && !isSrgbFormat(format)
            && format != TextureFormat::BGRA8Unorm;
 }
 } // namespace

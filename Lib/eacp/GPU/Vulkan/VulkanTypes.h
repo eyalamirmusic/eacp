@@ -112,6 +112,8 @@ inline VkFormat toVkFormat(TextureFormat format)
             return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
         case TextureFormat::RG11B10Float:
             return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        case TextureFormat::RGB9E5Float:
+            return VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
         case TextureFormat::R8Uint:
             return VK_FORMAT_R8_UINT;
         case TextureFormat::RG8Uint:

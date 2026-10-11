@@ -591,11 +591,13 @@ struct Texture::Native
             data.sampleCount = descriptor.sampleCount;
         }
 
+        // See the block formats and RGB9E5Float in Texture.h: sampled only.
+        if (!isRenderableFormat(format)
+            && (descriptor.renderTarget || descriptor.computeWrite))
+            return false;
+
         if (isCompressedFormat(format))
         {
-            if (descriptor.renderTarget || descriptor.computeWrite)
-                return false;
-
             if (!device.supportsBlockCompression())
             {
                 LOG("Vulkan: the device has no block-compressed formats, so a "

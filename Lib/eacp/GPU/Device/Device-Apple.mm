@@ -311,10 +311,11 @@ bool Device::supportsLayeredRendering() const
 }
 
 // BGRA8 by policy (G79: the hardware can, the other APIs cannot), sRGB because
-// Metal has no shader write that encodes.
+// Metal has no shader write that encodes, RGB9E5Float because the Mac2 family
+// cannot and the other APIs never can.
 bool Device::supportsComputeWrite(TextureFormat format) const
 {
-    return isValid() && !isCompressedFormat(format) && !isSrgbFormat(format)
+    return isValid() && isRenderableFormat(format) && !isSrgbFormat(format)
            && format != TextureFormat::BGRA8Unorm;
 }
 
@@ -379,7 +380,9 @@ bool Device::supportsMipGeneration(TextureFormat format) const
 {
     auto metalDevice = (__bridge id<MTLDevice>) nativeDevice();
 
-    if (metalDevice == nil || isCompressedFormat(format) || isIntegerFormat(format))
+    // generateMipmapsForTexture wants a format it can render into, which
+    // RGB9E5Float is only on Apple GPUs; its chain is the CPU's everywhere.
+    if (metalDevice == nil || !isRenderableFormat(format) || isIntegerFormat(format))
         return false;
 
     const auto fullFloat = format == TextureFormat::R32Float
