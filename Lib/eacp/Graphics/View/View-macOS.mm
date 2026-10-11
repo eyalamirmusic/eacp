@@ -25,6 +25,12 @@ View* getView(id self)
     return (View*) ObjC::getIvar<void*>(self, "cppView");
 }
 
+bool ignoresMouseEvents(id self)
+{
+    auto* view = getView(self);
+    return view != nullptr && view->getProperties().ignoresMouseEvents;
+}
+
 NSView* getRootView(id self)
 {
     auto* root = (NSView*) self;
@@ -247,6 +253,17 @@ void layout(id self, SEL)
     }
 }
 
+// A view ignoring the pointer answers no hit test, so AppKit carries on to the
+// view beneath: that one takes the click, becomes first responder and sets the
+// cursor, exactly as if this one were not there.
+NSView* hitTest(id self, SEL, NSPoint point)
+{
+    if (ignoresMouseEvents(self))
+        return nil;
+
+    return ObjC::sendSuper<NSView*>(self, [NSView class], @selector(hitTest:), point);
+}
+
 BOOL isFlipped(id, SEL)
 {
     return YES;
@@ -323,16 +340,25 @@ void mouseDragged(id self, SEL, NSEvent* event)
 
 void mouseMoved(id self, SEL, NSEvent* event)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     dispatchMouseEvent(self, event, MouseEventType::Moved);
 }
 
 void mouseEntered(id self, SEL, NSEvent* event)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     dispatchMouseEvent(self, event, MouseEventType::Entered);
 }
 
 void mouseExited(id self, SEL, NSEvent* event)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     dispatchMouseEvent(self, event, MouseEventType::Exited);
 }
 
@@ -428,6 +454,9 @@ NSCursor* toNSCursor(const MouseCursor& cursor)
 // rather than as a missing method.
 void cursorUpdate(id self, SEL, id)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     if (auto* view = getView(self))
         [toNSCursor(view->getMouseCursor()) set];
 }
@@ -604,6 +633,9 @@ void updateTrackingAreas(id self, SEL)
     for (NSTrackingArea* area in view.trackingAreas)
         [view removeTrackingArea:area];
 
+    if (ignoresMouseEvents(self))
+        return;
+
     NSTrackingAreaOptions options =
         NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
         | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
@@ -635,6 +667,7 @@ Class getNativeViewClass()
         builder->addMethod(@selector(drawRect:), drawRect);
         builder->addMethod(@selector(drawLayer:inContext:), drawLayerInContext);
         builder->addMethod(@selector(layout), layout);
+        builder->addMethod(@selector(hitTest:), hitTest);
         builder->addMethod(@selector(isFlipped), isFlipped);
         builder->addMethod(@selector(isOpaque), isOpaque);
         builder->addMethod(@selector(acceptsFirstResponder),

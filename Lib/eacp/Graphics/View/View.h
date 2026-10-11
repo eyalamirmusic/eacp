@@ -159,6 +159,10 @@ struct ViewProperties
 
     // Whether files dragged from the OS can be dropped here. See fileDragEnter.
     bool acceptsFileDrops = false;
+
+    // Whether the pointer passes through this view and its subviews to whatever
+    // is beneath them. See View::setIgnoresMouseEvents.
+    bool ignoresMouseEvents = false;
 };
 
 class View
@@ -340,6 +344,18 @@ public:
     View& setHandlesMouseEvents(bool value = true);
     View& setHandlesTouchEvents(bool value = true);
     View& setGrabsFocusOnMouseDown(bool value = true);
+
+    // Takes this view and its subviews out of pointer routing altogether, as if
+    // they were not there: hitTest answers null for them, so a click, a hover
+    // or a wheel lands on the view beneath, and on macOS and iOS the native
+    // view answers no hit test either, so the platform hands the click, the
+    // cursor and first-responder status to that view rather than to this one.
+    //
+    // What an overlay that only draws wants -- a GPUView placed over a
+    // ComponentHost to render a scene the host's own tree takes the input for.
+    // Without it AppKit makes the overlay first responder on a click, and the
+    // keys the host was handling go to a view that ignores them. Off by default.
+    View& setIgnoresMouseEvents(bool value = true);
 
     // Applied at once when this view already has focus.
     View& setWantsTextInput(bool value = true);

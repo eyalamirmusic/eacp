@@ -44,6 +44,14 @@
     return self;
 }
 
+- (UIView*)hitTest:(CGPoint)point withEvent:(UIEvent*)event
+{
+    if (cppView->getProperties().ignoresMouseEvents)
+        return nil;
+
+    return [super hitTest:point withEvent:event];
+}
+
 - (void)drawLayer:(CALayer*)layer inContext:(CGContextRef)ctx
 {
     auto nativeContext = eacp::Graphics::MacOSContext(ctx);

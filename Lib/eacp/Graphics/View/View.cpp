@@ -39,6 +39,12 @@ View& View::setGrabsFocusOnMouseDown(bool value)
     return *this;
 }
 
+View& View::setIgnoresMouseEvents(bool value)
+{
+    properties.ignoresMouseEvents = value;
+    return *this;
+}
+
 View& View::setWantsTextInput(bool value)
 {
     if (properties.wantsTextInput == value)
@@ -199,7 +205,7 @@ void View::scaleToFit(ChildViews views)
 
 View* View::hitTest(const Point& point)
 {
-    if (!getLocalBounds().contains(point))
+    if (properties.ignoresMouseEvents || !getLocalBounds().contains(point))
         return nullptr;
 
     for (auto child: std::ranges::reverse_view(subviews))
