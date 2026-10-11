@@ -39,10 +39,17 @@ struct PopupMenuStyle
     float itemHeight = 24.f;
     float separatorHeight = 9.f;
 
-    // The border between the panel's edge and its rows.
+    // The border between the panel's edge and its rows, and what their sides
+    // are padded by instead when sidePadding is given.
     float padding = 4.f;
+    std::optional<float> sidePadding;
     float cornerRadius = 5.f;
     float outlineThickness = 1.f;
+
+    // The part of a highlighted row that is filled, and its corners, which are
+    // never rounder than the panel's.
+    eacp::Graphics::Insets highlightInsets;
+    float highlightCornerRadius = 3.f;
 
     // What text is indented by from either side of its row, and the column the
     // tick sits in before it -- kept whether or not anything in the menu is

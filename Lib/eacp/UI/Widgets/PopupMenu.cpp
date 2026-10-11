@@ -477,7 +477,7 @@ private:
             anySubMenu = anySubMenu || item.hasSubMenu();
         }
 
-        auto width = style().padding * 2.f + style().textInset * 2.f
+        auto width = sidePadding() * 2.f + style().textInset * 2.f
                      + style().tickWidth + widestText;
 
         if (widestShortcut > 0.f)
@@ -546,11 +546,21 @@ private:
                > panels[depth].bounds.h - style().padding * 2.f + 0.5f;
     }
 
+    float sidePadding() const
+    {
+        return style().sidePadding.value_or(style().padding);
+    }
+
+    Rect inner(int depth) const
+    {
+        return panels[depth].bounds.inset(sidePadding(), style().padding);
+    }
+
     // The rows' window: inside the padding, and between the scroll arrows when
     // the panel has them.
     Rect rowArea(int depth) const
     {
-        auto rows = panels[depth].bounds.inset(style().padding);
+        auto rows = inner(depth);
 
         if (isScrollable(depth))
             rows = rows.inset(0.f, style().scrollArrowHeight);
@@ -600,12 +610,12 @@ private:
         if (!isScrollable(depth))
             return 0;
 
-        auto inner = panels[depth].bounds.inset(style().padding);
+        auto arrows = inner(depth);
 
-        if (inner.fromTop(style().scrollArrowHeight).contains(position))
+        if (arrows.fromTop(style().scrollArrowHeight).contains(position))
             return -1;
 
-        if (inner.fromBottom(style().scrollArrowHeight).contains(position))
+        if (arrows.fromBottom(style().scrollArrowHeight).contains(position))
             return 1;
 
         return 0;
@@ -887,20 +897,20 @@ private:
         if (!isScrollable(depth))
             return;
 
-        auto inner = panel.bounds.inset(look.padding);
+        auto arrows = inner(depth);
         auto reach = look.scrollArrowHeight * 0.3f;
 
         g.setColour(look.arrow);
 
         if (panel.scroll > 0.f)
             drawChevron(g,
-                        inner.fromTop(look.scrollArrowHeight).center(),
+                        arrows.fromTop(look.scrollArrowHeight).center(),
                         reach,
                         {0.f, -1.f});
 
         if (panel.scroll < maximumScroll(depth))
             drawChevron(g,
-                        inner.fromBottom(look.scrollArrowHeight).center(),
+                        arrows.fromBottom(look.scrollArrowHeight).center(),
                         reach,
                         {0.f, 1.f});
     }
@@ -922,7 +932,9 @@ private:
         if (highlighted)
         {
             g.setColour(look.highlight);
-            g.fillRoundedRect(row, std::min(3.f, look.cornerRadius));
+            g.fillRoundedRect(
+                row.inset(look.highlightInsets),
+                std::min(look.highlightCornerRadius, look.cornerRadius));
         }
 
         auto content = row.inset(look.textInset, 0.f);
