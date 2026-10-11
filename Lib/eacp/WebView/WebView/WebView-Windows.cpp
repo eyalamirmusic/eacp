@@ -5,6 +5,7 @@
 #include "StreamingRange.h"
 #include "WebViewDetail.h"
 #include "FileDrag-Windows.h"
+#include <eacp/Graphics/View/FileDragOut-Windows.h>
 #include <eacp/Graphics/DComp-Windows.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
@@ -1400,84 +1401,51 @@ struct WebView::Native
         if (FAILED(oleHr))
             return;
 
-        auto pidls = Vector<PIDLIST_ABSOLUTE> {};
+        auto dataObject = createFileDataObject(paths);
 
-        for (auto& path: paths)
+        if (dataObject)
         {
-            auto widePath = Strings::widen(path);
-            // SHParseDisplayName only accepts the OS-native separator: a path
-            // with forward slashes (which is how cross-platform code, e.g.
-            // std::filesystem generic paths, hands them over) fails to parse and
-            // yields no PIDL, so the drag silently never starts. Normalize first.
-            std::replace(widePath.begin(), widePath.end(), L'/', L'\\');
-            PIDLIST_ABSOLUTE pidl = nullptr;
-            if (SUCCEEDED(
-                    SHParseDisplayName(widePath.c_str(), nullptr, &pidl, 0, nullptr))
-                && pidl)
-                pidls.add(pidl);
-        }
+            if (onDragStarted)
+                onDragStarted();
 
-        if (!pidls.empty())
-        {
-            ComPtr<IShellItemArray> items;
-            if (SUCCEEDED(SHCreateShellItemArrayFromIDLists(
-                    static_cast<UINT>(pidls.size()),
-                    const_cast<LPCITEMIDLIST*>(pidls.data()),
-                    &items))
-                && items)
+            if (IsWindow(ownerWindow))
             {
-                ComPtr<IDataObject> dataObject;
-                if (SUCCEEDED(items->BindToHandler(
-                        nullptr, BHID_DataObject, IID_PPV_ARGS(&dataObject)))
-                    && dataObject)
-                {
-                    if (onDragStarted)
-                        onDragStarted();
+                // Attach (not construct-from-raw) so the source keeps the
+                // single ref it is born with; the ComPtr releases it — and
+                // deletes the object — when the drag returns.
+                ComPtr<IDropSource> dropSource;
+                dropSource.Attach(new FileDragSource(
+                    [ownerWindow, dpiScale]
+                    { return fileDragPointFromCursor(ownerWindow, dpiScale); },
+                    onDragMoved));
 
-                    if (IsWindow(ownerWindow))
-                    {
-                        // Attach (not construct-from-raw) so the source keeps the
-                        // single ref it is born with; the ComPtr releases it — and
-                        // deletes the object — when the drag returns.
-                        ComPtr<IDropSource> dropSource;
-                        dropSource.Attach(new FileDragSource(
-                            [ownerWindow, dpiScale]
-                            {
-                                return fileDragPointFromCursor(ownerWindow,
-                                                               dpiScale);
-                            },
-                            onDragMoved));
+                // Register our own window as a drop target for the length
+                // of the drag purely for cursor feedback (see
+                // FileDragTarget) — without it the shell shows ⊘ over our
+                // own window. Fails harmlessly (leaving the old ⊘) if
+                // something else already owns the window's drop slot.
+                ComPtr<IDropTarget> dropTarget;
+                dropTarget.Attach(new FileDragTarget());
+                auto registered =
+                    SUCCEEDED(RegisterDragDrop(ownerWindow, dropTarget.Get()));
 
-                        // Register our own window as a drop target for the length
-                        // of the drag purely for cursor feedback (see
-                        // FileDragTarget) — without it the shell shows ⊘ over our
-                        // own window. Fails harmlessly (leaving the old ⊘) if
-                        // something else already owns the window's drop slot.
-                        ComPtr<IDropTarget> dropTarget;
-                        dropTarget.Attach(new FileDragTarget());
-                        auto registered = SUCCEEDED(
-                            RegisterDragDrop(ownerWindow, dropTarget.Get()));
+                DWORD effect = DROPEFFECT_NONE;
+                SHDoDragDrop(ownerWindow,
+                             dataObject.Get(),
+                             dropSource.Get(),
+                             DROPEFFECT_COPY,
+                             &effect);
 
-                        DWORD effect = DROPEFFECT_NONE;
-                        SHDoDragDrop(ownerWindow,
-                                     dataObject.Get(),
-                                     dropSource.Get(),
-                                     DROPEFFECT_COPY,
-                                     &effect);
+                if (registered)
+                    RevokeDragDrop(ownerWindow);
 
-                        if (registered)
-                            RevokeDragDrop(ownerWindow);
-
-                        // The modal loop is over: report the release point so the
-                        // app can file the drop (or stand its filing UI down).
-                        onDragEnded(fileDragPointFromCursor(ownerWindow, dpiScale));
-                    }
-                }
+                // The modal loop is over: report the release point so the
+                // app can file the drop (or stand its filing UI down).
+                onDragEnded(fileDragPointFromCursor(ownerWindow, dpiScale));
             }
         }
 
-        for (auto* pidl: pidls)
-            CoTaskMemFree(pidl);
+        dataObject.Reset();
 
         if (SUCCEEDED(oleHr))
             OleUninitialize();

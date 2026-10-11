@@ -1,11 +1,15 @@
 #include "View.h"
+#include "FileDragOut-Windows.h"
 #include "../Graphics/GraphicsContext.h"
 #include <eacp/Core/Utils/Strings.h>
 #include "../Image/Image.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <eacp/Core/Threads/Async.h>
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
+
+#include <shlobj.h>
 
 #include <cmath>
 #include <memory>
@@ -21,6 +25,8 @@ void refreshHostCursor(HWND hwnd);
 namespace
 {
 using Microsoft::WRL::ComPtr;
+
+View* fileDragSource = nullptr;
 
 // Immediate-mode 2D drawing for View::paint(Context&) on Windows. macOS backs
 // paint() with a CGContext; here each painting View owns a Direct2D drawing
@@ -680,6 +686,9 @@ View::View()
 
 View::~View()
 {
+    if (fileDragSource == this)
+        fileDragSource = nullptr;
+
     for (auto* layer: getLayers())
         layer->detachFromLayer();
 
@@ -742,6 +751,50 @@ View& View::setAcceptsFileDrops(bool value)
 {
     properties.acceptsFileDrops = value;
     return *this;
+}
+
+bool View::startFileDrag(const Vector<std::string>& paths,
+                         const FileDragOptions& options)
+{
+    auto host = findHostHwndForView(this);
+
+    if (paths.empty() || fileDragSource != nullptr || host == nullptr)
+        return false;
+
+    auto oleResult = OleInitialize(nullptr);
+
+    if (FAILED(oleResult))
+        return false;
+
+    auto dataObject = createFileDataObject(paths);
+
+    if (!dataObject)
+    {
+        OleUninitialize();
+        return false;
+    }
+
+    auto onFinished = options.onFinished;
+    DWORD allowedEffects =
+        options.canMove ? DROPEFFECT_COPY | DROPEFFECT_MOVE : DROPEFFECT_COPY;
+    DWORD effect = DROPEFFECT_NONE;
+
+    fileDragSource = this;
+    auto dragResult =
+        SHDoDragDrop(host, dataObject.Get(), nullptr, allowedEffects, &effect);
+    auto sourceSurvived = fileDragSource == this;
+    fileDragSource = nullptr;
+
+    dataObject.Reset();
+    OleUninitialize();
+
+    if (onFinished && sourceSurvived)
+    {
+        auto result = fileDragResultFor(dragResult, effect);
+        Threads::callAsync([onFinished, result] { onFinished(result); });
+    }
+
+    return true;
 }
 
 void View::focus()

@@ -39,7 +39,11 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `setAcceptsFileDrops()` as `fileDragEnter` / `fileDragMove` /
   `fileDragExit` / `filesDropped` with UTF-8 paths, and a
   `UI::ComponentHost` hands them to the deepest `UI::FileDropTarget`
-  component under the pointer that wants them (macOS and Windows). On a
+  component under the pointer that wants them (macOS and Windows). Going
+  the other way, `startFileDrag(paths, options)` from a view's or a
+  component's mouse handler drags files out to Finder, Explorer or a DAW,
+  optionally letting the receiver move them and reporting `Cancelled`,
+  `Copied` or `Moved` once it ends (macOS and Windows). On a
   touch screen a view that calls `setHandlesTouchEvents()`
   gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
   `touchEnded`, one id per finger, held by the view it came down on, with its contact

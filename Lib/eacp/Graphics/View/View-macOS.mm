@@ -1,6 +1,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
+#include "FileDragOut-macOS.h"
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
 #include "../Window/MouseLock-macOS.h"
@@ -11,6 +12,7 @@
 #include <eacp/Core/ObjC/RuntimeClass.h>
 
 #include <cstring>
+#include <memory>
 
 namespace eacp::Graphics
 {
@@ -71,6 +73,8 @@ NSPoint fromScreen(NSView* view, NSPoint screenPoint)
     return window != nil ? [window convertPointFromScreen:screenPoint] : screenPoint;
 }
 
+NSEvent* mouseEventInDispatch = nil;
+
 void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 {
     auto* root = getRootView(self);
@@ -125,7 +129,12 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
     e.downPos = {(float) downPos.x, (float) downPos.y};
 
     if (auto* view = getView(root))
+    {
+        auto* previousEvent = mouseEventInDispatch;
+        mouseEventInDispatch = event;
         view->dispatchMouseEvent(e);
+        mouseEventInDispatch = previousEvent;
+    }
 }
 
 ScrollPhase scrollPhaseFromEvent(NSEvent* event)
@@ -470,6 +479,99 @@ BOOL wantsPeriodicDraggingUpdates(id, SEL)
     return NO;
 }
 
+struct FileDragSession
+{
+    FileDragOptions options;
+};
+
+bool fileDragInProgress = false;
+
+FileDragSession* getFileDragSession(id self)
+{
+    return static_cast<FileDragSession*>(ObjC::getIvar<void*>(self, "fileDragSession"));
+}
+
+void setFileDragSession(id self, FileDragSession* session)
+{
+    ObjC::getIvar<void*>(self, "fileDragSession") = session;
+}
+
+NSDragOperation fileDragSourceOperationMask(id self,
+                                            SEL,
+                                            NSDraggingSession*,
+                                            NSDraggingContext context)
+{
+    auto* session = getFileDragSession(self);
+    auto canMove = session != nullptr && session->options.canMove
+                   && context == NSDraggingContextOutsideApplication;
+
+    return canMove ? NSDragOperationCopy | NSDragOperationMove : NSDragOperationCopy;
+}
+
+void sendMouseUpAfterFileDrag(id self, NSPoint screenPoint)
+{
+    auto* window = ((NSView*) self).window;
+
+    if (window == nil)
+        return;
+
+    auto* event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                                     location:[window convertPointFromScreen:screenPoint]
+                                modifierFlags:[NSEvent modifierFlags]
+                                    timestamp:[NSProcessInfo processInfo].systemUptime
+                                 windowNumber:window.windowNumber
+                                      context:nil
+                                  eventNumber:0
+                                   clickCount:1
+                                     pressure:0.f];
+
+    if (event != nil)
+        dispatchMouseEvent(self, event, MouseEventType::Up);
+}
+
+void fileDragSessionEnded(id self,
+                          SEL,
+                          NSDraggingSession*,
+                          NSPoint screenPoint,
+                          NSDragOperation operation)
+{
+    auto session = std::unique_ptr<FileDragSession>(getFileDragSession(self));
+
+    if (session == nullptr)
+        return;
+
+    setFileDragSession(self, nullptr);
+    fileDragInProgress = false;
+
+    sendMouseUpAfterFileDrag(self, screenPoint);
+
+    if (getView(self) != nullptr && session->options.onFinished)
+        session->options.onFinished(fileDragResultFor(operation));
+
+    [(NSView*) self release];
+}
+
+NSEvent* mouseEventForFileDrag(NSView* view)
+{
+    auto* event = mouseEventInDispatch != nil ? mouseEventInDispatch : NSApp.currentEvent;
+
+    if (event == nil || view.window == nil || event.window != view.window)
+        return nil;
+
+    switch (event.type)
+    {
+        case NSEventTypeLeftMouseDown:
+        case NSEventTypeLeftMouseDragged:
+        case NSEventTypeRightMouseDown:
+        case NSEventTypeRightMouseDragged:
+        case NSEventTypeOtherMouseDown:
+        case NSEventTypeOtherMouseDragged:
+            return event;
+        default:
+            return nil;
+    }
+}
+
 void updateTrackingAreas(id self, SEL)
 {
     ObjC::sendSuper<void>(self, [NSView class], @selector(updateTrackingAreas));
@@ -501,9 +603,11 @@ Class getNativeViewClass()
 
         builder->addIvar<void*>("cppView");
         builder->addIvar<NSPoint>("mouseDownScreenPosition");
+        builder->addIvar<void*>("fileDragSession");
 
         builder->addProtocol(@protocol(CALayerDelegate));
         builder->addProtocol(@protocol(NSDraggingDestination));
+        builder->addProtocol(@protocol(NSDraggingSource));
 
         builder->addMethod(@selector(drawRect:), drawRect);
         builder->addMethod(@selector(drawLayer:inContext:), drawLayerInContext);
@@ -543,6 +647,12 @@ Class getNativeViewClass()
         builder->addMethod(@selector(performDragOperation:), performDragOperation);
         builder->addMethod(@selector(wantsPeriodicDraggingUpdates),
                            wantsPeriodicDraggingUpdates);
+
+        builder->addMethod(
+            @selector(draggingSession:sourceOperationMaskForDraggingContext:),
+            fileDragSourceOperationMask);
+        builder->addMethod(@selector(draggingSession:endedAtPoint:operation:),
+                           fileDragSessionEnded);
 
         builder->registerClass();
         return builder;
@@ -725,6 +835,47 @@ View& View::setAcceptsFileDrops(bool value)
         [native unregisterDraggedTypes];
 
     return *this;
+}
+
+bool View::startFileDrag(const Vector<std::string>& paths,
+                         const FileDragOptions& options)
+{
+    auto* native = (NSView*) impl->nativeView.get();
+
+    if (paths.empty() || fileDragInProgress)
+        return false;
+
+    auto* event = mouseEventForFileDrag(native);
+
+    if (event == nil)
+        return false;
+
+    auto anchor = [native convertPoint:event.locationInWindow fromView:nil];
+    auto* items = makeFileDraggingItems(
+        native, anchor, paths, options.image, options.imageScale);
+
+    if (items.count == 0)
+        return false;
+
+    setFileDragSession(native, new FileDragSession {options});
+    fileDragInProgress = true;
+    [native retain];
+
+    auto* session = [native beginDraggingSessionWithItems:items
+                                                    event:event
+                                                   source:(id<NSDraggingSource>) native];
+
+    if (session == nil)
+    {
+        delete getFileDragSession(native);
+        setFileDragSession(native, nullptr);
+        fileDragInProgress = false;
+        [native release];
+        return false;
+    }
+
+    session.animatesToStartingPositionsOnCancelOrFail = YES;
+    return true;
 }
 
 void View::setMouseCursor(const MouseCursor& cursor)

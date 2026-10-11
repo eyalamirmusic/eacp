@@ -84,6 +84,7 @@ if (APPLE)
                 Menu/AppKitMenu.mm
                 Menu/Menu-macOS.mm
                 Tray/TrayIcon-macOS.mm
+                View/FileDragOut-macOS.mm
                 View/View-macOS.mm
                 Window/Display-macOS.mm
                 Window/EmbeddedView-macOS.mm
@@ -116,6 +117,7 @@ elseif (WIN32)
             Primitives/Path-Windows.cpp
             Primitives/TextMetrics-Windows.cpp
             Tray/TrayIcon-Windows.cpp
+            View/FileDragOut-Windows.cpp
             View/View-Windows.cpp
             Window/CompositionHostWindow-Windows.cpp
             Window/Display-Windows.cpp

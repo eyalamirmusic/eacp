@@ -311,6 +311,11 @@ View& View::setAcceptsFileDrops(bool value)
     return *this;
 }
 
+bool View::startFileDrag(const Vector<std::string>&, const FileDragOptions&)
+{
+    return false;
+}
+
 void View::focus()
 {
     impl->focus();

@@ -99,6 +99,9 @@ public:
     void setMouseCursor(const eacp::Graphics::MouseCursor& cursorToUse);
     const eacp::Graphics::MouseCursor& getMouseCursor() const;
 
+    bool startFileDrag(const Vector<std::string>& paths,
+                       const eacp::Graphics::FileDragOptions& options = {});
+
     // Says that what this component draws has changed, so paint() has to be
     // asked again before the next frame.
     //

@@ -538,6 +538,15 @@ ComponentHost* Component::getHost() const
     return findHost();
 }
 
+bool Component::startFileDrag(const Vector<std::string>& paths,
+                              const eacp::Graphics::FileDragOptions& options)
+{
+    if (auto* owner = getHost())
+        return owner->startFileDrag(paths, options);
+
+    return false;
+}
+
 bool Component::isMouseOver() const
 {
     return mouseOver;

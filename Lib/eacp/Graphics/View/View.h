@@ -4,6 +4,7 @@
 #include "../Layers/Layer.h"
 #include "../Graphics/Keyboard.h"
 #include "MouseCursor.h"
+#include "FileDrag.h"
 
 #include <functional>
 #include <string>
@@ -334,6 +335,9 @@ public:
     // default: a view that registers and then refuses a drag shows the refusal
     // cursor rather than letting whatever is behind it take the files.
     View& setAcceptsFileDrops(bool value = true);
+
+    bool startFileDrag(const Vector<std::string>& paths,
+                       const FileDragOptions& options = {});
 
     Point getMousePosition() const;
 
