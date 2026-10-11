@@ -14,12 +14,15 @@ jobs:
         include:
           - name: macOS Universal Binary
             os: macos-latest
+            cache-key: macos-universal
             cmake-flags: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
           - name: Linux GCC
             os: ubuntu-latest
+            cache-key: linux-gcc
             cmake-flags: '-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++'
           - name: Linux Clang
             os: ubuntu-latest
+            cache-key: linux-clang
             cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
           # Every Linux lane builds the Wayland/Vulkan/FreeType backend; this
           # is the one that also runs it, on Mesa's lavapipe inside a headless
@@ -27,22 +30,27 @@ jobs:
           # so their GPU and window tests self-skip.
           - name: Linux Clang Vulkan
             os: ubuntu-latest
+            cache-key: linux-clang
             vulkan: true
             cmake-flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++'
           - name: Windows MSVC
             os: windows-latest
+            cache-key: windows-msvc-x64
             msvc-arch: x64
             cmake-flags: ''
           - name: Windows Clang
             os: windows-latest
+            cache-key: windows-clang-x64
             msvc-arch: x64
             cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
           - name: Windows MSVC ARM64
             os: windows-11-arm
+            cache-key: windows-msvc-arm64
             msvc-arch: arm64
             cmake-flags: ''
           - name: Windows Clang ARM64
             os: windows-11-arm
+            cache-key: windows-clang-arm64
             msvc-arch: arm64
             cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
 
@@ -66,6 +74,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+
+      # A ccache per compiler and architecture, kept in the Actions cache (the
+      # two Linux Clang lanes compile identical objects and share one). A
+      # translation unit whose preprocessed text, compiler and flags match an
+      # earlier run is restored rather than compiled: every third-party object
+      # on every run, and most of eacp's own on a change inside one module.
+      # The eviction keeps each saved cache to what this build touched, so
+      # eight lanes at 1 GB apiece stay inside the repository's 10 GB.
+      - name: Set up the compiler cache
+        uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
+        with:
+          key: ${{ matrix.cache-key }}
+          max-size: 1G
+          evict-old-files: job
 
       # Everything a Linux build links or generates code with, on every Linux
       # lane: libwayland-client, xkbcommon and libdecor are linked and
@@ -133,10 +155,22 @@ jobs:
         with:
           arch: ${{ matrix.msvc-arch }}
 
-      # No target uses C++20 modules; the scan pass is dead weight. Remove
-      # this flag if modules are ever adopted.
+      # ccache is the launcher for every language the lane compiles, which on
+      # macOS includes Objective-C++. Windows embeds debug info in each object
+      # (/Z7): the default /Zi writes one PDB per target that every translation
+      # unit appends to, which no per-object cache can restore. EACP_CI_BUILD
+      # leaves the PCH off for the same reason - ccache cannot cache MSVC's at
+      # all - and a hit saves the whole compile where the image saved a third.
+      # No target uses C++20 modules; the scan pass is dead weight. Remove that
+      # flag if modules are ever adopted.
       - name: Configure
-        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON -DCMAKE_CXX_SCAN_FOR_MODULES=OFF ${{ matrix.cmake-flags }}
+        run: >
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
+          -DCMAKE_CXX_SCAN_FOR_MODULES=OFF
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ${{ runner.os == 'macOS' && '-DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache' || '' }}
+          ${{ runner.os == 'Windows' && '-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded' || '' }}
+          ${{ matrix.cmake-flags }}
 
       - name: Build
         run: cmake --build build

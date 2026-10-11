@@ -54,19 +54,20 @@ files under `ThirdParty/miniz` and the version in its README.
 
 - `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's
   exact configuration locally. It forces `EACP_UNITY_BUILD` and
-  `MIRO_UNITY_BUILD` on and turns on `EACP_PCH`. Because it turns unity on, it
-  is for reproducing CI, not for LSP-backed development.
+  `MIRO_UNITY_BUILD` on. Because it turns unity on, it is for reproducing CI,
+  not for LSP-backed development.
 
   ```bash
   cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
   ```
 
-- `EACP_PCH` (default `OFF`, on under `EACP_CI_BUILD`) — shares one
-  precompiled header, the STL, across every eacp target, which is worth
-  roughly a third of the compile time of a typical translation unit. It holds
-  no eacp header on purpose, but editing `CMake/Pch.h` still rebuilds the
-  project, so it is off for normal work and on in CI, where every build is
-  cold anyway. `<windows.h>` is deliberately not in it: CMake builds a PCH
+- `EACP_PCH` (default `OFF`) — shares one precompiled header, the STL,
+  across every eacp target, which is worth roughly a third of the compile
+  time of a typical translation unit. It holds no eacp header on purpose, but
+  editing `CMake/Pch.h` still rebuilds the project, so it is off for normal
+  work; CI leaves it off too, since its compiler cache (below) cannot cache
+  MSVC's precompiled headers and a cache hit saves the whole compile where the
+  image saved a third. `<windows.h>` is deliberately not in it: CMake builds a PCH
   with `/FI`, so the payload is force-included into every translation unit,
   and windows.h brings two dozen macros with it — `near` and `far` among them,
   which collide with ordinary member names. Measured, it saves a portable TU
@@ -336,6 +337,24 @@ eacp's targets take under `Release` stays off — it roughly tripled the macOS
 and MSVC build steps for a few seconds of test time. The `NDEBUG`-only paths —
 the D3D12 debug layer, `Device::assertOwningThread`, the Android JNI
 local-reference check — are exercised by a local Debug build, not by CI.
+
+Every lane of the build matrix compiles through [ccache](https://ccache.dev)
+(`hendrikmuhs/ccache-action`, which installs it and keeps its directory in the
+Actions cache under one key per compiler and architecture; the two Linux Clang
+lanes compile identical objects and share one). A translation unit whose
+preprocessed text, compiler and flags match an earlier run is restored rather
+than compiled, which is every third-party object on every run — glslang, Miro,
+NanoTest's generated registrations — and most of eacp's own on a change that
+stays inside one module; under the unity build a batch misses as a whole when
+any file in it changed. Each lane's cache is capped at 1 GB and trimmed after
+the build to what that build touched, so the eight stay inside the repository's
+10 GB. Two configure flags go with it: the Windows lanes pass
+`-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded` (`/Z7`), because the default
+`/Zi` writes one PDB per target that every translation unit appends to, which
+no per-object cache can restore, and `EACP_PCH` stays off (see above). CPM's
+sources are not cached: every dependency but glslang and the Vulkan trio is
+pinned to `main`, and a cached checkout of a moving branch is never
+re-fetched.
 
 The Linux lanes install the packages listed in [Linux.md](Linux.md), and the
 `Dockerfile` reproduces their three steps — a headless build, the suite under

@@ -233,20 +233,21 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 
 - `EACP_CI_BUILD` (default `OFF`): the single switch CI passes to reproduce the
   exact CI configuration locally. It force-enables the unity-build flag of every
-  project that exposes one — `EACP_UNITY_BUILD` and `MIRO_UNITY_BUILD` — and
-  turns on `EACP_PCH`. Because it turns unity on, it is for reproducing CI, not
-  for LSP-backed development — Claude should keep using
-  `-DEACP_UNITY_BUILD=OFF` for normal work.
+  project that exposes one — `EACP_UNITY_BUILD` and `MIRO_UNITY_BUILD`. Because
+  it turns unity on, it is for reproducing CI, not for LSP-backed development —
+  Claude should keep using `-DEACP_UNITY_BUILD=OFF` for normal work.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON
 ```
 
-- `EACP_PCH` (default `OFF`, on under `EACP_CI_BUILD`): shares one precompiled
-  header — the STL — across every eacp target, which is worth roughly a third of
-  the compile time of a typical translation unit. It holds no eacp header on
-  purpose, but editing `CMake/Pch.h` still rebuilds the project, so it is off
-  for normal work and on in CI, where every build is cold anyway.
+- `EACP_PCH` (default `OFF`): shares one precompiled header — the STL — across
+  every eacp target, which is worth roughly a third of the compile time of a
+  typical translation unit. It holds no eacp header on purpose, but editing
+  `CMake/Pch.h` still rebuilds the project, so it is off for normal work. CI
+  leaves it off too: every lane compiles through ccache, which cannot cache
+  MSVC's precompiled headers, and a cache hit saves the whole compile where the
+  image saved a third (`Docs/Build.md`, "CI").
 
   `<windows.h>` is deliberately **not** in it. CMake builds a PCH with `/FI`, so
   the payload is force-included into every translation unit, and windows.h
