@@ -49,11 +49,9 @@ if (EACP_CI_BUILD)
             "Compile eacp libraries as CMake unity builds" FORCE)
     set(MIRO_UNITY_BUILD ON CACHE BOOL
             "Enable CMake unity build for the Miro library" FORCE)
-    # Worth roughly half the compile time of a cold Windows build. Off by
-    # default because it is a whole-project rebuild whenever Pch.h changes,
-    # which is the wrong trade for an edit-compile loop.
-    set(EACP_PCH ON CACHE BOOL
-            "Precompile the system headers every eacp target parses" FORCE)
+    # EACP_PCH stays off: CI compiles under ccache, which cannot cache MSVC's
+    # precompiled headers at all and needs per-compiler flags for the others,
+    # and a cache hit saves the whole compile where the image saved a third.
 endif ()
 
 if (NOT EACP_BUILD_GRAPHICS)

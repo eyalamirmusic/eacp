@@ -324,7 +324,7 @@ auto tQuadsKeepEveryBit = test("UIntBufferVector/quadsKeepBitsAFloatLoses") = []
                                    == ((quad[lane] >> 16) | (rotated[lane] << 16)),
                                name);
 
-                         if ((std::uint32_t) (float) quad[lane] != quad[lane])
+                         if (quad[lane] > (1u << 24))
                              ++beyondAFloat;
                      }
                  }

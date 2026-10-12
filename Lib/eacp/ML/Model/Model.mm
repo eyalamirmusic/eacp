@@ -414,7 +414,7 @@ class PinnedModels
 public:
     static PinnedModels& get()
     {
-        static auto pinned = PinnedModels {};
+        static auto& pinned = *new PinnedModels {};
         return pinned;
     }
 

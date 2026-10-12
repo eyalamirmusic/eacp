@@ -43,6 +43,17 @@ void stopEventLoop();
 // the root loop.
 void attachCurrentThreadAsMain();
 
+// The inverse, for a hosted copy whose image is about to be unloaded (a
+// plug-in's module exit, before the host's FreeLibrary/dlclose). Everything the
+// host's pump could still reach in this image goes: on Windows the message-only
+// window and its class, whose procedure is this copy's code, and the thread
+// timers still registered, whose procedure is too; on Linux the root copy's
+// pointer into this one; everywhere the callAfter scheduler thread, which would
+// otherwise wake into unmapped code, and the callbacks still queued, which
+// nothing could run any more. Idempotent; a later attach starts over. Call it
+// on the thread that attached.
+void detachCurrentThreadAsMain();
+
 // Stops the process's root run loop, provided an eacp copy is running it —
 // any copy: loop ownership is marked in the process environment
 // (EACP_ROOT_LOOP), which crosses DLL boundaries. The quit path for an app

@@ -42,7 +42,8 @@ struct ParentView final : View
 {
     ParentView()
     {
-        webView.loadURL("https://dev.tamber.ai/app/pro/sonic-atlas");
+        webView.loadURL(
+            "https://developer.mozilla.org/en-US/docs/Web/API/Window/open");
         webView.onNewWindowRequested =
             [this](EA::OwningPointer<WebView> popup, const std::string&)
         {

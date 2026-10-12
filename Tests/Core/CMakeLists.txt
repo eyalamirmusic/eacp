@@ -44,6 +44,12 @@ if (WIN32)
             FilePickerWindowsTests.cpp)
 endif ()
 
+# A hosted copy under a foreign host's own Win32 pump: attach, detach, attach
+# again. The message-only window and its class are Windows' hosted machinery.
+if (WIN32)
+    list(APPEND core_test_sources HostedLoopTests-Windows.cpp)
+endif ()
+
 # Permission bits, symlinks and FIFOs — the file behaviour Windows has no form
 # of. Each portable half covers the rest.
 if (NOT WIN32)

@@ -402,3 +402,21 @@ auto tDefaultIsAtTheCompanyLevel =
                         : FilePath::appCacheDirectory(company, {}) / "CoreML";
     check(defaultCacheDirectory() == expected);
 };
+
+namespace
+{
+std::optional<Model> modelHeldUntilExit;
+}
+
+auto tAStaticModelOutlivesTheRegistry =
+    test("MLCache/aModelHeldInAStaticUnpinsCleanlyAtExit") = []
+{
+    if (!isSupported())
+        return;
+
+    auto cache = freshCacheDirectory("static");
+    auto& model = modelHeldUntilExit.emplace();
+    auto result = model.load(TestPrograms::elementwiseChain(8, 16),
+                             optionsFor(ComputeUnits::cpu, cache));
+    check(result.ok, result.error);
+};
