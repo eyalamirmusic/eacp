@@ -150,6 +150,11 @@ int levelBytes(TextureFormat format, int width, int height)
     return levelBytesPerRow(format, width) * levelRows(format, height);
 }
 
+bool isWithin(int origin, int extent, int limit)
+{
+    return origin >= 0 && extent > 0 && origin + extent <= limit;
+}
+
 bool isFloatFormat(TextureFormat format)
 {
     return textureFormatTraits(format).kind == TextureFormatKind::Float;

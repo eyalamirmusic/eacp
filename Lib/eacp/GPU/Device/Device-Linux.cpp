@@ -41,31 +41,6 @@ VkBorderColor toVkBorderColor(SamplerBorderColor color)
     return VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
 
-VkCompareOp toVkCompareOp(CompareFunction compare)
-{
-    switch (compare)
-    {
-        case CompareFunction::Never:
-            return VK_COMPARE_OP_NEVER;
-        case CompareFunction::Less:
-            return VK_COMPARE_OP_LESS;
-        case CompareFunction::LessEqual:
-            return VK_COMPARE_OP_LESS_OR_EQUAL;
-        case CompareFunction::Equal:
-            return VK_COMPARE_OP_EQUAL;
-        case CompareFunction::NotEqual:
-            return VK_COMPARE_OP_NOT_EQUAL;
-        case CompareFunction::GreaterEqual:
-            return VK_COMPARE_OP_GREATER_OR_EQUAL;
-        case CompareFunction::Greater:
-            return VK_COMPARE_OP_GREATER;
-        case CompareFunction::Always:
-            return VK_COMPARE_OP_ALWAYS;
-    }
-
-    return VK_COMPARE_OP_NEVER;
-}
-
 VkFilter toVkFilter(SamplerFilter filter)
 {
     return filter == SamplerFilter::Linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;

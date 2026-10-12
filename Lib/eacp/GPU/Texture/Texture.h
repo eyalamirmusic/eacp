@@ -283,6 +283,9 @@ int levelRows(TextureFormat format, int height);
 // level of a chain the caller supplied.
 int levelBytes(TextureFormat format, int width, int height);
 
+// Whether [origin, origin + extent) is a non-empty range inside [0, limit).
+bool isWithin(int origin, int extent, int limit);
+
 // Whether a texel holds floats: the half and full float formats, RG11B10Float,
 // RGB9E5Float and BC6H.
 bool isFloatFormat(TextureFormat format);

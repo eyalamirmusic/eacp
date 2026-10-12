@@ -12,6 +12,8 @@
 
 namespace eacp::GPU
 {
+class Sampler;
+
 
 // One: the GLSL emitter writes exactly one uniform block.
 constexpr int maxUniformSlots = 1;
@@ -65,6 +67,11 @@ VkImageAspectFlags depthAspectMask(bool withStencil);
 
 // The flag bit for a sample count is the count itself: 1, 2, 4, 8 in order.
 VkSampleCountFlagBits toVkSampleCount(int samples);
+
+VkCompareOp toVkCompareOp(CompareFunction compare);
+
+// The VkSampler a made Sampler wraps.
+VkSampler toVkSampler(const Sampler& sampler);
 
 struct ImageUse
 {

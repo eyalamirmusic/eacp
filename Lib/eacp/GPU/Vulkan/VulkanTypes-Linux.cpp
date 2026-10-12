@@ -1,9 +1,41 @@
 #include "VulkanTypes.h"
 
+#include "../Texture/Sampler.h"
+
 #include <algorithm>
 
 namespace eacp::GPU
 {
+VkCompareOp toVkCompareOp(CompareFunction compare)
+{
+    switch (compare)
+    {
+        case CompareFunction::Never:
+            return VK_COMPARE_OP_NEVER;
+        case CompareFunction::Less:
+            return VK_COMPARE_OP_LESS;
+        case CompareFunction::LessEqual:
+            return VK_COMPARE_OP_LESS_OR_EQUAL;
+        case CompareFunction::Equal:
+            return VK_COMPARE_OP_EQUAL;
+        case CompareFunction::NotEqual:
+            return VK_COMPARE_OP_NOT_EQUAL;
+        case CompareFunction::GreaterEqual:
+            return VK_COMPARE_OP_GREATER_OR_EQUAL;
+        case CompareFunction::Greater:
+            return VK_COMPARE_OP_GREATER;
+        case CompareFunction::Always:
+            return VK_COMPARE_OP_ALWAYS;
+    }
+
+    return VK_COMPARE_OP_NEVER;
+}
+
+VkSampler toVkSampler(const Sampler& sampler)
+{
+    return reinterpret_cast<VkSampler>(sampler.nativeSampler());
+}
+
 int vulkanComputeBufferSlots(const VkPhysicalDeviceLimits& limits)
 {
     const auto limit = std::min(limits.maxPerStageDescriptorStorageBuffers,

@@ -10,11 +10,6 @@ namespace eacp::GPU
 {
 namespace
 {
-bool isWithin(int origin, int extent, int limit)
-{
-    return origin >= 0 && extent > 0 && origin + extent <= limit;
-}
-
 bool hasLevelAndSlice(const Texture& texture, int level, int slice)
 {
     return level >= 0 && level < texture.mipLevels() && slice >= 0

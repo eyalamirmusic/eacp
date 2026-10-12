@@ -226,31 +226,6 @@ VkFrontFace toVkFrontFace(Winding winding)
                                                 : VK_FRONT_FACE_CLOCKWISE;
 }
 
-VkCompareOp toVkCompareOp(CompareFunction compare)
-{
-    switch (compare)
-    {
-        case CompareFunction::Never:
-            return VK_COMPARE_OP_NEVER;
-        case CompareFunction::Less:
-            return VK_COMPARE_OP_LESS;
-        case CompareFunction::LessEqual:
-            return VK_COMPARE_OP_LESS_OR_EQUAL;
-        case CompareFunction::Equal:
-            return VK_COMPARE_OP_EQUAL;
-        case CompareFunction::NotEqual:
-            return VK_COMPARE_OP_NOT_EQUAL;
-        case CompareFunction::GreaterEqual:
-            return VK_COMPARE_OP_GREATER_OR_EQUAL;
-        case CompareFunction::Greater:
-            return VK_COMPARE_OP_GREATER;
-        case CompareFunction::Always:
-            return VK_COMPARE_OP_ALWAYS;
-    }
-
-    return VK_COMPARE_OP_LESS_OR_EQUAL;
-}
-
 VkStencilOp toVkStencilOp(StencilOp op)
 {
     switch (op)

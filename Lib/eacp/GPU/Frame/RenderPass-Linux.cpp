@@ -425,14 +425,6 @@ void RenderPass::setVertexBuffer(const BufferRange& range, int index)
                            &offset);
 }
 
-namespace
-{
-VkSampler toVkSampler(const Sampler& sampler)
-{
-    return reinterpret_cast<VkSampler>(sampler.nativeSampler());
-}
-} // namespace
-
 // No barrier: Vulkan forbids one inside a render pass instance, and the
 // resting-layout rule on VulkanTextureData leaves the image ready to sample.
 void RenderPass::setFragmentTexture(const Texture& texture,

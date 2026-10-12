@@ -281,14 +281,6 @@ void ComputePass::setOutputBuffer(const BufferRange& range, int slot)
     impl->boundBuffers |= 1u << slot;
 }
 
-namespace
-{
-VkSampler toVkSampler(const Sampler& sampler)
-{
-    return reinterpret_cast<VkSampler>(sampler.nativeSampler());
-}
-} // namespace
-
 void ComputePass::setInputTexture(const Texture& texture,
                                   int slot,
                                   TextureSampling sampling)

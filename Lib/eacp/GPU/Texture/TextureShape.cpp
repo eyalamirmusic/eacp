@@ -150,11 +150,6 @@ void addPackedSlice(TextureUploadPlan& plan,
     }
 }
 
-bool isWithin(int origin, int extent, int limit)
-{
-    return origin >= 0 && extent > 0 && origin + extent <= limit;
-}
-
 int extentToEdge(int requested, int origin, int levelExtent)
 {
     return requested > 0 ? requested : levelExtent - origin;
