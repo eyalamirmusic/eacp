@@ -91,36 +91,7 @@ enum class VertexFormat
 
 // Whether the shader reads this format as an integer (uint or int) rather than
 // a float. See the note above UByte.
-constexpr bool isIntegerVertexFormat(VertexFormat format)
-{
-    switch (format)
-    {
-        case VertexFormat::UByte:
-        case VertexFormat::UByte2:
-        case VertexFormat::UByte4:
-        case VertexFormat::Byte:
-        case VertexFormat::Byte2:
-        case VertexFormat::Byte4:
-        case VertexFormat::UShort:
-        case VertexFormat::UShort2:
-        case VertexFormat::UShort4:
-        case VertexFormat::Short:
-        case VertexFormat::Short2:
-        case VertexFormat::Short4:
-        case VertexFormat::UInt:
-        case VertexFormat::UInt2:
-        case VertexFormat::UInt3:
-        case VertexFormat::UInt4:
-        case VertexFormat::Int:
-        case VertexFormat::Int2:
-        case VertexFormat::Int3:
-        case VertexFormat::Int4:
-            return true;
-
-        default:
-            return false;
-    }
-}
+bool isIntegerVertexFormat(VertexFormat format);
 
 // How many bytes one attribute of this format occupies in the buffer. This is
 // what a packed CPU field is checked against, so a struct member that does not

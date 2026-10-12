@@ -398,7 +398,7 @@ public:
     // of its pools to write into from this, so that a renderer streaming
     // per-frame data has nothing to call at the frame boundary and therefore
     // nothing to forget - see StreamingBuffers for why that matters.
-    constexpr std::uint64_t frameIndex() const { return frameCount; }
+    std::uint64_t frameIndex() const;
 
     // Called by Frame's constructor on both backends, including the off-screen
     // one. An off-screen frame blocks until the GPU is done, so nothing it
@@ -426,7 +426,7 @@ public:
     void leaveFrame(const FrameNesting& nesting);
 
     // Whether a Frame is open on this device.
-    constexpr bool isFrameOpen() const { return openFrame != nullptr; }
+    bool isFrameOpen() const;
 
     // What the GPU spent on the most recent frame it has finished: every pass
     // that was given a label, plus the frame end to end.
@@ -449,7 +449,7 @@ public:
     bool supportsPassTimings() const;
 
     // Internal: the timer Frame drives. Apps read lastFrameTimings().
-    constexpr FrameTimer& frameTimer() { return timer; }
+    FrameTimer& frameTimer();
 
     // How many GPU buffers have been created on this device since it came up.
     //
@@ -458,17 +458,17 @@ public:
     // while the drawing repeats is allocation churn in the frame loop -
     // newBufferWithBytes on Metal, a committed resource on D3D12 - which is
     // what the assertions in Tests/GPU are there to catch.
-    constexpr int buffersCreated() const { return bufferCount; }
+    int buffersCreated() const;
 
     // Called by Buffer's constructor on both backends, for buffers that got
     // real storage.
-    constexpr void noteBufferCreated() { ++bufferCount; }
+    void noteBufferCreated();
 
 private:
     // Makes this Device follow the main thread rather than the one that
     // constructed it. Private because Device::shared() is the only caller and
     // it is a member, so nothing outside can move a Device's ownership.
-    constexpr void followMainThread() { mainThreadOwned = true; }
+    void followMainThread();
 
     struct Native;
     Pimpl<Native> impl;

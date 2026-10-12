@@ -13,6 +13,16 @@ ShaderSource makeShaderSourceFor(ShaderBackend backend, std::string sourceToUse)
 }
 } // namespace
 
+bool ThreadGroupShape::isSet() const
+{
+    return x > 0;
+}
+
+int ThreadGroupShape::threadCount() const
+{
+    return x * y * z;
+}
+
 ShaderSource ShaderSource::msl(std::string sourceToUse)
 {
     return makeShaderSourceFor(ShaderBackend::Metal, std::move(sourceToUse));
@@ -37,6 +47,12 @@ ShaderSource& ShaderSource::withVertex(std::string entry)
 ShaderSource& ShaderSource::withFragment(std::string entry)
 {
     fragmentEntry = std::move(entry);
+    return *this;
+}
+
+ShaderSource& ShaderSource::withThreadGroup(ThreadGroupShape shape)
+{
+    threadGroup = shape;
     return *this;
 }
 

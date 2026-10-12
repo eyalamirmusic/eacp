@@ -743,6 +743,47 @@ VulkanTextureBindings spirvTextureBindings(const Vector<std::uint32_t>& words,
     return bindings;
 }
 
+void CommandContext::rewindUploads()
+{
+    for (auto& chunk: uploads)
+        chunk.used = 0;
+
+    uploadCursor = 0;
+}
+
+bool VulkanShared::supportsSamplerAnisotropy() const
+{
+    return features.samplerAnisotropy == VK_TRUE;
+}
+
+bool VulkanShared::supportsMultiDrawIndirect() const
+{
+    return features.multiDrawIndirect == VK_TRUE;
+}
+
+bool VulkanShared::supportsIndirectCount() const
+{
+    return indirectCountSupported;
+}
+
+bool VulkanShared::supportsPreciseOcclusionQueries() const
+{
+    return features.occlusionQueryPrecise == VK_TRUE;
+}
+
+bool VulkanShared::supportsLayeredRendering() const
+{
+    return layeredRenderingSupported;
+}
+
+VkSampler VulkanShared::getSampler(const TextureSampling& sampling) const
+{
+    if (device == VK_NULL_HANDLE)
+        return VK_NULL_HANDLE;
+
+    return samplers[samplingIndex(sampling)];
+}
+
 VulkanShared::VulkanShared()
 {
     createAll();

@@ -72,13 +72,7 @@ struct CommandContext
     // Ready to be filled from the start again. Only sound once the recording's
     // fence has passed, which is the same condition that lets the allocator be
     // reset -- the GPU has read everything these chunks carried.
-    void rewindUploads()
-    {
-        for (auto& chunk: uploads)
-            chunk.used = 0;
-
-        uploadCursor = 0;
-    }
+    void rewindUploads();
 
     winrt::com_ptr<ID3D12CommandAllocator> allocator;
     winrt::com_ptr<ID3D12GraphicsCommandList> list;

@@ -26,28 +26,19 @@ struct TextureShape
     // The levels are the caller's or the GPU's: never built by eacp.
     bool explicitLevels = false;
 
-    bool isCubeKind() const
-    {
-        return kind == TextureType::Cube || kind == TextureType::CubeArray;
-    }
+    bool isCubeKind() const;
 
-    bool isArrayKind() const
-    {
-        return kind == TextureType::TwoDArray || kind == TextureType::CubeArray;
-    }
+    bool isArrayKind() const;
 
-    bool isVolume() const { return kind == TextureType::ThreeD; }
+    bool isVolume() const;
 
-    int slices() const { return layers * (isCubeKind() ? 6 : 1); }
+    int slices() const;
 
-    int levelWidth(int level) const { return mipExtent(width, level); }
-    int levelHeight(int level) const { return mipExtent(height, level); }
-    int levelDepth(int level) const
-    {
-        return isVolume() ? mipExtent(depth, level) : 1;
-    }
+    int levelWidth(int level) const;
+    int levelHeight(int level) const;
+    int levelDepth(int level) const;
 
-    bool buildsChain() const { return levels > 1 && !explicitLevels; }
+    bool buildsChain() const;
 };
 
 enum class InitialData

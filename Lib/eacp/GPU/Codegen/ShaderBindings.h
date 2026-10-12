@@ -20,7 +20,7 @@ constexpr int vulkanTextureBinding(int slot)
     return vulkanTextureBindingBase + slot;
 }
 
-constexpr int vulkanBufferBinding(int slot)
+inline int vulkanBufferBinding(int slot)
 {
     return RenderPass::bufferBase + slot;
 }

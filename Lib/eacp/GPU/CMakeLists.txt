@@ -23,7 +23,8 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ShaderValue.cpp
         Codegen/UniformLayout.cpp
         Pipeline/VertexLayout.cpp
-        Shader/ShaderSource.cpp)
+        Shader/ShaderSource.cpp
+        Texture/Texture.cpp)
 
 # Which dialect build() calls the native one: selection only, no backend.
 if (APPLE)
@@ -56,6 +57,7 @@ target_sources(eacp-gpu PRIVATE
         Codegen/ComputeProgram.cpp
         Codegen/ShaderProgram.cpp
         CommandBuffer/CommandBuffer.cpp
+        CommandBuffer/Copy.cpp
         CommandBuffer/CopyPlan.cpp
         Device/Device.cpp
         Frame/ComputePass.cpp
@@ -63,9 +65,12 @@ target_sources(eacp-gpu PRIVATE
         Frame/IndirectDrawPlan.cpp
         Frame/OcclusionQueries.cpp
         Frame/RenderPass.cpp
+        Pipeline/RenderPipeline.cpp
+        Shader/ShaderLibrary.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp
         Texture/MipChain.cpp
+        Texture/Sampler.cpp
         Texture/TextureShape.cpp
         View/GPUView.cpp)
 
@@ -116,7 +121,8 @@ elseif (WIN32)
             Texture/Texture-Windows.cpp
             Timing/GpuTimestamps-Windows.cpp
             View/GPUView-Windows.cpp
-            Windows/D3D12Context-Windows.cpp)
+            Windows/D3D12Context-Windows.cpp
+            Windows/D3D12Types-Windows.cpp)
     target_link_libraries(eacp-gpu PRIVATE
             d3d12
             dxgi
@@ -154,7 +160,8 @@ else ()
             Timing/GpuTimestamps-Linux.cpp
             View/GPUView-Linux.cpp
             Vulkan/VulkanContext-Linux.cpp
-            Vulkan/VulkanRenderPass-Linux.cpp)
+            Vulkan/VulkanRenderPass-Linux.cpp
+            Vulkan/VulkanTypes-Linux.cpp)
 
     if (ANDROID)
         target_sources(eacp-gpu PRIVATE Vulkan/VulkanSurface-Android.cpp)

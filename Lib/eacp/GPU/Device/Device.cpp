@@ -155,6 +155,36 @@ const FrameTimings& Device::lastFrameTimings() const
     return timer.lastTimings();
 }
 
+std::uint64_t Device::frameIndex() const
+{
+    return frameCount;
+}
+
+bool Device::isFrameOpen() const
+{
+    return openFrame != nullptr;
+}
+
+FrameTimer& Device::frameTimer()
+{
+    return timer;
+}
+
+int Device::buffersCreated() const
+{
+    return bufferCount;
+}
+
+void Device::noteBufferCreated()
+{
+    ++bufferCount;
+}
+
+void Device::followMainThread()
+{
+    mainThreadOwned = true;
+}
+
 bool Device::supportsPassTimings() const
 {
     return timer.isSupported();

@@ -7,6 +7,7 @@
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
 #include "../Shader/ShaderSource.h"
+#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 #include "../Windows/D3D12Types.h"
 

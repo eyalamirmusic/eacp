@@ -7,8 +7,6 @@
 #include "../Frame/ComputePass.h"
 #include "../Frame/RenderPass.h"
 
-#include <eacp/Core/Utils/Logging.h>
-
 // Internal shared types for the Windows/D3D12 GPU backend. The public GPU
 // classes expose opaque void* handles (nativeBuffer/nativeLibrary/nativeState/
 // ...); these structs are what those handles point to, so the separate
@@ -38,15 +36,15 @@ constexpr int maxBufferSlots = ComputePass::portableBufferSlots;
 // mix heap types), then per-stage root SRVs for the storage buffers a shader
 // subscripts. Single-descriptor tables let each texture bind its persistent
 // heap slot directly, with no per-frame descriptor copying.
-constexpr UINT renderVertexCBVParam(int slot)
+inline UINT renderVertexCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
 }
-constexpr UINT renderPixelCBVParam(int slot)
+inline UINT renderPixelCBVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + slot);
 }
-constexpr UINT renderTextureParam(int slot)
+inline UINT renderTextureParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + slot);
 }
@@ -56,11 +54,11 @@ constexpr UINT renderTextureParam(int slot)
 // and needs no heap. Per stage, like the CBVs and for the same reason - one
 // HLSL global is visible to both functions, so each stage names its own root
 // parameter at the same register.
-constexpr UINT renderVertexSRVParam(int slot)
+inline UINT renderVertexSRVParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + slot);
 }
-constexpr UINT renderPixelSRVParam(int slot)
+inline UINT renderPixelSRVParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots + maxBufferSlots
                              + slot);
@@ -72,7 +70,7 @@ constexpr UINT renderPixelSRVParam(int slot)
 static_assert(maxTextureSlots <= RenderPass::bufferRegisterBase,
               "render buffer registers must start above every texture slot");
 
-constexpr UINT renderBufferRegister(int slot)
+inline UINT renderBufferRegister(int slot)
 {
     return static_cast<UINT>(RenderPass::bufferRegisterBase + slot);
 }
@@ -82,7 +80,7 @@ constexpr UINT renderBufferRegister(int slot)
 // DriverQuirks::samplerTablesIgnoreOffset - keeps every other index. The
 // TextureSampling samplers are static samplers at s0.., never a table; see
 // TextureSampling.
-constexpr UINT renderSamplerParam(int slot)
+inline UINT renderSamplerParam(int slot)
 {
     return static_cast<UINT>(2 * maxUniformSlots + maxTextureSlots
                              + 2 * maxBufferSlots + slot);
@@ -94,7 +92,7 @@ constexpr int renderParamCount =
 static_assert(samplingConfigurations <= RenderPass::samplerRegisterBase,
               "per-bind sampler registers must start above the static samplers");
 
-constexpr UINT samplerRegister(int slot)
+inline UINT samplerRegister(int slot)
 {
     return static_cast<UINT>(RenderPass::samplerRegisterBase + slot);
 }
@@ -107,29 +105,29 @@ constexpr UINT samplerRegister(int slot)
 // all. Textures cannot be: a root descriptor is a buffer view and nothing else,
 // so a texture - read or written - goes through a table, which is why the
 // compute path binds descriptor heaps the way the render path does.
-constexpr UINT computeCBVParam(int slot)
+inline UINT computeCBVParam(int slot)
 {
     return static_cast<UINT>(slot);
 }
-constexpr UINT computeSRVParam(int slot)
+inline UINT computeSRVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + slot);
 }
-constexpr UINT computeUAVParam(int slot)
+inline UINT computeUAVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + maxBufferSlots + slot);
 }
-constexpr UINT computeTextureSRVParam(int slot)
+inline UINT computeTextureSRVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots + slot);
 }
-constexpr UINT computeTextureUAVParam(int slot)
+inline UINT computeTextureUAVParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots + maxTextureSlots
                              + slot);
 }
 
-constexpr UINT computeSamplerParam(int slot)
+inline UINT computeSamplerParam(int slot)
 {
     return static_cast<UINT>(maxUniformSlots + 2 * maxBufferSlots
                              + 2 * maxTextureSlots + slot);
@@ -139,10 +137,7 @@ constexpr int computeParamCount =
     maxUniformSlots + 2 * maxBufferSlots + 3 * maxTextureSlots;
 
 // Whether the root signatures carry the per-bind sampler tables above.
-inline bool hasSamplerTables()
-{
-    return !getD3D12Shared().getDriverQuirks().samplerTablesIgnoreOffset;
-}
+bool hasSamplerTables();
 
 // A kernel's textures share the t/u register spaces with its storage buffers,
 // and the two slot spaces are counted separately, so a texture's registers
@@ -151,7 +146,7 @@ inline bool hasSamplerTables()
 static_assert(maxBufferSlots <= ComputePass::textureRegisterBase,
               "compute texture registers must start above every buffer slot");
 
-constexpr UINT computeTextureRegister(int slot)
+inline UINT computeTextureRegister(int slot)
 {
     return static_cast<UINT>(ComputePass::textureRegisterBase + slot);
 }
@@ -187,14 +182,7 @@ struct D3D12Pipeline
 // slot 0) still bind correctly when the caller happens to pass a non-zero
 // slot index. Kept in one place so the two sites can't drift apart on the
 // platform I can't test.
-inline UINT strideForSlot(const Vector<UINT>& strides, int slot)
-{
-    if (slot >= 0 && slot < strides.size())
-        return strides[slot];
-    if (!strides.empty())
-        return strides[0];
-    return 0;
-}
+UINT strideForSlot(const Vector<UINT>& strides, int slot);
 
 // What Buffer::nativeBuffer() points to. Tracks the resource's state within
 // the current recording: buffers decay to COMMON after every
@@ -228,30 +216,7 @@ struct D3D12SamplerData
 // The descriptor a per-bind sampler table is pointed at, or a null handle
 // where there is nothing to bind - an invalid Sampler, or a root signature
 // without the tables, in which case the drop is logged once.
-inline D3D12_GPU_DESCRIPTOR_HANDLE perBindSamplerDescriptor(const Sampler& sampler)
-{
-    if (!hasSamplerTables())
-    {
-        static auto reported = false;
-
-        if (!reported)
-        {
-            reported = true;
-            LOG("D3D12: this driver ignores sampler table offsets; per-bind "
-                "samplers are dropped and their registers hold a fixed "
-                "linear/repeat static sampler. See SAMPLERS.md.");
-        }
-
-        return {};
-    }
-
-    auto* data = static_cast<D3D12SamplerData*>(sampler.nativeSampler());
-
-    if (data == nullptr)
-        return {};
-
-    return data->slot.gpu;
-}
+D3D12_GPU_DESCRIPTOR_HANDLE perBindSamplerDescriptor(const Sampler& sampler);
 
 // What Texture::nativeTexture()/nativeReadView() point to. The SRV slot lives
 // in the context's shader-visible heap for the texture's whole lifetime;
@@ -267,10 +232,7 @@ inline D3D12_GPU_DESCRIPTOR_HANDLE perBindSamplerDescriptor(const Sampler& sampl
 // the same 32-bit float precision, and the same near/far behaviour, whether or
 // not the stencil plane is there - and so it matches Metal, whose Apple-silicon
 // devices do not have the 24-bit combined format at all.
-inline DXGI_FORMAT depthAttachmentFormat(bool withStencil)
-{
-    return withStencil ? DXGI_FORMAT_D32_FLOAT_S8X24_UINT : DXGI_FORMAT_D32_FLOAT;
-}
+DXGI_FORMAT depthAttachmentFormat(bool withStencil);
 
 // What the depth *resource* is created as, which is the same thing as the
 // attachment format unless a shader is also going to read it. D3D12 will not
@@ -278,44 +240,25 @@ inline DXGI_FORMAT depthAttachmentFormat(bool withStencil)
 // sampleable depth buffer is created typeless and the DSV and the SRV each name
 // the type they want out of it. Metal needs none of this: a depth texture there
 // keeps its format and gains a usage bit.
-inline DXGI_FORMAT depthResourceFormat(bool withStencil, bool sampleable)
-{
-    if (!sampleable)
-        return depthAttachmentFormat(withStencil);
-
-    return withStencil ? DXGI_FORMAT_R32G8X24_TYPELESS : DXGI_FORMAT_R32_TYPELESS;
-}
+DXGI_FORMAT depthResourceFormat(bool withStencil, bool sampleable);
 
 // The read half of that pair: one float channel, which is what
 // ShaderBuilder::depthTexture declares and what Metal's depth2d<float> hands
 // back from the same sample. With a stencil plane the depth still reads as the
 // first 32 bits and the other 32 are named as the padding they are.
-inline DXGI_FORMAT depthShaderResourceFormat(bool withStencil)
-{
-    return withStencil ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
-                       : DXGI_FORMAT_R32_FLOAT;
-}
+DXGI_FORMAT depthShaderResourceFormat(bool withStencil);
 
 // The format a depth resolve names, which is neither of the two above: a
 // resolve is a copy, so it wants the plane as data rather than as a depth
 // attachment, and the resolve modes MIN and MAX are only defined over a
 // single-component typed format. The stencil half of a combined buffer is not
 // resolved and is named as the padding it is here.
-inline DXGI_FORMAT depthResolveFormat(bool withStencil)
-{
-    return withStencil ? DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS
-                       : DXGI_FORMAT_R32_FLOAT;
-}
+DXGI_FORMAT depthResolveFormat(bool withStencil);
 
 // Which planes a pass clears. Both when the buffer has both, which is what
 // keeps a stencilled pass starting from a value it named rather than from
 // whatever the last frame left in the plane.
-inline D3D12_CLEAR_FLAGS depthClearFlags(bool withStencil)
-{
-    return withStencil ? static_cast<D3D12_CLEAR_FLAGS>(D3D12_CLEAR_FLAG_DEPTH
-                                                        | D3D12_CLEAR_FLAG_STENCIL)
-                       : D3D12_CLEAR_FLAG_DEPTH;
-}
+D3D12_CLEAR_FLAGS depthClearFlags(bool withStencil);
 
 // A render-target or depth view of one level and a run of slices (images of a
 // volume), in a one-descriptor heap of its own like the target's first view,
@@ -400,16 +343,7 @@ struct D3D12TextureData
     // of a 2D target.
     Vector<DescriptorSlot> depthSliceSrvs;
 
-    D3D12_GPU_DESCRIPTOR_HANDLE depthSliceView(int slice) const
-    {
-        if (slice == 0 && depthSliceSrvs.empty())
-            return depthSrv.gpu;
-
-        if (slice < 0 || slice >= static_cast<int>(depthSliceSrvs.size()))
-            return {};
-
-        return depthSliceSrvs[static_cast<std::size_t>(slice)].gpu;
-    }
+    D3D12_GPU_DESCRIPTOR_HANDLE depthSliceView(int slice) const;
 
     // The single-sampled buffer a multisampled target's depth plane resolves
     // into, and the resource depthSrv actually views on that path. Null
@@ -508,26 +442,9 @@ d3d12DepthTargetView(D3D12TextureData& texture, int level, int slice, int count)
 // the one depthSrv views and the one a shader reads - and the attachment stays
 // in DEPTH_WRITE throughout, which is what lets the pass go on writing depth
 // while an earlier pass's resolve of it is being sampled.
-inline void transitionDepthForUse(ID3D12GraphicsCommandList* list,
-                                  D3D12TextureData& texture,
-                                  D3D12_RESOURCE_STATES target)
-{
-    auto* resource = texture.sampledDepthResource();
-
-    if (resource == nullptr || !texture.hasSampleableDepth()
-        || texture.depthState == target)
-        return;
-
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = resource;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore = texture.depthState;
-    barrier.Transition.StateAfter = target;
-    list->ResourceBarrier(1, &barrier);
-
-    texture.depthState = target;
-}
+void transitionDepthForUse(ID3D12GraphicsCommandList* list,
+                           D3D12TextureData& texture,
+                           D3D12_RESOURCE_STATES target);
 
 // The frame's color target. All members are owned by GPUView and stay valid
 // for the lifetime of the Frame. Pointed to by the drawable handle passed to
@@ -619,36 +536,9 @@ inline void endTimedPass(const Encoder& encoder)
 // Records the barrier a buffer needs before being used in the target state.
 // First use in a recording is free: the buffer was in COMMON (they decay
 // there after every execute) and promotion covers any first state.
-inline void transitionForUse(CommandContext& commands,
-                             D3D12BufferData& buffer,
-                             D3D12_RESOURCE_STATES target)
-{
-    // An upload-heap buffer is already in the one state it may ever be in, and
-    // GENERIC_READ covers every way a draw reads one - vertices, indices,
-    // constants, a shader resource. Nothing to record, which is the point.
-    if (buffer.uploadHeap)
-        return;
-
-    if (buffer.recordingId != commands.recordingId)
-    {
-        buffer.recordingId = commands.recordingId;
-        buffer.state = target;
-        return;
-    }
-
-    if (buffer.state == target)
-        return;
-
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = buffer.resource.get();
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore = buffer.state;
-    barrier.Transition.StateAfter = target;
-    commands.list->ResourceBarrier(1, &barrier);
-
-    buffer.state = target;
-}
+void transitionForUse(CommandContext& commands,
+                      D3D12BufferData& buffer,
+                      D3D12_RESOURCE_STATES target);
 
 // The texture sibling of transitionForUse: records the barrier a texture needs
 // before being used in the target state, and remembers what it is now in.
@@ -658,23 +548,9 @@ inline void transitionForUse(CommandContext& commands,
 // by the previous frame's last pass is what it is still in. Getting that wrong
 // is a barrier the debug layer rejects rather than anything visible, which is
 // exactly why the tracking lives here and not at the two call sites.
-inline void transitionTextureForUse(ID3D12GraphicsCommandList* list,
-                                    D3D12TextureData& texture,
-                                    D3D12_RESOURCE_STATES target)
-{
-    if (texture.resource == nullptr || texture.state == target)
-        return;
-
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = texture.resource.get();
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore = texture.state;
-    barrier.Transition.StateAfter = target;
-    list->ResourceBarrier(1, &barrier);
-
-    texture.state = target;
-}
+void transitionTextureForUse(ID3D12GraphicsCommandList* list,
+                             D3D12TextureData& texture,
+                             D3D12_RESOURCE_STATES target);
 
 // The state every compute pass needs bound before it can dispatch. Shared by
 // Frame::beginCompute and CommandBuffer::beginCompute so the two cannot drift
@@ -688,56 +564,14 @@ inline void transitionTextureForUse(ID3D12GraphicsCommandList* list,
 // signature declares no sampler table (every sampler in it is a static sampler,
 // see TextureSampling), but binding one heap here and two there would make the
 // bound heaps depend on the order the passes happened to run in.
-inline void bindComputeRootState(D3D12Context& context,
-                                 ID3D12GraphicsCommandList* list)
-{
-    ID3D12DescriptorHeap* heaps[] = {context.getTextureHeap(),
-                                     context.getSamplerHeap()};
-    list->SetDescriptorHeaps(2, heaps);
-    list->SetComputeRootSignature(context.getComputeRootSignature());
-
-    // Resource Binding Tier 1 hardware requires every descriptor table the root
-    // signature declares to be populated before a dispatch, even the ones the
-    // kernel never touches - an unset table drops the dispatch rather than
-    // failing loudly. The signature is shared and declares maxTextureSlots of
-    // each; setInputTexture / setOutputTexture overwrite the slots that carry a
-    // real texture. Same rule, and the same fix, as the render path's.
-    const auto nullSrv = context.getNullTextureDescriptor();
-    const auto nullUav = context.getNullTextureUAVDescriptor();
-
-    if (nullSrv.ptr == 0 || nullUav.ptr == 0)
-        return;
-
-    for (auto slot = 0; slot < maxTextureSlots; ++slot)
-    {
-        list->SetComputeRootDescriptorTable(computeTextureSRVParam(slot), nullSrv);
-        list->SetComputeRootDescriptorTable(computeTextureUAVParam(slot), nullUav);
-    }
-
-    const auto nullSampler = context.getNullSamplerDescriptor();
-
-    if (!hasSamplerTables() || nullSampler.ptr == 0)
-        return;
-
-    for (auto slot = 0; slot < maxTextureSlots; ++slot)
-        list->SetComputeRootDescriptorTable(computeSamplerParam(slot), nullSampler);
-}
+void bindComputeRootState(D3D12Context& context, ID3D12GraphicsCommandList* list);
 
 // A plain transition barrier for resources with externally known states (back
 // buffers, MSAA targets).
-inline void transition(ID3D12GraphicsCommandList* list,
-                       ID3D12Resource* resource,
-                       D3D12_RESOURCE_STATES before,
-                       D3D12_RESOURCE_STATES after)
-{
-    D3D12_RESOURCE_BARRIER barrier = {};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource = resource;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore = before;
-    barrier.Transition.StateAfter = after;
-    list->ResourceBarrier(1, &barrier);
-}
+void transition(ID3D12GraphicsCommandList* list,
+                ID3D12Resource* resource,
+                D3D12_RESOURCE_STATES before,
+                D3D12_RESOURCE_STATES after);
 
 // What a pass into a multisampled target does on its way out: flatten the
 // samples into the target's own resource, and into the resolved depth buffer
@@ -765,71 +599,5 @@ inline void transition(ID3D12GraphicsCommandList* list,
 // resolveDepthWithShader.
 void resolveDepthWithShader(CommandContext& commands, D3D12TextureData& texture);
 
-inline void resolveMultisampledTarget(CommandContext& commands,
-                                      D3D12TextureData& texture)
-{
-    auto* list = commands.list.get();
-
-    if (!texture.isMultisampled() || texture.resource == nullptr)
-        return;
-
-    transition(list,
-               texture.msaaResource.get(),
-               texture.msaaState,
-               D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
-    texture.msaaState = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
-
-    transitionTextureForUse(list, texture, D3D12_RESOURCE_STATE_RESOLVE_DEST);
-
-    list->ResolveSubresource(texture.resource.get(),
-                             0,
-                             texture.msaaResource.get(),
-                             0,
-                             texture.colorFormat);
-
-    transition(list,
-               texture.msaaResource.get(),
-               D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
-               D3D12_RESOURCE_STATE_RENDER_TARGET);
-    texture.msaaState = D3D12_RESOURCE_STATE_RENDER_TARGET;
-
-    if (texture.resolvedDepthResource == nullptr)
-        return;
-
-    if (getD3D12Shared().getDriverQuirks().noDepthResolve)
-    {
-        resolveDepthWithShader(commands, texture);
-        return;
-    }
-
-    winrt::com_ptr<ID3D12GraphicsCommandList1> list1;
-
-    if (FAILED(list->QueryInterface(__uuidof(ID3D12GraphicsCommandList1),
-                                    list1.put_void())))
-        return;
-
-    transition(list,
-               texture.depthResource.get(),
-               texture.msaaDepthState,
-               D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
-    texture.msaaDepthState = D3D12_RESOURCE_STATE_RESOLVE_SOURCE;
-
-    transitionDepthForUse(list, texture, D3D12_RESOURCE_STATE_RESOLVE_DEST);
-
-    list1->ResolveSubresourceRegion(texture.resolvedDepthResource.get(),
-                                    0,
-                                    0,
-                                    0,
-                                    texture.depthResource.get(),
-                                    0,
-                                    nullptr,
-                                    depthResolveFormat(texture.depthHasStencil),
-                                    D3D12_RESOLVE_MODE_MAX);
-
-    transition(list,
-               texture.depthResource.get(),
-               D3D12_RESOURCE_STATE_RESOLVE_SOURCE,
-               D3D12_RESOURCE_STATE_DEPTH_WRITE);
-    texture.msaaDepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
-}
+void resolveMultisampledTarget(CommandContext& commands, D3D12TextureData& texture);
 } // namespace eacp::GPU

@@ -68,7 +68,7 @@ struct BufferTextureCopyPlan
     int width = 0;
     int height = 0;
 
-    std::int64_t rowBytes() const { return (std::int64_t) width * bytesPerTexel; }
+    std::int64_t rowBytes() const;
 };
 
 int textureSlices(const Texture& texture);

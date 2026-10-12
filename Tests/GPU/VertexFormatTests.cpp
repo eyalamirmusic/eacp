@@ -724,13 +724,18 @@ bool readAsExpected(const std::array<float, 4>& read, const AttributeCase& entry
 }
 } // namespace
 
-static_assert(isIntegerVertexFormat(VertexFormat::UByte4));
-static_assert(isIntegerVertexFormat(VertexFormat::Int3));
-static_assert(!isIntegerVertexFormat(VertexFormat::UByte4Norm));
-static_assert(!isIntegerVertexFormat(VertexFormat::UInt1010102Norm));
 static_assert(bytesPerAttribute(VertexFormat::UInt1010102Norm) == 4);
 static_assert(bytesPerAttribute(VertexFormat::UShort4) == 8);
 static_assert(bytesPerAttribute(VertexFormat::Int3) == 12);
+
+auto tIntegerFormatsAreTheUnnormalisedOnes =
+    test("VertexFormat/integerFormatsAreTheUnnormalisedOnes") = []
+{
+    check(isIntegerVertexFormat(VertexFormat::UByte4));
+    check(isIntegerVertexFormat(VertexFormat::Int3));
+    check(!isIntegerVertexFormat(VertexFormat::UByte4Norm));
+    check(!isIntegerVertexFormat(VertexFormat::UInt1010102Norm));
+};
 
 auto tEveryFormatReadsItsValue = test("VertexFormat/everyFormatReadsItsValue") = []
 {

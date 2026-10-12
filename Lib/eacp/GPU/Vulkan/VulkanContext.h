@@ -94,13 +94,7 @@ struct CommandContext
     };
 
     // Only sound once the recording's completion value has passed.
-    void rewindUploads()
-    {
-        for (auto& chunk: uploads)
-            chunk.used = 0;
-
-        uploadCursor = 0;
-    }
+    void rewindUploads();
 
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer buffer = VK_NULL_HANDLE;
@@ -276,41 +270,26 @@ public:
     std::mutex& getQueueMutex() { return queueMutex; }
 
     // Enabled at device creation wherever the device offers it.
-    bool supportsSamplerAnisotropy() const
-    {
-        return features.samplerAnisotropy == VK_TRUE;
-    }
+    bool supportsSamplerAnisotropy() const;
 
     // Several records per vkCmdDrawIndirect, and a non-zero firstInstance in a
     // record; each enabled wherever the device offers it.
-    bool supportsMultiDrawIndirect() const
-    {
-        return features.multiDrawIndirect == VK_TRUE;
-    }
+    bool supportsMultiDrawIndirect() const;
 
     // vkCmdDrawIndirectCount: the Vulkan 1.2 feature on the core floor, the
     // VK_KHR_draw_indirect_count extension below it.
-    bool supportsIndirectCount() const { return indirectCountSupported; }
+    bool supportsIndirectCount() const;
 
     // An occlusion query that counts samples exactly, VK_QUERY_CONTROL_PRECISE_BIT;
     // enabled wherever the device offers it.
-    bool supportsPreciseOcclusionQueries() const
-    {
-        return features.occlusionQueryPrecise == VK_TRUE;
-    }
+    bool supportsPreciseOcclusionQueries() const;
 
     // gl_Layer from a vertex shader: shaderOutputLayer on the core floor,
     // VK_EXT_shader_viewport_index_layer below it.
-    bool supportsLayeredRendering() const { return layeredRenderingSupported; }
+    bool supportsLayeredRendering() const;
 
     // Null before the device came up.
-    VkSampler getSampler(const TextureSampling& sampling) const
-    {
-        if (device == VK_NULL_HANDLE)
-            return VK_NULL_HANDLE;
-
-        return samplers[samplingIndex(sampling)];
-    }
+    VkSampler getSampler(const TextureSampling& sampling) const;
 
 private:
     void createAll();

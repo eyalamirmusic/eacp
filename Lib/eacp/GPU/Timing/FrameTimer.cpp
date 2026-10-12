@@ -7,6 +7,11 @@ bool FrameTimer::isSupported() const
     return timestamps.isSupported();
 }
 
+const FrameTimings& FrameTimer::lastTimings() const
+{
+    return latest;
+}
+
 void FrameTimer::beginFrame(std::uint64_t frameIndex, Device& device)
 {
     // Before the new frame takes a slot, so that the one it is about to take is

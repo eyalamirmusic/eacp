@@ -12,29 +12,10 @@ namespace eacp::GPU
 // at 1x1. A 64x16 texture has 7: 64x16, 32x8, 16x4, 8x2, 4x1, 2x1, 1x1 - the
 // chain continues halving the larger axis after the smaller one bottoms out,
 // which is what both APIs expect and what GetCopyableFootprints assumes.
-constexpr int mipLevelCount(int width, int height)
-{
-    if (width <= 0 || height <= 0)
-        return 0;
-
-    auto levels = 1;
-    auto largest = width > height ? width : height;
-
-    while (largest > 1)
-    {
-        largest /= 2;
-        ++levels;
-    }
-
-    return levels;
-}
+int mipLevelCount(int width, int height);
 
 // One level's dimensions, never below 1.
-constexpr int mipExtent(int extent, int level)
-{
-    const auto shifted = extent >> level;
-    return shifted > 1 ? shifted : 1;
-}
+int mipExtent(int extent, int level);
 
 // The bytes a whole chain of this many levels occupies, tightly packed with
 // level 0 first - the layout MipChain holds, and the one
@@ -43,16 +24,7 @@ constexpr int mipExtent(int extent, int level)
 //
 // constexpr, as the two above are, so that a caller with a size known at compile
 // time can size a buffer with it rather than a magic number.
-constexpr int mipChainBytes(TextureFormat format, int width, int height, int levels)
-{
-    auto total = 0;
-
-    for (auto level = 0; level < levels; ++level)
-        total +=
-            levelBytes(format, mipExtent(width, level), mipExtent(height, level));
-
-    return total;
-}
+int mipChainBytes(TextureFormat format, int width, int height, int levels);
 
 // Whether buildMipChain knows how to average this format, which is the question
 // a texture asking to be mipmapped actually turns on. False for every
@@ -61,10 +33,7 @@ constexpr int mipChainBytes(TextureFormat format, int width, int height, int lev
 // wrote. False for an integer format too, whose texels are ids and counts
 // rather than samples of anything. Both backends ask this rather than each
 // deciding for itself.
-constexpr bool canBuildMipChain(TextureFormat format)
-{
-    return !isCompressedFormat(format) && !isIntegerFormat(format);
-}
+bool canBuildMipChain(TextureFormat format);
 
 // Every level of a texture, tightly packed, level 0 first.
 //

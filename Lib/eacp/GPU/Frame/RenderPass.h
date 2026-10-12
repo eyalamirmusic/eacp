@@ -3,7 +3,6 @@
 #include "../Buffer/Buffer.h"
 #include "IndirectDraw.h"
 #include "OcclusionQueries.h"
-#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
 #include <eacp/Core/Utils/Containers.h>
@@ -11,6 +10,7 @@
 namespace eacp::GPU
 {
 class RenderPipeline;
+class Sampler;
 
 // Records draw commands for a single render pass (MTLRenderCommandEncoder on
 // Metal). Ends the encoder automatically on destruction. Obtained from

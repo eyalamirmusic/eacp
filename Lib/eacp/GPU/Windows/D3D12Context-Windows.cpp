@@ -535,6 +535,14 @@ void addRenderingDeviceReplacedListener(std::function<void()> listener);
 
 namespace eacp::GPU
 {
+void CommandContext::rewindUploads()
+{
+    for (auto& chunk: uploads)
+        chunk.used = 0;
+
+    uploadCursor = 0;
+}
+
 D3D12Shared::D3D12Shared()
 {
     createAll();

@@ -57,7 +57,7 @@ public:
 
     // The most recent frame the GPU has finished and reported. Empty - no
     // passes, and a zero frameIndex - until one has.
-    constexpr const FrameTimings& lastTimings() const { return latest; }
+    const FrameTimings& lastTimings() const;
 
     // See GpuTimestamps::isSupported. Only meaningful once a frame has begun,
     // which is what builds the timestamp resources.

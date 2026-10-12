@@ -2,6 +2,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/ComputePipeline.h"
+#include "../Texture/Sampler.h"
 #include "../Vulkan/VulkanTypes.h"
 
 #include <memory>

@@ -4,12 +4,12 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Shader/ShaderSource.h"
-#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 
 namespace eacp::GPU
 {
 class ComputePipeline;
+class Sampler;
 
 // What an indirect dispatch reads out of a buffer: three threadgroup counts.
 // Both backends take exactly this, in this order and at this size - Metal's
@@ -347,26 +347,9 @@ private:
 
     // The group each dispatch is encoded with: the bound pipeline's own, or the
     // stock shape for the dispatch's rank when it carried none.
-    constexpr ThreadGroupShape groupFor1D() const
-    {
-        return boundGroup.isSet() ? boundGroup
-                                  : ThreadGroupShape {threadGroupWidth, 1, 1};
-    }
-
-    constexpr ThreadGroupShape groupFor2D() const
-    {
-        return boundGroup.isSet()
-                   ? boundGroup
-                   : ThreadGroupShape {threadGroupSize2D, threadGroupSize2D, 1};
-    }
-
-    constexpr ThreadGroupShape groupFor3D() const
-    {
-        return boundGroup.isSet() ? boundGroup
-                                  : ThreadGroupShape {threadGroupSize3D,
-                                                      threadGroupSize3D,
-                                                      threadGroupSize3D};
-    }
+    ThreadGroupShape groupFor1D() const;
+    ThreadGroupShape groupFor2D() const;
+    ThreadGroupShape groupFor3D() const;
 
     ThreadGroupShape boundGroup;
 

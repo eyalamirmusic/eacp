@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/RenderPipeline.h"
+#include "../Texture/Sampler.h"
 #include "../Texture/Texture.h"
 #include "../Vulkan/VulkanTypes.h"
 

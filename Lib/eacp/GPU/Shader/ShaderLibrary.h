@@ -15,17 +15,17 @@ class ShaderLibrary
 public:
     ShaderLibrary(Device& device, const ShaderSource& source);
 
-    constexpr const std::string& vertexEntry() const { return vertexEntryName; }
-    constexpr const std::string& fragmentEntry() const { return fragmentEntryName; }
-    constexpr const std::string& computeEntry() const { return computeEntryName; }
+    const std::string& vertexEntry() const;
+    const std::string& fragmentEntry() const;
+    const std::string& computeEntry() const;
 
     // False for a vertex-only library (ShaderSource::withFragment with an empty
     // entry), whose pipelines have no fragment stage.
-    bool hasFragment() const { return !fragmentEntryName.empty(); }
+    bool hasFragment() const;
 
     // The group the kernel was emitted for, carried to the pipeline the pass
     // dispatches through.
-    constexpr ThreadGroupShape threadGroupShape() const { return groupShape; }
+    ThreadGroupShape threadGroupShape() const;
 
     bool isValid() const;
 

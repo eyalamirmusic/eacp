@@ -236,261 +236,77 @@ struct TextureFormatTraits
     bool srgb = false;
 };
 
-// Exhaustive on purpose, and the only switch over every format in this header:
-// a format added without its traits is a -Wswitch warning here rather than a
+// Exhaustive on purpose, and the only switch over every format in Texture.cpp:
+// a format added without its traits is a -Wswitch warning there rather than a
 // texture uploaded at someone else's stride. bytesPerPixel answered 4 for
 // anything it did not recognise until the block formats arrived, which is a
 // wrong number rather than a missing case.
-constexpr TextureFormatTraits textureFormatTraits(TextureFormat format)
-{
-    using Kind = TextureFormatKind;
-
-    switch (format)
-    {
-        case TextureFormat::RGBA8Unorm:
-        case TextureFormat::BGRA8Unorm:
-            return {4, 0, 4, Kind::Unorm};
-        case TextureFormat::R8Unorm:
-            return {1, 0, 1, Kind::Unorm};
-        case TextureFormat::RG8Unorm:
-            return {2, 0, 2, Kind::Unorm};
-        case TextureFormat::RGBA16Float:
-            return {8, 0, 4, Kind::Float};
-        case TextureFormat::RGBA32Float:
-            return {16, 0, 4, Kind::Float};
-        case TextureFormat::R32Float:
-            return {4, 0, 1, Kind::Float};
-        case TextureFormat::R16Float:
-            return {2, 0, 1, Kind::Float};
-        case TextureFormat::RG16Float:
-            return {4, 0, 2, Kind::Float};
-        case TextureFormat::RG32Float:
-            return {8, 0, 2, Kind::Float};
-        case TextureFormat::R16Unorm:
-            return {2, 0, 1, Kind::Unorm};
-        case TextureFormat::R32Uint:
-            return {4, 0, 1, Kind::Uint};
-
-        case TextureFormat::RGBA8UnormSrgb:
-        case TextureFormat::BGRA8UnormSrgb:
-            return {4, 0, 4, Kind::Unorm, true};
-        case TextureFormat::RG16Unorm:
-            return {4, 0, 2, Kind::Unorm};
-        case TextureFormat::RGBA16Unorm:
-            return {8, 0, 4, Kind::Unorm};
-        case TextureFormat::RGB10A2Unorm:
-            return {4, 0, 4, Kind::Unorm};
-        case TextureFormat::RG11B10Float:
-        case TextureFormat::RGB9E5Float:
-            return {4, 0, 3, Kind::Float};
-
-        case TextureFormat::R8Uint:
-            return {1, 0, 1, Kind::Uint};
-        case TextureFormat::RG8Uint:
-            return {2, 0, 2, Kind::Uint};
-        case TextureFormat::RGBA8Uint:
-            return {4, 0, 4, Kind::Uint};
-        case TextureFormat::R16Uint:
-            return {2, 0, 1, Kind::Uint};
-        case TextureFormat::RG16Uint:
-            return {4, 0, 2, Kind::Uint};
-        case TextureFormat::RGBA16Uint:
-            return {8, 0, 4, Kind::Uint};
-        case TextureFormat::RG32Uint:
-            return {8, 0, 2, Kind::Uint};
-        case TextureFormat::RGBA32Uint:
-            return {16, 0, 4, Kind::Uint};
-        case TextureFormat::R8Sint:
-            return {1, 0, 1, Kind::Sint};
-        case TextureFormat::RG8Sint:
-            return {2, 0, 2, Kind::Sint};
-        case TextureFormat::RGBA8Sint:
-            return {4, 0, 4, Kind::Sint};
-        case TextureFormat::R16Sint:
-            return {2, 0, 1, Kind::Sint};
-        case TextureFormat::RG16Sint:
-            return {4, 0, 2, Kind::Sint};
-        case TextureFormat::RGBA16Sint:
-            return {8, 0, 4, Kind::Sint};
-        case TextureFormat::R32Sint:
-            return {4, 0, 1, Kind::Sint};
-        case TextureFormat::RG32Sint:
-            return {8, 0, 2, Kind::Sint};
-        case TextureFormat::RGBA32Sint:
-            return {16, 0, 4, Kind::Sint};
-
-        case TextureFormat::BC1RGBA:
-            return {0, 8, 4, Kind::Unorm};
-        case TextureFormat::BC2RGBA:
-        case TextureFormat::BC3RGBA:
-        case TextureFormat::BC7RGBA:
-            return {0, 16, 4, Kind::Unorm};
-        case TextureFormat::BC1RGBASrgb:
-            return {0, 8, 4, Kind::Unorm, true};
-        case TextureFormat::BC2RGBASrgb:
-        case TextureFormat::BC3RGBASrgb:
-        case TextureFormat::BC7RGBASrgb:
-            return {0, 16, 4, Kind::Unorm, true};
-        case TextureFormat::BC4RUnorm:
-            return {0, 8, 1, Kind::Unorm};
-        case TextureFormat::BC4RSnorm:
-            return {0, 8, 1, Kind::Snorm};
-        case TextureFormat::BC5RGUnorm:
-            return {0, 16, 2, Kind::Unorm};
-        case TextureFormat::BC5RGSnorm:
-            return {0, 16, 2, Kind::Snorm};
-        case TextureFormat::BC6HRGBUfloat:
-            return {0, 16, 3, Kind::Float};
-    }
-
-    return {};
-}
+TextureFormatTraits textureFormatTraits(TextureFormat format);
 
 // Whether one record of this format covers a 4x4 block of texels rather than a
 // single one. The formats that do are sized differently from the rest all the
 // way down, which is what levelBytesPerRow and levelBytes below exist to hide
 // from everything that only wants the size of a level.
-constexpr bool isCompressedFormat(TextureFormat format)
-{
-    return textureFormatTraits(format).blockBytes > 0;
-}
+bool isCompressedFormat(TextureFormat format);
 
 // Whether a pass can render into this format and a kernel can be asked to
 // store to it: every format but the block-compressed ones and RGB9E5Float,
 // which are sampled only. Each such format has its PixelFormat
 // (pixelFormatFor), and textureFormatFor is its way back.
-constexpr bool isRenderableFormat(TextureFormat format)
-{
-    return !isCompressedFormat(format) && format != TextureFormat::RGB9E5Float;
-}
+bool isRenderableFormat(TextureFormat format);
 
 // Bytes one 4x4 block occupies, and 0 for a format that has no blocks. Both
 // APIs round a level up to whole blocks, so a 2x2 level of a compressed texture
 // is still one block of this size and a 1x1 level is too.
-constexpr int bytesPerBlock(TextureFormat format)
-{
-    return textureFormatTraits(format).blockBytes;
-}
+int bytesPerBlock(TextureFormat format);
 
 // Bytes one texel occupies, and 0 for a block-compressed format, which has no
 // per-texel size at all - levelBytesPerRow is the number a compressed upload
 // wants.
-constexpr int bytesPerPixel(TextureFormat format)
-{
-    return textureFormatTraits(format).texelBytes;
-}
+int bytesPerPixel(TextureFormat format);
 
 // How many components a texel carries: what a shader reading it gets in
 // r, rg, rgb or rgba, the rest being 0 and an alpha of 1.
-constexpr int formatChannels(TextureFormat format)
-{
-    return textureFormatTraits(format).channels;
-}
+int formatChannels(TextureFormat format);
 
 // A level's row pitch when it is tightly packed: bytes per row of texels, or
 // bytes per row of *blocks* for a compressed format, where one row covers four
 // rows of texels.
-constexpr int levelBytesPerRow(TextureFormat format, int width)
-{
-    if (isCompressedFormat(format))
-        return ((width + 3) / 4) * bytesPerBlock(format);
-
-    return width * bytesPerPixel(format);
-}
+int levelBytesPerRow(TextureFormat format, int width);
 
 // How many rows of that pitch a level holds: its height in texels, or in blocks
 // of four.
-constexpr int levelRows(TextureFormat format, int height)
-{
-    return isCompressedFormat(format) ? (height + 3) / 4 : height;
-}
+int levelRows(TextureFormat format, int height);
 
 // One level of a texture this size, tightly packed - and the unit every layout
 // in this header is written in: a whole 2D texture, one face of a cube, one
 // level of a chain the caller supplied.
-constexpr int levelBytes(TextureFormat format, int width, int height)
-{
-    return levelBytesPerRow(format, width) * levelRows(format, height);
-}
+int levelBytes(TextureFormat format, int width, int height);
 
 // Whether a texel holds floats: the half and full float formats, RG11B10Float,
 // RGB9E5Float and BC6H.
-constexpr bool isFloatFormat(TextureFormat format)
-{
-    return textureFormatTraits(format).kind == TextureFormatKind::Float;
-}
+bool isFloatFormat(TextureFormat format);
 
 // Whether a shader reads this format as integers rather than as floats:
 // texture2d<uint> or <int>, Texture2D<uint> or <int>, usampler2D or isampler2D.
 // Unsigned and signed alike; the two below tell them apart.
-constexpr bool isIntegerFormat(TextureFormat format)
-{
-    const auto kind = textureFormatTraits(format).kind;
-    return kind == TextureFormatKind::Uint || kind == TextureFormatKind::Sint;
-}
+bool isIntegerFormat(TextureFormat format);
 
-constexpr bool isUnsignedIntegerFormat(TextureFormat format)
-{
-    return textureFormatTraits(format).kind == TextureFormatKind::Uint;
-}
+bool isUnsignedIntegerFormat(TextureFormat format);
 
-constexpr bool isSignedIntegerFormat(TextureFormat format)
-{
-    return textureFormatTraits(format).kind == TextureFormatKind::Sint;
-}
+bool isSignedIntegerFormat(TextureFormat format);
 
 // Whether the sampler decodes this format from sRGB, and a pass rendering
 // into it encodes.
-constexpr bool isSrgbFormat(TextureFormat format)
-{
-    return textureFormatTraits(format).srgb;
-}
+bool isSrgbFormat(TextureFormat format);
 
 // The sRGB twin of a format that has one, and the format itself otherwise -
 // and the way back. Same bytes, same size, decoded differently; a caller that
 // learns late whether its content is colour or data (bgfx's sampler flag)
 // picks between them with these.
-constexpr TextureFormat srgbFormatFor(TextureFormat format)
-{
-    switch (format)
-    {
-        case TextureFormat::RGBA8Unorm:
-            return TextureFormat::RGBA8UnormSrgb;
-        case TextureFormat::BGRA8Unorm:
-            return TextureFormat::BGRA8UnormSrgb;
-        case TextureFormat::BC1RGBA:
-            return TextureFormat::BC1RGBASrgb;
-        case TextureFormat::BC2RGBA:
-            return TextureFormat::BC2RGBASrgb;
-        case TextureFormat::BC3RGBA:
-            return TextureFormat::BC3RGBASrgb;
-        case TextureFormat::BC7RGBA:
-            return TextureFormat::BC7RGBASrgb;
-        default:
-            return format;
-    }
-}
+TextureFormat srgbFormatFor(TextureFormat format);
 
-constexpr TextureFormat linearFormatFor(TextureFormat format)
-{
-    switch (format)
-    {
-        case TextureFormat::RGBA8UnormSrgb:
-            return TextureFormat::RGBA8Unorm;
-        case TextureFormat::BGRA8UnormSrgb:
-            return TextureFormat::BGRA8Unorm;
-        case TextureFormat::BC1RGBASrgb:
-            return TextureFormat::BC1RGBA;
-        case TextureFormat::BC2RGBASrgb:
-            return TextureFormat::BC2RGBA;
-        case TextureFormat::BC3RGBASrgb:
-            return TextureFormat::BC3RGBA;
-        case TextureFormat::BC7RGBASrgb:
-            return TextureFormat::BC7RGBA;
-        default:
-            return format;
-    }
-}
+TextureFormat linearFormatFor(TextureFormat format);
 
 // Whether a kernel may write this format on **every** device eacp runs on. The
 // restriction is D3D12's: a typed UAV store is only promised for a small set,
@@ -504,12 +320,7 @@ constexpr TextureFormat linearFormatFor(TextureFormat format)
 //
 // A texture asked for computeWrite in a format its device refuses fails to
 // create rather than binding as a kernel output that quietly does nothing.
-constexpr bool supportsComputeWrite(TextureFormat format)
-{
-    return format == TextureFormat::RGBA8Unorm
-           || format == TextureFormat::RGBA16Float
-           || format == TextureFormat::RGBA32Float;
-}
+bool supportsComputeWrite(TextureFormat format);
 
 enum class TextureFilter
 {
@@ -563,11 +374,7 @@ struct TextureSampling
 // caches this many MTLSamplerStates on the Device.
 constexpr int samplingConfigurations = 4;
 
-constexpr int samplingIndex(const TextureSampling& sampling)
-{
-    return (sampling.filter == TextureFilter::Linear ? 2 : 0)
-           + (sampling.addressMode == TextureAddressMode::Repeat ? 1 : 0);
-}
+int samplingIndex(const TextureSampling& sampling);
 
 // The shape of a texture: one 2D image, a cube, an array of either, or a
 // volume. A shader declares the matching type - texture2d, texturecube,
@@ -836,13 +643,7 @@ struct TextureRegion
     int bytesPerRow = 0;
     int bytesPerImage = 0;
 
-    static TextureRegion wholeLevel(int level, int slice = 0)
-    {
-        auto region = TextureRegion {};
-        region.level = level;
-        region.slice = slice;
-        return region;
-    }
+    static TextureRegion wholeLevel(int level, int slice = 0);
 };
 
 // One level of one slice of a texture's initial contents, for

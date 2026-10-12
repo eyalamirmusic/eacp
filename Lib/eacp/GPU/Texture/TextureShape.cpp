@@ -209,6 +209,46 @@ std::optional<SubresourceUpload> planRegion(const TextureShape& shape,
 }
 } // namespace
 
+bool TextureShape::isCubeKind() const
+{
+    return kind == TextureType::Cube || kind == TextureType::CubeArray;
+}
+
+bool TextureShape::isArrayKind() const
+{
+    return kind == TextureType::TwoDArray || kind == TextureType::CubeArray;
+}
+
+bool TextureShape::isVolume() const
+{
+    return kind == TextureType::ThreeD;
+}
+
+int TextureShape::slices() const
+{
+    return layers * (isCubeKind() ? 6 : 1);
+}
+
+int TextureShape::levelWidth(int level) const
+{
+    return mipExtent(width, level);
+}
+
+int TextureShape::levelHeight(int level) const
+{
+    return mipExtent(height, level);
+}
+
+int TextureShape::levelDepth(int level) const
+{
+    return isVolume() ? mipExtent(depth, level) : 1;
+}
+
+bool TextureShape::buildsChain() const
+{
+    return levels > 1 && !explicitLevels;
+}
+
 int maxMipLevels(TextureType kind, int width, int height, int depth)
 {
     const auto largest =

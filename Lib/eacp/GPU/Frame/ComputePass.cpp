@@ -7,6 +7,27 @@ const ComputePass::Recorded& ComputePass::recorded() const
     return counts;
 }
 
+ThreadGroupShape ComputePass::groupFor1D() const
+{
+    return boundGroup.isSet() ? boundGroup
+                              : ThreadGroupShape {threadGroupWidth, 1, 1};
+}
+
+ThreadGroupShape ComputePass::groupFor2D() const
+{
+    return boundGroup.isSet()
+               ? boundGroup
+               : ThreadGroupShape {threadGroupSize2D, threadGroupSize2D, 1};
+}
+
+ThreadGroupShape ComputePass::groupFor3D() const
+{
+    return boundGroup.isSet() ? boundGroup
+                              : ThreadGroupShape {threadGroupSize3D,
+                                                  threadGroupSize3D,
+                                                  threadGroupSize3D};
+}
+
 void ComputePass::setPipeline(const ComputePipeline& pipeline)
 {
     ++counts.pipelineSets;

@@ -464,9 +464,44 @@ void halveSharedExponent(const std::uint8_t* source,
 }
 } // namespace
 
-// mipExtent, mipLevelCount and mipChainBytes are constexpr in the header: they
-// are arithmetic over a size, and a caller whose size is known at compile time
-// should be able to size a buffer with them.
+int mipLevelCount(int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return 0;
+
+    auto levels = 1;
+    auto largest = width > height ? width : height;
+
+    while (largest > 1)
+    {
+        largest /= 2;
+        ++levels;
+    }
+
+    return levels;
+}
+
+int mipExtent(int extent, int level)
+{
+    const auto shifted = extent >> level;
+    return shifted > 1 ? shifted : 1;
+}
+
+int mipChainBytes(TextureFormat format, int width, int height, int levels)
+{
+    auto total = 0;
+
+    for (auto level = 0; level < levels; ++level)
+        total +=
+            levelBytes(format, mipExtent(width, level), mipExtent(height, level));
+
+    return total;
+}
+
+bool canBuildMipChain(TextureFormat format)
+{
+    return !isCompressedFormat(format) && !isIntegerFormat(format);
+}
 
 bool MipChain::isValid() const
 {

@@ -46,6 +46,11 @@ bool coversWholeLevel(const Texture& texture, int level, int x, int y, int w, in
 }
 } // namespace
 
+std::int64_t BufferTextureCopyPlan::rowBytes() const
+{
+    return (std::int64_t) width * bytesPerTexel;
+}
+
 int textureSlices(const Texture& texture)
 {
     return texture.slices();

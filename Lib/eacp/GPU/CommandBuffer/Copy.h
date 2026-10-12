@@ -47,16 +47,7 @@ struct TextureCopyRegion
 
     // The whole of one level, the same level and slice on both sides: every
     // image of it on a volume.
-    static TextureCopyRegion wholeLevel(int level, int slice = 0)
-    {
-        auto region = TextureCopyRegion {};
-        region.sourceLevel = level;
-        region.sourceSlice = slice;
-        region.destinationLevel = level;
-        region.destinationSlice = slice;
-        region.size.depth = 0;
-        return region;
-    }
+    static TextureCopyRegion wholeLevel(int level, int slice = 0);
 };
 
 // The texture half of a copy between a buffer and a texture, and how the

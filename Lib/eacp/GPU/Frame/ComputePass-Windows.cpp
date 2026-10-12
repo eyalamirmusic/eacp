@@ -4,6 +4,7 @@
 
 #include "../Buffer/Buffer.h"
 #include "../Pipeline/ComputePipeline.h"
+#include "../Texture/Sampler.h"
 #include "../Windows/D3D12Types.h"
 
 // Windows/D3D12 backend. Records onto the command buffer's recording via the

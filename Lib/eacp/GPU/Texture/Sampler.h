@@ -1,15 +1,16 @@
 #pragma once
 
-#include "../Pipeline/RenderPipeline.h"
 #include "Texture.h"
 
 #include <cstddef>
-#include <functional>
 #include <limits>
 #include <optional>
 
 namespace eacp::GPU
 {
+// Defined in RenderPipeline.h; a descriptor only stores one.
+enum class CompareFunction;
+
 enum class SamplerAddressMode
 {
     ClampToEdge,
@@ -73,65 +74,17 @@ struct SamplerDescriptor
 
     // The descriptor a TextureSampling stands for: one filter for min, mag and
     // mip, one address mode on every axis.
-    static constexpr SamplerDescriptor from(const TextureSampling& sampling)
-    {
-        const auto linear = sampling.filter == TextureFilter::Linear;
-        const auto address = sampling.addressMode == TextureAddressMode::Repeat
-                                 ? SamplerAddressMode::Repeat
-                                 : SamplerAddressMode::ClampToEdge;
-
-        auto descriptor = SamplerDescriptor {};
-        descriptor.addressU = address;
-        descriptor.addressV = address;
-        descriptor.addressW = address;
-        descriptor.minFilter =
-            linear ? SamplerFilter::Linear : SamplerFilter::Nearest;
-        descriptor.magFilter = descriptor.minFilter;
-        descriptor.mipFilter =
-            linear ? SamplerMipFilter::Linear : SamplerMipFilter::Nearest;
-        return descriptor;
-    }
+    static SamplerDescriptor from(const TextureSampling& sampling);
 
     // Whether all three filters are Linear, which is what anisotropy needs.
-    constexpr bool isFullyLinear() const
-    {
-        return minFilter == SamplerFilter::Linear
-               && magFilter == SamplerFilter::Linear
-               && mipFilter == SamplerMipFilter::Linear;
-    }
+    bool isFullyLinear() const;
 };
 
-inline std::size_t hashOf(const SamplerDescriptor& descriptor)
-{
-    auto seed = std::size_t {0};
-
-    const auto combine = [&seed](auto value)
-    {
-        seed ^= std::hash<decltype(value)> {}(value) + 0x9e3779b97f4a7c15ull
-                + (seed << 6) + (seed >> 2);
-    };
-
-    combine((int) descriptor.addressU);
-    combine((int) descriptor.addressV);
-    combine((int) descriptor.addressW);
-    combine((int) descriptor.minFilter);
-    combine((int) descriptor.magFilter);
-    combine((int) descriptor.mipFilter);
-    combine(descriptor.maxAnisotropy);
-    combine(descriptor.compare.has_value() ? (int) *descriptor.compare : -1);
-    combine((int) descriptor.borderColor);
-    combine(descriptor.lodMinClamp);
-    combine(descriptor.lodMaxClamp);
-
-    return seed;
-}
+std::size_t hashOf(const SamplerDescriptor& descriptor);
 
 struct SamplerDescriptorHash
 {
-    std::size_t operator()(const SamplerDescriptor& descriptor) const
-    {
-        return hashOf(descriptor);
-    }
+    std::size_t operator()(const SamplerDescriptor& descriptor) const;
 };
 
 // A handle to a sampler the Device made and keeps: copying one is free, and it
@@ -146,22 +99,18 @@ class Sampler
 public:
     Sampler() = default;
 
-    bool isValid() const { return native != nullptr; }
+    bool isValid() const;
 
-    const SamplerDescriptor& descriptor() const { return description; }
+    const SamplerDescriptor& descriptor() const;
 
-    void* nativeSampler() const { return native; }
+    void* nativeSampler() const;
 
-    bool operator==(const Sampler& other) const { return native == other.native; }
+    bool operator==(const Sampler& other) const;
 
 private:
     friend class Device;
 
-    Sampler(void* nativeHandle, const SamplerDescriptor& samplerDescriptor)
-        : native(nativeHandle)
-        , description(samplerDescriptor)
-    {
-    }
+    Sampler(void* nativeHandle, const SamplerDescriptor& samplerDescriptor);
 
     void* native = nullptr;
     SamplerDescriptor description;
