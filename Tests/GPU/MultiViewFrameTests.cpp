@@ -267,7 +267,7 @@ auto tMultiViewOwnFrame = test("MultiView/aViewDoesNotNestInItsOwnFrame") = []
         return;
 
     auto extra = ExtraView {};
-    auto inner = true;
+    auto inner = false;
 
     const auto rendered = extra.view.renderFrame(
         [&](Frame& frame)
