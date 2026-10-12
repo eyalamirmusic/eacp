@@ -40,6 +40,13 @@ std::unordered_map<View*, HWND>& contentViewToHwnd()
     return Singleton::getImmortal<std::unordered_map<View*, HWND>>();
 }
 
+// Every live host, so a device loss can rebuild each one's target and root.
+// Main-thread only and immortal, like the view/HWND registry above.
+Vector<CompositionHostWindow*>& compositionHosts()
+{
+    return Singleton::getImmortal<Vector<CompositionHostWindow*>>();
+}
+
 // Virtual key codes - defined manually to reduce Windows.h dependency.
 namespace VK
 {
@@ -92,20 +99,20 @@ HCURSOR systemCursorFor(MouseCursor::Shape shape)
     switch (shape)
     {
         case MouseCursor::IBeam:
-            return LoadCursorW(nullptr, IDC_IBEAM);
+            return LoadCursor(nullptr, IDC_IBEAM);
         case MouseCursor::PointingHand:
-            return LoadCursorW(nullptr, IDC_HAND);
+            return LoadCursor(nullptr, IDC_HAND);
         case MouseCursor::ResizeLeftRight:
-            return LoadCursorW(nullptr, IDC_SIZEWE);
+            return LoadCursor(nullptr, IDC_SIZEWE);
         case MouseCursor::ResizeUpDown:
-            return LoadCursorW(nullptr, IDC_SIZENS);
+            return LoadCursor(nullptr, IDC_SIZENS);
         case MouseCursor::Crosshair:
-            return LoadCursorW(nullptr, IDC_CROSS);
+            return LoadCursor(nullptr, IDC_CROSS);
         case MouseCursor::Default:
             break;
     }
 
-    return LoadCursorW(nullptr, IDC_ARROW);
+    return LoadCursor(nullptr, IDC_ARROW);
 }
 
 struct ImageCursorHandle
@@ -435,12 +442,6 @@ void markViewTreeLayersDirty(const View* view)
         markViewTreeLayersDirty(subview);
 }
 
-// Every live host, so a device loss can rebuild each one's target and root.
-// Main-thread only and immortal, like the view/HWND registry above.
-Vector<CompositionHostWindow*>& compositionHosts()
-{
-    return Singleton::getImmortal<Vector<CompositionHostWindow*>>();
-}
 } // namespace
 
 bool isHostWindowTransparent(HWND hwnd)
