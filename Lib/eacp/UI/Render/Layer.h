@@ -52,6 +52,11 @@ class Graphics;
 // host renders them in the order they registered, so a layer drawing another
 // must be constructed after the one it draws. Building innermost-out is what a
 // tree walk gives you anyway, and it is the only ordering rule here.
+//
+// What fills it is one of three things, the first that is set winning:
+// onRender, a GPU pass of the caller's own; setContent, a subtree of components
+// drawn into it in place of the frame; and onPaint. Whichever it is, the result
+// is composited the same way, by drawLayer or by sampling getTexture().
 class Layer
 {
 public:
@@ -98,6 +103,79 @@ public:
     // dirty. Non-null by default so nothing has to check.
     std::function<void(Graphics&)> onPaint = [](Graphics&) {};
 
+    // A subtree of the owner drawn into this layer instead of into the frame:
+    // the frame's own pass steps over it, and the owner puts it on screen --
+    // with drawLayer, or by sampling the texture in a pass of its own. Null,
+    // the default, clears it.
+    //
+    // Normally a direct child of the owner, and always a descendant. It stays
+    // an ordinary part of the tree in every other respect: laid out, its paths
+    // rasterized, its own layers rendered (before this one, being children),
+    // its timers and listeners running, and found by getComponentAt as any
+    // visible component is. Only the frame's drawing of it moves here.
+    //
+    // A point at the content's position in the owner lands at that position
+    // less getBounds()'s corner in the texture, so bounds covering the content
+    // where it sits draw it 1:1. Cut to the bounds; ancestors between the owner
+    // and the content do not clip it.
+    //
+    // Rendered again whenever anything in the subtree changes what the frame
+    // would have drawn -- a repaint, a move or resize, a child shown, hidden,
+    // added, removed or reordered, a layer inside it rendered or faded -- and
+    // not otherwise. onPaint is not called while this is set.
+    //
+    // Let go of, rather than left dangling, when the content is deleted or
+    // removed from its parent; it then has to be set again.
+    void setContent(Component* subtreeRoot);
+    Component* getContent() const;
+
+    // A pass of the caller's own instead of drawn content: a 3D scene with a
+    // depth buffer, a projection of another layer, anything the tier's 2D
+    // renderers cannot express. Empty by default; while set, the layer is
+    // filled by this alone and both setContent and onPaint are ignored.
+    //
+    // The host opens a pass on the texture -- cleared to transparent, with the
+    // depth buffer cleared when hasDepth() -- sets its viewport to
+    // `contentAreaPixels`, the run of the texture the layer occupies in device
+    // pixels from its top-left, and calls this. Nothing else goes into it.
+    // The pipelines drawn here are built to match the texture:
+    //
+    //     descriptor.colorFormat = layer.getColorFormat();
+    //     descriptor.depth = layer.hasDepth();
+    //     descriptor.sampleCount = layer.getSampleCount();
+    //
+    // The texture is composited as any layer is, opacity and transform
+    // included, and the compositor treats it as drawn onto transparent -- so a
+    // pipeline that is not opaque blends with
+    // GPU::BlendMode::AlphaBlendOntoTransparent, as the tier's own do.
+    //
+    // **Sampling another layer works by the ordering rule above.** A layer
+    // registered earlier on the same component is rendered first, so this one
+    // can sample its texture; and whenever one of those is rendered again this
+    // one is too, in the same frame, with nothing to wire up. For a change of
+    // its own -- a camera moving -- call setDirty. Assigning this does not mark
+    // the layer dirty either.
+    std::function<void(GPU::RenderPass& pass, const Rect& contentAreaPixels)>
+        onRender;
+
+    // A depth buffer on the texture, for an onRender pass drawing a scene.
+    // Ignored for a layer without onRender, whose content has no use for one.
+    // Changing it remakes the texture.
+    void setDepth(bool shouldHaveDepth);
+    bool hasDepth() const;
+
+    // Samples per pixel for an onRender pass. Above 1 the pass draws into a
+    // multisampled twin and is resolved into the texture as it ends, so what
+    // is composited and sampled is always the resolved picture. A count the
+    // device refuses leaves the layer empty -- GPU::Device::supportsSampleCount
+    // is how to choose one. Ignored without onRender; changing it remakes the
+    // texture.
+    void setSampleCount(int newSampleCount);
+    int getSampleCount() const;
+
+    // The texture's colour format, as a pipeline drawing into it names it.
+    GPU::PixelFormat getColorFormat() const;
+
     // Asks for the content to be rendered again at the top of the next frame.
     // Setting the bounds does this for you; a change of what onPaint would draw
     // does not, since nothing here can see it.
@@ -116,8 +194,25 @@ public:
 
 private:
     friend class ComponentHost;
+    friend class Component;
 
-    bool isDirty() const;
+    // Something in the captured subtree changed what it draws. Only the flag:
+    // the owner's recording names the layer rather than its pixels, so it
+    // still holds, and the change that called this asks for the frame itself.
+    void contentChanged();
+
+    bool rendersOwnPass() const;
+    bool wantsDepth() const;
+    int wantedSampleCount() const;
+
+    // Dirty, or last rendered at another scale -- the texture is in device
+    // pixels, so content drawn for one display is the wrong resolution on the next.
+    bool needsRendering(float scale) const;
+
+    // The top-left run of the texture the content was rendered into, in texels:
+    // what a pass filling the layer has to confine itself to, since the texture
+    // may be larger than the content after a shrink.
+    Rect getContentArea() const;
 
     // Makes or grows the texture for the bounds at this scale. False when the
     // bounds hold no pixels, or the device could not give a texture -- either
@@ -130,6 +225,7 @@ private:
     void markRendered();
 
     Component& owner;
+    Component* content = nullptr;
 
     Rect bounds;
     float opacity = 1.f;
@@ -144,6 +240,9 @@ private:
     int contentHeight = 0;
 
     float renderedScale = 0.f;
+
+    bool depth = false;
+    int sampleCount = 1;
 
     bool dirty = true;
     bool ready = false;

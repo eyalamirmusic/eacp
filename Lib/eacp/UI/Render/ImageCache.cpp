@@ -31,12 +31,33 @@ std::uint64_t hashOf(const eacp::Graphics::Image& image)
 }
 } // namespace
 
+std::uint64_t ImageCache::hashFor(const eacp::Graphics::Image& image)
+{
+    auto buffer = image.pixelBuffer();
+    auto generation = image.pixelGeneration();
+    auto& entry = known[buffer.lock().get()];
+
+    // The same live buffer at the same write count is the same pixels. Owner
+    // comparison rather than the address alone, though while the weak pointer
+    // has not expired the address cannot belong to anything else.
+    auto same =
+        !entry.buffer.owner_before(buffer) && !buffer.owner_before(entry.buffer);
+
+    if (!entry.buffer.expired() && same && entry.generation == generation)
+        return entry.hash;
+
+    entry.buffer = buffer;
+    entry.generation = generation;
+    entry.hash = hashOf(image);
+    return entry.hash;
+}
+
 ImageRef ImageCache::get(const eacp::Graphics::Image& image)
 {
     if (!image.isValid() || image.width() <= 0 || image.height() <= 0)
         return nullptr;
 
-    auto hash = hashOf(image);
+    auto hash = hashFor(image);
     auto found = entries.find(hash);
 
     if (found != entries.end())
@@ -50,6 +71,7 @@ ImageRef ImageCache::get(const eacp::Graphics::Image& image)
     descriptor.height = image.height();
     descriptor.format = GPU::TextureFormat::RGBA8Unorm;
     descriptor.mipmapped = true;
+    descriptor.mipmapsOnDevice = true;
 
     auto entry =
         std::make_shared<ImageTexture>(descriptor, image.pixels().data(), hash);
@@ -68,6 +90,16 @@ void ImageCache::releaseUnused()
     {
         if (it->second.use_count() == 1)
             it = entries.erase(it);
+        else
+            ++it;
+    }
+
+    // And what was remembered about buffers that have gone, or whose texture
+    // just went -- so this holds no more than the textures do.
+    for (auto it = known.begin(); it != known.end();)
+    {
+        if (it->second.buffer.expired() || !entries.contains(it->second.hash))
+            it = known.erase(it);
         else
             ++it;
     }

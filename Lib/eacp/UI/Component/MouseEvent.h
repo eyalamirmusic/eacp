@@ -35,6 +35,10 @@ struct MouseEvent
     Point wheelDelta;
     bool preciseWheel = false;
 
+    // Magnify events only: the pinch step's zoom factor, to multiply the
+    // current zoom by. 1 is no change, above 1 zooms in.
+    float magnifyScale = 1.0f;
+
     // A finger rather than a pointer. A scrolling component follows a finger
     // dragged across it and leaves a mouse drag with the meaning it always had.
     bool fromTouch = false;

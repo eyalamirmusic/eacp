@@ -1,6 +1,7 @@
 
 #import <Cocoa/Cocoa.h>
 #include "View.h"
+#include "FileDragOut-macOS.h"
 #include "../Graphics/GraphicsContextImpl.h"
 #include "../Image/Image.h"
 #include "../Window/MouseLock-macOS.h"
@@ -9,6 +10,9 @@
 #include "../Graphics/Keyboard-MacOS.h"
 
 #include <eacp/Core/ObjC/RuntimeClass.h>
+
+#include <cstring>
+#include <memory>
 
 namespace eacp::Graphics
 {
@@ -19,6 +23,12 @@ Class getNativeViewClass();
 View* getView(id self)
 {
     return (View*) ObjC::getIvar<void*>(self, "cppView");
+}
+
+bool ignoresMouseEvents(id self)
+{
+    auto* view = getView(self);
+    return view != nullptr && view->getProperties().ignoresMouseEvents;
 }
 
 NSView* getRootView(id self)
@@ -68,6 +78,8 @@ NSPoint fromScreen(NSView* view, NSPoint screenPoint)
     NSWindow* window = view.window;
     return window != nil ? [window convertPointFromScreen:screenPoint] : screenPoint;
 }
+
+NSEvent* mouseEventInDispatch = nil;
 
 void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
 {
@@ -123,7 +135,29 @@ void dispatchMouseEvent(id self, NSEvent* event, MouseEventType type)
     e.downPos = {(float) downPos.x, (float) downPos.y};
 
     if (auto* view = getView(root))
+    {
+        auto* previousEvent = mouseEventInDispatch;
+        mouseEventInDispatch = event;
         view->dispatchMouseEvent(e);
+        mouseEventInDispatch = previousEvent;
+    }
+}
+
+ScrollPhase gesturePhaseFromEvent(NSEvent* event)
+{
+    switch (event.phase)
+    {
+        case NSEventPhaseBegan:
+        case NSEventPhaseMayBegin:
+            return ScrollPhase::Began;
+        case NSEventPhaseChanged:
+            return ScrollPhase::Changed;
+        case NSEventPhaseEnded:
+        case NSEventPhaseCancelled:
+            return ScrollPhase::Ended;
+        default:
+            return ScrollPhase::None;
+    }
 }
 
 ScrollPhase scrollPhaseFromEvent(NSEvent* event)
@@ -142,22 +176,8 @@ ScrollPhase scrollPhaseFromEvent(NSEvent* event)
             break;
     }
 
-    switch (event.phase)
-    {
-        case NSEventPhaseBegan:
-        case NSEventPhaseMayBegin:
-            return ScrollPhase::Began;
-        case NSEventPhaseChanged:
-            return ScrollPhase::Changed;
-        case NSEventPhaseEnded:
-        case NSEventPhaseCancelled:
-            return ScrollPhase::Ended;
-        default:
-            break;
-    }
-
     // A notched wheel reports no phase at all.
-    return ScrollPhase::None;
+    return gesturePhaseFromEvent(event);
 }
 
 void scrollWheel(id self, SEL, NSEvent* event)
@@ -188,6 +208,26 @@ void scrollWheel(id self, SEL, NSEvent* event)
         view->dispatchMouseEvent(e);
 }
 
+void magnifyWithEvent(id self, SEL, NSEvent* event)
+{
+    auto* root = getRootView(self);
+    auto localPos = [root convertPoint:[event locationInWindow] fromView:nil];
+
+    auto e = MouseEvent();
+
+    e.pos = {(float) localPos.x, (float) localPos.y};
+    e.downPos = e.pos;
+    e.type = MouseEventType::Magnify;
+    e.button = MouseButton::Other;
+    e.modifiers = modifierKeysFromEvent(event);
+    e.timestamp = event.timestamp;
+    e.scrollPhase = gesturePhaseFromEvent(event);
+    e.magnifyScale = magnifyScaleFromMagnification(event.magnification);
+
+    if (auto* view = getView(root))
+        view->dispatchMouseEvent(e);
+}
+
 void drawRect(id, SEL, NSRect)
 {
 }
@@ -211,6 +251,17 @@ void layout(id self, SEL)
         view->resized();
         view->resizeFinished();
     }
+}
+
+// A view ignoring the pointer answers no hit test, so AppKit carries on to the
+// view beneath: that one takes the click, becomes first responder and sets the
+// cursor, exactly as if this one were not there.
+NSView* hitTest(id self, SEL, NSPoint point)
+{
+    if (ignoresMouseEvents(self))
+        return nil;
+
+    return ObjC::sendSuper<NSView*>(self, [NSView class], @selector(hitTest:), point);
 }
 
 BOOL isFlipped(id, SEL)
@@ -289,16 +340,25 @@ void mouseDragged(id self, SEL, NSEvent* event)
 
 void mouseMoved(id self, SEL, NSEvent* event)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     dispatchMouseEvent(self, event, MouseEventType::Moved);
 }
 
 void mouseEntered(id self, SEL, NSEvent* event)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     dispatchMouseEvent(self, event, MouseEventType::Entered);
 }
 
 void mouseExited(id self, SEL, NSEvent* event)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     dispatchMouseEvent(self, event, MouseEventType::Exited);
 }
 
@@ -314,9 +374,61 @@ void keyUp(id self, SEL, NSEvent* event)
         view->dispatchKeyEvent(keyEventFrom(event, KeyEventType::Up));
 }
 
-NSCursor* toNSCursor(MouseCursor cursor)
+NSCursor* createImageCursor(const MouseCursor& cursor)
 {
-    switch (cursor)
+    auto image = cursor.getImage();
+    auto scale = (CGFloat) cursor.getScale();
+    auto hotspot = cursor.getHotspot();
+
+    auto* rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:nullptr
+                      pixelsWide:image.width()
+                      pixelsHigh:image.height()
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSDeviceRGBColorSpace
+                    bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
+                     bytesPerRow:image.width() * 4
+                    bitsPerPixel:32];
+
+    std::memcpy(rep.bitmapData, image.pixels().data(), image.pixels().size());
+
+    auto size = NSMakeSize(image.width() / scale, image.height() / scale);
+    rep.size = size;
+
+    auto* nsImage = [[NSImage alloc] initWithSize:size];
+    [nsImage addRepresentation:rep];
+
+    auto* result = [[NSCursor alloc]
+        initWithImage:nsImage
+              hotSpot:NSMakePoint(hotspot.x / scale, hotspot.y / scale)];
+
+    [nsImage release];
+    [rep release];
+
+    return result;
+}
+
+NSCursor* imageCursorFor(const MouseCursor& cursor)
+{
+    auto* cache = cursor.getNativeCache();
+
+    if (*cache == nullptr)
+        *cache = std::shared_ptr<void>((void*) createImageCursor(cursor),
+                                       [](void* native)
+                                       { [(NSCursor*) native release]; });
+
+    return (NSCursor*) cache->get();
+}
+
+NSCursor* toNSCursor(const MouseCursor& cursor)
+{
+    if (cursor.isImage())
+        return imageCursorFor(cursor);
+
+    switch (cursor.getShape())
     {
         case MouseCursor::IBeam:
             return [NSCursor IBeamCursor];
@@ -342,8 +454,174 @@ NSCursor* toNSCursor(MouseCursor cursor)
 // rather than as a missing method.
 void cursorUpdate(id self, SEL, id)
 {
+    if (ignoresMouseEvents(self))
+        return;
+
     if (auto* view = getView(self))
         [toNSCursor(view->getMouseCursor()) set];
+}
+
+Vector<std::string> draggedFilePaths(id<NSDraggingInfo> info)
+{
+    auto paths = Vector<std::string> {};
+
+    NSArray* urls = [[info draggingPasteboard]
+        readObjectsForClasses:@[ [NSURL class] ]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+
+    for (NSURL* url in urls)
+        if (url.isFileURL && url.path != nil)
+            paths.add(url.path.UTF8String);
+
+    return paths;
+}
+
+Point dragPosition(id self, id<NSDraggingInfo> info)
+{
+    auto local = [(NSView*) self convertPoint:[info draggingLocation] fromView:nil];
+    return {(float) local.x, (float) local.y};
+}
+
+NSDragOperation dragOperationFor(bool accepted)
+{
+    return accepted ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+NSDragOperation draggingEntered(id self, SEL, id<NSDraggingInfo> info)
+{
+    auto* view = getView(self);
+
+    if (view == nullptr)
+        return NSDragOperationNone;
+
+    return dragOperationFor(
+        view->fileDragEnter(draggedFilePaths(info), dragPosition(self, info)));
+}
+
+NSDragOperation draggingUpdated(id self, SEL, id<NSDraggingInfo> info)
+{
+    auto* view = getView(self);
+
+    if (view == nullptr)
+        return NSDragOperationNone;
+
+    return dragOperationFor(
+        view->fileDragMove(draggedFilePaths(info), dragPosition(self, info)));
+}
+
+void draggingExited(id self, SEL, id<NSDraggingInfo>)
+{
+    if (auto* view = getView(self))
+        view->fileDragExit();
+}
+
+BOOL performDragOperation(id self, SEL, id<NSDraggingInfo> info)
+{
+    auto* view = getView(self);
+
+    if (view == nullptr)
+        return NO;
+
+    view->filesDropped(draggedFilePaths(info), dragPosition(self, info));
+    return YES;
+}
+
+BOOL wantsPeriodicDraggingUpdates(id, SEL)
+{
+    return NO;
+}
+
+struct FileDragSession
+{
+    FileDragOptions options;
+};
+
+bool fileDragInProgress = false;
+
+FileDragSession* getFileDragSession(id self)
+{
+    return static_cast<FileDragSession*>(ObjC::getIvar<void*>(self, "fileDragSession"));
+}
+
+void setFileDragSession(id self, FileDragSession* session)
+{
+    ObjC::getIvar<void*>(self, "fileDragSession") = session;
+}
+
+NSDragOperation fileDragSourceOperationMask(id self,
+                                            SEL,
+                                            NSDraggingSession*,
+                                            NSDraggingContext context)
+{
+    auto* session = getFileDragSession(self);
+    auto canMove = session != nullptr && session->options.canMove
+                   && context == NSDraggingContextOutsideApplication;
+
+    return canMove ? NSDragOperationCopy | NSDragOperationMove : NSDragOperationCopy;
+}
+
+void sendMouseUpAfterFileDrag(id self, NSPoint screenPoint)
+{
+    auto* window = ((NSView*) self).window;
+
+    if (window == nil)
+        return;
+
+    auto* event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                                     location:[window convertPointFromScreen:screenPoint]
+                                modifierFlags:[NSEvent modifierFlags]
+                                    timestamp:[NSProcessInfo processInfo].systemUptime
+                                 windowNumber:window.windowNumber
+                                      context:nil
+                                  eventNumber:0
+                                   clickCount:1
+                                     pressure:0.f];
+
+    if (event != nil)
+        dispatchMouseEvent(self, event, MouseEventType::Up);
+}
+
+void fileDragSessionEnded(id self,
+                          SEL,
+                          NSDraggingSession*,
+                          NSPoint screenPoint,
+                          NSDragOperation operation)
+{
+    auto session = std::unique_ptr<FileDragSession>(getFileDragSession(self));
+
+    if (session == nullptr)
+        return;
+
+    setFileDragSession(self, nullptr);
+    fileDragInProgress = false;
+
+    sendMouseUpAfterFileDrag(self, screenPoint);
+
+    if (getView(self) != nullptr && session->options.onFinished)
+        session->options.onFinished(fileDragResultFor(operation));
+
+    [(NSView*) self release];
+}
+
+NSEvent* mouseEventForFileDrag(NSView* view)
+{
+    auto* event = mouseEventInDispatch != nil ? mouseEventInDispatch : NSApp.currentEvent;
+
+    if (event == nil || view.window == nil || event.window != view.window)
+        return nil;
+
+    switch (event.type)
+    {
+        case NSEventTypeLeftMouseDown:
+        case NSEventTypeLeftMouseDragged:
+        case NSEventTypeRightMouseDown:
+        case NSEventTypeRightMouseDragged:
+        case NSEventTypeOtherMouseDown:
+        case NSEventTypeOtherMouseDragged:
+            return event;
+        default:
+            return nil;
+    }
 }
 
 void updateTrackingAreas(id self, SEL)
@@ -354,6 +632,9 @@ void updateTrackingAreas(id self, SEL)
 
     for (NSTrackingArea* area in view.trackingAreas)
         [view removeTrackingArea:area];
+
+    if (ignoresMouseEvents(self))
+        return;
 
     NSTrackingAreaOptions options =
         NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved
@@ -377,12 +658,16 @@ Class getNativeViewClass()
 
         builder->addIvar<void*>("cppView");
         builder->addIvar<NSPoint>("mouseDownScreenPosition");
+        builder->addIvar<void*>("fileDragSession");
 
         builder->addProtocol(@protocol(CALayerDelegate));
+        builder->addProtocol(@protocol(NSDraggingDestination));
+        builder->addProtocol(@protocol(NSDraggingSource));
 
         builder->addMethod(@selector(drawRect:), drawRect);
         builder->addMethod(@selector(drawLayer:inContext:), drawLayerInContext);
         builder->addMethod(@selector(layout), layout);
+        builder->addMethod(@selector(hitTest:), hitTest);
         builder->addMethod(@selector(isFlipped), isFlipped);
         builder->addMethod(@selector(isOpaque), isOpaque);
         builder->addMethod(@selector(acceptsFirstResponder),
@@ -399,6 +684,7 @@ Class getNativeViewClass()
         builder->addMethod(@selector(mouseEntered:), mouseEntered);
         builder->addMethod(@selector(mouseExited:), mouseExited);
         builder->addMethod(@selector(scrollWheel:), scrollWheel);
+        builder->addMethod(@selector(magnifyWithEvent:), magnifyWithEvent);
         builder->addMethod(@selector(rightMouseDown:), mouseDown);
         builder->addMethod(@selector(rightMouseUp:), mouseUp);
         builder->addMethod(@selector(rightMouseDragged:), mouseDragged);
@@ -411,6 +697,19 @@ Class getNativeViewClass()
         builder->addMethod(@selector(cursorUpdate:), cursorUpdate);
         builder->addMethod(@selector(updateTrackingAreas),
                            updateTrackingAreas);
+
+        builder->addMethod(@selector(draggingEntered:), draggingEntered);
+        builder->addMethod(@selector(draggingUpdated:), draggingUpdated);
+        builder->addMethod(@selector(draggingExited:), draggingExited);
+        builder->addMethod(@selector(performDragOperation:), performDragOperation);
+        builder->addMethod(@selector(wantsPeriodicDraggingUpdates),
+                           wantsPeriodicDraggingUpdates);
+
+        builder->addMethod(
+            @selector(draggingSession:sourceOperationMaskForDraggingContext:),
+            fileDragSourceOperationMask);
+        builder->addMethod(@selector(draggingSession:endedAtPoint:operation:),
+                           fileDragSessionEnded);
 
         builder->registerClass();
         return builder;
@@ -581,7 +880,62 @@ Point View::getMousePosition() const
     return impl->getMousePosition();
 }
 
-void View::setMouseCursor(MouseCursor cursor)
+View& View::setAcceptsFileDrops(bool value)
+{
+    properties.acceptsFileDrops = value;
+
+    auto* native = (NSView*) impl->nativeView.get();
+
+    if (value)
+        [native registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+    else
+        [native unregisterDraggedTypes];
+
+    return *this;
+}
+
+bool View::startFileDrag(const Vector<std::string>& paths,
+                         const FileDragOptions& options)
+{
+    auto* native = (NSView*) impl->nativeView.get();
+
+    if (paths.empty() || fileDragInProgress)
+        return false;
+
+    auto* event = mouseEventForFileDrag(native);
+
+    if (event == nil)
+        return false;
+
+    auto anchor = [native convertPoint:event.locationInWindow fromView:nil];
+    auto* items = makeFileDraggingItems(
+        native, anchor, paths, options.image, options.imageScale);
+
+    if (items.count == 0)
+        return false;
+
+    setFileDragSession(native, new FileDragSession {options});
+    fileDragInProgress = true;
+    [native retain];
+
+    auto* session = [native beginDraggingSessionWithItems:items
+                                                    event:event
+                                                   source:(id<NSDraggingSource>) native];
+
+    if (session == nil)
+    {
+        delete getFileDragSession(native);
+        setFileDragSession(native, nullptr);
+        fileDragInProgress = false;
+        [native release];
+        return false;
+    }
+
+    session.animatesToStartingPositionsOnCancelOrFail = YES;
+    return true;
+}
+
+void View::setMouseCursor(const MouseCursor& cursor)
 {
     if (currentCursor == cursor)
         return;

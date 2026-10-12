@@ -5,6 +5,7 @@
 #include <eacp/GPUWidgets/GPUWidgets.h>
 
 #include <cstdint>
+#include <limits>
 
 namespace eacp::UI
 {
@@ -24,12 +25,13 @@ namespace eacp::UI
 // it multiplies by one. It costs a fetch of a texel that is in the cache for the
 // whole frame, against the batch break a second pipeline would cost.
 //
-// Allocation is a shelf: rows filled left to right, a new row started below the
-// tallest so far. There is no free list, because there is nothing sensible to
-// do with a hole a widget-sized mask leaves behind. Instead a shape keeps the
-// slot it was given for as long as its mask still fits in it - which for a knob
-// being dragged is always, since the arc only shrinks - and when the shelf does
-// run out the atlas grows, or compacts if it is already as large as it goes.
+// Allocation is a set of shelves: rows filled left to right, each holding
+// masks of about its own height, a new one started below the last. There is no
+// free list, because there is nothing sensible to do with a hole a widget-sized
+// mask leaves behind. Instead a shape keeps the slot it was given for as long
+// as its mask still fits in it - which for a knob being dragged is always,
+// since the arc only shrinks - and when the shelves do run out the atlas
+// compacts if little of what it holds is still in use, and grows otherwise.
 //
 // Either of those moves every slot already handed out, which hasMoved() reports
 // so the caller can re-rasterize the lot. That is the expensive frame, and it is
@@ -68,6 +70,7 @@ public:
     // there is nowhere it can go: a mask larger than the largest atlas, or any
     // mask that needs room while relocation is not allowed.
     Slot allocate(int width, int height);
+    void release(const Slot& slot);
 
     // Whether an allocation may grow or compact to make room. Both move every
     // slot already handed out, so a caller can only survive one while it can
@@ -112,16 +115,61 @@ public:
     int getWidth() const;
     int getHeight() const;
 
+    // The format the texture was created in: R8Unorm where the device can
+    // store to it, RGBA8Unorm where it cannot. See GPUWidgets::coverageFormat.
+    GPU::TextureFormat getFormat() const;
+
+    // Gives back room the shelf has stopped needing. The atlas only grows while
+    // it allocates, so an interface that once needed the ceiling -- every page
+    // rasterized at startup, say, or a compaction that found most of it
+    // abandoned -- would otherwise keep the whole texture for good.
+    //
+    // Shrinks to the smallest size that holds the largest mask placed since the
+    // shelf was last emptied with what has been reserved filling an eighth of it
+    // at most, and only when that is smaller than the atlas is now. Like a grow,
+    // it moves every slot, so it is only for a caller that is about to
+    // rasterize everything again (the generation says so); unlike one, it does
+    // not raise the moved flag, since nothing has been placed in the new atlas
+    // yet. Refused while relocation is not allowed.
+    //
+    // Meant to be asked once a walk, and that is what it counts: it shrinks
+    // only once that many walks have passed without the atlas growing (see
+    // getQuietWalksToShrink), so a slot churning under an animation cannot turn
+    // it into a resize every few frames.
+    //
+    // The reservation counts every slot placed since the shelf was last
+    // emptied -- abandoned ones, and those of shapes that have since been
+    // hidden or removed -- so hiding a page gives nothing back by itself. The
+    // shelf is emptied only by a grow or a compaction, and it is after one of
+    // those that this has something to return.
+    bool shrinkToFit();
+
+    // The walks without a grow a shrink currently waits for. It starts at 120
+    // and doubles, up to sixteen times that, each time a shrink is outgrown
+    // inside its window.
+    int getQuietWalksToShrink() const;
+
 private:
+    struct Shelf
+    {
+        int y = 0;
+        int height = 0;
+        int x = 0;
+        bool empty = true;
+    };
+
     // The two halves of an allocation: where it goes on the shelf as it stands,
     // and what can be done when the answer is nowhere. Separated because that is
     // what bounds the work -- one of each, in that order, and the second failure
     // is final.
     std::optional<Slot> placeOnShelf(int width, int height);
+    Shelf* findShelf(int width, int height);
     bool makeRoomFor(int width, int height);
+    bool shouldCompactFor(int width, int height) const;
 
     bool isShelfEmpty() const;
 
+    void repackAt(int size);
     void resizeTo(int size);
     void seedOpaqueTexel();
 
@@ -130,15 +178,30 @@ private:
 
     std::optional<GPU::Texture> texture;
 
-    // The shelf cursor: where the next slot goes, and how far down the next row
-    // starts.
-    int cursorX = 0;
-    int cursorY = 0;
-    int rowHeight = 0;
+    Vector<Shelf> shelves;
 
     // Texels handed out, including the opaque corner, which is reserved in the
     // same sense even though no allocation produced it.
     std::int64_t usedTexels = 0;
+    std::int64_t releasedTexels = 0;
+
+    // The largest mask placed since the shelf was last emptied, which a smaller
+    // atlas still has to hold.
+    int widestSlot = 0;
+    int tallestSlot = 0;
+
+    GPU::TextureFormat format = GPU::TextureFormat::RGBA8Unorm;
+
+    // The hysteresis: walks since the atlas last grew and since it last shrank,
+    // and how many quiet walks a shrink waits for. Since-shrink starts out of
+    // any window, so the first grows of a new atlas -- the tree arriving -- do
+    // not count against a shrink that never happened.
+    int walksSinceGrow = 0;
+    int walksSinceShrink = std::numeric_limits<int>::max() / 2;
+    int quietWalksNeeded = 0;
+
+    bool compactedThisWalk = false;
+    bool compactionReplayed = false;
 
     bool relocationAllowed = true;
     bool moved = false;

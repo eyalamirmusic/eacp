@@ -39,7 +39,7 @@ GPU::TextureDescriptor describeCoverage(int width, int height)
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = width;
     descriptor.height = height;
-    descriptor.format = GPU::TextureFormat::RGBA8Unorm;
+    descriptor.format = coverageFormat();
     descriptor.computeWrite = true;
     return descriptor;
 }

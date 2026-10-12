@@ -20,7 +20,7 @@ namespace
 // **The guard is for iOS, and is inert on macOS as eacp configures it.** The
 // four constants and Device::supportsBlockCompression carry the same
 // availability the query does - macOS 11 and iOS 16.4 - and the macOS
-// deployment target is already 11.0, while the iOS one is 14.0. So on macOS
+// deployment target is already 11.0, while the iOS one is 15.0. So on macOS
 // this compiles to the branch being taken, and on iOS it is what keeps the
 // constants from warning against a target that predates them.
 //
@@ -263,6 +263,21 @@ struct SubresourceViewKey
 
     bool operator==(const SubresourceViewKey&) const = default;
 };
+
+bool canGenerateMipsOnDevice(TextureFormat format)
+{
+    switch (format)
+    {
+        case TextureFormat::RGBA8Unorm:
+        case TextureFormat::BGRA8Unorm:
+        case TextureFormat::R8Unorm:
+        case TextureFormat::RG8Unorm:
+        case TextureFormat::RGBA16Float:
+            return true;
+        default:
+            return false;
+    }
+}
 } // namespace
 
 // What RenderPipeline-Apple.mm maps a PixelFormat through, by way of
@@ -321,6 +336,12 @@ struct Texture::Native
 
         if (shape.kind == TextureType::CubeArray && !deviceToUse.supportsCubeArrays())
             return;
+
+        // A chain built from the pixels can come from Metal's blit encoder
+        // instead of the CPU, for the formats it filters. See
+        // TextureDescriptor::mipmapsOnDevice.
+        deviceChain = shape.buildsChain() && descriptor.mipmapsOnDevice
+                      && canGenerateMipsOnDevice(format);
 
         auto textureDescriptor =
             describeShape(shape, toMetalFormat(descriptor.format));
@@ -499,10 +520,26 @@ struct Texture::Native
         if (texture.get() == nil)
             return;
 
-        const auto plan = planWholeUpload(shape, format, pixels, bytesPerRow);
+        const auto plan =
+            planWholeUpload(shapeToUpload(), format, pixels, bytesPerRow);
 
-        if (plan.valid)
-            upload(plan.uploads);
+        if (!plan.valid)
+            return;
+
+        upload(plan.uploads);
+
+        if (deviceChain)
+            generateLevelsOnDevice();
+    }
+
+    TextureShape shapeToUpload() const
+    {
+        if (!deviceChain)
+            return shape;
+
+        auto levelZero = shape;
+        levelZero.levels = 1;
+        return levelZero;
     }
 
     void upload(const Vector<SubresourceUpload>& uploads)
@@ -560,6 +597,26 @@ struct Texture::Native
 
             [blit endEncoding];
             [commandBuffer commit];
+        }
+    }
+
+    void generateLevelsOnDevice()
+    {
+        auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue();
+
+        if (queue == nil)
+            return;
+
+        @autoreleasepool
+        {
+            auto commandBuffer = [queue commandBuffer];
+            auto blit = [commandBuffer blitCommandEncoder];
+
+            [blit generateMipmapsForTexture:(id<MTLTexture>) texture.get()];
+            [blit endEncoding];
+            [commandBuffer commit];
+
+            device->trackSubmittedWork((__bridge void*) commandBuffer);
         }
     }
 
@@ -914,6 +971,10 @@ struct Texture::Native
 
     TextureShape shape;
     int levels = 1;
+
+    // Level 0 is uploaded and the blit encoder builds the rest. See
+    // TextureDescriptor::mipmapsOnDevice.
+    bool deviceChain = false;
 
     bool renderTarget = false;
     bool computeWrite = false;

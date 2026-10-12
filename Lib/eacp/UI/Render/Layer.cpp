@@ -17,6 +17,8 @@ namespace
 // than as a hundred megabytes nobody asked for.
 constexpr int maxLayerSize = 4096;
 
+constexpr auto colorFormat = GPU::TextureFormat::BGRA8Unorm;
+
 int devicePixels(float points, float scale)
 {
     return (int) std::ceil(points * scale - 0.001f);
@@ -32,6 +34,9 @@ Layer::Layer(Component& ownerToUse)
 Layer::~Layer()
 {
     owner.removeLayer(*this);
+
+    if (content != nullptr)
+        content->capturingLayer = nullptr;
 
     // Whatever drew it is holding a pointer to it. The owner is the component
     // that draws a layer -- that is the arrangement the class documents -- so
@@ -70,6 +75,90 @@ void Layer::setTransform(const GPUWidgets::AffineTransform& newTransform)
     owner.invalidateHost();
 }
 
+void Layer::setContent(Component* subtreeRoot)
+{
+    if (subtreeRoot == &owner)
+        subtreeRoot = nullptr;
+
+    if (content == subtreeRoot)
+        return;
+
+    if (content != nullptr)
+        content->capturingLayer = nullptr;
+
+    // One layer to a subtree: the frame steps over a captured one, so two
+    // claiming it would leave both drawing what only one can be told about.
+    if (subtreeRoot != nullptr && subtreeRoot->capturingLayer != nullptr)
+        subtreeRoot->capturingLayer->setContent(nullptr);
+
+    content = subtreeRoot;
+
+    if (content != nullptr)
+        content->capturingLayer = this;
+
+    setDirty();
+}
+
+Component* Layer::getContent() const
+{
+    return content;
+}
+
+void Layer::setDepth(bool shouldHaveDepth)
+{
+    if (depth == shouldHaveDepth)
+        return;
+
+    depth = shouldHaveDepth;
+    setDirty();
+}
+
+bool Layer::hasDepth() const
+{
+    return depth;
+}
+
+void Layer::setSampleCount(int newSampleCount)
+{
+    newSampleCount = std::max(1, newSampleCount);
+
+    if (sampleCount == newSampleCount)
+        return;
+
+    sampleCount = newSampleCount;
+    setDirty();
+}
+
+int Layer::getSampleCount() const
+{
+    return sampleCount;
+}
+
+GPU::PixelFormat Layer::getColorFormat() const
+{
+    return GPU::pixelFormatFor(colorFormat);
+}
+
+void Layer::contentChanged()
+{
+    dirty = true;
+}
+
+bool Layer::rendersOwnPass() const
+{
+    return static_cast<bool>(onRender);
+}
+
+bool Layer::wantsDepth() const
+{
+    return rendersOwnPass() && depth;
+}
+
+int Layer::wantedSampleCount() const
+{
+    return rendersOwnPass() ? sampleCount : 1;
+}
+
 void Layer::setDirty()
 {
     dirty = true;
@@ -103,15 +192,21 @@ bool Layer::ensureTexture(float scale)
     contentHeight = height;
     renderedScale = scale;
 
+    // Remade rather than kept when it has the wrong attachments, which only a
+    // layer turning into or out of an onRender one, or changing what that asks
+    // for, brings about.
     if (texture.has_value() && texture->width() >= width
-        && texture->height() >= height)
+        && texture->height() >= height && texture->hasDepth() == wantsDepth()
+        && texture->sampleCount() == wantedSampleCount())
         return true;
 
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = width;
     descriptor.height = height;
-    descriptor.format = GPU::TextureFormat::BGRA8Unorm;
+    descriptor.format = colorFormat;
     descriptor.renderTarget = true;
+    descriptor.depth = wantsDepth();
+    descriptor.sampleCount = wantedSampleCount();
 
     texture.emplace(GPU::Device::shared(), descriptor, nullptr);
 
@@ -155,8 +250,13 @@ const GPU::Texture& Layer::getTexture() const
     return *texture;
 }
 
-bool Layer::isDirty() const
+bool Layer::needsRendering(float scale) const
 {
-    return dirty;
+    return dirty || scale != renderedScale;
+}
+
+Rect Layer::getContentArea() const
+{
+    return {0.f, 0.f, (float) contentWidth, (float) contentHeight};
 }
 } // namespace eacp::UI

@@ -27,7 +27,7 @@ double linuxTimestamp(uint32_t milliseconds);
 MouseButton linuxButtonFromEvdev(uint32_t code);
 
 // Most likely name first; a theme with none of them falls back to the arrow.
-std::span<const char* const> linuxCursorNames(MouseCursor cursor);
+std::span<const char* const> linuxCursorNames(MouseCursor::Shape cursor);
 
 class XkbKeyboardState
 {
@@ -176,14 +176,14 @@ private:
 class CursorTracker
 {
 public:
-    bool setShape(MouseCursor newShape);
+    bool setShape(MouseCursor::Shape newShape);
     bool setHidden(bool shouldHide);
 
-    constexpr MouseCursor getShape() const { return shape; }
+    constexpr MouseCursor::Shape getShape() const { return shape; }
     constexpr bool isHidden() const { return hidden; }
 
 private:
-    MouseCursor shape = MouseCursor::Default;
+    MouseCursor::Shape shape = MouseCursor::Default;
     bool hidden = false;
 };
 } // namespace eacp::Graphics

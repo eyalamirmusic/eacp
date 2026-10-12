@@ -4,6 +4,8 @@
 
 #include "../Primitives/Primitives.h"
 
+#include <memory>
+
 namespace eacp::Graphics
 {
 
@@ -26,6 +28,15 @@ enum class ImageFormat
 // on a negative dimension or a pixel buffer whose length does not match
 // width * height * 4. Encoding a valid image or writing it to disk throws
 // std::runtime_error on failure.
+//
+// Copies share pixels: copying or returning an Image by value shares one
+// ref-counted pixel buffer instead of duplicating it, so an Image is as cheap
+// to pass around as a handle. A write (set(), prepareForOverwrite()) on an
+// image whose buffer is shared first detaches it into a buffer of its own, so
+// other copies never see the change. Reads never detach, and pixels() of an
+// image holding nothing is an empty buffer. Copies of an Image may be read
+// from any thread at once; one Image object must still not be written on one
+// thread while it is read or written on another.
 class Image
 {
 public:
@@ -67,10 +78,13 @@ public:
     // Reuse this image's storage as a width*height RGBA render target for an
     // external writer that fills every byte (an esimd image kernel, a
     // camera colour-convert, ...). Only (re)allocates when the pixel count
-    // changes; when it already matches, there is no allocation and no zero-fill
-    // -- the previous bytes are left for the writer to overwrite in full. This
-    // lets a per-frame pipeline recycle one Image instead of allocating (and
-    // zero-filling) a fresh buffer each frame. Returns the writable pixel buffer
+    // changes or the buffer is shared with another copy; when it is unshared
+    // and already matches, there is no allocation and no zero-fill -- the
+    // previous bytes are left for the writer to overwrite in full. A shared
+    // buffer is left to its other copies and replaced by a fresh one without
+    // copying the old pixels. This lets a per-frame pipeline recycle one Image
+    // instead of allocating (and zero-filling) a fresh buffer each frame, as
+    // long as it does not keep copies of it. Returns the writable pixel buffer
     // (width*height*4 bytes), or nullptr for a non-positive / oversized size
     // (leaving the image empty). Prefer the ImageOps reuse overloads and
     // CameraFrame::toImage(Image&) over calling this directly.
@@ -89,15 +103,46 @@ public:
     void save(const FilePath& path) const;
     void save(const FilePath& path, ImageFormat format, float quality = 0.9f) const;
 
-    // Exact comparison: identical dimensions and identical pixels.
+    // Exact comparison: identical dimensions and identical pixels. Copies
+    // sharing one buffer compare equal without reading it.
     bool equals(const Image& other) const;
     bool operator==(const Image& other) const;
     bool operator!=(const Image& other) const;
 
+    // The pixel buffer this image reads, as an identity for a cache keyed on it
+    // rather than on the pixels: every copy sharing the buffer names the same
+    // one, and a write that detaches moves the writer to a new one. Empty for
+    // an image holding nothing. Weak, so that keeping it neither keeps the
+    // pixels alive nor counts as a copy -- a strong reference would turn every
+    // later write into a detach -- and so that once it has expired it says its
+    // address may now belong to a different buffer. Lock it only for as long
+    // as it takes to read the address.
+    std::weak_ptr<const void> pixelBuffer() const;
+
+    // Bumped by every write that changes the buffer in place (set(),
+    // prepareForOverwrite() on an unshared image), which a buffer's identity
+    // alone cannot show. Together with pixelBuffer() it names these exact
+    // pixels without reading them. 0 for an image holding nothing.
+    //
+    // prepareForOverwrite() bumps it when it is called, not when the writer
+    // finishes, so the pointer it returns has to be written in full before the
+    // image is next handed to anything keyed on the pair -- a cache that saw
+    // the image half-written would keep the half it saw.
+    std::uint64_t pixelGeneration() const;
+
 private:
+    // The pixels, and how many times they have been written in place.
+    struct Buffer
+    {
+        ImageData pixels;
+        std::uint64_t generation = 0;
+    };
+
+    ImageData& writablePixels();
+
     int w = 0;
     int h = 0;
-    ImageData rgba;
+    std::shared_ptr<Buffer> rgba;
 };
 
 } // namespace eacp::Graphics

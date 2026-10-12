@@ -22,10 +22,12 @@ set(graphics_test_sources
         CursorTests.cpp
         DisplayTests.cpp
         EventLoopTests.cpp
+        FileDragTests.cpp
         GameInputTests.cpp
         ImageOpsTests.cpp
         ImageTests.cpp
         KeyCodeTests.cpp
+        MagnifyTests.cpp
         MenuCommandsTests.cpp
         MenuTests.cpp
         RectTests.cpp
@@ -75,7 +77,10 @@ if (APPLE AND NOT IOS)
     list(APPEND graphics_test_sources
             CursorTests-macOS.mm
             EmbeddedViewTests-macOS.mm
+            FileDragTests-macOS.mm
+            FileDropTests-macOS.mm
             KeyForwardingTests-macOS.mm
+            MagnifyTests-macOS.mm
             MenuTests-macOS.mm
             NativeChildSurfaceTests-macOS.mm
             ScrollWheelTests-macOS.mm

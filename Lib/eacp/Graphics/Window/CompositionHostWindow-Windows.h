@@ -4,6 +4,8 @@
 
 #include "../View/View.h"
 
+#include <ole2.h>
+
 #include <bitset>
 #include <memory>
 #include <optional>
@@ -17,6 +19,11 @@ namespace eacp::Graphics
 // either surface can resolve its host HWND. Main-thread only, so no locking is
 // needed.
 HWND findHostHwndForView(View* view);
+
+// Re-applies the cursor of the view under the pointer, when the pointer is over
+// `hwnd` or `hwnd` holds the capture. What View::setMouseCursor calls, so a
+// shape changed from a handler shows without waiting for the next move.
+void refreshHostCursor(HWND hwnd);
 
 // Whether `hwnd` hosts a WindowOptions::transparentBackground surface. Content
 // that composites straight to the screen (a GPUView's swapchain) must respect
@@ -70,11 +77,23 @@ struct CompositionHostWindow
     // The lock expresses intent: it engages while the HWND has focus and
     // WM_SETFOCUS / WM_KILLFOCUS re-engage / suspend it.
     void setMouseLocked(bool locked);
+
+    // Sets the pointer to the cursor of the view under it. False when there is
+    // nothing to ask or the mouse lock is hiding the pointer.
+    bool applyCursorUnderPointer();
+    void refreshCursor();
     constexpr bool isMouseLocked() const { return mouseLockIntent; }
 
     // Tears down the visual tree, registry entry, and HWND. Call from the
     // owning surface's destructor.
     void teardown();
+
+    // OS file drags over the HWND, in screen pixels, handed to the deepest
+    // view under the pointer that accepts file drops. Called by the IDropTarget
+    // the host registers for its HWND.
+    bool fileDragOver(const Vector<std::string>& files, POINT screenPixels);
+    void fileDragLeave();
+    bool fileDrop(const Vector<std::string>& files, POINT screenPixels);
 
     // Handles the messages shared by both surfaces (paint, size, mouse buttons,
     // move/drag with capture, wheel, mouse-leave, keyboard). Returns nullopt for
@@ -123,11 +142,19 @@ private:
     POINT clientCenter() const;
     void handleLockedMouseMove(LPARAM lParam);
 
+    void registerFileDrops();
+    void revokeFileDrops();
+    View* fileDropViewAt(Point position) const;
+
+    IDropTarget* fileDropTarget = nullptr;
+    View* fileDragView = nullptr;
+
     void fillWindowBackground(HDC dc) const;
     void resizeContentViewToClient();
     void layOutContentView();
     void ensureMouseLeaveTracking();
     void dispatchMouseToContentView(MouseEvent event);
+    bool dispatchZoomGesture(LPARAM lParam);
 
     POINT toScreenPixels(Point position) const;
     Point fromScreenPixels(POINT screenPixels) const;
@@ -140,6 +167,8 @@ private:
     // MouseEvent::delta is the difference. Empty until the pointer is seen,
     // and again once it has left, so a return does not report the jump.
     std::optional<Point> lastPointerPosition;
+
+    double zoomGestureDistance = 0.0;
 
     // The mouse's own movement, which the ordinary pointer messages cannot
     // report: they carry the pointer's position after the system's acceleration
@@ -162,6 +191,9 @@ private:
 
     bool mouseLockIntent = false;
     bool mouseLockEngaged = false;
+
+    // The native cursor last handed to SetCursor, kept alive while it shows.
+    std::shared_ptr<void> appliedImageCursor;
 
     // A minimized window is reported to the view tree as hidden, so the restore
     // that follows has to report it visible again. Nothing else distinguishes

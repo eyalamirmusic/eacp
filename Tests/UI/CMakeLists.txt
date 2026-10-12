@@ -4,22 +4,29 @@ nano_add_executable(UITests
             ClippedFillTests.cpp
             ComboBoxTests.cpp
             CoverageAtlasTests.cpp
+            CursorTests.cpp
             DrawListTests.cpp
             DragAndDropTests.cpp
+            FileDragTests.cpp
+            FileDropTests.cpp
             GradientRampsTests.cpp
             ImageBatchTests.cpp
             KeyboardTests.cpp
             ListBoxTests.cpp
+            MagnifyTests.cpp
             MaskCacheTests.cpp
             LayerTests.cpp
             ModuleShaderTests.cpp
             OnlineResourceMonitorTests.cpp
+            OverlayViewTests.cpp
+            PopupMenuTests.cpp
             RepaintTests.cpp
             ShadowTests.cpp
             SliderTests.cpp
             TabsTests.cpp
             TextEditorTests.cpp
             TouchScrollTests.cpp
+            ViewportTests.cpp
         TARGETS eacp-ui eacp-sprites eacp-ui-network)
 
 # ModuleShaderTests emits every shader this tier builds as GLSL and compiles it

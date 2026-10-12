@@ -11,6 +11,7 @@ nano_add_executable(SVGTests
 nano_add_executable(SVGImageTests
         NO_MAIN
         SOURCES
+            SVGImageElementTests.cpp
             SVGImageTests.cpp
             TestMain.cpp
         TARGETS eacp-svg)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
+#include "../DragAndDrop/FileDropTarget.h"
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
 #include "../Render/MaskCache.h"
@@ -186,12 +187,31 @@ public:
     void keyDown(const eacp::Graphics::KeyEvent& event) override;
     void keyUp(const eacp::Graphics::KeyEvent& event) override;
 
+    // Shows the cursor of the component under the pointer again, for a cursor
+    // that changed without the pointer moving. Component::setMouseCursor calls
+    // it for the hovered component, so this is only needed by hand where
+    // something else decides the shape.
+    void updateMouseCursor();
+
     void mouseDown(const eacp::Graphics::MouseEvent& event) override;
     void mouseUp(const eacp::Graphics::MouseEvent& event) override;
     void mouseDragged(const eacp::Graphics::MouseEvent& event) override;
     void mouseMoved(const eacp::Graphics::MouseEvent& event) override;
     void mouseExited(const eacp::Graphics::MouseEvent& event) override;
     void mouseWheel(const eacp::Graphics::MouseEvent& event) override;
+    void mouseMagnify(const eacp::Graphics::MouseEvent& event) override;
+
+    // Files dragged in from the OS, handed to the FileDropTarget components in
+    // the tree. The host accepts file drops from construction; turn it off with
+    // setAcceptsFileDrops(false) for a tree that should let them pass.
+    bool fileDragEnter(const Vector<std::string>& files, Point position) override;
+    bool fileDragMove(const Vector<std::string>& files, Point position) override;
+    void fileDragExit() override;
+    void filesDropped(const Vector<std::string>& files, Point position) override;
+
+    // The component a file dragged over `positionInRoot` would go to, or null.
+    Component* findFileDropTarget(const Vector<std::string>& files,
+                                  Point positionInRoot) const;
 
 private:
     friend class Component;
@@ -244,11 +264,17 @@ private:
     void record(Component& component);
 
     // Draws the recorded lists, in tree order, offsetting each by where its
-    // component sits and clipping it to what its ancestors left of it.
+    // component sits and clipping it to what its ancestors left of it. Steps
+    // over a subtree a Layer captures, which is drawn into that layer instead
+    // -- by playSubtree, the same walk without that one check at its root.
     void playComponent(Component& component,
                        DrawPlayer& player,
                        Point origin,
                        const Rect& clip);
+    void playSubtree(Component& component,
+                     DrawPlayer& player,
+                     Point origin,
+                     const Rect& clip);
 
     // Everything in the subtree has to be painted again: the scale changed, the
     // atlas moved under the uvs, or the tree's default face did.
@@ -275,6 +301,14 @@ private:
     void renderLayers(GPU::Frame& frame);
     void renderLayers(Component& component, GPU::Frame& frame);
     void renderLayer(Layer& layer, GPU::Frame& frame);
+    void renderOwnPass(Layer& layer, GPU::Frame& frame);
+    void playContent(Layer& layer, DrawPlayer& player);
+
+    // Records the subtree a layer captures, if anything in it is stale, so the
+    // layer is drawn from this frame's recordings rather than the last one's.
+    // Returns whether anything was painted, which is what makes the layer
+    // dirty.
+    bool recordContent(Layer& layer);
 
     // Rasterizing every PathShape in the tree whose geometry changed, before
     // the render pass opens. See the definition for why it can only happen here.
@@ -289,6 +323,10 @@ private:
     // space, and the fields the native event already carries.
     MouseEvent makeEvent(const Component& target,
                          const eacp::Graphics::MouseEvent& event) const;
+
+    Point toRootSpace(Point position) const;
+    void setFileDragTarget(Component* target, Point positionInRoot);
+    bool updateFileDrag(const Vector<std::string>& files, Point position);
 
     void updateHover(Component* target, const eacp::Graphics::MouseEvent& event);
     void setHoveredComponent(Component* component,
@@ -391,6 +429,9 @@ private:
     Component* hoveredComponent = nullptr;
     Component* focusedComponent = nullptr;
 
+    Component* fileDragTarget = nullptr;
+    Vector<std::string> fileDragFiles;
+
     bool tabMovesFocus = true;
     bool respectsSafeArea = true;
 
@@ -430,6 +471,10 @@ private:
     // Shapes that drew through a mask somebody else had already rasterized.
     int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
+
+    // The captured subtree recordContent is recording, whose layer is about to
+    // be rendered and so needs no telling that its content changed.
+    Component* recordingContent = nullptr;
     int lastImageDraws = 0;
 };
 } // namespace eacp::UI

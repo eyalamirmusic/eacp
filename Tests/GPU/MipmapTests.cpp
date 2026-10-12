@@ -1,6 +1,8 @@
 #include "Common.h"
 
+#include <cmath>
 #include <cstdint>
+#include <string>
 
 // TextureDescriptor::mipmapped - the chain, the filter that builds it, and the
 // sampler that reads it.
@@ -125,7 +127,7 @@ Vector<std::uint32_t> checkerboard()
     return pixels;
 }
 
-Texture makeCheckerboard(bool mipmapped)
+Texture makeCheckerboard(bool mipmapped, bool onDevice = false)
 {
     static auto pixels = checkerboard();
 
@@ -134,6 +136,7 @@ Texture makeCheckerboard(bool mipmapped)
     descriptor.height = textureSize;
     descriptor.format = TextureFormat::RGBA8Unorm;
     descriptor.mipmapped = mipmapped;
+    descriptor.mipmapsOnDevice = onDevice;
 
     return Device::shared().makeTexture(descriptor, pixels.data());
 }
@@ -330,5 +333,78 @@ auto tMinifiedDrawSamplesABlendedLevel =
         {
             check(isBlended(withMips.at(x, y)));
             check(!isBlended(withoutMips.at(x, y)));
+        }
+};
+
+auto tDeviceChainHasEveryLevel =
+    test("Mipmap/aChainBuiltOnTheDeviceHasEveryLevel") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto texture = makeCheckerboard(true, true);
+
+    check(texture.isValid());
+    check(texture.mipLevels() == mipLevelCount(textureSize, textureSize));
+};
+
+auto tDeviceChainMinifiesLikeCpu =
+    test("Mipmap/aChainBuiltOnTheDeviceDrawsLikeTheOneBuiltOnTheCpu") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto onCpu = makeCheckerboard(true);
+    auto onDevice = makeCheckerboard(true, true);
+
+    const auto fromCpu = drawMinified(onCpu);
+    const auto fromDevice = drawMinified(onDevice);
+
+    if (!fromCpu.isValid() || !fromDevice.isValid())
+        return;
+
+    for (auto y = 0; y < fromDevice.height(); ++y)
+        for (auto x = 0; x < fromDevice.width(); ++x)
+        {
+            const auto a = fromCpu.at(x, y);
+            const auto b = fromDevice.at(x, y);
+
+            check(isBlended(b));
+            check(std::abs(a.r - b.r) <= 1.f / 255.f
+                      && std::abs(a.g - b.g) <= 1.f / 255.f
+                      && std::abs(a.b - b.b) <= 1.f / 255.f,
+                  "texel " + std::to_string(x) + ", " + std::to_string(y));
+        }
+};
+
+auto tUpdateRebuildsTheDeviceChain =
+    test("Mipmap/updateRebuildsAChainBuiltOnTheDevice") = []
+{
+    if (!Device::shared().isValid())
+        return;
+
+    auto texture = makeCheckerboard(true, true);
+
+    if (!texture.isValid() || texture.mipLevels() <= 1)
+        return;
+
+    auto flat = Vector<std::uint32_t> {};
+    flat.resize(textureSize * textureSize);
+
+    for (auto i = 0; i < flat.size(); ++i)
+        flat[i] = red;
+
+    texture.update(flat.data());
+
+    const auto image = drawMinified(texture);
+
+    if (!image.isValid())
+        return;
+
+    for (auto y = 0; y < image.height(); ++y)
+        for (auto x = 0; x < image.width(); ++x)
+        {
+            check(image.at(x, y).r > 0.75f);
+            check(image.at(x, y).g < 0.25f);
         }
 };

@@ -297,7 +297,7 @@ auto tUIntOutputKeepsEveryBit = test("UIntBuffer/anOutputKeepsBitsAFloatLoses") 
                      auto square = (std::uint32_t) i * (std::uint32_t) i;
                      check(values[i] == square, readback.name());
 
-                     if ((std::uint32_t) (float) square != square)
+                     if (square > (1u << 24))
                          ++beyondAFloat;
                  }
 

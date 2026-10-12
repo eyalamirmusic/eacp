@@ -6,9 +6,11 @@
 #include "SVGGradient.h"
 #include "SVGPathParser.h"
 
+#include <eacp/Core/Utils/Base64.h>
 #include <eacp/UI/UI.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace eacp::SVG
 {
@@ -82,6 +84,23 @@ struct SVGComponent::TextRun
     ClipState clip;
 };
 
+struct SVGComponent::EmbeddedImage
+{
+    Graphics::Image pixels;
+    UI::ImageRef texture;
+    int width = 0;
+    int height = 0;
+};
+
+struct SVGComponent::ImageRun
+{
+    EmbeddedImage* image = nullptr;
+    Graphics::Rect source;
+    Graphics::Rect dest;
+    float opacity = 1.f;
+    ClipState clip;
+};
+
 // A clip region the document referenced, built once however many drawables
 // it cuts.
 //
@@ -127,6 +146,7 @@ struct SVGComponent::Drawable
     {
         Shape,
         Text,
+        Image,
 
         // A group composited as a unit rather than drawn shape by shape,
         // which is what a container's own opacity means. See OpacityGroup.
@@ -177,12 +197,15 @@ struct SVGComponent::Style
         // Which includes the viewport, a clipPath's own geometry being as free
         // to write itself in percentages as anything else is.
         Viewport viewport;
+
+        int region = -1;
     };
 
     Graphics::Color fill = Graphics::Color::black();
     Graphics::Color stroke = Graphics::Color::black();
     bool hasFill = true;
     bool hasStroke = false;
+    bool visible = true;
 
     // The id a `fill="url(#id)"` names, empty for the usual case of a colour.
     // Inherited like the colour it stands in for, so a group can paint its
@@ -369,6 +392,54 @@ bool isViewportTag(const std::string& tag)
 // honest document nests and short enough that a cycle costs nothing.
 constexpr int maxUseDepth = 8;
 
+constexpr int maxPatternTiles = 256;
+
+bool isDisplayed(const SVGElement& element)
+{
+    return Strings::toLower(PropertyReader {element}("display")) != "none";
+}
+
+Graphics::Image decodeDataUri(const std::string& href)
+{
+    if (href.rfind("data:", 0) != 0)
+        return {};
+
+    auto comma = href.find(',');
+
+    if (comma == std::string::npos)
+        return {};
+
+    auto header = Strings::toLower(href.substr(5, comma - 5));
+
+    if (header.rfind("image/", 0) != 0
+        || header.find(";base64") == std::string::npos)
+        return {};
+
+    auto text = std::string {};
+    text.reserve(href.size() - comma);
+
+    for (auto i = comma + 1; i < href.size(); ++i)
+        if (!std::isspace(static_cast<unsigned char>(href[i])))
+            text += href[i];
+
+    while (text.size() % 4 != 0)
+        text += '=';
+
+    auto bytes = Base64::decode(text);
+
+    if (!bytes.has_value() || bytes->empty())
+        return {};
+
+    return Graphics::Image::decode(
+        reinterpret_cast<const std::uint8_t*>(bytes->data()),
+        static_cast<int>(bytes->size()));
+}
+
+float boxFraction(const SVGElement& element, const std::string& name)
+{
+    return parseLength(element.attr(name), {1.f, 1.f}, LengthAxis::Horizontal, 0.f);
+}
+
 // An element's own opacity, which is not a thing that inherits: it applies to
 // the element, and for a container that means to the group rather than to each
 // child. Read here rather than folded into the style, because those two are
@@ -445,6 +516,10 @@ void SVGComponent::applyPresentationAttributes(Style& style,
     if (!slant.empty())
         style.italic = slant == "italic" || slant == "oblique";
 
+    auto visibility = read("visibility");
+    if (!visibility.empty() && visibility != "inherit")
+        style.visible = visibility == "visible";
+
     // Read off the attribute and not through the declarations, unlike everything
     // above it. SVG 1.1 has no transform *property*, and the CSS one that came
     // later writes its arguments differently enough - lengths with units,
@@ -505,9 +580,17 @@ int SVGComponent::getClipCount() const
     return clips.size();
 }
 
+int SVGComponent::getImageCount() const
+{
+    return images.size();
+}
+
 void SVGComponent::setDocument(const SVGElement& root)
 {
     documentRoot = root;
+
+    embeddedImages.clear();
+    embeddedImageIndex.clear();
 
     // Into the copy, not the argument: these outlive the call and the caller's
     // element does not have to.
@@ -563,6 +646,7 @@ void SVGComponent::clearContent()
     groups.clear();
     clips.clear();
     texts.clear();
+    images.clear();
 }
 
 // Every mask in the document, built against the size the component is now.
@@ -602,6 +686,9 @@ void SVGComponent::buildElement(const SVGElement& element,
                                 const Style& inherited,
                                 int depth)
 {
+    if (!isDisplayed(element))
+        return;
+
     auto style = inherited;
     applyPresentationAttributes(style, element);
 
@@ -611,7 +698,8 @@ void SVGComponent::buildElement(const SVGElement& element,
     // colour's, exactly, and multiplying it in costs nothing and needs no
     // texture. Only a container is a *group*, and only a group that is actually
     // being faded is worth one.
-    auto leaf = isShapeTag(element.tag) || element.tag == "text";
+    auto leaf =
+        isShapeTag(element.tag) || element.tag == "text" || element.tag == "image";
 
     if (leaf || own >= 1.f)
     {
@@ -667,13 +755,19 @@ void SVGComponent::buildElementContent(const SVGElement& element,
 {
     if (isShapeTag(element.tag))
     {
-        buildShapes(element, style);
+        buildShapes(element, style, depth);
         return;
     }
 
     if (element.tag == "text")
     {
         buildTextRun(element, style);
+        return;
+    }
+
+    if (element.tag == "image")
+    {
+        buildImage(element, style);
         return;
     }
 
@@ -746,6 +840,12 @@ Graphics::Rect SVGComponent::boundsOf(const Vector<Drawable>& drawables) const
         if (item.kind == Drawable::Kind::Group)
         {
             include(groups[item.index]->layer.getBounds());
+            continue;
+        }
+
+        if (item.kind == Drawable::Kind::Image)
+        {
+            include(images[item.index].dest);
             continue;
         }
 
@@ -896,8 +996,13 @@ void SVGComponent::buildNestedSvg(const SVGElement& element,
         buildElement(child, style, depth);
 }
 
-void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
+void SVGComponent::buildShapes(const SVGElement& element,
+                               const Style& style,
+                               int depth)
 {
+    if (!style.visible)
+        return;
+
     // A degenerate transform collapses the document to nothing, and dividing the
     // flatness by it would ask for an unbounded number of segments on the way.
     auto scale = style.transform.getScaleFactor();
@@ -935,7 +1040,11 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
     if (clip.hasRect && clip.rect.isEmpty())
         return;
 
-    if (!fillPath.isEmpty())
+    auto* pattern = findElementById(style.fillReference);
+
+    if (pattern != nullptr && pattern->tag == "pattern")
+        buildPatternFill(*pattern, fillPath, style, depth);
+    else if (!fillPath.isEmpty())
         addShape(
             fillPath.transformed(style.transform),
             style.fill.withAlpha(style.fill.a * style.opacity * style.fillOpacity),
@@ -974,7 +1083,7 @@ void SVGComponent::buildShapes(const SVGElement& element, const Style& style)
 
 void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
 {
-    if (element.textContent.empty())
+    if (!style.visible || element.textContent.empty())
         return;
 
     auto scale = style.transform.getScaleFactor();
@@ -1028,6 +1137,170 @@ void SVGComponent::buildTextRun(const SVGElement& element, const Style& style)
 
     texts.add(run);
     output->add({Drawable::Kind::Text, texts.size() - 1});
+}
+
+SVGComponent::EmbeddedImage*
+    SVGComponent::embeddedImageFor(const SVGElement& element)
+{
+    auto found = embeddedImageIndex.find(&element);
+
+    if (found == embeddedImageIndex.end())
+    {
+        auto href = element.attr("href");
+
+        if (href.empty())
+            href = element.attr("xlink:href");
+
+        auto& entry = embeddedImages.createNew();
+
+        entry.pixels = decodeDataUri(href);
+        entry.width = entry.pixels.width();
+        entry.height = entry.pixels.height();
+
+        found =
+            embeddedImageIndex.emplace(&element, embeddedImages.size() - 1).first;
+    }
+
+    auto* entry = &*embeddedImages[found->second];
+
+    return entry->width > 0 && entry->height > 0 ? entry : nullptr;
+}
+
+void SVGComponent::buildImage(const SVGElement& element, const Style& style)
+{
+    if (!style.visible || style.opacity <= 0.f)
+        return;
+
+    auto* embedded = embeddedImageFor(element);
+
+    if (embedded == nullptr)
+        return;
+
+    auto natural =
+        Graphics::Rect {0.f, 0.f, (float) embedded->width, (float) embedded->height};
+
+    auto port = Graphics::Rect {
+        lengthAttr(element, "x", style.viewport, LengthAxis::Horizontal),
+        lengthAttr(element, "y", style.viewport, LengthAxis::Vertical),
+        lengthAttr(
+            element, "width", style.viewport, LengthAxis::Horizontal, natural.w),
+        lengthAttr(
+            element, "height", style.viewport, LengthAxis::Vertical, natural.h)};
+
+    if (port.isEmpty())
+        return;
+
+    auto fit = parsePreserveAspectRatio(element.attr("preserveAspectRatio"));
+    auto placement = viewBoxTransform(natural, port, fit).then(style.transform);
+
+    if (placement.getDeterminant() == 0.f)
+        return;
+
+    auto dest = style.transform.apply(port).intersection(placement.apply(natural));
+
+    if (dest.isEmpty())
+        return;
+
+    auto clip = resolveClips(style, port);
+
+    if (clip.hasRect && clip.rect.isEmpty())
+        return;
+
+    images.add(
+        {embedded, placement.inverted().apply(dest), dest, style.opacity, clip});
+    output->add({Drawable::Kind::Image, images.size() - 1});
+}
+
+void SVGComponent::buildPatternFill(const SVGElement& element,
+                                    const GPUWidgets::Path& fillPath,
+                                    const Style& style,
+                                    int depth)
+{
+    if (fillPath.isEmpty() || depth >= maxUseDepth)
+        return;
+
+    auto bounds = fillPath.getBounds();
+
+    auto length = [&](const std::string& name, LengthAxis axis)
+    { return lengthAttr(element, name, style.viewport, axis); };
+
+    auto tile =
+        element.attr("patternUnits") == "userSpaceOnUse"
+            ? Graphics::Rect {length("x", LengthAxis::Horizontal),
+                              length("y", LengthAxis::Vertical),
+                              length("width", LengthAxis::Horizontal),
+                              length("height", LengthAxis::Vertical)}
+            : Graphics::Rect {bounds.x + bounds.w * boxFraction(element, "x"),
+                              bounds.y + bounds.h * boxFraction(element, "y"),
+                              bounds.w * boxFraction(element, "width"),
+                              bounds.h * boxFraction(element, "height")};
+
+    if (tile.isEmpty())
+        return;
+
+    auto content = GPUWidgets::AffineTransform {};
+    auto numbers = parseNumberList(element.attr("viewBox"));
+
+    if (numbers.size() >= 4)
+        content = viewBoxTransform(
+            {numbers[0], numbers[1], numbers[2], numbers[3]},
+            {0.f, 0.f, tile.w, tile.h},
+            parsePreserveAspectRatio(element.attr("preserveAspectRatio")));
+    else if (element.attr("patternContentUnits") == "objectBoundingBox")
+        content = GPUWidgets::AffineTransform::scaling(bounds.w, bounds.h);
+
+    auto patternTransform = parseTransformMatrix(element.attr("patternTransform"));
+
+    if (patternTransform.getDeterminant() == 0.f)
+        return;
+
+    auto patternToComponent = patternTransform.then(style.transform);
+    auto covered = patternTransform.inverted().apply(bounds);
+
+    auto firstColumn = (int) std::floor((covered.x - tile.x) / tile.w);
+    auto lastColumn = (int) std::ceil((covered.right() - tile.x) / tile.w);
+    auto firstRow = (int) std::floor((covered.y - tile.y) / tile.h);
+    auto lastRow = (int) std::ceil((covered.bottom() - tile.y) / tile.h);
+
+    if ((long long) (lastColumn - firstColumn) * (lastRow - firstRow)
+        > maxPatternTiles)
+        return;
+
+    auto shape =
+        addClipRegion(fillPath.transformed(style.transform), style.fillRule);
+
+    for (auto row = firstRow; row < lastRow; ++row)
+    {
+        for (auto column = firstColumn; column < lastColumn; ++column)
+        {
+            auto cell = Graphics::Rect {tile.x + tile.w * (float) column,
+                                        tile.y + tile.h * (float) row,
+                                        tile.w,
+                                        tile.h};
+
+            auto cellPath = GPUWidgets::Path {};
+            cellPath.addRect(cell);
+
+            auto tileStyle = Style {};
+            tileStyle.viewport = style.viewport;
+            tileStyle.opacity = style.opacity * style.fillOpacity;
+            tileStyle.transform =
+                content
+                    .then(GPUWidgets::AffineTransform::translation(cell.x, cell.y))
+                    .then(patternToComponent);
+            tileStyle.clips = style.clips;
+            tileStyle.clips.add(
+                {{},
+                 {},
+                 {},
+                 addClipRegion(cellPath.transformed(patternToComponent),
+                               GPUWidgets::FillRule::NonZero)});
+            tileStyle.clips.add({{}, {}, {}, shape});
+
+            for (auto& child: element.children)
+                buildElement(child, tileStyle, depth + 1);
+        }
+    }
 }
 
 void SVGComponent::addShape(const GPUWidgets::Path& path,
@@ -1092,14 +1365,21 @@ int SVGComponent::findOrAddClip(const std::string& reference,
     if (!region.resolved)
         return -1;
 
-    auto path = region.path.transformed(transform);
-
-    auto& clip = clips.createNew(*this);
+    auto index = addClipRegion(region.path.transformed(transform), region.rule);
+    auto& clip = *clips[index];
 
     clip.reference = reference;
     clip.transform = transform;
     clip.objectBounds = bounds;
     clip.viewport = viewport;
+
+    return index;
+}
+
+int SVGComponent::addClipRegion(const GPUWidgets::Path& path,
+                                GPUWidgets::FillRule rule)
+{
+    auto& clip = clips.createNew(*this);
 
     // A rectangle is a scissor rect: exact, free of the atlas, and the only kind
     // of clip that reaches the glyphs. Worth testing for rather than assuming
@@ -1119,7 +1399,7 @@ int SVGComponent::findOrAddClip(const std::string& reference,
     // leaves nothing for another shape to sample, and a clip is only a clip
     // because something else can read it.
     clip.mask.setBacking(UI::PathShape::Backing::Mask);
-    clip.mask.setPath(path, region.rule);
+    clip.mask.setPath(path, rule);
 
     return clips.size() - 1;
 }
@@ -1132,10 +1412,11 @@ SVGComponent::ClipState
 
     for (const auto& reference: style.clips)
     {
-        auto index = findOrAddClip(reference.reference,
-                                   reference.transform,
-                                   reference.viewport,
-                                   objectBounds);
+        auto index = reference.region >= 0 ? reference.region
+                                           : findOrAddClip(reference.reference,
+                                                           reference.transform,
+                                                           reference.viewport,
+                                                           objectBounds);
 
         if (index < 0)
             continue;
@@ -1291,6 +1572,20 @@ void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawa
         g.drawText(run.text, {x, run.baseline.y});
     };
 
+    auto drawImage = [&](const ImageRun& run)
+    {
+        auto& image = *run.image;
+
+        if (image.texture == nullptr && image.pixels.isValid()
+            && getHost() != nullptr)
+        {
+            image.texture = getHost()->getImageCache().get(image.pixels);
+            image.pixels = {};
+        }
+
+        g.drawImage(image.texture, run.source, run.dest, run.opacity);
+    };
+
     auto applyClip = [&](const ClipState& clip)
     {
         if (clip.hasRect)
@@ -1305,6 +1600,12 @@ void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawa
         if (item.kind == Drawable::Kind::Text)
         {
             drawText(texts[item.index]);
+            return;
+        }
+
+        if (item.kind == Drawable::Kind::Image)
+        {
+            drawImage(images[item.index]);
             return;
         }
 
@@ -1328,6 +1629,7 @@ void SVGComponent::paintDrawables(UI::Graphics& g, const Vector<Drawable>& drawa
         const auto* clip =
             item.kind == Drawable::Kind::Text    ? &texts[item.index].clip
             : item.kind == Drawable::Kind::Shape ? &shapes[item.index]->clip
+            : item.kind == Drawable::Kind::Image ? &images[item.index].clip
                                                  : nullptr;
 
         // Only where there is one. A clip costs a batch break each way, and a

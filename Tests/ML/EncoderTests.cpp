@@ -96,7 +96,7 @@ bool isSupportedEncoder()
 
 bool canPredictEnumerated(const std::string& what)
 {
-    if (isIOS() || osVersion().atLeast(27, 0))
+    if (enumeratedShapesRunOnTheCpu())
         return true;
 
     LOG("skipped: ",
@@ -104,6 +104,11 @@ bool canPredictEnumerated(const std::string& what)
         " predictions, since BNNS traps on macOS 26's CPU path"
         " (the run of 2026-09-25)");
     return false;
+}
+
+bool isRefusedOnTheCpu(ComputeUnits units)
+{
+    return !enumeratedShapesRunOnTheCpu() && isCpuOnly(units);
 }
 
 struct Encoded
@@ -387,6 +392,15 @@ auto tEncoderTimes = test("MLEncoder/whisperTinyLoadAndPredictionTimes") = []
     {
         auto what = "encoder, 18 members [" + nameOf(units) + "]";
         auto cache = freshCacheDirectory("whisper-encoder-times-" + nameOf(units));
+
+        if (isRefusedOnTheCpu(units))
+        {
+            auto refused = Model {};
+            check(!refused.load(package, optionsFor(units, cache)).ok,
+                  what + " should be refused where the CPU path traps");
+            LOG(what, ": refused, since the CPU path traps before macOS 27");
+            continue;
+        }
 
         auto cold = Model {};
         logLoad(what + " cold", timedLoad(cold, package, units, cache), cold);

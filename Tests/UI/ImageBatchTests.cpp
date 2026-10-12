@@ -176,6 +176,99 @@ auto tReleaseKeepsWhatIsHeld =
     check(cache.size() == 0, "and now nobody does");
 };
 
+// The pixels are hashed once per buffer, not once per ask. Shown by changing
+// the bytes behind the image's back -- something no caller may do, and the one
+// way to tell a lookup that reads no pixels from one that reads them all: the
+// old content key would hash the new bytes and upload a second texture.
+auto tHitReadsNoPixels =
+    test("ImageCache/askingAgainForAnUnchangedImageReadsNoPixels") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto cache = ImageCache {};
+    auto image = solid(4, red);
+
+    auto first = cache.get(image);
+
+    auto* bytes = const_cast<std::uint8_t*>(image.pixels().data());
+    bytes[0] = 0;
+
+    auto second = cache.get(image);
+
+    check(first != nullptr);
+    check(second == first, "found by the buffer, not by hashing it again");
+    check(cache.size() == 1, "and nothing uploaded");
+};
+
+// A write through prepareForOverwrite keeps the buffer -- it is unshared and
+// the size matches -- so the identity alone would find the old texture. The
+// write count is what says these are other pixels.
+auto tOverwriteInvalidates =
+    test("ImageCache/anImageOverwrittenInPlaceIsUploadedAgain") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto cache = ImageCache {};
+    auto image = solid(4, red);
+
+    auto first = cache.get(image);
+    const auto* before = image.pixels().data();
+
+    auto* out = image.prepareForOverwrite(4, 4);
+
+    for (auto i = 0; i < 4 * 4; ++i)
+    {
+        out[i * 4 + 0] = 0;
+        out[i * 4 + 1] = 0;
+        out[i * 4 + 2] = 255;
+        out[i * 4 + 3] = 255;
+    }
+
+    check(out == before, "the same buffer, written in place");
+
+    auto second = cache.get(image);
+
+    check(second != nullptr);
+    check(second != first, "the new pixels, not the texture of the old ones");
+    check(second == cache.get(solid(4, blue)), "and found by their content");
+
+    // And the same through set(), which writes in place too.
+    image.set(0, 0, red);
+
+    auto third = cache.get(image);
+
+    check(third != second);
+};
+
+// A copy shares the buffer, so it is the same entry -- found by identity,
+// without hashing the copy.
+auto tCopySharesEntry = test("ImageCache/aCopyOfAnImageIsTheSameTexture") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto cache = ImageCache {};
+    auto image = solid(4, red);
+
+    auto first = cache.get(image);
+    auto copy = image;
+
+    check(cache.get(copy) == first);
+    check(cache.size() == 1);
+
+    // Until the copy is written, which detaches it and leaves the original's
+    // texture where it was.
+    copy.set(0, 0, blue);
+
+    auto detached = cache.get(copy);
+
+    check(detached != first);
+    check(cache.get(image) == first);
+    check(cache.size() == 2);
+};
+
 auto tImageRecordsInOwnPoints = test("DrawList/anImageIsRecordedInItsOwnPoints") = []
 {
     if (!hasDevice())
@@ -397,4 +490,113 @@ auto tUnusedTextureGoes =
 
     check(scene.host.getCachedImageCount() == 0,
           "the recording was cleared and painted without them");
+};
+
+namespace
+{
+eacp::Graphics::Image pattern(int size)
+{
+    auto image = eacp::Graphics::Image {size, size};
+
+    for (auto y = 0; y < size; ++y)
+        for (auto x = 0; x < size; ++x)
+            image.set(x,
+                      y,
+                      Color {(float) x / (float) size,
+                             (float) y / (float) size,
+                             (float) ((x * 7 + y * 3) % 16) / 15.f,
+                             1.f});
+
+    return image;
+}
+
+ImageRef uploadedOnTheCpu(const eacp::Graphics::Image& image)
+{
+    auto descriptor = GPU::TextureDescriptor {};
+    descriptor.width = image.width();
+    descriptor.height = image.height();
+    descriptor.format = GPU::TextureFormat::RGBA8Unorm;
+    descriptor.mipmapped = true;
+
+    return std::make_shared<ImageTexture>(descriptor, image.pixels().data(), 0);
+}
+
+struct Shown final : Component
+{
+    void paint(UI::Graphics& g) override { g.drawImage(image, area); }
+
+    ImageRef image;
+    Rect area;
+};
+
+eacp::Graphics::Image drawThrough(ComponentHost& host,
+                                  Shown& shown,
+                                  const ImageRef& image,
+                                  float drawnPixels,
+                                  float scale)
+{
+    shown.image = image;
+    shown.area = {0.f, 0.f, drawnPixels / scale, drawnPixels / scale};
+    shown.repaint();
+
+    return host.renderToImage(scale);
+}
+
+int largestDifference(const eacp::Graphics::Image& a, const eacp::Graphics::Image& b)
+{
+    auto largest = 0;
+
+    for (auto y = 0; y < a.height(); ++y)
+    {
+        for (auto x = 0; x < a.width(); ++x)
+        {
+            auto p = a.at(x, y);
+            auto q = b.at(x, y);
+
+            for (auto difference: {p.r - q.r, p.g - q.g, p.b - q.b, p.a - q.a})
+                largest = std::max(largest,
+                                   (int) std::lround(std::abs(difference) * 255.f));
+        }
+    }
+
+    return largest;
+}
+} // namespace
+
+auto tDeviceChainDrawsLikeCpu =
+    test("ImageCache/aPictureDrawsTheSameWhicheverSideBuiltItsChain") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto source = pattern(64);
+    auto shown = Shown {};
+    auto host = ComponentHost {};
+
+    host.setBackgroundColour(Color::white());
+    host.setRootComponent(shown);
+    host.setBounds({0.f, 0.f, 64.f, 64.f});
+    host.resized();
+
+    auto cached = host.getImageCache().get(source);
+    auto reference = uploadedOnTheCpu(source);
+
+    check(cached->texture.mipLevels() == reference->texture.mipLevels());
+
+    for (auto scale: {1.f, 2.f})
+    {
+        auto label = " at " + std::to_string((int) scale) + "x";
+
+        auto full = drawThrough(host, shown, reference, 64.f, scale);
+        auto fullCached = drawThrough(host, shown, cached, 64.f, scale);
+
+        check(largestDifference(full, fullCached) == 0, "level 0" + label);
+
+        auto small = drawThrough(host, shown, reference, 13.f, scale);
+        auto smallCached = drawThrough(host, shown, cached, 13.f, scale);
+
+        check(largestDifference(small, smallCached) <= 1,
+              "minified, " + std::to_string(largestDifference(small, smallCached))
+                  + " apart" + label);
+    }
 };

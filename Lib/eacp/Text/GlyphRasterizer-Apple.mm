@@ -363,6 +363,16 @@ struct GlyphRasterizer::Native
         collectFamilyFaces();
     }
 
+    // A request naming one face by its PostScript name, as an embedded font is
+    // asked for, means that face and not its family's nearest to the variant.
+    bool namesAFace() const
+    {
+        CFRef<CFStringRef> postScriptName(CTFontCopyPostScriptName(base.get()));
+
+        return request.family != resolved
+               && toString(postScriptName.get()) == request.family;
+    }
+
     static std::string familyNameOf(CTFontRef font)
     {
         CFRef<CFStringRef> name(CTFontCopyFamilyName(font));
@@ -386,10 +396,13 @@ struct GlyphRasterizer::Native
     // considers close enough.
     void collectFamilyFaces()
     {
-        CFRef<CFStringRef> family(CFStringCreateWithCString(
-            nullptr, resolved.c_str(), kCFStringEncodingUTF8));
+        const auto named = namesAFace();
+        CFRef<CFStringRef> family(
+            CFStringCreateWithCString(nullptr,
+                                      named ? request.family.c_str() : resolved.c_str(),
+                                      kCFStringEncodingUTF8));
 
-        const void* keys[] = {kCTFontFamilyNameAttribute};
+        const void* keys[] = {named ? kCTFontNameAttribute : kCTFontFamilyNameAttribute};
         const void* values[] = {family.get()};
 
         CFRef<CFDictionaryRef> attributes(

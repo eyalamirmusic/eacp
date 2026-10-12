@@ -1,11 +1,19 @@
 #include "CompositionHostWindow-Windows.h"
 #include <eacp/Core/Utils/Strings.h>
+#include "../Helpers/ImageConversion-Windows.h"
 #include "../Helpers/SystemAppearance.h"
+#include "../Image/ImageOps.h"
 #include "../Layers/NativeLayer-Windows.h"
 
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Singleton.h>
 
+#include <shellapi.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <ranges>
 #include <unordered_map>
 
 namespace eacp::Graphics
@@ -30,6 +38,13 @@ namespace
 std::unordered_map<View*, HWND>& contentViewToHwnd()
 {
     return Singleton::getImmortal<std::unordered_map<View*, HWND>>();
+}
+
+// Every live host, so a device loss can rebuild each one's target and root.
+// Main-thread only and immortal, like the view/HWND registry above.
+Vector<CompositionHostWindow*>& compositionHosts()
+{
+    return Singleton::getImmortal<Vector<CompositionHostWindow*>>();
 }
 
 // Virtual key codes - defined manually to reduce Windows.h dependency.
@@ -79,6 +94,268 @@ MouseEvent makeMouseEvent(LPARAM lParam,
     return event;
 }
 
+HCURSOR systemCursorFor(MouseCursor::Shape shape)
+{
+    switch (shape)
+    {
+        case MouseCursor::IBeam:
+            return LoadCursor(nullptr, IDC_IBEAM);
+        case MouseCursor::PointingHand:
+            return LoadCursor(nullptr, IDC_HAND);
+        case MouseCursor::ResizeLeftRight:
+            return LoadCursor(nullptr, IDC_SIZEWE);
+        case MouseCursor::ResizeUpDown:
+            return LoadCursor(nullptr, IDC_SIZENS);
+        case MouseCursor::Crosshair:
+            return LoadCursor(nullptr, IDC_CROSS);
+        case MouseCursor::Default:
+            break;
+    }
+
+    return LoadCursor(nullptr, IDC_ARROW);
+}
+
+struct ImageCursorHandle
+{
+    ImageCursorHandle(HCURSOR handleToUse, int widthToUse, int heightToUse)
+        : handle(handleToUse)
+        , width(widthToUse)
+        , height(heightToUse)
+    {
+    }
+
+    ~ImageCursorHandle()
+    {
+        if (handle != nullptr)
+            DestroyIcon(handle);
+    }
+
+    ImageCursorHandle(const ImageCursorHandle&) = delete;
+    ImageCursorHandle& operator=(const ImageCursorHandle&) = delete;
+
+    HCURSOR handle = nullptr;
+    int width = 0;
+    int height = 0;
+};
+
+int scaledCursorExtent(int pixels, float factor)
+{
+    return std::max(
+        1, static_cast<int>(std::lround(static_cast<float>(pixels) * factor)));
+}
+
+int scaledHotspot(float pixels, float factor, int extent)
+{
+    return std::clamp(static_cast<int>(std::lround(pixels * factor)), 0, extent - 1);
+}
+
+HCURSOR imageCursorFor(const MouseCursor& cursor, float dpiScale)
+{
+    auto image = cursor.getImage();
+    auto factor = dpiScale / cursor.getScale();
+    auto width = scaledCursorExtent(image.width(), factor);
+    auto height = scaledCursorExtent(image.height(), factor);
+
+    auto& cache = *cursor.getNativeCache();
+    auto* cached = static_cast<ImageCursorHandle*>(cache.get());
+
+    if (cached != nullptr && cached->width == width && cached->height == height)
+        return cached->handle;
+
+    auto sized = width == image.width() && height == image.height()
+                     ? image
+                     : resizeBilinear(image, width, height);
+
+    auto hotspot = cursor.getHotspot();
+    auto handle = toHCursor(sized,
+                            scaledHotspot(hotspot.x, factor, width),
+                            scaledHotspot(hotspot.y, factor, height));
+
+    if (handle == nullptr)
+        return systemCursorFor(MouseCursor::Default);
+
+    cache = std::make_shared<ImageCursorHandle>(handle, width, height);
+    return handle;
+}
+
+HCURSOR cursorHandleFor(const MouseCursor& cursor, float dpiScale)
+{
+    if (cursor.isImage())
+        return imageCursorFor(cursor, dpiScale);
+
+    return systemCursorFor(cursor.getShape());
+}
+
+Vector<std::string> draggedFilePaths(IDataObject* data)
+{
+    auto paths = Vector<std::string> {};
+
+    if (data == nullptr)
+        return paths;
+
+    auto format = FORMATETC {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    auto medium = STGMEDIUM {};
+
+    if (FAILED(data->GetData(&format, &medium)))
+        return paths;
+
+    if (auto drop = static_cast<HDROP>(GlobalLock(medium.hGlobal)))
+    {
+        auto count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+
+        for (auto index = UINT {0}; index < count; ++index)
+        {
+            auto length = DragQueryFileW(drop, index, nullptr, 0);
+            auto path = std::wstring(length, L'\0');
+            DragQueryFileW(drop, index, path.data(), length + 1);
+            paths.add(Strings::narrow(path));
+        }
+
+        GlobalUnlock(medium.hGlobal);
+    }
+
+    ReleaseStgMedium(&medium);
+    return paths;
+}
+
+DWORD dropEffectFor(bool accepted)
+{
+    return accepted ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+}
+
+POINT toPoint(POINTL point)
+{
+    return {point.x, point.y};
+}
+
+class HostFileDropTarget final : public IDropTarget
+{
+public:
+    explicit HostFileDropTarget(CompositionHostWindow& hostToUse)
+        : host(&hostToUse)
+    {
+    }
+
+    void detach() { host = nullptr; }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** object) override
+    {
+        if (riid == IID_IUnknown || riid == IID_IDropTarget)
+        {
+            *object = static_cast<IDropTarget*>(this);
+            AddRef();
+            return S_OK;
+        }
+
+        *object = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refCount; }
+
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        auto remaining = --refCount;
+
+        if (remaining == 0)
+            delete this;
+
+        return remaining;
+    }
+
+    HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data,
+                                        DWORD,
+                                        POINTL point,
+                                        DWORD* effect) override
+    {
+        files = draggedFilePaths(data);
+        *effect = dropEffectFor(host != nullptr && !files.empty()
+                                && host->fileDragOver(files, toPoint(point)));
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL point, DWORD* effect) override
+    {
+        *effect = dropEffectFor(host != nullptr && !files.empty()
+                                && host->fileDragOver(files, toPoint(point)));
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE DragLeave() override
+    {
+        if (host != nullptr)
+            host->fileDragLeave();
+
+        files.clear();
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE Drop(IDataObject* data,
+                                   DWORD,
+                                   POINTL point,
+                                   DWORD* effect) override
+    {
+        auto dropped = draggedFilePaths(data);
+        files.clear();
+
+        *effect = dropEffectFor(host != nullptr && !dropped.empty()
+                                && host->fileDrop(dropped, toPoint(point)));
+        return S_OK;
+    }
+
+private:
+    CompositionHostWindow* host = nullptr;
+    Vector<std::string> files;
+    std::atomic<ULONG> refCount {1};
+};
+
+bool isInViewTree(const View* root, const View* view)
+{
+    if (root == nullptr)
+        return false;
+
+    if (root == view)
+        return true;
+
+    for (auto* subview: root->getSubviews())
+        if (isInViewTree(subview, view))
+            return true;
+
+    return false;
+}
+
+View* deepestFileDropView(View& view, Point position)
+{
+    if (!view.isVisible() || !view.getLocalBounds().contains(position))
+        return nullptr;
+
+    for (auto* child: std::ranges::reverse_view(view.getSubviews()))
+    {
+        auto childBounds = child->getBounds();
+
+        if (auto* found = deepestFileDropView(
+                *child, {position.x - childBounds.x, position.y - childBounds.y}))
+            return found;
+    }
+
+    return view.getProperties().acceptsFileDrops ? &view : nullptr;
+}
+
+Point positionInView(const View& view, Point positionInRoot)
+{
+    auto local = positionInRoot;
+
+    for (auto* current = &view; current->getParent() != nullptr;
+         current = current->getParent())
+    {
+        auto bounds = current->getBounds();
+        local.x -= bounds.x;
+        local.y -= bounds.y;
+    }
+
+    return local;
+}
+
 void registerContentViewHwnd(View* root, HWND hwnd)
 {
     contentViewToHwnd()[root] = hwnd;
@@ -102,6 +379,16 @@ HWND findHostHwndForView(View* view)
     auto& map = contentViewToHwnd();
     auto it = map.find(root);
     return it == map.end() ? nullptr : it->second;
+}
+
+void refreshHostCursor(HWND hwnd)
+{
+    if (hwnd == nullptr)
+        return;
+
+    for (auto* host: compositionHosts())
+        if (host->hwnd == hwnd)
+            host->refreshCursor();
 }
 
 void repaintViewTree(View* view)
@@ -155,12 +442,6 @@ void markViewTreeLayersDirty(const View* view)
         markViewTreeLayersDirty(subview);
 }
 
-// Every live host, so a device loss can rebuild each one's target and root.
-// Main-thread only and immortal, like the view/HWND registry above.
-Vector<CompositionHostWindow*>& compositionHosts()
-{
-    return Singleton::getImmortal<Vector<CompositionHostWindow*>>();
-}
 } // namespace
 
 bool isHostWindowTransparent(HWND hwnd)
@@ -292,6 +573,7 @@ void CompositionHostWindow::attachContentView(View* view)
         return;
 
     registerContentViewHwnd(view, hwnd);
+    registerFileDrops();
 
     RECT clientRect;
     GetClientRect(hwnd, &clientRect);
@@ -389,6 +671,37 @@ void CompositionHostWindow::setMouseLocked(bool locked)
         disengageMouseLock();
 }
 
+bool CompositionHostWindow::applyCursorUnderPointer()
+{
+    if (contentView == nullptr || mouseLockEngaged)
+        return false;
+
+    auto screen = POINT {};
+    GetCursorPos(&screen);
+
+    auto* hit = contentView->hitTest(fromScreenPixels(screen));
+    const auto& cursor =
+        hit != nullptr ? hit->getMouseCursor() : contentView->getMouseCursor();
+
+    SetCursor(cursorHandleFor(cursor, getDpiScale()));
+
+    auto* cache = cursor.getNativeCache();
+    appliedImageCursor = cache != nullptr ? *cache : nullptr;
+
+    return true;
+}
+
+void CompositionHostWindow::refreshCursor()
+{
+    auto screen = POINT {};
+    GetCursorPos(&screen);
+
+    auto capture = GetCapture();
+
+    if (capture == hwnd || (capture == nullptr && WindowFromPoint(screen) == hwnd))
+        applyCursorUnderPointer();
+}
+
 void CompositionHostWindow::engageMouseLock()
 {
     if (mouseLockEngaged)
@@ -462,9 +775,94 @@ void CompositionHostWindow::handleLockedMouseMove(LPARAM lParam)
     dispatchMouseToContentView(event);
 }
 
+void CompositionHostWindow::registerFileDrops()
+{
+    if (fileDropTarget != nullptr || hwnd == nullptr)
+        return;
+
+    static thread_local auto oleReady = SUCCEEDED(OleInitialize(nullptr));
+
+    if (!oleReady)
+        return;
+
+    auto* target = new HostFileDropTarget(*this);
+
+    if (FAILED(RegisterDragDrop(hwnd, target)))
+    {
+        target->Release();
+        return;
+    }
+
+    fileDropTarget = target;
+}
+
+void CompositionHostWindow::revokeFileDrops()
+{
+    if (fileDropTarget == nullptr)
+        return;
+
+    RevokeDragDrop(hwnd);
+    static_cast<HostFileDropTarget*>(fileDropTarget)->detach();
+    fileDropTarget->Release();
+    fileDropTarget = nullptr;
+    fileDragView = nullptr;
+}
+
+View* CompositionHostWindow::fileDropViewAt(Point position) const
+{
+    return contentView != nullptr ? deepestFileDropView(*contentView, position)
+                                  : nullptr;
+}
+
+bool CompositionHostWindow::fileDragOver(const Vector<std::string>& files,
+                                         POINT screenPixels)
+{
+    auto position = fromScreenPixels(screenPixels);
+    auto* view = fileDropViewAt(position);
+
+    if (view != fileDragView)
+    {
+        fileDragLeave();
+        fileDragView = view;
+
+        return view != nullptr
+               && view->fileDragEnter(files, positionInView(*view, position));
+    }
+
+    return view != nullptr
+           && view->fileDragMove(files, positionInView(*view, position));
+}
+
+void CompositionHostWindow::fileDragLeave()
+{
+    if (fileDragView != nullptr && isInViewTree(contentView, fileDragView))
+        fileDragView->fileDragExit();
+
+    fileDragView = nullptr;
+}
+
+bool CompositionHostWindow::fileDrop(const Vector<std::string>& files,
+                                     POINT screenPixels)
+{
+    auto position = fromScreenPixels(screenPixels);
+    auto* view = fileDropViewAt(position);
+
+    if (view != fileDragView)
+        fileDragLeave();
+
+    fileDragView = nullptr;
+
+    if (view == nullptr)
+        return false;
+
+    view->filesDropped(files, positionInView(*view, position));
+    return true;
+}
+
 void CompositionHostWindow::teardown()
 {
     disengageMouseLock();
+    revokeFileDrops();
 
     if (rootVisual)
         rootVisual->RemoveAllVisuals();
@@ -620,7 +1018,7 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
     // dragged, an embedded editor a plugin host is resizing), and a start point
     // kept in client space would report that movement as pointer travel. A
     // wheel event has no drag behind it, so it reports itself.
-    if (event.type == MouseEventType::Wheel)
+    if (event.type == MouseEventType::Wheel || event.type == MouseEventType::Magnify)
     {
         event.downPos = event.pos;
     }
@@ -661,6 +1059,44 @@ void CompositionHostWindow::dispatchMouseToContentView(MouseEvent event)
 
     contentView->dispatchMouseEvent(event);
     ensureAllLayersRendered(contentView);
+}
+
+bool CompositionHostWindow::dispatchZoomGesture(LPARAM lParam)
+{
+    auto handle = reinterpret_cast<HGESTUREINFO>(lParam);
+    auto info = GESTUREINFO {};
+    info.cbSize = sizeof(info);
+
+    if (!GetGestureInfo(handle, &info) || info.dwID != GID_ZOOM)
+        return false;
+
+    const auto distance =
+        static_cast<double>(static_cast<DWORD>(info.ullArguments));
+    const auto began = (info.dwFlags & GF_BEGIN) != 0;
+
+    MouseEvent event;
+    event.type = MouseEventType::Magnify;
+    event.button = MouseButton::Other;
+    event.modifiers = getModifiers();
+    event.pos = fromScreenPixels(POINT {info.ptsLocation.x, info.ptsLocation.y});
+
+    if (began)
+    {
+        event.scrollPhase = ScrollPhase::Began;
+    }
+    else
+    {
+        event.scrollPhase = (info.dwFlags & GF_END) != 0 ? ScrollPhase::Ended
+                                                         : ScrollPhase::Changed;
+        event.magnifyScale =
+            magnifyScaleBetweenDistances(zoomGestureDistance, distance);
+    }
+
+    zoomGestureDistance = distance;
+
+    dispatchMouseToContentView(event);
+    CloseGestureInfoHandle(handle);
+    return true;
 }
 
 std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
@@ -725,6 +1161,12 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
             // The matching key-ups go to whoever took focus (e.g. Alt+Tab), so
             // tracked state would otherwise report keys stuck down forever.
             keyState.reset();
+            return std::nullopt;
+
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT && reinterpret_cast<HWND>(wParam) == hwnd
+                && applyCursorUnderPointer())
+                return TRUE;
             return std::nullopt;
 
         case WM_ERASEBKGND:
@@ -855,6 +1297,11 @@ std::optional<LRESULT> CompositionHostWindow::handleCommonMessage(UINT msg,
                 dispatchMouseToContentView(event);
             }
             return 0;
+
+        case WM_GESTURE:
+            if (contentView && dispatchZoomGesture(lParam))
+                return 0;
+            return std::nullopt;
 
         case WM_KEYDOWN:
         case WM_KEYUP:

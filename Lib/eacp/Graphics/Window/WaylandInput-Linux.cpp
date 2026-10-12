@@ -594,8 +594,8 @@ void WaylandInput::refreshCursor()
 
     auto* contentView = pointerWindow->contentView;
     auto* hit = contentView->hitTest(pointerState.getPosition());
-    auto shape =
-        hit != nullptr ? hit->getMouseCursor() : contentView->getMouseCursor();
+    auto shape = hit != nullptr ? hit->getMouseCursor().getShape()
+                                : contentView->getMouseCursor().getShape();
 
     if (cursor.setShape(shape))
         applyCursor();

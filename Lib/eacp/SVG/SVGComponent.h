@@ -53,8 +53,8 @@ namespace eacp::SVG
 // happened to be cheap.
 //
 // What it does not do at all: <mask>, CSS selectors (the style *attribute* is
-// read, a <style> element is not), filters and images. An element asking for one
-// of those draws without it rather than not at all.
+// read, a <style> element is not) and filters. An element asking for one of
+// those draws without it rather than not at all.
 class SVGComponent : public UI::Component
 {
 public:
@@ -146,6 +146,8 @@ public:
     // one, which is worth being able to see.
     int getFontCount() const;
 
+    int getImageCount() const;
+
 private:
     struct ClipState;
     struct Shape;
@@ -155,6 +157,8 @@ private:
     struct Drawable;
     struct OpacityGroup;
     struct Style;
+    struct EmbeddedImage;
+    struct ImageRun;
 
     void rebuild();
     void clearContent();
@@ -189,8 +193,17 @@ private:
     // the specification forbids it and nothing stops a file doing it, so the
     // walk stops rather than recursing until the stack runs out.
     void buildElement(const SVGElement& element, const Style& inherited, int depth);
-    void buildShapes(const SVGElement& element, const Style& style);
+    void buildShapes(const SVGElement& element, const Style& style, int depth);
     void buildTextRun(const SVGElement& element, const Style& style);
+    void buildImage(const SVGElement& element, const Style& style);
+
+    void buildPatternFill(const SVGElement& element,
+                          const GPUWidgets::Path& fillPath,
+                          const Style& style,
+                          int depth);
+
+    EmbeddedImage* embeddedImageFor(const SVGElement& element);
+    int addClipRegion(const GPUWidgets::Path& path, GPUWidgets::FillRule rule);
 
     // A <use>, which is the referenced element built again here: with this
     // element's inherited style, its transform, and the extra translation its x
@@ -257,5 +270,9 @@ private:
     OwnedVector<OpacityGroup> groups;
     OwnedVector<Clip> clips;
     Vector<TextRun> texts;
+    Vector<ImageRun> images;
+
+    OwnedVector<EmbeddedImage> embeddedImages;
+    std::unordered_map<const SVGElement*, int> embeddedImageIndex;
 };
 } // namespace eacp::SVG

@@ -14,6 +14,11 @@ enum class ComputeUnits
     cpu
 };
 
+// What a cache directory may hold before a compile evicts its least recently
+// used models: 2 GiB, room for a product's handful of models and the versions
+// an update just replaced. Caches is purgeable, so this only bounds growth.
+constexpr auto defaultCacheBudgetBytes = std::uint64_t {2} << 30;
+
 struct Options
 {
     ComputeUnits units = ComputeUnits::all;
@@ -26,6 +31,11 @@ struct Options
 
     // Where compiled models are kept. Empty is defaultCacheDirectory().
     FilePath cacheDirectory;
+
+    // What a compile trims the cache directory back to, oldest use first,
+    // sparing models a live Model of this process holds and any used in the
+    // last hour. 0 never evicts.
+    std::uint64_t cacheBudgetBytes = defaultCacheBudgetBytes;
 };
 
 // What a load or a prediction came to, in the shape OnlineResource::Result

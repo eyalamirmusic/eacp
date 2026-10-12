@@ -66,6 +66,15 @@ const Address& Connection::address() const
     return impl->address;
 }
 
+void Connection::setIoTimeout(Time::MS timeout)
+{
+    if (!isOpen())
+        return;
+
+    impl->timeouts.io = timeout;
+    detail::socketSetIoTimeout(impl->socket, timeout);
+}
+
 void Connection::send(std::string_view bytes)
 {
     if (!isOpen())

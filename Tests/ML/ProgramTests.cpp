@@ -740,6 +740,43 @@ auto tDescriptionNamesTheFeatures =
     check(outputs[0].type == DType::float16);
 };
 
+// Before macOS 27 an enumerated model placed on the CPU traps in BNNS on its
+// first prediction, so the load is refused where the CPU is certain and
+// allowed everywhere else; on macOS 27 it loads under every setting.
+auto tEnumeratedOnTheCpu =
+    test("MLPrograms/anEnumeratedModelIsRefusedWhereTheCpuWouldTrap") = []
+{
+    if (!isSupported() || !supportsSpecification(8))
+        return;
+
+    auto cache = freshCacheDirectory("enumerated-cpu");
+    auto package = TestPrograms::enumeratedElementwiseChain(8, 4);
+
+    auto cpuOnly = Model {};
+    auto refused = cpuOnly.load(package, optionsFor(ComputeUnits::cpu, cache));
+    check(refused.ok == enumeratedShapesRunOnTheCpu(), refused.error);
+    check(cpuOnly.isLoaded() == enumeratedShapesRunOnTheCpu());
+
+    if (!refused.ok)
+        check(refused.error.find("enumerated") != std::string::npos, refused.error);
+
+    auto withGpu = Model {};
+    auto allowed = withGpu.load(package, optionsFor(ComputeUnits::cpuAndGPU, cache));
+    check(allowed.ok, allowed.error);
+    check(withGpu.inputs().size() == 1
+          && !withGpu.inputs()[0].enumeratedShapes.empty());
+
+    auto fixed = Model {};
+    auto plain = fixed.load(TestPrograms::elementwiseChain(8, 4),
+                            optionsFor(ComputeUnits::cpu, cache));
+    check(plain.ok, plain.error);
+
+    check(isCpuOnly(ComputeUnits::cpu));
+    check(!isCpuOnly(ComputeUnits::all));
+    check(!isCpuOnly(ComputeUnits::cpuAndGPU));
+    check(isCpuOnly(ComputeUnits::cpuAndNeuralEngine) == !hasNeuralEngine());
+};
+
 auto tMissingInputFails = test("MLPrograms/aMissingInputFailsWithAMessage") = []
 {
     if (!isSupported())

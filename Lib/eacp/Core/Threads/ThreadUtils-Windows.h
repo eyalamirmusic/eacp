@@ -22,4 +22,10 @@ void setCurrentThreadAsMainFallback();
 
 void shutdownMainThread();
 
+// Kills every thread timer still registered (Timer-Windows.cpp), so WM_TIMER
+// never again dispatches to a procedure in an image about to unload. The owning
+// Timers, singleton-held ones as a rule since anything else is destroyed by
+// then, keep a dead id their destructor skips. For detachCurrentThreadAsMain.
+void stopLiveTimers();
+
 } // namespace eacp::Threads

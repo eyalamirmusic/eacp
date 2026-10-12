@@ -39,6 +39,12 @@ View& View::setGrabsFocusOnMouseDown(bool value)
     return *this;
 }
 
+View& View::setIgnoresMouseEvents(bool value)
+{
+    properties.ignoresMouseEvents = value;
+    return *this;
+}
+
 View& View::setWantsTextInput(bool value)
 {
     if (properties.wantsTextInput == value)
@@ -95,6 +101,20 @@ void View::mouseMoved(const MouseEvent&) {}
 void View::mouseEntered(const MouseEvent&) {}
 void View::mouseExited(const MouseEvent&) {}
 void View::mouseWheel(const MouseEvent&) {}
+void View::mouseMagnify(const MouseEvent&) {}
+
+bool View::fileDragEnter(const Vector<std::string>&, Point)
+{
+    return false;
+}
+
+bool View::fileDragMove(const Vector<std::string>&, Point)
+{
+    return false;
+}
+
+void View::fileDragExit() {}
+void View::filesDropped(const Vector<std::string>&, Point) {}
 
 void View::touchBegan(const TouchEvent&) {}
 void View::touchMoved(const TouchEvent&) {}
@@ -185,7 +205,7 @@ void View::scaleToFit(ChildViews views)
 
 View* View::hitTest(const Point& point)
 {
-    if (!getLocalBounds().contains(point))
+    if (properties.ignoresMouseEvents || !getLocalBounds().contains(point))
         return nullptr;
 
     for (auto child: std::ranges::reverse_view(subviews))
@@ -386,6 +406,9 @@ void View::handleMouseEvent(const MouseEvent& event)
             break;
         case MouseEventType::Wheel:
             mouseWheel(event);
+            break;
+        case MouseEventType::Magnify:
+            mouseMagnify(event);
             break;
     }
 }

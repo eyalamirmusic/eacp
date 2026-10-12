@@ -31,7 +31,26 @@ them, so apps inherit the look, feel, and performance of the host OS:
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
   and work area in points, so an app can pick a first window size that fits;
   `View::getWindow()` lets a view reach the window it is in rather than be
-  handed it. On a touch screen a view that calls `setHandlesTouchEvents()`
+  handed it. `setMouseCursor` takes one of the named shapes or a `MouseCursor`
+  made from an `Image`, a hotspot and how many of its pixels make a point, so
+  a 32-pixel brush can be an 8-point pointer that stays sharp on a Retina
+  screen (macOS and Windows; the arrow elsewhere). Files dragged in from
+  Finder, Explorer or a DAW's browser reach a view that calls
+  `setAcceptsFileDrops()` as `fileDragEnter` / `fileDragMove` /
+  `fileDragExit` / `filesDropped` with UTF-8 paths, and a
+  `UI::ComponentHost` hands them to the deepest `UI::FileDropTarget`
+  component under the pointer that wants them (macOS and Windows). Going
+  the other way, `startFileDrag(paths, options)` from a view's or a
+  component's mouse handler drags files out to Finder, Explorer or a DAW,
+  optionally letting the receiver move them and reporting `Cancelled`,
+  `Copied` or `Moved` once it ends (macOS and Windows). A trackpad pinch
+  reaches the view under the pointer as `mouseMagnify`, each step a
+  `magnifyScale` to multiply the zoom by (1.25 is a quarter larger) with the
+  gesture's Began / Changed / Ended in `scrollPhase`, and a
+  `UI::ComponentHost` hands it to the component under the pointer and up the
+  tree until a `Component::mouseMagnify` returns true, as it does the wheel
+  (macOS, and touch-screen zoom gestures on Windows). On a
+  touch screen a view that calls `setHandlesTouchEvents()`
   gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
   `touchEnded`, one id per finger, held by the view it came down on, with its contact
   `radius` in points), and any
@@ -90,8 +109,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `SVG::SVGComponent`, a `UI` component, or rendered off-screen to an image
   (`SVG::renderToImage`), the same on every platform: linear and radial
   gradients, clip paths, element and group opacity, `<use>`/`<symbol>`, nested
-  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute and text. Not
-  `<mask>`, `<style>` selectors, filters or `<image>`.
+  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute, text, and
+  `<image>` from a base64 PNG or JPEG data URI, drawn directly or as a
+  `<pattern>` fill. Not `<mask>`, `<style>` selectors or filters.
 - **Processes & plugins** — launch a child process with args, env and working
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
   and unload shared libraries at runtime (`DynamicLibrary`). Both directions of

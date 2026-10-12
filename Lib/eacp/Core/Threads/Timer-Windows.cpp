@@ -49,6 +49,19 @@ struct Timer::Native
     Native(const Native&) = delete;
     Native& operator=(const Native&) = delete;
 
+    static void stopAll()
+    {
+        auto& timers = liveTimers();
+
+        for (auto& [timerId, native]: timers)
+        {
+            KillTimer(nullptr, timerId);
+            native->id = 0;
+        }
+
+        timers.clear();
+    }
+
 private:
     // SetTimer with a null HWND leaves WM_TIMER carrying nothing but the id, so
     // the id is the only way back to the Native that owns the callback.
@@ -72,6 +85,11 @@ private:
     Callback cb;
     UINT_PTR id = 0;
 };
+
+void stopLiveTimers()
+{
+    Timer::Native::stopAll();
+}
 
 Timer::Timer(const Callback& cbToUse, Time::MS interval)
     : callback(cbToUse)

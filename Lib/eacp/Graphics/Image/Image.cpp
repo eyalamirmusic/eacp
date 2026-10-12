@@ -50,6 +50,12 @@ ImageFormat formatFromExtension(const FilePath& path)
                              + ext + "' (supported: .png, .jpg, .jpeg)");
 }
 
+const ImageData& emptyPixels()
+{
+    static const auto empty = ImageData {};
+    return empty;
+}
+
 ImageData readFileBytes(const FilePath& path, std::string& error)
 {
     auto file = File {path};
@@ -81,16 +87,17 @@ ImageData readFileBytes(const FilePath& path, std::string& error)
 Image::Image(int widthToUse, int heightToUse)
     : w(widthToUse)
     , h(heightToUse)
-    , rgba(validatedByteCount(widthToUse, heightToUse))
+    , rgba(std::make_shared<Buffer>(
+          Buffer {ImageData(validatedByteCount(widthToUse, heightToUse))}))
 {
 }
 
 Image::Image(int widthToUse, int heightToUse, ImageData pixelsToUse)
     : w(widthToUse)
     , h(heightToUse)
-    , rgba(std::move(pixelsToUse))
+    , rgba(std::make_shared<Buffer>(Buffer {std::move(pixelsToUse)}))
 {
-    if (rgba.size() != validatedByteCount(w, h))
+    if (rgba->pixels.size() != validatedByteCount(w, h))
         throw std::invalid_argument("Image: pixel buffer size does not match "
                                     "width * height * 4");
 }
@@ -127,12 +134,12 @@ Image Image::load(const FilePath& path, std::string* error)
 bool Image::isValid() const
 {
     auto bytes = byteCountFor(w, h);
-    return bytes > 0 && rgba.size() == bytes;
+    return bytes > 0 && pixels().size() == bytes;
 }
 
 bool Image::isEmpty() const
 {
-    return rgba.empty();
+    return pixels().empty();
 }
 
 Image::operator bool() const
@@ -152,16 +159,25 @@ int Image::height() const
 
 const ImageData& Image::pixels() const
 {
-    return rgba;
+    return rgba != nullptr ? rgba->pixels : emptyPixels();
+}
+
+ImageData& Image::writablePixels()
+{
+    if (rgba.use_count() > 1)
+        rgba = std::make_shared<Buffer>(Buffer {rgba->pixels});
+
+    ++rgba->generation;
+    return rgba->pixels;
 }
 
 Color Image::at(int x, int y) const
 {
-    if (x < 0 || y < 0 || x >= w || y >= h)
+    if (x < 0 || y < 0 || x >= w || y >= h || rgba == nullptr)
         return {0.f, 0.f, 0.f, 0.f};
 
     auto i = (y * w + x) * 4;
-    const auto* p = rgba.data();
+    const auto* p = pixels().data();
     return {static_cast<float>(p[i]) / 255.f,
             static_cast<float>(p[i + 1]) / 255.f,
             static_cast<float>(p[i + 2]) / 255.f,
@@ -170,11 +186,11 @@ Color Image::at(int x, int y) const
 
 void Image::set(int x, int y, const Color& color)
 {
-    if (x < 0 || y < 0 || x >= w || y >= h)
+    if (x < 0 || y < 0 || x >= w || y >= h || rgba == nullptr)
         return;
 
     auto i = (y * w + x) * 4;
-    auto* p = rgba.data();
+    auto* p = writablePixels().data();
     p[i] = toByte(color.r);
     p[i + 1] = toByte(color.g);
     p[i + 2] = toByte(color.b);
@@ -188,18 +204,27 @@ std::uint8_t* Image::prepareForOverwrite(int width, int height)
     {
         w = 0;
         h = 0;
-        rgba.clear();
+        rgba.reset();
         return nullptr;
     }
 
     w = width;
     h = height;
-    // Resize only on a size change: a same-size call is a no-op, so a recycled
+    // A shared buffer belongs to the other copies too, so take a fresh one
+    // rather than copying pixels the writer is about to overwrite. Otherwise
+    // resize only on a size change: a same-size call is a no-op, so a recycled
     // image skips both the reallocation and std::vector's zero-fill of the new
     // bytes -- which the writer would immediately overwrite anyway.
-    if (rgba.size() != bytes)
-        rgba.resize(bytes);
-    return rgba.data();
+    //
+    // Either way the bytes are about to change under whoever reads this buffer,
+    // so the generation moves even when the buffer itself does not.
+    if (rgba == nullptr || rgba.use_count() > 1)
+        rgba = std::make_shared<Buffer>(Buffer {ImageData(bytes)});
+    else if (rgba->pixels.size() != bytes)
+        rgba->pixels.resize(bytes);
+
+    ++rgba->generation;
+    return rgba->pixels.data();
 }
 
 ImageData Image::encode(ImageFormat format, float quality) const
@@ -208,7 +233,8 @@ ImageData Image::encode(ImageFormat format, float quality) const
         throw std::runtime_error("Image::encode: image is empty or invalid");
 
     auto error = std::string {};
-    auto bytes = detail::encodeImageBytes(rgba.data(), w, h, format, quality, error);
+    auto bytes =
+        detail::encodeImageBytes(pixels().data(), w, h, format, quality, error);
     if (!error.empty() || bytes.empty())
         throw std::runtime_error("Image::encode: "
                                  + (error.empty() ? "encoding failed" : error));
@@ -239,7 +265,20 @@ void Image::save(const FilePath& path, ImageFormat format, float quality) const
 
 bool Image::equals(const Image& other) const
 {
-    return w == other.w && h == other.h && rgba == other.rgba;
+    if (w != other.w || h != other.h)
+        return false;
+
+    return rgba == other.rgba || pixels() == other.pixels();
+}
+
+std::weak_ptr<const void> Image::pixelBuffer() const
+{
+    return rgba;
+}
+
+std::uint64_t Image::pixelGeneration() const
+{
+    return rgba != nullptr ? rgba->generation : 0;
 }
 
 bool Image::operator==(const Image& other) const

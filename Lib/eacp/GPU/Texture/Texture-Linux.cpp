@@ -612,9 +612,11 @@ struct Texture::Native
             // find than a texture that refused to be created.
             if (!device.supportsComputeWrite(descriptor.format))
             {
-                LOG("Vulkan: the device reports no storage-image support for "
-                    "this format, so a computeWrite texture is invalid rather "
-                    "than silently unwritable");
+                if (supportsComputeWrite(descriptor.format))
+                    LOG("Vulkan: the device reports no storage-image support for "
+                        "this format, so a computeWrite texture is invalid rather "
+                        "than silently unwritable");
+
                 return false;
             }
 

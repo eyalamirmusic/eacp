@@ -651,6 +651,12 @@ struct TextureDescriptor
     // gets a chain - the one its compressor already built.
     bool mipmapped = false;
 
+    // With `mipmapped`, build that chain on the GPU rather than the CPU: only
+    // level 0 is uploaded, here and on every update(). Metal only, and only for
+    // RGBA8Unorm, BGRA8Unorm, R8Unorm, RG8Unorm and RGBA16Float; anywhere else
+    // the CPU builds it as before, so the levels are the same either way.
+    bool mipmapsOnDevice = false;
+
     // How many levels the pixels passed in already hold, for a caller that
     // built its own chain. 0 - the default - is exactly what it was before this
     // existed: one level, or the whole chain eacp builds when `mipmapped` says

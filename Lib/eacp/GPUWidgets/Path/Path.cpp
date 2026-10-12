@@ -36,12 +36,14 @@ void Path::setFlatness(float toleranceInPathUnits)
     flatness = std::max(toleranceInPathUnits, epsilon);
 }
 
-// A Bezier split into n uniform pieces strays from its polyline by at most
-// d / (8 n^2), where d is the largest second difference of its control points.
-// Turned around, that is the count which holds the error to flatness.
-int Path::segmentsForCurve(float difference) const
+// A Bezier of degree k split into n uniform pieces strays from its polyline by
+// at most k (k - 1) d / (8 n^2), where d is the largest second difference of its
+// control points (Wang's bound). Turned around, that is the count which holds
+// the error to flatness.
+int Path::segmentsForCurve(float difference, int degree) const
 {
-    auto needed = std::ceil(std::sqrt(difference / (8.0f * flatness)));
+    auto spread = (float) (degree * (degree - 1)) * difference;
+    auto needed = std::ceil(std::sqrt(spread / (8.0f * flatness)));
     return std::clamp((int) needed, 1, maxCurveSegments);
 }
 
@@ -102,7 +104,7 @@ void Path::quadTo(float controlX, float controlY, float endX, float endY)
     auto control = Graphics::Point {controlX, controlY};
     auto end = Graphics::Point {endX, endY};
     auto& points = currentSubPath().points;
-    auto steps = segmentsForCurve(secondDifference(start, control, end));
+    auto steps = segmentsForCurve(secondDifference(start, control, end), 2);
 
     for (auto i = 1; i <= steps; ++i)
     {
@@ -131,7 +133,7 @@ void Path::cubicTo(float control1X,
     // A cubic bows about either of its two second differences, so the tighter
     // of the two decides the count.
     auto steps = segmentsForCurve(
-        std::max(secondDifference(p0, p1, p2), secondDifference(p1, p2, p3)));
+        std::max(secondDifference(p0, p1, p2), secondDifference(p1, p2, p3)), 3);
 
     for (auto i = 1; i <= steps; ++i)
     {
@@ -243,6 +245,128 @@ void Path::addEllipse(const Graphics::Rect& rect)
     currentPoint = {centerX + radiusX, centerY};
 }
 
+void Path::addArc(const Graphics::Rect& ellipseBounds,
+                  float fromRadians,
+                  float toRadians,
+                  bool startAsNewSubPath)
+{
+    auto radiusX = ellipseBounds.w * 0.5f;
+    auto radiusY = ellipseBounds.h * 0.5f;
+
+    addCentredArc(ellipseBounds.x + radiusX,
+                  ellipseBounds.y + radiusY,
+                  radiusX,
+                  radiusY,
+                  0.0f,
+                  fromRadians,
+                  toRadians,
+                  startAsNewSubPath);
+}
+
+// An arc of the unit circle in the clockwise-from-12 convention is
+// (sin a, -cos a), with tangent (cos a, sin a). A cubic whose handles run
+// along those tangents for 4/3 tan(sweep / 4) of the radius matches the arc at
+// both ends and its midpoint; a quarter turn or less keeps it within a few
+// parts in ten thousand of the radius, well inside any flatness worth asking
+// for. Mapping the control points through the ellipse's transform is exact,
+// since a Bezier is affine-invariant.
+void Path::addCentredArc(float centreX,
+                         float centreY,
+                         float radiusX,
+                         float radiusY,
+                         float rotationOfEllipse,
+                         float fromRadians,
+                         float toRadians,
+                         bool startAsNewSubPath)
+{
+    if (radiusX <= 0.0f || radiusY <= 0.0f)
+        return;
+
+    auto ellipse = AffineTransform::scaling(radiusX, radiusY)
+                       .then(AffineTransform::rotation(rotationOfEllipse))
+                       .then(AffineTransform::translation(centreX, centreY));
+
+    auto onCircle = [](float angle) -> Graphics::Point
+    { return {std::sin(angle), -std::cos(angle)}; };
+
+    auto start = ellipse.apply(onCircle(fromRadians));
+
+    if (startAsNewSubPath)
+        moveTo(start);
+    else
+        lineTo(start);
+
+    auto sweep = toRadians - fromRadians;
+    auto quarterTurns = (int) std::ceil(std::abs(sweep) / (pi * 0.5f) - 1e-4f);
+
+    if (quarterTurns <= 0)
+        return;
+
+    auto step = sweep / (float) quarterTurns;
+    auto handle = 4.0f / 3.0f * std::tan(step * 0.25f);
+
+    for (auto i = 0; i < quarterTurns; ++i)
+    {
+        auto from = fromRadians + step * (float) i;
+        auto to = i == quarterTurns - 1 ? toRadians : from + step;
+
+        auto p0 = onCircle(from);
+        auto p3 = onCircle(to);
+        auto control1 = ellipse.apply(
+            {p0.x + handle * std::cos(from), p0.y + handle * std::sin(from)});
+        auto control2 = ellipse.apply(
+            {p3.x - handle * std::cos(to), p3.y - handle * std::sin(to)});
+        auto end = ellipse.apply(p3);
+
+        cubicTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+    }
+}
+
+void Path::addPieSegment(const Graphics::Rect& ellipseBounds,
+                         float fromRadians,
+                         float toRadians,
+                         float innerCircleProportionalSize)
+{
+    auto radiusX = ellipseBounds.w * 0.5f;
+    auto radiusY = ellipseBounds.h * 0.5f;
+    auto centreX = ellipseBounds.x + radiusX;
+    auto centreY = ellipseBounds.y + radiusY;
+
+    addCentredArc(
+        centreX, centreY, radiusX, radiusY, 0.0f, fromRadians, toRadians, true);
+
+    auto inner = std::clamp(innerCircleProportionalSize, 0.0f, 1.0f);
+    auto innerX = radiusX * inner;
+    auto innerY = radiusY * inner;
+    auto isFullTurn = std::abs(fromRadians - toRadians) > pi * 1.999f;
+
+    if (isFullTurn)
+    {
+        close();
+
+        if (inner > 0.0f)
+            addCentredArc(centreX,
+                          centreY,
+                          innerX,
+                          innerY,
+                          0.0f,
+                          toRadians,
+                          fromRadians,
+                          true);
+    }
+    else if (inner > 0.0f)
+    {
+        addCentredArc(
+            centreX, centreY, innerX, innerY, 0.0f, toRadians, fromRadians, false);
+    }
+    else
+    {
+        lineTo({centreX, centreY});
+    }
+
+    close();
+}
+
 void Path::append(const Path& other)
 {
     for (const auto& sub: other.subPaths)
@@ -255,14 +379,17 @@ void Path::append(const Path& other)
 Path Path::transformed(const AffineTransform& transform) const
 {
     auto result = *this;
+    result.applyTransform(transform);
+    return result;
+}
 
-    for (auto& sub: result.subPaths)
+void Path::applyTransform(const AffineTransform& transform)
+{
+    for (auto& sub: subPaths)
         for (auto& point: sub.points)
             point = transform.apply(point);
 
-    result.currentPoint = transform.apply(currentPoint);
-
-    return result;
+    currentPoint = transform.apply(currentPoint);
 }
 
 Path Path::scaled(float scaleX, float scaleY) const

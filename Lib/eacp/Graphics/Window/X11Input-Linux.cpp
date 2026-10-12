@@ -675,8 +675,8 @@ void X11Input::refreshCursor()
 
     auto* contentView = pointerWindow->contentView;
     auto* hit = contentView->hitTest(pointerState.getPosition());
-    auto shape =
-        hit != nullptr ? hit->getMouseCursor() : contentView->getMouseCursor();
+    auto shape = hit != nullptr ? hit->getMouseCursor().getShape()
+                                : contentView->getMouseCursor().getShape();
 
     if (cursor.setShape(shape))
         applyCursor();
@@ -731,7 +731,7 @@ void X11Input::cursorThemeChanged()
 // One cursor per shape for the life of the connection: loading one is a round
 // trip through the theme, and a pointer crossing a few views would repeat it
 // several times a second.
-xcb_cursor_t X11Input::cursorForShape(MouseCursor shape)
+xcb_cursor_t X11Input::cursorForShape(MouseCursor::Shape shape)
 {
     for (const auto& cached: cursorCache)
         if (cached.shape == shape)

@@ -56,6 +56,23 @@ inline Package elementwiseChain(int rows, int columns, DType type = DType::float
     return graph.build();
 }
 
+// The same chain over an input whose row count is enumerated, so that a load
+// under units that leave only the CPU is refused where that path traps.
+inline Package enumeratedElementwiseChain(int rows, int columns)
+{
+    auto graph = Graph {};
+    auto x = graph.input("x",
+                         {rows, columns},
+                         {{rows, columns}, {rows / 2, columns}},
+                         DType::float16);
+
+    auto body = [](const eacp::GPU::Float& value)
+    { return eacp::GPU::tanh(value * 0.5f + 0.25f); };
+
+    graph.output(graph.apply(x, body), "y");
+    return graph.build();
+}
+
 inline Vector<float> elementwiseReference(const Vector<float>& x)
 {
     auto y = Vector<float> {};

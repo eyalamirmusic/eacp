@@ -1,6 +1,8 @@
 #include "CoverageProbe.h"
 #include "PathShapes.h"
 
+#include <eacp/GPUWidgets/Path/CoverageKernel.h>
+
 #include <NanoTest/NanoTest.h>
 
 #include <algorithm>
@@ -64,12 +66,14 @@ struct Entry
     int height = 0;
 };
 
-GPU::Texture makeTarget(int width, int height)
+GPU::Texture makeTarget(int width,
+                        int height,
+                        GPU::TextureFormat format = GPU::TextureFormat::RGBA8Unorm)
 {
     auto descriptor = GPU::TextureDescriptor {};
     descriptor.width = width;
     descriptor.height = height;
-    descriptor.format = GPU::TextureFormat::RGBA8Unorm;
+    descriptor.format = format;
     descriptor.computeWrite = true;
     return {GPU::Device::shared(), descriptor, nullptr};
 }
@@ -81,7 +85,10 @@ GPU::Texture makeTarget(int width, int height)
 // pixel granularity.
 constexpr auto gap = 3;
 
-GPU::Texture rasterizeTogether(Vector<Entry>& entries, CoverageBatch& batch)
+GPU::Texture
+    rasterizeTogether(Vector<Entry>& entries,
+                      CoverageBatch& batch,
+                      GPU::TextureFormat format = GPU::TextureFormat::RGBA8Unorm)
 {
     auto rasterizers = Vector<PathRasterizer> {};
     rasterizers.resize(entries.size());
@@ -105,7 +112,7 @@ GPU::Texture rasterizeTogether(Vector<Entry>& entries, CoverageBatch& batch)
         tallest = std::max(tallest, entry.height);
     }
 
-    auto target = makeTarget(cursorX, tallest + gap * 2);
+    auto target = makeTarget(cursorX, tallest + gap * 2, format);
 
     batch.begin(target);
 
@@ -413,4 +420,71 @@ auto tOneDispatchWhateverTheCount =
 
     check(many.getDispatchCount() == one.getDispatchCount());
     check(many.getBufferUpdateCount() == one.getBufferUpdateCount());
+};
+
+// The one-channel target the atlas is where the device can store to R8Unorm,
+// against the RGBA8 one it is everywhere else. Both keep eight bits of the
+// same value, so what is read back out of them is not close -- it is the same.
+// And the solo texture a path rasterizes into on its own is the format the
+// device was asked for, which is what PathRasterizer and the atlas both use.
+auto tOneChannelMatchesFour =
+    test("CoverageBatch/aOneChannelTargetHoldsWhatAFourChannelOneDoes") = []
+{
+    auto& device = GPU::Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    auto oneChannel = device.supportsComputeWrite(GPU::TextureFormat::R8Unorm);
+
+    check(coverageFormat()
+          == (oneChannel ? GPU::TextureFormat::R8Unorm
+                         : GPU::TextureFormat::RGBA8Unorm));
+
+    if (!oneChannel)
+        return;
+
+    auto entries = Vector<Entry> {};
+    entries.add({star({0.f, 0.f, 40.f, 40.f}, 5), FillRule::NonZero, 2.f});
+    entries.add({ellipse({0.f, 0.f, 120.f, 70.f}), FillRule::NonZero, 2.f});
+    entries.add({star({0.f, 0.f, 90.f, 90.f}, 7), FillRule::EvenOdd, 2.f});
+
+    auto fourBatch = CoverageBatch {};
+    auto four = rasterizeTogether(entries, fourBatch);
+
+    auto oneBatch = CoverageBatch {};
+    auto one = rasterizeTogether(entries, oneBatch, GPU::TextureFormat::R8Unorm);
+
+    check(one.isValid(), "the device said it could be written");
+
+    if (!one.isValid() || !four.isValid())
+        return;
+
+    for (auto i = 0; i < entries.size(); ++i)
+    {
+        const auto& entry = entries[i];
+
+        auto fromFour = probe::readRegion(
+            four, entry.originX, entry.originY, entry.width, entry.height);
+        auto fromOne = probe::readRegion(
+            one, entry.originX, entry.originY, entry.width, entry.height);
+
+        check(fromOne.size() == fromFour.size());
+
+        if (fromOne.size() != fromFour.size())
+            continue;
+
+        auto covered = 0;
+
+        for (auto at = 0; at < fromOne.size(); ++at)
+        {
+            check(fromOne[at] == fromFour[at],
+                  "path " + std::to_string(i) + " texel " + std::to_string(at));
+
+            if (fromOne[at] > 0.f)
+                ++covered;
+        }
+
+        check(covered > 0, "and there was coverage to compare");
+    }
 };

@@ -17,5 +17,8 @@ private:
 
     struct Native;
     Pimpl<Native> impl;
+
+    // Windows: detachCurrentThreadAsMain kills every live timer through it.
+    friend void stopLiveTimers();
 };
 } // namespace eacp::Threads

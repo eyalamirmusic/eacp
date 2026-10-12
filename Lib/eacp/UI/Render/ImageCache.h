@@ -12,7 +12,8 @@ namespace eacp::UI
 // texture whatever buffers they arrived in, so an icon decoded in forty places
 // costs the GPU one upload, and a caller has nothing to name and nothing to get
 // wrong. The key is a hash of every pixel. That is what makes the sharing safe,
-// and it is also what it costs -- see get().
+// and it is also what it costs -- once per pixel buffer rather than once per
+// ask, see get().
 //
 // Where the tier's other caches keep what they hashed and compare it on a hit
 // -- a gradient's stops, a path's points -- this one cannot: the pixels are the
@@ -34,10 +35,13 @@ public:
     // pixels, and for one the device refused -- wider or taller than a texture
     // can be.
     //
-    // Every pixel is hashed to find it, so a caller drawing a large image from
-    // a paint() that runs often should keep what this returns rather than ask
-    // each time: the reference is the handle, and holding it is what keeps the
-    // texture alive across frames.
+    // Every pixel is hashed the first time a buffer is seen, and the hash is
+    // remembered against the buffer's identity (Image::pixelBuffer) and its
+    // write count (Image::pixelGeneration). Asking again for the same image, or
+    // for any copy sharing its pixels, finds that and reads no pixels at all; a
+    // write in place moves the count and hashes the image again. The reference
+    // is still the handle, and holding it is what keeps the texture alive
+    // across frames.
     ImageRef get(const eacp::Graphics::Image& image);
 
     // Drops every texture nothing outside the cache is holding: one whose last
@@ -48,6 +52,23 @@ public:
     int size() const;
 
 private:
+    // What a pixel buffer hashed to, as of a write count. The buffer is held
+    // weakly: a strong reference would keep every image ever drawn alive, and
+    // would count as a copy, so the image's own next write would detach for no
+    // reason. Expired, it also says the address it is filed under may have been
+    // reused by a buffer it never saw -- which cannot happen while the buffer is
+    // allocated with its control block, the weak reference holding the block,
+    // and is checked all the same rather than left to how Image allocates.
+    struct Known
+    {
+        std::weak_ptr<const void> buffer;
+        std::uint64_t generation = 0;
+        std::uint64_t hash = 0;
+    };
+
+    std::uint64_t hashFor(const eacp::Graphics::Image& image);
+
     std::unordered_map<std::uint64_t, ImageRef> entries;
+    std::unordered_map<const void*, Known> known;
 };
 } // namespace eacp::UI

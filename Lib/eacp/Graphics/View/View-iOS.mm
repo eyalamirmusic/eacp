@@ -44,6 +44,14 @@
     return self;
 }
 
+- (UIView*)hitTest:(CGPoint)point withEvent:(UIEvent*)event
+{
+    if (cppView->getProperties().ignoresMouseEvents)
+        return nil;
+
+    return [super hitTest:point withEvent:event];
+}
+
 - (void)drawLayer:(CALayer*)layer inContext:(CGContextRef)ctx
 {
     auto nativeContext = eacp::Graphics::MacOSContext(ctx);
@@ -300,9 +308,20 @@ Point View::getMousePosition() const
 // Stored and never shown: iOS draws no pointer for a touch. Kept rather than
 // ignored so portable code can set a shape unconditionally, and so an iPad with
 // a trackpad has one obvious place to grow a real implementation.
-void View::setMouseCursor(MouseCursor cursor)
+void View::setMouseCursor(const MouseCursor& cursor)
 {
     currentCursor = cursor;
+}
+
+View& View::setAcceptsFileDrops(bool value)
+{
+    properties.acceptsFileDrops = value;
+    return *this;
+}
+
+bool View::startFileDrag(const Vector<std::string>&, const FileDragOptions&)
+{
+    return false;
 }
 
 void View::focus()

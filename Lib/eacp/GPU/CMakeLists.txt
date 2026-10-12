@@ -58,6 +58,7 @@ target_sources(eacp-gpu PRIVATE
         CommandBuffer/CommandBuffer.cpp
         CommandBuffer/CopyPlan.cpp
         Device/Device.cpp
+        Frame/ComputePass.cpp
         Frame/Frame.cpp
         Frame/IndirectDrawPlan.cpp
         Frame/OcclusionQueries.cpp

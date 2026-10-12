@@ -11,13 +11,12 @@ struct Req
 
 int main()
 {
-    auto req = eacp::HTTP::Request(
-        "https://tamber-embed-server-620733406514.us-central1.run.app/embed");
+    auto req = eacp::HTTP::Request("https://httpbin.org/post");
 
     req.type = "POST";
-    req.headers["secret"] = "MagicTheGathering";
+    req.headers["Content-Type"] = "application/json";
 
-    for (int index = 0; index < 1000; ++index)
+    for (int index = 0; index < 10; ++index)
     {
         Req r;
         r.text = std::to_string(index);

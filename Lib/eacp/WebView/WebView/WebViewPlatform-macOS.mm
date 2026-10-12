@@ -5,7 +5,7 @@
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/ObjC/RuntimeClass.h>
-#include <eacp/Core/ObjC/Strings.h>
+#include <eacp/Graphics/View/FileDragOut-macOS.h>
 
 namespace eacp::Graphics::detail
 {
@@ -55,46 +55,15 @@ bool beginFileDrag(WKWebView* webView,
     if (webView == nil || event == nil || paths.empty())
         return false;
 
-    auto* source = sharedDragSource();
-    constexpr CGFloat iconSize = 64.0;
-    constexpr CGFloat stackOffset = 8.0;
-
-    auto* items = [NSMutableArray arrayWithCapacity:paths.size()];
-    auto* workspace = [NSWorkspace sharedWorkspace];
     auto anchor = [webView convertPoint:event.locationInWindow fromView:nil];
-
-    NSUInteger index = 0;
-    for (const auto& path: paths)
-    {
-        auto* nsPath = Strings::toNSString(path);
-        auto* fileURL = [NSURL fileURLWithPath:nsPath];
-
-        if (fileURL == nil)
-            continue;
-
-        auto* item = [[NSDraggingItem alloc] initWithPasteboardWriter:fileURL];
-
-        auto* icon = [workspace iconForFile:nsPath];
-        icon.size = NSMakeSize(iconSize, iconSize);
-
-        // Fan the stack out a few px per item so a multi-file drag reads as
-        // multiple items rather than one.
-        auto offset = (CGFloat) index * stackOffset;
-        [item setDraggingFrame:NSMakeRect(anchor.x - iconSize / 2 + offset,
-                                          anchor.y - iconSize / 2 - offset,
-                                          iconSize,
-                                          iconSize)
-                      contents:icon];
-
-        [items addObject:item];
-        [item release];
-        ++index;
-    }
+    auto* items = makeFileDraggingItems(webView, anchor, paths);
 
     if (items.count == 0)
         return false;
 
-    [webView beginDraggingSessionWithItems:items event:event source:source];
+    [webView beginDraggingSessionWithItems:items
+                                     event:event
+                                    source:sharedDragSource()];
     return true;
 }
 

@@ -34,7 +34,7 @@ ComputePass::~ComputePass()
     end();
 }
 
-void ComputePass::setPipeline(const ComputePipeline& pipeline)
+void ComputePass::encodePipeline(const ComputePipeline& pipeline)
 {
     boundGroup = pipeline.threadGroupShape();
 
@@ -258,7 +258,7 @@ void ComputePass::setBytes(const void* data, std::int64_t bytes, int slot)
                         atIndex:(NSUInteger) (uniformBase + slot)];
 }
 
-void ComputePass::dispatch(int count)
+void ComputePass::encodeDispatch(int count)
 {
     auto activeEncoder = impl->encoder.get();
 
@@ -276,7 +276,7 @@ void ComputePass::dispatch(int count)
                                           (NSUInteger) group.z)];
 }
 
-void ComputePass::dispatch(int width, int height)
+void ComputePass::encodeDispatch(int width, int height)
 {
     auto activeEncoder = impl->encoder.get();
 
@@ -294,7 +294,7 @@ void ComputePass::dispatch(int width, int height)
         threadsPerThreadgroup:MTLSizeMake(sizeX, sizeY, (NSUInteger) group.z)];
 }
 
-void ComputePass::dispatch(int width, int height, int depth)
+void ComputePass::encodeDispatch(int width, int height, int depth)
 {
     auto activeEncoder = impl->encoder.get();
 
@@ -317,7 +317,7 @@ void ComputePass::dispatch(int width, int height, int depth)
 // The threadgroup size still comes from here - only the *count* is in the
 // buffer. Metal reads three uint32s at the offset, which is what
 // DispatchArguments is, so no conversion happens on the way.
-void ComputePass::dispatchIndirect(const Buffer& arguments,
+void ComputePass::encodeDispatchIndirect(const Buffer& arguments,
                                    std::int64_t offsetInBytes)
 {
     auto activeEncoder = impl->encoder.get();
@@ -339,7 +339,7 @@ void ComputePass::dispatchIndirect(const Buffer& arguments,
                                                              (NSUInteger) group.z)];
 }
 
-void ComputePass::barrier()
+void ComputePass::encodeBarrier()
 {
     if (impl->order != DispatchOrder::Concurrent)
         return;
