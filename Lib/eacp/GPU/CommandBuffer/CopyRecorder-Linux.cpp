@@ -1,5 +1,6 @@
 #include "CopyRecorder.h"
 
+#include "../Texture/MipChain.h"
 #include "../Vulkan/VulkanTypes.h"
 
 #include <eacp/Core/Utils/Logging.h>
@@ -241,11 +242,6 @@ void makeChainWritable(VkCommandBuffer buffer, VkImage image, int levels, int la
 
     vkCmdPipelineBarrier2(buffer, &dependency);
 }
-
-std::int32_t levelExtent(int size, int level)
-{
-    return static_cast<std::int32_t>(std::max(1, size >> level));
-}
 } // namespace
 
 // A vkCmdBlitImage per level with a linear filter, every layer at once and a
@@ -272,13 +268,13 @@ void recordMipGeneration(void* recording, const Texture& texture)
 
         VkImageBlit region = {};
         region.srcSubresource = colorLayer(level - 1, 0, layers);
-        region.srcOffsets[1] = {levelExtent(data->width, level - 1),
-                                levelExtent(data->height, level - 1),
-                                volume ? levelExtent(data->depth, level - 1) : 1};
+        region.srcOffsets[1] = {mipExtent(data->width, level - 1),
+                                mipExtent(data->height, level - 1),
+                                volume ? mipExtent(data->depth, level - 1) : 1};
         region.dstSubresource = colorLayer(level, 0, layers);
-        region.dstOffsets[1] = {levelExtent(data->width, level),
-                                levelExtent(data->height, level),
-                                volume ? levelExtent(data->depth, level) : 1};
+        region.dstOffsets[1] = {mipExtent(data->width, level),
+                                mipExtent(data->height, level),
+                                volume ? mipExtent(data->depth, level) : 1};
 
         vkCmdBlitImage(buffer,
                        data->image,

@@ -1,6 +1,7 @@
 #include "Frame.h"
 
 #include "../Device/Device.h"
+#include "../Texture/MipChain.h"
 #include "../Vulkan/VulkanTypes.h"
 
 #include <eacp/Core/Utils/Logging.h>
@@ -33,11 +34,6 @@ struct VulkanClear
     int slice = 0;
     int layerCount = 1;
 };
-
-std::uint32_t levelExtent(int size, int level)
-{
-    return static_cast<std::uint32_t>(std::max(1, size >> level));
-}
 } // namespace
 
 struct Frame::Native
@@ -177,8 +173,10 @@ struct Frame::Native
         const auto& first = clears[0];
         const auto depthView = vulkanDepthTargetView(
             depthData, depthLevel, depthSlice, first.layerCount);
-        const auto width = levelExtent(data.width, first.level);
-        const auto height = levelExtent(data.height, first.level);
+        const auto width =
+            static_cast<std::uint32_t>(mipExtent(data.width, first.level));
+        const auto height =
+            static_cast<std::uint32_t>(mipExtent(data.height, first.level));
 
         // Barriers are illegal once vkCmdBeginRendering has run.
         barrierBeforeRendering(buffer);
