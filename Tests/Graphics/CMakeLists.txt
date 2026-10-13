@@ -88,6 +88,13 @@ if (APPLE AND NOT IOS)
             WindowTests-macOS.mm)
 endif ()
 
+# The iOS twin of EmbeddedViewTests-macOS: the surface inside a host's UIView,
+# which is what an AUv3's view controller hands an editor. CI builds it with
+# the rest of the simulator build; nothing in CI runs it.
+if (IOS)
+    list(APPEND graphics_test_sources EmbeddedViewTests-iOS.mm)
+endif ()
+
 if (WIN32)
     list(APPEND graphics_test_sources
             CompositionPixelTests-Windows.cpp
@@ -107,6 +114,9 @@ nano_add_executable(GraphicsTests
 if (APPLE AND NOT IOS)
     set_target_properties(GraphicsTests PROPERTIES OBJCXX_STANDARD 20)
     target_link_libraries(GraphicsTests PRIVATE "-framework AppKit")
+elseif (IOS)
+    set_target_properties(GraphicsTests PROPERTIES OBJCXX_STANDARD 20)
+    target_link_libraries(GraphicsTests PRIVATE "-framework UIKit")
 endif ()
 
 # Four binaries of their own. The three window suites must NOT be headless,

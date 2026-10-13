@@ -752,6 +752,20 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Apps/UI/GamepadDemo` is the controller tester: a disc the sticks move and aim, each of the fifteen buttons doing a
   visible thing and announcing its press and release in a log, and a panel of
   every button and axis named as the pad's `GamepadFamily` prints them
+- `Window/EmbeddedView`: a surface of ours inside a native view a host owns:
+  an `NSView*` on macOS, a `UIView*` on iOS, an `HWND` on Windows, an X11
+  window id on Linux. `EmbeddedView-iOS.mm` is the macOS one in UIKit (a
+  container `UIView` added to the host's, filling and following it until
+  `setBounds`, y-down with nothing to convert, `setPixelsPerPoint` ignored) for
+  an AUv3's `AUViewController`, so it reaches nothing outside the view it was
+  handed: no `UIApplication`, no scene, no `Window-iOS.mm`, and it compiles
+  under `-fapplication-extension`. Scale is the content's own:
+  `View-iOS.mm`'s `didMoveToWindow` takes the landing window's
+  `traitCollection.displayScale` and fires `backingScaleChanged`, the iOS
+  side of AppKit's `viewDidChangeBackingProperties`. Touches reach the content
+  as in a window, the content being the outermost eacp view above the touch.
+  `Tests/Graphics/EmbeddedViewTests-iOS.mm` is built into the simulator's
+  `GraphicsTests`, which CI builds and does not run
 - `Window/NativeChildSurface`: the inverse of `EmbeddedView` — a `View` in our
   layout whose `getNativeParentHandle()` (an `NSView*` or a child `HWND`) a
   foreign toolkit parents its own editor into, for plugin hosts. The macOS

@@ -67,6 +67,36 @@
     cppView->resizeFinished();
 }
 
+// The iOS side of AppKit's viewDidChangeBackingProperties. createNativeView
+// seeds the scale from the main screen, which is the right guess for a view
+// going into a window of ours and only a guess for one going into somebody
+// else's (an EmbeddedView's host) or onto another display, so the screen the
+// view has actually landed on gets the last word. It is read off the trait
+// collection rather than through UIApplication or a scene, which an app
+// extension cannot reach.
+- (void)didMoveToWindow
+{
+    [super didMoveToWindow];
+
+    if (self.window == nil)
+        return;
+
+    auto scale = self.traitCollection.displayScale;
+
+    if (scale <= 0.0 || scale == self.contentScaleFactor)
+        return;
+
+    self.contentScaleFactor = scale;
+    self.layer.contentsScale = scale;
+    [self.layer setNeedsDisplay];
+
+    // Anything the C++ side sized in device pixels (a CAMetalLayer's
+    // drawableSize, a glyph atlas) does not follow by itself.
+    cppView->resizeStarted();
+    cppView->backingScaleChanged();
+    cppView->resizeFinished();
+}
+
 - (void)safeAreaInsetsDidChange
 {
     [super safeAreaInsetsDidChange];

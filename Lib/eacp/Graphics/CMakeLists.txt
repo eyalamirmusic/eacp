@@ -71,6 +71,7 @@ if (APPLE)
                 Tray/TrayIcon-iOS.mm
                 View/View-iOS.mm
                 Window/Display-iOS.mm
+                Window/EmbeddedView-iOS.mm
                 Window/Window-iOS.mm)
         target_link_libraries(eacp-graphics PRIVATE
                 "-framework UIKit"

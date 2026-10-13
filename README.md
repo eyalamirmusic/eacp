@@ -116,7 +116,8 @@ them, so apps inherit the look, feel, and performance of the host OS:
   directory, feed its stdin and capture its output (`eacp::Processes`), and load
   and unload shared libraries at runtime (`DynamicLibrary`). Both directions of
   plugin UI are covered: `EmbeddedView` puts a view tree of ours inside a window
-  a host owns, and `NativeChildSurface` is the inverse, a `View` in one of our
+  a host owns (an `NSView`, a `UIView` such as an AUv3's view controller hands
+  over, an `HWND` or an X11 window), and `NativeChildSurface` is the inverse, a `View` in one of our
   layouts that hands a foreign toolkit an `NSView*` or a child `HWND` to parent
   its own editor into — what a plugin host passes to `IPlugView::attached()`.
   `EmbedderKeyForwarder` and `KeyGrab` carry the keys a hosted editor does not
