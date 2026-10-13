@@ -6,6 +6,10 @@
 #include <eacp/Graphics/Helpers/DisplayLink.h>
 #include <eacp/Graphics/Helpers/FramePacer.h>
 
+#include <cstdint>
+#include <optional>
+#include <string>
+
 namespace eacp::UI
 {
 // Custom GPU rendering inside a component tree: a GPUView's render(Frame&),
@@ -22,10 +26,10 @@ namespace eacp::UI
 //
 // render() runs on the host's frame when the component was repainted, resized
 // or moved to another scale, or on every display refresh while continuous - and
-// only while some of it is on screen. A component scrolled out of its parent or
-// clipped away entirely is culled: nothing renders, and it renders again the
-// frame it comes back. A hidden one is skipped the same way and keeps its
-// texture.
+// only while some of it is on screen. A showing component scrolled out of its
+// parent, clipped away entirely or of zero size is culled: nothing renders, and
+// it renders again the frame it comes back. A hidden one - not showing - is
+// skipped the same way and keeps its texture.
 //
 // Continuous mode ticks off the host's one display link. update() keeps running
 // while the component is culled or hidden, as long as it is in a host, so its
@@ -86,9 +90,12 @@ public:
 
     GPU::PixelFormat colorFormat() const;
 
-    // Whether the last frame found nothing of this component inside its
-    // ancestors' clips.
+    // Culled: showing - in a host, it and every ancestor visible - but with
+    // nothing of it inside its ancestors' clips, scrolled out, or of zero size.
+    // Hidden: not showing. The two never hold together, and are what the last
+    // frame found; a component in no host is hidden.
     bool wasCulledLastFrame() const;
+    bool wasHiddenLastFrame() const;
 
     // Whether any of it was drawn in the last frame: showing, and not culled.
     bool isOnScreen() const;
@@ -99,6 +106,19 @@ public:
 
     // How many times render() has been called.
     int getRenderCount() const;
+
+    // Times every pass render() begins, compute and texture passes included,
+    // under a label of the component's own in Device::lastFrameTimings() -
+    // "GPUComponent#n", or "GPUComponent#n/label" for a pass that has one. Off
+    // by default: a frame times at most GPU::GpuTimestamps::maxTimedPasses.
+    void setGpuTiming(bool shouldTime);
+    bool isGpuTiming() const;
+
+    // What this component's passes cost the GPU in the latest timed frame that
+    // rendered it. Timings come back frames late, so an on-demand component's
+    // arrive once the host has drawn again. Zero while timing is off, before
+    // any arrive, or where the device cannot time passes.
+    double lastGpuMilliseconds() const;
 
     const Layer& getLayer() const;
 
@@ -119,15 +139,43 @@ protected:
     // screen.
     void renderNow();
 
+    // Called under the redirect just before render() - on the first, and
+    // whenever the target's sample count, depth, stencil or colour format is
+    // not what the last render() drew into, and after a device restore. Not for
+    // a resize or a new scale. Where pipelines that have to match the target
+    // are made.
+    virtual void targetChanged(GPU::Frame& frame);
+
 private:
     friend class ComponentHost;
+
+    enum class Visibility
+    {
+        OnScreen,
+        Culled,
+        Hidden
+    };
+
+    struct TargetShape
+    {
+        int samples = 0;
+        bool depth = false;
+        bool stencil = false;
+        GPU::TextureFormat format = GPU::TextureFormat::BGRA8Unorm;
+
+        bool operator==(const TargetShape&) const = default;
+    };
 
     void paint(Graphics& g) final;
     bool advanceAnimation(double seconds) final;
 
-    void renderFrame(GPU::Frame& frame);
+    void renderFrame(GPU::Frame& frame, const GPU::Texture& target);
     void resumeIfContinuous();
     void setVisibility(const Rect& visibleLocalBounds);
+    void markHidden();
+    std::string_view timingLabel() const;
+    void collectGpuTime() const;
+    bool isOwnPass(std::string_view label) const;
 
     Layer layer;
     Threads::FramePacer pacer;
@@ -136,10 +184,17 @@ private:
     double clock = 0.0;
     double sinceLastUpdate = 0.0;
 
-    bool culled = false;
+    Visibility visibility = Visibility::Hidden;
     Rect visibleBounds;
 
     float renderedScale = 0.f;
     int renders = 0;
+
+    std::optional<TargetShape> renderedTarget;
+
+    std::string gpuLabel;
+    bool gpuTiming = false;
+    mutable double gpuMilliseconds = 0.0;
+    mutable std::uint64_t timedFrame = 0;
 };
 } // namespace eacp::UI

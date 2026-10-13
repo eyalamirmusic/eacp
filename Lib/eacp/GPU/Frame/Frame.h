@@ -207,10 +207,19 @@ public:
     // count are the pass's, exactly as for beginPass(texture), and it holds the
     // resolved picture once each pass ends. Begun and ended with no pass open.
     // Redirects nest, each restoring the one before it.
+    //
+    // A timing label times every pass begun under the redirect - compute and
+    // texture passes included, labelled or not - in Device::lastFrameTimings():
+    // an unlabelled one as the label itself, a labelled one as "label/its own".
+    // Empty, the default, leaves passes as they are. It must outlive the
+    // redirect.
     class Redirect
     {
     public:
-        Redirect(Frame& frameToUse, const Texture& target, float backingScaleToUse);
+        Redirect(Frame& frameToUse,
+                 const Texture& target,
+                 float backingScaleToUse,
+                 std::string_view timingLabel = {});
         ~Redirect();
 
         Redirect(const Redirect&) = delete;
@@ -220,6 +229,7 @@ public:
         Frame& frame;
         const Texture* previousTarget;
         float previousScale;
+        std::string_view previousTimingLabel;
     };
 
     bool isRedirected() const;

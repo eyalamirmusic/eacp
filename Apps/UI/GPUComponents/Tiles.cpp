@@ -205,34 +205,13 @@ void DemoTile::apply(const TileSettings& settings)
         setContinuous(settings.continuous);
 
     setMaxFps(settings.maxFps);
-    setTimed(settings.timing);
+    setGpuTiming(settings.timing);
 }
 
 void DemoTile::applyMsaa(bool enabled)
 {
     if (canMultisample())
         setSampleCount(enabled ? 4 : 1);
-}
-
-void DemoTile::setTimed(bool shouldTime)
-{
-    timed = shouldTime;
-}
-
-bool DemoTile::isTimed() const
-{
-    return timed;
-}
-
-double DemoTile::lastGpuMilliseconds() const
-{
-    auto total = 0.0;
-
-    for (const auto& pass: GPU::Device::shared().lastFrameTimings().passes)
-        if (pass.label == name)
-            total += pass.milliseconds;
-
-    return total;
 }
 
 void DemoTile::update(Threads::FrameTime time)
@@ -262,26 +241,14 @@ void DemoTile::tick(double) {}
 
 void DemoTile::press(const UI::MouseEvent&) {}
 
-PipelineKey DemoTile::currentKey() const
+void DemoTile::prepareForTarget(GPU::ShaderProgram& shader,
+                                GPU::BlendMode blend) const
 {
-    return {sampleCount(), hasDepth(), colorFormat()};
-}
-
-GPU::RenderPassDescriptor DemoTile::describePass(const UI::Color& clear) const
-{
-    auto descriptor = GPU::RenderPassDescriptor {};
-    descriptor.clearColor = clear;
-    descriptor.label = passLabel();
-
-    return descriptor;
-}
-
-std::string_view DemoTile::passLabel() const
-{
-    if (timed)
-        return name;
-
-    return {};
+    shader.prepare(sampleCount(),
+                   hasDepth(),
+                   GPU::PrimitiveTopology::Triangles,
+                   blend,
+                   colorFormat());
 }
 
 UI::Point DemoTile::toClip(UI::Point local, UI::Point size)
@@ -328,20 +295,13 @@ void MeshTile::tick(double seconds)
     shownPitch += (targetPitch - shownPitch) * ease;
 }
 
+void MeshTile::targetChanged(GPU::Frame&)
+{
+    prepareForTarget(shader, GPU::BlendMode::None);
+}
+
 void MeshTile::render(GPU::Frame& frame)
 {
-    auto key = currentKey();
-
-    if (key != prepared)
-    {
-        shader.prepare(key.samples,
-                       key.depth,
-                       GPU::PrimitiveTopology::Triangles,
-                       GPU::BlendMode::None,
-                       key.format);
-        prepared = key;
-    }
-
     auto aspect = aspectOf(frame.logicalSize());
     auto projection = Maths::Mat4::perspective(aspect, 0.8f, 0.1f, 50.f);
     auto view = Maths::Mat4::translation({0.f, 0.f, -distance});
@@ -353,7 +313,7 @@ void MeshTile::render(GPU::Frame& frame)
     shader.baseColour = hasKeyboardFocus() ? Maths::Vec3 {0.95f, 0.6f, 0.3f}
                                            : Maths::Vec3 {0.35f, 0.62f, 0.95f};
 
-    auto pass = frame.beginPass(describePass({0.07f, 0.08f, 0.11f, 1.f}));
+    auto pass = frame.beginPass({{0.07f, 0.08f, 0.11f, 1.f}});
     pass.draw(shader);
 }
 
@@ -455,25 +415,18 @@ void ParticlesTile::press(const UI::MouseEvent&)
     repaint();
 }
 
+void ParticlesTile::targetChanged(GPU::Frame&)
+{
+    prepareForTarget(draw, GPU::BlendMode::Additive);
+}
+
 void ParticlesTile::render(GPU::Frame& frame)
 {
-    auto key = currentKey();
-
-    if (key != prepared)
-    {
-        draw.prepare(key.samples,
-                     key.depth,
-                     GPU::PrimitiveTopology::Triangles,
-                     GPU::BlendMode::Additive,
-                     key.format);
-        prepared = key;
-    }
-
     auto& source = front ? bufferA : bufferB;
     auto& target = front ? bufferB : bufferA;
 
     {
-        auto pass = frame.beginCompute(passLabel());
+        auto pass = frame.beginCompute();
 
         integrator.state = source;
         integrator.next = target;
@@ -486,7 +439,7 @@ void ParticlesTile::render(GPU::Frame& frame)
         pass.dispatch(integrator, particleCount);
     }
 
-    auto pass = frame.beginPass(describePass({0.02f, 0.02f, 0.05f, 1.f}));
+    auto pass = frame.beginPass({{0.02f, 0.02f, 0.05f, 1.f}});
 
     draw.setInstanceBuffer(1, target, particleCount);
     draw.radius = 0.012f;
@@ -573,20 +526,13 @@ void MsaaTile::rebuildLines()
     linesStale = false;
 }
 
+void MsaaTile::targetChanged(GPU::Frame&)
+{
+    prepareForTarget(draw, GPU::BlendMode::None);
+}
+
 void MsaaTile::render(GPU::Frame& frame)
 {
-    auto key = currentKey();
-
-    if (key != prepared)
-    {
-        draw.prepare(key.samples,
-                     key.depth,
-                     GPU::PrimitiveTopology::Triangles,
-                     GPU::BlendMode::None,
-                     key.format);
-        prepared = key;
-    }
-
     auto size = frame.pixelSize();
     auto newAspect = aspectOf(size);
 
@@ -600,7 +546,7 @@ void MsaaTile::render(GPU::Frame& frame)
     draw.pixelSize = Maths::Vec2 {size.x, size.y};
     draw.halfWidth = 0.45f * frame.backingScale();
 
-    auto pass = frame.beginPass(describePass({0.05f, 0.05f, 0.07f, 1.f}));
+    auto pass = frame.beginPass({{0.05f, 0.05f, 0.07f, 1.f}});
     pass.drawInstanced(draw, lines.size());
 }
 
@@ -617,25 +563,18 @@ std::string_view PlasmaTile::getKindName() const
     return "Plasma";
 }
 
+void PlasmaTile::targetChanged(GPU::Frame&)
+{
+    prepareForTarget(shader, GPU::BlendMode::AlphaBlendOntoTransparent);
+}
+
 void PlasmaTile::render(GPU::Frame& frame)
 {
-    auto key = currentKey();
-
-    if (key != prepared)
-    {
-        shader.prepare(key.samples,
-                       key.depth,
-                       GPU::PrimitiveTopology::Triangles,
-                       GPU::BlendMode::AlphaBlendOntoTransparent,
-                       key.format);
-        prepared = key;
-    }
-
     shader.time = (float) elapsed;
     shader.aspect = aspectOf(frame.logicalSize());
     shader.strength = 0.92f;
 
-    auto pass = frame.beginPass(describePass({0.f, 0.f, 0.f, 0.f}));
+    auto pass = frame.beginPass({{0.f, 0.f, 0.f, 0.f}});
     pass.draw(shader);
 }
 
@@ -758,23 +697,23 @@ void FeedbackTile::ensureTargets(GPU::Frame& frame)
     targetA.emplace(GPU::Device::shared().makeTexture(descriptor));
     targetB.emplace(GPU::Device::shared().makeTexture(descriptor));
     targetsCleared = false;
+}
 
-    auto key = PipelineKey {1, false, GPU::pixelFormatFor(format)};
+void FeedbackTile::targetChanged(GPU::Frame& frame)
+{
+    auto format = GPU::pixelFormatFor(frame.drawableFormat());
 
-    if (key != preparedTargets)
-    {
-        feedback.prepare(1,
-                         false,
-                         GPU::PrimitiveTopology::Triangles,
-                         GPU::BlendMode::None,
-                         key.format);
-        splatDraw.prepare(1,
-                          false,
-                          GPU::PrimitiveTopology::Triangles,
-                          GPU::BlendMode::Additive,
-                          key.format);
-        preparedTargets = key;
-    }
+    feedback.prepare(
+        1, false, GPU::PrimitiveTopology::Triangles, GPU::BlendMode::None, format);
+    splatDraw.prepare(1,
+                      false,
+                      GPU::PrimitiveTopology::Triangles,
+                      GPU::BlendMode::Additive,
+                      format);
+    prepareForTarget(blit, GPU::BlendMode::None);
+
+    targetA.reset();
+    targetB.reset();
 }
 
 void FeedbackTile::drawFeedback(GPU::Frame& frame)
@@ -784,14 +723,14 @@ void FeedbackTile::drawFeedback(GPU::Frame& frame)
 
     if (!targetsCleared)
     {
-        auto clearing = frame.beginPass(previous, describePass(UI::Color::black()));
+        auto clearing = frame.beginPass(previous, {UI::Color::black()});
         targetsCleared = true;
     }
 
     if (splatsStale)
         moveEmitters();
 
-    auto pass = frame.beginPass(next, describePass(UI::Color::black()));
+    auto pass = frame.beginPass(next, {UI::Color::black()});
 
     feedback.previous = previous;
     feedback.zoom = 0.985f;
@@ -806,20 +745,8 @@ void FeedbackTile::drawFeedback(GPU::Frame& frame)
 
 void FeedbackTile::present(GPU::Frame& frame)
 {
-    auto key = currentKey();
-
-    if (key != prepared)
-    {
-        blit.prepare(key.samples,
-                     key.depth,
-                     GPU::PrimitiveTopology::Triangles,
-                     GPU::BlendMode::None,
-                     key.format);
-        prepared = key;
-    }
-
     auto& next = front ? *targetB : *targetA;
-    auto pass = frame.beginPass(describePass(UI::Color::black()));
+    auto pass = frame.beginPass({UI::Color::black()});
 
     blit.image = next;
     blit.rect = Maths::Vec4 {-1.f, -1.f, 2.f, 2.f};
@@ -915,26 +842,15 @@ void OnDemandTile::mouseDrag(const UI::MouseEvent& event)
     placeRing(event.position, true);
 }
 
+void OnDemandTile::targetChanged(GPU::Frame&)
+{
+    prepareForTarget(background, GPU::BlendMode::None);
+    prepareForTarget(rings, GPU::BlendMode::AlphaBlend);
+}
+
 void OnDemandTile::render(GPU::Frame& frame)
 {
-    auto key = currentKey();
-
-    if (key != prepared)
-    {
-        background.prepare(key.samples,
-                           key.depth,
-                           GPU::PrimitiveTopology::Triangles,
-                           GPU::BlendMode::None,
-                           key.format);
-        rings.prepare(key.samples,
-                      key.depth,
-                      GPU::PrimitiveTopology::Triangles,
-                      GPU::BlendMode::AlphaBlend,
-                      key.format);
-        prepared = key;
-    }
-
-    auto pass = frame.beginPass(describePass(UI::Color::black()));
+    auto pass = frame.beginPass({UI::Color::black()});
 
     background.count = (float) getRenderCount();
     background.background = Maths::Vec3 {0.13f, 0.12f, 0.17f};
@@ -1044,10 +960,12 @@ std::string TileFrame::statsText()
     if (tile->sampleCount() > 1)
         text += "  x" + std::to_string(tile->sampleCount());
 
-    if (!tile->isOnScreen())
+    if (tile->wasHiddenLastFrame())
+        text += "  hidden";
+    else if (tile->wasCulledLastFrame())
         text += "  culled";
 
-    if (tile->isTimed())
+    if (tile->isGpuTiming())
         text += "  " + formatMilliseconds(tile->lastGpuMilliseconds());
 
     return text;

@@ -15,7 +15,8 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 usage — and stays free of build-system and implementation detail. In-depth
 docs live under `Docs/` (`Build.md` for options, dependencies, capability
 variables and CI; `Linux.md` for the Linux backend) and beside the modules
-they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`). New
+they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`,
+`Lib/eacp/UI/README.md`). New
 implementation-level documentation goes there, not in the README.
 
 Platform coverage splits on whether a module draws, decided once in the
@@ -783,6 +784,10 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `Threads::delay` is built on it (`Threads/CallAfter.cpp`)
 - `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
+- `FramePacer` (`Graphics/Helpers/FramePacer.h`): the frame-rate divider
+  behind `DisplayLink::setMaxFps`, `ComponentHost::setAnimationMaxFps` and
+  every `GPUComponent::setMaxFps` — fires on the tick closest to due, carries
+  the remainder, banks at most half an interval (`Tests/Graphics/FramePacerTests.cpp`)
 - `addLoopSource(fd, events, cb)` / `removeLoopSource(fd)`
   (`Threads/EventLoop-Linux.h`, Linux only): a pollable descriptor joining the
   loop's own `poll()` set, so a Wayland or xcb connection can be pumped by
@@ -925,6 +930,35 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`
   and `Files::writeFile`, so UTF-8 paths take the same route as everything
   else. `Apps/Console/Zip` is the worked example.
+
+### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
+
+`UI::GPUComponent` is a `GPUView`'s `render(Frame&)`/`update(FrameTime)` as a
+component: the `ComponentHost`'s own frame is pointed at a texture of the
+component's exact pixels by `GPU::Frame::Redirect` (`GPU/Frame/Frame.h`;
+`beginPass()`, `pixelSize()`, `logicalSize()`, `backingScale()`,
+`drawableFormat()`, `copyDrawable()` and `isValid()` answer for the target,
+everything else is the host frame's, in order on its one command buffer), and
+the result is composited as a layer — clipped, ordered, faded, transformed,
+captured. The host's layer walk renders components children first and siblings
+in tree order, culls the ones its clips leave nothing of, and keeps a
+continuous one's `update()` running while culled or hidden without asking for
+a frame (`isOnScreen()`/`getVisibleBounds()` for the early return; the
+rendered, culled and hidden counts are disjoint and on the host).
+`targetChanged(Frame&)` is where pipelines are built, and runs again after a
+device restore (`onDeviceRestored` follows the host's own rebuild through
+`GPUView::deviceRestored()`); samples default to 1, not 4; the texture caps at
+8192 a side; `setGpuTiming` labels every pass under the component's redirect
+`GPUComponent#n` (the redirect's timing label). **GPU rendering inside a
+component tree goes through `GPUComponent`, never a native child `GPUView`**,
+which sits above the whole tree unclipped on every platform and cannot present
+at all on Android, one presenting surface per window. `Lib/eacp/UI/README.md`
+is the account (frame build order, off-screen rules, costs, a `GPUView` parity
+table), "Redirecting a frame" in `Lib/eacp/GPU/README.md` the redirect;
+`Tests/UI/GPUComponentTests.cpp`, `Tests/GPU/FrameRedirectTests.cpp` and
+`Tests/Graphics/FramePacerTests.cpp` are the suites, and
+`Apps/UI/GPUComponents` (`GPUComponents out.png [tab]` renders headless) the
+stress test.
 
 ### CPU compute (`Lib/eacp/GPU/CpuCompute`)
 

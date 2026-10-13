@@ -728,12 +728,221 @@ auto tHidden = test("GPUComponent/aHiddenOneIsNotRenderedAndKeepsItsTexture") = 
     check(isEmpty(hidden, 10, 10));
     check(!gpu.getLayer().isEmpty(), "and keeps what it had");
     check(fixture.host.getLastCulledGPUComponentCount() == 0, "hidden, not culled");
+    check(fixture.host.getLastHiddenGPUComponentCount() == 1);
+    check(fixture.host.getLastRenderedGPUComponentCount() == 0);
+    check(gpu.wasHiddenLastFrame());
+    check(!gpu.wasCulledLastFrame());
+    check(!gpu.isOnScreen());
 
     page.setVisible(true);
     auto shown = fixture.host.renderToImage(1.f);
 
     check(gpu.renders == 2, "the repaint it missed");
     check(isColour(shown, 10, 10, blue));
+    check(!gpu.wasHiddenLastFrame());
+    check(fixture.host.getLastHiddenGPUComponentCount() == 0);
+};
+
+auto tCountsAreDisjoint =
+    test("GPUComponent/renderedCulledAndHiddenCountsAreDisjoint") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto fixture = Fixture {};
+    auto viewport = Component {};
+    auto page = Component {};
+    auto shown = ClearComponent {};
+    auto scrolledOut = ClearComponent {};
+    auto zeroSize = ClearComponent {};
+    auto hiddenItself = ClearComponent {};
+    auto onHiddenPage = ClearComponent {};
+    auto culledOnHiddenPage = ClearComponent {};
+
+    fixture.root.addAndMakeVisible(viewport);
+    viewport.setBounds({0.f, 0.f, 50.f, 50.f});
+    viewport.addChildren({shown, scrolledOut, zeroSize, hiddenItself});
+    shown.setBounds({0.f, 0.f, 10.f, 10.f});
+    scrolledOut.setBounds({0.f, 70.f, 10.f, 10.f});
+    zeroSize.setBounds({20.f, 0.f, 0.f, 10.f});
+    hiddenItself.setBounds({30.f, 0.f, 10.f, 10.f});
+    hiddenItself.setVisible(false);
+
+    fixture.root.addAndMakeVisible(page);
+    page.setBounds({0.f, 50.f, 50.f, 50.f});
+    page.addChildren({onHiddenPage, culledOnHiddenPage});
+    onHiddenPage.setBounds({0.f, 0.f, 10.f, 10.f});
+    culledOnHiddenPage.setBounds({0.f, 90.f, 10.f, 10.f});
+    page.setVisible(false);
+
+    fixture.host.renderToImage(1.f);
+
+    check(fixture.host.getLastRenderedGPUComponentCount() == 1);
+    check(fixture.host.getLastCulledGPUComponentCount() == 2);
+    check(fixture.host.getLastHiddenGPUComponentCount() == 3);
+
+    check(!shown.wasCulledLastFrame() && !shown.wasHiddenLastFrame());
+    check(shown.isOnScreen());
+
+    for (auto* culled: {&scrolledOut, &zeroSize})
+    {
+        check(culled->wasCulledLastFrame());
+        check(!culled->wasHiddenLastFrame());
+        check(!culled->isOnScreen());
+    }
+
+    for (auto* hidden: {&hiddenItself, &onHiddenPage, &culledOnHiddenPage})
+    {
+        check(hidden->wasHiddenLastFrame());
+        check(!hidden->wasCulledLastFrame(), "hidden is never culled too");
+        check(!hidden->isOnScreen());
+    }
+
+    fixture.host.renderToImage(1.f);
+
+    check(fixture.host.getLastRenderedGPUComponentCount() == 0,
+          "on screen with nothing new is in none of them");
+    check(fixture.host.getLastCulledGPUComponentCount() == 2);
+    check(fixture.host.getLastHiddenGPUComponentCount() == 3);
+
+    viewport.removeChildComponent(scrolledOut);
+
+    check(scrolledOut.wasHiddenLastFrame(), "out of the host is hidden");
+    check(!scrolledOut.wasCulledLastFrame());
+};
+
+namespace
+{
+struct TargetWatcher final : ClearComponent
+{
+    void targetChanged(GPU::Frame& frame) override
+    {
+        ++changes;
+        changedRedirected = frame.isRedirected();
+        rendersAtChange = renders;
+        samplesAtChange = getLayer().getTexture().sampleCount();
+    }
+
+    int changes = 0;
+    int rendersAtChange = -1;
+    int samplesAtChange = 0;
+    bool changedRedirected = false;
+};
+} // namespace
+
+auto tTargetChanged =
+    test("GPUComponent/targetChangedPrecedesRenderOnlyWhenTheTargetDoes") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto fixture = Fixture {};
+    auto gpu = TargetWatcher {};
+
+    fixture.root.addAndMakeVisible(gpu);
+    gpu.setBounds({0.f, 0.f, 20.f, 20.f});
+
+    fixture.host.renderToImage(1.f);
+
+    check(gpu.changes == 1, "once, before the first render");
+    check(gpu.rendersAtChange == 0, "and before render()");
+    check(gpu.changedRedirected, "under the redirect");
+
+    gpu.repaint();
+    fixture.host.renderToImage(1.f);
+    check(gpu.changes == 1, "not for a repaint");
+
+    gpu.setBounds({0.f, 0.f, 30.f, 10.f});
+    fixture.host.renderToImage(1.f);
+    check(gpu.renders == 3);
+    check(gpu.changes == 1, "nor for a resize");
+
+    fixture.host.renderToImage(2.f);
+    check(gpu.renders == 4);
+    check(gpu.changes == 1, "nor for a new scale");
+
+    gpu.setDepth(true);
+    fixture.host.renderToImage(2.f);
+    check(gpu.changes == 2, "a depth buffer is a new target");
+
+    gpu.setStencil(true);
+    fixture.host.renderToImage(2.f);
+    check(gpu.changes == 3, "so is a stencil plane");
+
+    if (GPU::Device::shared().supportsSampleCount(4))
+    {
+        gpu.setSampleCount(4);
+        fixture.host.renderToImage(2.f);
+        check(gpu.changes == 4, "and a sample count");
+        check(gpu.samplesAtChange == 4, "with the new texture already made");
+    }
+};
+
+auto tGpuTimingOff = test("GPUComponent/gpuTimingIsOffAndZeroByDefault") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto fixture = Fixture {};
+    auto gpu = ClearComponent {};
+
+    fixture.root.addAndMakeVisible(gpu);
+    gpu.setBounds({0.f, 0.f, 20.f, 20.f});
+
+    for (auto frame = 0; frame < 4; ++frame)
+    {
+        gpu.repaint();
+        fixture.host.renderToImage(1.f);
+    }
+
+    check(!gpu.isGpuTiming());
+    check(gpu.lastGpuMilliseconds() == 0.0);
+
+    for (const auto& pass: GPU::Device::shared().lastFrameTimings().passes)
+        check(!pass.label.starts_with("GPUComponent#"), "nothing is labelled");
+};
+
+auto tGpuTimingOn = test("GPUComponent/gpuTimingSumsTheComponentsOwnPasses") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto fixture = Fixture {};
+    auto timed = ClearComponent {};
+    auto untimed = ClearComponent {};
+
+    fixture.root.addChildren({timed, untimed});
+    timed.setBounds({0.f, 0.f, 50.f, 50.f});
+    untimed.setBounds({50.f, 0.f, 50.f, 50.f});
+    timed.setGpuTiming(true);
+
+    check(timed.isGpuTiming());
+    check(timed.lastGpuMilliseconds() == 0.0, "nothing before it renders");
+
+    for (auto frame = 0; frame < 4; ++frame)
+    {
+        timed.repaint();
+        untimed.repaint();
+        fixture.host.renderToImage(1.f);
+        check(timed.lastGpuMilliseconds() >= 0.0);
+    }
+
+    check(untimed.lastGpuMilliseconds() == 0.0);
+
+    if (!GPU::Device::shared().supportsPassTimings())
+        return;
+
+    auto own = 0;
+
+    for (const auto& pass: GPU::Device::shared().lastFrameTimings().passes)
+        if (pass.label.starts_with("GPUComponent#"))
+            ++own;
+
+    check(own == 1, "one pass timed, the timed component's");
+    check(timed.lastGpuMilliseconds() > 0.0);
+
+    timed.setGpuTiming(false);
+    check(timed.lastGpuMilliseconds() == 0.0, "and zero again once off");
 };
 
 namespace
@@ -941,6 +1150,13 @@ auto tCulledContinuous =
 
     check(gpu.updates == 6, "hidden, too");
 
+    fixture.host.renderToImage(1.f);
+
+    check(gpu.wasHiddenLastFrame());
+    check(!gpu.wasCulledLastFrame(), "hidden, and so no longer culled");
+    check(fixture.host.getLastCulledGPUComponentCount() == 0);
+    check(fixture.host.getLastHiddenGPUComponentCount() == 1);
+
     viewport.setVisible(true);
     gpu.setBounds({0.f, 10.f, 20.f, 20.f});
     fixture.host.renderToImage(1.f);
@@ -1044,6 +1260,28 @@ auto tDeviceRestored =
 
     check(gpu.renders == 2, "and rendered again into a new one");
     check(isColour(image, 20, 20, blue));
+};
+
+auto tDeviceRestoredChangesTheTarget =
+    test("GPUComponent/aRestoredDeviceIsATargetChange") = []
+{
+    if (!hasDevice())
+        return;
+
+    auto fixture = Fixture {};
+    auto gpu = TargetWatcher {};
+
+    fixture.root.addAndMakeVisible(gpu);
+    gpu.setBounds({10.f, 10.f, 20.f, 20.f});
+    fixture.host.renderToImage(1.f);
+
+    check(gpu.changes == 1);
+
+    fixture.host.deviceRestored();
+    fixture.host.renderToImage(1.f);
+
+    check(gpu.changes == 2, "pipelines from the old device are made again");
+    check(gpu.rendersAtChange == 1, "before the render that follows");
 };
 
 auto tCopyDrawableCopiesTheComponent =

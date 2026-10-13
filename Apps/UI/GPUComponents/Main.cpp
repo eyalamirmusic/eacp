@@ -116,7 +116,8 @@ struct DemoHost final : UI::ComponentHost
             format("%.1f fps", fps) + "   CPU " + format("%.2f ms", cpu) + "   GPU "
             + format("%.2f ms", gpu) + "   GPU components "
             + std::to_string(getLastRenderedGPUComponentCount()) + " rendered / "
-            + std::to_string(getLastCulledGPUComponentCount()) + " culled   layers "
+            + std::to_string(getLastCulledGPUComponentCount()) + " culled / "
+            + std::to_string(getLastHiddenGPUComponentCount()) + " hidden   layers "
             + std::to_string(getLastRenderedLayerCount()) + "   painted "
             + std::to_string(getLastPaintedComponentCount());
 

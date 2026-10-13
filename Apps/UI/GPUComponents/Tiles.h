@@ -45,18 +45,9 @@ enum class TileKind
 
 constexpr int tileKindCount = 6;
 
-// What a pipeline has to agree with: the target's sample count, depth and
-// format. A component's can change under it -- the MSAA toggle remakes the
-// texture -- so each tile prepares again when this differs from the last.
-struct PipelineKey
-{
-    int samples = 0;
-    bool depth = false;
-    GPU::PixelFormat format = GPU::PixelFormat::BGRA8Unorm;
-
-    bool operator==(const PipelineKey&) const = default;
-};
-
+// Each tile makes its pipelines in targetChanged, which the component calls
+// before the first render and again whenever the MSAA toggle or a depth change
+// remakes the texture under it.
 class DemoTile : public UI::GPUComponent
 {
 public:
@@ -69,10 +60,6 @@ public:
     void apply(const TileSettings& settings);
     void applyMsaa(bool enabled);
 
-    void setTimed(bool shouldTime);
-    bool isTimed() const;
-    double lastGpuMilliseconds() const;
-
     void update(Threads::FrameTime time) final;
     void mouseDown(const UI::MouseEvent& event) final;
 
@@ -83,16 +70,13 @@ protected:
     virtual void tick(double seconds);
     virtual void press(const UI::MouseEvent& event);
 
-    PipelineKey currentKey() const;
-    GPU::RenderPassDescriptor describePass(const UI::Color& clear) const;
-    std::string_view passLabel() const;
+    void prepareForTarget(GPU::ShaderProgram& shader, GPU::BlendMode blend) const;
     static UI::Point toClip(UI::Point local, UI::Point size);
 
     double elapsed = 0.0;
 
 private:
     std::string name;
-    bool timed = false;
 };
 
 class MeshTile final : public DemoTile
@@ -101,6 +85,7 @@ public:
     explicit MeshTile(const std::string& nameToUse);
 
     std::string_view getKindName() const override;
+    void targetChanged(GPU::Frame& frame) override;
     void render(GPU::Frame& frame) override;
 
     void mouseDrag(const UI::MouseEvent& event) override;
@@ -113,7 +98,6 @@ private:
     void orbit(float yaw, float pitch);
 
     MeshShader shader;
-    PipelineKey prepared;
     int indexCount = 0;
     float spin = 0.f;
     float targetYaw = 0.4f;
@@ -129,6 +113,7 @@ public:
     explicit ParticlesTile(const std::string& nameToUse);
 
     std::string_view getKindName() const override;
+    void targetChanged(GPU::Frame& frame) override;
     void render(GPU::Frame& frame) override;
 
 private:
@@ -139,7 +124,6 @@ private:
     GPU::Buffer bufferB;
     IntegrateParticles integrator;
     DrawParticles draw;
-    PipelineKey prepared;
     UI::Point attractor;
     float step = 1.f / 60.f;
     float pullBoost = 0.f;
@@ -152,6 +136,7 @@ public:
     explicit MsaaTile(const std::string& nameToUse);
 
     std::string_view getKindName() const override;
+    void targetChanged(GPU::Frame& frame) override;
     void render(GPU::Frame& frame) override;
 
 private:
@@ -160,7 +145,6 @@ private:
     void rebuildLines();
 
     DrawLines draw;
-    PipelineKey prepared;
     Vector<LineInstance> lines;
     float angle = 0.f;
     float aspect = 1.f;
@@ -173,11 +157,11 @@ public:
     explicit PlasmaTile(const std::string& nameToUse);
 
     std::string_view getKindName() const override;
+    void targetChanged(GPU::Frame& frame) override;
     void render(GPU::Frame& frame) override;
 
 private:
     PlasmaShader shader;
-    PipelineKey prepared;
 };
 
 class FeedbackTile final : public DemoTile
@@ -186,6 +170,7 @@ public:
     explicit FeedbackTile(const std::string& nameToUse);
 
     std::string_view getKindName() const override;
+    void targetChanged(GPU::Frame& frame) override;
     void render(GPU::Frame& frame) override;
     bool keyDown(const UI::KeyEvent& event) override;
 
@@ -204,8 +189,6 @@ private:
     FeedbackShader feedback;
     DrawSplats splatDraw;
     BlitShader blit;
-    PipelineKey preparedTargets;
-    PipelineKey prepared;
 
     std::optional<GPU::Texture> targetA;
     std::optional<GPU::Texture> targetB;
@@ -225,6 +208,7 @@ public:
 
     std::string_view getKindName() const override;
     bool supportsContinuous() const override;
+    void targetChanged(GPU::Frame& frame) override;
     void render(GPU::Frame& frame) override;
 
     void mouseDrag(const UI::MouseEvent& event) override;
@@ -235,7 +219,6 @@ private:
 
     CounterShader background;
     DrawSplats rings;
-    PipelineKey prepared;
     Vector<Splat> placed;
 };
 

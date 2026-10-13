@@ -469,7 +469,7 @@ ChurnPanel::ChurnPanel()
         right.add(static_cast<TileKind>(i + 3));
     }
 
-    added = 0;
+    added = totalTiles();
     updateCounts();
 }
 

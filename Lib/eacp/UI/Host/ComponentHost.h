@@ -110,11 +110,13 @@ public:
     // already has, which is what makes an animated opacity cheap.
     int getLastRenderedLayerCount() const;
 
-    // GPUComponents whose render() ran in the last frame, and those the frame
-    // stepped over for being clipped out of sight entirely. A hidden one is in
-    // neither.
+    // GPUComponents in the tree as the last frame found them: rendered (its
+    // render() ran), culled (showing, but clipped or scrolled out entirely, or
+    // of zero size) and hidden (it or an ancestor not visible). The three are
+    // disjoint; one on screen with nothing new to render is in none.
     int getLastRenderedGPUComponentCount() const;
     int getLastCulledGPUComponentCount() const;
+    int getLastHiddenGPUComponentCount() const;
 
     // Vector shapes in the tree that have no mask, the coverage atlas having had
     // no room for them: each one draws as nothing. Zero unless an interface has
@@ -344,6 +346,7 @@ private:
                           bool earlierLayerRendered);
     void playContent(Layer& layer, DrawPlayer& player);
 
+    void markGPUComponentsHidden(Component& component);
     void dropLayerTextures(Component& component);
     void notifyDeviceRestored(Component& component);
 
@@ -519,8 +522,10 @@ private:
     int lastRenderedLayers = 0;
     int lastRenderedGPUComponents = 0;
     int lastCulledGPUComponents = 0;
+    int lastHiddenGPUComponents = 0;
     int renderedGPUComponentsThisWalk = 0;
     int culledGPUComponentsThisWalk = 0;
+    int hiddenGPUComponentsThisWalk = 0;
 
     // The captured subtree recordContent is recording, whose layer is about to
     // be rendered and so needs no telling that its content changed.

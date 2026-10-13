@@ -90,10 +90,13 @@ Frame::Nesting::~Nesting()
 
 Frame::Redirect::Redirect(Frame& frameToUse,
                           const Texture& target,
-                          float backingScaleToUse)
+                          float backingScaleToUse,
+                          std::string_view timingLabel)
     : frame(frameToUse)
     , previousTarget(frameToUse.redirectTarget)
     , previousScale(frameToUse.scale)
+    , previousTimingLabel(
+          frameToUse.nesting.device->frameTimer().setScope(timingLabel))
 {
     frame.redirectTarget = &target;
     frame.scale = backingScaleToUse;
@@ -103,6 +106,7 @@ Frame::Redirect::~Redirect()
 {
     frame.redirectTarget = previousTarget;
     frame.scale = previousScale;
+    frame.nesting.device->frameTimer().setScope(previousTimingLabel);
 }
 
 bool Frame::isRedirected() const

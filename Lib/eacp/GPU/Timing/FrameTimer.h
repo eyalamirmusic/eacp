@@ -36,6 +36,12 @@ public:
     // frame already holding maxTimedPasses labelled passes all get.
     int beginPass(std::string_view label);
 
+    // Times every pass begun until the next call under `scope`, an unlabelled
+    // one as `scope` itself and a labelled one as "scope/label"; empty turns it
+    // off. Returns the scope it replaced. What Frame::Redirect's timing label
+    // sets, and the view has to outlive it.
+    std::string_view setScope(std::string_view scope);
+
     // Called by Frame's destructor: endFrame before it commits, noteSubmitted
     // after, since a D3D12 fence value does not exist until then.
     void endFrame(void* nativeCommandBuffer);
@@ -83,6 +89,8 @@ private:
     Array<Slot, GpuTimestamps::slotCount> slots;
 
     FrameTimings latest;
+
+    std::string_view scope;
 
     // The slot the frame being encoded writes into, and how many labelled
     // passes it has had so far. -1 when the frame is not being timed.

@@ -40,7 +40,7 @@ void FrameTimer::beginFrame(std::uint64_t frameIndex, Device& device)
 
 int FrameTimer::beginPass(std::string_view label)
 {
-    if (current < 0 || label.empty() || !timestamps.isSupported())
+    if (current < 0 || (label.empty() && scope.empty()) || !timestamps.isSupported())
         return -1;
 
     if (passCount >= GpuTimestamps::maxTimedPasses)
@@ -51,9 +51,26 @@ int FrameTimer::beginPass(std::string_view label)
     if (labels.size() <= passCount)
         labels.resize(passCount + 1);
 
-    labels[passCount].assign(label);
+    auto& name = labels[passCount];
+
+    if (scope.empty())
+        name.assign(label);
+    else
+    {
+        name.assign(scope);
+
+        if (!label.empty())
+            name.append("/").append(label);
+    }
 
     return passCount++;
+}
+
+std::string_view FrameTimer::setScope(std::string_view scopeToUse)
+{
+    auto previous = scope;
+    scope = scopeToUse;
+    return previous;
 }
 
 int FrameTimer::suspend()

@@ -30,7 +30,7 @@ an `assert`, so a release build pays for nothing but the call.
 | --- | --- |
 | `Device` | The process-wide device and queue. `Device::shared()`, and `isValid()` on a machine with no GPU |
 | `GPUView` | A `View` that owns a swapchain and hands you a `Frame` each tick, or on demand from inside another view's render (`renderFrame`) |
-| `Frame` | One frame's command buffer. Presents and commits on destruction |
+| `Frame` | One frame's command buffer. Presents and commits on destruction; `Frame::Redirect` points it at a texture |
 | `RenderPass` | Records draws. Ends its encoder on destruction |
 | `Buffer` | Vertex, index and storage buffers |
 | `Texture` | 2D textures: uploaded, wrapped zero-copy from a camera buffer, or rendered into |
@@ -666,6 +666,83 @@ same texture is not supported: D3D12 and Vulkan track a texture's state and
 layout whole rather than per level, so a downscale chain built from passes goes
 through a second texture, or runs as kernels (below); a plain filtered chain is
 `Frame::generateMipmaps` (see "Mipmaps").
+
+### Redirecting a frame
+
+A renderer written for a `GPUView` finds its target through the frame —
+`beginPass()` with no texture, `pixelSize()`, `logicalSize()` — and so draws
+only into a drawable. `Frame::Redirect` points the frame's own target at a
+texture for as long as it lives, and that same code then renders into the
+texture, on the frame's command buffer and in order with everything else the
+frame records:
+
+```cpp
+void render(Frame& frame) override
+{
+    {
+        auto redirect = Frame::Redirect {frame, panelTexture, backingScale, "panel"};
+        drawPanel(frame);      // written against a drawable, unchanged
+    }
+
+    auto pass = frame.beginPass();
+    pass.draw(compositor);     // samples panelTexture
+}
+```
+
+While it is in force:
+
+| Call | Answers |
+| --- | --- |
+| `beginPass(descriptor)` | `beginPass(target, descriptor)` |
+| `pixelSize()` | the target's size |
+| `backingScale()` | the scale the redirect was given |
+| `logicalSize()` | the two above divided |
+| `drawableFormat()` | the target's format |
+| `copyDrawable(texture)` | a texture-to-texture copy of the target, with no `setReadableDrawable` needed |
+| `isValid()` | the recording is open and the target is a valid render target |
+| `isRedirected()` | true |
+
+Nothing else changes. `beginPass` on a named texture or on several targets,
+`beginCompute`, the copies, `generateMipmaps`, `flush()`, the frame's timings
+and `Device::frameIndex` are the frame's as they always are, so a compute pass
+the redirected code dispatches feeds its redirected pass exactly as it would
+have fed the drawable, and the passes after the scope see what it drew. The
+drawable is untouched while a redirect is in force, and nothing presents the
+target: it is a texture like any other once the scope ends.
+
+The target is a single-level 2D render target. Its depth, stencil and sample
+count are the pass's, exactly as for `beginPass(texture)`, so a pipeline drawing
+there is built against the texture's — and above one sample the pass resolves
+into it as it ends, so what is sampled afterwards is the resolved picture
+("Multisampling a target"). A texture that is not a render target leaves the
+frame `isValid()` false.
+
+**A redirect begins and ends with no pass open**, the rule `beginCompute` and
+`flush` already state: a pass is bound to the target it began on, and one
+spanning the scope would draw into the wrong one on either side. Redirects
+nest, each restoring the target and scale before it, and a `flush()` inside one
+flushes the whole frame, not the redirected part.
+
+A fourth argument, a timing label, times every pass begun under the redirect —
+compute and texture passes included, labelled or not — in
+`Device::lastFrameTimings()`: an unlabelled pass as the label itself, a
+labelled one as `label/its own`, so one redirected renderer's share of a frame
+is the passes whose label starts with its own. Empty, the default, leaves
+passes as they are, which is also what an inner redirect with no label does to
+the passes under it. The label is a `string_view` and has to outlive the
+redirect, and the passes count against the frame's
+`GpuTimestamps::maxTimedPasses` like any others ("Timing a pass").
+
+It is a scope rather than a second frame on purpose. A nested `Frame` would
+take a command buffer of its own, flush the outer one to begin and present or
+wait to end ("Several views in one render"); a redirect is a target, a scale
+and a timing scope swapped on the frame that was already open. It is what
+`UI::GPUComponent` renders through — the host's one frame, pointed at each
+component's texture in turn
+(`Lib/eacp/UI/README.md`). The logic is all in `Frame.cpp`; each backend only
+implements the native halves (`nativePixelSize`, `beginNativePass`,
+`nativeDrawableFormat`, `copyNativeDrawable`, `isNativeValid`).
+`Tests/GPU/FrameRedirectTests.cpp` (`FrameRedirect/`) runs it on every backend.
 
 ## Compute
 

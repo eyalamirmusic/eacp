@@ -125,7 +125,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **Text & sprites** — font metrics, glyph rasterization and a GPU glyph atlas,
   alongside a batched textured-quad renderer for everything that draws in bulk.
 - **UI** — a lightweight component tier: a whole widget tree in one `GPUView`,
-  drawn through the sprite and glyph batchers.
+  drawn through the sprite and glyph batchers. `UI::GPUComponent` puts custom
+  GPU rendering inside that tree: a `GPUView`-style `render(Frame&)` and
+  `update`, drawn in the window's own frame and then clipped, scrolled,
+  overlapped, faded and transformed like any other component, so a 3D viewport
+  or a shader preview sits among the widgets rather than on top of them.
+  `Apps/UI/GPUComponents` puts up to 64 of them in one window. See
+  [`Lib/eacp/UI/README.md`](Lib/eacp/UI/README.md).
 - **SIMD** — the image hot loops run through
   [ESIMD](https://github.com/eyalamirmusic/ESIMD), a portable SIMD library with
   runtime backend dispatch that is also usable on its own.
@@ -477,7 +483,8 @@ Lib/eacp/
   ML/         Tensor graphs compiled and run through Core ML — see ML/README.md
   Text/       Font metrics, glyph rasterization and a GPU glyph atlas
   Sprites/    Batched textured-quad renderer
-  UI/         A whole widget tree in one GPUView
+  UI/         A whole widget tree in one GPUView, GPU components included —
+              see UI/README.md
   SVG/        SVG parsing and rendering
   WebView/    System web view embedding
   Camera/     Capture devices and frames, plus CameraView/ to show them
@@ -500,6 +507,9 @@ CMake/        Build helpers (TargetSetup, CPM)
   shader EDSL end to end: pipelines, render targets, compute, packed weights,
   the SIMD-group matrix, running a kernel on the CPU, and the Vulkan backend.
   [`SAMPLERS.md`](Lib/eacp/GPU/SAMPLERS.md) beside it is the sampler model.
+- [`Lib/eacp/UI/README.md`](Lib/eacp/UI/README.md) — the component tier: how
+  a frame is built, and `GPUComponent`, custom GPU rendering inside a
+  component tree, with what it costs on and off screen.
 - [`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md) — the Core ML tier: building
   a tensor graph, running a model, the compile cache and what was measured.
 - [`Apps/GPU/VariableFont/README.md`](Apps/GPU/VariableFont/README.md) — the

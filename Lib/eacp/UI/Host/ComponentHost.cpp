@@ -702,12 +702,14 @@ void ComponentHost::renderLayers(GPU::Frame& frame)
     paintedThisWalk = 0;
     renderedGPUComponentsThisWalk = 0;
     culledGPUComponentsThisWalk = 0;
+    hiddenGPUComponentsThisWalk = 0;
 
     auto size = frame.logicalSize();
     renderLayers(*root, frame, {}, {0.f, 0.f, size.x, size.y});
 
     lastRenderedGPUComponents = renderedGPUComponentsThisWalk;
     lastCulledGPUComponents = culledGPUComponentsThisWalk;
+    lastHiddenGPUComponents = hiddenGPUComponentsThisWalk;
 }
 
 void ComponentHost::renderLayers(Component& component,
@@ -720,7 +722,10 @@ void ComponentHost::renderLayers(Component& component,
     // in it. Left dirty, it renders on the frame the subtree is shown -- after
     // rasterizePaths has given its shapes masks in the atlas as it is then.
     if (!component.isVisible())
+    {
+        markGPUComponentsHidden(component);
         return;
+    }
 
     auto bounds = component.getBounds();
     auto position = Point {origin.x + bounds.x, origin.y + bounds.y};
@@ -955,6 +960,7 @@ bool ComponentHost::renderFrameLayer(Layer& layer,
 
     component.resumeIfContinuous();
     component.setVisibility(visibleLocal);
+    component.collectGpuTime();
 
     if (component.wasCulledLastFrame())
     {
@@ -967,9 +973,10 @@ bool ComponentHost::renderFrameLayer(Layer& layer,
         return false;
 
     {
-        auto redirect =
-            GPU::Frame::Redirect {frame, layer.getTexture(), backingScale()};
-        component.renderFrame(frame);
+        auto& target = layer.getTexture();
+        auto redirect = GPU::Frame::Redirect {
+            frame, target, backingScale(), component.timingLabel()};
+        component.renderFrame(frame, target);
     }
 
     layer.markRendered();
@@ -977,6 +984,22 @@ bool ComponentHost::renderFrameLayer(Layer& layer,
     ++renderedGPUComponentsThisWalk;
 
     return true;
+}
+
+void ComponentHost::markGPUComponentsHidden(Component& component)
+{
+    for (auto* layer: component.getLayers())
+    {
+        if (layer->frameComponent != nullptr)
+        {
+            layer->frameComponent->markHidden();
+            layer->frameComponent->collectGpuTime();
+            ++hiddenGPUComponentsThisWalk;
+        }
+    }
+
+    for (auto* child: component.getChildren())
+        markGPUComponentsHidden(*child);
 }
 
 void ComponentHost::dropLayerTextures(Component& component)
@@ -996,7 +1019,10 @@ void ComponentHost::notifyDeviceRestored(Component& component)
 {
     for (auto* layer: component.getLayers())
         if (layer->frameComponent != nullptr)
+        {
+            layer->frameComponent->renderedTarget.reset();
             layer->frameComponent->onDeviceRestored();
+        }
 
     for (auto* child: component.getChildren())
         notifyDeviceRestored(*child);
@@ -1745,6 +1771,11 @@ int ComponentHost::getLastRenderedGPUComponentCount() const
 int ComponentHost::getLastCulledGPUComponentCount() const
 {
     return lastCulledGPUComponents;
+}
+
+int ComponentHost::getLastHiddenGPUComponentCount() const
+{
+    return lastHiddenGPUComponents;
 }
 
 int ComponentHost::getLastDroppedPathCount() const

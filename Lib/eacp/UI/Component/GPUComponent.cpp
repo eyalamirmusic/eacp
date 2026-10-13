@@ -2,6 +2,8 @@
 
 #include "../Host/ComponentHost.h"
 
+#include <atomic>
+
 namespace eacp::UI
 {
 GPUComponent::GPUComponent()
@@ -128,12 +130,17 @@ GPU::PixelFormat GPUComponent::colorFormat() const
 
 bool GPUComponent::wasCulledLastFrame() const
 {
-    return culled;
+    return visibility == Visibility::Culled && findHost() != nullptr;
+}
+
+bool GPUComponent::wasHiddenLastFrame() const
+{
+    return visibility == Visibility::Hidden || findHost() == nullptr;
 }
 
 bool GPUComponent::isOnScreen() const
 {
-    return !culled && isShowing();
+    return visibility != Visibility::Culled && isShowing();
 }
 
 Rect GPUComponent::getVisibleBounds() const
@@ -145,6 +152,85 @@ int GPUComponent::getRenderCount() const
 {
     return renders;
 }
+
+void GPUComponent::setGpuTiming(bool shouldTime)
+{
+    if (gpuTiming == shouldTime)
+        return;
+
+    gpuTiming = shouldTime;
+    gpuMilliseconds = 0.0;
+    timedFrame = 0;
+
+    if (gpuTiming && gpuLabel.empty())
+    {
+        static auto serial = std::atomic<int> {0};
+        gpuLabel = "GPUComponent#" + std::to_string(++serial);
+    }
+}
+
+bool GPUComponent::isGpuTiming() const
+{
+    return gpuTiming;
+}
+
+double GPUComponent::lastGpuMilliseconds() const
+{
+    if (!gpuTiming)
+        return 0.0;
+
+    collectGpuTime();
+    return gpuMilliseconds;
+}
+
+std::string_view GPUComponent::timingLabel() const
+{
+    if (!gpuTiming)
+        return {};
+
+    return gpuLabel;
+}
+
+// The device keeps only the latest frame to come back, so this is read on every
+// walk as well as when asked: a frame that rendered the component sets the
+// figure, and one that did not leaves it.
+void GPUComponent::collectGpuTime() const
+{
+    if (!gpuTiming)
+        return;
+
+    const auto& timings = GPU::Device::shared().lastFrameTimings();
+
+    if (timings.frameIndex == timedFrame)
+        return;
+
+    timedFrame = timings.frameIndex;
+
+    auto total = 0.0;
+    auto found = false;
+
+    for (const auto& pass: timings.passes)
+    {
+        if (isOwnPass(pass.label))
+        {
+            total += pass.milliseconds;
+            found = true;
+        }
+    }
+
+    if (found)
+        gpuMilliseconds = total;
+}
+
+bool GPUComponent::isOwnPass(std::string_view label) const
+{
+    if (!label.starts_with(gpuLabel))
+        return false;
+
+    return label.size() == gpuLabel.size() || label[gpuLabel.size()] == '/';
+}
+
+void GPUComponent::targetChanged(GPU::Frame&) {}
 
 const Layer& GPUComponent::getLayer() const
 {
@@ -195,7 +281,7 @@ bool GPUComponent::advanceAnimation(double seconds)
     return true;
 }
 
-void GPUComponent::renderFrame(GPU::Frame& frame)
+void GPUComponent::renderFrame(GPU::Frame& frame, const GPU::Texture& target)
 {
     auto scale = frame.backingScale();
 
@@ -203,6 +289,18 @@ void GPUComponent::renderFrame(GPU::Frame& frame)
         onBackingScaleChanged(scale);
 
     renderedScale = scale;
+
+    auto shape = TargetShape {target.sampleCount(),
+                              target.hasDepth(),
+                              target.hasStencil(),
+                              target.format()};
+
+    if (renderedTarget != shape)
+    {
+        renderedTarget = shape;
+        targetChanged(frame);
+    }
+
     ++renders;
 
     render(frame);
@@ -222,7 +320,15 @@ void GPUComponent::resumeIfContinuous()
 
 void GPUComponent::setVisibility(const Rect& visibleLocalBounds)
 {
-    culled = visibleLocalBounds.isEmpty();
+    auto culled = visibleLocalBounds.isEmpty();
+
+    visibility = culled ? Visibility::Culled : Visibility::OnScreen;
     visibleBounds = culled ? Rect {} : visibleLocalBounds;
+}
+
+void GPUComponent::markHidden()
+{
+    visibility = Visibility::Hidden;
+    visibleBounds = {};
 }
 } // namespace eacp::UI

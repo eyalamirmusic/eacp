@@ -355,3 +355,45 @@ auto tDrawableUntouched =
     check(holds(target, green));
     check(imageHolds(image, slate), "the pass after the scope is the drawable's");
 };
+
+auto tTimingLabel = test("FrameRedirect/aTimingLabelTimesThePassesUnderIt") = []
+{
+    if (!canTest())
+        return;
+
+    auto target = makeTarget(2, 2);
+
+    auto draw = [&](Frame& frame)
+    {
+        {
+            auto redirect = Frame::Redirect {frame, target, 1.f, "tile"};
+
+            clear(frame, green);
+
+            auto labelled = frame.beginPass({.clearColor = red, .label = "own"});
+            labelled.end();
+
+            {
+                auto inner = Frame::Redirect {frame, target, 1.f};
+                clear(frame, slate);
+            }
+
+            clear(frame, green);
+        }
+
+        clear(frame, slate);
+    };
+
+    runFrame(draw);
+    runFrame(draw);
+
+    if (!Device::shared().supportsPassTimings())
+        return;
+
+    const auto& passes = Device::shared().lastFrameTimings().passes;
+
+    check(passes.size() == 3, "an inner redirect with no label times nothing");
+    check(passes.size() == 3 && passes[0].label == "tile");
+    check(passes.size() == 3 && passes[1].label == "tile/own");
+    check(passes.size() == 3 && passes[2].label == "tile", "restored after it");
+};
