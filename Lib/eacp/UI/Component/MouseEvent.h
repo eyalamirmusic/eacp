@@ -59,5 +59,12 @@ struct MouseEvent
     // difference between two events means anything, which is what a fling's
     // velocity is measured from.
     double timestamp = 0.0;
+
+    // A right-click, or a Control-click on macOS: whether this press asks for a
+    // context menu. See eacp::Graphics::isPopupMenuClick.
+    bool isPopupMenu() const
+    {
+        return eacp::Graphics::isPopupMenuClick(button, modifiers);
+    }
 };
 } // namespace eacp::UI

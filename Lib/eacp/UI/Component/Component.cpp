@@ -539,6 +539,8 @@ void Component::mouseUp(const MouseEvent&) {}
 
 void Component::mouseMove(const MouseEvent&) {}
 
+void Component::mouseDoubleClick(const MouseEvent&) {}
+
 bool Component::mouseWheelMove(const MouseEvent&)
 {
     return false;

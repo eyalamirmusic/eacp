@@ -474,6 +474,12 @@ private:
     // wherever the pointer has since travelled -- a fader keeps tracking once
     // the pointer leaves it, which is the behaviour a drag has to have.
     Component* mouseDownTarget = nullptr;
+
+    // The press's click count, kept for its release: a platform is free to
+    // report 1 on the up of a double-click, and mouseDoubleClick goes by the
+    // down.
+    int pressClickCount = 1;
+
     Component* hoveredComponent = nullptr;
     Component* focusedComponent = nullptr;
 

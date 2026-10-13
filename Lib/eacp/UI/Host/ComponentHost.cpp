@@ -1495,6 +1495,7 @@ void ComponentHost::mouseDown(const eacp::Graphics::MouseEvent& hostEvent)
 
     dragOrigin = event.pos;
     lastMousePosition = event.pos;
+    pressClickCount = event.clickCount;
 
     touch = {event.fromTouch, false, event.timestamp};
 
@@ -1552,7 +1553,17 @@ void ComponentHost::mouseUp(const eacp::Graphics::MouseEvent& hostEvent)
     if (mouseDownTarget != nullptr)
         mouseDownTarget->mouseUp(makeEvent(*mouseDownTarget, event));
 
+    // After the release, as JUCE sends it, and only to a target the release
+    // left alive: componentDeleted clears mouseDownTarget.
+    if (mouseDownTarget != nullptr && pressClickCount == 2)
+    {
+        auto doubleClick = makeEvent(*mouseDownTarget, event);
+        doubleClick.clickCount = pressClickCount;
+        mouseDownTarget->mouseDoubleClick(doubleClick);
+    }
+
     mouseDownTarget = nullptr;
+    pressClickCount = 1;
     touch = {};
 
     // The pointer may have left the pressed component during the drag, so the

@@ -7,6 +7,8 @@
 #include "FileDrag.h"
 #include "Magnify.h"
 
+#include <eacp/Core/Platform/Platform.h>
+
 #include <functional>
 #include <string>
 
@@ -41,6 +43,17 @@ enum class MouseButton
     Middle = 2,
     Other = 3
 };
+
+// Whether a press asks for a context menu: the right button anywhere, and on
+// macOS also a Control-click with the left, which is how a one-button mouse or
+// a trackpad without secondary click asks. juce::ModifierKeys::isPopupMenu.
+constexpr bool isPopupMenuClick(MouseButton button, const ModifierKeys& modifiers)
+{
+    if (button == MouseButton::Right)
+        return true;
+
+    return Platform::isMac() && button == MouseButton::Left && modifiers.control;
+}
 
 // Where a wheel event sits in a scroll gesture. A notched wheel has no gesture
 // to speak of and always reports None; a trackpad runs Began -> Changed -> Ended
@@ -119,6 +132,9 @@ struct MouseEvent
     // follow a finger dragged across it while a mouse dragged the same way
     // still selects.
     bool fromTouch = false;
+
+    // See isPopupMenuClick.
+    bool isPopupMenu() const { return isPopupMenuClick(button, modifiers); }
 };
 
 enum class TouchPhase
