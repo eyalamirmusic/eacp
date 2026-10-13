@@ -149,29 +149,36 @@ static NSArray<UTType*>* contentTypesFor(const Vector<std::string>& extensions)
     return types;
 }
 
-std::optional<std::string> chooseFile(const FilePickerOptions& options)
+static void applyTitleAndDirectory(NSSavePanel* panel,
+                                   const std::string& title,
+                                   const std::string& initialDirectory)
+{
+    if (! title.empty())
+        panel.message = Strings::toNSString(title);
+
+    if (! initialDirectory.empty())
+        panel.directoryURL =
+            [NSURL fileURLWithPath:Strings::toNSString(initialDirectory)
+                       isDirectory:YES];
+}
+
+static NSOpenPanel* makeOpenPanel(const FilePickerOptions& options, bool pickFolders)
 {
     auto* panel = [NSOpenPanel openPanel];
-    panel.canChooseFiles = YES;
-    panel.canChooseDirectories = NO;
+    panel.canChooseFiles = pickFolders ? NO : YES;
+    panel.canChooseDirectories = pickFolders ? YES : NO;
     panel.allowsMultipleSelection = NO;
     panel.resolvesAliases = YES;
 
-    if (! options.allowedExtensions.empty())
+    if (! pickFolders && ! options.allowedExtensions.empty())
         panel.allowedContentTypes = contentTypesFor(options.allowedExtensions);
 
-    if ([panel runModal] != NSModalResponseOK)
-        return std::nullopt;
+    applyTitleAndDirectory(panel, options.title, options.initialDirectory);
 
-    auto* url = panel.URLs.firstObject;
-
-    if (url == nil)
-        return std::nullopt;
-
-    return std::string(url.fileSystemRepresentation);
+    return panel;
 }
 
-std::optional<std::string> chooseSaveFile(const FileSaveOptions& options)
+static NSSavePanel* makeSavePanel(const FileSaveOptions& options)
 {
     auto* panel = [NSSavePanel savePanel];
     panel.canCreateDirectories = YES;
@@ -189,33 +196,82 @@ std::optional<std::string> chooseSaveFile(const FileSaveOptions& options)
             panel.nameFieldStringValue = name;
     }
 
-    if ([panel runModal] != NSModalResponseOK)
-        return std::nullopt;
+    applyTitleAndDirectory(panel, options.title, options.initialDirectory);
 
-    auto* url = panel.URL;
+    return panel;
+}
 
+static std::optional<std::string> pathFrom(NSURL* url)
+{
     if (url == nil)
         return std::nullopt;
 
     return std::string(url.fileSystemRepresentation);
 }
 
+static std::optional<std::string> chosenPath(NSOpenPanel* panel,
+                                             NSModalResponse response)
+{
+    if (response != NSModalResponseOK)
+        return std::nullopt;
+
+    return pathFrom(panel.URLs.firstObject);
+}
+
+static std::optional<std::string> chosenPath(NSSavePanel* panel,
+                                             NSModalResponse response)
+{
+    if (response != NSModalResponseOK)
+        return std::nullopt;
+
+    return pathFrom(panel.URL);
+}
+
+std::optional<std::string> chooseFile(const FilePickerOptions& options)
+{
+    auto* panel = makeOpenPanel(options, false);
+    return chosenPath(panel, [panel runModal]);
+}
+
+std::optional<std::string> chooseSaveFile(const FileSaveOptions& options)
+{
+    auto* panel = makeSavePanel(options);
+    return chosenPath(panel, [panel runModal]);
+}
+
 std::optional<std::string> chooseDirectory()
 {
-    auto* panel = [NSOpenPanel openPanel];
-    panel.canChooseFiles = NO;
-    panel.canChooseDirectories = YES;
-    panel.allowsMultipleSelection = NO;
-    panel.resolvesAliases = YES;
+    auto* panel = makeOpenPanel({}, true);
+    return chosenPath(panel, [panel runModal]);
+}
 
-    if ([panel runModal] != NSModalResponseOK)
-        return std::nullopt;
+// beginWithCompletionHandler: rather than a sheet, since a plugin's view may
+// have no window of its own to hang one off. The block keeps the panel alive
+// until it answers, and AppKit calls it on the main thread.
+static void beginOpenPanel(NSOpenPanel* panel, FileChosenCallback onChosen)
+{
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+      onChosen(chosenPath(panel, response));
+    }];
+}
 
-    auto* url = panel.URLs.firstObject;
+void chooseFileAsync(const FilePickerOptions& options, FileChosenCallback onChosen)
+{
+    beginOpenPanel(makeOpenPanel(options, false), std::move(onChosen));
+}
 
-    if (url == nil)
-        return std::nullopt;
+void chooseDirectoryAsync(const FilePickerOptions& options,
+                          FileChosenCallback onChosen)
+{
+    beginOpenPanel(makeOpenPanel(options, true), std::move(onChosen));
+}
 
-    return std::string(url.fileSystemRepresentation);
+void chooseSaveFileAsync(const FileSaveOptions& options, FileChosenCallback onChosen)
+{
+    auto* panel = makeSavePanel(options);
+
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+      onChosen(chosenPath(panel, response));
+    }];
 }
 } // namespace eacp::Apps

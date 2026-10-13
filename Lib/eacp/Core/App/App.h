@@ -157,9 +157,13 @@ void observeSystemPowerOff();
 // convention and returns false.
 bool isDistributionSigned();
 
+// `title` and `initialDirectory` are honoured on macOS (the panel's message
+// and starting folder); the Windows dialog ignores them for now.
 struct FilePickerOptions
 {
     Vector<std::string> allowedExtensions;
+    std::string title;
+    std::string initialDirectory;
 };
 
 // Shows the OS's native file chooser, blocking until the user picks a file
@@ -174,6 +178,8 @@ struct FileSaveOptions
 {
     Vector<std::string> allowedExtensions;
     std::string suggestedName;
+    std::string title;
+    std::string initialDirectory;
 };
 
 // Shows the OS's native save panel, blocking until the user names a file or
@@ -189,6 +195,34 @@ std::optional<std::string> chooseSaveFile(const FileSaveOptions& options = {});
 // on cancel. Must be called on the UI thread. Implemented on macOS and
 // Windows; Linux returns std::nullopt for now.
 std::optional<std::string> chooseDirectory();
+
+// The path picked, or std::nullopt on cancel.
+using FileChosenCallback = std::function<void(const std::optional<std::string>&)>;
+
+// The choosers above without the block: each returns at once, and `onChosen`
+// is called later on the UI thread, exactly once. What a plugin wants, since a
+// modal loop inside a host's UI thread is the host's to run, not ours.
+//
+// On macOS the panel runs modelessly (beginWithCompletionHandler), so the app
+// and its host keep running while it is up. Elsewhere the blocking chooser is
+// run from the event loop through Threads::callAsync -- still modal on
+// Windows, and answering std::nullopt wherever the blocking one does (Linux,
+// iOS, Android). Must be called on the UI thread.
+void chooseFileAsync(const FilePickerOptions& options, FileChosenCallback onChosen);
+void chooseSaveFileAsync(const FileSaveOptions& options,
+                         FileChosenCallback onChosen);
+
+// `allowedExtensions` is ignored: it is a folder being picked.
+void chooseDirectoryAsync(const FilePickerOptions& options,
+                          FileChosenCallback onChosen);
+
+namespace Detail
+{
+// The async choosers on a platform with no modeless panel: posts `chooser` to
+// the event loop and hands its answer to `onChosen` there.
+void runChooserLater(std::function<std::optional<std::string>()> chooser,
+                     FileChosenCallback onChosen);
+} // namespace Detail
 
 // True when this copy's app was started by run<T>() from inside a dynamic
 // library — it rides the host executable's loop instead of owning one, and

@@ -168,4 +168,11 @@ void restart()
 
     Threads::callAsync(restartFunc);
 }
+
+void Detail::runChooserLater(std::function<std::optional<std::string>()> chooser,
+                             FileChosenCallback onChosen)
+{
+    Threads::callAsync([chooser = std::move(chooser), onChosen = std::move(onChosen)]
+                       { onChosen(chooser()); });
+}
 } // namespace eacp::Apps

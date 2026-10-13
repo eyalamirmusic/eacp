@@ -269,3 +269,39 @@ auto tQuitWithReturnValueStoresIt = test("App/quitWithReturnValueStoresIt") = []
 auto tLocalBuildIsNotDistributionSigned =
     test("App/localBuildIsNotDistributionSigned") = []
 { check(!eacp::Apps::isDistributionSigned()); };
+
+// The async choosers' fallback: nothing runs until the loop does, and then the
+// chooser's answer -- a path or a cancel -- reaches the callback once.
+auto tChooserLaterDefersToTheLoop =
+    test("App/filePicker/runChooserLaterAnswersFromTheLoop") = []
+{
+    auto chooserRuns = 0;
+    auto answers = std::vector<std::optional<std::string>> {};
+
+    eacp::Apps::Detail::runChooserLater(
+        [&]
+        {
+            ++chooserRuns;
+            return std::optional<std::string> {"/tmp/picked.wav"};
+        },
+        [&](const std::optional<std::string>& path) { answers.push_back(path); });
+
+    eacp::Apps::Detail::runChooserLater([] { return std::optional<std::string> {}; },
+                                        [&](const std::optional<std::string>& path)
+                                        { answers.push_back(path); });
+
+    check(chooserRuns == 0, "the chooser waits for the loop");
+    check(answers.empty());
+
+    eacp::Threads::runEventLoopUntil([&] { return answers.size() == 2; },
+                                     eacp::Time::MS {1000});
+
+    check(chooserRuns == 1);
+    check(answers.size() == 2);
+
+    if (answers.size() == 2)
+    {
+        check(answers[0] == std::optional<std::string> {"/tmp/picked.wav"});
+        check(!answers[1].has_value(), "a cancel arrives as nullopt");
+    }
+};

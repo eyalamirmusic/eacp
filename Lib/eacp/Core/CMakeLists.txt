@@ -59,6 +59,7 @@ if (APPLE)
         target_sources(eacp-core PRIVATE
                 App/App-iOS.mm
                 App/Clipboard-iOS.mm
+                App/FilePickerAsync-Default.cpp
                 App/LoginItem-iOS.cpp
                 Process/Process-iOS.cpp
                 Threads/EventLoop-iOS.mm)
@@ -81,6 +82,7 @@ elseif (WIN32)
     target_sources(eacp-core PRIVATE
             App/App-Windows.cpp
             App/Clipboard-Windows.cpp
+            App/FilePickerAsync-Default.cpp
             App/LoginItem-Windows.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Windows.cpp
@@ -98,6 +100,7 @@ elseif (WIN32)
             windowsapp crypt32 user32 advapi32 shell32 ole32 uuid)
 elseif (UNIX AND NOT APPLE)
     target_sources(eacp-core PRIVATE
+            App/FilePickerAsync-Default.cpp
             App/LoginItem-Linux.cpp
             Platform/ScopedAutoReleasePool-Default.cpp
             Plugins/DynamicLibrary-Linux.cpp
