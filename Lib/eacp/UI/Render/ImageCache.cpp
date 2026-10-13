@@ -84,6 +84,12 @@ ImageRef ImageCache::get(const eacp::Graphics::Image& image)
     return entry;
 }
 
+void ImageCache::clear()
+{
+    entries.clear();
+    known.clear();
+}
+
 void ImageCache::releaseUnused()
 {
     for (auto it = entries.begin(); it != entries.end();)

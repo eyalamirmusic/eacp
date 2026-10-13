@@ -49,6 +49,12 @@ public:
     // after each recording walk.
     void releaseUnused();
 
+    // Lets go of every texture, so the next ask for each image uploads it
+    // again: what a replaced device needs, nothing made on the old one being
+    // drawable on the new. A caller still holding a reference holds the old
+    // texture, and has to ask again.
+    void clear();
+
     int size() const;
 
 private:

@@ -174,6 +174,11 @@ protected:
     // noticed by a display link tick adds up to a full one.
     void renderNow();
 
+    // The subclass's half of a device restore, called just before
+    // onDeviceRestored: what a view built on this one rebuilds for itself, so
+    // the hook stays free for the app. Windows only, as the restore is.
+    virtual void deviceRestored();
+
 private:
     // Internal: drives the GPU render from the View draw cycle. Subclasses
     // override render(), not this.

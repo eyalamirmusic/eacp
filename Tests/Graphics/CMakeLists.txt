@@ -23,6 +23,7 @@ set(graphics_test_sources
         DisplayTests.cpp
         EventLoopTests.cpp
         FileDragTests.cpp
+        FramePacerTests.cpp
         GameInputTests.cpp
         ImageOpsTests.cpp
         ImageTests.cpp

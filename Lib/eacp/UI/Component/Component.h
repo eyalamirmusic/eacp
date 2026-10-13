@@ -81,6 +81,11 @@ public:
     void setVisible(bool shouldBeVisible);
     bool isVisible() const;
 
+    // Whether the frame draws this component at all: it and every ancestor
+    // visible, in a tree that is in a host. A hidden tab page's children are
+    // visible and not showing.
+    bool isShowing() const;
+
     // Z-order among siblings. Last painted is on top, and hit testing walks the
     // same order reversed, so the two can never disagree.
     void toFront();
@@ -320,6 +325,7 @@ private:
     friend class ComponentHost;
     friend class PathShape;
     friend class Layer;
+    friend class GPUComponent;
     friend class DragAndDropTarget;
     friend class DragAndDropContainer;
 

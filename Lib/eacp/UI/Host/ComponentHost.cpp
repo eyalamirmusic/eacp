@@ -1,5 +1,6 @@
 #include "ComponentHost.h"
 
+#include "../Component/GPUComponent.h"
 #include "../Widgets/TouchScroller.h"
 
 #include <algorithm>
@@ -14,6 +15,14 @@ constexpr auto maximumPathPasses = 9;
 // How far an unclipped component's recording reaches either way, in points:
 // past any surface, and well inside what a float holds exactly.
 constexpr auto unclippedReach = 1.0e6f;
+
+Rect everywhere()
+{
+    return {-unclippedReach,
+            -unclippedReach,
+            unclippedReach * 2.f,
+            unclippedReach * 2.f};
+}
 
 FileDropTarget* asInterestedFileDropTarget(Component& component,
                                            const Vector<std::string>& files)
@@ -125,6 +134,8 @@ void ComponentHost::setRootComponent(Component& newRoot)
     root->host = this;
     root->setBounds(getRootBounds());
 
+    subtreeAttached(*root);
+
     repaint();
 }
 
@@ -215,6 +226,16 @@ void ComponentHost::forgetAnimationsIn(Component& subtree)
     retireAnimationClockWhenIdle();
 }
 
+void ComponentHost::subtreeAttached(Component& subtree)
+{
+    for (auto* layer: subtree.getLayers())
+        if (layer->frameComponent != nullptr)
+            layer->frameComponent->resumeIfContinuous();
+
+    for (auto* child: subtree.getChildren())
+        subtreeAttached(*child);
+}
+
 void ComponentHost::advanceAnimations(double seconds)
 {
     advancingAnimations = true;
@@ -249,6 +270,19 @@ void ComponentHost::setAnimationClockEnabled(bool shouldRun)
         startAnimationClock();
 }
 
+void ComponentHost::setAnimationMaxFps(int fps)
+{
+    animationMaxFps = std::max(0, fps);
+
+    if (animationClock != nullptr)
+        animationClock->setMaxFps(animationMaxFps);
+}
+
+int ComponentHost::getAnimationMaxFps() const
+{
+    return animationMaxFps;
+}
+
 void ComponentHost::startAnimationClock()
 {
     if (!animationClockEnabled || animationClock != nullptr)
@@ -256,6 +290,7 @@ void ComponentHost::startAnimationClock()
 
     auto tick = [this](Threads::FrameTime frame) { advanceAnimations(frame.delta); };
     animationClock.create(Threads::DisplayLink::FrameCallback {tick});
+    animationClock->setMaxFps(animationMaxFps);
 }
 
 // Later rather than now: this is usually running inside the link's own tick,
@@ -665,10 +700,20 @@ void ComponentHost::renderLayers(GPU::Frame& frame)
 
     lastRenderedLayers = 0;
     paintedThisWalk = 0;
-    renderLayers(*root, frame);
+    renderedGPUComponentsThisWalk = 0;
+    culledGPUComponentsThisWalk = 0;
+
+    auto size = frame.logicalSize();
+    renderLayers(*root, frame, {}, {0.f, 0.f, size.x, size.y});
+
+    lastRenderedGPUComponents = renderedGPUComponentsThisWalk;
+    lastCulledGPUComponents = culledGPUComponentsThisWalk;
 }
 
-void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
+void ComponentHost::renderLayers(Component& component,
+                                 GPU::Frame& frame,
+                                 Point origin,
+                                 const Rect& clip)
 {
     // Skipped while hidden, as its paths are: a layer rendered now would draw
     // shapes that have not been rasterized, and be marked rendered with nothing
@@ -677,8 +722,24 @@ void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
     if (!component.isVisible())
         return;
 
+    auto bounds = component.getBounds();
+    auto position = Point {origin.x + bounds.x, origin.y + bounds.y};
+    auto own = Rect {position.x, position.y, bounds.w, bounds.h};
+
+    auto reach = component.capturingLayer != nullptr ? everywhere() : clip;
+
+    auto visible = component.isPaintingUnclipped() ? reach : reach.intersection(own);
+
+    // Walked whether or not anything of it is visible: a culled GPUComponent
+    // still has to hear that it is, and every other layer renders as it did.
     for (auto* child: component.getChildren())
-        renderLayers(*child, frame);
+        renderLayers(*child, frame, position, visible);
+
+    auto visibleLocal = visible.isEmpty() ? Rect {}
+                                          : Rect {visible.x - position.x,
+                                                  visible.y - position.y,
+                                                  visible.w,
+                                                  visible.h};
 
     // An onRender layer samples whatever it likes, and what it is most likely
     // to sample is a layer registered before it -- so one rendering again is
@@ -687,6 +748,14 @@ void ComponentHost::renderLayers(Component& component, GPU::Frame& frame)
 
     for (auto* layer: component.getLayers())
     {
+        if (layer->rendersFrame())
+        {
+            if (renderFrameLayer(*layer, frame, visibleLocal, earlierLayerRendered))
+                earlierLayerRendered = true;
+
+            continue;
+        }
+
         if (recordContent(*layer))
             layer->contentChanged();
 
@@ -866,6 +935,106 @@ void ComponentHost::renderOwnPass(Layer& layer, GPU::Frame& frame)
     ++lastRenderedLayers;
 }
 
+// The component's whole render(), with this frame pointed at the layer's
+// texture: what it records lands on this frame's command buffer, ahead of the
+// pass that composites it.
+//
+// The bounds are synced rather than set: setting them asks for a frame, and
+// this is the frame.
+bool ComponentHost::renderFrameLayer(Layer& layer,
+                                     GPU::Frame& frame,
+                                     const Rect& visibleLocal,
+                                     bool earlierLayerRendered)
+{
+    auto& component = *layer.frameComponent;
+
+    layer.syncFrameBounds(component.getLocalBounds());
+
+    if (component.selfDirty || earlierLayerRendered)
+        layer.contentChanged();
+
+    component.resumeIfContinuous();
+    component.setVisibility(visibleLocal);
+
+    if (component.wasCulledLastFrame())
+    {
+        ++culledGPUComponentsThisWalk;
+        return false;
+    }
+
+    if (!layer.needsRendering(backingScale())
+        || !layer.ensureTexture(backingScale()))
+        return false;
+
+    {
+        auto redirect =
+            GPU::Frame::Redirect {frame, layer.getTexture(), backingScale()};
+        component.renderFrame(frame);
+    }
+
+    layer.markRendered();
+    ++lastRenderedLayers;
+    ++renderedGPUComponentsThisWalk;
+
+    return true;
+}
+
+void ComponentHost::dropLayerTextures(Component& component)
+{
+    for (auto* layer: component.getLayers())
+    {
+        layer->texture.reset();
+        layer->ready = false;
+        layer->dirty = true;
+    }
+
+    for (auto* child: component.getChildren())
+        dropLayerTextures(*child);
+}
+
+void ComponentHost::notifyDeviceRestored(Component& component)
+{
+    for (auto* layer: component.getLayers())
+        if (layer->frameComponent != nullptr)
+            layer->frameComponent->onDeviceRestored();
+
+    for (auto* child: component.getChildren())
+        notifyDeviceRestored(*child);
+}
+
+// Nothing made on the old device draws on the new one, so everything is made
+// again: the renderers and the atlas by the build resized() does, the glyph
+// and ramp textures on their first ask, the images as the tree
+// repaints and asks for them, and every layer as it renders.
+void ComponentHost::deviceRestored()
+{
+    shapes.reset();
+    meshes.reset();
+    images.reset();
+    layers.reset();
+    paths.reset();
+    masks.clear();
+    pathBatch.emplace();
+    text.reset();
+    ramps.reset();
+    imageCache.clear();
+
+    lastPathScale = 0.f;
+    lastRecordScale = 0.f;
+
+    ComponentHost::resized();
+
+    if (root == nullptr)
+        return;
+
+    dropLayerTextures(*root);
+    markTreeDirty(*root);
+    markAllPathsDirty(*root);
+    notifyDeviceRestored(*root);
+
+    repaint();
+}
+
 // Every path whose geometry changed since the last frame, drawn into the shared
 // atlas on this frame's own command buffer.
 //
@@ -929,8 +1098,8 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         // costs no GPU work at all: beginning the batch again is what throws it
         // away, where recording a dispatch per shape meant every one of them had
         // already been issued against a layout that no longer held.
-        pathBatch.begin(paths->getTexture());
-        rasterizeDirtyPaths(*root, pathBatch, walk);
+        pathBatch->begin(paths->getTexture());
+        rasterizeDirtyPaths(*root, *pathBatch, walk);
 
         if (!walk.atlasMoved)
             break;
@@ -949,10 +1118,10 @@ void ComponentHost::rasterizePaths(GPU::Frame& frame)
         masks.clear();
     }
 
-    if (!pathBatch.isEmpty())
+    if (!pathBatch->isEmpty())
     {
         auto compute = frame.beginCompute();
-        pathBatch.dispatch(compute);
+        pathBatch->dispatch(compute);
     }
 
     // The atlas grew or compacted, so every uv a component recorded points at
@@ -1070,6 +1239,9 @@ MouseEvent ComponentHost::makeEvent(const Component& target,
     result.position = target.rootPointToLocal(event.pos);
     result.downPosition = target.rootPointToLocal(dragOrigin);
     result.delta = event.delta;
+    result.rawDelta = event.rawDelta;
+    result.pressure = event.pressure;
+    result.scrollPhase = event.scrollPhase;
     result.button = event.button;
     result.modifiers = event.modifiers;
     result.clickCount = event.clickCount;
@@ -1563,6 +1735,16 @@ int ComponentHost::getLastRendererSwitchCount() const
 int ComponentHost::getLastRenderedLayerCount() const
 {
     return lastRenderedLayers;
+}
+
+int ComponentHost::getLastRenderedGPUComponentCount() const
+{
+    return lastRenderedGPUComponents;
+}
+
+int ComponentHost::getLastCulledGPUComponentCount() const
+{
+    return lastCulledGPUComponents;
 }
 
 int ComponentHost::getLastDroppedPathCount() const

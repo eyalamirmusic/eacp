@@ -11,6 +11,7 @@
 namespace eacp::UI
 {
 class Component;
+class GPUComponent;
 class Graphics;
 
 // A run of drawing rendered into a texture of its own, so it can be composited
@@ -164,6 +165,13 @@ public:
     void setDepth(bool shouldHaveDepth);
     bool hasDepth() const;
 
+    // A stencil plane beside that depth buffer, for pipelines setting
+    // RenderPipelineDescriptor::stencil. Brings the depth buffer with it, the
+    // two planes being one attachment; ignored without onRender, and changing
+    // it remakes the texture.
+    void setStencil(bool shouldHaveStencil);
+    bool hasStencil() const;
+
     // Samples per pixel for an onRender pass. Above 1 the pass draws into a
     // multisampled twin and is resolved into the texture as it ends, so what
     // is composited and sampled is always the resolved picture. A count the
@@ -195,14 +203,24 @@ public:
 private:
     friend class ComponentHost;
     friend class Component;
+    friend class GPUComponent;
+    friend class LayerRenderer;
 
     // Something in the captured subtree changed what it draws. Only the flag:
     // the owner's recording names the layer rather than its pixels, so it
     // still holds, and the change that called this asks for the frame itself.
     void contentChanged();
 
+    // The bounds a frame layer is kept at, set by the host's walk while the
+    // frame is being built. Marks the layer and the owner's drawing stale
+    // without asking for another frame, since the one in progress is about to
+    // render and record both.
+    void syncFrameBounds(const Rect& newBounds);
+
     bool rendersOwnPass() const;
+    bool rendersFrame() const;
     bool wantsDepth() const;
+    bool wantsStencil() const;
     int wantedSampleCount() const;
 
     // Dirty, or last rendered at another scale -- the texture is in device
@@ -219,6 +237,7 @@ private:
     // way the layer draws as nothing. Kept between renders and only remade when
     // it is too small, so a layer redrawn every frame allocates nothing.
     bool ensureTexture(float scale);
+    void reportTooLarge(int width, int height);
 
     // The content has just been rendered into the texture, at the scale
     // ensureTexture was given.
@@ -242,9 +261,24 @@ private:
     float renderedScale = 0.f;
 
     bool depth = false;
+    bool stencil = false;
     int sampleCount = 1;
 
     bool dirty = true;
     bool ready = false;
+
+    // Composited as a solid rectangle, the texture's alpha ignored, rather than
+    // as colour weighted by its coverage.
+    bool opaque = false;
+
+    // Said once rather than every frame, for a layer the device would not give
+    // a texture of its size.
+    bool reportedTooLarge = false;
+
+    // The component filling this layer with a whole redirected GPU::Frame
+    // rather than a pass the host opens, with a texture of exactly the owner's
+    // pixels, since the frame's code sizes itself off the target. Set by
+    // GPUComponent, which is also the owner.
+    GPUComponent* frameComponent = nullptr;
 };
 } // namespace eacp::UI

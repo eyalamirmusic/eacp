@@ -55,10 +55,9 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
         auto local =
             float2(corner.x() * destination.z(), corner.y() * destination.w());
 
-        auto placed = float2(matrix.x() * local.x() + matrix.z() * local.y()
-                                 + offset.x(),
-                             matrix.y() * local.x() + matrix.w() * local.y()
-                                 + offset.y());
+        auto placed =
+            float2(matrix.x() * local.x() + matrix.z() * local.y() + offset.x(),
+                   matrix.y() * local.x() + matrix.w() * local.y() + offset.y());
 
         auto position =
             float2(destination.x() + placed.x(), destination.y() + placed.y());
@@ -77,10 +76,13 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
         // The colour, weighted by the coverage the layer pass left in the alpha
         // channel. Divided out here and multiplied back by the blend, which is
         // exact wherever there is any coverage to divide by.
+        //
+        // An opaque layer is a solid rectangle whatever its alpha says, as a
+        // GPUView is: its colour is taken as it stands, at full coverage.
         auto coverage = max(sampled.w(), smallestCoverage);
-        auto colour = sampled.xyz() / coverage;
+        auto colour = mix(sampled.xyz() / coverage, sampled.xyz(), opaque);
 
-        auto alpha = sampled.w() * opacity
+        auto alpha = max(sampled.w(), opaque) * opacity
                      * clipCoverage(fragPosition, clipRegion, clipMask, clipAtlas);
 
         setFragment(float4(colour.x(), colour.y(), colour.z(), alpha));
@@ -90,6 +92,9 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
     GPU::Uniform<GPU::Float4> destination;
     GPU::Uniform<GPU::Float4> contentUV;
     GPU::Uniform<GPU::Float> opacity;
+
+    // 1 for a layer whose alpha is ignored, 0 for one composited by it.
+    GPU::Uniform<GPU::Float> opaque;
 
     // The layer's transform, as SVG writes it: (a, b, c, d) and (tx, ty).
     GPU::Uniform<GPU::Float4> matrix;
@@ -104,6 +109,7 @@ struct LayerRenderer::Program final : GPU::ShaderProgram
                 destination,
                 contentUV,
                 opacity,
+                opaque,
                 matrix,
                 offset,
                 clipRegion,
@@ -156,6 +162,7 @@ void LayerRenderer::draw(GPU::RenderPass& pass,
         Array<float, 4> {destination.x, destination.y, destination.w, destination.h};
     program->contentUV = Array<float, 4> {uv.x, uv.y, uv.w, uv.h};
     program->opacity = layer.getOpacity();
+    program->opaque = layer.opaque ? 1.f : 0.f;
 
     const auto& placement = layer.getTransform();
 

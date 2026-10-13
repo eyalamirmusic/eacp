@@ -2,6 +2,7 @@ add_library(eacp-graphics STATIC)
 
 target_sources(eacp-graphics PRIVATE
         Helpers/DisplayLink.cpp
+        Helpers/FramePacer.cpp
         Image/Image.cpp
         Image/ImageOps.cpp
         Input/GameInput.cpp

@@ -88,6 +88,73 @@ Frame::Nesting::~Nesting()
     device->leaveFrame(place);
 }
 
+Frame::Redirect::Redirect(Frame& frameToUse,
+                          const Texture& target,
+                          float backingScaleToUse)
+    : frame(frameToUse)
+    , previousTarget(frameToUse.redirectTarget)
+    , previousScale(frameToUse.scale)
+{
+    frame.redirectTarget = &target;
+    frame.scale = backingScaleToUse;
+}
+
+Frame::Redirect::~Redirect()
+{
+    frame.redirectTarget = previousTarget;
+    frame.scale = previousScale;
+}
+
+bool Frame::isRedirected() const
+{
+    return redirectTarget != nullptr;
+}
+
+Graphics::Point Frame::pixelSize() const
+{
+    if (redirectTarget == nullptr)
+        return nativePixelSize();
+
+    return {(float) redirectTarget->width(), (float) redirectTarget->height()};
+}
+
+RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
+{
+    if (redirectTarget == nullptr)
+        return beginNativePass(descriptor);
+
+    return beginPass(*redirectTarget, descriptor);
+}
+
+TextureFormat Frame::drawableFormat() const
+{
+    if (redirectTarget == nullptr)
+        return nativeDrawableFormat();
+
+    return redirectTarget->format();
+}
+
+bool Frame::copyDrawable(const Texture& destination)
+{
+    if (redirectTarget == nullptr)
+        return copyNativeDrawable(destination);
+
+    if (!isValid() || !canCopyDrawableInto(destination))
+        return false;
+
+    copy(*redirectTarget, destination, TextureCopyRegion::wholeLevel(0));
+    return true;
+}
+
+bool Frame::isValid() const
+{
+    if (redirectTarget == nullptr)
+        return isNativeValid();
+
+    return nativeRecording() != nullptr && redirectTarget->isValid()
+           && redirectTarget->isRenderTarget();
+}
+
 float Frame::backingScale() const
 {
     return scale;

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "../Common.h"
+#include "FramePacer.h"
 
-#include <atomic>
 #include <memory>
 
 namespace eacp::Threads
@@ -53,17 +53,12 @@ public:
 
 private:
     // Shared with the wrapper rateLimited() builds, which runs on the main
-    // thread; the atomics only make setMaxFps safe to call while a tick is
-    // in flight.
-    struct RateLimit
-    {
-        std::atomic<int> fps {0};
-        std::atomic<double> minInterval {0.0};
-    };
+    // thread; the pacer's cap is atomic, so setMaxFps is safe to call while a
+    // tick is in flight.
+    using RateLimit = FramePacer;
 
     // Wraps a tick callback in the divider that skips ticks until `limit`'s
-    // interval has accumulated (the pacing state lives inside the returned
-    // callback, exactly like timedTick's).
+    // interval has accumulated, measured between the ticks themselves.
     static Callback rateLimited(const std::shared_ptr<RateLimit>& limit,
                                 const Callback& tick);
 

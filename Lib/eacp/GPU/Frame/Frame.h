@@ -195,6 +195,35 @@ public:
     Frame(const Frame&) = delete;
     Frame& operator=(const Frame&) = delete;
 
+    // Points this frame's own target at an app-owned texture for as long as it
+    // lives, so code written against a drawable - beginPass() with no texture,
+    // pixelSize(), logicalSize(), backingScale(), drawableFormat(),
+    // copyDrawable() - renders into the texture instead, on the same command
+    // buffer and in order with everything else the frame records. This is how
+    // a renderer written for a GPUView draws into a texture something else
+    // composites (UI::GPUComponent).
+    //
+    // The texture is a single-level 2D render target; its depth and sample
+    // count are the pass's, exactly as for beginPass(texture), and it holds the
+    // resolved picture once each pass ends. Begun and ended with no pass open.
+    // Redirects nest, each restoring the one before it.
+    class Redirect
+    {
+    public:
+        Redirect(Frame& frameToUse, const Texture& target, float backingScaleToUse);
+        ~Redirect();
+
+        Redirect(const Redirect&) = delete;
+        Redirect& operator=(const Redirect&) = delete;
+
+    private:
+        Frame& frame;
+        const Texture* previousTarget;
+        float previousScale;
+    };
+
+    bool isRedirected() const;
+
     // The size of the target this frame draws into: the drawable's texture on
     // screen, the app's texture off it.
     //
@@ -418,6 +447,12 @@ public:
     bool isValid() const;
 
 private:
+    Graphics::Point nativePixelSize() const;
+    RenderPass beginNativePass(const RenderPassDescriptor& descriptor);
+    TextureFormat nativeDrawableFormat() const;
+    bool copyNativeDrawable(const Texture& destination);
+    bool isNativeValid() const;
+
     static bool canRenderInto(std::span<const ColorTarget> targets,
                               const RenderPassDescriptor& descriptor);
 
@@ -465,5 +500,6 @@ private:
     Pimpl<Native> impl;
 
     float scale = 1.f;
+    const Texture* redirectTarget = nullptr;
 };
 } // namespace eacp::GPU

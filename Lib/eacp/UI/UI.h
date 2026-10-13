@@ -2,6 +2,7 @@
 
 #include "Common.h"
 #include "Component/Component.h"
+#include "Component/GPUComponent.h"
 #include "Component/KeyEvent.h"
 #include "Component/MouseEvent.h"
 #include "DragAndDrop/DragAndDrop.h"

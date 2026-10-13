@@ -300,7 +300,7 @@ Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleTo
     device.beginFrame();
 }
 
-Graphics::Point Frame::pixelSize() const
+Graphics::Point Frame::nativePixelSize() const
 {
     auto target = impl->storeTexture();
 
@@ -373,7 +373,7 @@ void Frame::flush()
     impl->openCommandBuffer();
 }
 
-RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
+RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
 {
     auto target = impl->storeTexture();
     auto buffer = impl->commandBuffer.get();
@@ -516,7 +516,7 @@ ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
                        order);
 }
 
-TextureFormat Frame::drawableFormat() const
+TextureFormat Frame::nativeDrawableFormat() const
 {
     auto target = impl->storeTexture();
 
@@ -542,7 +542,7 @@ TextureFormat Frame::drawableFormat() const
 // recorded before it and before whatever follows. A drawable's texture is
 // only a blit source when its layer is not framebufferOnly, which is what
 // GPUView::setReadableDrawable turns off; a snapshot's texture always is.
-bool Frame::copyDrawable(const Texture& destination)
+bool Frame::copyNativeDrawable(const Texture& destination)
 {
     auto target = impl->storeTexture();
     auto buffer = impl->commandBuffer.get();
@@ -574,7 +574,7 @@ bool Frame::copyDrawable(const Texture& destination)
     return true;
 }
 
-bool Frame::isValid() const
+bool Frame::isNativeValid() const
 {
     return impl->storeTexture() != nil && impl->commandBuffer.get() != nil;
 }

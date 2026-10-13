@@ -134,6 +134,7 @@ struct GPUView::Native : DeviceResourceHolder
         if (device != nullptr)
             updateSize();
 
+        view.deviceRestored();
         view.onDeviceRestored();
         view.repaint();
     }

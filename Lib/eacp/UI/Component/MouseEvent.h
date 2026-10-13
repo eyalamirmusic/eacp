@@ -23,6 +23,18 @@ struct MouseEvent
     // Movement since the previous event, in points.
     Point delta;
 
+    // The same movement as the device reported it, with no acceleration curve:
+    // what a camera orbit or an FPS look follows. In the device's own units
+    // rather than points. See eacp::Graphics::MouseEvent::rawDelta.
+    Point rawDelta;
+
+    // Pen or Force Touch pressure, 0 to 1; 1 where the device has none.
+    float pressure = 1.0f;
+
+    // Wheel and magnify events: where the event sits in its gesture. See
+    // eacp::Graphics::ScrollPhase.
+    eacp::Graphics::ScrollPhase scrollPhase = eacp::Graphics::ScrollPhase::None;
+
     eacp::Graphics::MouseButton button = eacp::Graphics::MouseButton::Left;
     eacp::Graphics::ModifierKeys modifiers;
     int clickCount = 1;

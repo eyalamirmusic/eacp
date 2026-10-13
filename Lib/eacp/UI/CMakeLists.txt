@@ -9,6 +9,7 @@ target_link_libraries(eacp-ui PUBLIC eacp-gpu eacp-gpuwidgets eacp-text)
 target_sources(eacp-ui PRIVATE
         Common.cpp
         Component/Component.cpp
+        Component/GPUComponent.cpp
         DragAndDrop/DragAndDrop.cpp
         Graphics/Graphics.cpp
         Host/ComponentHost.cpp

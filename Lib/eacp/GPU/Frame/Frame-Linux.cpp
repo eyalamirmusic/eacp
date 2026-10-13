@@ -370,7 +370,7 @@ Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleTo
 // The swapchain image for a drawable frame and the app's texture off screen are
 // the same VulkanTextureData either way - the one beginPassOn takes its render
 // area and viewport from.
-Graphics::Point Frame::pixelSize() const
+Graphics::Point Frame::nativePixelSize() const
 {
     if (impl->target == nullptr)
         return {};
@@ -435,7 +435,7 @@ void Frame::flush()
     impl->open(context.acquire());
 }
 
-RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
+RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
 {
     if (impl->target == nullptr)
         return RenderPass(nullptr);
@@ -493,7 +493,7 @@ ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
     return ComputePass(encoder, order);
 }
 
-TextureFormat Frame::drawableFormat() const
+TextureFormat Frame::nativeDrawableFormat() const
 {
     if (impl->target == nullptr)
         return TextureFormat::BGRA8Unorm;
@@ -517,7 +517,7 @@ TextureFormat Frame::drawableFormat() const
 // view's pass resolves into the swapchain image as it ends, so the image holds
 // the picture either way. The image is left where the copy put it; the next
 // pass or the present moves it from there.
-bool Frame::copyDrawable(const Texture& destination)
+bool Frame::copyNativeDrawable(const Texture& destination)
 {
     if (impl->commands == nullptr || impl->target == nullptr
         || !canCopyDrawableInto(destination))
@@ -567,7 +567,7 @@ bool Frame::copyDrawable(const Texture& destination)
     return true;
 }
 
-bool Frame::isValid() const
+bool Frame::isNativeValid() const
 {
     return impl->commands != nullptr && impl->target != nullptr
            && impl->target->isValid();

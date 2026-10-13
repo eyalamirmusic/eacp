@@ -56,6 +56,7 @@ set(gpu_test_sources
         DrawableCopyTests.cpp
         MultiViewFrameTests.cpp
         FrameComputeTests.cpp
+        FrameRedirectTests.cpp
         FrameTimingTests.cpp
         GPUSmokeTests.cpp
         GPUSnapshotTests.cpp

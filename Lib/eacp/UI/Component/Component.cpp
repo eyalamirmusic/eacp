@@ -81,6 +81,11 @@ void Component::addChildComponent(Component& child)
     if (child.needsRecording())
         child.markAncestorsDirty();
 
+    // Removing it stopped whatever it animated, so joining a host is where a
+    // continuous GPUComponent inside it starts again.
+    if (auto* found = findHost())
+        found->subtreeAttached(child);
+
     invalidateHost();
 }
 
@@ -474,6 +479,17 @@ Component* Component::getParentComponent() const
 bool Component::isVisible() const
 {
     return visible;
+}
+
+bool Component::isShowing() const
+{
+    auto* current = this;
+
+    for (; current->parent != nullptr; current = current->parent)
+        if (!current->visible)
+            return false;
+
+    return current->visible && current->host != nullptr;
 }
 
 bool Component::getInterceptsMouseClicks() const

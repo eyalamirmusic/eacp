@@ -110,6 +110,12 @@ public:
     // already has, which is what makes an animated opacity cheap.
     int getLastRenderedLayerCount() const;
 
+    // GPUComponents whose render() ran in the last frame, and those the frame
+    // stepped over for being clipped out of sight entirely. A hidden one is in
+    // neither.
+    int getLastRenderedGPUComponentCount() const;
+    int getLastCulledGPUComponentCount() const;
+
     // Vector shapes in the tree that have no mask, the coverage atlas having had
     // no room for them: each one draws as nothing. Zero unless an interface has
     // reached the atlas ceiling, which is a real limit rather than an error --
@@ -169,6 +175,12 @@ public:
     // deterministic under test.
     void setAnimationClockEnabled(bool shouldRun);
 
+    // Caps how often that display link ticks, and so every animation in the
+    // tree with it, continuous GPUComponents included. Zero (the default)
+    // ticks at the display's refresh. See DisplayLink::setMaxFps.
+    void setAnimationMaxFps(int fps);
+    int getAnimationMaxFps() const;
+
     // The component keys are offered to first. Null means none has been focused,
     // and the tree's keys go to the root -- which is what makes a shortcut work
     // before anything has been clicked.
@@ -213,6 +225,13 @@ public:
     Component* findFileDropTarget(const Vector<std::string>& files,
                                   Point positionInRoot) const;
 
+protected:
+    // Everything the host made on the lost device is made again - its
+    // renderers, the coverage atlas, the glyph and image textures and every
+    // layer's texture - the tree is painted from scratch, and every
+    // GPUComponent in it is told through its onDeviceRestored.
+    void deviceRestored() override;
+
 private:
     friend class Component;
 
@@ -228,6 +247,11 @@ private:
     void stopAnimating(Component& component);
     bool isAnimating(const Component& component) const;
     void forgetAnimationsIn(Component& subtree);
+
+    // A subtree joined the tree: every continuous GPUComponent in it that is
+    // not already ticking starts again.
+    void subtreeAttached(Component& subtree);
+
     void startAnimationClock();
     void retireAnimationClockWhenIdle();
 
@@ -298,11 +322,30 @@ private:
     // Rendering every Layer in the tree whose content changed, each into a pass
     // of its own, before the frame's own pass opens -- which is the only place
     // it can happen, a pass not being able to begin inside another one.
+    //
+    // The walk tracks where each component sits and what its ancestors leave
+    // of it exactly as playSubtree does, so a GPUComponent the frame would not
+    // draw is not rendered either. A captured subtree starts again unclipped,
+    // being drawn into its layer rather than where it sits.
     void renderLayers(GPU::Frame& frame);
-    void renderLayers(Component& component, GPU::Frame& frame);
+    void renderLayers(Component& component,
+                      GPU::Frame& frame,
+                      Point origin,
+                      const Rect& clip);
     void renderLayer(Layer& layer, GPU::Frame& frame);
     void renderOwnPass(Layer& layer, GPU::Frame& frame);
+
+    // A GPUComponent's layer: kept at the component's bounds, culled when
+    // `visibleLocal` is empty, and otherwise rendered by the component's own
+    // render() through the frame, redirected. Returns whether it rendered.
+    bool renderFrameLayer(Layer& layer,
+                          GPU::Frame& frame,
+                          const Rect& visibleLocal,
+                          bool earlierLayerRendered);
     void playContent(Layer& layer, DrawPlayer& player);
+
+    void dropLayerTextures(Component& component);
+    void notifyDeviceRestored(Component& component);
 
     // Records the subtree a layer captures, if anything in it is stale, so the
     // layer is drawn from this frame's recordings rather than the last one's.
@@ -375,7 +418,9 @@ private:
     // across frames rather than made per frame, because what it holds is the
     // buffers -- a canvas whose paths all move re-fills them and allocates
     // nothing.
-    GPUWidgets::CoverageBatch pathBatch;
+    //
+    // Optional only so a restored device can have it made again.
+    std::optional<GPUWidgets::CoverageBatch> pathBatch {std::in_place};
 
     std::optional<ShapeBatch> shapes;
 
@@ -453,6 +498,7 @@ private:
     bool advancingAnimations = false;
 
     OwningPointer<Threads::DisplayLink> animationClock;
+    int animationMaxFps = 0;
     bool animationClockEnabled = true;
     bool animationClockRetiring = false;
 
@@ -471,6 +517,10 @@ private:
     // Shapes that drew through a mask somebody else had already rasterized.
     int lastSharedMasks = 0;
     int lastRenderedLayers = 0;
+    int lastRenderedGPUComponents = 0;
+    int lastCulledGPUComponents = 0;
+    int renderedGPUComponentsThisWalk = 0;
+    int culledGPUComponentsThisWalk = 0;
 
     // The captured subtree recordContent is recording, whose layer is about to
     // be rendered and so needs no telling that its content changed.

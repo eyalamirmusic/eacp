@@ -2,6 +2,8 @@
 
 #include "../Component/Component.h"
 
+#include <eacp/Core/Utils/Logging.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -16,6 +18,12 @@ namespace
 // negotiates. Past this the layer draws as nothing, which is visible, rather
 // than as a hundred megabytes nobody asked for.
 constexpr int maxLayerSize = 4096;
+
+// A GPUComponent's texture is exactly its pixels, so the ceiling is a display
+// rather than a drawing: 8192 covers a full-screen component on a 5K panel. A
+// device that cannot make one that large is answered the same way, by drawing
+// nothing and saying so once.
+constexpr int maxFrameLayerSize = 8192;
 
 constexpr auto colorFormat = GPU::TextureFormat::BGRA8Unorm;
 
@@ -118,6 +126,20 @@ bool Layer::hasDepth() const
     return depth;
 }
 
+void Layer::setStencil(bool shouldHaveStencil)
+{
+    if (stencil == shouldHaveStencil)
+        return;
+
+    stencil = shouldHaveStencil;
+    setDirty();
+}
+
+bool Layer::hasStencil() const
+{
+    return stencil;
+}
+
 void Layer::setSampleCount(int newSampleCount)
 {
     newSampleCount = std::max(1, newSampleCount);
@@ -144,14 +166,42 @@ void Layer::contentChanged()
     dirty = true;
 }
 
+void Layer::syncFrameBounds(const Rect& newBounds)
+{
+    if (sameRect(bounds, newBounds))
+        return;
+
+    bounds = newBounds;
+    dirty = true;
+    ready = false;
+
+    // The owner drew the layer as a quad of its old bounds. Recorded later in
+    // this same frame, so no frame has to be asked for.
+    if (!owner.selfDirty)
+    {
+        owner.selfDirty = true;
+        owner.markAncestorsDirty();
+    }
+}
+
 bool Layer::rendersOwnPass() const
 {
-    return static_cast<bool>(onRender);
+    return frameComponent != nullptr || static_cast<bool>(onRender);
+}
+
+bool Layer::rendersFrame() const
+{
+    return frameComponent != nullptr;
 }
 
 bool Layer::wantsDepth() const
 {
-    return rendersOwnPass() && depth;
+    return rendersOwnPass() && (depth || stencil);
+}
+
+bool Layer::wantsStencil() const
+{
+    return rendersOwnPass() && stencil;
 }
 
 int Layer::wantedSampleCount() const
@@ -184,9 +234,18 @@ bool Layer::ensureTexture(float scale)
 {
     auto width = devicePixels(bounds.w, scale);
     auto height = devicePixels(bounds.h, scale);
+    auto largest = rendersFrame() ? maxFrameLayerSize : maxLayerSize;
 
-    if (width <= 0 || height <= 0 || width > maxLayerSize || height > maxLayerSize)
+    if (width <= 0 || height <= 0)
         return false;
+
+    if (width > largest || height > largest)
+    {
+        reportTooLarge(width, height);
+        texture.reset();
+        ready = false;
+        return false;
+    }
 
     contentWidth = width;
     contentHeight = height;
@@ -194,9 +253,15 @@ bool Layer::ensureTexture(float scale)
 
     // Remade rather than kept when it has the wrong attachments, which only a
     // layer turning into or out of an onRender one, or changing what that asks
-    // for, brings about.
-    if (texture.has_value() && texture->width() >= width
-        && texture->height() >= height && texture->hasDepth() == wantsDepth()
+    // for, brings about. A frame layer is remade on any change of size, shrink
+    // included: the code filling it sizes itself off the whole target.
+    auto fits = rendersFrame() ? texture.has_value() && texture->width() == width
+                                     && texture->height() == height
+                               : texture.has_value() && texture->width() >= width
+                                     && texture->height() >= height;
+
+    if (fits && texture->hasDepth() == wantsDepth()
+        && texture->hasStencil() == wantsStencil()
         && texture->sampleCount() == wantedSampleCount())
         return true;
 
@@ -206,6 +271,7 @@ bool Layer::ensureTexture(float scale)
     descriptor.format = colorFormat;
     descriptor.renderTarget = true;
     descriptor.depth = wantsDepth();
+    descriptor.stencil = wantsStencil();
     descriptor.sampleCount = wantedSampleCount();
 
     texture.emplace(GPU::Device::shared(), descriptor, nullptr);
@@ -213,10 +279,26 @@ bool Layer::ensureTexture(float scale)
     if (!texture->isValid())
     {
         texture.reset();
+        ready = false;
+        reportTooLarge(width, height);
         return false;
     }
 
+    reportedTooLarge = false;
     return true;
+}
+
+void Layer::reportTooLarge(int width, int height)
+{
+    if (reportedTooLarge)
+        return;
+
+    reportedTooLarge = true;
+    LOG("eacp: a layer of ",
+        width,
+        "x",
+        height,
+        " pixels could not be given a texture and draws nothing");
 }
 
 void Layer::markRendered()

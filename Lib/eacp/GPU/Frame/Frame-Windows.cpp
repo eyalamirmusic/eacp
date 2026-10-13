@@ -189,7 +189,7 @@ Frame::Frame(Device& device, const OffscreenTarget& target, float backingScaleTo
 
 // The back buffer's size, which the off-screen path carries in a D3D12Drawable
 // of its own - the same pair of numbers beginPass sets the viewport from.
-Graphics::Point Frame::pixelSize() const
+Graphics::Point Frame::nativePixelSize() const
 {
     if (impl->drawable == nullptr)
         return {};
@@ -319,7 +319,7 @@ void Frame::flush()
 }
 
 // Every view's target is B8G8R8A8: the swapchain's and the snapshot's.
-TextureFormat Frame::drawableFormat() const
+TextureFormat Frame::nativeDrawableFormat() const
 {
     return TextureFormat::BGRA8Unorm;
 }
@@ -329,7 +329,7 @@ TextureFormat Frame::drawableFormat() const
 // one is copied out of the back buffer, which is in RENDER_TARGET once a pass
 // has begun on it (always, off screen) and in PRESENT before, and goes back to
 // that state after.
-bool Frame::copyDrawable(const Texture& destination)
+bool Frame::copyNativeDrawable(const Texture& destination)
 {
     if (impl->commands == nullptr || impl->drawable == nullptr
         || impl->drawable->backBuffer == nullptr
@@ -386,7 +386,7 @@ bool Frame::copyDrawable(const Texture& destination)
     return true;
 }
 
-RenderPass Frame::beginPass(const RenderPassDescriptor& descriptor)
+RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
 {
     if (impl->commands == nullptr || impl->drawable == nullptr
         || impl->drawable->backBuffer == nullptr)
@@ -647,7 +647,7 @@ ComputePass Frame::beginCompute(std::string_view label, DispatchOrder order)
     return ComputePass(encoder, order);
 }
 
-bool Frame::isValid() const
+bool Frame::isNativeValid() const
 {
     return impl->commands != nullptr && impl->drawable != nullptr
            && impl->drawable->backBuffer != nullptr;
