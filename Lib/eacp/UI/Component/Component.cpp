@@ -12,6 +12,8 @@ Component::Component() = default;
 
 Component::~Component()
 {
+    lifetimeToken.reset();
+
     if (capturingLayer != nullptr)
         capturingLayer->setContent(nullptr);
 
@@ -540,6 +542,14 @@ void Component::mouseUp(const MouseEvent&) {}
 void Component::mouseMove(const MouseEvent&) {}
 
 void Component::mouseDoubleClick(const MouseEvent&) {}
+
+std::weak_ptr<bool> Component::getLifetimeToken() const
+{
+    if (lifetimeToken == nullptr)
+        lifetimeToken = std::make_shared<bool>(true);
+
+    return lifetimeToken;
+}
 
 bool Component::mouseWheelMove(const MouseEvent&)
 {

@@ -5,6 +5,7 @@
 #include "Component/GPUComponent.h"
 #include "Component/KeyEvent.h"
 #include "Component/MouseEvent.h"
+#include "Component/SafePointer.h"
 #include "DragAndDrop/DragAndDrop.h"
 #include "DragAndDrop/FileDropTarget.h"
 #include "Graphics/Graphics.h"

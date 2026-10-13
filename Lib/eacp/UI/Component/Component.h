@@ -5,9 +5,13 @@
 #include "MouseEvent.h"
 
 #include <functional>
+#include <memory>
 
 namespace eacp::UI
 {
+template <typename T>
+class SafePointer;
+
 class ComponentHost;
 class DragAndDropTarget;
 class DragAndDropContainer;
@@ -329,6 +333,9 @@ public:
     const Vector<Layer*>& getLayers() const;
 
 private:
+    template <typename>
+    friend class SafePointer;
+
     friend class ComponentHost;
     friend class PathShape;
     friend class Layer;
@@ -346,6 +353,11 @@ private:
     void removeLayer(Layer& layer);
 
     ComponentHost* findHost() const;
+
+    // What a SafePointer watches: made on first ask, so a component nobody
+    // points at safely costs nothing, and released as the destructor starts.
+    std::weak_ptr<bool> getLifetimeToken() const;
+    mutable std::shared_ptr<bool> lifetimeToken;
 
     // Asks the host for a frame without saying that anything this component
     // draws has changed -- what a move, a reorder or a visibility change needs,
@@ -413,3 +425,5 @@ private:
     eacp::Graphics::MouseCursor cursor = eacp::Graphics::MouseCursor::Default;
 };
 } // namespace eacp::UI
+
+#include "SafePointer.h"

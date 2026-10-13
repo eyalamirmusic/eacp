@@ -23,6 +23,7 @@ nano_add_executable(UITests
             OverlayViewTests.cpp
             PopupMenuTests.cpp
             RepaintTests.cpp
+            SafePointerTests.cpp
             ShadowTests.cpp
             SliderTests.cpp
             TabsTests.cpp
