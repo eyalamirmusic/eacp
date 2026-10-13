@@ -56,6 +56,40 @@ struct Gradient
     // sorts and clamps.
     Vector<GradientStop> stops;
 
+    // The two-stop ramps most fills are, with juce::ColourGradient's argument
+    // order so a port maps one to one: the first colour at position 0 on
+    // `from`, the second at 1 on `to`.
+    static Gradient linear(Point from,
+                           const Color& fromColour,
+                           Point to,
+                           const Color& toColour);
+
+    // Centred on `centre`, reaching `edgeColour` at the distance to `edge`.
+    static Gradient radial(Point centre,
+                           const Color& centreColour,
+                           Point edge,
+                           const Color& edgeColour);
+
+    // Axis-aligned ramps. The axis sits at x (or y) = 0, which is where
+    // juce::ColourGradient::vertical and ::horizontal put it -- a linear
+    // gradient's colour only depends on the coordinate along its axis, so
+    // where the axis crosses the other one does not matter.
+    static Gradient vertical(const Color& top,
+                             float topY,
+                             const Color& bottom,
+                             float bottomY);
+    static Gradient vertical(const Color& top, const Color& bottom, const Rect& area);
+    static Gradient horizontal(const Color& left,
+                               float leftX,
+                               const Color& right,
+                               float rightX);
+    static Gradient
+        horizontal(const Color& left, const Color& right, const Rect& area);
+
+    // Another stop, anywhere along the ramp. The order stops are added in does
+    // not matter: the baking sorts them.
+    Gradient& addStop(float position, const Color& colour);
+
     bool isEmpty() const;
 };
 

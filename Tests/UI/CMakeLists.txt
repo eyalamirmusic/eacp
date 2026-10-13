@@ -11,6 +11,7 @@ nano_add_executable(UITests
             FileDropTests.cpp
             GPUComponentTests.cpp
             GradientRampsTests.cpp
+            GradientTests.cpp
             ImageBatchTests.cpp
             KeyboardTests.cpp
             ListBoxTests.cpp
