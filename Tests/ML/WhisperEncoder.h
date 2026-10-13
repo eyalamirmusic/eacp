@@ -3,8 +3,7 @@
 // The Whisper tiny.en encoder at its real sizes, over deterministic weights
 // rather than the model's: 80 mel bands, width 384, six heads, four layers,
 // the eighteen audio contexts the live path uses, and a key projection with no
-// bias. MLGraphTests builds and compiles it; MLTests runs it against the fp32
-// reference in EncoderReference.h.
+// bias. MLGraphTests builds and compiles it.
 
 #include "TestPrograms.h"
 
@@ -23,7 +22,6 @@ constexpr auto headWidth = width / heads;
 constexpr auto layerCount = 4;
 constexpr auto kernel = 3;
 constexpr auto maxContext = 1500;
-constexpr auto maxFrames = 2 * maxContext;
 
 inline Vector<int> audioContexts()
 {
@@ -142,25 +140,6 @@ inline const Weights& sharedWeights()
 {
     static const auto weights = makeWeights();
     return weights;
-}
-
-// A mel window of maxFrames frames per band, band-major, the way the kernel
-// path's binding holds it; a context of N reads the first 2N of each band.
-inline Vector<float> melWindow()
-{
-    return TestPrograms::seededValues(bands * maxFrames, 7777u, 0.7f);
-}
-
-inline Vector<float> melFor(const Vector<float>& window, int context)
-{
-    auto frames = 2 * context;
-    auto mel = Vector<float> {};
-
-    for (auto band = 0; band < bands; ++band)
-        for (auto frame = 0; frame < frames; ++frame)
-            mel.add(window[band * maxFrames + frame]);
-
-    return mel;
 }
 
 inline Shape melShape(int context)

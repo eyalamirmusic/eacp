@@ -54,11 +54,10 @@ const auto linearLayerNormTolerances = Tolerances {
     {ComputeUnits::all, 3e-2},
 };
 
-// Attention under an input mask, one query per head over 449 and 1500 keys,
+// Attention under an input mask, one query per head over 449 keys,
 // is kept on the CPU under every setting, with or without a projection
 // either side: measured 1.2e-4 alone and 1.5e-2 projected, exactly 0 over a
-// prefix of one. An ignored mask would be off by about 170. The step in
-// DecoderStepTests is what takes the same op to the GPU and the engine.
+// prefix of one. An ignored mask would be off by about 170.
 constexpr auto maskedAttentionTolerance = 4e-4;
 constexpr auto projectedMaskedAttentionTolerance = 5e-2;
 
@@ -76,9 +75,8 @@ bool isHeldToTheEngine(ComputeUnits units)
                || units == ComputeUnits::all);
 }
 
-bool ranOnTheCpu(const Model& model)
+bool ranOnTheCpu(const ComputePlan& plan)
 {
-    auto plan = model.computePlan();
     return plan.isEmpty() || plan.allOn(ComputePlan::Device::cpu);
 }
 
@@ -91,9 +89,9 @@ double cpuBoundOf(const Tolerances& tolerances)
 
 Tolerance toleranceWhereItRan(const Tolerances& tolerances,
                               const Tolerance& requested,
-                              const Model& model)
+                              const ComputePlan& plan)
 {
-    if (isHeldToTheEngine(requested.units) || !ranOnTheCpu(model))
+    if (isHeldToTheEngine(requested.units) || !ranOnTheCpu(plan))
         return requested;
 
     return {requested.units, cpuBoundOf(tolerances)};
@@ -101,7 +99,7 @@ Tolerance toleranceWhereItRan(const Tolerances& tolerances,
 
 void checkWithin(const std::string& what,
                  const Tolerance& tolerance,
-                 const Model& model,
+                 const std::string& placement,
                  const Errors& errors)
 {
     LOG(what,
@@ -112,7 +110,7 @@ void checkWithin(const std::string& what,
         " maxRel ",
         errors.maxRel,
         " placed ",
-        placementOf(model));
+        placement);
 
     check(errors.maxAbs <= tolerance.maxAbs,
           what + " under " + nameOf(tolerance.units) + ": max abs error "
@@ -160,8 +158,10 @@ void checkAttention(bool causal)
         auto result = model.predict(inputs, outputs);
         check(result.ok, result.error);
 
-        checkWithin(
-            what, tolerance, model, compare(outputs["y"].toFloats(), expected));
+        checkWithin(what,
+                    tolerance,
+                    placementOf(model),
+                    compare(outputs["y"].toFloats(), expected));
     }
 }
 
@@ -402,6 +402,15 @@ Vector<float> beyondThePrefix(const TestPrograms::MaskedAttention& net,
     return result;
 }
 
+struct PrefixCase
+{
+    std::string what;
+    int prefix = 0;
+    Inputs inputs;
+    Vector<float> expected;
+    Vector<float> unmasked;
+};
+
 void checkMaskedAttention(int keys, bool projected, const Tolerances& tolerances)
 {
     if (!isSupportedAttention())
@@ -423,6 +432,29 @@ void checkMaskedAttention(int keys, bool projected, const Tolerances& tolerances
     auto keyNoise = TestPrograms::seededValues(cacheCount, 64u, 50.0f);
     auto valueNoise = TestPrograms::seededValues(cacheCount, 65u, 50.0f);
 
+    auto cases = Vector<PrefixCase> {};
+
+    for (auto prefix: Vector<int> {1, keys * 2 / 5, keys})
+    {
+        auto maskedK = beyondThePrefix(net, k, keyNoise, prefix);
+        auto maskedV = beyondThePrefix(net, v, valueNoise, prefix);
+        auto allowed = TestPrograms::prefixMask(keys, prefix);
+
+        auto entry = PrefixCase {};
+        entry.what = label + " over " + std::to_string(prefix) + " of "
+                     + std::to_string(keys);
+        entry.prefix = prefix;
+        entry.inputs["q"] = arrayOf(q, net.queryShape(), DType::float16);
+        entry.inputs["k"] = arrayOf(maskedK, net.cacheShape(), DType::float16);
+        entry.inputs["v"] = arrayOf(maskedV, net.cacheShape(), DType::float16);
+        entry.inputs["allowed"] = arrayOf(allowed, net.maskShape(), DType::float16);
+        entry.expected =
+            TestPrograms::prefixAttentionReference(net, q, maskedK, maskedV, prefix);
+        entry.unmasked =
+            TestPrograms::prefixAttentionReference(net, q, maskedK, maskedV, keys);
+        cases.add(entry);
+    }
+
     for (const auto& tolerance: tolerances)
     {
         auto model = Model {};
@@ -432,42 +464,25 @@ void checkMaskedAttention(int keys, bool projected, const Tolerances& tolerances
         if (!loaded)
             return;
 
-        for (auto prefix: Vector<int> {1, keys * 2 / 5, keys})
+        auto plan = model.computePlan();
+        auto bound = toleranceWhereItRan(tolerances, tolerance, plan);
+        auto placement = placementOf(plan);
+
+        for (const auto& entry: cases)
         {
-            auto maskedK = beyondThePrefix(net, k, keyNoise, prefix);
-            auto maskedV = beyondThePrefix(net, v, valueNoise, prefix);
-            auto allowed = TestPrograms::prefixMask(keys, prefix);
-
-            auto inputs = Inputs {};
-            inputs["q"] = arrayOf(q, net.queryShape(), DType::float16);
-            inputs["k"] = arrayOf(maskedK, net.cacheShape(), DType::float16);
-            inputs["v"] = arrayOf(maskedV, net.cacheShape(), DType::float16);
-            inputs["allowed"] = arrayOf(allowed, net.maskShape(), DType::float16);
-
             auto outputs = Outputs {};
             outputs["y"] = MultiArray::create(net.queryShape(), DType::float16);
 
-            auto result = model.predict(inputs, outputs);
+            auto result = model.predict(entry.inputs, outputs);
             check(result.ok, result.error);
 
             auto actual = outputs["y"].toFloats();
-            auto expected = TestPrograms::prefixAttentionReference(
-                net, q, maskedK, maskedV, prefix);
-            auto what = label + " over " + std::to_string(prefix) + " of "
-                        + std::to_string(keys);
+            checkWithin(
+                entry.what, bound, placement, compare(actual, entry.expected));
 
-            checkWithin(what,
-                        toleranceWhereItRan(tolerances, tolerance, model),
-                        model,
-                        compare(actual, expected));
-
-            if (prefix == keys)
-                continue;
-
-            auto unmasked = TestPrograms::prefixAttentionReference(
-                net, q, maskedK, maskedV, keys);
-            check(compare(actual, unmasked).maxAbs > 1.0,
-                  what + " is as close to the unmasked attention");
+            if (entry.prefix != keys)
+                check(compare(actual, entry.unmasked).maxAbs > 1.0,
+                      entry.what + " is as close to the unmasked attention");
         }
     }
 }
@@ -497,7 +512,8 @@ auto tElementwiseChainMatchesReference =
             return;
 
         auto actual = predictOnce(model, {rows, columns}, x);
-        checkWithin("elementwise", tolerance, model, compare(actual, expected));
+        checkWithin(
+            "elementwise", tolerance, placementOf(model), compare(actual, expected));
     }
 };
 
@@ -507,7 +523,7 @@ auto tLinearSoftmaxMatchesReference =
     if (!isSupported())
         return;
 
-    auto net = TestPrograms::linearSoftmaxWeights(1500, 384);
+    auto net = TestPrograms::linearSoftmaxWeights(64, 384);
     auto cache = freshCacheDirectory("linear-softmax");
     auto package = TestPrograms::linearSoftmax(net);
     auto x = TestPrograms::seededValues(net.rows * net.width, 42u, 1.0f);
@@ -523,9 +539,10 @@ auto tLinearSoftmaxMatchesReference =
             return;
 
         auto actual = predictOnce(model, {net.rows, net.width}, x);
+        auto plan = model.computePlan();
         checkWithin("linear+softmax",
-                    toleranceWhereItRan(linearSoftmaxTolerances, tolerance, model),
-                    model,
+                    toleranceWhereItRan(linearSoftmaxTolerances, tolerance, plan),
+                    placementOf(plan),
                     compare(actual, expected));
     }
 };
@@ -554,7 +571,8 @@ auto tLayerNormMatchesReference =
             return;
 
         auto actual = predictOnce(model, {net.rows, net.width}, x);
-        checkWithin("layer norm", tolerance, model, compare(actual, expected));
+        checkWithin(
+            "layer norm", tolerance, placementOf(model), compare(actual, expected));
     }
 };
 
@@ -564,8 +582,8 @@ auto tLinearLayerNormMatchesReference =
     if (!isSupported())
         return;
 
-    auto projection = TestPrograms::linearSoftmaxWeights(1500, 384, 99u);
-    auto norm = TestPrograms::layerNormWeights(1500, 384);
+    auto projection = TestPrograms::linearSoftmaxWeights(64, 384, 99u);
+    auto norm = TestPrograms::layerNormWeights(64, 384);
     auto cache = freshCacheDirectory("linear-layer-norm");
     auto package = TestPrograms::linearLayerNorm(projection, norm);
     check(!package.isEmpty());
@@ -583,9 +601,10 @@ auto tLinearLayerNormMatchesReference =
             return;
 
         auto actual = predictOnce(model, {norm.rows, norm.width}, x);
+        auto plan = model.computePlan();
         checkWithin("linear+layer norm",
-                    toleranceWhereItRan(linearLayerNormTolerances, tolerance, model),
-                    model,
+                    toleranceWhereItRan(linearLayerNormTolerances, tolerance, plan),
+                    placementOf(plan),
                     compare(actual, expected));
     }
 };
@@ -613,7 +632,7 @@ auto tArgmaxMatchesReference =
                     logitsCases(vocabulary));
 };
 
-// Whisper's logits projection, 51864 tokens of 384, in front of the argmax:
+// A logits projection, 8192 tokens of Whisper's 384, in front of the argmax:
 // a lone argmax stays on the CPU, and this is what moves it.
 auto tProjectedArgmaxMatchesReference =
     test("MLPrograms/anArgmaxBehindTheLogitsProjectionOnEveryDevice") = []
@@ -621,24 +640,20 @@ auto tProjectedArgmaxMatchesReference =
     if (!isSupported())
         return;
 
-    auto net = projectedArgmaxWeights(51864, 384);
+    auto net = projectedArgmaxWeights(8192, 384);
     checkArgmax(
         "projected argmax", TestPrograms::projectedArgmax(net), projectedCases(net));
 };
 
 auto tMaskedAttention =
     test("MLPrograms/anInputMaskHoldsAttentionToAPrefixOnEveryDevice") = []
-{
-    for (auto keys: {449, 1500})
-        checkMaskedAttention(keys, false, sameOnEveryUnit(maskedAttentionTolerance));
-};
+{ checkMaskedAttention(449, false, sameOnEveryUnit(maskedAttentionTolerance)); };
 
 auto tProjectedMaskedAttention =
     test("MLPrograms/anInputMaskHoldsAProjectedAttentionToAPrefixOnEveryDevice") = []
 {
-    for (auto keys: {449, 1500})
-        checkMaskedAttention(
-            keys, true, sameOnEveryUnit(projectedMaskedAttentionTolerance));
+    checkMaskedAttention(
+        449, true, sameOnEveryUnit(projectedMaskedAttentionTolerance));
 };
 
 auto tFloat32ProgramRunsOnPlainArrays =

@@ -14,6 +14,10 @@ target_sources(eacp-ml-graph PRIVATE
 
 set_default_target_setting(eacp-ml-graph)
 eacp_enable_unity_build(eacp-ml-graph)
+
+# Building a package converts every weight to fp16 and writes it out byte by
+# byte, tens of millions of them for a real model, which is pointless at -O0.
+eacp_force_optimization(eacp-ml-graph)
 add_ide_sources(eacp-ml-graph)
 
 if (NOT EACP_HAS_COREML)

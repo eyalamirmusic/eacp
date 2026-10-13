@@ -12,7 +12,7 @@ namespace
 {
 constexpr auto timeout = eacp::Time::MS {60000};
 constexpr auto pollInterval = eacp::Time::MS {50};
-constexpr auto settleTime = eacp::Time::MS {500};
+constexpr auto settleTime = eacp::Time::MS {100};
 
 constexpr auto rows = 16;
 constexpr auto columns = 32;

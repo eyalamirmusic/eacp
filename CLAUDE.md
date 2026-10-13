@@ -955,7 +955,7 @@ under `MIL/` (`MILWriter`, a hand-rolled `Protobuf::Writer`, `Blob::Writer`,
 `Half.h`) that `build()` turns into a `Package`, which `Package::write` lays
 out as an `.mlpackage`. Errors are recorded, not thrown: a failing op returns
 an invalid `Tensor`, `isValid()`/`errors()` report it, and `build()` is then
-empty. `MLGraphTests` (90 `MLGraph/` cases) runs on macOS, Windows and Linux.
+empty. `MLGraphTests` (88 `MLGraph/` cases) runs on macOS, Windows and Linux.
 `eacp-ml` (`EACP_HAS_COREML`: `EACP_HAS_GPU` and Apple, a PUBLIC define) is
 `ML::Model` under `Model/`: `load` from a `Package`, an `.mlpackage` or an
 `.mlmodelc`, `ComputeUnits` selection, `predict` blocking or `predictAsync`
@@ -975,10 +975,11 @@ rename-to-`.trash` the temporaries take. Before macOS 27 a model with
 enumerated input shapes placed on the CPU traps in BNNS on its first
 prediction, so `load` refuses one where the CPU is certain (`isCpuOnly`:
 `cpu`, or `cpuAndNeuralEngine` with no engine) unless
-`enumeratedShapesRunOnTheCpu()`. `MLTests` (63 cases, `TestMain.cpp`
-of its own) builds Whisper
-tiny.en's encoder and decode step at real sizes against fp32 references;
-`EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners have none).
+`enumeratedShapesRunOnTheCpu()`. `MLTests` (53 cases, `TestMain.cpp`
+of its own) checks small programs on every compute-unit setting against fp32
+references; `EACP_REQUIRE_ANE=1` asserts Neural Engine placement (CI's runners
+have none). Both suites and `eacp-ml-graph` are force-optimised, and every ML
+case runs in about half a second or less.
 `Apps/ML/Projection` is the worked example, and the design record, decisions
 and measurements are under "Design record" in `Lib/eacp/ML/README.md`.
 

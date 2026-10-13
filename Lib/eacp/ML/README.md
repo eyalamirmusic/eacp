@@ -6,9 +6,10 @@ against eacp keeps its `ComputeProgram` kernels on every platform; this module
 is the second way to run the same maths on Apple hardware, as a fixed graph of
 whole-tensor ops that Core ML compiles ahead of time and places on the CPU,
 the GPU or the Apple Neural Engine. The net that proved it is
-[WhisperEACP](https://github.com/eyalamirmusic/WhisperEACP): its tiny.en
-encoder and decode step are built in `Tests/ML` at their real sizes over
-seeded weights and checked against fp32 scalar references.
+[WhisperEACP](https://github.com/eyalamirmusic/WhisperEACP), whose own tests
+check its tiny.en encoder against the kernel path; `Tests/ML` builds the
+encoder's graph at its real sizes and runs small programs against fp32 scalar
+references.
 
 It is not a fourth backend of `GPU::ComputePass`. A kernel body is one
 thread's view — `threadId()`, `shared<>`, `barrier()`, atomics — and Core ML
@@ -258,8 +259,9 @@ against an fp32 reference, max abs error and the device Core ML chose:
 | linear, then layer norm | 3.7e-2, CPU | 5.0e-3, GPU | 9.4e-3, engine |
 | elementwise, layer norm alone, attention `[1, 128, 64]` | CPU | CPU | CPU |
 
-The seeded tiny.en encoder in `MLTests` (`WhisperEncoder.h`, 18 enumerated
-contexts), max abs at 1500 / 448 / 576 rows and the median prediction:
+The seeded tiny.en encoder (`WhisperEncoder.h`, 18 enumerated contexts; the
+`MLEncoder` suite that ran it is in git history), max abs at 1500 / 448 / 576
+rows and the median prediction:
 
 | setting | placed | max abs | 1500 rows | 448 rows |
 | --- | --- | --- | --- | --- |
@@ -286,8 +288,9 @@ context. The engine is shared with the system: under load a live stream's
 engine runs went from 26.6 ms to 61–106 ms while the kernel column moved by
 1–2 ms.
 
-The tiny.en decode step (`WhisperDecoderStep.h`, 196 ops, the KV cache as
-inputs, 12 MB a prediction), median of 25 predictions after five warm-ups,
+The tiny.en decode step (`WhisperDecoderStep.h` and the `MLDecoderStep`
+suite, both in git history; 196 ops, the KV cache as inputs, 12 MB a
+prediction), median of 25 predictions after five warm-ups,
 against a Metal step of 332–409 µs all in:
 
 | setting | placed | max abs, logits | predict, prefix 1 / 447 | caches resident |
@@ -335,13 +338,17 @@ prediction once `EventLoop::runFor` on macOS stopped waking a frame late
 
 ## Tests and examples
 
-`MLGraphTests` (90 `MLGraph/` cases: shapes, text, protobuf, blob, package,
-`apply`, and the encoder and decoder graphs) runs on every lane but iOS, and
-where `eacp-ml` exists every package it builds is also compiled and loaded by
-Core ML. `MLTests` (63 cases over `MLMultiArray`, `MLAsync`, `MLCache`,
-`MLPlacement`, `MLPrograms`, `MLEncoder` and `MLDecoderStep`) needs Core ML;
+`MLGraphTests` (88 `MLGraph/` cases: shapes, text, protobuf, blob, package,
+`apply`, and the encoder graph at Whisper's real sizes) runs on every lane but
+iOS, and where `eacp-ml` exists every package it builds is also compiled and
+loaded by Core ML on the CPU and GPU. `MLTests` (53 cases over `MLMultiArray`,
+`MLAsync`, `MLCache`, `MLPlacement` and `MLPrograms`) needs Core ML;
 `EACP_REQUIRE_ANE=1` makes it assert Neural Engine placement, which CI leaves
-unset because its macOS runners have none. `Apps/ML/Projection` builds the
+unset because its macOS runners have none. Every case runs in about half a
+second or less: the Whisper-sized encoder and decode-step suites took 30 s and
+more each, mostly in the Neural Engine's compile, and were removed rather than
+shrunk, because a reduced encoder behaves differently on the engine (Core ML
+refuses its output backings as dynamic). `Apps/ML/Projection` builds the
 graph above, loads it under `--units all|cpu-ane|cpu-gpu|cpu`, prints the
 compute plan and times the prediction; `Apps/ML/Spike` is the raw
 Objective-C++ spike the module grew out of, kept as a reference for the file

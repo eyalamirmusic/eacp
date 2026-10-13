@@ -137,13 +137,18 @@ inline Errors compare(const Vector<float>& actual, const Vector<float>& expected
     return errors;
 }
 
-inline std::string placementOf(const Model& model)
+inline std::string placementOf(const ComputePlan& plan)
 {
     auto text = std::string {};
 
-    for (const auto& op: model.computePlan().ops)
+    for (const auto& op: plan.ops)
         text += (text.empty() ? "" : " ") + op.type + ":" + toString(op.device);
 
     return text.empty() ? "(no plan)" : text;
+}
+
+inline std::string placementOf(const Model& model)
+{
+    return placementOf(model.computePlan());
 }
 } // namespace ModelTests

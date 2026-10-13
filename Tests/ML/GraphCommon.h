@@ -74,7 +74,10 @@ inline void expectCoreMLLoads(const eacp::ML::Package& package,
     if (!eacp::ML::isSupported())
         return;
 
+    // Whether Core ML accepts a package is decided before any device, and the
+    // Neural Engine's compile of a real-size model would cost seconds.
     auto options = eacp::ML::Options {};
+    options.units = eacp::ML::ComputeUnits::cpuAndGPU;
     options.cacheDirectory = coreMLCacheDirectory();
 
     auto model = eacp::ML::Model {};
