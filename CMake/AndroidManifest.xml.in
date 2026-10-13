@@ -10,7 +10,7 @@
 
     <application android:label="@EACP_APK_LABEL@"
             @EACP_APK_ICON_ATTRIBUTE@
-            android:hasCode="false"
+            android:hasCode="true"
             android:usesCleartextTraffic="@EACP_APK_CLEARTEXT_TRAFFIC@"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <activity android:name="android.app.NativeActivity"
