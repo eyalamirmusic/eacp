@@ -85,6 +85,7 @@ struct CountingView final : GPUView
 
         lastWidth = pass.targetWidth();
         lastHeight = pass.targetHeight();
+        lastFrameScale = frame.backingScale();
     }
 
     void update(Threads::FrameTime time) override
@@ -98,6 +99,7 @@ struct CountingView final : GPUView
     bool everyFrameWasValid = true;
     int lastWidth = 0;
     int lastHeight = 0;
+    float lastFrameScale = 0.f;
     Threads::FrameTime lastTime;
 };
 
@@ -294,6 +296,58 @@ auto tResizeFollowsTheView = test("Present/resizeReachesTheSwapchain") = []
           "the swapchain never followed the view's new size");
 
     check(matchesPixels(view.lastHeight, 100.f, view.backingScale()));
+};
+
+// Weston has wp_viewporter, so a Wayland subsurface stretches whatever it is
+// given and the swapchain shrinks; an X11 child window takes its own size and
+// nothing else, so there the scale is recorded and the swapchain stays whole.
+auto tRenderScaleReachesTheSwapchain =
+    test("Present/renderScaleReachesTheSwapchain") = []
+{
+    if (noDeviceOrDisplay())
+        return;
+
+    auto content = Graphics::View {};
+    auto view = CountingView {};
+    auto notifications = 0;
+    view.onBackingScaleChanged = [&](float) { ++notifications; };
+
+    content.addSubview(view);
+    view.setBounds({0.f, 0.f, 160.f, 120.f});
+
+    auto window = Graphics::Window {windowSized(320, 240)};
+    showWith(window, content);
+
+    check(pumpUntil(presentTimeout, [&] { return view.renders > 0; }),
+          "no frame was presented within the timeout");
+
+    const auto full = view.backingScale();
+    const auto stretches = !embeddingIsPossible();
+    const auto expected = stretches ? full * 0.5f : full;
+
+    view.setRenderScale(0.5f);
+    check(view.renderScale() == 0.5f);
+
+    check(pumpUntil(presentTimeout,
+                    [&]
+                    {
+                        return matchesPixels(view.lastWidth, 160.f, expected)
+                               && matchesPixels(view.lastHeight, 120.f, expected);
+                    }),
+          "the swapchain did not follow the render scale");
+
+    check(view.backingScale() == expected);
+    check(view.lastFrameScale == expected);
+    check(notifications == (stretches ? 1 : 0));
+
+    view.setRenderScale(1.f);
+
+    check(pumpUntil(presentTimeout,
+                    [&] { return matchesPixels(view.lastWidth, 160.f, full); }),
+          "the swapchain did not return to the full size");
+
+    check(matchesPixels(view.lastHeight, 120.f, full));
+    check(view.backingScale() == full);
 };
 
 auto tVisibilityStopsAndResumes =
