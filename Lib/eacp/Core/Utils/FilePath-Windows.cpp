@@ -94,4 +94,19 @@ FilePath FilePath::cacheDirectory()
 {
     return knownFolder(FOLDERID_LocalAppData);
 }
+
+FilePath FilePath::commonAppDataDirectory()
+{
+    return knownFolder(FOLDERID_ProgramData);
+}
+
+FilePath FilePath::applicationsDirectory()
+{
+    return knownFolder(FOLDERID_ProgramFiles);
+}
+
+FilePath FilePath::appGroupContainerDirectory(std::string_view /*groupID*/)
+{
+    return {};
+}
 } // namespace eacp

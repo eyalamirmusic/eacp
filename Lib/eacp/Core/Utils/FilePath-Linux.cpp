@@ -106,4 +106,19 @@ FilePath FilePath::cacheDirectory()
     auto path = getEnvValue("XDG_CACHE_HOME");
     return path.empty() ? homeDirectory() / ".cache" : FilePath {path};
 }
+
+FilePath FilePath::commonAppDataDirectory()
+{
+    return FilePath {"/opt"};
+}
+
+FilePath FilePath::applicationsDirectory()
+{
+    return FilePath {"/usr"};
+}
+
+FilePath FilePath::appGroupContainerDirectory(std::string_view /*groupID*/)
+{
+    return {};
+}
 } // namespace eacp

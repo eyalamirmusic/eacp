@@ -25,7 +25,11 @@ them, so apps inherit the look, feel, and performance of the host OS:
   archives. A directory is walked with `Files::forEachEntry` (a visitor that
   can prune a subtree or stop early, with unreadable entries reported to a
   callback) or collected with `listDirectory` / `listFiles`, recursively or
-  not, hidden entries and symlinks by choice.
+  not, hidden entries and symlinks by choice, filtered by a wildcard such as
+  `"*.wav; *.flac"`. `copyFile`, `copyDirectory`, `moveFile`, `removeFile`,
+  `appendFile` and `writeFileAt` change files and report failure as `false`;
+  `FileWriter` streams into one, `TemporaryFile` deletes its path when it goes
+  out of scope, and `legalFileName` / `nonexistentSibling` name new ones.
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame
@@ -337,6 +341,22 @@ parameters, encoding each once:
 auto url = eacp::HTTP::URL("https://api.example.com/search");
 url.addParameter("q", "rock & roll").addParameter("page", "2");
 auto res = eacp::HTTP::Request(url.toString()).perform();
+```
+
+Saving a file under a name the user typed, without overwriting anything:
+
+```cpp
+using namespace eacp;
+
+auto folder = FilePath::documentsDirectory() / "Presets";
+auto name = Files::legalFileName("Kick: 808 / Hard"); // "Kick 808  Hard"
+auto path = Files::nonexistentSibling((folder / name).withExtension("preset"));
+
+Files::writeFileAtomically(path, bytes);
+
+auto options = Files::DirectoryOptions {};
+options.pattern = "*.wav; *.flac";
+auto samples = Files::listFiles(FilePath::musicDirectory(), options);
 ```
 
 More examples live under [`Apps/`](Apps), grouped by the module they exercise:

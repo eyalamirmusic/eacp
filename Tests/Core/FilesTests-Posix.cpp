@@ -220,6 +220,55 @@ auto tUnreadableDirectory = test("Files/anUnreadableDirectoryReachesOnError") = 
     std::filesystem::remove_all(dir);
 };
 
+auto tCopyDirectoryKeepsSymlinks =
+    test("FilesCopyMove/copyDirectoryCopiesSymlinksAsSymlinks") = []
+{
+    auto dir = scratchDirectory("copymove-symlinks");
+    writeTestFile(dir / "src/real.txt", "real");
+    std::filesystem::create_symlink("real.txt", dir / "src/link.txt");
+    std::filesystem::create_directory_symlink("..", dir / "src/up");
+
+    check(
+        eacp::Files::copyDirectory(FilePath {dir / "src"}, FilePath {dir / "dst"}));
+
+    check(std::filesystem::is_symlink(dir / "dst/link.txt"));
+    check(std::filesystem::read_symlink(dir / "dst/link.txt") == "real.txt");
+    check(readTestFile(dir / "dst/link.txt") == "real");
+    check(std::filesystem::is_symlink(dir / "dst/up"));
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tRemoveFileTakesALink =
+    test("FilesCopyMove/removeFileRemovesALinkNotItsTarget") = []
+{
+    auto dir = scratchDirectory("copymove-remove-link");
+    writeTestFile(dir / "real/a.txt", "a");
+    std::filesystem::create_directory_symlink(dir / "real", dir / "link");
+
+    check(eacp::Files::removeFile(FilePath {dir / "link"}));
+    check(!std::filesystem::exists(std::filesystem::symlink_status(dir / "link")));
+    check(std::filesystem::exists(dir / "real/a.txt"));
+
+    std::filesystem::remove_all(dir);
+};
+
+auto tMoveLinkIntoItsTarget =
+    test("FilesCopyMove/moveFileMovesALinkIntoTheDirectoryItNames") = []
+{
+    auto dir = scratchDirectory("copymove-move-link");
+    writeTestFile(dir / "real/a.txt", "a");
+    std::filesystem::create_directory_symlink(dir / "real", dir / "link");
+
+    check(eacp::Files::moveFile(FilePath {dir / "link"},
+                                FilePath {dir / "real/link"}));
+    check(std::filesystem::is_symlink(dir / "real/link"));
+    check(!std::filesystem::exists(std::filesystem::symlink_status(dir / "link")));
+    check(readTestFile(dir / "real/a.txt") == "a");
+
+    std::filesystem::remove_all(dir);
+};
+
 #ifdef __APPLE__
 auto tFinderHidden = test("Files/aFinderHiddenFileIsHiddenWithoutADot") = []
 {

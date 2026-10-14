@@ -78,4 +78,30 @@ FilePath FilePath::cacheDirectory()
 {
     return searchPathDirectory(NSCachesDirectory);
 }
+
+FilePath FilePath::commonAppDataDirectory()
+{
+    return FilePath {"/Library"};
+}
+
+FilePath FilePath::applicationsDirectory()
+{
+    return FilePath {"/Applications"};
+}
+
+FilePath FilePath::appGroupContainerDirectory(std::string_view groupID)
+{
+    if (groupID.empty())
+        return {};
+
+    auto pool = ObjC::AutoReleasePool();
+    auto* identifier = Strings::toNSString(std::string {groupID});
+    auto* url = [[NSFileManager defaultManager]
+        containerURLForSecurityApplicationGroupIdentifier:identifier];
+
+    if (url == nil || url.path == nil)
+        return {};
+
+    return FilePath {Strings::toStdString(url.path)};
+}
 } // namespace eacp

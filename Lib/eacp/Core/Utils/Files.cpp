@@ -2,8 +2,12 @@
 #include "FilesPlatform.h"
 #include "StdPath.h"
 
+#include "../Platform/Platform.h"
+#include "../Plugins/ModuleInfo.h"
+
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -161,6 +165,529 @@ bool removeAll(const FilePath& path)
     return !error;
 }
 
+bool exists(const FilePath& path)
+{
+    auto ec = std::error_code {};
+    return std::filesystem::exists(toStdPath(path), ec);
+}
+
+bool isFile(const FilePath& path)
+{
+    auto ec = std::error_code {};
+    return std::filesystem::is_regular_file(toStdPath(path), ec);
+}
+
+bool isDirectory(const FilePath& path)
+{
+    auto ec = std::error_code {};
+    return std::filesystem::is_directory(toStdPath(path), ec);
+}
+
+namespace
+{
+// Anything at all at path, a dangling symlink included: what a copy or a move
+// would have to replace, and what a fresh name must not collide with.
+bool somethingAt(const std::filesystem::path& path)
+{
+    auto ec = std::error_code {};
+    return std::filesystem::exists(std::filesystem::symlink_status(path, ec));
+}
+
+bool createParentOf(const std::filesystem::path& path)
+{
+    if (!path.has_parent_path())
+        return true;
+
+    auto ec = std::error_code {};
+    std::filesystem::create_directories(path.parent_path(), ec);
+    return !ec;
+}
+
+bool isSameEntry(const std::filesystem::path& a, const std::filesystem::path& b)
+{
+    auto ec = std::error_code {};
+    return std::filesystem::equivalent(a, b, ec) && !ec;
+}
+
+// True when `inner` is `outer` or lies somewhere below it, so a recursive
+// copy of outer into inner would never end.
+bool isWithin(const std::filesystem::path& inner, const std::filesystem::path& outer)
+{
+    auto innerError = std::error_code {};
+    auto outerError = std::error_code {};
+    auto canonicalInner = std::filesystem::weakly_canonical(inner, innerError);
+    auto canonicalOuter = std::filesystem::weakly_canonical(outer, outerError);
+
+    if (innerError || outerError)
+        return false;
+
+    auto relative = canonicalInner.lexically_relative(canonicalOuter);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
+bool copyEntry(const std::filesystem::path& from, const std::filesystem::path& to)
+{
+    auto ec = std::error_code {};
+    const auto status = std::filesystem::symlink_status(from, ec);
+
+    if (ec)
+        return false;
+
+    if (std::filesystem::is_symlink(status))
+        std::filesystem::copy_symlink(from, to, ec);
+    else if (std::filesystem::is_directory(status))
+        std::filesystem::copy(from,
+                              to,
+                              std::filesystem::copy_options::recursive
+                                  | std::filesystem::copy_options::copy_symlinks,
+                              ec);
+    else
+        std::filesystem::copy_file(
+            from, to, std::filesystem::copy_options::overwrite_existing, ec);
+
+    return !ec;
+}
+
+// The rename errors that mean "something is already at the target", as
+// opposed to a missing permission or a full disk. Windows reports a
+// directory in the way as access denied.
+bool isTargetInTheWay(const std::error_code& ec)
+{
+    if (ec == std::errc::file_exists || ec == std::errc::directory_not_empty
+        || ec == std::errc::is_a_directory)
+        return true;
+
+    if constexpr (Platform::isWindows())
+        return ec == std::errc::permission_denied;
+
+    return false;
+}
+
+bool writeBytes(std::ostream& stream, Span<const std::uint8_t> bytes)
+{
+    stream.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    stream.flush();
+
+    return static_cast<bool>(stream);
+}
+} // namespace
+
+bool copyFile(const FilePath& from, const FilePath& to)
+{
+    const auto source = toStdPath(from);
+    const auto target = toStdPath(to);
+
+    if (!isFile(from) || !createParentOf(target))
+        return false;
+
+    if (isSameEntry(source, target))
+        return true;
+
+    auto ec = std::error_code {};
+    std::filesystem::copy_file(
+        source, target, std::filesystem::copy_options::overwrite_existing, ec);
+
+    return !ec;
+}
+
+bool copyDirectory(const FilePath& from, const FilePath& to)
+{
+    const auto source = toStdPath(from);
+    const auto target = toStdPath(to);
+
+    // Either way round the replace below would delete the source.
+    if (!isDirectory(from) || isWithin(target, source) || isWithin(source, target))
+        return false;
+
+    if (!removeAll(to) || !createParentOf(target))
+        return false;
+
+    auto ec = std::error_code {};
+    std::filesystem::copy(source,
+                          target,
+                          std::filesystem::copy_options::recursive
+                              | std::filesystem::copy_options::copy_symlinks,
+                          ec);
+
+    return !ec;
+}
+
+bool moveFile(const FilePath& from, const FilePath& to)
+{
+    const auto source = toStdPath(from);
+    const auto target = toStdPath(to);
+
+    if (!somethingAt(source))
+        return false;
+
+    if (from == to)
+        return true;
+
+    // A case-only rename on a case-insensitive volume is the same entry, and
+    // neither inside nor above itself.
+    const auto sameEntry = isSameEntry(source, target);
+
+    // Onto one of its own ancestors: replacing the target would delete the
+    // source with it.
+    if (!sameEntry && isWithin(source, target))
+        return false;
+
+    // Into its own subtree. symlink_status: a link is moved, not followed.
+    auto statusError = std::error_code {};
+    const auto sourceIsDirectory = std::filesystem::is_directory(
+        std::filesystem::symlink_status(source, statusError));
+
+    if (sourceIsDirectory && !sameEntry && isWithin(target, source))
+        return false;
+
+    if (!createParentOf(target))
+        return false;
+
+    auto ec = std::error_code {};
+    std::filesystem::rename(source, target, ec);
+
+    if (!ec)
+        return true;
+
+    // A rename does not replace a non-empty directory (nor, on Windows, a
+    // directory at all), so clear the way and try once more - but only when
+    // the target is what stopped it.
+    if (isTargetInTheWay(ec) && somethingAt(target) && !sameEntry)
+    {
+        if (!removeAll(to))
+            return false;
+
+        ec.clear();
+        std::filesystem::rename(source, target, ec);
+
+        if (!ec)
+            return true;
+    }
+
+    // Different filesystems: no rename can do it, so copy and remove. Any
+    // other failure leaves both sides as they are.
+    if (ec != std::errc::cross_device_link)
+        return false;
+
+    if (!removeAll(to) || !copyEntry(source, target))
+    {
+        removeAll(to);
+        return false;
+    }
+
+    return removeAll(from);
+}
+
+bool removeFile(const FilePath& path)
+{
+    const auto fsPath = toStdPath(path);
+    auto ec = std::error_code {};
+    const auto status = std::filesystem::symlink_status(fsPath, ec);
+
+    if (ec || !std::filesystem::exists(status)
+        || std::filesystem::is_directory(status))
+        return false;
+
+    return std::filesystem::remove(fsPath, ec) && !ec;
+}
+
+bool appendFile(const FilePath& path, Span<const std::uint8_t> bytes)
+{
+    const auto fsPath = toStdPath(path);
+
+    if (!createParentOf(fsPath))
+        return false;
+
+    auto stream = std::ofstream(fsPath, std::ios::binary | std::ios::app);
+    return stream && writeBytes(stream, bytes);
+}
+
+bool appendFile(const FilePath& path, std::string_view text)
+{
+    return appendFile(path,
+                      Span {reinterpret_cast<const std::uint8_t*>(text.data()),
+                            (int) text.size()});
+}
+
+bool writeFileAt(const FilePath& path,
+                 std::uint64_t offset,
+                 Span<const std::uint8_t> bytes)
+{
+    const auto fsPath = toStdPath(path);
+
+    if (!createParentOf(fsPath))
+        return false;
+
+    if (!somethingAt(fsPath) && !std::ofstream(fsPath, std::ios::binary))
+        return false;
+
+    auto stream =
+        std::fstream(fsPath, std::ios::binary | std::ios::in | std::ios::out);
+
+    if (!stream)
+        return false;
+
+    stream.seekp(static_cast<std::streamoff>(offset));
+    return stream && writeBytes(stream, bytes);
+}
+
+namespace
+{
+// Byte offsets where each UTF-8 code point of text begins, so lengths and cuts
+// count characters rather than bytes, as JUCE's String does.
+std::vector<std::size_t> codePointStarts(std::string_view text)
+{
+    auto starts = std::vector<std::size_t> {};
+
+    // The first byte always starts a character, even a stray continuation
+    // byte, so no byte is ever skipped over.
+    for (auto index = std::size_t {0}; index < text.size(); ++index)
+        if (index == 0 || (static_cast<unsigned char>(text[index]) & 0xC0) != 0x80)
+            starts.push_back(index);
+
+    return starts;
+}
+
+bool isIllegalInFileName(char character)
+{
+    return std::string_view {"\"#@,;:<>*^|?\\/"}.find(character)
+           != std::string_view::npos;
+}
+} // namespace
+
+std::string legalFileName(std::string_view name)
+{
+    constexpr auto maxLength = std::size_t {128};
+
+    auto legal = std::string {};
+
+    for (auto character: name)
+        if (!isIllegalInFileName(character))
+            legal += character;
+
+    const auto starts = codePointStarts(legal);
+    const auto length = starts.size();
+
+    if (length <= maxLength)
+        return legal;
+
+    const auto byteOf = [&](std::size_t character)
+    { return character < length ? starts[character] : legal.size(); };
+
+    const auto dotByte = legal.find_last_of('.');
+
+    // A dot within the last 11 characters is an extension worth keeping.
+    if (dotByte != std::string::npos)
+    {
+        const auto dot = static_cast<std::size_t>(
+            std::lower_bound(starts.begin(), starts.end(), dotByte)
+            - starts.begin());
+
+        if (dot > 0 && dot + 12 > length)
+            return legal.substr(0, byteOf(maxLength - (length - dot)))
+                   + legal.substr(dotByte);
+    }
+
+    return legal.substr(0, byteOf(maxLength));
+}
+
+namespace
+{
+bool isAllDigits(std::string_view text)
+{
+    return std::all_of(
+        text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
+int parseLeadingNumber(std::string_view digits)
+{
+    auto number = 0;
+    std::from_chars(digits.data(), digits.data() + digits.size(), number);
+    return number;
+}
+} // namespace
+
+FilePath nonexistentChild(const FilePath& directory,
+                          std::string_view prefix,
+                          std::string_view suffix)
+{
+    auto candidate = directory / (std::string {prefix} + std::string {suffix});
+
+    if (!somethingAt(toStdPath(candidate)))
+        return candidate;
+
+    auto base = std::string {prefix};
+    auto number = 1;
+
+    // A name that already ends in "(n)" counts on from n instead of growing
+    // a second pair of brackets.
+    if (Strings::trim(base).ends_with(')'))
+    {
+        const auto open = base.find_last_of('(');
+        const auto close = base.find_last_of(')');
+
+        if (open != std::string::npos && open > 0 && close > open
+            && isAllDigits(
+                std::string_view {base}.substr(open + 1, close - open - 1)))
+        {
+            number = parseLeadingNumber(
+                std::string_view {base}.substr(open + 1, close - open - 1));
+            base.erase(open);
+        }
+    }
+
+    do
+    {
+        auto name =
+            base + "(" + std::to_string(++number) + ")" + std::string {suffix};
+        candidate = directory / name;
+    } while (somethingAt(toStdPath(candidate)));
+
+    return candidate;
+}
+
+FilePath nonexistentSibling(const FilePath& path)
+{
+    if (!somethingAt(toStdPath(path)))
+        return path;
+
+    return nonexistentChild(path.parentDirectory(), path.stem(), path.extension());
+}
+
+namespace
+{
+std::vector<std::string> splitWildcards(std::string_view pattern)
+{
+    auto wildcards = std::vector<std::string> {};
+
+    while (!pattern.empty())
+    {
+        const auto separator = pattern.find_first_of(";,");
+
+        if (auto wildcard = Strings::trim(pattern.substr(0, separator));
+            !wildcard.empty())
+            wildcards.push_back(Strings::toLower(wildcard));
+
+        if (separator == std::string_view::npos)
+            break;
+
+        pattern.remove_prefix(separator + 1);
+    }
+
+    return wildcards;
+}
+
+// One UTF-8 character per element, lowercased when it is ASCII, so '?' takes
+// a whole character and case is ignored.
+std::vector<std::string_view> wildcardCharacters(std::string_view text)
+{
+    auto characters = std::vector<std::string_view> {};
+    const auto starts = codePointStarts(text);
+
+    for (auto index = std::size_t {0}; index < starts.size(); ++index)
+    {
+        const auto end = index + 1 < starts.size() ? starts[index + 1] : text.size();
+        characters.push_back(text.substr(starts[index], end - starts[index]));
+    }
+
+    return characters;
+}
+
+// The classic greedy match with one backtrack point: on a mismatch, the last
+// '*' takes one more character and the rest is tried again.
+bool matchesOneWildcard(std::string_view lowerName, std::string_view wildcard)
+{
+    const auto name = wildcardCharacters(lowerName);
+    const auto pattern = wildcardCharacters(wildcard);
+
+    auto n = std::size_t {0};
+    auto p = std::size_t {0};
+    auto starAt = std::string_view::npos;
+    auto resumeAt = std::size_t {0};
+
+    while (n < name.size())
+    {
+        if (p < pattern.size() && pattern[p] == "*")
+        {
+            starAt = p++;
+            resumeAt = n;
+        }
+        else if (p < pattern.size() && (pattern[p] == "?" || pattern[p] == name[n]))
+        {
+            ++p;
+            ++n;
+        }
+        else if (starAt != std::string_view::npos)
+        {
+            p = starAt + 1;
+            n = ++resumeAt;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    while (p < pattern.size() && pattern[p] == "*")
+        ++p;
+
+    return p == pattern.size();
+}
+
+bool matchesAnyWildcard(std::string_view name,
+                        const std::vector<std::string>& wildcards)
+{
+    if (wildcards.empty())
+        return true;
+
+    const auto lowerName = Strings::toLower(name);
+
+    return std::any_of(wildcards.begin(),
+                       wildcards.end(),
+                       [&](const std::string& wildcard)
+                       { return matchesOneWildcard(lowerName, wildcard); });
+}
+} // namespace
+
+bool matchesWildcard(std::string_view name, std::string_view pattern)
+{
+    return matchesAnyWildcard(name, splitWildcards(pattern));
+}
+
+FilePath applicationPath()
+{
+    auto module = Plugins::getCurrentModulePath();
+
+    if (module.empty())
+        return {};
+
+    if constexpr (Platform::isIOS())
+        return module.parentDirectory();
+
+    if constexpr (Platform::isMac())
+        if (auto bundle = enclosingBundle(module); !bundle.empty())
+            return bundle;
+
+    return module;
+}
+
+FilePath enclosingBundle(const FilePath& binary)
+{
+    constexpr auto bundleTail = std::string_view {"/Contents/MacOS"};
+
+    const auto parent = binary.parentDirectory();
+    const auto& text = parent.str();
+
+    if (text.size() <= bundleTail.size()
+        || !Strings::equalsCaseInsensitive(
+            std::string_view {text}.substr(text.size() - bundleTail.size()),
+            bundleTail))
+        return {};
+
+    return parent.parentDirectory().parentDirectory();
+}
+
 namespace
 {
 EntryKind kindOf(const std::filesystem::file_status& status)
@@ -192,6 +719,7 @@ public:
                     const VisitingFunc& visitorToUse)
         : options(optionsToUse)
         , visitor(visitorToUse)
+        , wildcards(splitWildcards(optionsToUse.pattern))
     {
     }
 
@@ -226,6 +754,9 @@ private:
 
         for (const auto& child: children)
         {
+            if (!passesPattern(child))
+                continue;
+
             const auto verdict = visitor(child);
 
             if (verdict == Visit::stop)
@@ -332,6 +863,16 @@ private:
         return std::filesystem::is_directory(path, ec);
     }
 
+    // The pattern filters files only: a directory is always visited, so the
+    // walk can still reach the matching files below it.
+    bool passesPattern(const DirectoryEntry& entry) const
+    {
+        if (wildcards.empty() || leadsToDirectory(entry, toStdPath(entry.path)))
+            return true;
+
+        return matchesAnyWildcard(entry.path.fileName(), wildcards);
+    }
+
     // False when this directory has been entered before on this walk.
     bool rememberEntered(const std::filesystem::path& directory)
     {
@@ -357,6 +898,7 @@ private:
 
     const DirectoryOptions& options;
     const VisitingFunc& visitor;
+    std::vector<std::string> wildcards;
     std::set<std::filesystem::path> entered;
 };
 } // namespace

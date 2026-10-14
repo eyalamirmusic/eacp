@@ -77,4 +77,21 @@ FilePath FilePath::cacheDirectory()
     auto files = homeDirectory();
     return files.empty() ? files : files.parentDirectory() / "cache";
 }
+
+// An app sees only its own sandbox, so there is no machine-wide data or
+// application folder to point at.
+FilePath FilePath::commonAppDataDirectory()
+{
+    return {};
+}
+
+FilePath FilePath::applicationsDirectory()
+{
+    return {};
+}
+
+FilePath FilePath::appGroupContainerDirectory(std::string_view /*groupID*/)
+{
+    return {};
+}
 } // namespace eacp

@@ -27,11 +27,13 @@ target_sources(eacp-core PRIVATE
         Utils/Environment.cpp
         Utils/File.cpp
         Utils/FilePath.cpp
+        Utils/FileWriter.cpp
         Utils/Files.cpp
         Utils/Logging.cpp
         Utils/MemoryMappedFile.cpp
         Utils/Random.cpp
         Utils/Strings.cpp
+        Utils/TemporaryFile.cpp
         Utils/Time.cpp
         Utils/Zip.cpp)
 

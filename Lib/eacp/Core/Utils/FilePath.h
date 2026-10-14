@@ -72,6 +72,20 @@ public:
     static FilePath appCacheDirectory(std::string_view company,
                                       std::string_view app);
 
+    // Machine-wide application data, shared by every user: /Library on Apple
+    // platforms, ProgramData on Windows, /opt on Linux (JUCE's choice). Empty
+    // on Android.
+    static FilePath commonAppDataDirectory();
+
+    // Where applications are installed: /Applications on Apple platforms,
+    // Program Files on Windows, /usr on Linux. Empty on Android.
+    static FilePath applicationsDirectory();
+
+    // The shared container of an Apple app group, for sandboxed apps and
+    // plugins that share data. Empty when the group is unknown, the id is
+    // empty, or the platform has no app groups.
+    static FilePath appGroupContainerDirectory(std::string_view groupID);
+
     // Builds a path from a native wide string — a Win32 out-parameter, a
     // GetModuleFileNameW buffer. Converts to UTF-8 and normalizes '\' to '/',
     // the same treatment the std::filesystem::path constructor above gets.
@@ -92,6 +106,28 @@ public:
     // "dir/sub" for "dir/sub/image.png"; empty when there is no directory
     // part, mirroring std::filesystem::path::parent_path().
     FilePath parentDirectory() const;
+
+    // "image.png" for "dir/image.png": everything after the last separator.
+    std::string fileName() const;
+
+    // The file name with only its last extension removed: "a.tar" for
+    // "dir/a.tar.gz". A dotfile keeps its whole name.
+    std::string stem() const;
+
+    // Case-insensitive, with or without the leading dot, or several
+    // alternatives separated by ';' ("wav; flac"). An empty argument asks
+    // whether there is no extension at all.
+    bool hasExtension(std::string_view ext) const;
+
+    // The same path with the last extension replaced by ext, given with or
+    // without its dot. An empty ext strips the extension.
+    FilePath withExtension(std::string_view ext) const;
+
+    // A path beside this one: parentDirectory() / name.
+    FilePath sibling(std::string_view name) const;
+
+    // Rooted at '/', or on Windows at a drive letter ("C:") or a UNC share.
+    bool isAbsolute() const;
 
     FilePath operator/(std::string_view part) const;
 

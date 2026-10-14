@@ -994,7 +994,43 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   sorted by name before any visitor call, so the order is deterministic and a
   visitor may delete what it is shown. `Zip::Writer::addDirectory`, the
   `OnlineResources` directory size and the Core ML cache's listing and sweep
-  all go through it rather than a `directory_iterator` of their own
+  all go through it rather than a `directory_iterator` of their own.
+  `DirectoryOptions::pattern` is a `matchesWildcard` list (`;` or `,`
+  separated, trimmed, `*` and `?` over UTF-8 characters, ASCII case ignored)
+  that filters files only, so directories are still visited and descended
+- File operations (`Utils/Files.h`), all `bool` over `std::error_code`, none
+  throwing: `exists`/`isFile`/`isDirectory`; `copyFile` (one regular file,
+  overwrites, makes parents); `copyDirectory` (removes an existing target
+  first, copies symlinks as symlinks, refuses a target inside the source or
+  above it, either of which the removal would destroy); `moveFile` (refuses a
+  target above the source, or inside a directory source; renames; removes the
+  target and renames again only for the errors that mean something is in the
+  way; copies and removes only on `cross_device_link`; any other error
+  touches nothing); `removeFile` (never a directory); `appendFile` and
+  `writeFileAt` (positional, never truncates). Naming mirrors JUCE so ported
+  code lands on the same names: `legalFileName` is `createLegalFileName`
+  (the same stripped characters, 128 characters counted as code points, an
+  extension of up to 11 kept), `nonexistentSibling`/`nonexistentChild` are
+  `getNonexistentSibling(true)`/`getNonexistentChildFile(…, true)`, and
+  `FilePath::stem`/`hasExtension`/`withExtension` follow
+  `getFileNameWithoutExtension`/`hasFileExtension`/`withFileExtension`, except
+  that a dotfile has no extension, as `FilePath::extension()` already says
+- `FilePath::commonAppDataDirectory`/`applicationsDirectory` are JUCE's
+  `commonApplicationDataDirectory`/`globalApplicationsDirectory` (`/Library`
+  and `/Applications`, ProgramData and Program Files, `/opt` and `/usr`, empty
+  on Android); `appGroupContainerDirectory(id)` is
+  `containerURLForSecurityApplicationGroupIdentifier` on Apple and empty
+  elsewhere. `Files::applicationPath()` is `currentApplicationFile`: from
+  `Plugins::getCurrentModulePath()`, so a plugin answers for itself, and on
+  macOS `Files::enclosingBundle` of it (the bundle when the binary sits in
+  `<bundle>/Contents/MacOS/`, a pure string check) when that is not empty.
+  `FileWriter` is neither copyable nor movable
+- `TemporaryFile` (`Utils/TemporaryFile.h`): reserves
+  `eacp-temp-<64-bit hex><suffix>` in the temp directory (or a given one),
+  creates nothing, and `removeAll`s the path on destruction; move-only.
+  `FileWriter` (`Utils/FileWriter.h`): `std::fstream` opened in+out — never
+  `ios::app`, so `seek` can patch earlier bytes — with `truncate()` through
+  `std::filesystem::resize_file`
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)

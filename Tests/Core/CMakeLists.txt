@@ -9,15 +9,22 @@ set(core_test_sources
         ClipboardTests.cpp
         DynamicLibraryTests.cpp
         EventLoopTests.cpp
+        FileLocationsTests.cpp
+        FilePathNamesTests.cpp
         FilePathTests.cpp
         FileTests.cpp
+        FileWriterTests.cpp
+        FilesAppendTests.cpp
+        FilesCopyMoveTests.cpp
         FilesTests.cpp
+        FilesWildcardTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp
         RangeTests.cpp
         StringsTests.cpp
+        TemporaryFileTests.cpp
         TimerTests.cpp
         ZipTests.cpp)
 
