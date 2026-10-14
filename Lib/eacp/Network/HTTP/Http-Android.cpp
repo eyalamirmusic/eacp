@@ -348,8 +348,8 @@ private:
         env->CallVoidMethod(connection, java.setRequestMethod, method);
         check();
 
-        if (needsDefaultUserAgent(req))
-            setHeader("User-Agent", defaultUserAgent());
+        if (auto agent = userAgentToAdd(req); !agent.empty())
+            setHeader("User-Agent", agent);
 
         for (const auto& [key, value]: req.headers)
             setHeader(key, value);

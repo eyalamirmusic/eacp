@@ -100,17 +100,75 @@ std::string agentSeenFor(const Request& req)
 
     return host.lastAgent();
 }
+
+std::string agentSeenDownloading(const Request& req)
+{
+    auto host = AgentRecordingServer();
+    check(host.listening);
+
+    auto sent = req;
+    sent.url = host.url();
+
+    auto path = tempPath("download.bin");
+    auto res = Response();
+
+    check(runOffTheLoop(host.server, [&] { res = sent.downloadTo(path); }));
+    check(res.statusCode == 200);
+
+    auto ec = std::error_code();
+    std::filesystem::remove(path, ec);
+
+    return host.lastAgent();
+}
+
+// What a request with no User-Agent of its own carries when no app-wide one
+// is set: the system's on Apple platforms and Android, eacp's elsewhere.
+void checkIsThePlatformDefault(const std::string& agent)
+{
+#if defined(__APPLE__)
+    check(agent.find("CFNetwork") != std::string::npos);
+    check(!agent.starts_with("eacp/"));
+#elif defined(__ANDROID__)
+    check(!agent.empty());
+    check(!agent.starts_with("eacp/"));
+#else
+    check(agent == eacp::HTTP::eacpUserAgent());
+#endif
+}
+
+constexpr auto appAgent = "Modalics/Test/1.0";
+
+// Sets the app-wide User-Agent for one test, and always puts the platform's
+// back so no other test sees it.
+struct AppWideAgent
+{
+    explicit AppWideAgent(const std::string& agent)
+    {
+        eacp::HTTP::setDefaultUserAgent(agent);
+    }
+
+    ~AppWideAgent() { eacp::HTTP::setDefaultUserAgent({}); }
+};
 } // namespace
 
-auto tDefaultNamesEacp = test("HttpUserAgent/defaultNamesEacpAndItsVersion") = []
+auto tEacpNamesItsVersion = test("HttpUserAgent/eacpAgentNamesItsVersion") = []
 {
-    auto agent = eacp::HTTP::defaultUserAgent();
+    auto agent = eacp::HTTP::eacpUserAgent();
     check(agent.starts_with("eacp"));
     check(agent.find(' ') == std::string::npos);
 };
 
-auto tDefaultIsSent = test("HttpUserAgent/defaultIsSent") = []
-{ check(agentSeenFor(Request()) == eacp::HTTP::defaultUserAgent()); };
+auto tDefaultIsThePlatformOne = test("HttpUserAgent/defaultIsThePlatformOne") = []
+{
+#if defined(__APPLE__) || defined(__ANDROID__)
+    check(eacp::HTTP::defaultUserAgent().empty());
+#else
+    check(eacp::HTTP::defaultUserAgent() == eacp::HTTP::eacpUserAgent());
+#endif
+};
+
+auto tDefaultIsSent = test("HttpUserAgent/platformDefaultIsSent") = []
+{ checkIsThePlatformDefault(agentSeenFor(Request())); };
 
 auto tHeaderWins = test("HttpUserAgent/callersHeaderWins") = []
 {
@@ -126,26 +184,64 @@ auto tHeaderWinsInAnyCase = test("HttpUserAgent/callersHeaderWinsInAnyCase") = [
     check(agentSeenFor(req) == "lowercase/1");
 };
 
-auto tPostSendsDefault = test("HttpUserAgent/postSendsTheDefaultToo") = []
+auto tPostSendsDefault = test("HttpUserAgent/postSendsThePlatformDefaultToo") = []
+{ checkIsThePlatformDefault(agentSeenFor(Request::post({}, "body"))); };
+
+auto tDownloadSendsDefault =
+    test("HttpUserAgent/downloadSendsThePlatformDefaultToo") = []
+{ checkIsThePlatformDefault(agentSeenDownloading(Request())); };
+
+auto tAppWideIsReported = test("HttpUserAgent/appWideAgentIsTheDefault") = []
 {
-    auto req = Request::post({}, "body");
-    check(agentSeenFor(req) == eacp::HTTP::defaultUserAgent());
+    auto scoped = AppWideAgent(appAgent);
+    check(eacp::HTTP::defaultUserAgent() == appAgent);
 };
 
-auto tDownloadSendsDefault = test("HttpUserAgent/downloadSendsTheDefaultToo") = []
+auto tAppWideIsSent = test("HttpUserAgent/appWideAgentIsSent") = []
 {
-    auto host = AgentRecordingServer();
-    check(host.listening);
+    auto scoped = AppWideAgent(appAgent);
+    check(agentSeenFor(Request()) == appAgent);
+};
 
-    auto req = Request(host.url());
-    auto path = tempPath("download.bin");
-    auto res = Response();
+auto tHeaderBeatsAppWide = test("HttpUserAgent/callersHeaderBeatsAppWideAgent") = []
+{
+    auto scoped = AppWideAgent(appAgent);
 
-    check(runOffTheLoop(host.server, [&] { res = req.downloadTo(path); }));
+    auto req = Request();
+    req.headers["User-Agent"] = "MyApp/2.1 (test)";
+    check(agentSeenFor(req) == "MyApp/2.1 (test)");
+};
 
-    check(res.statusCode == 200);
-    check(host.lastAgent() == eacp::HTTP::defaultUserAgent());
+auto tPostSendsAppWide = test("HttpUserAgent/postSendsAppWideAgent") = []
+{
+    auto scoped = AppWideAgent(appAgent);
+    check(agentSeenFor(Request::post({}, "body")) == appAgent);
+};
 
-    auto ec = std::error_code();
-    std::filesystem::remove(path, ec);
+auto tDownloadSendsAppWide = test("HttpUserAgent/downloadSendsAppWideAgent") = []
+{
+    auto scoped = AppWideAgent(appAgent);
+    check(agentSeenDownloading(Request()) == appAgent);
+};
+
+auto tDownloadHeaderBeatsAppWide =
+    test("HttpUserAgent/downloadHeaderBeatsAppWideAgent") = []
+{
+    auto scoped = AppWideAgent(appAgent);
+
+    auto req = Request();
+    req.headers["User-Agent"] = "MyApp/2.1 (test)";
+    check(agentSeenDownloading(req) == "MyApp/2.1 (test)");
+};
+
+auto tResetRestoresPlatform =
+    test("HttpUserAgent/emptyAgentRestoresThePlatformOne") = []
+{
+    eacp::HTTP::setDefaultUserAgent(appAgent);
+    check(agentSeenFor(Request()) == appAgent);
+
+    eacp::HTTP::setDefaultUserAgent({});
+    checkIsThePlatformDefault(agentSeenFor(Request()));
+    checkIsThePlatformDefault(agentSeenFor(Request::post({}, "body")));
+    checkIsThePlatformDefault(agentSeenDownloading(Request()));
 };

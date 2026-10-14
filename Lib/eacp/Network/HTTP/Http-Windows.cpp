@@ -84,13 +84,14 @@ struct Handle
 // One process-wide session, never closed: WinHTTP session handles are
 // thread-safe and cheap to share. AUTOMATIC_PROXY honours the system proxy
 // configuration (as Windows.Web.Http did); the fallback covers systems
-// predating it (Win8.0). The agent named here is the User-Agent of every
-// request that adds none of its own: WinHttpAddRequestHeaders overrides it.
+// predating it (Win8.0). The session outlives any setDefaultUserAgent call,
+// so each request adds its User-Agent as a header, which overrides the agent
+// named here.
 HINTERNET session()
 {
     static auto handle = []
     {
-        auto agent = Strings::widen(defaultUserAgent());
+        auto agent = Strings::widen(eacpUserAgent());
 
         auto opened = WinHttpOpen(agent.c_str(),
                                   WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
@@ -512,6 +513,10 @@ void sendRequest(const Request& req, OpenedRequest& opened)
     countRedirects(opened.request.get(), opened.redirectsFollowed);
 
     auto headerLines = std::string();
+
+    if (auto agent = userAgentToAdd(req); !agent.empty())
+        headerLines.append("User-Agent: " + agent + "\r\n");
+
     for (const auto& [key, value]: req.headers)
     {
         headerLines.append(key);

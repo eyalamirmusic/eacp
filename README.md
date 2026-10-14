@@ -309,9 +309,21 @@ comes back as an error.
 connected (on Apple platforms, which report no connect event, it runs until
 the response headers arrive), and `req.idleTimeout` fails a transfer that goes
 quiet for that long without capping how long a steady one may run - the way to
-catch a stalled download of any size. Every backend sends `User-Agent:
-eacp/<version>` unless the request sets its own header, and none answers from a
-local cache unless `req.cachePolicy = HTTP::CachePolicy::UseLocalCache`.
+catch a stalled download of any size. No backend answers from a local cache
+unless `req.cachePolicy = HTTP::CachePolicy::UseLocalCache`.
+
+A request sends the platform's own User-Agent - CFNetwork's on Apple platforms,
+HttpURLConnection's on Android - and `eacp/<version>` (`HTTP::eacpUserAgent()`)
+on Windows and Linux, which have none. `HTTP::setDefaultUserAgent("MyApp/1.2")`
+replaces that for every request on every platform, and an empty string puts it
+back; a `User-Agent` header on the request beats both:
+
+```cpp
+eacp::HTTP::setDefaultUserAgent("MyApp/1.2");
+
+auto req = eacp::HTTP::Request("https://api.example.com/");
+req.headers["User-Agent"] = "MyApp/1.2 (sync)"; // this request only
+```
 
 `req.resumeDownload` makes `downloadTo` continue a partial file: it asks for
 the bytes it lacks with a `Range` header, appends a 206 and counts the bytes

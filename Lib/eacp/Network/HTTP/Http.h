@@ -164,8 +164,23 @@ struct Request
 Response httpRequest(const Request& req);
 Response downloadFile(const Request& req, const std::string& filePath);
 
-// "eacp/<version>": the User-Agent every backend sends unless the request
-// carries a User-Agent header of its own, which always wins.
+// "eacp/<version>": the User-Agent sent by default where the platform has
+// none of its own - WinHTTP and libcurl.
+std::string eacpUserAgent();
+
+// Sets the User-Agent every request sends, on every platform, unless it
+// carries a User-Agent header of its own, which always wins - say
+// "MyApp/1.2" once at startup. Empty, the initial value, puts the platform's
+// default back. Safe to call while requests run on other threads; a request
+// already sent keeps the agent it went out with.
+void setDefaultUserAgent(const std::string& agent);
+
+// The User-Agent a request with no User-Agent header is sent with: the one
+// given to setDefaultUserAgent, else eacpUserAgent() on Windows and Linux.
+// Empty on Apple platforms and Android when none was set: the request then
+// adds no header, and the system sends its own (CFNetwork's
+// "<App>/<version> CFNetwork/... Darwin/...", or HttpURLConnection's
+// http.agent, "Dalvik/...").
 std::string defaultUserAgent();
 
 // Percent-encodes every byte outside RFC 3986's unreserved set (A-Z a-z 0-9

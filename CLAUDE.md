@@ -845,8 +845,15 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   used `sharedSession` uses one process-wide session of eacp's own with no
   `URLCache` instead, so nothing is stored either; Android
   `setUseCaches(false)`; WinHTTP and curl never cache)
-- `defaultUserAgent()` (`eacp/<project version>`, from `EACP_VERSION_STRING`)
-  is sent by every backend unless the request has a User-Agent header
+- User-Agent: each backend adds `userAgentToAdd(req)` (`HttpProtocol`), which
+  is empty when the request has a User-Agent header and otherwise
+  `defaultUserAgent()`: the mutex-guarded value from `setDefaultUserAgent`
+  (empty resets), else empty on Apple/Android - so NSURLSession and
+  HttpURLConnection send the system's own - and `eacpUserAgent()`
+  (`eacp/<project version>`, from `EACP_VERSION_STRING`) on Windows and
+  Linux. WinHTTP's process-wide session is opened with `eacpUserAgent()`, but
+  the agent is also added per request as a header, so a later
+  `setDefaultUserAgent` still applies
 - `Request::resumeDownload`: `downloadFile` in `Http.cpp` measures the file,
   adds `Range: bytes=N-`, and calls the backend's `downloadFileFrom(req, path,
   N)`, which picks `DownloadWrite::Replace`/`Append`/`Keep` from the final

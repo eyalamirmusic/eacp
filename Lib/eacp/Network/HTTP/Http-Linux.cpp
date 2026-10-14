@@ -292,8 +292,8 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
     applyRedirectPolicy(curl, req);
     applyTimeouts(curl, req);
 
-    if (needsDefaultUserAgent(req))
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, defaultUserAgent().c_str());
+    if (auto agent = userAgentToAdd(req); !agent.empty())
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, agent.c_str());
 
     if (req.type == "HEAD")
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);

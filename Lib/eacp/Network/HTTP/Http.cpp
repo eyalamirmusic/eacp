@@ -765,13 +765,60 @@ std::map<std::string, std::string> parseQueryString(const std::string& query)
     return result;
 }
 
-std::string defaultUserAgent()
+std::string eacpUserAgent()
 {
 #ifdef EACP_VERSION_STRING
     return std::string("eacp/") + EACP_VERSION_STRING;
 #else
     return "eacp";
 #endif
+}
+
+namespace
+{
+struct UserAgentOverride
+{
+    std::mutex mutex;
+    std::string agent;
+};
+
+UserAgentOverride& userAgentOverride()
+{
+    static auto instance = UserAgentOverride();
+    return instance;
+}
+
+// NSURLSession and HttpURLConnection name the app and system themselves
+// when a request adds no User-Agent; WinHTTP needs an agent to open a
+// session, and curl sends none at all.
+std::string platformFallbackUserAgent()
+{
+#if defined(__APPLE__) || defined(__ANDROID__)
+    return {};
+#else
+    return eacpUserAgent();
+#endif
+}
+} // namespace
+
+void setDefaultUserAgent(const std::string& agent)
+{
+    auto& state = userAgentOverride();
+    auto lock = std::scoped_lock(state.mutex);
+    state.agent = agent;
+}
+
+std::string defaultUserAgent()
+{
+    {
+        auto& state = userAgentOverride();
+        auto lock = std::scoped_lock(state.mutex);
+
+        if (!state.agent.empty())
+            return state.agent;
+    }
+
+    return platformFallbackUserAgent();
 }
 
 namespace
