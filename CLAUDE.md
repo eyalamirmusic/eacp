@@ -72,7 +72,10 @@ systems; all three Linux lanes build the whole graphics stack and install the
 stock font packages so the text suites resolve rather than skip, and only the
 third has a driver, a compositor and an X server to run the GPU and window
 tests on), and builds iOS for the simulator and HelloGPU and HelloNetwork
-for Android (arm64-v8a, an NDK installed with `sdkmanager`).
+for Android (arm64-v8a, an NDK installed with `sdkmanager`). The Windows ARM64
+lanes configure with `-DEACP_BUILD_WEBVIEW=OFF`, because the WebView example
+apps' npm installs run inside configure and are several times slower on the
+ARM runners; the x64 lanes cover WebView2.
 
 Dependencies are fetched by CPM at configure time — `ea_data_structures`, `Miro`,
 `ResEmbed`, `ESIMD` (`eyalamirmusic/ESIMD`, `CMake/FindESIMD.cmake`: the

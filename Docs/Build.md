@@ -355,7 +355,10 @@ and Android: an Ubuntu lane installs a pinned NDK with `sdkmanager`, configures
 against it with `-DCMAKE_SYSTEM_NAME=Android` and builds `HelloGPU` and
 `HelloNetwork` for `arm64-v8a`, which is every module an Android app links,
 the network backend included, then configures once
-more with no NDK named, which exercises the newest-installed path. Every lane
+more with no NDK named, which exercises the newest-installed path. The two
+Windows ARM64 lanes pass `-DEACP_BUILD_WEBVIEW=OFF`: the WebView example apps
+run their npm installs inside configure, several times slower on the ARM
+runners, and the x64 lanes cover the WebView2 backend. Every lane
 configures with `EACP_CI_BUILD=ON` and builds `RelWithDebInfo`: the tests run
 optimized code, as a shipped build does, while the link-time optimization
 eacp's targets take under `Release` stays off — it roughly tripled the macOS

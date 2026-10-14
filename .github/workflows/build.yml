@@ -43,16 +43,19 @@ jobs:
             cache-key: windows-clang-x64
             msvc-arch: x64
             cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
+          # The WebView example apps run their npm installs inside configure,
+          # and those are several times slower on the ARM runners, so the two
+          # ARM64 lanes leave the module out; the x64 lanes above cover it.
           - name: Windows MSVC ARM64
             os: windows-11-arm
             cache-key: windows-msvc-arm64
             msvc-arch: arm64
-            cmake-flags: ''
+            cmake-flags: '-DEACP_BUILD_WEBVIEW=OFF'
           - name: Windows Clang ARM64
             os: windows-11-arm
             cache-key: windows-clang-arm64
             msvc-arch: arm64
-            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl'
+            cmake-flags: '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DEACP_BUILD_WEBVIEW=OFF'
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
