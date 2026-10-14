@@ -300,9 +300,32 @@ auto res = req.perform();
 ```
 
 Redirects are followed unless `req.followRedirects = false`, which hands back
-the 3xx itself and sends nothing to the new address. `req.maxResponseSize`
+the 3xx itself and sends nothing to the new address; `req.maxRedirects` caps
+how many are followed before the request fails. `req.maxResponseSize`
 caps the body: a response that grows past it is cut off as it arrives and
 comes back as an error.
+
+`req.timeout` bounds the whole request. `req.connectTimeout` bounds getting
+connected (on Apple platforms, which report no connect event, it runs until
+the response headers arrive), and `req.idleTimeout` fails a transfer that goes
+quiet for that long without capping how long a steady one may run - the way to
+catch a stalled download of any size. Every backend sends `User-Agent:
+eacp/<version>` unless the request sets its own header, and none answers from a
+local cache unless `req.cachePolicy = HTTP::CachePolicy::UseLocalCache`.
+
+`req.resumeDownload` makes `downloadTo` continue a partial file: it asks for
+the bytes it lacks with a `Range` header, appends a 206 and counts the bytes
+already there in its progress, and starts over when the server sends the whole
+file instead.
+
+`HTTP::URL` builds an address from a base and an ordered list of query
+parameters, encoding each once:
+
+```cpp
+auto url = eacp::HTTP::URL("https://api.example.com/search");
+url.addParameter("q", "rock & roll").addParameter("page", "2");
+auto res = eacp::HTTP::Request(url.toString()).perform();
+```
 
 More examples live under [`Apps/`](Apps), grouped by the module they exercise:
 `Console`, `Network`, `Graphics`, `GPU`, `UI`, `SVG`, `WebView`, `Camera`,

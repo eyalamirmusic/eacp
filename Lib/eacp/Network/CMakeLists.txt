@@ -21,6 +21,9 @@ target_sources(eacp-network PRIVATE
 
 target_link_libraries(eacp-network PUBLIC eacp-core)
 
+target_compile_definitions(eacp-network PRIVATE
+        EACP_VERSION_STRING="${eacp_VERSION}")
+
 if (APPLE)
     target_sources(eacp-network PRIVATE
             HTTP/Http.mm
