@@ -509,7 +509,7 @@ CancelledOutcome cancelDuringStall(TricklingServer& server,
         return res;
     };
 
-    outcome.response = runOffTheLoop(timed);
+    outcome.response = responseOffTheLoop(timed);
     return outcome;
 }
 } // namespace
