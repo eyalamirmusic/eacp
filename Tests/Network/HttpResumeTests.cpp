@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <eacp/Core/Utils/Zip.h>
 #include <eacp/Network/HTTP/HttpProtocol.h>
 #include <filesystem>
 #include <fstream>
@@ -77,18 +78,24 @@ struct RangeServer
     Response answer(const Request& req)
     {
         auto range = req.getHeader("Range");
-        record(req.type, range);
+        record(req.type, range, req.getHeader("Accept-Encoding"));
 
         auto path = req.pathWithoutQuery();
 
         if (path == "/missing")
             return status(404, "not here");
 
+        if (path == "/encoded")
+            return encodedAnswer(req, range);
+
         if (range.empty() || path == "/ignores")
             return status(200, body);
 
         if (path == "/misplaced")
             return partial(0);
+
+        if (path == "/short")
+            return partial(rangeStart(range), 100);
 
         auto start = rangeStart(range);
 
@@ -102,13 +109,57 @@ struct RangeServer
         return partial(start);
     }
 
-    Response partial(std::int64_t start) const
+    Response partial(std::int64_t start, std::int64_t length = -1) const
     {
-        auto res = status(206, body.substr((size_t) start));
+        return partialOf(body, start, length);
+    }
+
+    static Response partialOf(const std::string& entity,
+                              std::int64_t start,
+                              std::int64_t length = -1)
+    {
+        auto size = (std::int64_t) entity.size();
+        auto end = length < 0 ? size : std::min(size, start + length);
+        auto res =
+            status(206, entity.substr((size_t) start, (size_t) (end - start)));
         res.headers["Content-Range"] = "bytes " + std::to_string(start) + "-"
-                                       + std::to_string(body.size() - 1) + "/"
-                                       + std::to_string(body.size());
+                                       + std::to_string(end - 1) + "/"
+                                       + std::to_string(size);
         return res;
+    }
+
+    // A server that compresses when asked, and whose ranges - as RFC 9110 has
+    // them - count bytes of the compressed representation it would send.
+    Response encodedAnswer(const Request& req, const std::string& range) const
+    {
+        auto acceptsDeflate =
+            eacp::Strings::toLower(req.getHeader("Accept-Encoding")).find("deflate")
+            != std::string::npos;
+
+        if (!acceptsDeflate)
+            return range.empty() ? status(200, body) : partial(rangeStart(range));
+
+        auto encoded = deflated();
+        auto start = range.empty() ? 0 : rangeStart(range);
+
+        if (start >= (std::int64_t) encoded.size())
+            return status(416, {});
+
+        auto res = range.empty() ? status(200, encoded) : partialOf(encoded, start);
+        res.headers["Content-Encoding"] = "deflate";
+        return res;
+    }
+
+    std::string deflated() const
+    {
+        auto bytes = eacp::Zip::compress(body);
+        return {bytes.begin(), bytes.end()};
+    }
+
+    std::string acceptEncodingOfLastRequest()
+    {
+        auto lock = std::scoped_lock(mutex);
+        return lastAcceptEncoding;
     }
 
     static Response status(int code, const std::string& content)
@@ -119,11 +170,14 @@ struct RangeServer
         return res;
     }
 
-    void record(const std::string& method, const std::string& range)
+    void record(const std::string& method,
+                const std::string& range,
+                const std::string& acceptEncoding)
     {
         auto lock = std::scoped_lock(mutex);
         methods.push_back(method);
         ranges.push_back(range);
+        lastAcceptEncoding = acceptEncoding;
     }
 
     std::vector<std::string> rangesSeen()
@@ -149,6 +203,7 @@ struct RangeServer
     std::mutex mutex;
     std::vector<std::string> methods;
     std::vector<std::string> ranges;
+    std::string lastAcceptEncoding;
 };
 
 Response
@@ -213,7 +268,7 @@ auto tAppendsPartialContent =
     auto res = run.download("/range");
 
     check(res.error.empty());
-    check(res.statusCode == 206);
+    check(res.statusCode == 200);
     check(readFile(run.path) == run.host.body);
     check(run.host.rangesSeen() == std::vector<std::string> {"bytes=400-"});
     check(run.progress.bytesReceived.load() == 1000);
@@ -319,7 +374,46 @@ auto tResumeIsNotSplit = test("HttpResume/aResumedDownloadIsNotSplit") = []
 
     auto res = downloadOffTheLoop(run.host.server, req, run.path);
 
-    check(res.statusCode == 206);
+    check(res.statusCode == 200);
     check(readFile(run.path) == run.host.body);
     check(run.host.methodsSeen() == std::vector<std::string> {"GET"});
+};
+
+auto tShortRemainderIsAnError =
+    test("HttpResume/aRemainderThatStopsShortIsAnError") = []
+{
+    auto run = ResumeCase("short.bin", makeBody().substr(0, 400));
+
+    auto res = run.download("/short");
+
+    check(!res.error.empty());
+    check(res.statusCode == 0);
+    check(readFile(run.path) == makeBody().substr(0, 500));
+};
+
+auto tResumeAsksForIdentity =
+    test("HttpResume/asksForTheUnencodedRepresentation") = []
+{
+    auto run = ResumeCase("encoded.bin", makeBody().substr(0, 10));
+
+    auto res = run.download("/encoded");
+
+    check(res.error.empty());
+    check(res.statusCode == 200);
+    check(readFile(run.path) == run.host.body);
+    check(run.host.rangesSeen() == std::vector<std::string> {"bytes=10-"});
+    check(run.host.acceptEncodingOfLastRequest() == "identity");
+};
+
+auto tCallerEncodingWins = test("HttpResume/keepsTheCallersAcceptEncoding") = []
+{
+    auto run = ResumeCase("chosen.bin", makeBody().substr(0, 400));
+
+    auto req = Request(run.host.url("/range"));
+    req.resumeDownload = true;
+    req.headers["Accept-Encoding"] = "br";
+
+    downloadOffTheLoop(run.host.server, req, run.path);
+
+    check(run.host.acceptEncodingOfLastRequest() == "br");
 };

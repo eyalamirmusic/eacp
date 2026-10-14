@@ -216,7 +216,11 @@ std::string appendFile(NSURL* source, const std::string& filePath)
     if (!in || !out)
         return "Failed to open destination file";
 
-    out << in.rdbuf();
+    // Inserting an empty stream buffer sets failbit, so an empty body is
+    // checked for rather than appended.
+    if (in.peek() != std::ifstream::traits_type::eof())
+        out << in.rdbuf();
+
     out.close();
 
     if (!out)
@@ -449,13 +453,21 @@ public:
         });
     }
 
-    void throwIfFired() const
+    // The task can finish between the deadline's check and its cancel, so it
+    // only counts as a timeout when the task did end cancelled.
+    void throwIfFired(NSError* error) const
     {
-        if (fired->load())
+        if (fired->load() && wasCancelled(error))
             throw std::runtime_error(timedOutError());
     }
 
 private:
+    static bool wasCancelled(NSError* error)
+    {
+        return error != nil && [error.domain isEqualToString:NSURLErrorDomain]
+               && error.code == NSURLErrorCancelled;
+    }
+
     static bool isStillConnecting(NSURLSessionTask* task)
     {
         return task.state == NSURLSessionTaskStateRunning && task.response == nil
@@ -517,9 +529,29 @@ struct SafeResult
     ObjC::Ptr<NSError> error;
 };
 
-NSURLSession* getSharedSession()
+// sharedSession writes what it fetches into the shared NSURLCache whatever a
+// request's policy, so a request that ignores the cache shares a session of
+// eacp's own that has none instead - still one session for the process, so
+// its connections are reused as before.
+NSURLSession* getUncachedSession()
 {
-    return [NSURLSession sharedSession];
+    static auto session = []
+    {
+        auto config = [NSURLSessionConfiguration defaultSessionConfiguration];
+        config.URLCache = nil;
+        config.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+        return ObjC::attachPtr([NSURLSession sessionWithConfiguration:config]);
+    }();
+
+    return session.get();
+}
+
+NSURLSession* getSharedSession(const Request& req)
+{
+    if (req.cachePolicy == CachePolicy::UseLocalCache)
+        return [NSURLSession sharedSession];
+
+    return getUncachedSession();
 }
 
 // A timed request needs its own session: timeoutIntervalForResource - the
@@ -533,7 +565,7 @@ public:
     {
         if (req.timeout.count <= 0)
         {
-            session = getSharedSession();
+            session = getSharedSession(req);
             return;
         }
 
@@ -591,7 +623,7 @@ SafeResult performSyncRequest(NSURLRequest* request,
     connectDeadline.arm(task, req.connectTimeout);
 
     semaphore.wait();
-    connectDeadline.throwIfFired();
+    connectDeadline.throwIfFired(result.error.get());
 
     return result;
 }
@@ -639,7 +671,7 @@ SafeResult performDelegatedRequest(NSURLRequest* request, const Request& req)
     semaphore.wait();
     [session.get() finishTasksAndInvalidate];
 
-    connectDeadline.throwIfFired();
+    connectDeadline.throwIfFired(ctx.error.get());
     throwIfRuleBroken(ctx.rules);
 
     auto result = SafeResult();
@@ -721,7 +753,7 @@ Response downloadFileInternal(const Request& req,
     semaphore.wait();
     [session.get() finishTasksAndInvalidate];
 
-    connectDeadline.throwIfFired();
+    connectDeadline.throwIfFired(ctx.error.get());
     throwIfRuleBroken(ctx.rules);
 
     if (ctx.error)

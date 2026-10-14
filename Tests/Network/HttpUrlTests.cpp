@@ -289,3 +289,101 @@ auto tDownloadWriteDecisions = test("HttpDownloadWrite/followsTheStatus") = []
     check(writeFor(416, "bytes */400", 400) == DownloadWrite::Keep);
     check(writeFor(500, "", 400) == DownloadWrite::Keep);
 };
+
+auto tUrlJoinsOntoAQuery = test("HttpURL/joinsParametersOntoAnExistingQuery") = []
+{
+    auto url = URL("http://h/p");
+    url.base = "http://h/p?a=1";
+    url.addParameter("b", "2");
+    check(url.toString() == "http://h/p?a=1&b=2");
+
+    auto open = URL::parse("http://h/x?");
+    check(open.toString() == "http://h/x?");
+    open.addParameter("k", "v");
+    check(open.toString() == "http://h/x?k=v");
+};
+
+auto tUrlConstructorParses = test("HttpURL/constructorParsesItsArgument") = []
+{
+    auto url = URL("http://h/p?a=1");
+    check(url.base == "http://h/p");
+    url.addParameter("b", "2");
+    check(url.toString() == "http://h/p?a=1&b=2");
+};
+
+auto tUrlFragmentStartsAtFirstHash =
+    test("HttpURL/fragmentStartsAtTheFirstHash") = []
+{
+    auto url = URL::parse("http://h/p#frag?not=query");
+    check(url.base == "http://h/p");
+    check(url.parameters.empty());
+    check(url.fragment == "frag?not=query");
+};
+
+auto tUrlPlusIsASpace = test("HttpURL/plusInAParsedQueryIsASpace") = []
+{
+    auto url = URL::parse("http://h/?q=a+b&p=a%2Bb");
+    check(url.getParameter("q") == "a b");
+    check(url.getParameter("p") == "a+b");
+    check(url.toString() == "http://h/?q=a%20b&p=a%2Bb");
+};
+
+auto tResolvesDotSegments = test("HttpRedirectLocation/removesDotSegments") = []
+{
+    auto resolve = [](const std::string& location)
+    { return eacp::HTTP::resolveRedirectLocation("http://a/b/c/d?q", location); };
+
+    check(resolve("../e") == "http://a/b/e");
+    check(resolve("./e") == "http://a/b/c/e");
+    check(resolve("../../../../e") == "http://a/e");
+    check(resolve("/x/./y/../z?r") == "http://a/x/z?r");
+    check(resolve("..") == "http://a/b/");
+    check(resolve(".") == "http://a/b/c/");
+};
+
+auto tResolvesFragment = test("HttpRedirectLocation/fragmentOnlyKeepsTheUrl") = []
+{
+    check(eacp::HTTP::resolveRedirectLocation("http://a/x?q=1#old", "#new")
+          == "http://a/x?q=1#new");
+};
+
+auto tRedirectDropsCredentials =
+    test("HttpRedirectedRequest/credentialsStayWithTheirOrigin") = []
+{
+    auto req = Request("http://a/x");
+    req.headers["Cookie"] = "s=1";
+    req.headers["Proxy-Authorization"] = "Basic x";
+
+    auto same = eacp::HTTP::redirectedRequest(req, 302, "/y");
+    check(same.hasHeader("Cookie") && same.hasHeader("Proxy-Authorization"));
+
+    auto other = eacp::HTTP::redirectedRequest(req, 302, "http://b/y");
+    check(!other.hasHeader("Cookie") && !other.hasHeader("Proxy-Authorization"));
+};
+
+auto tDetectsDowngrade = test("HttpRedirectedRequest/detectsADowngrade") = []
+{
+    check(eacp::HTTP::isSchemeDowngrade("https://a/x", "http://a/y"));
+    check(!eacp::HTTP::isSchemeDowngrade("http://a/x", "https://a/y"));
+    check(!eacp::HTTP::isSchemeDowngrade("https://a/x", "https://b/y"));
+};
+
+auto tRedirectErrorWithoutLimit =
+    test("HttpRedirect/errorNamesNoLimitWhenThereIsNone") = []
+{
+    check(eacp::HTTP::tooManyRedirectsError(-1).find("-1") == std::string::npos);
+    check(eacp::HTTP::tooManyRedirectsError(3).find('3') != std::string::npos);
+};
+
+auto tIdentityEncoding = test("HttpRange/prefersTheIdentityEncoding") = []
+{
+    auto req = Request();
+    eacp::HTTP::preferIdentityEncoding(req);
+    check(eacp::HTTP::asksForIdentityEncoding(req));
+
+    auto chosen = Request();
+    chosen.headers["accept-encoding"] = "gzip";
+    eacp::HTTP::preferIdentityEncoding(chosen);
+    check(chosen.getHeader("Accept-Encoding") == "gzip");
+    check(!eacp::HTTP::asksForIdentityEncoding(chosen));
+};

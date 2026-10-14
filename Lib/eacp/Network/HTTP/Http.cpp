@@ -228,6 +228,7 @@ RangeProbe probeRangeSupport(const Request& req)
     head.parallelChunks = 1;
     head.progress = nullptr;
     head.headers.erase("Range");
+    preferIdentityEncoding(head);
 
     auto response = httpRequest(head);
 
@@ -307,6 +308,7 @@ std::string downloadChunk(const Request& sourceReq,
     worker.progress = &progress;
     worker.headers["Range"] =
         "bytes=" + std::to_string(range.start) + "-" + std::to_string(range.end);
+    preferIdentityEncoding(worker);
 
     auto res = downloadFile(worker, destPath);
 
@@ -521,7 +523,32 @@ Request withRangeFrom(const Request& req, std::int64_t offset)
 {
     auto ranged = req;
     ranged.headers["Range"] = "bytes=" + std::to_string(offset) + "-";
+    preferIdentityEncoding(ranged);
     return ranged;
+}
+
+// A 206 that stops short of the end - a server that caps how much one range
+// returns - leaves a file that is a correct but incomplete prefix, kept so a
+// later resume can carry on from it.
+std::string incompleteRemainderError(const Response& response,
+                                     const std::string& filePath)
+{
+    auto range =
+        parseContentRange(findHeaderIgnoringCase(response.headers, "Content-Range"));
+
+    if (range.total < 0 || existingFileSize(filePath) == range.total)
+        return {};
+
+    return "The server sent bytes " + std::to_string(range.first) + "-"
+           + std::to_string(range.last) + " of " + std::to_string(range.total)
+           + "; the download is incomplete";
+}
+
+Response finishAppended(Response response, const std::string& filePath)
+{
+    response.error = incompleteRemainderError(response, filePath);
+    response.statusCode = response.error.empty() ? 200 : 0;
+    return response;
 }
 
 bool fileIsAlreadyWhole(const Response& response, std::int64_t fileSize)
@@ -563,9 +590,15 @@ Response downloadResuming(const Request& req, const std::string& filePath)
 
     auto response = downloadFileFrom(withRangeFrom(req, offset), filePath, offset);
 
-    if (!response.error.empty()
-        || downloadWriteFor(response.statusCode, response.headers, offset)
-               != DownloadWrite::Keep)
+    if (!response.error.empty())
+        return response;
+
+    auto write = downloadWriteFor(response.statusCode, response.headers, offset);
+
+    if (write == DownloadWrite::Append)
+        return finishAppended(std::move(response), filePath);
+
+    if (write == DownloadWrite::Replace)
         return response;
 
     if (fileIsAlreadyWhole(response, offset))
@@ -741,26 +774,36 @@ std::string defaultUserAgent()
 #endif
 }
 
-URL::URL(const std::string& baseToUse)
-    : base(baseToUse)
+namespace
 {
-}
+std::string querySeparator(const std::string& base)
+{
+    if (base.find('?') == std::string::npos)
+        return "?";
 
-URL URL::parse(const std::string& text)
+    return base.ends_with("?") || base.ends_with("&") ? "" : "&";
+}
+} // namespace
+
+URL::URL(const std::string& text)
 {
     auto hash = text.find('#');
     auto withoutFragment = text.substr(0, hash);
     auto question = withoutFragment.find('?');
+    auto query = question == std::string::npos
+                     ? std::string()
+                     : withoutFragment.substr(question + 1);
 
-    auto url = URL(withoutFragment.substr(0, question));
-
-    if (question != std::string::npos)
-        url.parameters = parseQueryParameters(withoutFragment.substr(question + 1));
+    base = query.empty() ? withoutFragment : withoutFragment.substr(0, question);
+    parameters = parseQueryParameters(query);
 
     if (hash != std::string::npos)
-        url.fragment = text.substr(hash + 1);
+        fragment = text.substr(hash + 1);
+}
 
-    return url;
+URL URL::parse(const std::string& text)
+{
+    return URL(text);
 }
 
 URL& URL::addParameter(const std::string& name, const std::string& value)
@@ -809,7 +852,7 @@ std::string URL::toString() const
     auto result = base;
 
     if (!parameters.empty())
-        result += "?" + query();
+        result += querySeparator(base) + query();
 
     if (!fragment.empty())
         result += "#" + fragment;

@@ -353,11 +353,42 @@ void applyRedirectPolicy(HINTERNET request, const Request& req)
         request, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &limit, sizeof(limit));
 }
 
-[[noreturn]] void throwReceiveError(const Request& req)
+// WinHTTP reports every redirect it follows through the status callback, which
+// runs on the calling thread for a synchronous handle. The count tells a
+// redirect left unfollowed because the limit was reached from one the
+// redirect policy refused - an https to http downgrade, say - which comes
+// back as the response, as on the other backends.
+void CALLBACK
+    countRedirect(HINTERNET, DWORD_PTR context, DWORD status, LPVOID, DWORD)
 {
-    if (limitsRedirects(req) && GetLastError() == ERROR_WINHTTP_REDIRECT_FAILED)
+    if (status == WINHTTP_CALLBACK_STATUS_REDIRECT && context != 0)
+        ++*reinterpret_cast<std::atomic<int>*>(context);
+}
+
+void countRedirects(HINTERNET request, std::atomic<int>& followed)
+{
+    auto context = reinterpret_cast<DWORD_PTR>(&followed);
+    WinHttpSetOption(
+        request, WINHTTP_OPTION_CONTEXT_VALUE, &context, sizeof(context));
+    WinHttpSetStatusCallback(
+        request, countRedirect, WINHTTP_CALLBACK_FLAG_REDIRECT, 0);
+}
+
+bool reachedRedirectLimit(const Request& req, const std::atomic<int>& followed)
+{
+    return limitsRedirects(req) && followed.load() >= req.maxRedirects;
+}
+
+[[noreturn]] void throwReceiveError(const Request& req,
+                                    const std::atomic<int>& followed)
+{
+    auto error = GetLastError();
+
+    if (error == ERROR_WINHTTP_REDIRECT_FAILED
+        && reachedRedirectLimit(req, followed))
         throw std::runtime_error(tooManyRedirectsError(req.maxRedirects));
 
+    SetLastError(error);
     throwLastError("Receiving the response");
 }
 
@@ -376,11 +407,13 @@ bool hasLocationHeader(HINTERNET request)
 int queryStatusCode(HINTERNET request);
 
 // WinHTTP stops following once the limit is reached and hands back the
-// redirect it did not follow, so a final answer that is still a redirect is
-// the limit being hit.
-void throwIfRedirectLimitHit(HINTERNET request, const Request& req)
+// redirect it did not follow, so a final answer that is still a redirect,
+// after as many redirects as the limit allows, is the limit being hit.
+void throwIfRedirectLimitHit(HINTERNET request,
+                             const Request& req,
+                             const std::atomic<int>& followed)
 {
-    if (!limitsRedirects(req))
+    if (!reachedRedirectLimit(req, followed))
         return;
 
     if (isRedirectStatus(queryStatusCode(request)) && hasLocationHeader(request))
@@ -388,12 +421,48 @@ void throwIfRedirectLimitHit(HINTERNET request, const Request& req)
 }
 
 // The request is declared last so it is destroyed first: the watchdog gets
-// joined and the request closed before the connection it hangs off.
+// joined and the request closed before the connection it hangs off, and
+// before the count its status callback writes to.
 struct OpenedRequest
 {
+    std::atomic<int> redirectsFollowed {0};
     Handle connection;
     TimedRequestHandle request;
 };
+
+// Under an idle limit a body larger than one slice goes out a slice at a time
+// rather than inside WinHttpSendRequest, so each slice counts as activity and
+// an upload that takes longer than the idle limit, while still moving, is not
+// cut short. Anything else is sent in the one call, as before.
+constexpr auto uploadSliceSize = std::size_t {64 * 1024};
+
+bool sendsBodyInSlices(const Request& req)
+{
+    return req.idleTimeout.count > 0 && req.body.size() > uploadSliceSize;
+}
+
+void writeBody(const Request& req, TimedRequestHandle& request)
+{
+    auto offset = std::size_t {0};
+
+    while (offset < req.body.size())
+    {
+        auto slice = std::min(uploadSliceSize, req.body.size() - offset);
+        auto written = DWORD {0};
+
+        if (!WinHttpWriteData(request.get(),
+                              req.body.data() + offset,
+                              static_cast<DWORD>(slice),
+                              &written))
+        {
+            request.throwIfTimedOut();
+            throwLastError("Sending the request");
+        }
+
+        offset += written;
+        request.noteActivity();
+    }
+}
 
 void sendRequest(const Request& req, OpenedRequest& opened)
 {
@@ -427,13 +496,19 @@ void sendRequest(const Request& req, OpenedRequest& opened)
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
-    auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
-    WinHttpSetOption(opened.request.get(),
-                     WINHTTP_OPTION_DECOMPRESSION,
-                     &decompression,
-                     sizeof(decompression));
+    // Not for a request that asks for the identity encoding, as a ranged one
+    // does: its byte offsets are the representation's own.
+    if (!asksForIdentityEncoding(req))
+    {
+        auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
+        WinHttpSetOption(opened.request.get(),
+                         WINHTTP_OPTION_DECOMPRESSION,
+                         &decompression,
+                         sizeof(decompression));
+    }
 
     applyRedirectPolicy(opened.request.get(), req);
+    countRedirects(opened.request.get(), opened.redirectsFollowed);
 
     auto headerLines = std::string();
     for (const auto& [key, value]: req.headers)
@@ -453,14 +528,15 @@ void sendRequest(const Request& req, OpenedRequest& opened)
                                  WINHTTP_ADDREQ_FLAG_ADD);
 
     auto bodySize = static_cast<DWORD>(req.body.size());
-    auto* bodyData = req.body.empty() ? WINHTTP_NO_REQUEST_DATA
-                                      : const_cast<char*>(req.body.data());
+    auto sliced = sendsBodyInSlices(req);
+    auto* bodyData = sliced || req.body.empty() ? WINHTTP_NO_REQUEST_DATA
+                                                : const_cast<char*>(req.body.data());
 
     if (!WinHttpSendRequest(opened.request.get(),
                             WINHTTP_NO_ADDITIONAL_HEADERS,
                             0,
                             bodyData,
-                            bodySize,
+                            sliced ? 0 : bodySize,
                             bodySize,
                             0))
     {
@@ -468,14 +544,19 @@ void sendRequest(const Request& req, OpenedRequest& opened)
         throwLastError("Sending the request");
     }
 
+    opened.request.noteActivity();
+
+    if (sliced)
+        writeBody(req, opened.request);
+
     if (!WinHttpReceiveResponse(opened.request.get(), nullptr))
     {
         opened.request.throwIfTimedOut();
-        throwReceiveError(req);
+        throwReceiveError(req, opened.redirectsFollowed);
     }
 
     opened.request.noteActivity();
-    throwIfRedirectLimitHit(opened.request.get(), req);
+    throwIfRedirectLimitHit(opened.request.get(), req, opened.redirectsFollowed);
 }
 
 int queryStatusCode(HINTERNET request)

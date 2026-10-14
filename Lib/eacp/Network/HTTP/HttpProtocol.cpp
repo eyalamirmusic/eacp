@@ -1,6 +1,8 @@
 #include "HttpProtocol.h"
 
+#include <initializer_list>
 #include <sstream>
+#include <vector>
 
 namespace eacp::HTTP
 {
@@ -178,8 +180,29 @@ std::string timedOutError()
 
 std::string tooManyRedirectsError(int maxRedirects)
 {
+    if (maxRedirects < 0)
+        return "The request was redirected too many times";
+
     return "The request was redirected more than " + std::to_string(maxRedirects)
            + " times";
+}
+
+void preferIdentityEncoding(Request& req)
+{
+    if (!req.hasHeader("Accept-Encoding"))
+        req.headers["Accept-Encoding"] = "identity";
+}
+
+bool asksForIdentityEncoding(const Request& req)
+{
+    return Strings::toLower(Strings::trim(req.getHeader("Accept-Encoding")))
+           == "identity";
+}
+
+bool isSchemeDowngrade(const std::string& from, const std::string& to)
+{
+    return Strings::toLower(from).starts_with("https:")
+           && Strings::toLower(to).starts_with("http:");
 }
 
 Time::MS connectLimit(const Request& req)
@@ -265,20 +288,80 @@ std::int64_t parseByteCount(const std::string& text)
 }
 } // namespace
 
-std::string resolveRedirectLocation(const std::string& from,
-                                    const std::string& location)
+namespace
 {
-    if (location.empty())
-        return from;
+// RFC 3986 section 5.2.4: "." segments go, ".." takes the one before it with
+// it, and a path that ended on either still ends in a slash.
+std::string removeDotSegments(const std::string& path)
+{
+    auto segments = std::vector<std::string>();
+    auto endsInDirectory = false;
+    auto pos = path.starts_with("/") ? std::size_t {1} : std::size_t {0};
 
+    while (pos <= path.size())
+    {
+        auto slash = path.find('/', pos);
+        auto end = slash == std::string::npos ? path.size() : slash;
+        auto segment = path.substr(pos, end - pos);
+        auto isLast = slash == std::string::npos;
+
+        if (segment == "..")
+        {
+            if (!segments.empty())
+                segments.pop_back();
+        }
+        else if (segment != ".")
+        {
+            segments.push_back(segment);
+        }
+
+        endsInDirectory = isLast && (segment == "." || segment == "..");
+
+        if (isLast)
+            break;
+
+        pos = slash + 1;
+    }
+
+    auto result = std::string(path.starts_with("/") ? "/" : "");
+
+    for (auto i = std::size_t {0}; i < segments.size(); ++i)
+    {
+        if (i > 0)
+            result.push_back('/');
+
+        result += segments[i];
+    }
+
+    if (endsInDirectory && !result.ends_with("/"))
+        result.push_back('/');
+
+    return result;
+}
+
+std::string withoutDotSegments(const std::string& url)
+{
+    auto authorityEnd = endOfAuthority(url);
+    auto pathEnd = url.find_first_of("?#", authorityEnd);
+
+    if (pathEnd == std::string::npos)
+        pathEnd = url.size();
+
+    auto path = url.substr(authorityEnd, pathEnd - authorityEnd);
+    return url.substr(0, authorityEnd) + removeDotSegments(path)
+           + url.substr(pathEnd);
+}
+
+std::string mergedLocation(const std::string& from, const std::string& location)
+{
     if (hasScheme(location))
         return location;
 
     if (location.starts_with("//"))
         return from.substr(0, endOfScheme(from)) + location;
 
-    if (location.front() == '/')
-        return from.substr(0, endOfAuthority(from)) + location;
+    if (location.front() == '#')
+        return from.substr(0, from.find('#')) + location;
 
     if (location.front() == '?')
     {
@@ -286,7 +369,20 @@ std::string resolveRedirectLocation(const std::string& from,
         return from.substr(0, queryStart) + location;
     }
 
+    if (location.front() == '/')
+        return from.substr(0, endOfAuthority(from)) + location;
+
     return directoryOf(from) + location;
+}
+} // namespace
+
+std::string resolveRedirectLocation(const std::string& from,
+                                    const std::string& location)
+{
+    if (location.empty())
+        return from;
+
+    return withoutDotSegments(mergedLocation(from, location));
 }
 
 namespace
@@ -329,7 +425,8 @@ Request redirectedRequest(const Request& from,
     }
 
     if (originOf(next.url) != originOf(from.url))
-        eraseHeaderIgnoringCase(next.headers, "Authorization");
+        for (auto* credential: {"Authorization", "Cookie", "Proxy-Authorization"})
+            eraseHeaderIgnoringCase(next.headers, credential);
 
     return next;
 }

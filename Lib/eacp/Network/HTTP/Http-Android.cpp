@@ -554,9 +554,16 @@ void countChunk(ResponseSizeLimit& limit, std::string_view chunk)
         throw std::runtime_error(responseTooLargeError(limit.maxBytes));
 }
 
-bool isRedirectTo(const Response& response, const std::string& location)
+// A downgrade from https to http is not followed - HttpURLConnection does not
+// follow one either - so the redirect itself is the response.
+bool isRedirectTo(const Request& hop,
+                  const Response& response,
+                  const std::string& location)
 {
-    return isRedirectStatus(response.statusCode) && !location.empty();
+    if (!isRedirectStatus(response.statusCode) || location.empty())
+        return false;
+
+    return !isSchemeDowngrade(hop.url, resolveRedirectLocation(hop.url, location));
 }
 
 Request nextHop(const Request& hop,
@@ -597,7 +604,7 @@ std::unique_ptr<Exchange>
         auto location =
             findHeaderIgnoringCase(exchange->response.headers, "Location");
 
-        if (!isRedirectTo(exchange->response, location))
+        if (!isRedirectTo(hop, exchange->response, location))
             return exchange;
 
         if (followed >= req.maxRedirects)

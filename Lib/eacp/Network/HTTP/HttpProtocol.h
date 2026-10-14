@@ -39,6 +39,17 @@ Time::MS idleLimit(const Request& req);
 
 bool needsDefaultUserAgent(const Request& req);
 
+// A byte range names offsets in the representation the server sends, so a
+// ranged request asks for it unencoded - unless the caller chose an
+// Accept-Encoding - and a backend that would otherwise decode transparently
+// leaves it alone.
+void preferIdentityEncoding(Request& req);
+bool asksForIdentityEncoding(const Request& req);
+
+// An https URL redirecting to plain http, which a backend that follows
+// redirects itself refuses as HttpURLConnection does.
+bool isSchemeDowngrade(const std::string& from, const std::string& to);
+
 bool isRedirectStatus(int statusCode);
 
 // Where a Location header points, read against the URL that answered with it:
@@ -48,7 +59,8 @@ std::string resolveRedirectLocation(const std::string& from,
 
 // The request a redirect leads to, for a backend that follows them itself:
 // a 303, and a 301 or 302 answering a POST, become a GET without the body,
-// and Authorization is dropped when the redirect leaves the origin.
+// and Authorization, Cookie and Proxy-Authorization are dropped when the
+// redirect leaves the origin.
 Request redirectedRequest(const Request& from,
                           int statusCode,
                           const std::string& location);

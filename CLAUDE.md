@@ -825,25 +825,37 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   first redirect; exceeding it is an error with status 0). Android has no
   setting for it, so a request that names one has its redirects followed by
   hand (`redirectedRequest` in `HttpProtocol.h`: 303 and POST-after-301/302
-  become a GET, Authorization dropped across origins)
+  become a GET, Authorization, Cookie and Proxy-Authorization dropped across
+  origins, an https-to-http downgrade returned as the 3xx). WinHTTP counts the
+  redirects it follows through a status callback, so only a redirect left
+  unfollowed at the limit is the error
 - `Request::connectTimeout` and `idleTimeout` beside the whole-request
   `timeout`; unset falls back to `timeout`, then to the backend
   (`connectLimit`/`idleLimit`). curl: `CURLOPT_CONNECTTIMEOUT_MS`, idle checked
   in its progress callback (about once a second while nothing moves).
   WinHTTP: `WinHttpSetTimeouts` plus the watchdog, which also closes the handle
-  at the end of an idle gap. NSURLSession: idle is `timeoutIntervalForRequest`;
-  connect has no event, so a task with no response and no body byte sent by
-  then is cancelled. Android: `setConnectTimeout`/`setReadTimeout`
+  at the end of an idle gap; under an idle limit a large body is written in
+  64 KiB slices with `WinHttpWriteData`, each one activity. NSURLSession: idle
+  is `timeoutIntervalForRequest`; connect has no event, so a task with no
+  response and no body byte sent by then is cancelled, and reported as a
+  timeout only if it then ended cancelled. Android:
+  `setConnectTimeout`/`setReadTimeout`
 - `Request::cachePolicy` (default `IgnoreLocalCache`; on Apple the request uses
-  `NSURLRequestReloadIgnoringLocalCacheData` and owned sessions drop their
-  `URLCache`, Android `setUseCaches(false)`; WinHTTP and curl never cache)
+  `NSURLRequestReloadIgnoringLocalCacheData`, and a request that would have
+  used `sharedSession` uses one process-wide session of eacp's own with no
+  `URLCache` instead, so nothing is stored either; Android
+  `setUseCaches(false)`; WinHTTP and curl never cache)
 - `defaultUserAgent()` (`eacp/<project version>`, from `EACP_VERSION_STRING`)
   is sent by every backend unless the request has a User-Agent header
 - `Request::resumeDownload`: `downloadFile` in `Http.cpp` measures the file,
   adds `Range: bytes=N-`, and calls the backend's `downloadFileFrom(req, path,
   N)`, which picks `DownloadWrite::Replace`/`Append`/`Keep` from the final
-  status through `downloadWriteFor`; a 416 for a whole file reports 200, any
-  other 416 or a 206 elsewhere starts over without the Range
+  status through `downloadWriteFor`; an appended file that is whole reports
+  200 and one a short 206 left incomplete is an error, a 416 for a whole file
+  reports 200, any other 416 or a 206 elsewhere starts over without the Range.
+  Ranged requests (resume, parallel chunks and their HEAD probe) send
+  `Accept-Encoding: identity` unless the caller set one
+  (`preferIdentityEncoding`), and WinHTTP skips its decompression for them
 - `HTTP::URL` (base, ordered `QueryParameter`s, fragment; `parse`,
   `addParameter`, `toString`) and `parseQueryParameters`, which keeps order
   and repeats

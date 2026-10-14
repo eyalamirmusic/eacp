@@ -47,12 +47,21 @@ public:
 
     bool wentIdle() const { return idleExpired; }
 
-    void countExistingBytes(std::int64_t bytes) { offset = bytes; }
+    // A resumed download reports nothing until the response says whether its
+    // body extends the file, replaces it or - an error page - is not the
+    // file at all; from then on the bytes already on disk are counted in.
+    void waitForTheResponse() { reporting = false; }
+
+    void startReporting(std::int64_t bytesAlreadyOnDisk)
+    {
+        offset = bytesAlreadyOnDisk;
+        reporting = true;
+    }
 
 private:
     void reportProgress(curl_off_t total, curl_off_t received)
     {
-        if (progress == nullptr)
+        if (progress == nullptr || !reporting)
             return;
 
         progress->bytesReceived.store(offset + received);
@@ -87,6 +96,7 @@ private:
     DownloadProgress* progress = nullptr;
     Time::MS idleLimit;
     std::int64_t offset = 0;
+    bool reporting = true;
     curl_off_t lastMoved = 0;
     Clock::time_point lastActivity = Clock::now();
     bool idleExpired = false;
@@ -135,8 +145,7 @@ struct BodyToFile
         if (write == DownloadWrite::Keep)
             return true;
 
-        if (write == DownloadWrite::Append)
-            watch->countExistingBytes(resumeFrom);
+        watch->startReporting(write == DownloadWrite::Append ? resumeFrom : 0);
 
         file =
             std::fopen(path.c_str(), write == DownloadWrite::Append ? "ab" : "wb");
@@ -373,6 +382,9 @@ Response downloadFileInternal(const Request& req,
 
     auto watch = TransferWatch(req.progress, req.idleTimeout);
     watchTransfer(curl.handle, watch);
+
+    if (resumeFrom > 0)
+        watch.waitForTheResponse();
 
     auto sink = BodyToFile {};
     sink.curl = curl.handle;

@@ -132,8 +132,11 @@ struct Request
     CachePolicy cachePolicy = CachePolicy::IgnoreLocalCache;
 
     // Downloads only: when the destination already holds N bytes, asks for
-    // the rest with "Range: bytes=N-". A 206 starting at N is appended, and
-    // progress counts the N bytes already there; a 200 replaces the file. A
+    // the rest with "Range: bytes=N-", unencoded unless the request names an
+    // Accept-Encoding. A 206 starting at N is appended, progress counts the N
+    // bytes already there, and a file that is then whole is reported as 200;
+    // a 206 that stops short of the end is an error, the file keeping the
+    // bytes it did get for a later resume. A 200 replaces the file. A
     // 416 whose Content-Range says the file is already whole leaves it as it
     // is and reports 200; any other 416, or a 206 starting elsewhere, discards
     // the partial file and downloads it again from the start. Any other
@@ -188,15 +191,20 @@ Vector<QueryParameter> parseQueryParameters(const std::string& query);
 std::map<std::string, std::string> parseQueryString(const std::string& query);
 
 // An address and its query, kept apart so parameters are added unencoded and
-// encoded once, in order, when the string is asked for. The base is taken
-// verbatim - scheme, host and path, already in URL form.
+// encoded once, in order, when the string is asked for. The base is scheme,
+// host and path, already in URL form and taken verbatim. A base that still
+// carries a '?' - set directly, or "x?" with nothing after it - has the
+// parameters joined on with '&'.
 struct URL
 {
-    URL(const std::string& baseToUse = {});
+    // The same as parse(text).
+    URL(const std::string& text = {});
 
-    // Splits at the first '?' and the first '#' after it; the query's pairs
-    // are decoded. A name with no '=' comes back with an empty value, and is
-    // written back as "name=".
+    // The fragment starts at the first '#', and the query at the first '?'
+    // before it. The query's pairs are decoded the way urlDecode reads them,
+    // '+' as a space included, so a literal plus must arrive as %2B - which
+    // is how toString writes one. A name with no '=' comes back with an
+    // empty value, and is written back as "name=".
     static URL parse(const std::string& text);
 
     URL& addParameter(const std::string& name, const std::string& value);
