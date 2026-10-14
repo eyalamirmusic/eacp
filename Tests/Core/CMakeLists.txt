@@ -138,35 +138,17 @@ if (LINUX)
     add_dependencies(CoreTests RootLoopTestPlugin)
 endif ()
 
-# The system clipboard is a single global object shared with the whole machine,
-# and NanoTest gives every case its own process, so these cannot overlap: under
-# ctest -j one case's copyText lands between another's copyText and getText, and
-# the reader sees the wrong string. A RESOURCE_LOCK serialises them against each
-# other while the rest of the suite still runs in parallel. The names are read
-# out of the source so a new case is covered without editing a list here.
-#
+# The system clipboard is one object shared with the whole machine, so the
+# Clipboard group takes a lock that every other group copying to it takes too.
 # The file is appended to TEST_INCLUDE_FILES after the one nano_discover_tests
-# registers, so the tests exist by the time these run. A name that is not
-# there — the placeholder entry written before the first build — is ignored
-# rather than an error, so only the cross-compiling case, which registers a
-# single target-level test instead, needs a guard.
+# registers, so the group's entry exists by the time it runs.
 if (NOT CMAKE_CROSSCOMPILING)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/ClipboardTests.cpp")
-
-    file(STRINGS ClipboardTests.cpp clipboard_test_lines
-            REGEX "\"Clipboard/[^\"]+\"")
-
     set(clipboard_lock_file
             "${CMAKE_CURRENT_BINARY_DIR}/ClipboardSerialisation.cmake")
-    file(WRITE "${clipboard_lock_file}" "")
 
-    foreach (line IN LISTS clipboard_test_lines)
-        string(REGEX MATCH "Clipboard/[^\"]+" clipboard_test "${line}")
-        file(APPEND "${clipboard_lock_file}"
-                "set_tests_properties(\"${clipboard_test}\" PROPERTIES\n"
-                "        RESOURCE_LOCK eacp-system-clipboard)\n")
-    endforeach ()
+    file(WRITE "${clipboard_lock_file}"
+            "set_tests_properties(Clipboard PROPERTIES\n"
+            "        RESOURCE_LOCK eacp-system-clipboard)\n")
 
     set_property(DIRECTORY APPEND PROPERTY
             TEST_INCLUDE_FILES "${clipboard_lock_file}")

@@ -216,7 +216,7 @@ jobs:
           EACP_REQUIRE_DISPLAY: '1'
         run: >
           Scripts/with-weston ctest --test-dir build --output-on-failure -j 4
-          -E '^(X11|EmbeddedView)/'
+          -E '^(X11|EmbeddedView)(/|$)'
 
       # The same windows on the other window system: an Xvfb with no window
       # manager, which is the harshest X11 target there is, and the swapchain
@@ -229,7 +229,7 @@ jobs:
           EACP_REQUIRE_DISPLAY: '1'
         run: >
           Scripts/with-xvfb ctest --test-dir build --output-on-failure -j 4
-          -R '^(X11|EmbeddedView|Present)/'
+          -R '^(X11|EmbeddedView|Present)(/|$)'
 
       # lavapipe is a 1.3 device; this forces the render-pass path a Vulkan 1.1
       # device takes, so both paths stay covered.

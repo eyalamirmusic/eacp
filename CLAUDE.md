@@ -628,12 +628,12 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
       with-weston ctest --test-dir build-ci-linux --output-on-failure \
-      -E '^(X11|EmbeddedView)/'
+      -E '^(X11|EmbeddedView)(/|$)'
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
       -v "$PWD":/workspace eacp-ci-linux \
       with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-      -R '^(X11|EmbeddedView|Present)/'
+      -R '^(X11|EmbeddedView|Present)(/|$)'
 ```
 
 `EACP_VK_SOFTWARE=1` prefers a CPU device (Mesa's lavapipe), mirroring
@@ -672,13 +672,16 @@ of the suite runs at whatever scale that session named. A display has one
 pointer, one
 keyboard, one focus and one clipboard, and with no window manager under Xvfb
 every window a case opens lands on top of the last one and exposes it into a
-repaint, so `Tests/Graphics/CMakeLists.txt` and `Tests/GPU/CMakeLists.txt` read
-the case names back out of the sources (which are `CMAKE_CONFIGURE_DEPENDS`, so
-a renamed case is not silently left unlocked) and give them a `RESOURCE_LOCK`:
-`eacp-linux-display` over every `X11/`, `EmbeddedView/` and `Present/` case, and
-`eacp-system-clipboard` over the clipboard ones, which take both. Each
-serialises its own set under `ctest -j` while the rest of the suite runs beside
-them.
+repaint. A ctest entry is a group of cases, not one case:
+`Tests/CMakeLists.txt` sets `NANO_TEST_GROUP_BY PREFIX`, so the cases named
+`X11/...` run in one process behind the entry `X11`, and
+`Tests/Graphics/CMakeLists.txt` and `Tests/GPU/CMakeLists.txt` give the groups a
+`RESOURCE_LOCK` by name: `eacp-linux-display` over `X11`, `EmbeddedView` and
+`Present`, and `eacp-system-clipboard` over `X11`, `Wayland` and `Tests/Core`'s
+`Clipboard`. Each serialises its own set under `ctest -j` while the rest of the
+suite runs beside them. One case runs on its own through its binary
+(`X11WindowTests --test X11/windowComesUpAtItsConfiguredSize`), one group
+through `ctest -R '^X11$'`.
 `DisplayLinkTests` is a fourth Linux-only binary and a headless one: it plays
 host to the loop, as `EmbeddedViewTests` does, so
 `DisplayLink/ticksOnlyWhenPumped` needs a plain `main` outside `Apps::run`,

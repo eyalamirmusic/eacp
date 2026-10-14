@@ -371,13 +371,21 @@ docker run --rm -e EACP_HEADLESS=1 -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 \
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -e EACP_REQUIRE_FONTS=1 -v "$PWD":/workspace eacp-ci-linux \
     with-weston ctest --test-dir build-ci-linux --output-on-failure \
-    -E '^(X11|EmbeddedView)/'
+    -E '^(X11|EmbeddedView)(/|$)'
 
 docker run --rm -e EACP_REQUIRE_GPU=1 -e EACP_VK_SOFTWARE=1 -e EACP_REQUIRE_DISPLAY=1 \
     -v "$PWD":/workspace eacp-ci-linux \
     with-xvfb ctest --test-dir build-ci-linux --output-on-failure \
-    -R '^(X11|EmbeddedView|Present)/'
+    -R '^(X11|EmbeddedView|Present)(/|$)'
 ```
+
+A ctest entry is a group, not a case: `Tests/CMakeLists.txt` sets
+`NANO_TEST_GROUP_BY PREFIX`, so every case named `X11/...` runs in the one
+process behind the entry `X11`, and a filter names the group, as `^X11$` does.
+One case runs on its own through its binary, `X11WindowTests --test
+X11/windowComesUpAtItsConfiguredSize`, and one group through `ctest -R '^X11$'`. The groups that
+share a display or the clipboard take a `RESOURCE_LOCK` by group name, set in
+the `TEST_INCLUDE_FILES` of their test directories.
 
 The environment variables those commands set — `EACP_VK_SOFTWARE`,
 `EACP_REQUIRE_GPU`, `EACP_REQUIRE_DISPLAY`, `EACP_REQUIRE_FONTS`,

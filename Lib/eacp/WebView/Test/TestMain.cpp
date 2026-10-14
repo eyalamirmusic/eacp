@@ -83,6 +83,8 @@ nano::RunOptions parseRunOptions()
             opts.listTests = true;
         else if (args[i] == "--test" && i + 1 < args.size())
             opts.test = args[++i];
+        else if (args[i] == "--test-group" && i + 1 < args.size())
+            opts.group = args[++i];
     }
 
     return opts;

@@ -2,6 +2,8 @@ set(CMAKE_FOLDER Tests)
 
 find_package(NanoTest REQUIRED)
 
+set(NANO_TEST_GROUP_BY PREFIX)
+
 add_subdirectory(Core)
 
 if (APPLE)
