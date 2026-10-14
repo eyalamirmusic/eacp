@@ -498,8 +498,8 @@ NSMutableURLRequest* getRequest(const Request& req)
     request.HTTPMethod = Strings::toNSString(req.type);
     request.cachePolicy = nativeCachePolicy(req);
 
-    if (needsDefaultUserAgent(req))
-        [request setValue:Strings::toNSString(defaultUserAgent())
+    if (auto agent = userAgentToAdd(req); !agent.empty())
+        [request setValue:Strings::toNSString(agent)
             forHTTPHeaderField:@"User-Agent"];
 
     for (const auto& pair: req.headers)

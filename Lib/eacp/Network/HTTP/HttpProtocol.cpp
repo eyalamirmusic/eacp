@@ -215,9 +215,12 @@ Time::MS idleLimit(const Request& req)
     return req.idleTimeout.count > 0 ? req.idleTimeout : req.timeout;
 }
 
-bool needsDefaultUserAgent(const Request& req)
+std::string userAgentToAdd(const Request& req)
 {
-    return !req.hasHeader("User-Agent");
+    if (req.hasHeader("User-Agent"))
+        return {};
+
+    return defaultUserAgent();
 }
 
 bool isRedirectStatus(int statusCode)

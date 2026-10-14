@@ -37,7 +37,10 @@ std::string tooManyRedirectsError(int maxRedirects);
 Time::MS connectLimit(const Request& req);
 Time::MS idleLimit(const Request& req);
 
-bool needsDefaultUserAgent(const Request& req);
+// The User-Agent a backend adds to the request: defaultUserAgent(), or empty
+// when the request carries its own or there is nothing to add because the
+// platform sends its own.
+std::string userAgentToAdd(const Request& req);
 
 // A byte range names offsets in the representation the server sends, so a
 // ranged request asks for it unencoded - unless the caller chose an
