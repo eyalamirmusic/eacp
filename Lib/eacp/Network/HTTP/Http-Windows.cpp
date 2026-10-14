@@ -496,9 +496,10 @@ void sendRequest(const Request& req, OpenedRequest& opened)
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
-    // Not for a request that asks for the identity encoding, as a ranged one
-    // does: its byte offsets are the representation's own.
-    if (!asksForIdentityEncoding(req))
+    // Not for a request that names its own Accept-Encoding - a ranged one asks
+    // for the identity encoding, its byte offsets being the representation's
+    // own - since WinHTTP would replace the caller's header with its own.
+    if (!req.hasHeader("Accept-Encoding"))
     {
         auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
         WinHttpSetOption(opened.request.get(),

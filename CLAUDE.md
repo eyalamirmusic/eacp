@@ -855,7 +855,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   reports 200, any other 416 or a 206 elsewhere starts over without the Range.
   Ranged requests (resume, parallel chunks and their HEAD probe) send
   `Accept-Encoding: identity` unless the caller set one
-  (`preferIdentityEncoding`), and WinHTTP skips its decompression for them
+  (`preferIdentityEncoding`), and WinHTTP skips its decompression for any
+  request that names an Accept-Encoding, which it would otherwise replace
 - `HTTP::URL` (base, ordered `QueryParameter`s, fragment; `parse`,
   `addParameter`, `toString`) and `parseQueryParameters`, which keeps order
   and repeats
