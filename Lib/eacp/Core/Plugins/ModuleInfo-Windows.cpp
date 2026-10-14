@@ -1,5 +1,6 @@
 #include "ModuleInfo.h"
 
+#include "../Utils/FilesPlatform.h"
 #include "../Utils/WinInclude.h"
 
 namespace eacp::Plugins
@@ -26,16 +27,7 @@ bool isDynamicLibrary()
 
 FilePath getCurrentModulePath()
 {
-    auto buffer = std::wstring(MAX_PATH, L'\0');
-    auto length = GetModuleFileNameW(
-        (HMODULE) getCurrentModuleHandle(), buffer.data(), (DWORD) buffer.size());
-
-    if (length == 0)
-        return {};
-
-    buffer.resize(length);
-
-    return FilePath::fromWide(buffer);
+    return eacp::Detail::modulePath(getCurrentModuleHandle());
 }
 
 std::string getModuleIdentitySuffix()

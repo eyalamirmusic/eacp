@@ -79,6 +79,20 @@ auto tApplicationPath = test("FileLocations/applicationPathIsThisBinary") = []
         check(application.fileName() == executable.fileName());
 };
 
+auto tModulePath = test("FileLocations/currentModulePathIsThisBinary") = []
+{
+    auto module = eacp::Plugins::getCurrentModulePath();
+
+    check(!module.empty());
+    check(module.isAbsolute());
+    check(eacp::Files::isFile(module));
+
+    // Both are GetModuleFileNameW on Windows, one for this module and one for
+    // the executable, which in the test runner are the same image.
+    if constexpr (eacp::Platform::isWindows())
+        check(module == eacp::Files::executablePath());
+};
+
 auto tEnclosingBundle = test("FileLocations/enclosingBundleOfABundledBinary") = []
 {
     using eacp::Files::enclosingBundle;
