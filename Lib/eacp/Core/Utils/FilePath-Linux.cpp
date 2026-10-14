@@ -1,12 +1,45 @@
 #include "Environment.h"
 #include "FilePath.h"
 
+#include <cerrno>
 #include <fstream>
+#include <vector>
+
+#include <pwd.h>
+#include <unistd.h>
 
 namespace eacp
 {
 namespace
 {
+// The home folder the password database records for this user, for a process
+// started without $HOME (a service, or a sanitised environment).
+std::string passwordDatabaseHome()
+{
+    auto bufferSize = ::sysconf(_SC_GETPW_R_SIZE_MAX);
+    auto buffer = std::vector<char>(bufferSize > 0 ? (std::size_t) bufferSize
+                                                   : std::size_t {16384});
+
+    while (true)
+    {
+        auto entry = passwd {};
+        auto* result = (passwd*) nullptr;
+        auto error =
+            ::getpwuid_r(::getuid(), &entry, buffer.data(), buffer.size(), &result);
+
+        if (error == ERANGE && buffer.size() < 1024 * 1024)
+        {
+            buffer.resize(buffer.size() * 2);
+            continue;
+        }
+
+        if (error != 0 || result == nullptr || result->pw_dir == nullptr)
+            return {};
+
+        return result->pw_dir;
+    }
+}
+
 FilePath configHome()
 {
     auto path = getEnvValue("XDG_CONFIG_HOME");
@@ -56,7 +89,17 @@ FilePath xdgUserDirectory(std::string_view key, std::string_view fallback)
 
 FilePath FilePath::homeDirectory()
 {
-    return FilePath {getEnvValue("HOME")};
+    auto path = getEnvValue("HOME");
+
+    if (path.empty())
+        path = passwordDatabaseHome();
+
+    // JUCE's File drops the trailing separator, and paths built on this one
+    // have to match it.
+    if (path.size() > 1 && path.ends_with('/'))
+        path.pop_back();
+
+    return FilePath {path};
 }
 
 FilePath FilePath::documentsDirectory()

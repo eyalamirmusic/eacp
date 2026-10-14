@@ -79,6 +79,12 @@ if (LINUX)
             RootLoopTests-Linux.cpp)
 endif ()
 
+# $HOME and the XDG user-dirs file are how FilePath-Linux.cpp finds the
+# per-user folders.
+if (LINUX)
+    list(APPEND core_test_sources FileLocationsTests-Linux.cpp)
+endif ()
+
 nano_add_executable(CoreTests
         SOURCES ${core_test_sources}
         TARGETS eacp-core)
