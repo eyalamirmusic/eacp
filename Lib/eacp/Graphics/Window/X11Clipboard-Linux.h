@@ -70,6 +70,7 @@ private:
     constexpr const X11Atoms& atoms() const { return connection.getAtoms(); }
 
     xcb_window_t selectionOwner();
+    bool isStaleSelectionClear();
     bool takeSelection(std::string data, Content kind);
 
     void serveRequest(const xcb_selection_request_event_t& request);

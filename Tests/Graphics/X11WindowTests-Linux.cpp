@@ -1684,8 +1684,18 @@ auto tPointerMotionReachesTheContentView =
 
     input.moveTo(origin + Point {130.f, 90.f});
 
-    Threads::runEventLoopUntil([&] { return !host.content.moves.empty(); },
-                               x11TestTimeout);
+    // The pointer a previous case left over this spot can enter the window
+    // before the move does, so wait for the move rather than the first event.
+    auto reachedTarget = [&]
+    {
+        if (host.content.moves.empty())
+            return false;
+
+        const auto& moved = host.content.moves.back();
+        return moved.pos.x == 130.f && moved.pos.y == 90.f;
+    };
+
+    Threads::runEventLoopUntil(reachedTarget, x11TestTimeout);
 
     if (!checkArrived(!host.content.moves.empty(),
                       "no mouseMoved reached the content view"))

@@ -147,6 +147,14 @@ xcb_window_t X11Clipboard::selectionOwner()
     return owner;
 }
 
+// A clear for an ownership we lost and then took back before the loop ran is
+// still in the queue behind the new copy, and must not drop what that copy
+// stored.
+bool X11Clipboard::isStaleSelectionClear()
+{
+    return ownedContent != Content::None && selectionOwner() == window;
+}
+
 // CurrentTime is the right timestamp here rather than a lazy one: the server
 // replaces it with its own, and nothing of ours serves TIMESTAMP for a
 // clipboard manager to compare.
@@ -255,6 +263,9 @@ bool X11Clipboard::handleEvent(const xcb_generic_event_t& event)
 
             if (cleared.owner != window)
                 return false;
+
+            if (isStaleSelectionClear())
+                return true;
 
             ownedData.clear();
             ownedContent = Content::None;

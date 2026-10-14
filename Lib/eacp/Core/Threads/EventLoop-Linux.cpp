@@ -508,11 +508,17 @@ bool EventLoop::runFor(Time::MS timeout)
     initMainThread();
 
     auto& loop = getLoop();
-    loop.running = true;
+    auto wasRunning = loop.running.exchange(true);
 
     auto advertised = RootLoopScope {loop};
     auto scope = PumpScope {loop};
     auto deadline = Time::Deadline {timeout};
+
+    auto timedOut = [&]
+    {
+        loop.running = wasRunning;
+        return false;
+    };
 
     while (loop.running)
     {
@@ -522,12 +528,12 @@ bool EventLoop::runFor(Time::MS timeout)
             break;
 
         if (deadline.expired())
-            return false;
+            return timedOut();
 
         auto wait = waitForLoopActivity(loop, (int) deadline.remaining().count);
 
         if (wait == WaitResult::TimedOut)
-            return false;
+            return timedOut();
 
         if (wait == WaitResult::Failed)
             break;
