@@ -11,31 +11,6 @@ using namespace eacp::Zip;
 
 namespace
 {
-std::filesystem::path scratchDirectory(const std::string& name)
-{
-    auto dir = std::filesystem::temp_directory_path() / ("eacp-zip-" + name);
-
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directories(dir);
-
-    return dir;
-}
-
-void write(const std::filesystem::path& path, std::string_view contents)
-{
-    std::filesystem::create_directories(path.parent_path());
-
-    auto out = std::ofstream {path, std::ios::binary | std::ios::trunc};
-    out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-}
-
-std::string read(const std::filesystem::path& path)
-{
-    auto in = std::ifstream {path, std::ios::binary};
-
-    return {std::istreambuf_iterator<char> {in}, std::istreambuf_iterator<char> {}};
-}
-
 std::string repeated(std::string_view unit, int times)
 {
     auto text = std::string {};
@@ -154,7 +129,7 @@ auto tZipRejectsEmptyBytes =
 
 auto tZipMissingFileIsInvalid = test("Zip/missingFileIsInvalid") = []
 {
-    const auto dir = scratchDirectory("missing");
+    const auto dir = scratchDirectory("zip-missing");
     const auto reader = Reader {FilePath {dir / "nope.zip"}};
 
     check(!reader.isValid());
@@ -162,7 +137,7 @@ auto tZipMissingFileIsInvalid = test("Zip/missingFileIsInvalid") = []
 
 auto tZipWritesAndReadsFile = test("Zip/writesAndReadsFile") = []
 {
-    const auto dir = scratchDirectory("file");
+    const auto dir = scratchDirectory("zip-file");
     const auto archive = FilePath {dir / "out" / "archive.zip"};
 
     auto writer = Writer {};
@@ -178,11 +153,11 @@ auto tZipWritesAndReadsFile = test("Zip/writesAndReadsFile") = []
 
 auto tZipAddsFilesAndDirectories = test("Zip/addsFilesAndDirectories") = []
 {
-    const auto dir = scratchDirectory("tree");
-    write(dir / "root.txt", "root");
-    write(dir / "sub" / "one.txt", "one");
-    write(dir / "sub" / "deeper" / "two.txt", "two");
-    write(dir / "extra.txt", "extra");
+    const auto dir = scratchDirectory("zip-tree");
+    writeTestFile(dir / "root.txt", "root");
+    writeTestFile(dir / "sub" / "one.txt", "one");
+    writeTestFile(dir / "sub" / "deeper" / "two.txt", "two");
+    writeTestFile(dir / "extra.txt", "extra");
 
     auto writer = Writer {};
     check(writer.addDirectory(FilePath {dir / "sub"}, "tree/"));
@@ -200,17 +175,18 @@ auto tZipAddsFilesAndDirectories = test("Zip/addsFilesAndDirectories") = []
 
 auto tZipExtractsAll = test("Zip/extractsAll") = []
 {
-    const auto dir = scratchDirectory("extract");
+    const auto dir = scratchDirectory("zip-extract");
     const auto reader = Reader {twoEntryArchive()};
 
     check(reader.extractAll(FilePath {dir / "out"}));
-    check(read(dir / "out" / "hello.txt") == "hello, zip");
-    check(read(dir / "out" / "nested" / "data.bin") == repeated("0123456789", 100));
+    check(readTestFile(dir / "out" / "hello.txt") == "hello, zip");
+    check(readTestFile(dir / "out" / "nested" / "data.bin")
+          == repeated("0123456789", 100));
 };
 
 auto tZipExtractionStaysUnderRoot = test("Zip/extractionStaysUnderRoot") = []
 {
-    const auto dir = scratchDirectory("slip");
+    const auto dir = scratchDirectory("zip-slip");
 
     auto writer = Writer {};
     check(writer.add("../escaped.txt", "escaped"));
@@ -229,8 +205,8 @@ auto tZipExtractionStaysUnderRoot = test("Zip/extractionStaysUnderRoot") = []
     const auto root = dir / "out";
 
     check(!reader.extractAll(FilePath {root}));
-    check(read(root / "safe.txt") == "safe");
-    check(read(root / "fine.txt") == "fine");
+    check(readTestFile(root / "safe.txt") == "safe");
+    check(readTestFile(root / "fine.txt") == "fine");
     check(!std::filesystem::exists(dir / "escaped.txt"));
     check(!std::filesystem::exists(root / "absolute.txt"));
 };

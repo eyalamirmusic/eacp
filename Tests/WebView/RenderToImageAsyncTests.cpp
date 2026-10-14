@@ -24,7 +24,7 @@ bool isNear(const Color& c, int r, int g, int b, int tolerance = 12)
 // Solid red page. A short setTimeout defers the ready signal to let layout
 // settle -- requestAnimationFrame would not fire for an off-screen (headless)
 // web view, but timers do.
-const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
+const std::string snapshotPageHtml = R"HTML(<!doctype html><html><head><style>
   html,body{margin:0;height:100%;background:#e01010}
 </style></head><body><script>
   setTimeout(function () {
@@ -32,19 +32,19 @@ const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
   }, 50);
 </script></body></html>)HTML";
 
-struct Fixture
+struct SnapshotFixture
 {
     WebView webView {};
     Window window {};
     bool ready = false;
 
-    Fixture()
+    SnapshotFixture()
     {
         window.setContentView(webView);
         webView.setBounds({0.f, 0.f, 120.f, 80.f});
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
-        webView.loadHTML(pageHtml);
+        webView.loadHTML(snapshotPageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
     }
@@ -56,7 +56,7 @@ struct Fixture
 auto tAsyncSnapshotCapturesWebContent =
     test("RenderToImageAsync/capturesWebContent") = []
 {
-    auto fix = Fixture {};
+    auto fix = SnapshotFixture {};
 
     auto image = fix.webView.renderToImageAsync(1.f).waitFor(webViewResultTimeout);
 

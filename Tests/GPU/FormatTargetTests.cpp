@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace FormatTargetTests
+{
 namespace
 {
 constexpr auto targetSize = 4;
@@ -215,3 +217,4 @@ auto tFormatTargetDraws = test("FormatTarget/aPassDrawsIntoEachFormat") = []
                       <= 2.5e-3f);
     }
 };
+} // namespace FormatTargetTests

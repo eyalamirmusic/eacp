@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace SamplerTests
+{
 namespace
 {
 constexpr auto viewWidth = 16;
@@ -691,9 +693,12 @@ constexpr QuadVertex leftHalf[] = {
     {{-1.f, 1.f}, {0.f, 0.f}},
 };
 } // namespace
+} // namespace SamplerTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(SamplerTests::QuadVertex, Float2)
 
+namespace SamplerTests
+{
 namespace
 {
 struct DepthWriter final : ShaderProgram
@@ -872,3 +877,4 @@ auto tCompareGreater = test("Sampler/compareGreaterPassesOnlyInFront") = []
     check(left == half);
     check(right == 0);
 };
+} // namespace SamplerTests

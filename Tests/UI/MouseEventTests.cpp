@@ -12,6 +12,8 @@ using namespace eacp::UI;
 using eacp::Graphics::ModifierKeys;
 using eacp::Graphics::MouseButton;
 
+namespace MouseEventTests
+{
 namespace
 {
 eacp::Graphics::MouseEvent mouseAt(Point position, int clickCount = 1)
@@ -202,3 +204,4 @@ auto tDoubleClickSkipsDeleted =
     check(target == nullptr);
     check(doubles == 0);
 };
+} // namespace MouseEventTests

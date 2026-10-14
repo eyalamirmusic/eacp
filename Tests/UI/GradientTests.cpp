@@ -8,6 +8,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace GradientTests
+{
 namespace
 {
 const auto red = Color {1.f, 0.f, 0.f, 1.f};
@@ -94,7 +96,6 @@ auto tAddStop = test("Gradient/addStopAppendsAndChains") = []
     check(gradient.stops[3].position == 0.25f);
 };
 
-auto tEmpty = test("Gradient/aDefaultGradientIsEmpty") = []
-{
-    check(Gradient {}.isEmpty());
-};
+auto tEmpty =
+    test("Gradient/aDefaultGradientIsEmpty") = [] { check(Gradient {}.isEmpty()); };
+} // namespace GradientTests

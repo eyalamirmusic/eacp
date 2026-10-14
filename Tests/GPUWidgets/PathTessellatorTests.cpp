@@ -1,4 +1,4 @@
-#include <eacp/GPUWidgets/GPUWidgets.h>
+#include "PathShapes.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -32,7 +32,7 @@ constexpr auto feather = 1.f;
 
 // How far from an edge a point has to be before its coverage is called, in
 // feathers. Anything closer is inside the ramp, which is not what these check.
-constexpr auto margin = 1.5f;
+constexpr auto featherMargin = 1.5f;
 
 Path rectangle()
 {
@@ -41,7 +41,7 @@ Path rectangle()
     return path;
 }
 
-Path circle()
+Path fillCircle()
 {
     auto path = Path {};
     path.addEllipse({20.f, 20.f, 240.f, 240.f});
@@ -61,11 +61,11 @@ Path arrow()
     return path;
 }
 
-Vector<Path> everyShape()
+Vector<Path> everyFillShape()
 {
     auto shapes = Vector<Path> {};
     shapes.add(rectangle());
-    shapes.add(circle());
+    shapes.add(fillCircle());
     shapes.add(arrow());
     return shapes;
 }
@@ -105,25 +105,6 @@ float coverageAt(const Vector<MeshVertex>& mesh, const Point& at)
     return 0.f;
 }
 
-float distanceToSegment(const Point& p, const Point& a, const Point& b)
-{
-    auto dx = b.x - a.x;
-    auto dy = b.y - a.y;
-    auto lengthSquared = dx * dx + dy * dy;
-
-    auto t = lengthSquared > 0.f
-                 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared,
-                              0.f,
-                              1.f)
-                 : 0.f;
-
-    auto nearestX = a.x + dx * t;
-    auto nearestY = a.y + dy * t;
-
-    return std::sqrt((p.x - nearestX) * (p.x - nearestX)
-                     + (p.y - nearestY) * (p.y - nearestY));
-}
-
 float distanceToOutline(const Point& p, const Path& path)
 {
     auto best = std::numeric_limits<float>::max();
@@ -133,9 +114,9 @@ float distanceToOutline(const Point& p, const Path& path)
         auto count = sub.points.size();
 
         for (auto i = 0; i < count; ++i)
-            best = std::min(
-                best,
-                distanceToSegment(p, sub.points[i], sub.points[(i + 1) % count]));
+            best = std::min(best,
+                            shapes::distanceToSegment(
+                                p, sub.points[i], sub.points[(i + 1) % count]));
     }
 
     return best;
@@ -211,7 +192,7 @@ float polygonArea(const Path& path)
 // whole bounding box would pass every interior check there is.
 auto tCoversTheShape = test("PathTessellator/meshCoversExactlyTheShape") = []
 {
-    for (const auto& shape: everyShape())
+    for (const auto& shape: everyFillShape())
     {
         auto mesh = tessellateAntialiasedFill(shape, feather);
         check(!mesh.empty());
@@ -229,7 +210,7 @@ auto tCoversTheShape = test("PathTessellator/meshCoversExactlyTheShape") = []
 
                 auto distance = distanceToOutline(at, shape);
 
-                if (distance < feather * margin)
+                if (distance < feather * featherMargin)
                     continue;
 
                 auto covered = coverageAt(mesh, at);
@@ -260,7 +241,7 @@ auto tCoversTheShape = test("PathTessellator/meshCoversExactlyTheShape") = []
 // more than a feather squared of.
 auto tInkMatchesTheArea = test("PathTessellator/featherIsCentredOnTheOutline") = []
 {
-    for (const auto& shape: everyShape())
+    for (const auto& shape: everyFillShape())
     {
         auto mesh = tessellateAntialiasedFill(shape, feather);
         auto difference = std::abs(inkedArea(mesh) - polygonArea(shape));
@@ -276,7 +257,7 @@ auto tInkMatchesTheArea = test("PathTessellator/featherIsCentredOnTheOutline") =
 // opacity, which is what the one that broke the atlas does.
 auto tDoesNotOverlapItself = test("PathTessellator/trianglesDoNotOverlap") = []
 {
-    for (const auto& shape: everyShape())
+    for (const auto& shape: everyFillShape())
     {
         auto mesh = tessellateAntialiasedFill(shape, feather);
         auto area = shape.getBounds().inset(-feather * 4.f);

@@ -25,6 +25,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace PipelineStateTests
+{
 namespace
 {
 bool isGreen(const Graphics::Color& c)
@@ -512,3 +514,4 @@ auto tNeverAndAlwaysAreTheExtremes = test("PipelineState/neverAndAlwaysAgree") =
     check(isRed(centreOf(never)));
     check(isGreen(centreOf(always)));
 };
+} // namespace PipelineStateTests

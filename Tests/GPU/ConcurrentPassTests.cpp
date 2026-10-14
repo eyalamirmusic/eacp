@@ -14,6 +14,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ConcurrentPassTests
+{
 namespace
 {
 constexpr auto floatBytes = (int) sizeof(float);
@@ -327,3 +329,4 @@ auto tConcurrentPassOnTheFrame =
 
     view.chain.checkResult();
 };
+} // namespace ConcurrentPassTests

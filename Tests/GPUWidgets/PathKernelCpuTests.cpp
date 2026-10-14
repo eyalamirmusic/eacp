@@ -33,16 +33,16 @@ using namespace eacp::GPUWidgets;
 namespace
 {
 using cpu::UInts;
+using cpu::untouched;
 using Graphics::Rect;
 
-constexpr auto untouched = 0xdeadbeefu;
 constexpr auto untouchedFloat = -12345.f;
 
 // Past the end of every array a stage writes, so a guard that let a thread
 // through shows as a changed element rather than a write nobody reads.
 constexpr auto pad = 5;
 
-struct Entry
+struct SceneEntry
 {
     Path path;
     FillRule rule = FillRule::NonZero;
@@ -68,7 +68,7 @@ struct Scene
     int tileSlots() const { return tiles + 1; }
 };
 
-Scene gather(const Vector<Entry>& entries)
+Scene gather(const Vector<SceneEntry>& entries)
 {
     auto scene = Scene {};
 
@@ -301,11 +301,11 @@ Stages runOnGpu(const Scene& scene)
 
 // The batches CoverageBatchTests draws: mixed sizes and rules, backdrops of very
 // different areas, and enough paths that the search has somewhere to go wrong.
-Vector<Entry> mixedBatch()
+Vector<SceneEntry> mixedBatch()
 {
     using namespace shapes;
 
-    auto entries = Vector<Entry> {};
+    auto entries = Vector<SceneEntry> {};
     entries.add({star({0.f, 0.f, 40.f, 40.f}, 5), FillRule::NonZero, 2.f});
     entries.add({ellipse({0.f, 0.f, 220.f, 130.f}), FillRule::NonZero, 2.f});
     entries.add({roundedRect({0.f, 0.f, 64.f, 90.f}, 12.f), FillRule::NonZero, 2.f});
@@ -313,20 +313,20 @@ Vector<Entry> mixedBatch()
     return entries;
 }
 
-Vector<Entry> veryDifferentBackdrops()
+Vector<SceneEntry> veryDifferentBackdrops()
 {
     using namespace shapes;
 
-    auto entries = Vector<Entry> {};
+    auto entries = Vector<SceneEntry> {};
     entries.add({ellipse({0.f, 0.f, 700.f, 460.f}), FillRule::NonZero, 2.f});
     entries.add({star({0.f, 0.f, 36.f, 36.f}, 9), FillRule::EvenOdd, 2.f});
     entries.add({ellipse({0.f, 0.f, 640.f, 420.f}), FillRule::EvenOdd, 2.f});
     return entries;
 }
 
-Vector<Entry> manyPaths()
+Vector<SceneEntry> manyPaths()
 {
-    auto entries = Vector<Entry> {};
+    auto entries = Vector<SceneEntry> {};
 
     for (auto i = 0; i < 24; ++i)
     {
@@ -342,7 +342,7 @@ Vector<Entry> manyPaths()
 struct Named
 {
     const char* name;
-    Vector<Entry> (*entries)();
+    Vector<SceneEntry> (*entries)();
 };
 
 const auto scenes = std::array {Named {"mixed", mixedBatch},

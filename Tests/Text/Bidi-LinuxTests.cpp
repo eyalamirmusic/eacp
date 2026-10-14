@@ -40,21 +40,7 @@ FontRequest bidiRequest()
     return request;
 }
 
-std::string utf8Of(std::initializer_list<char32_t> codepoints)
-{
-    auto text = std::string {};
-
-    for (const auto codepoint: codepoints)
-    {
-        char encoded[4] = {};
-
-        text.append(encoded, (std::size_t) encodeUtf8(codepoint, encoded));
-    }
-
-    return text;
-}
-
-bool has(const GlyphRasterizer& rasterizer)
+bool hasBidiFamily(const GlyphRasterizer& rasterizer)
 {
     const auto resolved =
         rasterizer.isValid()
@@ -84,7 +70,7 @@ auto tBidiOrdersHebrewRightToLeft = test("Text/bidiShapesInVisualOrder") = []
 {
     const auto rasterizer = GlyphRasterizer {bidiRequest()};
 
-    if (!has(rasterizer))
+    if (!hasBidiFamily(rasterizer))
         return;
 
     // Three Hebrew letters on their own: the first one typed is drawn
@@ -103,7 +89,7 @@ auto tBidiOrdersMixedText = test("Text/bidiShapesMixedDirectionInVisualOrder") =
 {
     const auto rasterizer = GlyphRasterizer {bidiRequest()};
 
-    if (!has(rasterizer))
+    if (!hasBidiFamily(rasterizer))
         return;
 
     // "ab" then a space then two Hebrew letters: a left-to-right paragraph,
@@ -126,7 +112,7 @@ auto tBidiKeepsDigitsLeftToRight = test("Text/bidiKeepsDigitsLeftToRight") = []
 {
     const auto rasterizer = GlyphRasterizer {bidiRequest()};
 
-    if (!has(rasterizer))
+    if (!hasBidiFamily(rasterizer))
         return;
 
     // Two Arabic letters, a space and "12". The paragraph is right-to-left,
@@ -149,7 +135,7 @@ auto tBidiOrdersThreeScripts = test("Text/bidiShapesThreeScriptsInVisualOrder") 
 {
     const auto rasterizer = GlyphRasterizer {bidiRequest()};
 
-    if (!has(rasterizer))
+    if (!hasBidiFamily(rasterizer))
         return;
 
     // Hebrew, then Latin, then Arabic, in a right-to-left paragraph: the
@@ -175,7 +161,7 @@ auto tBidiLeavesLatinAlone = test("Text/bidiLeavesLatinAlone") = []
 {
     const auto rasterizer = GlyphRasterizer {bidiRequest()};
 
-    if (!has(rasterizer))
+    if (!hasBidiFamily(rasterizer))
         return;
 
     // The fast path: nothing right-to-left, so the run is what it always was.

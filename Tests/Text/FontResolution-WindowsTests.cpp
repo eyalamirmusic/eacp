@@ -74,7 +74,8 @@ auto tRasterizerAcceptsAPostScriptName =
 auto tGraphicsFontResolvesAPostScriptName =
     test("FontResolution/graphicsFontResolvesAPostScriptName") = []
 {
-    const auto font = Font {FontOptions().withName("ArialMT").withSize(12.f)};
+    const auto font =
+        Graphics::Font {FontOptions().withName("ArialMT").withSize(12.f)};
     auto* format = static_cast<IDWriteTextFormat*>(font.getHandle());
 
     if (format == nullptr)
@@ -91,7 +92,8 @@ auto tGraphicsFontResolvesAPostScriptName =
 // typographic width counts trailing whitespace; Windows must agree.
 auto tSpaceMeasuresItsAdvance = test("TextMetrics/aLoneSpaceMeasuresItsAdvance") = []
 {
-    const auto font = Font {FontOptions().withName("Arial").withSize(12.f)};
+    const auto font =
+        Graphics::Font {FontOptions().withName("Arial").withSize(12.f)};
 
     if (font.getHandle() == nullptr)
         return;

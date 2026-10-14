@@ -13,6 +13,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace ViewportTests
+{
 namespace
 {
 constexpr auto frame = 1.0 / 60.0;
@@ -434,3 +436,4 @@ auto tBackground = test("Viewport/isTransparentUnlessAsked") = []
     viewport.setDrawsBackground(true);
     check(viewport.getDrawsBackground());
 };
+} // namespace ViewportTests

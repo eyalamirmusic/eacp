@@ -46,11 +46,6 @@ NSView* surfaceOf(EmbeddedView& embedded)
 {
     return (__bridge NSView*) embedded.getHandle();
 }
-
-bool same(double a, double b)
-{
-    return std::abs(a - b) < 0.0001;
-}
 } // namespace
 
 // The host is a plain AppKit view, so its subviews are measured up from its

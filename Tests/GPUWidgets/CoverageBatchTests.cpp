@@ -45,7 +45,7 @@ using Graphics::Rect;
 // The two sides sum a pixel's segments in the same order here - it is the same
 // kernel - so this is looser than it needs to be for anything but the 8-bit
 // texture the mask lives in.
-constexpr auto tolerance = 1.5f / 255.f;
+constexpr auto batchTolerance = 1.5f / 255.f;
 
 using shapes::ellipse;
 using shapes::roundedRect;
@@ -170,7 +170,7 @@ Difference compare(const Vector<float>& batched,
             auto at = y * width + x;
             auto delta = std::abs(batched[at] - alone[at]);
 
-            if (delta > tolerance)
+            if (delta > batchTolerance)
                 ++result.past;
 
             if (delta > result.worst)

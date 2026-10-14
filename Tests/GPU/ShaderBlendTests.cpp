@@ -15,6 +15,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ShaderBlendTests
+{
 namespace
 {
 struct QuadVertex
@@ -22,9 +24,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace ShaderBlendTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(ShaderBlendTests::QuadVertex, Float2)
 
+namespace ShaderBlendTests
+{
 namespace
 {
 constexpr QuadVertex fullScreenTriangle[] = {
@@ -170,3 +175,4 @@ auto tDefaultsToNoBlend = test("ShaderBlend/prepareDefaultsToNoBlending") = []
     check(image.isValid());
     check(isNear(image.at(8, 8).r, 1.f));
 };
+} // namespace ShaderBlendTests

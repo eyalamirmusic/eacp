@@ -12,6 +12,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace OverlayViewTests
+{
 namespace
 {
 struct Pressable final : Component
@@ -108,3 +110,4 @@ auto tIgnoringCoversSubviews =
 
     tree.overlay.removeSubview(inner);
 };
+} // namespace OverlayViewTests

@@ -110,7 +110,7 @@ Graphics::Color brightest(const Graphics::Image& image)
     return best;
 }
 
-int inkPixels(const Graphics::Image& image)
+int glyphInkPixels(const Graphics::Image& image)
 {
     auto total = 0;
 
@@ -136,7 +136,7 @@ auto tDrawsAGlyph = test("GlyphRenderer/drawsAGlyphFromTheAtlas") = []
     auto image = view.renderToImage(1.f);
 
     check(image.isValid());
-    check(inkPixels(image) > 20);
+    check(glyphInkPixels(image) > 20);
 };
 
 // The regression this class exists to prevent. A mask drawn through a general
@@ -240,7 +240,7 @@ auto tEmptyBatchDrawsNothing = test("GlyphRenderer/nothingQueuedDrawsNothing") =
     auto image = view.renderToImage(1.f);
 
     check(image.isValid());
-    check(inkPixels(image) == 0);
+    check(glyphInkPixels(image) == 0);
 };
 
 auto tQueueTracksAdds = test("GlyphRenderer/queueCountsWhatWasAdded") = []

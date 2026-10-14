@@ -17,6 +17,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace PopupMenuTests
+{
 namespace
 {
 eacp::Graphics::MouseEvent mouseAt(Point position)
@@ -582,3 +584,4 @@ auto tPopupCopies = test("PopupMenu/aCopyHasItsOwnSubMenus") = []
     check(copy.getItem(0).subMenu.get() != menu.getItem(0).subMenu.get());
     check(copy.getItem(0).subMenu->getItem(0).id == 5);
 };
+} // namespace PopupMenuTests

@@ -12,6 +12,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace VertexOnlyPipelineTests
+{
 namespace
 {
 constexpr auto targetWidth = 16;
@@ -533,3 +535,4 @@ auto tStencilOnly = test("VertexOnlyPipeline/writesStencilAndLeavesTheColour") =
 
     check(countOff(readPixels(view.scene), opaqueRed, opaqueBlack) == 0);
 };
+} // namespace VertexOnlyPipelineTests

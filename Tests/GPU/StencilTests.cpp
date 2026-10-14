@@ -35,6 +35,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace StencilTests
+{
 namespace
 {
 constexpr auto viewWidth = 8;
@@ -45,9 +47,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace StencilTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(StencilTests::QuadVertex, Float2)
 
+namespace StencilTests
+{
 namespace
 {
 // Counter-clockwise in clip space - the space setPosition writes, with y up -
@@ -705,3 +710,4 @@ auto tReferenceDoesNotSurviveAPass =
     check(isGreen(halves.left));
     check(isGreen(halves.right));
 };
+} // namespace StencilTests

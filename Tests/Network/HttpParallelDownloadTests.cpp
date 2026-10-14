@@ -16,27 +16,6 @@ using eacp::Threads::stopEventLoop;
 
 namespace
 {
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-std::string tempPath(const std::string& name)
-{
-    auto path = std::filesystem::temp_directory_path() / ("eacp-parallel-" + name);
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
-    return path.string();
-}
-
-std::string readFile(const std::string& path)
-{
-    auto in = std::ifstream(path, std::ios::binary);
-    auto ss = std::stringstream();
-    ss << in.rdbuf();
-    return ss.str();
-}
-
 std::string makePayload(int size)
 {
     auto out = std::string();
@@ -108,11 +87,11 @@ struct ParallelOutcome
     bool eventLoopFinished = false;
 };
 
-void performDownload(Server& server,
-                     const Request& clientRequest,
-                     const std::string& destPath,
-                     ParallelOutcome& out,
-                     eacp::Time::MS timeout = eacp::Time::MS {15000})
+void performParallelDownload(Server& server,
+                             const Request& clientRequest,
+                             const std::string& destPath,
+                             ParallelOutcome& out,
+                             eacp::Time::MS timeout = eacp::Time::MS {15000})
 {
     auto worker = std::thread();
     auto stopped = eacp::Threads::runEventLoopFor(
@@ -161,8 +140,8 @@ auto tParallelDownloadReassembles =
     req.parallelChunks = 4;
 
     auto out = ParallelOutcome();
-    auto destination = tempPath("assembled.bin");
-    performDownload(server, req, destination, out);
+    auto destination = tempPath("parallel-assembled.bin");
+    performParallelDownload(server, req, destination, out);
 
     check(out.eventLoopFinished);
     check(out.response.error.empty());
@@ -194,8 +173,8 @@ auto tParallelFallsBackWhenNoRange =
     req.parallelChunks = 4;
 
     auto out = ParallelOutcome();
-    auto destination = tempPath("fallback.bin");
-    performDownload(server, req, destination, out);
+    auto destination = tempPath("parallel-fallback.bin");
+    performParallelDownload(server, req, destination, out);
 
     check(out.eventLoopFinished);
     check(out.response.error.empty());
@@ -221,8 +200,8 @@ auto tParallelFallsBackOnSmallFile =
     req.parallelChunks = 4;
 
     auto out = ParallelOutcome();
-    auto destination = tempPath("small.bin");
-    performDownload(server, req, destination, out);
+    auto destination = tempPath("parallel-small.bin");
+    performParallelDownload(server, req, destination, out);
 
     check(out.eventLoopFinished);
     check(out.response.error.empty());
@@ -290,8 +269,8 @@ auto tParallelReportsIntermediateProgress =
         });
 
     auto out = ParallelOutcome();
-    auto destination = tempPath("intermediate.bin");
-    performDownload(server, req, destination, out);
+    auto destination = tempPath("parallel-intermediate.bin");
+    performParallelDownload(server, req, destination, out);
 
     samplerStop.store(true);
     sampler.join();
@@ -319,8 +298,8 @@ auto tParallelChunksOneSkipsProbe =
     req.parallelChunks = 1;
 
     auto out = ParallelOutcome();
-    auto destination = tempPath("single.bin");
-    performDownload(server, req, destination, out);
+    auto destination = tempPath("parallel-single.bin");
+    performParallelDownload(server, req, destination, out);
 
     check(out.eventLoopFinished);
     check(stats.headCount.load() == 0);

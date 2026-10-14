@@ -17,7 +17,7 @@ using namespace eacp::Graphics;
 
 namespace
 {
-NSView* nativeViewOf(View& view)
+NSView* handleViewOf(View& view)
 {
     return (__bridge NSView*) view.getHandle();
 }
@@ -27,13 +27,13 @@ auto tSetVisibleReachesAppKit = test("ViewVisibility/setVisibleReachesAppKit") =
 {
     auto view = View {};
 
-    check(!nativeViewOf(view).hidden);
+    check(!handleViewOf(view).hidden);
 
     view.setVisible(false);
-    check(nativeViewOf(view).hidden);
+    check(handleViewOf(view).hidden);
 
     view.setVisible(true);
-    check(!nativeViewOf(view).hidden);
+    check(!handleViewOf(view).hidden);
 };
 
 // A hidden ancestor hides the native view nested under it, without that view's
@@ -46,15 +46,15 @@ auto tHiddenAncestorHidesNestedNativeView =
 
     parent.addSubview(child);
 
-    check(!nativeViewOf(child).isHiddenOrHasHiddenAncestor);
+    check(!handleViewOf(child).isHiddenOrHasHiddenAncestor);
 
     parent.setVisible(false);
 
-    check(nativeViewOf(child).isHiddenOrHasHiddenAncestor);
+    check(handleViewOf(child).isHiddenOrHasHiddenAncestor);
 
     // The child was never hidden in its own right — only by where it sits.
-    check(!nativeViewOf(child).hidden);
+    check(!handleViewOf(child).hidden);
 
     parent.setVisible(true);
-    check(!nativeViewOf(child).isHiddenOrHasHiddenAncestor);
+    check(!handleViewOf(child).isHiddenOrHasHiddenAncestor);
 };

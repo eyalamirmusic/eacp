@@ -13,6 +13,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace ComputeBufferRangeTests
+{
 namespace
 {
 struct CopyKernel final : ComputeProgram
@@ -482,3 +484,4 @@ auto tStorageBufferStrideIsFourBytes =
 
     check(!has(hlsl, "ByteAddressBuffer"));
 };
+} // namespace ComputeBufferRangeTests

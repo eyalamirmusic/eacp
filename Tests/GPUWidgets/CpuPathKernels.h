@@ -22,6 +22,8 @@ namespace eacp::GPUWidgets::cpu
 {
 using UInts = Vector<std::uint32_t>;
 
+inline constexpr auto untouched = 0xdeadbeefu;
+
 inline UInts uintsOf(int count, std::uint32_t value)
 {
     auto values = UInts {};

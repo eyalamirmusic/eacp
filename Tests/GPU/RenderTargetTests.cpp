@@ -29,6 +29,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace RenderTargetTests
+{
 namespace
 {
 constexpr auto viewWidth = 8;
@@ -45,9 +47,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace RenderTargetTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(RenderTargetTests::QuadVertex, Float2)
 
+namespace RenderTargetTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -255,3 +260,4 @@ auto tEmptyTargetSamplesItsClear = test("RenderTarget/anEmptyTargetIsItsClear") 
     check(pixel.g < 0.1f);
     check(pixel.b < 0.25f);
 };
+} // namespace RenderTargetTests

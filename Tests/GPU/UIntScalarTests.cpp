@@ -16,11 +16,6 @@ using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
 // One thread's worth per record, every operator in every form it takes, so a
 // wrong form and a wrong operator are different wrong answers.
 constexpr auto perThread = 16;

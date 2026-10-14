@@ -19,7 +19,7 @@ namespace
 // A text input to test implicit consumption, plus a handler that explicitly
 // consumes the 'x' key (and only that key) with preventDefault. `ready` gates
 // the tests until document-start injection has run.
-const std::string pageHtml = R"HTML(
+const std::string keyForwardingPageHtml = R"HTML(
 <!doctype html>
 <html>
 
@@ -41,14 +41,14 @@ WebView::Options forwardingOptions()
     return options;
 }
 
-struct Fixture
+struct KeyForwardingFixture
 {
     WebView webView {forwardingOptions()};
     Window window {};
     bool ready = false;
     Vector<KeyEvent> received;
 
-    Fixture()
+    KeyForwardingFixture()
     {
         window.setContentView(webView);
         webView.addScriptMessageHandler(
@@ -58,7 +58,7 @@ struct Fixture
             received.add(event);
             return true;
         };
-        webView.loadHTML(pageHtml);
+        webView.loadHTML(keyForwardingPageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
     }
@@ -91,7 +91,7 @@ struct Fixture
 
 auto tKeyForwardUnhandled = test("KeyForwardingWin/unhandledKeyReachesCallback") = []
 {
-    auto fix = Fixture {};
+    auto fix = KeyForwardingFixture {};
 
     fix.dispatchKey("window", "keydown", " ", 32);
 
@@ -103,7 +103,7 @@ auto tKeyForwardUnhandled = test("KeyForwardingWin/unhandledKeyReachesCallback")
 
 auto tKeyForwardPreventDefault = test("KeyForwardingWin/preventDefaultConsumes") = []
 {
-    auto fix = Fixture {};
+    auto fix = KeyForwardingFixture {};
 
     // The page preventDefaults 'x'; Space is the sentinel that flushes the
     // pipeline -- verdicts arrive in delivery order, so once Space is out, the
@@ -118,7 +118,7 @@ auto tKeyForwardPreventDefault = test("KeyForwardingWin/preventDefaultConsumes")
 
 auto tKeyForwardEditable = test("KeyForwardingWin/typingInTextInputStaysInPage") = []
 {
-    auto fix = Fixture {};
+    auto fix = KeyForwardingFixture {};
 
     // Dispatched at the input, so key-events.js sees a text-field target and
     // treats it as implicitly consumed -- it must not forward.

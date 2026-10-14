@@ -29,11 +29,6 @@ using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
 // Abramowitz & Stegun 7.1.26, in the form the HLSL helper emits it - the same
 // operations in the same order, so this measures the shader's arithmetic and
 // not a tidier rewriting of it.

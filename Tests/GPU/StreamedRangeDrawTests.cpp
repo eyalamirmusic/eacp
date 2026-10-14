@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace StreamedRangeDrawTests
+{
 namespace
 {
 struct Vertex
@@ -25,9 +27,12 @@ struct Vertex
     float position[2];
 };
 } // namespace
+} // namespace StreamedRangeDrawTests
 
-EACP_SHADER_VALUE(Vertex, Float2)
+EACP_SHADER_VALUE(StreamedRangeDrawTests::Vertex, Float2)
 
+namespace StreamedRangeDrawTests
+{
 namespace
 {
 // Two triangles, each covering one half of clip space, so a draw that took the
@@ -287,3 +292,4 @@ auto tRecycledArena = test("StreamedRanges/recycledArenaDrawsTheSame") = []
           "one arena per frame in flight, and no more");
     checkBothHalves(view, image);
 };
+} // namespace StreamedRangeDrawTests

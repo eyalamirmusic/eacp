@@ -3,6 +3,9 @@
 #include <thread>
 
 using namespace nano;
+
+namespace TcpConnectionTests
+{
 using eacp::Vector;
 using eacp::TCP::Connection;
 using eacp::TCP::Error;
@@ -768,3 +771,4 @@ auto tMultiMegabyte = test("Tcp/streamsAMultiMegabytePayload") = []
     check(received.size() == big.size());
     check(received == big);
 };
+} // namespace TcpConnectionTests

@@ -27,6 +27,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace ExecutorTests
+{
+
 namespace
 {
 constexpr auto sentinel = -1.f;
@@ -4136,19 +4139,21 @@ auto tNoFragmentAllocation =
     check(releasesCounted.load() == 0);
     check(matchesRealtimeFragments(input, output));
 };
+} // namespace ExecutorTests
 
 namespace
 {
 void noteAllocation()
 {
-    if (countingHeap.load(std::memory_order_relaxed))
-        allocationsCounted.fetch_add(1, std::memory_order_relaxed);
+    if (ExecutorTests::countingHeap.load(std::memory_order_relaxed))
+        ExecutorTests::allocationsCounted.fetch_add(1, std::memory_order_relaxed);
 }
 
 void noteRelease(void* pointer)
 {
-    if (pointer != nullptr && countingHeap.load(std::memory_order_relaxed))
-        releasesCounted.fetch_add(1, std::memory_order_relaxed);
+    if (pointer != nullptr
+        && ExecutorTests::countingHeap.load(std::memory_order_relaxed))
+        ExecutorTests::releasesCounted.fetch_add(1, std::memory_order_relaxed);
 }
 
 void* allocateBytes(std::size_t size)

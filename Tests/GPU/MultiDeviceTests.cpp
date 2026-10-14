@@ -23,6 +23,8 @@ using namespace eacp::GPU;
 // there cannot be one here: the rule is an assert, and an assert that fires
 // aborts the run rather than failing a test.
 
+namespace MultiDeviceTests
+{
 namespace
 {
 struct ScaleKernel final : ComputeProgram
@@ -210,3 +212,4 @@ auto tWorkerDevicesRunConcurrently = test("GPU/workerDevicesRunConcurrently") = 
     check(results[0]);
     check(results[1]);
 };
+} // namespace MultiDeviceTests

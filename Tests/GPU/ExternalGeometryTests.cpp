@@ -23,6 +23,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ExternalGeometryTests
+{
 namespace
 {
 struct Vertex
@@ -30,9 +32,12 @@ struct Vertex
     float position[2];
 };
 } // namespace
+} // namespace ExternalGeometryTests
 
-EACP_SHADER_VALUE(Vertex, Float2)
+EACP_SHADER_VALUE(ExternalGeometryTests::Vertex, Float2)
 
+namespace ExternalGeometryTests
+{
 namespace
 {
 // Two triangles in one buffer, each covering one half of clip space, so a draw
@@ -228,7 +233,8 @@ auto tTwoRanges = test("ExternalGeometry/bindDrawsTheRangesAsked") = []
     check(image.isValid());
 
     check(isRed(image.at(8, 16)), "the first range painted the left half red");
-    check(isGreen(image.at(24, 16)), "the second range painted the right half green");
+    check(isGreen(image.at(24, 16)),
+          "the second range painted the right half green");
 };
 
 // The property a program that owns no geometry rests on, stated where it can
@@ -279,6 +285,8 @@ auto tTwoTextures = test("ExternalGeometry/texturesRebindBetweenDraws") = []
     auto image = view.renderToImage(1.f);
     check(image.isValid());
 
-    check(isRed(image.at(8, 16)), "the first range sampled the texture bind() bound");
+    check(isRed(image.at(8, 16)),
+          "the first range sampled the texture bind() bound");
     check(isGreen(image.at(24, 16)), "the second sampled the one rebound after it");
 };
+} // namespace ExternalGeometryTests

@@ -15,6 +15,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace MipGenerationTests
+{
 namespace
 {
 bool canTest()
@@ -456,3 +458,4 @@ auto tMipGenerationRefusesIntegers =
 
     runFrame([&](Frame& frame) { frame.generateMipmaps(texture); });
 };
+} // namespace MipGenerationTests

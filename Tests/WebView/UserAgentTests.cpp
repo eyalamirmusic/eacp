@@ -24,9 +24,9 @@ const std::string reportingPage = R"HTML(<!doctype html><html><body><script>
   window.webkit.messageHandlers.ua.postMessage(navigator.userAgent);
 </script></body></html>)HTML";
 
-struct Fixture
+struct UserAgentFixture
 {
-    explicit Fixture(WebView::Options options)
+    explicit UserAgentFixture(WebView::Options options)
         : webView(std::move(options))
     {
         window.setContentView(webView);
@@ -104,7 +104,7 @@ auto tInlineLoadingDefaultsOn =
 auto tDefaultUserAgentIsThePlatformOne =
     test("WebView/emptyUserAgentLeavesThePlatformOne") = []
 {
-    auto fix = Fixture {WebView::Options {}};
+    auto fix = UserAgentFixture {WebView::Options {}};
 
     check(!fix.reportedUserAgent.empty());
     check(fix.reportedUserAgent != customUserAgent);
@@ -113,7 +113,7 @@ auto tDefaultUserAgentIsThePlatformOne =
 auto tUserAgentOverrideReachesThePage =
     test("WebView/userAgentOverrideReachesThePage") = []
 {
-    auto fix = Fixture {withUserAgent(customUserAgent)};
+    auto fix = UserAgentFixture {withUserAgent(customUserAgent)};
 
     check(fix.reportedUserAgent == customUserAgent);
 };
@@ -123,7 +123,7 @@ auto tUserAgentOverrideReachesThePage =
 auto tDeclinedPopupLoadsInlineByDefault =
     test("WebView/declinedPopupLoadsInlineByDefault") = []
 {
-    auto fix = Fixture {withInlineLoading(true)};
+    auto fix = UserAgentFixture {withInlineLoading(true)};
 
     check(fix.readMarker() == "alive");
 
@@ -141,7 +141,7 @@ auto tDeclinedPopupLoadsInlineByDefault =
 auto tDeclinedPopupCanLeaveTheHostAlone =
     test("WebView/declinedPopupCanLeaveTheHostAlone") = []
 {
-    auto fix = Fixture {withInlineLoading(false)};
+    auto fix = UserAgentFixture {withInlineLoading(false)};
 
     fix.webView.evaluateJavaScript("window.openPopup()");
 

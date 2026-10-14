@@ -27,6 +27,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace SuppliedMipChainTests
+{
 namespace
 {
 constexpr std::uint32_t red = 0xff0000ff; // RGBA8, little-endian: A B G R
@@ -45,9 +47,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace SuppliedMipChainTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(SuppliedMipChainTests::QuadVertex, Float2)
 
+namespace SuppliedMipChainTests
+{
 namespace
 {
 constexpr QuadVertex unitQuad[] = {
@@ -439,3 +444,4 @@ auto tPartialChain = test("SuppliedMipChain/aPartialChainIsTakenAsItIs") = []
         for (auto x = 0; x < minified.width(); ++x)
             check(isGreen(minified.at(x, y)));
 };
+} // namespace SuppliedMipChainTests

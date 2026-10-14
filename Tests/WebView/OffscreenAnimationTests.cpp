@@ -28,7 +28,7 @@ namespace
 // The loop chains a fixed number of frames and then stops, signalling painted:
 // chaining is what proves rAF keeps firing off-screen rather than landing one
 // frame and stalling.
-const std::string pageHtml = R"HTML(<!doctype html><html><head><style>
+const std::string animationPageHtml = R"HTML(<!doctype html><html><head><style>
   html,body{margin:0;height:100%;background:#e01010}
   canvas{display:block;width:100%;height:100%}
 </style></head><body><canvas id="c"></canvas><script>
@@ -60,14 +60,14 @@ constexpr auto untouchedCentre = "0,0,0,0";
 // expects frames waits for the signal instead.
 constexpr auto frozenSettleTime = eacp::Time::MS {100};
 
-struct Fixture
+struct AnimationFixture
 {
     WebView webView;
     Window window {};
     bool ready = false;
     bool painted = false;
 
-    explicit Fixture(bool driveOffscreen)
+    explicit AnimationFixture(bool driveOffscreen)
         : webView(makeOptions(driveOffscreen))
     {
         window.setContentView(webView);
@@ -76,7 +76,7 @@ struct Fixture
             "ready", [this](const std::string&) { ready = true; });
         webView.addScriptMessageHandler(
             "painted", [this](const std::string&) { painted = true; });
-        webView.loadHTML(pageHtml);
+        webView.loadHTML(animationPageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
     }
@@ -113,7 +113,7 @@ struct Fixture
 // and the canvas ends up painted green.
 auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = []
 {
-    auto fix = Fixture {/*driveOffscreen*/ true};
+    auto fix = AnimationFixture {/*driveOffscreen*/ true};
     fix.waitForPaint();
     check(fix.frameCount() == "3");
     check(fix.centre() == paintedCentre);
@@ -132,7 +132,7 @@ auto tDrivesAnimationOffscreen = test("OffscreenAnimation/paintsWhenEnabled") = 
 auto tAnimationDefaultMatchesPlatform =
     test("OffscreenAnimation/frozenByDefault") = []
 {
-    auto fix = Fixture {/*driveOffscreen*/ false};
+    auto fix = AnimationFixture {/*driveOffscreen*/ false};
 
     if (Platform::isWindows())
     {

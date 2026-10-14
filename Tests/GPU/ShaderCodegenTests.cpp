@@ -22,11 +22,6 @@ GeneratedShader makeTriangleShader()
     return builder.build();
 }
 
-bool contains(const std::string& haystack, const std::string& needle)
-{
-    return haystack.find(needle) != std::string::npos;
-}
-
 // Derives the MSL uniform-block declaration string from the runtime constant
 // that the emitter uses (RenderPass::uniformBase / ComputePass::uniformBase).
 // Bumping the constant flows into both the emitter's output and the tests'

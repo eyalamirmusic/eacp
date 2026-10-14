@@ -603,21 +603,6 @@ struct PlainQuantizedKernel final : ComputeProgram
 };
 
 // The words as the float slots the kernels read them through, bit for bit.
-Vector<float> asFloats(const Vector<std::uint32_t>& words)
-{
-    auto floats = Vector<float> {};
-
-    for (auto word: words)
-        floats.add(std::bit_cast<float>(word));
-
-    return floats;
-}
-
-std::uint32_t wordOf(float value)
-{
-    return std::bit_cast<std::uint32_t>(value);
-}
-
 using VerifyOutput = std::function<void(const Vector<float>&, const Readback&)>;
 
 // Every kernel here reads `weights` and writes `output`: one CrossCheck over
@@ -711,11 +696,6 @@ void checkWidensEveryPattern(const Vector<std::uint32_t>& words,
                       check(result[i] == (float) meaning(patterns[i]),
                             readback.name());
               });
-}
-
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
 }
 
 int countOccurrences(const std::string& text, const char* needle)

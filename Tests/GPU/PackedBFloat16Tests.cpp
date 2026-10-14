@@ -67,16 +67,6 @@ float widened(std::uint16_t bits)
 }
 
 // The words as the float slots the kernels read them through, bit for bit.
-Vector<float> asFloats(const Vector<std::uint32_t>& words)
-{
-    auto floats = Vector<float> {};
-
-    for (auto word: words)
-        floats.add(std::bit_cast<float>(word));
-
-    return floats;
-}
-
 // Every bf16 class, and deliberately including the two magnitudes fp16 gets
 // wrong: 0x3586 is about 1e-6, which fp16 holds only as a subnormal, and 0x7149
 // is about 1e30, which fp16 cannot hold at all. Paired with each other below,
@@ -391,11 +381,6 @@ void checkRoundTrip(const Vector<float>& result,
                               (std::uint16_t) (words[i] >> 16)),
               name);
     }
-}
-
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
 }
 
 int countOccurrences(const std::string& haystack, const std::string& needle)

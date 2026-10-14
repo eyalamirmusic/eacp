@@ -1,5 +1,6 @@
+#include "Common.h"
+
 #include <eacp/UI/Network/OnlineResourceMonitor.h>
-#include <eacp/UI/UI.h>
 
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/StdPath.h>
@@ -42,14 +43,6 @@ OnlineResource::Info infoFor(const std::string& name, const std::string& url)
     return info;
 }
 
-eacp::Graphics::MouseEvent mouseAt(Point position)
-{
-    auto event = eacp::Graphics::MouseEvent {};
-    event.pos = position;
-    event.downPos = position;
-    return event;
-}
-
 // Points the registry at one case's folder and puts the previous one back,
 // so a case leaves the directory as it found it whatever order they run in.
 struct ScopedDirectory
@@ -65,9 +58,9 @@ struct ScopedDirectory
     FilePath previous;
 };
 
-struct Harness
+struct MonitorHarness
 {
-    Harness()
+    MonitorHarness()
     {
         host.setBounds({0.f, 0.f, hostWidth, hostHeight});
         host.setRootComponent(monitor);
@@ -103,7 +96,7 @@ auto tMonitorListsTheRegistry =
     registry.declare(infoFor("First", "https://host/first.bin"));
     registry.declare(infoFor("Second", "https://host/second.bin"));
 
-    auto harness = Harness {};
+    auto harness = MonitorHarness {};
     const auto& rows = harness.monitor.getRows();
 
     check(rows.size() == 2);
@@ -129,7 +122,7 @@ auto tMonitorClickSelects = test("OnlineResourceMonitor/clickingARowSelectsIt") 
     registry.declare(infoFor("First", "https://host/first.bin"));
     registry.declare(infoFor("Second", "https://host/second.bin"));
 
-    auto harness = Harness {};
+    auto harness = MonitorHarness {};
     check(harness.monitor.getRows().size() == 2);
     check(!harness.monitor.getSelectedEntry().has_value());
 
@@ -159,7 +152,7 @@ auto tMonitorClearDeletesTheFolder =
 
     registry.declare(infoFor("Stale", "https://host/stale.bin"));
 
-    auto harness = Harness {};
+    auto harness = MonitorHarness {};
     check(exists(directory));
 
     harness.monitor.clearAll();

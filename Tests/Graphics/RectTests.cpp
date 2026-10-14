@@ -13,20 +13,6 @@ using namespace nano;
 using eacp::Graphics::Point;
 using eacp::Graphics::Rect;
 
-namespace
-{
-bool same(float a, float b)
-{
-    return std::abs(a - b) < 0.0001f;
-}
-
-bool same(const Rect& rect, const Rect& expected)
-{
-    return same(rect.x, expected.x) && same(rect.y, expected.y)
-           && same(rect.w, expected.w) && same(rect.h, expected.h);
-}
-} // namespace
-
 auto tEdges = test("Rect/edgesRunTopToBottom") = []
 {
     const auto rect = Rect {10.f, 20.f, 100.f, 50.f};

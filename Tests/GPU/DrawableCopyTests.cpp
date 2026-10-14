@@ -13,6 +13,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace DrawableCopyTests
+{
 namespace
 {
 constexpr auto viewSize = 4.f;
@@ -174,3 +176,4 @@ auto tDrawableCopyRefusals =
                 check(!frame.copyDrawable(multisampled));
         });
 };
+} // namespace DrawableCopyTests

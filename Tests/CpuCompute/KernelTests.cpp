@@ -11,6 +11,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace KernelTests
+{
+
 // The example apps' kernels, re-declared as ComputeKernels with the apps'
 // bodies unchanged, run over a few thousand elements with a partial last group
 // and compared against C++ written in the same operation order. The executor
@@ -413,3 +416,4 @@ auto tComputeChain = test("Kernel/computeExampleChainsThreeKernels") = []
         check(smoothed[(int) i] == (previous + expected[(int) i] + next) / 3.0f);
     }
 };
+} // namespace KernelTests

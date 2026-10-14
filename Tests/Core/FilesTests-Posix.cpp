@@ -18,44 +18,12 @@
 using namespace nano;
 using eacp::FilePath;
 
-namespace
-{
-std::filesystem::path scratchDirectory(const std::string& name)
-{
-    auto dir = std::filesystem::temp_directory_path() / ("eacp-files-" + name);
-
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directories(dir);
-
-    return dir;
-}
-
-void write(const std::filesystem::path& path, const std::string& contents)
-{
-    auto out = std::ofstream {path, std::ios::binary | std::ios::trunc};
-    out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-}
-
-std::string read(const std::filesystem::path& path)
-{
-    return eacp::Files::readFile(FilePath {path});
-}
-
-void writeAtomically(const std::filesystem::path& path, std::string_view contents)
-{
-    eacp::Files::writeFileAtomically(
-        FilePath {path},
-        eacp::Span {reinterpret_cast<const std::uint8_t*>(contents.data()),
-                    (int) contents.size()});
-}
-} // namespace
-
 auto tAtomicKeepsPermissions = test("Files/atomicKeepsPermissions") = []
 {
-    auto dir = scratchDirectory("permissions");
+    auto dir = scratchDirectory("files-permissions");
     auto path = dir / "script.sh";
 
-    write(path, "#!/bin/sh\necho old\n");
+    writeTestFile(path, "#!/bin/sh\necho old\n");
 
     const auto executable = std::filesystem::perms::owner_all
                             | std::filesystem::perms::group_read
@@ -74,11 +42,11 @@ auto tAtomicKeepsPermissions = test("Files/atomicKeepsPermissions") = []
 
 auto tAtomicFollowsSymlinks = test("Files/atomicFollowsSymlinks") = []
 {
-    auto dir = scratchDirectory("symlink");
+    auto dir = scratchDirectory("files-symlink");
     auto real = dir / "real.txt";
     auto link = dir / "link.txt";
 
-    write(real, "original");
+    writeTestFile(real, "original");
     std::filesystem::create_symlink(real, link);
 
     writeAtomically(link, "through the link");
@@ -87,7 +55,7 @@ auto tAtomicFollowsSymlinks = test("Files/atomicFollowsSymlinks") = []
     // contents -- renaming over it would have made it a regular file and left
     // the real one stale.
     check(std::filesystem::is_symlink(link));
-    check(read(real) == "through the link");
+    check(readTestFile(real) == "through the link");
 
     std::filesystem::remove_all(dir);
 };
@@ -97,7 +65,7 @@ auto tAtomicFollowsSymlinks = test("Files/atomicFollowsSymlinks") = []
 // throws here rather than answering zero.
 auto tReadsAStreamWithNoKnownSize = test("Files/readsAStreamWhoseSizeIsUnknown") = []
 {
-    const auto dir = scratchDirectory("read-fifo");
+    const auto dir = scratchDirectory("files-read-fifo");
     const auto path = dir / "pipe";
 
     if (::mkfifo(path.c_str(), 0600) != 0)
@@ -148,25 +116,13 @@ using eacp::Files::EntryKind;
 using eacp::Files::Symlinks;
 using eacp::Files::Visit;
 
-std::vector<std::string> relativeNames(const std::filesystem::path& root,
-                                       const eacp::Vector<DirectoryEntry>& entries)
-{
-    auto names = std::vector<std::string> {};
-
-    for (const auto& entry: entries)
-        names.push_back(
-            eacp::toStdPath(entry.path).lexically_relative(root).generic_string());
-
-    return names;
-}
-
 // a/x.txt, a/up -> a (a cycle), file-link -> a/x.txt, dir-link -> a.
 std::filesystem::path linkedTree(const std::string& name)
 {
-    auto dir = scratchDirectory(name);
+    auto dir = scratchDirectory("files-" + name);
 
     std::filesystem::create_directories(dir / "a");
-    write(dir / "a" / "x.txt", "x");
+    writeTestFile(dir / "a" / "x.txt", "x");
     std::filesystem::create_directory_symlink(dir / "a", dir / "a" / "up");
     std::filesystem::create_symlink(dir / "a" / "x.txt", dir / "file-link");
     std::filesystem::create_directory_symlink(dir / "a", dir / "dir-link");
@@ -229,10 +185,10 @@ auto tUnreadableDirectory = test("Files/anUnreadableDirectoryReachesOnError") = 
     if (geteuid() == 0)
         return;
 
-    auto dir = scratchDirectory("list-unreadable");
+    auto dir = scratchDirectory("files-list-unreadable");
     std::filesystem::create_directories(dir / "locked");
-    write(dir / "locked" / "secret.txt", "s");
-    write(dir / "open.txt", "o");
+    writeTestFile(dir / "locked" / "secret.txt", "s");
+    writeTestFile(dir / "open.txt", "o");
     std::filesystem::create_directories(dir / "zed");
 
     chmod((dir / "locked").c_str(), 0);
@@ -267,9 +223,9 @@ auto tUnreadableDirectory = test("Files/anUnreadableDirectoryReachesOnError") = 
 #ifdef __APPLE__
 auto tFinderHidden = test("Files/aFinderHiddenFileIsHiddenWithoutADot") = []
 {
-    auto dir = scratchDirectory("list-finder-hidden");
-    write(dir / "plain.txt", "p");
-    write(dir / "flagged.txt", "f");
+    auto dir = scratchDirectory("files-list-finder-hidden");
+    writeTestFile(dir / "plain.txt", "p");
+    writeTestFile(dir / "flagged.txt", "f");
 
     check(chflags((dir / "flagged.txt").c_str(), UF_HIDDEN) == 0);
 

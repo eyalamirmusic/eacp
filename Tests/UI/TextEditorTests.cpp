@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -22,17 +22,6 @@ using namespace eacp::UI;
 
 namespace
 {
-KeyEvent keyOf(std::uint16_t code, const std::string& characters = {})
-{
-    auto event = KeyEvent {};
-
-    event.keyCode = code;
-    event.characters = characters;
-    event.charactersIgnoringModifiers = characters;
-
-    return event;
-}
-
 KeyEvent typed(const std::string& characters)
 {
     return keyOf(0, characters);
@@ -46,9 +35,9 @@ KeyEvent shifted(std::uint16_t code)
     return event;
 }
 
-struct Harness
+struct TextEditorHarness
 {
-    Harness(std::string startingText = {})
+    TextEditorHarness(std::string startingText = {})
         : editor(std::move(startingText))
     {
         host.setBounds({0.f, 0.f, 300.f, 40.f});
@@ -74,7 +63,7 @@ const auto accented = std::string {"café"};
 
 auto tTypingInserts = test("TextEditor/typingInsertsAtTheCaret") = []
 {
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
 
     harness.press(typed("a"));
     harness.press(typed("b"));
@@ -85,7 +74,7 @@ auto tTypingInserts = test("TextEditor/typingInsertsAtTheCaret") = []
 
 auto tTypingIsReported = test("TextEditor/everyEditIsReportedOnce") = []
 {
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
     auto changes = 0;
 
     harness.editor.onTextChange = [&changes](const std::string&) { ++changes; };
@@ -99,7 +88,7 @@ auto tTypingIsReported = test("TextEditor/everyEditIsReportedOnce") = []
 auto tControlCharactersAreNotTyped =
     test("TextEditor/aControlCharacterIsNotInsertedAsText") = []
 {
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
 
     // Tab produces a character, and an editor that inserted it would swallow
     // the key that moves focus out of the field.
@@ -110,7 +99,7 @@ auto tControlCharactersAreNotTyped =
 auto tBackspaceDeletesBackwards =
     test("TextEditor/backspaceTakesTheCharacterBefore") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.press(keyOf(eacp::Graphics::KeyCode::Delete));
 
@@ -121,7 +110,7 @@ auto tBackspaceDeletesBackwards =
 auto tForwardDeleteTakesTheOneAfter =
     test("TextEditor/forwardDeleteTakesTheCharacterAfter") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.editor.setCaretPosition(0);
     harness.press(keyOf(eacp::Graphics::KeyCode::ForwardDelete));
@@ -133,7 +122,7 @@ auto tForwardDeleteTakesTheOneAfter =
 auto tBackspaceAtTheStartDoesNothing =
     test("TextEditor/backspaceAtTheStartIsNotAnEdit") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
     auto changes = 0;
 
     harness.editor.onTextChange = [&changes](const std::string&) { ++changes; };
@@ -149,7 +138,7 @@ auto tBackspaceAtTheStartDoesNothing =
 auto tDeletesWholeCharacters =
     test("TextEditor/backspaceTakesAWholeUtf8Character") = []
 {
-    auto harness = Harness {accented};
+    auto harness = TextEditorHarness {accented};
 
     harness.press(keyOf(eacp::Graphics::KeyCode::Delete));
 
@@ -159,7 +148,7 @@ auto tDeletesWholeCharacters =
 auto tCaretNeverLandsInsideACharacter =
     test("TextEditor/theCaretIsNeverLeftInsideASequence") = []
 {
-    auto harness = Harness {accented};
+    auto harness = TextEditorHarness {accented};
 
     // Straight into the middle of the two-byte accent, which is what a click
     // measured against the wrong metrics would ask for.
@@ -170,7 +159,7 @@ auto tCaretNeverLandsInsideACharacter =
 
 auto tArrowsMoveByCharacter = test("TextEditor/arrowsMoveByCharacterNotByByte") = []
 {
-    auto harness = Harness {accented};
+    auto harness = TextEditorHarness {accented};
 
     harness.editor.setCaretPosition((int) accented.size());
     harness.press(keyOf(eacp::Graphics::KeyCode::LeftArrow));
@@ -184,7 +173,7 @@ auto tArrowsMoveByCharacter = test("TextEditor/arrowsMoveByCharacterNotByByte") 
 
 auto tHomeAndEnd = test("TextEditor/homeAndEndGoToTheEnds") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.press(keyOf(eacp::Graphics::KeyCode::Home));
     check(harness.editor.getCaretPosition() == 0);
@@ -195,7 +184,7 @@ auto tHomeAndEnd = test("TextEditor/homeAndEndGoToTheEnds") = []
 
 auto tShiftArrowSelects = test("TextEditor/shiftAndAnArrowGrowsASelection") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     check(!harness.editor.hasSelection());
 
@@ -214,7 +203,7 @@ auto tShiftArrowSelects = test("TextEditor/shiftAndAnArrowGrowsASelection") = []
 auto tTypingReplacesASelection =
     test("TextEditor/typingOverASelectionReplacesIt") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.press(shifted(eacp::Graphics::KeyCode::LeftArrow));
     harness.press(shifted(eacp::Graphics::KeyCode::LeftArrow));
@@ -228,7 +217,7 @@ auto tTypingReplacesASelection =
 auto tBackspaceDeletesTheSelection =
     test("TextEditor/backspaceOverASelectionTakesAllOfIt") = []
 {
-    auto harness = Harness {"abcdef"};
+    auto harness = TextEditorHarness {"abcdef"};
 
     harness.editor.selectAll();
     harness.press(keyOf(eacp::Graphics::KeyCode::Delete));
@@ -238,7 +227,7 @@ auto tBackspaceDeletesTheSelection =
 
 auto tSelectAll = test("TextEditor/selectAllTakesTheWholeString") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.editor.selectAll();
 
@@ -252,7 +241,7 @@ auto tSelectAll = test("TextEditor/selectAllTakesTheWholeString") = []
 auto tSettingTextMovesTheCaretToTheEnd =
     test("TextEditor/settingTheTextPutsTheCaretAtTheEnd") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.editor.selectAll();
     harness.editor.setText("longer text");
@@ -263,7 +252,7 @@ auto tSettingTextMovesTheCaretToTheEnd =
 
 auto tSetTextCanNotify = test("TextEditor/settingTheTextReportsOnlyWhenAsked") = []
 {
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
     auto changes = 0;
 
     harness.editor.onTextChange = [&changes](const std::string&) { ++changes; };
@@ -278,7 +267,7 @@ auto tSetTextCanNotify = test("TextEditor/settingTheTextReportsOnlyWhenAsked") =
 auto tReturnAndEscape =
     test("TextEditor/returnAndEscapeAreReportedRatherThanTyped") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     auto committed = std::string {};
     auto escapes = 0;
@@ -297,7 +286,7 @@ auto tReturnAndEscape =
 
 auto tEscapeIsKept = test("TextEditor/escapeIsKeptAndTheEditorStaysFocused") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     auto escapes = 0;
     harness.editor.onEscapeKey = [&escapes] { ++escapes; };
@@ -318,7 +307,7 @@ auto tEscapeIsKept = test("TextEditor/escapeIsKeptAndTheEditorStaysFocused") = [
 // be left.
 auto tBackPassesOn = test("TextEditor/backIsPassedOnByAFocusedEditor") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     auto escapes = 0;
     harness.editor.onEscapeKey = [&escapes] { ++escapes; };
@@ -331,7 +320,7 @@ auto tBackPassesOn = test("TextEditor/backIsPassedOnByAFocusedEditor") = []
 
 auto tReadOnlyRefusesEdits = test("TextEditor/aReadOnlyEditorTakesNoEdits") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.editor.setReadOnly(true);
 
@@ -350,7 +339,7 @@ auto tReadOnlyRefusesEdits = test("TextEditor/aReadOnlyEditorTakesNoEdits") = []
 auto tUnknownShortcutsAreLeftAlone =
     test("TextEditor/aShortcutTheEditorDoesNotUseCarriesOn") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     auto event = typed("s");
     event.modifiers.command = true;
@@ -361,7 +350,7 @@ auto tUnknownShortcutsAreLeftAlone =
 
 auto tSelectAllShortcut = test("TextEditor/theSelectAllShortcutIsTaken") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     auto event = typed("a");
     event.modifiers.command = true;
@@ -375,7 +364,7 @@ auto tSelectAllShortcut = test("TextEditor/theSelectAllShortcutIsTaken") = []
 auto tLosingFocusDropsTheSelection =
     test("TextEditor/losingFocusDropsTheSelection") = []
 {
-    auto harness = Harness {"abc"};
+    auto harness = TextEditorHarness {"abc"};
 
     harness.editor.selectAll();
     harness.editor.giveAwayKeyboardFocus();
@@ -387,7 +376,7 @@ auto tLosingFocusDropsTheSelection =
 auto tPasswordMask =
     test("TextEditor/aPasswordFieldKeepsTheTextAndDrawsTheMask") = []
 {
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
 
     harness.editor.setPasswordCharacter("\xE2\x80\xA2");
     harness.press(typed("a"));
@@ -433,7 +422,7 @@ auto tFrameless = test("TextEditor/anEditorWithoutAFrameDrawsOnlyItsText") = []
     if (!GPU::Device::shared().isValid())
         return;
 
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
     harness.editor.setText("abc");
     harness.editor.giveAwayKeyboardFocus();
 
@@ -457,7 +446,7 @@ auto tFrameless = test("TextEditor/anEditorWithoutAFrameDrawsOnlyItsText") = []
 
 auto tFocusIsReported = test("TextEditor/takingAndLosingTheKeyboardIsReported") = []
 {
-    auto harness = Harness {};
+    auto harness = TextEditorHarness {};
     auto reported = Vector<int> {};
 
     harness.editor.onFocusChange = [&](bool focused) { reported.add(focused); };

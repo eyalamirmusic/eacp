@@ -16,6 +16,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace MultiTargetTests
+{
 namespace
 {
 constexpr auto targetSize = 4;
@@ -920,3 +922,4 @@ auto tFacesOfOneCube = test("MultiTarget/twoFacesOfOneCubeAreTwoTargets") = []
     for (auto face: {0, 2, 3, 5})
         check(matches(readSlice(cube, face)[0], 128, 128, 128));
 };
+} // namespace MultiTargetTests

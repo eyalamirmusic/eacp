@@ -38,6 +38,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CompressedTextureTests
+{
 namespace
 {
 struct QuadVertex
@@ -46,9 +48,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace CompressedTextureTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(CompressedTextureTests::QuadVertex, Float2)
 
+namespace CompressedTextureTests
+{
 namespace
 {
 // The whole texture across the whole viewport, uv running 0..1 left to right.
@@ -969,3 +974,4 @@ auto tCompressedRegionAndRead = test("Compressed/regionAndReadAreNoOps") = []
     for (auto byte: destination)
         check(byte == 0xCD);
 };
+} // namespace CompressedTextureTests

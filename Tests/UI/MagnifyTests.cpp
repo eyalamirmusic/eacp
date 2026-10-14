@@ -6,6 +6,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace MagnifyTests
+{
 namespace
 {
 struct Pinchable final : Component
@@ -139,3 +141,4 @@ auto tWheelIsNotMagnify = test("Magnify/theWheelDoesNotReachMouseMagnify") = []
     check(tree.child.magnifies == 0);
     check(tree.parent.magnifies == 0);
 };
+} // namespace MagnifyTests

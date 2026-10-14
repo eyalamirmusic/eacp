@@ -14,6 +14,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace IndirectDrawTests
+{
 namespace
 {
 constexpr auto targetSize = 40;
@@ -384,3 +386,4 @@ auto tIndirectDrawIndirectCount = test("IndirectDraw/countFollowsTheDevice") = [
     else
         check(countGreen(image) == 0);
 };
+} // namespace IndirectDrawTests

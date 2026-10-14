@@ -1,4 +1,5 @@
 #include "CoverageProbe.h"
+#include "PathShapes.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -53,25 +54,6 @@ float signedArea(const Vector<Point>& contour)
     return sum * 0.5f;
 }
 
-float distanceToSegment(const Point& p, const Point& a, const Point& b)
-{
-    auto dx = b.x - a.x;
-    auto dy = b.y - a.y;
-    auto lengthSquared = dx * dx + dy * dy;
-
-    auto t = lengthSquared > 0.f
-                 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared,
-                              0.f,
-                              1.f)
-                 : 0.f;
-
-    auto nearestX = a.x + dx * t;
-    auto nearestY = a.y + dy * t;
-
-    return std::sqrt((p.x - nearestX) * (p.x - nearestX)
-                     + (p.y - nearestY) * (p.y - nearestY));
-}
-
 float distanceToPath(const Point& p, const Path& path)
 {
     auto best = std::numeric_limits<float>::max();
@@ -81,14 +63,15 @@ float distanceToPath(const Point& p, const Path& path)
         const auto& points = sub.points;
 
         if (points.size() == 1)
-            best = std::min(best, distanceToSegment(p, points[0], points[0]));
+            best =
+                std::min(best, shapes::distanceToSegment(p, points[0], points[0]));
 
         auto segments = sub.closed ? points.size() : points.size() - 1;
 
         for (auto i = 0; i < segments; ++i)
-            best = std::min(
-                best,
-                distanceToSegment(p, points[i], points[(i + 1) % points.size()]));
+            best = std::min(best,
+                            shapes::distanceToSegment(
+                                p, points[i], points[(i + 1) % points.size()]));
     }
 
     return best;

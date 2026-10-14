@@ -8,6 +8,8 @@
 using namespace nano;
 using namespace eacp::Graphics;
 
+namespace FileDragTests
+{
 namespace
 {
 NSView* nativeViewOf(View& view)
@@ -99,3 +101,4 @@ auto tCustomImage = test("FileDrag/aDragImageIsSizedInPoints") = []
     check(NSMidX(frame) == 50.0);
     check(NSMidY(frame) == 60.0);
 };
+} // namespace FileDragTests

@@ -38,6 +38,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace DepthTextureTests
+{
 namespace
 {
 constexpr auto viewWidth = 8;
@@ -65,9 +67,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace DepthTextureTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(DepthTextureTests::QuadVertex, Float2)
 
+namespace DepthTextureTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -400,3 +405,4 @@ auto tFloatTargetKeepsItsPrecision =
         check(view.values[i] != 1.f);
     }
 };
+} // namespace DepthTextureTests

@@ -26,6 +26,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace TextureReadTests
+{
 namespace
 {
 constexpr auto targetSize = 4;
@@ -35,9 +37,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace TextureReadTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(TextureReadTests::QuadVertex, Float2)
 
+namespace TextureReadTests
+{
 namespace
 {
 // The left half of the target, so one draw can be told from another by where it
@@ -284,3 +289,4 @@ auto tFlushMakesTheFrameReadable =
     check(stillRed[0] > 200);
     check(nowBlue[2] > 200);
 };
+} // namespace TextureReadTests

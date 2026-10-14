@@ -16,7 +16,7 @@ namespace
 {
 constexpr auto groupSize = ComputePass::threadGroupWidth;
 constexpr auto groups = 3;
-constexpr auto threadCount = groupSize * groups;
+constexpr auto reductionThreadCount = groupSize * groups;
 
 // Distinctive per lane: not monotonic, negative in places, and with the
 // extremes off the ends - lane 7 holds the minimum and the last lane of the
@@ -46,7 +46,7 @@ Vector<float> laneValues()
 {
     auto values = Vector<float> {};
 
-    for (auto i = 0; i < threadCount; ++i)
+    for (auto i = 0; i < reductionThreadCount; ++i)
         values.add(laneValue(i % groupSize));
 
     return values;
@@ -373,11 +373,11 @@ auto tGroupFoldsAreRight = test("GroupReduction/sumMaxAndMinOverTheGroup") = []
 
     CrossCheck {kernel}
         .input(kernel.input, laneValues())
-        .output(kernel.sums, threadCount)
-        .output(kernel.maxima, threadCount)
-        .output(kernel.minima, threadCount)
+        .output(kernel.sums, reductionThreadCount)
+        .output(kernel.maxima, reductionThreadCount)
+        .output(kernel.minima, reductionThreadCount)
         .agreeing(1.0e-3f)
-        .run(threadCount,
+        .run(reductionThreadCount,
              [&](const Readback& readback)
              {
                  auto total = groupTotal();
@@ -387,7 +387,7 @@ auto tGroupFoldsAreRight = test("GroupReduction/sumMaxAndMinOverTheGroup") = []
 
                  auto agreeing = 0;
 
-                 for (auto i = 0; i < threadCount; ++i)
+                 for (auto i = 0; i < reductionThreadCount; ++i)
                      if (std::abs(summed[i] - total) < 1.0e-3f && peaks[i] == 137.25f
                          && least[i] == -91.5f)
                          ++agreeing;
@@ -395,18 +395,18 @@ auto tGroupFoldsAreRight = test("GroupReduction/sumMaxAndMinOverTheGroup") = []
                  // Every slot, so a fold that reached only the first lane of
                  // the group - or only the first group - is a count short of
                  // this.
-                 check(agreeing == threadCount, readback.name());
+                 check(agreeing == reductionThreadCount, readback.name());
 
                  // And bit for bit the same number on every thread of a group,
                  // which is what "returned to every thread" means rather than
                  // "close enough".
                  auto identical = 0;
 
-                 for (auto i = 0; i < threadCount; ++i)
+                 for (auto i = 0; i < reductionThreadCount; ++i)
                      if (summed[i] == summed[(i / groupSize) * groupSize])
                          ++identical;
 
-                 check(identical == threadCount, readback.name());
+                 check(identical == reductionThreadCount, readback.name());
              });
 };
 
@@ -430,10 +430,10 @@ auto tTwoFoldsInOneKernel = test("GroupReduction/aMeanThenAVariance") = []
     // The looser of the two tolerances below, the variance's.
     CrossCheck {kernel}
         .input(kernel.input, laneValues())
-        .output(kernel.means, threadCount)
-        .output(kernel.variances, threadCount)
+        .output(kernel.means, reductionThreadCount)
+        .output(kernel.variances, reductionThreadCount)
         .agreeing(1.0e-1f)
-        .run(threadCount,
+        .run(reductionThreadCount,
              [&](const Readback& readback)
              {
                  const auto& meansBack = readback.floats(kernel.means);
@@ -441,12 +441,12 @@ auto tTwoFoldsInOneKernel = test("GroupReduction/aMeanThenAVariance") = []
 
                  auto agreeing = 0;
 
-                 for (auto i = 0; i < threadCount; ++i)
+                 for (auto i = 0; i < reductionThreadCount; ++i)
                      if (std::abs(meansBack[i] - expectedMean) < 1.0e-3f
                          && std::abs(variancesBack[i] - expectedVariance) < 1.0e-1f)
                          ++agreeing;
 
-                 check(agreeing == threadCount, readback.name());
+                 check(agreeing == reductionThreadCount, readback.name());
              });
 };
 
@@ -534,7 +534,7 @@ auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
 {
     auto values = Vector<std::uint32_t> {};
 
-    for (auto i = 0; i < threadCount; ++i)
+    for (auto i = 0; i < reductionThreadCount; ++i)
     {
         auto lane = i % groupSize;
         values.add(lane == 5 ? 4000u : (std::uint32_t) ((lane * 17) % 31) + 3u);
@@ -555,20 +555,20 @@ auto tUnsignedFolds = test("GroupReduction/theUnsignedSiblingsFold") = []
 
     CrossCheck {kernel}
         .input(kernel.input, values)
-        .output(kernel.output, threadCount * 3)
+        .output(kernel.output, reductionThreadCount * 3)
         .agreeing()
-        .run(threadCount,
+        .run(reductionThreadCount,
              [&](const Readback& readback)
              {
                  const auto& back = readback.uints(kernel.output);
                  auto agreeing = 0;
 
-                 for (auto i = 0; i < threadCount; ++i)
+                 for (auto i = 0; i < reductionThreadCount; ++i)
                      if (back[i * 3] == expectedSum && back[i * 3 + 1] == expectedMax
                          && back[i * 3 + 2] == expectedMin)
                          ++agreeing;
 
-                 check(agreeing == threadCount, readback.name());
+                 check(agreeing == reductionThreadCount, readback.name());
              });
 };
 

@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -25,13 +25,6 @@ using namespace eacp::UI;
 
 namespace
 {
-// The ramps own a texture, so they need a device - but no window, no pass and no
-// draw: baking a row is arithmetic over a stop list.
-bool hasDevice()
-{
-    return GPU::Device::shared().isValid();
-}
-
 Gradient twoStop(const Color& from, const Color& to)
 {
     auto gradient = Gradient {};
@@ -41,8 +34,6 @@ Gradient twoStop(const Color& from, const Color& to)
     return gradient;
 }
 
-const auto red = Color {1.f, 0.f, 0.f, 1.f};
-const auto blue = Color {0.f, 0.f, 1.f, 1.f};
 const auto green = Color {0.f, 1.f, 0.f, 1.f};
 } // namespace
 

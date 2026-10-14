@@ -28,6 +28,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace TextureFormatTests
+{
 namespace
 {
 constexpr auto targetSize = 4;
@@ -1923,3 +1925,4 @@ auto tFormatSharedExponentChain =
     texture.readSubresource(TextureRegion::wholeLevel(1), &word);
     check(word == packRGB9E5(448, 160, 32, 17));
 };
+} // namespace TextureFormatTests

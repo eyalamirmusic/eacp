@@ -13,11 +13,6 @@ using namespace eacp::GPU;
 
 namespace
 {
-auto has(const std::string& source, std::string_view text)
-{
-    return source.find(text) != std::string::npos;
-}
-
 constexpr auto groupSize = ComputePass::threadGroupWidth;
 
 int widthOf(ReductionScope scope)

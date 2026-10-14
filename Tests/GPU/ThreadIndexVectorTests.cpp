@@ -14,6 +14,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace ThreadIndexVectorTests
+{
 namespace
 {
 constexpr auto sentinel = 0xdeadbeefu;
@@ -25,11 +27,6 @@ constexpr auto padding = 64;
 constexpr auto columns = 13;
 constexpr auto rows = 11;
 constexpr auto cells = columns * rows;
-
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
 
 std::uint32_t expectedAt(int x, int y, int z = 0)
 {
@@ -300,3 +297,4 @@ auto tRebuiltPairIsTheThreadId =
                  }
              });
 };
+} // namespace ThreadIndexVectorTests

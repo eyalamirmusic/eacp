@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -22,21 +22,10 @@ using namespace eacp::UI;
 
 namespace
 {
-eacp::Graphics::MouseEvent mouseAt(Point position, int clickCount = 1)
-{
-    auto event = eacp::Graphics::MouseEvent {};
-
-    event.pos = position;
-    event.downPos = position;
-    event.clickCount = clickCount;
-
-    return event;
-}
-
 template <typename Control>
-struct Harness
+struct SliderHarness
 {
-    Harness()
+    SliderHarness()
     {
         host.setBounds({0.f, 0.f, 200.f, 100.f});
         host.setRootComponent(root);
@@ -76,7 +65,7 @@ struct Harness
 template <typename Control>
 void checkSettingTheValueIsSilent()
 {
-    auto harness = Harness<Control> {};
+    auto harness = SliderHarness<Control> {};
 
     harness.control.setValue(0.8f);
 
@@ -96,7 +85,7 @@ void checkSettingTheValueIsSilent()
 template <typename Control>
 void checkTheMousePathReports()
 {
-    auto harness = Harness<Control> {};
+    auto harness = SliderHarness<Control> {};
 
     harness.press({150.f, 50.f});
     harness.drag({20.f, 10.f});
@@ -108,7 +97,7 @@ void checkTheMousePathReports()
 template <typename Control>
 void checkTheGestureIsBracketed()
 {
-    auto harness = Harness<Control> {};
+    auto harness = SliderHarness<Control> {};
 
     harness.press({150.f, 50.f});
 
@@ -127,7 +116,7 @@ void checkTheGestureIsBracketed()
 template <typename Control>
 void checkDoubleClickResetsAsAWholeGesture()
 {
-    auto harness = Harness<Control> {};
+    auto harness = SliderHarness<Control> {};
 
     harness.control.setValue(0.9f);
     harness.control.setDefaultValue(0.25f);
@@ -149,7 +138,7 @@ void checkDoubleClickResetsAsAWholeGesture()
 template <typename Control>
 void checkDoubleClickWithNoDefaultIsAnOrdinaryPress()
 {
-    auto harness = Harness<Control> {};
+    auto harness = SliderHarness<Control> {};
 
     harness.press({150.f, 50.f}, 2);
 
@@ -202,7 +191,7 @@ auto tKnobDoubleClickNoDefault =
 // value, which is the part a rotary control does differently.
 auto tSliderTracksThePointer = test("Slider/thePositionOfThePressIsTheValue") = []
 {
-    auto harness = Harness<Slider> {};
+    auto harness = SliderHarness<Slider> {};
 
     harness.press({150.f, 50.f});
 
@@ -217,7 +206,7 @@ auto tSliderTracksThePointer = test("Slider/thePositionOfThePressIsTheValue") = 
 // not have to trace the shape it is turning.
 auto tKnobTracksVerticalTravel = test("Knob/theValueFollowsVerticalTravel") = []
 {
-    auto harness = Harness<Knob> {};
+    auto harness = SliderHarness<Knob> {};
 
     harness.control.setValue(0.5f);
     harness.press({100.f, 50.f});

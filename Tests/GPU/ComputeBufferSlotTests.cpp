@@ -9,6 +9,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ComputeBufferSlotTests
+{
 namespace
 {
 constexpr auto count = 100;
@@ -176,3 +178,4 @@ auto tPastTheEndDropped =
 
     check(matchesExpected(runHighSlotKernel(true)));
 };
+} // namespace ComputeBufferSlotTests

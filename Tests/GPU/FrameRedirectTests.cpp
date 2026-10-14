@@ -12,6 +12,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace FrameRedirectTests
+{
 namespace
 {
 constexpr auto viewSize = 4.f;
@@ -246,9 +248,12 @@ struct InstanceColor
     float color[3];
 };
 } // namespace
+} // namespace FrameRedirectTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(FrameRedirectTests::QuadVertex, Float2)
 
+namespace FrameRedirectTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -397,3 +402,4 @@ auto tTimingLabel = test("FrameRedirect/aTimingLabelTimesThePassesUnderIt") = []
     check(passes.size() == 3 && passes[1].label == "tile/own");
     check(passes.size() == 3 && passes[2].label == "tile", "restored after it");
 };
+} // namespace FrameRedirectTests

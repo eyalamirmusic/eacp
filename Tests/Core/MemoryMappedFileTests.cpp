@@ -15,22 +15,6 @@ using eacp::MemoryMappedFile;
 
 namespace
 {
-std::filesystem::path scratchDirectory(const std::string& name)
-{
-    auto dir = std::filesystem::temp_directory_path() / ("eacp-mapped-" + name);
-
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directories(dir);
-
-    return dir;
-}
-
-void write(const std::filesystem::path& path, std::string_view contents)
-{
-    auto out = std::ofstream {path, std::ios::binary | std::ios::trunc};
-    out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-}
-
 // Distinct in every byte, so a window that lands one page early or late is a
 // failed comparison rather than a run of identical filler that matches anyway.
 std::string countingPattern(int size)
@@ -46,10 +30,10 @@ std::string countingPattern(int size)
 
 auto tMapsWholeFile = test("MemoryMappedFile/mapsWholeFile") = []
 {
-    const auto dir = scratchDirectory("whole");
+    const auto dir = scratchDirectory("mapped-whole");
     const auto path = dir / "hello.txt";
 
-    write(path, "hello world");
+    writeTestFile(path, "hello world");
 
     const auto file = MemoryMappedFile {FilePath {path}};
 
@@ -65,11 +49,11 @@ auto tMapsWholeFile = test("MemoryMappedFile/mapsWholeFile") = []
 
 auto tMapsBinaryContent = test("MemoryMappedFile/mapsBinaryContent") = []
 {
-    const auto dir = scratchDirectory("binary");
+    const auto dir = scratchDirectory("mapped-binary");
     const auto path = dir / "nuls.bin";
 
     const auto contents = std::string {"a\0b\0c", 5};
-    write(path, contents);
+    writeTestFile(path, contents);
 
     const auto file = MemoryMappedFile {FilePath {path}};
 
@@ -85,10 +69,10 @@ auto tMapsBinaryContent = test("MemoryMappedFile/mapsBinaryContent") = []
 // the same way as a missing file.
 auto tMapsAnEmptyFile = test("MemoryMappedFile/mapsAnEmptyFile") = []
 {
-    const auto dir = scratchDirectory("empty");
+    const auto dir = scratchDirectory("mapped-empty");
     const auto path = dir / "empty.bin";
 
-    write(path, "");
+    writeTestFile(path, "");
 
     const auto file = MemoryMappedFile {FilePath {path}};
 
@@ -103,7 +87,7 @@ auto tMapsAnEmptyFile = test("MemoryMappedFile/mapsAnEmptyFile") = []
 
 auto tMissingFileIsInvalid = test("MemoryMappedFile/missingFileIsInvalid") = []
 {
-    const auto dir = scratchDirectory("missing");
+    const auto dir = scratchDirectory("mapped-missing");
 
     const auto file = MemoryMappedFile {FilePath {dir / "nope.bin"}};
 
@@ -117,7 +101,7 @@ auto tMissingFileIsInvalid = test("MemoryMappedFile/missingFileIsInvalid") = []
 
 auto tDirectoryIsInvalid = test("MemoryMappedFile/directoryIsInvalid") = []
 {
-    const auto dir = scratchDirectory("directory");
+    const auto dir = scratchDirectory("mapped-directory");
 
     const auto file = MemoryMappedFile {FilePath {dir}};
 
@@ -128,10 +112,10 @@ auto tDirectoryIsInvalid = test("MemoryMappedFile/directoryIsInvalid") = []
 
 auto tKeepsThePath = test("MemoryMappedFile/keepsThePath") = []
 {
-    const auto dir = scratchDirectory("path");
+    const auto dir = scratchDirectory("mapped-path");
     const auto path = dir / "named.txt";
 
-    write(path, "x");
+    writeTestFile(path, "x");
 
     const auto file = MemoryMappedFile {FilePath {path}};
 
@@ -144,10 +128,10 @@ auto tKeepsThePath = test("MemoryMappedFile/keepsThePath") = []
 
 auto tMapsAWindow = test("MemoryMappedFile/mapsAWindow") = []
 {
-    const auto dir = scratchDirectory("window");
+    const auto dir = scratchDirectory("mapped-window");
     const auto path = dir / "abc.txt";
 
-    write(path, "abcdefghij");
+    writeTestFile(path, "abcdefghij");
 
     const auto file = MemoryMappedFile {FilePath {path}, 3, 4};
 
@@ -166,11 +150,11 @@ auto tMapsAWindow = test("MemoryMappedFile/mapsAWindow") = []
 // aligned base is a different page.
 auto tMapsAnUnalignedWindow = test("MemoryMappedFile/mapsAnUnalignedWindow") = []
 {
-    const auto dir = scratchDirectory("unaligned");
+    const auto dir = scratchDirectory("mapped-unaligned");
     const auto path = dir / "pattern.bin";
 
     const auto contents = countingPattern(256 * 1024);
-    write(path, contents);
+    writeTestFile(path, contents);
 
     const auto offset = 65536 + 1234;
     const auto length = std::size_t {5000};
@@ -187,10 +171,10 @@ auto tMapsAnUnalignedWindow = test("MemoryMappedFile/mapsAnUnalignedWindow") = [
 auto tMapsToTheEndFromAnOffset =
     test("MemoryMappedFile/mapsToTheEndFromAnOffset") = []
 {
-    const auto dir = scratchDirectory("to-end");
+    const auto dir = scratchDirectory("mapped-to-end");
     const auto path = dir / "abc.txt";
 
-    write(path, "abcdefghij");
+    writeTestFile(path, "abcdefghij");
 
     const auto file = MemoryMappedFile {FilePath {path}, 7};
 
@@ -204,10 +188,10 @@ auto tMapsToTheEndFromAnOffset =
 // walking a file in fixed-size windows does not have to shorten the last one.
 auto tClampsALengthPastTheEnd = test("MemoryMappedFile/clampsALengthPastTheEnd") = []
 {
-    const auto dir = scratchDirectory("clamp");
+    const auto dir = scratchDirectory("mapped-clamp");
     const auto path = dir / "abc.txt";
 
-    write(path, "abcdefghij");
+    writeTestFile(path, "abcdefghij");
 
     const auto file = MemoryMappedFile {FilePath {path}, 6, 4096};
 
@@ -221,10 +205,10 @@ auto tClampsALengthPastTheEnd = test("MemoryMappedFile/clampsALengthPastTheEnd")
 auto tMapsTheEmptyWindowAtTheEnd =
     test("MemoryMappedFile/mapsTheEmptyWindowAtTheEnd") = []
 {
-    const auto dir = scratchDirectory("at-end");
+    const auto dir = scratchDirectory("mapped-at-end");
     const auto path = dir / "abc.txt";
 
-    write(path, "abcdefghij");
+    writeTestFile(path, "abcdefghij");
 
     const auto file = MemoryMappedFile {FilePath {path}, 10};
 
@@ -237,10 +221,10 @@ auto tMapsTheEmptyWindowAtTheEnd =
 auto tOffsetPastTheEndIsInvalid =
     test("MemoryMappedFile/offsetPastTheEndIsInvalid") = []
 {
-    const auto dir = scratchDirectory("past-end");
+    const auto dir = scratchDirectory("mapped-past-end");
     const auto path = dir / "abc.txt";
 
-    write(path, "abcdefghij");
+    writeTestFile(path, "abcdefghij");
 
     const auto file = MemoryMappedFile {FilePath {path}, 11};
 
@@ -252,10 +236,10 @@ auto tOffsetPastTheEndIsInvalid =
 
 auto tZeroLengthWindowIsValid = test("MemoryMappedFile/zeroLengthWindowIsValid") = []
 {
-    const auto dir = scratchDirectory("zero-length");
+    const auto dir = scratchDirectory("mapped-zero-length");
     const auto path = dir / "abc.txt";
 
-    write(path, "abcdefghij");
+    writeTestFile(path, "abcdefghij");
 
     const auto file = MemoryMappedFile {FilePath {path}, 3, 0};
 
@@ -272,11 +256,11 @@ auto tZeroLengthWindowIsValid = test("MemoryMappedFile/zeroLengthWindowIsValid")
 // were not held, these reads would be of freed pages.
 auto tOutlivesTheOpenFile = test("MemoryMappedFile/outlivesTheOpenFile") = []
 {
-    const auto dir = scratchDirectory("lifetime");
+    const auto dir = scratchDirectory("mapped-lifetime");
     const auto path = dir / "pattern.bin";
 
     const auto contents = countingPattern(128 * 1024);
-    write(path, contents);
+    writeTestFile(path, contents);
 
     auto file = MemoryMappedFile {FilePath {path}};
     check(file.isValid());
@@ -296,12 +280,12 @@ auto tIsMoveAssignable = test("MemoryMappedFile/isMoveAssignable") = []
     static_assert(std::is_move_assignable_v<MemoryMappedFile>);
     static_assert(!std::is_copy_assignable_v<MemoryMappedFile>);
 
-    const auto dir = scratchDirectory("assign");
+    const auto dir = scratchDirectory("mapped-assign");
     const auto first = dir / "first.txt";
     const auto second = dir / "second.txt";
 
-    write(first, "first file");
-    write(second, "second file");
+    writeTestFile(first, "first file");
+    writeTestFile(second, "second file");
 
     auto held = std::optional<MemoryMappedFile> {};
     held = MemoryMappedFile {FilePath {first}};
@@ -330,11 +314,11 @@ auto tIsMoveAssignable = test("MemoryMappedFile/isMoveAssignable") = []
 auto tMappingDoesNotAllocateTheFile =
     test("MemoryMappedFile/mappingDoesNotAllocateTheFile") = []
 {
-    const auto dir = scratchDirectory("cost");
+    const auto dir = scratchDirectory("mapped-cost");
     const auto path = dir / "big.bin";
 
     const auto size = std::size_t {4 * 1024 * 1024};
-    write(path, std::string(size, 'x'));
+    writeTestFile(path, std::string(size, 'x'));
 
     const auto filePath = FilePath {path};
 
@@ -359,11 +343,11 @@ auto tMappingDoesNotAllocateTheFile =
 auto tMapsAFileLargerThanAnInt =
     test("MemoryMappedFile/mapsAFileLargerThanAnInt") = []
 {
-    const auto dir = scratchDirectory("large");
+    const auto dir = scratchDirectory("mapped-large");
     const auto path = dir / "large.bin";
     const auto size = (std::size_t {1} << 31) + 4096;
 
-    write(path, "");
+    writeTestFile(path, "");
     std::filesystem::resize_file(path, size);
 
     const auto file = MemoryMappedFile {FilePath {path}};

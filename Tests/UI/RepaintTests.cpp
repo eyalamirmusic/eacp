@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -21,11 +21,6 @@ using namespace eacp::UI;
 
 namespace
 {
-bool hasDevice()
-{
-    return GPU::Device::shared().isValid();
-}
-
 struct Counter final : Component
 {
     void paint(UI::Graphics&) override { ++paints; }
@@ -272,14 +267,6 @@ struct ShapedTree
     ComponentHost host;
     Shaped shaped;
 };
-
-GPUWidgets::Path rect(const Rect& bounds)
-{
-    auto path = GPUWidgets::Path {};
-    path.addRect(bounds);
-
-    return path;
-}
 } // namespace
 
 auto tPathShapeRepaints =

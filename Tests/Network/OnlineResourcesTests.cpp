@@ -21,30 +21,11 @@ using eacp::HTTP::ServerThreadingMode;
 
 namespace
 {
-constexpr auto fetchTimeout = eacp::Time::MS {5000};
 using Status = OnlineResources::Status;
 
-std::string baseUrl(int port)
+struct TaggedFileServer
 {
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-FilePath scratchDirectory(const std::string& name)
-{
-    auto path = std::filesystem::temp_directory_path() / ("eacp-registry-" + name);
-    auto ignored = std::error_code {};
-    std::filesystem::remove_all(path, ignored);
-    return FilePath {path};
-}
-
-bool exists(const FilePath& path)
-{
-    return std::filesystem::exists(eacp::toStdPath(path));
-}
-
-struct StaticFileServer
-{
-    explicit StaticFileServer(std::string bodyToUse)
+    explicit TaggedFileServer(std::string bodyToUse)
         : body(std::move(bodyToUse))
     {
         check(server.listen(0,
@@ -58,7 +39,7 @@ struct StaticFileServer
                             }));
     }
 
-    ~StaticFileServer() { server.stop(); }
+    ~TaggedFileServer() { server.stop(); }
 
     std::string url(const std::string& file) const
     {
@@ -132,7 +113,7 @@ struct ChangeCounter
 auto tRegistryDeclare =
     test("OnlineResources/declareListsAResourceNotYetOnDisk") = []
 {
-    auto directory = scratchDirectory("declare");
+    auto directory = scratchDirectory("registry-declare");
     auto counter = ChangeCounter {};
     auto& registry = OnlineResources::get();
     auto scope = ScopedDirectory {directory};
@@ -159,8 +140,8 @@ auto tRegistryDeclare =
 auto tFetchReports =
     test("OnlineResources/aFetchIsListedFetchingThenFetchedWithItsSize") = []
 {
-    auto server = StaticFileServer {std::string(65536, 'a')};
-    auto directory = scratchDirectory("fetch");
+    auto server = TaggedFileServer {std::string(65536, 'a')};
+    auto directory = scratchDirectory("registry-fetch");
     auto& registry = OnlineResources::get();
     auto scope = ScopedDirectory {directory};
     auto counter = ChangeCounter {};
@@ -195,8 +176,8 @@ auto tFetchReports =
 auto tRegistryAppOwned =
     test("OnlineResources/anObjectTheAppOwnsReportsTheSameWay") = []
 {
-    auto server = StaticFileServer {"payload"};
-    auto directory = scratchDirectory("owned");
+    auto server = TaggedFileServer {"payload"};
+    auto directory = scratchDirectory("registry-owned");
     auto& registry = OnlineResources::get();
 
     auto resource =
@@ -240,7 +221,7 @@ auto tDestroyedStillReports =
                             return response;
                         }));
 
-    auto directory = scratchDirectory("destroyed");
+    auto directory = scratchDirectory("registry-destroyed");
     auto resource = eacp::makeOwned<OnlineResource>(
         infoFor("Late", baseUrl(server.boundPort()) + "/late.txt"), directory);
     auto path = resource->path();
@@ -272,7 +253,7 @@ auto tRegistryFailure = test("OnlineResources/aFailedFetchKeepsItsError") = []
                             return response;
                         }));
 
-    auto directory = scratchDirectory("failed");
+    auto directory = scratchDirectory("registry-failed");
     auto& registry = OnlineResources::get();
     auto scope = ScopedDirectory {directory};
 
@@ -294,8 +275,8 @@ auto tRegistryFailure = test("OnlineResources/aFailedFetchKeepsItsError") = []
 auto tRegistryCancel =
     test("OnlineResources/cancelThroughTheRegistryIsListedCancelled") = []
 {
-    auto server = StaticFileServer {std::string(1 << 20, 'z')};
-    auto directory = scratchDirectory("cancel");
+    auto server = TaggedFileServer {std::string(1 << 20, 'z')};
+    auto directory = scratchDirectory("registry-cancel");
     auto& registry = OnlineResources::get();
     auto scope = ScopedDirectory {directory};
 
@@ -317,8 +298,8 @@ auto tRegistryCancel =
 auto tRegistryRemove =
     test("OnlineResources/removeDeletesTheCopyAndKeepsTheEntry") = []
 {
-    auto server = StaticFileServer {"payload"};
-    auto directory = scratchDirectory("remove");
+    auto server = TaggedFileServer {"payload"};
+    auto directory = scratchDirectory("registry-remove");
     auto& registry = OnlineResources::get();
     auto scope = ScopedDirectory {directory};
 
@@ -361,8 +342,8 @@ auto tRegistryClear =
                             return response;
                         }));
 
-    auto directory = scratchDirectory("clear");
-    auto elsewhere = scratchDirectory("clear-elsewhere");
+    auto directory = scratchDirectory("registry-clear");
+    auto elsewhere = scratchDirectory("registry-clear-elsewhere");
     auto& registry = OnlineResources::get();
     auto scope = ScopedDirectory {directory};
     auto url = baseUrl(server.boundPort());

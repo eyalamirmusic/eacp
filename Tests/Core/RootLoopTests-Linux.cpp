@@ -12,7 +12,7 @@ using namespace eacp;
 
 namespace
 {
-int pluginLoadCount()
+int rootLoopPluginLoadCount()
 {
     return Strings::parseIntOr(getEnvValue("EACP_ROOT_LOOP_PLUGIN_LOADS"));
 }
@@ -259,7 +259,7 @@ auto tUnloadDetachesTheHostedLoop = test("RootLoop/unloadDetachesTheHostedLoop")
         // proves the deferred close really unmapped it.
         auto reopened = Plugins::DynamicLibrary(EACP_ROOT_LOOP_TEST_PLUGIN);
         check(reopened.isOpen());
-        check(pluginLoadCount() == 2);
+        check(rootLoopPluginLoadCount() == 2);
     }
 };
 
@@ -293,7 +293,7 @@ auto tBareCloseDetachesTheHostedLoop =
                                      plugin.library.close();
                                  });
 
-        check(pluginLoadCount() == 1);
+        check(rootLoopPluginLoadCount() == 1);
 
         auto afterUnload = 0;
         Threads::callAsync([&] { ++afterUnload; });
@@ -302,7 +302,7 @@ auto tBareCloseDetachesTheHostedLoop =
 
         auto reopened = Plugins::DynamicLibrary(EACP_ROOT_LOOP_TEST_PLUGIN);
         check(reopened.isOpen());
-        check(pluginLoadCount() == 2);
+        check(rootLoopPluginLoadCount() == 2);
     }
 };
 
@@ -317,7 +317,7 @@ auto tTwoHostedCopiesShareOneAttachment =
     auto second = RootLoopPlugin {};
     check(first.isLoaded());
     check(second.isLoaded());
-    check(pluginLoadCount() == 1);
+    check(rootLoopPluginLoadCount() == 1);
 
     auto asyncCalls = 0;
     Threads::callAsync(

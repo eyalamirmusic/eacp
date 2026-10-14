@@ -17,12 +17,7 @@ using eacp::Threads::stopEventLoop;
 
 namespace
 {
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-struct Exchange
+struct ServerExchange
 {
     Request received;
     bool handlerCalled = false;
@@ -30,7 +25,9 @@ struct Exchange
     bool completed = false;
 };
 
-void performExchange(Server& server, const Request& clientRequest, Exchange& out)
+void performServerExchange(Server& server,
+                           const Request& clientRequest,
+                           ServerExchange& out)
 {
     auto worker = std::thread();
 
@@ -124,7 +121,7 @@ auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -139,7 +136,7 @@ auto tHandlerReceivesGet = test("HttpServer/handlerReceivesGetRequest") = []
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/ping"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/ping"), ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -153,7 +150,7 @@ auto tHandlerReceivesPostBody = test("HttpServer/handlerReceivesPostBody") = []
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -172,7 +169,7 @@ auto tHandlerReceivesPostBody = test("HttpServer/handlerReceivesPostBody") = []
         Request::post(baseUrl(port) + "/items", "{\"name\":\"widget\"}");
     clientReq.headers["Content-Type"] = "application/json";
 
-    performExchange(server, clientReq, ex);
+    performServerExchange(server, clientReq, ex);
 
     check(ex.completed);
     check(ex.received.type == "POST");
@@ -186,7 +183,7 @@ auto tHandlerReceivesHeaders = test("HttpServer/handlerReceivesCustomHeaders") =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -203,7 +200,7 @@ auto tHandlerReceivesHeaders = test("HttpServer/handlerReceivesCustomHeaders") =
     auto clientReq = Request(baseUrl(port) + "/h");
     clientReq.headers["X-Custom-Header"] = "abc123";
 
-    performExchange(server, clientReq, ex);
+    performServerExchange(server, clientReq, ex);
 
     check(ex.completed);
     check(ex.received.headers["X-Custom-Header"] == "abc123");
@@ -214,7 +211,7 @@ auto tResponseHeadersForwarded =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request&)
@@ -229,7 +226,7 @@ auto tResponseHeadersForwarded =
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/json"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/json"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 200);
@@ -243,7 +240,7 @@ auto tMultipleResponseHeadersRoundTrip =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request&)
@@ -258,7 +255,7 @@ auto tMultipleResponseHeadersRoundTrip =
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/multi"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/multi"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 200);
@@ -271,7 +268,7 @@ auto tDefaultStatusIs200 = test("HttpServer/responseWithoutStatusDefaultsTo200")
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request&)
@@ -283,7 +280,7 @@ auto tDefaultStatusIs200 = test("HttpServer/responseWithoutStatusDefaultsTo200")
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 200);
@@ -294,7 +291,7 @@ auto tNotFoundStatus = test("HttpServer/handlerCanReturnNotFound") = []
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request&)
@@ -307,7 +304,7 @@ auto tNotFoundStatus = test("HttpServer/handlerCanReturnNotFound") = []
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/x"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/x"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 404);
@@ -319,7 +316,7 @@ auto tHandlerReceivesQueryParams =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -331,7 +328,7 @@ auto tHandlerReceivesQueryParams =
     check(ok);
     port = server.boundPort();
 
-    performExchange(
+    performServerExchange(
         server, Request(baseUrl(port) + "/search?q=hello%20world&limit=10"), ex);
 
     check(ex.completed);
@@ -346,7 +343,7 @@ auto tHandlerReceivesEmptyParamsForNoQuery =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -358,7 +355,7 @@ auto tHandlerReceivesEmptyParamsForNoQuery =
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/plain"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/plain"), ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -370,7 +367,7 @@ auto tHandlerReceivesRemoteAddr =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     auto ok = server.listen(0,
                             [&](const Request& req)
@@ -382,7 +379,7 @@ auto tHandlerReceivesRemoteAddr =
     check(ok);
     port = server.boundPort();
 
-    performExchange(server, Request(baseUrl(port) + "/who"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/who"), ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -716,7 +713,7 @@ auto tRouterDispatchesGet = test("HttpServer/routerDispatchesGetRoute") = []
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.get("/ping",
                [&](const Request& req)
@@ -731,7 +728,7 @@ auto tRouterDispatchesGet = test("HttpServer/routerDispatchesGetRoute") = []
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request(baseUrl(port) + "/ping"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/ping"), ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -744,7 +741,7 @@ auto tRouterDispatchesPost = test("HttpServer/routerDispatchesPostRoute") = []
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.post("/items",
                 [&](const Request& req)
@@ -759,7 +756,8 @@ auto tRouterDispatchesPost = test("HttpServer/routerDispatchesPostRoute") = []
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request::post(baseUrl(port) + "/items", "body"), ex);
+    performServerExchange(
+        server, Request::post(baseUrl(port) + "/items", "body"), ex);
 
     check(ex.completed);
     check(ex.received.type == "POST");
@@ -822,7 +820,7 @@ auto tRouterUnknownReturns404 = test("HttpServer/routerReturns404WhenNoMatch") =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.get("/exists",
                [](const Request&)
@@ -834,7 +832,7 @@ auto tRouterUnknownReturns404 = test("HttpServer/routerReturns404WhenNoMatch") =
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request(baseUrl(port) + "/missing"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/missing"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 404);
@@ -846,7 +844,7 @@ auto tRouterStripsQueryString =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.get("/search",
                [&](const Request& req)
@@ -861,7 +859,8 @@ auto tRouterStripsQueryString =
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request(baseUrl(port) + "/search?q=cat&limit=5"), ex);
+    performServerExchange(
+        server, Request(baseUrl(port) + "/search?q=cat&limit=5"), ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -874,14 +873,14 @@ auto tRouterCatchesError = test("HttpServer/routerConvertsErrorToItsResponse") =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.get("/fail",
                [](const Request&) -> Response { throwError("not allowed", 403); });
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request(baseUrl(port) + "/fail"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/fail"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 403);
@@ -893,7 +892,7 @@ auto tRouterCatchesErrorWithCustomResponse =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.get("/fail",
                [](const Request&) -> Response
@@ -907,7 +906,7 @@ auto tRouterCatchesErrorWithCustomResponse =
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request(baseUrl(port) + "/fail"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/fail"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 451);
@@ -919,7 +918,7 @@ auto tRouterCatchesUnknownExceptionAs500 =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.get("/boom",
                [](const Request&) -> Response
@@ -927,7 +926,7 @@ auto tRouterCatchesUnknownExceptionAs500 =
 
     check(server.listen(0));
     port = server.boundPort();
-    performExchange(server, Request(baseUrl(port) + "/boom"), ex);
+    performServerExchange(server, Request(baseUrl(port) + "/boom"), ex);
 
     check(ex.completed);
     check(ex.clientResponse.statusCode == 500);
@@ -949,7 +948,7 @@ auto tAddRouteRegistersCustomMethod =
 {
     auto server = Server();
     auto port = 0;
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     server.addRoute("PATCH",
                     "/r",
@@ -968,7 +967,7 @@ auto tAddRouteRegistersCustomMethod =
 
     auto clientReq = Request(baseUrl(port) + "/r");
     clientReq.type = "PATCH";
-    performExchange(server, clientReq, ex);
+    performServerExchange(server, clientReq, ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -983,7 +982,7 @@ auto tHandlerReceivesInMemoryFilePart =
     test("HttpServer/multipartCarriesInMemoryFileBytes") = []
 {
     auto server = Server();
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     check(server.listen(0,
                         [&](const Request& req)
@@ -999,7 +998,7 @@ auto tHandlerReceivesInMemoryFilePart =
     req.addFormField("payload_json", "{\"content\":\"hi\"}");
     req.addFileBytes("files[0]", "chart.png", "\x89PNG rendered bytes", "image/png");
 
-    performExchange(server, req, ex);
+    performServerExchange(server, req, ex);
 
     check(ex.completed);
     check(ex.handlerCalled);
@@ -1030,7 +1029,7 @@ auto tHandlerReceivesFilePartFromDisk =
     }
 
     auto server = Server();
-    auto ex = Exchange();
+    auto ex = ServerExchange();
 
     check(server.listen(0,
                         [&](const Request& req)
@@ -1044,7 +1043,7 @@ auto tHandlerReceivesFilePartFromDisk =
     req.addFileField("files[0]", path, "text/plain");
     req.addFileBytes("files[1]", "memo.txt", "bytes from memory", "text/plain");
 
-    performExchange(server, req, ex);
+    performServerExchange(server, req, ex);
     std::filesystem::remove(path);
 
     check(ex.completed);

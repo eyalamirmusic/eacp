@@ -4,6 +4,9 @@
 #include <memory>
 
 using namespace nano;
+
+namespace WebSocketTests
+{
 using eacp::Vector;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::MS;
@@ -667,3 +670,4 @@ auto tSendBeforeOpen = test("WebSocket/aSendBeforeOpenIsDropped") = []
     check(record.messages.size() == 1);
     check(record.errors == 0);
 };
+} // namespace WebSocketTests

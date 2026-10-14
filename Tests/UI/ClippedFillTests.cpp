@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -14,9 +14,6 @@ using namespace eacp::UI;
 
 namespace
 {
-const auto red = Color {1.f, 0.f, 0.f, 1.f};
-const auto blue = Color {0.f, 0.f, 1.f, 1.f};
-
 bool isNear(float a, float b, float tolerance = 0.02f)
 {
     return std::abs(a - b) <= tolerance;

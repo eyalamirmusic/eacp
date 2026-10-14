@@ -4,6 +4,7 @@
 
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 
+#include <bit>
 #include <cstdint>
 #include <cmath>
 #include <functional>
@@ -37,6 +38,21 @@ Vector<T> filled(int elements, T value)
     auto values = Vector<T> {};
     values.assign(elements, value);
     return values;
+}
+
+inline Vector<float> asFloats(const Vector<std::uint32_t>& words)
+{
+    auto floats = Vector<float> {};
+
+    for (auto word: words)
+        floats.add(std::bit_cast<float>(word));
+
+    return floats;
+}
+
+inline std::uint32_t wordOf(float value)
+{
+    return std::bit_cast<std::uint32_t>(value);
 }
 
 // The two backends' copies of one array, element for element: floats within

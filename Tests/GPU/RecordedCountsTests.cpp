@@ -11,6 +11,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace RecordedCountsTests
+{
 namespace
 {
 constexpr auto floatBytes = (int) sizeof(float);
@@ -240,3 +242,4 @@ auto tRawCallsCount = test("RecordedCounts/rawCallsCountAsAskedFor") = []
     for (auto i = 0; i < gridColumns * gridRows; ++i)
         check(gridValues[i] == (float) i);
 };
+} // namespace RecordedCountsTests

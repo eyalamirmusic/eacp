@@ -19,7 +19,7 @@ using namespace eacp::Graphics;
 
 namespace
 {
-NSView* nativeViewOf(View& view)
+NSView* drawingViewOf(View& view)
 {
     return (__bridge NSView*) view.getHandle();
 }
@@ -28,11 +28,6 @@ NSView* nativeViewOf(View& view)
 NSView* foreignParentOf(NativeChildSurface& surface)
 {
     return (__bridge NSView*) surface.getNativeParentHandle();
-}
-
-bool same(double a, double b)
-{
-    return std::abs(a - b) < 0.0001;
 }
 } // namespace
 
@@ -47,8 +42,8 @@ auto tOffersAStockViewInsideItsOwn =
     auto* foreignParent = foreignParentOf(surface);
 
     check(foreignParent != nil);
-    check(foreignParent != nativeViewOf(surface));
-    check(foreignParent.superview == nativeViewOf(surface));
+    check(foreignParent != drawingViewOf(surface));
+    check(foreignParent.superview == drawingViewOf(surface));
     check(!foreignParent.isFlipped);
 };
 
@@ -103,7 +98,7 @@ auto tCoversTheBoundsItWasGiven =
     // from its top-left — the rect is the one the layout asked for, which is
     // the whole claim the class makes.
     auto placed = [foreignParent convertRect:foreignParent.bounds
-                                      toView:nativeViewOf(content)];
+                                      toView:drawingViewOf(content)];
 
     check(same(placed.origin.x, 20.));
     check(same(placed.origin.y, 40.));

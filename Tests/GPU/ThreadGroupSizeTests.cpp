@@ -11,6 +11,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace ThreadGroupSizeTests
+{
 namespace
 {
 constexpr auto wideGroup = 256;
@@ -423,3 +425,4 @@ auto tIndirectDispatchUsesTheProgramsGroup =
     check(countWritten(onGpu) == groups * wideGroup, "gpu");
     expectAgreement(onCpu, onGpu);
 };
+} // namespace ThreadGroupSizeTests

@@ -15,6 +15,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace SharedMemoryTests
+{
 namespace
 {
 constexpr auto groupSize = ComputePass::threadGroupWidth;
@@ -215,3 +217,4 @@ auto tKernelReportsWhatItDeclares =
 
     over.prepare(device);
 };
+} // namespace SharedMemoryTests

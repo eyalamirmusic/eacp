@@ -19,6 +19,28 @@
 
 #include <source_location>
 #include <string>
+#include <string_view>
+
+inline bool contains(std::string_view haystack, std::string_view needle)
+{
+    return haystack.find(needle) != std::string_view::npos;
+}
+
+inline bool has(std::string_view source, std::string_view text)
+{
+    return contains(source, text);
+}
+
+inline int occurrences(std::string_view haystack, std::string_view needle)
+{
+    auto found = 0;
+
+    for (auto at = haystack.find(needle); at != std::string_view::npos;
+         at = haystack.find(needle, at + needle.size()))
+        ++found;
+
+    return found;
+}
 
 // Where eacp-spirv is built (Linux by default) the emitted GLSL is compiled.
 

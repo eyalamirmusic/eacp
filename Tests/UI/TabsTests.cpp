@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -18,19 +18,9 @@ namespace
 {
 constexpr auto barHeight = 28.f;
 
-eacp::Graphics::MouseEvent mouseAt(Point position)
+struct TabsHarness
 {
-    auto event = eacp::Graphics::MouseEvent {};
-
-    event.pos = position;
-    event.downPos = position;
-
-    return event;
-}
-
-struct Harness
-{
-    Harness()
+    TabsHarness()
     {
         host.setBounds({0.f, 0.f, 300.f, 200.f});
         host.setRootComponent(root);
@@ -72,7 +62,7 @@ struct Harness
 
 auto tTabsFirstTabShows = test("Tabs/theFirstTabAddedIsTheOneShowing") = []
 {
-    auto harness = Harness {};
+    auto harness = TabsHarness {};
 
     check(harness.tabs.getNumTabs() == 3);
     check(harness.tabs.getCurrentTabIndex() == 0);
@@ -87,7 +77,7 @@ auto tTabsFirstTabShows = test("Tabs/theFirstTabAddedIsTheOneShowing") = []
 
 auto tTabsPageFillsWhatTheBarLeaves = test("Tabs/thePageFillsWhatTheBarLeaves") = []
 {
-    auto harness = Harness {};
+    auto harness = TabsHarness {};
 
     auto page = harness.first.getBounds();
 
@@ -98,7 +88,7 @@ auto tTabsPageFillsWhatTheBarLeaves = test("Tabs/thePageFillsWhatTheBarLeaves") 
 
 auto tTabsSettingTheTabIsSilent = test("Tabs/settingTheTabReportsOnlyWhenAsked") = []
 {
-    auto harness = Harness {};
+    auto harness = TabsHarness {};
 
     harness.tabs.setCurrentTabIndex(1);
 
@@ -125,7 +115,7 @@ auto tTabsSettingTheTabIsSilent = test("Tabs/settingTheTabReportsOnlyWhenAsked")
 auto tTabsClickingATabSelectsIt =
     test("Tabs/clickingATabSelectsItAndSwapsThePage") = []
 {
-    auto harness = Harness {};
+    auto harness = TabsHarness {};
 
     // Three tabs across three hundred points, so the middle one is the middle
     // hundred.

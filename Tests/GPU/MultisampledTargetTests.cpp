@@ -43,6 +43,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace MultisampledTargetTests
+{
 namespace
 {
 constexpr auto targetSize = 16;
@@ -66,10 +68,13 @@ struct UvVertex
     float uv[2];
 };
 } // namespace
+} // namespace MultisampledTargetTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
-EACP_SHADER_VALUE(UvVertex, Float2)
+EACP_SHADER_VALUE(MultisampledTargetTests::QuadVertex, Float2)
+EACP_SHADER_VALUE(MultisampledTargetTests::UvVertex, Float2)
 
+namespace MultisampledTargetTests
+{
 namespace
 {
 // A right triangle whose hypotenuse runs corner to corner, offset by a quarter
@@ -637,3 +642,4 @@ auto tSingleSampledDepthReadsTheSame =
     check(std::abs(covered - quadDepth) < 0.01f);
     check(std::abs(empty - 1.f) < 0.01f);
 };
+} // namespace MultisampledTargetTests

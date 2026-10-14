@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ScissorTests
+{
 namespace
 {
 bool isGreen(const Graphics::Color& c)
@@ -199,10 +201,10 @@ auto tClipsToRect = test("Scissor/clipsDrawingToRect") = []
     check(image.isValid());
     check(image.width() == 40);
 
-    check(isGreen(image.at(2, 20)));   // inside
-    check(isGreen(image.at(19, 20)));  // last column inside
-    check(isRed(image.at(20, 20)));    // first column outside
-    check(isRed(image.at(38, 20)));    // well outside
+    check(isGreen(image.at(2, 20))); // inside
+    check(isGreen(image.at(19, 20))); // last column inside
+    check(isRed(image.at(20, 20))); // first column outside
+    check(isRed(image.at(38, 20))); // well outside
 
     check(countGreen(image) == 20 * 40);
 };
@@ -345,3 +347,4 @@ auto tRectIsInPixels = test("Scissor/rectIsInRenderTargetPixels") = []
     check(image.width() == 80);
     check(countGreen(image) == 20 * 80);
 };
+} // namespace ScissorTests

@@ -19,6 +19,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace FrameComputeTests
+{
 namespace
 {
 constexpr auto viewWidth = 8;
@@ -44,9 +46,12 @@ struct InstanceColor
     float color[3];
 };
 } // namespace
+} // namespace FrameComputeTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(FrameComputeTests::QuadVertex, Float2)
 
+namespace FrameComputeTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -952,3 +957,4 @@ auto tSharedMemoryGroupSums = test("FrameCompute/sharedMemoryGroupSums") = []
         check(result[group] == expected);
     }
 };
+} // namespace FrameComputeTests

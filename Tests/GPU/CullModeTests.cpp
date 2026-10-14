@@ -35,6 +35,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CullModeTests
+{
 namespace
 {
 constexpr auto viewWidth = 8;
@@ -45,9 +47,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace CullModeTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(CullModeTests::QuadVertex, Float2)
 
+namespace CullModeTests
+{
 namespace
 {
 // The left half of the frame, wound counter-clockwise in clip space - the space
@@ -252,3 +257,4 @@ auto tCullDoesNotLeakBetweenPipelines =
 
     check(isGreen(image.at(viewWidth * 3 / 4, viewHeight / 2)));
 };
+} // namespace CullModeTests

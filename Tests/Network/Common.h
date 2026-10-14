@@ -1,10 +1,143 @@
 #pragma once
 
+#include <eacp/Core/Utils/StdPath.h>
 #include <eacp/Network/Network.h>
+#include <Miro/Reflect.h>
 #include <NanoTest/NanoTest.h>
 
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <mutex>
+#include <string>
+#include <system_error>
+#include <thread>
+
+constexpr auto fetchTimeout = eacp::Time::MS {5000};
+
+// Every server here binds port 0 and reports back what it got. Fixed ports do
+// not survive this suite: NanoTest's CTest discovery runs each case in its own
+// process, so a per-process counter hands every concurrent case the same number,
+// and SO_REUSEADDR lets them all bind it and steal each other's connections.
+inline std::string baseUrl(int port)
+{
+    return "http://127.0.0.1:" + std::to_string(port);
+}
+
+inline std::string tempPath(const std::string& name)
+{
+    auto path = std::filesystem::temp_directory_path() / ("eacp-" + name);
+    auto ec = std::error_code();
+    std::filesystem::remove(path, ec);
+    return path.string();
+}
+
+inline eacp::FilePath scratchDirectory(const std::string& name)
+{
+    auto path = std::filesystem::temp_directory_path() / ("eacp-" + name);
+    auto ignored = std::error_code {};
+    std::filesystem::remove_all(path, ignored);
+    return eacp::FilePath {path};
+}
+
+inline std::string readFile(const std::string& path)
+{
+    auto file = std::ifstream(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file),
+                       std::istreambuf_iterator<char>());
+}
+
+inline bool exists(const eacp::FilePath& path)
+{
+    return std::filesystem::exists(eacp::toStdPath(path));
+}
+
+// A handler that blocks has to run off the event loop, which is the same
+// loop the reply has to travel back through.
+inline eacp::HTTP::ServerOptions threadPoolOptions()
+{
+    auto options = eacp::HTTP::ServerOptions();
+    options.threading = eacp::HTTP::ServerThreadingMode::ThreadPool;
+    options.threadPoolSize = 2;
+    return options;
+}
+
+inline bool runOffTheLoop(const std::function<void()>& work)
+{
+    auto worker = std::thread();
+
+    auto startWorker = [&]
+    {
+        auto runAndStop = [&]
+        {
+            work();
+            eacp::Threads::callAsync([] { eacp::Threads::stopEventLoop(); });
+        };
+
+        worker = std::thread(runAndStop);
+    };
+
+    auto stopped =
+        eacp::Threads::runEventLoopFor(eacp::Time::MS {5000}, startWorker);
+
+    if (worker.joinable())
+        worker.join();
+
+    return stopped;
+}
+
+inline eacp::HTTP::Response performOffTheLoop(eacp::HTTP::Server& server,
+                                              const eacp::HTTP::Request& req)
+{
+    auto response = eacp::HTTP::Response();
+    auto perform = [&] { response = req.perform(); };
+    nano::check(runOffTheLoop(perform));
+    server.stop();
+    return response;
+}
+
+struct Exchange
+{
+    eacp::HTTP::Response clientResponse;
+    bool completed = false;
+};
+
+inline void performExchange(eacp::HTTP::Server& server,
+                            const eacp::HTTP::Request& clientRequest,
+                            Exchange& out)
+{
+    auto worker = std::thread();
+
+    auto stopped = eacp::Threads::runEventLoopFor(
+        eacp::Time::MS {5000},
+        [&]
+        {
+            worker = std::thread(
+                [&]
+                {
+                    out.clientResponse = eacp::HTTP::httpRequest(clientRequest);
+                    eacp::Threads::callAsync([] { eacp::Threads::stopEventLoop(); });
+                });
+        });
+
+    worker.join();
+    out.completed = stopped;
+    server.stop();
+}
+
+struct GreetRequest
+{
+    std::string name;
+    MIRO_REFLECT(name)
+};
+
+struct GreetResponse
+{
+    std::string greeting;
+    MIRO_REFLECT(greeting)
+};
 
 // A bound for calls that must not wait for a server that is deliberately
 // stalled - the client's own timeout, or the fact that a request is

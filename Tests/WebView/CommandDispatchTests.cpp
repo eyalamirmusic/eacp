@@ -23,16 +23,6 @@ using namespace eacp::Graphics;
 static_assert(std::is_base_of_v<ScriptHost, WebView>);
 static_assert(std::is_constructible_v<WebViewBridge, WebView&>);
 
-namespace
-{
-struct Message
-{
-    std::string text;
-
-    MIRO_REFLECT(text)
-};
-} // namespace
-
 auto tPerCommandWorkerThread =
     test("CommandDispatch/perCommandMode/runsOnlyTaggedCommandOffMain") = []
 {

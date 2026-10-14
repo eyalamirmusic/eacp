@@ -22,22 +22,6 @@ using eacp::Graphics::WindowOptions;
 
 namespace
 {
-bool same(float a, float b)
-{
-    return std::abs(a - b) < 0.0001f;
-}
-
-bool same(Point point, Point expected)
-{
-    return same(point.x, expected.x) && same(point.y, expected.y);
-}
-
-bool same(const Rect& rect, const Rect& expected)
-{
-    return same(rect.x, expected.x) && same(rect.y, expected.y)
-           && same(rect.w, expected.w) && same(rect.h, expected.h);
-}
-
 const auto sixteenNine = Point {16.f, 9.f};
 } // namespace
 

@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace OcclusionQueryTests
+{
 namespace
 {
 constexpr auto viewSize = 32;
@@ -31,9 +33,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace OcclusionQueryTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(OcclusionQueryTests::QuadVertex, Float2)
 
+namespace OcclusionQueryTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -505,3 +510,4 @@ auto tOcclusionRefusals = test("Occlusion/refusedQueriesCountNothing") = []
 
     check(queries.result(1) == 0);
 };
+} // namespace OcclusionQueryTests

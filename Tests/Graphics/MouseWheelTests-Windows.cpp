@@ -13,9 +13,9 @@ using namespace eacp::Graphics;
 
 namespace
 {
-struct Recorder final : View
+struct NativeWheelRecorder final : View
 {
-    Recorder() { setHandlesMouseEvents(true); }
+    NativeWheelRecorder() { setHandlesMouseEvents(true); }
 
     void mouseWheel(const MouseEvent& event) override { events.add(event); }
 
@@ -36,7 +36,7 @@ void turnWheel(HWND hwnd, UINT message, int wheelDelta)
 auto tWheelReportsLines = test("Window/wheelReportsLines") = []
 {
     auto window = Window {};
-    auto content = Recorder {};
+    auto content = NativeWheelRecorder {};
     window.setContentView(content);
     auto hwnd = static_cast<HWND>(window.getHandle());
 

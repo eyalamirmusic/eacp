@@ -45,9 +45,9 @@ struct Bin final : Component
 };
 
 // Two bins side by side inside one container, and a source to drag from.
-struct Harness
+struct DragAndDropHarness
 {
-    Harness()
+    DragAndDropHarness()
     {
         board.setBounds({0.f, 0.f, 200.f, 100.f});
 
@@ -82,7 +82,7 @@ struct Harness
 auto tDragReachesATarget =
     test("DragAndDrop/aDragEntersTheTargetUnderThePointer") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
     harness.dragging.dragTo({50.f, 50.f});
@@ -94,7 +94,7 @@ auto tDragReachesATarget =
 
 auto tMovingBetweenTargets = test("DragAndDrop/leavingOneTargetEntersTheOther") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
     harness.dragging.dragTo({50.f, 50.f});
@@ -108,7 +108,7 @@ auto tMovingBetweenTargets = test("DragAndDrop/leavingOneTargetEntersTheOther") 
 // highlighting itself has one place to turn it off rather than two.
 auto tDropExitsFirst = test("DragAndDrop/aDropLeavesTheTargetBeforeDropping") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
     harness.dragging.dragTo({50.f, 50.f});
@@ -122,7 +122,7 @@ auto tDropExitsFirst = test("DragAndDrop/aDropLeavesTheTargetBeforeDropping") = 
 auto tDropReportsThePositionInTheTarget =
     test("DragAndDrop/aDropReportsWhereItLandedInTheTarget") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
     harness.dragging.drop({150.f, 40.f});
@@ -135,7 +135,7 @@ auto tDropReportsThePositionInTheTarget =
 auto tDropOutsideAnyTarget =
     test("DragAndDrop/aDropOnNothingEndsTheDragQuietly") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
     harness.dragging.dragTo({50.f, 50.f});
@@ -152,7 +152,7 @@ auto tDropOutsideAnyTarget =
 // stopping at the first one it meets.
 auto tRefusedDragsCarryOn = test("DragAndDrop/aTargetThatRefusesIsPassedOver") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.left.target.isInterestedIn = [](const DragInfo&) { return false; };
 
@@ -169,7 +169,7 @@ auto tRefusedDragsCarryOn = test("DragAndDrop/aTargetThatRefusesIsPassedOver") =
 auto tInterestIsAskedOfThePayload =
     test("DragAndDrop/aTargetDecidesFromWhatIsBeingDragged") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
     auto seen = std::string {};
 
     harness.left.target.isInterestedIn = [&seen](const DragInfo& info)
@@ -188,7 +188,7 @@ auto tInterestIsAskedOfThePayload =
 auto tImageIsAChildWhileDragging =
     test("DragAndDrop/theDraggedImageIsInTheTreeOnlyWhileTheDragIs") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     auto before = harness.board.getChildren().size();
 
@@ -209,7 +209,7 @@ auto tImageIsAChildWhileDragging =
 auto tImageIsTransparentToTheSearch =
     test("DragAndDrop/theDraggedImageIsNotItselfATarget") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
 
@@ -296,7 +296,7 @@ auto tDeletingTheSourceCancels = test("DragAndDrop/losingTheSourceEndsTheDrag") 
 auto tStartingASecondDragEndsTheFirst =
     test("DragAndDrop/startingAnotherDragCleansUpTheFirst") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag(1);
     harness.dragging.dragTo({50.f, 50.f});
@@ -308,7 +308,7 @@ auto tStartingASecondDragEndsTheFirst =
 
 auto tCancelling = test("DragAndDrop/aCancelledDragDropsNothing") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.startDrag();
     harness.dragging.dragTo({50.f, 50.f});
@@ -321,7 +321,7 @@ auto tCancelling = test("DragAndDrop/aCancelledDragDropsNothing") = []
 
 auto tHiddenTargetsAreSkipped = test("DragAndDrop/aHiddenTargetTakesNothing") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     harness.left.setVisible(false);
 
@@ -334,7 +334,7 @@ auto tHiddenTargetsAreSkipped = test("DragAndDrop/aHiddenTargetTakesNothing") = 
 auto tContainerIsFoundByWalkingUp =
     test("DragAndDrop/aSourceFindsTheContainerAboveIt") = []
 {
-    auto harness = Harness {};
+    auto harness = DragAndDropHarness {};
 
     check(harness.source.findDragContainer() == &harness.dragging);
     check(harness.board.findDragContainer() == &harness.dragging);

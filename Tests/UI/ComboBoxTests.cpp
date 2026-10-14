@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -26,27 +26,9 @@ namespace
 constexpr auto boxHeight = 24.f;
 constexpr auto listPadding = 4.f;
 
-eacp::Graphics::MouseEvent mouseAt(Point position)
+struct ComboBoxHarness
 {
-    auto event = eacp::Graphics::MouseEvent {};
-
-    event.pos = position;
-    event.downPos = position;
-
-    return event;
-}
-
-KeyEvent keyOf(std::uint16_t code)
-{
-    auto event = KeyEvent {};
-    event.keyCode = code;
-
-    return event;
-}
-
-struct Harness
-{
-    Harness()
+    ComboBoxHarness()
     {
         host.setBounds({0.f, 0.f, 300.f, 200.f});
         host.setRootComponent(root);
@@ -91,7 +73,7 @@ struct Harness
 auto tComboSelectingIsSilent =
     test("ComboBox/settingTheSelectionReportsOnlyWhenAsked") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.box.setSelectedIndex(2);
 
@@ -113,7 +95,7 @@ auto tComboSelectingIsSilent =
 
 auto tComboClickOpens = test("ComboBox/clickingTheBoxOpensTheList") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     check(!harness.box.isPopupOpen());
     check(harness.root.getChildren().size() == 1);
@@ -129,7 +111,7 @@ auto tComboClickOpens = test("ComboBox/clickingTheBoxOpensTheList") = []
 auto tComboClickingARowSelectsIt =
     test("ComboBox/clickingARowSelectsItAndCloses") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.click({40.f, 30.f});
     harness.click(harness.rowCentre(2));
@@ -143,7 +125,7 @@ auto tComboClickingARowSelectsIt =
 auto tComboClickingOutsideDismisses =
     test("ComboBox/aClickOutsideTheListPutsItAway") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.box.setSelectedIndex(1);
     harness.click({40.f, 30.f});
@@ -159,7 +141,7 @@ auto tComboClickingOutsideDismisses =
 auto tComboEscapeDismisses =
     test("ComboBox/escapeClosesTheListWithoutSelecting") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.box.setSelectedIndex(0);
     harness.click({40.f, 30.f});
@@ -177,7 +159,7 @@ auto tComboEscapeDismisses =
 auto tComboBackDismisses =
     test("ComboBox/backClosesTheListAndIsPassedOnOnceClosed") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.box.setSelectedIndex(0);
     harness.click({40.f, 30.f});
@@ -196,7 +178,7 @@ auto tComboBackDismisses =
 auto tComboArrowsAndReturn =
     test("ComboBox/arrowsMoveTheHighlightAndReturnTakesIt") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.box.setSelectedIndex(1);
     harness.click({40.f, 30.f});
@@ -218,7 +200,7 @@ auto tComboArrowsAndReturn =
 auto tComboArrowsWhileClosed =
     test("ComboBox/arrowsStepTheSelectionWhileClosed") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.box.setSelectedIndex(1);
     harness.box.grabKeyboardFocus();
@@ -244,7 +226,7 @@ auto tComboArrowsWhileClosed =
 // the room there is, so a box near the bottom edge opens over itself.
 auto tComboOpensUpward = test("ComboBox/aBoxNearTheBottomOpensUpward") = []
 {
-    auto harness = Harness {};
+    auto harness = ComboBoxHarness {};
 
     harness.click({40.f, 30.f});
 

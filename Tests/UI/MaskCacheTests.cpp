@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -23,14 +23,6 @@ using namespace eacp::UI;
 
 namespace
 {
-GPUWidgets::Path rect(const Rect& bounds)
-{
-    auto path = GPUWidgets::Path {};
-    path.addRect(bounds);
-
-    return path;
-}
-
 MaskCache::Entry entryAt(int x, int y)
 {
     auto entry = MaskCache::Entry {};

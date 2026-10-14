@@ -177,14 +177,13 @@ struct BlockResult
     cpu::UInts totals;
 };
 
-constexpr auto untouched = 0xdeadbeefu;
-
 BlockResult scanBlockOnCpu(const cpu::UInts& counts)
 {
     auto count = counts.size();
     auto groups = cpu::scanGroupsFor(count);
-    auto result = BlockResult {
-        counts, cpu::uintsOf(count, untouched), cpu::uintsOf(groups, untouched)};
+    auto result = BlockResult {counts,
+                               cpu::uintsOf(count, cpu::untouched),
+                               cpu::uintsOf(groups, cpu::untouched)};
 
     auto kernel = ScanBlockKernel {};
     auto bindings = GPU::CpuCompute::Bindings {};
@@ -203,8 +202,8 @@ BlockResult scanBlockOnGpu(const cpu::UInts& counts)
     auto groups = cpu::scanGroupsFor(count);
 
     auto source = cpu::bufferOf(counts);
-    auto offsets = cpu::bufferOf(cpu::uintsOf(count, untouched));
-    auto totals = cpu::bufferOf(cpu::uintsOf(groups, untouched));
+    auto offsets = cpu::bufferOf(cpu::uintsOf(count, cpu::untouched));
+    auto totals = cpu::bufferOf(cpu::uintsOf(groups, cpu::untouched));
 
     auto& kernel = sharedKernel<ScanBlockKernel>();
     kernel.counts = source;
@@ -318,7 +317,7 @@ auto tWholeSumOnCpu = test("PrefixSum/theWholeSumOnTheCpuMatchesTheGpu") = []
     {
         auto counts = countsOfLength(count);
         auto source = counts;
-        auto offsets = cpu::uintsOf(count, untouched);
+        auto offsets = cpu::uintsOf(count, cpu::untouched);
         auto size = " at " + std::to_string(count);
 
         check(cpu::prefixSum(source, offsets, count), "cpu sum ran" + size);

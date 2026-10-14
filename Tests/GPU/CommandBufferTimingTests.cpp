@@ -11,6 +11,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CommandBufferTimingTests
+{
 namespace
 {
 constexpr auto elementCount = 1 << 14;
@@ -211,3 +213,4 @@ auto tUntimedBufferReportsNothing =
     check(commands.timings().passes.size() == 0);
     check(commands.timings().milliseconds == 0.0);
 };
+} // namespace CommandBufferTimingTests

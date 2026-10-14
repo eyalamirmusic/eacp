@@ -14,7 +14,7 @@ namespace
 // One button per role, a glyph child inside one of them (the custom property
 // inherits, so a click landing on the glyph still resolves), and an unmarked
 // sibling. `ready` gates queries until document-start injection has run.
-const std::string pageHtml = R"HTML(
+const std::string windowControlPageHtml = R"HTML(
 <!doctype html>
 <html>
 
@@ -37,18 +37,18 @@ const std::string pageHtml = R"HTML(
 </html>
 )HTML";
 
-struct Fixture
+struct WindowControlFixture
 {
     WebView webView {};
     Window window {};
     bool ready = false;
 
-    Fixture()
+    WindowControlFixture()
     {
         window.setContentView(webView);
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
-        webView.loadHTML(pageHtml);
+        webView.loadHTML(windowControlPageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
     }
@@ -64,7 +64,7 @@ struct Fixture
 
 auto tRolesResolve = test("WindowControl/buttonRolesResolve") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowControlFixture {};
     check(fix.buttonOf("#min") == "minimize");
     check(fix.buttonOf("#max") == "maximize");
     check(fix.buttonOf("#close") == "close");
@@ -72,20 +72,20 @@ auto tRolesResolve = test("WindowControl/buttonRolesResolve") = []
 
 auto tGlyphChildResolves = test("WindowControl/childOfButtonResolves") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowControlFixture {};
     // Inherits -> a glyph inside the button is still a hit.
     check(fix.buttonOf("#glyph") == "maximize");
 };
 
 auto tUnmarkedIsEmpty = test("WindowControl/unmarkedElementIsEmpty") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowControlFixture {};
     check(fix.buttonOf("#outside").empty());
 };
 
 auto tPlatformAttribute = test("WindowControl/platformAttributeMirrorsNative") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowControlFixture {};
     auto attribute =
         fix.webView
             .callJS("document.documentElement.getAttribute('data-eacp-platform')")
@@ -97,7 +97,7 @@ auto tMaximizedAttribute = test("WindowControl/maximizedAttributeTracksNative") 
 {
     // Native reports maximize toggles through __eacpSetMaximized; the page
     // keys its restore glyph off the resulting <html> attribute.
-    auto fix = Fixture {};
+    auto fix = WindowControlFixture {};
 
     auto hasAttribute = [&fix]
     {

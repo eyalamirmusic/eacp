@@ -10,25 +10,10 @@ using eacp::HTTP::DownloadProgress;
 using eacp::HTTP::Request;
 using eacp::HTTP::Response;
 using eacp::HTTP::Server;
-using eacp::Threads::callAsync;
-using eacp::Threads::stopEventLoop;
 
 namespace
 {
 constexpr auto limit = std::int64_t {16 * 1024};
-
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-std::string tempPath(const std::string& name)
-{
-    auto path = std::filesystem::temp_directory_path() / ("eacp-size-" + name);
-    auto ec = std::error_code();
-    std::filesystem::remove(path, ec);
-    return path.string();
-}
 
 bool serveBody(Server& server, const std::string& body)
 {
@@ -41,39 +26,6 @@ bool serveBody(Server& server, const std::string& body)
     };
 
     return server.listen(0, handler);
-}
-
-bool runOffTheLoop(const std::function<void()>& work)
-{
-    auto worker = std::thread();
-
-    auto startWorker = [&]
-    {
-        auto runAndStop = [&]
-        {
-            work();
-            callAsync([] { stopEventLoop(); });
-        };
-
-        worker = std::thread(runAndStop);
-    };
-
-    auto stopped =
-        eacp::Threads::runEventLoopFor(eacp::Time::MS {5000}, startWorker);
-
-    if (worker.joinable())
-        worker.join();
-
-    return stopped;
-}
-
-Response performOffTheLoop(Server& server, const Request& req)
-{
-    auto response = Response();
-    auto perform = [&] { response = req.perform(); };
-    check(runOffTheLoop(perform));
-    server.stop();
-    return response;
 }
 
 void checkIsTooLarge(const Response& res)
@@ -214,7 +166,7 @@ auto tDownloadOverTheLimit =
     req.progress = &progress;
 
     auto res = Response();
-    auto path = tempPath("download.bin");
+    auto path = tempPath("size-download.bin");
     auto download = [&] { res = req.downloadTo(path); };
     check(runOffTheLoop(download));
     server.stop();

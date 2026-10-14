@@ -11,34 +11,12 @@ using eacp::HTTP::DownloadRequest;
 using eacp::HTTP::Request;
 using eacp::HTTP::Response;
 using eacp::HTTP::Server;
-using eacp::HTTP::ServerOptions;
-using eacp::HTTP::ServerThreadingMode;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::MS;
 
 namespace
 {
-constexpr auto pumpTimeout = MS {5000};
-
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-std::string tempPath(const std::string& name)
-{
-    auto path = std::filesystem::temp_directory_path() / ("eacp-async-" + name);
-    auto ec = std::error_code();
-    std::filesystem::remove(path, ec);
-    return path.string();
-}
-
-std::string readFile(const std::string& path)
-{
-    auto file = std::ifstream(path, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(file),
-                       std::istreambuf_iterator<char>());
-}
+constexpr auto asyncPumpTimeout = MS {5000};
 
 Response respondWith(const std::string& content)
 {
@@ -54,19 +32,9 @@ Response stallThenRespond(StallGate& gate, const std::string& content)
     return respondWith(content);
 }
 
-// A handler that blocks has to run off the event loop, which is the same
-// loop the reply has to travel back through.
-ServerOptions threadPoolOptions()
-{
-    auto options = ServerOptions();
-    options.threading = ServerThreadingMode::ThreadPool;
-    options.threadPoolSize = 2;
-    return options;
-}
-
 bool pumpUntil(const std::function<bool()>& ready)
 {
-    return runEventLoopUntil(ready, pumpTimeout);
+    return runEventLoopUntil(ready, asyncPumpTimeout);
 }
 
 void pumpFor(MS duration)
@@ -236,7 +204,7 @@ auto tDownloadWritesTheFile = test("HttpAsync/downloadWritesTheFile") = []
     auto handler = [](const Request&) { return respondWith("payload-bytes"); };
     check(server.listen(0, handler));
 
-    auto destination = tempPath("download");
+    auto destination = tempPath("async-download");
     auto req = DownloadRequest(baseUrl(server.boundPort()) + "/file", destination);
 
     auto received = Response();

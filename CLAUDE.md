@@ -232,9 +232,30 @@ Output executables:
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF
 ```
 
+- `EACP_UNITY_BUILD_TESTS` (default `OFF`): the same for the test executables
+  under `Tests/`, whose many small sources are where a unity build saves the
+  most — a clean build of the tests takes about a third of the CPU time with
+  it. Off by default for the same LSP reason, and Claude keeps it off for
+  normal work. Because a unity batch is one translation unit, every file-local
+  name in a test source — the helpers in its anonymous namespace, its
+  `using` aliases, its `t…` registrations — must be unique within its target:
+  shared helpers go in the directory's `Common.h` (or a header beside it), and
+  a file whose helpers would collide wraps its body in a namespace named after
+  it (`namespace MipmapTests`, with an `EACP_SHADER_VALUE` outside it naming
+  the type qualified). Platform-only sources (`-Linux`, `-Windows`, `-Android`,
+  `-iOS`) are unity-built on their own CI lanes, so keep the rule there too.
+  Batch size 0 puts each target in one translation unit and so shows every
+  collision at once:
+
+```bash
+cmake -G Ninja -B build-unity -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_UNITY_BUILD_TESTS=ON -DCMAKE_UNITY_BUILD_BATCH_SIZE=0
+```
+
 - `EACP_CI_BUILD` (default `OFF`): the single switch CI passes to reproduce the
   exact CI configuration locally. It force-enables the unity-build flag of every
-  project that exposes one — `EACP_UNITY_BUILD` and `MIRO_UNITY_BUILD`. Because
+  project that exposes one — `EACP_UNITY_BUILD`, `EACP_UNITY_BUILD_TESTS` and
+  `MIRO_UNITY_BUILD`. Because
   it turns unity on, it is for reproducing CI, not for LSP-backed development —
   Claude should keep using `-DEACP_UNITY_BUILD=OFF` for normal work.
 

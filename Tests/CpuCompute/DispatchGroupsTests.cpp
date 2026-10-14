@@ -23,6 +23,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace DispatchGroupsTests
+{
+
 namespace
 {
 constexpr auto sentinel = -1.f;
@@ -680,3 +683,4 @@ auto tIndirectSplit =
     check(noArguments.isValid());
     check(noArguments.groupCount() == 0);
 };
+} // namespace DispatchGroupsTests

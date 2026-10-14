@@ -13,6 +13,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CopyTests
+{
 namespace
 {
 constexpr auto size = 4;
@@ -26,9 +28,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace CopyTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(CopyTests::QuadVertex, Float2)
 
+namespace CopyTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -576,3 +581,4 @@ auto tCopyRefusals = test("Copy/badCopiesAreRefused") = []
     check(readTexture(source) == values);
     check(readBuffer(buffer) == texels(8));
 };
+} // namespace CopyTests

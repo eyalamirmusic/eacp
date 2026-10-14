@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -14,34 +14,6 @@
 using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
-
-namespace
-{
-// The ramps own a texture and the glyph atlas owns two, so a painter needs a
-// device -- but no window, no pass and no drawable. Recording touches none of
-// them, which is the point being tested.
-bool hasDevice()
-{
-    return GPU::Device::shared().isValid();
-}
-
-// A painter with nowhere to draw, which is all a recording needs.
-struct Recorder
-{
-    explicit Recorder(const Rect& bounds = {0.f, 0.f, 100.f, 50.f})
-        : g(list, ramps, text, bounds)
-    {
-    }
-
-    DrawList list;
-    GradientRamps ramps;
-    Text::TextRenderer text;
-    UI::Graphics g;
-};
-
-const auto red = Color {1.f, 0.f, 0.f, 1.f};
-const auto blue = Color {0.f, 0.f, 1.f, 1.f};
-} // namespace
 
 auto tShapesRecordInOrder = test("DrawList/aPaintIsKeptAsWhatItIssued") = []
 {

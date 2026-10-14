@@ -14,11 +14,6 @@ using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
 // The larger of two unsigned values, and a literal floor under it, both picked
 // by a comparison. Integers, so the answer is exact and there is nothing to
 // tolerance.

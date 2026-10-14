@@ -19,6 +19,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace MultiViewFrameTests
+{
 namespace
 {
 constexpr auto viewSize = 4.f;
@@ -307,3 +309,4 @@ auto tMultiViewUnreadable = test("MultiView/anUnreadableDrawableIsNotCopied") = 
     if (rendered && !Platform::isWindows())
         check(!copied);
 };
+} // namespace MultiViewFrameTests

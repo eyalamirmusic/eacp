@@ -20,6 +20,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace StorePlacementTests
+{
 namespace
 {
 constexpr auto elementCount = 64;
@@ -141,3 +143,4 @@ auto tLoopStoreRunsEveryIteration =
                 check(correct == elementCount, name);
             });
 };
+} // namespace StorePlacementTests

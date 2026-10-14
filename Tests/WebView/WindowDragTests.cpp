@@ -12,7 +12,7 @@ namespace
 {
 // Drag bar with an opt-out button and an unmarked label, plus an unmarked
 // sibling. `ready` gates queries until document-start injection has run.
-const std::string pageHtml = R"HTML(
+const std::string windowDragPageHtml = R"HTML(
 <!doctype html>
 <html>
 
@@ -35,18 +35,18 @@ const std::string pageHtml = R"HTML(
 </html>
 )HTML";
 
-struct Fixture
+struct WindowDragFixture
 {
     WebView webView {};
     Window window {};
     bool ready = false;
 
-    Fixture()
+    WindowDragFixture()
     {
         window.setContentView(webView);
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
-        webView.loadHTML(pageHtml);
+        webView.loadHTML(windowDragPageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
     }
@@ -62,26 +62,26 @@ struct Fixture
 
 auto tDragRegionResolves = test("WindowDrag/dragRegionResolvesToDrag") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowDragFixture {};
     check(fix.regionOf("#bar") == "drag");
 };
 
 auto tNoDragOptsOut = test("WindowDrag/noDragDescendantOptsOut") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowDragFixture {};
     check(fix.regionOf("#btn") == "no-drag");
 };
 
 auto tUnmarkedChildInherits = test("WindowDrag/unmarkedChildInheritsDrag") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowDragFixture {};
     // Inherits -> the whole bar is a handle, not just its background.
     check(fix.regionOf("#label") == "drag");
 };
 
 auto tOutsideIsNotDraggable = test("WindowDrag/unmarkedRegionIsEmpty") = []
 {
-    auto fix = Fixture {};
+    auto fix = WindowDragFixture {};
     check(fix.regionOf("#outside").empty());
 };
 

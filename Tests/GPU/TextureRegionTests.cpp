@@ -19,12 +19,14 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace TextureRegionTests
+{
 namespace
 {
 constexpr auto textureSize = 8;
 
 constexpr std::uint32_t black = 0xff000000;
-constexpr std::uint32_t red = 0xff0000ff;   // RGBA8, little-endian: A B G R
+constexpr std::uint32_t red = 0xff0000ff; // RGBA8, little-endian: A B G R
 constexpr std::uint32_t green = 0xff00ff00;
 
 struct QuadVertex
@@ -33,9 +35,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace TextureRegionTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(TextureRegionTests::QuadVertex, Float2)
 
+namespace TextureRegionTests
+{
 namespace
 {
 // Two triangles covering clip space, with uv running 0..1 across them.
@@ -103,8 +108,14 @@ Texture makeBlackTexture()
     return Device::shared().makeTexture(descriptor, pixels);
 }
 
-bool isRed(const Graphics::Color& c) { return c.r > 0.5f && c.g < 0.5f && c.b < 0.5f; }
-bool isGreen(const Graphics::Color& c) { return c.g > 0.5f && c.r < 0.5f; }
+bool isRed(const Graphics::Color& c)
+{
+    return c.r > 0.5f && c.g < 0.5f && c.b < 0.5f;
+}
+bool isGreen(const Graphics::Color& c)
+{
+    return c.g > 0.5f && c.r < 0.5f;
+}
 bool isBlack(const Graphics::Color& c)
 {
     return c.r < 0.5f && c.g < 0.5f && c.b < 0.5f;
@@ -186,7 +197,8 @@ auto tRegionLandsAtOrigin = test("TextureRegion/uploadsAtTheGivenOrigin") = []
 
 // The whole point of the API: a second upload elsewhere must leave the first
 // alone. A whole-texture update() would wipe the red.
-auto tRegionLeavesRestUntouched = test("TextureRegion/leavesTheRestOfTheTextureAlone") = []
+auto tRegionLeavesRestUntouched =
+    test("TextureRegion/leavesTheRestOfTheTextureAlone") = []
 {
     if (!Device::shared().isValid())
         return;
@@ -262,8 +274,14 @@ auto tRegionRespectsSourceStride = test("TextureRegion/respectsSourceStride") = 
 
     // 4 px per row, of which the first 2 are uploaded and the last 2 skipped.
     const std::uint32_t wide[] = {
-        red, red, green, green, // row 0
-        red, red, green, green, // row 1
+        red,
+        red,
+        green,
+        green, // row 0
+        red,
+        red,
+        green,
+        green, // row 1
     };
 
     texture.update({0.f, 0.f, 2.f, 2.f}, wide, 4 * sizeof(std::uint32_t));
@@ -294,10 +312,11 @@ auto tRegionRejectsOutOfBounds = test("TextureRegion/rejectsOutOfBoundsRegions")
     for (auto& pixel: pixels)
         pixel = red;
 
-    texture.update({(float) textureSize - 1.f, 0.f, 4.f, 4.f}, pixels); // past the right edge
+    texture.update({(float) textureSize - 1.f, 0.f, 4.f, 4.f},
+                   pixels); // past the right edge
     texture.update({0.f, 0.f, (float) textureSize + 1.f, 1.f}, pixels); // too wide
-    texture.update({-2.f, 0.f, 4.f, 4.f}, pixels);                      // negative origin
-    texture.update({100.f, 100.f, 2.f, 2.f}, pixels);                   // entirely outside
+    texture.update({-2.f, 0.f, 4.f, 4.f}, pixels); // negative origin
+    texture.update({100.f, 100.f, 2.f, 2.f}, pixels); // entirely outside
 
     auto image = readBack(texture);
     check(image.isValid());
@@ -307,7 +326,8 @@ auto tRegionRejectsOutOfBounds = test("TextureRegion/rejectsOutOfBoundsRegions")
 
 // Degenerate regions and a null source are safe no-ops, so a caller need not
 // special-case an empty glyph.
-auto tRegionIgnoresEmptyAndNull = test("TextureRegion/emptyRegionAndNullPixelsAreNoOps") = []
+auto tRegionIgnoresEmptyAndNull =
+    test("TextureRegion/emptyRegionAndNullPixelsAreNoOps") = []
 {
     if (!Device::shared().isValid())
         return;
@@ -335,7 +355,8 @@ auto tRegionIgnoresEmptyAndNull = test("TextureRegion/emptyRegionAndNullPixelsAr
 
 // A full-size region is equivalent to the whole-texture overload, which is how
 // the two share one code path underneath.
-auto tFullRegionMatchesWholeUpdate = test("TextureRegion/fullRegionMatchesWholeUpdate") = []
+auto tFullRegionMatchesWholeUpdate =
+    test("TextureRegion/fullRegionMatchesWholeUpdate") = []
 {
     if (!Device::shared().isValid())
         return;
@@ -356,3 +377,4 @@ auto tFullRegionMatchesWholeUpdate = test("TextureRegion/fullRegionMatchesWholeU
     check(image.isValid());
     check(count(image, isGreen) == textureSize * textureSize);
 };
+} // namespace TextureRegionTests

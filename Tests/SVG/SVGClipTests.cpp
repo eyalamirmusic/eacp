@@ -33,7 +33,7 @@ bool isNearClip(float a, float b)
     return std::abs(a - b) < clipTolerance;
 }
 
-bool isNearRect(const Graphics::Rect& rect, float x, float y, float w, float h)
+bool isNearClipRect(const Graphics::Rect& rect, float x, float y, float w, float h)
 {
     return isNearClip(rect.x, x) && isNearClip(rect.y, y) && isNearClip(rect.w, w)
            && isNearClip(rect.h, h);
@@ -82,7 +82,7 @@ auto tClipReference = test("SVGClip/aClipPathNamesARegionOrIsNotThere") = []
 
     check(region.resolved);
     check(!region.isEmpty());
-    check(isNearRect(region.path.getBounds(), 10.f, 20.f, 30.f, 40.f));
+    check(isNearClipRect(region.path.getBounds(), 10.f, 20.f, 30.f, 40.f));
 
     // An id that names nothing is ignored and the element draws unclipped, which
     // is not the same answer as a region of nothing -- so the two have to be
@@ -127,7 +127,7 @@ auto tClipUnion = test("SVGClip/severalShapesInAClipPathAreTheirUnion") = []
     auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(region.path.getSubPaths().size() == 2, "both shapes are in the region");
-    check(isNearRect(region.path.getBounds(), 0.f, 0.f, 60.f, 50.f),
+    check(isNearClipRect(region.path.getBounds(), 0.f, 0.f, 60.f, 50.f),
           "which spans both of them");
 
     // Two children disagreeing about clip-rule cannot both be honoured by one
@@ -151,7 +151,7 @@ auto tClipChildTransform =
 
     auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
-    check(isNearRect(region.path.getBounds(), 30.f, 40.f, 10.f, 10.f));
+    check(isNearClipRect(region.path.getBounds(), 30.f, 40.f, 10.f, 10.f));
 };
 
 auto tClipUse = test("SVGClip/aUseInsideAClipPathIsTheShapeItNames") = []
@@ -168,7 +168,7 @@ auto tClipUse = test("SVGClip/aUseInsideAClipPathIsTheShapeItNames") = []
     auto region = SVG::resolveClipPath("c", byId, anyBox, anyViewport, clipFlatness);
 
     check(!region.isEmpty());
-    check(isNearRect(region.path.getBounds(), 5.f, 7.f, 10.f, 10.f),
+    check(isNearClipRect(region.path.getBounds(), 5.f, 7.f, 10.f, 10.f),
           "x and y translate what the use names");
 };
 
@@ -194,14 +194,14 @@ auto tClipUnits = test("SVGClip/objectBoundingBoxIsFractionsOfTheClippedShape") 
     auto box = Graphics::Rect {100.f, 200.f, 40.f, 60.f};
     auto region = SVG::resolveClipPath("half", byId, box, anyViewport, clipFlatness);
 
-    check(isNearRect(region.path.getBounds(), 100.f, 200.f, 20.f, 60.f),
+    check(isNearClipRect(region.path.getBounds(), 100.f, 200.f, 20.f, 60.f),
           "half the box, placed on the box");
 
     // The same numbers in user space are the numbers themselves, and the box is
     // not read at all.
     auto plain = SVG::resolveClipPath("user", byId, box, anyViewport, clipFlatness);
 
-    check(isNearRect(plain.path.getBounds(), 0.f, 0.f, 0.5f, 1.f));
+    check(isNearClipRect(plain.path.getBounds(), 0.f, 0.f, 0.5f, 1.f));
 };
 
 // One child, so its own rule stands: the inner rectangle is a hole in the region
@@ -249,7 +249,7 @@ auto tRectangleClip = test("SVGClip/aRectangularRegionIsRecognisedAsOne") = []
     auto found = SVG::asAxisAlignedRect(rectangle);
 
     check(found.has_value());
-    check(isNearRect(*found, 10.f, 20.f, 30.f, 40.f));
+    check(isNearClipRect(*found, 10.f, 20.f, 30.f, 40.f));
 
     // A rectangle a document wrote as a path, closing it by repeating the first
     // point rather than by saying so.

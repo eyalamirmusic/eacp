@@ -10,13 +10,10 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ProgramGraphTests
+{
 namespace
 {
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
 struct ScaleKernel final : ComputeProgram
 {
     ScaleKernel() { compile(); }
@@ -39,9 +36,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace ProgramGraphTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(ProgramGraphTests::QuadVertex, Float2)
 
+namespace ProgramGraphTests
+{
 namespace
 {
 struct FlatColourProgram final : ShaderProgram
@@ -114,3 +114,4 @@ auto tShaderProgramExposesItsGraph =
 
     expectGlslCompiles(program.graph());
 };
+} // namespace ProgramGraphTests

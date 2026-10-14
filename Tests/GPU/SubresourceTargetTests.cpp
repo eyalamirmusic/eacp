@@ -15,6 +15,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace SubresourceTargetTests
+{
 namespace
 {
 struct ColorVertex
@@ -960,3 +962,4 @@ auto tSubresourceSliceRangeCopy = test("Subresource/aCopyMovesARunOfLayers") = [
     check(layer(2) == sourceLayer(1));
     check(layer(3) == sourceLayer(2));
 };
+} // namespace SubresourceTargetTests

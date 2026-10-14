@@ -47,4 +47,25 @@ inline Path roundedRect(Graphics::Rect bounds, float radius)
     path.addRoundedRect(bounds, radius);
     return path;
 }
+
+inline float distanceToSegment(const Graphics::Point& p,
+                               const Graphics::Point& a,
+                               const Graphics::Point& b)
+{
+    auto dx = b.x - a.x;
+    auto dy = b.y - a.y;
+    auto lengthSquared = dx * dx + dy * dy;
+
+    auto t = lengthSquared > 0.f
+                 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared,
+                              0.f,
+                              1.f)
+                 : 0.f;
+
+    auto nearestX = a.x + dx * t;
+    auto nearestY = a.y + dy * t;
+
+    return std::sqrt((p.x - nearestX) * (p.x - nearestX)
+                     + (p.y - nearestY) * (p.y - nearestY));
+}
 } // namespace eacp::GPUWidgets::shapes

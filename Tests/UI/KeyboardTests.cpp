@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -22,9 +22,9 @@ using namespace eacp::UI;
 namespace
 {
 // Records what it was given and consumes what it was told to.
-struct Recorder final : Component
+struct FocusRecorder final : Component
 {
-    explicit Recorder(std::string nameToUse, bool consumes = false)
+    explicit FocusRecorder(std::string nameToUse, bool consumes = false)
         : name(std::move(nameToUse))
         , consuming(consumes)
     {
@@ -58,20 +58,9 @@ struct Recorder final : Component
     bool hadFocusWhenTold = false;
 };
 
-KeyEvent keyOf(const std::string& characters, std::uint16_t code = 0)
-{
-    auto event = KeyEvent {};
-
-    event.characters = characters;
-    event.charactersIgnoringModifiers = characters;
-    event.keyCode = code;
-
-    return event;
-}
-
 KeyEvent tabKey(bool shift = false)
 {
-    auto event = keyOf("\t", eacp::Graphics::KeyCode::Tab);
+    auto event = keyOf(eacp::Graphics::KeyCode::Tab, "\t");
     event.modifiers.shift = shift;
 
     return event;
@@ -89,9 +78,9 @@ eacp::Graphics::MouseEvent clickAt(Point position)
 
 // A host with a root and two focusable children, sized so a click can be aimed
 // at either of them.
-struct Harness
+struct KeyboardHarness
 {
-    Harness()
+    KeyboardHarness()
     {
         root.addAndMakeVisible(first);
         root.addAndMakeVisible(second);
@@ -105,20 +94,20 @@ struct Harness
     }
 
     ComponentHost host;
-    Recorder root {"root"};
-    Recorder first {"first"};
-    Recorder second {"second"};
+    FocusRecorder root {"root"};
+    FocusRecorder first {"first"};
+    FocusRecorder second {"second"};
 };
 } // namespace
 
 auto tNothingFocusedGoesToTheRoot =
     test("Keyboard/withNothingFocusedKeysReachTheRoot") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     check(harness.host.getFocusedComponent() == nullptr);
 
-    harness.host.keyDown(keyOf("a"));
+    harness.host.keyDown(keyOf(0, "a"));
 
     check(harness.root.keysSeen == "a", "so a shortcut works before any click");
     check(harness.first.keysSeen.empty());
@@ -127,10 +116,10 @@ auto tNothingFocusedGoesToTheRoot =
 auto tFocusedComponentGetsTheKey =
     test("Keyboard/theFocusedComponentIsOfferedFirst") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
-    harness.host.keyDown(keyOf("a"));
+    harness.host.keyDown(keyOf(0, "a"));
 
     check(harness.first.keysSeen == "a");
 };
@@ -139,10 +128,10 @@ auto tFocusedComponentGetsTheKey =
 // what lets a root hold a shortcut while a field deep inside it has focus.
 auto tUnconsumedKeysBubble = test("Keyboard/anUnconsumedKeyCarriesOnUpTheTree") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
-    harness.host.keyDown(keyOf("a"));
+    harness.host.keyDown(keyOf(0, "a"));
 
     check(harness.first.keysSeen == "a");
     check(harness.root.keysSeen == "a", "the parent heard it too");
@@ -150,11 +139,11 @@ auto tUnconsumedKeysBubble = test("Keyboard/anUnconsumedKeyCarriesOnUpTheTree") 
 
 auto tConsumedKeysStop = test("Keyboard/aConsumedKeyStopsWhereItWasTaken") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.consuming = true;
     harness.first.grabKeyboardFocus();
-    harness.host.keyDown(keyOf("a"));
+    harness.host.keyDown(keyOf(0, "a"));
 
     check(harness.first.keysSeen == "a");
     check(harness.root.keysSeen.empty(), "and the root never saw it");
@@ -162,7 +151,7 @@ auto tConsumedKeysStop = test("Keyboard/aConsumedKeyStopsWhereItWasTaken") = []
 
 auto tFocusCallbacks = test("Keyboard/focusIsHandedOverWithBothSidesTold") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
 
@@ -180,7 +169,7 @@ auto tFocusCallbacks = test("Keyboard/focusIsHandedOverWithBothSidesTold") = []
 auto tGrabbingTwiceIsNotAChange =
     test("Keyboard/regrabbingFocusTellsNobodyTwice") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
     harness.first.grabKeyboardFocus();
@@ -191,7 +180,7 @@ auto tGrabbingTwiceIsNotAChange =
 
 auto tGivingAwayFocus = test("Keyboard/focusCanBeGivenBackToNothing") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
     harness.first.giveAwayKeyboardFocus();
@@ -199,7 +188,7 @@ auto tGivingAwayFocus = test("Keyboard/focusCanBeGivenBackToNothing") = []
     check(harness.host.getFocusedComponent() == nullptr);
     check(harness.first.lost == 1);
 
-    harness.host.keyDown(keyOf("a"));
+    harness.host.keyDown(keyOf(0, "a"));
 
     check(harness.root.keysSeen == "a");
     check(harness.first.keysSeen.empty());
@@ -210,7 +199,7 @@ auto tGivingAwayFocus = test("Keyboard/focusCanBeGivenBackToNothing") = []
 auto tRefusingFocusReleasesIt =
     test("Keyboard/aComponentThatStopsWantingFocusLosesIt") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
     harness.first.setWantsKeyboardFocus(false);
@@ -224,7 +213,7 @@ auto tRefusingFocusReleasesIt =
 auto tGrabbingIsRefusedWhenUnwanted =
     test("Keyboard/aComponentThatWantsNoFocusCannotGrabIt") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.second.setWantsKeyboardFocus(false);
     harness.second.grabKeyboardFocus();
@@ -235,7 +224,7 @@ auto tGrabbingIsRefusedWhenUnwanted =
 
 auto tPressMovesFocus = test("Keyboard/pressingSomethingFocusableFocusesIt") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.host.mouseDown(clickAt({150.f, 50.f}));
 
@@ -253,7 +242,7 @@ auto tPressMovesFocus = test("Keyboard/pressingSomethingFocusableFocusesIt") = [
 auto tPressOnUnfocusableKeepsFocus =
     test("Keyboard/pressingWithNothingFocusableUnderThePointerLeavesFocusAlone") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.grabKeyboardFocus();
     harness.second.setWantsKeyboardFocus(false);
@@ -270,7 +259,7 @@ auto tPressOnUnfocusableKeepsFocus =
 auto tPressFocusesTheNearestAncestor =
     test("Keyboard/pressingAChildFocusesTheAncestorThatWantsIt") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     auto child = Component {};
     child.setInterceptsMouseClicks(true);
@@ -284,7 +273,7 @@ auto tPressFocusesTheNearestAncestor =
 
 auto tTabMovesFocus = test("Keyboard/tabMovesThroughTheTreeInAddOrder") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.root.grabKeyboardFocus();
 
@@ -301,7 +290,7 @@ auto tTabMovesFocus = test("Keyboard/tabMovesThroughTheTreeInAddOrder") = []
 
 auto tShiftTabGoesBack = test("Keyboard/shiftTabMovesTheOtherWay") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.second.grabKeyboardFocus();
 
@@ -314,7 +303,7 @@ auto tShiftTabGoesBack = test("Keyboard/shiftTabMovesTheOtherWay") = []
 // takes it the same way it takes any other key.
 auto tConsumedTabDoesNotTraverse = test("Keyboard/aConsumedTabDoesNotMoveFocus") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.consuming = true;
     harness.first.grabKeyboardFocus();
@@ -327,7 +316,7 @@ auto tConsumedTabDoesNotTraverse = test("Keyboard/aConsumedTabDoesNotMoveFocus")
 
 auto tTraversalCanBeTurnedOff = test("Keyboard/aTreeCanKeepTabForItself") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.host.setTabMovesFocus(false);
     harness.first.grabKeyboardFocus();
@@ -342,10 +331,10 @@ auto tTraversalCanBeTurnedOff = test("Keyboard/aTreeCanKeepTabForItself") = []
 auto tDeletedComponentLosesFocus =
     test("Keyboard/deletingTheFocusedComponentClearsIt") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     {
-        auto temporary = Recorder {"temporary"};
+        auto temporary = FocusRecorder {"temporary"};
         harness.root.addAndMakeVisible(temporary);
         temporary.grabKeyboardFocus();
 
@@ -355,7 +344,7 @@ auto tDeletedComponentLosesFocus =
     check(harness.host.getFocusedComponent() == nullptr);
 
     // And the tree still works afterwards rather than writing through it.
-    harness.host.keyDown(keyOf("a"));
+    harness.host.keyDown(keyOf(0, "a"));
 
     check(harness.root.keysSeen == "a");
 };
@@ -364,7 +353,7 @@ auto tDeletedComponentLosesFocus =
 // cannot be seen is a keyboard that has vanished as far as the user knows.
 auto tHiddenComponentsAreSkipped = test("Keyboard/tabSkipsWhatIsNotVisible") = []
 {
-    auto harness = Harness {};
+    auto harness = KeyboardHarness {};
 
     harness.first.setVisible(false);
     harness.root.grabKeyboardFocus();

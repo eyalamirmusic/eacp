@@ -21,16 +21,13 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace UIntVectorTests
+{
 namespace
 {
 constexpr auto groupSize = ComputePass::threadGroupWidth;
 constexpr auto groups = 4;
 constexpr auto sharedThreads = groupSize * groups;
-
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
 
 // Everything a uint2 and a uint4 can be asked componentwise, one thread's worth
 // per record, so a wrong lane and a wrong operator are different wrong answers.
@@ -774,3 +771,4 @@ auto tUIntVectorWideStoreRuns = test("UIntVector/aWideStoreLaysTheRecordDown") =
                  }
              });
 };
+} // namespace UIntVectorTests

@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::Graphics;
 
+namespace TransparentViewTests
+{
 namespace
 {
 constexpr auto windowSize = 160;
@@ -253,3 +255,4 @@ auto tTurnedOnLaterRebuilds =
             check(isRed(waitForPixel(hwnd, isRed)));
         });
 };
+} // namespace TransparentViewTests

@@ -24,6 +24,8 @@
 using namespace nano;
 using namespace eacp;
 
+namespace SVGGradientTests
+{
 namespace
 {
 constexpr auto tolerance = 0.001f;
@@ -295,3 +297,4 @@ auto tInverted = test("AffineTransform/invertedUndoesTheTransform") = []
     // identity rather than infinities.
     check(GPUWidgets::AffineTransform::scaling(1.f, 0.f).inverted().isIdentity());
 };
+} // namespace SVGGradientTests

@@ -12,6 +12,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace HelperTests
+{
+
 // The C++ twins of the eacp* shader helpers, checked exhaustively where the
 // domain allows against a double-precision reference that shares no code with
 // them, and then through the executor: a recorded kernel calling each helper
@@ -1004,3 +1007,4 @@ auto tMalformedHelpers = test("Executor/aMalformedHelperCallIsRefusedByName") = 
 
     check(refusedNaming(Executor {integer}, "eacpErf"));
 };
+} // namespace HelperTests

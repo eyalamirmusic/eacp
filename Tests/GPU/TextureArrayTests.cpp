@@ -15,6 +15,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace TextureArrayTests
+{
 namespace
 {
 struct PositionVertex
@@ -721,3 +723,4 @@ auto tArrayRefusals = test("TextureArray/refusesWhatItCannotMean") = []
 
     check(!refused(describe(TextureType::TwoDArray, 4, 2)));
 };
+} // namespace TextureArrayTests

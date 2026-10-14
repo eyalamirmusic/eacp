@@ -21,24 +21,7 @@ using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
-int occurrences(const std::string& text, const char* needle)
-{
-    auto count = 0;
-    auto length = std::string(needle).size();
-
-    for (auto at = text.find(needle); at != std::string::npos;
-         at = text.find(needle, at + length))
-        ++count;
-
-    return count;
-}
-
-constexpr auto elementCount = 256;
+constexpr auto geluElementCount = 256;
 
 // The exact GELU, over the buffer it was handed and nothing else.
 struct InPlaceGeluKernel final : ComputeProgram
@@ -69,19 +52,19 @@ auto tInPlaceGeluRewritesItsOwnBuffer =
 {
     auto values = Vector<float> {};
 
-    for (auto i = 0; i < elementCount; ++i)
+    for (auto i = 0; i < geluElementCount; ++i)
         values.add(((float) i - 128.f) / 32.f);
 
     auto kernel = InPlaceGeluKernel {};
 
     CrossCheck {kernel}
         .output(kernel.output, values)
-        .run(elementCount,
+        .run(geluElementCount,
              [&](const Readback& readback)
              {
                  const auto& result = readback.floats(kernel.output);
 
-                 for (auto i = 0; i < elementCount; ++i)
+                 for (auto i = 0; i < geluElementCount; ++i)
                      check(std::fabs((double) result[i]
                                      - geluReference((double) values[i]))
                                <= 1.0e-5,

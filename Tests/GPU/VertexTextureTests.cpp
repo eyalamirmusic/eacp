@@ -12,6 +12,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace VertexTextureTests
+{
 namespace
 {
 constexpr auto columns = 16;
@@ -665,3 +667,4 @@ auto tSlotTwelve = test("VertexTexture/eachStageKeepsItsOwnSlotTwelve") = []
 
     check(mismatches == 0);
 };
+} // namespace VertexTextureTests

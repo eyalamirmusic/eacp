@@ -42,6 +42,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace DepthActionTests
+{
 namespace
 {
 constexpr auto viewWidth = 8;
@@ -57,9 +59,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace DepthActionTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(DepthActionTests::QuadVertex, Float2)
 
+namespace DepthActionTests
+{
 namespace
 {
 // Counter-clockwise in clip space - the space setPosition writes, with y up -
@@ -328,3 +333,4 @@ auto tClearLosesTheStencil = test("DepthAction/aClearingPassEmptiesTheStencil") 
 
     check(isBlue(stencilResult({DepthAction::Clear, DepthAction::Clear})));
 };
+} // namespace DepthActionTests

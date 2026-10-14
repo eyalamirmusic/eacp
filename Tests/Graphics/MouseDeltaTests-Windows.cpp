@@ -13,9 +13,9 @@ using namespace eacp::Graphics;
 
 namespace
 {
-struct Recorder final : View
+struct PointerRecorder final : View
 {
-    Recorder() { setHandlesMouseEvents(true); }
+    PointerRecorder() { setHandlesMouseEvents(true); }
 
     void mouseDown(const MouseEvent& event) override { events.add(event); }
     void mouseDragged(const MouseEvent& event) override { events.add(event); }
@@ -41,7 +41,7 @@ auto tDragReportsThePointersMovement =
     test("Window/dragReportsThePointersMovement") = []
 {
     auto window = Window {};
-    auto content = Recorder {};
+    auto content = PointerRecorder {};
     window.setContentView(content);
     auto hwnd = static_cast<HWND>(window.getHandle());
 

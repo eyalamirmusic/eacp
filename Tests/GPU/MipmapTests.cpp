@@ -25,6 +25,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace MipmapTests
+{
 namespace
 {
 constexpr std::uint32_t red = 0xff0000ff; // RGBA8, little-endian: A B G R
@@ -44,9 +46,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace MipmapTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(MipmapTests::QuadVertex, Float2)
 
+namespace MipmapTests
+{
 namespace
 {
 // The whole texture across the whole viewport.
@@ -408,3 +413,4 @@ auto tUpdateRebuildsTheDeviceChain =
             check(image.at(x, y).g < 0.25f);
         }
 };
+} // namespace MipmapTests

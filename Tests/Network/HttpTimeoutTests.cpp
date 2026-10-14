@@ -8,37 +8,12 @@ using eacp::HTTP::DownloadProgress;
 using eacp::HTTP::Request;
 using eacp::HTTP::Response;
 using eacp::HTTP::Server;
-using eacp::HTTP::ServerOptions;
-using eacp::HTTP::ServerThreadingMode;
 using eacp::Threads::callAsync;
 using eacp::Threads::stopEventLoop;
 using eacp::Time::MS;
 
 namespace
 {
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-std::string tempPath(const std::string& name)
-{
-    auto path = std::filesystem::temp_directory_path() / ("eacp-timeout-" + name);
-    auto ec = std::error_code();
-    std::filesystem::remove(path, ec);
-    return path.string();
-}
-
-// The handlers here sleep, so they must not run on the event loop that the
-// client's completion has to travel back through.
-ServerOptions threadPoolOptions()
-{
-    auto options = ServerOptions();
-    options.threading = ServerThreadingMode::ThreadPool;
-    options.threadPoolSize = 2;
-    return options;
-}
-
 Response okResponse()
 {
     auto res = Response();
@@ -157,7 +132,7 @@ auto tDownloadTimesOut = test("HttpTimeout/downloadFailsWhenTheServerStalls") = 
     req.timeout = MS {50};
     req.progress = &progress;
 
-    auto destination = tempPath("stalled");
+    auto destination = tempPath("timeout-stalled");
     auto gaveUpEarly = false;
 
     auto perform = [&]

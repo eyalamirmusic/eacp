@@ -9,6 +9,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace GPUComponentTests
+{
 namespace
 {
 const auto blue = Color {0.f, 0.f, 1.f, 1.f};
@@ -289,9 +291,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace GPUComponentTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(GPUComponentTests::QuadVertex, Float2)
 
+namespace GPUComponentTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -1398,3 +1403,4 @@ auto tDefaults = test("GPUComponent/defaultsAndContract") = []
     gpu.onBackingScaleChanged(2.f);
     gpu.onDeviceRestored();
 };
+} // namespace GPUComponentTests

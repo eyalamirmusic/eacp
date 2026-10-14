@@ -12,18 +12,11 @@ using namespace eacp::Graphics;
 
 namespace
 {
-struct Message
-{
-    std::string text;
-
-    MIRO_REFLECT(text)
-};
-
 // Registers three exposed functions and signals readiness so the test
 // only calls once window.eacp.expose has run. `echoAsync` returns a
 // Promise that settles on a later tick — the case that plain
 // evaluateJavaScript could never await.
-const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
+const std::string callPageHtml = R"HTML(<!doctype html><html><body><script>
   window.eacp.expose('echo', function (p) {
     return { text: p.text + '!' };
   });
@@ -40,19 +33,19 @@ const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
 
 // Builds a live WebView + bridge, loads the page, and pumps until the
 // page has registered its exposed functions.
-struct Fixture
+struct CallFixture
 {
     WebView webView {};
     Window window {};
     WebViewBridge transport {webView};
     bool ready = false;
 
-    Fixture()
+    CallFixture()
     {
         window.setContentView(webView);
         webView.addScriptMessageHandler(
             "ready", [this](const std::string&) { ready = true; });
-        webView.loadHTML(pageHtml);
+        webView.loadHTML(callPageHtml);
         check(Threads::runEventLoopUntil([this] { return ready; },
                                          firstNavigationTimeout));
     }
@@ -62,7 +55,7 @@ struct Fixture
 auto tCallSyncExposedFunction =
     test("WebViewCall/callsSynchronousExposedFunction") = []
 {
-    auto fix = Fixture {};
+    auto fix = CallFixture {};
 
     auto result = fix.transport.call("echo", Miro::toJSON(Message {"hi"}))
                       .waitFor(webViewResultTimeout);
@@ -73,7 +66,7 @@ auto tCallSyncExposedFunction =
 
 auto tCallAsyncExposedFunction = test("WebViewCall/awaitsAsyncExposedFunction") = []
 {
-    auto fix = Fixture {};
+    auto fix = CallFixture {};
 
     auto result = fix.transport.call("echoAsync", Miro::toJSON(Message {"hi"}))
                       .waitFor(webViewResultTimeout);
@@ -84,7 +77,7 @@ auto tCallAsyncExposedFunction = test("WebViewCall/awaitsAsyncExposedFunction") 
 
 auto tCallTypedOverload = test("WebViewCall/typedOverloadRoundTrips") = []
 {
-    auto fix = Fixture {};
+    auto fix = CallFixture {};
 
     auto reply = fix.transport.call<Message>("echo", Message {"yo"})
                      .waitFor(webViewResultTimeout);
@@ -95,7 +88,7 @@ auto tCallTypedOverload = test("WebViewCall/typedOverloadRoundTrips") = []
 auto tCallThrowingFunctionRejects =
     test("WebViewCall/exposedThrowSurfacesAsRejection") = []
 {
-    auto fix = Fixture {};
+    auto fix = CallFixture {};
 
     auto threw = false;
     try
@@ -114,7 +107,7 @@ auto tCallThrowingFunctionRejects =
 auto tCallMissingFunctionRejects =
     test("WebViewCall/missingFunctionSurfacesAsRejection") = []
 {
-    auto fix = Fixture {};
+    auto fix = CallFixture {};
 
     auto threw = false;
     try

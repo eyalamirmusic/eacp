@@ -9,6 +9,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace FileDropTests
+{
 namespace
 {
 using Files = Vector<std::string>;
@@ -235,3 +237,4 @@ auto tSafeAreaOffsetIsApplied =
     check(tree.inner.enters == 1);
     check(tree.inner.last.x == 10.f && tree.inner.last.y == 10.f);
 };
+} // namespace FileDropTests

@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace ViewportTests
+{
 namespace
 {
 bool isGreen(const Graphics::Color& c)
@@ -464,3 +466,4 @@ auto tPassReportsItsTargetSize = test("Viewport/thePassReportsItsTargetSize") = 
     check(view.width == (int) targetSize * 2);
     check(view.height == (int) targetSize * 2);
 };
+} // namespace ViewportTests

@@ -15,25 +15,11 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace UIntBufferVectorTests
+{
 namespace
 {
 constexpr auto uintBytes = (int) sizeof(std::uint32_t);
-
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
-int occurrences(const std::string& text, const std::string& needle)
-{
-    auto found = 0;
-
-    for (auto at = text.find(needle); at != std::string::npos;
-         at = text.find(needle, at + needle.size()))
-        ++found;
-
-    return found;
-}
 
 // Values a float cannot hold: past the mantissa, and up against 2^32.
 std::uint32_t sourceValue(int element)
@@ -415,3 +401,4 @@ auto tRecordsReadThroughARangeStartAtItsOffset =
                  }
              });
 };
+} // namespace UIntBufferVectorTests

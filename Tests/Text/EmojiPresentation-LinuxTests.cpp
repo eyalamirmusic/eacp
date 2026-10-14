@@ -19,11 +19,6 @@ using namespace eacp::Text;
 
 namespace
 {
-constexpr char32_t grinningFace = 0x1F600;
-constexpr char32_t regionalIndicatorA = 0x1F1E6;
-constexpr char32_t heavyBlackHeart = 0x2764;
-constexpr char32_t copyrightSign = 0x00A9;
-
 constexpr const char* presentationFamily()
 {
     return "DejaVu Sans";
@@ -39,21 +34,7 @@ FontRequest presentationRequest()
     return request;
 }
 
-std::string utf8Of(std::initializer_list<char32_t> codepoints)
-{
-    auto text = std::string {};
-
-    for (const auto codepoint: codepoints)
-    {
-        char encoded[4] = {};
-
-        text.append(encoded, (std::size_t) encodeUtf8(codepoint, encoded));
-    }
-
-    return text;
-}
-
-bool has(const GlyphRasterizer& rasterizer)
+bool hasPresentationFamily(const GlyphRasterizer& rasterizer)
 {
     const auto resolved = rasterizer.isValid()
                           && Strings::equalsCaseInsensitive(
@@ -102,7 +83,7 @@ auto tPresentationChoosesTheFace = test("Text/emojiPresentationChoosesTheFace") 
 {
     const auto rasterizer = GlyphRasterizer {presentationRequest()};
 
-    if (!has(rasterizer))
+    if (!hasPresentationFamily(rasterizer))
         return;
 
     const auto emoji = firstGlyphOf(rasterizer, {grinningFace});
@@ -125,7 +106,7 @@ auto tVariationSelectorStaysWithItsBase =
 {
     const auto rasterizer = GlyphRasterizer {presentationRequest()};
 
-    if (!has(rasterizer))
+    if (!hasPresentationFamily(rasterizer))
         return;
 
     // A variation selector is a mark on the codepoint before it, so it

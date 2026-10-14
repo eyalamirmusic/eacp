@@ -12,6 +12,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace SimdMatrixTests
+{
+
 // The SIMD-group matrix: a fragment held whole per SIMD group, filled, loaded,
 // stored and multiplied. Every case carries its C++ twin; the product's twin
 // sums in the fallback's order - the accumulator, then k = 0 to 7 - so it
@@ -818,3 +821,4 @@ auto tSimdMatrixPartialGroup =
     auto executor = Executor {whole.graph()};
     check(executor.isValid(), executor.reason());
 };
+} // namespace SimdMatrixTests

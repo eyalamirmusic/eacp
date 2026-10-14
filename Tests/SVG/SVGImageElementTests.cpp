@@ -9,6 +9,8 @@
 using namespace nano;
 using namespace eacp;
 
+namespace SVGImageElementTests
+{
 namespace
 {
 const auto quadrants = std::string {
@@ -370,3 +372,4 @@ auto tPatternRepeats =
     check(isWhite(picture.at(17, 17)));
     check(isWhite(picture.at(37, 37)));
 };
+} // namespace SVGImageElementTests

@@ -30,6 +30,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CubeTextureTests
+{
 namespace
 {
 constexpr auto viewWidth = 4;
@@ -48,9 +50,12 @@ struct QuadVertex
     float position[2];
 };
 } // namespace
+} // namespace CubeTextureTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(CubeTextureTests::QuadVertex, Float2)
 
+namespace CubeTextureTests
+{
 namespace
 {
 constexpr QuadVertex fullQuad[] = {
@@ -375,3 +380,4 @@ auto tCubeUpdate = test("CubeTexture/updateReplacesAllSixFaces") = []
     check(isColor(sampleAlong(cube, 0.f, 1.f, 0.f), yellow));
     check(isColor(sampleAlong(cube, 0.f, 0.f, -1.f), red));
 };
+} // namespace CubeTextureTests

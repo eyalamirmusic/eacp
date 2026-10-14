@@ -9,7 +9,7 @@ using eacp::Threads::runEventLoopUntil;
 
 namespace
 {
-constexpr auto pumpTimeout = eacp::Time::MS {10000};
+constexpr auto messengerPumpTimeout = eacp::Time::MS {10000};
 }
 
 auto tRoundTrip = test("Ipc/Messenger/roundTripsBothDirections") = []
@@ -37,7 +37,7 @@ auto tRoundTrip = test("Ipc/Messenger/roundTripsBothDirections") = []
     };
     client.onMessage = [&](const std::string& message) { reply = message; };
 
-    check(runEventLoopUntil([&] { return !reply.empty(); }, pumpTimeout));
+    check(runEventLoopUntil([&] { return !reply.empty(); }, messengerPumpTimeout));
     check(connected);
     check(serverGot == "ping");
     check(reply == "pong:ping");
@@ -61,7 +61,7 @@ auto tMessengerBinaryPayload = test("Ipc/Messenger/carriesArbitraryBytesIntact")
     auto client = Messenger {"eacp.tests.msgr.binary"};
     client.onConnected = [&] { client.send(payload); };
 
-    check(runEventLoopUntil([&] { return !arrived.empty(); }, pumpTimeout));
+    check(runEventLoopUntil([&] { return !arrived.empty(); }, messengerPumpTimeout));
     check(arrived == payload);
 };
 
@@ -81,11 +81,11 @@ auto tClientLeavingNotifiesServer =
     {
         auto client = std::optional<Messenger> {};
         client.emplace("eacp.tests.msgr.leave");
-        check(runEventLoopUntil([&] { return arrived; }, pumpTimeout));
+        check(runEventLoopUntil([&] { return arrived; }, messengerPumpTimeout));
         client.reset();
     }
 
-    check(runEventLoopUntil([&] { return gone; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return gone; }, messengerPumpTimeout));
 };
 
 // A busy main thread meets the newcomer's adoption before the leaver's
@@ -106,7 +106,7 @@ auto tLeaveBehindAnArrivalStillNotifies =
 
     auto leaving = std::optional<Messenger> {};
     leaving.emplace("eacp.tests.msgr.leaveBehind");
-    check(runEventLoopUntil([&] { return sessions == 1; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return sessions == 1; }, messengerPumpTimeout));
 
     // Pumping before both are queued, in this order, tests nothing.
     auto arriving = Messenger {"eacp.tests.msgr.leaveBehind"};
@@ -115,8 +115,8 @@ auto tLeaveBehindAnArrivalStillNotifies =
     leaving.reset();
     eacp::Time::sleep(eacp::Time::MS {50});
 
-    check(runEventLoopUntil([&] { return sessions == 2; }, pumpTimeout));
-    check(runEventLoopUntil([&] { return gone == 1; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return sessions == 2; }, messengerPumpTimeout));
+    check(runEventLoopUntil([&] { return gone == 1; }, messengerPumpTimeout));
     check(arriving.isConnected());
 };
 
@@ -133,11 +133,11 @@ auto tServerDyingNotifiesClient =
     client.onConnected = [&] { connected = true; };
     client.onDisconnected = [&] { gone = true; };
 
-    check(runEventLoopUntil([&] { return connected; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return connected; }, messengerPumpTimeout));
 
     server.reset();
 
-    check(runEventLoopUntil([&] { return gone; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return gone; }, messengerPumpTimeout));
     check(!client.isConnected());
 };
 
@@ -148,7 +148,7 @@ auto tDialFailureNotifies = test("Ipc/Messenger/failedDialNotifiesDisconnected")
     auto client = Messenger {"eacp.tests.msgr.nobody", eacp::Time::MS {50}};
     client.onDisconnected = [&] { gone = true; };
 
-    check(runEventLoopUntil([&] { return gone; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return gone; }, messengerPumpTimeout));
     check(!client.isConnected());
 };
 
@@ -195,7 +195,8 @@ auto tServesClientsInTurn = test("Ipc/Messenger/servesClientsInTurn") = []
             ++greeted;
         };
 
-        check(runEventLoopUntil([&] { return !reply.empty(); }, pumpTimeout));
+        check(
+            runEventLoopUntil([&] { return !reply.empty(); }, messengerPumpTimeout));
         check(reply == "hello " + std::to_string(round));
     }
 

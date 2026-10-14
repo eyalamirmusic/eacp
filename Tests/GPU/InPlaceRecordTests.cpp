@@ -22,22 +22,6 @@ using namespace eacp::GPU::CrossChecks;
 
 namespace
 {
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
-int occurrences(const std::string& text, const std::string& needle)
-{
-    auto found = 0;
-
-    for (auto at = text.find(needle); at != std::string::npos;
-         at = text.find(needle, at + needle.size()))
-        ++found;
-
-    return found;
-}
-
 // Values a float cannot hold, so a uint record that came back through one
 // would show it.
 std::uint32_t sourceValue(int element)

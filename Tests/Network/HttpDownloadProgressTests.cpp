@@ -13,19 +13,6 @@ using eacp::Threads::stopEventLoop;
 
 namespace
 {
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-std::string tempPath(const std::string& name)
-{
-    auto path = std::filesystem::temp_directory_path() / ("eacp-progress-" + name);
-    std::error_code ec;
-    std::filesystem::remove(path, ec);
-    return path.string();
-}
-
 struct DownloadOutcome
 {
     Response response;
@@ -89,7 +76,7 @@ auto tUpdatesOnSuccess =
     req.progress = &progress;
 
     auto out = DownloadOutcome();
-    performDownload(server, req, tempPath("success.bin"), out);
+    performDownload(server, req, tempPath("progress-success.bin"), out);
 
     check(out.eventLoopFinished);
     check(out.response.statusCode == 200);
@@ -118,7 +105,7 @@ auto tReportsContentLength =
     req.progress = &progress;
 
     auto out = DownloadOutcome();
-    performDownload(server, req, tempPath("content-length.bin"), out);
+    performDownload(server, req, tempPath("progress-content-length.bin"), out);
 
     check(out.eventLoopFinished);
     check(progress.totalBytes.load() == (std::int64_t) body.size());
@@ -143,7 +130,7 @@ auto tDoneEvenWithoutProgressArg =
     auto req = Request(baseUrl(port) + "/data");
 
     auto out = DownloadOutcome();
-    performDownload(server, req, tempPath("no-progress.bin"), out);
+    performDownload(server, req, tempPath("progress-no-progress.bin"), out);
 
     check(out.eventLoopFinished);
     check(out.response.statusCode == 200);
@@ -155,7 +142,7 @@ auto tDoneOnError = test("HttpDownloadProgress/setsDoneEvenOnError") = []
     auto req = Request("http://127.0.0.1:1/never");
     req.progress = &progress;
 
-    auto res = req.downloadTo(tempPath("err.bin"));
+    auto res = req.downloadTo(tempPath("progress-err.bin"));
 
     check(!res.error.empty());
     check(progress.done.load());
@@ -188,7 +175,8 @@ auto tCancelHaltsTransfer = test("HttpDownloadProgress/cancelHaltsTransfer") = [
     req.progress = &progress;
 
     auto out = DownloadOutcome();
-    performDownload(server, req, tempPath("cancel.bin"), out, eacp::Time::MS {5000});
+    performDownload(
+        server, req, tempPath("progress-cancel.bin"), out, eacp::Time::MS {5000});
 
     check(progress.done.load());
     check(progress.cancel.load());

@@ -7,13 +7,10 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace Dispatch3DTests
+{
 namespace
 {
-bool contains(const std::string& haystack, const std::string& needle)
-{
-    return haystack.find(needle) != std::string::npos;
-}
-
 // The value element (x, y, z) carries, chosen so a swapped pair of extents, a
 // wrong stride and a thread that ran twice are all different numbers. Every
 // one of them is exact in float.
@@ -260,3 +257,4 @@ auto tGroupAndLocalPositionsAgree =
                  }
              });
 };
+} // namespace Dispatch3DTests

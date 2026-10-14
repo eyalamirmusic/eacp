@@ -25,22 +25,6 @@ namespace
 constexpr auto rowLength = 8u;
 constexpr auto rowCount = 4;
 
-int occurrences(const std::string& text, const std::string& needle)
-{
-    auto found = 0;
-
-    for (auto at = text.find(needle); at != std::string::npos;
-         at = text.find(needle, at + needle.size()))
-        ++found;
-
-    return found;
-}
-
-bool contains(const std::string& text, const std::string& needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
 // The argmax scan: the element is read in the condition and again in the body,
 // and nothing in the body moves it.
 void recordArgMax(ShaderBuilder& builder)

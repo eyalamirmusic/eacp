@@ -34,6 +34,8 @@ using namespace eacp::Graphics;
 }
 @end
 
+namespace FileDropTests
+{
 namespace
 {
 struct DropView final : View
@@ -142,3 +144,4 @@ auto tDraggingReachesTheView =
     check(view.drops == 1);
     check(view.lastFiles[1] == "/tmp/snare.wav");
 };
+} // namespace FileDropTests

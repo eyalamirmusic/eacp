@@ -18,7 +18,7 @@ const std::string streamData = "abcdefghijklmnopqrstuvwxyz";
 
 // The page only announces itself on load; the fetch waits for the test to
 // ask, so booting the engine and the round trip each get a budget of their own.
-const std::string pageHtml = R"HTML(<!doctype html><html><body><script>
+const std::string streamingPageHtml = R"HTML(<!doctype html><html><body><script>
 window.runFetch = async function () {
   try {
     const r = await fetch('teststream://host/data', { headers: { Range: 'bytes=2-5' } });
@@ -42,7 +42,7 @@ StreamingProvider testProvider()
     return [](std::string_view url) -> std::optional<StreamingResource>
     {
         auto isData = url.find("/data") != std::string_view::npos;
-        const auto* payload = isData ? &streamData : &pageHtml;
+        const auto* payload = isData ? &streamData : &streamingPageHtml;
 
         auto resource = StreamingResource {};
         resource.mimeType =

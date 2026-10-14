@@ -13,6 +13,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace GroupTests
+{
+
 // The threadgroup tier: local and group ids, shared memory, barriers,
 // reductions, atomics, the SIMD-group index and the indirect dispatch. Every
 // case carries its C++ twin; the reductions' twin folds by the same halving
@@ -1543,3 +1546,4 @@ auto tGroupRefusals = test("Group/malformedGroupStatementsAreRefusedByName") = [
             refusedNaming(Executor {graph}, "offset that is not a scalar integer"));
     }
 };
+} // namespace GroupTests

@@ -40,6 +40,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 include(ConfigureLog)
 
 option(EACP_UNITY_BUILD "Compile eacp libraries as CMake unity builds" OFF)
+option(EACP_UNITY_BUILD_TESTS "Compile the test executables as unity builds" OFF)
 option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
@@ -47,6 +48,8 @@ option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL
             "Compile eacp libraries as CMake unity builds" FORCE)
+    set(EACP_UNITY_BUILD_TESTS ON CACHE BOOL
+            "Compile the test executables as unity builds" FORCE)
     set(MIRO_UNITY_BUILD ON CACHE BOOL
             "Enable CMake unity build for the Miro library" FORCE)
     # EACP_PCH stays off: CI compiles under ccache, which cannot cache MSVC's

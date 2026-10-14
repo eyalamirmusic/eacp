@@ -10,6 +10,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace CursorTests
+{
 using Cursor = eacp::Graphics::MouseCursor;
 
 namespace
@@ -119,3 +121,4 @@ auto tUpdateMouseCursorReapplies =
 
     check(tree.host.getMouseCursor() == Cursor::ResizeUpDown);
 };
+} // namespace CursorTests

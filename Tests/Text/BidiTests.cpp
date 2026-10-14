@@ -231,20 +231,6 @@ BidiBaseDirection baseOf(int direction)
 
     return direction == 1 ? BidiBaseDirection::RightToLeft : BidiBaseDirection::Auto;
 }
-
-std::string utf8Of(std::initializer_list<char32_t> codepoints)
-{
-    auto text = std::string {};
-
-    for (const auto codepoint: codepoints)
-    {
-        char encoded[4] = {};
-
-        text.append(encoded, (std::size_t) encodeUtf8(codepoint, encoded));
-    }
-
-    return text;
-}
 } // namespace
 
 auto tBidiConformance = test("Text/bidiConformance") = []

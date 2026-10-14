@@ -9,6 +9,9 @@
 #include <utility>
 
 using namespace nano;
+
+namespace WebSocketServerTests
+{
 using eacp::Vector;
 using eacp::Threads::runEventLoopUntil;
 using eacp::Time::Deadline;
@@ -1232,3 +1235,4 @@ auto tServerStopsWithClients =
     check(!record.offMessageThread);
     check(!record.reentered);
 };
+} // namespace WebSocketServerTests

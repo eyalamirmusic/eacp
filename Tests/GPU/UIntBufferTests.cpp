@@ -19,6 +19,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace UIntBufferTests
+{
 namespace
 {
 constexpr auto floatBytes = (int) sizeof(float);
@@ -219,21 +221,6 @@ Vector<float> readFloats(const Buffer& buffer, int elements)
     return values;
 }
 
-bool contains(const std::string& text, const char* needle)
-{
-    return text.find(needle) != std::string::npos;
-}
-
-int occurrences(const std::string& text, const std::string& needle)
-{
-    auto found = 0;
-
-    for (auto at = text.find(needle); at != std::string::npos;
-         at = text.find(needle, at + needle.size()))
-        ++found;
-
-    return found;
-}
 } // namespace
 
 // Ids read as integers index a table directly, with no bitcast on the way in
@@ -603,3 +590,4 @@ auto tARenderStageReadsUIntElements =
 
     expectGlslCompiles(graph);
 };
+} // namespace UIntBufferTests

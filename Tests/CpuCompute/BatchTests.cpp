@@ -19,6 +19,9 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CpuCompute;
 
+namespace BatchTests
+{
+
 namespace
 {
 constexpr auto sentinel = -1.f;
@@ -940,3 +943,4 @@ auto tBatchHalved = test("Batch/aBatchOverTheBudgetIsHalvedUntilItFits") = []
 
     check(sameWords(graph.run(executor), graph.twin(), groups));
 };
+} // namespace BatchTests

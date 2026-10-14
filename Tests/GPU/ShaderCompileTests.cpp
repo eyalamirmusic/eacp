@@ -120,11 +120,6 @@ struct OffBoundaryProgram final : ShaderProgram
     }
 };
 
-bool contains(const std::string& haystack, const std::string& needle)
-{
-    return haystack.find(needle) != std::string::npos;
-}
-
 } // namespace
 
 auto tShaderProgramInstancedLayout = test("GPU/shaderProgramInstancedLayout") = []

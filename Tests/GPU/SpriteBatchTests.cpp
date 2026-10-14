@@ -24,6 +24,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace SpriteBatchTests
+{
 namespace
 {
 constexpr auto viewW = 64.f;
@@ -347,3 +349,4 @@ auto tSteadyStateAllocatesNoBuffers =
     // Before StreamingBuffers this climbed by one per flush per frame.
     check(Device::shared().buffersCreated() == before);
 };
+} // namespace SpriteBatchTests

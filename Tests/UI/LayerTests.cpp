@@ -18,6 +18,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace LayerTests
+{
 auto tLayerRegisters = test("Layer/aLayerRegistersWithItsComponent") = []
 {
     auto component = Component {};
@@ -654,9 +656,12 @@ struct LayerQuadVertex
     float position[2];
 };
 } // namespace
+} // namespace LayerTests
 
-EACP_SHADER_VALUE(LayerQuadVertex, Float2)
+EACP_SHADER_VALUE(LayerTests::LayerQuadVertex, Float2)
 
+namespace LayerTests
+{
 namespace
 {
 constexpr LayerQuadVertex fullLayerQuad[] = {
@@ -871,3 +876,4 @@ auto tOwnPassFollowsAnEarlierLayer =
     check(host.getLastRenderedLayerCount() == 2, "both of them");
     check(scene.renders == 2);
 };
+} // namespace LayerTests

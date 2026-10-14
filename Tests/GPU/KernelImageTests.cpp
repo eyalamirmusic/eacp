@@ -23,6 +23,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace KernelImageTests
+{
 namespace
 {
 constexpr auto imageSize = 4;
@@ -1698,3 +1700,4 @@ auto tKernelImageDepthAtAnotherSlice =
     check(holdsHalfAndHalf(readFloats(layerZero, texelCount), 1.f));
     check(holdsHalfAndHalf(readFloats(layerOne, texelCount), 0.25f));
 };
+} // namespace KernelImageTests

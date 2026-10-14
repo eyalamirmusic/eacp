@@ -45,6 +45,31 @@ files under `ThirdParty/miniz` and the version in its README.
   `-DEACP_UNITY_BUILD=OFF` explicitly when reconfiguring a build directory
   that may have cached `ON`.
 
+- `EACP_UNITY_BUILD_TESTS` (default `OFF`) — compiles the test executables
+  under `Tests/` as unity builds. The tests are many small sources that each
+  parse the same headers, so this is where unity pays most: a clean build of
+  the tests dropped from 253 s to 76 s of CPU time when measured, about 2.4
+  times faster on the wall clock, while an incremental edit to one test source
+  costs 0.4 s more. It is off by default for the same `compile_commands.json`
+  reason as `EACP_UNITY_BUILD`, and `EACP_CI_BUILD` forces it on.
+
+  A unity batch is one translation unit, so every file-local name in a test
+  source — the helpers in its anonymous namespace, its `using` aliases and its
+  `t…` registrations — must be unique within its target, not just within its
+  file. Helpers several sources share live in the directory's `Common.h` or a
+  header beside it; a source whose own helpers would collide wraps its body in
+  a namespace named after the file (`namespace MipmapTests { ... }`), with any
+  `EACP_SHADER_VALUE` closing the namespace around it and naming the type
+  qualified. The platform-only sources (`-Linux`, `-Windows`, `-Android`,
+  `-iOS`) are unity-built only on their own lanes, so a collision there shows
+  up in CI rather than locally. A batch size of 0 puts each target in a single
+  translation unit and shows every collision at once:
+
+  ```bash
+  cmake -G Ninja -B build-unity -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+        -DEACP_UNITY_BUILD_TESTS=ON -DCMAKE_UNITY_BUILD_BATCH_SIZE=0
+  ```
+
 - `EACP_BUILD_GRAPHICS` (default `ON`) — builds the whole drawing half. Turn it
   off to build only the portable modules, on any platform. It is the only
   switch that leaves the Linux backend out; there is no Linux-specific one.
@@ -53,8 +78,8 @@ files under `ThirdParty/miniz` and the version in its README.
   where the platform has one.
 
 - `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's
-  exact configuration locally. It forces `EACP_UNITY_BUILD` and
-  `MIRO_UNITY_BUILD` on. Because it turns unity on, it is for reproducing CI,
+  exact configuration locally. It forces `EACP_UNITY_BUILD`,
+  `EACP_UNITY_BUILD_TESTS` and `MIRO_UNITY_BUILD` on. Because it turns unity on, it is for reproducing CI,
   not for LSP-backed development.
 
   ```bash

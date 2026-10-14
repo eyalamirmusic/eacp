@@ -12,10 +12,6 @@ using namespace eacp::Text;
 
 namespace
 {
-constexpr char32_t grinningFace = 0x1F600;
-constexpr char32_t regionalIndicatorA = 0x1F1E6;
-constexpr char32_t heavyBlackHeart = 0x2764;
-constexpr char32_t copyrightSign = 0x00A9;
 constexpr char32_t watch = 0x231A;
 } // namespace
 

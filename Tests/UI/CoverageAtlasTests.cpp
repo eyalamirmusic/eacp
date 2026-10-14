@@ -1,8 +1,8 @@
 #include "../GPUWidgets/CoverageProbe.h"
+#include "Common.h"
 
 #include <eacp/GPUWidgets/Path/CoverageKernel.h>
 #include <eacp/UI/UI.h>
-
 #include <NanoTest/NanoTest.h>
 
 #include <cmath>
@@ -30,13 +30,6 @@ using namespace eacp::UI;
 
 namespace
 {
-// The atlas owns a texture, so it needs a device - but no window, no pass and no
-// dispatch: allocation is arithmetic over a rect.
-bool hasDevice()
-{
-    return GPU::Device::shared().isValid();
-}
-
 bool overlaps(const CoverageAtlas::Slot& a, const CoverageAtlas::Slot& b)
 {
     return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height

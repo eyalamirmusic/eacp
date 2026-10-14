@@ -3,6 +3,7 @@ set(CMAKE_FOLDER Tests)
 find_package(NanoTest REQUIRED)
 
 set(NANO_TEST_GROUP_BY PREFIX)
+set(CMAKE_UNITY_BUILD ${EACP_UNITY_BUILD_TESTS})
 
 add_subdirectory(Core)
 

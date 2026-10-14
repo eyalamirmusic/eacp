@@ -2,6 +2,9 @@
 #include <eacp/Network/WebSocket/Protocol.h>
 
 using namespace nano;
+
+namespace WebSocketProtocolTests
+{
 using eacp::Vector;
 using eacp::WebSocket::CloseStatus;
 using eacp::WebSocket::Protocol::acceptKeyFor;
@@ -487,3 +490,4 @@ auto tUnrequestedProtocol =
     check(protocolContains(offeredOthers.error, "mqtt"));
     check(!offeredNone.ok);
 };
+} // namespace WebSocketProtocolTests

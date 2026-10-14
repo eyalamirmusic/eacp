@@ -14,58 +14,7 @@ namespace Rpc = eacp::HTTP::Rpc;
 
 namespace
 {
-
-// Every server here binds port 0 and reports back what it got. Fixed ports do
-// not survive this suite: NanoTest's CTest discovery runs each case in its own
-// process, so a per-process counter hands every concurrent case the same number,
-// and SO_REUSEADDR lets them all bind it and steal each other's connections.
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-struct Exchange
-{
-    Response clientResponse;
-    bool completed = false;
-};
-
-void performExchange(eacp::HTTP::Server& server,
-                     const Request& clientRequest,
-                     Exchange& out)
-{
-    auto worker = std::thread();
-
-    auto stopped = eacp::Threads::runEventLoopFor(
-        eacp::Time::MS {5000},
-        [&]
-        {
-            worker = std::thread(
-                [&]
-                {
-                    out.clientResponse = eacp::HTTP::httpRequest(clientRequest);
-                    callAsync([] { stopEventLoop(); });
-                });
-        });
-
-    worker.join();
-    out.completed = stopped;
-    server.stop();
-}
-
-struct GreetRequest
-{
-    std::string name;
-    MIRO_REFLECT(name)
-};
-
-struct GreetResponse
-{
-    std::string greeting;
-    MIRO_REFLECT(greeting)
-};
-
-GreetResponse greet(const GreetRequest& req)
+GreetResponse rpcGreet(const GreetRequest& req)
 {
     if (req.name.empty())
         eacp::HTTP::throwError("name must not be empty");
@@ -85,7 +34,7 @@ auto tRpcDispatchesTypedHandler =
     auto httpServer = eacp::HTTP::Server();
     auto bridge = Miro::Bridge {};
     auto rpc = Rpc::Server {httpServer, bridge};
-    bridge.on<GreetRequest, GreetResponse>("greet", &greet);
+    bridge.on<GreetRequest, GreetResponse>("greet", &rpcGreet);
 
     auto ok = httpServer.listen(0);
     check(ok);
@@ -136,7 +85,7 @@ auto tRpcHttpErrorPropagatesStatus =
     auto httpServer = eacp::HTTP::Server();
     auto bridge = Miro::Bridge {};
     auto rpc = Rpc::Server {httpServer, bridge};
-    bridge.on<GreetRequest, GreetResponse>("greet", &greet);
+    bridge.on<GreetRequest, GreetResponse>("greet", &rpcGreet);
 
     auto ok = httpServer.listen(0);
     check(ok);
@@ -238,7 +187,7 @@ auto tRpcClientRoundTripsTypedCall = test("HttpRpc/clientRoundTripsTypedCall") =
     auto httpServer = eacp::HTTP::Server();
     auto bridge = Miro::Bridge {};
     auto rpc = Rpc::Server {httpServer, bridge};
-    bridge.on<GreetRequest, GreetResponse>("greet", &greet);
+    bridge.on<GreetRequest, GreetResponse>("greet", &rpcGreet);
     auto ok = httpServer.listen(0);
     check(ok);
 
@@ -263,7 +212,7 @@ auto tRpcClientThrowsOnHandlerError = test("HttpRpc/clientThrowsOnHandlerError")
     auto httpServer = eacp::HTTP::Server();
     auto bridge = Miro::Bridge {};
     auto rpc = Rpc::Server {httpServer, bridge};
-    bridge.on<GreetRequest, GreetResponse>("greet", &greet);
+    bridge.on<GreetRequest, GreetResponse>("greet", &rpcGreet);
     auto ok = httpServer.listen(0);
     check(ok);
 
@@ -330,7 +279,7 @@ auto tRpcAsInvokerWorks = test("HttpRpc/asInvokerProducesUsableInvokeCallable") 
     auto httpServer = eacp::HTTP::Server();
     auto bridge = Miro::Bridge {};
     auto rpc = Rpc::Server {httpServer, bridge};
-    bridge.on<GreetRequest, GreetResponse>("greet", &greet);
+    bridge.on<GreetRequest, GreetResponse>("greet", &rpcGreet);
     auto ok = httpServer.listen(0);
     check(ok);
 

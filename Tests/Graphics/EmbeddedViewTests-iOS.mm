@@ -41,11 +41,6 @@ UIView* nativeViewOf(View& view)
     return (__bridge UIView*) view.getHandle();
 }
 
-bool same(double a, double b)
-{
-    return std::abs(a - b) < 0.0001;
-}
-
 constexpr auto followsHost =
     UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 

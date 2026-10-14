@@ -25,35 +25,6 @@ auto tExecutablePath = test("Files/executablePathIsThisBinary") = []
 
 namespace
 {
-std::filesystem::path scratchDirectory(const std::string& name)
-{
-    auto dir = std::filesystem::temp_directory_path() / ("eacp-files-" + name);
-
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directories(dir);
-
-    return dir;
-}
-
-void write(const std::filesystem::path& path, const std::string& contents)
-{
-    auto out = std::ofstream {path, std::ios::binary | std::ios::trunc};
-    out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-}
-
-std::string read(const std::filesystem::path& path)
-{
-    return eacp::Files::readFile(FilePath {path});
-}
-
-void writeAtomically(const std::filesystem::path& path, std::string_view contents)
-{
-    eacp::Files::writeFileAtomically(
-        FilePath {path},
-        eacp::Span {reinterpret_cast<const std::uint8_t*>(contents.data()),
-                    (int) contents.size()});
-}
-
 int entryCount(const std::filesystem::path& dir)
 {
     auto options = eacp::Files::DirectoryOptions {};
@@ -65,33 +36,33 @@ int entryCount(const std::filesystem::path& dir)
 
 auto tAtomicCreatesFile = test("Files/atomicCreatesFile") = []
 {
-    auto dir = scratchDirectory("create");
+    auto dir = scratchDirectory("files-create");
     auto path = dir / "new.txt";
 
     writeAtomically(path, "hello");
 
-    check(read(path) == "hello");
+    check(readTestFile(path) == "hello");
 
     std::filesystem::remove_all(dir);
 };
 
 auto tAtomicReplacesWholeFile = test("Files/atomicReplacesWholeFile") = []
 {
-    auto dir = scratchDirectory("replace");
+    auto dir = scratchDirectory("files-replace");
     auto path = dir / "existing.txt";
 
-    write(path, "a much longer previous version of the file");
+    writeTestFile(path, "a much longer previous version of the file");
     writeAtomically(path, "short");
 
     // A truncating write that stopped early would leave the old tail behind.
-    check(read(path) == "short");
+    check(readTestFile(path) == "short");
 
     std::filesystem::remove_all(dir);
 };
 
 auto tAtomicLeavesNoTemporaries = test("Files/atomicLeavesNoTemporaries") = []
 {
-    auto dir = scratchDirectory("no-litter");
+    auto dir = scratchDirectory("files-no-litter");
     auto path = dir / "doc.txt";
 
     writeAtomically(path, "one");
@@ -101,7 +72,7 @@ auto tAtomicLeavesNoTemporaries = test("Files/atomicLeavesNoTemporaries") = []
     // The temporary is renamed onto the target rather than left beside it, so
     // repeated saves must not accumulate files in the directory.
     check(entryCount(dir) == 1);
-    check(read(path) == "three");
+    check(readTestFile(path) == "three");
 
     std::filesystem::remove_all(dir);
 };
@@ -109,22 +80,22 @@ auto tAtomicLeavesNoTemporaries = test("Files/atomicLeavesNoTemporaries") = []
 auto tAtomicCreatesParentDirectories =
     test("Files/atomicCreatesParentDirectories") = []
 {
-    auto dir = scratchDirectory("parents");
+    auto dir = scratchDirectory("files-parents");
     auto path = dir / "a" / "b" / "c.txt";
 
     writeAtomically(path, "nested");
 
-    check(read(path) == "nested");
+    check(readTestFile(path) == "nested");
 
     std::filesystem::remove_all(dir);
 };
 
 auto tAtomicWritesEmpty = test("Files/atomicWritesEmpty") = []
 {
-    auto dir = scratchDirectory("empty");
+    auto dir = scratchDirectory("files-empty");
     auto path = dir / "doc.txt";
 
-    write(path, "not empty yet");
+    writeTestFile(path, "not empty yet");
     writeAtomically(path, "");
 
     check(File {path}.exists());
@@ -136,7 +107,7 @@ auto tAtomicWritesEmpty = test("Files/atomicWritesEmpty") = []
 auto tAtomicThrowsOnUnwritableTarget =
     test("Files/atomicThrowsOnUnwritableTarget") = []
 {
-    auto dir = scratchDirectory("unwritable");
+    auto dir = scratchDirectory("files-unwritable");
 
     // The target is a directory, so the rename can never succeed.
     std::filesystem::create_directories(dir / "target");
@@ -162,10 +133,10 @@ auto tAtomicThrowsOnUnwritableTarget =
 
 auto tModificationTimeMoves = test("File/modificationTimeMoves") = []
 {
-    auto dir = scratchDirectory("mtime");
+    auto dir = scratchDirectory("files-mtime");
     auto path = dir / "doc.txt";
 
-    write(path, "first");
+    writeTestFile(path, "first");
     const auto first = File {path}.modificationTime();
 
     check(first != 0);
@@ -184,7 +155,7 @@ auto tModificationTimeMoves = test("File/modificationTimeMoves") = []
 
 auto tModificationTimeMissing = test("File/modificationTimeMissing") = []
 {
-    auto dir = scratchDirectory("mtime-missing");
+    auto dir = scratchDirectory("files-mtime-missing");
 
     check(File {dir / "nothing-here.txt"}.modificationTime() == 0);
 
@@ -193,14 +164,14 @@ auto tModificationTimeMissing = test("File/modificationTimeMissing") = []
 
 auto tCreateAndRemoveDirectories = test("Files/createAndRemoveDirectories") = []
 {
-    auto dir = scratchDirectory("tree");
+    auto dir = scratchDirectory("files-tree");
     auto nested = FilePath {dir / "a" / "b" / "c"};
 
     check(eacp::Files::createDirectories(nested));
     check(eacp::Files::createDirectories(nested));
     check(File {nested}.exists());
 
-    write(dir / "a" / "b" / "file.txt", "contents");
+    writeTestFile(dir / "a" / "b" / "file.txt", "contents");
 
     auto top = FilePath {dir / "a"};
     check(eacp::Files::removeAll(top));
@@ -220,16 +191,16 @@ auto tCreateAndRemoveDirectories = test("Files/createAndRemoveDirectories") = []
 auto tReadAllocatesAboutTheFileSize =
     test("Files/readAllocatesAboutTheFileSize") = []
 {
-    const auto dir = scratchDirectory("read-cost");
+    const auto dir = scratchDirectory("files-read-cost");
     const auto path = dir / "big.txt";
 
     // Large enough that a doubling buffer reallocates many times, so the
     // difference is structural rather than a fixed overhead.
     const auto size = 2 * 1024 * 1024;
-    write(path, std::string((std::size_t) size, 'x'));
+    writeTestFile(path, std::string((std::size_t) size, 'x'));
 
     auto counter = AllocationCount {};
-    const auto contents = read(path);
+    const auto contents = readTestFile(path);
     const auto bytes = counter.bytes();
 
     check((int) contents.size() == size);
@@ -238,57 +209,57 @@ auto tReadAllocatesAboutTheFileSize =
 
 auto tReadsAnEmptyFile = test("Files/readsAnEmptyFile") = []
 {
-    const auto dir = scratchDirectory("read-empty");
+    const auto dir = scratchDirectory("files-read-empty");
     const auto path = dir / "empty.txt";
 
-    write(path, "");
+    writeTestFile(path, "");
 
-    check(read(path).empty());
+    check(readTestFile(path).empty());
 };
 
 auto tReadsAMissingFileAsEmpty = test("Files/readsAMissingFileAsEmpty") = []
 {
-    const auto dir = scratchDirectory("read-missing");
+    const auto dir = scratchDirectory("files-read-missing");
 
-    check(read(dir / "does-not-exist.txt").empty());
+    check(readTestFile(dir / "does-not-exist.txt").empty());
 };
 
 auto tReadsWithoutATrailingNewline =
     test("Files/readsAFileWithNoTrailingNewline") = []
 {
-    const auto dir = scratchDirectory("read-no-newline");
+    const auto dir = scratchDirectory("files-read-no-newline");
     const auto path = dir / "text.txt";
 
-    write(path, "one\ntwo");
+    writeTestFile(path, "one\ntwo");
 
-    check(read(path) == "one\ntwo");
+    check(readTestFile(path) == "one\ntwo");
 };
 
 // A file is a length and some bytes, not a C string.
 auto tReadsEmbeddedNulBytes = test("Files/readsEmbeddedNulBytes") = []
 {
-    const auto dir = scratchDirectory("read-nuls");
+    const auto dir = scratchDirectory("files-read-nuls");
     const auto path = dir / "binary.bin";
 
     const auto contents = std::string {"before\0after\0\0end", 17};
-    write(path, contents);
+    writeTestFile(path, contents);
 
-    check(read(path) == contents);
-    check(read(path).size() == 17);
+    check(readTestFile(path) == contents);
+    check(readTestFile(path).size() == 17);
 };
 
 // Text mode on Windows folds CRLF and stops at 0x1A, so a binary file came back
 // short; the read is byte-exact on every platform.
 auto tReadsBytesVerbatim = test("Files/readsBytesVerbatim") = []
 {
-    const auto dir = scratchDirectory("read-verbatim");
+    const auto dir = scratchDirectory("files-read-verbatim");
     const auto path = dir / "data.bin";
 
     const auto contents = std::string {"a\r\nb\032c\r\n", 7};
-    write(path, contents);
+    writeTestFile(path, contents);
 
-    check(read(path) == contents);
-    check(read(path).size() == 7);
+    check(readTestFile(path) == contents);
+    check(readTestFile(path).size() == 7);
 };
 
 // --- resources beside the executable ----------------------------------------
@@ -338,30 +309,18 @@ using eacp::Files::DirectoryOptions;
 using eacp::Files::EntryKind;
 using eacp::Files::Visit;
 
-std::vector<std::string> relativeNames(const std::filesystem::path& root,
-                                       const eacp::Vector<DirectoryEntry>& entries)
-{
-    auto names = std::vector<std::string> {};
-
-    for (const auto& entry: entries)
-        names.push_back(
-            eacp::toStdPath(entry.path).lexically_relative(root).generic_string());
-
-    return names;
-}
-
 std::filesystem::path listingTree(const std::string& name)
 {
-    auto dir = scratchDirectory(name);
+    auto dir = scratchDirectory("files-" + name);
 
-    write(dir / "c.txt", "c");
-    write(dir / "a.txt", "a");
+    writeTestFile(dir / "c.txt", "c");
+    writeTestFile(dir / "a.txt", "a");
     std::filesystem::create_directories(dir / "b" / "inner");
-    write(dir / "b" / "x.txt", "x");
-    write(dir / "b" / "inner" / "y.txt", "y");
-    write(dir / ".hidden", "h");
+    writeTestFile(dir / "b" / "x.txt", "x");
+    writeTestFile(dir / "b" / "inner" / "y.txt", "y");
+    writeTestFile(dir / ".hidden", "h");
     std::filesystem::create_directories(dir / ".config");
-    write(dir / ".config" / "z.txt", "z");
+    writeTestFile(dir / ".config" / "z.txt", "z");
 
     return dir;
 }
@@ -495,7 +454,7 @@ auto tListFiles = test("Files/listFilesIsRegularFilesOnly") = []
 auto tMissingDirectory =
     test("Files/missingDirectoryReachesOnErrorAndReturnsFalse") = []
 {
-    auto dir = scratchDirectory("list-missing");
+    auto dir = scratchDirectory("files-list-missing");
     auto missing = FilePath {dir / "nowhere"};
 
     auto options = DirectoryOptions {};

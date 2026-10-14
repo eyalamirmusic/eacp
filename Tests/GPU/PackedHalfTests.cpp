@@ -33,6 +33,8 @@ using namespace eacp;
 using namespace eacp::GPU;
 using namespace eacp::GPU::CrossChecks;
 
+namespace PackedHalfTests
+{
 namespace
 {
 // One 32-bit word out of two fp16 bit patterns, low half first - the layout
@@ -50,21 +52,6 @@ float widened(std::uint16_t bits)
 }
 
 // The words as the float slots the kernels read them through, bit for bit.
-Vector<float> asFloats(const Vector<std::uint32_t>& words)
-{
-    auto floats = Vector<float> {};
-
-    for (auto word: words)
-        floats.add(std::bit_cast<float>(word));
-
-    return floats;
-}
-
-std::uint32_t wordOf(float value)
-{
-    return std::bit_cast<std::uint32_t>(value);
-}
-
 // Every fp16 class, and deliberately paired so that several of the packed
 // words are denormal floats: (0x0001, 0x0001) is 0x00010001, and 0x0000ffff
 // and 0x00003c00 are denormals too. Those are the entries that catch a load
@@ -846,3 +833,4 @@ auto tHalfHelpersAreNotAlwaysEmitted =
     check(contains(packing.source().source, "eacpPackHalf2"));
     check(!contains(packing.source().source, "eacpReadHalf"));
 };
+} // namespace PackedHalfTests

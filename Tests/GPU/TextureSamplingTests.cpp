@@ -23,6 +23,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace TextureSamplingTests
+{
 namespace
 {
 constexpr auto viewWidth = 16;
@@ -37,9 +39,12 @@ struct QuadVertex
     float uv[2];
 };
 } // namespace
+} // namespace TextureSamplingTests
 
-EACP_SHADER_VALUE(QuadVertex, Float2)
+EACP_SHADER_VALUE(TextureSamplingTests::QuadVertex, Float2)
 
+namespace TextureSamplingTests
+{
 namespace
 {
 // A full-viewport quad whose u runs 0..1: each texel covers half the width.
@@ -262,3 +267,4 @@ auto tLinearBlends = test("TextureSampling/linearBlendsBetweenTexels") = []
     check(image.isValid());
     check(count(image, isBlended) > 0);
 };
+} // namespace TextureSamplingTests

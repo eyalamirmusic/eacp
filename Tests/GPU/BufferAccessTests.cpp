@@ -20,22 +20,6 @@ using namespace eacp::GPU;
 
 namespace
 {
-bool contains(const std::string& haystack, const std::string& needle)
-{
-    return haystack.find(needle) != std::string::npos;
-}
-
-int occurrences(const std::string& haystack, const std::string& needle)
-{
-    auto count = 0;
-
-    for (auto at = haystack.find(needle); at != std::string::npos;
-         at = haystack.find(needle, at + needle.size()))
-        ++count;
-
-    return count;
-}
-
 // One element read with a literal index, broadcast over the dispatch: the
 // shape of a kernel scaling by a factor another kernel left in a one-element
 // buffer.

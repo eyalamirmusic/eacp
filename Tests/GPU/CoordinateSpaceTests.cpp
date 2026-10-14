@@ -25,6 +25,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CoordinateSpaceTests
+{
 namespace
 {
 constexpr auto viewW = 120.f;
@@ -175,3 +177,4 @@ auto tScissorSharesTheConvention =
     check(isBlack(image.at(middle, image.height() / 2)));
     check(isBlack(image.at(middle, image.height() - 3)));
 };
+} // namespace CoordinateSpaceTests

@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -19,16 +19,6 @@ using namespace eacp::UI;
 
 namespace
 {
-// The ramps own a texture and the glyph atlas owns two, so a painter needs a
-// device -- but no window, no pass and no drawable.
-bool hasDevice()
-{
-    return GPU::Device::shared().isValid();
-}
-
-const auto red = Color {1.f, 0.f, 0.f, 1.f};
-const auto blue = Color {0.f, 0.f, 1.f, 1.f};
-
 // A solid image of one colour, `size` on a side.
 eacp::Graphics::Image solid(int size, const Color& colour)
 {
@@ -41,21 +31,7 @@ eacp::Graphics::Image solid(int size, const Color& colour)
     return image;
 }
 
-// A painter with nowhere to draw, which is all a recording needs.
-struct Recorder
-{
-    explicit Recorder(const Rect& bounds = {0.f, 0.f, 100.f, 50.f})
-        : g(list, ramps, text, bounds)
-    {
-    }
-
-    DrawList list;
-    GradientRamps ramps;
-    Text::TextRenderer text;
-    UI::Graphics g;
-};
-
-bool isNear(float a, float b, float tolerance = 1e-4f)
+bool isNearlyEqual(float a, float b, float tolerance = 1e-4f)
 {
     return std::abs(a - b) <= tolerance;
 }
@@ -80,10 +56,11 @@ struct Rendered
 };
 
 // Within what eight bits and a linear filter allow.
-bool isColour(const Color& actual, const Color& expected)
+bool isImageColour(const Color& actual, const Color& expected)
 {
-    return isNear(actual.r, expected.r, 0.02f) && isNear(actual.g, expected.g, 0.02f)
-           && isNear(actual.b, expected.b, 0.02f);
+    return isNearlyEqual(actual.r, expected.r, 0.02f)
+           && isNearlyEqual(actual.g, expected.g, 0.02f)
+           && isNearlyEqual(actual.b, expected.b, 0.02f);
 }
 
 // The left half red, the right half blue at half strength, out of two images
@@ -307,10 +284,10 @@ auto tSourceRectIsUV =
 
     const auto& uv = recorder.list.getImages()[0].uv;
 
-    check(isNear(uv.x, 0.25f));
-    check(isNear(uv.y, 0.5f));
-    check(isNear(uv.w, 0.5f));
-    check(isNear(uv.h, 0.25f));
+    check(isNearlyEqual(uv.x, 0.25f));
+    check(isNearlyEqual(uv.y, 0.5f));
+    check(isNearlyEqual(uv.w, 0.5f));
+    check(isNearlyEqual(uv.h, 0.25f));
 };
 
 auto tNothingIsRecordedForNothing =
@@ -390,8 +367,9 @@ auto tFrameDrawsImages = test("ImageBatch/aFrameDrawsWhatTheTreeRecorded") = []
 
     // The x axis carries the assertion: neither backend mirrors horizontally,
     // so nothing here assumes which way up the read-back arrives.
-    check(isColour(rendered.at(10.f, 20.f), red), "the left half is the red image");
-    check(isColour(rendered.at(30.f, 20.f), {0.5f, 0.5f, 1.f, 1.f}),
+    check(isImageColour(rendered.at(10.f, 20.f), red),
+          "the left half is the red image");
+    check(isImageColour(rendered.at(30.f, 20.f), {0.5f, 0.5f, 1.f, 1.f}),
           "the right half is half blue over the white background");
 
     check(scene.host.getCachedImageCount() == 2);
@@ -469,8 +447,8 @@ auto tImageIsCutByClip = test("ImageBatch/anImageIsCutByTheClip") = []
 
     auto rendered = Rendered {host};
 
-    check(isColour(rendered.at(10.f, 20.f), red));
-    check(isColour(rendered.at(30.f, 20.f), Color::white()), "cut by the clip");
+    check(isImageColour(rendered.at(10.f, 20.f), red));
+    check(isImageColour(rendered.at(30.f, 20.f), Color::white()), "cut by the clip");
 };
 
 auto tUnusedTextureGoes =

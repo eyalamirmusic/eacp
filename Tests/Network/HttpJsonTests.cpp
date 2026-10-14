@@ -9,58 +9,10 @@ using eacp::HTTP::Error;
 using eacp::HTTP::Request;
 using eacp::HTTP::RequestHandler;
 using eacp::HTTP::Response;
-using eacp::Threads::callAsync;
-using eacp::Threads::stopEventLoop;
 namespace Json = eacp::HTTP::Json;
 
 namespace
 {
-std::string baseUrl(int port)
-{
-    return "http://127.0.0.1:" + std::to_string(port);
-}
-
-struct Exchange
-{
-    Response clientResponse;
-    bool completed = false;
-};
-
-void performExchange(eacp::HTTP::Server& server,
-                     const Request& clientRequest,
-                     Exchange& out)
-{
-    auto worker = std::thread();
-
-    auto stopped = eacp::Threads::runEventLoopFor(
-        eacp::Time::MS {5000},
-        [&]
-        {
-            worker = std::thread(
-                [&]
-                {
-                    out.clientResponse = eacp::HTTP::httpRequest(clientRequest);
-                    callAsync([] { stopEventLoop(); });
-                });
-        });
-
-    worker.join();
-    out.completed = stopped;
-    server.stop();
-}
-
-struct GreetRequest
-{
-    std::string name;
-    MIRO_REFLECT(name)
-};
-
-struct GreetResponse
-{
-    std::string greeting;
-    MIRO_REFLECT(greeting)
-};
-
 struct CountResponse
 {
     int n = 0;

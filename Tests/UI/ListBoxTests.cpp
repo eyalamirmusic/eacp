@@ -1,4 +1,4 @@
-#include <eacp/UI/UI.h>
+#include "Common.h"
 
 #include <NanoTest/NanoTest.h>
 
@@ -22,17 +22,6 @@ namespace
 {
 constexpr auto rowHeight = 20.f;
 
-eacp::Graphics::MouseEvent mouseAt(Point position, int clickCount = 1)
-{
-    auto event = eacp::Graphics::MouseEvent {};
-
-    event.pos = position;
-    event.downPos = position;
-    event.clickCount = clickCount;
-
-    return event;
-}
-
 struct Model final : ListBoxModel
 {
     int getNumRows() override { return rows; }
@@ -53,9 +42,9 @@ struct Model final : ListBoxModel
     int lastDoubleClicked = -1;
 };
 
-struct Harness
+struct ListBoxHarness
 {
-    Harness()
+    ListBoxHarness()
     {
         host.setBounds({0.f, 0.f, 200.f, 100.f});
         host.setRootComponent(root);
@@ -83,7 +72,7 @@ struct Harness
 
 auto tListClickSelects = test("ListBox/clickingARowSelectsIt") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     check(harness.list.getNumRows() == 20,
           "the count is read when the model is set");
@@ -106,7 +95,7 @@ auto tListClickSelects = test("ListBox/clickingARowSelectsIt") = []
 auto tListSelectingIsSilent =
     test("ListBox/settingTheSelectionReportsOnlyWhenAsked") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     harness.list.setSelectedRow(4);
 
@@ -125,7 +114,7 @@ auto tListSelectingIsSilent =
 
 auto tListDoubleClick = test("ListBox/aSecondClickOnARowIsADoubleClick") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     harness.click({50.f, 50.f});
     harness.click({50.f, 50.f}, 2);
@@ -138,7 +127,7 @@ auto tListDoubleClick = test("ListBox/aSecondClickOnARowIsADoubleClick") = []
 auto tListUpdateContentClamps =
     test("ListBox/updateContentPutsTheSelectionBackInRange") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     harness.list.setSelectedRow(18);
     harness.list.scrollToRow(19);
@@ -161,7 +150,7 @@ auto tListUpdateContentClamps =
 
 auto tListScrollToRow = test("ListBox/scrollingToARowMovesAsFarAsItHasTo") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     // Five rows fit in a hundred points, so the top five are already there.
     harness.list.scrollToRow(3);
@@ -184,7 +173,7 @@ auto tListScrollToRow = test("ListBox/scrollingToARowMovesAsFarAsItHasTo") = []
 auto tListScrolledRowsAreHit =
     test("ListBox/aScrolledListSelectsWhatIsUnderThePointer") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     harness.list.setScrollPosition(50.f);
     harness.click({50.f, 10.f});
@@ -195,7 +184,7 @@ auto tListScrolledRowsAreHit =
 
 auto tListWheelScrolls = test("ListBox/theWheelScrollsTheRows") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     auto wheel = mouseAt({50.f, 50.f});
     wheel.delta = {0.f, -1.f};
@@ -216,7 +205,7 @@ auto tListWheelScrolls = test("ListBox/theWheelScrollsTheRows") = []
 // the row arithmetic has to leave room for.
 auto tListColumns = test("ListBox/columnsSplitARowAndLeaveRoomForTheHeader") = []
 {
-    auto harness = Harness {};
+    auto harness = ListBoxHarness {};
 
     harness.list.setColumns({{"time", 60.f}, {"channel", 40.f}, {"message", 100.f}});
     harness.list.setHeaderHeight(24.f);

@@ -20,6 +20,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace CommandBufferWaitTests
+{
 namespace
 {
 constexpr auto floatBytes = (int) sizeof(float);
@@ -489,3 +491,4 @@ auto tScopedUpdateWaitsForOneBufferOnly =
 
     trailing.wait();
 };
+} // namespace CommandBufferWaitTests

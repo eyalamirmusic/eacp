@@ -9,6 +9,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::UI;
 
+namespace SafePointerTests
+{
 namespace
 {
 struct Panel : Component
@@ -100,3 +102,4 @@ auto tSafePointerInDerivedDestructor =
     check(Watcher::seenInDestructor != nullptr);
     check(safe == nullptr);
 };
+} // namespace SafePointerTests

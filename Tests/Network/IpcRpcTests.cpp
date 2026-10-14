@@ -12,7 +12,7 @@ using eacp::Threads::runEventLoopUntil;
 
 namespace
 {
-constexpr auto pumpTimeout = eacp::Time::MS {10000};
+constexpr auto ipcRpcPumpTimeout = eacp::Time::MS {10000};
 
 struct AddRequest
 {
@@ -57,7 +57,7 @@ auto tTypedCall = test("Ipc/Rpc/typedCallRoundTrips") = []
         .then([&](AddResult result) { sum = result.sum; },
               [](const std::string&) {});
 
-    check(runEventLoopUntil([&] { return sum != 0; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return sum != 0; }, ipcRpcPumpTimeout));
     check(sum == 42);
 };
 
@@ -71,7 +71,7 @@ auto tUnknownCommandRejects = test("Ipc/Rpc/unknownCommandRejects") = []
     client.call<AddResult>("nope", AddRequest {})
         .then([](AddResult) {}, [&](const std::string& reason) { error = reason; });
 
-    check(runEventLoopUntil([&] { return !error.empty(); }, pumpTimeout));
+    check(runEventLoopUntil([&] { return !error.empty(); }, ipcRpcPumpTimeout));
 };
 
 auto tEventsReachEveryClient = test("Ipc/Rpc/eventsReachEveryClient") = []
@@ -90,12 +90,12 @@ auto tEventsReachEveryClient = test("Ipc/Rpc/eventsReachEveryClient") = []
                          [&](const AddResult& event) { secondGot = event.sum; });
 
     check(runEventLoopUntil([&] { return server.connectedClients() == 2; },
-                            pumpTimeout));
+                            ipcRpcPumpTimeout));
 
     bridge.emit("total", AddResult {7});
 
     check(runEventLoopUntil([&] { return firstGot == 7 && secondGot == 7; },
-                            pumpTimeout));
+                            ipcRpcPumpTimeout));
 };
 
 // A call must never hang forever: when the dial finds nobody, the pending
@@ -108,7 +108,7 @@ auto tCallsFailWhenNobodyServes = test("Ipc/Rpc/callsFailWhenNobodyServes") = []
     client.call<AddResult>("add", AddRequest {1, 2})
         .then([](AddResult) {}, [&](const std::string& reason) { error = reason; });
 
-    check(runEventLoopUntil([&] { return !error.empty(); }, pumpTimeout));
+    check(runEventLoopUntil([&] { return !error.empty(); }, ipcRpcPumpTimeout));
 };
 
 auto tClientLeavingIsBookkept = test("Ipc/Rpc/clientLeavingIsBookkept") = []
@@ -123,10 +123,10 @@ auto tClientLeavingIsBookkept = test("Ipc/Rpc/clientLeavingIsBookkept") = []
     client.emplace("eacp.tests.rpc.leave");
 
     check(runEventLoopUntil([&] { return server.connectedClients() == 1; },
-                            pumpTimeout));
+                            ipcRpcPumpTimeout));
 
     client.reset();
 
-    check(runEventLoopUntil([&] { return left; }, pumpTimeout));
+    check(runEventLoopUntil([&] { return left; }, ipcRpcPumpTimeout));
     check(server.connectedClients() == 0);
 };

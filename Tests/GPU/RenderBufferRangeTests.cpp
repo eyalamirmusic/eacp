@@ -17,6 +17,8 @@ using namespace nano;
 using namespace eacp;
 using namespace eacp::GPU;
 
+namespace RenderBufferRangeTests
+{
 namespace
 {
 struct Vertex
@@ -24,9 +26,12 @@ struct Vertex
     float position[2];
 };
 } // namespace
+} // namespace RenderBufferRangeTests
 
-EACP_SHADER_VALUE(Vertex, Float2)
+EACP_SHADER_VALUE(RenderBufferRangeTests::Vertex, Float2)
 
+namespace RenderBufferRangeTests
+{
 namespace
 {
 constexpr Vertex fullQuad[] = {
@@ -322,3 +327,4 @@ auto tIndexGuardsDrawNothing =
     check(isClear(image.at(24, 16)), "no draw took an unbindable index range");
     check(isGreen(image.at(8, 16)), "and the draw after them still happened");
 };
+} // namespace RenderBufferRangeTests
