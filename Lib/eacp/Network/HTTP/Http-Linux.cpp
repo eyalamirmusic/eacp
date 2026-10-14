@@ -45,12 +45,23 @@ public:
 
     bool needsCallback() const { return progress != nullptr || idleLimit.count > 0; }
 
+    bool canBeCancelled() const { return progress != nullptr; }
+
+    bool isCancelled() const
+    {
+        return progress != nullptr && progress->cancel.load();
+    }
+
     bool wentIdle() const { return idleExpired; }
 
     // A resumed download reports nothing until the response says whether its
     // body extends the file, replaces it or - an error page - is not the
     // file at all; from then on the bytes already on disk are counted in.
     void waitForTheResponse() { reporting = false; }
+
+    // A plain request takes the cancel from its progress block but reports
+    // nothing into it, as on the other backends.
+    void reportNothing() { reporting = false; }
 
     void startReporting(std::int64_t bytesAlreadyOnDisk)
     {
@@ -66,11 +77,6 @@ private:
 
         progress->bytesReceived.store(offset + received);
         progress->totalBytes.store(total == 0 ? -1 : offset + total);
-    }
-
-    bool isCancelled() const
-    {
-        return progress != nullptr && progress->cancel.load();
     }
 
     bool hasBeenIdleTooLong(curl_off_t moved)
@@ -324,6 +330,73 @@ void watchTransfer(CURL* curl, TransferWatch& watch)
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &watch);
 }
 
+struct CurlMulti
+{
+    CurlMulti(CURL* easyToRun)
+        : handle(curl_multi_init())
+        , easy(easyToRun)
+    {
+        if (!handle)
+            throw std::runtime_error("Failed to initialise curl");
+
+        curl_multi_add_handle(handle, easy);
+    }
+
+    ~CurlMulti()
+    {
+        curl_multi_remove_handle(handle, easy);
+        curl_multi_cleanup(handle);
+    }
+
+    CURLM* handle = nullptr;
+    CURL* easy = nullptr;
+};
+
+constexpr auto cancelPollMilliseconds = 25;
+
+CURLcode finishedTransferResult(CURLM* multi)
+{
+    auto queued = 0;
+
+    while (auto* message = curl_multi_info_read(multi, &queued))
+    {
+        if (message->msg == CURLMSG_DONE)
+            return message->data.result;
+    }
+
+    return CURLE_OK;
+}
+
+// curl only offers the cancel flag to the progress callback, which it calls
+// about once a second while nothing moves. A transfer that can be cancelled
+// is driven through a multi handle instead, which wakes every few
+// milliseconds to look. A transfer that has finished keeps its own result,
+// whatever the flag says by then.
+CURLcode performWatchingForCancel(CURL* easy, const TransferWatch& watch)
+{
+    if (!watch.canBeCancelled())
+        return curl_easy_perform(easy);
+
+    auto multi = CurlMulti(easy);
+
+    while (true)
+    {
+        auto running = 0;
+        auto rc = curl_multi_perform(multi.handle, &running);
+
+        if (rc != CURLM_OK)
+            throw std::runtime_error(curl_multi_strerror(rc));
+
+        if (running == 0)
+            return finishedTransferResult(multi.handle);
+
+        if (watch.isCancelled())
+            return CURLE_ABORTED_BY_CALLBACK;
+
+        curl_multi_poll(multi.handle, nullptr, 0, cancelPollMilliseconds, nullptr);
+    }
+}
+
 int responseCode(CURL* curl)
 {
     long status = 0;
@@ -352,10 +425,11 @@ Response httpRequestInternal(const Request& req)
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
 
-    auto watch = TransferWatch(nullptr, req.idleTimeout);
+    auto watch = TransferWatch(req.progress, req.idleTimeout);
+    watch.reportNothing();
     watchTransfer(curl.handle, watch);
 
-    auto rc = curl_easy_perform(curl.handle);
+    auto rc = performWatchingForCancel(curl.handle, watch);
     if (rc != CURLE_OK)
         throwTransferError(rc, {sink.tooLarge, watch.wentIdle(), false}, req);
 
@@ -396,7 +470,7 @@ Response downloadFileInternal(const Request& req,
     curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToFile);
     curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &sink);
 
-    auto rc = curl_easy_perform(curl.handle);
+    auto rc = performWatchingForCancel(curl.handle, watch);
 
     if (rc == CURLE_OK && !sink.decide())
         rc = CURLE_WRITE_ERROR;

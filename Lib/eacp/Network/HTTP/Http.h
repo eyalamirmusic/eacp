@@ -24,6 +24,12 @@ struct DownloadProgress
 {
     std::atomic<std::int64_t> bytesReceived {0};
     std::atomic<std::int64_t> totalBytes {-1};
+
+    // Set from any thread to end the request or download carrying this block;
+    // it then returns an error. NSURLSession, WinHTTP and curl act on it
+    // within a few tens of milliseconds even while the connection is stalled.
+    // Android checks it only as body data arrives, so a stalled transfer
+    // there runs on until its idle or whole-request timeout.
     std::atomic<bool> cancel {false};
     std::atomic<bool> done {false};
 };

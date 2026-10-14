@@ -177,9 +177,13 @@ void applyTimeouts(HINTERNET request, const Request& req)
 // a thread that closes it at the deadline - the whole request's, or the end
 // of a silence longer than the idle limit, whichever comes first; the call
 // then fails with ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout.
+// A request with a progress block has its cancel flag checked every few
+// milliseconds the same way, so a cancel cuts a stalled call short too.
 class TimedRequestHandle
 {
     using Clock = std::chrono::steady_clock;
+
+    static constexpr auto cancelPollInterval = std::chrono::milliseconds(25);
 
 public:
     ~TimedRequestHandle()
@@ -190,11 +194,15 @@ public:
 
     // Takes ownership of the handle and starts the clocks. Called before the
     // first blocking call, so the whole exchange sits inside the window.
-    void adopt(HINTERNET requestToOwn, Time::MS timeout, Time::MS idleTimeout)
+    void adopt(HINTERNET requestToOwn,
+               Time::MS timeout,
+               Time::MS idleTimeout,
+               const DownloadProgress* progressToWatch)
     {
         handle = requestToOwn;
+        progress = progressToWatch;
 
-        if (timeout.count <= 0 && idleTimeout.count <= 0)
+        if (timeout.count <= 0 && idleTimeout.count <= 0 && progress == nullptr)
             return;
 
         // The deadline is pinned here rather than inside the watchdog: a
@@ -218,8 +226,11 @@ public:
 
     HINTERNET get() const { return handle; }
 
-    void throwIfTimedOut() const
+    void throwIfCutShort() const
     {
+        if (cancelled.load())
+            throw std::runtime_error("Download cancelled");
+
         if (expired.load())
             throw std::runtime_error(timedOutError());
     }
@@ -233,26 +244,46 @@ private:
         return lastActivity + idleLimit;
     }
 
+    Clock::time_point nextCancelCheck() const
+    {
+        if (progress == nullptr)
+            return Clock::time_point::max();
+
+        return Clock::now() + cancelPollInterval;
+    }
+
+    bool isCancelled() const
+    {
+        return progress != nullptr && progress->cancel.load();
+    }
+
     void watch(Clock::time_point due)
     {
         auto lock = std::unique_lock(mutex);
 
         while (true)
         {
-            auto next = std::min(due, idleDue());
+            auto next = std::min({due, idleDue(), nextCancelCheck()});
 
             if (settled.wait_until(lock, next, [this] { return finished; }))
                 return;
 
+            if (isCancelled())
+            {
+                cancelled.store(true);
+                break;
+            }
+
             auto now = Clock::now();
 
             if (now >= due || now >= idleDue())
+            {
+                expired.store(true);
                 break;
+            }
         }
 
         lock.unlock();
-
-        expired.store(true);
         closeOnce();
     }
 
@@ -278,12 +309,14 @@ private:
     }
 
     HINTERNET handle = nullptr;
+    const DownloadProgress* progress = nullptr;
     std::chrono::milliseconds idleLimit {0};
     Clock::time_point lastActivity;
     std::thread watchdog;
     std::mutex mutex;
     std::condition_variable settled;
     std::atomic<bool> expired {false};
+    std::atomic<bool> cancelled {false};
     std::atomic<bool> closed {false};
     bool finished = false;
 };
@@ -456,7 +489,7 @@ void writeBody(const Request& req, TimedRequestHandle& request)
                               static_cast<DWORD>(slice),
                               &written))
         {
-            request.throwIfTimedOut();
+            request.throwIfCutShort();
             throwLastError("Sending the request");
         }
 
@@ -493,7 +526,7 @@ void sendRequest(const Request& req, OpenedRequest& opened)
         throwLastError("Opening the request");
 
     applyTimeouts(request, req);
-    opened.request.adopt(request, req.timeout, req.idleTimeout);
+    opened.request.adopt(request, req.timeout, req.idleTimeout, req.progress);
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
@@ -546,7 +579,7 @@ void sendRequest(const Request& req, OpenedRequest& opened)
                             bodySize,
                             0))
     {
-        opened.request.throwIfTimedOut();
+        opened.request.throwIfCutShort();
         throwLastError("Sending the request");
     }
 
@@ -557,7 +590,7 @@ void sendRequest(const Request& req, OpenedRequest& opened)
 
     if (!WinHttpReceiveResponse(opened.request.get(), nullptr))
     {
-        opened.request.throwIfTimedOut();
+        opened.request.throwIfCutShort();
         throwReceiveError(req, opened.redirectsFollowed);
     }
 
@@ -672,7 +705,7 @@ std::string readBodyToString(TimedRequestHandle& request,
         auto available = DWORD {0};
         if (!WinHttpQueryDataAvailable(request.get(), &available))
         {
-            request.throwIfTimedOut();
+            request.throwIfCutShort();
             throwLastError("Reading the response");
         }
 
@@ -688,7 +721,7 @@ std::string readBodyToString(TimedRequestHandle& request,
         auto read = DWORD {0};
         if (!WinHttpReadData(request.get(), body.data() + offset, available, &read))
         {
-            request.throwIfTimedOut();
+            request.throwIfCutShort();
             throwLastError("Reading the response");
         }
 
@@ -737,7 +770,7 @@ void streamBodyToFile(TimedRequestHandle& request,
         auto available = DWORD {0};
         if (!WinHttpQueryDataAvailable(request.get(), &available))
         {
-            request.throwIfTimedOut();
+            request.throwIfCutShort();
             throwLastError("Reading the response");
         }
 
@@ -750,7 +783,7 @@ void streamBodyToFile(TimedRequestHandle& request,
         auto read = DWORD {0};
         if (!WinHttpReadData(request.get(), buffer.data(), toRead, &read))
         {
-            request.throwIfTimedOut();
+            request.throwIfCutShort();
             throwLastError("Reading the response");
         }
 

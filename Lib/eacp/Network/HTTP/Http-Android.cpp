@@ -625,10 +625,11 @@ Response httpRequestInternal(const Request& req)
     exchange->throwIfDeclaredTooLarge(limit);
 
     auto& body = exchange->response.content;
-    auto appendToBody = [&body, &limit](std::string_view chunk)
+    auto appendToBody = [&body, &limit, &req](std::string_view chunk)
     {
         countChunk(limit, chunk);
         body.append(chunk);
+        throwIfCancelled(req);
     };
     exchange->readBody(appendToBody);
 

@@ -843,6 +843,13 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   response and no body byte sent by then is cancelled, and reported as a
   timeout only if it then ended cancelled. Android:
   `setConnectTimeout`/`setReadTimeout`
+- `DownloadProgress::cancel` ends `httpRequest` as well as a download, and a
+  stalled one within about 25 ms: NSURLSession's waiting thread waits in
+  slices and cancels the task (a task that completed first keeps its result),
+  curl drives a cancellable transfer through a multi handle polled every
+  25 ms, and WinHTTP's watchdog - started for any request with a progress
+  block - closes the handle. Android checks the flag only per body chunk (for
+  both), so a stall there lasts until the idle or whole-request timeout
 - `Request::cachePolicy` (default `IgnoreLocalCache`; on Apple the request uses
   `NSURLRequestReloadIgnoringLocalCacheData`, and a request that would have
   used `sharedSession` uses one process-wide session of eacp's own with no

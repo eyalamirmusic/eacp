@@ -477,6 +477,33 @@ private:
     std::shared_ptr<std::atomic<bool>> fired =
         std::make_shared<std::atomic<bool>>(false);
 };
+
+constexpr auto cancelPollInterval = Time::MS {25};
+
+// The delegate only sees the cancel flag as data arrives, so a stalled
+// transfer would run on until a timeout. The waiting thread checks it between
+// short waits instead and cancels the task itself. A task that completed
+// first ignores the cancel and keeps the result it ended with.
+void waitForTask(NSURLSessionTask* task,
+                 Threads::TaskSemaphore& semaphore,
+                 const DownloadProgress* progress)
+{
+    if (progress == nullptr)
+    {
+        semaphore.wait();
+        return;
+    }
+
+    while (!semaphore.waitFor(cancelPollInterval))
+    {
+        if (progress->cancel.load())
+        {
+            [task cancel];
+            semaphore.wait();
+            return;
+        }
+    }
+}
 } // namespace
 
 NSMutableURLRequest* getRequest(const Request& req)
@@ -622,7 +649,7 @@ SafeResult performSyncRequest(NSURLRequest* request,
     [task resume];
     connectDeadline.arm(task, req.connectTimeout);
 
-    semaphore.wait();
+    waitForTask(task, semaphore, req.progress);
     connectDeadline.throwIfFired(result.error.get());
 
     return result;
@@ -668,7 +695,7 @@ SafeResult performDelegatedRequest(NSURLRequest* request, const Request& req)
     [task resume];
     connectDeadline.arm(task, req.connectTimeout);
 
-    semaphore.wait();
+    waitForTask(task, semaphore, req.progress);
     [session.get() finishTasksAndInvalidate];
 
     connectDeadline.throwIfFired(ctx.error.get());
@@ -750,7 +777,7 @@ Response downloadFileInternal(const Request& req,
     [task resume];
     connectDeadline.arm(task, req.connectTimeout);
 
-    semaphore.wait();
+    waitForTask(task, semaphore, req.progress);
     [session.get() finishTasksAndInvalidate];
 
     connectDeadline.throwIfFired(ctx.error.get());

@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <chrono>
 #include <filesystem>
 #include <system_error>
 #include <thread>
@@ -483,6 +484,102 @@ auto tIdleUploadArrivesWhole =
     check(res.error.empty());
     check(res.statusCode == 200);
     check(received == 3 * 1024 * 1024);
+};
+
+namespace
+{
+// Far longer than the tests wait, so only the cancel can end the transfer.
+constexpr auto anIdleLimitTheCancelMustBeat = MS {30000};
+
+// Each backend looks at the cancel flag every few tens of milliseconds while
+// a transfer is stalled; the bound leaves room for a loaded runner's stalls.
+constexpr auto promptlyAfterTheCancel = std::chrono::milliseconds(1500);
+
+struct CancelledOutcome
+{
+    Response response;
+    std::chrono::milliseconds afterTheCancel {0};
+};
+
+// Cancels from another thread once the transfer has stalled, and measures how
+// long the call took to return after that.
+CancelledOutcome cancelDuringStall(TricklingServer& server,
+                                   DownloadProgress& progress,
+                                   const std::function<Response()>& perform)
+{
+    using Clock = std::chrono::steady_clock;
+
+    auto outcome = CancelledOutcome();
+    auto cancelledAt = Clock::time_point();
+
+    auto cancelLater = [&]
+    {
+        eacp::Time::sleep(MS {200});
+        cancelledAt = Clock::now();
+        progress.cancel.store(true);
+    };
+
+    auto timed = [&]
+    {
+        auto canceller = std::thread(cancelLater);
+        auto res = perform();
+        auto returnedAt = Clock::now();
+
+        canceller.join();
+        server.stalled.release();
+
+        auto elapsed = returnedAt - cancelledAt;
+        outcome.afterTheCancel =
+            std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        return res;
+    };
+
+    outcome.response = runOffTheLoop(timed);
+    return outcome;
+}
+} // namespace
+
+auto tCancelEndsStalledRequest =
+    test("HttpTimeout/cancelEndsAStalledRequestPromptly") = []
+{
+    auto server = TricklingServer(4, MS {0}, true);
+
+    auto progress = DownloadProgress();
+    auto req = Request(server.url());
+    req.idleTimeout = anIdleLimitTheCancelMustBeat;
+    req.progress = &progress;
+
+    auto perform = [&] { return req.perform(); };
+    auto outcome = cancelDuringStall(server, progress, perform);
+
+    check(outcome.afterTheCancel.count() >= 0);
+    check(outcome.afterTheCancel < promptlyAfterTheCancel);
+    check(!outcome.response.error.empty());
+    check(outcome.response.statusCode == 0);
+};
+
+auto tCancelEndsStalledDownload =
+    test("HttpTimeout/cancelEndsAStalledDownloadPromptly") = []
+{
+    auto server = TricklingServer(4, MS {0}, true);
+
+    auto progress = DownloadProgress();
+    auto req = Request(server.url());
+    req.idleTimeout = anIdleLimitTheCancelMustBeat;
+    req.progress = &progress;
+
+    auto destination = tempPath("cancel-stalled");
+    auto outcome = cancelDuringStall(
+        server, progress, [&] { return req.downloadTo(destination); });
+
+    check(outcome.afterTheCancel.count() >= 0);
+    check(outcome.afterTheCancel < promptlyAfterTheCancel);
+    check(!outcome.response.error.empty());
+    check(outcome.response.statusCode == 0);
+    check(progress.done.load());
+
+    auto ec = std::error_code();
+    std::filesystem::remove(destination, ec);
 };
 
 #if !defined(_WIN32)
