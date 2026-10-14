@@ -1,7 +1,6 @@
 #include "Http.h"
 #include "HttpProtocol.h"
 #include <algorithm>
-#include <cctype>
 
 #include <filesystem>
 #include <fstream>
@@ -229,6 +228,7 @@ RangeProbe probeRangeSupport(const Request& req)
     head.parallelChunks = 1;
     head.progress = nullptr;
     head.headers.erase("Range");
+    preferIdentityEncoding(head);
 
     auto response = httpRequest(head);
 
@@ -303,10 +303,12 @@ std::string downloadChunk(const Request& sourceReq,
 {
     auto worker = sourceReq;
     worker.parallelChunks = 1;
+    worker.resumeDownload = false;
     worker.type = "GET";
     worker.progress = &progress;
     worker.headers["Range"] =
         "bytes=" + std::to_string(range.start) + "-" + std::to_string(range.end);
+    preferIdentityEncoding(worker);
 
     auto res = downloadFile(worker, destPath);
 
@@ -500,9 +502,139 @@ Response downloadFileParallel(const Request& req, const std::string& filePath)
     return response;
 }
 
+namespace
+{
+std::int64_t existingFileSize(const std::string& filePath)
+{
+    auto ec = std::error_code();
+    auto size = std::filesystem::file_size(filePath, ec);
+    return ec ? 0 : (std::int64_t) size;
+}
+
+std::int64_t bytesToResumeFrom(const Request& req, const std::string& filePath)
+{
+    if (!req.resumeDownload || req.hasHeader("Range"))
+        return 0;
+
+    return existingFileSize(filePath);
+}
+
+Request withRangeFrom(const Request& req, std::int64_t offset)
+{
+    auto ranged = req;
+    ranged.headers["Range"] = "bytes=" + std::to_string(offset) + "-";
+    preferIdentityEncoding(ranged);
+    return ranged;
+}
+
+// A 206 that stops short of the end - a server that caps how much one range
+// returns - leaves a file that is a correct but incomplete prefix, kept so a
+// later resume can carry on from it.
+std::string incompleteRemainderError(const Response& response,
+                                     const std::string& filePath)
+{
+    auto range =
+        parseContentRange(findHeaderIgnoringCase(response.headers, "Content-Range"));
+
+    if (range.total < 0 || existingFileSize(filePath) == range.total)
+        return {};
+
+    return "The server sent bytes " + std::to_string(range.first) + "-"
+           + std::to_string(range.last) + " of " + std::to_string(range.total)
+           + "; the download is incomplete";
+}
+
+Response finishAppended(Response response, const std::string& filePath)
+{
+    response.error = incompleteRemainderError(response, filePath);
+    response.statusCode = response.error.empty() ? 200 : 0;
+    return response;
+}
+
+bool fileIsAlreadyWhole(const Response& response, std::int64_t fileSize)
+{
+    auto range =
+        parseContentRange(findHeaderIgnoringCase(response.headers, "Content-Range"));
+    return response.statusCode == 416 && range.total == fileSize;
+}
+
+bool restartsFromScratch(const Response& response)
+{
+    return response.statusCode == 416 || response.statusCode == 206;
+}
+
+void reportWholeFile(DownloadProgress* progress, std::int64_t fileSize)
+{
+    if (progress == nullptr)
+        return;
+
+    progress->bytesReceived.store(fileSize);
+    progress->totalBytes.store(fileSize);
+}
+
+void resetProgress(DownloadProgress* progress)
+{
+    if (progress == nullptr)
+        return;
+
+    progress->bytesReceived.store(0);
+    progress->totalBytes.store(-1);
+}
+
+Response downloadResuming(const Request& req, const std::string& filePath)
+{
+    auto offset = bytesToResumeFrom(req, filePath);
+
+    if (offset <= 0)
+        return downloadFileFrom(req, filePath, 0);
+
+    auto response = downloadFileFrom(withRangeFrom(req, offset), filePath, offset);
+
+    if (!response.error.empty())
+        return response;
+
+    auto write = downloadWriteFor(response.statusCode, response.headers, offset);
+
+    if (write == DownloadWrite::Append)
+        return finishAppended(std::move(response), filePath);
+
+    if (write == DownloadWrite::Replace)
+        return response;
+
+    if (fileIsAlreadyWhole(response, offset))
+    {
+        reportWholeFile(req.progress, offset);
+        response.statusCode = 200;
+        response.content.clear();
+        return response;
+    }
+
+    if (!restartsFromScratch(response))
+        return response;
+
+    resetProgress(req.progress);
+    return downloadFileFrom(req, filePath, 0);
+}
+
+bool resumesExistingFile(const Request& req, const std::string& filePath)
+{
+    return bytesToResumeFrom(req, filePath) > 0;
+}
+} // namespace
+
+Response downloadFile(const Request& req, const std::string& filePath)
+{
+    auto response = downloadResuming(req, filePath);
+
+    if (req.progress)
+        req.progress->done.store(true);
+
+    return response;
+}
+
 Response Request::downloadTo(const std::string& filePath) const
 {
-    if (parallelChunks > 1)
+    if (parallelChunks > 1 && !resumesExistingFile(*this, filePath))
     {
         auto res = downloadFileParallel(*this, filePath);
         if (progress)
@@ -532,9 +664,15 @@ void appendDecodedPercentEscape(std::string& out, const std::string& src, int& i
 
 namespace
 {
+bool isAsciiAlphanumeric(unsigned char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+           || (c >= '0' && c <= '9');
+}
+
 bool isUnreservedUrlChar(unsigned char c)
 {
-    return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.' || c == '~';
+    return isAsciiAlphanumeric(c) || c == '-' || c == '_' || c == '.' || c == '~';
 }
 
 void appendPercentEscape(std::string& out, unsigned char c)
@@ -585,22 +723,22 @@ std::string urlDecode(const std::string& encoded)
 
 namespace
 {
-void parseQueryPair(const std::string& pair, std::map<std::string, std::string>& out)
+void parseQueryPair(const std::string& pair, Vector<QueryParameter>& out)
 {
     if (pair.empty())
         return;
 
     auto eq = pair.find('=');
     if (eq == std::string::npos)
-        out[urlDecode(pair)] = "";
+        out.add({urlDecode(pair), {}});
     else
-        out[urlDecode(pair.substr(0, eq))] = urlDecode(pair.substr(eq + 1));
+        out.add({urlDecode(pair.substr(0, eq)), urlDecode(pair.substr(eq + 1))});
 }
 } // namespace
 
-std::map<std::string, std::string> parseQueryString(const std::string& query)
+Vector<QueryParameter> parseQueryParameters(const std::string& query)
 {
-    auto result = std::map<std::string, std::string>();
+    auto result = Vector<QueryParameter>();
     auto pos = std::size_t {0};
 
     while (pos < query.size())
@@ -613,6 +751,111 @@ std::map<std::string, std::string> parseQueryString(const std::string& query)
             break;
         pos = amp + 1;
     }
+
+    return result;
+}
+
+std::map<std::string, std::string> parseQueryString(const std::string& query)
+{
+    auto result = std::map<std::string, std::string>();
+
+    for (auto& parameter: parseQueryParameters(query))
+        result[parameter.name] = parameter.value;
+
+    return result;
+}
+
+std::string defaultUserAgent()
+{
+#ifdef EACP_VERSION_STRING
+    return std::string("eacp/") + EACP_VERSION_STRING;
+#else
+    return "eacp";
+#endif
+}
+
+namespace
+{
+std::string querySeparator(const std::string& base)
+{
+    if (base.find('?') == std::string::npos)
+        return "?";
+
+    return base.ends_with("?") || base.ends_with("&") ? "" : "&";
+}
+} // namespace
+
+URL::URL(const std::string& text)
+{
+    auto hash = text.find('#');
+    auto withoutFragment = text.substr(0, hash);
+    auto question = withoutFragment.find('?');
+    auto query = question == std::string::npos
+                     ? std::string()
+                     : withoutFragment.substr(question + 1);
+
+    base = query.empty() ? withoutFragment : withoutFragment.substr(0, question);
+    parameters = parseQueryParameters(query);
+
+    if (hash != std::string::npos)
+        fragment = text.substr(hash + 1);
+}
+
+URL URL::parse(const std::string& text)
+{
+    return URL(text);
+}
+
+URL& URL::addParameter(const std::string& name, const std::string& value)
+{
+    parameters.add({name, value});
+    return *this;
+}
+
+std::string URL::getParameter(const std::string& name) const
+{
+    for (auto& parameter: parameters)
+        if (parameter.name == name)
+            return parameter.value;
+
+    return {};
+}
+
+bool URL::hasParameter(const std::string& name) const
+{
+    for (auto& parameter: parameters)
+        if (parameter.name == name)
+            return true;
+
+    return false;
+}
+
+std::string URL::query() const
+{
+    auto result = std::string();
+
+    for (auto& parameter: parameters)
+    {
+        if (!result.empty())
+            result.push_back('&');
+
+        result += urlEncode(parameter.name);
+        result.push_back('=');
+        result += urlEncode(parameter.value);
+    }
+
+    return result;
+}
+
+std::string URL::toString() const
+{
+    auto result = base;
+
+    if (!parameters.empty())
+        result += querySeparator(base) + query();
+
+    if (!fragment.empty())
+        result += "#" + fragment;
 
     return result;
 }

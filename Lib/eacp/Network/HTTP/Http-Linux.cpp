@@ -3,6 +3,7 @@
 
 #include <curl/curl.h>
 
+#include <chrono>
 #include <cstdio>
 
 namespace eacp::HTTP
@@ -21,6 +22,93 @@ void initCurlOnce()
     (void) once;
 }
 
+// Runs from curl's progress callback, which curl calls often while bytes move
+// and about once a second while they do not: reports download progress,
+// passes a cancel on, and ends a transfer that has gone quiet for longer than
+// the idle limit.
+class TransferWatch
+{
+    using Clock = std::chrono::steady_clock;
+
+public:
+    TransferWatch(DownloadProgress* progressToReport, Time::MS idleLimitToUse)
+        : progress(progressToReport)
+        , idleLimit(idleLimitToUse)
+    {
+    }
+
+    bool update(curl_off_t total, curl_off_t received, curl_off_t sent)
+    {
+        reportProgress(total, received);
+        return isCancelled() || hasBeenIdleTooLong(received + sent);
+    }
+
+    bool needsCallback() const { return progress != nullptr || idleLimit.count > 0; }
+
+    bool wentIdle() const { return idleExpired; }
+
+    // A resumed download reports nothing until the response says whether its
+    // body extends the file, replaces it or - an error page - is not the
+    // file at all; from then on the bytes already on disk are counted in.
+    void waitForTheResponse() { reporting = false; }
+
+    void startReporting(std::int64_t bytesAlreadyOnDisk)
+    {
+        offset = bytesAlreadyOnDisk;
+        reporting = true;
+    }
+
+private:
+    void reportProgress(curl_off_t total, curl_off_t received)
+    {
+        if (progress == nullptr || !reporting)
+            return;
+
+        progress->bytesReceived.store(offset + received);
+        progress->totalBytes.store(total == 0 ? -1 : offset + total);
+    }
+
+    bool isCancelled() const
+    {
+        return progress != nullptr && progress->cancel.load();
+    }
+
+    bool hasBeenIdleTooLong(curl_off_t moved)
+    {
+        if (idleLimit.count <= 0)
+            return false;
+
+        auto now = Clock::now();
+
+        if (moved != lastMoved)
+        {
+            lastMoved = moved;
+            lastActivity = now;
+            return false;
+        }
+
+        auto quiet = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - lastActivity);
+        idleExpired = quiet.count() >= idleLimit.count;
+        return idleExpired;
+    }
+
+    DownloadProgress* progress = nullptr;
+    Time::MS idleLimit;
+    std::int64_t offset = 0;
+    bool reporting = true;
+    curl_off_t lastMoved = 0;
+    Clock::time_point lastActivity = Clock::now();
+    bool idleExpired = false;
+};
+
+int progressCallback(
+    void* userp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t ulnow)
+{
+    auto* watch = static_cast<TransferWatch*>(userp);
+    return watch->update(dltotal, dlnow, ulnow) ? 1 : 0;
+}
+
 struct BodyToString
 {
     std::string* body = nullptr;
@@ -28,10 +116,53 @@ struct BodyToString
     bool tooLarge = false;
 };
 
+// The destination is opened on the first byte of the final response, once
+// its status says whether the body replaces the file, extends it, or is not
+// wanted at all.
 struct BodyToFile
 {
+    ~BodyToFile() { close(); }
+
+    void close()
+    {
+        if (file != nullptr)
+            std::fclose(file);
+
+        file = nullptr;
+    }
+
+    bool decide()
+    {
+        if (decided)
+            return !openFailed;
+
+        decided = true;
+
+        auto status = 0L;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        write = downloadWriteFor((int) status, *headers, resumeFrom);
+
+        if (write == DownloadWrite::Keep)
+            return true;
+
+        watch->startReporting(write == DownloadWrite::Append ? resumeFrom : 0);
+
+        file =
+            std::fopen(path.c_str(), write == DownloadWrite::Append ? "ab" : "wb");
+        openFailed = file == nullptr;
+        return !openFailed;
+    }
+
+    CURL* curl = nullptr;
+    const std::map<std::string, std::string>* headers = nullptr;
+    TransferWatch* watch = nullptr;
+    std::string path;
+    std::int64_t resumeFrom = 0;
     std::FILE* file = nullptr;
     ResponseSizeLimit limit;
+    DownloadWrite write = DownloadWrite::Replace;
+    bool decided = false;
+    bool openFailed = false;
     bool tooLarge = false;
 };
 
@@ -55,19 +186,43 @@ size_t writeToFile(void* contents, size_t size, size_t nmemb, void* userp)
     auto total = size * nmemb;
     auto& sink = *static_cast<BodyToFile*>(userp);
 
+    if (!sink.decide())
+        return 0;
+
     if (!sink.limit.add((int64_t) total))
     {
         sink.tooLarge = true;
         return 0;
     }
 
+    if (sink.file == nullptr)
+        return total;
+
     return std::fwrite(contents, 1, total, sink.file);
 }
 
-[[noreturn]] void throwTransferError(CURLcode rc, bool tooLarge, const Request& req)
+struct TransferFailure
 {
-    if (tooLarge)
+    bool tooLarge = false;
+    bool wentIdle = false;
+    bool couldNotOpenFile = false;
+};
+
+[[noreturn]] void throwTransferError(CURLcode rc,
+                                     const TransferFailure& failure,
+                                     const Request& req)
+{
+    if (failure.tooLarge)
         throw std::runtime_error(responseTooLargeError(req.maxResponseSize));
+
+    if (failure.wentIdle)
+        throw std::runtime_error(timedOutError());
+
+    if (failure.couldNotOpenFile)
+        throw std::runtime_error("Failed to open destination file");
+
+    if (rc == CURLE_TOO_MANY_REDIRECTS)
+        throw std::runtime_error(tooManyRedirectsError(req.maxRedirects));
 
     throw std::runtime_error(curl_easy_strerror(rc));
 }
@@ -106,13 +261,23 @@ struct CurlEasy
     CURL* handle = nullptr;
 };
 
-int progressCallback(
-    void* userp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t)
+void applyTimeouts(CURL* curl, const Request& req)
 {
-    auto* progress = static_cast<DownloadProgress*>(userp);
-    progress->bytesReceived.store(dlnow);
-    progress->totalBytes.store(dltotal == 0 ? -1 : dltotal);
-    return progress->cancel.load() ? 1 : 0;
+    if (req.timeout.count > 0)
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, (long) req.timeout.count);
+
+    auto connect = connectLimit(req);
+
+    if (connect.count > 0)
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, (long) connect.count);
+}
+
+void applyRedirectPolicy(CURL* curl, const Request& req)
+{
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
+
+    if (req.followRedirects && req.maxRedirects >= 0)
+        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, (long) req.maxRedirects);
 }
 
 void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
@@ -122,15 +287,13 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
 
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.type.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
-    if (req.timeout.count > 0)
-    {
-        auto limit = (long) req.timeout.count;
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, limit);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, limit);
-    }
+    applyRedirectPolicy(curl, req);
+    applyTimeouts(curl, req);
+
+    if (needsDefaultUserAgent(req))
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, defaultUserAgent().c_str());
 
     if (req.type == "HEAD")
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
@@ -149,6 +312,23 @@ void applyCommonOptions(CURL* curl, const Request& req, CurlSlist& headers)
     }
     if (headers.list)
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers.list);
+}
+
+void watchTransfer(CURL* curl, TransferWatch& watch)
+{
+    if (!watch.needsCallback())
+        return;
+
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressCallback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &watch);
+}
+
+int responseCode(CURL* curl)
+{
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    return (int) status;
 }
 
 Response httpRequestInternal(const Request& req)
@@ -172,17 +352,20 @@ Response httpRequestInternal(const Request& req)
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
 
+    auto watch = TransferWatch(nullptr, req.idleTimeout);
+    watchTransfer(curl.handle, watch);
+
     auto rc = curl_easy_perform(curl.handle);
     if (rc != CURLE_OK)
-        throwTransferError(rc, sink.tooLarge, req);
+        throwTransferError(rc, {sink.tooLarge, watch.wentIdle(), false}, req);
 
-    long status = 0;
-    curl_easy_getinfo(curl.handle, CURLINFO_RESPONSE_CODE, &status);
-    response.statusCode = (int) status;
+    response.statusCode = responseCode(curl.handle);
     return response;
 }
 
-Response downloadFileInternal(const Request& req, const std::string& filePath)
+Response downloadFileInternal(const Request& req,
+                              const std::string& filePath,
+                              std::int64_t resumeFrom)
 {
     initCurlOnce();
 
@@ -193,36 +376,38 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     auto headers = CurlSlist();
     applyCommonOptions(curl.handle, req, headers);
 
-    auto* file = std::fopen(filePath.c_str(), "wb");
-    if (!file)
-        throw std::runtime_error("Failed to open destination file");
-
-    auto sink = BodyToFile {};
-    sink.file = file;
-    sink.limit.maxBytes = req.maxResponseSize;
-    curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToFile);
-    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &sink);
-
     auto response = Response();
     curl_easy_setopt(curl.handle, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl.handle, CURLOPT_HEADERDATA, &response.headers);
 
-    if (req.progress)
-    {
-        curl_easy_setopt(curl.handle, CURLOPT_NOPROGRESS, 0L);
-        curl_easy_setopt(curl.handle, CURLOPT_XFERINFOFUNCTION, progressCallback);
-        curl_easy_setopt(curl.handle, CURLOPT_XFERINFODATA, req.progress);
-    }
+    auto watch = TransferWatch(req.progress, req.idleTimeout);
+    watchTransfer(curl.handle, watch);
+
+    if (resumeFrom > 0)
+        watch.waitForTheResponse();
+
+    auto sink = BodyToFile {};
+    sink.curl = curl.handle;
+    sink.headers = &response.headers;
+    sink.watch = &watch;
+    sink.path = filePath;
+    sink.resumeFrom = resumeFrom;
+    sink.limit.maxBytes = req.maxResponseSize;
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEFUNCTION, writeToFile);
+    curl_easy_setopt(curl.handle, CURLOPT_WRITEDATA, &sink);
 
     auto rc = curl_easy_perform(curl.handle);
-    std::fclose(file);
+
+    if (rc == CURLE_OK && !sink.decide())
+        rc = CURLE_WRITE_ERROR;
+
+    sink.close();
 
     if (rc != CURLE_OK)
-        throwTransferError(rc, sink.tooLarge, req);
+        throwTransferError(
+            rc, {sink.tooLarge, watch.wentIdle(), sink.openFailed}, req);
 
-    long status = 0;
-    curl_easy_getinfo(curl.handle, CURLINFO_RESPONSE_CODE, &status);
-    response.statusCode = (int) status;
+    response.statusCode = responseCode(curl.handle);
     return response;
 }
 
@@ -243,21 +428,20 @@ Response httpRequest(const Request& req)
     return res;
 }
 
-Response downloadFile(const Request& req, const std::string& filePath)
+Response downloadFileFrom(const Request& req,
+                          const std::string& filePath,
+                          std::int64_t resumeFrom)
 {
     auto res = Response();
     try
     {
-        res = downloadFileInternal(req, filePath);
+        res = downloadFileInternal(req, filePath, resumeFrom);
     }
     catch (const std::exception& e)
     {
         res.error = e.what();
         res.statusCode = 0;
     }
-
-    if (req.progress)
-        req.progress->done.store(true);
 
     return res;
 }

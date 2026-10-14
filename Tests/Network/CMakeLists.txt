@@ -1,14 +1,18 @@
 set(network_test_sources
         HttpAsyncTests.cpp
+        HttpCacheTests.cpp
         HttpDownloadProgressTests.cpp
         HttpJsonTests.cpp
         HttpParallelDownloadTests.cpp
         HttpRedirectTests.cpp
         HttpRequestTests.cpp
         HttpResponseSizeTests.cpp
+        HttpResumeTests.cpp
         HttpRpcTests.cpp
         HttpServerTests.cpp
         HttpTimeoutTests.cpp
+        HttpUrlTests.cpp
+        HttpUserAgentTests.cpp
         OnlineResourceTests.cpp
         OnlineResourcesTests.cpp
         TcpConnectionTests.cpp

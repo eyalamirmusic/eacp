@@ -84,18 +84,21 @@ struct Handle
 // One process-wide session, never closed: WinHTTP session handles are
 // thread-safe and cheap to share. AUTOMATIC_PROXY honours the system proxy
 // configuration (as Windows.Web.Http did); the fallback covers systems
-// predating it (Win8.0).
+// predating it (Win8.0). The agent named here is the User-Agent of every
+// request that adds none of its own: WinHttpAddRequestHeaders overrides it.
 HINTERNET session()
 {
     static auto handle = []
     {
-        auto opened = WinHttpOpen(L"eacp",
+        auto agent = Strings::widen(defaultUserAgent());
+
+        auto opened = WinHttpOpen(agent.c_str(),
                                   WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                   WINHTTP_NO_PROXY_NAME,
                                   WINHTTP_NO_PROXY_BYPASS,
                                   0);
         if (!opened)
-            opened = WinHttpOpen(L"eacp",
+            opened = WinHttpOpen(agent.c_str(),
                                  WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                  WINHTTP_NO_PROXY_NAME,
                                  WINHTTP_NO_PROXY_BYPASS,
@@ -123,7 +126,7 @@ public:
     void throwIfExpired() const
     {
         if (limited && deadline.expired())
-            throw std::runtime_error("The request timed out");
+            throw std::runtime_error(timedOutError());
     }
 
 private:
@@ -131,17 +134,37 @@ private:
     Time::Deadline deadline;
 };
 
-void applyTimeouts(HINTERNET request, const Request& req)
+int clampedMilliseconds(Time::MS limit, int fallback)
 {
-    if (req.timeout.count <= 0)
-        return;
+    if (limit.count <= 0)
+        return fallback;
 
     auto maxMilliseconds = std::numeric_limits<int>::max();
-    auto limit = req.timeout.count > maxMilliseconds
-                     ? maxMilliseconds
-                     : static_cast<int>(req.timeout.count);
+    return limit.count > maxMilliseconds ? maxMilliseconds
+                                         : static_cast<int>(limit.count);
+}
 
-    WinHttpSetTimeouts(request, limit, limit, limit, limit);
+// WinHTTP's own defaults, used for whichever phase the request leaves unset:
+// no resolve limit, 60s to connect, 30s to send and 30s for each receive.
+constexpr auto defaultResolveTimeout = 0;
+constexpr auto defaultConnectTimeout = 60000;
+constexpr auto defaultSendTimeout = 30000;
+constexpr auto defaultReceiveTimeout = 30000;
+
+// The receive timeout bounds each wait for data, which is the idle limit.
+void applyTimeouts(HINTERNET request, const Request& req)
+{
+    auto connect = connectLimit(req);
+    auto idle = idleLimit(req);
+
+    if (connect.count <= 0 && idle.count <= 0 && req.timeout.count <= 0)
+        return;
+
+    WinHttpSetTimeouts(request,
+                       clampedMilliseconds(connect, defaultResolveTimeout),
+                       clampedMilliseconds(connect, defaultConnectTimeout),
+                       clampedMilliseconds(req.timeout, defaultSendTimeout),
+                       clampedMilliseconds(idle, defaultReceiveTimeout));
 }
 
 // Those timeouts are recorded but never interrupt a call already in flight:
@@ -150,8 +173,9 @@ void applyTimeouts(HINTERNET request, const Request& req)
 // limit is only reported afterwards - far too late to be the wall-clock bound
 // the curl and NSURLSession backends give. Closing the request handle is the
 // one thing that does cut a blocked call short, so the handle lives here with
-// a thread that closes it at the deadline; the call then fails with
-// ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout.
+// a thread that closes it at the deadline - the whole request's, or the end
+// of a silence longer than the idle limit, whichever comes first; the call
+// then fails with ERROR_WINHTTP_OPERATION_CANCELLED and unwinds as a timeout.
 class TimedRequestHandle
 {
     using Clock = std::chrono::steady_clock;
@@ -163,20 +187,32 @@ public:
         closeOnce();
     }
 
-    // Takes ownership of the handle and starts the clock. Called before the
+    // Takes ownership of the handle and starts the clocks. Called before the
     // first blocking call, so the whole exchange sits inside the window.
-    void adopt(HINTERNET requestToOwn, Time::MS timeout)
+    void adopt(HINTERNET requestToOwn, Time::MS timeout, Time::MS idleTimeout)
     {
         handle = requestToOwn;
 
-        if (timeout.count <= 0)
+        if (timeout.count <= 0 && idleTimeout.count <= 0)
             return;
 
         // The deadline is pinned here rather than inside the watchdog: a
         // contended machine can take a while to schedule the thread, and that
         // delay would otherwise be added to the limit the caller asked for.
-        auto due = Clock::now() + std::chrono::milliseconds(timeout.count);
+        auto now = Clock::now();
+        auto due = timeout.count > 0 ? now + std::chrono::milliseconds(timeout.count)
+                                     : Clock::time_point::max();
+
+        idleLimit = std::chrono::milliseconds(idleTimeout.count);
+        lastActivity = now;
         watchdog = std::thread([this, due] { watch(due); });
+    }
+
+    // Data arrived: the silence the idle limit measures starts again.
+    void noteActivity()
+    {
+        auto lock = std::scoped_lock(mutex);
+        lastActivity = Clock::now();
     }
 
     HINTERNET get() const { return handle; }
@@ -184,16 +220,34 @@ public:
     void throwIfTimedOut() const
     {
         if (expired.load())
-            throw std::runtime_error("The request timed out");
+            throw std::runtime_error(timedOutError());
     }
 
 private:
+    Clock::time_point idleDue() const
+    {
+        if (idleLimit.count() <= 0)
+            return Clock::time_point::max();
+
+        return lastActivity + idleLimit;
+    }
+
     void watch(Clock::time_point due)
     {
         auto lock = std::unique_lock(mutex);
 
-        if (settled.wait_until(lock, due, [this] { return finished; }))
-            return;
+        while (true)
+        {
+            auto next = std::min(due, idleDue());
+
+            if (settled.wait_until(lock, next, [this] { return finished; }))
+                return;
+
+            auto now = Clock::now();
+
+            if (now >= due || now >= idleDue())
+                break;
+        }
 
         lock.unlock();
 
@@ -223,6 +277,8 @@ private:
     }
 
     HINTERNET handle = nullptr;
+    std::chrono::milliseconds idleLimit {0};
+    Clock::time_point lastActivity;
     std::thread watchdog;
     std::mutex mutex;
     std::condition_variable settled;
@@ -268,13 +324,145 @@ CrackedUrl crackUrl(const std::string& url)
     return cracked;
 }
 
+bool limitsRedirects(const Request& req)
+{
+    return req.followRedirects && req.maxRedirects >= 0;
+}
+
+void setRedirectPolicy(HINTERNET request, DWORD policy)
+{
+    WinHttpSetOption(
+        request, WINHTTP_OPTION_REDIRECT_POLICY, &policy, sizeof(policy));
+}
+
+// A limit of zero follows nothing, so the first redirect comes back as the
+// response and throwIfRedirectLimitHit turns it into the error.
+void applyRedirectPolicy(HINTERNET request, const Request& req)
+{
+    if (!req.followRedirects || req.maxRedirects == 0)
+    {
+        setRedirectPolicy(request, WINHTTP_OPTION_REDIRECT_POLICY_NEVER);
+        return;
+    }
+
+    if (req.maxRedirects < 0)
+        return;
+
+    auto limit = static_cast<DWORD>(req.maxRedirects);
+    WinHttpSetOption(
+        request, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &limit, sizeof(limit));
+}
+
+// WinHTTP reports every redirect it follows through the status callback, which
+// runs on the calling thread for a synchronous handle. The count tells a
+// redirect left unfollowed because the limit was reached from one the
+// redirect policy refused - an https to http downgrade, say - which comes
+// back as the response, as on the other backends.
+void CALLBACK
+    countRedirect(HINTERNET, DWORD_PTR context, DWORD status, LPVOID, DWORD)
+{
+    if (status == WINHTTP_CALLBACK_STATUS_REDIRECT && context != 0)
+        ++*reinterpret_cast<std::atomic<int>*>(context);
+}
+
+void countRedirects(HINTERNET request, std::atomic<int>& followed)
+{
+    auto context = reinterpret_cast<DWORD_PTR>(&followed);
+    WinHttpSetOption(
+        request, WINHTTP_OPTION_CONTEXT_VALUE, &context, sizeof(context));
+    WinHttpSetStatusCallback(
+        request, countRedirect, WINHTTP_CALLBACK_FLAG_REDIRECT, 0);
+}
+
+bool reachedRedirectLimit(const Request& req, const std::atomic<int>& followed)
+{
+    return limitsRedirects(req) && followed.load() >= req.maxRedirects;
+}
+
+[[noreturn]] void throwReceiveError(const Request& req,
+                                    const std::atomic<int>& followed)
+{
+    auto error = GetLastError();
+
+    if (error == ERROR_WINHTTP_REDIRECT_FAILED
+        && reachedRedirectLimit(req, followed))
+        throw std::runtime_error(tooManyRedirectsError(req.maxRedirects));
+
+    SetLastError(error);
+    throwLastError("Receiving the response");
+}
+
+bool hasLocationHeader(HINTERNET request)
+{
+    auto size = DWORD {0};
+    WinHttpQueryHeaders(request,
+                        WINHTTP_QUERY_LOCATION,
+                        WINHTTP_HEADER_NAME_BY_INDEX,
+                        WINHTTP_NO_OUTPUT_BUFFER,
+                        &size,
+                        WINHTTP_NO_HEADER_INDEX);
+    return GetLastError() == ERROR_INSUFFICIENT_BUFFER && size > 0;
+}
+
+int queryStatusCode(HINTERNET request);
+
+// WinHTTP stops following once the limit is reached and hands back the
+// redirect it did not follow, so a final answer that is still a redirect,
+// after as many redirects as the limit allows, is the limit being hit.
+void throwIfRedirectLimitHit(HINTERNET request,
+                             const Request& req,
+                             const std::atomic<int>& followed)
+{
+    if (!reachedRedirectLimit(req, followed))
+        return;
+
+    if (isRedirectStatus(queryStatusCode(request)) && hasLocationHeader(request))
+        throw std::runtime_error(tooManyRedirectsError(req.maxRedirects));
+}
+
 // The request is declared last so it is destroyed first: the watchdog gets
-// joined and the request closed before the connection it hangs off.
+// joined and the request closed before the connection it hangs off, and
+// before the count its status callback writes to.
 struct OpenedRequest
 {
+    std::atomic<int> redirectsFollowed {0};
     Handle connection;
     TimedRequestHandle request;
 };
+
+// Under an idle limit a body larger than one slice goes out a slice at a time
+// rather than inside WinHttpSendRequest, so each slice counts as activity and
+// an upload that takes longer than the idle limit, while still moving, is not
+// cut short. Anything else is sent in the one call, as before.
+constexpr auto uploadSliceSize = std::size_t {64 * 1024};
+
+bool sendsBodyInSlices(const Request& req)
+{
+    return req.idleTimeout.count > 0 && req.body.size() > uploadSliceSize;
+}
+
+void writeBody(const Request& req, TimedRequestHandle& request)
+{
+    auto offset = std::size_t {0};
+
+    while (offset < req.body.size())
+    {
+        auto slice = std::min(uploadSliceSize, req.body.size() - offset);
+        auto written = DWORD {0};
+
+        if (!WinHttpWriteData(request.get(),
+                              req.body.data() + offset,
+                              static_cast<DWORD>(slice),
+                              &written))
+        {
+            request.throwIfTimedOut();
+            throwLastError("Sending the request");
+        }
+
+        offset += written;
+        request.noteActivity();
+    }
+}
 
 void sendRequest(const Request& req, OpenedRequest& opened)
 {
@@ -304,24 +492,24 @@ void sendRequest(const Request& req, OpenedRequest& opened)
         throwLastError("Opening the request");
 
     applyTimeouts(request, req);
-    opened.request.adopt(request, req.timeout);
+    opened.request.adopt(request, req.timeout, req.idleTimeout);
 
     // Responses arrive decompressed, matching NSURLSession and the previous
     // backend. Best-effort: unsupported systems just skip Accept-Encoding.
-    auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
-    WinHttpSetOption(opened.request.get(),
-                     WINHTTP_OPTION_DECOMPRESSION,
-                     &decompression,
-                     sizeof(decompression));
-
-    if (!req.followRedirects)
+    // Not for a request that names its own Accept-Encoding - a ranged one asks
+    // for the identity encoding, its byte offsets being the representation's
+    // own - since WinHTTP would replace the caller's header with its own.
+    if (!req.hasHeader("Accept-Encoding"))
     {
-        auto policy = DWORD {WINHTTP_OPTION_REDIRECT_POLICY_NEVER};
+        auto decompression = DWORD {WINHTTP_DECOMPRESSION_FLAG_ALL};
         WinHttpSetOption(opened.request.get(),
-                         WINHTTP_OPTION_REDIRECT_POLICY,
-                         &policy,
-                         sizeof(policy));
+                         WINHTTP_OPTION_DECOMPRESSION,
+                         &decompression,
+                         sizeof(decompression));
     }
+
+    applyRedirectPolicy(opened.request.get(), req);
+    countRedirects(opened.request.get(), opened.redirectsFollowed);
 
     auto headerLines = std::string();
     for (const auto& [key, value]: req.headers)
@@ -341,14 +529,15 @@ void sendRequest(const Request& req, OpenedRequest& opened)
                                  WINHTTP_ADDREQ_FLAG_ADD);
 
     auto bodySize = static_cast<DWORD>(req.body.size());
-    auto* bodyData = req.body.empty() ? WINHTTP_NO_REQUEST_DATA
-                                      : const_cast<char*>(req.body.data());
+    auto sliced = sendsBodyInSlices(req);
+    auto* bodyData = sliced || req.body.empty() ? WINHTTP_NO_REQUEST_DATA
+                                                : const_cast<char*>(req.body.data());
 
     if (!WinHttpSendRequest(opened.request.get(),
                             WINHTTP_NO_ADDITIONAL_HEADERS,
                             0,
                             bodyData,
-                            bodySize,
+                            sliced ? 0 : bodySize,
                             bodySize,
                             0))
     {
@@ -356,11 +545,19 @@ void sendRequest(const Request& req, OpenedRequest& opened)
         throwLastError("Sending the request");
     }
 
+    opened.request.noteActivity();
+
+    if (sliced)
+        writeBody(req, opened.request);
+
     if (!WinHttpReceiveResponse(opened.request.get(), nullptr))
     {
         opened.request.throwIfTimedOut();
-        throwLastError("Receiving the response");
+        throwReceiveError(req, opened.redirectsFollowed);
     }
+
+    opened.request.noteActivity();
+    throwIfRedirectLimitHit(opened.request.get(), req, opened.redirectsFollowed);
 }
 
 int queryStatusCode(HINTERNET request)
@@ -457,7 +654,7 @@ void throwIfDeclaredTooLarge(HINTERNET request,
         throw std::runtime_error(responseTooLargeError(limit.maxBytes));
 }
 
-std::string readBodyToString(const TimedRequestHandle& request,
+std::string readBodyToString(TimedRequestHandle& request,
                              const RequestTimeout& timeout,
                              ResponseSizeLimit& limit)
 {
@@ -477,6 +674,7 @@ std::string readBodyToString(const TimedRequestHandle& request,
         if (available == 0)
             return body;
 
+        request.noteActivity();
         throwIfTooLarge(limit, available);
 
         auto offset = body.size();
@@ -496,13 +694,14 @@ std::string readBodyToString(const TimedRequestHandle& request,
     }
 }
 
-HANDLE openDestinationFileForWrite(const std::string& filePath)
+HANDLE openDestinationFile(const std::string& filePath, DownloadWrite write)
 {
+    auto appending = write == DownloadWrite::Append;
     auto handle = CreateFileW(Strings::widen(filePath).c_str(),
-                              GENERIC_WRITE,
+                              appending ? FILE_APPEND_DATA : GENERIC_WRITE,
                               0,
                               nullptr,
-                              CREATE_ALWAYS,
+                              appending ? OPEN_ALWAYS : CREATE_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL,
                               nullptr);
 
@@ -512,10 +711,11 @@ HANDLE openDestinationFileForWrite(const std::string& filePath)
     return handle;
 }
 
-void streamBodyToFile(const TimedRequestHandle& request,
+void streamBodyToFile(TimedRequestHandle& request,
                       HANDLE file,
                       const Request& req,
                       const std::string& filePath,
+                      std::int64_t alreadyOnDisk,
                       const RequestTimeout& timeout,
                       ResponseSizeLimit& limit)
 {
@@ -539,6 +739,8 @@ void streamBodyToFile(const TimedRequestHandle& request,
         if (available == 0)
             return;
 
+        request.noteActivity();
+
         auto toRead = std::min(available, static_cast<DWORD>(buffer.size()));
         auto read = DWORD {0};
         if (!WinHttpReadData(request.get(), buffer.data(), toRead, &read))
@@ -558,8 +760,19 @@ void streamBodyToFile(const TimedRequestHandle& request,
 
         received += read;
         if (req.progress)
-            req.progress->bytesReceived.store(received);
+            req.progress->bytesReceived.store(alreadyOnDisk + received);
     }
+}
+
+void reportExpectedSize(const Request& req,
+                        std::int64_t contentLength,
+                        std::int64_t alreadyOnDisk)
+{
+    if (req.progress == nullptr)
+        return;
+
+    req.progress->totalBytes.store(contentLength >= 0 ? alreadyOnDisk + contentLength
+                                                      : -1);
 }
 
 Response httpRequestInternal(const Request& req)
@@ -581,7 +794,9 @@ Response httpRequestInternal(const Request& req)
     return response;
 }
 
-Response downloadFileInternal(const Request& req, const std::string& filePath)
+Response downloadFileInternal(const Request& req,
+                              const std::string& filePath,
+                              std::int64_t resumeFrom)
 {
     auto timeout = RequestTimeout(req);
 
@@ -592,18 +807,25 @@ Response downloadFileInternal(const Request& req, const std::string& filePath)
     response.statusCode = queryStatusCode(opened.request.get());
     copyResponseHeaders(opened.request.get(), response);
 
+    auto write = downloadWriteFor(response.statusCode, response.headers, resumeFrom);
+
+    if (write == DownloadWrite::Keep)
+        return response;
+
+    auto alreadyOnDisk = write == DownloadWrite::Append ? resumeFrom : 0;
+
     auto limit = ResponseSizeLimit {};
     limit.maxBytes = req.maxResponseSize;
     throwIfDeclaredTooLarge(opened.request.get(), req, limit);
 
-    if (req.progress)
-        req.progress->totalBytes.store(queryContentLength(opened.request.get()));
+    reportExpectedSize(req, queryContentLength(opened.request.get()), alreadyOnDisk);
 
-    auto file = openDestinationFileForWrite(filePath);
+    auto file = openDestinationFile(filePath, write);
 
     try
     {
-        streamBodyToFile(opened.request, file, req, filePath, timeout, limit);
+        streamBodyToFile(
+            opened.request, file, req, filePath, alreadyOnDisk, timeout, limit);
     }
     catch (...)
     {
@@ -634,22 +856,21 @@ Response httpRequest(const Request& req)
     return res;
 }
 
-Response downloadFile(const Request& req, const std::string& filePath)
+Response downloadFileFrom(const Request& req,
+                          const std::string& filePath,
+                          std::int64_t resumeFrom)
 {
     auto res = Response();
 
     try
     {
-        res = downloadFileInternal(req, filePath);
+        res = downloadFileInternal(req, filePath, resumeFrom);
     }
     catch (const std::exception& e)
     {
         res.error = e.what();
         res.statusCode = 0;
     }
-
-    if (req.progress)
-        req.progress->done.store(true);
 
     return res;
 }

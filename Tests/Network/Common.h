@@ -64,7 +64,8 @@ inline eacp::HTTP::ServerOptions threadPoolOptions()
     return options;
 }
 
-inline bool runOffTheLoop(const std::function<void()>& work)
+inline bool runOffTheLoop(const std::function<void()>& work,
+                          eacp::Time::MS budget = fetchTimeout)
 {
     auto worker = std::thread();
 
@@ -79,8 +80,7 @@ inline bool runOffTheLoop(const std::function<void()>& work)
         worker = std::thread(runAndStop);
     };
 
-    auto stopped =
-        eacp::Threads::runEventLoopFor(eacp::Time::MS {5000}, startWorker);
+    auto stopped = eacp::Threads::runEventLoopFor(budget, startWorker);
 
     if (worker.joinable())
         worker.join();

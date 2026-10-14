@@ -210,6 +210,18 @@ struct DisconnectOnExit
 
 using ChunkSink = std::function<void(std::string_view)>;
 
+// HttpURLConnection follows up to its own fixed limit and has no setting for
+// it, so a request that names a limit has its redirects followed here.
+bool followsRedirectsItself(const Request& req)
+{
+    return req.followRedirects && req.maxRedirects < 0;
+}
+
+bool followsRedirectsByHand(const Request& req)
+{
+    return req.followRedirects && req.maxRedirects >= 0;
+}
+
 // One request's connection. The members go in reverse: the watchdog is joined,
 // then the connection disconnected, then the frame popped - which happens even
 // when the constructor throws.
@@ -283,7 +295,7 @@ public:
     void throwIfExpired() const
     {
         if (deadline.hasExpired())
-            throw std::runtime_error("The request timed out");
+            throw std::runtime_error(timedOutError());
     }
 
     Response response;
@@ -321,28 +333,46 @@ private:
         if (!env->IsInstanceOf(connection, java.connection))
             throw std::runtime_error("Not an HTTP URL: " + req.url);
 
-        auto follow = req.followRedirects ? JNI_TRUE : JNI_FALSE;
+        auto follow = followsRedirectsItself(req) ? JNI_TRUE : JNI_FALSE;
         env->CallVoidMethod(connection, java.setInstanceFollowRedirects, follow);
-        env->CallVoidMethod(connection, java.setUseCaches, JNI_FALSE);
+
+        auto useCaches =
+            req.cachePolicy == CachePolicy::UseLocalCache ? JNI_TRUE : JNI_FALSE;
+        env->CallVoidMethod(connection, java.setUseCaches, useCaches);
         check();
 
-        if (req.timeout.count > 0)
-        {
-            auto limit = clampedMilliseconds(req.timeout);
-            env->CallVoidMethod(connection, java.setConnectTimeout, limit);
-            env->CallVoidMethod(connection, java.setReadTimeout, limit);
-            check();
-        }
+        applyTimeouts(req);
 
         auto* method = Jni::toJava(env, std::string_view {req.type});
         check();
         env->CallVoidMethod(connection, java.setRequestMethod, method);
         check();
 
+        if (needsDefaultUserAgent(req))
+            setHeader("User-Agent", defaultUserAgent());
+
         for (const auto& [key, value]: req.headers)
             setHeader(key, value);
 
         isHead = req.type == "HEAD";
+    }
+
+    // The connection's read timeout bounds each wait for data, which is the
+    // idle limit; the watchdog keeps the whole-request one.
+    void applyTimeouts(const Request& req)
+    {
+        auto connect = connectLimit(req);
+        auto idle = idleLimit(req);
+
+        if (connect.count > 0)
+            env->CallVoidMethod(
+                connection, java.setConnectTimeout, clampedMilliseconds(connect));
+
+        if (idle.count > 0)
+            env->CallVoidMethod(
+                connection, java.setReadTimeout, clampedMilliseconds(idle));
+
+        check();
     }
 
     void setHeader(const std::string& key, const std::string& value)
@@ -494,9 +524,10 @@ struct FileCloser
 
 using File = std::unique_ptr<std::FILE, FileCloser>;
 
-File openDestinationFile(const std::string& filePath)
+File openDestinationFile(const std::string& filePath, DownloadWrite write)
 {
-    auto file = File {std::fopen(filePath.c_str(), "wb")};
+    auto mode = write == DownloadWrite::Append ? "ab" : "wb";
+    auto file = File {std::fopen(filePath.c_str(), mode)};
 
     if (!file)
         throw std::runtime_error("Failed to open destination file");
@@ -523,40 +554,123 @@ void countChunk(ResponseSizeLimit& limit, std::string_view chunk)
         throw std::runtime_error(responseTooLargeError(limit.maxBytes));
 }
 
+// A downgrade from https to http is not followed - HttpURLConnection does not
+// follow one either - so the redirect itself is the response.
+bool isRedirectTo(const Request& hop,
+                  const Response& response,
+                  const std::string& location)
+{
+    if (!isRedirectStatus(response.statusCode) || location.empty())
+        return false;
+
+    return !isSchemeDowngrade(hop.url, resolveRedirectLocation(hop.url, location));
+}
+
+Request nextHop(const Request& hop,
+                const Response& response,
+                const std::string& location,
+                const Time::Deadline& deadline,
+                const Request& original)
+{
+    auto next = redirectedRequest(hop, response.statusCode, location);
+
+    if (original.timeout.count > 0)
+    {
+        next.timeout = deadline.remaining();
+
+        if (next.timeout.count <= 0)
+            throw std::runtime_error(timedOutError());
+    }
+
+    return next;
+}
+
+// Each hop is its own exchange, and the last one is handed back. A hop's
+// exchange is gone before the next one opens, since each holds a JNI local
+// frame and those have to be popped in the order they were pushed. The
+// whole-request timeout spans every hop.
+std::unique_ptr<Exchange>
+    openFollowingRedirects(JNIEnv* env, const JavaNet& net, const Request& req)
+{
+    if (!followsRedirectsByHand(req))
+        return std::make_unique<Exchange>(env, net, req);
+
+    auto deadline = Time::Deadline {req.timeout};
+    auto hop = req;
+
+    for (auto followed = 0;; ++followed)
+    {
+        auto exchange = std::make_unique<Exchange>(env, net, hop);
+        auto location =
+            findHeaderIgnoringCase(exchange->response.headers, "Location");
+
+        if (!isRedirectTo(hop, exchange->response, location))
+            return exchange;
+
+        if (followed >= req.maxRedirects)
+            throw std::runtime_error(tooManyRedirectsError(req.maxRedirects));
+
+        auto next = nextHop(hop, exchange->response, location, deadline, req);
+        exchange.reset();
+        hop = std::move(next);
+    }
+}
+
 Response httpRequestInternal(const Request& req)
 {
     auto [env, net] = javaContext();
-    auto exchange = Exchange {env, *net, req};
+    auto exchange = openFollowingRedirects(env, *net, req);
 
     auto limit = sizeLimitFor(req);
-    exchange.throwIfDeclaredTooLarge(limit);
+    exchange->throwIfDeclaredTooLarge(limit);
 
-    auto& body = exchange.response.content;
+    auto& body = exchange->response.content;
     auto appendToBody = [&body, &limit](std::string_view chunk)
     {
         countChunk(limit, chunk);
         body.append(chunk);
     };
-    exchange.readBody(appendToBody);
+    exchange->readBody(appendToBody);
 
-    return exchange.response;
+    return exchange->response;
 }
 
-Response downloadFileInternal(const Request& req, const std::string& filePath)
+void reportExpectedSize(const Request& req,
+                        std::int64_t contentLength,
+                        std::int64_t alreadyOnDisk)
+{
+    if (req.progress == nullptr)
+        return;
+
+    req.progress->totalBytes.store(contentLength >= 0 ? alreadyOnDisk + contentLength
+                                                      : -1);
+}
+
+Response downloadFileInternal(const Request& req,
+                              const std::string& filePath,
+                              std::int64_t resumeFrom)
 {
     auto [env, net] = javaContext();
-    auto exchange = Exchange {env, *net, req};
+    auto exchangeOwner = openFollowingRedirects(env, *net, req);
+    auto& exchange = *exchangeOwner;
+
+    auto write = downloadWriteFor(
+        exchange.response.statusCode, exchange.response.headers, resumeFrom);
+
+    if (write == DownloadWrite::Keep)
+        return exchange.response;
+
+    auto alreadyOnDisk = write == DownloadWrite::Append ? resumeFrom : 0;
 
     auto limit = sizeLimitFor(req);
     exchange.throwIfDeclaredTooLarge(limit);
 
-    if (req.progress != nullptr)
-        req.progress->totalBytes.store(exchange.contentLength());
+    reportExpectedSize(req, exchange.contentLength(), alreadyOnDisk);
 
     throwIfCancelled(req);
 
-    auto file = openDestinationFile(filePath);
-    auto received = std::int64_t {0};
+    auto file = openDestinationFile(filePath, write);
+    auto received = alreadyOnDisk;
 
     auto writeToFile = [&](std::string_view chunk)
     {
@@ -600,22 +714,21 @@ Response httpRequest(const Request& req)
     return res;
 }
 
-Response downloadFile(const Request& req, const std::string& filePath)
+Response downloadFileFrom(const Request& req,
+                          const std::string& filePath,
+                          std::int64_t resumeFrom)
 {
     auto res = Response();
 
     try
     {
-        res = downloadFileInternal(req, filePath);
+        res = downloadFileInternal(req, filePath, resumeFrom);
     }
     catch (const std::exception& e)
     {
         res.error = e.what();
         res.statusCode = 0;
     }
-
-    if (req.progress != nullptr)
-        req.progress->done.store(true);
 
     return res;
 }
