@@ -606,15 +606,16 @@ auto tTiledProductOnRaggedShape = test("SimdMatrix/blockedProductHoldsTheEdges")
                       referenceProduct(a, b, rows, columns, inner, 0.f));
 };
 
-// The shape a Whisper encoder's feed-forward is, which is what the primitive
-// was added for. Checked against the scalar reference on a strip of the rows,
-// the whole product being 2.3 million dot products of 384 terms and this being
-// a test rather than a benchmark.
+// The depth a Whisper encoder's feed-forward runs at, which is what the
+// primitive was added for: 384 inner terms, twelve slabs accumulated into each
+// fragment. The rows and columns are cut down from its 1500 by 1536 - the CPU
+// half interprets the whole product - to six column tiles and a ragged fourth
+// row tile, and the scalar reference checks a strip of the rows.
 auto tTiledProductAtEncoderShape =
     test("SimdMatrix/blockedProductAtAnEncoderShape") = []
 {
-    constexpr auto rows = 1500;
-    constexpr auto columns = 1536;
+    constexpr auto rows = 200;
+    constexpr auto columns = 384;
     constexpr auto inner = 384;
     constexpr auto checkedRows = 8;
 

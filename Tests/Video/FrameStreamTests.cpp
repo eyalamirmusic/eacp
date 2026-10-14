@@ -1,5 +1,7 @@
 #include "Common.h"
 
+#include <chrono>
+
 using namespace nano;
 using namespace eacp;
 using namespace VideoTests;
@@ -94,8 +96,18 @@ auto tQueueDepthBounds = test("FrameStream/queueDepthBoundsDecodeAhead") = []
 {
     auto fake = FakeStream {1000, 10.0, 3};
 
-    // Let the decode thread get as far as it is allowed to.
-    Time::sleepMS(200);
+    auto queueFilled = [&] { return fake.decoder->framesDecoded.load() >= 3; };
+    auto giveUpAt =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+
+    while (!queueFilled() && std::chrono::steady_clock::now() < giveUpAt)
+        Time::sleepMS(1);
+
+    check(queueFilled(), "the decode thread filled the queue");
+
+    // Then give it a decoder's worth of time to run past the queue, which it
+    // would by hundreds of frames.
+    Time::sleepMS(30);
 
     // Three queued, plus at most one in flight when the wait took hold.
     check(fake.decoder->framesDecoded.load() <= 4);

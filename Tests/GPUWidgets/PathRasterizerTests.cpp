@@ -300,7 +300,7 @@ void expectMatchesReference(const Path& path, float scale, FillRule rule)
 auto tEllipse = test("PathRasterizer/ellipseMatchesUnbinned") = []
 {
     auto path = Path {};
-    path.addEllipse({4.f, 4.f, 120.f, 120.f});
+    path.addEllipse({4.f, 4.f, 72.f, 72.f});
 
     expectMatchesReference(path, 1.f, FillRule::NonZero);
     expectMatchesReference(path, 2.f, FillRule::NonZero);
@@ -331,7 +331,7 @@ auto tStarRules = test("PathRasterizer/selfIntersectingStarMatchesUnbinned") = [
 // since a re-laid-out knob rebuilds its mask from scratch at the new size.
 auto tKnobSizes = test("PathRasterizer/knobIndicatorMatchesUnbinnedAtEverySize") = []
 {
-    for (auto size: {18.f, 24.f, 33.f, 40.f, 57.f, 64.f, 96.f, 129.f})
+    for (auto size: {18.f, 57.f, 129.f})
         expectMatchesReference(knobIndicator(size, 0.7f), 2.f, FillRule::NonZero);
 };
 

@@ -153,6 +153,10 @@ public:
     float getAtlasFillFraction() const;
     int getAtlasSize() const;
 
+    // How many walks without a grow the atlas waits before giving room back.
+    // See CoverageAtlas::setQuietWalksToShrink.
+    void setAtlasQuietWalksToShrink(int walks);
+
     // Paints every component in the tree that has asked for it, into the list
     // the next frame replays, and returns how many were painted.
     //
@@ -404,6 +408,7 @@ private:
     // Built on the first resize, once there is a size to build them against.
     // The atlas comes first and outlives the batch that reads it.
     std::optional<CoverageAtlas> paths;
+    int atlasQuietWalks = CoverageAtlas::defaultQuietWalksToShrink;
 
     // What is already in the atlas, by the geometry that put it there, so that
     // a shape drawn in forty-eight places is rasterized once. Dropped with the

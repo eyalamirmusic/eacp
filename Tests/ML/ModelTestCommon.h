@@ -67,6 +67,15 @@ inline FilePath freshCacheDirectory(const std::string& name)
     return MLSuiteCommon::freshScratchDirectory(name);
 }
 
+// Kept across runs, so a program the suite loads is compiled once per machine
+// rather than once per process: the key is the program's bytes and the OS
+// build, so a changed program misses. What the cache itself does is MLCache's
+// to test, in fresh directories of its own.
+inline FilePath sharedCacheDirectory()
+{
+    return FilePath::tempDirectory() / "eacp-ml-tests-cache";
+}
+
 inline Vector<std::string> entriesOf(const FilePath& directory)
 {
     auto names = Vector<std::string> {};

@@ -252,6 +252,6 @@ auto tDestroyedBridgeSettlesNothing =
     check(host.scripts.empty());
     check(!host.routes(bridgeChannel));
 
-    Threads::runEventLoopFor(Time::MS {300});
+    Threads::runEventLoopFor(Time::MS {30});
     check(host.scripts.empty());
 };

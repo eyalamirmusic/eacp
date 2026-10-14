@@ -327,6 +327,14 @@ int ComponentHost::getAtlasSize() const
     return paths.has_value() ? paths->getWidth() : 0;
 }
 
+void ComponentHost::setAtlasQuietWalksToShrink(int walks)
+{
+    atlasQuietWalks = walks;
+
+    if (paths.has_value())
+        paths->setQuietWalksToShrink(walks);
+}
+
 void ComponentHost::setBackgroundColour(const Color& colour)
 {
     background = colour;
@@ -418,6 +426,7 @@ void ComponentHost::resized()
     if (!shapes.has_value())
     {
         paths.emplace();
+        paths->setQuietWalksToShrink(atlasQuietWalks);
         shapes.emplace(*paths,
                        gradientRamps(),
                        Point {bounds.w, bounds.h},

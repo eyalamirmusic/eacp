@@ -758,7 +758,7 @@ auto tAPluggedInGamepadIsReported =
 
     const auto required = eacp::getEnvValue("EACP_REQUIRE_GAMEPAD") == "1";
 
-    if (!aGamepadArrives(input, required ? 3.0 : 0.25))
+    if (!aGamepadArrives(input, required ? 3.0 : 0.02))
     {
         eacp::LOG("GameInput: no gamepad connected");
         check(!required, "EACP_REQUIRE_GAMEPAD=1 but no controller was reported");

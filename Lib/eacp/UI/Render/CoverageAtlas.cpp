@@ -20,7 +20,8 @@ constexpr auto opaqueSize = 4;
 constexpr auto initialSize = 64;
 constexpr auto maximumSize = 4096;
 
-// How many walks without a grow a shrink waits for. Counted in walks rather than
+// How many walks without a grow a shrink waits for, by default
+// (CoverageAtlas::defaultQuietWalksToShrink). Counted in walks rather than
 // in time, because a walk is what a resize costs -- a whole tree rasterized
 // again -- and an interface that is not drawing is not paying for the room it
 // holds any more than it would pay to give it back. 120 is two seconds of a
@@ -32,8 +33,7 @@ constexpr auto maximumSize = 4096;
 // not latched: an interface that keeps needing the room pays for one wasted
 // resize per doubling, and one that grew back by coincidence -- a page switch
 // on the frame after -- has only made the next shrink wait longer.
-constexpr auto quietWalksToShrink = 120;
-constexpr auto maximumQuietWalks = quietWalksToShrink * 16;
+constexpr auto quietWalksDoublingCap = 16;
 
 constexpr auto shelfRounding = 8;
 
@@ -77,9 +77,15 @@ GPU::TextureDescriptor describeAtlas(int size)
 } // namespace
 
 CoverageAtlas::CoverageAtlas()
-    : quietWalksNeeded(quietWalksToShrink)
 {
+    setQuietWalksToShrink(defaultQuietWalksToShrink);
     resizeTo(initialSize);
+}
+
+void CoverageAtlas::setQuietWalksToShrink(int walks)
+{
+    quietWalksNeeded = std::max(1, walks);
+    maximumQuietWalks = quietWalksNeeded * quietWalksDoublingCap;
 }
 
 int CoverageAtlas::getWidth() const

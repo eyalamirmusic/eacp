@@ -148,11 +148,10 @@ auto tDeclinedPopupCanLeaveTheHostAlone =
     check(Threads::runEventLoopUntil([&] { return fix.declined; },
                                      webViewResultTimeout));
 
-    // The inline load, had it happened, would be in flight by now:
-    // declinedPopupLoadsInlineByDefault gets all the way from declined to
-    // navigated, loaded and read back inside this budget.
-    Threads::runEventLoopFor(Time::MS {200});
-
-    check(!fix.navigatedWhileWatching);
+    // The inline load, had it happened, would have finished by now:
+    // declinedPopupLoadsInlineByDefault gets from declined to navigated in
+    // about a fifth of this budget, and a navigation ends the wait early.
+    check(!Threads::runEventLoopUntil([&] { return fix.navigatedWhileWatching; },
+                                      Time::MS {100}));
     check(fix.readMarker() == "alive");
 };

@@ -103,7 +103,7 @@ auto tUnloadDefersWhileLooping = test("DynamicLibrary/unloadDefersWhileLooping")
     auto stillMappedInsideTurn = false;
 
     // Runs inside a loop turn, so unload takes its deferred path.
-    Threads::runEventLoopFor(Time::MS {200},
+    Threads::runEventLoopFor(Time::MS {20},
                              [&]
                              {
                                  check(Threads::isEventLoopRunning());

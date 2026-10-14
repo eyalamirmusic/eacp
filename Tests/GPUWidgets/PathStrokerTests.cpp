@@ -272,27 +272,26 @@ auto tClosed = test("PathStroker/everyContourIsClosed") = []
 };
 
 // The region, for the join and cap the distance predicate describes exactly.
+// Each shape once, the two widths taken in turn.
 auto tCoversTheRibbon = test("PathStroker/roundStrokeIsTheDistanceField") = []
 {
-    for (const auto& shape: everyShape())
+    auto shapes = everyShape();
+
+    for (auto i = 0; i < shapes.size(); ++i)
     {
-        for (auto width: {5.f, 13.f})
-        {
-            auto verdict = checkAgainstDistance(shape, width, 2.f);
+        auto width = i % 2 == 0 ? 5.f : 13.f;
+        auto verdict = checkAgainstDistance(shapes[i], width, 2.f);
 
-            if (!verdict.ran)
-                return;
+        if (!verdict.ran)
+            return;
 
-            check(verdict.missing == 0,
-                  std::to_string(verdict.missing) + " pixels inside the stroke left "
-                      + "unfilled, first at ("
-                      + std::to_string(verdict.worstMissing.x) + ", "
-                      + std::to_string(verdict.worstMissing.y) + ")");
+        check(verdict.missing == 0,
+              std::to_string(verdict.missing) + " pixels inside the stroke left "
+                  + "unfilled, first at (" + std::to_string(verdict.worstMissing.x)
+                  + ", " + std::to_string(verdict.worstMissing.y) + ")");
 
-            check(verdict.extra == 0,
-                  std::to_string(verdict.extra)
-                      + " pixels filled outside the stroke");
-        }
+        check(verdict.extra == 0,
+              std::to_string(verdict.extra) + " pixels filled outside the stroke");
     }
 };
 

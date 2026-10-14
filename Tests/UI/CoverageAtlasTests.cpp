@@ -1026,6 +1026,7 @@ auto tHostShrinkDrawsTheSameFrame =
 
     auto root = Root {};
     auto host = ComponentHost {};
+    host.setAtlasQuietWalksToShrink(3);
     settle(host, root, 1040.f);
 
     (void) host.renderToImage(1.f);
@@ -1044,7 +1045,7 @@ auto tHostShrinkDrawsTheSameFrame =
 
     auto shrankOn = std::optional<eacp::Graphics::Image> {};
 
-    for (auto frame = 0; frame < 200 && !shrankOn; ++frame)
+    for (auto frame = 0; frame < 10 && !shrankOn; ++frame)
     {
         auto image = host.renderToImage(1.f);
 

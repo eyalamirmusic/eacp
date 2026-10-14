@@ -58,7 +58,7 @@ constexpr auto untouchedCentre = "0,0,0,0";
 // How long to let an off-screen rAF loop prove itself absent before concluding
 // it is frozen. Only ever spent in full on the frozen path — the case that
 // expects frames waits for the signal instead.
-constexpr auto frozenSettleTime = eacp::Time::MS {250};
+constexpr auto frozenSettleTime = eacp::Time::MS {100};
 
 struct Fixture
 {

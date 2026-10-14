@@ -144,10 +144,17 @@ public:
     // those that this has something to return.
     bool shrinkToFit();
 
-    // The walks without a grow a shrink currently waits for. It starts at 120
-    // and doubles, up to sixteen times that, each time a shrink is outgrown
-    // inside its window.
+    // The walks without a grow a shrink currently waits for. It starts at
+    // defaultQuietWalksToShrink and doubles, up to sixteen times that, each
+    // time a shrink is outgrown inside its window.
     int getQuietWalksToShrink() const;
+
+    // Restarts that window at this many walks, with its cap at sixteen times
+    // it. For a test that has to watch a shrink happen without drawing two
+    // seconds of frames to get there.
+    void setQuietWalksToShrink(int walks);
+
+    static constexpr int defaultQuietWalksToShrink = 120;
 
 private:
     struct Shelf
@@ -199,6 +206,7 @@ private:
     int walksSinceGrow = 0;
     int walksSinceShrink = std::numeric_limits<int>::max() / 2;
     int quietWalksNeeded = 0;
+    int maximumQuietWalks = 0;
 
     bool compactedThisWalk = false;
     bool compactionReplayed = false;

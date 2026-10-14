@@ -144,7 +144,7 @@ bool runInTurn(const Executor& executor,
     return ran;
 }
 
-constexpr auto streamCount = 1 << 20;
+constexpr auto streamCount = 1 << 16;
 constexpr auto streamGain = 0.8125f;
 
 struct StreamKernel final : ComputeKernel

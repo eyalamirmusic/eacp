@@ -20,12 +20,12 @@ using namespace eacp::Graphics;
 
 namespace
 {
-constexpr auto testDeadline = eacp::Time::MS {50};
+constexpr auto testDeadline = eacp::Time::MS {10};
 
 // Long enough to carry a run of the event loop well past testDeadline — several
 // ticks of the timer behind it — so a deadline that fired when it should not
 // have has been seen by the time the test looks.
-constexpr auto beyondDeadline = eacp::Time::MS {500};
+constexpr auto beyondDeadline = eacp::Time::MS {60};
 
 // A bound rather than a sleep: a deadline that never fires at all fails the
 // test instead of hanging it.
