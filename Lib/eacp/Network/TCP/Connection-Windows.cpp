@@ -239,16 +239,79 @@ NativeSocket
     return (NativeSocket) sock;
 }
 
+// The shutdown makes every later call fail at once; the cancel ends one that
+// is already blocked, which a shutdown alone is not guaranteed to do here.
+void socketShutdown(NativeSocket socket) noexcept
+{
+    if (socket == invalidSocket)
+        return;
+
+    ::shutdown((SOCKET) socket, SD_BOTH);
+    ::CancelIoEx((HANDLE) socket, nullptr);
+}
+
+// select() takes nothing but sockets here, so the waker is one: a UDP socket
+// bound to loopback and connected to itself, readable once it has sent.
+AcceptWaker acceptWakerCreate()
+{
+    ensureWinsockInitialized();
+
+    auto sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET)
+        throwLastError("socket");
+
+    auto addr = sockaddr_in {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    auto length = (int) sizeof(addr);
+    auto bound = ::bind(sock, (sockaddr*) &addr, sizeof(addr)) != SOCKET_ERROR
+                 && ::getsockname(sock, (sockaddr*) &addr, &length) != SOCKET_ERROR
+                 && ::connect(sock, (sockaddr*) &addr, sizeof(addr)) != SOCKET_ERROR;
+
+    if (!bound)
+    {
+        auto error = WSAGetLastError();
+        ::closesocket(sock);
+        WSASetLastError(error);
+        throwLastError("accept waker");
+    }
+
+    return {(NativeSocket) sock, (NativeSocket) sock};
+}
+
+void acceptWakerSignal(const AcceptWaker& waker) noexcept
+{
+    if (waker.signalWith == invalidSocket)
+        return;
+
+    auto byte = char {1};
+    ::send((SOCKET) waker.signalWith, &byte, 1, 0);
+}
+
+void acceptWakerClose(AcceptWaker& waker) noexcept
+{
+    socketClose(waker.waitOn);
+    waker = {};
+}
+
 NativeSocket socketAccept(NativeSocket listenSocket,
+                          const AcceptWaker& waker,
                           Time::MS acceptTimeout,
                           Time::MS ioTimeout,
                           Address& peer)
 {
     auto lsock = (SOCKET) listenSocket;
+    auto wsock = (SOCKET) waker.waitOn;
+    auto hasWaker = waker.waitOn != invalidSocket;
 
     auto readable = fd_set {};
     FD_ZERO(&readable);
     FD_SET(lsock, &readable);
+
+    if (hasWaker)
+        FD_SET(wsock, &readable);
 
     auto tv = timeval {};
     tv.tv_sec = (long) (acceptTimeout.count / 1000);
@@ -260,6 +323,8 @@ NativeSocket socketAccept(NativeSocket listenSocket,
         throw TimeoutError("accept timed out");
     if (ready == SOCKET_ERROR)
         throwLastError("accept");
+    if (hasWaker && FD_ISSET(wsock, &readable))
+        throw Error("accept interrupted");
 
     auto addr = sockaddr_in {};
     auto length = (int) sizeof(addr);

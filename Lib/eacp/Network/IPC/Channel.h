@@ -115,6 +115,11 @@ public:
     // loop can check a stop flag without exceptions as control flow.
     std::optional<Channel> accept(Time::MS timeout = {});
 
+    // Wakes an accept() blocked in another thread, and every later one, with
+    // nullopt - how an acceptor thread is told to leave without waiting out
+    // its timeout. Safe from any thread while the server lives.
+    void interrupt();
+
 private:
     struct Impl;
     OwningPointer<Impl> impl;

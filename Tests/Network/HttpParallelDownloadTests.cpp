@@ -249,11 +249,11 @@ auto tParallelReportsIntermediateProgress =
             auto chunkIndex = start / chunkBytes;
             // Stagger each chunk's completion so the aggregate progress
             // climbs in visible steps. The plateau between steps must
-            // comfortably outlast the progress aggregator's publish
-            // interval (25ms, see launchProgressAggregator) or a loaded
-            // CI runner can collapse several steps into one sample and
-            // starve the >=3 distinct-values check below.
-            eacp::Time::sleepMS(100 * (int) chunkIndex);
+            // outlast the progress aggregator's publish interval (25ms, see
+            // launchProgressAggregator) twice over, or a loaded CI runner
+            // can collapse several steps into one sample and starve the
+            // >=3 distinct-values check below.
+            eacp::Time::sleepMS(50 * (int) chunkIndex);
         }
         return res;
     };

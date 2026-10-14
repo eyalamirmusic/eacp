@@ -18,10 +18,10 @@ namespace eacp::HTTP
 namespace
 {
 
-// Every blocking call the server makes wakes this often, so stop() is bounded
-// by one slice rather than by a browser's idle speculative connection, which
-// it holds open for as long as it likes.
-constexpr auto httpServerSlice = Time::MS {250};
+// stop() interrupts the listener and every connection still being read - a
+// browser's idle speculative one among them, held open for as long as it
+// likes - so this is only a backstop for a wake-up a platform loses.
+constexpr auto httpServerSlice = Time::MS {100};
 
 constexpr auto httpServerReadChunk = 4096;
 
@@ -47,7 +47,12 @@ struct Server::Impl
 
     void acceptLoop();
     void handleConnection(TCP::Connection connection);
+    std::optional<Request> readRequest(TCP::Connection& connection);
     void dispatchRequest(TCP::Connection connection, Request request);
+
+    bool beginReading(TCP::Connection& connection);
+    void endReading(TCP::Connection& connection);
+    void interruptReading();
 
     ServerOptions options;
     OwningPointer<Dispatcher> dispatcher;
@@ -58,6 +63,7 @@ struct Server::Impl
 
     std::mutex clientMutex;
     Vector<std::thread> clientThreads;
+    Vector<TCP::Connection*> reading;
 };
 
 Server::Server(ServerOptions options)
@@ -110,7 +116,10 @@ bool Server::Impl::start(int port, RequestHandler h)
 
 void Server::Impl::stop()
 {
-    running = false;
+    interruptReading();
+
+    if (listener.has_value())
+        listener->interrupt();
 
     if (acceptThread.joinable())
         acceptThread.join();
@@ -180,7 +189,51 @@ void Server::Impl::dispatchRequest(TCP::Connection connection, Request request)
         DispatchTask {std::move(request), handler, std::move(sendResponse)});
 }
 
+// A connection is listed only while its request is read, under the lock
+// stop() interrupts the list under, so stop() never reaches a stream that has
+// moved on to its reply or one whose thread has finished with it.
+bool Server::Impl::beginReading(TCP::Connection& connection)
+{
+    auto lock = std::lock_guard(clientMutex);
+
+    if (!running)
+        return false;
+
+    reading.add(&connection);
+    return true;
+}
+
+void Server::Impl::endReading(TCP::Connection& connection)
+{
+    auto isThisOne = [&connection](TCP::Connection* candidate)
+    { return candidate == &connection; };
+
+    auto lock = std::lock_guard(clientMutex);
+    reading.eraseIf(isThisOne);
+}
+
+void Server::Impl::interruptReading()
+{
+    auto lock = std::lock_guard(clientMutex);
+    running = false;
+
+    for (auto* connection: reading)
+        connection->interrupt();
+}
+
 void Server::Impl::handleConnection(TCP::Connection connection)
+{
+    if (!beginReading(connection))
+        return;
+
+    auto request = readRequest(connection);
+    endReading(connection);
+
+    if (request.has_value())
+        dispatchRequest(std::move(connection), std::move(*request));
+}
+
+std::optional<Request> Server::Impl::readRequest(TCP::Connection& connection)
 {
     auto parser = RequestParser();
 
@@ -197,28 +250,27 @@ void Server::Impl::handleConnection(TCP::Connection connection)
             if (running)
                 continue;
 
-            return;
+            return std::nullopt;
         }
         catch (const TCP::Error&)
         {
-            return;
+            return std::nullopt;
         }
 
         if (chunk.empty())
-            return;
+            return std::nullopt;
 
         auto state = parser.feed(chunk.data(), (int) chunk.size());
 
         if (state == RequestParser::State::Invalid)
-            return;
+            return std::nullopt;
 
         if (state == RequestParser::State::Ready)
         {
             auto request = std::move(parser.request());
             request.remoteAddr = connection.address().host;
             request.remotePort = connection.address().port;
-            dispatchRequest(std::move(connection), std::move(request));
-            return;
+            return request;
         }
     }
 }

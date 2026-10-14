@@ -19,6 +19,10 @@ namespace
 {
 constexpr auto webSocketPumpTimeout = MS {10000};
 
+// How long a closed connection is watched for a second report: with no stream
+// left to send an ordering barrier down, a short wait is all there is.
+constexpr auto webSocketQuietPeriod = MS {50};
+
 // Everything a connection said, in the order it said it, and whether any of
 // it arrived somewhere other than the message thread - which is half of what
 // these tests are checking.
@@ -304,7 +308,7 @@ auto tMessageOverTheLimit = test("WebSocket/failsOnAMessageOverMaxMessageSize") 
     connection->send(std::string(4096, 'x'));
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.errors == 1);
     check(record.closes == 1);
@@ -347,10 +351,13 @@ auto tFragmentedMessage = test("WebSocket/reassemblesAFragmentedServerMessage") 
     auto connection = webSocketConnect(server.url(), record);
 
     check(webSocketPumpUntil([&] { return record.messages.size() == 1; }));
-    webSocketPumpFor(MS {150});
 
-    check(record.messages.size() == 1);
+    connection->send("barrier");
+    check(webSocketPumpUntil([&] { return record.messages.size() >= 2; }));
+
+    check(record.messages.size() == 2);
     check(!record.messages.empty() && record.messages[0].data == options.greeting);
+    check(record.messages.size() == 2 && record.messages[1].data == "barrier");
 };
 
 auto tPingIsAnswered = test("WebSocket/answersAServerPingWithAPong") = []
@@ -387,7 +394,7 @@ auto tClientClose = test("WebSocket/aClientCloseIsAnsweredAndReported") = []
     check(connection->state() == State::closing);
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(server.sawClose());
     check(server.closeStatus().code == 4000);
@@ -414,7 +421,7 @@ auto tCloseIsIdempotent = test("WebSocket/closingTwiceReportsOneClose") = []
     connection->close(4002, "second");
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.closes == 1);
     check(record.errors == 0);
@@ -437,7 +444,7 @@ auto tCloseTimesOut = test("WebSocket/aCloseNobodyAnswersStillEnds") = []
     auto record = WebSocketRecord();
 
     auto options = Options();
-    options.closeTimeout = MS {300};
+    options.closeTimeout = MS {50};
 
     auto connection = webSocketConnect(server.url(), record, options);
     check(webSocketOpened(record));
@@ -478,7 +485,7 @@ auto tServerClose = test("WebSocket/aServerCloseArrivesWithItsCodeAndReason") = 
     auto connection = webSocketConnect(server.url(), record);
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.closes == 1);
     check(record.errors == 0);
@@ -507,7 +514,7 @@ auto tMessageThenClose =
     auto connection = webSocketConnect(server.url(), record);
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.messages.size() == 1);
     check(!record.messages.empty() && record.messages[0].data == "last");
@@ -526,7 +533,7 @@ auto tConnectionRefused = test("WebSocket/aRefusedConnectionErrorsThenCloses") =
     auto connection = webSocketConnect("ws://127.0.0.1:9/nobody-listening", record);
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.errors == 1);
     check(record.closes == 1);
@@ -552,7 +559,7 @@ auto tRejectedHandshake = test("WebSocket/aRejectedHandshakeErrorsThenCloses") =
     auto connection = webSocketConnect(server.url(), record);
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(!server.sawHandshake());
     check(record.opens == 0);
@@ -575,12 +582,12 @@ auto tDestroyWhileOpen = test("WebSocket/destroyingAnOpenConnectionGoesQuiet") =
     auto before = record.order.size();
     connection.reset();
 
-    webSocketPumpFor(MS {200});
+    check(webSocketPumpUntil([&] { return server.sawDisconnect(); }));
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.order.size() == before);
     check(record.closes == 0);
     check(record.errors == 0);
-    check(webSocketPumpUntil([&] { return server.sawDisconnect(); }));
 };
 
 auto tDestroyWhileConnecting =
@@ -596,7 +603,7 @@ auto tDestroyWhileConnecting =
     auto record = WebSocketRecord();
 
     auto connection = webSocketConnect(server.url(), record);
-    webSocketPumpFor(MS {150});
+    webSocketPumpFor(MS {50});
 
     check(record.order.empty());
 
@@ -604,7 +611,7 @@ auto tDestroyWhileConnecting =
     connection.reset();
     check(!promptly.expired());
 
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
     check(record.order.empty());
 };
 
@@ -621,14 +628,14 @@ auto tCloseWhileConnecting =
     auto record = WebSocketRecord();
 
     auto connection = webSocketConnect(server.url(), record);
-    webSocketPumpFor(MS {100});
+    webSocketPumpFor(MS {50});
 
     check(connection->state() == State::connecting);
     connection->close();
     check(connection->state() == State::closing);
 
     check(webSocketPumpUntil([&] { return record.closes > 0; }));
-    webSocketPumpFor(MS {200});
+    webSocketPumpFor(webSocketQuietPeriod);
 
     check(record.opens == 0);
     check(record.errors == 0);
@@ -652,9 +659,11 @@ auto tSendBeforeOpen = test("WebSocket/aSendBeforeOpenIsDropped") = []
     connection->sendBinary("too early as well");
 
     check(webSocketOpened(record));
-    webSocketPumpFor(MS {250});
 
-    check(server.messageCount() == 0);
-    check(record.messages.empty());
+    connection->send("barrier");
+    check(webSocketPumpUntil([&] { return !record.messages.empty(); }));
+
+    check(server.messageCount() == 1 && server.messages()[0] == "barrier");
+    check(record.messages.size() == 1);
     check(record.errors == 0);
 };

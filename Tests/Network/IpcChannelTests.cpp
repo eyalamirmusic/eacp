@@ -39,8 +39,7 @@ auto tNoServerThrows = test("Ipc/Channel/connectWithoutAServerThrows") = []
 
     try
     {
-        auto channel =
-            Channel::connect("eacp.tests.ch.nobody", eacp::Time::MS {100});
+        auto channel = Channel::connect("eacp.tests.ch.nobody", eacp::Time::MS {30});
     }
     catch (const eacp::IPC::Error&)
     {
@@ -81,12 +80,33 @@ auto tAcceptTimesOut = test("Ipc/Channel/acceptTimesOutWithNobodyThere") = []
     check(!server.accept(eacp::Time::MS {50}).has_value());
 };
 
+auto tChannelInterruptWakesAccept =
+    test("Ipc/Channel/interruptWakesABlockedAccept") = []
+{
+    auto server = ChannelServer {"eacp.tests.ch.interruptAccept"};
+    auto answered = std::atomic<bool> {false};
+
+    auto acceptNobody = [&] { answered = !server.accept(testWait).has_value(); };
+    auto acceptor = std::thread(acceptNobody);
+
+    eacp::Time::sleepMS(20);
+    auto promptly = eacp::Time::Deadline {eacp::Time::MS {1000}};
+    server.interrupt();
+    acceptor.join();
+
+    check(!promptly.expired());
+    check(answered.load());
+
+    check(!server.accept(testWait).has_value());
+    check(!promptly.expired());
+};
+
 auto tConnectWaits = test("Ipc/Channel/connectWaitsForTheServerToAppear") = []
 {
     auto serving = std::thread(
         []
         {
-            eacp::Time::sleep(eacp::Time::MS {150});
+            eacp::Time::sleep(eacp::Time::MS {60});
             auto server = ChannelServer {"eacp.tests.ch.lateServer"};
 
             if (auto peer = server.accept(testWait))

@@ -30,6 +30,10 @@ namespace
 {
 constexpr auto webSocketServerPumpTimeout = MS {10000};
 
+// How long a case watches for a report that must not come, where no stream is
+// left to send an ordering barrier down.
+constexpr auto webSocketServerQuietPeriod = MS {50};
+
 // The RFC's own example key, so the accept header the server writes back can
 // be checked against the value §1.3 spells out.
 constexpr auto webSocketServerExampleKey = "dGhlIHNhbXBsZSBub25jZQ==";
@@ -414,7 +418,7 @@ auto tServerRejectsNonUpgrade =
 
     // A handshake that never happened owes neither callback, and the slot it
     // held has to go all the same.
-    webSocketServerPumpFor(MS {300});
+    webSocketServerPumpFor(webSocketServerQuietPeriod);
     check(record.connects == 0);
     check(record.disconnects == 0);
     check(server->clientCount() == 0);
@@ -466,12 +470,13 @@ auto tServerReassemblesFragments =
     peer.sendFrame({WebSocketProtocolNames::Opcode::continuation, false, "two "});
     peer.sendFrame({WebSocketProtocolNames::Opcode::continuation, true, "three"});
 
-    check(webSocketServerPumpUntil([&] { return !record.messages.empty(); }));
-    webSocketServerPumpFor(MS {150});
+    peer.sendFrame({WebSocketProtocolNames::Opcode::text, true, "barrier"});
+    check(webSocketServerPumpUntil([&] { return record.messages.size() >= 2; }));
 
-    check(record.messages.size() == 1);
+    check(record.messages.size() == 2);
     check(record.messages[0].second.data == "one two three");
     check(record.messages[0].second.type == MessageType::text);
+    check(record.messages[1].second.data == "barrier");
 };
 
 auto tServerAnswersAPing = test("WebSocketServer/answersAPingWithAPong") = []
@@ -638,7 +643,7 @@ auto tServerStopsWithRawPeers =
     }
 
     // Nothing the teardown provoked reaches a Server that has stopped.
-    webSocketServerPumpFor(MS {200});
+    webSocketServerPumpFor(webSocketServerQuietPeriod);
     check(record.order.size() == before);
     check(record.disconnects == 0);
 
@@ -701,7 +706,7 @@ auto tServerDestroyedPromptly =
     server.reset();
     check(!promptly.expired());
 
-    webSocketServerPumpFor(MS {200});
+    webSocketServerPumpFor(webSocketServerQuietPeriod);
     check(record.order.size() == before);
 
     check(first.waitForEnd());
@@ -764,8 +769,11 @@ auto tServerCloseWaitsForTheEcho =
     check(asked.reason == "kick");
 
     // Nothing is reported until the peer answers, and what is reported then is
-    // the peer's own status.
-    webSocketServerPumpFor(MS {200});
+    // the peer's own status. A server still waiting answers a ping, and one
+    // that had given up could not.
+    peer.sendFrame({WebSocketProtocolNames::Opcode::ping, true, "still there"});
+    auto pong = peer.readFrame();
+    check(pong.has_value() && pong->opcode == WebSocketProtocolNames::Opcode::pong);
     check(record.disconnects == 0);
 
     peer.sendFrame({WebSocketProtocolNames::Opcode::close, true, sent->payload});
@@ -783,7 +791,7 @@ auto tServerCloseTimesOut =
     auto record = WebSocketServerRecord();
 
     auto options = ServerOptions();
-    options.closeTimeout = MS {400};
+    options.closeTimeout = MS {50};
 
     auto server = webSocketServerListening(record, options);
 
@@ -828,7 +836,7 @@ auto tServerDropsSendsAfterAClose =
     check(webSocketServerPumpUntil([&] { return record.disconnects == 1; }));
 
     server->send(id, "after the disconnect");
-    webSocketServerPumpFor(MS {150});
+    webSocketServerPumpFor(webSocketServerQuietPeriod);
     check(record.disconnects == 1);
 };
 
@@ -1148,7 +1156,7 @@ auto tServerHearsAClientGoing =
     connection.reset();
 
     check(webSocketServerPumpUntil([&] { return record.disconnects == 1; }));
-    webSocketServerPumpFor(MS {300});
+    webSocketServerPumpFor(webSocketServerQuietPeriod);
 
     // macOS's invalidateAndCancel puts a close frame with no payload on the
     // wire, which §7.4.1 reads back as 1005 - so what the server reports is a

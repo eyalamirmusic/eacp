@@ -7,10 +7,15 @@ namespace eacp::TCP
 
 struct Listener::Impl
 {
-    ~Impl() { detail::socketClose(socket); }
+    ~Impl()
+    {
+        detail::socketClose(socket);
+        detail::acceptWakerClose(waker);
+    }
 
     Timeouts timeouts;
     detail::NativeSocket socket = detail::invalidSocket;
+    detail::AcceptWaker waker;
     std::uint16_t port = 0;
 };
 
@@ -29,6 +34,7 @@ Listener Listener::bind(std::uint16_t port, Timeouts timeouts, BindInterface bin
     listener.impl->timeouts = timeouts;
     listener.impl->socket = socket;
     listener.impl->port = boundPort;
+    listener.impl->waker = detail::acceptWakerCreate();
     return listener;
 }
 
@@ -58,8 +64,14 @@ Connection Listener::accept()
 
     auto peer = Address {};
     auto socket = detail::socketAccept(
-        impl->socket, impl->timeouts.connect, impl->timeouts.io, peer);
+        impl->socket, impl->waker, impl->timeouts.connect, impl->timeouts.io, peer);
     return Connection::adopt((std::intptr_t) socket, std::move(peer));
+}
+
+void Listener::interrupt()
+{
+    if (impl)
+        detail::acceptWakerSignal(impl->waker);
 }
 
 } // namespace eacp::TCP

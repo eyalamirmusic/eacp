@@ -35,13 +35,28 @@ NativeChannel channelTryConnect(const std::string& safeName);
 // predecessor's leftover endpoint. Throws IPC::Error on failure.
 NativeChannel channelBind(const std::string& safeName);
 
+// What a blocked channelAccept waits on beside the endpoint. Once signalled it
+// stays signalled, so a signal that lands before the wait begins is not lost:
+// a pipe on POSIX (waitOn its read end, signalWith its write end), a
+// manual-reset event on Windows (both fields the one HANDLE).
+struct ChannelWaker
+{
+    std::intptr_t waitOn = -1;
+    std::intptr_t signalWith = -1;
+};
+
+ChannelWaker channelWakerCreate();
+void channelWakerSignal(const ChannelWaker& waker) noexcept;
+void channelWakerClose(ChannelWaker& waker) noexcept;
+
 // Waits up to timeout (forever when zero or negative) for an inbound client
 // and returns the connected endpoint, or invalidChannel when the timeout
-// elapsed first. listener is taken by reference because Windows replaces
-// the pipe instance on every accept; safeName feeds that replacement and
-// POSIX ignores it. Throws IPC::Error on failure.
+// elapsed first or waker is signalled. listener is taken by reference
+// because Windows replaces the pipe instance on every accept; safeName feeds
+// that replacement and POSIX ignores it. Throws IPC::Error on failure.
 NativeChannel channelAccept(NativeChannel& listener,
                             const std::string& safeName,
+                            const ChannelWaker& waker,
                             Time::MS timeout);
 
 // Writes once, returning the number of bytes accepted (always > 0). Throws

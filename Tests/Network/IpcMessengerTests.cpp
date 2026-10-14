@@ -145,7 +145,7 @@ auto tDialFailureNotifies = test("Ipc/Messenger/failedDialNotifiesDisconnected")
 {
     auto gone = false;
 
-    auto client = Messenger {"eacp.tests.msgr.nobody", eacp::Time::MS {150}};
+    auto client = Messenger {"eacp.tests.msgr.nobody", eacp::Time::MS {50}};
     client.onDisconnected = [&] { gone = true; };
 
     check(runEventLoopUntil([&] { return gone; }, pumpTimeout));

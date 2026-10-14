@@ -411,7 +411,7 @@ auto tEventLoopModeSerializesHandlers =
                                        && !maxInFlight.compare_exchange_weak(m, cur))
                                 {
                                 }
-                                eacp::Time::sleepMS(40);
+                                eacp::Time::sleepMS(20);
                                 inFlight.fetch_sub(1);
 
                                 auto res = Response();
@@ -578,7 +578,7 @@ auto tStopNotBlockedByIdleConnection =
     check(server.listen(0, [](const Request&) { return Response(); }));
 
     auto idle = connectRaw(server.boundPort());
-    eacp::Threads::runEventLoopFor(eacp::Time::MS {200}, [] {});
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {50}, [] {});
 
     check(stopCompletesWithin(server, idle, eacp::Time::MS {3000}));
 };
@@ -591,7 +591,7 @@ auto tStopNotBlockedByPartialRequest =
 
     auto client = connectRaw(server.boundPort());
     client.send("GET /pending HTTP/1.1\r\nHost: 127.0.0.1\r\n");
-    eacp::Threads::runEventLoopFor(eacp::Time::MS {200}, [] {});
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {50}, [] {});
 
     check(stopCompletesWithin(server, client, eacp::Time::MS {3000}));
 };
@@ -624,10 +624,10 @@ auto tSlowClientNotDroppedByRecvTimeout =
                     {
                         auto client = connectRaw(port);
                         client.send("GET /slow HTTP/1.1\r\nHost: 127.0.0.1\r\n");
-                        // Comfortably past the 250ms SO_RCVTIMEO the server
+                        // Comfortably past the 100ms SO_RCVTIMEO the server
                         // arms on an idle connection, which is what must not
                         // drop the client.
-                        eacp::Time::sleepMS(400);
+                        eacp::Time::sleepMS(150);
                         client.send("Connection: close\r\n\r\n");
 
                         while (true)

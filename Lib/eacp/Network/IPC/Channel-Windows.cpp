@@ -185,7 +185,7 @@ bool endOfStream(DWORD reason)
 // Waits up to timeout for a client on the pipe instance. The wait is the
 // overlapped connect's own event, so a bounded accept costs one wait
 // rather than a polling loop.
-bool waitForClient(HANDLE pipe, Time::MS timeout)
+bool waitForClient(HANDLE pipe, HANDLE wake, Time::MS timeout)
 {
     auto operation = Operation {};
 
@@ -203,8 +203,10 @@ bool waitForClient(HANDLE pipe, Time::MS timeout)
         fail("cannot wait for a channel client", reason);
 
     auto wait = timeout.count <= 0 ? INFINITE : (DWORD) timeout.count;
+    HANDLE waitOn[] = {operation.event(), wake};
+    auto count = wake != nullptr ? DWORD {2} : DWORD {1};
 
-    if (::WaitForSingleObject(operation.event(), wait) == WAIT_OBJECT_0)
+    if (::WaitForMultipleObjects(count, waitOn, FALSE, wait) == WAIT_OBJECT_0)
     {
         auto transferred = DWORD {0};
 
@@ -264,11 +266,39 @@ NativeChannel channelBind(const std::string& safeName)
     return createInstance(safeName, true);
 }
 
+ChannelWaker channelWakerCreate()
+{
+    auto event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+    if (event == nullptr)
+        fail("cannot create a channel waker");
+
+    auto handle = (std::intptr_t) event;
+    return {handle, handle};
+}
+
+void channelWakerSignal(const ChannelWaker& waker) noexcept
+{
+    if (waker.signalWith != -1)
+        ::SetEvent((HANDLE) waker.signalWith);
+}
+
+void channelWakerClose(ChannelWaker& waker) noexcept
+{
+    if (waker.waitOn != -1)
+        ::CloseHandle((HANDLE) waker.waitOn);
+
+    waker = {};
+}
+
 NativeChannel channelAccept(NativeChannel& listener,
                             const std::string& safeName,
+                            const ChannelWaker& waker,
                             Time::MS timeout)
 {
-    if (!waitForClient((HANDLE) listener, timeout))
+    auto wake = waker.waitOn != -1 ? (HANDLE) waker.waitOn : nullptr;
+
+    if (!waitForClient((HANDLE) listener, wake, timeout))
         return invalidChannel;
 
     // The connected instance is the channel; a fresh instance takes over

@@ -161,12 +161,17 @@ int Channel::receive(char* buffer, int maxBytes)
 // name without asking anyone.
 struct ChannelServer::Impl
 {
-    ~Impl() { detail::channelServerClose(listener, safeName); }
+    ~Impl()
+    {
+        detail::channelServerClose(listener, safeName);
+        detail::channelWakerClose(waker);
+    }
 
     std::string safeName;
     std::optional<Lock> lock;
     std::optional<ScopedLock> guard;
     detail::NativeChannel listener = detail::invalidChannel;
+    detail::ChannelWaker waker;
 };
 
 ChannelServer::ChannelServer(std::string_view name)
@@ -180,6 +185,7 @@ ChannelServer::ChannelServer(std::string_view name)
         throw Error("channel '" + std::string(name) + "' already has a live server");
 
     impl->listener = detail::channelBind(impl->safeName);
+    impl->waker = detail::channelWakerCreate();
 }
 
 ChannelServer::~ChannelServer() = default;
@@ -206,7 +212,8 @@ std::optional<Channel> ChannelServer::accept(Time::MS timeout)
     if (!isListening())
         throw Error("accept() on a closed channel server");
 
-    auto accepted = detail::channelAccept(impl->listener, impl->safeName, timeout);
+    auto accepted =
+        detail::channelAccept(impl->listener, impl->safeName, impl->waker, timeout);
 
     if (accepted == detail::invalidChannel)
         return std::nullopt;
@@ -215,6 +222,12 @@ std::optional<Channel> ChannelServer::accept(Time::MS timeout)
     channel.impl.create();
     channel.impl->channel = accepted;
     return channel;
+}
+
+void ChannelServer::interrupt()
+{
+    if (impl)
+        detail::channelWakerSignal(impl->waker);
 }
 
 } // namespace eacp::IPC

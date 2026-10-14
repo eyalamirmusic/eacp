@@ -178,10 +178,46 @@ NativeChannel channelBind(const std::string& safeName)
     return fd;
 }
 
-NativeChannel
-    channelAccept(NativeChannel& listener, const std::string&, Time::MS timeout)
+ChannelWaker channelWakerCreate()
+{
+    int ends[2] = {-1, -1};
+
+    if (::pipe(ends) != 0)
+        fail("cannot create a channel waker");
+
+    for (auto end: ends)
+        ::fcntl(end, F_SETFD, FD_CLOEXEC);
+
+    ::fcntl(ends[1], F_SETFL, ::fcntl(ends[1], F_GETFL, 0) | O_NONBLOCK);
+    return {ends[0], ends[1]};
+}
+
+void channelWakerSignal(const ChannelWaker& waker) noexcept
+{
+    if (waker.signalWith < 0)
+        return;
+
+    auto byte = char {1};
+    auto written = ::write((int) waker.signalWith, &byte, 1);
+    (void) written;
+}
+
+void channelWakerClose(ChannelWaker& waker) noexcept
+{
+    for (auto end: {waker.waitOn, waker.signalWith})
+        if (end >= 0)
+            ::close((int) end);
+
+    waker = {};
+}
+
+NativeChannel channelAccept(NativeChannel& listener,
+                            const std::string&,
+                            const ChannelWaker& waker,
+                            Time::MS timeout)
 {
     auto fd = (int) listener;
+    auto wakeFd = (int) waker.waitOn;
 
     for (;;)
     {
@@ -189,12 +225,16 @@ NativeChannel
         FD_ZERO(&readable);
         FD_SET(fd, &readable);
 
+        if (wakeFd >= 0)
+            FD_SET(wakeFd, &readable);
+
         auto tv = timeval {};
         tv.tv_sec = (time_t) (timeout.count / 1000);
         tv.tv_usec = (suseconds_t) ((timeout.count % 1000) * 1000);
         auto* deadline = timeout.count > 0 ? &tv : nullptr; // null = forever
 
-        auto ready = ::select(fd + 1, &readable, nullptr, nullptr, deadline);
+        auto highest = wakeFd > fd ? wakeFd : fd;
+        auto ready = ::select(highest + 1, &readable, nullptr, nullptr, deadline);
 
         if (ready == 0)
             return invalidChannel;
@@ -206,6 +246,9 @@ NativeChannel
 
             fail("cannot wait for a channel client");
         }
+
+        if (wakeFd >= 0 && FD_ISSET(wakeFd, &readable))
+            return invalidChannel;
 
         auto accepted = ::accept(fd, nullptr, nullptr);
 

@@ -151,7 +151,7 @@ auto tKilledHolderReleases = test("Ipc/Lock/killedHolderReleases") = []
 auto tTimeoutWaitsForRelease = test("Ipc/Lock/timeoutWaitsForHolderToRelease") = []
 {
     auto name = std::string {"eacp.tests.ipc.waitForRelease"};
-    auto harness = holdInAnotherProcess(name, 300);
+    auto harness = holdInAnotherProcess(name, 100);
 
     check(waitUntilHeld(harness));
 
@@ -168,7 +168,7 @@ auto tTimeoutGivesUp = test("Ipc/Lock/timeoutGivesUp") = []
     auto guard = ScopedLock {lock};
     check(guard.isLocked());
 
-    check(runHarness("eacp.tests.ipc.givesUp", "wait", 200).exitCode == contended);
+    check(runHarness("eacp.tests.ipc.givesUp", "wait", 50).exitCode == contended);
 };
 
 auto tEmptyNameThrows = test("Ipc/Lock/emptyNameThrows") = []

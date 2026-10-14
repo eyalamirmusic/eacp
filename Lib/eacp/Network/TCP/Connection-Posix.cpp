@@ -1,6 +1,7 @@
 #include "ConnectionInternal.h"
 #include "../Common-Posix.h"
 
+#include <algorithm>
 #include <fcntl.h>
 #include <netdb.h>
 #include <sys/select.h>
@@ -232,24 +233,69 @@ NativeSocket
     return (NativeSocket) fd;
 }
 
+void socketShutdown(NativeSocket socket) noexcept
+{
+    if (socket != invalidSocket)
+        ::shutdown((int) socket, SHUT_RDWR);
+}
+
+AcceptWaker acceptWakerCreate()
+{
+    int ends[2] = {kInvalidFd, kInvalidFd};
+
+    if (::pipe(ends) != 0)
+        throwErrno("pipe");
+
+    for (auto end: ends)
+        ::fcntl(end, F_SETFD, FD_CLOEXEC);
+
+    ::fcntl(ends[1], F_SETFL, ::fcntl(ends[1], F_GETFL, 0) | O_NONBLOCK);
+    return {(NativeSocket) ends[0], (NativeSocket) ends[1]};
+}
+
+void acceptWakerSignal(const AcceptWaker& waker) noexcept
+{
+    if (waker.signalWith == invalidSocket)
+        return;
+
+    auto byte = char {1};
+    auto written = ::write((int) waker.signalWith, &byte, 1);
+    (void) written;
+}
+
+void acceptWakerClose(AcceptWaker& waker) noexcept
+{
+    socketClose(waker.waitOn);
+    socketClose(waker.signalWith);
+    waker = {};
+}
+
 NativeSocket socketAccept(NativeSocket listenSocket,
+                          const AcceptWaker& waker,
                           Time::MS acceptTimeout,
                           Time::MS ioTimeout,
                           Address& peer)
 {
     auto lfd = (int) listenSocket;
+    auto wfd = (int) waker.waitOn;
 
     auto readable = fd_set {};
     FD_ZERO(&readable);
     FD_SET(lfd, &readable);
 
+    if (wfd != kInvalidFd)
+        FD_SET(wfd, &readable);
+
     auto tv = toTimeval(acceptTimeout);
     auto* deadline = acceptTimeout.count > 0 ? &tv : nullptr; // null = forever
-    auto ready = ::select(lfd + 1, &readable, nullptr, nullptr, deadline);
+    auto ready =
+        ::select(std::max(lfd, wfd) + 1, &readable, nullptr, nullptr, deadline);
     if (ready == 0)
         throw TimeoutError("accept timed out");
     if (ready < 0)
         throwErrno("accept");
+    if (wfd != kInvalidFd && FD_ISSET(wfd, &readable))
+        throw Error("accept interrupted");
 
     auto addr = sockaddr_in {};
     auto length = (socklen_t) sizeof(addr);

@@ -1,5 +1,7 @@
 #include "Messenger.h"
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <thread>
@@ -8,10 +10,12 @@ namespace eacp::IPC
 {
 namespace
 {
-// The slices are what keep every blocking wait interruptible: a worker
-// checks its stop flag between slices, so no teardown waits longer than
-// one of these.
-constexpr auto dialSlice = Time::MS {200};
+// A dial retries this often while nobody serves the name; the wait between
+// attempts ends the moment the Messenger is destroyed.
+constexpr auto dialRetry = Time::MS {25};
+
+// The destructor interrupts the acceptor, so this only bounds a wake-up a
+// platform loses.
 constexpr auto acceptSlice = Time::MS {200};
 constexpr auto interruptRetry = Time::MS {5};
 
@@ -112,6 +116,27 @@ struct Messenger::Impl
     std::atomic<bool> stop = false;
     std::atomic<bool> workerDone = false;
     std::thread worker;
+
+    std::mutex stopMutex;
+    std::condition_variable stopSignal;
+
+    void requestStop()
+    {
+        {
+            auto guard = std::lock_guard {stopMutex};
+            stop = true;
+        }
+
+        stopSignal.notify_all();
+    }
+
+    void waitBeforeRetrying(Time::MS interval)
+    {
+        auto guard = std::unique_lock {stopMutex};
+        auto stopped = [this] { return stop.load(); };
+        stopSignal.wait_for(
+            guard, std::chrono::milliseconds(interval.count), stopped);
+    }
 };
 
 Messenger::Messenger(std::string_view name, Time::MS timeout)
@@ -130,7 +155,7 @@ Messenger::Messenger(Channel connectedChannel)
 
 Messenger::~Messenger()
 {
-    impl->stop = true;
+    impl->requestStop();
 
     // Interrupt until the reader acknowledges: on POSIX the first pass
     // wakes it for good; on Windows a cancel only reaches a read already
@@ -217,12 +242,9 @@ bool Messenger::dial()
 
     while (!impl->stop)
     {
-        auto remaining = deadline.remaining();
-
         try
         {
-            auto opened = Channel::connect(
-                impl->name, remaining < dialSlice ? remaining : dialSlice);
+            auto opened = Channel::connect(impl->name, Time::MS {0});
 
             auto guard = std::lock_guard {impl->mutex};
             impl->channel.emplace(std::move(opened));
@@ -233,6 +255,9 @@ bool Messenger::dial()
             if (deadline.expired())
                 return false;
         }
+
+        auto remaining = deadline.remaining();
+        impl->waitBeforeRetrying(remaining < dialRetry ? remaining : dialRetry);
     }
 
     return false;
@@ -325,6 +350,7 @@ MessageServer::MessageServer(std::string_view name)
 MessageServer::~MessageServer()
 {
     impl->stop = true;
+    impl->server->interrupt();
 
     if (impl->acceptor.joinable())
         impl->acceptor.join();

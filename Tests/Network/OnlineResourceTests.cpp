@@ -405,7 +405,14 @@ auto tDestroyedMidFetch = test("OnlineResource/destroyingMidFetchNeverResolves")
     resource.reset();
     gate.release();
 
-    eacp::Threads::runEventLoopFor(eacp::Time::MS {300});
+    auto barrierArrived = false;
+    auto onBarrier = [&](const eacp::HTTP::Response&) { barrierArrived = true; };
+    eacp::HTTP::asyncRequest(Request(baseUrl(server.boundPort()) + "/after"),
+                             onBarrier);
+
+    auto arrived = [&] { return barrierArrived; };
+    check(eacp::Threads::runEventLoopUntil(arrived, eacp::Time::MS {5000}));
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {20});
     check(!resolved);
 
     server.stop();

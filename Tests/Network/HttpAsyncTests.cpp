@@ -111,7 +111,7 @@ auto tDelivers = test("HttpAsync/deliversOnTheMessageThreadExactlyOnce") = []
 
     auto arrived = [&] { return calls > 0; };
     check(pumpUntil(arrived));
-    pumpFor(MS {200});
+    pumpFor(MS {50});
 
     check(calls == 1);
     check(onMessageThread);
@@ -177,7 +177,7 @@ auto tHonoursTimeout = test("HttpAsync/honoursTheRequestTimeout") = []
     check(server.listen(0, handler));
 
     auto req = Request(baseUrl(server.boundPort()) + "/slow");
-    req.timeout = MS {250};
+    req.timeout = MS {50};
 
     auto received = Response();
     auto calls = 0;
@@ -215,10 +215,14 @@ auto tCancelAllStops = test("HttpAsync/cancelAllStopsTheCallback") = []
     asyncRequest(Request(baseUrl(server.boundPort()) + "/slow"), onResponse);
     cancelAllAsyncRequests();
 
-    // Let the reply the cancel raced actually land: the callback still must
-    // not fire.
+    // Let the reply the cancel raced actually land, behind a request sent after
+    // it: the callback still must not fire.
     stalled.release();
-    pumpFor(MS {250});
+
+    auto barrierCalls = 0;
+    auto onBarrier = [&](const Response&) { ++barrierCalls; };
+    asyncRequest(Request(baseUrl(server.boundPort()) + "/after"), onBarrier);
+    check(pumpUntil([&] { return barrierCalls > 0; }));
 
     check(calls == 0);
 

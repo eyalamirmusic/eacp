@@ -40,6 +40,11 @@ public:
     // throws), returning the connected stream.
     Connection accept();
 
+    // Wakes an accept() blocked in another thread, and every later one, with
+    // a TCP::Error - how a server's accept thread is told to leave without
+    // waiting out its timeout. Safe from any thread while the listener lives.
+    void interrupt();
+
 private:
     Listener();
 

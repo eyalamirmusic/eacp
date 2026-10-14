@@ -14,9 +14,8 @@ namespace eacp::WebSocket
 {
 namespace
 {
-// Every blocking call the server makes wakes this often, so a thread told to
-// stop notices within one slice instead of at the end of a timeout nobody is
-// waiting out. It is what bounds stop() and the destructor.
+// stop() interrupts the listener and every client's socket, so no thread waits
+// this out to leave; it is a backstop that bounds a wake-up a platform loses.
 constexpr auto webSocketServerSlice = Time::MS {200};
 
 // How long a peer that has connected and then not finished its upgrade
@@ -36,6 +35,18 @@ constexpr auto webSocketServerFrameHeader = 14;
 TCP::Timeouts webSocketServerTimeouts()
 {
     return {webSocketServerSlice, webSocketServerSlice};
+}
+
+// A read waiting on the peer's answer to a close wakes at the close deadline,
+// not at the end of a slice past it.
+Time::MS webSocketServerReadSlice(const Time::Deadline& answering)
+{
+    auto remaining = answering.remaining();
+
+    if (remaining.count < 1)
+        return Time::MS {1};
+
+    return remaining < webSocketServerSlice ? remaining : webSocketServerSlice;
 }
 
 std::string webSocketServerBadRequest()
@@ -313,17 +324,24 @@ public:
         if (!connected.load() || closeSent.exchange(true))
             return;
 
+        {
+            auto lock = std::scoped_lock(sendMutex);
+            closeSentAt.emplace(options.closeTimeout);
+        }
+
         writeFrame(webSocketServerCloseFrame(code, reason));
     }
 
     // §7.4.1's 1001, and then no waiting at all: stop() owes its caller a
-    // prompt return, not a closing handshake.
+    // prompt return, not a closing handshake, so the thread's read is woken
+    // rather than left to time out.
     void requestStop()
     {
         if (connected.load() && !closeSent.exchange(true))
             writeFrame(webSocketServerCloseFrame(1001, "going away"));
 
         stopping.store(true);
+        interruptReading();
     }
 
 private:
@@ -417,10 +435,13 @@ private:
         while (!stopping.load())
         {
             if (closeSent.load() && !answering.has_value())
-                answering.emplace(options.closeTimeout);
+                answering = answerDeadline();
 
             if (answering.has_value() && answering->expired())
                 return {1006, {}};
+
+            if (answering.has_value())
+                connection.setIoTimeout(webSocketServerReadSlice(*answering));
 
             auto chunk = std::string();
 
@@ -582,6 +603,22 @@ private:
         }
     }
 
+    // closeTimeout runs from the moment the close went out, not from whenever
+    // this thread's read next woke to notice it.
+    Time::Deadline answerDeadline()
+    {
+        auto lock = std::scoped_lock(sendMutex);
+        return closeSentAt.value_or(Time::Deadline {options.closeTimeout});
+    }
+
+    void interruptReading()
+    {
+        auto lock = std::scoped_lock(sendMutex);
+
+        if (!finished)
+            connection.interrupt();
+    }
+
     // The socket goes under the same lock every write takes, so nothing on the
     // message thread is ever sending into a stream the thread has let go.
     void finish()
@@ -602,6 +639,7 @@ private:
 
     std::mutex sendMutex;
     bool finished = false;
+    std::optional<Time::Deadline> closeSentAt;
 
     std::atomic<bool> stopping {false};
     std::atomic<bool> connected {false};
@@ -656,6 +694,9 @@ struct Server::Impl
     void stop()
     {
         stopping.store(true);
+
+        if (listener.has_value())
+            listener->interrupt();
 
         if (accepting.joinable())
             accepting.join();

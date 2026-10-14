@@ -61,6 +61,14 @@ public:
     ~WebSocketTestServer()
     {
         stopping.store(true);
+        listener.interrupt();
+
+        {
+            auto lock = std::scoped_lock(peerMutex);
+
+            if (current != nullptr)
+                current->interrupt();
+        }
 
         if (worker.joinable())
             worker.join();
@@ -149,6 +157,9 @@ private:
                 continue;
             }
 
+            if (!watch(*peer))
+                return;
+
             try
             {
                 serve(*peer);
@@ -157,7 +168,26 @@ private:
             {
                 noteDisconnect();
             }
+
+            unwatch();
         }
+    }
+
+    bool watch(Peer& peer)
+    {
+        auto lock = std::scoped_lock(peerMutex);
+
+        if (stopping.load())
+            return false;
+
+        current = &peer;
+        return true;
+    }
+
+    void unwatch()
+    {
+        auto lock = std::scoped_lock(peerMutex);
+        current = nullptr;
     }
 
     void serve(Peer& peer)
@@ -506,6 +536,9 @@ private:
     std::string assembly;
     Opcode assemblyOpcode = Opcode::text;
     bool closeSent = false;
+
+    std::mutex peerMutex;
+    Peer* current = nullptr;
 
     std::thread worker;
 };

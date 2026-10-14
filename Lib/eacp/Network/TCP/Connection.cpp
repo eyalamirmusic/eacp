@@ -61,6 +61,12 @@ void Connection::close()
     impl->socket = detail::invalidSocket;
 }
 
+void Connection::interrupt()
+{
+    if (isOpen())
+        detail::socketShutdown(impl->socket);
+}
+
 const Address& Connection::address() const
 {
     return impl->address;

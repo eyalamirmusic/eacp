@@ -102,7 +102,7 @@ auto tEventsReachEveryClient = test("Ipc/Rpc/eventsReachEveryClient") = []
 // promise is rejected rather than orphaned.
 auto tCallsFailWhenNobodyServes = test("Ipc/Rpc/callsFailWhenNobodyServes") = []
 {
-    auto client = RpcClient {"eacp.tests.rpc.nobody", eacp::Time::MS {150}};
+    auto client = RpcClient {"eacp.tests.rpc.nobody", eacp::Time::MS {50}};
 
     auto error = std::string {};
     client.call<AddResult>("add", AddRequest {1, 2})

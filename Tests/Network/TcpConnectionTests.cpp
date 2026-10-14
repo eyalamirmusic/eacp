@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <atomic>
 #include <thread>
 
 using namespace nano;
@@ -369,7 +370,7 @@ auto tMoveListener = test("Tcp/movingAListenerKeepsItServing") = []
 
 auto tAcceptTimeout = test("Tcp/acceptTimesOutWhenNoClientConnects") = []
 {
-    auto listener = Listener::bind(0, {eacp::Time::MS {200}, eacp::Time::MS {2000}});
+    auto listener = Listener::bind(0, {eacp::Time::MS {30}, eacp::Time::MS {2000}});
 
     auto threw = false;
     try
@@ -524,6 +525,110 @@ auto tSplitDelimiter = test("Tcp/receiveUntilHandlesADelimiterSplitAcrossReads")
     check(second == "second-line");
 };
 
+auto tTcpInterruptWakesAccept = test("Tcp/interruptWakesABlockedAccept") = []
+{
+    auto listener =
+        Listener::bind(0, {eacp::Time::MS {5000}, eacp::Time::MS {2000}});
+
+    auto interrupted = std::atomic<bool> {false};
+    auto timedOut = std::atomic<bool> {false};
+
+    auto acceptOnce = [&]
+    {
+        try
+        {
+            listener.accept();
+        }
+        catch (const TimeoutError&)
+        {
+            timedOut = true;
+        }
+        catch (const Error&)
+        {
+            interrupted = true;
+        }
+    };
+
+    auto acceptor = std::thread(acceptOnce);
+
+    eacp::Time::sleepMS(20);
+    auto promptly = eacp::Time::Deadline {eacp::Time::MS {1000}};
+    listener.interrupt();
+    acceptor.join();
+
+    check(!promptly.expired());
+    check(interrupted.load());
+    check(!timedOut.load());
+
+    auto laterOneThrows = false;
+
+    try
+    {
+        listener.accept();
+    }
+    catch (const TimeoutError&)
+    {
+    }
+    catch (const Error&)
+    {
+        laterOneThrows = true;
+    }
+
+    check(laterOneThrows);
+    check(!promptly.expired());
+};
+
+auto tTcpInterruptWakesReceive = test("Tcp/interruptWakesABlockedReceive") = []
+{
+    auto listener = Listener::bind(0, testTimeouts());
+    auto stalled = StallGate();
+
+    auto holdSilently = [&]
+    {
+        auto peer = listener.accept();
+        stalled.wait();
+    };
+
+    auto server = std::thread(holdSilently);
+
+    auto client =
+        Connection::connect({"127.0.0.1", listener.port()},
+                            {eacp::Time::MS {2000}, eacp::Time::MS {5000}});
+
+    auto ended = std::atomic<bool> {false};
+    auto timedOut = std::atomic<bool> {false};
+
+    auto receiveOnce = [&]
+    {
+        try
+        {
+            ended = client.receive().empty();
+        }
+        catch (const TimeoutError&)
+        {
+            timedOut = true;
+        }
+        catch (const Error&)
+        {
+            ended = true;
+        }
+    };
+
+    auto reader = std::thread(receiveOnce);
+
+    eacp::Time::sleepMS(20);
+    auto promptly = eacp::Time::Deadline {eacp::Time::MS {1000}};
+    client.interrupt();
+    reader.join();
+
+    check(!promptly.expired());
+    check(ended.load());
+    check(!timedOut.load());
+
+    stalled.release();
+    server.join();
+};
+
 auto tIdleReceiveTimesOut =
     test("Tcp/receiveTimesOutWithTimeoutErrorWhenPeerIsIdle") = []
 {
@@ -541,7 +646,7 @@ auto tIdleReceiveTimesOut =
 
     // Short io timeout so the idle read trips quickly.
     auto client = Connection::connect({"127.0.0.1", listener.port()},
-                                      {eacp::Time::MS {2000}, eacp::Time::MS {200}});
+                                      {eacp::Time::MS {2000}, eacp::Time::MS {30}});
 
     auto timedOut = false;
     try
@@ -633,7 +738,7 @@ auto tUnreachableHost = test("Tcp/connectToAnUnreachableHostFails") = []
     try
     {
         auto client = Connection::connect(
-            {"192.0.2.1", 80}, {eacp::Time::MS {200}, eacp::Time::MS {200}});
+            {"192.0.2.1", 80}, {eacp::Time::MS {30}, eacp::Time::MS {30}});
     }
     catch (const Error&)
     {

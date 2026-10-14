@@ -41,10 +41,31 @@ int socketReceive(NativeSocket socket, char* buffer, int length);
 NativeSocket
     socketListen(std::uint16_t port, std::uint16_t& boundPort, BindInterface bindTo);
 
+// Wakes a send or receive blocked on socket in another thread, and makes every
+// later one end at once: a receive reports the stream closed or throws
+// TCP::Error. Bytes already sent still reach the peer. The handle stays open
+// until socketClose.
+void socketShutdown(NativeSocket socket) noexcept;
+
+// What a blocked socketAccept waits on beside the listening socket. Once
+// signalled it stays signalled, so a signal that lands before the wait begins
+// is not lost: a pipe on POSIX, a loopback UDP socket that has sent itself a
+// datagram on Windows.
+struct AcceptWaker
+{
+    NativeSocket waitOn = invalidSocket;
+    NativeSocket signalWith = invalidSocket;
+};
+
+AcceptWaker acceptWakerCreate();
+void acceptWakerSignal(const AcceptWaker& waker) noexcept;
+void acceptWakerClose(AcceptWaker& waker) noexcept;
+
 // Waits up to acceptTimeout for an inbound connection, accepts it, arms it
 // with ioTimeout and writes the peer's address to peer. Throws TCP::Error on
-// timeout or failure.
+// timeout or failure, and once waker is signalled.
 NativeSocket socketAccept(NativeSocket listenSocket,
+                          const AcceptWaker& waker,
                           Time::MS acceptTimeout,
                           Time::MS ioTimeout,
                           Address& peer);
