@@ -77,4 +77,60 @@ auto tHomeFallback = test("FileLocationsLinux/homeFallsBackToPasswordDatabase") 
     auto empty = ScopedVariable {"HOME", ""};
     check(FilePath::homeDirectory().str() == expected);
 };
+
+auto tUserDirs = test("FileLocationsLinux/userDirsFileIsReadLikeJuce") = []
+{
+    auto root = scratchDirectory("xdg-user-dirs");
+    auto home = root / "home";
+    auto config = root / "config";
+    auto elsewhere = root / "elsewhere" / "Films";
+
+    for (auto& folder: {home / "Music",
+                        home / "Tunes",
+                        home / "Docs",
+                        home / "Pics",
+                        home / "Desk",
+                        elsewhere})
+        std::filesystem::create_directories(folder);
+
+    writeTestFile(config / "user-dirs.dirs",
+                  "# written by xdg-user-dirs-update\n"
+                  "XDG_MUSIC_DIR=\"$HOME/Gone\"\n"
+                  "XDG_MUSIC_DIR=\"$HOME/Tunes\"\n"
+                  "XDG_DOWNLOAD_DIR=\"$HOME/Missing\"\n"
+                  "   \tXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\n"
+                  "XDG_PICTURES_DIR='$HOME/Pics'\n"
+                  "XDG_DESKTOP_DIR=$HOME/Desk\n"
+                  "XDG_VIDEOS_DIR=\""
+                      + elsewhere.string() + "\"\n");
+
+    auto homeVariable = ScopedVariable {"HOME", home.string()};
+    auto configVariable = ScopedVariable {"XDG_CONFIG_HOME", config.string()};
+
+    check(FilePath::musicDirectory().str() == (home / "Tunes").string());
+    check(FilePath::downloadsDirectory().str() == (home / "Downloads").string());
+    check(FilePath::documentsDirectory().str() == (home / "Docs").string());
+    check(FilePath::picturesDirectory().str() == (home / "Pics").string());
+    check(FilePath::desktopDirectory().str() == (home / "Desk").string());
+    check(FilePath::moviesDirectory().str() == elsewhere.string());
+
+    writeTestFile(config / "user-dirs.dirs", "XDG_MUSIC_DIR=\"$HOME/Music\"\n");
+    check(FilePath::musicDirectory().str() == (home / "Music").string());
+
+    std::filesystem::remove_all(root);
+};
+
+auto tUserDirsMissingFile = test("FileLocationsLinux/noUserDirsFileFallsBack") = []
+{
+    auto root = scratchDirectory("xdg-no-user-dirs");
+    auto homeVariable = ScopedVariable {"HOME", (root / "home").string()};
+    auto configVariable =
+        ScopedVariable {"XDG_CONFIG_HOME", (root / "config").string()};
+
+    check(FilePath::musicDirectory().str() == (root / "home" / "Music").string());
+    check(FilePath::desktopDirectory().str()
+          == (root / "home" / "Desktop").string());
+
+    std::filesystem::remove_all(root);
+};
 } // namespace FileLocationsLinuxTests
