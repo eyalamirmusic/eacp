@@ -241,8 +241,12 @@ struct CollectedRun
 
 // Whether two faces are the same font: the same files at the same index with
 // the same simulations. The layout hands out face objects of its own, so a
-// pointer comparison would number the requested face as a fallback.
-bool sameFontFace(IDWriteFontFace* a, IDWriteFontFace* b)
+// pointer comparison would number the requested face as a fallback. The
+// simulations `ignored` names are not compared: a layout asked for an italic
+// leans the face itself, which a face withholding that lean is still.
+bool sameFontFace(IDWriteFontFace* a,
+                  IDWriteFontFace* b,
+                  int ignored = DWRITE_FONT_SIMULATIONS_NONE)
 {
     if (a == b)
         return true;
@@ -250,7 +254,8 @@ bool sameFontFace(IDWriteFontFace* a, IDWriteFontFace* b)
     if (a == nullptr || b == nullptr)
         return false;
 
-    if (a->GetIndex() != b->GetIndex() || a->GetSimulations() != b->GetSimulations())
+    if (a->GetIndex() != b->GetIndex()
+        || (a->GetSimulations() & ~ignored) != (b->GetSimulations() & ~ignored))
         return false;
 
     const auto filesOf = [](IDWriteFontFace* face)
@@ -522,7 +527,12 @@ struct GlyphRasterizer::Native
         if (auto varied = alongItsOwnAxes(face, font.Get(), variant, simulations))
             return varied;
 
-        return withSimulations(face.Get(), simulations);
+        auto simulated = withSimulations(face.Get(), simulations);
+
+        if (withholdsSyntheticItalic(variant))
+            return withoutOblique(simulated);
+
+        return simulated;
     }
 
     // The face moved along its own variation axes to the weight and slant the
@@ -576,10 +586,25 @@ struct GlyphRasterizer::Native
             && font->GetWeight() < DWRITE_FONT_WEIGHT_SEMI_BOLD)
             simulations |= DWRITE_FONT_SIMULATIONS_BOLD;
 
-        if (variant.italic && font->GetStyle() == DWRITE_FONT_STYLE_NORMAL)
+        if (wantsSyntheticItalic(variant,
+                                 font->GetStyle() != DWRITE_FONT_STYLE_NORMAL))
             simulations |= DWRITE_FONT_SIMULATIONS_OBLIQUE;
 
         return static_cast<DWRITE_FONT_SIMULATIONS>(simulations);
+    }
+
+    // A face matching handed back already leaning, which is what an italic
+    // whose synthesis is withheld must not be.
+    static ComPtr<IDWriteFontFace> withoutOblique(const ComPtr<IDWriteFontFace>& face)
+    {
+        const auto simulations = face->GetSimulations();
+
+        if ((simulations & DWRITE_FONT_SIMULATIONS_OBLIQUE) == 0)
+            return face;
+
+        return rebuiltWith(face.Get(),
+                           static_cast<DWRITE_FONT_SIMULATIONS>(
+                               simulations & ~DWRITE_FONT_SIMULATIONS_OBLIQUE));
     }
 
     static ComPtr<IDWriteFontFace>
@@ -588,6 +613,14 @@ struct GlyphRasterizer::Native
         if (simulations == DWRITE_FONT_SIMULATIONS_NONE)
             return face;
 
+        return rebuiltWith(face, simulations);
+    }
+
+    // The same face file and index built afresh with exactly these
+    // simulations, or the face as it was when it cannot be.
+    static ComPtr<IDWriteFontFace>
+        rebuiltWith(IDWriteFontFace* face, DWRITE_FONT_SIMULATIONS simulations)
+    {
         auto fileCount = UINT32 {};
 
         if (FAILED(face->GetFiles(&fileCount, nullptr)) || fileCount == 0)
@@ -621,7 +654,7 @@ struct GlyphRasterizer::Native
     // DirectWrite's matching, with what it lacks simulated.
     IDWriteFontFace* faceFor(const FontVariant& variant) const
     {
-        const auto key = weightClass(variant.weight) * 2 + (variant.italic ? 1 : 0);
+        const auto key = faceKeyOf(variant);
         auto found = variants.find(key);
 
         if (found != variants.end())
@@ -696,9 +729,14 @@ struct GlyphRasterizer::Native
     // the fallback's place in the table, added the first time it is met.
     int fontIndexOf(IDWriteFontFace* face,
                     float emSize,
-                    IDWriteFontFace* requested) const
+                    IDWriteFontFace* requested,
+                    const FontVariant& variant) const
     {
-        if (face == nullptr || sameFontFace(face, requested))
+        const auto ignored = withholdsSyntheticItalic(variant)
+                                 ? DWRITE_FONT_SIMULATIONS_OBLIQUE
+                                 : DWRITE_FONT_SIMULATIONS_NONE;
+
+        if (face == nullptr || sameFontFace(face, requested, ignored))
             return 0;
 
         for (auto index = 0; index < fallbacks.size(); ++index)
@@ -782,7 +820,7 @@ struct GlyphRasterizer::Native
         for (const auto& run: collector.runs)
         {
             const auto fontIndex =
-                fontIndexOf(run.face.Get(), run.emSize, requested);
+                fontIndexOf(run.face.Get(), run.emSize, requested, variant);
             auto pen = run.baselineX;
 
             for (auto index = 0; index < run.glyphs.size(); ++index)

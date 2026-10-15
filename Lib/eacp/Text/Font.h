@@ -37,13 +37,36 @@ constexpr bool isItalic(FontStyle style)
 // its 100 (thin) to 900 (black) scale, 400 regular and 700 bold, and the
 // slant. The axis FontStyle folds to two bits, kept beside it rather than
 // in it so a caller that has only ever wanted bold-or-not keeps its enum.
+//
+// `synthesizeItalic` is what an italic asked of a family with no italic face
+// gets: the upright face sheared by syntheticItalicAngle when true, as
+// DirectWrite's oblique simulation and a browser's synthetic italic draw it,
+// and the upright face as it is when false (CSS's `font-synthesis-style:
+// none`). The shear moves no advance, so a line measures the same either way.
 struct FontVariant
 {
     int weight = 400;
     bool italic = false;
+    bool synthesizeItalic = true;
 
     bool operator==(const FontVariant&) const = default;
 };
+
+// The lean of a synthetic italic, in degrees clockwise from upright: CSS's
+// default oblique angle, the quarter-em-per-em shear browsers draw one at.
+constexpr float syntheticItalicAngle = 14.f;
+
+constexpr bool wantsSyntheticItalic(const FontVariant& variant, bool faceIsItalic)
+{
+    return variant.italic && variant.synthesizeItalic && !faceIsItalic;
+}
+
+// An italic that may not be synthesized is a face of its own wherever faces
+// are cached; upright, the flag changes nothing and keys nothing.
+constexpr bool withholdsSyntheticItalic(const FontVariant& variant)
+{
+    return variant.italic && !variant.synthesizeItalic;
+}
 
 constexpr FontVariant variantOf(FontStyle style)
 {
@@ -62,6 +85,13 @@ constexpr int weightClass(int weight)
     const auto clamped = weight < 100 ? 100 : weight > 900 ? 900 : weight;
 
     return (clamped + 50) / 100 * 100;
+}
+
+// One number per face a rasterizer builds for a variant.
+constexpr int faceKeyOf(const FontVariant& variant)
+{
+    return weightClass(variant.weight) * 4 + (variant.italic ? 1 : 0)
+           + (withholdsSyntheticItalic(variant) ? 2 : 0);
 }
 
 // The platform's stock fixed-pitch face. No family name ships on all three
@@ -114,10 +144,15 @@ struct Font
     // takes it from the style: 400, or 700 when the style is bold.
     int weight = 0;
 
+    // Whether an italic the family has no face for is drawn sheared; see
+    // FontVariant.
+    bool synthesizeItalic = true;
+
     constexpr FontVariant variant() const
     {
         return {weight > 0 ? weightClass(weight) : (isBold(style) ? 700 : 400),
-                isItalic(style)};
+                isItalic(style),
+                synthesizeItalic};
     }
 };
 
