@@ -1,7 +1,9 @@
 #import <Carbon/Carbon.h>
+#import <Foundation/Foundation.h>
 
 #include "GlobalHotKey.h"
 
+#include <eacp/Core/ObjC/CFRef.h>
 #include <eacp/Core/Utils/Singleton.h>
 
 #include <map>
@@ -160,5 +162,35 @@ GlobalHotKey::GlobalHotKey(ModifierKeys modifiers,
 }
 
 GlobalHotKey::~GlobalHotKey() = default;
+
+// The system's own shortcuts win over any app's hotkey, so an enabled one on
+// the same chord is a GlobalHotKey that would never fire. Only the four
+// modifiers a chord can name are compared: the entries carry other bits too.
+bool GlobalHotKey::isAvailable(ModifierKeys modifiers, uint16_t keyCode)
+{
+    auto raw = CFArrayRef {nullptr};
+
+    if (CopySymbolicHotKeys(&raw) != noErr || raw == nullptr)
+        return true;
+
+    auto shortcuts = CFRef<CFArrayRef> {raw};
+    auto wanted = toCarbonModifiers(modifiers);
+    auto relevant = UInt32 {shiftKey | controlKey | optionKey | cmdKey};
+
+    for (NSDictionary* shortcut in (__bridge NSArray*) shortcuts.get())
+    {
+        auto enabled =
+            [shortcut[(__bridge NSString*) kHISymbolicHotKeyEnabled] boolValue];
+        auto code =
+            [shortcut[(__bridge NSString*) kHISymbolicHotKeyCode] unsignedIntValue];
+        auto mods = [shortcut[(__bridge NSString*) kHISymbolicHotKeyModifiers]
+            unsignedIntValue];
+
+        if (enabled && code == keyCode && (mods & relevant) == wanted)
+            return false;
+    }
+
+    return true;
+}
 
 } // namespace eacp::Graphics

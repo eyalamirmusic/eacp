@@ -177,4 +177,24 @@ GlobalHotKey::GlobalHotKey(ModifierKeys modifiers,
 
 GlobalHotKey::~GlobalHotKey() = default;
 
+// Registered against the thread rather than a window, under an id of its own:
+// a thread-level registration is told apart from every window's by its null
+// HWND, so the probe can never collide with a live GlobalHotKey's id.
+bool GlobalHotKey::isAvailable(ModifierKeys modifiers, uint16_t keyCode)
+{
+    auto vk = virtualKeyFromKeyCode(keyCode);
+
+    if (vk == 0)
+        return false;
+
+    constexpr auto probeId = 0xBFFF;
+
+    if (!RegisterHotKey(
+            nullptr, probeId, toWinModifiers(modifiers), static_cast<UINT>(vk)))
+        return false;
+
+    UnregisterHotKey(nullptr, probeId);
+    return true;
+}
+
 } // namespace eacp::Graphics
