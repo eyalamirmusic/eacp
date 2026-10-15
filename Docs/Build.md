@@ -79,8 +79,9 @@ files under `ThirdParty/miniz` and the version in its README.
 
 - `EACP_CI_BUILD` (default `OFF`) — the single switch that reproduces CI's
   exact configuration locally. It forces `EACP_UNITY_BUILD`,
-  `EACP_UNITY_BUILD_TESTS` and `MIRO_UNITY_BUILD` on. Because it turns unity on, it is for reproducing CI,
-  not for LSP-backed development.
+  `EACP_UNITY_BUILD_TESTS`, `MIRO_UNITY_BUILD` and `ESIMD_UNITY_BUILD` on.
+  Because it turns unity on, it is for reproducing CI, not for LSP-backed
+  development.
 
   ```bash
   cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DEACP_CI_BUILD=ON

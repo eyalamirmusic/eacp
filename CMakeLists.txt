@@ -52,6 +52,8 @@ if (EACP_CI_BUILD)
             "Compile the test executables as unity builds" FORCE)
     set(MIRO_UNITY_BUILD ON CACHE BOOL
             "Enable CMake unity build for the Miro library" FORCE)
+    set(ESIMD_UNITY_BUILD ON CACHE BOOL
+            "Compile ESIMD as a CMake unity build" FORCE)
     # EACP_PCH stays off: CI compiles under ccache, which cannot cache MSVC's
     # precompiled headers at all and needs per-compiler flags for the others,
     # and a cache hit saves the whole compile where the image saved a third.

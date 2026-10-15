@@ -257,8 +257,8 @@ cmake -G Ninja -B build-unity -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 
 - `EACP_CI_BUILD` (default `OFF`): the single switch CI passes to reproduce the
   exact CI configuration locally. It force-enables the unity-build flag of every
-  project that exposes one — `EACP_UNITY_BUILD`, `EACP_UNITY_BUILD_TESTS` and
-  `MIRO_UNITY_BUILD`. Because
+  project that exposes one — `EACP_UNITY_BUILD`, `EACP_UNITY_BUILD_TESTS`,
+  `MIRO_UNITY_BUILD` and `ESIMD_UNITY_BUILD`. Because
   it turns unity on, it is for reproducing CI, not for LSP-backed development —
   Claude should keep using `-DEACP_UNITY_BUILD=OFF` for normal work.
 
