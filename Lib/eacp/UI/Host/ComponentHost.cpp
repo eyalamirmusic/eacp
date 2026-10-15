@@ -815,6 +815,18 @@ bool ComponentHost::recordContent(Layer& layer)
     return paintedThisWalk != paintedBefore;
 }
 
+void ComponentHost::recordLayer(Layer& layer, DrawList& list)
+{
+    auto bounds = layer.getBounds();
+    auto g = Graphics {list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
+
+    // So the content draws in the coordinates it was authored in and the
+    // layer's own top-left lands on the texture's.
+    g.translate(-bounds.x, -bounds.y);
+
+    layer.onPaint(g);
+}
+
 void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
 {
     auto bounds = layer.getBounds();
@@ -827,6 +839,18 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
         renderOwnPass(layer, frame);
         return;
     }
+
+    // Recorded before the pass opens, as a component's band is: what the
+    // drawing asks for on the way - a picture rendered off-screen, which
+    // nests a frame and flushes this one - must not find an encoder open.
+    // Played straight away rather than kept: a layer already has a cache --
+    // its own texture, which is only rebuilt when the layer is dirty -- so a
+    // second one for the drawing that fills it would be a list that is
+    // written and read once.
+    auto list = std::optional<DrawList> {};
+
+    if (layer.getContent() == nullptr)
+        recordLayer(layer, list.emplace());
 
     // The renderers are the tree's own, pointed at this pass and told the
     // layer's size. One set rather than a second, because a pipeline is
@@ -861,31 +885,10 @@ void ComponentHost::renderLayer(Layer& layer, GPU::Frame& frame)
                                   {0.f, 0.f, bounds.w, bounds.h},
                                   backingScale()};
 
-        if (layer.getContent() != nullptr)
-        {
-            playContent(layer, player);
-        }
+        if (list)
+            player.play(*list, {}, {0.f, 0.f, bounds.w, bounds.h});
         else
-        {
-            // Recorded and played straight away rather than kept. A layer
-            // already has a cache -- its own texture, which is only rebuilt
-            // when the layer is dirty -- so a second one for the drawing that
-            // fills it would be a list that is written and read once.
-            auto list = DrawList {};
-
-            {
-                auto g = Graphics {
-                    list, *ramps, renderer(), {0.f, 0.f, bounds.w, bounds.h}};
-
-                // So the content draws in the coordinates it was authored in and
-                // the layer's own top-left lands on the texture's.
-                g.translate(-bounds.x, -bounds.y);
-
-                layer.onPaint(g);
-            }
-
-            player.play(list, {}, {0.f, 0.f, bounds.w, bounds.h});
-        }
+            playContent(layer, player);
 
         player.flush();
     }

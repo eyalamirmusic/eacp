@@ -338,6 +338,7 @@ private:
                       GPU::Frame& frame,
                       Point origin,
                       const Rect& clip);
+    void recordLayer(Layer& layer, DrawList& list);
     void renderLayer(Layer& layer, GPU::Frame& frame);
     void renderOwnPass(Layer& layer, GPU::Frame& frame);
 
