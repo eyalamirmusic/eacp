@@ -52,7 +52,9 @@ void restart();
 
 // Hands `url` to the OS for its registered handler (e.g. the default
 // browser for http/https) — e.g. to run an OAuth login outside the
-// in-app WebView. Linux has no backend yet and asserts if called.
+// in-app WebView. Linux spawns xdg-open. For a local file or folder, use
+// Files::openWithSystem, which takes a path rather than a URL and reports
+// whether the launch happened.
 void openExternalURL(const std::string& url);
 
 // Controls whether the app shows a Dock icon and appears in the app

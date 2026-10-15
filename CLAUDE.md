@@ -1028,6 +1028,22 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   macOS `Files::enclosingBundle` of it (the bundle when the binary sits in
   `<bundle>/Contents/MacOS/`, a pure string check) when that is not empty.
   `FileWriter` is neither copyable nor movable
+- `Files::openWithSystem` / `revealInFileManager` (`Utils/Files.h`) are
+  JUCE's `File::startAsProcess()` and `revealToUser()`. `Files.cpp` refuses
+  an empty or missing path, makes it absolute and lexically normal
+  (`Detail::systemTarget`, `FilesPlatform.h`), catches everything, and calls
+  the platform half in `Utils/FilesOpen-<platform>`: macOS `NSWorkspace`
+  `openURL:` and `selectFile:inFileViewerRootedAtPath:`; Windows
+  `ShellExecuteW` with the default verb and `SHOpenFolderAndSelectItems`
+  (falling back to `explorer.exe /select,`), each under a `CoInitializeEx`
+  undone only if it was the one that set COM up; Linux spawns `xdg-open`
+  (never through a shell) and reaps it on a detached thread rather than as a
+  detached `Process`, which would leave a zombie per call, and reveals by
+  opening `Files::revealFallbackDirectory` (the parent, a pure string
+  function) since selection has no portable form; iOS and Android
+  (`FilesOpen-Default.cpp`) answer `false`. `true` means launched, which on
+  Linux is only that `xdg-open` started. Tests cover the refusals and the
+  computed targets only; nothing in CI opens a file manager
 - `TemporaryFile` (`Utils/TemporaryFile.h`): reserves
   `eacp-temp-<64-bit hex><suffix>` in the temp directory (or a given one),
   creates nothing, and `removeAll`s the path on destruction; move-only.

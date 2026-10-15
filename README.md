@@ -33,6 +33,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `appendFile` and `writeFileAt` change files and report failure as `false`;
   `FileWriter` streams into one, `TemporaryFile` deletes its path when it goes
   out of scope, and `legalFileName` / `nonexistentSibling` name new ones.
+  `Files::openWithSystem` hands a file to its default application or opens a
+  folder in Finder, Explorer or the desktop's file manager, and
+  `revealInFileManager` shows an item there selected (Linux opens the folder
+  holding it); both answer `false` on iOS and Android.
 - **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
   abstraction backed by Core Graphics / CoreText on Apple platforms and the
   native Windows graphics stack. `primaryDisplay()` reports the screen's frame

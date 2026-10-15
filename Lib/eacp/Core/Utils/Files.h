@@ -179,6 +179,39 @@ Vector<DirectoryEntry> listDirectory(const FilePath& directory,
 Vector<FilePath> listFiles(const FilePath& directory,
                            const DirectoryOptions& options = {});
 
+// Hands path to the system to open as if the user had double-clicked it: a
+// directory opens in the file manager (Finder, Explorer, the desktop's own),
+// a file in its default application. JUCE's File::startAsProcess() with no
+// parameters.
+//
+// True when the open was handed off: NSWorkspace openURL: on macOS,
+// ShellExecuteW with the default verb on Windows, a spawned xdg-open on
+// Linux. On Linux that only means xdg-open started; a desktop with no handler
+// for the type is xdg-open's to report. False when path is empty or nothing
+// is there, when the launch failed, and always on iOS and Android, where an
+// app has no file manager to hand its own files to. A relative path is
+// resolved against the working directory first.
+//
+// Returns once the launch is handed off, never waiting for the application
+// it starts, and never throws, so it is safe from the message thread.
+bool openWithSystem(const FilePath& path);
+
+// Shows path in the file manager with it selected, as JUCE's
+// File::revealToUser() does, for a file or a directory alike: Finder through
+// NSWorkspace selectFile:inFileViewerRootedAtPath: on macOS, Explorer
+// through SHOpenFolderAndSelectItems on Windows (falling back to
+// "explorer /select," when that fails). Linux has no portable way to select
+// an item, so it opens revealFallbackDirectory(path) with xdg-open instead.
+// The result, the threading and the iOS and Android answer are
+// openWithSystem's.
+bool revealInFileManager(const FilePath& path);
+
+// The folder a file manager that cannot select an item opens to show it: the
+// parent of path, ignoring a trailing separator, or path itself when it has
+// no parent (a root such as "/" or "C:/"). Pure text: nothing is checked on
+// disk.
+FilePath revealFallbackDirectory(const FilePath& path);
+
 // The running process's executable. Empty if unresolvable.
 FilePath executablePath();
 

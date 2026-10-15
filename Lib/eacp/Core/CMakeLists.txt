@@ -64,7 +64,8 @@ if (APPLE)
                 App/FilePickerAsync-Default.cpp
                 App/LoginItem-iOS.cpp
                 Process/Process-iOS.cpp
-                Threads/EventLoop-iOS.mm)
+                Threads/EventLoop-iOS.mm
+                Utils/FilesOpen-Default.cpp)
         target_link_libraries(eacp-core PRIVATE "-framework UIKit")
     else ()
         target_sources(eacp-core PRIVATE
@@ -73,7 +74,8 @@ if (APPLE)
                 App/LoginItem-macOS.mm
                 Process/Process-Posix.cpp
                 Process/SpawnDirectory-Posix.cpp
-                Threads/EventLoop-macOS.mm)
+                Threads/EventLoop-macOS.mm
+                Utils/FilesOpen-macOS.mm)
         target_link_libraries(eacp-core PRIVATE
                 "-framework Cocoa"
                 "-framework Security"
@@ -96,6 +98,7 @@ elseif (WIN32)
             Utils/Environment-Windows.cpp
             Utils/FilePath-Windows.cpp
             Utils/Files-Windows.cpp
+            Utils/FilesOpen-Windows.cpp
             Utils/Logging-Windows.cpp
             Utils/MemoryMappedFile-Windows.cpp)
     target_link_libraries(eacp-core PRIVATE
@@ -128,6 +131,7 @@ elseif (UNIX AND NOT APPLE)
                 Threads/EventLoop-Android.cpp
                 Utils/FilePath-Android.cpp
                 Utils/Files-Android.cpp
+                Utils/FilesOpen-Default.cpp
                 Utils/Logging-Android.cpp)
         target_link_libraries(eacp-core PUBLIC android log)
     else ()
@@ -138,6 +142,7 @@ elseif (UNIX AND NOT APPLE)
                 Threads/EventLoopWait-Linux.cpp
                 Utils/FilePath-Linux.cpp
                 Utils/Files-Linux.cpp
+                Utils/FilesOpen-Linux.cpp
                 Utils/Logging-Posix.cpp)
     endif ()
 endif ()

@@ -16,6 +16,9 @@ set(core_test_sources
         FileWriterTests.cpp
         FilesAppendTests.cpp
         FilesCopyMoveTests.cpp
+        # Only the paths refused before anything is launched, and the targets
+        # computed for the launch; nothing here starts a file manager.
+        FilesOpenTests.cpp
         FilesTests.cpp
         FilesWildcardTests.cpp
         MathsTests.cpp

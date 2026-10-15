@@ -690,6 +690,57 @@ FilePath enclosingBundle(const FilePath& binary)
 
 namespace
 {
+// "dir/sub/" names "dir/sub", whose filename the trailing separator hides
+// from parent_path(). A root ("/", "C:/") has no relative part and stays.
+std::filesystem::path withoutTrailingSeparator(std::filesystem::path path)
+{
+    path = path.lexically_normal();
+
+    if (!path.has_filename() && path.has_relative_path())
+        return path.parent_path();
+
+    return path;
+}
+} // namespace
+
+// The platform halves can throw only what allocation and std::thread do, but
+// a button handler on the message thread should never have to catch either.
+bool openWithSystem(const FilePath& path)
+{
+    try
+    {
+        auto target = Detail::systemTarget(path);
+        return !target.empty() && Detail::openWithSystem(target);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool revealInFileManager(const FilePath& path)
+{
+    try
+    {
+        auto target = Detail::systemTarget(path);
+        return !target.empty() && Detail::revealInFileManager(target);
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+FilePath revealFallbackDirectory(const FilePath& path)
+{
+    auto item = withoutTrailingSeparator(toStdPath(path));
+    auto parent = item.parent_path();
+
+    return FilePath {parent.empty() ? item : parent};
+}
+
+namespace
+{
 EntryKind kindOf(const std::filesystem::file_status& status)
 {
     if (std::filesystem::is_symlink(status))
@@ -989,3 +1040,20 @@ std::string filenameFromPath(const std::string& path)
     return path;
 }
 } // namespace eacp::Files
+
+namespace eacp::Detail
+{
+FilePath systemTarget(const FilePath& path)
+{
+    if (path.empty())
+        return {};
+
+    auto ec = std::error_code {};
+    auto absolute = std::filesystem::absolute(toStdPath(path), ec);
+
+    if (ec || !std::filesystem::exists(absolute, ec))
+        return {};
+
+    return FilePath {Files::withoutTrailingSeparator(absolute)};
+}
+} // namespace eacp::Detail
