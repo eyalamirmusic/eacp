@@ -226,7 +226,7 @@ struct View::Native
 {
     Native(View& view) { nativeView = createNativeView(&view); }
 
-    void repaint() { [nativeView.get() setNeedsDisplay]; }
+    void repaint() { [nativeView.get().layer setNeedsDisplay]; }
 
     void setOpacity(float opacity) { nativeView.get().alpha = opacity; }
 
