@@ -191,6 +191,33 @@ public:
         // hardware-key chain to feed, so it is a no-op there.
         bool forwardUnhandledKeys = false;
 
+        // Appended to WebKit's own OS/engine user-agent prefix
+        // (WKWebViewConfiguration.applicationNameForUserAgent). WKWebView's
+        // default UA stops after "(KHTML, like Gecko)", which is exactly how
+        // Google and friends fingerprint "embedded web view" and degrade or
+        // block sign-in. A browser-shaped embedder should pass Safari's own
+        // tail (e.g. "Version/26.0 Safari/605.1.15") so the UA reads as stock
+        // Safari while the OS/WebKit tokens stay live and current. Empty (the
+        // default) keeps the platform UA. Apple platforms only; WebView2
+        // composes a full Chromium UA on its own.
+        std::string applicationNameForUserAgent;
+
+        // Two-finger swipe navigates the page's back/forward history
+        // (WKWebView.allowsBackForwardNavigationGestures). Off by default:
+        // embedded UIs have no history worth swiping through. Apple
+        // platforms; WebView2 has its own swipe handling.
+        bool backForwardGestures = false;
+
+        // macOS: trackpad pinch scales the page (WKWebView.allowsMagnification).
+        // No-op on iOS and Windows.
+        bool allowsMagnification = false;
+
+        // Let pages use the Fullscreen API — a video player's fullscreen
+        // button does nothing without it (WKPreferences
+        // .elementFullscreenEnabled, macOS 12.3+ / iOS 15.4+; silently
+        // unavailable below). WebView2 allows element fullscreen by default.
+        bool elementFullscreen = false;
+
         // Keep requestAnimationFrame-driven content advancing while the view is
         // off-screen, so an animated canvas (a spectrum analyser, a meter, a
         // visualiser) is captured by renderToImageAsync / takeSnapshot instead of
