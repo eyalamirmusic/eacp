@@ -22,6 +22,34 @@ constexpr ImageVertex imageUnitQuad[] = {
     {{1.f, 1.f}},
     {{0.f, 1.f}},
 };
+
+// How far past its own edges an uncut quad's square reaches: a device pixel,
+// and never less than a point. A fragment shades at its pixel's centre, which
+// under multisampling sits up to half a device pixel outside the quad, and the
+// edge ramp reaches half a device pixel further in -- so a square any closer
+// would take alpha off the edge pixels of a quad drawn below one-to-one.
+float uncutMargin(float pixelScale)
+{
+    return 1.f / std::min(pixelScale, 1.f);
+}
+
+// What a quad is cut to: the rounded rect it was given, or -- given none -- a
+// square one far enough past its own edges that the field reads one everywhere
+// it draws, so an uncut quad needs no second pipeline.
+RoundedRect cutFor(const Rect& destination,
+                   const RoundedRect& corners,
+                   float pixelScale)
+{
+    if (corners.isRounded())
+        return corners;
+
+    auto margin = uncutMargin(pixelScale);
+
+    return {{destination.x - margin,
+             destination.y - margin,
+             destination.w + margin * 2.f,
+             destination.h + margin * 2.f}};
+}
 } // namespace
 
 struct ImageBatch::Program final : GPU::ShaderProgram
@@ -49,6 +77,9 @@ struct ImageBatch::Program final : GPU::ShaderProgram
         auto uv0 = instanceInput(&ImageInstance::uv0, 1);
         auto uv1 = instanceInput(&ImageInstance::uv1, 1);
         auto tint = instanceInput(&ImageInstance::tint, 1);
+        auto cutCentre = instanceInput(&ImageInstance::cutCentre, 1);
+        auto cutHalfSize = instanceInput(&ImageInstance::cutHalfSize, 1);
+        auto cutRadii = instanceInput(&ImageInstance::cutRadii, 1);
 
         auto position = origin + corner.x() * edgeX + corner.y() * edgeY;
         auto clipX = position.x() / screenSize.x() * 2.f - 1.f;
@@ -58,8 +89,28 @@ struct ImageBatch::Program final : GPU::ShaderProgram
         auto fragUV = varying(uv0 + corner * (uv1 - uv0));
         auto fragPosition = varying(position);
         auto fragTint = varying(tint);
+        auto fragCutCentre = varying(cutCentre);
+        auto fragCutHalfSize = varying(cutHalfSize);
+        auto fragCutRadii = varying(cutRadii);
 
         auto colour = sample(image, fragUV) * fragTint;
+
+        // The rounded box's field, as the shape batch reads it, with the radius
+        // of whichever quarter the fragment is in: right of centre takes a
+        // right-hand corner, below it a bottom one.
+        auto local = fragPosition - fragCutCentre;
+        auto right = step(0.f, local.x());
+        auto below = step(0.f, local.y());
+        auto top = mix(fragCutRadii.x(), fragCutRadii.y(), right);
+        auto bottom = mix(fragCutRadii.w(), fragCutRadii.z(), right);
+        auto radius = mix(top, bottom, below);
+
+        auto q = abs(local) - (fragCutHalfSize - float2(radius, radius));
+        auto distance =
+            length(max(0.f, q)) + min(0.f, max(q.x(), q.y())) - radius;
+
+        // Half a device pixel each side of the edge, as fillRoundedRect's.
+        auto cut = clamp(0.5f - distance * pixelScale, 0.f, 1.f);
 
         // The clip's coverage, out of the atlas the shapes read theirs from:
         // an image under a shaped clip is cut by the shape, one fetch rather
@@ -67,17 +118,18 @@ struct ImageBatch::Program final : GPU::ShaderProgram
         // multiplies by one -- see ClipShader.
         auto coverage = clipCoverage(fragPosition, clipRegion, clipMask, clipAtlas);
 
-        setFragment(
-            float4(colour.x(), colour.y(), colour.z(), colour.w() * coverage));
+        setFragment(float4(
+            colour.x(), colour.y(), colour.z(), colour.w() * coverage * cut));
     }
 
     GPU::Uniform<GPU::Float2> screenSize;
+    GPU::Uniform<GPU::Float> pixelScale;
     GPU::Uniform<GPU::Float4> clipRegion;
     GPU::Uniform<GPU::Float4> clipMask;
     GPU::Uniform<GPU::Texture2D> image;
     GPU::Uniform<GPU::Texture2D> clipAtlas;
 
-    EACP_SHADER(screenSize, clipRegion, clipMask, image, clipAtlas)
+    EACP_SHADER(screenSize, pixelScale, clipRegion, clipMask, image, clipAtlas)
 };
 
 ImageBatch::ImageBatch(const CoverageAtlas& atlasToUse,
@@ -149,6 +201,11 @@ void ImageBatch::setLogicalSize(Point size)
     logicalSize = {std::max(1.f, size.x), std::max(1.f, size.y)};
 }
 
+void ImageBatch::setPixelScale(float scale)
+{
+    pixelScale = scale > 0.f ? scale : 1.f;
+}
+
 void ImageBatch::setScissorRect(const Rect& rectInPixels)
 {
     flush();
@@ -190,6 +247,7 @@ void ImageBatch::flush()
     }
 
     program->screenSize = Array {logicalSize.x, logicalSize.y};
+    program->pixelScale = pixelScale;
 
     packClipMask(clip,
                  atlas.getOpaqueUV(),
@@ -210,7 +268,8 @@ void ImageBatch::flush()
 void ImageBatch::draw(const GPU::Texture& texture,
                       const Rect& destination,
                       const Rect& uv,
-                      const Color& tint)
+                      const Color& tint,
+                      const RoundedRect& corners)
 {
     if (destination.w <= 0.f || destination.h <= 0.f || tint.a <= 0.f
         || !texture.isValid())
@@ -242,6 +301,19 @@ void ImageBatch::draw(const GPU::Texture& texture,
     instance.tint[1] = tint.g;
     instance.tint[2] = tint.b;
     instance.tint[3] = tint.a;
+
+    auto cut = cutFor(destination, corners, pixelScale);
+    auto radii = fittedRadii(cut);
+
+    instance.cutCentre[0] = cut.rect.x + cut.rect.w * 0.5f;
+    instance.cutCentre[1] = cut.rect.y + cut.rect.h * 0.5f;
+    instance.cutHalfSize[0] = cut.rect.w * 0.5f;
+    instance.cutHalfSize[1] = cut.rect.h * 0.5f;
+
+    instance.cutRadii[0] = radii.topLeft;
+    instance.cutRadii[1] = radii.topRight;
+    instance.cutRadii[2] = radii.bottomRight;
+    instance.cutRadii[3] = radii.bottomLeft;
 }
 
 void ImageBatch::forEachShaderGraph(const GPU::ShaderGraphVisitor& visit)

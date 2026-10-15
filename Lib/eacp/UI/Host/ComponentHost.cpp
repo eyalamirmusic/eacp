@@ -435,6 +435,7 @@ void ComponentHost::resized()
         meshes.emplace(
             *paths, gradientRamps(), Point {bounds.w, bounds.h}, sampleCount());
         images.emplace(*paths, Point {bounds.w, bounds.h}, sampleCount());
+        images->setPixelScale(backingScale());
         layers.emplace(Point {bounds.w, bounds.h}, sampleCount());
     }
 
@@ -453,6 +454,7 @@ void ComponentHost::setSurfaceSize(Point size)
     shapes->setPixelScale(backingScale());
     meshes->setLogicalSize(size);
     images->setLogicalSize(size);
+    images->setPixelScale(backingScale());
     layers->setLogicalSize(size);
 }
 

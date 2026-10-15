@@ -258,9 +258,22 @@ void Graphics::drawImage(const ImageRef& image,
                          const Rect& dest,
                          float opacity)
 {
+    drawImage(image, source, dest, RoundedRect {}, opacity);
+}
+
+void Graphics::drawImage(const ImageRef& image,
+                         const Rect& source,
+                         const Rect& dest,
+                         const RoundedRect& corners,
+                         float opacity)
+{
     if (image == nullptr || image->width <= 0 || image->height <= 0 || dest.w <= 0.f
         || dest.h <= 0.f || opacity <= 0.f)
         return;
+
+    auto cut = corners.isRounded()
+                   ? RoundedRect {toLocal(corners.rect), corners.radii}
+                   : RoundedRect {};
 
     recordClip();
 
@@ -270,7 +283,7 @@ void Graphics::drawImage(const ImageRef& image,
     auto uv = Rect {
         source.x / width, source.y / height, source.w / width, source.h / height};
 
-    list.addImage({image, toLocal(dest), uv, std::clamp(opacity, 0.f, 1.f)});
+    list.addImage({image, toLocal(dest), uv, std::clamp(opacity, 0.f, 1.f), cut});
 }
 
 float Graphics::drawText(std::string_view textToDraw, Point baselineLeft)

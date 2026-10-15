@@ -23,6 +23,14 @@ struct ImageInstance
     // Multiplied into the sample. Opaque white draws the image as it is; the
     // alpha is where an opacity goes.
     float tint[4];
+
+    // The rounded rect the quad is cut to, as its centre and half-size in
+    // points, and its four radii clockwise from the top-left. An uncut quad
+    // carries a square rect a device pixel larger than itself, and never less
+    // than a point, which every fragment is far enough inside to read one.
+    float cutCentre[2];
+    float cutHalfSize[2];
+    float cutRadii[4];
 };
 
 // Draws images as textured quads, batched and instanced by texture.
@@ -70,6 +78,10 @@ public:
 
     void setLogicalSize(Point size);
 
+    // Device pixels per point, which is how wide a rounded cut's edge ramp is:
+    // half a device pixel each side, as a shape's is.
+    void setPixelScale(float scale);
+
     // Draws what is queued and then clips the pass, so that what was issued
     // before the call escapes the new clip. Render-target *pixels*, matching
     // RenderPass::setScissorRect.
@@ -85,10 +97,15 @@ public:
     // `destination` and multiplied by `tint`. The texture is referred to and
     // not retained, so it has to outlive the flush -- which the recording that
     // holds it sees to.
+    //
+    // `corners`, when rounded, cuts the quad to a rounded rect in the same
+    // space -- a per-instance distance field, so quads cut by different shapes
+    // still share a draw.
     void draw(const GPU::Texture& texture,
               const Rect& destination,
               const Rect& uv,
-              const Color& tint);
+              const Color& tint,
+              const RoundedRect& corners = {});
 
     static void forEachShaderGraph(const GPU::ShaderGraphVisitor& visit);
 
@@ -103,6 +120,7 @@ private:
     ClipMask clip;
 
     Point logicalSize;
+    float pixelScale = 1.f;
     int sampleCount = 1;
     GPU::PixelFormat colorFormat = GPU::PixelFormat::BGRA8Unorm;
 
