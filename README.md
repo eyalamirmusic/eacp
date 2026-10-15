@@ -126,7 +126,12 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `<image>` from a base64 PNG or JPEG data URI, drawn directly or as a
   `<pattern>` fill. Not `<mask>`, `<style>` selectors or filters.
 - **Processes & plugins** — launch a child process with args, env and working
-  directory, feed its stdin and capture its output (`eacp::Processes`), and load
+  directory, feed its stdin and capture its output, separately or with stderr
+  merged into stdout, and optionally watch it arrive through a callback
+  (`eacp::Processes`). A whole command line can be given instead of
+  executable and arguments: Windows hands it to `CreateProcessW` verbatim (so
+  `cmd /c "a.bat && b.exe"` works), POSIX splits it into argv the way JUCE's
+  `StringArray::fromTokens` does and runs no shell. Load
   and unload shared libraries at runtime (`DynamicLibrary`). Both directions of
   plugin UI are covered: `EmbeddedView` puts a view tree of ours inside a window
   a host owns (an `NSView`, a `UIView` such as an AUv3's view controller hands

@@ -965,7 +965,24 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Process`: launch an executable with args/env/working dir; captures stdout and
   stderr, feeds stdin, and exposes `wait()`/`isRunning()`/`terminate()`/`kill()`
 - `run()`: blocking convenience returning a `ProcessResult`; `runAsync()` returns
-  a `Threads::Async<ProcessResult>` resolved on the main thread
+  a `Threads::Async<ProcessResult>` resolved on the main thread. `run()` closes
+  the child's stdin before waiting, so a child that reads it gets end-of-file
+- `ProcessOptions::commandLine` replaces `executable`/`arguments` when set. On
+  Windows it goes to `CreateProcessW` verbatim (null application name), as JUCE's
+  `ChildProcess::start(String)` does, so `cmd /c "vcvars.bat && cmake …"` reaches
+  cmd unescaped. POSIX has no such call and runs no shell: the line is split by
+  `tokeniseCommandLine` (JUCE's `StringArray::fromTokens(line, true)`: whitespace
+  breaks outside double quotes, quotes stay in the tokens, empty tokens dropped,
+  only the first token unquoted) and that token is spawned through `PATH`; a
+  blank line does not launch. Shell syntax (`&&`, pipes) therefore only works on
+  Windows, through an explicit `cmd /c`
+- `mergeErrorOutput` points the child's stderr at the stdout pipe (POSIX
+  `adddup2` onto `STDERR_FILENO`, Windows `hStdError = hStdOutput`): `output()`
+  is both streams interleaved, `errorOutput()` stays empty. `onOutput` sees each
+  stdout chunk on the reader thread as it is read, before it is appended; it is
+  not called for a separate stderr. Both need `captureOutput`
+- Tests: `ProcessTests.cpp` (POSIX commands), `ProcessTests-Windows.cpp` (the
+  same options through cmd.exe), `ProcessTokeniseTests.cpp` (everywhere)
 - POSIX impl (`Process-Posix.cpp`, fork/exec) shared by macOS+Linux; Windows uses
   `CreateProcessW` (`Process-Windows.cpp`)
 

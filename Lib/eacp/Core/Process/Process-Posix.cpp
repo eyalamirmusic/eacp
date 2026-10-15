@@ -72,6 +72,7 @@ struct Process::Native
 {
     explicit Native(ProcessOptions options)
         : detached(options.detached)
+        , onOutput(std::move(options.onOutput))
     {
         ignoreSigPipeOnce();
 
@@ -179,12 +180,32 @@ private:
     // and stdio is wired through file actions, so no arbitrary code (and no
     // allocation) runs in the child — avoiding the fork-in-a-threaded-process
     // deadlock. posix_spawnp keeps PATH lookup for bare executables.
-    void launch(const ProcessOptions& options)
+    static Vector<std::string> argumentsFor(const ProcessOptions& options)
     {
+        if (!options.commandLine.empty())
+            return tokeniseCommandLine(options.commandLine);
+
         auto argStrings = Vector<std::string> {options.executable};
         for (const auto& arg: options.arguments)
             argStrings.push_back(arg);
 
+        return argStrings;
+    }
+
+    void launch(const ProcessOptions& options)
+    {
+        auto argStrings = argumentsFor(options);
+
+        if (!options.commandLine.empty()
+            && (argStrings.empty() || argStrings.front().empty()))
+        {
+            LOG("Process: nothing to run in command line '",
+                options.commandLine,
+                "'");
+            return;
+        }
+
+        const auto executable = argStrings.front();
         auto envStrings = buildEnvironment(options.environment);
 
         auto argv = toCArray(argStrings);
@@ -194,7 +215,9 @@ private:
         int outPipe[2] = {-1, -1};
         int errPipe[2] = {-1, -1};
 
-        if (options.captureOutput && !createPipes(inPipe, outPipe, errPipe))
+        const auto merge = options.mergeErrorOutput;
+
+        if (options.captureOutput && !createPipes(inPipe, outPipe, errPipe, !merge))
             return;
 
         auto actions = posix_spawn_file_actions_t {};
@@ -204,7 +227,8 @@ private:
         {
             posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO);
             posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
-            posix_spawn_file_actions_adddup2(&actions, errPipe[1], STDERR_FILENO);
+            posix_spawn_file_actions_adddup2(
+                &actions, merge ? outPipe[1] : errPipe[1], STDERR_FILENO);
 
             for (auto fd: {inPipe[0],
                            inPipe[1],
@@ -212,14 +236,15 @@ private:
                            outPipe[1],
                            errPipe[0],
                            errPipe[1]})
-                posix_spawn_file_actions_addclose(&actions, fd);
+                if (fd >= 0)
+                    posix_spawn_file_actions_addclose(&actions, fd);
         }
 
         if (!options.workingDirectory.empty()
             && !addSpawnWorkingDirectory(actions, options.workingDirectory))
         {
             LOG("Process: cannot start ",
-                options.executable,
+                executable,
                 " in ",
                 options.workingDirectory);
             posix_spawn_file_actions_destroy(&actions);
@@ -237,12 +262,8 @@ private:
             posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
 #endif
 
-        auto result = posix_spawnp(&pid,
-                                   options.executable.c_str(),
-                                   &actions,
-                                   &attr,
-                                   argv.data(),
-                                   envp.data());
+        auto result = posix_spawnp(
+            &pid, executable.c_str(), &actions, &attr, argv.data(), envp.data());
 
         posix_spawnattr_destroy(&attr);
         posix_spawn_file_actions_destroy(&actions);
@@ -262,7 +283,9 @@ private:
             adoptPipes(inPipe, outPipe, errPipe);
     }
 
-    static bool createPipes(int (&in)[2], int (&out)[2], int (&err)[2])
+    // Without a separate error pipe (merged stderr) err is left at {-1, -1}.
+    static bool
+        createPipes(int (&in)[2], int (&out)[2], int (&err)[2], bool separateErr)
     {
         if (pipe(in) != 0)
             return false;
@@ -274,7 +297,7 @@ private:
             return false;
         }
 
-        if (pipe(err) != 0)
+        if (separateErr && pipe(err) != 0)
         {
             ::close(in[0]);
             ::close(in[1]);
@@ -299,14 +322,22 @@ private:
     {
         ::close(in[0]);
         ::close(out[1]);
-        ::close(err[1]);
         inputFd = in[1];
 
-        outReader = std::thread([this, fd = out[0]] { drain(fd, outBuffer); });
-        errReader = std::thread([this, fd = err[0]] { drain(fd, errBuffer); });
+        outReader =
+            std::thread([this, fd = out[0]] { drain(fd, outBuffer, onOutput); });
+
+        if (err[0] >= 0)
+        {
+            ::close(err[1]);
+            errReader =
+                std::thread([this, fd = err[0]] { drain(fd, errBuffer, nullptr); });
+        }
     }
 
-    void drain(int fd, std::string& dest)
+    void drain(int fd,
+               std::string& dest,
+               const std::function<void(std::string_view)>& onChunk)
     {
         char buffer[4096];
 
@@ -316,6 +347,9 @@ private:
 
             if (count > 0)
             {
+                if (onChunk)
+                    onChunk(std::string_view {buffer, (std::size_t) count});
+
                 auto lock = std::lock_guard {bufferMutex};
                 dest.append(buffer, (std::size_t) count);
             }
@@ -386,6 +420,7 @@ private:
     pid_t pid = -1;
     bool execFailed = false; // posix_spawn couldn't exec → report 127
     const bool detached;
+    const std::function<void(std::string_view)> onOutput;
     int inputFd = -1;
 
     std::thread outReader;

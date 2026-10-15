@@ -25,6 +25,7 @@ set(core_test_sources
         MemoryMappedFileTests.cpp
         PluginObjectTests.cpp
         ProcessInheritStdioTests.cpp
+        ProcessTokeniseTests.cpp
         RangeTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp
@@ -44,6 +45,12 @@ endif ()
 # only run on macOS and Linux.
 if (NOT WIN32)
     list(APPEND core_test_sources ProcessTests.cpp)
+endif ()
+
+# The same options (verbatim commandLine, merged stderr, live output, working
+# directory) through cmd.exe.
+if (WIN32)
+    list(APPEND core_test_sources ProcessTests-Windows.cpp)
 endif ()
 
 # The file/folder picker seam is Windows-only (App-Windows-FilePicker.h), and
