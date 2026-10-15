@@ -1042,10 +1042,15 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 - `Zip::Reader`/`Zip::Writer` (`Utils/Zip.h`): zip archives over the vendored
   miniz, read from a file (memory-mapped) or from bytes, written to either.
   `extractAll` refuses entries that would land outside the target directory.
+  `extract` (one entry to a file) and `extractAll` stream through
+  `mz_zip_reader_extract_iter_*` into a `FileWriter`, one
+  `Zip::extractChunkSize` (1 MiB) buffer per call, never the whole entry, and
+  take an optional `ExtractProgressFunc` called before, per chunk and per
+  entry, whose `false` cancels and removes the file being written.
   `Zip::compress`/`decompress` deflate a single blob as a zlib stream. It is
-  compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`
-  and `Files::writeFile`, so UTF-8 paths take the same route as everything
-  else. `Apps/Console/Zip` is the worked example.
+  compiled with `MINIZ_NO_STDIO`: every file goes through `MemoryMappedFile`,
+  `FileWriter` and `Files::writeFile`, so UTF-8 paths take the same route as
+  everything else. `Apps/Console/Zip` is the worked example.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 

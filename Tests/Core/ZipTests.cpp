@@ -44,6 +44,76 @@ Bytes twoEntryArchive()
 
     return writer.finish();
 }
+
+// Incompressible bytes, the same for the same seed (xorshift32).
+std::string noise(std::size_t size, std::uint32_t seed)
+{
+    auto text = std::string(size, '\0');
+    auto state = seed == 0 ? 1u : seed;
+
+    for (auto& c: text)
+    {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        c = static_cast<char>(state & 0xff);
+    }
+
+    return text;
+}
+
+// Big enough that every streamed entry in it takes several chunks.
+const auto bigSize = 3 * extractChunkSize + 12345;
+
+Bytes mixedArchive()
+{
+    auto writer = Writer {};
+    check(writer.add("readme.txt", "streamed to disk"));
+    check(writer.add("empty/", std::string_view {}));
+    check(writer.add("deep/er/big.bin", noise(bigSize, 7)));
+    check(writer.add("deep/stored.bin", noise(bigSize / 2, 11), Level::none));
+    check(writer.add("deep/er/zeros.bin", std::string(bigSize, '\0')));
+    check(writer.add("zero.txt", std::string_view {}));
+
+    return writer.finish();
+}
+
+// Every report, checked as it arrives: totals fixed, counters never going
+// down, and bytes moving at most one chunk per report.
+struct ProgressLog
+{
+    ExtractProgressFunc func()
+    {
+        return [this](const ExtractProgress& progress)
+        {
+            if (!reports.empty())
+            {
+                const auto& last = reports.back();
+
+                check(progress.entriesTotal == last.entriesTotal);
+                check(progress.bytesTotal == last.bytesTotal);
+                check(progress.entriesDone >= last.entriesDone);
+                check(progress.bytesDone >= last.bytesDone);
+            }
+
+            check(progress.entriesDone <= progress.entriesTotal);
+            check(progress.bytesDone <= progress.bytesTotal);
+
+            reports.push_back(progress);
+
+            return true;
+        };
+    }
+
+    bool finished() const
+    {
+        const auto& last = reports.back();
+        return last.entriesDone == last.entriesTotal
+               && last.bytesDone == last.bytesTotal;
+    }
+
+    std::vector<ExtractProgress> reports;
+};
 } // namespace
 
 auto tZipRoundTripsInMemory = test("Zip/roundTripsInMemory") = []
@@ -209,6 +279,266 @@ auto tZipExtractionStaysUnderRoot = test("Zip/extractionStaysUnderRoot") = []
     check(readTestFile(root / "fine.txt") == "fine");
     check(!std::filesystem::exists(dir / "escaped.txt"));
     check(!std::filesystem::exists(root / "absolute.txt"));
+};
+
+auto tZipStreamsEveryEntry = test("Zip/extract/streamsEveryEntry") = []
+{
+    const auto dir = scratchDirectory("zip-stream-all");
+    const auto reader = Reader {mixedArchive()};
+    const auto root = dir / "out";
+
+    auto log = ProgressLog {};
+    check(reader.extractAll(FilePath {root}, log.func()));
+
+    for (const auto& entry: reader.entries())
+    {
+        if (entry.isDirectory)
+            check(std::filesystem::is_directory(root / entry.name));
+        else
+            check(readTestFile(root / entry.name) == reader.readText(entry.name));
+    }
+
+    check(readTestFile(root / "deep" / "er" / "big.bin") == noise(bigSize, 7));
+    check(std::filesystem::file_size(root / "zero.txt") == 0);
+};
+
+auto tZipExtractAllWithoutProgressStreams =
+    test("Zip/extract/allWithoutProgress") = []
+{
+    const auto dir = scratchDirectory("zip-stream-plain");
+    const auto reader = Reader {mixedArchive()};
+
+    check(reader.extractAll(FilePath {dir}));
+    check(readTestFile(dir / "deep" / "stored.bin") == noise(bigSize / 2, 11));
+    check(std::filesystem::is_directory(dir / "empty"));
+};
+
+auto tZipExtractsOneEntry = test("Zip/extract/oneEntry") = []
+{
+    const auto dir = scratchDirectory("zip-stream-one");
+    const auto reader = Reader {mixedArchive()};
+    const auto target = dir / "a" / "b" / "copy.bin";
+
+    check(reader.extract("deep/er/big.bin", FilePath {target}));
+    check(readTestFile(target) == noise(bigSize, 7));
+
+    // Replaces a longer file rather than leaving its tail.
+    writeTestFile(dir / "small.txt", repeated("old contents ", 100));
+    check(reader.extract("readme.txt", FilePath {dir / "small.txt"}));
+    check(readTestFile(dir / "small.txt") == "streamed to disk");
+
+    check(reader.extract("zero.txt", FilePath {dir / "zero.txt"}));
+    check(std::filesystem::file_size(dir / "zero.txt") == 0);
+
+    check(!reader.extract("missing.bin", FilePath {dir / "missing.bin"}));
+    check(!std::filesystem::exists(dir / "missing.bin"));
+
+    check(!reader.extract("DEEP/ER/BIG.BIN", FilePath {dir / "case.bin"}));
+    check(!reader.extract("empty/", FilePath {dir / "dir"}));
+    check(!std::filesystem::exists(dir / "dir"));
+
+    check(!Reader {Bytes {}}.extract("readme.txt", FilePath {dir / "x"}));
+};
+
+auto tZipExtractOneEntryReportsProgress =
+    test("Zip/extract/oneEntryReportsProgress") = []
+{
+    const auto dir = scratchDirectory("zip-stream-one-progress");
+    const auto reader = Reader {mixedArchive()};
+
+    auto log = ProgressLog {};
+    check(reader.extract("deep/er/big.bin", FilePath {dir / "big.bin"}, log.func()));
+
+    check(log.finished());
+    check(log.reports.front().entriesTotal == 1);
+    check(log.reports.front().bytesTotal == bigSize);
+    check(log.reports.front().bytesDone == 0);
+
+    // One before, one per chunk, one at the end.
+    check(log.reports.size() == bigSize / extractChunkSize + 1 + 2);
+};
+
+auto tZipExtractReportsProgress = test("Zip/extract/reportsProgress") = []
+{
+    const auto dir = scratchDirectory("zip-stream-progress");
+    const auto reader = Reader {mixedArchive()};
+
+    auto log = ProgressLog {};
+    check(reader.extractAll(FilePath {dir}, log.func()));
+
+    auto total = std::uint64_t {0};
+
+    for (const auto& entry: reader.entries())
+        total += entry.size;
+
+    const auto& first = log.reports.front();
+    check(first.entriesDone == 0);
+    check(first.bytesDone == 0);
+    check(first.entriesTotal == reader.numEntries());
+    check(first.bytesTotal == total);
+    check(log.finished());
+
+    // Bytes move a chunk at a time at most, so no report ever stood for more
+    // than one chunk buffer of inflated data, and the big entries took many.
+    auto chunkReports = 0;
+
+    for (auto i = std::size_t {1}; i < log.reports.size(); ++i)
+    {
+        const auto step = log.reports[i].bytesDone - log.reports[i - 1].bytesDone;
+        check(step <= extractChunkSize);
+
+        if (step > 0)
+            ++chunkReports;
+    }
+
+    check(chunkReports >= int((bigSize * 2 + bigSize / 2) / extractChunkSize));
+
+    // One report after every entry as well.
+    auto entryReports = 0;
+
+    for (auto i = std::size_t {1}; i < log.reports.size(); ++i)
+        if (log.reports[i].entriesDone != log.reports[i - 1].entriesDone)
+            ++entryReports;
+
+    check(entryReports == reader.numEntries());
+};
+
+auto tZipExtractCancelsMidEntry = test("Zip/extract/cancelsMidEntry") = []
+{
+    const auto dir = scratchDirectory("zip-stream-cancel");
+    const auto reader = Reader {mixedArchive()};
+
+    auto refused = false;
+    auto calledAfterRefusing = false;
+    auto lastProgress = ExtractProgress {};
+    const auto cancelOnFirstChunk = [&](const ExtractProgress& progress)
+    {
+        calledAfterRefusing = calledAfterRefusing || refused;
+        lastProgress = progress;
+        refused = progress.bytesDone > std::string_view {"streamed to disk"}.size();
+        return !refused;
+    };
+
+    check(!reader.extractAll(FilePath {dir}, cancelOnFirstChunk));
+
+    // readme.txt and the directory came before the big entry; the big entry
+    // was cut short and removed, and nothing after it was started.
+    check(readTestFile(dir / "readme.txt") == "streamed to disk");
+    check(std::filesystem::is_directory(dir / "empty"));
+    check(!std::filesystem::exists(dir / "deep" / "er" / "big.bin"));
+    check(!std::filesystem::exists(dir / "deep" / "stored.bin"));
+    check(!std::filesystem::exists(dir / "zero.txt"));
+    check(refused);
+    check(!calledAfterRefusing);
+    check(lastProgress.entriesDone == 2);
+    check(lastProgress.bytesDone == 16 + extractChunkSize);
+
+    // Cancelling one entry removes the file it had started.
+    const auto target = dir / "single.bin";
+    const auto stopAtOnce = [](const ExtractProgress& progress)
+    { return progress.bytesDone == 0; };
+
+    check(!reader.extract("deep/er/big.bin", FilePath {target}, stopAtOnce));
+    check(!std::filesystem::exists(target));
+};
+
+auto tZipExtractCancelsBetweenEntries =
+    test("Zip/extract/cancelsBetweenEntries") = []
+{
+    const auto dir = scratchDirectory("zip-stream-cancel-between");
+    const auto reader = Reader {mixedArchive()};
+
+    auto calls = 0;
+    const auto stopAfterFirstEntry = [&](const ExtractProgress& progress)
+    {
+        ++calls;
+        return progress.entriesDone < 1;
+    };
+
+    check(!reader.extractAll(FilePath {dir}, stopAfterFirstEntry));
+    check(readTestFile(dir / "readme.txt") == "streamed to disk");
+    check(!std::filesystem::exists(dir / "empty"));
+
+    // Before, readme's one chunk, readme done - and nothing further.
+    check(calls == 3);
+
+    // Cancelling before anything starts writes nothing at all.
+    const auto empty = dir / "none";
+    check(!reader.extractAll(FilePath {empty},
+                             [](const ExtractProgress&) { return false; }));
+    check(!std::filesystem::exists(empty / "readme.txt"));
+};
+
+auto tZipExtractSkipsEscapingEntries = test("Zip/extract/skipsEscapingEntries") = []
+{
+    const auto dir = scratchDirectory("zip-stream-slip");
+
+    auto writer = Writer {};
+    check(writer.add("../evil.txt", "evil"));
+    check(writer.add("a\\..\\..\\evil2.txt", "evil"));
+    check(writer.add("safe.txt", "safe"));
+    check(writer.add("win\\style.txt", "backslash"));
+
+    const auto reader = Reader {writer.finish()};
+    const auto root = dir / "out";
+
+    auto log = ProgressLog {};
+    check(!reader.extractAll(FilePath {root}, log.func()));
+
+    check(readTestFile(root / "safe.txt") == "safe");
+    check(readTestFile(root / "win" / "style.txt") == "backslash");
+    check(!std::filesystem::exists(dir / "evil.txt"));
+    check(!std::filesystem::exists(dir / "evil2.txt"));
+    check(!std::filesystem::exists(root / "evil.txt"));
+    check(log.finished());
+};
+
+auto tZipExtractKeepsGoingPastCorruptEntry =
+    test("Zip/extract/keepsGoingPastCorruptEntry") = []
+{
+    const auto dir = scratchDirectory("zip-stream-corrupt");
+    const auto payload = noise(2 * extractChunkSize + 99, 3);
+
+    auto writer = Writer {};
+    check(writer.add("before.txt", "before"));
+    check(writer.add("bad.bin", payload, Level::none));
+    check(writer.add("after.txt", "after"));
+    auto bytes = writer.finish();
+
+    // Stored, so the payload sits in the archive verbatim; flip a byte deep
+    // inside it and only the CRC can tell.
+    auto text = std::string {bytes.begin(), bytes.end()};
+    const auto at = text.find(payload.substr(0, 64));
+    check(at != std::string::npos);
+    bytes[static_cast<int>(at + extractChunkSize + 5)] ^= 0xff;
+
+    const auto reader = Reader {std::move(bytes)};
+
+    auto log = ProgressLog {};
+    check(!reader.extractAll(FilePath {dir}, log.func()));
+
+    check(readTestFile(dir / "before.txt") == "before");
+    check(readTestFile(dir / "after.txt") == "after");
+    check(!std::filesystem::exists(dir / "bad.bin"));
+    check(log.finished());
+
+    check(!reader.extract("bad.bin", FilePath {dir / "bad.bin"}));
+    check(!std::filesystem::exists(dir / "bad.bin"));
+};
+
+auto tZipExtractsUtf8Names = test("Zip/extract/utf8Names") = []
+{
+    const auto dir = scratchDirectory("zip-stream-utf8");
+    const auto name =
+        std::string {"caf\xc3\xa9/\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d.txt"};
+
+    auto writer = Writer {};
+    check(writer.add(name, "unicode"));
+
+    const auto reader = Reader {writer.finish()};
+    check(reader.extractAll(FilePath {dir}));
+    check(eacp::Files::readFile(FilePath {FilePath {dir}.str() + "/" + name})
+          == "unicode");
 };
 
 auto tZipWriterRefusesAbsoluteNames = test("Zip/writerRefusesAbsoluteNames") = []

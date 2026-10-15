@@ -32,6 +32,26 @@ struct Entry
     bool isDirectory = false;
 };
 
+// How far an extraction has got. Every entry counts, directories and skipped
+// ones included, and bytes are uncompressed sizes as the archive declares
+// them, so a run that keeps going past a bad entry still ends with both
+// counters at their totals.
+struct ExtractProgress
+{
+    int entriesDone = 0;
+    int entriesTotal = 0;
+    std::uint64_t bytesDone = 0;
+    std::uint64_t bytesTotal = 0;
+};
+
+// Called as an extraction moves; return false to cancel it.
+using ExtractProgressFunc = std::function<bool(const ExtractProgress&)>;
+
+// Extraction inflates an entry this many bytes at a time and writes each
+// piece straight to disk, so memory stays bounded whatever the entry's size.
+// Progress is reported at most this many bytes apart.
+inline constexpr std::size_t extractChunkSize = std::size_t {1} << 20;
+
 // Reads an existing archive. Never throws: ask isValid(). A file is mapped
 // rather than copied, so the same hazard MemoryMappedFile documents applies -
 // read what something else may truncate through the Bytes constructor.
@@ -60,11 +80,35 @@ public:
     std::optional<Bytes> read(std::string_view name) const;
     std::optional<std::string> readText(std::string_view name) const;
 
+    // The entry `name` written to the file `target`, streamed in
+    // extractChunkSize pieces rather than inflated in memory, creating
+    // target's parent directories and replacing whatever file is there.
+    // False when there is no such entry, it is a directory, its data is
+    // corrupt, the file could not be written or onProgress cancelled; the
+    // incomplete file is then removed. onProgress, when given, is called
+    // once before the first byte, after every chunk and once at the end,
+    // with an entriesTotal of 1.
+    bool extract(std::string_view name,
+                 const FilePath& target,
+                 const ExtractProgressFunc& onProgress = {}) const;
+
     // Every entry under `directory`, creating it and any intermediate
-    // directories. An entry whose name would land outside `directory` - an
-    // absolute path, or one climbing through ".." - is skipped rather than
-    // written, so an archive from an untrusted source cannot reach past it.
-    // False when any entry could not be written.
+    // directories, each file streamed to disk as extract() does, so memory
+    // stays bounded however large the archive or its entries are. Names are
+    // read as UTF-8 with '\' taken as '/'. An entry whose name would land
+    // outside `directory` - an absolute path, or one climbing through ".." -
+    // is skipped rather than written, so an archive from an untrusted source
+    // cannot reach past it. A failed or skipped entry does not stop the rest.
+    // False when any entry could not be written or was skipped.
+    //
+    // onProgress, when given, is called once before the first entry, after
+    // every chunk written and after every entry, with counters that never
+    // go down; returning false stops at once and returns false. The entries
+    // already finished stay on disk; the one being written is removed.
+    bool extractAll(const FilePath& directory,
+                    const ExtractProgressFunc& onProgress) const;
+
+    // extractAll() with no progress reporting.
     bool extractAll(const FilePath& directory) const;
 
 private:

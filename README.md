@@ -22,10 +22,13 @@ them, so apps inherit the look, feel, and performance of the host OS:
 - **Files** — `FilePath` carries a path as UTF-8 text, `Files::readFile` /
   `writeFile` / `writeFileAtomically` move whole files, `File` and
   `MemoryMappedFile` read big ones in pieces, and `Zip` reads and writes
-  archives. A directory is walked with `Files::forEachEntry` (a visitor that
-  can prune a subtree or stop early, with unreadable entries reported to a
-  callback) or collected with `listDirectory` / `listFiles`, recursively or
-  not, hidden entries and symlinks by choice, filtered by a wildcard such as
+  archives, extracting one entry or all of them straight to disk a chunk at a
+  time, with a progress callback that can cancel, so a multi-gigabyte archive
+  unpacks in bounded memory. A directory is walked with `Files::forEachEntry`
+  (a visitor that can prune a subtree or stop early, with unreadable entries
+  reported to a callback) or collected with `listDirectory` / `listFiles`,
+  recursively or not, hidden entries and symlinks by choice, filtered by a
+  wildcard such as
   `"*.wav; *.flac"`. `copyFile`, `copyDirectory`, `moveFile`, `removeFile`,
   `appendFile` and `writeFileAt` change files and report failure as `false`;
   `FileWriter` streams into one, `TemporaryFile` deletes its path when it goes

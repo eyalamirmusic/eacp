@@ -1,4 +1,5 @@
 #include "Zip.h"
+#include "FileWriter.h"
 #include "Files.h"
 #include "MemoryMappedFile.h"
 #include "StdPath.h"
@@ -106,7 +107,9 @@ std::optional<std::filesystem::path> relativeEntryPath(std::string_view name)
     auto text = std::string {name};
     std::replace(text.begin(), text.end(), '\\', '/');
 
-    const auto path = std::filesystem::path {text}.lexically_normal();
+    // Through FilePath, so the name is taken as UTF-8 on Windows too, where a
+    // std::filesystem::path built from a std::string reads the ANSI code page.
+    const auto path = toStdPath(FilePath {text}).lexically_normal();
 
     if (path.empty() || path.has_root_name() || path.has_root_directory())
         return std::nullopt;
@@ -117,6 +120,31 @@ std::optional<std::filesystem::path> relativeEntryPath(std::string_view name)
 
     return path;
 }
+
+// How streaming one entry to disk ended.
+enum class Streamed
+{
+    done,
+    failed,
+    cancelled
+};
+
+// One extraction's running counters, the caller's callback and the single
+// chunk buffer every entry is inflated through. With no callback every report
+// goes on.
+struct Extraction
+{
+    explicit Extraction(const ExtractProgressFunc& onProgressToUse)
+        : onProgress(onProgressToUse)
+    {
+    }
+
+    bool report() const { return !onProgress || onProgress(progress); }
+
+    const ExtractProgressFunc& onProgress;
+    ExtractProgress progress;
+    Scratch scratch = Scratch(extractChunkSize);
+};
 } // namespace
 
 struct Reader::Impl
@@ -204,6 +232,84 @@ struct Reader::Impl
         return out;
     }
 
+    // Inflates entry `index` into the file at `target` through the
+    // extraction's one chunk buffer, advancing bytesDone by each chunk and
+    // reporting it; a false report cancels. The entry's declared size is
+    // added to bytesDone however it ends, so the counters still reach their
+    // totals. A file left incomplete is removed.
+    Streamed streamTo(int index,
+                      const Entry& entry,
+                      const std::filesystem::path& target,
+                      Extraction& extraction) const
+    {
+        const auto endBytes = extraction.progress.bytesDone + entry.size;
+        const auto result = stream(index, target, extraction, endBytes);
+
+        if (result != Streamed::done)
+        {
+            auto ec = std::error_code {};
+            std::filesystem::remove(target, ec);
+        }
+
+        extraction.progress.bytesDone = endBytes;
+
+        return result;
+    }
+
+    Streamed stream(int index,
+                    const std::filesystem::path& target,
+                    Extraction& extraction,
+                    std::uint64_t endBytes) const
+    {
+        auto* state = mz_zip_reader_extract_iter_new(&zip, (mz_uint) index, 0);
+
+        if (state == nullptr)
+            return Streamed::failed;
+
+        auto result = Streamed::done;
+
+        {
+            auto writer = FileWriter {FilePath {target}};
+            auto& scratch = extraction.scratch;
+
+            if (!writer.isOpen())
+                result = Streamed::failed;
+
+            while (result == Streamed::done)
+            {
+                const auto n = mz_zip_reader_extract_iter_read(
+                    state, scratch.data(), scratch.size());
+
+                if (n == 0)
+                    break;
+
+                const auto chunk =
+                    Span<const std::uint8_t> {scratch.data(), scratch.data() + n};
+
+                if (!writer.write(chunk))
+                {
+                    result = Streamed::failed;
+                    break;
+                }
+
+                auto& done = extraction.progress.bytesDone;
+                done = std::min<std::uint64_t>(done + n, endBytes);
+
+                if (!extraction.report())
+                    result = Streamed::cancelled;
+            }
+
+            if (result == Streamed::done && !writer.flush())
+                result = Streamed::failed;
+        }
+
+        // False unless the whole entry came through and its CRC matched.
+        if (!mz_zip_reader_extract_iter_free(state) && result == Streamed::done)
+            result = Streamed::failed;
+
+        return result;
+    }
+
     std::optional<MemoryMappedFile> mapping;
     Bytes bytes;
     mutable mz_zip_archive zip {};
@@ -274,61 +380,95 @@ std::optional<std::string> Reader::readText(std::string_view name) const
     return asText(*bytes);
 }
 
-bool Reader::extractAll(const FilePath& directory) const
+bool Reader::extract(std::string_view name,
+                     const FilePath& target,
+                     const ExtractProgressFunc& onProgress) const
+{
+    const auto index = impl->locate(name);
+    const auto entry = impl->stat(index);
+
+    if (!entry || entry->isDirectory)
+        return false;
+
+    auto extraction = Extraction {onProgress};
+    extraction.progress.entriesTotal = 1;
+    extraction.progress.bytesTotal = entry->size;
+
+    if (!extraction.report())
+        return false;
+
+    const auto result = impl->streamTo(index, *entry, toStdPath(target), extraction);
+
+    if (result == Streamed::cancelled)
+        return false;
+
+    extraction.progress.entriesDone = 1;
+
+    return extraction.report() && result == Streamed::done;
+}
+
+bool Reader::extractAll(const FilePath& directory,
+                        const ExtractProgressFunc& onProgress) const
 {
     if (!impl->valid)
         return false;
 
     const auto root = toStdPath(directory);
+    const auto all = entries();
+
+    auto extraction = Extraction {onProgress};
+    auto& progress = extraction.progress;
+    progress.entriesTotal = numEntries();
+
+    for (const auto& entry: all)
+        progress.bytesTotal += entry.size;
+
+    if (!extraction.report())
+        return false;
+
     auto ok = true;
 
-    for (auto index = 0; index < numEntries(); ++index)
+    for (auto index = 0; index < progress.entriesTotal; ++index)
     {
         const auto entry = impl->stat(index);
 
         if (!entry)
+            ok = false;
+        else if (const auto relative = relativeEntryPath(entry->name); !relative)
         {
             ok = false;
-            continue;
+            progress.bytesDone += entry->size;
         }
-
-        const auto relative = relativeEntryPath(entry->name);
-
-        if (!relative)
+        else if (entry->isDirectory)
         {
-            ok = false;
-            continue;
-        }
-
-        const auto target = root / *relative;
-        auto ec = std::error_code {};
-
-        if (entry->isDirectory)
-        {
-            std::filesystem::create_directories(target, ec);
+            auto ec = std::error_code {};
+            std::filesystem::create_directories(root / *relative, ec);
             ok = ok && !ec;
-            continue;
+            progress.bytesDone += entry->size;
+        }
+        else
+        {
+            const auto result =
+                impl->streamTo(index, *entry, root / *relative, extraction);
+
+            if (result == Streamed::cancelled)
+                return false;
+
+            ok = ok && result == Streamed::done;
         }
 
-        const auto bytes = impl->extract(index);
+        ++progress.entriesDone;
 
-        if (!bytes)
-        {
-            ok = false;
-            continue;
-        }
-
-        try
-        {
-            Files::writeFile(FilePath {target}, *bytes);
-        }
-        catch (const std::exception&)
-        {
-            ok = false;
-        }
+        if (!extraction.report())
+            return false;
     }
 
     return ok;
+}
+
+bool Reader::extractAll(const FilePath& directory) const
+{
+    return extractAll(directory, {});
 }
 
 struct Writer::Impl
