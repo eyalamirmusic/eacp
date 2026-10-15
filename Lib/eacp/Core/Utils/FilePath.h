@@ -91,9 +91,26 @@ public:
     // the same treatment the std::filesystem::path constructor above gets.
     static FilePath fromWide(std::wstring_view wide);
 
+    // Builds a path from UTF-8 text in the platform's own form — a string
+    // nativeString() wrote out, one a user typed, one read from a settings
+    // file. On Windows '\' becomes '/', so "C:\dir\file.wav" equals the
+    // FilePath of "C:/dir/file.wav"; elsewhere '\' is an ordinary file name
+    // character and the text is kept as-is, like the string constructors.
+    static FilePath fromNative(std::string_view nativeText);
+
+    // The text in eacp's own form: UTF-8 with '/' separators on every
+    // platform, Windows included.
     const std::string& str() const;
     const char* c_str() const;
     bool empty() const;
+
+    // The text the platform's own APIs and users expect, for display or for
+    // storing where other software reads it: on Windows every '/' becomes '\',
+    // so "C:/dir/file.wav" reads "C:\dir\file.wav", "//server/share" reads
+    // "\\server\share" and a "//?/" long-path prefix reads "\\?\" again — the
+    // inverse of what the wide constructors and fromWide do. Elsewhere it is
+    // str(). fromNative() parses it back.
+    std::string nativeString() const;
 
     // The path as a wide string, for native APIs and std::filesystem on
     // Windows. Never throws: bytes that are not valid UTF-8 decode to U+FFFD.

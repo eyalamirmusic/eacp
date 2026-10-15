@@ -19,7 +19,9 @@ them, so apps inherit the look, feel, and performance of the host OS:
   `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink, their Windows
   equivalents, and on Linux one `epoll` descriptor a plugin host's own loop
   can pump (`getEventLoopFd`, `pumpEventLoop`).
-- **Files** — `FilePath` carries a path as UTF-8 text, `Files::readFile` /
+- **Files** — `FilePath` carries a path as UTF-8 text with `/` separators on
+  every platform (`nativeString` and `fromNative` convert to and from the
+  platform's own form, `\` on Windows), `Files::readFile` /
   `writeFile` / `writeFileAtomically` move whole files, `File` and
   `MemoryMappedFile` read big ones in pieces, and `Zip` reads and writes
   archives. A directory is walked with `Files::forEachEntry` (a visitor that

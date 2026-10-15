@@ -17,6 +17,21 @@ auto tGenericSeparators =
     check(path.str() == "C:/dir/file.wav");
 };
 
+auto tNativeStringInvertsWideConversion =
+    test("FilePath/nativeString restores the native separators") = []
+{
+    for (auto native: {L"C:\\dir\\file.wav",
+                       L"\\\\server\\share\\dir",
+                       L"\\\\?\\C:\\very\\long\\path.wav"})
+    {
+        auto path = FilePath {std::filesystem::path {native}};
+        check(path.str().find('\\') == std::string::npos);
+        check(path.wide().find(L'\\') == std::wstring::npos);
+        check(FilePath {path.nativeString()}.wide() == native);
+        check(FilePath::fromNative(path.nativeString()) == path);
+    }
+};
+
 auto tLoneSurrogateNeverThrows =
     test("FilePath/lone surrogate becomes U+FFFD instead of throwing") = []
 {

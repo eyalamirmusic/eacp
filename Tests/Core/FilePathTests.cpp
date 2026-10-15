@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <eacp/Core/Utils/FilesPlatform.h>
 #include <eacp/Core/Utils/StdPath.h>
 #include <filesystem>
 
@@ -98,4 +99,70 @@ auto tInvalidUtf8NeverThrows =
     const auto wide = path.wide();
     check(wide.find(wchar_t {0xFFFD}) != std::wstring::npos);
     check(!eacp::toStdPath(path).empty());
+};
+
+// The swap nativeString() and fromNative() make on Windows, run on every
+// platform with the separators passed in.
+auto tReplaceSeparatorsWindowsForms =
+    test("FilePath/replaceSeparators converts the Windows forms both ways") = []
+{
+    using eacp::Detail::replaceSeparators;
+
+    auto toNative = [](std::string_view text)
+    { return replaceSeparators(text, '/', '\\'); };
+
+    auto fromNative = [](std::string_view text)
+    { return replaceSeparators(text, '\\', '/'); };
+
+    check(toNative("C:/dir/file.wav") == "C:\\dir\\file.wav");
+    check(toNative("//server/share/dir") == "\\\\server\\share\\dir");
+    check(toNative("//?/C:/very/long") == "\\\\?\\C:\\very\\long");
+    check(toNative("relative/name") == "relative\\name");
+    check(toNative("C:/") == "C:\\");
+    check(toNative("").empty());
+
+    check(fromNative("C:\\dir\\file.wav") == "C:/dir/file.wav");
+    check(fromNative("\\\\server\\share\\dir") == "//server/share/dir");
+    check(fromNative("\\\\?\\C:\\very\\long") == "//?/C:/very/long");
+    check(fromNative("C:\\mixed/forms") == "C:/mixed/forms");
+
+    // Multi-byte UTF-8 passes through untouched.
+    check(toNative("caf\xC3\xA9/\xEF\xBF\xBD.wav")
+          == "caf\xC3\xA9\\\xEF\xBF\xBD.wav");
+};
+
+auto tNativeStringRoundTrips =
+    test("FilePath/nativeString round-trips through fromNative") = []
+{
+    for (auto text: {"C:/dir/file.wav",
+                     "//server/share/dir",
+                     "/usr/local/lib",
+                     "relative/name.txt",
+                     ""})
+    {
+        auto path = FilePath {text};
+        check(FilePath::fromNative(path.nativeString()) == path);
+    }
+
+    auto home = FilePath::homeDirectory();
+    check(FilePath::fromNative(home.nativeString()) == home);
+};
+
+auto tNativeStringPerPlatform =
+    test("FilePath/nativeString uses the platform's separator") = []
+{
+    auto path = FilePath {"dir/sub/file.wav"};
+
+    if constexpr (eacp::Platform::isWindows())
+    {
+        check(path.nativeString() == "dir\\sub\\file.wav");
+        check(FilePath::fromNative("dir\\sub\\file.wav") == path);
+    }
+    else
+    {
+        // '\' is an ordinary file name character outside Windows, so neither
+        // direction touches it.
+        check(path.nativeString() == path.str());
+        check(FilePath::fromNative("dir\\name").str() == "dir\\name");
+    }
 };
