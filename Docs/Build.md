@@ -5,6 +5,12 @@ the two commands a build needs; this page is everything behind them: the
 dependencies, every option, the capability variables that decide which
 modules a platform gets, the pieces that build everywhere, and how CI runs.
 
+After cloning, run `git config core.hooksPath .githooks` once. It turns on
+the repository's two hooks: `pre-commit` refuses a commit whose author or
+committer names Claude or Anthropic, and `commit-msg` refuses a message with a
+`Co-Authored-By` trailer for either, an `@anthropic.com` address or a
+"Generated with Claude" line.
+
 ## Dependencies
 
 Dependencies are fetched by [CPM](https://github.com/cpm-cmake/CPM.cmake) at

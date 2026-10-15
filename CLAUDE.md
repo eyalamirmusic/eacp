@@ -7,6 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Claude must never commit or push without explicit permission from the user in
 the current conversation.
 
+Claude must never appear in commit metadata: not as author or committer, and
+not as a `Co-Authored-By` trailer or a "Generated with Claude" line in the
+message. The hooks under `.githooks/` refuse such a commit; activate them once
+per clone with `git config core.hooksPath .githooks`.
+
 ## Project Overview
 
 eacp is a cross-platform GUI/graphics framework written in modern C++20 with Objective-C++ interop. It provides abstractions for application lifecycle, graphics rendering, threading, GPU, and networking.
