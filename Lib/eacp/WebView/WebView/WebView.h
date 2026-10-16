@@ -284,6 +284,8 @@ public:
     // typing.
     void focusContent();
 
+    // The WebView in the key (foreground) window that holds keyboard focus;
+    // else, with focus elsewhere in that window, the first one in it.
     static WebView* focused();
 
     // True when the platform web runtime backing WebView is present. Always

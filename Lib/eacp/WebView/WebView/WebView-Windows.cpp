@@ -271,7 +271,14 @@ struct WebView::Native
         }
 
         if (controller)
+        {
+            if (gotFocusToken.value)
+                controller->remove_GotFocus(gotFocusToken);
+            if (lostFocusToken.value)
+                controller->remove_LostFocus(lostFocusToken);
+
             controller->Close();
+        }
 
         // Drop our COM references so the WebView2 browser-process IPC threads
         // release their connection while the heap is still valid. The shared
@@ -954,6 +961,29 @@ struct WebView::Native
         if (!webView)
             return;
 
+        if (controller)
+        {
+            controller->add_GotFocus(
+                Microsoft::WRL::Callback<ICoreWebView2FocusChangedEventHandler>(
+                    [this](ICoreWebView2Controller*, IUnknown*) -> HRESULT
+                    {
+                        hasFocus = true;
+                        return S_OK;
+                    })
+                    .Get(),
+                &gotFocusToken);
+
+            controller->add_LostFocus(
+                Microsoft::WRL::Callback<ICoreWebView2FocusChangedEventHandler>(
+                    [this](ICoreWebView2Controller*, IUnknown*) -> HRESULT
+                    {
+                        hasFocus = false;
+                        return S_OK;
+                    })
+                    .Get(),
+                &lostFocusToken);
+        }
+
         webView->add_NavigationStarting(
             Microsoft::WRL::Callback<ICoreWebView2NavigationStartingEventHandler>(
                 [this](ICoreWebView2*,
@@ -1610,6 +1640,12 @@ struct WebView::Native
     EventRegistrationToken permissionRequestedToken {};
     EventRegistrationToken newWindowRequestedToken {};
     EventRegistrationToken windowCloseRequestedToken {};
+    EventRegistrationToken gotFocusToken {};
+    EventRegistrationToken lostFocusToken {};
+
+    // Whether the page holds keyboard focus, from the controller's
+    // GotFocus/LostFocus. See WebView::focused.
+    bool hasFocus = false;
 };
 
 void WebView::initNative(Options options)
@@ -2191,18 +2227,27 @@ WebView* WebView::focused()
     if (!foreground)
         return nullptr;
 
+    WebView* firstInWindow = nullptr;
+
     for (auto* view: detail::registeredWebViews())
     {
         if (!view->impl || !view->impl->hostHwnd)
             continue;
 
         // The host HWND is the top-level window the visual-hosted WebView lives
-        // in; the focused WebView is the one whose window is in the foreground.
-        if (view->impl->hostHwnd == foreground)
+        // in. Of the WebViews in the foreground window, the focused one is the
+        // one holding keyboard focus; else, with focus elsewhere, the first.
+        if (view->impl->hostHwnd != foreground)
+            continue;
+
+        if (view->impl->hasFocus)
             return view;
+
+        if (firstInWindow == nullptr)
+            firstInWindow = view;
     }
 
-    return nullptr;
+    return firstInWindow;
 }
 
 bool WebView::isRuntimeAvailable()
