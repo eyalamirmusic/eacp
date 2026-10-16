@@ -1,6 +1,11 @@
+#include <eacp/Graphics/HotKey/GlobalHotKey.h>
 #include <eacp/UI/UI.h>
+#include <eacp/WebView/WebView.h>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
+#include <string_view>
 
 using namespace eacp;
 using namespace Graphics;
@@ -35,45 +40,58 @@ static Image makeTrayIcon()
     return image;
 }
 
-// The content of the floating panel below. The window's cornerRadius clips
-// this component tree, so it just fills its bounds — the rounding comes for
-// free.
-struct PanelContent final : UI::Component
-{
-    PanelContent()
-    {
-        title.setFontSize(17.f);
-        title.setColour({0.95f, 0.95f, 0.95f, 1.f});
-
-        subtitle.setColour({0.62f, 0.62f, 0.68f, 1.f});
-
-        addChildren({title, subtitle});
+// A self-contained page — an auto-focusing text box that posts the typed name
+// to native on Enter and asks to be dismissed on Esc. Mirrors the Librarian
+// mini-panel input: the point of the demo is that a WKWebView input inside a
+// non-activating panel is typeable over another app's full-screen Space
+// without the owning app ever activating.
+static constexpr std::string_view panelHtml = R"html(
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #17171a; color: #ececf0;
+    font: 16px -apple-system, system-ui, sans-serif;
+  }
+  .wrap {
+    box-sizing: border-box; height: 100%;
+    padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  }
+  h1 {
+    margin: 0; font-size: 12px; font-weight: 600;
+    letter-spacing: .04em; color: #8a8a94; text-transform: uppercase;
+  }
+  input {
+    width: 100%; box-sizing: border-box; padding: 12px 14px;
+    border-radius: 10px; border: 1px solid #33333c; background: #0e0e11;
+    color: #fff; font-size: 18px; outline: none;
+  }
+  input:focus { border-color: #4ade80; }
+  p { margin: 0; font-size: 12px; color: #6a6a74; }
+</style>
+<div class="wrap">
+  <h1>Non-activating panel &middot; &#8997;&#8984;L</h1>
+  <input id="name" name="search" placeholder="Type your name, hit &#9166;&#8230;"
+         autocomplete="off" spellcheck="false">
+  <p>&#9166; prints &ldquo;hello &lt;name&gt;&rdquo; to the terminal &middot; esc hides</p>
+</div>
+<script>
+  const input = document.getElementById('name');
+  const focus = () => { input.focus(); input.select(); };
+  focus();
+  setTimeout(focus, 0); setTimeout(focus, 50); setTimeout(focus, 150);
+  window.addEventListener('focus', focus);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      window.webkit.messageHandlers.hello.postMessage(input.value);
+      input.select();
+    } else if (e.key === 'Escape') {
+      window.webkit.messageHandlers.dismiss.postMessage('');
     }
-
-    void paint(UI::Graphics& g) override { g.fillAll({0.11f, 0.11f, 0.13f, 1.f}); }
-
-    void resized() override
-    {
-        auto area = getLocalBounds().inset(20.f, 24.f);
-
-        title.setBounds(area.removeFromTop(26.f));
-        subtitle.setBounds(area.removeFromTop(22.f));
-    }
-
-    UI::Label title {"Quick Panel"};
-    UI::Label subtitle {"Toggled from the tray, never recreated"};
-};
-
-struct PanelHost final : UI::ComponentHost
-{
-    PanelHost()
-    {
-        setBackgroundColour({0.11f, 0.11f, 0.13f, 1.f});
-        setRootComponent(content);
-    }
-
-    PanelContent content;
-};
+  });
+</script>
+)html";
 
 // The main window's content: a written-out description of the three ways to
 // put this app away, because the whole point of the window is that two of
@@ -121,10 +139,26 @@ struct MainHost final : UI::ComponentHost
     MainContent content;
 };
 
+// The demo is a REGULAR dock app while its main window is up (showMainWindow
+// below turns the Dock icon on) — the
+// hard case Librarian hit. A Regular app's plain key window is inert unless the
+// app is frontmost, and activating it would drop the user out of a full-screen
+// DAW's Space. Only a NonactivatingPanel takes the keyboard over full screen
+// without activating, which is exactly what this proves.
 struct TrayApp
 {
     TrayApp()
     {
+        webView.loadHTML(std::string {panelHtml});
+        webView.addScriptMessageHandler(
+            "hello",
+            [](const std::string& name)
+            { LOG("hello ", name.empty() ? std::string("there") : name); });
+        webView.addScriptMessageHandler("dismiss",
+                                        [this](const std::string&) { hidePanel(); });
+
+        window.setContentView(webView);
+
         // The panel shows itself on construction; hide it immediately so the
         // app starts with the main window only. setVisible keeps the window
         // (and its content) alive across toggles, so it reappears exactly
@@ -160,19 +194,19 @@ struct TrayApp
             });
 
         tray.setIcon(makeTrayIcon());
-        tray.setTooltip("eacp Tray App");
-
+        tray.setTooltip("Non-activating panel demo");
         tray.setMenu(createTrayMenu());
-
-        // Windows: a left-click on the tray icon toggles the panel (the
-        // menu stays on right-click). On macOS the menu owns the click, so
-        // this never fires there — use the menu item instead.
         tray.setOnClick([this] { togglePanel(); });
 
         // The bundle is LSUIElement, so the app launched with no Dock icon
         // and the main window is already on screen — promote it to a regular
         // Dock app to match, with no icon flash on the way.
         showMainWindow(true);
+
+        // Opt+Cmd+L toggles the panel from anywhere, even over a full-screen app.
+        hotKey.emplace(ModifierKeys {.alt = true, .command = true},
+                       KeyCode::L,
+                       [this] { togglePanel(); });
     }
 
     // The ordinary window the Dock icon belongs to. hidesOnClose is what
@@ -190,20 +224,20 @@ struct TrayApp
         return options;
     }
 
-    // A small tray companion: borderless and rounded (cornerRadius defines
-    // the shape of a frameless window), floating above normal windows,
-    // following the user across Spaces, and shown without stealing focus
-    // from whatever they're working in.
+    // Borderless + rounded, floating above normal windows and following the
+    // user across Spaces (including onto another app's full-screen Space), and
+    // — the whole point — a non-activating panel so it can be keyed without the
+    // app activating. showInactive so construction never steals focus.
     static WindowOptions getPanelOptions()
     {
         auto options = WindowOptions();
 
-        options.width = 320;
-        options.height = 180;
+        options.width = 420;
+        options.height = 172;
         options.isPrimary = false;
 
-        options.flags = {WindowFlags::Borderless};
-        options.cornerRadius = 14.f;
+        options.flags = {WindowFlags::Borderless, WindowFlags::NonactivatingPanel};
+        options.cornerRadius = 16.f;
 
         options.alwaysOnTop = true;
         options.visibleOnAllWorkspaces = true;
@@ -220,9 +254,8 @@ struct TrayApp
         // the deal a tray-resident app makes when it refuses to quit.
         menu.add(
             MenuItem::withAction("Open Tray App", [this] { showMainWindow(true); }));
-        menu.add(MenuItem::withAction("Toggle Panel", [this] { togglePanel(); }));
-        menu.add(
-            MenuItem::withAction("Say Hello", [] { LOG("Hello from the tray!"); }));
+        menu.add(MenuItem::withAction("Toggle Panel (Opt+Cmd+L)",
+                                      [this] { togglePanel(); }));
         menu.addSeparator();
 
         // quit(), not requestQuit(): the handler above refuses every request,
@@ -242,13 +275,28 @@ struct TrayApp
             mainWindow.toFront();
     }
 
-    void togglePanel() { window.setVisible(!window.isVisible()); }
+    void togglePanel()
+    {
+        if (window.isVisible())
+            hidePanel();
+        else
+            reveal();
+    }
 
-    PanelHost panelHost;
+    void reveal()
+    {
+        window.focusWithoutActivating();
+        webView.focusContent();
+    }
+
+    void hidePanel() { window.setVisible(false); }
+
+    WebView webView;
     MainHost mainHost;
-    Window window {panelHost, getPanelOptions()};
+    Window window {getPanelOptions()};
     Window mainWindow {mainHost, getMainWindowOptions()};
     TrayIcon tray;
+    std::optional<GlobalHotKey> hotKey;
 };
 
 int main()

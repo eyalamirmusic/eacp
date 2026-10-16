@@ -91,6 +91,13 @@ void Window::toFront()
     impl->native->setVisible(true);
 }
 
+// Wayland has no client-side way to take the keyboard without the compositor
+// handing over focus, so this is the same show-and-hope as toFront().
+void Window::focusWithoutActivating()
+{
+    impl->setVisible(true);
+}
+
 void Window::setVisible(bool visible)
 {
     impl->native->setVisible(visible);
