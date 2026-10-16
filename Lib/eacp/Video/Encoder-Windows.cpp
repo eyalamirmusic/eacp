@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/Logging.h>
 
+#include "WideString-Windows.h"
+
 #include <mfapi.h>
 #include <mferror.h>
 
