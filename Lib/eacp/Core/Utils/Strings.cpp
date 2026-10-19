@@ -1,6 +1,16 @@
 #include "Strings.h"
 
 #include <cctype>
+#include <cerrno>
+#include <clocale>
+#include <cmath>
+#include <cstdlib>
+
+#if defined(__APPLE__)
+#include <xlocale.h>
+#elif !defined(_WIN32) && !defined(__ANDROID__)
+#include <locale.h>
+#endif
 
 namespace eacp::Strings
 {
@@ -307,6 +317,128 @@ std::optional<int> tryParseInt(const std::string& s)
     {
         return std::nullopt;
     }
+}
+
+namespace
+{
+bool isAsciiDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+bool startsWithHexPrefix(std::string_view s)
+{
+    return s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
+}
+
+// strtod reads a superset of what from_chars does: leading whitespace, a '+',
+// hex floats. Anything outside from_chars' grammar is turned away up front so
+// both halves of tryParse accept the same kind of text.
+bool looksLikeAFromCharsNumber(std::string_view s)
+{
+    auto body = !s.empty() && s.front() == '-' ? s.substr(1) : s;
+
+    if (body.empty() || startsWithHexPrefix(body))
+        return false;
+
+    auto first = body.front();
+    auto lower = static_cast<char>(std::tolower(static_cast<unsigned char>(first)));
+
+    return isAsciiDigit(first) || first == '.' || lower == 'i' || lower == 'n';
+}
+
+#if defined(_WIN32)
+_locale_t cLocale()
+{
+    static auto locale = _create_locale(LC_ALL, "C");
+    return locale;
+}
+
+float readFloating(const char* text, char** end, float*)
+{
+    return _strtof_l(text, end, cLocale());
+}
+
+double readFloating(const char* text, char** end, double*)
+{
+    return _strtod_l(text, end, cLocale());
+}
+#elif defined(__ANDROID__)
+// Bionic's strtod ignores LC_NUMERIC, so the plain functions are already the
+// C locale's.
+float readFloating(const char* text, char** end, float*)
+{
+    return std::strtof(text, end);
+}
+
+double readFloating(const char* text, char** end, double*)
+{
+    return std::strtod(text, end);
+}
+#else
+locale_t cLocale()
+{
+    static auto locale = newlocale(LC_ALL_MASK, "C", locale_t {});
+    return locale;
+}
+
+float readFloating(const char* text, char** end, float*)
+{
+    return strtof_l(text, end, cLocale());
+}
+
+double readFloating(const char* text, char** end, double*)
+{
+    return strtod_l(text, end, cLocale());
+}
+#endif
+
+template <typename T>
+bool parseFloatingAs(std::string_view s, T& out)
+{
+    if (!looksLikeAFromCharsNumber(s))
+        return false;
+
+    // strtod needs a terminator, and a NUL inside the view stops it early, so
+    // the end check below rejects one.
+    auto text = std::string {s};
+    auto* end = static_cast<char*>(nullptr);
+
+    errno = 0;
+    auto value = readFloating(text.c_str(), &end, static_cast<T*>(nullptr));
+
+    if (end != text.c_str() + text.size())
+        return false;
+
+    if (errno == ERANGE && std::isinf(value))
+        return false;
+
+    out = value;
+    return true;
+}
+} // namespace
+
+bool Detail::parseFloating(std::string_view s, float& out)
+{
+    return parseFloatingAs(s, out);
+}
+
+bool Detail::parseFloating(std::string_view s, double& out)
+{
+    return parseFloatingAs(s, out);
+}
+
+std::optional<bool> tryParseBool(std::string_view s)
+{
+    for (auto word: {"true", "yes", "on", "1"})
+        if (equalsCaseInsensitive(s, word))
+            return true;
+
+    for (auto word: {"false", "no", "off", "0"})
+        if (equalsCaseInsensitive(s, word))
+            return false;
+
+    return std::nullopt;
 }
 
 float parseFloatOr(const std::string& s, float fallback)

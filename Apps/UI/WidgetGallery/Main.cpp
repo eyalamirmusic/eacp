@@ -1,8 +1,8 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <string>
 
 // The stock widgets, in one window, doing the things that are hard to see from
@@ -36,10 +36,6 @@ namespace
 {
 constexpr auto padding = 12.f;
 constexpr auto generatedRowCount = 10000;
-
-// Which page the window opens on, from the command line, so a picture of the
-// second one costs no click.
-int startupTab = 0;
 
 std::string percentText(float value)
 {
@@ -512,7 +508,7 @@ struct ListPage final : UI::Component
 
 struct DemoRoot final : UI::Component
 {
-    DemoRoot()
+    explicit DemoRoot(int startupTab)
     {
         tabs.addTab("Controls", controls);
         tabs.addTab("List", lists);
@@ -535,7 +531,8 @@ struct DemoRoot final : UI::Component
 
 struct DemoHost final : UI::ComponentHost
 {
-    DemoHost()
+    explicit DemoHost(int startupTab)
+        : root(startupTab)
     {
         setFontPointSize(13.f);
         root.lists.stats.host = this;
@@ -561,8 +558,19 @@ Graphics::WindowOptions makeOptions()
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        startupTab = static_cast<int>(std::strtol(argv[1], nullptr, 10));
+    Apps::setCommandLineArgs(argc, argv);
 
-    return Graphics::runWindowedApp<DemoHost>(makeOptions());
+    // Which page the window opens on, so a picture of the second one costs no
+    // click. The pages are a fixed pair: 0 is Controls, 1 is List.
+    auto startupTab = 0;
+
+    auto cli = Args::Parser {"WidgetGallery", "The stock widgets, in one window."};
+    cli.positional(startupTab, "tab", "the page to open on: 0 Controls, 1 List")
+        .atLeast(0)
+        .atMost(1);
+
+    if (auto code = cli.exitCodeFor(cli.parse()))
+        return *code;
+
+    return Graphics::runWindowedApp<DemoHost>(makeOptions(), startupTab);
 }

@@ -15,6 +15,10 @@ them, so apps inherit the look, feel, and performance of the host OS:
 
 - **Application lifecycle** — a templated `Apps::run<T>()` entry point that
   wires up the platform's main event loop.
+- **Command-line tools** — `Apps::runConsole` runs a tool's body inside the
+  loop and turns an escaping exception into an exit code, `Args::Parser`
+  binds options straight to your variables and writes the help text, and
+  `Console::print` / `printError` write plain lines to stdout and stderr.
 - **Event loops & threading** — `EventLoop`, `Timer`, `DisplayLink`, and
   `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink, their Windows
   equivalents, and on Linux one `epoll` descriptor a plugin host's own loop

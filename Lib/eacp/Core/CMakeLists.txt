@@ -13,6 +13,7 @@ target_link_libraries(eacp-core PRIVATE miniz)
 
 target_sources(eacp-core PRIVATE
         App/App.cpp
+        App/Args.cpp
         Maths/Mat4.cpp
         Platform/AppInfo.cpp
         Platform/Platform.cpp
@@ -24,6 +25,7 @@ target_sources(eacp-core PRIVATE
         Threads/TaskSemaphore.cpp
         Threads/ThreadId.cpp
         Utils/Base64.cpp
+        Utils/Console.cpp
         Utils/Environment.cpp
         Utils/File.cpp
         Utils/FilePath.cpp

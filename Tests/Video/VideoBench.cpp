@@ -1,9 +1,9 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/Video/Decode/Decoder.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 
 // What PlayingHeavyContent cannot measure. That sample runs a real playback
 // clock, so every rate it reports is pinned to the clip's frame rate by
@@ -123,16 +123,21 @@ void benchSeek(Video::Decoder& decoder, Video::SeekMode mode, const char* label)
 
 int main(int argc, char* argv[])
 {
-    if (argc < 2)
-    {
-        std::printf("usage: VideoBench <clip.mp4> [frames]\n");
-        return 1;
-    }
+    auto path = FilePath {};
+    auto frames = 300;
 
-    auto path = FilePath {argv[1]};
-    auto frames = argc > 2 ? std::atoi(argv[2]) : 300;
+    auto cli = Args::Parser {"VideoBench",
+                             "Times opening, decoding and seeking a clip "
+                             "through the Decoder directly."};
+    cli.positional(path, "clip", "the video to decode").required();
+    cli.positional(frames, "frames", "frames to time decoding")
+        .atLeast(1)
+        .defaultText("300");
 
-    std::printf("%s\n", argv[1]);
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    std::printf("%s\n", path.str().c_str());
 
     benchDecoderOpen(path, "cold");
     auto decoder = benchDecoderOpen(path, "warm");

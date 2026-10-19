@@ -73,21 +73,50 @@ std::string concat(const Args&... args)
     return (std::string {} + ... + toString(args));
 }
 
-// string → number, the counterpart to toString. Uses from_chars, so it neither
-// throws nor depends on the locale, and it rejects trailing junk. Returns
-// nullopt unless the whole string is a valid T.
+namespace Detail
+{
+// The floating half of tryParse, out of line because floating from_chars is
+// not available on every target eacp supports (Apple's libc++ has it only from
+// macOS 26). It reads through strtod/strtof under the C locale and holds them
+// to from_chars' grammar: an optional '-', no '+', no leading whitespace, no
+// hex, and the whole input consumed. A value too large for the type fails;
+// one too small rounds towards zero.
+bool parseFloating(std::string_view s, float& out);
+bool parseFloating(std::string_view s, double& out);
+} // namespace Detail
+
+// string → number, the counterpart to toString. Integers go through from_chars
+// and float/double through Detail::parseFloating, so neither throws nor depends
+// on the locale, and both reject trailing junk. Returns nullopt unless the
+// whole string is a valid T.
 template <typename T>
 std::optional<T> tryParse(std::string_view s)
 {
-    static_assert(std::is_integral_v<T>,
-                  "tryParse<T> handles integers; use tryParseFloat for reals");
+    static_assert((std::is_integral_v<T> && !std::is_same_v<T, bool>)
+                      || std::is_same_v<T, float> || std::is_same_v<T, double>,
+                  "tryParse<T> handles integers, float and double; use "
+                  "tryParseBool for bool");
     auto value = T {};
-    auto* last = s.data() + s.size();
-    auto [ptr, ec] = std::from_chars(s.data(), last, value);
-    if (ec != std::errc {} || ptr != last)
-        return std::nullopt;
+
+    if constexpr (std::is_floating_point_v<T>)
+    {
+        if (!Detail::parseFloating(s, value))
+            return std::nullopt;
+    }
+    else
+    {
+        auto* last = s.data() + s.size();
+        auto [ptr, ec] = std::from_chars(s.data(), last, value);
+        if (ec != std::errc {} || ptr != last)
+            return std::nullopt;
+    }
+
     return value;
 }
+
+// true/yes/on/1 and false/no/off/0, in any case. Nothing else, not even
+// surrounding whitespace.
+std::optional<bool> tryParseBool(std::string_view s);
 
 template <typename T>
 T parseOr(std::string_view s, T fallback)

@@ -1,8 +1,11 @@
 #include "App.h"
 #include "AppEnvironment.h"
+#include "../Utils/Console.h"
+#include "../Utils/FilePath.h"
 #include "../Utils/Singleton.h"
 
 #include <atomic>
+#include <exception>
 
 namespace eacp::Apps
 {
@@ -28,6 +31,11 @@ void setCommandLineArgs(int argc, char* argv[])
     args.reserve(argc);
     for (auto i = 0; i < argc; ++i)
         args.emplace_back(argv[i]);
+}
+
+const Vector<std::string>& commandLineArgs()
+{
+    return getAppEnvironment().commandLineArgs;
 }
 
 void setHeadless(bool headless)
@@ -153,6 +161,50 @@ int run(const Callback& func)
         });
 
     return getReturnValue();
+}
+
+namespace
+{
+std::string programName()
+{
+    const auto& args = getAppEnvironment().commandLineArgs;
+
+    if (args.empty())
+        return "program";
+
+    return FilePath {args.front()}.fileName();
+}
+
+int runConsoleBody(const std::function<int()>& body)
+{
+    try
+    {
+        return body();
+    }
+    catch (const std::exception& e)
+    {
+        Console::printError(Strings::concat(programName(), ": ", e.what()));
+        return 1;
+    }
+}
+} // namespace
+
+int runConsole(int argc, char* argv[], const std::function<int()>& body)
+{
+    setCommandLineArgs(argc, argv);
+    return runConsole(body);
+}
+
+int runConsole(const std::function<int()>& body)
+{
+    // run(func) quits once the callback returns and hands back the return
+    // value, so setting it here is the quit(code) of an app-shaped program.
+    return run(
+        [&body]
+        {
+            setDockIconVisible(false);
+            setReturnValue(runConsoleBody(body));
+        });
 }
 
 void restart()

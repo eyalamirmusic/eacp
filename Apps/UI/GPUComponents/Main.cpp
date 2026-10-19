@@ -1,8 +1,9 @@
 #include "Panels.h"
 
+#include <eacp/Core/App/Args.h>
+
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 
 // GPU components under stress: custom GPU rendering -- a lit mesh, compute
 // particles, multisampled lines, a transparent plasma, a feedback loop over
@@ -176,7 +177,7 @@ Graphics::WindowOptions makeOptions()
     return options;
 }
 
-int snapshot(const char* path, int tab)
+int snapshot(const FilePath& path, int tab)
 {
     auto host = DemoHost {false};
     host.setBounds({0.f, 0.f, snapshotWidth, snapshotHeight});
@@ -191,7 +192,7 @@ int snapshot(const char* path, int tab)
     if (!image.isValid())
         return 1;
 
-    image.save(FilePath {path});
+    image.save(path);
 
     return 0;
 }
@@ -199,9 +200,23 @@ int snapshot(const char* path, int tab)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        return snapshot(argv[1],
-                        argc > 2 ? (int) std::strtol(argv[2], nullptr, 10) : 0);
+    auto snapshotPath = FilePath {};
+    auto tab = 0;
+
+    auto cli = Args::Parser {"GPUComponents",
+                             "GPU components under stress, in a component tree."};
+    cli.positional(snapshotPath,
+                   "snapshot",
+                   "render one frame to this PNG and exit, with no window");
+    cli.positional(tab, "tab", "the page to snapshot: 0 Grid, 1 Overlap, 2 Churn")
+        .atLeast(0)
+        .atMost(2);
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (!snapshotPath.empty())
+        return snapshot(snapshotPath, tab);
 
     return Graphics::runWindowedApp<DemoHost>(makeOptions(), true);
 }

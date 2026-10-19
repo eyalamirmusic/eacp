@@ -11,6 +11,7 @@
 #include "Threads/Timer.h"
 #include "Utils/Base64.h"
 #include "Utils/Broadcaster.h"
+#include "Utils/Console.h"
 #include "Utils/File.h"
 #include "Utils/FileWriter.h"
 #include "Utils/Files.h"

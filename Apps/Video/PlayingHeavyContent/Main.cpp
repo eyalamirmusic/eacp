@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/Text/TextRenderer.h>
 #include <eacp/Video/Decode/Player.h>
 #include <eacp/Video/SyntheticClip.h>
@@ -7,7 +8,6 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 
 using namespace eacp;
 
@@ -31,35 +31,30 @@ Video::SyntheticClipOptions clipOptions()
     return options;
 }
 
+struct PlaybackOptions
+{
+    FilePath clip;
+
+    // `PlayingHeavyContent <clip> <seconds>` plays for that long, logs one
+    // summary line and quits. That is how comparable decode numbers are taken
+    // across a change: reading them off the HUD by eye is neither repeatable nor
+    // loggable, and this is a GUI-subsystem binary with no console to print to.
+    double seconds = 0.0;
+};
+
 // A path on the command line if given — that is how to point the sample at real
 // heavy content — otherwise a generated clip, encoded once into the user's
 // cache directory and reused from then on. Nothing is read from the source
 // tree, so no media has to be committed to run this.
-FilePath resolveVideoPath()
+FilePath resolveVideoPath(const FilePath& given)
 {
-    const auto& args = Apps::getAppEnvironment().commandLineArgs;
-
-    if (args.size() > 1)
-        return FilePath {args[1]};
+    if (!given.empty())
+        return given;
 
     logMessage("No file given — generating a synthetic 1080p clip (first run "
                "only; cached afterwards).");
 
     return Video::cachedSyntheticClip(clipOptions());
-}
-
-// `PlayingHeavyContent <clip> <seconds>` plays for that long, logs one summary
-// line and quits. That is how comparable decode numbers are taken across a
-// change: reading them off the HUD by eye is neither repeatable nor loggable,
-// and this is a GUI-subsystem binary with no console to print to.
-double benchmarkSeconds()
-{
-    const auto& args = Apps::getAppEnvironment().commandLineArgs;
-
-    if (args.size() <= 2)
-        return 0.0;
-
-    return std::max(0.0, std::atof(args[2].c_str()));
 }
 
 std::string formatted(const char* format, ...)
@@ -96,7 +91,11 @@ Graphics::WindowOptions windowOptions()
 // is the bottleneck; starved rising with an empty queue means decode is.
 struct PlaybackView final : Video::VideoView
 {
-    PlaybackView() { setHandlesMouseEvents(true); }
+    explicit PlaybackView(double benchmarkLimitToUse)
+        : benchmarkLimit(benchmarkLimitToUse)
+    {
+        setHandlesMouseEvents(true);
+    }
 
     // Unhooks from the stream while it is still alive. The base destructor
     // cannot do this: by the time it runs, `stream` below has already gone.
@@ -313,7 +312,7 @@ struct PlaybackView final : Video::VideoView
     bool scrubbing = false;
     bool wasPlaying = false;
 
-    const double benchmarkLimit = benchmarkSeconds();
+    const double benchmarkLimit;
     double windowStart = -1.0;
     std::uint64_t renderedFrames = 0;
     Video::FrameStream::Stats atWindowStart;
@@ -321,9 +320,10 @@ struct PlaybackView final : Video::VideoView
 
 struct PlaybackApp
 {
-    PlaybackApp()
+    explicit PlaybackApp(const PlaybackOptions& options)
+        : view(options.seconds)
     {
-        auto path = resolveVideoPath();
+        auto path = resolveVideoPath(options.clip);
 
         if (path.empty() || !view.stream.open(path))
         {
@@ -344,5 +344,23 @@ struct PlaybackApp
 
 int main(int argc, char* argv[])
 {
-    return eacp::Apps::run<PlaybackApp>(argc, argv);
+    Apps::setCommandLineArgs(argc, argv);
+
+    auto options = PlaybackOptions {};
+
+    auto cli = Args::Parser {"PlayingHeavyContent",
+                             "Plays a video with a scrub bar and a decode HUD."};
+    cli.positional(options.clip,
+                   "clip",
+                   "the video to play; without one, a synthetic 1080p clip is "
+                   "generated and cached");
+    cli.positional(options.seconds,
+                   "seconds",
+                   "play for this long, log one benchmark line and quit")
+        .atLeast(0.0);
+
+    if (auto code = cli.exitCodeFor(cli.parse()))
+        return *code;
+
+    return Apps::run<PlaybackApp>(options);
 }

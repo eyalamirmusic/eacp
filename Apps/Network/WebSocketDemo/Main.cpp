@@ -1,9 +1,10 @@
 // Both ends of the WebSocket API in one process: a server and a client
 // holding a short conversation, printed as it happens.
 //
-//   WebSocketDemo                      both ends, over an ephemeral port
-//   WebSocketDemo --serve [PORT]       echo server on loopback (8765)
-//   WebSocketDemo --connect URL [MSG]  one message to a server, one reply
+//   WebSocketDemo                        both ends, over an ephemeral port
+//   WebSocketDemo --serve [--port PORT]  echo server on loopback (8765)
+//   WebSocketDemo --serve [PORT]         the same
+//   WebSocketDemo --connect URL [MSG]    one message to a server, one reply
 //
 // Talk to --serve from a browser console:
 //
@@ -18,6 +19,7 @@
 // wss:// needs nothing extra on macOS and Windows; on Linux it works only
 // where libcurl was built with WebSocket support.
 
+#include <eacp/Core/App/Args.h>
 #include <eacp/Network/Network.h>
 
 #include <iostream>
@@ -331,31 +333,61 @@ int runOneMessageClient(const std::string& url, const std::string& message)
 
     return failed ? 1 : 0;
 }
-
-std::uint16_t portFrom(const std::string& text)
-{
-    return (std::uint16_t) std::stoi(text);
-}
 } // namespace
 
 int main(int argc, char** argv)
 {
-    auto arguments = Vector<std::string>();
-    arguments.assign(argv + 1, argv + argc);
+    auto serve = false;
+    auto port = std::optional<std::uint16_t> {};
+    auto url = std::string {};
+    auto trailing = std::string {};
 
-    if (arguments.empty())
-        return runBothEnds();
+    auto cli = Args::Parser {
+        "WebSocketDemo",
+        "Both ends of the WebSocket API in one process: with no options, a server "
+        "and a client hold a short conversation over an ephemeral port."};
 
-    if (arguments[0] == "--serve" && arguments.size() <= 2)
-        return runEchoServer(arguments.size() == 2 ? portFrom(arguments[1])
-                                                   : std::uint16_t {8765});
+    cli.flag("--serve", serve, "run an echo server on loopback");
+    cli.option("--port", port, "the port --serve listens on")
+        .atLeast(1)
+        .defaultText("8765");
+    cli.option("--connect", url, "send one message to a server, print the reply")
+        .hint("<url>");
+    cli.positional(trailing,
+                   "PORT|MESSAGE",
+                   "after --serve, the port; after --connect, the message")
+        .defaultText("hello");
 
-    if (arguments[0] == "--connect" && arguments.size() >= 2
-        && arguments.size() <= 3)
-        return runOneMessageClient(arguments[1],
-                                   arguments.size() == 3 ? arguments[2] : "hello");
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
 
-    std::cerr << "usage: WebSocketDemo [--serve [PORT]"
-                 " | --connect URL [MESSAGE]]\n";
-    return 2;
+    if (serve && !url.empty())
+        return cli.fail("--serve and --connect cannot be combined");
+
+    if (serve)
+    {
+        if (!trailing.empty())
+        {
+            auto trailingPort = Strings::tryParse<std::uint16_t>(trailing);
+
+            if (!trailingPort || *trailingPort == 0)
+                return cli.fail("PORT must be from 1 to 65535, not '" + trailing
+                                + "'");
+
+            port = *trailingPort;
+        }
+
+        return runEchoServer(port.value_or(8765));
+    }
+
+    if (port)
+        return cli.fail("--port needs --serve");
+
+    if (!url.empty())
+        return runOneMessageClient(url, trailing.empty() ? "hello" : trailing);
+
+    if (!trailing.empty())
+        return cli.fail("'" + trailing + "' needs --serve or --connect");
+
+    return runBothEnds();
 }

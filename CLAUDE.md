@@ -734,6 +734,12 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   options, viewArgs...)` runs one as the app with no struct written at all; a
   struct that does more still pairs its view and window in one member,
   `Window window {view, options};`
+- Command-line tools: `runConsole(argc, argv, body)` (`App/App.h`; or
+  `runConsole(body)` after `setCommandLineArgs`), the
+  `Args::Parser` that binds options to the caller's variables (`App/Args.h`,
+  `Tests/Core/ArgsTests.cpp`; `parse()` reads the stored command line, so a
+  body needs no argc/argv), and `Console::print`/`printError`
+  (`Utils/Console.h`), plain stdout/stderr lines where `LOG` timestamps
 
 **Graphics/** - Rendering and UI
 - `Context`: Abstract base for drawing operations, backed by Core Graphics on

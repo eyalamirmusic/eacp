@@ -1,5 +1,6 @@
 #include "../X11PluginABI.h"
 
+#include <eacp/Core/App/Args.h>
 #include <eacp/Core/Threads/EventLoop-Linux.h>
 #include <eacp/Graphics/Graphics.h>
 
@@ -101,24 +102,23 @@ private:
     int registeredFd = -1;
 };
 
-FilePath pluginPath;
+FilePath pluginPath {X11_PLUGIN_PATH};
 Time::MS exitAfter;
 
-void readArguments(int argc, char** argv)
+// nullopt to go on, else the exit code: --help, or arguments that did not parse.
+std::optional<int> readArguments(int argc, char** argv)
 {
-    constexpr auto exitFlag = std::string_view {"--exit-after-ms="};
+    auto cli = Args::Parser {"X11Host", "Embeds an X11 plugin GUI as a DAW would."};
 
-    pluginPath = FilePath {X11_PLUGIN_PATH};
+    cli.option("--exit-after-ms",
+               exitAfter.count,
+               "quit by itself after this long, resizing the window halfway")
+        .atLeast(0)
+        .hint("<ms>");
+    cli.positional(pluginPath, "plugin", "the plugin library to load")
+        .defaultText("the bundled one");
 
-    for (auto i = 1; i < argc; ++i)
-    {
-        auto argument = std::string_view {argv[i]};
-
-        if (argument.starts_with(exitFlag))
-            exitAfter = Time::MS {std::atoll(argv[i] + exitFlag.size())};
-        else if (!argument.starts_with("-"))
-            pluginPath = FilePath {std::string {argument}};
-    }
+    return cli.exitCodeFor(cli.parse(argc, argv));
 }
 
 Graphics::WindowOptions hostWindowOptions()
@@ -179,7 +179,8 @@ int main(int argc, char** argv)
 {
     setenv("EACP_WINDOW_SYSTEM", "x11", 1);
 
-    readArguments(argc, argv);
+    if (auto code = readArguments(argc, argv))
+        return *code;
 
     return Apps::run<HostApp>();
 }

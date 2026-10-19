@@ -2,11 +2,14 @@ set(core_test_sources
         AllocationCount.cpp
         AppAffordanceTests.cpp
         AppTests.cpp
+        ArgsTests.cpp
         AsyncCoroutineTests.cpp
         AsyncTests.cpp
         Base64Tests.cpp
         # Touches the real system clipboard, and restores whatever was there.
         ClipboardTests.cpp
+        # Runs ConsoleHarness as a child: runConsole's exit codes and streams.
+        ConsoleTests.cpp
         DynamicLibraryTests.cpp
         EventLoopTests.cpp
         FileLocationsTests.cpp
@@ -128,6 +131,15 @@ target_link_libraries(StdioLingerHarness PRIVATE eacp-core)
 target_compile_definitions(CoreTests PRIVATE
         EACP_STDIO_LINGER_HARNESS="$<TARGET_FILE:StdioLingerHarness>")
 add_dependencies(CoreTests StdioLingerHarness)
+
+# A command-line tool over Apps::runConsole and Args::Parser, which
+# ConsoleTests runs to read the exit code and both streams it leaves.
+add_executable(ConsoleHarness ConsoleHarness.cpp)
+target_link_libraries(ConsoleHarness PRIVATE eacp-core)
+
+target_compile_definitions(CoreTests PRIVATE
+        EACP_CONSOLE_HARNESS="$<TARGET_FILE:ConsoleHarness>")
+add_dependencies(CoreTests ConsoleHarness)
 
 # The image a standalone executable reports for itself cannot be checked from
 # inside the test binary: it depends on the path the launcher used, so the

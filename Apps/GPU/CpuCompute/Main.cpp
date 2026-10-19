@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/GPU/CpuCompute/CpuCompute.h>
 #include <eacp/GPU/GPU.h>
 
@@ -5,7 +6,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <functional>
 #include <thread>
 #include <vector>
@@ -235,6 +235,14 @@ void runCpuCompute(bool forceCpuOnly)
 
 int main(int argc, char* argv[])
 {
-    auto forceCpuOnly = argc > 1 && std::strcmp(argv[1], "--cpu-only") == 0;
+    auto forceCpuOnly = false;
+    auto cli = Args::Parser {"CpuCompute",
+                             "One compute kernel on the GPU and on the CPU, "
+                             "compared and timed."};
+    cli.flag("--cpu-only", forceCpuOnly, "skip the GPU even where a device is up");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
     return Apps::run([forceCpuOnly] { runCpuCompute(forceCpuOnly); });
 }

@@ -1,45 +1,39 @@
 #include "IconContainers.h"
 
 #include "../Image/Image.h"
-#include <iostream>
+#include <eacp/Core/App/Args.h>
+#include <eacp/Core/Utils/Console.h>
 
+using namespace eacp;
 using namespace eacp::Graphics;
-
-namespace
-{
-
-std::string option(int argc, char** argv, std::string_view name)
-{
-    for (auto i = 1; i + 1 < argc; ++i)
-        if (name == argv[i])
-            return argv[i + 1];
-
-    return {};
-}
-
-int usage()
-{
-    std::cerr << "usage: eacp-icon-tool --format icns|ico|iconset"
-                 " --in <image.(png|jpeg)> --out <path>\n";
-    return 1;
-}
-
-} // namespace
 
 int main(int argc, char** argv)
 {
-    const auto format = option(argc, argv, "--format");
-    const auto in = option(argc, argv, "--in");
-    const auto out = option(argc, argv, "--out");
+    auto format = std::string {};
+    auto in = FilePath {};
+    auto out = FilePath {};
 
-    if (format.empty() || in.empty() || out.empty())
-        return usage();
+    auto cli = Args::Parser {
+        "eacp-icon-tool",
+        "Converts one PNG or JPEG image into a platform icon container."};
+    cli.option("--format", format, "the container to write")
+        .choices({"icns", "ico", "iconset"})
+        .required();
+    cli.option("--in", in, "the source PNG or JPEG image").hint("<file>").required();
+    cli.option("--out", out, "where to write the icon").hint("<file>").required();
+    cli.epilogue("An iconset is written as a directory at --out.\n"
+                 "Exit codes: 0 written, 1 the image or the icon failed, "
+                 "2 bad arguments.");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
 
     std::string error;
     const auto source = Image::load(in, &error);
     if (!source)
     {
-        std::cerr << "eacp-icon-tool: cannot load '" << in << "': " << error << '\n';
+        Console::printError(Strings::concat(
+            "eacp-icon-tool: cannot load '", in.str(), "': ", error));
         return 1;
     }
 
@@ -49,17 +43,12 @@ int main(int argc, char** argv)
             Icons::writeIcns(source, out);
         else if (format == "ico")
             Icons::writeIco(source, out);
-        else if (format == "iconset")
-            Icons::writeIconset(source, out);
         else
-        {
-            std::cerr << "eacp-icon-tool: unknown format '" << format << "'\n";
-            return usage();
-        }
+            Icons::writeIconset(source, out);
     }
     catch (const std::exception& e)
     {
-        std::cerr << "eacp-icon-tool: " << e.what() << '\n';
+        Console::printError(Strings::concat("eacp-icon-tool: ", e.what()));
         return 1;
     }
 

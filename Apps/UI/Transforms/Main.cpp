@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <cmath>
@@ -310,7 +311,7 @@ Graphics::WindowOptions makeOptions()
 
 // The same tree rendered to a file with no window, which is how the picture is
 // looked at on a machine with nobody at the screen.
-int snapshot(const char* path)
+int snapshot(const FilePath& path)
 {
     auto host = DemoHost {};
     host.setBounds({0.f, 0.f, 1250.f, 780.f});
@@ -326,7 +327,7 @@ int snapshot(const char* path)
     if (!image.isValid())
         return 1;
 
-    image.save(FilePath {path});
+    image.save(path);
 
     return 0;
 }
@@ -334,8 +335,20 @@ int snapshot(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        return snapshot(argv[1]);
+    auto snapshotPath = FilePath {};
+
+    auto cli = Args::Parser {"Transforms",
+                             "Transforms on a layer's composite, in the component "
+                             "tier."};
+    cli.positional(snapshotPath,
+                   "snapshot",
+                   "render one frame to this PNG and exit, with no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (!snapshotPath.empty())
+        return snapshot(snapshotPath);
 
     return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }

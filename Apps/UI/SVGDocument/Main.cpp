@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/SVG/SVG.h>
 #include <eacp/UI/UI.h>
 
@@ -586,18 +587,9 @@ struct StatsBar final : UI::Component
     std::string lastPainted;
 };
 
-// Which document to open with, as argv[1], so a screenshot of any of them can be
-// taken without anyone having to click through the others first.
-int startingDocument()
-{
-    auto& args = Apps::getAppEnvironment().commandLineArgs;
-
-    return args.size() > 1 ? Strings::parseIntOr(args[1], 0) : 0;
-}
-
 struct Gallery final : UI::Component
 {
-    Gallery()
+    explicit Gallery(int startingDocument)
     {
         setInterceptsMouseClicks(true);
         title.setColour(Graphics::Color {0.16f, 0.16f, 0.2f, 1.f});
@@ -606,7 +598,7 @@ struct Gallery final : UI::Component
         stats.document = &document;
 
         addChildren({title, hint, document, stats});
-        show(startingDocument());
+        show(startingDocument);
     }
 
     void show(int index)
@@ -657,7 +649,8 @@ struct Gallery final : UI::Component
 
 struct GalleryHost final : UI::ComponentHost
 {
-    GalleryHost()
+    explicit GalleryHost(int startingDocument)
+        : gallery(startingDocument)
     {
         setBackgroundColour(Graphics::Color::white());
         setFontPointSize(12.f);
@@ -684,5 +677,22 @@ Graphics::WindowOptions makeOptions()
 
 int main(int argc, char* argv[])
 {
-    return Graphics::runWindowedApp<GalleryHost>(argc, argv, makeOptions());
+    Apps::setCommandLineArgs(argc, argv);
+
+    // Which document to open with, so a screenshot of any of them can be taken
+    // without anyone having to click through the others first.
+    auto startingDocument = 0;
+    auto lastDocument = (int) makeDocuments().size() - 1;
+
+    auto cli = Args::Parser {"SVGDocument",
+                             "A gallery of SVG documents drawn through the "
+                             "component tier; a click or a tap moves to the next."};
+    cli.positional(startingDocument, "document", "the document to open with, from 0")
+        .atLeast(0)
+        .atMost(lastDocument);
+
+    if (auto code = cli.exitCodeFor(cli.parse()))
+        return *code;
+
+    return Graphics::runWindowedApp<GalleryHost>(makeOptions(), startingDocument);
 }

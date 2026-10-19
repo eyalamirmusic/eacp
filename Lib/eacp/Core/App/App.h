@@ -295,4 +295,25 @@ int run(int argc, char* argv[])
 // Use run<T>() when state must outlive a single call (windows, tray icons).
 int run(const Callback& func);
 
+// The entry point for a command-line tool:
+// `int main(int argc, char* argv[]) { return Apps::runConsole(argc, argv, body); }`.
+// Stores argv (see commandLineArgs), then runs `body` once inside the
+// bootstrapped loop, as run(func) does, and returns what `body` returned. On
+// macOS the Dock icon is hidden as the body starts (it cannot be before: the
+// loop's bootstrap sets the activation policy from the bundle). A
+// std::exception escaping `body` is printed to stderr as
+// "<program>: <what()>", <program> being argv[0]'s file name, and the exit
+// code is 1. `body` reads the command line from there (commandLineArgs(),
+// Args::Parser::parse()), so it needs no captures.
+int runConsole(int argc, char* argv[], const std::function<int()>& body);
+
+// The same for a command line setCommandLineArgs() has already stored, as in a
+// main() that reads it before choosing between runConsole and run<T>():
+//
+//   setCommandLineArgs(argc, argv);
+//   if (isWorker())
+//       return Apps::runConsole(workerBody);
+//   return Apps::run<MyApp>();
+int runConsole(const std::function<int()>& body);
+
 } // namespace eacp::Apps

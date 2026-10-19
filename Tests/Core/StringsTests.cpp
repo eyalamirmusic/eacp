@@ -2,6 +2,8 @@
 
 #include <eacp/Core/Utils/Strings.h>
 
+#include <clocale>
+
 using namespace nano;
 using eacp::Strings::widen;
 
@@ -175,4 +177,90 @@ auto tToLower = test("Strings/toLower") = []
     check(eacp::Strings::toLower(".WAV") == ".wav");
     check(eacp::Strings::toLower("MiXeD") == "mixed");
     check(eacp::Strings::toLower("").empty());
+};
+
+auto tTryParseInteger = test("Strings/tryParse integers are strict") = []
+{
+    using eacp::Strings::tryParse;
+
+    check(tryParse<int>("42") == 42);
+    check(tryParse<int>("-7") == -7);
+    check(!tryParse<int>("4x"));
+    check(!tryParse<int>(" 4"));
+    check(!tryParse<int>(""));
+    check(!tryParse<unsigned>("-1"));
+};
+
+auto tTryParseFloating = test("Strings/tryParse reads float and double") = []
+{
+    using eacp::Strings::tryParse;
+
+    check(tryParse<double>("1.5") == 1.5);
+    check(tryParse<double>("-0.25") == -0.25);
+    check(tryParse<double>("1e3") == 1000.0);
+    check(tryParse<double>(".5") == 0.5);
+    check(tryParse<float>("2.5") == 2.5f);
+    check(tryParse<double>("inf").has_value());
+};
+
+auto tTryParseFloatingStrict =
+    test("Strings/tryParse floating rejects what from_chars would") = []
+{
+    using eacp::Strings::tryParse;
+
+    check(!tryParse<double>(""));
+    check(!tryParse<double>("-"));
+    check(!tryParse<double>("1.5x"));
+    check(!tryParse<double>("1e"));
+    check(!tryParse<double>(" 1.5"));
+    check(!tryParse<double>("1.5 "));
+    check(!tryParse<double>("+1.5"));
+    check(!tryParse<double>("0x10"));
+    check(!tryParse<double>("1,5"));
+    check(!tryParse<double>("--1"));
+    check(!tryParse<double>(std::string_view {"1\0"
+                                              "5",
+                                              3}));
+    check(!tryParse<float>("1e60"));
+    check(!tryParse<double>("1e400"));
+};
+
+auto tTryParseFloatingLocale =
+    test("Strings/tryParse floating ignores a comma-decimal locale") = []
+{
+    auto previous = std::string {std::setlocale(LC_NUMERIC, nullptr)};
+
+    // Passes trivially where no such locale is installed.
+    for (auto name: {"de_DE.UTF-8", "de_DE", "German_Germany"})
+    {
+        if (std::setlocale(LC_NUMERIC, name) == nullptr)
+            continue;
+
+        check(eacp::Strings::tryParse<double>("1.5") == 1.5);
+        check(!eacp::Strings::tryParse<double>("1,5"));
+        break;
+    }
+
+    std::setlocale(LC_NUMERIC, previous.c_str());
+};
+
+auto tTryParseFloatingView = test("Strings/tryParse reads only the view") = []
+{
+    // The view's end is not a terminator, so this proves the copy is bounded.
+    auto text = std::string_view {"2.5junk"}.substr(0, 3);
+    check(eacp::Strings::tryParse<double>(text) == 2.5);
+};
+
+auto tTryParseBool = test("Strings/tryParseBool") = []
+{
+    using eacp::Strings::tryParseBool;
+
+    for (auto word: {"true", "TRUE", "Yes", "on", "1"})
+        check(tryParseBool(word) == true);
+
+    for (auto word: {"false", "False", "NO", "off", "0"})
+        check(tryParseBool(word) == false);
+
+    for (auto word: {"", "maybe", "2", " true", "yes "})
+        check(!tryParseBool(word).has_value());
 };

@@ -1,3 +1,4 @@
+#include <eacp/Core/App/Args.h>
 #include <eacp/UI/UI.h>
 
 #include <algorithm>
@@ -255,7 +256,7 @@ Graphics::WindowOptions makeOptions()
 // looked at on a machine with nobody at the screen. Sized and told resized() by
 // hand, since a view in no window is never told and that is where the host
 // builds its renderers.
-int snapshot(const char* path)
+int snapshot(const FilePath& path)
 {
     auto host = DemoHost {};
     host.setBounds({0.f, 0.f, 1100.f, 820.f});
@@ -271,7 +272,7 @@ int snapshot(const char* path)
     if (!image.isValid())
         return 1;
 
-    image.save(FilePath {path});
+    image.save(path);
 
     return 0;
 }
@@ -279,8 +280,19 @@ int snapshot(const char* path)
 
 int main(int argc, char** argv)
 {
-    if (argc > 1)
-        return snapshot(argv[1]);
+    auto snapshotPath = FilePath {};
+
+    auto cli =
+        Args::Parser {"Images", "Pictures in the component tier, and their cost."};
+    cli.positional(snapshotPath,
+                   "snapshot",
+                   "render one frame to this PNG and exit, with no window");
+
+    if (auto code = cli.exitCodeFor(cli.parse(argc, argv)))
+        return *code;
+
+    if (!snapshotPath.empty())
+        return snapshot(snapshotPath);
 
     return Graphics::runWindowedApp<DemoHost>(makeOptions());
 }
