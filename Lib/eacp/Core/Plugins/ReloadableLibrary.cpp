@@ -1,0 +1,111 @@
+#include "ReloadableLibrary.h"
+#include "../Utils/Files.h"
+
+#include <atomic>
+#include <string>
+#include <utility>
+
+namespace eacp::Plugins
+{
+namespace
+{
+int nextStagingSerial()
+{
+    static auto serial = std::atomic<int> {0};
+    return ++serial;
+}
+} // namespace
+
+ReloadableLibrary::ReloadableLibrary(const FilePath& builtPathToUse,
+                                     const FilePath& stagingDirectoryToUse)
+    : builtPath(builtPathToUse)
+    , stagingDirectory(stagingDirectoryToUse)
+{
+}
+
+ReloadableLibrary::~ReloadableLibrary()
+{
+    library.close();
+    loadedPath = {};
+    removeStaleCopies();
+}
+
+FilePath ReloadableLibrary::nextStagedPath() const
+{
+    auto name = builtPath.stem() + "-" + std::to_string(generation + 1) + "-"
+                + std::to_string(nextStagingSerial()) + builtPath.extension();
+
+    return stagingDirectory / name;
+}
+
+bool ReloadableLibrary::reload()
+{
+    if (!Files::isFile(builtPath))
+        return false;
+
+    auto staged = nextStagedPath();
+    Files::removeFile(staged);
+
+    if (!Files::copyFile(builtPath, staged))
+        return false;
+
+    auto fresh = DynamicLibrary {};
+
+    if (!fresh.open(staged))
+    {
+        Files::removeFile(staged);
+        return false;
+    }
+
+    stagedCopies.add(staged);
+
+    if (library.isOpen())
+        unload(std::move(library));
+
+    library.open(staged);
+    loadedPath = staged;
+    ++generation;
+
+    removeStaleCopies();
+    return true;
+}
+
+void ReloadableLibrary::removeStaleCopies()
+{
+    auto removeUnlessLoaded = [this](const FilePath& copy)
+    {
+        if (copy == loadedPath)
+            return false;
+
+        Files::removeFile(copy);
+        return !Files::exists(copy);
+    };
+
+    stagedCopies.eraseIf(removeUnlessLoaded);
+}
+
+bool ReloadableLibrary::isOpen() const
+{
+    return library.isOpen();
+}
+
+int ReloadableLibrary::getGeneration() const
+{
+    return generation;
+}
+
+const FilePath& ReloadableLibrary::getBuiltPath() const
+{
+    return builtPath;
+}
+
+const FilePath& ReloadableLibrary::getLoadedPath() const
+{
+    return loadedPath;
+}
+
+void* ReloadableLibrary::findSymbol(const std::string& name) const
+{
+    return library.findSymbol(name);
+}
+} // namespace eacp::Plugins

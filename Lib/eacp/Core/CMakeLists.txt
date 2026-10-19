@@ -18,17 +18,21 @@ target_sources(eacp-core PRIVATE
         Platform/AppInfo.cpp
         Platform/Platform.cpp
         Plugins/DynamicLibrary.cpp
+        Plugins/ReloadableLibrary.cpp
+        Process/BuildRunner.cpp
         Process/Process.cpp
         Threads/Async.cpp
         Threads/CallAfter.cpp
         Threads/EventLoop.cpp
         Threads/TaskSemaphore.cpp
+        Threads/Thread.cpp
         Threads/ThreadId.cpp
         Utils/Base64.cpp
         Utils/Console.cpp
         Utils/Environment.cpp
         Utils/File.cpp
         Utils/FilePath.cpp
+        Utils/FileWatcher.cpp
         Utils/FileWriter.cpp
         Utils/Files.cpp
         Utils/Logging.cpp

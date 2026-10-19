@@ -16,6 +16,7 @@ set(core_test_sources
         FilePathNamesTests.cpp
         FilePathTests.cpp
         FileTests.cpp
+        FileWatcherTests.cpp
         FileWriterTests.cpp
         FilesAppendTests.cpp
         FilesCopyMoveTests.cpp
@@ -30,8 +31,10 @@ set(core_test_sources
         ProcessInheritStdioTests.cpp
         ProcessTokeniseTests.cpp
         RangeTests.cpp
+        ReloadableLibraryTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp
+        ThreadTests.cpp
         TimerTests.cpp
         ZipTests.cpp)
 
@@ -47,7 +50,7 @@ endif ()
 # ProcessTests drive real POSIX commands (/bin/echo, /bin/cat, ...), so they
 # only run on macOS and Linux.
 if (NOT WIN32)
-    list(APPEND core_test_sources ProcessTests.cpp)
+    list(APPEND core_test_sources BuildRunnerTests.cpp ProcessTests.cpp)
 endif ()
 
 # The same options (verbatim commandLine, merged stderr, live output, working
@@ -161,6 +164,19 @@ target_link_libraries(DynamicLibraryTestPlugin PRIVATE eacp-core)
 target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
 add_dependencies(CoreTests DynamicLibraryTestPlugin)
+
+# Two builds of one module for ReloadableLibraryTests, linking no eacp library:
+# a bare module needs only PluginExport.h, so it takes eacp-core's include
+# directory and nothing else.
+foreach (fixture A B)
+    eacp_add_plugin(ReloadFixture${fixture} ReloadFixture${fixture}.cpp)
+    target_include_directories(ReloadFixture${fixture} PRIVATE
+            $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)
+
+    target_compile_definitions(CoreTests PRIVATE
+            EACP_RELOAD_FIXTURE_${fixture}="$<TARGET_FILE:ReloadFixture${fixture}>")
+    add_dependencies(CoreTests ReloadFixture${fixture})
+endforeach ()
 
 # The thin-eacp-host bridge: a plugin whose own copy defers work, so the
 # tests can watch this binary's root loop pump it (RootLoopTests-Linux.cpp).

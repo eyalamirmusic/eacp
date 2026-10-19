@@ -825,6 +825,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   thread serves every pending callback, so N deadlines cost one thread, not N;
   `Threads::delay` is built on it (`Threads/CallAfter.cpp`)
 - `Timer`: periodic callbacks, taking either `Time::MS` or an integer Hz
+- `Thread` (`Threads/Thread.h`): a joining thread whose header keeps
+  `<thread>` out of public headers; the only wrapper eacp has, so new worker
+  threads in headers use it
 - `DisplayLink`: CADisplayLink-backed V-sync synchronized callbacks
 - `FramePacer` (`Graphics/Helpers/FramePacer.h`): the frame-rate divider
   behind `DisplayLink::setMaxFps`, `ComponentHost::setAnimationMaxFps` and
@@ -1000,6 +1003,17 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   same options through cmd.exe), `ProcessTokeniseTests.cpp` (everywhere)
 - POSIX impl (`Process-Posix.cpp`, fork/exec) shared by macOS+Linux; Windows uses
   `CreateProcessW` (`Process-Windows.cpp`)
+- `BuildRunner` (`Process/BuildRunner.h`): one command rerun on demand on a
+  background thread, stderr merged; `onOutput`/`onFinished` on the main thread;
+  `run()` mid-run coalesces into exactly one rerun; a cancelled run finishes
+  with `exited == false` (cancel kills the direct child only, not ninja under
+  cmake)
+- `Plugins::ReloadableLibrary` (`Plugins/ReloadableLibrary.h`): `reload()` opens
+  a uniquely named staged copy of a module being rebuilt and hands the old
+  image to `Plugins::unload`; every pointer from the image dies at the next
+  successful reload. `Apps/UI/HotReload` is the worked example of it,
+  `BuildRunner` and `FileWatcher` together: a layout function in a module,
+  rebuilt and reloaded on save
 
 **ObjC/** - Memory management bridge
 - `Ptr<T>`: RAII smart pointer for Objective-C objects (handles retain/release)
@@ -1082,6 +1096,10 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `FileWriter` (`Utils/FileWriter.h`): `std::fstream` opened in+out — never
   `ios::app`, so `seek` can patch earlier bytes — with `truncate()` through
   `std::filesystem::resize_file`
+- `Files::FileWatcher` (`Utils/FileWatcher.h`): polls paths on the main thread
+  (`pollInterval`, recursive, a `matchesWildcard` `pattern`) and reports the
+  changed files once per burst after `settle`; a missing path is watched for
+  appearing, and the callback must not destroy the watcher
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)

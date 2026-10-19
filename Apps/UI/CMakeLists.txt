@@ -59,3 +59,7 @@ add_subdirectory(SVGDocument)
 # up to 64 at once in a scrolling grid, stacked under widgets and a captured
 # group, and added, deleted and reparented while they animate.
 add_subdirectory(GPUComponents)
+
+if (NOT ANDROID AND NOT IOS)
+    add_subdirectory(HotReload)
+endif ()

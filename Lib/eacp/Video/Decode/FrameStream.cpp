@@ -81,12 +81,13 @@ void FrameStream::setFrameReadyCallback(Callback callback)
 void FrameStream::startDecodeThread()
 {
     stopping = false;
-    decodeThread = std::thread {[this] { decodeLoop(); }};
+    auto loop = [this] { decodeLoop(); };
+    decodeThread.start(loop);
 }
 
 void FrameStream::stopDecodeThread()
 {
-    if (!decodeThread.joinable())
+    if (!decodeThread.isJoinable())
         return;
 
     {
