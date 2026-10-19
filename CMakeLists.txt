@@ -44,6 +44,9 @@ option(EACP_UNITY_BUILD_TESTS "Compile the test executables as unity builds" OFF
 option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_CI_BUILD "Mirror the exact flag set used by CI builds" OFF)
+set(EACP_HOT_RELOAD "" CACHE STRING
+        "Hot reload for every eacp_add_hot_reload app: ON, OFF, or empty for each app's own default")
+set_property(CACHE EACP_HOT_RELOAD PROPERTY STRINGS "" ON OFF)
 
 if (EACP_CI_BUILD)
     set(EACP_UNITY_BUILD ON CACHE BOOL

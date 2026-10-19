@@ -264,3 +264,71 @@ auto tTryParseBool = test("Strings/tryParseBool") = []
     for (auto word: {"", "maybe", "2", " true", "yes "})
         check(!tryParseBool(word).has_value());
 };
+
+auto tLastNonEmptyLineEmpty = test("Strings/lastNonEmptyLine of nothing") = []
+{
+    using eacp::Strings::lastNonEmptyLine;
+
+    check(lastNonEmptyLine("").empty());
+    check(lastNonEmptyLine(" \t\r\n\n  ").empty());
+};
+
+auto tLastNonEmptyLineSingle = test("Strings/lastNonEmptyLine of one line") = []
+{
+    using eacp::Strings::lastNonEmptyLine;
+
+    check(lastNonEmptyLine("only") == "only");
+    check(lastNonEmptyLine("  indented  ") == "  indented");
+};
+
+auto tLastNonEmptyLineTrailingBlanks =
+    test("Strings/lastNonEmptyLine skips trailing blank lines") = []
+{
+    using eacp::Strings::lastNonEmptyLine;
+
+    check(lastNonEmptyLine("first\nsecond \t\n\n   \n") == "second");
+    check(lastNonEmptyLine("first\r\nsecond\r\n\r\n") == "second");
+};
+
+auto tLineContainingFirst = test("Strings/lineContaining on the first line") = []
+{
+    check(eacp::Strings::lineContaining("a error: x\nb\nc", "error:")
+          == "a error: x");
+};
+
+auto tLineContainingMiddle = test("Strings/lineContaining on a middle line") = []
+{
+    using eacp::Strings::lineContaining;
+
+    check(lineContaining("a\nb error: y\nc", "error:") == "b error: y");
+    check(lineContaining("a\r\nb error: y\r\nc", "error:") == "b error: y");
+};
+
+auto tLineContainingLast =
+    test("Strings/lineContaining on an unterminated last line") = []
+{
+    check(eacp::Strings::lineContaining("a\nb\nc error: z", "error:")
+          == "c error: z");
+};
+
+auto tLineContainingFirstMatch =
+    test("Strings/lineContaining takes the first match") = []
+{ check(eacp::Strings::lineContaining("one x\ntwo x", "x") == "one x"); };
+
+auto tLineContainingAbsent = test("Strings/lineContaining an absent needle") = []
+{
+    using eacp::Strings::lineContaining;
+
+    check(lineContaining("a\nb", "error:").empty());
+    check(lineContaining("", "error:").empty());
+};
+
+auto tLineContainingEmptyNeedle =
+    test("Strings/lineContaining an empty needle matches the first line") = []
+{
+    using eacp::Strings::lineContaining;
+
+    check(lineContaining("first\nsecond", "") == "first");
+    check(lineContaining("\nsecond", "").empty());
+    check(lineContaining("", "").empty());
+};

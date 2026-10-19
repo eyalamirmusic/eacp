@@ -1,5 +1,7 @@
 #pragma once
 
+#include <eacp/Core/Plugins/PluginExport.h>
+
 #include <cstring>
 
 struct LayoutEntry
@@ -16,6 +18,8 @@ struct LayoutTable
 };
 
 using LayoutFunction = void (*)(float width, float height, LayoutTable* table);
+
+EACP_PLUGIN_EXPORT void demoLayout(float width, float height, LayoutTable* table);
 
 inline constexpr auto layoutFunctionName = "demoLayout";
 

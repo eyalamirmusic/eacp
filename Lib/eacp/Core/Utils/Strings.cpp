@@ -247,6 +247,43 @@ std::string trim(std::string_view s)
     return std::string {s.substr(begin, end - begin + 1)};
 }
 
+namespace
+{
+std::string_view::size_type lineStart(std::string_view text,
+                                      std::string_view::size_type position)
+{
+    if (position == 0)
+        return 0;
+
+    auto previousBreak = text.find_last_of("\r\n", position - 1);
+    return previousBreak == std::string_view::npos ? 0 : previousBreak + 1;
+}
+} // namespace
+
+std::string lastNonEmptyLine(std::string_view text)
+{
+    auto end = text.find_last_not_of("\r\n \t");
+
+    if (end == std::string_view::npos)
+        return {};
+
+    auto first = lineStart(text, end);
+    return std::string {text.substr(first, end + 1 - first)};
+}
+
+std::string lineContaining(std::string_view text, std::string_view needle)
+{
+    auto found = text.find(needle);
+
+    if (found == std::string_view::npos)
+        return {};
+
+    auto first = lineStart(text, found);
+    auto last = text.find_first_of("\r\n", found);
+    auto length = last == std::string_view::npos ? last : last - first;
+    return std::string {text.substr(first, length)};
+}
+
 std::string toLower(std::string_view s)
 {
     auto result = std::string {};

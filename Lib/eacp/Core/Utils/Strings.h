@@ -10,6 +10,14 @@ namespace eacp::Strings
 {
 // Strips leading and trailing spaces, tabs, CRs and LFs.
 std::string trim(std::string_view s);
+
+// The last line holding anything but whitespace, its trailing whitespace and
+// line ending stripped; empty when there is none.
+std::string lastNonEmptyLine(std::string_view text);
+// The whole line, without its line ending, holding the first occurrence of
+// needle; empty when needle is absent. An empty needle matches the first line.
+std::string lineContaining(std::string_view text, std::string_view needle);
+
 // ASCII-only lowercasing, for matching extensions, header names and the like.
 std::string toLower(std::string_view s);
 

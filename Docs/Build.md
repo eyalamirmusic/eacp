@@ -124,6 +124,17 @@ files under `ThirdParty/miniz` and the version in its README.
   prefers a reachable dev server (`Options::Embedded::preferDevServer`).
   Schema codegen still emits TS into `web/src/generated` on every app build.
 
+- `EACP_HOT_RELOAD` (default empty) — dev or static mode for every app wired
+  with `eacp_add_hot_reload(<app> MODULE <module> SOURCES <files...>
+  [DEFAULT ON|OFF])`. Empty leaves each app at its own `DEFAULT` (`OFF` when
+  it names none; `Apps/UI/HotReload` names `ON`), `ON` or `OFF` overrides
+  every app, and iOS and Android are always off. The sources are compiled
+  into the app either way, as generation 0; dev mode adds the reloadable
+  module and the app's watcher and build runner, static mode adds nothing.
+  The host branches on `Plugins::isHotReload()` (`Core/Plugins/HotReload.h`,
+  included directly rather than through the `Core.h` umbrella, since its
+  contents depend on the app's compile definitions), and a configure prints `<app>: hot reload ON/OFF`.
+
 - `EACP_VERBOSE_CONFIGURE` (default `OFF`) — prints the configure detail a
   clean configure leaves out: the FetchContent population of the
   `DOWNLOAD_ONLY` Vulkan sources, the pkg-config and `find_package` probes

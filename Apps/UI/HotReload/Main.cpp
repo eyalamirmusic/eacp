@@ -1,14 +1,17 @@
 #include "LayoutABI.h"
 
 #include <eacp/UI/UI.h>
+#include <eacp/Core/Plugins/HotReload.h>
 
+#include <optional>
 #include <string>
 
-// A window whose layout lives in a separate module, HotReloadLayout, built from
-// Layout.cpp beside this file. The app owns every widget; the module is one C
-// function that is handed the window's size and answers with a rectangle per
-// named widget. Edit a constant in Layout.cpp and save: the watcher sees it,
-// cmake rebuilds the module, and the fresh image is loaded and applied.
+// A window whose layout is one C function in Layout.cpp beside this file. The
+// app owns every widget; the function is handed the window's size and answers
+// with a rectangle per named widget. It is always compiled into the app, and
+// under EACP_HOT_RELOAD it is also built as a module, HotReloadLayout: edit a
+// constant in Layout.cpp and save, the watcher sees it, cmake rebuilds the
+// module, and the fresh image is loaded and applied over the compiled-in copy.
 
 using namespace eacp;
 
@@ -19,48 +22,10 @@ constexpr auto statusHeight = 22.f;
 constexpr auto statusPadding = 16.f;
 constexpr auto logLimit = 4000;
 
-std::string lastNonEmptyLine(const std::string& text)
-{
-    auto end = text.find_last_not_of("\r\n \t");
-
-    if (end == std::string::npos)
-        return {};
-
-    auto start = text.find_last_of("\r\n", end);
-    auto first = start == std::string::npos ? 0 : start + 1;
-    return text.substr(first, end + 1 - first);
-}
-
-std::string lineContaining(const std::string& text, std::string_view needle)
-{
-    auto found = text.find(needle);
-
-    if (found == std::string::npos)
-        return {};
-
-    auto start = text.find_last_of("\r\n", found);
-    auto first = start == std::string::npos ? 0 : start + 1;
-    auto last = text.find_first_of("\r\n", found);
-    return text.substr(first, last == std::string::npos ? last : last - first);
-}
-
 std::string buildFailureSummary(const std::string& log)
 {
-    auto error = lineContaining(log, "error:");
-    return error.empty() ? lastNonEmptyLine(log) : error;
-}
-
-Processes::ProcessOptions makeBuildCommand()
-{
-    auto options = Processes::ProcessOptions {};
-    options.executable = EACP_HOT_RELOAD_CMAKE;
-    options.arguments = {"--build",
-                         EACP_HOT_RELOAD_BUILD_DIR,
-                         "--config",
-                         EACP_HOT_RELOAD_CONFIG,
-                         "--target",
-                         EACP_HOT_RELOAD_TARGET};
-    return options;
+    auto error = Strings::lineContaining(log, "error:");
+    return error.empty() ? Strings::lastNonEmptyLine(log) : error;
 }
 
 Files::FileWatcherOptions makeWatcherOptions()
@@ -69,6 +34,23 @@ Files::FileWatcherOptions makeWatcherOptions()
     options.pattern = "*.cpp;*.h";
     return options;
 }
+
+struct ReloadLoop
+{
+    ReloadLoop(const Plugins::HotReloadTarget& target,
+               const Files::FileWatcher::ChangedFunc& onChanged)
+        : library {FilePath {target.library},
+                   FilePath::appCacheDirectory() / "HotReload"}
+        , runner {Plugins::hotReloadBuildCommand(target)}
+        , watcher {
+              {FilePath {target.sourceDirectory}}, onChanged, makeWatcherOptions()}
+    {
+    }
+
+    Plugins::ReloadableLibrary library;
+    Processes::BuildRunner runner;
+    Files::FileWatcher watcher;
+};
 
 struct Sidebar final : UI::Component
 {
@@ -125,13 +107,20 @@ struct DemoRoot final : UI::Component
 
         addChildren({title, sidebar, gain, mute, notes, footer, status});
 
+        if constexpr (Plugins::isHotReload())
+            startReloadLoop();
+    }
+
+    void startReloadLoop()
+    {
+        auto changed = [this](const Vector<FilePath>&) { sourcesChanged(); };
+        auto& loop = reloader.emplace(Plugins::hotReloadTarget(), changed);
+
         auto appendOutput = [this](std::string_view chunk) { appendLog(chunk); };
         auto buildFinished = [this](const Processes::ProcessResult& result)
         { finishBuild(result); };
-        runner.onOutput = appendOutput;
-        runner.onFinished = buildFinished;
-
-        reloadLayout();
+        loop.runner.onOutput = appendOutput;
+        loop.runner.onFinished = buildFinished;
     }
 
     void paint(UI::Graphics& g) override
@@ -148,7 +137,7 @@ struct DemoRoot final : UI::Component
     void sourcesChanged()
     {
         status.setText("building…");
-        runner.run();
+        reloader->runner.run();
     }
 
     void appendLog(std::string_view chunk)
@@ -176,6 +165,8 @@ struct DemoRoot final : UI::Component
 
     void reloadLayout()
     {
+        auto& library = reloader->library;
+
         if (!library.reload())
         {
             status.setText("load failed");
@@ -183,16 +174,22 @@ struct DemoRoot final : UI::Component
             return;
         }
 
-        layout = library.findFunction<LayoutFunction>(layoutFunctionName);
+        auto loaded = library.findFunction<LayoutFunction>(layoutFunctionName);
 
-        if (layout == nullptr)
+        if (loaded == nullptr)
         {
             status.setText("load failed: no " + std::string {layoutFunctionName});
             return;
         }
 
-        Console::print("generation " + std::to_string(library.getGeneration()));
+        layout = loaded;
+        Console::print("generation " + std::to_string(generation()));
         applyLayout();
+    }
+
+    int generation() const
+    {
+        return reloader ? reloader->library.getGeneration() : 0;
     }
 
     void placeStatus()
@@ -212,9 +209,6 @@ struct DemoRoot final : UI::Component
 
     void applyLayout()
     {
-        if (layout == nullptr)
-            return;
-
         auto entries = Vector<LayoutEntry>(layoutCapacity);
         auto table = LayoutTable {entries.data(), layoutCapacity, 0};
         auto bounds = getLocalBounds();
@@ -237,8 +231,11 @@ struct DemoRoot final : UI::Component
 
     void showLoaded(int unknown)
     {
-        auto text = "generation " + std::to_string(library.getGeneration())
-                    + " · watching " + std::string {EACP_HOT_RELOAD_SOURCE_DIR};
+        auto text = std::string {"static layout"};
+
+        if constexpr (Plugins::isHotReload())
+            text = "generation " + std::to_string(generation()) + " · watching "
+                   + std::string {Plugins::hotReloadTarget().sourceDirectory};
 
         if (unknown > 0)
             text += " · " + std::to_string(unknown) + " unknown keys";
@@ -256,15 +253,8 @@ struct DemoRoot final : UI::Component
 
     Vector<NamedComponent> named;
     std::string log;
-    LayoutFunction layout = nullptr;
-
-    Plugins::ReloadableLibrary library {FilePath {EACP_HOT_RELOAD_LIBRARY},
-                                        FilePath::appCacheDirectory() / "HotReload"};
-    Processes::BuildRunner runner {makeBuildCommand()};
-    Files::FileWatcher watcher {{FilePath {EACP_HOT_RELOAD_SOURCE_DIR}},
-                                [this](const Vector<FilePath>&)
-                                { sourcesChanged(); },
-                                makeWatcherOptions()};
+    LayoutFunction layout = &demoLayout;
+    std::optional<ReloadLoop> reloader;
 };
 
 struct DemoHost final : UI::ComponentHost

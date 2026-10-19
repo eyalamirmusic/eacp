@@ -60,6 +60,6 @@ add_subdirectory(SVGDocument)
 # group, and added, deleted and reparented while they animate.
 add_subdirectory(GPUComponents)
 
-if (NOT ANDROID AND NOT IOS)
-    add_subdirectory(HotReload)
-endif ()
+# A layout function rebuilt and reloaded on save under EACP_HOT_RELOAD, and
+# compiled into the app as it stands otherwise.
+add_subdirectory(HotReload)

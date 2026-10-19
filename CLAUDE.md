@@ -328,6 +328,26 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_WEBVIEW_DEV=ON
 ```
 
+- `EACP_HOT_RELOAD` (default empty): the dev/static switch for every app
+  wired with `eacp_add_hot_reload(<app> MODULE <module> SOURCES <files...>
+  [DEFAULT ON|OFF])` (`CMake/EacpPlugin.cmake`). Empty leaves each app at the
+  `DEFAULT` it declares (`Apps/UI/HotReload` declares `ON`; no `DEFAULT` is
+  `OFF`), `ON` or `OFF` overrides every app, and iOS and Android are always
+  off, having no cmake to run. The sources are compiled into the app in both
+  modes, so that copy is generation 0 and the fallback; dev mode also builds
+  them as a module the app reloads on save, static mode builds no module, no
+  watcher and no build runner. The host reads its mode and module from
+  `Core/Plugins/HotReload.h` — `if constexpr (Plugins::isHotReload())`,
+  `hotReloadTarget()` and `hotReloadBuildCommand` — and never spells an
+  `EACP_HOT_RELOAD_*` macro; it includes that header directly, never through
+  the `Core.h` umbrella, because its contents depend on the app's own compile
+  definitions. A configure prints `<app>: hot reload ON/OFF`.
+
+```bash
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
+      -DEACP_HOT_RELOAD=OFF
+```
+
 ### Local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against a
@@ -1013,7 +1033,9 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   image to `Plugins::unload`; every pointer from the image dies at the next
   successful reload. `Apps/UI/HotReload` is the worked example of it,
   `BuildRunner` and `FileWatcher` together: a layout function in a module,
-  rebuilt and reloaded on save
+  rebuilt and reloaded on save, or compiled in statically when
+  `EACP_HOT_RELOAD` says so (`Plugins/HotReload.h`: `isHotReload()`,
+  `HotReloadTarget`, `hotReloadBuildCommand`)
 
 **ObjC/** - Memory management bridge
 - `Ptr<T>`: RAII smart pointer for Objective-C objects (handles retain/release)
