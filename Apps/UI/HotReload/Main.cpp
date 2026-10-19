@@ -6,18 +6,18 @@
 #include <optional>
 #include <string>
 
-// A window whose layout is one C function in Layout.cpp beside this file. The
-// app owns every widget; the function is handed the window's size and answers
-// with a rectangle per named widget. It is always compiled into the app, and
-// under EACP_HOT_RELOAD it is also built as a module, HotReloadLayout: edit a
-// constant in Layout.cpp and save, the watcher sees it, cmake rebuilds the
-// module, and the fresh image is loaded and applied over the compiled-in copy.
+// A window whose layout is one eacp-ui function in Layout.cpp beside this file.
+// The app owns every widget; the function is handed them and the window's
+// bounds and calls setBounds on each. It is always compiled into the app, and
+// under EACP_HOT_RELOAD it is also built as a module, HotReloadLayout, bound
+// at load time to this app's own eacp: edit a constant in Layout.cpp and save, the
+// watcher sees it, cmake rebuilds the module, and the fresh image is loaded
+// and applied over the compiled-in copy.
 
 using namespace eacp;
 
 namespace
 {
-constexpr auto layoutCapacity = 64;
 constexpr auto statusHeight = 22.f;
 constexpr auto statusPadding = 16.f;
 constexpr auto logLimit = 4000;
@@ -77,11 +77,11 @@ struct Sidebar final : UI::Component
     UI::Button randomise {"Randomise"};
 };
 
-struct NamedComponent
+std::string describe(const UI::Rect& rect)
 {
-    std::string key;
-    UI::Component* component = nullptr;
-};
+    return std::to_string(int(rect.x)) + "," + std::to_string(int(rect.y)) + " "
+           + std::to_string(int(rect.w)) + "x" + std::to_string(int(rect.h));
+}
 
 struct DemoRoot final : UI::Component
 {
@@ -97,13 +97,6 @@ struct DemoRoot final : UI::Component
         { gain.setValue(0.1f + 0.8f * gain.getValue()); };
         sidebar.reset.onClick = resetGain;
         sidebar.randomise.onClick = randomiseGain;
-
-        named.add({"title", &title});
-        named.add({"sidebar", &sidebar});
-        named.add({"gain", &gain});
-        named.add({"mute", &mute});
-        named.add({"notes", &notes});
-        named.add({"footer", &footer});
 
         addChildren({title, sidebar, gain, mute, notes, footer, status});
 
@@ -169,8 +162,7 @@ struct DemoRoot final : UI::Component
 
         if (!library.reload())
         {
-            status.setText("load failed");
-            Console::print("load failed: " + library.getBuiltPath().str());
+            reportLoadFailure(library.lastError());
             return;
         }
 
@@ -178,13 +170,22 @@ struct DemoRoot final : UI::Component
 
         if (loaded == nullptr)
         {
-            status.setText("load failed: no " + std::string {layoutFunctionName});
+            layout = &demoLayout;
+            applyLayout();
+            reportLoadFailure("no " + std::string {layoutFunctionName});
             return;
         }
 
         layout = loaded;
-        Console::print("generation " + std::to_string(generation()));
         applyLayout();
+        Console::print("generation " + std::to_string(generation()) + ": gain at "
+                       + describe(gain.getBounds()));
+    }
+
+    void reportLoadFailure(const std::string& reason)
+    {
+        status.setText("load failed: " + reason);
+        Console::print("load failed: " + reason);
     }
 
     int generation() const
@@ -198,47 +199,19 @@ struct DemoRoot final : UI::Component
         status.setBounds(area.removeFromBottom(statusHeight));
     }
 
-    UI::Component* findNamed(const char* key)
-    {
-        for (auto& entry: named)
-            if (entry.key == key)
-                return entry.component;
-
-        return nullptr;
-    }
-
     void applyLayout()
     {
-        auto entries = Vector<LayoutEntry>(layoutCapacity);
-        auto table = LayoutTable {entries.data(), layoutCapacity, 0};
-        auto bounds = getLocalBounds();
-        layout(bounds.w, bounds.h, &table);
-
-        auto unknown = 0;
-
-        for (auto index = 0; index < table.count; ++index)
-        {
-            auto& entry = entries[index];
-
-            if (auto* component = findNamed(entry.key))
-                component->setBounds({entry.x, entry.y, entry.width, entry.height});
-            else
-                ++unknown;
-        }
-
-        showLoaded(unknown);
+        layout(targets, getLocalBounds());
+        showLoaded();
     }
 
-    void showLoaded(int unknown)
+    void showLoaded()
     {
         auto text = std::string {"static layout"};
 
         if constexpr (Plugins::isHotReload())
             text = "generation " + std::to_string(generation()) + " · watching "
                    + std::string {Plugins::hotReloadTarget().sourceDirectory};
-
-        if (unknown > 0)
-            text += " · " + std::to_string(unknown) + " unknown keys";
 
         status.setText(text);
     }
@@ -251,7 +224,7 @@ struct DemoRoot final : UI::Component
     UI::Label footer {"Edit Layout.cpp and save to move everything above"};
     UI::Label status;
 
-    Vector<NamedComponent> named;
+    LayoutTargets targets {title, sidebar, gain, mute, notes, footer};
     std::string log;
     LayoutFunction layout = &demoLayout;
     std::optional<ReloadLoop> reloader;

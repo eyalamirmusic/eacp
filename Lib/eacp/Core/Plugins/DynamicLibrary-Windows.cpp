@@ -12,6 +12,23 @@ void* loadImage(const FilePath& path)
     return LoadLibraryW(path.wide().c_str());
 }
 
+std::string lastLoadError()
+{
+    auto code = GetLastError();
+    char* buffer = nullptr;
+    auto flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM
+                 | FORMAT_MESSAGE_IGNORE_INSERTS;
+    auto length =
+        FormatMessageA(flags, nullptr, code, 0, (LPSTR) &buffer, 0, nullptr);
+    auto message = length == 0 ? std::string {} : std::string(buffer, length);
+    LocalFree(buffer);
+
+    while (!message.empty() && (message.back() == '\n' || message.back() == '\r'))
+        message.pop_back();
+
+    return "error " + std::to_string(code) + ": " + message;
+}
+
 void unloadImage(void* handle)
 {
     FreeLibrary((HMODULE) handle);

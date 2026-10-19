@@ -124,13 +124,32 @@ files under `ThirdParty/miniz` and the version in its README.
   prefers a reachable dev server (`Options::Embedded::preferDevServer`).
   Schema codegen still emits TS into `web/src/generated` on every app build.
 
-- `EACP_HOT_RELOAD` (default empty) — dev or static mode for every app wired
+- `EACP_HOT_RELOAD` (default `OFF`) — dev or static mode for every app wired
   with `eacp_add_hot_reload(<app> MODULE <module> SOURCES <files...>
-  [DEFAULT ON|OFF])`. Empty leaves each app at its own `DEFAULT` (`OFF` when
-  it names none; `Apps/UI/HotReload` names `ON`), `ON` or `OFF` overrides
-  every app, and iOS and Android are always off. The sources are compiled
-  into the app either way, as generation 0; dev mode adds the reloadable
-  module and the app's watcher and build runner, static mode adds nothing.
+  [HOT_RELOAD ON|OFF])` that names no mode of its own. An app's `HOT_RELOAD`
+  wins over the option either way; `Apps/UI/HotReload` names none, so it is
+  in dev mode exactly when `-DEACP_HOT_RELOAD=ON` is given. iOS, Android and
+  Windows are always off, whatever either says. The sources are
+  compiled into the app either way, as generation 0; dev mode adds the
+  reloadable module and the app's watcher and build runner, static mode adds
+  nothing. The module links nothing: its eacp references stay undefined
+  (`-undefined dynamic_lookup` on Apple, the default for a Linux module) and
+  bind at load time to the eacp the app exports, so both share one eacp and
+  the module's one `extern "C"` entry point takes and calls C++ types. Dev
+  mode builds the app with `ENABLE_EXPORTS` (`-export_dynamic` on Apple,
+  `--export-dynamic` on Linux, which is what keeps the exports alive under
+  the libraries' Release IPO) and links every static library in its link
+  closure whole-archive, so the module can call eacp code the app itself
+  never does. It also compiles every eacp library in that closure at default
+  visibility, a property of those library targets and so of the whole build
+  directory: `eacp_add_plugin` modules built there re-export eacp and lose
+  their isolation, so the two should not be mixed in one build directory.
+  A save rebuilds the module alone, never the running app. Windows is not
+  supported: `WINDOWS_EXPORT_ALL_SYMBOLS` never exports a static library's
+  symbols, and a module linking the exe would relink a locked exe on every
+  save. The module owns nothing: it creates no objects, installs no callbacks
+  and keeps no state, since its image is unmapped one loop turn after the
+  next reload.
   The host branches on `Plugins::isHotReload()` (`Core/Plugins/HotReload.h`,
   included directly rather than through the `Core.h` umbrella, since its
   contents depend on the app's compile definitions), and a configure prints `<app>: hot reload ON/OFF`.

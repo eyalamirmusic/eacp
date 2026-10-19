@@ -9,6 +9,11 @@
 // crosses the boundary: host and plugin each statically link their own copy,
 // so nothing with C++ layout may pass through these functions; stick to C
 // primitives, C structs and function pointers.
+//
+// A hot-reload module (eacp_add_hot_reload) is the exception: it links nothing
+// and binds at load time to the eacp the host exports, so the two share one
+// copy built by one compiler and C++ types cross freely. Only the symbol the
+// host looks up stays extern "C", so no mangled name is ever spelled.
 
 #ifdef __cplusplus
 #define EACP_PLUGIN_EXTERN_C extern "C"

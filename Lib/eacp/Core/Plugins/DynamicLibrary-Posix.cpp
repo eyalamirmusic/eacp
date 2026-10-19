@@ -9,6 +9,12 @@ void* loadImage(const FilePath& path)
     return dlopen(path.c_str(), RTLD_LOCAL | RTLD_NOW);
 }
 
+std::string lastLoadError()
+{
+    auto* message = dlerror();
+    return message == nullptr ? std::string {} : std::string {message};
+}
+
 void unloadImage(void* handle)
 {
     dlclose(handle);

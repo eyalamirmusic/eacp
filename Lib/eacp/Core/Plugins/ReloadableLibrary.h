@@ -33,6 +33,10 @@ public:
 
     [[nodiscard]] bool isOpen() const;
 
+    // Why the last reload() failed: the loader's message, or what went wrong
+    // staging the copy. Empty after a successful reload().
+    [[nodiscard]] const std::string& lastError() const;
+
     // 0 before the first successful reload, one more per success.
     [[nodiscard]] int getGeneration() const;
 
@@ -58,6 +62,7 @@ private:
     FilePath loadedPath;
     DynamicLibrary library;
     Vector<FilePath> stagedCopies;
+    std::string error;
     int generation = 0;
 };
 } // namespace eacp::Plugins

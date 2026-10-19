@@ -1,42 +1,27 @@
 #pragma once
 
 #include <eacp/Core/Plugins/PluginExport.h>
+#include <eacp/UI/UI.h>
 
-#include <cstring>
+// The module binds to the app's own eacp, so C++ types cross freely, but its
+// image is unmapped a loop turn after the next reload: demoLayout only moves
+// what the host owns, creating, installing and keeping nothing. Everything else
+// in Layout.cpp stays in its anonymous namespace, or it binds to the app's copy.
 
-struct LayoutEntry
+struct LayoutTargets
 {
-    char key[32];
-    float x, y, width, height;
+    eacp::UI::Component& title;
+    eacp::UI::Component& sidebar;
+    eacp::UI::Component& gain;
+    eacp::UI::Component& mute;
+    eacp::UI::Component& notes;
+    eacp::UI::Component& footer;
 };
 
-struct LayoutTable
-{
-    LayoutEntry* entries;
-    int capacity;
-    int count;
-};
+using LayoutFunction = void (*)(const LayoutTargets& targets,
+                                const eacp::UI::Rect& bounds);
 
-using LayoutFunction = void (*)(float width, float height, LayoutTable* table);
-
-EACP_PLUGIN_EXPORT void demoLayout(float width, float height, LayoutTable* table);
+EACP_PLUGIN_EXPORT void demoLayout(const LayoutTargets& targets,
+                                   const eacp::UI::Rect& bounds);
 
 inline constexpr auto layoutFunctionName = "demoLayout";
-
-inline void addLayoutEntry(
-    LayoutTable* table, const char* key, float x, float y, float width, float height)
-{
-    if (table == nullptr || table->count >= table->capacity)
-        return;
-
-    auto& entry = table->entries[table->count++];
-    auto keyLength = std::strlen(key);
-    auto copied = keyLength < sizeof(entry.key) ? keyLength : sizeof(entry.key) - 1;
-
-    std::memcpy(entry.key, key, copied);
-    entry.key[copied] = '\0';
-    entry.x = x;
-    entry.y = y;
-    entry.width = width;
-    entry.height = height;
-}

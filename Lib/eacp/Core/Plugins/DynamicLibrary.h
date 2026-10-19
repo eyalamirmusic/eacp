@@ -39,6 +39,10 @@ public:
     [[nodiscard]] bool isOpen() const;
     [[nodiscard]] void* findSymbol(const std::string& name) const;
 
+    // The loader's own message for the last failed open(), empty after a
+    // successful one: dlerror() on POSIX, GetLastError() as text on Windows.
+    [[nodiscard]] const std::string& lastError() const;
+
     template <typename FunctionType>
     FunctionType findFunction(const std::string& name) const
     {
@@ -54,6 +58,7 @@ public:
 private:
     void* handle = nullptr;
     std::string path;
+    std::string error;
 };
 
 // Tears a module down and unmaps it, in the order the platform requires.

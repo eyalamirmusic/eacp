@@ -50,6 +50,7 @@ DynamicLibrary::~DynamicLibrary()
 DynamicLibrary::DynamicLibrary(DynamicLibrary&& other) noexcept
     : handle(std::exchange(other.handle, nullptr))
     , path(std::exchange(other.path, {}))
+    , error(std::exchange(other.error, {}))
 {
 }
 
@@ -60,6 +61,7 @@ DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept
         close();
         handle = std::exchange(other.handle, nullptr);
         path = std::exchange(other.path, {});
+        error = std::exchange(other.error, {});
     }
 
     return *this;
@@ -68,6 +70,7 @@ DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&& other) noexcept
 bool DynamicLibrary::open(const FilePath& pathToOpen)
 {
     close();
+    error.clear();
 
     auto guard = std::lock_guard {registry().mutex};
     auto& entry = registry().images[pathToOpen.str()];
@@ -78,6 +81,7 @@ bool DynamicLibrary::open(const FilePath& pathToOpen)
 
         if (entry.handle == nullptr)
         {
+            error = Detail::lastLoadError();
             registry().images.erase(pathToOpen.str());
             return false;
         }
@@ -120,6 +124,11 @@ void* DynamicLibrary::findSymbol(const std::string& name) const
         return nullptr;
 
     return Detail::findImageSymbol(handle, name);
+}
+
+const std::string& DynamicLibrary::lastError() const
+{
+    return error;
 }
 
 void unload(DynamicLibrary library, const Callback& quiesce)

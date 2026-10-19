@@ -40,19 +40,28 @@ FilePath ReloadableLibrary::nextStagedPath() const
 
 bool ReloadableLibrary::reload()
 {
+    error.clear();
+
     if (!Files::isFile(builtPath))
+    {
+        error = "no module at " + builtPath.str();
         return false;
+    }
 
     auto staged = nextStagedPath();
     Files::removeFile(staged);
 
     if (!Files::copyFile(builtPath, staged))
+    {
+        error = "could not stage " + staged.str();
         return false;
+    }
 
     auto fresh = DynamicLibrary {};
 
     if (!fresh.open(staged))
     {
+        error = fresh.lastError();
         Files::removeFile(staged);
         return false;
     }
@@ -87,6 +96,11 @@ void ReloadableLibrary::removeStaleCopies()
 bool ReloadableLibrary::isOpen() const
 {
     return library.isOpen();
+}
+
+const std::string& ReloadableLibrary::lastError() const
+{
+    return error;
 }
 
 int ReloadableLibrary::getGeneration() const
