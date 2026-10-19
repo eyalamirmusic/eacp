@@ -105,12 +105,21 @@ glyph rasterizer (`CMake/FindLinuxText.cmake`, one `eacp-linux-text` target). No
 opens it by name at runtime, so a machine with no driver builds the same binary
 and reports `Device::isValid()` false.
 
-One dependency is carried in the tree instead: `ThirdParty/miniz`, the
-amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C target
-so it never joins a unity build and its warnings are silenced. Only `eacp-core`
-links it, PRIVATE, and only `Utils/Zip.cpp` includes its header, so the whole
-of it is reached through `eacp::Zip`. To update it, replace the files under
-`ThirdParty/miniz` and the version in its README.
+Two dependencies are carried in the tree instead. One is `ThirdParty/miniz`,
+the amalgamated miniz 3.1.2 pair beside its MIT license, built as its own C
+target so it never joins a unity build and its warnings are silenced. Only
+`eacp-core` links it, PRIVATE, and only `Utils/Zip.cpp` includes its header,
+so the whole of it is reached through `eacp::Zip`. To update it, replace the
+files under `ThirdParty/miniz` and the version in its README. The other,
+`ThirdParty/fmt`, is carried the same way: fmt 12.2.0's `include/fmt` headers
+and `src/format.cc` alone, unmodified, beside its MIT license, built as its
+own static C++ target with its warnings silenced. `eacp-core` links it
+PRIVATE, so no eacp header may include it, and exactly one file does:
+`Utils/Format.cpp`, behind `Strings::format` (`Utils/Format.h`, a
+type-erased bridge every module — and `LOGF` — formats through). fmt's
+`base.h` requires `/utf-8` on MSVC of every translation unit that includes it,
+so the fmt target sets it PRIVATE and `eacp-core` sets it on `Format.cpp`
+alone. To update it, replace those files and the version in its README.
 
 Android (API `EACP_ANDROID_MIN_SDK`+, Vulkan 1.1) is Linux without Wayland: CMake's
 `ANDROID` is checked before `UNIX`, per-platform files are `Thing-Android.cpp`,

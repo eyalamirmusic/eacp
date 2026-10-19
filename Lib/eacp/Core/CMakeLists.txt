@@ -11,6 +11,18 @@ target_link_libraries(eacp-core PUBLIC ResEmbed Miro)
 # PRIVATE: Zip.cpp is the only thing that includes miniz.h.
 target_link_libraries(eacp-core PRIVATE miniz)
 
+# PRIVATE: no public eacp header may include fmt; Utils/Format.cpp is the only
+# thing that includes it.
+target_link_libraries(eacp-core PRIVATE fmt)
+
+# fmt's base.h static_asserts that cl compiles string literals as UTF-8. The
+# shared PCH image is not built under /utf-8, so this one file goes without it.
+if (MSVC)
+    set_source_files_properties(Utils/Format.cpp PROPERTIES
+            COMPILE_OPTIONS /utf-8
+            SKIP_PRECOMPILE_HEADERS ON)
+endif ()
+
 target_sources(eacp-core PRIVATE
         App/App.cpp
         App/Args.cpp
@@ -31,6 +43,7 @@ target_sources(eacp-core PRIVATE
         Utils/FilePath.cpp
         Utils/FileWriter.cpp
         Utils/Files.cpp
+        Utils/Format.cpp
         Utils/Logging.cpp
         Utils/MemoryMappedFile.cpp
         Utils/Random.cpp

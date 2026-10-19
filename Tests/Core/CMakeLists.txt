@@ -24,6 +24,7 @@ set(core_test_sources
         FilesOpenTests.cpp
         FilesTests.cpp
         FilesWildcardTests.cpp
+        FormatTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
         PluginObjectTests.cpp

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Containers.h"
+#include "Format.h"
 #include "Logging.h"
 #include "Pimpl.h"
 #include "Strings.h"

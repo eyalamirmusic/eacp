@@ -163,7 +163,7 @@ endif ()
 
 set(CMAKE_CXX_STANDARD 20)
 
-# Vendored single-file C libraries, ahead of Lib so its modules can link them.
+# Vendored libraries (miniz, fmt), ahead of Lib so its modules can link them.
 add_subdirectory(ThirdParty)
 
 add_subdirectory(Lib)

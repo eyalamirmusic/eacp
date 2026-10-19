@@ -6,10 +6,9 @@
 #include "ShaderGraph.h"
 #include "UniformLayout.h"
 
+#include <eacp/Core/Utils/Format.h>
+
 #include <cassert>
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
 
 // The single source-of-truth walker. MSL and HLSL spell most of an expression
 // identically; GLSL differs in a countable list, each with one arm here.
@@ -30,25 +29,9 @@ const char* typeName(Backend backend, ValueType type)
     return backend == Backend::Vulkan ? glslTypeName(type) : typeName(type);
 }
 
-std::string shortestRoundTrip(float value)
-{
-    char buffer[32];
-
-    for (auto precision = 6; precision < 9; ++precision)
-    {
-        std::snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
-
-        if (!std::isfinite(value) || std::strtof(buffer, nullptr) == value)
-            return buffer;
-    }
-
-    std::snprintf(buffer, sizeof(buffer), "%.9g", value);
-    return buffer;
-}
-
 std::string floatLiteral(float value)
 {
-    auto text = shortestRoundTrip(value);
+    auto text = Strings::shortestRoundTrip(value);
 
     if (text.find('.') == std::string::npos && text.find('e') == std::string::npos
         && text.find('n') == std::string::npos)

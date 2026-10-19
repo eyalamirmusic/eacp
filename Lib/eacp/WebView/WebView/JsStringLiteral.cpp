@@ -1,6 +1,6 @@
 #include "JsStringLiteral.h"
 
-#include <cstdio>
+#include <eacp/Core/Utils/Format.h>
 
 namespace eacp::Graphics
 {
@@ -38,10 +38,8 @@ std::string jsStringLiteral(std::string_view value)
             default:
                 if (static_cast<unsigned char>(c) < 0x20)
                 {
-                    char buf[8];
-                    std::snprintf(
-                        buf, sizeof buf, "\\u%04x", static_cast<unsigned char>(c));
-                    out += buf;
+                    out +=
+                        Strings::format("\\u{:04x}", static_cast<unsigned char>(c));
                 }
                 else
                 {

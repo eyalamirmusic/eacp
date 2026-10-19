@@ -8,10 +8,10 @@
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Environment.h>
+#include <eacp/Core/Utils/Format.h>
 
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
 #include <string_view>
 
 namespace eacp::Graphics
@@ -117,9 +117,7 @@ std::string linuxFileUri(const std::string& path)
             continue;
         }
 
-        char escaped[4] = {};
-        std::snprintf(escaped, sizeof(escaped), "%%%02X", byte);
-        uri += escaped;
+        uri += Strings::format("%{:02X}", byte);
     }
 
     return uri;

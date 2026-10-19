@@ -7,6 +7,7 @@
 #include "FileDrag-Windows.h"
 #include <eacp/Graphics/View/FileDragOut-Windows.h>
 #include <eacp/Graphics/DComp-Windows.h>
+#include <eacp/Core/Utils/Format.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Threads/ThreadUtils.h>
 
@@ -512,9 +513,7 @@ struct WebView::Native
 
     static std::string hresultHex(HRESULT hr)
     {
-        char buf[16];
-        std::snprintf(buf, sizeof buf, "%08lx", static_cast<unsigned long>(hr));
-        return buf;
+        return Strings::format("{:08x}", static_cast<unsigned long>(hr));
     }
 
     Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> buildEnvironmentOptions()

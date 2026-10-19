@@ -498,7 +498,8 @@ eacp uses CMake (3.31+) and a C++20 toolchain. Dependencies are fetched via
 — among them [ESIMD](https://github.com/eyalamirmusic/ESIMD), the SIMD kernels
 the image operations run through — except
 [miniz](https://github.com/richgel999/miniz), which is carried in
-`ThirdParty/` and wrapped by `eacp::Zip`.
+`ThirdParty/` and wrapped by `eacp::Zip`, and
+[fmt](https://github.com/fmtlib/fmt), carried beside it and used internally.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
@@ -565,7 +566,7 @@ Lib/eacp/
 Apps/         Example applications
 Tests/        Unit tests
 Docs/         In-depth documentation: the build system and the Linux backend
-ThirdParty/   Vendored single-file libraries (miniz, behind eacp::Zip)
+ThirdParty/   Vendored libraries (miniz, behind eacp::Zip; fmt)
 CMake/        Build helpers (TargetSetup, CPM)
 ```
 
