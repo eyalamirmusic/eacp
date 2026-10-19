@@ -13,10 +13,34 @@ Proc::ProcessResult runHarness(const eacp::Vector<std::string>& args)
     return Proc::run(EACP_CONSOLE_HARNESS, args);
 }
 
-bool startsWithProgramName(const std::string& text)
+Proc::ProcessResult runHarnessWith(const eacp::Vector<std::string>& args,
+                                   const std::string& name,
+                                   const std::string& value)
 {
-    // "ConsoleHarness.exe" on Windows: argv[0]'s file name, as written.
-    return text.starts_with("ConsoleHarness");
+    auto options = Proc::ProcessOptions {};
+    options.executable = EACP_CONSOLE_HARNESS;
+    options.arguments = args;
+    options.environment.add({name, value});
+    return Proc::run(std::move(options));
+}
+
+Proc::ProcessResult runHarnessOnStoredArgs(const eacp::Vector<std::string>& args)
+{
+    return runHarnessWith(args, "EACP_CONSOLE_HARNESS_STORED", "1");
+}
+
+Proc::ProcessResult runHarnessNamed(const std::string& argv0,
+                                    const eacp::Vector<std::string>& args)
+{
+    return runHarnessWith(args, "EACP_CONSOLE_HARNESS_ARGV0", argv0);
+}
+
+// A Windows console program's text-mode streams write "\n" as "\r\n", which
+// is correct there, so the captured text is compared with the '\r's removed.
+std::string withLfEndings(std::string text)
+{
+    std::erase(text, '\r');
+    return text;
 }
 
 auto tReturnsTheBodysCode =
@@ -36,7 +60,7 @@ auto tPrintGoesToStdout = test("Console/print writes a line to stdout") = []
     auto result = runHarness({"--say", "hello"});
 
     check(result.exitCode == 0);
-    check(result.output == "hello\n");
+    check(withLfEndings(result.output) == "hello\n");
     check(result.errorOutput.empty());
 };
 
@@ -47,8 +71,21 @@ auto tExceptionIsReported =
 
     check(result.exitCode == 1);
     check(result.output.empty());
-    check(startsWithProgramName(result.errorOutput));
-    check(result.errorOutput.ends_with(": boom\n"));
+    check(withLfEndings(result.errorOutput) == "ConsoleHarness: boom\n");
+};
+
+auto tProgramNameDropsExe =
+    test("Console/the program name is argv[0]'s file name less .exe") = []
+{
+    auto exe = runHarnessNamed("some/dir/Tool.EXE", {"--throw"});
+
+    check(exe.exitCode == 1);
+    check(withLfEndings(exe.errorOutput) == "Tool: boom\n");
+
+    auto dotted = runHarnessNamed("some/dir/tool.v2", {"--throw"});
+
+    check(dotted.exitCode == 1);
+    check(withLfEndings(dotted.errorOutput) == "tool.v2: boom\n");
 };
 
 auto tBadArgumentsExit2 =
@@ -58,28 +95,20 @@ auto tBadArgumentsExit2 =
 
     check(result.exitCode == eacp::Args::badArguments);
     check(result.output.empty());
-    check(result.errorOutput
+    check(withLfEndings(result.errorOutput)
           == "ConsoleHarness: --exit needs a whole number, not 'abc'\n");
 };
 
 auto tHelpExits0 = test("Console/help prints to stdout and exits 0") = []
 {
     auto result = runHarness({"--help"});
+    auto output = withLfEndings(result.output);
 
     check(result.exitCode == 0);
-    check(result.output.starts_with("Usage: ConsoleHarness [options]\n"));
-    check(result.output.find("--say <value>") != std::string::npos);
+    check(output.starts_with("Usage: ConsoleHarness [options]\n"));
+    check(output.find("--say <value>") != std::string::npos);
     check(result.errorOutput.empty());
 };
-
-Proc::ProcessResult runHarnessOnStoredArgs(const eacp::Vector<std::string>& args)
-{
-    auto options = Proc::ProcessOptions {};
-    options.executable = EACP_CONSOLE_HARNESS;
-    options.arguments = args;
-    options.environment.add({"EACP_CONSOLE_HARNESS_STORED", "1"});
-    return Proc::run(std::move(options));
-}
 
 auto tStoredArgs =
     test("Console/runConsole(body) runs on the stored command line") = []
@@ -87,13 +116,13 @@ auto tStoredArgs =
     auto result = runHarnessOnStoredArgs({"--exit", "4", "--say", "stored"});
 
     check(result.exitCode == 4);
-    check(result.output == "stored\n");
+    check(withLfEndings(result.output) == "stored\n");
     check(result.errorOutput.empty());
 
     auto failed = runHarnessOnStoredArgs({"--throw"});
 
     check(failed.exitCode == 1);
-    check(startsWithProgramName(failed.errorOutput));
+    check(withLfEndings(failed.errorOutput) == "ConsoleHarness: boom\n");
 };
 
 auto tFailReportsLikeAParseError =
@@ -103,6 +132,7 @@ auto tFailReportsLikeAParseError =
 
     check(result.exitCode == eacp::Args::badArguments);
     check(result.output.empty());
-    check(result.errorOutput == "ConsoleHarness: nothing to validate\n");
+    check(withLfEndings(result.errorOutput)
+          == "ConsoleHarness: nothing to validate\n");
 };
 } // namespace ConsoleTests

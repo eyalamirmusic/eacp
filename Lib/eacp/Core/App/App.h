@@ -302,8 +302,8 @@ int run(const Callback& func);
 // macOS the Dock icon is hidden as the body starts (it cannot be before: the
 // loop's bootstrap sets the activation policy from the bundle). A
 // std::exception escaping `body` is printed to stderr as
-// "<program>: <what()>", <program> being argv[0]'s file name, and the exit
-// code is 1. `body` reads the command line from there (commandLineArgs(),
+// "<program>: <what()>", <program> being argv[0]'s file name less any ".exe",
+// and the exit code is 1. `body` reads the command line from there (commandLineArgs(),
 // Args::Parser::parse()), so it needs no captures.
 int runConsole(int argc, char* argv[], const std::function<int()>& body);
 

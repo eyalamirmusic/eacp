@@ -172,7 +172,8 @@ std::string programName()
     if (args.empty())
         return "program";
 
-    return FilePath {args.front()}.fileName();
+    auto path = FilePath {args.front()};
+    return path.hasExtension("exe") ? path.stem() : path.fileName();
 }
 
 int runConsoleBody(const std::function<int()>& body)

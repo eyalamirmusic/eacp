@@ -41,8 +41,15 @@ int runCase()
 
 // EACP_CONSOLE_HARNESS_STORED=1 takes the other entry point: the command line
 // stored first, then runConsole(body) with no argc/argv.
+// EACP_CONSOLE_HARNESS_ARGV0 stands in for argv[0], so the program name
+// runConsole derives can be tested with names this binary does not have.
 int main(int argc, char* argv[])
 {
+    auto argv0 = eacp::getEnvValue("EACP_CONSOLE_HARNESS_ARGV0");
+
+    if (!argv0.empty())
+        argv[0] = argv0.data();
+
     if (eacp::getEnvValue("EACP_CONSOLE_HARNESS_STORED") != "1")
         return eacp::Apps::runConsole(argc, argv, runCase);
 
