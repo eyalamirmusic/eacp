@@ -7,14 +7,6 @@ namespace BuildRunnerTests
 namespace Proc = eacp::Processes;
 using eacp::Threads::runEventLoopUntil;
 
-Proc::ProcessOptions shellCommand(const std::string& script)
-{
-    auto options = Proc::ProcessOptions {};
-    options.executable = "/bin/sh";
-    options.arguments = {"-c", script};
-    return options;
-}
-
 Proc::ProcessOptions sleepCommand(const std::string& seconds)
 {
     auto options = Proc::ProcessOptions {};

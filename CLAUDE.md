@@ -1046,15 +1046,31 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   with `exited == false` (cancel kills the direct child only, not ninja under
   cmake)
 - `Plugins::ReloadableLibrary` (`Plugins/ReloadableLibrary.h`): `reload()` opens
-  a uniquely named staged copy of a module being rebuilt and hands the old
-  image to `Plugins::unload`; every pointer from the image dies at the next
-  successful reload. `Apps/UI/HotReload` is the worked example of it,
-  `BuildRunner` and `FileWatcher` together: an eacp-ui layout function
-  (`demoLayout(const LayoutTargets&, const UI::Rect&)`, calling `setBounds`
-  on components the host owns) in a module, rebuilt and reloaded on save,
-  or compiled in statically when
-  `EACP_HOT_RELOAD` says so (`Plugins/HotReload.h`: `isHotReload()`,
-  `HotReloadTarget`, `hotReloadBuildCommand`)
+  a staged copy of a module being rebuilt (named `<stem>-<gen>-<pid>-<serial>`,
+  so two running copies of an app never remove each other's) and hands the
+  old image to `Plugins::unload`; every pointer from the image dies at the
+  next successful reload. With a `requiredSymbol`, an image that does not
+  export it is refused before the swap: the previous generation stays and
+  `lastError()` is `no <symbol>`. `Apps/UI/HotReload` is the worked example: an eacp-ui
+  layout function (`demoLayout(const LayoutTargets&, const UI::Rect&)`,
+  calling `setBounds` on components the host owns) in a module, rebuilt and
+  reloaded on save, or compiled in statically when `EACP_HOT_RELOAD` says so
+  (`Plugins/HotReload.h`: `isHotReload()`, `hotReloadTarget()`)
+- `Plugins::HotReloadLoop` (`Plugins/HotReloadLoop.h`): a `SourceWatcher`,
+  `BuildRunner` and `ReloadableLibrary` as one object, built from `Options`
+  or a define-free `HotReloadTarget` (`Plugins/HotReloadTarget.h`, with
+  `hotReloadBuildCommand`). A settled change builds (a change mid-build is
+  one coalesced rerun, reported as a build of its own), a successful build
+  reloads and calls `onReloaded(library)`, which fires only when the image
+  exports `Options::requiredSymbol`, so the app looks its entry point up
+  without a fallback; a failed build or load keeps the generation.
+  `BuildFailure::summary` (`buildFailureFrom`) strips ANSI colour and takes a
+  located compiler error, then any non-driver `error:` line, a `CMake Error`,
+  ninja's `FAILED:` and the last line, in that order. The module's and
+  staging directories are excluded from the watch when they lie under the
+  sources. `getState()`/`describeState()` (`generation N`, `building…`,
+  `build failed: …`, `load failed: …`) drive a status line. Nothing builds
+  until the first change; callbacks must not destroy the loop
 
 **ObjC/** - Memory management bridge
 - `Ptr<T>`: RAII smart pointer for Objective-C objects (handles retain/release)
@@ -1139,8 +1155,14 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `std::filesystem::resize_file`
 - `Files::FileWatcher` (`Utils/FileWatcher.h`): polls paths on the main thread
   (`pollInterval`, recursive, a `matchesWildcard` `pattern`) and reports the
-  changed files once per burst after `settle`; a missing path is watched for
-  appearing, and the callback must not destroy the watcher
+  changed files once per burst after `settle`; `excludedDirectories` are
+  neither listed nor descended, a missing path is watched for appearing, and
+  the callback must not destroy the watcher
+- `Files::SourceWatcher` (`Utils/SourceWatcher.h`): a `FileWatcher` over one
+  source tree, always recursive, matching `Files::sourceFilePattern` (the C,
+  C++ and Objective-C source and header extensions) unless its `Options`
+  name another, with the rest of `FileWatcherOptions` in `Options::watcher`;
+  built from a directory alone or from `Options`
 - `Pimpl<T>`: Pointer-to-implementation pattern
 - `Singleton<T>::get()`: Thread-safe singleton
 - `Vectors`: Container algorithms (`contains`, `eraseMatch`, `find`)

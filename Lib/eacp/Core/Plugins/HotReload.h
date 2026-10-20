@@ -1,9 +1,6 @@
 #pragma once
 
-#include "../Process/Process.h"
-
-#include <string>
-#include <string_view>
+#include "HotReloadTarget.h"
 
 // Each app's eacp_add_hot_reload sets these on the app alone; the header is
 // evaluated in the including translation unit, so eacp-core never sees them.
@@ -43,16 +40,6 @@ constexpr bool isHotReload()
     return EACP_HOT_RELOAD != 0;
 }
 
-struct HotReloadTarget
-{
-    std::string_view library;
-    std::string_view cmake;
-    std::string_view buildDirectory;
-    std::string_view config;
-    std::string_view target;
-    std::string_view sourceDirectory;
-};
-
 constexpr HotReloadTarget hotReloadTarget()
 {
     return {EACP_HOT_RELOAD_LIBRARY,
@@ -61,18 +48,5 @@ constexpr HotReloadTarget hotReloadTarget()
             EACP_HOT_RELOAD_CONFIG,
             EACP_HOT_RELOAD_TARGET,
             EACP_HOT_RELOAD_SOURCE_DIR};
-}
-
-inline Processes::ProcessOptions hotReloadBuildCommand(const HotReloadTarget& target)
-{
-    auto options = Processes::ProcessOptions {};
-    options.executable = std::string {target.cmake};
-    options.arguments = {"--build",
-                         std::string {target.buildDirectory},
-                         "--config",
-                         std::string {target.config},
-                         "--target",
-                         std::string {target.target}};
-    return options;
 }
 } // namespace eacp::Plugins

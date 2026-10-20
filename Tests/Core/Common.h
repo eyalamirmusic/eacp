@@ -32,6 +32,14 @@ inline void writeTestFile(const std::filesystem::path& path,
     out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
 }
 
+inline eacp::Processes::ProcessOptions shellCommand(const std::string& script)
+{
+    auto options = eacp::Processes::ProcessOptions {};
+    options.executable = "/bin/sh";
+    options.arguments = {"-c", script};
+    return options;
+}
+
 inline std::string readTestFile(const std::filesystem::path& path)
 {
     return eacp::Files::readFile(eacp::FilePath {path});

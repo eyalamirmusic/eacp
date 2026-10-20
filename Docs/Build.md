@@ -131,8 +131,13 @@ files under `ThirdParty/miniz` and the version in its README.
   in dev mode exactly when `-DEACP_HOT_RELOAD=ON` is given. iOS, Android and
   Windows are always off, whatever either says. The sources are
   compiled into the app either way, as generation 0; dev mode adds the
-  reloadable module and the app's watcher and build runner, static mode adds
-  nothing. The module links nothing: its eacp references stay undefined
+  reloadable module and a `Plugins::HotReloadLoop` (a `Files::SourceWatcher`
+  on the source directory, a build runner and the reloadable library, with
+  the build-failure summary and status text; an image without the app's
+  `requiredSymbol` is refused and the previous generation kept), static mode
+  adds nothing, so the example is that loop plus one layout function. The
+  module links
+  nothing: its eacp references stay undefined
   (`-undefined dynamic_lookup` on Apple, the default for a Linux module) and
   bind at load time to the eacp the app exports, so both share one eacp and
   the module's one `extern "C"` entry point takes and calls C++ types. Dev

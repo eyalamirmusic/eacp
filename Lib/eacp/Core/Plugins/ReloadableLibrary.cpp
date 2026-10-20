@@ -1,4 +1,5 @@
 #include "ReloadableLibrary.h"
+#include "DynamicLibraryPlatform.h"
 #include "../Utils/Files.h"
 
 #include <atomic>
@@ -17,9 +18,11 @@ int nextStagingSerial()
 } // namespace
 
 ReloadableLibrary::ReloadableLibrary(const FilePath& builtPathToUse,
-                                     const FilePath& stagingDirectoryToUse)
+                                     const FilePath& stagingDirectoryToUse,
+                                     const std::string& requiredSymbolToUse)
     : builtPath(builtPathToUse)
     , stagingDirectory(stagingDirectoryToUse)
+    , requiredSymbol(requiredSymbolToUse)
 {
 }
 
@@ -33,6 +36,7 @@ ReloadableLibrary::~ReloadableLibrary()
 FilePath ReloadableLibrary::nextStagedPath() const
 {
     auto name = builtPath.stem() + "-" + std::to_string(generation + 1) + "-"
+                + std::to_string(Detail::currentProcessId()) + "-"
                 + std::to_string(nextStagingSerial()) + builtPath.extension();
 
     return stagingDirectory / name;
@@ -62,6 +66,14 @@ bool ReloadableLibrary::reload()
     if (!fresh.open(staged))
     {
         error = fresh.lastError();
+        Files::removeFile(staged);
+        return false;
+    }
+
+    if (!requiredSymbol.empty() && fresh.findSymbol(requiredSymbol) == nullptr)
+    {
+        error = "no " + requiredSymbol;
+        fresh.close();
         Files::removeFile(staged);
         return false;
     }

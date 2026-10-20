@@ -15,11 +15,15 @@ namespace eacp::Plugins
 // Every pointer obtained through findFunction/findSymbol, and anything a
 // function in the image returned, is invalid after the next successful
 // reload(): copy out what you need first. Main thread only.
+//
+// With a requiredSymbol, an image that does not export it is refused before
+// it replaces the current one, so the previous generation stays loaded.
 class ReloadableLibrary
 {
 public:
     ReloadableLibrary(const FilePath& builtPathToUse,
-                      const FilePath& stagingDirectoryToUse);
+                      const FilePath& stagingDirectoryToUse,
+                      const std::string& requiredSymbolToUse = {});
     ~ReloadableLibrary();
 
     ReloadableLibrary(const ReloadableLibrary&) = delete;
@@ -59,6 +63,7 @@ private:
 
     FilePath builtPath;
     FilePath stagingDirectory;
+    std::string requiredSymbol;
     FilePath loadedPath;
     DynamicLibrary library;
     Vector<FilePath> stagedCopies;

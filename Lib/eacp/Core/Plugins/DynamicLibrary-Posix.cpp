@@ -1,6 +1,7 @@
 #include "DynamicLibraryPlatform.h"
 
 #include <dlfcn.h>
+#include <unistd.h>
 
 namespace eacp::Plugins::Detail
 {
@@ -13,6 +14,11 @@ std::string lastLoadError()
 {
     auto* message = dlerror();
     return message == nullptr ? std::string {} : std::string {message};
+}
+
+long long currentProcessId()
+{
+    return (long long) getpid();
 }
 
 void unloadImage(void* handle)

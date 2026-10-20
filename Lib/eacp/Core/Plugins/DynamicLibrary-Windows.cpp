@@ -29,6 +29,11 @@ std::string lastLoadError()
     return "error " + std::to_string(code) + ": " + message;
 }
 
+long long currentProcessId()
+{
+    return (long long) GetCurrentProcessId();
+}
+
 void unloadImage(void* handle)
 {
     FreeLibrary((HMODULE) handle);

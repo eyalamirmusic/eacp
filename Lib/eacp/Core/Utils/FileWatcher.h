@@ -19,6 +19,9 @@ struct FileWatcherOptions
     // Empty watches every file.
     std::string pattern;
     bool includeHidden = false;
+
+    // Directories under a watched one that are neither listed nor descended.
+    Vector<FilePath> excludedDirectories;
 };
 
 // Polls files and directories on the main thread and reports what was

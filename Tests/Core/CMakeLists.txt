@@ -32,6 +32,7 @@ set(core_test_sources
         ProcessTokeniseTests.cpp
         RangeTests.cpp
         ReloadableLibraryTests.cpp
+        SourceWatcherTests.cpp
         StringsTests.cpp
         TemporaryFileTests.cpp
         ThreadTests.cpp
@@ -50,7 +51,8 @@ endif ()
 # ProcessTests drive real POSIX commands (/bin/echo, /bin/cat, ...), so they
 # only run on macOS and Linux.
 if (NOT WIN32)
-    list(APPEND core_test_sources BuildRunnerTests.cpp ProcessTests.cpp)
+    list(APPEND core_test_sources
+            BuildRunnerTests.cpp HotReloadLoopTests.cpp ProcessTests.cpp)
 endif ()
 
 # The same options (verbatim commandLine, merged stderr, live output, working
@@ -165,10 +167,10 @@ target_compile_definitions(CoreTests PRIVATE
         EACP_TEST_PLUGIN="$<TARGET_FILE:DynamicLibraryTestPlugin>")
 add_dependencies(CoreTests DynamicLibraryTestPlugin)
 
-# Two builds of one module for ReloadableLibraryTests, linking no eacp library:
-# a bare module needs only PluginExport.h, so it takes eacp-core's include
-# directory and nothing else.
-foreach (fixture A B)
+# Builds of one module for ReloadableLibraryTests and HotReloadLoopTests,
+# linking no eacp library: a bare module needs only PluginExport.h, so it takes
+# eacp-core's include directory and nothing else. C lacks the answer function.
+foreach (fixture A B C)
     eacp_add_plugin(ReloadFixture${fixture} ReloadFixture${fixture}.cpp)
     target_include_directories(ReloadFixture${fixture} PRIVATE
             $<TARGET_PROPERTY:eacp-core,INTERFACE_INCLUDE_DIRECTORIES>)

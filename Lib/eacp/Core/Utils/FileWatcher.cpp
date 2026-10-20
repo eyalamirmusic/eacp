@@ -36,8 +36,49 @@ DirectoryOptions directoryOptionsFor(const FileWatcherOptions& options)
     return dirOptions;
 }
 
+std::string_view withoutTrailingSlash(const std::string& path)
+{
+    auto view = std::string_view {path};
+
+    while (view.size() > 1 && view.back() == '/')
+        view.remove_suffix(1);
+
+    return view;
+}
+
+bool isExcluded(const FilePath& directory, const Vector<FilePath>& excluded)
+{
+    auto name = withoutTrailingSlash(directory.str());
+
+    for (const auto& candidate: excluded)
+        if (withoutTrailingSlash(candidate.str()) == name)
+            return true;
+
+    return false;
+}
+
+void addDirectoryFiles(Snapshot& snapshot,
+                       const FilePath& directory,
+                       const DirectoryOptions& dirOptions,
+                       const Vector<FilePath>& excluded)
+{
+    auto visit = [&](const DirectoryEntry& entry)
+    {
+        if (entry.kind == EntryKind::directory && isExcluded(entry.path, excluded))
+            return Visit::skipChildren;
+
+        if (entry.kind == EntryKind::file)
+            snapshot[entry.path.str()] = signatureOf(entry.path);
+
+        return Visit::next;
+    };
+
+    forEachEntry(directory, dirOptions, visit);
+}
+
 Snapshot takeSnapshot(const Vector<FilePath>& paths,
-                      const DirectoryOptions& dirOptions)
+                      const DirectoryOptions& dirOptions,
+                      const Vector<FilePath>& excluded)
 {
     auto snapshot = Snapshot {};
 
@@ -45,8 +86,7 @@ Snapshot takeSnapshot(const Vector<FilePath>& paths,
     {
         if (isDirectory(path))
         {
-            for (const auto& file: listFiles(path, dirOptions))
-                snapshot[file.str()] = signatureOf(file);
+            addDirectoryFiles(snapshot, path, dirOptions, excluded);
         }
         else if (isFile(path))
         {
@@ -97,7 +137,7 @@ struct FileWatcher::Impl
         , onChanged(onChangedToUse)
         , options(optionsToUse)
         , dirOptions(directoryOptionsFor(optionsToUse))
-        , snapshot(takeSnapshot(paths, dirOptions))
+        , snapshot(takeSnapshot(paths, dirOptions, options.excludedDirectories))
     {
         auto tick = [this] { poll(); };
         timer.emplace(tick, options.pollInterval);
@@ -105,7 +145,7 @@ struct FileWatcher::Impl
 
     void poll()
     {
-        auto current = takeSnapshot(paths, dirOptions);
+        auto current = takeSnapshot(paths, dirOptions, options.excludedDirectories);
 
         if (current != snapshot)
         {
