@@ -50,6 +50,11 @@ struct ViewSurface
     // Pixels per point on the surface.
     float scale = linuxDefaultBackingScale;
 
+    // Whether the window system stretches a buffer of any size over the
+    // surface (a Wayland viewport, Android's scale-to-window), so a presenter
+    // may render fewer pixels than pixelWidth by pixelHeight.
+    bool stretchesBuffer = false;
+
     std::function<void()> onAvailable = [] {};
 
     // Destroy the swapchain and VkSurfaceKHR here.
