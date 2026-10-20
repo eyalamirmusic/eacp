@@ -143,8 +143,9 @@ function(eacp_add_hot_reload app)
 
     target_sources(${app} PRIVATE ${ARG_SOURCES})
 
-    # Same compiler, same eacp: an extern "C" entry point returning a C++ class
-    # never meets a C caller, so clang's C-linkage warning is off for both.
+    # Same compiler, same eacp: an EACP_HOT_RELOAD_EXPORT entry point returning
+    # a C++ class never meets a C caller, so clang's C-linkage warning is off
+    # for both.
     set_target_properties(${app} PROPERTIES EACP_HOT_RELOAD_ABI ON)
 
     if (NOT enabled)

@@ -155,7 +155,8 @@ its README.
   nothing: its eacp references stay undefined
   (`-undefined dynamic_lookup` on Apple, the default for a Linux module) and
   bind at load time to the eacp the app exports, so both share one eacp and
-  the module's one `extern "C"` entry point takes and calls C++ types. Dev
+  the module's one `extern "C"` entry point (`EACP_HOT_RELOAD_EXPORT`, empty
+  on Windows) takes and calls C++ types. Dev
   mode builds the app with `ENABLE_EXPORTS` (`-export_dynamic` on Apple,
   `--export-dynamic` on Linux, which is what keeps the exports alive under
   the libraries' Release IPO) and links every static library in its link

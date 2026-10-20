@@ -351,7 +351,7 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   builds no module, no watcher and no build runner. The module links nothing
   and binds at load time to the eacp the app exports (`-undefined
   dynamic_lookup` on Apple, a Linux module's default), so C++ types cross its
-  one `extern "C"` entry point. Dev mode gives the app `ENABLE_EXPORTS`
+  one `extern "C"` entry point (`EACP_HOT_RELOAD_EXPORT`, empty on Windows). Dev mode gives the app `ENABLE_EXPORTS`
   (`-export_dynamic` on Apple, `--export-dynamic` on Linux, which keeps the
   exports alive under the libraries' Release IPO), links every static library
   in its link closure whole-archive so the module can call what the app never

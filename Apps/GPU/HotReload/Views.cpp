@@ -170,8 +170,8 @@ using PlasmaView = FullScreenView<PlasmaShader>;
 using TunnelView = FullScreenView<TunnelShader>;
 } // namespace
 
-EACP_PLUGIN_EXPORT ViewPointer makeDemoView()
+EACP_HOT_RELOAD_EXPORT ViewPointer makeDemoView()
 {
-    return makeOwned<TunnelView>();
-    // return makeOwned<PlasmaView>();
+    // return makeOwned<TunnelView>();
+    return makeOwned<PlasmaView>();
 }

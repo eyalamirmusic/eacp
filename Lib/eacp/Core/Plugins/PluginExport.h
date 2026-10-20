@@ -11,11 +11,14 @@
 // primitives, C structs and function pointers.
 //
 // A hot-reload module (eacp_add_hot_reload) is the exception: it links nothing
-// and binds at load time to the eacp the host exports, so the two share one
-// copy built by one compiler and C++ types cross freely. Only the symbol the
-// host looks up stays extern "C", so no mangled name is ever spelled. That
-// entry point may return a C++ type; eacp_add_hot_reload silences clang's
-// C-linkage warning for it.
+// and binds at load time to the eacp the host exports, so C++ types cross
+// freely. Its entry point is marked EACP_HOT_RELOAD_EXPORT: extern "C" so the
+// host looks it up with no mangled name spelled, and free to return a C++ type
+// since module and app share one eacp built by one compiler (eacp_add_hot_reload
+// silences clang's warning for that). Windows has no hot reload, so no module
+// and the app calls its compiled-in copy directly; the macro is empty there,
+// which is also why MSVC's refusal to return a class from a C function never
+// applies.
 
 #ifdef __cplusplus
 #define EACP_PLUGIN_EXTERN_C extern "C"
@@ -25,7 +28,10 @@
 
 #ifdef _WIN32
 #define EACP_PLUGIN_EXPORT EACP_PLUGIN_EXTERN_C __declspec(dllexport)
+#define EACP_HOT_RELOAD_EXPORT
 #else
 #define EACP_PLUGIN_EXPORT                                                          \
+    EACP_PLUGIN_EXTERN_C __attribute__((visibility("default")))
+#define EACP_HOT_RELOAD_EXPORT                                                      \
     EACP_PLUGIN_EXTERN_C __attribute__((visibility("default")))
 #endif

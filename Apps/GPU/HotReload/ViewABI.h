@@ -14,6 +14,6 @@
 using ViewPointer = eacp::OwningPointer<eacp::Graphics::View>;
 using ViewFactory = ViewPointer (*)();
 
-EACP_PLUGIN_EXPORT ViewPointer makeDemoView();
+EACP_HOT_RELOAD_EXPORT ViewPointer makeDemoView();
 
 inline constexpr auto viewFactoryName = "makeDemoView";

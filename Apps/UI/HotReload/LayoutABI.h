@@ -21,7 +21,7 @@ struct LayoutTargets
 using LayoutFunction = void (*)(const LayoutTargets& targets,
                                 const eacp::UI::Rect& bounds);
 
-EACP_PLUGIN_EXPORT void demoLayout(const LayoutTargets& targets,
-                                   const eacp::UI::Rect& bounds);
+EACP_HOT_RELOAD_EXPORT void demoLayout(const LayoutTargets& targets,
+                                       const eacp::UI::Rect& bounds);
 
 inline constexpr auto layoutFunctionName = "demoLayout";
