@@ -342,7 +342,8 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   [HOT_RELOAD ON|OFF])` (`CMake/EacpPlugin.cmake`) that names no mode of its
   own. An app's `HOT_RELOAD ON` is always dev mode and `OFF` always static,
   whatever the option says; `Apps/UI/HotReload` names none, so it follows
-  the option. iOS and Android (no cmake to run) and Windows (not supported: `WINDOWS_EXPORT_ALL_SYMBOLS` never
+  the option, and `Apps/GPU/HotReload` (`HotReloadGPU`, always `ON`) reloads
+  a factory whose `GPUView` the host owns and recreates per generation. iOS and Android (no cmake to run) and Windows (not supported: `WINDOWS_EXPORT_ALL_SYMBOLS` never
   exports a static library's symbols, and a module linking the exe would
   relink a locked exe on every save) are always off. The sources are compiled
   into the app in both modes, so that copy is generation 0 and the fallback;
@@ -361,8 +362,9 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
   A save rebuilds the module alone, never the running app. Everything in the
   module's sources but its entry point stays in an anonymous namespace, or
   it binds to the app's generation-0 copy. The module owns
-  nothing: no objects, no callbacks, no state, since its image is unmapped a
-  loop turn after the next reload. The host reads its mode and module from
+  nothing: no callbacks, no state, and any object it creates is the host's
+  to destroy by the next `onReloaded`, since its image is unmapped a loop
+  turn after the next reload. The host reads its mode and module from
   `Core/Plugins/HotReload.h` — `if constexpr (Plugins::isHotReload())`,
   `hotReloadTarget()` and `hotReloadBuildCommand` — and never spells an
   `EACP_HOT_RELOAD_*` macro; it includes that header directly, never through
@@ -1064,7 +1066,11 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   layout function (`demoLayout(const LayoutTargets&, const UI::Rect&)`,
   calling `setBounds` on components the host owns) in a module, rebuilt and
   reloaded on save, or compiled in statically when `EACP_HOT_RELOAD` says so
-  (`Plugins/HotReload.h`: `isHotReload()`, `hotReloadTarget()`)
+  (`Plugins/HotReload.h`: `isHotReload()`, `hotReloadTarget()`);
+  `Apps/GPU/HotReload` is the object case: `makeDemoView()` returns
+  an `OwningPointer<Graphics::View>` holding one of two module-defined
+  `GPUView`s, which the host destroys in `onReloaded`, while the old image is
+  still mapped, before asking the new one for a replacement
 - `Plugins::HotReloadLoop` (`Plugins/HotReloadLoop.h`): a `SourceWatcher`,
   `BuildRunner` and `ReloadableLibrary` as one object, built from `Options`
   or a define-free `HotReloadTarget` (`Plugins/HotReloadTarget.h`, with

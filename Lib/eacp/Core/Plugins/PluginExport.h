@@ -13,7 +13,9 @@
 // A hot-reload module (eacp_add_hot_reload) is the exception: it links nothing
 // and binds at load time to the eacp the host exports, so the two share one
 // copy built by one compiler and C++ types cross freely. Only the symbol the
-// host looks up stays extern "C", so no mangled name is ever spelled.
+// host looks up stays extern "C", so no mangled name is ever spelled. That
+// entry point may return a C++ type; eacp_add_hot_reload silences clang's
+// C-linkage warning for it.
 
 #ifdef __cplusplus
 #define EACP_PLUGIN_EXTERN_C extern "C"

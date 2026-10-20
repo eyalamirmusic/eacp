@@ -145,8 +145,13 @@ its README.
   on the source directory, a build runner and the reloadable library, with
   the build-failure summary and status text; an image without the app's
   `requiredSymbol` is refused and the previous generation kept), static mode
-  adds nothing, so the example is that loop plus one layout function. The
-  module links
+  adds nothing, so the example is that loop plus one layout function.
+  `Apps/GPU/HotReload` (`HotReloadGPU`) is the other half: its module
+  exports a factory that makes a `GPUView` defined in the module, the host
+  owns it, and each reload destroys it inside `onReloaded` (the previous
+  image is still mapped then, its unmap being deferred a loop turn) and asks
+  the fresh image for a new one, so an object whose code lives in the module
+  is created and dropped once per generation. The module links
   nothing: its eacp references stay undefined
   (`-undefined dynamic_lookup` on Apple, the default for a Linux module) and
   bind at load time to the eacp the app exports, so both share one eacp and
@@ -162,9 +167,10 @@ its README.
   A save rebuilds the module alone, never the running app. Windows is not
   supported: `WINDOWS_EXPORT_ALL_SYMBOLS` never exports a static library's
   symbols, and a module linking the exe would relink a locked exe on every
-  save. The module owns nothing: it creates no objects, installs no callbacks
-  and keeps no state, since its image is unmapped one loop turn after the
-  next reload.
+  save. The module owns nothing: it installs no callbacks and keeps no state,
+  and anything it creates is handed to the host, which destroys it no later
+  than the `onReloaded` of the next generation, since the image is unmapped
+  one loop turn after that reload.
   The host branches on `Plugins::isHotReload()` (`Core/Plugins/HotReload.h`,
   included directly rather than through the `Core.h` umbrella, since its
   contents depend on the app's compile definitions), and a configure prints `<app>: hot reload ON/OFF`.

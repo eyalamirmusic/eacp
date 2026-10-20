@@ -143,6 +143,10 @@ function(eacp_add_hot_reload app)
 
     target_sources(${app} PRIVATE ${ARG_SOURCES})
 
+    # Same compiler, same eacp: an extern "C" entry point returning a C++ class
+    # never meets a C caller, so clang's C-linkage warning is off for both.
+    set_target_properties(${app} PROPERTIES EACP_HOT_RELOAD_ABI ON)
+
     if (NOT enabled)
         message(STATUS "${app}: hot reload OFF")
         target_compile_definitions(${app} PRIVATE EACP_HOT_RELOAD=0)
@@ -158,6 +162,7 @@ function(eacp_add_hot_reload app)
     add_dependencies(${app} ${ARG_MODULE})
     eacp_set_default_visibility(${ARG_MODULE})
     set_target_properties(${ARG_MODULE} PROPERTIES
+            EACP_HOT_RELOAD_ABI ON
             INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 
     if (APPLE)

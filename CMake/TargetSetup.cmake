@@ -119,6 +119,10 @@ function(set_default_warnings_level target)
     # narrowing that is genuinely intended is written as a cast with a comment.
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
         target_compile_options(${target} PRIVATE -Wshorten-64-to-32)
+
+        # Set by eacp_add_hot_reload on the app and its module.
+        target_compile_options(${target} PRIVATE
+                $<$<BOOL:$<TARGET_PROPERTY:EACP_HOT_RELOAD_ABI>>:-Wno-return-type-c-linkage>)
     endif ()
 endfunction()
 
