@@ -68,13 +68,14 @@ std::string vformat(std::string_view pattern, std::span<const FormatArg> args);
 template <typename... Args>
 std::string format(std::string_view pattern, const Args&... args)
 {
+    // Qualified: ADL on std::string_view finds std::vformat once <format> is in.
     if constexpr (sizeof...(Args) == 0)
-        return vformat(pattern, {});
+        return Strings::vformat(pattern, {});
     else
     {
         const auto packed =
             std::array<FormatArg, sizeof...(Args)> {toFormatArg(args)...};
-        return vformat(pattern, packed);
+        return Strings::vformat(pattern, packed);
     }
 }
 
