@@ -1,5 +1,3 @@
-#include <cstdio>
-
 #include "../DComp-Windows.h"
 
 #include "../Common.h"
@@ -98,14 +96,11 @@ private:
     {
         if (auto hr = create(); FAILED(hr))
         {
-            char code[16];
-            std::snprintf(
-                code, sizeof code, "0x%08lx", static_cast<unsigned long>(hr));
-            LOG("DCompCompositor: composition device init failed (hr=",
-                code,
-                "); GPU compositing unavailable. Expected on headless sessions "
-                "and plugin hosts without an accessible desktop compositor — "
-                "views degrade to no compositing instead of crashing the host.");
+            LOGF("DCompCompositor: composition device init failed (hr=0x{:08x}); "
+                 "GPU compositing unavailable. Expected on headless sessions "
+                 "and plugin hosts without an accessible desktop compositor — "
+                 "views degrade to no compositing instead of crashing the host.",
+                 static_cast<unsigned long>(hr));
 
             releaseAll();
             return;

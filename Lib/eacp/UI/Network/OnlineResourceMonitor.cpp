@@ -1,10 +1,10 @@
 #include "OnlineResourceMonitor.h"
 
 #include <eacp/Core/Threads/Timer.h>
+#include <eacp/Core/Utils/Format.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 namespace eacp::UI
 {
@@ -25,18 +25,15 @@ constexpr auto badColour = Color {1.f, 0.55f, 0.5f, 1.f};
 
 std::string formatBytes(std::int64_t bytes)
 {
-    char buffer[32] = {};
     auto value = (double) bytes;
 
     if (bytes >= 1024 * 1024 * 1024)
-        std::snprintf(
-            buffer, sizeof(buffer), "%.2f GB", value / (1024.0 * 1024.0 * 1024.0));
-    else if (bytes >= 1024 * 1024)
-        std::snprintf(buffer, sizeof(buffer), "%.1f MB", value / (1024.0 * 1024.0));
-    else
-        std::snprintf(buffer, sizeof(buffer), "%.0f KB", value / 1024.0);
+        return Strings::format("{:.2f} GB", value / (1024.0 * 1024.0 * 1024.0));
 
-    return buffer;
+    if (bytes >= 1024 * 1024)
+        return Strings::format("{:.1f} MB", value / (1024.0 * 1024.0));
+
+    return Strings::format("{:.0f} KB", value / 1024.0);
 }
 
 std::string percentText(float fraction)

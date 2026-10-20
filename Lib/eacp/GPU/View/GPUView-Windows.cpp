@@ -10,7 +10,6 @@
 #include <eacp/Graphics/Image/Image.h>
 
 #include <algorithm>
-#include <cstdio>
 #include <cmath>
 #include <unordered_set>
 
@@ -560,11 +559,8 @@ struct GPUView::Native : DeviceResourceHolder
         {
             reported = true;
 
-            char code[16] = {};
-            std::snprintf(
-                code, sizeof(code), "0x%08lX", static_cast<unsigned long>(reason));
-
-            LOG("GPUView: the D3D12 device was removed, reason ", code);
+            LOGF("GPUView: the D3D12 device was removed, reason 0x{:08X}",
+                 static_cast<unsigned long>(reason));
         }
 
         // Recovery rebuilds this view's swapchain, so run it from a fresh

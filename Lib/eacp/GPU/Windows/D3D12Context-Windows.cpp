@@ -13,7 +13,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -1617,10 +1616,8 @@ void D3D12Context::reportFailedClose() const
     auto* device = getDevice();
     const auto reason = device != nullptr ? device->GetDeviceRemovedReason() : S_OK;
 
-    char code[16] = {};
-    std::snprintf(code, sizeof(code), "0x%08lX", static_cast<unsigned long>(reason));
-
-    LOG("D3D12Context: a recording failed to close; device removed reason ", code);
+    LOGF("D3D12Context: a recording failed to close; device removed reason 0x{:08X}",
+         static_cast<unsigned long>(reason));
 }
 
 void D3D12Context::discard(CommandContext* commands)
