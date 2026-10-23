@@ -234,6 +234,13 @@ void RenderPass::setPipeline(const RenderPipeline& pipeline)
     {
         [activeEncoder setFrontFacingWinding:toMetalWinding(pipeline.frontFace())];
         [activeEncoder setCullMode:toMetalCullMode(pipeline.cullMode())];
+
+        // Encoder state for the same reason, and set to zero by a pipeline
+        // without one so a biased shadow caster lends nothing to what follows.
+        const auto bias = pipeline.depthBias();
+        [activeEncoder setDepthBias:bias.constant
+                         slopeScale:bias.slopeScale
+                              clamp:bias.clamp];
     }
 
     impl->primitiveType = toMetalPrimitiveType(pipeline.topology());

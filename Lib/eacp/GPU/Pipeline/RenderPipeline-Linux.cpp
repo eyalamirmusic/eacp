@@ -387,6 +387,20 @@ VkPipelineRasterizationStateCreateInfo
     state.frontFace = toVkFrontFace(from.frontFace);
     state.lineWidth = 1.0f;
 
+    const auto bias = appliedDepthBias(from);
+
+    if (!bias.isNone())
+    {
+        state.depthBiasEnable = VK_TRUE;
+        state.depthBiasConstantFactor = bias.constant;
+        state.depthBiasSlopeFactor = bias.slopeScale;
+
+        // A clamp is a device feature here and nowhere else; without it the
+        // bias is applied unclamped rather than the pipeline refused.
+        if (getVulkanShared().getFeatures().depthBiasClamp == VK_TRUE)
+            state.depthBiasClamp = bias.clamp;
+    }
+
     return state;
 }
 
@@ -420,6 +434,7 @@ struct RenderPipeline::Native
         : topology(descriptor.topology)
         , cullMode(descriptor.cullMode)
         , frontFace(descriptor.frontFace)
+        , depthBias(appliedDepthBias(descriptor))
     {
         state.topology = toVkTopology(descriptor.topology);
         state.cullMode = toVkCullMode(descriptor.cullMode);
@@ -627,6 +642,7 @@ struct RenderPipeline::Native
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
     Winding frontFace = Winding::CounterClockwise;
+    DepthBias depthBias;
     VulkanRenderPipeline state;
 };
 
@@ -654,6 +670,11 @@ CullMode RenderPipeline::cullMode() const
 Winding RenderPipeline::frontFace() const
 {
     return impl->frontFace;
+}
+
+DepthBias RenderPipeline::depthBias() const
+{
+    return impl->depthBias;
 }
 
 void* RenderPipeline::nativeState() const

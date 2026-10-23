@@ -47,6 +47,7 @@ set(gpu_test_sources
         CubeTextureTests.cpp
         CullModeTests.cpp
         DepthActionTests.cpp
+        DepthBiasTests.cpp
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp

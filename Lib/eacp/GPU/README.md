@@ -385,6 +385,31 @@ somewhere else, at some other size.
 
 ```cpp
 pass.setViewport({0.f, 0.f, width / 2.f, height});   // left pane
+**`depthBias` is the polygon offset**, the fix for a shadow map shadowing the
+surface it was rendered from: every fragment's depth moves by
+`constant * r + slopeScale * maxSlope`, capped at `clamp` when that is non-zero,
+before the test and the write. `r` is the depth plane's precision at the
+primitive's depth — the plane is 32-bit float everywhere, so 2^(e − 23) for a
+primitive whose largest z has exponent `e`, 2^-24 anywhere in [0.5, 1) — and
+the slope is depth per pixel, so a surface seen edge-on gets more than one facing
+the camera. It is ignored unless `depth` is set.
+
+```cpp
+caster.prepare({.depth = true,
+                .depthBias = {.constant = 64.f, .slopeScale = 1.5f}});
+```
+
+**A positive bias makes depth larger**: further away in a LessEqual buffer
+cleared to 1, nearer in a reversed-Z one (below), where a caster pushed away
+from the light takes a negative bias instead. The three numbers are the same
+three on every API; D3D12 takes the constant as an integer, so it is rounded
+there and a whole number of units is the portable choice. Vulkan clamps only
+where the device has `depthBiasClamp`, and applies the bias unclamped where it
+has not. Bias is pipeline state on D3D12 and Vulkan and encoder state on Metal,
+which `setPipeline` sets on every bind, a pipeline with none setting it back to
+zero. `DepthBiasTests` pins the direction, the unit, the slope, the clamp and
+the reset.
+
 scene.drawFrom(leftCamera, pass);
 pass.setViewport({width / 2.f, 0.f, width / 2.f, height});  // right pane
 scene.drawFrom(rightCamera, pass);

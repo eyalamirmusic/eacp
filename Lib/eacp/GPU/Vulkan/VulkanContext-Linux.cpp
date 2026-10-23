@@ -1115,6 +1115,7 @@ bool VulkanShared::createDevice()
 
     if (!coreFloor)
     {
+    enabled.features.depthBiasClamp = features.depthBiasClamp;
         for (const auto* name: floorExtensions)
             extensions.add(name);
 
