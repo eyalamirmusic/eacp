@@ -25,9 +25,11 @@ constexpr auto viewSize = 128.f;
 
 struct GlyphView final : GPU::GPUView
 {
-    GlyphView()
+    explicit GlyphView(bool withDepthToUse = false)
+        : withDepth(withDepthToUse)
     {
         setSampleCount(1);
+        setDepth(withDepth);
         setBounds({0.f, 0.f, viewSize, viewSize});
     }
 
@@ -47,6 +49,7 @@ struct GlyphView final : GPU::GPUView
 
         renderer.emplace();
         renderer->setViewportSize({viewSize, viewSize});
+        renderer->setPassHasDepthAttachment(withDepth);
 
         return true;
     }
@@ -78,6 +81,7 @@ struct GlyphView final : GPU::GPUView
         renderer->flush(pass, *atlas);
     }
 
+    bool withDepth = false;
     char32_t codepoint = U'M';
     Graphics::Color color = Graphics::Color::white();
 
@@ -129,6 +133,26 @@ auto tDrawsAGlyph = test("GlyphRenderer/drawsAGlyphFromTheAtlas") = []
         return;
 
     auto view = GlyphView {};
+
+    if (!view.build())
+        return;
+
+    auto image = view.renderToImage(1.f);
+
+    check(image.isValid());
+    check(glyphInkPixels(image) > 20);
+};
+
+// Text over a 3D scene is drawn in the scene's own pass, which has a depth
+// attachment. A pipeline without one is rejected by Metal's validation layer
+// (run with MTL_DEBUG_LAYER=1) and by D3D12.
+auto tDrawsIntoAPassWithDepth =
+    test("GlyphRenderer/drawsIntoAPassWithADepthAttachment") = []
+{
+    if (!GPU::Device::shared().isValid())
+        return;
+
+    auto view = GlyphView {true};
 
     if (!view.build())
         return;

@@ -247,11 +247,29 @@ ShapeBatch::ShapeBatch(const CoverageAtlas& atlasToUse,
     // already opaque, and the difference between a correct layer and one whose
     // every antialiased edge composites too faintly -- see Layer, which renders
     // this same batch into a transparent texture.
-    program->prepare(sampleCount,
-                     false,
-                     GPU::PrimitiveTopology::Triangles,
-                     GPU::BlendMode::AlphaBlendOntoTransparent,
-                     colorFormat);
+    preparePipeline();
+}
+
+void ShapeBatch::setPassHasDepthAttachment(bool hasDepthAttachment)
+{
+    if (hasDepthAttachment == passHasDepthAttachment)
+        return;
+
+    passHasDepthAttachment = hasDepthAttachment;
+    preparePipeline();
+}
+
+void ShapeBatch::preparePipeline()
+{
+    auto descriptor = GPU::RenderPipelineDescriptor {};
+    descriptor.sampleCount = sampleCount;
+    descriptor.blendMode = GPU::BlendMode::AlphaBlendOntoTransparent;
+    descriptor.colorFormat = colorFormat;
+    descriptor.depth = passHasDepthAttachment;
+    descriptor.depthCompare = GPU::DepthCompare::Always;
+    descriptor.depthWrite = false;
+
+    program->prepare(descriptor);
 }
 
 ShapeBatch::~ShapeBatch()
