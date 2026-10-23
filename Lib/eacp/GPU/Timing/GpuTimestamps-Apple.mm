@@ -1,11 +1,14 @@
 #import <Metal/Metal.h>
 
 #include "GpuTimestamps.h"
+#include "PassSamples-Apple.h"
 
 #include "../Device/Device.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Utils/Containers.h>
+
+#include <cstdint>
 
 namespace eacp::GPU
 {
@@ -67,7 +70,8 @@ struct GpuTimestamps::Native
         auto descriptor = ObjC::makePtr<MTLCounterSampleBufferDescriptor>();
         descriptor.get().counterSet = set;
         descriptor.get().storageMode = MTLStorageModeShared;
-        descriptor.get().sampleCount = (NSUInteger) (maxTimedPasses * 2);
+        descriptor.get().sampleCount =
+            (NSUInteger) (maxTimedPasses * PassSamples::perPass);
 
         for (auto& slot : slots)
         {
@@ -120,6 +124,58 @@ struct GpuTimestamps::Native
                                : 1.0;
 
         return scale * 1e-6;
+    }
+
+    // A pass's first and last samples bound it, and are the only two a compute
+    // encoder writes. A boundary between them counts only if it lies inside
+    // that pair: the slot's buffer is reused, so an unwritten sample still
+    // holds a frame's worth of the past, which is always earlier than this
+    // pass began. A sample the GPU never wrote comes back as the error value,
+    // and a pass whose stages were dropped can end before it starts; either
+    // way the pass has no activity rather than a negative one.
+    void readActivity(const MTLCounterResultTimestamp* results,
+                      int passCount,
+                      PassActivity* activity) const
+    {
+        const auto sample = [results](int pass, int boundary)
+        { return results[PassSamples::index(pass, boundary)].timestamp; };
+
+        const auto isWritten = [](MTLTimestamp value)
+        { return value != MTLCounterErrorValue && value != 0; };
+
+        auto origin = MTLCounterErrorValue;
+
+        for (auto pass = 0; pass < passCount; ++pass)
+            if (const auto start = sample(pass, PassSamples::vertexStart);
+                isWritten(start) && start < origin)
+                origin = start;
+
+        const auto scale = ticksToMilliseconds();
+        const auto at = [origin, scale](MTLTimestamp value)
+        { return (double) (std::int64_t) (value - origin) * scale; };
+
+        for (auto pass = 0; pass < passCount; ++pass)
+        {
+            const auto start = sample(pass, PassSamples::vertexStart);
+            const auto end = sample(pass, PassSamples::fragmentEnd);
+
+            if (!isWritten(start) || !isWritten(end) || end < start)
+                continue;
+
+            const auto vertexEnd = sample(pass, PassSamples::vertexEnd);
+            const auto fragmentStart = sample(pass, PassSamples::fragmentStart);
+
+            const auto isInside = [start, end](MTLTimestamp value)
+            { return value >= start && value <= end; };
+
+            if (isInside(vertexEnd) && isInside(fragmentStart))
+            {
+                activity[pass].add(at(start), at(vertexEnd));
+                activity[pass].add(at(fragmentStart), at(end));
+            }
+            else
+                activity[pass].add(at(start), at(end));
+        }
     }
 
     Array<Slot, slotCount> slots;
@@ -200,7 +256,7 @@ bool GpuTimestamps::isSlotComplete(int slot, const Device&) const
            || status == MTLCommandBufferStatusError;
 }
 
-double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
+double GpuTimestamps::resolveSlot(int slot, int passCount, PassActivity* activity)
 {
     auto& entry = impl->slots[slot];
     auto buffer = (id<MTLCommandBuffer>) entry.commandBuffer.get();
@@ -211,28 +267,12 @@ double GpuTimestamps::resolveSlot(int slot, int passCount, double* milliseconds)
 
     if (samples != nil && passCount > 0)
     {
-        const auto count = (NSUInteger) (passCount * 2);
+        const auto count = (NSUInteger) (passCount * PassSamples::perPass);
         auto data = [samples resolveCounterRange:NSMakeRange(0, count)];
 
         if (data != nil && data.length >= count * sizeof(MTLCounterResultTimestamp))
-        {
-            const auto* results = (const MTLCounterResultTimestamp*) data.bytes;
-            const auto scale = impl->ticksToMilliseconds();
-
-            for (auto pass = 0; pass < passCount; ++pass)
-            {
-                const auto start = results[pass * 2].timestamp;
-                const auto end = results[pass * 2 + 1].timestamp;
-
-                // A sample the GPU never wrote comes back as the error value,
-                // and a pass whose stages were dropped can leave end before
-                // start. Both mean "no number", not a negative duration.
-                const auto missing = start == MTLCounterErrorValue
-                                     || end == MTLCounterErrorValue || end < start;
-
-                milliseconds[pass] = missing ? 0.0 : (double) (end - start) * scale;
-            }
-        }
+            impl->readActivity(
+                (const MTLCounterResultTimestamp*) data.bytes, passCount, activity);
     }
 
     // The frame's own total, which needs no counters at all - and so is the one

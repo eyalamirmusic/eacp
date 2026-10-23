@@ -30,9 +30,9 @@ public:
     void beginFrame(std::uint64_t frameIndex, Device& device);
 
     // Called by Frame::beginPass and Frame::beginCompute for a pass carrying a
-    // label. Returns the pass's ordinal in this frame - its two samples are at
-    // 2 * ordinal and 2 * ordinal + 1 - or -1 when the pass is not being
-    // timed, which is what an unlabelled pass, an unsupported device and a
+    // label. Returns the pass's ordinal in this frame - which samples are its
+    // is the backend's layout, two a pass on D3D12 and Vulkan and four on
+    // Metal - or -1 when the pass is not being timed, which is what an unlabelled pass, an unsupported device and a
     // frame already holding maxTimedPasses labelled passes all get.
     int beginPass(std::string_view label);
 

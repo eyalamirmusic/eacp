@@ -1,11 +1,14 @@
 #include "Common.h"
 
+#include <string>
+
 // CommandBuffer::timings() - what the GPU spent on the labelled passes of an
 // off-screen command buffer, which has no frame to report through.
 //
 // The assertions are shaped like FrameTimingTests': the bookkeeping is exact -
 // which labels come back, in what order, how many - and the durations are a
-// measurement, so the only honest statements about them are bounds.
+// measurement, held to bounds and to one ordering between passes far apart in
+// cost that have to run in turn.
 
 using namespace nano;
 using namespace eacp;
@@ -53,15 +56,53 @@ void checkBounded(const CommandBuffer& commands, const FrameTimings& timings)
     if (!commands.supportsPassTimings())
         return;
 
+    auto total = 0.0;
+
     for (const auto& pass: timings.passes)
     {
         // Zero is what a sample the GPU never wrote reads as, so this is the
-        // case that fails if the two sample indices are swapped or never reach
-        // the pass descriptor.
-        check(pass.milliseconds > 0.0);
-        check(pass.milliseconds <= timings.milliseconds + 0.05);
+        // case that fails if the sample indices are swapped or never reach the
+        // pass descriptor.
+        check(pass.spanMilliseconds > 0.0);
+        check(pass.spanMilliseconds <= timings.milliseconds + 0.05);
+
+        check(pass.milliseconds >= 0.0);
+        check(pass.milliseconds <= pass.spanMilliseconds + 1e-6);
+
+        total += pass.milliseconds;
     }
+
+    check(total <= timings.milliseconds + 0.05);
 }
+
+constexpr auto heavyIterations = 4096;
+
+// The same ramp, made expensive by a loop that feeds the value it writes, so
+// the compiler cannot drop it.
+struct HeavyRampKernel final : ComputeProgram
+{
+    HeavyRampKernel() { compile(); }
+
+    void define() override
+    {
+        auto i = threadId();
+        auto total = var(0.f);
+        auto step = var(0);
+
+        loop(step < heavyIterations,
+             [&]
+             {
+                 total += sin(toFloat(i + toUInt(step)));
+                 step += 1;
+             });
+
+        write(output, i, toFloat(i) * 0.5f + total * 1e-6f);
+    }
+
+    Uniform<OutputBuffer> output;
+
+    EACP_SHADER(output)
+};
 } // namespace
 
 // The wiring: the labels the passes were given come back, all of them, in the
@@ -212,5 +253,77 @@ auto tUntimedBufferReportsNothing =
 
     check(commands.timings().passes.size() == 0);
     check(commands.timings().milliseconds == 0.0);
+};
+// The figure that adds up, on a buffer of passes that all write one buffer and
+// so run in turn: the shares cover the buffer, and the heavy pass in the middle
+// is charged for itself rather than spread over the light ones around it. Asked
+// of the best of a few buffers, as FrameTiming/sharesSumToTheFrame is and for
+// its reason: another process's work can land inside any one pass.
+auto tSharesSumToTheBuffer = test("CommandBufferTiming/sharesSumToTheBuffer") = []
+{
+    auto& device = Device::shared();
+
+    if (!device.isValid())
+        return;
+
+    constexpr auto passCount = 5;
+    constexpr auto heavyPass = 2;
+    constexpr auto attempts = 4;
+
+    auto output = makeOutput();
+
+    auto light = RampKernel {};
+    light.output = output;
+    light.prepare();
+
+    auto heavy = HeavyRampKernel {};
+    heavy.output = output;
+    heavy.prepare();
+
+    auto accounted = false;
+
+    for (auto attempt = 0; attempt < attempts && !accounted; ++attempt)
+    {
+        auto commands = device.makeCommandBuffer();
+
+        for (auto index = 0; index < passCount; ++index)
+        {
+            auto pass = commands.beginCompute("pass" + std::to_string(index));
+
+            if (index == heavyPass)
+                pass.dispatch(heavy, elementCount);
+            else
+                pass.dispatch(light, elementCount);
+        }
+
+        commands.commit();
+
+        const auto& timings = commands.timings();
+        checkBounded(commands, timings);
+
+        if (!commands.supportsPassTimings())
+            return;
+
+        check(timings.passes.size() == passCount);
+
+        if (timings.passes.size() != passCount)
+            return;
+
+        auto total = 0.0;
+
+        for (const auto& pass: timings.passes)
+            total += pass.milliseconds;
+
+        const auto heavyShare = timings.passes[heavyPass].milliseconds;
+
+        accounted = total >= timings.milliseconds * 0.75 - 0.05;
+
+        for (auto index = 0; index < passCount; ++index)
+            if (index != heavyPass
+                && timings.passes[index].milliseconds >= heavyShare * 0.5)
+                accounted = false;
+    }
+
+    check(accounted);
 };
 } // namespace CommandBufferTimingTests

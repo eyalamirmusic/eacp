@@ -1062,9 +1062,10 @@ A frame or a command buffer times its first `GpuTimestamps::maxTimedPasses`
 labelled passes, which is 128 — enough to give every kernel of a net a label of
 its own. Past that a pass runs exactly as it would have and is simply not
 timed, so the tail is missing from the breakdown rather than the buffer being
-wrong. The ceiling is a fixed pool of two timestamps per pass, so it costs a
-slot 2 KB of samples on Metal and a 258-entry query heap with its readback
-buffer on D3D12 and Vulkan — paid only once a labelled pass has asked for it.
+wrong. The ceiling is a fixed pool of four samples per pass on Metal and two
+timestamps per pass on D3D12 and Vulkan, so it costs a slot 4 KB of samples on
+Metal and a 258-entry query heap with its readback buffer on D3D12 and Vulkan —
+paid only once a labelled pass has asked for it.
 
 ### Zeroing a buffer
 
@@ -1187,6 +1188,14 @@ orders, and waits for nothing.
 **That wait is new**, and it is a cost every existing caller now pays: an update
 that used to be a bare memcpy on Metal is a memcpy behind a wait for the newest
 submission. Code that was already right by construction gets its old cost back
+Each pass carries two numbers, and only one of them adds up:
+| `milliseconds` | the pass's share: the time it had work in flight, with any stretch shared with other timed passes split evenly between them | yes |
+| `spanMilliseconds` | the start of its first stage to the end of its last, waiting included | on D3D12 and Vulkan only |
+The shares of a frame's passes add up to the time at least one of them was
+adding up to ten frames — while their shares are about 7 µs each and the shares
+of its stage boundaries and counts its vertex and fragment stages as two
+which consecutive passes do not overlap, so a share there is the pass's span.
+What the share cannot do is see inside work that genuinely runs at once. Two
 by asking for the unordered call by name — which is what `StreamingBuffers`,
 `GPUWidgets`' coverage batch and the `Apps/GPU` samples in this tree were
 changed to do.
