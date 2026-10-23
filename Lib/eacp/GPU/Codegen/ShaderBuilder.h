@@ -127,6 +127,25 @@ public:
     // to have ended and kept it. See TextureDepth2D.
     TextureDepth2D depthTexture(TextureSampling sampling = {});
 
+    // A TwoDArray texture, and the whole depth plane of a TwoDArray target -
+    // sampled with a layer beside the coordinate, bound with setFragmentTexture
+    // and setFragmentDepthTexture. A sampling with TextureCompare::LessEqual
+    // makes either depth form a shadow map, read with sampleCompare().
+    Texture2DArray textureArray(TextureSampling sampling = {});
+    TextureDepth2DArray depthTextureArray(TextureSampling sampling = {});
+
+    // The fragment's window position: x and y in pixels from the top left of
+    // the target, y down, at pixel centres (.5), z its depth and w 1 / clip w -
+    // the same four numbers on every backend. Fragment stage only.
+    Float4 fragmentCoordinate();
+
+    // Which vertex and which instance of the draw the vertex stage is running.
+    // Vertex stage only; carry one across with varying() for the fragment
+    // stage. See the GPU README for what firstVertex, baseVertex and
+    // firstInstance add on each backend.
+    UInt vertexId();
+    UInt instanceId();
+
     // Compute kernel authoring. Declaring buffers assigns slots in call order
     // (inputs and outputs share one slot space, matching Metal's flat buffer
     // indices); threadId() is the 1D work-item index; write() records a kernel

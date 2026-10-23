@@ -655,15 +655,21 @@ void D3D12Shared::createRootSignatures()
     for (auto configuration = 0; configuration < samplingConfigurations;
          ++configuration)
     {
-        const auto linear = (configuration & 2) != 0;
-        const auto repeat = (configuration & 1) != 0;
-        const auto address = repeat ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
-                                    : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        const auto sampling = samplingConfiguration(configuration);
+        const auto linear = sampling.filter == TextureFilter::Linear;
+        const auto compare = sampling.compare == TextureCompare::LessEqual;
+        const auto address = sampling.addressMode == TextureAddressMode::Repeat
+                                 ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                                 : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
 
         auto& sampler = staticSamplers[configuration];
 
-        sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
-                                : D3D12_FILTER_MIN_MAG_MIP_POINT;
+        if (compare)
+            sampler.Filter = linear ? D3D12_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
+        else
+            sampler.Filter = linear ? D3D12_FILTER_MIN_MAG_MIP_LINEAR
+                                    : D3D12_FILTER_MIN_MAG_MIP_POINT;
         sampler.AddressU = address;
         sampler.AddressV = address;
         sampler.AddressW = address;
@@ -672,7 +678,8 @@ void D3D12Shared::createRootSignatures()
         // Not left at 0: zero is not a legal D3D12_COMPARISON_FUNC (they run
         // 1..8), and a static sampler is validated when the root signature is
         // serialised rather than quietly ignored.
-        sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        sampler.ComparisonFunc = compare ? D3D12_COMPARISON_FUNC_LESS_EQUAL
+                                         : D3D12_COMPARISON_FUNC_ALWAYS;
         sampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
         sampler.ShaderRegister = static_cast<UINT>(configuration);
         sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;

@@ -73,7 +73,7 @@ struct SamplerDescriptor
     bool operator==(const SamplerDescriptor&) const = default;
 
     // The descriptor a TextureSampling stands for: one filter for min, mag and
-    // mip, one address mode on every axis.
+    // mip, one address mode on every axis, and LessEqual where it compares.
     static SamplerDescriptor from(const TextureSampling& sampling);
 
     // Whether all three filters are Linear, which is what anisotropy needs.

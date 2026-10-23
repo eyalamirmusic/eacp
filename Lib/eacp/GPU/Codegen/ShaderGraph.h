@@ -42,7 +42,9 @@ enum class ExprKind
     // and both languages read whichever operand is on the left the same way, so
     // the order is the whole of what distinguishes the three.
     Sample, // texture sample; index = texture slot, args = {uv} or {uv, level}.
-    // Emits per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)).
+    // Emits per-backend (MSL t.sample(s, uv), HLSL t.Sample(s, uv)). On an
+    // array slot the second argument is the layer instead, and a comparison
+    // sample is text "compare" with the reference depth as its last argument.
     Fetch, // texel read at integer coordinates, no sampler; index = texture slot,
     // args = {coordinates}. Emits per-backend (MSL t.read(), HLSL t.Load()).
     ThreadId, // compute work-item id; emitted as the kernel's gid parameter.
@@ -69,9 +71,18 @@ enum class ExprKind
     // kernel that barriers - and therefore has no early-return guard - can
     // bound its stores against the very same value the dispatch supplied.
     SharedRead, // threadgroup-array element read; index = slot, args = {index}
-    SimdGroupIndex // which SIMD group of the threadgroup this thread is in.
+    SimdGroupIndex, // which SIMD group of the threadgroup this thread is in.
     // Metal's own builtin; the flat local index divided by simdGroupWidth
     // where there is no builtin, which is the same number.
+    BuiltIn // a value a render stage is handed rather than computes; index =
+    // the ShaderBuiltIn.
+};
+
+enum class ShaderBuiltIn
+{
+    FragmentCoordinate,
+    VertexId,
+    InstanceId
 };
 
 // How a kernel accesses a storage buffer: a read-only input (Metal device
@@ -124,8 +135,24 @@ enum class TextureKind
     // RenderPass::setFragmentDepthTexture. Not a texture the app created: a
     // depth attachment belongs to the target it was made with, which is why the
     // bind takes the target rather than a texture of its own.
-    Depth2D
+    Depth2D,
+
+    // The layered forms of Texture2D and Depth2D, sampled with a layer beside
+    // the coordinate: a TwoDArray texture, or the whole depth plane of a
+    // TwoDArray target bound with setFragmentDepthTexture.
+    Texture2DArray,
+    Depth2DArray
 };
+
+constexpr bool isLayered(TextureKind kind)
+{
+    return kind == TextureKind::Texture2DArray || kind == TextureKind::Depth2DArray;
+}
+
+constexpr bool isDepth(TextureKind kind)
+{
+    return kind == TextureKind::Depth2D || kind == TextureKind::Depth2DArray;
+}
 
 // Which fold a group-wide reduction performs over the value every thread of
 // the group contributed.
@@ -463,6 +490,19 @@ public:
     int addDepthTexture(TextureSampling sampling = {});
     int addDepthSample(int textureSlot, int uv);
 
+    // The array forms, whose sample takes a layer beside the coordinate. The
+    // node is a Float4 on a colour array and a Float on a depth one.
+    int addArrayTexture(TextureSampling sampling = {});
+    int addDepthArrayTexture(TextureSampling sampling = {});
+    int addLayerSample(int textureSlot, int uv, int layer);
+
+    // A comparison sample of a depth slot declared with TextureCompare: one
+    // Float in 0..1, filtered across the footprint where the sampling is linear.
+    int addCompareSample(int textureSlot, int uv, int reference);
+    int addCompareSample(int textureSlot, int uv, int layer, int reference);
+
+    int addBuiltIn(ShaderBuiltIn which);
+
     // A texture slot a kernel writes rather than reads, and one such write. It
     // takes a slot from the same counter addTexture does, so a kernel that
     // reads one texture and writes another binds them at distinct indices -
@@ -693,6 +733,8 @@ public:
     // barrier below a return some threads took is undefined on both backends.
     // Such a kernel bounds its own stores, typically against gridExtent.
     constexpr bool usesLocalId() const { return localIdUsed; }
+    constexpr bool usesVertexId() const { return vertexIdUsed; }
+    constexpr bool usesInstanceId() const { return instanceIdUsed; }
     constexpr bool usesGroupId() const { return groupIdUsed; }
     constexpr bool usesBarrier() const { return barrierUsed; }
 
@@ -793,6 +835,8 @@ private:
     Vector<SimdMatrixElement> simdMatrixElementList; // one entry per fragment
     bool simdGroupIndexUsed = false;
     bool localIdUsed = false;
+    bool vertexIdUsed = false;
+    bool instanceIdUsed = false;
     bool groupIdUsed = false;
     bool barrierUsed = false;
 

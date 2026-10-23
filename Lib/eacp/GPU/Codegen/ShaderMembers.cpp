@@ -22,6 +22,17 @@ void ShaderVisitor::operator()(const char* name, Uniform<TextureDepth2D>& member
     onDepthTexture(name, member, member.value, member.sampling);
 }
 
+void ShaderVisitor::operator()(const char* name, Uniform<Texture2DArray>& member)
+{
+    onArrayTexture(name, member, member.value, member.sampling);
+}
+
+void ShaderVisitor::operator()(const char* name,
+                               Uniform<TextureDepth2DArray>& member)
+{
+    onDepthArrayTexture(name, member, member.value, member.sampling);
+}
+
 void ShaderVisitor::operator()(const char* name, Uniform<InputBuffer>& member)
 {
     onInputBuffer(name, member, member.value);
@@ -70,6 +81,20 @@ void ShaderVisitor::onDepthTexture(const char*,
                                    TextureDepth2D&,
                                    const Texture*,
                                    TextureSampling)
+{
+}
+
+void ShaderVisitor::onArrayTexture(const char*,
+                                   Texture2DArray&,
+                                   const Texture*,
+                                   TextureSampling)
+{
+}
+
+void ShaderVisitor::onDepthArrayTexture(const char*,
+                                        TextureDepth2DArray&,
+                                        const Texture*,
+                                        TextureSampling)
 {
 }
 
@@ -132,6 +157,22 @@ void ShaderBuildVisitor::onDepthTexture(const char*,
                                         TextureSampling sampling)
 {
     handle = builder.depthTexture(sampling);
+}
+
+void ShaderBuildVisitor::onArrayTexture(const char*,
+                                        Texture2DArray& handle,
+                                        const Texture*,
+                                        TextureSampling sampling)
+{
+    handle = builder.textureArray(sampling);
+}
+
+void ShaderBuildVisitor::onDepthArrayTexture(const char*,
+                                             TextureDepth2DArray& handle,
+                                             const Texture*,
+                                             TextureSampling sampling)
+{
+    handle = builder.depthTextureArray(sampling);
 }
 
 void ShaderBuildVisitor::onInputBuffer(const char*,

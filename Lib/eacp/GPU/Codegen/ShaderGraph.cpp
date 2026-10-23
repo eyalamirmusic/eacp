@@ -60,6 +60,7 @@ bool dependsOnMutableState(ExprKind kind)
         case ExprKind::GroupId:
         case ExprKind::GridExtent:
         case ExprKind::SimdGroupIndex:
+        case ExprKind::BuiltIn:
             return false;
     }
 
@@ -594,6 +595,72 @@ int ShaderGraph::addDepthSample(int textureSlot, int uv)
     node.type = ValueType::Float;
     node.index = textureSlot;
     node.args.add(uv);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addArrayTexture(TextureSampling sampling)
+{
+    textureSamplings.add(sampling);
+    textureAccesses.add(TextureAccess::Sample);
+    textureKinds.add(TextureKind::Texture2DArray);
+    return textureSamplings.size() - 1;
+}
+
+int ShaderGraph::addDepthArrayTexture(TextureSampling sampling)
+{
+    textureSamplings.add(sampling);
+    textureAccesses.add(TextureAccess::Sample);
+    textureKinds.add(TextureKind::Depth2DArray);
+    return textureSamplings.size() - 1;
+}
+
+int ShaderGraph::addLayerSample(int textureSlot, int uv, int layer)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Sample;
+    node.type =
+        isDepth(textureKind(textureSlot)) ? ValueType::Float : ValueType::Float4;
+    node.index = textureSlot;
+    node.args.add(uv);
+    node.args.add(layer);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addCompareSample(int textureSlot, int uv, int reference)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Sample;
+    node.type = ValueType::Float;
+    node.index = textureSlot;
+    node.text = "compare";
+    node.args.add(uv);
+    node.args.add(reference);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addCompareSample(int textureSlot, int uv, int layer, int reference)
+{
+    auto node = Expr {};
+    node.kind = ExprKind::Sample;
+    node.type = ValueType::Float;
+    node.index = textureSlot;
+    node.text = "compare";
+    node.args.add(uv);
+    node.args.add(layer);
+    node.args.add(reference);
+    return add(std::move(node));
+}
+
+int ShaderGraph::addBuiltIn(ShaderBuiltIn which)
+{
+    vertexIdUsed = vertexIdUsed || which == ShaderBuiltIn::VertexId;
+    instanceIdUsed = instanceIdUsed || which == ShaderBuiltIn::InstanceId;
+
+    auto node = Expr {};
+    node.kind = ExprKind::BuiltIn;
+    node.type = which == ShaderBuiltIn::FragmentCoordinate ? ValueType::Float4
+                                                           : ValueType::UInt;
+    node.index = (int) which;
     return add(std::move(node));
 }
 

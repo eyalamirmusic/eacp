@@ -41,6 +41,17 @@ public:
                         const Texture* renderTarget,
                         TextureSampling sampling) override;
 
+    void onArrayTexture(const char*,
+                        Texture2DArray& handle,
+                        const Texture* texture,
+                        TextureSampling sampling) override;
+
+    // The whole plane: the slice binds stay for a TextureDepth2D over one layer.
+    void onDepthArrayTexture(const char*,
+                             TextureDepth2DArray& handle,
+                             const Texture* renderTarget,
+                             TextureSampling sampling) override;
+
 private:
     RenderPass& pass;
 };
@@ -119,6 +130,24 @@ void ShaderTextureBindVisitor::onDepthTexture(const char*,
                                               TextureDepth2D& handle,
                                               const Texture* renderTarget,
                                               TextureSampling sampling)
+{
+    if (renderTarget != nullptr)
+        pass.setFragmentDepthTexture(*renderTarget, handle.slot, sampling);
+}
+
+void ShaderTextureBindVisitor::onArrayTexture(const char*,
+                                              Texture2DArray& handle,
+                                              const Texture* texture,
+                                              TextureSampling sampling)
+{
+    if (texture != nullptr)
+        pass.setFragmentTexture(*texture, handle.slot, sampling);
+}
+
+void ShaderTextureBindVisitor::onDepthArrayTexture(const char*,
+                                                   TextureDepth2DArray& handle,
+                                                   const Texture* renderTarget,
+                                                   TextureSampling sampling)
 {
     if (renderTarget != nullptr)
         pass.setFragmentDepthTexture(*renderTarget, handle.slot, sampling);
@@ -382,6 +411,26 @@ Float3 ShaderProgram::varying(const Float3& vertexValue)
 Float4 ShaderProgram::varying(const Float4& vertexValue)
 {
     return builder.varying(vertexValue);
+}
+
+UInt ShaderProgram::varying(const UInt& vertexValue)
+{
+    return builder.varying(vertexValue);
+}
+
+Float4 ShaderProgram::fragmentCoordinate()
+{
+    return builder.fragmentCoordinate();
+}
+
+UInt ShaderProgram::vertexId()
+{
+    return builder.vertexId();
+}
+
+UInt ShaderProgram::instanceId()
+{
+    return builder.instanceId();
 }
 
 Float ShaderProgram::constant(float value)

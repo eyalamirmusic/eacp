@@ -98,6 +98,11 @@ public:
                        const Texture* texture,
                        TextureSampling sampling) override;
 
+    void onArrayTexture(const char*,
+                        Texture2DArray& handle,
+                        const Texture* texture,
+                        TextureSampling sampling) override;
+
     void onWritableTexture(const char*,
                            WritableTexture2D& handle,
                            const Texture* texture) override;
@@ -171,6 +176,15 @@ void ComputeBindVisitor::onCubeTexture(const char*,
                                        TextureCube& handle,
                                        const Texture* texture,
                                        TextureSampling sampling)
+{
+    if (texture != nullptr)
+        pass.setInputTexture(*texture, handle.slot, sampling);
+}
+
+void ComputeBindVisitor::onArrayTexture(const char*,
+                                        Texture2DArray& handle,
+                                        const Texture* texture,
+                                        TextureSampling sampling)
 {
     if (texture != nullptr)
         pass.setInputTexture(*texture, handle.slot, sampling);

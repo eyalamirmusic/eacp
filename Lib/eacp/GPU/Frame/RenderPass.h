@@ -608,7 +608,7 @@ public:
 
     // The D3D12 sampler register a per-bind sampler for texture slot n sits at:
     // s<samplerRegisterBase + n>. Above the static samplers the codegen layer's
-    // TextureSampling declarations use, which hold s0..s3.
+    // TextureSampling declarations use, which hold s0..s7.
     static constexpr int samplerRegisterBase = 8;
 
 private:

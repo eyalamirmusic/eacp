@@ -156,6 +156,32 @@ TextureDepth2D ShaderBuilder::depthTexture(TextureSampling sampling)
     return {&graphData, graphData.addDepthTexture(sampling)};
 }
 
+Texture2DArray ShaderBuilder::textureArray(TextureSampling sampling)
+{
+    return {&graphData, graphData.addArrayTexture(sampling)};
+}
+
+TextureDepth2DArray ShaderBuilder::depthTextureArray(TextureSampling sampling)
+{
+    return {&graphData, graphData.addDepthArrayTexture(sampling)};
+}
+
+Float4 ShaderBuilder::fragmentCoordinate()
+{
+    return indexValue<Float4>(
+        graphData.addBuiltIn(ShaderBuiltIn::FragmentCoordinate));
+}
+
+UInt ShaderBuilder::vertexId()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::VertexId));
+}
+
+UInt ShaderBuilder::instanceId()
+{
+    return indexValue<UInt>(graphData.addBuiltIn(ShaderBuiltIn::InstanceId));
+}
+
 UInt ShaderBuilder::threadId()
 {
     auto value = UInt {};
