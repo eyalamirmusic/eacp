@@ -847,11 +847,12 @@ struct Texture::Native
     // and the one case where the state moves.
     //
     // The optimised clear value is not optional. D3D12 wants a resource that
-    // will be cleared to say so at creation, and a ClearDepthStencilView that
-    // does not match it is a validation error rather than a slow path - and it
-    // must agree with the 1.0 the pass clears to. It names the *attachment*
-    // format even where the resource is typeless, which is the format the clear
-    // is actually performed in.
+    // will be cleared to say so at creation, and 1.0 is the default
+    // RenderPassDescriptor::clearDepth; a pass clearing to another (0, for
+    // reversed Z) is still correct, off the fast clear and warned about by the
+    // debug layer, since a target does not know which it will get. It names the
+    // *attachment* format even where the resource is typeless, which is the
+    // format the clear is actually performed in.
     void createDepthBuffer(D3D12Context& context, bool withStencil, bool sampleable)
     {
         const auto format = depthAttachmentFormat(withStencil);

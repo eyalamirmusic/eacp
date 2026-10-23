@@ -523,9 +523,9 @@ struct TextureDescriptor
     //
     // The buffer is created beside the colour texture and lives exactly as
     // long, so a render target stays one object with no second lifetime to keep
-    // in step. It is cleared to the far plane at the start of every pass and
-    // never stored, like the drawable's. Ignored without renderTarget, which is
-    // what renders.
+    // in step. Each pass clears, keeps or resumes it as its RenderPassDescriptor
+    // says - depthAction, and clearDepth for the value - like the drawable's.
+    // Ignored without renderTarget, which is what renders.
     bool depth = false;
 
     // Whether that depth buffer may also be *sampled*, by a pass that is not

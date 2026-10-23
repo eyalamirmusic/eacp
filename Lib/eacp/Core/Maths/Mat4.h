@@ -3,6 +3,7 @@
 #include "../Utils/Containers.h"
 #include "Vec.h"
 
+#include <limits>
 #include <utility>
 
 namespace eacp::Maths
@@ -29,6 +30,15 @@ struct Mat4
     static Mat4 rotationZ(float radians);
 
     static Mat4 perspective(float aspect, float fovY, float nearZ, float farZ);
+
+    // The same frustum with depth reversed: near lands on 1 and far on 0, for a
+    // pass cleared to 0 and tested GreaterEqual. An infinite farZ is allowed,
+    // the far plane then being at depth 0 in the limit.
+    static Mat4
+        perspectiveReversedZ(float aspect,
+                             float fovY,
+                             float nearZ,
+                             float farZ = std::numeric_limits<float>::infinity());
 
     static constexpr Mat4 orthographic(
         float left, float right, float bottom, float top, float nearZ, float farZ);

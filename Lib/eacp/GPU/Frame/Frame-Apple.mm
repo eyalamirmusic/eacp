@@ -97,6 +97,7 @@ void point(MTLRenderPassAttachmentDescriptor* attachment, const AttachmentImage&
 void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
                         id<MTLTexture> depth,
                         id<MTLTexture> resolved,
+                        float clearDepth,
                         unsigned char clearStencil,
                         DepthAction action,
                         const ColorTarget& at = {})
@@ -116,7 +117,7 @@ void attachDepthStencil(MTLRenderPassDescriptor* passDescriptor,
     point(depthAttachment, image);
     depthAttachment.loadAction = load;
     depthAttachment.storeAction = store;
-    depthAttachment.clearDepth = 1.0;
+    depthAttachment.clearDepth = (double) clearDepth;
 
     if (resolved != nil)
     {
@@ -401,6 +402,7 @@ RenderPass Frame::beginNativePass(const RenderPassDescriptor& descriptor)
         attachDepthStencil(passDescriptor,
                            (id<MTLTexture>) depth,
                            nil,
+                           descriptor.clearDepth,
                            descriptor.clearStencil,
                            descriptor.depthAction);
 
@@ -453,6 +455,7 @@ RenderPass Frame::beginMultiTargetPass(std::span<const ColorTarget> targets,
             passDescriptor,
             depth,
             (__bridge id<MTLTexture>) depthOwner.nativeResolvedDepthTexture(),
+            descriptor.clearDepth,
             descriptor.clearStencil,
             descriptor.depthAction,
             depthFrom);

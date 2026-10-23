@@ -102,6 +102,13 @@ struct RenderPassDescriptor
     // left. A pass with no stencil plane ignores it either way.
     unsigned char clearStencil = 0;
 
+    // The value in [0, 1] the depth plane is cleared to, read and ignored
+    // exactly as clearStencil is. 1, the far plane, is what a LessEqual buffer
+    // starts from; 0 with DepthCompare::GreaterEqual and
+    // Maths::Mat4::perspectiveReversedZ is reversed Z, which spends the float's
+    // precision at distance instead of beside the near plane.
+    float clearDepth = 1.f;
+
     // The depth and stencil planes' load and store. Clear by default, which is
     // what every pass did before this existed and what a pass drawing a scene
     // wants.
@@ -271,10 +278,11 @@ public:
     // anything else yields a pass that records nothing.
     //
     // Depth is the target's, from TextureDescriptor::depth: a target created
-    // with one gets it attached, cleared to the far plane and discarded, and a
-    // target created without one runs the pass with no depth test at all. Ask
-    // for it whenever the pass draws a 3D scene rather than a full-screen quad,
-    // and match it with RenderPipelineDescriptor::depth on the pipeline.
+    // with one gets it attached, cleared to descriptor.clearDepth and kept or
+    // discarded as descriptor.depthAction says, and a target created without
+    // one runs the pass with no depth test at all. Ask for it whenever the pass
+    // draws a 3D scene rather than a full-screen quad, and match it with
+    // RenderPipelineDescriptor::depth on the pipeline.
     //
     // Multisampling is the target's, from TextureDescriptor::sampleCount. Above
     // 1 the pass renders into the multisampled texture beside the target and

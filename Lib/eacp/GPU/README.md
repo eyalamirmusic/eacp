@@ -487,7 +487,35 @@ program.prepare(pipeline);
 
 The buffer belongs to the target, is created with it and dies with it, so there
 is no second lifetime to keep in step. Every pass into the texture clears it to
-the far plane and stores nothing.
+`RenderPassDescriptor::clearDepth` — 1, the far plane, unless it says otherwise
+— and stores nothing, unless its `depthAction` keeps or resumes it.
+
+**Reversed Z** is a clear to 0, a `GreaterEqual` test and a projection that
+puts the near plane on 1 and the far one on 0, `Maths::Mat4::perspectiveReversedZ`
+(whose far plane may be infinite). A float depth plane is densest near 0, and a
+perspective divide crowds the distance into the last sliver of the range, so
+reversing the range puts the precision where the projection took it away:
+
+```cpp
+auto projection = Maths::Mat4::perspectiveReversedZ(aspect, fovY, 0.1f);
+scene.prepare({.depth = true, .depthCompare = DepthCompare::GreaterEqual});
+
+auto descriptor = RenderPassDescriptor {};
+descriptor.clearDepth = 0.f;
+auto pass = frame.beginPass(target, descriptor);
+```
+
+`clearDepth` is read wherever a pass clears — `DepthAction::Clear` and `Keep`,
+the drawable, a texture target and a `depthTarget` alike — and ignored by
+`Resume`, as `clearStencil` is; it is a value in [0, 1]. D3D12 creates every
+depth buffer with 1 as its optimised clear, so a clear to 0 there is correct
+but off the fast-clear path, and the debug layer says so. `DepthClearTests`
+covers each kind of pass and the projection end to end.
+
+One thing a reversed or infinite projection is not for is plane extraction:
+Gribb/Hartmann on it hands back a degenerate far plane, so a frustum cull keeps
+a conventional, finite `perspective` of the same lens for its planes and gives
+only the pipeline the reversed one.
 
 The two flags have to agree. A pipeline that declares depth drawing into a
 target that has none is a validation error on Metal and an untested draw on
