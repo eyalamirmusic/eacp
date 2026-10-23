@@ -93,6 +93,8 @@ const char* planKindName(ExprKind kind)
             return "SharedRead";
         case ExprKind::SimdGroupIndex:
             return "SimdGroupIndex";
+        case ExprKind::BuiltIn:
+            return "BuiltIn";
     }
 
     return "unknown";
@@ -1240,6 +1242,7 @@ private:
         {
             case ExprKind::Input:
             case ExprKind::Varying:
+            case ExprKind::BuiltIn:
                 rejectNode(id, "a render graph input cannot run as a kernel");
                 return;
 

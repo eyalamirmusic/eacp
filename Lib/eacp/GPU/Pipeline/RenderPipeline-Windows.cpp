@@ -8,6 +8,8 @@
 
 #include <winrt/base.h>
 
+#include <cmath>
+
 // Windows/D3D12 backend. Everything the D3D11 backend kept as five separate
 // state objects bakes into a single pipeline-state object against the shared
 // render root signature; only the topology and vertex stride stay outside the
@@ -281,6 +283,13 @@ D3D12_RASTERIZER_DESC makeRasterizerDesc(const RenderPipelineDescriptor& from)
     desc.FrontCounterClockwise = from.frontFace == Winding::CounterClockwise;
     desc.DepthClipEnable = TRUE;
     desc.MultisampleEnable = from.sampleCount > 1 ? TRUE : FALSE;
+
+    // An integer here and a float on Metal and Vulkan, in the same unit on all
+    // three for a float depth plane, so rounding is the whole conversion.
+    const auto bias = appliedDepthBias(from);
+    desc.DepthBias = static_cast<INT>(std::lround(bias.constant));
+    desc.SlopeScaledDepthBias = bias.slopeScale;
+    desc.DepthBiasClamp = bias.clamp;
     return desc;
 }
 
@@ -499,6 +508,7 @@ struct RenderPipeline::Native
         , topology(descriptor.topology)
         , cullMode(descriptor.cullMode)
         , frontFace(descriptor.frontFace)
+        , depthBias(appliedDepthBias(descriptor))
     {
         pipeline.topology = toD3DTopology(descriptor.topology);
         pipeline.strides = makeStrideTable(descriptor.vertexLayout);
@@ -571,6 +581,7 @@ struct RenderPipeline::Native
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
     Winding frontFace = Winding::CounterClockwise;
+    DepthBias depthBias;
     D3D12Pipeline pipeline;
 };
 
@@ -600,6 +611,11 @@ CullMode RenderPipeline::cullMode() const
 Winding RenderPipeline::frontFace() const
 {
     return impl->frontFace;
+}
+
+DepthBias RenderPipeline::depthBias() const
+{
+    return impl->depthBias;
 }
 
 void* RenderPipeline::nativeState() const

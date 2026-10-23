@@ -365,19 +365,37 @@ enum class TextureAddressMode
 // camera frames and crisp pixel art through the same code - compiles one
 // program per configuration and picks between them. A hand-written shader that
 // takes its sampler per draw binds a Sampler instead (Sampler.h).
+//
+// compare makes it a comparison sampler for a depth texture, read through
+// sampleCompare: the result is 1 where `reference <= texel`, so with the
+// receiver's depth as the reference a lit point reads 1. One function rather
+// than CompareFunction's eight, because each one doubles the fixed set below;
+// a reversed-Z map reads `1 - sampleCompare(...)`, which differs only where the
+// two depths are equal.
+enum class TextureCompare
+{
+    None,
+    LessEqual
+};
+
 struct TextureSampling
 {
     TextureFilter filter = TextureFilter::Nearest;
     TextureAddressMode addressMode = TextureAddressMode::Clamp;
+    TextureCompare compare = TextureCompare::None;
 };
 
 // The number of distinct sampling configurations, and the index of one. On
 // D3D12 this is the entire static sampler count - a texture's sampler lands on
 // register s<index>, whatever slot the texture is in - and the Metal backend
-// caches this many MTLSamplerStates on the Device.
-constexpr int samplingConfigurations = 4;
+// caches this many MTLSamplerStates on the Device. Eight is also the ceiling:
+// the per-bind sampler registers start at s8 (RenderPass::samplerRegisterBase).
+constexpr int samplingConfigurations = 8;
 
 int samplingIndex(const TextureSampling& sampling);
+
+// The inverse of samplingIndex, which every backend builds its fixed set from.
+TextureSampling samplingConfiguration(int index);
 
 // The shape of a texture: one 2D image, a cube, an array of either, or a
 // volume. A shader declares the matching type - texture2d, texturecube,
@@ -523,9 +541,9 @@ struct TextureDescriptor
     //
     // The buffer is created beside the colour texture and lives exactly as
     // long, so a render target stays one object with no second lifetime to keep
-    // in step. It is cleared to the far plane at the start of every pass and
-    // never stored, like the drawable's. Ignored without renderTarget, which is
-    // what renders.
+    // in step. Each pass clears, keeps or resumes it as its RenderPassDescriptor
+    // says - depthAction, and clearDepth for the value - like the drawable's.
+    // Ignored without renderTarget, which is what renders.
     bool depth = false;
 
     // Whether that depth buffer may also be *sampled*, by a pass that is not

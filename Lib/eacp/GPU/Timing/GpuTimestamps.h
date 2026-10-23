@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PassShares.h"
+
 #include <eacp/Core/Utils/Pimpl.h>
 
 #include <cstdint>
@@ -18,6 +20,12 @@ class Device;
 // no such thing as a timestamp in the middle of a pass. D3D12 writes them into
 // a query heap at any point on the command list, and needs that heap resolved
 // into a readback buffer by the list itself before anything can be read.
+//
+// What comes back differs too. A D3D12 or Vulkan pass is one interval between
+// two points on the list, and consecutive ones do not overlap. A Metal render
+// pass is sampled at all four stage boundaries, because a tile-based GPU runs
+// its vertex stage early and alongside the passes before it: its start and end
+// alone would span everything in between. See PassActivity.
 //
 // So the seam is drawn here, and FrameTimer above it is portable. Nothing in
 // this class knows what a pass is called or which frame is current.
@@ -82,9 +90,9 @@ public:
     // whose fence answers the question on D3D12.
     bool isSlotComplete(int slot, const Device& device) const;
 
-    // Reads a completed slot back. milliseconds[i] is filled for each of the
-    // passCount passes; the return value is the whole frame's GPU time, or zero
-    // where the backend cannot say.
+    // Reads a completed slot back. activity[i] is filled for each of the
+    // passCount passes, on one origin for the whole slot; the return value is
+    // the whole frame's GPU time, or zero where the backend cannot say.
     //
     // Not const, because reading a slot is also the only chance to find out that
     // an adapter which advertised timestamps does not actually write any - some
@@ -92,7 +100,7 @@ public:
     // the readback untouched. A slot that comes back entirely unwritten retires
     // isSupported(), so a caller is told it cannot profile instead of being
     // handed a column of zeroes.
-    double resolveSlot(int slot, int passCount, double* milliseconds);
+    double resolveSlot(int slot, int passCount, PassActivity* activity);
 
     // How many slots there are, and therefore how many frames may be timed at
     // once. One more than the deepest pipeline either backend runs, so the
@@ -103,9 +111,10 @@ public:
     // it would have and is simply not timed - see FrameTimer::beginPass, which
     // is where that is decided and where it would be noticed.
     //
-    // High enough to give every kernel of a net a label of its own: the whole
-    // pool is two timestamps a pass, so 128 costs a slot 2 KB of samples and
-    // the resolve one 1 KB stack array.
+    // High enough to give every kernel of a net a label of its own: the pool is
+    // two timestamps a pass on D3D12 and Vulkan and four on Metal, which samples
+    // a render pass's vertex and fragment stages apart, so 128 costs a Metal
+    // slot 4 KB of samples.
     static constexpr int maxTimedPasses = 128;
 
 private:

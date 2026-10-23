@@ -579,11 +579,11 @@ bool makePipelineLayouts(VkDevice device,
     return false;
 }
 
-// Decoded from the index, which must agree with samplingIndex's packing.
 VkSampler makeSampler(VkDevice device, int index)
 {
-    const auto linear = (index & 2) != 0;
-    const auto repeat = (index & 1) != 0;
+    const auto sampling = samplingConfiguration(index);
+    const auto linear = sampling.filter == TextureFilter::Linear;
+    const auto repeat = sampling.addressMode == TextureAddressMode::Repeat;
 
     const auto filter = linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
     const auto address = repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT
@@ -600,6 +600,12 @@ VkSampler makeSampler(VkDevice device, int index)
     info.addressModeW = address;
     info.maxLod = VK_LOD_CLAMP_NONE;
     info.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+
+    if (sampling.compare == TextureCompare::LessEqual)
+    {
+        info.compareEnable = VK_TRUE;
+        info.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    }
 
     auto sampler = VkSampler {VK_NULL_HANDLE};
 
@@ -1109,6 +1115,7 @@ bool VulkanShared::createDevice()
     enabled.features.multiDrawIndirect = features.multiDrawIndirect;
     enabled.features.drawIndirectFirstInstance = features.drawIndirectFirstInstance;
     enabled.features.occlusionQueryPrecise = features.occlusionQueryPrecise;
+    enabled.features.depthBiasClamp = features.depthBiasClamp;
 
     // Absent rather than fatal; GPUView then stays on the off-screen path.
     auto extensions = Vector<const char*> {};

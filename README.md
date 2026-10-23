@@ -1,223 +1,185 @@
 # eacp
 
 A cross-platform C++20 framework that abstracts native OS primitives behind a
-single, modern API. eacp lets you write desktop and mobile applications once
-and have them target the platform's first-class primitives directly. The heavy
-lifting stays with the OS: there is no bundled renderer, no bundled widget
-toolkit and no VM. That reaches the GPU too: a shader is a C++ struct, emitted
-as Metal, HLSL and GLSL from one source, and the pipeline around it is one API
-over all three backends.
+single, modern API. Write a desktop or mobile app once and have it use the
+platform's own windows, views, input, networking and GPU directly: there is no
+bundled renderer, no bundled widget toolkit and no VM. That reaches the GPU
+too: a shader is a C++ struct, emitted as Metal, HLSL and GLSL from one source,
+and the pipeline around it is one API over all three backends.
 
-## What it abstracts
+## Graphics
 
-eacp wraps the platform's native building blocks rather than reimplementing
-them, so apps inherit the look, feel, and performance of the host OS:
+Windows, views and input are the platform's own — Cocoa, Win32, UIKit,
+Android's NativeActivity, and Wayland or X11 on Linux — so an eacp window
+looks, moves and resizes like every other window on the desk.
 
-- **Application lifecycle** — a templated `Apps::run<T>()` entry point that
-  wires up the platform's main event loop.
-- **Command-line tools** — `Apps::runConsole` runs a tool's body inside the
-  loop and turns an escaping exception into an exit code, `Args::Parser`
-  binds options straight to your variables and writes the help text, and
-  `Console::print` / `printError` write plain lines to stdout and stderr.
-- **Event loops & threading** — `EventLoop`, `Timer`, `DisplayLink`, and
-  `callAsync` on top of CFRunLoop / NSTimer / CADisplayLink, their Windows
-  equivalents, and on Linux one `epoll` descriptor a plugin host's own loop
-  can pump (`getEventLoopFd`, `pumpEventLoop`).
-- **Files** — `FilePath` carries a path as UTF-8 text with `/` separators on
-  every platform (`nativeString` and `fromNative` convert to and from the
-  platform's own form, `\` on Windows), `Files::readFile` /
-  `writeFile` / `writeFileAtomically` move whole files, `File` and
-  `MemoryMappedFile` read big ones in pieces, and `Zip` reads and writes
-  archives, extracting one entry or all of them straight to disk a chunk at a
-  time, with a progress callback that can cancel, so a multi-gigabyte archive
-  unpacks in bounded memory. A directory is walked with `Files::forEachEntry`
-  (a visitor that can prune a subtree or stop early, with unreadable entries
-  reported to a callback) or collected with `listDirectory` / `listFiles`,
-  recursively or not, hidden entries and symlinks by choice, filtered by a
-  wildcard such as
-  `"*.wav; *.flac"`. `copyFile`, `copyDirectory`, `moveFile`, `removeFile`,
-  `appendFile` and `writeFileAt` change files and report failure as `false`;
-  `FileWriter` streams into one, `TemporaryFile` deletes its path when it goes
-  out of scope, and `legalFileName` / `nonexistentSibling` name new ones.
-  `Files::openWithSystem` hands a file to its default application or opens a
-  folder in Finder, Explorer or the desktop's file manager, and
-  `revealInFileManager` shows an item there selected (Linux opens the folder
-  holding it); both answer `false` on iOS and Android.
-- **Graphics** — `Window`, `View`, `Path`, `Font`, and a `Context` drawing
-  abstraction backed by Core Graphics / CoreText on Apple platforms and the
-  native Windows graphics stack. `primaryDisplay()` reports the screen's frame
-  and work area in points, so an app can pick a first window size that fits;
-  `View::getWindow()` lets a view reach the window it is in rather than be
-  handed it. `setMouseCursor` takes one of the named shapes or a `MouseCursor`
-  made from an `Image`, a hotspot and how many of its pixels make a point, so
-  a 32-pixel brush can be an 8-point pointer that stays sharp on a Retina
-  screen (macOS and Windows; the arrow elsewhere). Files dragged in from
-  Finder, Explorer or a DAW's browser reach a view that calls
-  `setAcceptsFileDrops()` as `fileDragEnter` / `fileDragMove` /
-  `fileDragExit` / `filesDropped` with UTF-8 paths, and a
-  `UI::ComponentHost` hands them to the deepest `UI::FileDropTarget`
-  component under the pointer that wants them (macOS and Windows). Going
-  the other way, `startFileDrag(paths, options)` from a view's or a
-  component's mouse handler drags files out to Finder, Explorer or a DAW,
-  optionally letting the receiver move them and reporting `Cancelled`,
-  `Copied` or `Moved` once it ends (macOS and Windows). A trackpad pinch
-  reaches the view under the pointer as `mouseMagnify`, each step a
-  `magnifyScale` to multiply the zoom by (1.25 is a quarter larger) with the
-  gesture's Began / Changed / Ended in `scrollPhase`, and a
-  `UI::ComponentHost` hands it to the component under the pointer and up the
-  tree until a `Component::mouseMagnify` returns true, as it does the wheel
-  (macOS, and touch-screen zoom gestures on Windows). On a
-  touch screen a view that calls `setHandlesTouchEvents()`
-  gets every finger as its own `TouchEvent` (`touchBegan` / `touchMoved` /
-  `touchEnded`, one id per finger, held by the view it came down on, with its contact
-  `radius` in points), and any
-  other view gets the first finger as the mouse, so widgets written for a mouse
-  work unchanged. `View::getSafeAreaInsets()` is what the status bar, a notch or
-  the home indicator covers, with `safeAreaInsetsChanged()` when it moves; both
-  stay zero and silent on desktop windows. `Apps/UI/TouchDemo` draws both.
-  A `UI::ComponentHost` lays its root inside the safe area by default
-  (`setRespectsSafeArea(false)` gives it the whole view), and `ScrollPanel` and
-  `ListBox` scroll by finger, coasting on when flung, while a mouse drag over
-  them means what it always did.
-- **Game input** — `GameInput` is keyboard and mouse state for a game loop,
-  polled once a frame beside the `View` callbacks that UI and text entry keep
-  using: `snapshot()` returns a frame that answers `isDown`, `wasPressed`,
-  `wasReleased` and `mouseDelta`, with every event timestamped on the clock
-  `FrameTime` uses. On Apple platforms the events come from the GameController
-  framework off the main thread, so they are captured while the app is still
-  drawing; elsewhere they come from the window's own events. Input counts
-  only while the window has key focus, and losing it releases every key.
-  `frame.gamepads()` lists the connected controllers — buttons named by
-  position, sticks and triggers as raw axes — from GameController on Apple
-  and XInput on Windows, so an Xbox controller on USB or Bluetooth works on
-  both and a Switch Pro Controller on macOS. `Apps/GPU/Maze` is a
-  first-person maze driven by it, and `Apps/UI/GamepadDemo` is every button
-  and axis of a controller doing something on screen and announcing itself.
-- **GPU** — `GPUView`, frames, passes, buffers, textures and pipelines over
-  Metal and D3D12, plus compute — and a shader EDSL that makes a shader a C++
-  struct rather than a string literal per backend. The same compute kernel also
-  runs on the CPU, on the calling thread and without allocating, where no
-  device came up or an audio callback needs it now. See
-  [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md).
-- **ML** — tensor-level compute as a `Graph` of whole-tensor ops (`linear`,
-  `matmul`, `softmax`, `layerNorm`, `conv`, `gather`, attention with a causal
-  or run-time mask, `argmax`, and `apply` for anything elementwise, written
-  over the shader EDSL's own `Float`), written out as an `.mlpackage` that
-  Core ML compiles and runs on the CPU, the GPU or the Apple Neural Engine.
-  `Model` caches the compile, predicts blocking or as a `Threads::Async`,
-  reports where each op was placed, and its `MultiArray` copies to and from a
-  `GPU::Buffer`. The graph builder and writers build everywhere; only the
-  runner is Apple. See [`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md).
-- **Widgets & menus** — native text inputs, menus, and embedded views.
-- **WebView** — embed a system web view (WKWebView on Apple, WebView2 on
-  Windows) with support for popups and new-window requests.
-- **Networking** — an `HTTP::Request` / `HTTP::Response` API plus an
-  `HTTPServer`, a `WebSocket::Connection` client and `WebSocket::Server`, TCP
-  sockets, IPC channels and an RPC layer over both — `Apps/Network/WebSocketDemo`
-  runs both WebSocket ends in one process. Backed by NSURLSession and
-  Network.framework on Apple platforms, WinHTTP on Windows, libcurl on
-  Linux and Java's own `HttpURLConnection` and sockets on Android.
-  `OnlineResource` fetches a file an app needs into its own Application
-  Support folder once, revalidates it against the server's ETag on later runs,
-  and unpacks a zip; `UI::OnlineResourceMonitor` shows every such fetch as a
-  list with progress bars. `Apps/Console/OnlineResource` and
-  `Apps/UI/ResourceMonitor` are the two examples.
-- **SVG** — SVG documents parsed (`SVG::parseXML`) and drawn by
-  `SVG::SVGComponent`, a `UI` component, or rendered off-screen to an image
-  (`SVG::renderToImage`), the same on every platform: linear and radial
-  gradients, clip paths, element and group opacity, `<use>`/`<symbol>`, nested
-  `<svg>`, `preserveAspectRatio`, dashes, the `style` attribute, text, and
-  `<image>` from a base64 PNG or JPEG data URI, drawn directly or as a
-  `<pattern>` fill. Not `<mask>`, `<style>` selectors or filters.
-- **Processes & plugins** — launch a child process with args, env and working
-  directory, feed its stdin and capture its output, separately or with stderr
-  merged into stdout, and optionally watch it arrive through a callback
-  (`eacp::Processes`). A whole command line can be given instead of
-  executable and arguments: Windows hands it to `CreateProcessW` verbatim (so
-  `cmd /c "a.bat && b.exe"` works), POSIX splits it into argv the way JUCE's
-  `StringArray::fromTokens` does and runs no shell. Load
-  and unload shared libraries at runtime (`DynamicLibrary`). Both directions of
-  plugin UI are covered: `EmbeddedView` puts a view tree of ours inside a window
-  a host owns (an `NSView`, a `UIView` such as an AUv3's view controller hands
-  over, an `HWND` or an X11 window), and `NativeChildSurface` is the inverse, a `View` in one of our
-  layouts that hands a foreign toolkit an `NSView*` or a child `HWND` to parent
-  its own editor into — what a plugin host passes to `IPlugView::attached()`.
-  `EmbedderKeyForwarder` and `KeyGrab` carry the keys a hosted editor does not
-  want back to the host's main window, so a DAW's shortcuts still work.
-- **Text & sprites** — font metrics, glyph rasterization and a GPU glyph atlas,
-  alongside a batched textured-quad renderer for everything that draws in bulk.
-- **UI** — a lightweight component tier: a whole widget tree in one `GPUView`,
-  drawn through the sprite and glyph batchers. `UI::GPUComponent` puts custom
-  GPU rendering inside that tree: a `GPUView`-style `render(Frame&)` and
-  `update`, drawn in the window's own frame and then clipped, scrolled,
-  overlapped, faded and transformed like any other component, so a 3D viewport
-  or a shader preview sits among the widgets rather than on top of them.
-  `Apps/UI/GPUComponents` puts up to 64 of them in one window. See
-  [`Lib/eacp/UI/README.md`](Lib/eacp/UI/README.md).
-- **SIMD** — the image hot loops run through
-  [ESIMD](https://github.com/eyalamirmusic/ESIMD), a portable SIMD library with
-  runtime backend dispatch that is also usable on its own.
-- **Maths** — `Vec2` / `Vec3` / `Vec4` and a column-major `Mat4` with the
-  transform and projection builders, packed exactly as the shader types they
-  register as, so the same value does the CPU-side geometry and crosses to the
-  GPU as a vertex field or uniform without repacking.
-- **Camera & video** — capture devices and frames with a `CameraView` to show
-  them, screen capture, video encoding, and decoded playback through the GPU
-  display stack.
-- **Interop helpers** — RAII wrappers (`Ptr<T>`, `CFRef<T>`,
-  `AutoReleasePool`) for safe Objective-C / Core Foundation interop, plus
-  generic utilities (`Pimpl`, `Singleton`, vector helpers).
+- **Windows** — the usual options: transparent backgrounds, always-on-top,
+  click-through, size and aspect-ratio constraints, fullscreen, rounded
+  corners, a drawn application icon, an initial position, and mouse lock for
+  a first-person camera. The primary display's frame and work area are a call
+  away.
+- **Views and 2D drawing** — native views with paint and event callbacks. On
+  Apple platforms and Windows there is a 2D drawing context over Core Graphics
+  and Direct2D, with paths, fonts and text layout, retained shape and text
+  layers, and the platform's own text field.
+- **Images** — PNG and JPEG decoded and encoded, resized, cropped and warped
+  through SIMD kernels; the source of every texture, cursor, tray icon and
+  drag image.
+- **Input** — keys travel from the focused view up through its parents; the
+  wheel and a trackpad pinch reach the view under the pointer; a touch screen
+  delivers every finger separately, or the first finger as the mouse so
+  widgets written for one work unchanged. Cursors can be drawn from an image,
+  and safe-area insets report what a notch or home indicator covers.
+- **File drag and drop** — files dragged in from Finder, Explorer or a DAW's
+  browser arrive as paths, and files can be dragged out the other way.
+- **Game input** — keyboard, mouse and gamepad state polled once a frame for
+  a game loop, up to eight controllers, with Xbox and Switch pads supported.
+- **Desktop glue** — menus with shortcuts, tray icons, global hot keys, light
+  and dark appearance, and a callback on every display refresh.
+- **Embedding, both ways** — a view tree of ours inside a window a host owns
+  (a plugin editor, an AUv3 view, an X11 window id), or a foreign toolkit's
+  editor inside our layout, with the keys it does not want forwarded back to
+  the host so a DAW's shortcuts still work.
+
+## GPU
+
+Metal on Apple platforms, Direct3D 12 on Windows and Vulkan on Linux and
+Android, behind one API with nothing backend-specific in any header.
+[`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) is the full account.
+
+- **Shaders in C++** — a shader is a struct whose body records a graph of
+  typed values; the emitters print it as MSL, HLSL and GLSL. The CPU vertex
+  struct _is_ the vertex layout, uniforms and textures are typed members, and
+  anything the backends cannot pack identically is a compile error. The EDSL
+  has the float, integer, unsigned and boolean families, matrices, swizzles,
+  the intrinsics, branches and loops, arrays, 2D, cube and depth textures,
+  storage buffers in either stage, and instancing.
+- **Views and frames** — a GPU view owns a swapchain and hands over one frame
+  per tick or on demand: continuous or one-shot, a frame-rate cap, MSAA,
+  depth and stencil, transparency, frames in flight, a readable drawable. A
+  frame is one command buffer: passes, compute and copies in order, with no
+  fences to write.
+- **Passes and pipelines** — pipeline state named in one descriptor (samples,
+  depth, blending, culling, winding); draws plain, instanced or indirect from
+  a buffer the GPU filled; occlusion queries; viewport and scissor distinct.
+- **Render targets** — into a texture, with depth, multisampled and resolved,
+  several targets at once, into one mip level, array slice or volume layer;
+  mipmaps generated on the GPU; pixels read back from any target or the
+  drawable; copies between buffers and textures; and a frame redirected into
+  a texture, which is what puts GPU rendering inside a widget tree.
+- **Compute** — the same struct shape: atomics, threadgroup memory and
+  barriers, group- and SIMD-group-wide reductions, the SIMD-group matrix with
+  fp16, bf16, int8 and int4 weights read where they lie, textures a kernel
+  writes, dispatches the GPU sizes, dispatches that overlap on an async queue,
+  and a timer on every pass.
+- **The same kernel on the CPU** — the graph a kernel records also runs with
+  no device at all, on the calling thread, allocation-free and realtime-safe,
+  so an audio callback or a driverless box runs the very kernel the GPU does.
+  One tier up, tensor-level compute over the same buffers compiles to a
+  Core ML program for the Apple Neural Engine.
+
+## UI on the GPU
+
+A widget tree is not a tree of native views. A component is a lightweight
+element — bounds, children, paint and events — and a whole tree of them lives
+inside one GPU view: one swapchain, one display link, one frame a refresh,
+whatever the tree holds. [`Lib/eacp/UI/README.md`](Lib/eacp/UI/README.md)
+explains how a frame is built.
+
+- **Drawing** — rectangles, rounded rectangles, lines, shadows, paths with
+  solid or gradient fills, images, text, and clipping to rectangles or shapes,
+  recorded once and replayed through batched shape, mesh, image and glyph
+  renderers. A tree that changed nothing records nothing.
+- **Widgets** — labels, buttons, checkboxes, text editors, sliders, knobs,
+  scroll panels, viewports, lists, combo boxes, tabs and popup menus, a theme,
+  keyboard focus with tab order, drag and drop within the tree and file drops
+  from outside it, and finger scrolling that coasts when flung.
+- **Layers and animation** — a subtree captured into a texture is clipped,
+  faded, transformed and composited as one; animations run on the host's
+  clock under their own frame-rate cap.
+- **GPU components** — custom GPU rendering inside the tree, drawn into a
+  texture of its own and composited like any other layer, so a 3D viewport or
+  a shader preview sits among the widgets, clipped and scrolled, rather than
+  on top of them.
+- **Paths** — vector paths rasterized on the GPU by a compute coverage pass
+  into a shared atlas, plus a tessellated fill-and-stroke view with gradients.
+- **Text** — glyphs rasterized by CoreText, DirectWrite, FreeType with
+  HarfBuzz or Android's own text stack into a GPU atlas, with bidirectional
+  layout, emoji and variable fonts.
+- **Sprites** — runs of textured quads as one instanced draw per texture,
+  including NV12 video frames, which is what the camera and video views draw.
+- **SVG** — documents drawn as a component or rendered to an image, the same
+  on every platform: gradients, clip paths, opacity, symbols, nested
+  documents, dashes, text and embedded images.
+
+## Everything else
+
+- **Application lifecycle** — a struct is the app; one view in one window
+  needs no struct at all.
+- **Command-line tools** — a console runner, an argument parser that binds
+  options to your variables and writes the help, and plain stdout lines.
+- **Event loop and threads** — the loop, timers, deferred and delayed calls,
+  async results, and on Linux a loop a plugin host's own loop can pump.
+- **Files** — UTF-8 paths with `/` everywhere, atomic and memory-mapped
+  files, a filtered directory walk, a file watcher, and zip archives read and
+  written in bounded memory.
+- **Processes** — a child with args, env, stdin and captured output, and a
+  build runner that reruns one command on demand.
+- **Plugins and hot reload** — shared libraries loaded at runtime, and a
+  source tree watched, rebuilt on save and reloaded into the running app.
+- **Networking** — an HTTP client with redirects, timeouts and resumable
+  downloads, an HTTP server, WebSocket client and server, TCP, IPC and RPC,
+  and a resource fetched once and revalidated on later runs.
+- **WebView** — the system web view with a typed page bridge generated from a
+  schema.
+- **ML** — tensor graphs written out as a Core ML package and run on the CPU,
+  GPU or Neural Engine ([`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md)).
+- **Camera and video** — capture devices and frames, screen capture, video
+  encoding, and MP4 decoding behind a player the caller clocks.
+- **SIMD and maths** — image hot loops through
+  [ESIMD](https://github.com/eyalamirmusic/ESIMD), and vector and matrix
+  types packed exactly as the shader types they cross to the GPU as.
+- **Interop** — RAII wrappers for Objective-C and Core Foundation objects.
 
 ## Supported platforms
 
-The dividing line is drawing. Everything that never touches a screen — the app
-and threading core, processes, plugins, files, the HTTP client and server, IPC
-and RPC, the CPU compute interpreter, the ML graph builder —
-builds on Linux too, which is what makes eacp usable for a headless service as
-well as for a GUI. The graphics stack builds on all four platforms, because it
-wraps each one's own compositor instead of shipping one: Cocoa and Metal,
-Win32 and D3D12, UIKit, and Wayland or X11 with Vulkan.
+The dividing line is drawing. Everything that never touches a screen builds
+everywhere, which is what makes eacp usable for a headless service as well as
+a GUI. The graphics stack wraps each platform's own compositor instead of
+shipping one: Cocoa and Metal, Win32 and D3D12, UIKit, NativeActivity and
+Vulkan, and Wayland or X11 with Vulkan.
 
-| Module | macOS | Windows | iOS | Linux |
-| --- | :---: | :---: | :---: | :---: |
-| `Core` — lifecycle, event loops, timers, processes, plugins, files | ✅ | ✅ | ✅ | ✅ |
-| `Network` — HTTP client and server, WebSocket client, TCP, IPC, RPC | ✅ | ✅ | ✅ | ✅ |
-| `Graphics` — windows, views, widgets, menus, drawing | ✅ | ✅ | ✅ | ✅ † |
-| `GameInput` — polled keyboard, mouse and gamepads for a game loop | ✅ ‡ | ✅ ‡ | ✅ ‡ | ✅ |
-| `GPU` / `GPUWidgets` — Metal, D3D12, Vulkan and the shader EDSL | ✅ | ✅ | ✅ | ✅ |
-| `CpuCompute` — the same compute kernels run on the CPU, no device needed | ✅ | ✅ | ✅ | ✅ |
-| `Text` / `Sprites` — glyph rasterization, atlas, batched quads | ✅ | ✅ | ✅ | ✅ |
-| `UI` / `SVG` — component tier and SVG rendering | ✅ | ✅ | ✅ | ✅ † |
-| `WebView` — WKWebView and WebView2 | ✅ | ✅ | ✅ | — |
-| `Camera` / `CameraView` — capture devices and frames | ✅ | ✅ | ✅ | — |
-| `Video` / `VideoView` — screen capture, encode, playback | ✅ | ✅ | — | — |
-| `ML` — tensor graphs compiled and run through Core ML | ✅ | — | ✅ | — |
+| | macOS | Windows | iOS | Android | Linux |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| App core, files, processes, plugins | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Networking | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Windows, views, input | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 2D drawing, fonts, menus, tray | ✅ | ✅ | ✅ | — | — |
+| Game input | ✅ | ✅ | ✅ | ✅ | ✅ |
+| GPU and the shader EDSL | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Compute kernels on the CPU | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Text, sprites, UI components, SVG | ✅ | ✅ | ✅ | ✅ | ✅ |
+| WebView | ✅ | ✅ | ✅ | — | — |
+| Camera | ✅ | ✅ | ✅ | ✅ | — |
+| Video | ✅ | ✅ | — | — | — |
+| ML through Core ML | ✅ | — | ✅ | — | — |
 
-† Linux has no platform 2D tier: no `Graphics::Context`, `Font`, `TextInput`,
-image codecs, menus or tray. Everything drawn through a `GPUView` — the `UI`
-component tier, its text, its images and `SVGComponent` — works there in
-full, and a `Window` is a real Wayland or X11 window with input, clipboard,
-fractional scaling and mouse lock. Audio-plugin hosting has what it needs
-(`EmbeddedView` into a host's X11 window, and an event loop a host's own loop
-can pump), and `EACP_HEADLESS=1` runs every window and every GPU test with no
-display server at all. [`Docs/Linux.md`](Docs/Linux.md) is the full account.
+Where there is no 2D tier, everything drawn through the GPU — the component
+tier, its text and images, and SVG — works in full, and Android keeps its own
+image codecs. Gamepads come from GameController on Apple platforms and XInput
+on Windows; elsewhere game input is the window's own keys and mouse.
 
-‡ Keys and mouse are fed by the GameController framework on Apple platforms,
-which times events off the main thread, and by the window's own events
-elsewhere; gamepads come from GameController on Apple and XInput on Windows.
+Android is a NativeActivity app on Vulkan 1.1 with touch and soft-keyboard
+input, the camera behind a runtime permission prompt, and networking over the
+platform's own HTTP and TLS stack; the configure writes an Android Studio
+project, and [`Apps/Android/README.md`](Apps/Android/README.md) is the guide.
+Linux is a real Wayland or X11 window with input, clipboard, fractional
+scaling and mouse lock, and can run every window and GPU test with no display
+server at all; [`Docs/Linux.md`](Docs/Linux.md) is the full account.
 
-CI builds and tests macOS (universal), Windows x64 and ARM64 (MSVC and
-clang-cl) and Linux (GCC, Clang, and a lane that runs the graphics stack on
-Mesa's software Vulkan under a headless Weston and then an Xvfb), and builds
-iOS for the simulator and Android (Vulkan 1.1; the HelloGPU and
-HelloNetwork examples for arm64-v8a with a pinned NDK; the second checks the
-HTTP client and server, downloads, `OnlineResource` and both WebSocket ends
-when run on a device). macOS is the most exercised of them.
-On Android, `Camera` and `CameraView` work as well, with the camera permission
-asked for at run time (`eacp::Android::requestPermission`); `Video` and
-`VideoView` are not available there yet.
-Android builds through an Android Studio project the configure writes;
-[`Apps/Android/README.md`](Apps/Android/README.md) is the guide.
+CI builds and tests macOS, Windows x64 and ARM64, and Linux (including the
+graphics stack on Mesa's software Vulkan under Weston and Xvfb), and builds
+iOS for the simulator and Android. macOS is the most exercised of them.
 
 ## A taste of the API
 
@@ -283,10 +245,7 @@ int main()
 }
 ```
 
-An app that is one view in one window and nothing else needs no struct at all:
-`Graphics::runWindowedApp<MyView>(options, viewArgs...)` runs a
-`ViewWindow<MyView>` — the view built from `viewArgs`, then the window showing
-it — as the app.
+An app that is one view in one window needs no struct at all:
 
 ```cpp
 #include <eacp/Graphics/Graphics.h>
@@ -321,77 +280,17 @@ req.headers["Content-Type"] = "application/json";
 auto res = req.perform();
 ```
 
-Redirects are followed unless `req.followRedirects = false`, which hands back
-the 3xx itself and sends nothing to the new address; `req.maxRedirects` caps
-how many are followed before the request fails. `req.maxResponseSize`
-caps the body: a response that grows past it is cut off as it arrives and
-comes back as an error.
-
-`req.timeout` bounds the whole request. `req.connectTimeout` bounds getting
-connected (on Apple platforms, which report no connect event, it runs until
-the response headers arrive), and `req.idleTimeout` fails a transfer that goes
-quiet for that long without capping how long a steady one may run - the way to
-catch a stalled download of any size. No backend answers from a local cache
-unless `req.cachePolicy = HTTP::CachePolicy::UseLocalCache`.
-
-A request sends the platform's own User-Agent - CFNetwork's on Apple platforms,
-HttpURLConnection's on Android - and `eacp/<version>` (`HTTP::eacpUserAgent()`)
-on Windows and Linux, which have none. `HTTP::setDefaultUserAgent("MyApp/1.2")`
-replaces that for every request on every platform, and an empty string puts it
-back; a `User-Agent` header on the request beats both:
-
-```cpp
-eacp::HTTP::setDefaultUserAgent("MyApp/1.2");
-
-auto req = eacp::HTTP::Request("https://api.example.com/");
-req.headers["User-Agent"] = "MyApp/1.2 (sync)"; // this request only
-```
-
-`req.resumeDownload` makes `downloadTo` continue a partial file: it asks for
-the bytes it lacks with a `Range` header, appends a 206 and counts the bytes
-already there in its progress, and starts over when the server sends the whole
-file instead.
-
-`HTTP::URL` builds an address from a base and an ordered list of query
-parameters, encoding each once:
-
-```cpp
-auto url = eacp::HTTP::URL("https://api.example.com/search");
-url.addParameter("q", "rock & roll").addParameter("page", "2");
-auto res = eacp::HTTP::Request(url.toString()).perform();
-```
-
-Saving a file under a name the user typed, without overwriting anything:
-
-```cpp
-using namespace eacp;
-
-auto folder = FilePath::documentsDirectory() / "Presets";
-auto name = Files::legalFileName("Kick: 808 / Hard"); // "Kick 808  Hard"
-auto path = Files::nonexistentSibling((folder / name).withExtension("preset"));
-
-Files::writeFileAtomically(path, bytes);
-
-auto options = Files::DirectoryOptions {};
-options.pattern = "*.wav; *.flac";
-auto samples = Files::listFiles(FilePath::musicDirectory(), options);
-```
-
-More examples live under [`Apps/`](Apps), grouped by the module they exercise:
-`Console`, `Network`, `Graphics`, `GPU`, `UI`, `SVG`, `WebView`, `Camera`,
-`Video`, `Plugins` and `Mixed`.
+More examples live under [`Apps/`](Apps), grouped by the module they exercise.
 
 ## Shaders in C++
 
-There is no shader string anywhere in an eacp app. A shader is a struct that
-derives from `ShaderProgram`; `define()` records a graph of typed value handles,
-and the emitters turn that one graph into Metal Shading Language for macOS and
-iOS, into HLSL for Direct3D 12 on Windows and into GLSL for Vulkan on Linux,
-where glslang compiles it to SPIR-V inside the binary. Vertex inputs are
-pulled straight out of the CPU vertex struct, so that struct _is_ the vertex
-layout; uniforms and textures are typed members assigned by name, and
-`Maths::Vec2` crosses to the GPU packed exactly as the `float2` it registers
-as.
+There is no shader string anywhere in an eacp app. A shader is a struct whose
+body records a graph of typed value handles, and the emitters turn that one
+graph into Metal Shading Language for macOS and iOS, HLSL for Direct3D 12 on
+Windows and GLSL for Vulkan on Linux and Android, compiled to SPIR-V inside
+the binary. Vertex inputs are pulled straight out of the CPU vertex struct, so
+that struct _is_ the vertex layout, and a CPU vector crosses to the GPU packed
+exactly as the shader type it registers as.
 
 ```cpp
 #include <eacp/GPU/GPU.h>
@@ -428,11 +327,9 @@ struct Waves final : ShaderProgram
 };
 ```
 
-The view that draws it is as portable as the shader. `setVertices` uploads the
-typed vertex array, `prepare` takes a `RenderPipelineDescriptor` — sample
-count, depth test and write, blend equation, cull mode, winding — and builds
-the pipeline state from it, and `pass.draw(shader)` binds the pipeline, the
-vertices, the uniform block and every assigned texture:
+The view that draws it is as portable as the shader: upload the typed vertex
+array, build the pipeline state from a descriptor, and draw, which binds the
+pipeline, the vertices, the uniform block and every assigned texture:
 
 ```cpp
 struct WavesView final : GPUView
@@ -466,79 +363,67 @@ struct WavesView final : GPUView
 };
 ```
 
-Render targets, depth and multisampling, and compute passes all sit on the same
-`Frame`, ordered for you, with no fences to write.
+A compute kernel is the same struct shape, dispatched from a compute pass on a
+command buffer — or, with no device at all, through the CPU interpreter over
+the same members:
 
-The EDSL covers the `Float`, `Int`, `UInt` and `Bool` families and the
-matrices, every swizzle, the intrinsic set spelled the way MSL and HLSL spell
-it, `var` / `select` / `ifThen` / `loop`, 2D, cube and depth textures, storage
-buffers readable from either stage, instancing, and compute — `ComputeProgram`
-is the same struct shape, with atomics, threadgroup memory, barriers, SIMD-group
-matrix fragments, packed fp16, bf16, int8 and int4 weight reads and a dispatch
-the GPU sized. What the backends cannot pack the same way — a `Bool` or a
-`Float3x3` uniform — is a `static_assert` rather than a footnote.
-[`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) is the full account, and
-`Apps/GPU` has a worked example of every piece.
+```cpp
+struct ToneKernel final : ComputeProgram
+{
+    ToneKernel() { compile(); }
 
-The graph a kernel records is also what runs it where there is no device.
-The CPU compute interpreter runs a `ComputeProgram` on the calling thread over
-plain arrays, allocation-free and realtime-safe, so an audio callback or a
-driverless Linux box runs the very same kernel the GPU does, and every emitter
-test has a numeric half that needs no driver — `Apps/GPU/CpuCompute` times the
-two against each other. One tier up, `Lib/eacp/ML` takes tensor-level compute
-written against the same buffers and compiles it to a Core ML program, so a
-net that runs through the compute kernels on every platform also runs on the
-Apple Neural Engine where there is one (see
-[`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md)).
+    void define() override
+    {
+        auto i = threadId();
+        auto phase = toFloat(i) / sampleRate * frequency * twoPi;
+        auto wave = sin(phase) + sin(phase * 2.0f) / 2.0f
+                    + sin(phase * 3.0f) / 3.0f;
+        write(output, i, wave);
+    }
+
+    Uniform<OutputBuffer> output;
+    Uniform<Float> frequency;
+    Uniform<Float> sampleRate;
+    EACP_SHADER(output, frequency, sampleRate)
+};
+
+// On the GPU
+auto samples = device.makeBuffer(sizeof(float) * count);
+tone.output = samples;
+tone.prepare();
+
+auto commands = device.makeCommandBuffer();
+{
+    auto pass = commands.beginCompute();
+    pass.dispatch(tone, count);
+}
+commands.commit();
+
+// On the CPU, on this thread, allocating nothing
+auto wave = std::vector<float>(count);
+auto executor = CpuCompute::Executor {tone};
+auto bindings = CpuCompute::Bindings {};
+bindings.set(tone.output, wave);
+executor.dispatch(bindings, count);
+```
+
+[`Apps/GPU`](Apps/GPU) has a worked example of every piece, from a rotating
+triangle to a teapot, stencil shadows, a cube map, a glyph atlas, particles,
+async compute and a first-person maze.
 
 ## Building
 
-eacp uses CMake (3.31+) and a C++20 toolchain. Dependencies are fetched via
-[CPM](https://github.com/cpm-cmake/CPM.cmake) automatically at configure time
-— among them [ESIMD](https://github.com/eyalamirmusic/ESIMD), the SIMD kernels
-the image operations run through — except
-[miniz](https://github.com/richgel999/miniz), which is carried in
-`ThirdParty/` and wrapped by `eacp::Zip`, and
-[fmt](https://github.com/fmtlib/fmt), carried beside it and used internally.
+CMake 3.31+ and a C++20 toolchain. Dependencies are fetched automatically at
+configure time.
 
 ```bash
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Build a specific example:
-
-```bash
-cmake --build build --target GUI       # build/Apps/GUI/GUI.app
-cmake --build build --target Console   # build/Apps/Console/Console
-```
-
-On Linux the window systems, the text stack and the HTTP client are found by
-pkg-config against the machine's own libraries, and the Vulkan loader is
-opened at runtime, so a driver is all the GPU half needs:
-
-```bash
-sudo apt install pkg-config libcurl4-openssl-dev \
-    libwayland-dev wayland-protocols libwayland-bin libxkbcommon-dev libdecor-0-dev \
-    libxcb1-dev libxcb-xkb-dev libxkbcommon-x11-dev libxcb-randr0-dev \
-    libxcb-xfixes0-dev libxcb-cursor-dev libxcb-icccm4-dev libxcb-xinput-dev \
-    libfreetype-dev libharfbuzz-dev libfontconfig-dev mesa-vulkan-drivers
-```
-
-The options most builds reach for:
-
-- `EACP_UNITY_BUILD` (default `OFF`) — unity builds, markedly faster for a cold
-  full build, off by default because they collapse the per-file entries in
-  `compile_commands.json` that language servers read.
-- `EACP_BUILD_GRAPHICS` (default `ON`) — turn it off to build only the
-  portable modules, on any platform.
-- `EACP_BUILD_SPIRV` (default `ON` on Linux, `OFF` elsewhere) — the GLSL
-  compiler the Vulkan backend ships. Passing `ON` on a Mac or a Windows
-  machine turns the GLSL compile checks in the GPU test suites on.
-
-Every option, the CPM and pkg-config dependencies, the capability variables
-that decide which modules a platform gets, and how CI runs are in
-[`Docs/Build.md`](Docs/Build.md).
+Every option, the dependencies, the Linux packages and how CI runs are in
+[`Docs/Build.md`](Docs/Build.md) and [`Docs/Linux.md`](Docs/Linux.md);
+[`Apps/Android/README.md`](Apps/Android/README.md) is the Android guide.
 
 ## Repository layout
 
@@ -547,85 +432,60 @@ own — take `Network` without pulling in `GPU`.
 
 ```
 Lib/eacp/
-  Core/       App lifecycle, threading, processes, plugins, files, vector maths,
-              ObjC/CF interop
-  Network/    HTTP client and server, WebSocket client, TCP, IPC, RPC
-  Graphics/   Windows, views, widgets, menus, drawing primitives
-  GPU/        Metal / D3D12 / Vulkan: device, buffers, textures, pipelines,
-              passes, the shader EDSL and its CPU interpreter — see GPU/README.md
-  GPUWidgets/ Views drawn on the GPU (gradients, paths)
-  ML/         Tensor graphs compiled and run through Core ML — see ML/README.md
-  Text/       Font metrics, glyph rasterization and a GPU glyph atlas
+  Core/       App lifecycle, threading, processes, plugins, files, maths
+  Network/    HTTP client and server, WebSocket, TCP, IPC, RPC
+  Graphics/   Windows, views, input, menus, tray, 2D drawing
+  GPU/        Metal / D3D12 / Vulkan, the shader EDSL and its CPU interpreter
+  GPUWidgets/ GPU path rasterization and gradients
+  Text/       Glyph rasterization, bidi, and a GPU glyph atlas
   Sprites/    Batched textured-quad renderer
-  UI/         A whole widget tree in one GPUView, GPU components included —
-              see UI/README.md
+  UI/         The component tier: a whole widget tree in one GPU view
   SVG/        SVG parsing and rendering
+  ML/         Tensor graphs compiled and run through Core ML
   WebView/    System web view embedding
-  Camera/     Capture devices and frames, plus CameraView/ to show them
-  Video/      Screen capture and encoding, plus VideoView/ for playback
+  Camera/     Capture devices and frames, plus a view to show them
+  Video/      Screen capture, encoding and decoding, plus a view for playback
 Apps/         Example applications
 Tests/        Unit tests
-Docs/         In-depth documentation: the build system and the Linux backend
-ThirdParty/   Vendored libraries (miniz, behind eacp::Zip; fmt)
-CMake/        Build helpers (TargetSetup, CPM)
+Docs/         The build system and the Linux backend
+ThirdParty/   Vendored libraries (miniz, fmt)
+CMake/        Build helpers
 ```
 
 ## Documentation
 
-- [`Docs/Build.md`](Docs/Build.md) — every build option, the dependencies,
-  the capability variables and the CI matrix.
+- [`Docs/Build.md`](Docs/Build.md) — build options, dependencies, the
+  capability variables and the CI matrix.
 - [`Docs/Linux.md`](Docs/Linux.md) — the Linux backend: Wayland, X11, Vulkan
-  and FreeType, what is and is not there, and the environment variables that
-  drive it.
+  and FreeType.
+- [`Apps/Android/README.md`](Apps/Android/README.md) — building, running and
+  shipping on Android.
 - [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) — the GPU module and the
-  shader EDSL end to end: pipelines, render targets, compute, packed weights,
-  the SIMD-group matrix, running a kernel on the CPU, and the Vulkan backend.
-  [`SAMPLERS.md`](Lib/eacp/GPU/SAMPLERS.md) beside it is the sampler model.
-- [`Lib/eacp/UI/README.md`](Lib/eacp/UI/README.md) — the component tier: how
-  a frame is built, and `GPUComponent`, custom GPU rendering inside a
-  component tree, with what it costs on and off screen.
-- [`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md) — the Core ML tier: building
-  a tensor graph, running a model, the compile cache and what was measured.
-- [`Apps/GPU/VariableFont/README.md`](Apps/GPU/VariableFont/README.md) — the
-  variable-font example.
+  shader EDSL end to end, with [`SAMPLERS.md`](Lib/eacp/GPU/SAMPLERS.md)
+  beside it.
+- [`Lib/eacp/UI/README.md`](Lib/eacp/UI/README.md) — the component tier and
+  GPU rendering inside it.
+- [`Lib/eacp/ML/README.md`](Lib/eacp/ML/README.md) — the Core ML tier.
 
 ## Built with eacp
 
-Four projects lean on different parts of the framework, and between them are
-what keeps it honest — each one is a demand the API has to meet, and the gaps
-they surface are what gets fixed next.
-
 - **[PureDOOM](https://github.com/eyalamirmusic/PureDOOM)** — DOOM on eacp's
-  application, GPU and input stack. The level is drawn as real hardware 3D at
-  the window's resolution rather than at 320×200, but the shading is DOOM's own:
-  the texture yields a palette index, the `COLORMAP` row picked by sector light
-  and distance remaps it, and the palette resolves the colour. Three attract-mode
-  demos, 11,410 tics, replay as a test that hashes the world after every tic.
-
-- **[ShaderToyEACP](https://github.com/eyalamirmusic/ShaderToyEACP)** —
-  Shadertoy's GLSL turned into eacp GPU programs, shaders authored as C++ structs
-  and compiled to Metal and HLSL from one source. A corpus of two hundred real
-  fragment shaders turns "what is the shader EDSL missing?" into a measurement:
-  every shader that fails to convert names a gap, and the number blocked on each
-  gap decides which one to close next.
-
-- **[imgui-eacp](https://github.com/eyalamirmusic/imgui-eacp)** — Dear ImGui as
-  an ordinary eacp `View`, drawn by the GPU module, with ImGui's shader written
-  once in the EDSL and emitted as both MSL and HLSL. Because it is a real view it
-  composes: `Apps/MixedViews` puts it beside a `WebView` in one window, wired in
-  both directions.
-
+  application, GPU and input stack, with DOOM's own palette shading.
+- **[ShaderToyEACP](https://github.com/eyalamirmusic/ShaderToyEACP)** — two
+  hundred Shadertoy shaders as C++ shader structs, a measure of what the EDSL
+  is missing.
+- **[imgui-eacp](https://github.com/eyalamirmusic/imgui-eacp)** — Dear ImGui
+  as an ordinary eacp view, drawn by the GPU module.
 - **[WhisperEACP](https://github.com/eyalamirmusic/WhisperEACP)** — Whisper
-  on eacp's compute stack: the encoder and decoder as EDSL compute kernels over
-  packed fp16 weights, running on Metal, D3D12 and Vulkan from one source, and
-  the encoder again through `Lib/eacp/ML` on Core ML. It is what drove the
-  SIMD-group matrix, the packed weight reads and the Core ML backend, and its
-  tests are what say the two ways of running the same net agree.
-
+  as compute kernels on Metal, D3D12 and Vulkan, and again through Core ML.
+- **[dhewm3](https://github.com/eyalamirmusic/dhewm3)** — a DOOM 3 source
+  port with SDL and OpenGL removed: eacp for the OS and input, and one
+  renderer on Metal and Direct3D 12 from shaders written once.
+- **[MakeASound](https://github.com/eyalamirmusic/makeasound)** — audio
+  devices and MIDI ports behind one API, with its probe, demo and synth apps
+  hosted in eacp's GPU, UI and web view stack.
 - **[CowTerm](https://github.com/jamierpond/CowTerm)** — a GPU-accelerated
-  terminal emulator and session manager by Jamie Pond. Every visible pixel is
-  composited on the GPU from a CoreText glyph atlas; sessions, a fuzzy palette
-  and persistent pane layouts replace the tmux-sessionizer workflow.
+  terminal emulator by Jamie Pond.
 
 ## Contributing
 

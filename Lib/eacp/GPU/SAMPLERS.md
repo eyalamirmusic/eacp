@@ -1,6 +1,6 @@
 # Samplers, and why the shader declares them
 
-`TextureSampling` (filter + address mode) belongs to the **shader**, declared on
+`TextureSampling` (filter + address mode + comparison) belongs to the **shader**, declared on
 its texture members, and not to the `Texture` it is bound to. That is the
 opposite of the obvious design and of what this backend did until recently, so
 this file records why, and what is left to finish.
@@ -64,7 +64,7 @@ On **Metal**, where nothing is wrong with binding samplers, the declaration is
 still what picks one, so the two backends cannot drift apart:
 
 - `Device` builds one `MTLSamplerState` per configuration at construction —
-  there are only four — and `Device::nativeSampler(sampling)` returns it.
+  there are only eight — and `Device::nativeSampler(sampling)` returns it.
 - `RenderPass::setFragmentTexture` binds the state for the sampling it is
   passed, not one the `Texture` carries.
 - `ShaderProgram::bindTextures` is what passes it, from each member's
@@ -81,9 +81,39 @@ WorldShader()
 }
 ```
 
-Adding a configuration means widening `samplingConfigurations` and
-`samplingIndex`; the root signature, the emitter and the Metal sampler cache all
-derive from those, so they stay in step on their own.
+Adding a configuration means widening `samplingConfigurations`,
+`samplingIndex` and its inverse `samplingConfiguration`; the root signature, the
+Vulkan and Metal sampler caches, `SamplerDescriptor::from` and the emitter all
+derive from those, so they stay in step on their own. Eight is now also the
+ceiling: the per-bind registers start at `s8`, and `D3D12Types.h`
+static_asserts that the static ones stay under them.
+
+## Comparison is a configuration too
+
+A shadow map wants a comparison sampler — `sample_compare`, `SampleCmp`,
+`sampler2DShadow` — and the same driver bug rules out the obvious way of giving
+a codegen shader one, a per-bind `Sampler` with a `CompareFunction`: on the
+Qualcomm route that is a static linear/repeat sampler with no comparison at all,
+and `SampleCmp` through it is undefined. So comparison joined the fixed set
+instead. `TextureSampling::compare` is `TextureCompare::None` or `LessEqual`,
+and `LessEqual` doubles the four configurations to eight (`samplingIndex` adds
+4): static comparison samplers at `s4..s7` on D3D12 (`COMPARISON_MIN_MAG_MIP_*`,
+`LESS_EQUAL`), four more cached `MTLSamplerState`s and `VkSampler`s with the
+comparison enabled, and an emitter that declares `SamplerComparisonState`,
+`sampler2DShadow` or `sampler2DArrayShadow` for a slot that compares. The bind
+path did not change at all: `setFragmentDepthTexture(target, slot, sampling)`
+already looks the sampler up by configuration on every backend.
+
+One function rather than `CompareFunction`'s eight, because each one would
+double the set again and the registers under `s8` are spent. `LessEqual` with
+the receiver's depth as the reference reads 1 where lit; a reversed-Z map reads
+`1 - sampleCompare(...)`, which differs from `GreaterEqual` only where the two
+depths are exactly equal.
+
+A constexpr sampler in the MSL source (`sampler s(compare_func::less_equal)`)
+would have spared the Metal cache, but HLSL and Vulkan need the sampler outside
+the shader either way, and a Metal declaration that ignored the bound sampler
+would be the one backend where a `Sampler` bound over the slot did nothing.
 
 ## One shader samples one slot one way
 
@@ -121,7 +151,7 @@ its sampler with each draw, and eacp now does that too:
   owns. The device keeps a map from descriptor to sampler behind a mutex
   (`Device.cpp`) and only asks the backend (`createNativeSampler`) the first
   time it sees a descriptor, so a renderer can ask per draw per texture.
-- The four `TextureSampling` configurations are four of those descriptors
+- The eight `TextureSampling` configurations are eight of those descriptors
   (`SamplerDescriptor::from`), and `makeSampler` hands back the very objects
   `Device::nativeSampler(sampling)` already held on Metal and Vulkan. The
   `TextureSampling` overloads are therefore sugar over the same cache, and
@@ -139,8 +169,8 @@ Where the shader finds it, per backend:
 | D3D12 | `SamplerState s : register(s<8 + slot>)` (`RenderPass::samplerRegisterBase`) | a one-descriptor sampler table per slot, pointed at the `Sampler`'s descriptor in the device's sampler heap |
 | Vulkan | the combined `sampler2D` / `sampler2DShadow` at the texture's binding (`8 + slot`) | the `VkSampler` goes in the combined image sampler's descriptor write |
 
-On D3D12 the per-bind registers start at `s8`, above the four static samplers
-at `s0..s3`, so codegen shaders and per-bind shaders share one root signature
+On D3D12 the per-bind registers start at `s8`, above the eight static samplers
+at `s0..s7`, so codegen shaders and per-bind shaders share one root signature
 without either moving. It is the same shape the storage buffers already have
 (`t<8 + slot>`, `RenderPass::bufferRegisterBase`), and it keeps shader model 5.0:
 register spaces would have been the tidier separation, but they need 5.1 and
@@ -168,7 +198,7 @@ buffers at 24, and are declared for both stages. D3D12 stays at eight: the
 texture registers stop at `t8`, where the storage buffers start, and the render
 root signature spends 56 of its 64 DWORDs - four root CBVs, sixteen root SRVs,
 eight SRV tables and eight sampler tables. A vertex table and a vertex sampler
-table per slot would be sixteen more, so instead the existing tables, the four
+table per slot would be sixteen more, so instead the existing tables, the eight
 static samplers and the fallback statics are all visible to every stage: a
 vertex shader reads `t<n>` and `s<8 + n>` exactly as a pixel shader does, the
 two stages share each slot, and `Device::stagesShareTextureSlots()` is true
@@ -238,6 +268,14 @@ border, nearest and linear samplers, two samplers through one pipeline in one
 pass, and a comparison sampler (`Less`, then `Greater`) over a depth buffer.
 Making the Metal per-bind overload bind the default sampler instead turns seven
 of them red, which is how they were checked to be measuring something.
+
+`Tests/GPU/ShadowSamplingTests.cpp` covers the declared comparison: each layer
+of a `TwoDArray` depth target read through `TextureDepth2DArray`, a nearest
+`LessEqual` comparison reading 1 in front of the stored depth and 0 behind it on
+both the array and a plain `TextureDepth2D`, and a linear one aimed a quarter
+texel short of a depth edge reading 0.25. Building the compare configurations
+with `Greater` turns the last three red, and with a nearest filter the linear
+one.
 
 `Tests/GPU/TextureSamplingTests.cpp` covers the declared path on both backends.
 It draws a two-texel red|green texture through a shader declaring one

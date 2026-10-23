@@ -47,6 +47,8 @@ set(gpu_test_sources
         CubeTextureTests.cpp
         CullModeTests.cpp
         DepthActionTests.cpp
+        DepthBiasTests.cpp
+        DepthClearTests.cpp
         DepthTextureTests.cpp
         DevicePresenceTests.cpp
         Dispatch3DTests.cpp
@@ -89,9 +91,11 @@ set(gpu_test_sources
         SelectTests.cpp
         ShaderBlendTests.cpp
         ShaderCompileTests.cpp
+        ShadowSamplingTests.cpp
         SharedMemoryTests.cpp
         SimdMatrixTests.cpp
         SpriteBatchTests.cpp
+        StageBuiltInTests.cpp
         StencilTests.cpp
         StorePlacementTests.cpp
         StreamedRangeDrawTests.cpp

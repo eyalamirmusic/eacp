@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 
 using namespace eacp;
 using namespace VideoDemo;

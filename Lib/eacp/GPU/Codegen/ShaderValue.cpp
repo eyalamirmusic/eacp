@@ -2,6 +2,8 @@
 
 #include "SwizzleGrid.h"
 
+#include <cassert>
+
 namespace eacp::GPU
 {
 namespace detail
@@ -87,10 +89,134 @@ Float4 sample(const TextureCube& texture, const Float3& direction)
 
 Float sample(const TextureDepth2D& texture, const Float2& coordinates)
 {
+    assert(texture.graph->textureSampling(texture.slot).compare
+           == TextureCompare::None);
+
     auto result = Float {};
     result.graph = texture.graph;
     result.node = texture.graph->addDepthSample(texture.slot, coordinates.node);
     return result;
+}
+
+namespace
+{
+template <typename Result, typename Texture>
+Result
+    layerSampleOf(const Texture& texture, const Float2& coordinates, int layerNode)
+{
+    auto result = Result {};
+    result.graph = texture.graph;
+    result.node =
+        texture.graph->addLayerSample(texture.slot, coordinates.node, layerNode);
+    return result;
+}
+
+template <typename Texture>
+void assertCompares(const Texture& texture, bool compares)
+{
+    assert((texture.graph->textureSampling(texture.slot).compare
+            != TextureCompare::None)
+           == compares);
+    (void) texture;
+    (void) compares;
+}
+
+Float compareSampleOf(const TextureDepth2DArray& texture,
+                      const Float2& coordinates,
+                      int layerNode,
+                      const Float& reference)
+{
+    assertCompares(texture, true);
+
+    auto result = Float {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addCompareSample(
+        texture.slot, coordinates.node, layerNode, reference.node);
+    return result;
+}
+} // namespace
+
+Float4 sample(const Texture2DArray& texture,
+              const Float2& coordinates,
+              const Int& layer)
+{
+    return layerSampleOf<Float4>(texture, coordinates, layer.node);
+}
+
+Float4 sample(const Texture2DArray& texture,
+              const Float2& coordinates,
+              const Float& layer)
+{
+    return layerSampleOf<Float4>(texture, coordinates, layer.node);
+}
+
+Float4 sample(const Texture2DArray& texture, const Float2& coordinates, int layer)
+{
+    return layerSampleOf<Float4>(
+        texture, coordinates, texture.graph->addIntConstant(layer));
+}
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             const Int& layer)
+{
+    assertCompares(texture, false);
+    return layerSampleOf<Float>(texture, coordinates, layer.node);
+}
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             const Float& layer)
+{
+    assertCompares(texture, false);
+    return layerSampleOf<Float>(texture, coordinates, layer.node);
+}
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             int layer)
+{
+    assertCompares(texture, false);
+    return layerSampleOf<Float>(
+        texture, coordinates, texture.graph->addIntConstant(layer));
+}
+
+Float sampleCompare(const TextureDepth2D& texture,
+                    const Float2& coordinates,
+                    const Float& reference)
+{
+    assertCompares(texture, true);
+
+    auto result = Float {};
+    result.graph = texture.graph;
+    result.node = texture.graph->addCompareSample(
+        texture.slot, coordinates.node, reference.node);
+    return result;
+}
+
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    const Int& layer,
+                    const Float& reference)
+{
+    return compareSampleOf(texture, coordinates, layer.node, reference);
+}
+
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    const Float& layer,
+                    const Float& reference)
+{
+    return compareSampleOf(texture, coordinates, layer.node, reference);
+}
+
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    int layer,
+                    const Float& reference)
+{
+    return compareSampleOf(
+        texture, coordinates, texture.graph->addIntConstant(layer), reference);
 }
 
 Float4

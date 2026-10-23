@@ -296,10 +296,36 @@ other. `Tests/GPU/CullModeTests.cpp` is what fails if either drifts.
   stores a fragment — see the compute section
 - `Array<T, N>` with a subscript, at a literal or a computed index
 - Texture reads: `sample`, `sample` at a chosen level, and `fetch` at texel
-  coordinates
+  coordinates; `sample(t, uv, layer)` on a `Texture2DArray` or a
+  `TextureDepth2DArray`, and `sampleCompare` on a depth texture declared with
+  `TextureCompare::LessEqual` (see "Depth")
+- Stage built-ins: `fragmentCoordinate()`, `vertexId()` and `instanceId()`
+  (see "Stage built-ins" below)
 
 There is no aggregate type and none is needed: the EDSL is embedded in C++, so a
 struct of handles is a C++ struct.
+
+### Stage built-ins
+
+`fragmentCoordinate()` is the fragment's window position as a `Float4`, and the
+same four numbers on every backend: x and y in pixels from the target's top
+left with y down, at pixel centres (.5), z the depth the fragment tests with,
+and w one over clip w. It is MSL's `[[position]]` and GLSL's `gl_FragCoord`
+as they stand; HLSL's `SV_Position` hands over clip w itself, so the emitter
+prints `float4(p.xyz, 1.0 / p.w)` there. The origin needs no correction: Vulkan
+has only the top-left one, and eacp's flipped Vulkan viewport moves clip space,
+not the framebuffer. Fragment stage only.
+
+`vertexId()` and `instanceId()` are `UInt`s of the vertex stage — `[[vertex_id]]`
+and `[[instance_id]]`, `SV_VertexID` and `SV_InstanceID`, `gl_VertexIndex` and
+`gl_InstanceIndex` — declared only by a shader that reads them, and carried to
+the fragment stage with `varying()`, which crosses a `UInt` flat. What the
+draw's offsets add is the backends' own and differs: Metal and Vulkan include
+`firstInstance` in the instance id (pinned on Metal: ids `1, 2` for two
+instances from 1) and `firstVertex` / `baseVertex` in the vertex id, while
+D3D12's system values start at 0 whatever the draw's start locations are, and
+shader model 5 has no way to read those. Portable code that reads either id
+draws from 0, or adds its own offset from a uniform.
 
 ```cpp
 struct Hit
@@ -358,6 +384,31 @@ instead of blending over it.
 opaque.prepare({.sampleCount = 1, .depth = true});                    // the default: LessEqual, writing
 glass.prepare({.sampleCount = 1, .depth = true, .depthWrite = false}); // tests, does not write
 ```
+
+**`depthBias` is the polygon offset**, the fix for a shadow map shadowing the
+surface it was rendered from: every fragment's depth moves by
+`constant * r + slopeScale * maxSlope`, capped at `clamp` when that is non-zero,
+before the test and the write. `r` is the depth plane's precision at the
+primitive's depth — the plane is 32-bit float everywhere, so 2^(e − 23) for a
+primitive whose largest z has exponent `e`, 2^-24 anywhere in [0.5, 1) — and
+the slope is depth per pixel, so a surface seen edge-on gets more than one facing
+the camera. It is ignored unless `depth` is set.
+
+```cpp
+caster.prepare({.depth = true,
+                .depthBias = {.constant = 64.f, .slopeScale = 1.5f}});
+```
+
+**A positive bias makes depth larger**: further away in a LessEqual buffer
+cleared to 1, nearer in a reversed-Z one (below), where a caster pushed away
+from the light takes a negative bias instead. The three numbers are the same
+three on every API; D3D12 takes the constant as an integer, so it is rounded
+there and a whole number of units is the portable choice. Vulkan clamps only
+where the device has `depthBiasClamp`, and applies the bias unclamped where it
+has not. Bias is pipeline state on D3D12 and Vulkan and encoder state on Metal,
+which `setPipeline` sets on every bind, a pipeline with none setting it back to
+zero. `DepthBiasTests` pins the direction, the unit, the slope, the clamp and
+the reset.
 
 **Culling is off by default, and the front face is counter-clockwise in clip
 space** — glTF's convention, spelled out under "Face culling, and which way round
@@ -462,7 +513,35 @@ program.prepare(pipeline);
 
 The buffer belongs to the target, is created with it and dies with it, so there
 is no second lifetime to keep in step. Every pass into the texture clears it to
-the far plane and stores nothing.
+`RenderPassDescriptor::clearDepth` — 1, the far plane, unless it says otherwise
+— and stores nothing, unless its `depthAction` keeps or resumes it.
+
+**Reversed Z** is a clear to 0, a `GreaterEqual` test and a projection that
+puts the near plane on 1 and the far one on 0, `Maths::Mat4::perspectiveReversedZ`
+(whose far plane may be infinite). A float depth plane is densest near 0, and a
+perspective divide crowds the distance into the last sliver of the range, so
+reversing the range puts the precision where the projection took it away:
+
+```cpp
+auto projection = Maths::Mat4::perspectiveReversedZ(aspect, fovY, 0.1f);
+scene.prepare({.depth = true, .depthCompare = DepthCompare::GreaterEqual});
+
+auto descriptor = RenderPassDescriptor {};
+descriptor.clearDepth = 0.f;
+auto pass = frame.beginPass(target, descriptor);
+```
+
+`clearDepth` is read wherever a pass clears — `DepthAction::Clear` and `Keep`,
+the drawable, a texture target and a `depthTarget` alike — and ignored by
+`Resume`, as `clearStencil` is; it is a value in [0, 1]. D3D12 creates every
+depth buffer with 1 as its optimised clear, so a clear to 0 there is correct
+but off the fast-clear path, and the debug layer says so. `DepthClearTests`
+covers each kind of pass and the projection end to end.
+
+One thing a reversed or infinite projection is not for is plane extraction:
+Gribb/Hartmann on it hands back a degenerate far plane, so a frustum cull keeps
+a conventional, finite `perspective` of the same lens for its planes and gives
+only the pipeline the reversed one.
 
 The two flags have to agree. A pipeline that declares depth drawing into a
 target that has none is a validation error on Metal and an untested draw on
@@ -494,6 +573,56 @@ view of the layer, each made on first use and kept; D3D12 has no `TEXTURE2D`
 view past slice 0, so it binds a one-slice `TEXTURE2DARRAY` view made with the
 target, which a strict driver wants declared `Texture2DArray<float>` and read
 at layer 0.
+
+A codegen shader that wants every layer in one bind declares
+`Uniform<TextureDepth2DArray>` (`ShaderBuilder::depthTextureArray`), is assigned
+the array target, and samples `sample(t, uv, layer)` — `depth2d_array<float>`,
+`Texture2DArray<float>`, `sampler2DArray`, through the plain
+`setFragmentDepthTexture` bind. A `Float` layer is rounded to the nearest even
+layer everywhere (MSL `uint(rint(layer))`; D3D and Vulkan round the coordinate's
+third component that way themselves), and a layer outside the array is the
+caller's bug: D3D and Vulkan clamp it, Metal does not.
+
+**Comparison sampling.** A depth texture declared with a sampling whose
+`compare` is `TextureCompare::LessEqual` is a shadow map, read with
+`sampleCompare(t, uv, reference)` or `sampleCompare(t, uv, layer, reference)`:
+one `Float`, 1 where `reference <= stored depth` and 0 where not — so with the
+receiver's own depth as the reference, lit is 1. With `TextureFilter::Linear`
+the hardware filters the comparison over the 2x2 footprint, which is one PCF
+tap for the price of one sample.
+
+```cpp
+struct Lit final : ShaderProgram
+{
+    Lit()
+    {
+        cascades.sampling = {TextureFilter::Linear, TextureAddressMode::Clamp,
+                             TextureCompare::LessEqual};
+        compile();
+    }
+
+    void define() override
+    {
+        // ... cascade (an Int), shadowUv and receiverDepth from the light's view
+        auto lit = sampleCompare(cascades, shadowUv, cascade, receiverDepth);
+        // ...
+    }
+
+    Uniform<TextureDepth2DArray> cascades;   // = the TwoDArray shadow target
+
+    EACP_SHADER(cascades)
+};
+```
+
+MSL spells it `t.sample_compare(s, uv[, uint(layer)], reference)`, HLSL
+`t.SampleCmpLevelZero(samplerConfigN, uv | float3(uv, layer), reference)`
+through a `SamplerComparisonState` — the level-zero form because the plane has
+one level and because a PCF loop has no derivatives for `SampleCmp` — and GLSL
+`texture(t, vec3(uv, reference))` or `texture(t, vec4(uv, layer, reference))`
+on a `sampler2DShadow` or `sampler2DArrayShadow`. A texture declared to compare
+has no plain `sample`, since GLSL's shadow types have none; the builder asserts.
+The comparison is a sampling configuration like the filter and the wrap, so it
+binds the way every declared sampling does; see `SAMPLERS.md`.
 
 **A depth plane from another target.** A depth plane belongs to the first
 colour target and follows its level and slice, which is no help to a pass into
@@ -1058,13 +1187,50 @@ builds no timestamp resources; `supportsPassTimings()` says whether this device
 can break a buffer down by pass, as `Device::supportsPassTimings()` does for a
 frame.
 
+Each pass carries two numbers, and only one of them adds up:
+
+| Field | What it is | Sums to the frame |
+| --- | --- | --- |
+| `milliseconds` | the pass's share: the time it had work in flight, with any stretch shared with other timed passes split evenly between them | yes |
+| `spanMilliseconds` | the start of its first stage to the end of its last, waiting included | on D3D12 and Vulkan only |
+
+The shares of a frame's passes add up to the time at least one of them was
+running on the GPU: never more than `FrameTimings::milliseconds`, and nearly all
+of it when every pass is labelled, the rest being whatever the command buffer
+does around them (a copy, a resolve, the gaps at either end). That makes them
+the figure for a per-pass breakdown, and for a sum over some of the passes —
+`UI::GPUComponent`'s own time is one.
+
+The two differ only on Metal, and for a reason in the hardware. A tile-based GPU
+starts a render pass's vertex stage as soon as it is encoded and holds its
+fragment stage until the passes it depends on have finished shading, so a pass
+sampled from the start of its vertex stage to the end of its fragment stage
+spans everything that ran in between. Measured on an M4 Max, a frame of three
+shadow passes, a 4.6 ms scene pass, nine light bloom passes each reading the one
+before and a composite gives every bloom pass a span of about 4.6 ms — a column
+adding up to ten frames — while their shares are about 7 µs each and the shares
+sum to the frame within a microsecond. So Metal samples a render pass at all four
+of its stage boundaries and counts its vertex and fragment stages as two
+intervals, with the wait between them in neither; a compute pass is sampled at
+its encoder's start and end, the only boundaries an encoder has. D3D12 and
+Vulkan take each pass's timestamps at two points on the command list, between
+which consecutive passes do not overlap, so a share there is the pass's span.
+
+What the share cannot do is see inside work that genuinely runs at once. Two
+passes with no dependency between them — writing different targets, neither
+reading the other — may be shaded side by side, and Apple's GPUs do this: a
+trivial pass next to a heavy independent one stays in flight until the heavy
+one is nearly done. The overlap is split evenly, which keeps the sum right and
+the split a guess, so a breakdown is only as sharp as the passes are ordered.
+
 A frame or a command buffer times its first `GpuTimestamps::maxTimedPasses`
 labelled passes, which is 128 — enough to give every kernel of a net a label of
 its own. Past that a pass runs exactly as it would have and is simply not
 timed, so the tail is missing from the breakdown rather than the buffer being
-wrong. The ceiling is a fixed pool of two timestamps per pass, so it costs a
-slot 2 KB of samples on Metal and a 258-entry query heap with its readback
-buffer on D3D12 and Vulkan — paid only once a labelled pass has asked for it.
+wrong. The ceiling is a fixed pool of four samples per pass on Metal and two
+timestamps per pass on D3D12 and Vulkan, so it costs a slot 4 KB of samples on
+Metal and a 258-entry query heap with its readback buffer on D3D12 and Vulkan —
+paid only once a labelled pass has asked for it.
 
 ### Zeroing a buffer
 
@@ -2685,8 +2851,8 @@ kernel at `setOutputTextureLevel(texture, slot, level)`), and a cube takes a cha
 per face, slice-major: face 0's levels, then face 1's.
 
 No new `TextureSampling` configuration is involved: mip filtering on a
-single-level texture is what both APIs do anyway, so the four configurations
-still cover everything. That is also where a long-standing divergence was found —
+single-level texture is what both APIs do anyway, so the filter and wrap
+configurations still cover everything. That is also where a long-standing divergence was found —
 D3D12's static samplers had always declared `MIN_MAG_MIP_LINEAR`, while Metal
 left `mipFilter` at its default of `NotMipmapped`. Nothing could see it while no
 texture had a second level — and neither could `sample(t, uv, level)`, which
@@ -2712,8 +2878,10 @@ cube array) and `volumeDepth` images. The shader declares the matching type —
 `texture2d_array`, `texturecube_array`, `texture3d` in MSL, `Texture2DArray`,
 `TextureCubeArray`, `Texture3D` in HLSL, `sampler2DArray`, `samplerCubeArray`,
 `sampler3D` in GLSL — and binds through the same `setFragmentTexture`,
-`setVertexTexture` and `setInputTexture` as a 2D one. The shader graph has no
-array or volume type yet; hand-written shaders do.
+`setVertexTexture` and `setInputTexture` as a 2D one. The shader graph has the
+2D array, `Uniform<Texture2DArray>` (`ShaderBuilder::textureArray`) sampled as
+`sample(t, uv, layer)` for a `Float4`, and the depth array beside it (see
+"Depth"); no cube array or volume type yet, which hand-written shaders have.
 
 A **slice** is one 2D image of one level: a layer, a face (`layer * 6 + face`
 on a cube array) — the index `TextureRegion`, `TextureCopyRegion`,
@@ -2903,7 +3071,7 @@ The shader declares the sampler where the slot puts it: an MSL
 `SamplerComparisonState` for a comparison sampler), or on Vulkan the combined
 `sampler2D` / `sampler2DShadow` at the texture's own binding. Shaders built with
 the codegen layer keep sampling the way they declared, and the `TextureSampling`
-overloads are the same cache under four fixed descriptors
+overloads are the same cache under eight fixed descriptors
 (`SamplerDescriptor::from`). `Device::supportsPerBindSamplers()` is false on the
 one D3D12 driver whose sampler tables cannot be trusted, where the per-bind
 registers hold a fixed linear/repeat sampler instead; `SAMPLERS.md` says which

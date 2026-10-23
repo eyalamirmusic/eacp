@@ -90,16 +90,6 @@ std::shared_ptr<Device::SamplerCache> Device::makeSamplerCache()
     return std::make_shared<SamplerCache>();
 }
 
-namespace
-{
-constexpr TextureSampling samplingConfigurationsInOrder[] = {
-    {TextureFilter::Nearest, TextureAddressMode::Clamp},
-    {TextureFilter::Nearest, TextureAddressMode::Repeat},
-    {TextureFilter::Linear, TextureAddressMode::Clamp},
-    {TextureFilter::Linear, TextureAddressMode::Repeat},
-};
-} // namespace
-
 Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
 {
     if (!isValid())
@@ -113,9 +103,9 @@ Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
 
     auto native = static_cast<void*>(nullptr);
 
-    for (const auto& sampling: samplingConfigurationsInOrder)
-        if (SamplerDescriptor::from(sampling) == descriptor)
-            native = nativeSampler(sampling);
+    for (auto index = 0; index < samplingConfigurations; ++index)
+        if (SamplerDescriptor::from(samplingConfiguration(index)) == descriptor)
+            native = nativeSampler(samplingConfiguration(index));
 
     if (native == nullptr)
         native = createNativeSampler(descriptor);

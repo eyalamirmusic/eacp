@@ -326,6 +326,41 @@ struct Uniform<TextureDepth2D> : TextureDepth2D
     TextureSampling sampling {};
 };
 
+// The array forms. A colour array is assigned a TwoDArray texture; a depth
+// array is assigned the TwoDArray render target whose whole depth plane it
+// samples, as Uniform<TextureDepth2D> is assigned a target.
+template <>
+struct Uniform<Texture2DArray> : Texture2DArray
+{
+    constexpr Uniform& operator=(const Texture& newTexture)
+    {
+        value = &newTexture;
+        return *this;
+    }
+
+    Uniform& operator=(Texture&&) = delete;
+
+    const Texture* value = nullptr;
+
+    TextureSampling sampling {};
+};
+
+template <>
+struct Uniform<TextureDepth2DArray> : TextureDepth2DArray
+{
+    constexpr Uniform& operator=(const Texture& newRenderTarget)
+    {
+        value = &newRenderTarget;
+        return *this;
+    }
+
+    Uniform& operator=(Texture&&) = delete;
+
+    const Texture* value = nullptr;
+
+    TextureSampling sampling {};
+};
+
 // Storage-buffer members of a compute program, following the texture pattern:
 // the slot-indexed handle define() reads or writes, and the slot the assigned
 // GPU::Buffer is bound at when dispatched. A Buffer binds whole, a BufferRange
@@ -457,6 +492,10 @@ public:
 
     void operator()(const char* name, Uniform<TextureDepth2D>& member);
 
+    void operator()(const char* name, Uniform<Texture2DArray>& member);
+
+    void operator()(const char* name, Uniform<TextureDepth2DArray>& member);
+
     void operator()(const char* name, Uniform<InputBuffer>& member);
 
     void operator()(const char* name, Uniform<OutputBuffer>& member);
@@ -484,6 +523,14 @@ protected:
                                 TextureDepth2D&,
                                 const Texture*,
                                 TextureSampling);
+    virtual void onArrayTexture(const char*,
+                                Texture2DArray&,
+                                const Texture*,
+                                TextureSampling);
+    virtual void onDepthArrayTexture(const char*,
+                                     TextureDepth2DArray&,
+                                     const Texture*,
+                                     TextureSampling);
     virtual void onInputBuffer(const char*, InputBuffer&, const BufferRange&);
     virtual void onOutputBuffer(const char*, OutputBuffer&, const BufferRange&);
     virtual void
@@ -520,6 +567,16 @@ public:
                         TextureDepth2D& handle,
                         const Texture*,
                         TextureSampling sampling) override;
+
+    void onArrayTexture(const char*,
+                        Texture2DArray& handle,
+                        const Texture*,
+                        TextureSampling sampling) override;
+
+    void onDepthArrayTexture(const char*,
+                             TextureDepth2DArray& handle,
+                             const Texture*,
+                             TextureSampling sampling) override;
 
     void
         onInputBuffer(const char*, InputBuffer& handle, const BufferRange&) override;

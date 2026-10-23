@@ -349,6 +349,65 @@ struct TextureDepth2D
 // near plane, 1 at the far one, after whatever depth range the viewport set.
 Float sample(const TextureDepth2D& texture, const Float2& coordinates);
 
+// A TwoDArray texture, sampled at a coordinate within one layer. Bound like a
+// Texture2D, with RenderPass::setFragmentTexture.
+struct Texture2DArray
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// The whole depth plane of a TwoDArray render target: the cascades of a shadow
+// map in one bind, RenderPass::setFragmentDepthTexture of the target, where a
+// TextureDepth2D takes one layer of it through setFragmentDepthTextureSlice.
+struct TextureDepth2DArray
+{
+    ShaderGraph* graph = nullptr;
+    int slot = -1;
+};
+
+// The layer is an index: a Float one is rounded to the nearest (even) layer on
+// every backend, and one outside the array is undefined on Metal, where the
+// other two clamp it.
+Float4 sample(const Texture2DArray& texture,
+              const Float2& coordinates,
+              const Int& layer);
+Float4 sample(const Texture2DArray& texture,
+              const Float2& coordinates,
+              const Float& layer);
+Float4 sample(const Texture2DArray& texture, const Float2& coordinates, int layer);
+
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             const Int& layer);
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             const Float& layer);
+Float sample(const TextureDepth2DArray& texture,
+             const Float2& coordinates,
+             int layer);
+
+// A shadow lookup: 1 where `reference <= stored depth`, 0 where not, and with a
+// Linear sampling the fraction of the 2x2 footprint that passes - the hardware
+// PCF tap. The texture must be declared with TextureCompare::LessEqual, which
+// is also what makes sample() unavailable on it: GLSL's shadow sampler has no
+// plain read.
+Float sampleCompare(const TextureDepth2D& texture,
+                    const Float2& coordinates,
+                    const Float& reference);
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    const Int& layer,
+                    const Float& reference);
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    const Float& layer,
+                    const Float& reference);
+Float sampleCompare(const TextureDepth2DArray& texture,
+                    const Float2& coordinates,
+                    int layer,
+                    const Float& reference);
+
 // Sampling at a mip level the shader chooses rather than the one the hardware
 // derives from the neighbouring fragments. Two things need this: a sample taken
 // where the derivatives are meaningless - of a coordinate that jumps between

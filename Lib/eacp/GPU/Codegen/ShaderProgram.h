@@ -402,6 +402,12 @@ protected:
     Float2 varying(const Float2& vertexValue);
     Float3 varying(const Float3& vertexValue);
     Float4 varying(const Float4& vertexValue);
+    UInt varying(const UInt& vertexValue);
+
+    // The stage built-ins; see ShaderBuilder for what each one holds.
+    Float4 fragmentCoordinate();
+    UInt vertexId();
+    UInt instanceId();
 
     Float constant(float value);
     Bool boolean(bool value);

@@ -1247,6 +1247,83 @@ struct ExprPrinter
         return widest;
     }
 
+    // Metal takes the layer as an index and rounds nothing, so a Float layer is
+    // rounded to nearest even first - the rule Vulkan and D3D apply to the
+    // coordinate's third component, which is how the other two take it.
+    std::string metalLayer(int node) const
+    {
+        if (graph.expr(node).type == ValueType::Int)
+            return "uint(" + ref(node) + ")";
+
+        return "uint(rint(" + ref(node) + "))";
+    }
+
+    std::string floatLayer(int layer) const
+    {
+        if (graph.expr(layer).type == ValueType::Int)
+            return "float(" + ref(layer) + ")";
+
+        return ref(layer);
+    }
+
+    std::string layeredCoordinate(int uv, int layer) const
+    {
+        return std::string(typeName(backend, ValueType::Float3)) + "(" + ref(uv)
+               + ", " + floatLayer(layer) + ")";
+    }
+
+    std::string layerSample(const Expr& expr,
+                            const std::string& name,
+                            const std::string& sampler) const
+    {
+        auto uv = expr.args[0];
+        auto layer = expr.args[1];
+
+        if (backend == Backend::Metal)
+            return name + ".sample(" + sampler + ", " + ref(uv) + ", "
+                   + metalLayer(layer) + ")";
+
+        if (backend == Backend::DirectX)
+            return name + ".Sample(" + sampler + ", " + layeredCoordinate(uv, layer)
+                   + ")";
+
+        auto call = "texture(" + name + ", " + layeredCoordinate(uv, layer) + ")";
+
+        return isDepth(graph.textureKind(expr.index)) ? call + ".r" : call;
+    }
+
+    // HLSL takes the level-zero form because a depth plane has one level and
+    // because SampleCmp needs derivatives, which a PCF loop does not have.
+    // GLSL folds the reference into the coordinate's last component.
+    std::string compareSample(const Expr& expr,
+                              const std::string& name,
+                              const std::string& sampler) const
+    {
+        auto layered = expr.args.size() == 3;
+        auto uv = expr.args[0];
+        auto reference = ref(expr.args.back());
+
+        if (backend == Backend::Metal)
+            return name + ".sample_compare(" + sampler + ", " + ref(uv) + ", "
+                   + (layered ? metalLayer(expr.args[1]) + ", " : std::string {})
+                   + reference + ")";
+
+        if (backend == Backend::DirectX)
+        {
+            auto coordinate =
+                layered ? layeredCoordinate(uv, expr.args[1]) : ref(uv);
+
+            return name + ".SampleCmpLevelZero(" + sampler + ", " + coordinate + ", "
+                   + reference + ")";
+        }
+
+        if (layered)
+            return "texture(" + name + ", vec4(" + ref(uv) + ", "
+                   + floatLayer(expr.args[1]) + ", " + reference + "))";
+
+        return "texture(" + name + ", vec3(" + ref(uv) + ", " + reference + "))";
+    }
+
     std::string widened(int node, ValueType wide) const
     {
         auto argument = ref(node);
@@ -1431,6 +1508,12 @@ struct ExprPrinter
                     backend == Backend::Metal
                         ? "sampler" + std::to_string(expr.index)
                         : hlslSamplerName(graph.textureSampling(expr.index));
+                if (expr.text == "compare")
+                    return compareSample(expr, name, sampler);
+
+                if (isLayered(graph.textureKind(expr.index)))
+                    return layerSample(expr, name, sampler);
+
                 auto uv = ref(expr.args[0]);
 
                 // GLSL's sampler2D over a depth image hands back four
@@ -1586,9 +1669,36 @@ struct ExprPrinter
 
                 return "(" + std::string(groupLaneName(backend)) + " / "
                        + std::to_string(simdGroupWidth) + "u)";
+
+            case ExprKind::BuiltIn:
+                return builtIn((ShaderBuiltIn) expr.index);
         }
 
         return {};
+    }
+
+    // HLSL's SV_Position hands the fragment stage clip w where the other two
+    // hand 1 / w, so it is turned round to agree. All three put the origin at
+    // the top left, y down, in pixels with centres at .5: Vulkan has no other
+    // origin, and eacp's flipped viewport moves clip space, not the framebuffer.
+    std::string builtIn(ShaderBuiltIn which) const
+    {
+        if (which == ShaderBuiltIn::FragmentCoordinate)
+        {
+            if (backend == Backend::Vulkan)
+                return "gl_FragCoord";
+
+            if (backend == Backend::DirectX)
+                return "float4(input.position.xyz, 1.0 / input.position.w)";
+
+            return "input.position";
+        }
+
+        if (backend == Backend::Vulkan)
+            return which == ShaderBuiltIn::VertexId ? "uint(gl_VertexIndex)"
+                                                    : "uint(gl_InstanceIndex)";
+
+        return which == ShaderBuiltIn::VertexId ? "vertexId" : "instanceId";
     }
 
     const ShaderGraph& graph;
@@ -1632,6 +1742,7 @@ bool wantsLocal(ExprKind kind)
         case ExprKind::GroupId:
         case ExprKind::GridExtent:
         case ExprKind::SimdGroupIndex:
+        case ExprKind::BuiltIn:
             return false;
     }
 
@@ -3211,6 +3322,10 @@ const char* metalTextureType(TextureKind kind)
             return "texturecube<float>";
         case TextureKind::Depth2D:
             return "depth2d<float>";
+        case TextureKind::Texture2DArray:
+            return "texture2d_array<float>";
+        case TextureKind::Depth2DArray:
+            return "depth2d_array<float>";
         default:
             return "texture2d<float>";
     }
@@ -3228,16 +3343,35 @@ const char* hlslTextureType(TextureKind kind)
             return "TextureCube";
         case TextureKind::Depth2D:
             return "Texture2D<float>";
+        case TextureKind::Texture2DArray:
+            return "Texture2DArray";
+        case TextureKind::Depth2DArray:
+            return "Texture2DArray<float>";
         default:
             return "Texture2D";
     }
 }
 
-// A combined image sampler: the pipeline layout supplies an immutable sampler
-// per binding, so the sampling configuration never reaches the source.
-const char* glslTextureType(TextureKind kind)
+// A combined image sampler: the sampler travels in the descriptor write, so the
+// sampling configuration never reaches the source - except a comparison, which
+// GLSL spells in the type and which the bound VkSampler must then enable.
+const char* glslTextureType(TextureKind kind, const TextureSampling& sampling)
 {
-    return kind == TextureKind::Cube ? "samplerCube" : "sampler2D";
+    const auto compare = sampling.compare != TextureCompare::None;
+
+    switch (kind)
+    {
+        case TextureKind::Cube:
+            return "samplerCube";
+        case TextureKind::Texture2DArray:
+            return "sampler2DArray";
+        case TextureKind::Depth2DArray:
+            return compare ? "sampler2DArrayShadow" : "sampler2DArray";
+        case TextureKind::Depth2D:
+            return compare ? "sampler2DShadow" : "sampler2D";
+        default:
+            return "sampler2D";
+    }
 }
 
 // imageStore is all a kernel does with one, so the image needs no format layout
@@ -3248,10 +3382,11 @@ std::string glslWritableTexture(int slot, int binding)
            + ") uniform writeonly image2D texture" + std::to_string(slot) + ";\n";
 }
 
-std::string glslSampledTexture(TextureKind kind, int slot, int binding)
+std::string glslSampledTexture(const ShaderGraph& graph, int slot, int binding)
 {
     return "layout(set = 0, binding = " + std::to_string(binding) + ") uniform "
-           + glslTextureType(kind) + " texture" + std::to_string(slot) + ";\n";
+           + glslTextureType(graph.textureKind(slot), graph.textureSampling(slot))
+           + " texture" + std::to_string(slot) + ";\n";
 }
 
 // The SamplerState globals an HLSL stage needs: one per sampling configuration
@@ -3280,9 +3415,17 @@ std::string hlslSamplerDeclarations(const ShaderGraph& graph)
 
     for (auto configuration = 0; configuration < samplingConfigurations;
          ++configuration)
-        if (used[configuration])
-            source += "SamplerState samplerConfig" + std::to_string(configuration)
-                      + " : register(s" + std::to_string(configuration) + ");\n";
+    {
+        if (!used[configuration])
+            continue;
+
+        const auto compares =
+            samplingConfiguration(configuration).compare != TextureCompare::None;
+
+        source += std::string(compares ? "SamplerComparisonState" : "SamplerState")
+                  + " samplerConfig" + std::to_string(configuration)
+                  + " : register(s" + std::to_string(configuration) + ");\n";
+    }
 
     return source;
 }
@@ -3475,7 +3618,7 @@ std::string emitCompute(const ShaderGraph& graph, Backend backend)
 
             source += graph.textureAccess(i) == TextureAccess::Write
                           ? glslWritableTexture(i, binding)
-                          : glslSampledTexture(graph.textureKind(i), i, binding);
+                          : glslSampledTexture(graph, i, binding);
         }
 
         if (graph.textureCount() > 0)
@@ -3706,8 +3849,7 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     if (glsl)
     {
         for (auto i = 0; i < graph.textureCount(); ++i)
-            source +=
-                glslSampledTexture(graph.textureKind(i), i, vulkanTextureBinding(i));
+            source += glslSampledTexture(graph, i, vulkanTextureBinding(i));
 
         if (graph.textureCount() > 0)
             source += "\n";
@@ -3767,6 +3909,12 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     {
         source += "vertex VertexOut vertexMain(VertexIn input [[stage_in]]";
 
+        if (graph.usesVertexId())
+            source += ", uint vertexId [[vertex_id]]";
+
+        if (graph.usesInstanceId())
+            source += ", uint instanceId [[instance_id]]";
+
         if (hasUniforms && vertexReadsUniforms(graph))
             source += ", constant Uniforms& uniforms [[buffer("
                       + std::to_string(RenderPass::uniformBase) + ")]]";
@@ -3792,7 +3940,15 @@ std::string emit(const ShaderGraph& graph, Backend backend)
     }
     else
     {
-        source += "VertexOut vertexMain(VertexIn input)\n{\n";
+        source += "VertexOut vertexMain(VertexIn input";
+
+        if (graph.usesVertexId())
+            source += ", uint vertexId : SV_VertexID";
+
+        if (graph.usesInstanceId())
+            source += ", uint instanceId : SV_InstanceID";
+
+        source += ")\n{\n";
     }
 
     // The vertex stage takes no statements: a mutable local and the control flow

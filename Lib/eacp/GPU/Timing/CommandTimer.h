@@ -17,8 +17,9 @@ class Device;
 class CommandTimer
 {
 public:
-    // The pass's ordinal - its two samples are at 2 * ordinal and 2 * ordinal + 1
-    // - or -1 when the pass is not being timed, which is what an unlabelled pass,
+    // The pass's ordinal - which samples are its is the backend's layout, two a
+    // pass on D3D12 and Vulkan and four on Metal - or -1 when the pass is not
+    // being timed, which is what an unlabelled pass,
     // an unsupported device and a buffer already holding maxTimedPasses labelled
     // passes all get.
     int beginPass(std::string_view label, Device& device, void* nativeCommandBuffer);

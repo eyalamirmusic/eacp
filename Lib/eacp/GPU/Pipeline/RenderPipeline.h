@@ -305,6 +305,36 @@ enum class CompareFunction
 // it and nothing is served by rewriting every call site.
 using DepthCompare = CompareFunction;
 
+// The polygon offset added to every fragment's depth before the test and the
+// write:
+//
+//     bias = constant * r + slopeScale * max(|dz/dx|, |dz/dy|)
+//
+// clamped to at most `clamp` when that is positive and at least it when it is
+// negative; zero clamps nothing. `r` is the smallest representable difference
+// in depth at the primitive's depth - the depth plane is 32-bit float on every
+// backend, so 2^(e - 23) with `e` the exponent of the primitive's largest z,
+// and one unit near z = 0.5 is about 6e-8. The slope is depth per pixel.
+//
+// **A positive bias makes depth larger**, which is further from the camera
+// under the conventional LessEqual buffer cleared to 1 and *nearer* under a
+// reversed-Z one cleared to 0 and tested GreaterEqual - so a shadow caster
+// pushed away from the light takes a positive bias in the first and a negative
+// one in the second. Tests/GPU/DepthBiasTests.cpp measures it on each backend.
+//
+// The three are the same three on every API - D3D12's rasterizer desc, Vulkan's
+// rasterization state, Metal's encoder - with one difference: D3D12 takes the
+// constant as an integer, so it is rounded to the nearest whole unit there, and
+// a whole-unit constant is the portable one.
+struct DepthBias
+{
+    float constant = 0.f;
+    float slopeScale = 0.f;
+    float clamp = 0.f;
+
+    bool isNone() const;
+};
+
 // What happens to the stencil value in the buffer when a fragment reaches one
 // of the three outcomes a StencilFace names.
 //
@@ -404,6 +434,11 @@ struct RenderPipelineDescriptor
     DepthCompare depthCompare = DepthCompare::LessEqual;
     bool depthWrite = true;
 
+    // Pushes this pipeline's depth along the buffer, which is what keeps a
+    // shadow map from shadowing the surface it was rendered from. None by
+    // default, and ignored unless `depth` is set. See DepthBias.
+    DepthBias depthBias;
+
     // Face culling, off by default. Worth turning on for closed geometry whose
     // winding is consistent: a back face is rasterised and shaded before the
     // depth test throws it away, so culling it is work not done rather than work
@@ -477,6 +512,10 @@ ColorTargetState writtenColorTarget(const RenderPipelineDescriptor& descriptor,
 // one, the named mode's otherwise.
 BlendState resolvedBlend(const ColorTargetState& target);
 
+// The bias a pipeline is built with: the descriptor's, or none at all when it
+// has no depth test for the bias to move.
+DepthBias appliedDepthBias(const RenderPipelineDescriptor& descriptor);
+
 // A compiled render pipeline state (MTLRenderPipelineState on Metal). Create via
 // Device::makeRenderPipeline.
 class RenderPipeline
@@ -494,6 +533,10 @@ public:
     // part of the pipeline state object it is on D3D12.
     CullMode cullMode() const;
     Winding frontFace() const;
+
+    // appliedDepthBias of the descriptor. Encoder state on Metal like the two
+    // above, so it is read and set on every bind there.
+    DepthBias depthBias() const;
 
     // Opaque native handles for cross-translation-unit use by the render pass.
     // nativeDepthState() is the combined depth-stencil state: non-null wherever

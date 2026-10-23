@@ -4,6 +4,7 @@
 
 #include "../Device/Device.h"
 #include "../Timing/CommandTimer.h"
+#include "../Timing/PassSamples-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
 #include <eacp/Core/Threads/EventLoop.h>
@@ -75,13 +76,7 @@ ComputePass CommandBuffer::beginCompute(std::string_view label, DispatchOrder or
     {
         if (auto samples =
                 (__bridge id<MTLCounterSampleBuffer>) impl->timer.nativeSamples())
-        {
-            auto attachment = passDescriptor.sampleBufferAttachments[0];
-
-            attachment.sampleBuffer = samples;
-            attachment.startOfEncoderSampleIndex = (NSUInteger) (pass * 2);
-            attachment.endOfEncoderSampleIndex = (NSUInteger) (pass * 2 + 1);
-        }
+            PassSamples::attach(passDescriptor, samples, pass);
     }
 
     return ComputePass((__bridge void*)

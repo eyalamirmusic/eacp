@@ -354,6 +354,7 @@ struct RenderPipeline::Native
         : topology(descriptor.topology)
         , cullMode(descriptor.cullMode)
         , frontFace(descriptor.frontFace)
+        , depthBias(appliedDepthBias(descriptor))
     {
         auto metalDevice = (__bridge id<MTLDevice>) device.nativeDevice();
 
@@ -471,6 +472,7 @@ struct RenderPipeline::Native
     PrimitiveTopology topology = PrimitiveTopology::Triangles;
     CullMode cullMode = CullMode::None;
     Winding frontFace = Winding::CounterClockwise;
+    DepthBias depthBias;
     ObjC::Ptr<NSObject<MTLRenderPipelineState>> state;
     ObjC::Ptr<NSObject<MTLDepthStencilState>> depthState;
 };
@@ -499,6 +501,11 @@ CullMode RenderPipeline::cullMode() const
 Winding RenderPipeline::frontFace() const
 {
     return impl->frontFace;
+}
+
+DepthBias RenderPipeline::depthBias() const
+{
+    return impl->depthBias;
 }
 
 void* RenderPipeline::nativeState() const
