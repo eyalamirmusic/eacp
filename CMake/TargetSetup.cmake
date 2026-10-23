@@ -395,6 +395,10 @@ END
 }
 ]==])
 
+    # Called from a consumer's directory, whose CMAKE_MODULE_PATH has neither
+    # eacp's CMake dir nor CPM's module shims (each is set only in the scope
+    # that added it). Find FindResEmbed.cmake here; the append is function-local.
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_FUNCTION_LIST_DIR}")
     find_package(ResEmbed REQUIRED)
     res_embed_add(${target}
             FILES     "${app_info_json}"
