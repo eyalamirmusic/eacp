@@ -123,6 +123,8 @@ in [Build.md](Build.md).
 | `EACP_HEADLESS=1` | Builds every window with no surface and never shows it; the GPU tests still run on lavapipe with no display server |
 | `EACP_VK_SOFTWARE=1` | Prefers a CPU Vulkan device (Mesa's lavapipe), mirroring `EACP_D3D12_WARP` |
 | `EACP_VK_VALIDATION=1` | Enables `VK_LAYER_KHRONOS_validation` with a debug-utils messenger that logs |
+| `EACP_VK_RENDER_PASSES=1` | Runs a Vulkan 1.3 device on the render-pass path a 1.1 device takes |
+| `EACP_VK_LEGACY_SYNC=1` | Runs a device with `VK_KHR_synchronization2` on the Vulkan 1.0 barrier and submit path a device without it takes |
 | `EACP_X11_NO_XI2=1` | Refuses XInput 2, so the X11 backend takes the core pointer path |
 | `EACP_REQUIRE_GPU=1` | Makes `GPUTests` fail rather than self-skip when no device came up |
 | `EACP_REQUIRE_DISPLAY=1` | Makes the window and present tests fail rather than self-skip without a display server |
