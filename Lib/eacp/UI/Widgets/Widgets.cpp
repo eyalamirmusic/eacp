@@ -83,7 +83,7 @@ void Label::paint(Graphics& g)
     if (style.has_value())
         g.setFontStyle(*style);
 
-    g.setColour(colour);
+    g.setColour(colour.value_or(getHostTheme().text));
     g.drawText(text, getLocalBounds(), justification);
 }
 
@@ -123,10 +123,10 @@ void Button::setAccentColour(const Color& colour)
 
 void Button::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto bounds = getLocalBounds();
 
-    g.setColour(toggledOn ? accent : theme.panel);
+    g.setColour(toggledOn ? accent.value_or(theme.accent) : theme.panel);
     g.fillRoundedRect(bounds, buttonCorner);
 
     if (down)
@@ -269,13 +269,13 @@ bool Checkbox::keyDown(const KeyEvent& event)
 
 void Checkbox::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto bounds = getLocalBounds();
 
     auto boxSize = std::min(18.f, bounds.h);
     auto box = Rect {0.f, (bounds.h - boxSize) * 0.5f, boxSize, boxSize};
 
-    g.setColour(checked ? accent : theme.panel);
+    g.setColour(checked ? accent.value_or(theme.accent) : theme.panel);
     g.fillRoundedRect(box, 4.f);
 
     g.setColour(isMouseOver() ? theme.text : theme.outline);
@@ -729,7 +729,8 @@ bool TextEditor::keyDown(const KeyEvent& event)
 
 void TextEditor::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
+    auto accentColour = accent.value_or(theme.accent);
     auto bounds = getLocalBounds();
     auto focused = hasKeyboardFocus();
 
@@ -738,7 +739,7 @@ void TextEditor::paint(Graphics& g)
         g.setColour(theme.panel);
         g.fillRoundedRect(bounds, 4.f);
 
-        g.setColour(focused ? accent : theme.outline);
+        g.setColour(focused ? accentColour : theme.outline);
         g.drawRoundedRect(bounds, 4.f, focused ? 2.f : 1.f);
     }
 
@@ -766,11 +767,11 @@ void TextEditor::paint(Graphics& g)
         auto left = g.measureText(displayedPrefix(selectionLeft()));
         auto right = g.measureText(displayedPrefix(selectionRight()));
 
-        g.setColour(accent.withAlpha(0.35f));
+        g.setColour(accentColour.withAlpha(0.35f));
         g.fillRect({origin + left, 2.f, right - left, bounds.h - 4.f});
     }
 
-    g.setColour(colour);
+    g.setColour(colour.value_or(theme.text));
     g.drawText(displayed(), {origin, baseline});
 
     if (!focused || readOnly)
@@ -782,7 +783,7 @@ void TextEditor::paint(Graphics& g)
     // while nothing changes.
     auto caretX = origin + g.measureText(displayedPrefix(caret));
 
-    g.setColour(accent);
+    g.setColour(accentColour);
     g.fillRect({caretX, 3.f, 1.5f, bounds.h - 6.f});
 }
 
@@ -822,7 +823,8 @@ void Slider::setAccentColour(const Color& colour)
 
 void Slider::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
+    auto accentColour = accent.value_or(theme.accent);
     auto bounds = getLocalBounds();
 
     g.setColour(theme.panel);
@@ -830,7 +832,7 @@ void Slider::paint(Graphics& g)
 
     if (orientation == Orientation::Horizontal)
     {
-        g.setColour(accent);
+        g.setColour(accentColour);
         g.fillRoundedRect(bounds.withWidth(bounds.w * value), trackCorner);
 
         auto thumbX = bounds.w * value;
@@ -843,7 +845,7 @@ void Slider::paint(Graphics& g)
         // Bottom-to-top: a fader's zero is at the bottom whatever way y runs.
         auto filledHeight = bounds.h * value;
 
-        g.setColour(accent);
+        g.setColour(accentColour);
         g.fillRoundedRect(
             {bounds.x, bounds.bottom() - filledHeight, bounds.w, filledHeight},
             trackCorner);
@@ -1130,7 +1132,7 @@ void Knob::rebuildArc()
 
 void Knob::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto geometry = knobGeometry(getLocalBounds());
 
     if (geometry.isEmpty())
@@ -1139,7 +1141,8 @@ void Knob::paint(Graphics& g)
     g.setColour(theme.outline);
     g.fillPath(track);
 
-    g.setColour(isMouseOver() || dragging ? theme.text : accent);
+    g.setColour(isMouseOver() || dragging ? theme.text
+                                          : accent.value_or(theme.accent));
     g.fillPath(arc);
 
     // The thumb: a disc twice the ring's width, centred on the ring where the
@@ -1292,7 +1295,7 @@ void ScrollPanel::keepFocusedInView()
 
 void ScrollPanel::paint(Graphics& g)
 {
-    g.fillAll(defaultTheme().background);
+    g.fillAll(getHostTheme().background);
 }
 
 void ScrollPanel::paintOverChildren(Graphics& g)
@@ -1302,7 +1305,7 @@ void ScrollPanel::paintOverChildren(Graphics& g)
     if (maximum <= 0.f)
         return;
 
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto bounds = getLocalBounds();
     auto trackWidth = 4.f;
     auto track = bounds.fromRight(trackWidth);

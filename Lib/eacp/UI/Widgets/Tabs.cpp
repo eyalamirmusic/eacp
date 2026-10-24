@@ -122,14 +122,14 @@ void TabBar::mouseExit(const MouseEvent&)
 
 void TabBar::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
 
     for (auto index = 0; index < names.size(); ++index)
     {
         auto bounds = getTabBounds(index).inset(tabGap, 0.f);
         auto current = index == currentIndex;
 
-        g.setColour(current ? accent : theme.panel);
+        g.setColour(current ? accent.value_or(theme.accent) : theme.panel);
         g.fillRoundedRect(bounds, tabCorner);
 
         if (!current && index == hoveredIndex)

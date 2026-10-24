@@ -5,6 +5,7 @@
 #include "../Render/DrawPlayer.h"
 #include "../Render/ImageCache.h"
 #include "../Render/MaskCache.h"
+#include "../Widgets/Theme.h"
 
 #include <memory>
 #include <optional>
@@ -64,6 +65,13 @@ public:
 
     void setFontPointSize(float points);
     void setFontFamily(const std::string& family);
+
+    // The colours every stock widget in the tree draws with, as the font above
+    // is the face: a product's look for one tree, without touching another tree
+    // in the same process -- a plugin's editor and its host's window, say.
+    // defaultTheme() until set. Repaints the whole tree.
+    void setTheme(const Theme& theme);
+    const Theme& getTheme() const;
 
     // Measurement without a paint in progress -- see Component::measureText,
     // which is where a component should ask. Builds the renderer if the host has
@@ -405,6 +413,8 @@ private:
     Color background {0.11f, 0.12f, 0.15f, 1.f};
 
     Font font {defaultUIFontFamily(), 13.f};
+
+    Theme theme;
 
     // Built on the first resize, once there is a size to build them against.
     // The atlas comes first and outlives the batch that reads it.

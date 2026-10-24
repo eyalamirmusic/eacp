@@ -230,7 +230,7 @@ void ListBox::paintHeader(Graphics& g)
     if (height <= 0.f)
         return;
 
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto header = getLocalBounds().withHeight(height);
 
     g.setColour(theme.panel);
@@ -283,7 +283,7 @@ void ListBox::paintScrollIndicator(Graphics& g)
     if (maximum <= 0.f)
         return;
 
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto rows = getRowArea();
     auto track = rows.fromRight(indicatorWidth);
 
@@ -301,7 +301,7 @@ void ListBox::paintScrollIndicator(Graphics& g)
 
 void ListBox::paint(Graphics& g)
 {
-    g.fillAll(defaultTheme().background);
+    g.fillAll(getHostTheme().background);
 
     paintHeader(g);
     paintRows(g);

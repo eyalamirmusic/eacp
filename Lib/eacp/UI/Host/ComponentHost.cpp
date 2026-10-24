@@ -1748,6 +1748,23 @@ const Font& ComponentHost::getFont() const
     return font;
 }
 
+void ComponentHost::setTheme(const Theme& themeToUse)
+{
+    theme = themeToUse;
+
+    // Every widget recorded its colours from the theme it found, so all of them
+    // have to paint again, as for a change of face.
+    if (root != nullptr)
+        markTreeDirty(*root);
+
+    repaint();
+}
+
+const Theme& ComponentHost::getTheme() const
+{
+    return theme;
+}
+
 ImageCache& ComponentHost::getImageCache()
 {
     return imageCache;

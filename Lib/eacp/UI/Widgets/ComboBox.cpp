@@ -261,7 +261,7 @@ bool ComboBox::keyDown(const KeyEvent& event)
 
 void ComboBox::paint(Graphics& g)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
     auto bounds = getLocalBounds();
     auto focused = hasKeyboardFocus();
 
@@ -274,7 +274,8 @@ void ComboBox::paint(Graphics& g)
         g.fillRoundedRect(bounds, boxCorner);
     }
 
-    g.setColour(focused || popup.has_value() ? accent : theme.outline);
+    g.setColour(focused || popup.has_value() ? accent.value_or(theme.accent)
+                                             : theme.outline);
     g.drawRoundedRect(bounds, boxCorner, focused || popup.has_value() ? 2.f : 1.f);
 
     // Two strokes rather than a path, for what a checkbox's tick is drawn this
@@ -474,7 +475,7 @@ void ComboBox::Popup::paint(Graphics& g)
     // otherwise show through it.
     g.paintOver();
 
-    const auto& theme = defaultTheme();
+    const auto& theme = owner.getHostTheme();
 
     auto list = getListBounds();
     auto rowHeight = getRowHeight();
@@ -505,7 +506,10 @@ void ComboBox::Popup::paint(Graphics& g)
 
         if (index == highlighted)
         {
-            g.setColour(owner.accent.withAlpha(0.35f));
+            // The theme's own highlight unless the box was given an accent,
+            // which is accentDim's default relation to accent.
+            g.setColour(owner.accent ? owner.accent->withAlpha(0.35f)
+                                     : theme.accentDim);
             g.fillRoundedRect(row, 3.f);
         }
 

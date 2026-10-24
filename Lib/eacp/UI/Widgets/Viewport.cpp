@@ -354,7 +354,7 @@ void Viewport::resized()
 void Viewport::paint(Graphics& g)
 {
     if (drawsBackground)
-        g.fillAll(defaultTheme().background);
+        g.fillAll(getHostTheme().background);
 }
 
 void Viewport::paintOverChildren(Graphics& g)
