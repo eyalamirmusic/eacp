@@ -48,8 +48,8 @@ struct ScanBlockKernel final : GPU::ComputeProgram
 
     // How many elements there really are. A kernel that waits at a barrier has
     // no generated bounds guard - every thread must reach every barrier - so the
-    // dispatch is rounded up to whole groups and this is what holds the stores
-    // inside the array.
+    // dispatch is rounded up to whole groups and this is what holds the reads
+    // and the stores inside the array.
     GPU::Uniform<GPU::UInt> elementCount;
 
     EACP_SHADER(counts, offsets, groupTotals, elementCount)

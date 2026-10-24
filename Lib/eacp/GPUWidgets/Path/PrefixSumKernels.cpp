@@ -16,10 +16,15 @@ void ScanBlockKernel::define()
     // has to agree about before it can scan.
     auto mine = var(0u);
 
+    // D3D12 compiles a guarded read as an unconditional load whose value the
+    // guard then discards, through a root UAV that carries no size - so the
+    // address has to stay inside the counts, not only the value that is kept.
+    auto clampedToCounts = [&](auto at) { return min(at, elementCount - 1u); };
+
     for (auto i = 0; i < perLane; ++i)
     {
         auto at = base.get() + (unsigned) i;
-        ifThen(at < elementCount, [&] { mine += counts.load(at); });
+        ifThen(at < elementCount, [&] { mine += counts.load(clampedToCounts(at)); });
     }
 
     auto subtotals = shared<GPU::UInt>(lanes);
@@ -60,7 +65,7 @@ void ScanBlockKernel::define()
         ifThen(at < elementCount,
                [&]
                {
-                   auto value = counts.load(at);
+                   auto value = counts.load(clampedToCounts(at));
                    write(offsets, at, running.get());
                    running += value;
                    write(counts, at, 0u);
