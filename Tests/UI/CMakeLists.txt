@@ -29,6 +29,7 @@ nano_add_executable(UITests
             SliderTests.cpp
             TabsTests.cpp
             TextEditorTests.cpp
+            ThemeTests.cpp
             TouchScrollTests.cpp
             ViewportTests.cpp
         TARGETS eacp-ui eacp-sprites eacp-ui-network)
