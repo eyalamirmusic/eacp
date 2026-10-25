@@ -233,16 +233,16 @@ void ListBox::paintHeader(Graphics& g)
     const auto& theme = getHostTheme();
     auto header = getLocalBounds().withHeight(height);
 
-    g.setColour(theme.panel);
+    g.setColour(theme.get(ThemeKeys::panel));
     g.fillRect(header);
 
-    g.setColour(theme.dimText);
+    g.setColour(theme.get(ThemeKeys::dimText));
 
     for (auto index = 0; index < columns.size(); ++index)
         g.drawText(columns[index].name,
                    getColumnBounds(index, header).inset(headerInset, 0.f));
 
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.drawLine({header.x, header.bottom()}, {header.right(), header.bottom()});
 }
 
@@ -291,17 +291,17 @@ void ListBox::paintScrollIndicator(Graphics& g)
     auto thumbHeight = std::max(24.f, rows.h * visibleProportion);
     auto thumbY = rows.y + (rows.h - thumbHeight) * (scrollOffset / maximum);
 
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.fillRoundedRect(track, indicatorWidth * 0.5f);
 
-    g.setColour(theme.dimText);
+    g.setColour(theme.get(ThemeKeys::dimText));
     g.fillRoundedRect({track.x, thumbY, indicatorWidth, thumbHeight},
                       indicatorWidth * 0.5f);
 }
 
 void ListBox::paint(Graphics& g)
 {
-    g.fillAll(getHostTheme().background);
+    g.fillAll(getHostTheme().get(ThemeKeys::background));
 
     paintHeader(g);
     paintRows(g);

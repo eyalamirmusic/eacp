@@ -57,10 +57,10 @@ struct Card final : UI::Component
             g.drawShadow({box, radius, offset, blur, spread});
         }
 
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(box, radius);
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(caption, box, UI::Justification::Centred);
     }
 
@@ -87,10 +87,10 @@ struct StackedCard final : UI::Component
             g.drawShadow({box, 10.f, {0.f, depth * depth}, depth * depth * 1.5f});
         }
 
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(box, 10.f);
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText("stacked", box, UI::Justification::Centred);
     }
 };
@@ -103,13 +103,13 @@ struct InsetCard final : UI::Component
     {
         auto box = cardBox();
 
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(box, 10.f);
 
         g.setColour(shadowColour);
         g.drawShadow({box, 10.f, {0.f, 3.f}, 10.f, 0.f, true});
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText("inset", box, UI::Justification::Centred);
     }
 };
@@ -118,7 +118,7 @@ struct Label final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -136,7 +136,7 @@ struct Stats final : UI::Component
                     + std::to_string(host->getLastClipChangeCount())
                     + " clip changes";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -231,7 +231,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     Vector<OwningPointer<Label>> labels;

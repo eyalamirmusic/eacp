@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../Component/Component.h"
-#include "Theme.h"
+#include "ThemeKeys.h"
 #include "TouchScroller.h"
 
 #include <optional>
@@ -9,9 +9,9 @@
 
 namespace eacp::UI
 {
-// Every widget below draws in its host's theme (Component::getHostTheme), and a
-// colour given to the widget itself, by setColour or setAccentColour, wins over
-// the theme's.
+// Every widget below draws in its host's theme (Component::getHostTheme) under
+// the keys in ThemeKeys.h, and a colour given to the widget itself, by
+// setColour or setAccentColour, wins over the theme's.
 class Label final : public Component
 {
 public:
@@ -20,7 +20,14 @@ public:
     void setText(std::string newText);
     const std::string& getText() const;
 
+    // A colour of its own, kept whatever the theme says.
     void setColour(const Color& colour);
+
+    // The theme's colour under another key than ThemeKeys::text -- a caption's
+    // dimText, say -- so the label follows a theme set after it was made.
+    // Whichever of the two was called last is the one drawn.
+    void setThemeColour(const ColourKey& key);
+
     void setJustification(Justification newJustification);
 
     // A face of its own, for a heading or a caption. Left unset, the label draws
@@ -38,6 +45,7 @@ public:
 private:
     std::string text;
     std::optional<Color> colour;
+    ColourKey colourKey = ThemeKeys::text;
     Justification justification = Justification::Left;
 
     // Empty until asked for. A label that never mentions a font has to draw in

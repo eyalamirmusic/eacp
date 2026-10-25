@@ -74,16 +74,16 @@ PopupMenuStyle PopupMenuStyle::fromTheme(const Theme& theme)
 {
     auto style = PopupMenuStyle {};
 
-    style.background = theme.panel;
-    style.outline = theme.outline;
-    style.text = theme.text;
-    style.disabledText = theme.dimText.withAlpha(0.55f);
-    style.highlight = theme.accentDim;
-    style.highlightedText = theme.text;
-    style.separator = theme.outline;
-    style.tick = theme.accent;
-    style.headerText = theme.dimText;
-    style.arrow = theme.dimText;
+    style.background = theme.get(ThemeKeys::panel);
+    style.outline = theme.get(ThemeKeys::outline);
+    style.text = theme.get(ThemeKeys::text);
+    style.disabledText = theme.get(ThemeKeys::dimText).withAlpha(0.55f);
+    style.highlight = theme.get(ThemeKeys::accentDim);
+    style.highlightedText = theme.get(ThemeKeys::text);
+    style.separator = theme.get(ThemeKeys::outline);
+    style.tick = theme.get(ThemeKeys::accent);
+    style.headerText = theme.get(ThemeKeys::dimText);
+    style.arrow = theme.get(ThemeKeys::dimText);
 
     return style;
 }

@@ -61,7 +61,8 @@ void paintCard(UI::Graphics& g,
     g.setColour(UI::Color::gray(0.23f).withAlpha(hovered ? 1.f : 0.9f));
     g.fillRoundedRect(bounds, 8.f);
 
-    g.setColour(selected ? UI::Color {0.4f, 0.6f, 1.f, 1.f} : theme.outline);
+    g.setColour(selected ? UI::Color {0.4f, 0.6f, 1.f, 1.f}
+                         : theme.get(UI::ThemeKeys::outline));
     g.drawRoundedRect(bounds, 8.f, selected ? 2.f : 1.f);
 
     g.setColour(data.colour);

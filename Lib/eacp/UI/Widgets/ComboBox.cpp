@@ -9,9 +9,6 @@ namespace eacp::UI
 {
 namespace
 {
-constexpr auto boxCorner = 5.f;
-constexpr auto listCorner = 5.f;
-
 // The border the list draws around its rows, and the gap it leaves between
 // itself and the box it belongs to.
 constexpr auto listPadding = 4.f;
@@ -264,19 +261,21 @@ void ComboBox::paint(Graphics& g)
     const auto& theme = getHostTheme();
     auto bounds = getLocalBounds();
     auto focused = hasKeyboardFocus();
+    auto corner = theme.get(ThemeKeys::comboBoxCorner);
 
-    g.setColour(theme.panel);
-    g.fillRoundedRect(bounds, boxCorner);
+    g.setColour(theme.get(ThemeKeys::panel));
+    g.fillRoundedRect(bounds, corner);
 
     if (isMouseOver() || popup.has_value())
     {
-        g.setColour(theme.hover);
-        g.fillRoundedRect(bounds, boxCorner);
+        g.setColour(theme.get(ThemeKeys::hover));
+        g.fillRoundedRect(bounds, corner);
     }
 
-    g.setColour(focused || popup.has_value() ? accent.value_or(theme.accent)
-                                             : theme.outline);
-    g.drawRoundedRect(bounds, boxCorner, focused || popup.has_value() ? 2.f : 1.f);
+    g.setColour(focused || popup.has_value()
+                    ? accent.value_or(theme.get(ThemeKeys::accent))
+                    : theme.get(ThemeKeys::outline));
+    g.drawRoundedRect(bounds, corner, focused || popup.has_value() ? 2.f : 1.f);
 
     // Two strokes rather than a path, for what a checkbox's tick is drawn this
     // way for: an arrow this small is two quads in the batch the tree is
@@ -285,7 +284,7 @@ void ComboBox::paint(Graphics& g)
     auto centre = arrow.center();
     auto reach = 4.f;
 
-    g.setColour(theme.dimText);
+    g.setColour(theme.get(ThemeKeys::dimText));
     g.drawLine({centre.x - reach, centre.y - reach * 0.5f},
                {centre.x, centre.y + reach * 0.5f},
                1.5f);
@@ -296,7 +295,8 @@ void ComboBox::paint(Graphics& g)
     auto text = bounds;
     text.w -= arrow.w;
 
-    g.setColour(selectedIndex >= 0 ? theme.text : theme.dimText);
+    g.setColour(
+        theme.get(selectedIndex >= 0 ? ThemeKeys::text : ThemeKeys::dimText));
     g.drawText(getText(), text.inset(textInset, 0.f));
 }
 
@@ -479,12 +479,13 @@ void ComboBox::Popup::paint(Graphics& g)
 
     auto list = getListBounds();
     auto rowHeight = getRowHeight();
+    auto corner = theme.get(ThemeKeys::comboBoxCorner);
 
-    g.setColour(theme.panel);
-    g.fillRoundedRect(list, listCorner);
+    g.setColour(theme.get(ThemeKeys::panel));
+    g.fillRoundedRect(list, corner);
 
-    g.setColour(theme.outline);
-    g.drawRoundedRect(list, listCorner);
+    g.setColour(theme.get(ThemeKeys::outline));
+    g.drawRoundedRect(list, corner);
 
     auto rows = list.inset(listPadding);
 
@@ -506,14 +507,18 @@ void ComboBox::Popup::paint(Graphics& g)
 
         if (index == highlighted)
         {
-            // The theme's own highlight unless the box was given an accent,
-            // which is accentDim's default relation to accent.
+            // The box's own accent dimmed, as accentDim is accent dimmed, when
+            // it was given one; else the theme's highlight, accentDim unless
+            // the theme names one for combo boxes.
             g.setColour(owner.accent ? owner.accent->withAlpha(0.35f)
-                                     : theme.accentDim);
+                                     : theme.get(ThemeKeys::comboBoxHighlight,
+                                                 theme.get(ThemeKeys::accentDim)));
             g.fillRoundedRect(row, 3.f);
         }
 
-        g.setColour(index == owner.getSelectedIndex() ? theme.text : theme.dimText);
+        g.setColour(theme.get(index == owner.getSelectedIndex()
+                                  ? ThemeKeys::text
+                                  : ThemeKeys::dimText));
         g.drawText(owner.getItemText(index),
                    row.inset(textInset - listPadding, 0.f));
     }

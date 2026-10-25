@@ -7,8 +7,6 @@ namespace eacp::UI
 {
 namespace
 {
-constexpr auto tabCorner = 5.f;
-
 // What separates one tab from the next. Taken out of each tab rather than added
 // between them, so the tabs still divide the bar exactly.
 constexpr auto tabGap = 1.f;
@@ -123,28 +121,30 @@ void TabBar::mouseExit(const MouseEvent&)
 void TabBar::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
+    auto tabCorner = theme.get(ThemeKeys::tabCorner);
 
     for (auto index = 0; index < names.size(); ++index)
     {
         auto bounds = getTabBounds(index).inset(tabGap, 0.f);
         auto current = index == currentIndex;
 
-        g.setColour(current ? accent.value_or(theme.accent) : theme.panel);
+        g.setColour(current ? accent.value_or(theme.get(ThemeKeys::accent))
+                            : theme.get(ThemeKeys::panel));
         g.fillRoundedRect(bounds, tabCorner);
 
         if (!current && index == hoveredIndex)
         {
-            g.setColour(theme.hover);
+            g.setColour(theme.get(ThemeKeys::hover));
             g.fillRoundedRect(bounds, tabCorner);
         }
 
-        g.setColour(theme.outline);
+        g.setColour(theme.get(ThemeKeys::outline));
         g.drawRoundedRect(bounds, tabCorner);
 
-        // A lit tab carries a dark caption, so it stays legible against the
-        // accent rather than sitting light-on-light -- the same bargain a
-        // latching Button makes.
-        g.setColour(current ? Color {0.08f, 0.09f, 0.12f, 1.f} : theme.dimText);
+        // A lit tab carries accentText, so it stays legible against the accent
+        // rather than sitting light-on-light -- the same bargain a latching
+        // Button makes.
+        g.setColour(theme.get(current ? ThemeKeys::accentText : ThemeKeys::dimText));
         g.drawText(names[index], bounds, Justification::Centred);
     }
 }

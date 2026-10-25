@@ -73,21 +73,19 @@ std::string statusText(const Entry& entry)
     return "not downloaded";
 }
 
-Color statusColour(const Entry& entry)
+Color statusColour(const Entry& entry, const Theme& theme)
 {
-    const auto& theme = defaultTheme();
-
     switch (entry.status)
     {
         case Status::fetching:
-            return theme.accent;
+            return theme.get(ThemeKeys::accent);
         case Status::failed:
             return badColour;
         default:
             break;
     }
 
-    return entry.available ? goodColour : theme.dimText;
+    return entry.available ? goodColour : theme.get(ThemeKeys::dimText);
 }
 
 std::string detailText(const Entry& entry)
@@ -120,9 +118,9 @@ OnlineResourceMonitor::OnlineResourceMonitor()
     : title("Online resources")
 {
     title.setFontStyle(FontStyle::Bold);
-    location.setColour(defaultTheme().dimText);
+    location.setThemeColour(ThemeKeys::dimText);
     location.setFontSize(11.f);
-    summary.setColour(defaultTheme().dimText);
+    summary.setThemeColour(ThemeKeys::dimText);
     summary.setJustification(Justification::Right);
 
     list.setModel(this);
@@ -296,16 +294,16 @@ void OnlineResourceMonitor::paintRow(Graphics& g,
                                      const Rect& bounds,
                                      bool selected)
 {
-    const auto& theme = defaultTheme();
+    const auto& theme = getHostTheme();
 
     if (selected)
     {
-        g.setColour(theme.accentDim);
+        g.setColour(theme.get(ThemeKeys::accentDim));
         g.fillRect(bounds);
     }
     else if (row % 2 == 1)
     {
-        g.setColour(theme.panel);
+        g.setColour(theme.get(ThemeKeys::panel));
         g.fillRect(bounds);
     }
 
@@ -321,28 +319,30 @@ void OnlineResourceMonitor::paintRow(Graphics& g,
     auto status = statusText(entry);
     auto statusWidth = g.measureText(status);
 
-    g.setColour(theme.text);
+    g.setColour(theme.get(ThemeKeys::text));
     g.drawText(entry.info.name, {left, firstLine});
 
-    g.setColour(statusColour(entry));
+    g.setColour(statusColour(entry, theme));
     g.drawText(status, {right - statusWidth, firstLine});
 
     g.setFontSize(11.f);
-    g.setColour(entry.status == Status::failed ? badColour : theme.dimText);
+    g.setColour(entry.status == Status::failed ? badColour
+                                               : theme.get(ThemeKeys::dimText));
     g.drawText(detailText(entry), {left, secondLine});
 
     if (!entry.isFetching())
         return;
 
     auto track = Rect {left, bounds.bottom() - 5.f, right - left, 3.f};
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.fillRect(track);
 
     auto fraction = entry.progress.fraction;
     auto filled = track;
     filled.w = fraction >= 0.f ? track.w * std::clamp(fraction, 0.f, 1.f) : track.w;
 
-    g.setColour(fraction >= 0.f ? theme.accent : theme.accentDim);
+    g.setColour(
+        theme.get(fraction >= 0.f ? ThemeKeys::accent : ThemeKeys::accentDim));
     g.fillRect(filled);
 }
 

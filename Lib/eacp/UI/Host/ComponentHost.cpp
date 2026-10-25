@@ -1752,6 +1752,15 @@ void ComponentHost::setTheme(const Theme& themeToUse)
 {
     theme = themeToUse;
 
+    // The two things the host draws with itself, taken only from a theme that
+    // holds them, so a theme of a few colours leaves the face and the backdrop
+    // as they were.
+    if (auto* face = theme.find(ThemeKeys::font))
+        setFont(*face);
+
+    if (auto* backdrop = theme.find(ThemeKeys::background))
+        background = *backdrop;
+
     // Every widget recorded its colours from the theme it found, so all of them
     // have to paint again, as for a change of face.
     if (root != nullptr)

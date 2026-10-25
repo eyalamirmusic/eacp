@@ -9,8 +9,8 @@ namespace eacp::UI
 // How a Viewport draws its scrollbars.
 struct ScrollbarStyle
 {
-    Color track = defaultTheme().outline;
-    Color thumb = defaultTheme().dimText;
+    Color track = defaultTheme().get(ThemeKeys::outline);
+    Color thumb = defaultTheme().get(ThemeKeys::dimText);
 
     // Across the bar. The strip a shown bar takes is kept clear of the content
     // the scroll can reach, so the last row or column is never under it.

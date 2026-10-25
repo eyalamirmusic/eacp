@@ -52,13 +52,13 @@ GPUWidgets::AffineTransform about(const GPUWidgets::AffineTransform& transform,
 // thing, and the stripe is what shows it.
 void paintCard(UI::Graphics& g, const Rect& box, std::string_view caption)
 {
-    g.setColour(UI::defaultTheme().panel);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
     g.fillRoundedRect(box, 10.f);
 
     g.setColour(Color {0.31f, 0.27f, 0.9f, 1.f});
     g.fillRect({box.x, box.y, 8.f, box.h});
 
-    g.setColour(UI::defaultTheme().dimText);
+    g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
     g.drawText(caption, box, UI::Justification::Centred);
 }
 
@@ -148,7 +148,7 @@ struct Label final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -168,7 +168,7 @@ struct Stats final : UI::Component
             + std::to_string(host->getLastComponentCount()) + " components   "
             + std::to_string(host->getLastClipChangeCount()) + " clip changes";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Left);
     }
 
@@ -262,7 +262,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     Vector<OwningPointer<Label>> labels;

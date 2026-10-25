@@ -37,7 +37,7 @@ struct ChannelStrip final : UI::Component
         : index(indexToUse)
         , name("Channel " + std::to_string(indexToUse + 1))
     {
-        name.setColour(UI::defaultTheme().dimText);
+        name.setThemeColour(UI::ThemeKeys::dimText);
 
         level.setValue(0.35f
                        + 0.6f * static_cast<float>((indexToUse * 37) % 100) / 100.f);
@@ -64,7 +64,7 @@ struct ChannelStrip final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(getLocalBounds().inset(0.f, 2.f), 6.f);
     }
 
@@ -148,7 +148,7 @@ struct StatsBar final : UI::Component
             + std::to_string(host->getLastPaintedComponentCount()) + " painted   "
             + std::to_string(host->getLastSharedMaskCount()) + " masks shared";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
         // The request itself would survive -- the recording walk clears a
@@ -174,7 +174,7 @@ struct DemoRoot final : UI::Component
 {
     DemoRoot()
     {
-        title.setColour(UI::defaultTheme().text);
+        title.setThemeColour(UI::ThemeKeys::text);
 
         selectAll.onClick = [this] { setAllToggles(true); };
         clearAll.onClick = [this] { setAllToggles(false); };
@@ -195,7 +195,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override

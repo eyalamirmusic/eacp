@@ -13,7 +13,7 @@ template <typename T>
 class SafePointer;
 
 class ComponentHost;
-struct Theme;
+class Theme;
 class DragAndDropTarget;
 class DragAndDropContainer;
 
@@ -297,10 +297,11 @@ public:
     // host's. Zero-initialized while there is no host.
     Font getHostFont() const;
 
-    // The colours a component with nothing to say about its own draws in: the
+    // The theme a component reads what it has not been told itself from: the
     // host's (ComponentHost::setTheme), and defaultTheme() while there is no
     // host. Asked for in paint(), never kept, so a theme the host is given later
-    // reaches every widget the next time it paints.
+    // reaches every widget the next time it paints. Theme::get falls back to
+    // defaultTheme() for any key the host's does not hold.
     const Theme& getHostTheme() const;
 
     bool isMouseOver() const;

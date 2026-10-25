@@ -28,7 +28,7 @@ struct Sidebar final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().panel);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::panel));
         g.fillRoundedRect(getLocalBounds(), 8.f);
     }
 
@@ -58,8 +58,8 @@ struct DemoRoot final : UI::Component
     DemoRoot()
     {
         title.setFontSize(20.f);
-        footer.setColour(UI::defaultTheme().dimText);
-        status.setColour(UI::defaultTheme().dimText);
+        footer.setThemeColour(UI::ThemeKeys::dimText);
+        status.setThemeColour(UI::ThemeKeys::dimText);
         notes.setPlaceholder("Notes");
 
         auto resetGain = [this] { gain.setValue(0.5f); };
@@ -93,7 +93,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override

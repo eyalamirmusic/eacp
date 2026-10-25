@@ -91,12 +91,12 @@ void paintRowBackground(UI::Graphics& g,
 
     if (selected)
     {
-        g.setColour(theme.accentDim);
+        g.setColour(theme.get(UI::ThemeKeys::accentDim));
         g.fillRect(bounds);
     }
     else if (row % 2 == 1)
     {
-        g.setColour(theme.panel);
+        g.setColour(theme.get(UI::ThemeKeys::panel));
         g.fillRect(bounds);
     }
 }
@@ -109,7 +109,7 @@ struct EventLog final
 {
     EventLog()
     {
-        title.setColour(UI::defaultTheme().dimText);
+        title.setThemeColour(UI::ThemeKeys::dimText);
 
         list.setModel(this);
         list.setRowHeight(18.f);
@@ -134,7 +134,7 @@ struct EventLog final
     {
         paintRowBackground(g, row, bounds, selected);
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(lines[row], bounds.inset(8.f, 0.f));
     }
 
@@ -142,7 +142,7 @@ struct EventLog final
     // invisible without a frame drawn over it.
     void paintOverChildren(UI::Graphics& g) override
     {
-        g.setColour(UI::defaultTheme().outline);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::outline));
         g.drawRect(list.getBounds());
     }
 
@@ -175,7 +175,7 @@ struct LabelledControl final : UI::Component
         , control(std::forward<Args>(args)...)
         , caption(name)
     {
-        caption.setColour(UI::defaultTheme().dimText);
+        caption.setThemeColour(UI::ThemeKeys::dimText);
         caption.setJustification(UI::Justification::Centred);
         readout.setJustification(UI::Justification::Centred);
 
@@ -222,9 +222,9 @@ struct ControlsPage final : UI::Component
 {
     ControlsPage()
     {
-        presetCaption.setColour(UI::defaultTheme().dimText);
-        editorCaption.setColour(UI::defaultTheme().dimText);
-        programCaption.setColour(UI::defaultTheme().dimText);
+        presetCaption.setThemeColour(UI::ThemeKeys::dimText);
+        editorCaption.setThemeColour(UI::ThemeKeys::dimText);
+        programCaption.setThemeColour(UI::ThemeKeys::dimText);
 
         preset.addItems({"Init", "Warm", "Bright", "Hollow", "Bell"});
         preset.setSelectedIndex(0);
@@ -361,7 +361,8 @@ struct GeneratedRows final : UI::ListBoxModel
 
         paintRowBackground(g, row, bounds, selected);
 
-        g.setColour(selected ? theme.text : theme.dimText);
+        g.setColour(
+            theme.get(selected ? UI::ThemeKeys::text : UI::ThemeKeys::dimText));
         g.drawText(generatedRowText(row), bounds.inset(8.f, 0.f));
     }
 
@@ -392,7 +393,8 @@ struct NoteTable final : UI::ListBoxModel
     {
         const auto& theme = UI::defaultTheme();
 
-        g.setColour(selected ? theme.text : theme.dimText);
+        g.setColour(
+            theme.get(selected ? UI::ThemeKeys::text : UI::ThemeKeys::dimText));
         g.drawText(cellText(row, column), bounds.inset(6.f, 0.f));
     }
 
@@ -428,7 +430,7 @@ struct StatsBar final : UI::Component
                     + std::to_string(host->getLastPaintedComponentCount())
                     + " painted   " + std::to_string(generatedRowCount) + " rows";
 
-        g.setColour(UI::defaultTheme().dimText);
+        g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
         g.drawText(text, getLocalBounds(), UI::Justification::Right);
 
         if (text != lastPainted)
@@ -448,7 +450,7 @@ struct ListPage final : UI::Component
     {
         for (auto* label:
              {&rowsCaption, &notesCaption, &rowsSelection, &notesSelection})
-            label->setColour(UI::defaultTheme().dimText);
+            label->setThemeColour(UI::ThemeKeys::dimText);
 
         rows.onSelect = [this](int row)
         { rowsSelection.setText("selected row " + std::to_string(row)); };
@@ -519,7 +521,7 @@ struct DemoRoot final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        g.fillAll(UI::defaultTheme().background);
+        g.fillAll(UI::defaultTheme().get(UI::ThemeKeys::background));
     }
 
     void resized() override { tabs.setBounds(getLocalBounds()); }

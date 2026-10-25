@@ -11,23 +11,11 @@ namespace eacp::UI
 {
 namespace
 {
-// Corner radii, in points. Kept together because what makes a set of controls
-// look like a set is that they agree about this, and a literal at each call
-// site is how they stop agreeing.
-constexpr auto buttonCorner = 5.f;
-constexpr auto trackCorner = 4.f;
-
 // The gap between an editor's border and the first glyph. Also what the caret
 // has to stay clear of, which is why it is a constant rather than a literal in
 // the scrolling arithmetic.
 constexpr auto editorTextInset = 6.f;
 } // namespace
-
-const Theme& defaultTheme()
-{
-    static const auto theme = Theme {};
-    return theme;
-}
 
 Label::Label(std::string textToUse)
     : text(std::move(textToUse))
@@ -43,6 +31,13 @@ void Label::setText(std::string newText)
 void Label::setColour(const Color& colourToUse)
 {
     colour = colourToUse;
+    repaint();
+}
+
+void Label::setThemeColour(const ColourKey& key)
+{
+    colourKey = key;
+    colour.reset();
     repaint();
 }
 
@@ -83,7 +78,7 @@ void Label::paint(Graphics& g)
     if (style.has_value())
         g.setFontStyle(*style);
 
-    g.setColour(colour.value_or(getHostTheme().text));
+    g.setColour(colour ? *colour : getHostTheme().get(colourKey));
     g.drawText(text, getLocalBounds(), justification);
 }
 
@@ -125,27 +120,29 @@ void Button::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
     auto bounds = getLocalBounds();
+    auto corner = theme.get(ThemeKeys::buttonCorner);
 
-    g.setColour(toggledOn ? accent.value_or(theme.accent) : theme.panel);
-    g.fillRoundedRect(bounds, buttonCorner);
+    g.setColour(toggledOn ? accent.value_or(theme.get(ThemeKeys::accent))
+                          : theme.get(ThemeKeys::panel));
+    g.fillRoundedRect(bounds, corner);
 
     if (down)
     {
-        g.setColour(theme.pressed);
-        g.fillRoundedRect(bounds, buttonCorner);
+        g.setColour(theme.get(ThemeKeys::pressed));
+        g.fillRoundedRect(bounds, corner);
     }
     else if (isMouseOver())
     {
-        g.setColour(theme.hover);
-        g.fillRoundedRect(bounds, buttonCorner);
+        g.setColour(theme.get(ThemeKeys::hover));
+        g.fillRoundedRect(bounds, corner);
     }
 
-    g.setColour(theme.outline);
-    g.drawRoundedRect(bounds, buttonCorner);
+    g.setColour(theme.get(ThemeKeys::outline));
+    g.drawRoundedRect(bounds, corner);
 
-    // A lit toggle carries a dark caption, so it stays legible against the
-    // accent rather than sitting light-on-light.
-    g.setColour(toggledOn ? Color {0.08f, 0.09f, 0.12f, 1.f} : theme.text);
+    // A lit toggle carries accentText, dark by default, so it stays legible
+    // against the accent rather than sitting light-on-light.
+    g.setColour(theme.get(toggledOn ? ThemeKeys::accentText : ThemeKeys::text));
     g.drawText(text, bounds, Justification::Centred);
 }
 
@@ -275,18 +272,21 @@ void Checkbox::paint(Graphics& g)
     auto boxSize = std::min(18.f, bounds.h);
     auto box = Rect {0.f, (bounds.h - boxSize) * 0.5f, boxSize, boxSize};
 
-    g.setColour(checked ? accent.value_or(theme.accent) : theme.panel);
-    g.fillRoundedRect(box, 4.f);
+    auto corner = theme.get(ThemeKeys::checkboxCorner);
 
-    g.setColour(isMouseOver() ? theme.text : theme.outline);
-    g.drawRoundedRect(box, 4.f, hasKeyboardFocus() ? 2.f : 1.f);
+    g.setColour(checked ? accent.value_or(theme.get(ThemeKeys::accent))
+                        : theme.get(ThemeKeys::panel));
+    g.fillRoundedRect(box, corner);
+
+    g.setColour(theme.get(isMouseOver() ? ThemeKeys::text : ThemeKeys::outline));
+    g.drawRoundedRect(box, corner, hasKeyboardFocus() ? 2.f : 1.f);
 
     // A tick out of two strokes rather than a path: two lines are two quads in
     // the batch the rest of the tree is drawing in, where a path would be a
     // mask in the atlas for every checkbox on screen.
     if (checked)
     {
-        g.setColour(theme.background);
+        g.setColour(theme.get(ThemeKeys::background));
 
         auto inset = boxSize * 0.26f;
         auto left = Point {box.x + inset, box.y + boxSize * 0.52f};
@@ -304,7 +304,7 @@ void Checkbox::paint(Graphics& g)
     textArea.x = box.right() + 8.f;
     textArea.w -= textArea.x;
 
-    g.setColour(theme.text);
+    g.setColour(theme.get(ThemeKeys::text));
     g.drawText(text, textArea);
 }
 
@@ -730,17 +730,19 @@ bool TextEditor::keyDown(const KeyEvent& event)
 void TextEditor::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
-    auto accentColour = accent.value_or(theme.accent);
+    auto accentColour = accent.value_or(theme.get(ThemeKeys::accent));
     auto bounds = getLocalBounds();
     auto focused = hasKeyboardFocus();
 
     if (drawsFrame)
     {
-        g.setColour(theme.panel);
-        g.fillRoundedRect(bounds, 4.f);
+        auto corner = theme.get(ThemeKeys::textEditorCorner);
 
-        g.setColour(focused ? accentColour : theme.outline);
-        g.drawRoundedRect(bounds, 4.f, focused ? 2.f : 1.f);
+        g.setColour(theme.get(ThemeKeys::panel));
+        g.fillRoundedRect(bounds, corner);
+
+        g.setColour(focused ? accentColour : theme.get(ThemeKeys::outline));
+        g.drawRoundedRect(bounds, corner, focused ? 2.f : 1.f);
     }
 
     auto face = fontToDrawIn();
@@ -757,7 +759,7 @@ void TextEditor::paint(Graphics& g)
 
     if (text.empty() && !placeholder.empty())
     {
-        g.setColour(theme.dimText);
+        g.setColour(theme.get(ThemeKeys::dimText));
         g.drawText(placeholder, {origin, baseline});
         return;
     }
@@ -771,7 +773,7 @@ void TextEditor::paint(Graphics& g)
         g.fillRect({origin + left, 2.f, right - left, bounds.h - 4.f});
     }
 
-    g.setColour(colour.value_or(theme.text));
+    g.setColour(colour.value_or(theme.get(ThemeKeys::text)));
     g.drawText(displayed(), {origin, baseline});
 
     if (!focused || readOnly)
@@ -824,10 +826,11 @@ void Slider::setAccentColour(const Color& colour)
 void Slider::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
-    auto accentColour = accent.value_or(theme.accent);
+    auto accentColour = accent.value_or(theme.get(ThemeKeys::accent));
     auto bounds = getLocalBounds();
+    auto trackCorner = theme.get(ThemeKeys::sliderCorner);
 
-    g.setColour(theme.panel);
+    g.setColour(theme.get(ThemeKeys::panel));
     g.fillRoundedRect(bounds, trackCorner);
 
     if (orientation == Orientation::Horizontal)
@@ -836,7 +839,7 @@ void Slider::paint(Graphics& g)
         g.fillRoundedRect(bounds.withWidth(bounds.w * value), trackCorner);
 
         auto thumbX = bounds.w * value;
-        g.setColour(theme.text);
+        g.setColour(theme.get(ThemeKeys::text));
         g.fillRoundedRect({thumbX - 1.5f, bounds.y + 2.f, 3.f, bounds.h - 4.f},
                           1.5f);
     }
@@ -850,7 +853,7 @@ void Slider::paint(Graphics& g)
             {bounds.x, bounds.bottom() - filledHeight, bounds.w, filledHeight},
             trackCorner);
 
-        g.setColour(theme.text);
+        g.setColour(theme.get(ThemeKeys::text));
         g.fillRoundedRect({bounds.x + 2.f,
                            bounds.bottom() - filledHeight - 1.5f,
                            bounds.w - 4.f,
@@ -858,7 +861,8 @@ void Slider::paint(Graphics& g)
                           1.5f);
     }
 
-    g.setColour(isMouseOver() || dragging ? theme.accent : theme.outline);
+    g.setColour(theme.get(isMouseOver() || dragging ? ThemeKeys::accent
+                                                    : ThemeKeys::outline));
     g.drawRoundedRect(bounds, trackCorner);
 }
 
@@ -1138,11 +1142,12 @@ void Knob::paint(Graphics& g)
     if (geometry.isEmpty())
         return;
 
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.fillPath(track);
 
-    g.setColour(isMouseOver() || dragging ? theme.text
-                                          : accent.value_or(theme.accent));
+    g.setColour(isMouseOver() || dragging
+                    ? theme.get(ThemeKeys::text)
+                    : accent.value_or(theme.get(ThemeKeys::accent)));
     g.fillPath(arc);
 
     // The thumb: a disc twice the ring's width, centred on the ring where the
@@ -1155,7 +1160,7 @@ void Knob::paint(Graphics& g)
     auto thumbCentre = onCircle(geometry.centre, geometry.arcRadius, angle);
     auto thumbRadius = geometry.lineWidth;
 
-    g.setColour(theme.text);
+    g.setColour(theme.get(ThemeKeys::text));
     g.fillRoundedRect({thumbCentre.x - thumbRadius,
                        thumbCentre.y - thumbRadius,
                        thumbRadius * 2.f,
@@ -1295,7 +1300,7 @@ void ScrollPanel::keepFocusedInView()
 
 void ScrollPanel::paint(Graphics& g)
 {
-    g.fillAll(getHostTheme().background);
+    g.fillAll(getHostTheme().get(ThemeKeys::background));
 }
 
 void ScrollPanel::paintOverChildren(Graphics& g)
@@ -1314,10 +1319,10 @@ void ScrollPanel::paintOverChildren(Graphics& g)
     auto thumbHeight = std::max(24.f, bounds.h * visibleProportion);
     auto thumbY = (bounds.h - thumbHeight) * (scrollOffset / maximum);
 
-    g.setColour(theme.outline);
+    g.setColour(theme.get(ThemeKeys::outline));
     g.fillRoundedRect(track, trackWidth * 0.5f);
 
-    g.setColour(theme.dimText);
+    g.setColour(theme.get(ThemeKeys::dimText));
     g.fillRoundedRect({track.x, thumbY, trackWidth, thumbHeight}, trackWidth * 0.5f);
 }
 
