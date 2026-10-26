@@ -31,6 +31,14 @@ inline constexpr FontKey font {"font"};
 // is accentDim until a theme says otherwise.
 inline constexpr NumberKey buttonCorner {"button.cornerRadius"};
 inline constexpr NumberKey checkboxCorner {"checkbox.cornerRadius"};
+
+// A ticked checkbox: what fills its box and what the tick is drawn in. Unset,
+// the fill is the accent and the tick the background, a solid swatch with the
+// tick cut out of it; a clear fill and a tick in the text colour draw an
+// outlined box with a tick inside instead. A box given setAccentColour fills
+// with that whatever the theme says.
+inline constexpr ColourKey checkboxTickedFill {"checkbox.tickedFill"};
+inline constexpr ColourKey checkboxTick {"checkbox.tick"};
 inline constexpr NumberKey comboBoxCorner {"comboBox.cornerRadius"};
 inline constexpr ColourKey comboBoxHighlight {"comboBox.highlight"};
 inline constexpr NumberKey sliderCorner {"slider.cornerRadius"};

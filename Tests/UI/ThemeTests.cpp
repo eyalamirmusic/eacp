@@ -137,8 +137,12 @@ auto tDefaultLook = test("Theme/theDefaultIsTheLookEacpAlwaysDrew") = []
     check(theme.get(ThemeKeys::tabCorner) == 5.f);
     check(theme.get(ThemeKeys::textEditorCorner) == 4.f);
 
-    // A combo box's highlight is accentDim's, by falling back, not by a value.
+    // A combo box's highlight is accentDim's, by falling back, not by a value,
+    // and a ticked checkbox's fill and tick are the accent's and the
+    // background's the same way.
     check(!theme.contains(ThemeKeys::comboBoxHighlight));
+    check(!theme.contains(ThemeKeys::checkboxTickedFill));
+    check(!theme.contains(ThemeKeys::checkboxTick));
 
     // A host draws in the same face and backdrop before any theme.
     auto host = ComponentHost {};
@@ -272,6 +276,73 @@ auto tWidgetColourWins = test("Theme/aColourGivenToAWidgetWinsOverTheTheme") = [
     auto ownPaint = Recorder {};
     own.paint(ownPaint.g);
     check(sameColour(firstShape(ownPaint).colour, green), "its own accent");
+};
+
+auto tTickedCheckbox = test("Theme/aTickedCheckboxDrawsInTheThemesFillAndTick") = []
+{
+    if (!hasDevice())
+        return;
+
+    // The box's fill is the first shape a checkbox draws and the tick's second
+    // stroke the last, there being no caption.
+    auto fillAndTick = [](Checkbox& box)
+    {
+        auto recorder = Recorder {};
+        box.paint(recorder.g);
+
+        const auto& shapes = recorder.list.getShapes();
+        return std::pair {shapes[0].colour, shapes.back().colour};
+    };
+
+    // Unset: a solid accent swatch with the tick in the background colour, as
+    // eacp has always drawn one, in a theme that sets neither key too.
+    auto plain = Checkbox {};
+    plain.setBounds({0.f, 0.f, 80.f, 24.f});
+    plain.setChecked(true);
+
+    auto [plainFill, plainTick] = fillAndTick(plain);
+    check(sameColour(plainFill, defaultTheme().get(ThemeKeys::accent)));
+    check(sameColour(plainTick, defaultTheme().get(ThemeKeys::background)));
+
+    auto root = Component {};
+    auto themed = Checkbox {};
+    auto own = Checkbox {};
+
+    root.addAndMakeVisible(themed);
+    root.addAndMakeVisible(own);
+    themed.setBounds({0.f, 0.f, 80.f, 24.f});
+    own.setBounds({0.f, 30.f, 80.f, 24.f});
+    themed.setChecked(true);
+    own.setChecked(true);
+    own.setAccentColour(green);
+
+    auto colours = Theme {};
+    colours.set(ThemeKeys::accent, blue);
+    colours.set(ThemeKeys::background, grey);
+
+    auto hosted = Hosted {root};
+    hosted.host.setTheme(colours);
+
+    auto [rolesFill, rolesTick] = fillAndTick(themed);
+    check(sameColour(rolesFill, blue), "the theme's accent");
+    check(sameColour(rolesTick, grey), "the theme's background");
+
+    // An outlined box with a tick inside: a clear fill, a tick in another
+    // colour.
+    auto clear = Color {0.f, 0.f, 0.f, 0.f};
+    auto outlined = colours;
+    outlined.set(ThemeKeys::checkboxTickedFill, clear);
+    outlined.set(ThemeKeys::checkboxTick, red);
+    hosted.host.setTheme(outlined);
+
+    auto [outlinedFill, outlinedTick] = fillAndTick(themed);
+    check(sameColour(outlinedFill, clear), "the theme's ticked fill");
+    check(sameColour(outlinedTick, red), "the theme's tick");
+
+    // A box's own accent still wins over the theme's fill.
+    auto [ownFill, ownTick] = fillAndTick(own);
+    check(sameColour(ownFill, green), "its own accent");
+    check(sameColour(ownTick, red));
 };
 
 auto tLabelColour = test("Theme/aLabelDrawsInTheThemesTextUnlessToldOtherwise") = []

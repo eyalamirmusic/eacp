@@ -274,8 +274,13 @@ void Checkbox::paint(Graphics& g)
 
     auto corner = theme.get(ThemeKeys::checkboxCorner);
 
-    g.setColour(checked ? accent.value_or(theme.get(ThemeKeys::accent))
-                        : theme.get(ThemeKeys::panel));
+    auto tickedFill = [&]
+    {
+        return accent.value_or(
+            theme.get(ThemeKeys::checkboxTickedFill, theme.get(ThemeKeys::accent)));
+    };
+
+    g.setColour(checked ? tickedFill() : theme.get(ThemeKeys::panel));
     g.fillRoundedRect(box, corner);
 
     g.setColour(theme.get(isMouseOver() ? ThemeKeys::text : ThemeKeys::outline));
@@ -286,7 +291,8 @@ void Checkbox::paint(Graphics& g)
     // mask in the atlas for every checkbox on screen.
     if (checked)
     {
-        g.setColour(theme.get(ThemeKeys::background));
+        g.setColour(
+            theme.get(ThemeKeys::checkboxTick, theme.get(ThemeKeys::background)));
 
         auto inset = boxSize * 0.26f;
         auto left = Point {box.x + inset, box.y + boxSize * 0.52f};
