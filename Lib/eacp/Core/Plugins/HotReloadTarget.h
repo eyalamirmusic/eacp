@@ -15,6 +15,10 @@ struct HotReloadTarget
     std::string_view config;
     std::string_view target;
     std::string_view sourceDirectory;
+
+    // The module's own source files, absolute and separated by '|'. Empty
+    // watches the whole source directory instead.
+    std::string_view sources;
 };
 
 inline Processes::ProcessOptions hotReloadBuildCommand(const HotReloadTarget& target)

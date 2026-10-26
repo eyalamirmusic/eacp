@@ -72,6 +72,46 @@ function(eacp_set_default_visibility target)
 endfunction()
 
 function(eacp_link_hot_reload app module)
+    get_target_property(module_links ${module} LINK_LIBRARIES)
+
+    if (NOT module_links)
+        set(module_links "")
+    endif ()
+
+    set(compile_only "")
+
+    foreach (link IN LISTS module_links)
+        if (NOT TARGET "${link}")
+            continue()
+        endif ()
+
+        list(APPEND compile_only "$<COMPILE_ONLY:${link}>")
+        get_target_property(imported ${link} IMPORTED)
+
+        if (NOT imported)
+            add_dependencies(${module} ${link})
+        endif ()
+    endforeach ()
+
+    set_target_properties(${module} PROPERTIES LINK_LIBRARIES "${compile_only}")
+    target_link_libraries(${app} PRIVATE ${module_links})
+
+    get_target_property(module_sources ${module} SOURCES)
+    get_target_property(module_dir ${module} SOURCE_DIR)
+    set(watched "")
+
+    foreach (source IN LISTS module_sources)
+        if (source MATCHES "\\$<" OR source MATCHES "NOTFOUND$")
+            continue()
+        endif ()
+
+        cmake_path(ABSOLUTE_PATH source BASE_DIRECTORY ${module_dir} NORMALIZE)
+        list(APPEND watched ${source})
+    endforeach ()
+
+    list(JOIN watched "|" watched)
+    target_compile_definitions(${app} PRIVATE EACP_HOT_RELOAD_SOURCES="${watched}")
+
     get_target_property(direct ${app} LINK_LIBRARIES)
     set(closure "")
     eacp_collect_link_targets(${app} closure)
@@ -92,11 +132,6 @@ function(eacp_link_hot_reload app module)
     set(links "")
 
     foreach (link IN LISTS direct)
-        if (TARGET "${link}")
-            target_link_libraries(${module} PRIVATE $<COMPILE_ONLY:${link}>)
-            add_dependencies(${module} ${link})
-        endif ()
-
         if (NOT link IN_LIST archives)
             list(APPEND links "${link}")
         endif ()
@@ -120,29 +155,32 @@ function(eacp_link_hot_reload app module)
             INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 endfunction()
 
-# Deferred to the end of the configure, once the app's links are final.
+# Deferred to the end of the configure, once the app's and the library's links
+# are final. In dev mode the library is a module that links nothing: its links
+# go to the app, which exports them, and reach the module compile-only.
 #
-#   eacp_add_hot_reload(MyApp MODULE MyAppLayout SOURCES Layout.cpp
-#           [HOT_RELOAD ON|OFF])
-function(eacp_add_hot_reload app)
-    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "MODULE;HOT_RELOAD" "SOURCES")
+#   eacp_add_hot_reload(MyApp MyAppLayout SOURCES Layout.cpp [HOT_RELOAD <bool>])
+#   target_link_libraries(MyAppLayout PRIVATE eacp-ui)
+function(eacp_add_hot_reload app library)
+    cmake_parse_arguments(PARSE_ARGV 2 ARG "" "HOT_RELOAD" "SOURCES")
 
-    set(enabled ${EACP_HOT_RELOAD})
+    set(enabled OFF)
 
-    if (DEFINED ARG_HOT_RELOAD)
-        if (NOT ARG_HOT_RELOAD MATCHES "^(ON|OFF)$")
-            message(FATAL_ERROR "eacp_add_hot_reload(${app}): HOT_RELOAD is ON "
-                    "or OFF, not '${ARG_HOT_RELOAD}'")
+    if (EACP_HOT_RELOAD)
+        set(enabled ON)
+    endif ()
+
+    if (DEFINED ARG_HOT_RELOAD AND NOT ARG_HOT_RELOAD STREQUAL "")
+        if (ARG_HOT_RELOAD)
+            set(enabled ON)
+        else ()
+            set(enabled OFF)
         endif ()
-
-        set(enabled ${ARG_HOT_RELOAD})
     endif ()
 
     if (IOS OR ANDROID OR WIN32)
         set(enabled OFF)
     endif ()
-
-    target_sources(${app} PRIVATE ${ARG_SOURCES})
 
     # Same compiler, same eacp: an EACP_HOT_RELOAD_EXPORT entry point returning
     # a C++ class never meets a C caller, so clang's C-linkage warning is off
@@ -151,6 +189,10 @@ function(eacp_add_hot_reload app)
 
     if (NOT enabled)
         message(STATUS "${app}: hot reload OFF")
+        add_library(${library} STATIC ${ARG_SOURCES})
+        set_default_warnings_level(${library})
+        set_target_properties(${library} PROPERTIES EACP_HOT_RELOAD_ABI ON)
+        target_link_libraries(${app} PRIVATE ${library})
         target_compile_definitions(${app} PRIVATE EACP_HOT_RELOAD=0)
         return()
     endif ()
@@ -160,29 +202,28 @@ function(eacp_add_hot_reload app)
     set_target_properties(${app} PROPERTIES ENABLE_EXPORTS ON)
     eacp_set_default_visibility(${app})
 
-    eacp_add_plugin(${ARG_MODULE} ${ARG_SOURCES})
-    add_dependencies(${app} ${ARG_MODULE})
-    eacp_set_default_visibility(${ARG_MODULE})
-    set_target_properties(${ARG_MODULE} PROPERTIES
+    eacp_add_plugin(${library} ${ARG_SOURCES})
+    add_dependencies(${app} ${library})
+    eacp_set_default_visibility(${library})
+    set_target_properties(${library} PROPERTIES
             EACP_HOT_RELOAD_ABI ON
             INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 
     if (APPLE)
         target_link_options(${app} PRIVATE LINKER:-export_dynamic)
-        target_link_options(${ARG_MODULE} PRIVATE
-                LINKER:-undefined,dynamic_lookup)
+        target_link_options(${library} PRIVATE LINKER:-undefined,dynamic_lookup)
     endif ()
 
     cmake_language(EVAL CODE "
         cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]]
-                CALL eacp_link_hot_reload [[${app}]] [[${ARG_MODULE}]])")
+                CALL eacp_link_hot_reload [[${app}]] [[${library}]])")
 
     target_compile_definitions(${app} PRIVATE
             EACP_HOT_RELOAD=1
-            EACP_HOT_RELOAD_LIBRARY="$<TARGET_FILE:${ARG_MODULE}>"
+            EACP_HOT_RELOAD_LIBRARY="$<TARGET_FILE:${library}>"
             EACP_HOT_RELOAD_CMAKE="${CMAKE_COMMAND}"
             EACP_HOT_RELOAD_BUILD_DIR="${CMAKE_BINARY_DIR}"
             EACP_HOT_RELOAD_CONFIG="$<CONFIG>"
-            EACP_HOT_RELOAD_TARGET="${ARG_MODULE}"
+            EACP_HOT_RELOAD_TARGET="${library}"
             EACP_HOT_RELOAD_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 endfunction()

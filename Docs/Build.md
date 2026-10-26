@@ -135,10 +135,13 @@ its README.
   Schema codegen still emits TS into `web/src/generated` on every app build.
 
 - `EACP_HOT_RELOAD` (default `OFF`) — dev or static mode for every app wired
-  with `eacp_add_hot_reload(<app> MODULE <module> SOURCES <files...>
-  [HOT_RELOAD ON|OFF])` that names no mode of its own. An app's `HOT_RELOAD`
-  wins over the option either way, and both in-tree examples pass `ON`.
-  iOS, Android and Windows are always static. A configure prints
+  with `eacp_add_hot_reload(<app> <library> [SOURCES <files...>]
+  [HOT_RELOAD <bool>])` that names no mode of its own (or an empty one). The
+  call creates
+  `<library>`, configured afterwards like any target: a static library linked
+  into the app in static mode, a module the app loads in dev mode. An app's
+  `HOT_RELOAD` wins over the option either way, and both in-tree examples
+  pass `ON`. iOS, Android and Windows are always static. A configure prints
   `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
   `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
 

@@ -51,6 +51,21 @@ struct HotReloadSandbox
                + first + "; fi";
     }
 
+    void install(const eacp::FilePath& fixture) const
+    {
+        eacp::Files::removeFile(modulePath());
+        nano::check(eacp::Files::copyFile(fixture, modulePath()));
+    }
+
+    std::string copyEachBuildScript(const eacp::FilePath& first,
+                                    const eacp::FilePath& then) const
+    {
+        auto marker = quotedPath(root.path() / "Built");
+
+        return "if [ -f " + marker + " ]; then " + copyScript(then) + "; else touch "
+               + marker + "; " + copyScript(first) + "; fi";
+    }
+
     void touchSource(std::string_view contents) const
     {
         writeTestFile(eacp::toStdPath(sources() / "nested/Layout.cpp"), contents);

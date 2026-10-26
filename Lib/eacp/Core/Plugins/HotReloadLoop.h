@@ -64,6 +64,7 @@ public:
     [[nodiscard]] int getGeneration() const;
     [[nodiscard]] ReloadableLibrary& getLibrary();
     [[nodiscard]] const FilePath& getSourceDirectory() const;
+    [[nodiscard]] const Vector<FilePath>& getWatchedPaths() const;
 
     std::function<void()> onBuildStarted = [] {};
     std::function<void(std::string_view chunk)> onBuildOutput =
