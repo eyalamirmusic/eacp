@@ -352,3 +352,11 @@ auto tParseHexRejects = test("Strings/parseHex rejects what is not hex") = []
     check(!parseHex(" 12").has_value());
     check(!parseHex("10000000000000000").has_value());
 };
+
+auto tToUpper = test("Strings/toUpper is ASCII only") = []
+{
+    using eacp::Strings::toUpper;
+    check(toUpper("0ea5e0bc-c597") == "0EA5E0BC-C597");
+    check(toUpper("") == "");
+    check(toUpper("caf\xC3\xA9") == "CAF\xC3\xA9");
+};

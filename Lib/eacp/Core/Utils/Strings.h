@@ -21,6 +21,7 @@ std::string lineContaining(std::string_view text, std::string_view needle);
 
 // ASCII-only lowercasing, for matching extensions, header names and the like.
 std::string toLower(std::string_view s);
+std::string toUpper(std::string_view s);
 
 // Changes the case of the first character only, leaving the rest as written -
 // for identifiers and labels, where lowercasing the whole string would destroy

@@ -296,6 +296,15 @@ std::string toLower(std::string_view s)
     return result;
 }
 
+std::string toUpper(std::string_view s)
+{
+    auto result = std::string {};
+    result.reserve(s.size());
+    for (auto c: s)
+        result.push_back((char) std::toupper((unsigned char) c));
+    return result;
+}
+
 std::string capitalize(std::string_view s)
 {
     auto result = std::string {s};
