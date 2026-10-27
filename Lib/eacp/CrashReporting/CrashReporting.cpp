@@ -4,11 +4,13 @@
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/EventLoop.h>
+#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Random.h>
 #include <eacp/Core/Utils/Strings.h>
 
+#include <algorithm>
 #include <exception>
 #include <mutex>
 #include <type_traits>
@@ -33,6 +35,7 @@ struct CrashReportingSession
     bool crashedLastRun = false;
     Options options;
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
+    std::optional<Threads::Timer> heartbeat;
 };
 
 CrashReportingSession& getSession()
@@ -128,6 +131,33 @@ void schedulePendingReports(const ReportDatabase& database)
         Threads::callAsync([report] { deliverPendingReport(report); });
 }
 
+void writeHeartbeat(Detail::SharedHangInfo& hang)
+{
+    hang.heartbeatMilliseconds.store(Detail::getSteadyMilliseconds(),
+                                     std::memory_order_release);
+}
+
+std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
+{
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
+}
+
+void armHangDetection(CrashReportingSession& session, Detail::SharedState& state)
+{
+    auto& hang = state.hang;
+    hang.thresholdMilliseconds = countMilliseconds(session.options.hangThreshold);
+    hang.pollIntervalMilliseconds =
+        countMilliseconds(session.options.heartbeatInterval);
+    hang.mainThreadId = Detail::getCurrentThreadId();
+
+    if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
+        return;
+
+    auto interval = Time::MS {session.options.heartbeatInterval.count()};
+    session.heartbeat.emplace([&hang] { writeHeartbeat(hang); }, interval);
+    Detail::startHangWatchdog(state);
+}
+
 Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
 {
     auto launch = Detail::HandlerLaunch {};
@@ -209,6 +239,9 @@ bool start(const Options& options)
     auto launched = Detail::launchHandlerProcess(launch, state);
     Detail::installCrashHandlers(state);
 
+    if (launched)
+        armHangDetection(session, state);
+
     schedulePendingReports(database);
     return launched;
 }
@@ -231,6 +264,8 @@ void stop()
     if (!session.started || !session.sharedState)
         return;
 
+    Detail::stopHangWatchdog();
+    session.heartbeat.reset();
     Detail::uninstallCrashHandlers();
     Detail::stopHandlerProcess(session.sharedState->get());
     session.started = false;
@@ -284,6 +319,29 @@ void addBreadcrumb(const Breadcrumb& breadcrumb)
         {
             Detail::addSharedBreadcrumb(
                 state, breadcrumb, getMillisecondsSinceEpoch());
+        });
+}
+
+void pauseHangDetection()
+{
+    writeToSharedState([](Detail::SharedState& state)
+                       { state.hang.pauseDepth.fetch_add(1); });
+}
+
+void resumeHangDetection()
+{
+    writeToSharedState(
+        [](Detail::SharedState& state)
+        {
+            auto& hang = state.hang;
+
+            if (hang.pauseDepth.load() == 0)
+                return;
+
+            if (hang.heartbeatMilliseconds.load() != 0)
+                writeHeartbeat(hang);
+
+            hang.pauseDepth.fetch_sub(1);
         });
 }
 

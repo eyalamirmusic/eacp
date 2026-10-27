@@ -447,4 +447,13 @@ std::uint64_t getCurrentProcessId()
     return ::GetCurrentProcessId();
 }
 
+std::uint64_t getCurrentThreadId()
+{
+    return ::GetCurrentThreadId();
+}
+
+// The handler process watches the heartbeat and samples from outside.
+void startHangWatchdog(SharedState&) {}
+void stopHangWatchdog() {}
+
 } // namespace eacp::CrashReporting::Detail
