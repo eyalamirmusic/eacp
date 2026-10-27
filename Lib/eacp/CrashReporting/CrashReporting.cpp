@@ -4,13 +4,13 @@
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Threads/EventLoop.h>
-#include <eacp/Core/Threads/Timer.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Random.h>
 #include <eacp/Core/Utils/Strings.h>
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <mutex>
 #include <type_traits>
@@ -35,7 +35,7 @@ struct CrashReportingSession
     bool crashedLastRun = false;
     Options options;
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
-    std::optional<Threads::Timer> heartbeat;
+    std::atomic<bool> heartbeatRunning {false};
 };
 
 CrashReportingSession& getSession()
@@ -142,6 +142,24 @@ std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
     return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
 }
 
+// Each beat posts the next through callAfter rather than a Timer: Windows
+// delays WM_TIMER behind every other message and coalesces it by up to a
+// second, which an idle loop would be reported as a hang for.
+void scheduleHeartbeat(CrashReportingSession& session, Detail::SharedHangInfo& hang)
+{
+    auto interval = Time::MS {session.options.heartbeatInterval.count()};
+
+    Threads::callAfter(interval,
+                       [&session, &hang]
+                       {
+                           if (!session.heartbeatRunning)
+                               return;
+
+                           writeHeartbeat(hang);
+                           scheduleHeartbeat(session, hang);
+                       });
+}
+
 // Before the handler launches, since on Windows it reads these to decide how
 // often it wakes.
 void writeHangSettings(Detail::SharedState& state, const Options& options)
@@ -159,8 +177,8 @@ void armHangDetection(CrashReportingSession& session, Detail::SharedState& state
     if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
         return;
 
-    auto interval = Time::MS {session.options.heartbeatInterval.count()};
-    session.heartbeat.emplace([&hang] { writeHeartbeat(hang); }, interval);
+    session.heartbeatRunning = true;
+    scheduleHeartbeat(session, hang);
     Detail::startHangWatchdog(state);
 }
 
@@ -272,7 +290,7 @@ void stop()
         return;
 
     Detail::stopHangWatchdog();
-    session.heartbeat.reset();
+    session.heartbeatRunning = false;
     Detail::uninstallCrashHandlers();
     Detail::stopHandlerProcess(session.sharedState->get());
     session.started = false;

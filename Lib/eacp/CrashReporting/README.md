@@ -146,8 +146,10 @@ the unhandled-exception filter other than through the exit code above.
 
 ## Hangs
 
-`start()` arms a heartbeat: a `Threads::Timer` on the event loop writes the
-steady clock into the shared block every `heartbeatInterval`. When the
+`start()` arms a heartbeat: a callback on the event loop, re-posted with
+`Threads::callAfter` each time it runs, writes the steady clock into the
+shared block every `heartbeatInterval`. (Not a `Threads::Timer`: Windows
+delays `WM_TIMER` behind other messages and coalesces it by up to a second.) When the
 heartbeat has been silent for `hangThreshold`, the main thread (the thread
 that called `start()`) is sampled and a report is written to `pending/` like a
 crash's: `kind: "hang"`, `reason: "Hang"`, `message: "main thread
@@ -178,10 +180,6 @@ breakpoint is not a hang.
   `StackWalk64`, `ResumeThread`s it, then names the frames and writes a
   minidump of the threads as they are. The debugger check is
   `CheckRemoteDebuggerPresent`.
-
-Keep the threshold well above the interval: Windows delays the thread timer
-behind the heartbeat by up to a second in a process with no window, so a
-threshold under about a second reports an idle loop as hung.
 
 Limits: only the main thread is sampled, once, at the threshold; there is no
 deadlock analysis or other threads' stacks. A frame-pointer walk on macOS

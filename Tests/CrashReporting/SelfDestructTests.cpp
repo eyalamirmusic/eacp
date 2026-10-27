@@ -331,6 +331,10 @@ auto tCrashReportFastFail =
 auto tCrashReportHang = test("CrashReport/hang") = []
 {
     auto reports = runHangFault({}, testHangThresholdMilliseconds);
+
+    if (reports.size() != 1)
+        Console::printError(std::to_string(reports.size()) + " hang reports");
+
     check(reports.size() == 1);
 
     if (reports.size() == 1)
