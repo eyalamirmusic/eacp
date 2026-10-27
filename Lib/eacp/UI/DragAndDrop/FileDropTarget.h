@@ -26,7 +26,7 @@ namespace eacp::UI
 class FileDropTarget
 {
 public:
-    virtual ~FileDropTarget() = default;
+    virtual ~FileDropTarget();
 
     virtual bool isInterestedInFileDrop(const Vector<std::string>& files) = 0;
 

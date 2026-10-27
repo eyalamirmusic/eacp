@@ -1,9 +1,15 @@
 #include "DragAndDrop.h"
+#include "FileDropTarget.h"
 
 #include <ranges>
 
 namespace eacp::UI
 {
+// The key function: FileDropTarget's typeinfo is emitted here alone, so the
+// host's dynamic_cast finds the one copy whichever LTO mode a subclass's
+// translation unit was built in.
+FileDropTarget::~FileDropTarget() = default;
+
 DragAndDropTarget::DragAndDropTarget(Component& ownerToUse)
     : owner(ownerToUse)
 {
