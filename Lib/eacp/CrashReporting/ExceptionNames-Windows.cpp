@@ -1,4 +1,5 @@
 #include "ExceptionNames-Windows.h"
+#include "CppExceptions-Windows.h"
 
 #include <array>
 
@@ -6,7 +7,6 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-constexpr auto cppExceptionCode = DWORD {0xE06D7363};
 constexpr auto heapCorruptionCode = DWORD {0xC0000374};
 constexpr auto stackBufferOverrunCode = DWORD {0xC0000409};
 

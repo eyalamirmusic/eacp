@@ -7,6 +7,8 @@
 
 namespace eacp::CrashReporting::Detail
 {
+constexpr auto cppExceptionCode = DWORD {0xE06D7363};
+
 // A C++ exception nothing caught reaches the unhandled-exception filter as a
 // structured exception, and std::current_exception no longer sees it there.
 bool isCppException(const EXCEPTION_RECORD& record);

@@ -11,7 +11,6 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-constexpr auto cppExceptionCode = DWORD {0xE06D7363};
 constexpr auto cppExceptionMagic = ULONG_PTR {0x19930520};
 constexpr auto cppExceptionParameterCount = DWORD {4};
 constexpr auto thrownObjectParameter = 1;
