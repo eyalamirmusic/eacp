@@ -316,9 +316,9 @@ struct FrameRecord
     std::uint64_t returnAddress;
 };
 
-// ARM64 Windows always keeps the x29 chain, and StackWalk64 stops at the
-// first ntdll frame of a thread parked in a wait, so a hang is walked this way
-// too and the longer walk kept.
+// ARM64 Windows always keeps the x29 chain, and StackWalk64 is unreliable
+// there for a thread parked in a wait (it stops at the first ntdll frame), so
+// a hang is walked this way alone.
 Vector<std::uint64_t> walkFramePointerChain(HANDLE process, const CONTEXT& context)
 {
     auto addresses = Vector<std::uint64_t> {context.Pc, context.Lr};
@@ -344,17 +344,15 @@ Vector<std::uint64_t> walkFramePointerChain(HANDLE process, const CONTEXT& conte
 }
 #endif
 
-Vector<std::uint64_t>
-    walkSuspendedThread(HANDLE process, HANDLE thread, const CONTEXT& context)
+Vector<std::uint64_t> walkSuspendedThread(HANDLE process,
+                                          [[maybe_unused]] HANDLE thread,
+                                          const CONTEXT& context)
 {
-    auto addresses = walkThreadAddresses(process, thread, context);
 #if defined(_M_ARM64)
-    auto chain = walkFramePointerChain(process, context);
-
-    if (chain.size() > addresses.size())
-        return chain;
+    return walkFramePointerChain(process, context);
+#else
+    return walkThreadAddresses(process, thread, context);
 #endif
-    return addresses;
 }
 
 Vector<StackFrame> makeReportFrames(HANDLE process,
