@@ -27,6 +27,7 @@ struct ExpectedCrash
     std::string_view reason;
     bool hasStack = true;
     std::string_view messageFragment = {};
+    bool stackReachesApp = true;
 };
 
 #if defined(_WIN32)
@@ -48,8 +49,19 @@ constexpr auto pureVirtualCrash = ExpectedCrash {"purevirtual", "SIGABRT"};
 constexpr auto heapCorruptionCrash = ExpectedCrash {"heapcorruption", "SIGTRAP"};
 #endif
 
-constexpr auto terminateCrash = ExpectedCrash {
-    "terminate", "std::terminate", true, "SelfDestruct threw this on purpose"};
+// On Windows ARM64 the handler's walk of an uncaught C++ exception stops at
+// KERNELBASE's RaiseException (see README.md, the v1 limits).
+#if defined(_M_ARM64)
+constexpr auto terminateReachesApp = false;
+#else
+constexpr auto terminateReachesApp = true;
+#endif
+
+constexpr auto terminateCrash = ExpectedCrash {"terminate",
+                                               "std::terminate",
+                                               true,
+                                               "SelfDestruct threw this on purpose",
+                                               terminateReachesApp};
 
 bool isSelfDestructFrame(const StackFrame& frame)
 {
@@ -207,11 +219,15 @@ CrashReport checkCrashReport(const ExpectedCrash& expected)
 
     check(report.message.find(expected.messageFragment) != std::string::npos);
 
-    if (expected.hasStack && !hasSelfDestructFrame(report))
+    auto shouldReachApp = expected.hasStack && expected.stackReachesApp;
+
+    if (shouldReachApp && !hasSelfDestructFrame(report))
         printFrames(report);
 
-    if (expected.hasStack)
+    if (shouldReachApp)
         check(hasSelfDestructFrame(report));
+    else if (expected.hasStack)
+        check(!report.crashingThread.frames.empty());
     else
         check(report.crashingThread.frames.empty());
 

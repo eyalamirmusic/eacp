@@ -75,53 +75,6 @@ std::uint64_t getFaultAddress(const EXCEPTION_RECORD& record)
     return reinterpret_cast<std::uintptr_t>(record.ExceptionAddress);
 }
 
-std::uint64_t getProgramCounter(const CONTEXT& context)
-{
-#if defined(_M_ARM64)
-    return context.Pc;
-#else
-    return context.Rip;
-#endif
-}
-
-// This thread's stack from the faulting instruction down, unwound in-process
-// from the exception's context with the OS's own unwinder. The handler falls
-// back to it where its own walk stops early, as StackWalk64 does on ARM64 at
-// the RaiseException of an uncaught C++ exception.
-void recordInProcessFrames(SharedCrashInfo& crash, const CONTEXT& faultContext)
-{
-    auto context = faultContext;
-    crash.frameCount = 0;
-
-    while (crash.frameCount < maxCrashFrames)
-    {
-        auto programCounter = getProgramCounter(context);
-
-        if (programCounter == 0)
-            break;
-
-        crash.frames[crash.frameCount++] = programCounter;
-
-        auto imageBase = DWORD64 {0};
-        auto* function =
-            ::RtlLookupFunctionEntry(programCounter, &imageBase, nullptr);
-
-        if (function == nullptr)
-            break;
-
-        auto handlerData = PVOID {nullptr};
-        auto establisherFrame = DWORD64 {0};
-        ::RtlVirtualUnwind(UNW_FLAG_NHANDLER,
-                           imageBase,
-                           programCounter,
-                           function,
-                           &context,
-                           &handlerData,
-                           &establisherFrame,
-                           nullptr);
-    }
-}
-
 void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
 {
     const auto& record = *pointers.ExceptionRecord;
@@ -135,7 +88,6 @@ void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
     crash.faultAddress = getFaultAddress(record);
     crash.threadId = ::GetCurrentThreadId();
     crash.exceptionPointersAddress = reinterpret_cast<std::uintptr_t>(&pointers);
-    recordInProcessFrames(crash, *pointers.ContextRecord);
 }
 
 // Hands the crash to the handler, which writes the report and ends this

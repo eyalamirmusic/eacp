@@ -6,7 +6,6 @@
 
 #include <dbghelp.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <optional>
@@ -300,36 +299,6 @@ Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& cras
     return frames;
 }
 
-Vector<StackFrame> makeInProcessFrames(HANDLE process, const SharedCrashInfo& crash)
-{
-    auto frames = Vector<StackFrame> {};
-    auto count = std::min<std::size_t>(crash.frameCount, maxCrashFrames);
-
-    ::SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-    ::SymInitializeW(process, nullptr, TRUE);
-
-    for (auto index = std::size_t {0}; index < count; ++index)
-        frames.add(makeReportFrame(process, crash.frames[index], index > 0));
-
-    ::SymCleanup(process);
-    return frames;
-}
-
-// The walk from the context, unless it stopped within the first frame and the
-// app's own in-process walk went further.
-Vector<StackFrame> findCrashedThreadFrames(HANDLE process,
-                                           const SharedCrashInfo& crash)
-{
-    constexpr auto shortestUsefulWalk = 1;
-    auto walked = walkCrashedThread(process, crash);
-    auto walkedCount = static_cast<std::size_t>(walked.size());
-
-    if (walkedCount > shortestUsefulWalk || crash.frameCount <= walkedCount)
-        return walked;
-
-    return makeInProcessFrames(process, crash);
-}
-
 int handleCrash(const ReportDatabase& database, const AppConnection& connection)
 {
     const auto& state = connection.state->get();
@@ -340,7 +309,7 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
         report.minidumpPath = minidumpPath;
 
     report.crashingThread.frames =
-        findCrashedThreadFrames(connection.appProcess, state.crash);
+        walkCrashedThread(connection.appProcess, state.crash);
     finishHandlerReport(database, report, state);
 
     auto exitCode = static_cast<UINT>(state.crash.code);

@@ -168,6 +168,9 @@ a window `crashReported` opens can take the foreground with `Window::toFront()`.
 - No WER runtime-exception module, so `__fastfail` and heap corruption are
   reported from the exit code only, with no stack.
 - No vectored exception handlers.
+- On ARM64, `StackWalk64` stops an uncaught C++ exception's stack at
+  KERNELBASE's `RaiseException`, so that report has one frame; the minidump
+  has the whole thread.
 
 Both: when the handler process is gone at crash time, the crash is not
 reported; there is no in-process fallback in v1.
