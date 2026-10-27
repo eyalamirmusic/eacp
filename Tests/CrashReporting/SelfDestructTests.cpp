@@ -276,6 +276,7 @@ CrashReport checkCrashReport(const ExpectedCrash& expected)
     check(report.extra.contains("launchedFrom"));
     check(report.metadata["environment"] == "demo");
     check(report.metadata.contains("release"));
+    check(!report.metadata["arch"].empty());
     check(report.user.id == "self-destruct-user");
     check(report.user.email == "user@example.com");
     check(report.user.username == "selfdestruct");

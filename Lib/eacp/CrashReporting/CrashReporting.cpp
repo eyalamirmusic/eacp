@@ -75,6 +75,20 @@ std::string getAppIdentity()
     return company + "." + appName;
 }
 
+// The handler is the app's own executable, so its build is the app's.
+std::string getArchitectureName()
+{
+#if defined(_M_ARM64) || defined(__aarch64__)
+    return "arm64";
+#elif defined(_WIN32) && defined(_M_X64)
+    return "x64";
+#elif defined(__x86_64__)
+    return "x86_64";
+#else
+    return "unknown";
+#endif
+}
+
 void setDefaultMetadata(Detail::SharedState& state, const Options& options)
 {
     auto& metadata = state.metadata;
@@ -86,6 +100,7 @@ void setDefaultMetadata(Detail::SharedState& state, const Options& options)
                              "os",
                              getPlatformName() + " "
                                  + Detail::getOperatingSystemVersion());
+    Detail::writeSharedEntry(state, metadata, "arch", getArchitectureName());
     Detail::writeSharedEntry(state, metadata, "release", options.release);
     Detail::writeSharedEntry(state, metadata, "environment", options.environment);
     Detail::writeSharedEntry(state, metadata, "dist", options.dist);
