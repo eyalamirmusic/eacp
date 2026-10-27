@@ -189,7 +189,7 @@ std::uint64_t getSteadyMilliseconds();
 
 // How long the heartbeat has been silent when that is a hang to report: the
 // heartbeat has started, detection is on and not paused, and the silence is
-// at least the threshold. 0 otherwise.
+// at least the threshold past the beat that was due. 0 otherwise.
 std::uint64_t findHangDuration(const SharedHangInfo& hang, std::uint64_t now);
 
 // Async-signal-safe: copies into a fixed field without allocating.

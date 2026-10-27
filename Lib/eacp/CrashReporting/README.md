@@ -150,7 +150,7 @@ the unhandled-exception filter other than through the exit code above.
 `Threads::callAfter` each time it runs, writes the steady clock into the
 shared block every `heartbeatInterval`. (Not a `Threads::Timer`: Windows
 delays `WM_TIMER` behind other messages and coalesces it by up to a second.) When the
-heartbeat has been silent for `hangThreshold`, the main thread (the thread
+heartbeat has been silent for `hangThreshold` past the beat that was due, the main thread (the thread
 that called `start()`) is sampled and a report is written to `pending/` like a
 crash's: `kind: "hang"`, `reason: "Hang"`, `message: "main thread
 unresponsive for N s"`, `hangDuration`, the main thread's frames in

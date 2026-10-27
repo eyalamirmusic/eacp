@@ -97,9 +97,10 @@ std::uint64_t findHangDuration(const SharedHangInfo& hang, std::uint64_t now)
         || now < heartbeat)
         return 0;
 
+    // A healthy loop is up to one interval past its last beat.
     auto silence = now - heartbeat;
 
-    if (silence < hang.thresholdMilliseconds)
+    if (silence < hang.thresholdMilliseconds + hang.pollIntervalMilliseconds)
         return 0;
 
     return silence;

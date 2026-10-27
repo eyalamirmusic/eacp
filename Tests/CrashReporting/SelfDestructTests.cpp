@@ -20,7 +20,7 @@ namespace
 constexpr auto selfDestructModuleName = std::string_view {"SelfDestruct"};
 constexpr auto reportWaitLimit = std::chrono::seconds {10};
 constexpr auto reportPollInterval = std::chrono::milliseconds {20};
-constexpr auto testHangThresholdMilliseconds = "1500";
+constexpr auto testHangThresholdMilliseconds = "500";
 
 struct ExpectedCrash
 {
@@ -234,7 +234,7 @@ void checkHangReport(const CrashReport& report, std::string_view function)
     check(report.kind == ReportKind::hang);
     check(report.reason == "Hang");
     check(report.message.starts_with("main thread unresponsive for "));
-    check(report.hangDurationMilliseconds >= 1500);
+    check(report.hangDurationMilliseconds >= 1000);
     check(report.tags.at("project") == "eacp SelfDestruct");
     check(report.breadcrumbs.size() == 2);
 
