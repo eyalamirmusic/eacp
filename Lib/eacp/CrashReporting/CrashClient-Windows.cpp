@@ -84,33 +84,42 @@ std::uint64_t getProgramCounter(const CONTEXT& context)
 #endif
 }
 
-// This thread's stack from the faulting instruction down, walked in-process,
-// where the unwinder crosses the exception dispatcher's frames. The handler
-// falls back to it when its own walk from the context stops there, as
-// StackWalk64 does on ARM64 at a RaiseException. Frames above the fault (this
-// filter and the dispatcher) are dropped when the fault's address is found.
-void recordInProcessFrames(SharedCrashInfo& crash, const CONTEXT& context)
+// This thread's stack from the faulting instruction down, unwound in-process
+// from the exception's context with the OS's own unwinder. The handler falls
+// back to it where its own walk stops early, as StackWalk64 does on ARM64 at
+// the RaiseException of an uncaught C++ exception.
+void recordInProcessFrames(SharedCrashInfo& crash, const CONTEXT& faultContext)
 {
-    auto addresses = std::array<void*, maxCrashFrames> {};
-    auto count = ::RtlCaptureStackBackTrace(
-        0, static_cast<DWORD>(addresses.size()), addresses.data(), nullptr);
-    auto faultAddress = getProgramCounter(context);
-    auto first = std::size_t {0};
-
-    for (auto index = std::size_t {0}; index < count; ++index)
-    {
-        if (reinterpret_cast<std::uintptr_t>(addresses[index]) == faultAddress)
-        {
-            first = index;
-            break;
-        }
-    }
-
+    auto context = faultContext;
     crash.frameCount = 0;
 
-    for (auto index = first; index < count; ++index)
-        crash.frames[crash.frameCount++] =
-            reinterpret_cast<std::uintptr_t>(addresses[index]);
+    while (crash.frameCount < maxCrashFrames)
+    {
+        auto programCounter = getProgramCounter(context);
+
+        if (programCounter == 0)
+            break;
+
+        crash.frames[crash.frameCount++] = programCounter;
+
+        auto imageBase = DWORD64 {0};
+        auto* function =
+            ::RtlLookupFunctionEntry(programCounter, &imageBase, nullptr);
+
+        if (function == nullptr)
+            break;
+
+        auto handlerData = PVOID {nullptr};
+        auto establisherFrame = DWORD64 {0};
+        ::RtlVirtualUnwind(UNW_FLAG_NHANDLER,
+                           imageBase,
+                           programCounter,
+                           function,
+                           &context,
+                           &handlerData,
+                           &establisherFrame,
+                           nullptr);
+    }
 }
 
 void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
