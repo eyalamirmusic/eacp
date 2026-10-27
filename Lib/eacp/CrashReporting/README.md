@@ -87,67 +87,31 @@ JSON number loses the low bits of a 64-bit address.
 
 `moduleUuid` is the key a symbol server finds the image's symbols by. On macOS
 it is the Mach-O `LC_UUID`, upper-case `8-4-4-4-12` as `dwarfdump --uuid`
-prints it; on Windows the PDB's CodeView GUID and age as Sentry's `debug_id`,
+prints it; on Windows the PDB's CodeView GUID and age,
 lower-case `8-4-4-4-12-<age hex>`. Empty where it was not read; a report
 written before the field existed reads back with it empty.
-
-## Coming from sentry-native
-
-| sentry-native | eacp |
-|---|---|
-| `sentry_options_set_database_path` | `Options::databaseDirectory` |
-| `sentry_options_set_release` / `_environment` / `_dist` | `Options::release` / `environment` / `dist` |
-| `sentry_options_add_attachment` | `Options::attachments` |
-| `sentry_init` / `sentry_close` | `start()` / `stop()` |
-| `sentry_set_tag` / `sentry_remove_tag` | `setTag` / `removeTag` |
-| `sentry_set_extra` | `setExtra` (string values) |
-| `sentry_set_user` / `sentry_remove_user` | `setUser` / `clearUser` |
-| `sentry_add_breadcrumb` | `addBreadcrumb` |
-| `sentry_get_crashed_last_run` / `sentry_clear_crashed_last_run` | `crashedLastRun` / `clearCrashedLastRun` |
-| `sentry_options_set_dsn`, transport | none: an uploader of the app's own, below |
-| `on_crash` / `before_send` | `CrashHandler::crashReported`, in the handler process |
 
 ## Writing an uploader
 
 The module uploads nothing; an app does it in its own `CrashHandler`.
 
 - Upload from `crashReported`, in the handler process: it is healthy, the app
-  is already gone, and it may block as long as it needs.
+  is already gone, and it may take as long as it needs.
 - Resend from `pendingReportFound` on every launch, for reports that never
   arrived, and `markReportHandled(id)` once the server has taken one. It runs
-  on the event loop, so start the request asynchronously and never wait on it
-  there.
-- The report `id` is the idempotency key. Resends are expected, so the server
-  must dedupe: Sentry's `event_id` is the id with the dashes stripped; send it
-  as `Idempotency-Key` too where the server honours one.
-- The handler has no app state. Pass what it needs (endpoint, DSN) through
-  `Options::handlerArguments`, read back with `Apps::commandLineArgs()`, or as
-  a `setExtra` key, which arrives in `report.extra`.
+  on the event loop, so start the upload asynchronously; never wait on it.
+- The report folder is the payload: `report.json`, `minidump.dmp` when there
+  is one, and the copies under `attachments/`.
+- The report `id` is the idempotency key. Resends are expected, so a server
+  should dedupe on it.
+- Symbols change with every build, as `moduleUuid` does, so keep each build's
+  with it: `eacp_enable_crash_reporting(<target> SYMBOLS_DIR <dir>)` copies
+  the dSYM or PDB there as `<target>-<version>`.
+- The handler has no app state. Pass what it needs (an endpoint, a key)
+  through `Options::handlerArguments`, read back with
+  `Apps::commandLineArgs()`, or as a tag, which arrives in `report.tags`.
 
-Sentry mapping:
-
-| Sentry | Report |
-|---|---|
-| `event_id` | `id` without dashes |
-| `release`, `environment`, `dist` | `metadata["release"]`, `["environment"]`, `["dist"]` |
-| `exception.values[0].type` / `value` | `reason` / `message` |
-| `stacktrace.frames[]` `instruction_addr` | `moduleBase + offset` |
-| `image_addr`, `package`, `function` | `moduleBase`, `modulePath`, `symbol` |
-| `debug_meta.images[]` `debug_id`, `image_addr`, `code_file` | `moduleUuid`, `moduleBase`, `modulePath` |
-| `tags` / `extra` | `tags` / `extra` |
-| `user` `id`, `email`, `username` | `user` |
-| `breadcrumbs.values[]` `category`, `message`, `level`, `timestamp` | `breadcrumbs[]` (timestamp in ms; Sentry wants seconds) |
-| `contexts.os` | `metadata["os"]` |
-| envelope attachment items | `attachments` |
-
-Sentry wants frames innermost last, the reverse of `frames`. On Windows the
-minidump can go to the minidump endpoint instead, as multipart with the event
-fields beside it.
-
-Symbols change with every build, since `moduleUuid` does, so they are uploaded
-per build. `eacp_enable_crash_reporting(<target> SYMBOLS_DIR <dir>)` copies each
-build's dSYM or PDB into one folder as `<target>-<version>`, ready for
-`sentry-cli debug-files upload` or the like.
+The fields map onto what crash backends such as Sentry expect.
 
 ## What is caught
 

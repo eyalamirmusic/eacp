@@ -211,7 +211,7 @@ bool hasPdbSignature(const IMAGEHLP_MODULEW64& module)
     return module.PdbSig70 != GUID {};
 }
 
-// The PDB's CodeView GUID and age as Sentry's debug_id: lower-case 8-4-4-4-12
+// The PDB's CodeView GUID and age: lower-case 8-4-4-4-12
 // followed by -<age hex>.
 std::string formatDebugId(const GUID& guid, DWORD age)
 {

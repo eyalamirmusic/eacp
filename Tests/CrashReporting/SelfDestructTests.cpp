@@ -1,4 +1,5 @@
 #include <eacp/Core/Process/Process.h>
+#include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 #include <eacp/CrashReporting/ReportDatabase.h>
@@ -60,6 +61,14 @@ bool hasSelfDestructFrame(const CrashReport& report)
     return std::ranges::any_of(report.crashingThread.frames, isSelfDestructFrame);
 }
 
+void printFrames(const CrashReport& report)
+{
+    Console::printError("frames of " + report.reason + ":");
+
+    for (const auto& frame: report.crashingThread.frames)
+        Console::printError("  " + frame.modulePath + " " + frame.symbol);
+}
+
 bool isHexDigit(char character, bool upperCase)
 {
     if (character >= '0' && character <= '9')
@@ -72,7 +81,7 @@ bool isHexDigit(char character, bool upperCase)
 }
 
 // 8-4-4-4-12 hex digits, upper case on macOS (LC_UUID) and lower case with a
-// trailing -<age hex> on Windows (a Sentry debug_id).
+// trailing -<age hex> on Windows (PDB GUID and age).
 bool isModuleUuidForm(std::string_view text)
 {
 #if defined(_WIN32)
@@ -197,6 +206,9 @@ CrashReport checkCrashReport(const ExpectedCrash& expected)
     check(report.attachments.size() == 1);
 
     check(report.message.find(expected.messageFragment) != std::string::npos);
+
+    if (expected.hasStack && !hasSelfDestructFrame(report))
+        printFrames(report);
 
     if (expected.hasStack)
         check(hasSelfDestructFrame(report));
