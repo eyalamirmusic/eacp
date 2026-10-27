@@ -1,6 +1,5 @@
 #include "Strings.h"
 
-#include <array>
 #include <cctype>
 #include <cerrno>
 #include <clocale>
@@ -18,7 +17,7 @@ namespace eacp::Strings
 namespace
 {
 constexpr auto replacementChar = char32_t {0xFFFD};
-constexpr auto hexPrefixes = std::array<std::string_view, 2> {"0x", "0X"};
+constexpr auto hexPrefixes = Array<std::string_view, 2> {"0x", "0X"};
 constexpr auto hexBase = 16;
 
 // D800..DBFF and DC00..DFFF are the two halves of a UTF-16 surrogate pair.
@@ -346,12 +345,11 @@ bool equalsInConstantTime(std::string_view expected, std::string_view supplied)
     return difference == 0;
 }
 
-std::vector<std::string>
-    split(std::string_view text, char delimiter, std::size_t maximumParts)
+Vector<std::string> split(std::string_view text, char delimiter, int maximumParts)
 {
-    auto parts = std::vector<std::string> {};
+    auto parts = Vector<std::string> {};
 
-    while (maximumParts == 0 || parts.size() + 1 < maximumParts)
+    while (maximumParts <= 0 || parts.size() + 1 < maximumParts)
     {
         const auto end = text.find(delimiter);
 
@@ -366,11 +364,11 @@ std::vector<std::string>
     return parts;
 }
 
-std::string join(const std::vector<std::string>& parts, std::string_view separator)
+std::string join(const Vector<std::string>& parts, std::string_view separator)
 {
     auto joined = std::string {};
 
-    for (std::size_t index = 0; index < parts.size(); ++index)
+    for (auto index = 0; index < parts.size(); ++index)
     {
         if (index > 0)
             joined += separator;

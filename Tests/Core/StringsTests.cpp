@@ -374,7 +374,7 @@ auto tEqualsInConstantTime = test("Strings/equalsInConstantTime") = []
 auto tSplitKeepsEmptyPieces = test("Strings/split keeps empty pieces") = []
 {
     using eacp::Strings::split;
-    using Pieces = std::vector<std::string>;
+    using Pieces = eacp::Vector<std::string>;
     check(split("a,b,,c", ',') == Pieces {"a", "b", "", "c"});
     check(split("", ',') == Pieces {""});
     check(split("abc", ',') == Pieces {"abc"});
@@ -384,7 +384,7 @@ auto tSplitKeepsEmptyPieces = test("Strings/split keeps empty pieces") = []
 auto tSplitStopsAtMaximumParts = test("Strings/split leaves the rest whole") = []
 {
     using eacp::Strings::split;
-    using Pieces = std::vector<std::string>;
+    using Pieces = eacp::Vector<std::string>;
     check(split("FUNC 64cc 1c 0 Ns::f(int a, int b)", ' ', 5)
           == Pieces {"FUNC", "64cc", "1c", "0", "Ns::f(int a, int b)"});
     check(split("a b", ' ', 5) == Pieces {"a", "b"});

@@ -1,12 +1,13 @@
 #pragma once
 
+#include "Containers.h"
+
 #include <charconv>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <vector>
 
 namespace eacp::Strings
 {
@@ -40,11 +41,11 @@ bool equalsInConstantTime(std::string_view expected, std::string_view supplied);
 // The pieces between each delimiter, empty ones included. With maximumParts
 // above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
 // two is {"a", "b c"}.
-std::vector<std::string>
-    split(std::string_view text, char delimiter, std::size_t maximumParts = 0);
+Vector<std::string>
+    split(std::string_view text, char delimiter, int maximumParts = 0);
 
 // The parts with separator between each, empty parts included.
-std::string join(const std::vector<std::string>& parts, std::string_view separator);
+std::string join(const Vector<std::string>& parts, std::string_view separator);
 
 int hexCharToInt(char c);
 
