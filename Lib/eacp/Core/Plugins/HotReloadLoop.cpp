@@ -192,6 +192,26 @@ HotReloadLoop::Options hotReloadOptionsFor(const HotReloadTarget& target,
     return options;
 }
 
+Vector<FilePath> hotReloadSourceFiles(std::string_view sources)
+{
+    auto files = Vector<FilePath> {};
+
+    while (!sources.empty())
+    {
+        auto end = sources.find('|');
+
+        if (auto file = sources.substr(0, end); !file.empty())
+            files.add(FilePath {file});
+
+        if (end == std::string_view::npos)
+            break;
+
+        sources.remove_prefix(end + 1);
+    }
+
+    return files;
+}
+
 Files::SourceWatcher::Options
     sourcesExcludingOutputs(const HotReloadLoop::Options& options)
 {
@@ -211,6 +231,7 @@ HotReloadLoop::Options hotReloadOptions(const HotReloadTarget& target)
 {
     auto options = HotReloadLoop::Options {};
     options.sources.directory = FilePath {target.sourceDirectory};
+    options.sources.files = hotReloadSourceFiles(target.sources);
     options.buildCommand = hotReloadBuildCommand(target);
     options.modulePath = FilePath {target.library};
     return options;
@@ -343,5 +364,10 @@ ReloadableLibrary& HotReloadLoop::getLibrary()
 const FilePath& HotReloadLoop::getSourceDirectory() const
 {
     return watcher.getDirectory();
+}
+
+const Vector<FilePath>& HotReloadLoop::getWatchedPaths() const
+{
+    return watcher.getWatchedPaths();
 }
 } // namespace eacp::Plugins

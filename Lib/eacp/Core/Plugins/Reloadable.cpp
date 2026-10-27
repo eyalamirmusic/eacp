@@ -1,12 +1,10 @@
 #include "Reloadable.h"
 
+#include <stdexcept>
+
 namespace eacp::Plugins
 {
-namespace
-{
-using ReloadableTableFunction = ReloadableTable (*)();
-
-std::string readableReloadableSignature(std::string_view signature)
+std::string Detail::readableSignature(std::string_view signature)
 {
     constexpr auto marker = std::string_view {"Signature = "};
     auto start = signature.find(marker);
@@ -22,6 +20,10 @@ std::string readableReloadableSignature(std::string_view signature)
     return std::string {signature};
 }
 
+namespace
+{
+using ReloadableTableFunction = ReloadableTable (*)();
+
 ReloadableEntry::Erased findReloadable(const ReloadableTable& table,
                                        std::string_view signature)
 {
@@ -36,47 +38,60 @@ ReloadableEntry::Erased findReloadable(const ReloadableTable& table,
     return nullptr;
 }
 
-std::string joinedSignatures(const Vector<std::string>& names)
+Vector<std::string> reloadableSignaturesOf(const ReloadableTable& table)
+{
+    auto signatures = Vector<std::string> {};
+
+    for (auto index = 0; index < table.count; ++index)
+        if (table.entries[index].function != nullptr)
+            signatures.add(table.entries[index].signature);
+
+    return signatures;
+}
+
+std::string joinedSignatures(const Vector<std::string>& signatures)
 {
     auto text = std::string {};
 
-    for (const auto& name: names)
-        text += (text.empty() ? "" : ", ") + name;
+    for (const auto& signature: signatures)
+        text += (text.empty() ? "" : ", ") + Detail::readableSignature(signature);
 
     return text;
 }
 
-Vector<std::string> signaturesMissingFrom(const ReloadableTable& table,
-                                          const ReloadableTable& reference)
+std::string reloadRefusalFor(const Vector<std::string>& expected,
+                             const ReloadableTable& module)
 {
     auto missing = Vector<std::string> {};
 
-    for (auto index = 0; index < reference.count; ++index)
-    {
-        const auto& entry = reference.entries[index];
-
-        if (findReloadable(table, entry.signature) == nullptr)
-            missing.add(readableReloadableSignature(entry.signature));
-    }
-
-    return missing;
-}
-
-std::string reloadRefusalFor(const ReloadableTable& compiledIn,
-                             const ReloadableTable& module)
-{
-    auto missing = signaturesMissingFrom(module, compiledIn);
+    for (const auto& signature: expected)
+        if (findReloadable(module, signature) == nullptr)
+            missing.add(signature);
 
     if (missing.empty())
         return {};
 
-    auto extra = signaturesMissingFrom(compiledIn, module);
+    auto extra = Vector<std::string> {};
+
+    for (const auto& signature: reloadableSignaturesOf(module))
+        if (!expected.contains(signature))
+            extra.add(signature);
 
     if (extra.empty())
         return "the module lacks " + joinedSignatures(missing);
 
     return "signature mismatch: the module lacks " + joinedSignatures(missing)
            + " and has " + joinedSignatures(extra);
+}
+
+std::string watchedPathsText(const Vector<FilePath>& paths)
+{
+    auto text = std::string {};
+
+    for (const auto& path: paths)
+        text += (text.empty() ? "" : ", ") + path.str();
+
+    return text;
 }
 
 HotReloadLoop::Options
@@ -88,6 +103,9 @@ HotReloadLoop::Options
 
     if (watched.directory.empty())
         watched.directory = options.sources.directory;
+
+    if (watched.files.empty())
+        watched.files = options.sources.files;
 
     options.sources = watched;
     return options;
@@ -110,43 +128,43 @@ Reloadable::~Reloadable() = default;
 
 std::string Reloadable::describeState() const
 {
-    return loop ? loop->describeState() : "static";
+    if (!loop)
+        return "static";
+
+    auto state = loop->getState();
+
+    if (state != HotReloadLoop::State::Idle && state != HotReloadLoop::State::Loaded)
+        return loop->describeState();
+
+    if (!imageLoaded)
+        return "load failed: " + firstLoadFailure;
+
+    return "generation " + std::to_string(getGeneration());
 }
 
 int Reloadable::getGeneration() const
 {
-    return loop ? loop->getGeneration() : 0;
+    if (!loop || !imageLoaded)
+        return 0;
+
+    return loop->getGeneration() - firstImageGeneration;
 }
 
-bool Reloadable::isModuleLoaded() const
+ReloadableEntry::Erased Reloadable::lookup(std::string_view signature) const
 {
-    return getGeneration() > 0;
-}
+    if (loop && !imageLoaded)
+        return nullptr;
 
-ReloadableEntry::Erased
-    Reloadable::compiledInFunction(std::string_view signature) const
-{
-    if (auto function = findReloadable(compiledIn, signature))
+    if (auto function = findReloadable(loop ? loaded : compiledIn, signature))
         return function;
 
     throw std::logic_error("EACP_RELOADABLE lists no "
-                           + readableReloadableSignature(signature));
+                           + Detail::readableSignature(signature));
 }
 
-ReloadableEntry::Erased Reloadable::currentFunction(std::string_view signature) const
+void Reloadable::logFactoryFailure(const std::string& reason) const
 {
-    auto compiled = compiledInFunction(signature);
-
-    if (!isModuleLoaded())
-        return compiled;
-
-    auto function = findReloadable(loaded, signature);
-    return function != nullptr ? function : compiled;
-}
-
-void Reloadable::logFallback(const std::string& reason) const
-{
-    options.log("HotReload: " + reason + ", using the compiled-in copy");
+    options.log("HotReload: " + reason);
 }
 
 std::string Reloadable::refusalOf(const DynamicLibrary& image) const
@@ -156,7 +174,10 @@ std::string Reloadable::refusalOf(const DynamicLibrary& image) const
     if (table == nullptr)
         return std::string {"no "} + reloadableTableSymbol;
 
-    return reloadRefusalFor(compiledIn, table());
+    if (!imageLoaded)
+        return {};
+
+    return reloadRefusalFor(firstSignatures, table());
 }
 
 HotReloadLoop::Options Reloadable::loopOptions(const HotReloadTarget& target) const
@@ -213,14 +234,46 @@ void Reloadable::startLoop(const HotReloadTarget& target)
     running.onLoadFailed = loadFailed;
     running.onReloaded = swapped;
 
-    options.log("HotReload: watching " + running.getSourceDirectory().str());
+    options.log("HotReload: watching "
+                + watchedPathsText(running.getWatchedPaths()));
+    loadFirstImage();
+}
+
+void Reloadable::loadFirstImage()
+{
+    auto& library = loop->getLibrary();
+
+    if (library.reload())
+    {
+        useLoadedImage();
+        options.log("HotReload: generation 0");
+    }
+    else
+    {
+        firstLoadFailure = library.lastError();
+        options.log("HotReload: load failed: " + firstLoadFailure);
+        options.onLoadFailed(firstLoadFailure);
+    }
+
+    options.onStateChanged();
+}
+
+void Reloadable::useLoadedImage()
+{
+    auto& library = loop->getLibrary();
+    loaded = library.findFunction<ReloadableTableFunction>(reloadableTableSymbol)();
+
+    if (imageLoaded)
+        return;
+
+    imageLoaded = true;
+    firstImageGeneration = library.getGeneration();
+    firstSignatures = reloadableSignaturesOf(loaded);
 }
 
 void Reloadable::reloaded()
 {
-    auto table = loop->getLibrary().findFunction<ReloadableTableFunction>(
-        reloadableTableSymbol);
-    loaded = table();
+    useLoadedImage();
 
     options.log("HotReload: generation " + std::to_string(getGeneration()));
     options.onReloaded();

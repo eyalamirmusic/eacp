@@ -83,4 +83,16 @@ auto tClear = test("OptionalView/clearRemovesTheContent") = []
     check(holder.get() == nullptr);
     check(holder.getSubviews().empty());
 };
+auto tSetNothing = test("OptionalView/settingNothingClears") = []
+{
+    auto holder = OptionalView<> {};
+    auto destroyed = false;
+    holder.set(markedView(destroyed));
+
+    holder.set({});
+
+    check(destroyed);
+    check(!holder.hasContent());
+    check(holder.getSubviews().empty());
+};
 } // namespace OptionalViewTests

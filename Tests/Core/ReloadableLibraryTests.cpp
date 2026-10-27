@@ -3,6 +3,8 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
 
+#include <optional>
+
 using namespace nano;
 
 namespace ReloadableLibraryTests
@@ -209,19 +211,24 @@ auto tValidatorRefuses =
 auto tDestructorCleans = test("ReloadableLibrary/destructorEmptiesStaging") = []
 {
     auto sandbox = Sandbox {};
+    auto library = std::optional<ReloadableLibrary> {};
+    library.emplace(sandbox.builtPath(), sandbox.stagingDirectory());
 
+    sandbox.build(fixtureA);
+    check(library->reload());
+    sandbox.build(fixtureB);
+    check(library->reload());
+    sandbox.build(fixtureA);
+    check(library->reload());
+    check(sandbox.stagedFileCount() >= 1);
+
+    auto destroyInsideTurn = [&library]
     {
-        auto library =
-            ReloadableLibrary {sandbox.builtPath(), sandbox.stagingDirectory()};
+        check(eacp::Threads::isEventLoopRunning());
+        library.reset();
+    };
 
-        sandbox.build(fixtureA);
-        check(library.reload());
-        sandbox.build(fixtureB);
-        check(library.reload());
-        sandbox.build(fixtureA);
-        check(library.reload());
-        check(sandbox.stagedFileCount() >= 1);
-    }
+    eacp::Threads::runEventLoopFor(eacp::Time::MS {20}, destroyInsideTurn);
 
     check(sandbox.stagedFileCount() == 0);
 };

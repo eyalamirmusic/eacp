@@ -351,4 +351,21 @@ auto tNoOutputSummary = test("HotReloadLoop/summaryWithoutOutputNamesTheCause") 
     check(failure.exitCode == -1);
     check(eacp::Plugins::buildFailureFrom(cancelled).summary == "build cancelled");
 };
+
+auto tTargetSources = test("HotReloadLoop/aTargetsSourcesAreTheWatchedFiles") = []
+{
+    auto target = eacp::Plugins::HotReloadTarget {};
+    target.sourceDirectory = "/src/app";
+    target.sources = "/src/app/Views.cpp|/src/app/Views.h";
+
+    auto options = eacp::Plugins::hotReloadOptions(target);
+
+    check(options.sources.directory == FilePath {"/src/app"});
+    check(options.sources.files.size() == 2);
+    check(options.sources.files[0] == FilePath {"/src/app/Views.cpp"});
+    check(options.sources.files[1] == FilePath {"/src/app/Views.h"});
+
+    target.sources = "";
+    check(eacp::Plugins::hotReloadOptions(target).sources.files.empty());
+};
 } // namespace HotReloadLoopTests

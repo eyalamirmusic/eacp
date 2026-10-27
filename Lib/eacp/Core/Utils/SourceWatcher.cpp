@@ -18,11 +18,20 @@ SourceWatcher::Options sourceWatcherOptionsFor(const FilePath& directory)
     options.directory = directory;
     return options;
 }
+
+Vector<FilePath> watchedPathsFor(const SourceWatcher::Options& options)
+{
+    if (options.files.empty())
+        return {options.directory};
+
+    return options.files;
+}
 } // namespace
 
 SourceWatcher::SourceWatcher(const Options& options,
                              const FileWatcher::ChangedFunc& onChanged)
-    : watcher({options.directory}, onChanged, fileWatcherOptionsFor(options))
+    : directory(options.directory)
+    , watcher(watchedPathsFor(options), onChanged, fileWatcherOptionsFor(options))
 {
 }
 
@@ -34,6 +43,11 @@ SourceWatcher::SourceWatcher(const FilePath& directoryToWatch,
 
 const FilePath& SourceWatcher::getDirectory() const
 {
-    return watcher.getPaths()[0];
+    return directory;
+}
+
+const Vector<FilePath>& SourceWatcher::getWatchedPaths() const
+{
+    return watcher.getPaths();
 }
 } // namespace eacp::Files

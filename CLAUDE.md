@@ -342,6 +342,9 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
 - `EACP_HOT_RELOAD` (default `OFF`): dev or static mode for every app wired
   with `eacp_add_hot_reload` that passes no `HOT_RELOAD` of its own (both
   in-tree examples pass `ON`; Windows, iOS and Android are always static).
+  `eacp_add_hot_reload(<app> <library> SOURCES ...)` creates the library: a
+  static one linked into the app in static mode, a module the app loads in
+  dev mode, whose own links are routed to the app and reach it compile-only.
   An app lists its reloadable functions once with `EACP_RELOADABLE` and
   reaches them by type through `Plugins::Reloadable` (`create<T>()`,
   `function<F>()`; `Core/Plugins/Reloadable.h`, included directly, never

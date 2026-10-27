@@ -33,6 +33,9 @@ const auto throwingObject = FilePath {EACP_RELOADABLE_FIXTURE_THROW};
 const auto answerAndObject = FilePath {EACP_RELOADABLE_FIXTURE_PAIR};
 const auto noTable = FilePath {EACP_RELOAD_FIXTURE_C};
 
+constexpr auto returnedNothing = "HotReload: factory returned nothing";
+constexpr auto threwNoObject = "HotReload: factory threw: no object today";
+
 int compiledInAnswer()
 {
     return 0;
@@ -50,9 +53,39 @@ Object* makeCompiledInObject()
     return new CompiledInObject;
 }
 
+Object* makeNoCompiledInObject()
+{
+    return nullptr;
+}
+
+Object* throwInsteadOfAnObject()
+{
+    throw std::runtime_error("no object today");
+}
+
 const auto answerEntries = reloadableEntries(&compiledInAnswer);
-const auto objectEntries = reloadableEntries(&makeCompiledInObject);
 const auto pairEntries = reloadableEntries(&compiledInAnswer, &makeCompiledInObject);
+const auto nullEntries = reloadableEntries(&makeNoCompiledInObject);
+const auto throwingEntries = reloadableEntries(&throwInsteadOfAnObject);
+
+struct PlainSettings
+{
+    int width = 0;
+};
+
+PlainSettings* makePlainSettings()
+{
+    return new PlainSettings {640};
+}
+
+const auto plainEntries = reloadableEntries(&makePlainSettings);
+
+template <typename F>
+std::string spelled()
+{
+    using namespace eacp::Plugins::Detail;
+    return readableSignature(signatureOf<F>());
+}
 
 template <std::size_t size>
 ReloadableTable tableOf(const std::array<ReloadableEntry, size>& entries)
@@ -77,23 +110,37 @@ struct Log
         return false;
     }
 
-    int finished() const
+    int buildsFinished() const
     {
         auto count = 0;
+        auto building = false;
 
         for (const auto& line: lines)
+        {
+            if (line.starts_with("HotReload: building "))
+            {
+                building = true;
+                continue;
+            }
+
             for (auto prefix: {"HotReload: generation ",
                                "HotReload: build failed: ",
                                "HotReload: load failed: "})
-                if (line.starts_with(prefix))
+            {
+                if (building && line.starts_with(prefix))
+                {
                     ++count;
+                    building = false;
+                }
+            }
+        }
 
         return count;
     }
 
-    bool waitForFinished(int count) const
+    bool waitForBuilds(int count) const
     {
-        auto reached = [this, count] { return finished() >= count; };
+        auto reached = [this, count] { return buildsFinished() >= count; };
         return eacp::Threads::runEventLoopUntil(reached, MS {10000});
     }
 
@@ -119,9 +166,9 @@ ReloadableSetup staticSetup(const ReloadableTable& table)
     return {table, false, {}};
 }
 
-ReloadableSetup devSetup(const ReloadableTable& table)
+ReloadableSetup devSetup()
 {
-    return {table, true, {}};
+    return {{}, true, {}};
 }
 
 std::string thrownBy(const std::function<void()>& action)
@@ -154,6 +201,31 @@ auto tStatic = test("Reloadable/staticModeUsesTheCompiledInTable") = []
     check(log.lines.empty());
 };
 
+auto tStaticNothing = test("Reloadable/aNullOrThrowingFactoryGivesNothing") = []
+{
+    auto log = Log {};
+    auto options = ReloadableOptions {};
+    options.log = log.sink();
+
+    auto returnsNull = Reloadable {staticSetup(tableOf(nullEntries)), options};
+    auto throws = Reloadable {staticSetup(tableOf(throwingEntries)), options};
+
+    check(returnsNull.create<Object>() == nullptr);
+    check(throws.create<Object>() == nullptr);
+    check(log.contains(returnedNothing));
+    check(log.contains(threwNoObject));
+};
+
+auto tPlainStruct = test("Reloadable/createMakesAPlainStruct") = []
+{
+    auto reloadable = Reloadable {staticSetup(tableOf(plainEntries)), {}};
+
+    auto settings = reloadable.create<PlainSettings>();
+
+    check(settings != nullptr);
+    check(settings->width == 640);
+};
+
 auto tUnknownType = test("Reloadable/anUnlistedTypeThrows") = []
 {
     auto reloadable = Reloadable {staticSetup(tableOf(answerEntries)), {}};
@@ -161,39 +233,57 @@ auto tUnknownType = test("Reloadable/anUnlistedTypeThrows") = []
     auto createObject = [&reloadable] { reloadable.create<Object>(); };
     auto fetchLong = [&reloadable] { reloadable.function<long()>(); };
 
-    check(thrownBy(createObject).find("ReloadableTestObject *()")
-          != std::string::npos);
-    check(thrownBy(fetchLong).find("long ()") != std::string::npos);
+    check(spelled<Object*()>().starts_with("ReloadableTestObject"));
+    check(spelled<long()>().starts_with("long"));
+    check(thrownBy(createObject)
+          == "EACP_RELOADABLE lists no " + spelled<Object*()>());
+    check(thrownBy(fetchLong) == "EACP_RELOADABLE lists no " + spelled<long()>());
 };
 
-auto tSwapsFunction = test("Reloadable/aFunctionSwapsAcrossGenerations") = []
+auto tGenerationZero = test("Reloadable/generationZeroIsTheModule") = []
+{
+    auto sandbox = HotReloadSandbox {};
+    sandbox.touchSource("a");
+    sandbox.install(answerAndObject);
+
+    auto log = Log {};
+    auto reloadable = Reloadable {devSetup(), optionsFor(sandbox, "true", log)};
+
+    check(reloadable.getGeneration() == 0);
+    check(reloadable.describeState() == "generation 0");
+    check(reloadable.call<AnswerFunction>() == 7);
+    check(reloadable.create<Object>()->value() == 7);
+    check(log.line(1) == "HotReload: generation 0");
+};
+
+auto tFirstLoadFails = test("Reloadable/aFailedFirstLoadLeavesNothingLoaded") = []
 {
     auto sandbox = HotReloadSandbox {};
     sandbox.touchSource("a");
 
     auto log = Log {};
-    auto reloads = 0;
-    auto options =
-        optionsFor(sandbox, sandbox.copyInTurnScript(answerOne, answerTwo), log);
-    auto countReload = [&reloads] { ++reloads; };
-    options.onReloaded = countReload;
+    auto loadFailures = 0;
+    auto options = optionsFor(sandbox, sandbox.copyScript(answerOne), log);
+    auto countFailure = [&loadFailures](const std::string&) { ++loadFailures; };
+    options.onLoadFailed = countFailure;
 
-    auto reloadable = Reloadable {devSetup(tableOf(answerEntries)), options};
-    check(reloads == 1);
+    auto reloadable = Reloadable {devSetup(), options};
+
+    check(loadFailures == 1);
+    check(log.line(1).starts_with("HotReload: load failed: no module at "));
+    check(reloadable.describeState().starts_with("load failed: no module at "));
+    check(reloadable.getGeneration() == 0);
+    check(reloadable.function<AnswerFunction>() == nullptr);
     check(reloadable.call<AnswerFunction>() == 0);
-    check(reloadable.describeState() == "generation 0");
+    check(reloadable.create<Object>() == nullptr);
 
     sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
-    check(reloadable.function<AnswerFunction>()() == 1);
-    check(reloadable.getGeneration() == 1);
+    check(log.waitForBuilds(1));
 
-    sandbox.touchSource("abc");
-    check(log.waitForFinished(2));
-    check(reloadable.call<AnswerFunction>() == 2);
-    check(reloadable.getGeneration() == 2);
-    check(reloadable.describeState() == "generation 2");
-    check(reloads == 3);
+    check(reloadable.getGeneration() == 0);
+    check(reloadable.describeState() == "generation 0");
+    check(reloadable.call<AnswerFunction>() == 1);
+    check(log.contains("HotReload: generation 0"));
 };
 
 auto tCalledAtCreation = test("Reloadable/onReloadedRunsOnceAtCreation") = []
@@ -208,14 +298,17 @@ auto tCalledAtCreation = test("Reloadable/onReloadedRunsOnceAtCreation") = []
     check(reloads == 1);
 
     auto sandbox = HotReloadSandbox {};
+    sandbox.install(answerOne);
+
     auto log = Log {};
-    auto devOptions = optionsFor(sandbox, sandbox.copyScript(answerOne), log);
+    auto devOptions = optionsFor(sandbox, "true", log);
     devOptions.onReloaded = countReload;
 
-    auto devReloadable = Reloadable {devSetup(tableOf(answerEntries)), devOptions};
+    auto devReloadable = Reloadable {devSetup(), devOptions};
     check(reloads == 2);
     check(devReloadable.getGeneration() == 0);
-    check(log.lines.size() == 1);
+    check(devReloadable.call<AnswerFunction>() == 1);
+    check(log.lines.size() == 2);
 };
 
 auto tNotCalledAtCreation =
@@ -233,12 +326,67 @@ auto tNotCalledAtCreation =
     check(reloadable.call<AnswerFunction>() == 0);
 };
 
+auto tSwapsFunction = test("Reloadable/aFunctionSwapsAcrossGenerations") = []
+{
+    auto sandbox = HotReloadSandbox {};
+    sandbox.touchSource("a");
+    sandbox.install(answerOne);
+
+    auto log = Log {};
+    auto reloads = 0;
+    auto options =
+        optionsFor(sandbox, sandbox.copyEachBuildScript(answerTwo, answerOne), log);
+    auto countReload = [&reloads] { ++reloads; };
+    options.onReloaded = countReload;
+
+    auto reloadable = Reloadable {devSetup(), options};
+    check(reloads == 1);
+    check(reloadable.call<AnswerFunction>() == 1);
+
+    sandbox.touchSource("ab");
+    check(log.waitForBuilds(1));
+    check(reloadable.function<AnswerFunction>()() == 2);
+    check(reloadable.getGeneration() == 1);
+
+    sandbox.touchSource("abc");
+    check(log.waitForBuilds(2));
+    check(reloadable.call<AnswerFunction>() == 1);
+    check(reloadable.getGeneration() == 2);
+    check(reloadable.describeState() == "generation 2");
+    check(reloads == 3);
+};
+
+auto tIndependentObjects = test("Reloadable/createMakesIndependentObjects") = []
+{
+    auto sandbox = HotReloadSandbox {};
+    sandbox.install(objectOne);
+
+    auto log = Log {};
+    auto reloadable = Reloadable {devSetup(), optionsFor(sandbox, "true", log)};
+
+    auto first = reloadable.create<Object>();
+    auto second = reloadable.create<Object>();
+    auto firstDestroyed = false;
+    auto secondDestroyed = false;
+    first->destroyed = &firstDestroyed;
+    second->destroyed = &secondDestroyed;
+
+    check(first.get() != second.get());
+    check(first->value() == 1);
+    check(second->value() == 1);
+
+    first.reset();
+    check(firstDestroyed);
+    check(!secondDestroyed);
+    check(second->value() == 1);
+};
+
 // The app's pattern: the holder of the objects first, the Reloadable last, and
 // onReloaded the one place objects are made.
 struct ObjectOwner
 {
-    ObjectOwner(const ReloadableTable& table, const ReloadableOptions& base)
-        : reloadable {devSetup(table), withReplacement(base)}
+    explicit ObjectOwner(const ReloadableOptions& base)
+        : reloadable {devSetup(), withReplacement(base)}
     {
     }
 
@@ -275,79 +423,46 @@ struct ObjectOwner
     Reloadable reloadable;
 };
 
-auto tIndependentObjects = test("Reloadable/createMakesIndependentObjects") = []
-{
-    auto sandbox = HotReloadSandbox {};
-    sandbox.touchSource("a");
-
-    auto log = Log {};
-    auto reloadable =
-        Reloadable {devSetup(tableOf(objectEntries)),
-                    optionsFor(sandbox, sandbox.copyScript(objectOne), log)};
-
-    sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
-
-    auto first = reloadable.create<Object>();
-    auto second = reloadable.create<Object>();
-    auto firstDestroyed = false;
-    auto secondDestroyed = false;
-    first->destroyed = &firstDestroyed;
-    second->destroyed = &secondDestroyed;
-
-    check(first.get() != second.get());
-    check(first->value() == 1);
-    check(second->value() == 1);
-
-    first.reset();
-    check(firstDestroyed);
-    check(!secondDestroyed);
-    check(second->value() == 1);
-};
-
 auto tReplacedInsideHook =
     test("Reloadable/objectsReplacedInOnReloadedDieWhileTheOldImageIsMapped") = []
 {
     auto sandbox = HotReloadSandbox {};
     sandbox.touchSource("a");
+    sandbox.install(objectOne);
 
     auto log = Log {};
     auto owner = ObjectOwner {
-        tableOf(objectEntries),
-        optionsFor(sandbox, sandbox.copyInTurnScript(objectOne, objectTwo), log)};
+        optionsFor(sandbox, sandbox.copyEachBuildScript(objectTwo, objectOne), log)};
 
     check(owner.newValues.size() == 1);
-    check(owner.newValues[0] == -1);
+    check(owner.newValues[0] == 1);
     check(owner.oldValues.empty());
 
     sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
+    check(log.waitForBuilds(1));
     sandbox.touchSource("abc");
-    check(log.waitForFinished(2));
+    check(log.waitForBuilds(2));
 
     check(owner.oldValues.size() == 2);
-    check(owner.oldValues[0] == -1);
-    check(owner.oldValues[1] == 1);
+    check(owner.oldValues[0] == 1);
+    check(owner.oldValues[1] == 2);
     check(owner.newValues.size() == 3);
-    check(owner.newValues[1] == 1);
-    check(owner.newValues[2] == 2);
+    check(owner.newValues[1] == 2);
+    check(owner.newValues[2] == 1);
     check(owner.destroyedInsideTheHook == 2);
-    check(owner.current->value() == 2);
+    check(owner.current->value() == 1);
 };
 
 auto tOutlivesTheReloadable =
     test("Reloadable/anObjectDestroyedAfterTheReloadableIsSafe") = []
 {
     auto sandbox = HotReloadSandbox {};
-    sandbox.touchSource("a");
+    sandbox.install(objectOne);
 
     auto log = Log {};
     auto owner = std::optional<ObjectOwner> {};
-    owner.emplace(tableOf(objectEntries),
-                  optionsFor(sandbox, sandbox.copyScript(objectOne), log));
+    owner.emplace(optionsFor(sandbox, "true", log));
 
-    sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
     check(owner->current->value() == 1);
 
     auto destroyed = false;
@@ -364,122 +479,99 @@ auto tOutlivesTheReloadable =
     check(destroyed);
 };
 
-auto tTwoFactories = test("Reloadable/oneModuleProvidesTwoFactoriesByType") = []
-{
-    auto sandbox = HotReloadSandbox {};
-    sandbox.touchSource("a");
-
-    auto log = Log {};
-    auto reloadable =
-        Reloadable {devSetup(tableOf(pairEntries)),
-                    optionsFor(sandbox, sandbox.copyScript(answerAndObject), log)};
-
-    check(reloadable.call<AnswerFunction>() == 0);
-    check(reloadable.create<Object>()->value() == -1);
-
-    sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
-
-    check(reloadable.getGeneration() == 1);
-    check(reloadable.call<AnswerFunction>() == 7);
-    check(reloadable.create<Object>()->value() == 7);
-};
-
 auto tMissingFactory = test("Reloadable/aModuleMissingAFactoryIsRefused") = []
 {
     auto sandbox = HotReloadSandbox {};
     sandbox.touchSource("a");
+    sandbox.install(answerAndObject);
 
     auto log = Log {};
-    auto reloadable =
-        Reloadable {devSetup(tableOf(pairEntries)),
-                    optionsFor(sandbox, sandbox.copyScript(answerOne), log)};
+    auto reloadable = Reloadable {
+        devSetup(), optionsFor(sandbox, sandbox.copyScript(answerOne), log)};
 
     sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
+    check(log.waitForBuilds(1));
 
     check(reloadable.getGeneration() == 0);
-    check(reloadable.call<AnswerFunction>() == 0);
+    check(reloadable.call<AnswerFunction>() == 7);
     check(reloadable.describeState()
-          == "load failed: the module lacks ReloadableTestObject *()");
+          == "load failed: the module lacks " + spelled<Object*()>());
 };
 
 auto tMismatch = test("Reloadable/aSignatureMismatchIsRefused") = []
 {
     auto sandbox = HotReloadSandbox {};
     sandbox.touchSource("a");
+    sandbox.install(answerOne);
 
     auto log = Log {};
     auto loadFailures = eacp::Vector<std::string> {};
-    auto options =
-        optionsFor(sandbox, sandbox.copyInTurnScript(answerOne, answerLong), log);
+    auto options = optionsFor(sandbox, sandbox.copyScript(answerLong), log);
     auto keepFailure = [&loadFailures](const std::string& error)
     { loadFailures.add(error); };
     options.onLoadFailed = keepFailure;
 
-    auto reloadable = Reloadable {devSetup(tableOf(answerEntries)), options};
+    auto reloadable = Reloadable {devSetup(), options};
 
     sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
-    sandbox.touchSource("abc");
-    check(log.waitForFinished(2));
+    check(log.waitForBuilds(1));
 
     check(reloadable.call<AnswerFunction>() == 1);
-    check(reloadable.getGeneration() == 1);
+    check(reloadable.getGeneration() == 0);
     check(loadFailures.size() == 1);
     check(reloadable.describeState().starts_with("load failed: signature mismatch"));
     check(loadFailures[0]
-          == "signature mismatch: the module lacks int () and has long ()");
+          == "signature mismatch: the module lacks " + spelled<AnswerFunction>()
+                 + " and has " + spelled<long()>());
 };
 
-auto tFallback = test("Reloadable/aNullOrThrowingFactoryFallsBack") = []
+auto tNothing = test("Reloadable/aNullOrThrowingModuleFactoryGivesNothing") = []
 {
     auto sandbox = HotReloadSandbox {};
     sandbox.touchSource("a");
+    sandbox.install(objectOne);
 
     auto log = Log {};
-    auto script = sandbox.copyInTurnScript(noObject, throwingObject);
-    auto reloadable = Reloadable {devSetup(tableOf(objectEntries)),
-                                  optionsFor(sandbox, script, log)};
+    auto script = sandbox.copyEachBuildScript(noObject, throwingObject);
+    auto reloadable = Reloadable {devSetup(), optionsFor(sandbox, script, log)};
 
     sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
-    check(reloadable.create<Object>()->value() == -1);
-    check(log.contains(
-        "HotReload: factory returned nothing, using the compiled-in copy"));
+    check(log.waitForBuilds(1));
+    check(reloadable.create<Object>() == nullptr);
+    check(log.contains(returnedNothing));
 
     sandbox.touchSource("abc");
-    check(log.waitForFinished(2));
+    check(log.waitForBuilds(2));
     check(reloadable.getGeneration() == 2);
-    check(reloadable.create<Object>()->value() == -1);
-    check(log.contains(
-        "HotReload: factory threw: no object today, using the compiled-in copy"));
+    check(reloadable.create<Object>() == nullptr);
+    check(log.contains(threwNoObject));
 };
 
 auto tDefaultLog = test("Reloadable/theDefaultLogLines") = []
 {
     auto sandbox = HotReloadSandbox {};
     sandbox.touchSource("a");
+    sandbox.install(answerOne);
 
     auto log = Log {};
     auto reloadable = Reloadable {
-        devSetup(tableOf(answerEntries)),
-        optionsFor(sandbox, sandbox.copyInTurnScript(answerOne, noTable), log)};
-
-    check(log.line(0) == "HotReload: watching " + sandbox.sources().str());
+        devSetup(),
+        optionsFor(sandbox, sandbox.copyEachBuildScript(answerTwo, noTable), log)};
 
     sandbox.touchSource("ab");
-    check(log.waitForFinished(1));
+    check(log.waitForBuilds(1));
     sandbox.touchSource("abc");
-    check(log.waitForFinished(2));
+    check(log.waitForBuilds(2));
 
     auto building = "HotReload: building " + sandbox.modulePath().stem() + "…";
 
-    check(log.lines.size() == 5);
-    check(log.line(1) == building);
-    check(log.line(2) == "HotReload: generation 1");
-    check(log.line(3) == building);
-    check(log.line(4) == "HotReload: load failed: no eacpReloadableTable");
-    check(reloadable.call<AnswerFunction>() == 1);
+    check(log.lines.size() == 6);
+    check(log.line(0) == "HotReload: watching " + sandbox.sources().str());
+    check(log.line(1) == "HotReload: generation 0");
+    check(log.line(2) == building);
+    check(log.line(3) == "HotReload: generation 1");
+    check(log.line(4) == building);
+    check(log.line(5) == "HotReload: load failed: no eacpReloadableTable");
+    check(reloadable.call<AnswerFunction>() == 2);
 };
 } // namespace ReloadableTests
