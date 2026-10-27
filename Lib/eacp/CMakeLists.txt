@@ -1,6 +1,11 @@
 add_subdirectory(Core)
 add_subdirectory(Network)
 
+# A handler process launched from the app's own executable: macOS and Windows.
+if ((APPLE AND NOT IOS) OR WIN32)
+    add_subdirectory(CrashReporting)
+endif ()
+
 # Always added: it builds the shader codegen library (eacp-gpu-codegen), which
 # is pure string generation, and returns before eacp-gpu when there is no GPU.
 add_subdirectory(GPU)

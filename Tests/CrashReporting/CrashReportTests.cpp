@@ -1,0 +1,62 @@
+#include <eacp/CrashReporting/CrashReport.h>
+
+#include <NanoTest/NanoTest.h>
+
+using namespace nano;
+using namespace eacp::CrashReporting;
+
+namespace
+{
+constexpr auto addressAboveDoublePrecision = std::uint64_t {0xFFFF'8000'1234'5679};
+
+CrashReport makeSampleReport()
+{
+    auto report = CrashReport {};
+    report.id = "0f5e0c2a-8f5b-4d0e-9d6e-6b8a1a2b3c4d";
+    report.timestamp = 1793060881563;
+    report.reason = "SIGSEGV";
+    report.message = "std::runtime_error: \"quoted\"\nnext line";
+    report.faultAddress = addressAboveDoublePrecision;
+    report.crashingThread.threadId = 42;
+    report.crashingThread.frames.add({"/bin/app", 0x100000000, 0x647c, "main + 4"});
+    report.metadata["project"] = "tests";
+    report.attachments.add(eacp::FilePath {"/tmp/log.txt"});
+    report.platform = "macOS";
+    report.capturedBy = CaptureSource::exitCode;
+
+    return report;
+}
+} // namespace
+
+auto tCrashReportRoundTripsThroughJSON =
+    test("CrashReport/roundTripsThroughJSON") = []
+{
+    auto original = makeSampleReport();
+    auto parsed = CrashReport::fromJSON(original.toJSON());
+
+    check(parsed.has_value());
+    check(parsed->id == original.id);
+    check(parsed->timestamp == original.timestamp);
+    check(parsed->reason == original.reason);
+    check(parsed->message == original.message);
+    check(parsed->faultAddress == addressAboveDoublePrecision);
+    check(parsed->crashingThread.threadId == 42);
+    check(parsed->crashingThread.frames.size() == 1);
+    check(parsed->crashingThread.frames[0].offset == 0x647c);
+    check(parsed->crashingThread.frames[0].symbol == "main + 4");
+    check(parsed->metadata == original.metadata);
+    check(parsed->attachments.size() == 1);
+    check(parsed->capturedBy == CaptureSource::exitCode);
+};
+
+auto tCrashReportRefusesJunk = test("CrashReport/refusesJunk") = []
+{ check(!CrashReport::fromJSON("not json").has_value()); };
+
+auto tCrashReportHexAddressesRoundTrip =
+    test("CrashReport/hexAddressesRoundTrip") = []
+{
+    auto text = formatHexAddress(addressAboveDoublePrecision);
+
+    check(parseHexAddress(text) == addressAboveDoublePrecision);
+    check(!parseHexAddress("0xzz").has_value());
+};

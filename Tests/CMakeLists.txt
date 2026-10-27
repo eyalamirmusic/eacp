@@ -12,6 +12,11 @@ if (APPLE)
 endif ()
 
 add_subdirectory(Network)
+
+# Crashes the SelfDestruct example for real and reads what its handler wrote.
+if (TARGET SelfDestruct)
+    add_subdirectory(CrashReporting)
+endif ()
 add_subdirectory(Spirv)
 
 if (EACP_HAS_DRAW)

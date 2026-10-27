@@ -1149,6 +1149,21 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
   `FileWriter` and `Files::writeFile`, so UTF-8 paths take the same route as
   everything else. `Apps/Console/Zip` is the worked example.
 
+### Crash reporting (`Lib/eacp/CrashReporting`)
+
+`eacp-crash-reporting` (macOS and Windows; `eacp_enable_crash_reporting(<exe>)`
+in `CMake/CrashReporting.cmake` links it, `eacp-core` does not) relaunches the
+app's own executable as a handler process at `start()`; `main()` begins with
+`runHandlerIfRequested`. The app and handler share one fixed-size block
+(`SharedState.h`: metadata, attachments, the crash). On macOS the app captures
+in its signal handler (`backtrace()` on an alternate stack, the dyld image
+list) and the handler symbolises with `dladdr`; on Windows the handler writes a
+minidump and walks the stack with DbgHelp. Reports land in
+`pending/<id>/report.json` and reach the app's `CrashHandler`
+(`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
+itself; `Tests/CrashReporting` drives it. `Lib/eacp/CrashReporting/README.md`
+is the account, platform coverage and v1 limits.
+
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 
 `UI::GPUComponent` is a `GPUView`'s `render(Frame&)`/`update(FrameTime)` as a

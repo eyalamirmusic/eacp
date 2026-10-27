@@ -125,6 +125,10 @@ explains how a frame is built.
   written in bounded memory.
 - **Processes** — a child with args, env, stdin and captured output, and a
   build runner that reruns one command on demand.
+- **Crash reporting** — a handler process launched from the app's own
+  executable writes a report with the crashed thread's symbolised stack,
+  metadata and attachments when the app faults, then hands it to the app's
+  own code; macOS and Windows.
 - **Plugins and hot reload** — shared libraries loaded at runtime, and a
   function or object rebuilt on save and swapped into the running app
   ([`Docs/HotReload.md`](Docs/HotReload.md)).
