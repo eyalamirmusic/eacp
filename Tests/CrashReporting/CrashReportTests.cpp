@@ -9,6 +9,25 @@ namespace
 {
 constexpr auto addressAboveDoublePrecision = std::uint64_t {0xFFFF'8000'1234'5679};
 
+// report.json as written before frames carried moduleUuid.
+constexpr auto reportWithoutModuleUuid = R"({
+  "id": "0f5e0c2a-8f5b-4d0e-9d6e-6b8a1a2b3c4d",
+  "timestamp": 1793060881563,
+  "reason": "SIGSEGV",
+  "message": "",
+  "faultAddress": "0x0",
+  "crashingThread": {
+    "threadId": 7,
+    "frames": [{"modulePath": "/bin/app", "moduleBase": "0x100000000",
+                "offset": "0x647c", "symbol": "main + 4"}]
+  },
+  "minidumpPath": "",
+  "metadata": {},
+  "attachments": [],
+  "platform": "macOS",
+  "capturedBy": "handler"
+})";
+
 CrashReport makeSampleReport()
 {
     auto report = CrashReport {};
@@ -47,6 +66,22 @@ auto tCrashReportRoundTripsThroughJSON =
     check(parsed->metadata == original.metadata);
     check(parsed->attachments.size() == 1);
     check(parsed->capturedBy == CaptureSource::exitCode);
+};
+
+auto tCrashReportReadsAReportWithoutModuleUuid =
+    test("CrashReport/readsAReportWithoutModuleUuid") = []
+{
+    auto parsed = CrashReport::fromJSON(reportWithoutModuleUuid);
+
+    check(parsed.has_value());
+    check(parsed->crashingThread.frames.size() == 1);
+    check(parsed->crashingThread.frames[0].symbol == "main + 4");
+    check(parsed->crashingThread.frames[0].moduleUuid.empty());
+
+    auto reparsed = CrashReport::fromJSON(parsed->toJSON());
+    check(reparsed.has_value());
+    check(reparsed->crashingThread.frames[0].offset == 0x647c);
+    check(reparsed->crashingThread.frames[0].moduleUuid.empty());
 };
 
 auto tCrashReportRefusesJunk = test("CrashReport/refusesJunk") = []

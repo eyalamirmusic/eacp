@@ -5,6 +5,8 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <thread>
 
@@ -48,15 +50,79 @@ constexpr auto heapCorruptionCrash = ExpectedCrash {"heapcorruption", "SIGTRAP"}
 constexpr auto terminateCrash = ExpectedCrash {
     "terminate", "std::terminate", true, "SelfDestruct threw this on purpose"};
 
+bool isSelfDestructFrame(const StackFrame& frame)
+{
+    return frame.modulePath.find(selfDestructModuleName) != std::string::npos;
+}
+
 bool hasSelfDestructFrame(const CrashReport& report)
 {
-    for (const auto& frame: report.crashingThread.frames)
+    return std::ranges::any_of(report.crashingThread.frames, isSelfDestructFrame);
+}
+
+bool isHexDigit(char character, bool upperCase)
+{
+    if (character >= '0' && character <= '9')
+        return true;
+
+    if (upperCase)
+        return character >= 'A' && character <= 'F';
+
+    return character >= 'a' && character <= 'f';
+}
+
+// 8-4-4-4-12 hex digits, upper case on macOS (LC_UUID) and lower case with a
+// trailing -<age hex> on Windows (a Sentry debug_id).
+bool isModuleUuidForm(std::string_view text)
+{
+#if defined(_WIN32)
+    constexpr auto upperCase = false;
+#else
+    constexpr auto upperCase = true;
+#endif
+    constexpr auto groupLengths = std::to_array<std::size_t>({8, 4, 4, 4, 12});
+    auto position = std::size_t {0};
+
+    for (auto groupLength: groupLengths)
     {
-        if (frame.modulePath.find(selfDestructModuleName) != std::string::npos)
-            return true;
+        if (position > 0)
+        {
+            if (position >= text.size() || text[position] != '-')
+                return false;
+            ++position;
+        }
+
+        for (auto index = std::size_t {0}; index < groupLength; ++index, ++position)
+        {
+            if (position >= text.size() || !isHexDigit(text[position], upperCase))
+                return false;
+        }
     }
 
-    return false;
+#if defined(_WIN32)
+    if (position + 1 >= text.size() || text[position] != '-')
+        return false;
+
+    for (++position; position < text.size(); ++position)
+    {
+        if (!isHexDigit(text[position], upperCase))
+            return false;
+    }
+
+    return true;
+#else
+    return position == text.size();
+#endif
+}
+
+bool hasSelfDestructFrameWithModuleUuid(const CrashReport& report)
+{
+    return std::ranges::any_of(report.crashingThread.frames,
+                               [](const StackFrame& frame)
+                               {
+                                   return isSelfDestructFrame(frame)
+                                          && isModuleUuidForm(frame.moduleUuid);
+                               });
 }
 
 bool hasCompleteReport(const ReportDatabase& database)
@@ -106,7 +172,7 @@ CrashReport crashSelfDestruct(std::string_view kind)
     return reports.empty() ? CrashReport {} : reports[0];
 }
 
-void checkCrashReport(const ExpectedCrash& expected)
+CrashReport checkCrashReport(const ExpectedCrash& expected)
 {
     auto report = crashSelfDestruct(expected.kind);
 
@@ -120,11 +186,16 @@ void checkCrashReport(const ExpectedCrash& expected)
         check(hasSelfDestructFrame(report));
     else
         check(report.crashingThread.frames.empty());
+
+    return report;
 }
 } // namespace
 
-auto tCrashReportNullPointer =
-    test("CrashReport/nullPointer") = [] { checkCrashReport(nullPointerCrash); };
+auto tCrashReportNullPointer = test("CrashReport/nullPointer") = []
+{
+    auto report = checkCrashReport(nullPointerCrash);
+    check(hasSelfDestructFrameWithModuleUuid(report));
+};
 
 auto tCrashReportStackOverflow =
     test("CrashReport/stackOverflow") = [] { checkCrashReport(stackOverflowCrash); };

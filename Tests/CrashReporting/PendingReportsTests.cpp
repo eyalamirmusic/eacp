@@ -1,0 +1,73 @@
+#include <eacp/Core/Process/Process.h>
+#include <eacp/Core/Utils/TemporaryFile.h>
+#include <eacp/CrashReporting/ReportDatabase.h>
+
+#include <NanoTest/NanoTest.h>
+
+using namespace nano;
+using namespace eacp;
+using namespace eacp::CrashReporting;
+
+namespace
+{
+constexpr auto pendingReportCount = 2;
+
+std::string writePendingReport(const ReportDatabase& database)
+{
+    auto report = CrashReport {};
+    report.id = createReportId();
+    report.reason = "SIGSEGV";
+    report.timestamp = getMillisecondsSinceEpoch();
+    report.platform = getPlatformName();
+    database.createReportFolder(report.id);
+    database.writeReport(report);
+
+    return report.id;
+}
+
+// Windows' text-mode stdout ends each line with \r\n.
+std::string removeCarriageReturns(std::string text)
+{
+    std::erase(text, '\r');
+    return text;
+}
+
+int countLines(const std::string& rawOutput, const std::string& line)
+{
+    auto output = removeCarriageReturns(rawOutput);
+    auto count = 0;
+    auto needle = line + "\n";
+
+    for (auto at = output.find(needle); at != std::string::npos;
+         at = output.find(needle, at + needle.size()))
+        ++count;
+
+    return count;
+}
+} // namespace
+
+auto tCrashReportPendingReportsArriveOnTheLoop =
+    test("CrashReport/pendingReportsArriveOnTheLoop") = []
+{
+    auto directory = TemporaryFile {};
+    auto database = ReportDatabase {directory.path()};
+    auto ids = Vector<std::string> {};
+
+    for (auto index = 0; index < pendingReportCount; ++index)
+        ids.add(writePendingReport(database));
+
+    auto options = Processes::ProcessOptions {};
+    options.executable = EACP_PENDING_REPORTS_PROBE;
+    options.arguments = {"--database",
+                         directory.path().str(),
+                         "--expect",
+                         std::to_string(pendingReportCount)};
+
+    auto result = Processes::run(options);
+    check(result.launched);
+    check(result.exitCode == 0);
+    check(countLines(result.output, "during start: 0") == 1);
+
+    for (const auto& id: ids)
+        check(countLines(result.output, "delivered: " + id) == 1);
+};
