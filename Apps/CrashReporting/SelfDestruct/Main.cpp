@@ -16,7 +16,7 @@
 //   SelfDestruct                                   the window of buttons
 //   SelfDestruct --crash nullptr                   faults at once, no window
 //   SelfDestruct --crash abort -- --no-report-window
-//   SelfDestruct --crash hang --hang-threshold-ms 500
+//   SelfDestruct --crash hang --hang-threshold-ms 1500
 //
 // Everything after "--" goes to the handler process, whose own flag
 // --no-report-window has it write the report and exit, which is what

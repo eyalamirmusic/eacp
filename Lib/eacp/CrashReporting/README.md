@@ -179,6 +179,10 @@ breakpoint is not a hang.
   minidump of the threads as they are. The debugger check is
   `CheckRemoteDebuggerPresent`.
 
+Keep the threshold well above the interval: Windows delays the thread timer
+behind the heartbeat by up to a second in a process with no window, so a
+threshold under about a second reports an idle loop as hung.
+
 Limits: only the main thread is sampled, once, at the threshold; there is no
 deadlock analysis or other threads' stacks. A frame-pointer walk on macOS
 loses frames compiled without frame pointers. While `hangReported` runs, the
