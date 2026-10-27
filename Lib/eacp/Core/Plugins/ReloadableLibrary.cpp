@@ -24,17 +24,27 @@ void keepMappedUntilExit(DynamicLibrary image)
     kept->add(std::move(image));
 }
 
-void unmapAfterThisTurn(DynamicLibrary image)
+void unmapAfterThisTurn(DynamicLibrary image, const Vector<FilePath>& stagedCopies)
 {
     if (!Threads::isEventLoopRunning())
     {
-        keepMappedUntilExit(std::move(image));
+        if (image.isOpen())
+            keepMappedUntilExit(std::move(image));
+
         return;
     }
 
     auto shared = std::make_shared<DynamicLibrary>(std::move(image));
-    auto closeLater = [shared] { shared->close(); };
-    Threads::callAsync(closeLater);
+
+    auto closeAndRemoveLater = [shared, stagedCopies]
+    {
+        shared->close();
+
+        for (const auto& copy: stagedCopies)
+            Files::removeFile(copy);
+    };
+
+    Threads::callAsync(closeAndRemoveLater);
 }
 } // namespace
 
@@ -49,11 +59,9 @@ ReloadableLibrary::ReloadableLibrary(const FilePath& builtPathToUse,
 
 ReloadableLibrary::~ReloadableLibrary()
 {
-    if (library.isOpen())
-        unmapAfterThisTurn(std::move(library));
-
     loadedPath = {};
     removeStaleCopies();
+    unmapAfterThisTurn(std::move(library), stagedCopies);
 }
 
 FilePath ReloadableLibrary::nextStagedPath() const

@@ -47,6 +47,9 @@ struct ReloadableSetup
     bool hotReload = false;
     HotReloadTarget target;
 };
+
+// The type a signatureOf() string names, as this compiler spells it.
+std::string readableSignature(std::string_view signature);
 } // namespace Detail
 
 // The functions EACP_RELOADABLE lists, each found by its type: create<T>()

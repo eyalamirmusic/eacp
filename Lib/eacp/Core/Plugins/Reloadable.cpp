@@ -4,11 +4,7 @@
 
 namespace eacp::Plugins
 {
-namespace
-{
-using ReloadableTableFunction = ReloadableTable (*)();
-
-std::string readableReloadableSignature(std::string_view signature)
+std::string Detail::readableSignature(std::string_view signature)
 {
     constexpr auto marker = std::string_view {"Signature = "};
     auto start = signature.find(marker);
@@ -23,6 +19,10 @@ std::string readableReloadableSignature(std::string_view signature)
 
     return std::string {signature};
 }
+
+namespace
+{
+using ReloadableTableFunction = ReloadableTable (*)();
 
 ReloadableEntry::Erased findReloadable(const ReloadableTable& table,
                                        std::string_view signature)
@@ -54,7 +54,7 @@ std::string joinedSignatures(const Vector<std::string>& signatures)
     auto text = std::string {};
 
     for (const auto& signature: signatures)
-        text += (text.empty() ? "" : ", ") + readableReloadableSignature(signature);
+        text += (text.empty() ? "" : ", ") + Detail::readableSignature(signature);
 
     return text;
 }
@@ -159,7 +159,7 @@ ReloadableEntry::Erased Reloadable::lookup(std::string_view signature) const
         return function;
 
     throw std::logic_error("EACP_RELOADABLE lists no "
-                           + readableReloadableSignature(signature));
+                           + Detail::readableSignature(signature));
 }
 
 void Reloadable::logFactoryFailure(const std::string& reason) const

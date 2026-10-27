@@ -254,7 +254,9 @@ the current one, two checks run:
 2. The table must provide every signature that generation 0's table has.
 
 If either check fails, the module is refused. The previous generation stays,
-and the reason becomes `load failed: …`, naming what is wrong:
+and the reason becomes `load failed: …`, naming what is wrong in the
+compiler's own spelling of the type (Clang's below; GCC writes
+`ReloadableTestObject*()` and `long int()`):
 
 - a missing factory: `the module lacks ReloadableTestObject *()`
 - a changed type: changing `int answer()` to `long answer()` gives
@@ -502,7 +504,9 @@ A `DynamicLibrary` over a module file that is rebuilt while the app runs.
 - **Destruction.** The current image is not unloaded in the destructor
   either. It goes one loop turn later, or, with no loop running, stays
   loaded until the process exits. Objects it made can therefore outlive the
-  library for the rest of the current turn.
+  library for the rest of the current turn. Its staged copy is removed at
+  destruction where the OS allows deleting a loaded file; Windows does not, so
+  there it is removed on that later turn, and with no loop running it stays.
 - **Refusals.** A module without `requiredSymbol` is refused with
   `lastError()` set to `no <symbol>`. A module that `validate` answers with a
   non-empty string is refused with that string as `lastError()`. Either way,

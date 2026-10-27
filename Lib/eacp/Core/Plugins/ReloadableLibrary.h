@@ -24,7 +24,9 @@ namespace eacp::Plugins
 // Destruction never unmaps the current image there and then: it goes on a
 // later loop turn, or, with no loop running, stays mapped until the process
 // exits. Objects the image made may therefore outlive this library for the
-// rest of the current turn, as members destroyed after its owner do.
+// rest of the current turn, as members destroyed after its owner do. A staged
+// copy Windows will not delete while it is loaded goes on that later turn too,
+// and with no loop running stays in the staging directory.
 class ReloadableLibrary
 {
 public:

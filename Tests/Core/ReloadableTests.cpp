@@ -80,6 +80,13 @@ PlainSettings* makePlainSettings()
 
 const auto plainEntries = reloadableEntries(&makePlainSettings);
 
+template <typename F>
+std::string spelled()
+{
+    using namespace eacp::Plugins::Detail;
+    return readableSignature(signatureOf<F>());
+}
+
 template <std::size_t size>
 ReloadableTable tableOf(const std::array<ReloadableEntry, size>& entries)
 {
@@ -226,9 +233,11 @@ auto tUnknownType = test("Reloadable/anUnlistedTypeThrows") = []
     auto createObject = [&reloadable] { reloadable.create<Object>(); };
     auto fetchLong = [&reloadable] { reloadable.function<long()>(); };
 
-    check(thrownBy(createObject).find("ReloadableTestObject *()")
-          != std::string::npos);
-    check(thrownBy(fetchLong).find("long ()") != std::string::npos);
+    check(spelled<Object*()>().starts_with("ReloadableTestObject"));
+    check(spelled<long()>().starts_with("long"));
+    check(thrownBy(createObject)
+          == "EACP_RELOADABLE lists no " + spelled<Object*()>());
+    check(thrownBy(fetchLong) == "EACP_RELOADABLE lists no " + spelled<long()>());
 };
 
 auto tGenerationZero = test("Reloadable/generationZeroIsTheModule") = []
@@ -486,7 +495,7 @@ auto tMissingFactory = test("Reloadable/aModuleMissingAFactoryIsRefused") = []
     check(reloadable.getGeneration() == 0);
     check(reloadable.call<AnswerFunction>() == 7);
     check(reloadable.describeState()
-          == "load failed: the module lacks ReloadableTestObject *()");
+          == "load failed: the module lacks " + spelled<Object*()>());
 };
 
 auto tMismatch = test("Reloadable/aSignatureMismatchIsRefused") = []
@@ -512,7 +521,8 @@ auto tMismatch = test("Reloadable/aSignatureMismatchIsRefused") = []
     check(loadFailures.size() == 1);
     check(reloadable.describeState().starts_with("load failed: signature mismatch"));
     check(loadFailures[0]
-          == "signature mismatch: the module lacks int () and has long ()");
+          == "signature mismatch: the module lacks " + spelled<AnswerFunction>()
+                 + " and has " + spelled<long()>());
 };
 
 auto tNothing = test("Reloadable/aNullOrThrowingModuleFactoryGivesNothing") = []
