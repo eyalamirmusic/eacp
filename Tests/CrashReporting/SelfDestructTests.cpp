@@ -228,6 +228,9 @@ bool hasFrameInFunction(const CrashReport& report, std::string_view function)
 
 void checkHangReport(const CrashReport& report, std::string_view function)
 {
+    if (report.kind != ReportKind::hang)
+        Console::printError("not a hang: " + report.reason + " " + report.message);
+
     check(report.kind == ReportKind::hang);
     check(report.reason == "Hang");
     check(report.message.starts_with("main thread unresponsive for "));

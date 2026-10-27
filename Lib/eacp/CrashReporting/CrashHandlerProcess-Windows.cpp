@@ -309,6 +309,54 @@ Vector<std::uint64_t>
     return addresses;
 }
 
+#if defined(_M_ARM64)
+struct FrameRecord
+{
+    std::uint64_t callerFramePointer;
+    std::uint64_t returnAddress;
+};
+
+// ARM64 Windows always keeps the x29 chain, and StackWalk64 stops at the
+// first ntdll frame of a thread parked in a wait, so a hang is walked this way
+// too and the longer walk kept.
+Vector<std::uint64_t> walkFramePointerChain(HANDLE process, const CONTEXT& context)
+{
+    auto addresses = Vector<std::uint64_t> {context.Pc, context.Lr};
+    auto framePointer = std::uint64_t {context.Fp};
+
+    while (addresses.size() < static_cast<int>(maxCrashFrames) && framePointer != 0)
+    {
+        auto record = readAppMemory<FrameRecord>(process, framePointer);
+
+        if (!record || record->returnAddress == 0)
+            break;
+
+        if (record->returnAddress != addresses.back())
+            addresses.add(record->returnAddress);
+
+        if (record->callerFramePointer <= framePointer)
+            break;
+
+        framePointer = record->callerFramePointer;
+    }
+
+    return addresses;
+}
+#endif
+
+Vector<std::uint64_t>
+    walkSuspendedThread(HANDLE process, HANDLE thread, const CONTEXT& context)
+{
+    auto addresses = walkThreadAddresses(process, thread, context);
+#if defined(_M_ARM64)
+    auto chain = walkFramePointerChain(process, context);
+
+    if (chain.size() > addresses.size())
+        return chain;
+#endif
+    return addresses;
+}
+
 Vector<StackFrame> makeReportFrames(HANDLE process,
                                     const Vector<std::uint64_t>& addresses)
 {
@@ -365,7 +413,7 @@ Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
         context.ContextFlags = CONTEXT_FULL;
 
         if (::GetThreadContext(thread, &context))
-            addresses = walkThreadAddresses(process, thread, context);
+            addresses = walkSuspendedThread(process, thread, context);
 
         ::ResumeThread(thread);
     }
