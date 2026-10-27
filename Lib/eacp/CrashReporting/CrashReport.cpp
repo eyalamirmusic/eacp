@@ -27,6 +27,39 @@ constexpr auto captureSourceNames = std::to_array<CaptureSourceName>({
     {CaptureSource::incomplete, "incomplete"},
 });
 
+struct LevelName
+{
+    Level level;
+    std::string_view name;
+};
+
+constexpr auto levelNames = std::to_array<LevelName>({
+    {Level::debug, "debug"},
+    {Level::info, "info"},
+    {Level::warning, "warning"},
+    {Level::error, "error"},
+    {Level::fatal, "fatal"},
+});
+
+struct UserRecord
+{
+    std::string id;
+    std::string email;
+    std::string username;
+
+    MIRO_REFLECT(id, email, username)
+};
+
+struct BreadcrumbRecord
+{
+    std::string category;
+    std::string message;
+    std::string level;
+    std::int64_t timestamp = 0;
+
+    MIRO_REFLECT(category, message, level, timestamp)
+};
+
 struct StackFrameRecord
 {
     std::string modulePath;
@@ -56,6 +89,10 @@ struct CrashReportRecord
     CrashedThreadRecord crashingThread;
     std::string minidumpPath;
     std::map<std::string, std::string> metadata;
+    std::map<std::string, std::string> tags;
+    std::map<std::string, std::string> extra;
+    UserRecord user;
+    Vector<BreadcrumbRecord> breadcrumbs;
     Vector<std::string> attachments;
     std::string platform;
     std::string capturedBy;
@@ -68,6 +105,10 @@ struct CrashReportRecord
                  crashingThread,
                  minidumpPath,
                  metadata,
+                 tags,
+                 extra,
+                 user,
+                 breadcrumbs,
                  attachments,
                  platform,
                  capturedBy)
@@ -107,6 +148,15 @@ CrashReportRecord makeCrashReportRecord(const CrashReport& report)
 
     record.minidumpPath = report.minidumpPath.str();
     record.metadata = report.metadata;
+    record.tags = report.tags;
+    record.extra = report.extra;
+    record.user = {report.user.id, report.user.email, report.user.username};
+
+    for (const auto& breadcrumb: report.breadcrumbs)
+        record.breadcrumbs.add({breadcrumb.category,
+                                breadcrumb.message,
+                                std::string {getLevelName(breadcrumb.level)},
+                                breadcrumb.timestamp});
 
     for (const auto& attachment: report.attachments)
         record.attachments.add(attachment.str());
@@ -133,6 +183,15 @@ CrashReport makeCrashReport(const CrashReportRecord& record)
 
     report.minidumpPath = FilePath {record.minidumpPath};
     report.metadata = record.metadata;
+    report.tags = record.tags;
+    report.extra = record.extra;
+    report.user = {record.user.id, record.user.email, record.user.username};
+
+    for (const auto& breadcrumb: record.breadcrumbs)
+        report.breadcrumbs.add({breadcrumb.category,
+                                breadcrumb.message,
+                                findLevel(breadcrumb.level).value_or(Level::info),
+                                breadcrumb.timestamp});
 
     for (const auto& attachment: record.attachments)
         report.attachments.add(FilePath {attachment});
@@ -144,6 +203,24 @@ CrashReport makeCrashReport(const CrashReportRecord& record)
     return report;
 }
 } // namespace
+
+std::string_view getLevelName(Level level)
+{
+    for (const auto& entry: levelNames)
+        if (entry.level == level)
+            return entry.name;
+
+    return {};
+}
+
+std::optional<Level> findLevel(std::string_view name)
+{
+    for (const auto& entry: levelNames)
+        if (entry.name == name)
+            return entry.level;
+
+    return std::nullopt;
+}
 
 std::string_view getCaptureSourceName(CaptureSource source)
 {

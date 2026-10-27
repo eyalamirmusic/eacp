@@ -2,6 +2,7 @@
 
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
+#include <eacp/CrashReporting/CrashReport.h>
 
 #include <array>
 #include <atomic>
@@ -18,9 +19,14 @@
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto sharedStateMagic = std::uint32_t {0xEAC9C4A5};
-constexpr auto sharedStateVersion = std::uint32_t {2};
+constexpr auto sharedStateVersion = std::uint32_t {3};
 
 constexpr auto maxMetadataEntries = std::size_t {64};
+constexpr auto maxBreadcrumbs = std::size_t {64};
+constexpr auto maxBreadcrumbCategoryLength = std::size_t {64};
+constexpr auto maxBreadcrumbMessageLength = std::size_t {512};
+constexpr auto maxUserFieldLength = std::size_t {256};
+constexpr auto maxLevelNameLength = std::size_t {16};
 constexpr auto maxMetadataKeyLength = std::size_t {64};
 constexpr auto maxMetadataValueLength = std::size_t {512};
 constexpr auto maxAttachments = std::size_t {16};
@@ -38,6 +44,36 @@ struct SharedMetadataEntry
 {
     BoundedText<maxMetadataKeyLength> key;
     BoundedText<maxMetadataValueLength> value;
+};
+
+struct SharedKeyValueTable
+{
+    std::uint32_t count;
+    std::array<SharedMetadataEntry, maxMetadataEntries> entries;
+};
+
+struct SharedUser
+{
+    std::uint32_t isSet;
+    BoundedText<maxUserFieldLength> id;
+    BoundedText<maxUserFieldLength> email;
+    BoundedText<maxUserFieldLength> username;
+};
+
+struct SharedBreadcrumb
+{
+    std::int64_t timestamp;
+    BoundedText<maxLevelNameLength> level;
+    BoundedText<maxBreadcrumbCategoryLength> category;
+    BoundedText<maxBreadcrumbMessageLength> message;
+};
+
+// A ring: the newest maxBreadcrumbs of `added`, the slot of the next one
+// being added % maxBreadcrumbs.
+struct SharedBreadcrumbRing
+{
+    std::uint64_t added;
+    std::array<SharedBreadcrumb, maxBreadcrumbs> entries;
 };
 
 struct SharedModule
@@ -77,11 +113,17 @@ struct SharedState
     // odd count, or a different count after reading, reads again.
     std::atomic<std::uint32_t> tableSequence;
 
-    std::uint32_t metadataCount;
-    std::array<SharedMetadataEntry, maxMetadataEntries> metadata;
+    SharedKeyValueTable metadata;
+    SharedKeyValueTable tags;
+    SharedKeyValueTable extra;
+    SharedUser user;
+    SharedBreadcrumbRing breadcrumbs;
 
     std::uint32_t attachmentCount;
     std::array<BoundedText<maxAttachmentPathLength>, maxAttachments> attachments;
+
+    // Set by stop() before it wakes the handler, which then exits cleanly.
+    std::atomic<std::uint32_t> stopRequested;
 
     SharedCrashInfo crash;
 };
@@ -91,14 +133,30 @@ bool isSharedStateValid(const SharedState& state);
 
 // Both called by the app under its own lock: one writer only. False when the
 // table is full or the text does not fit.
-bool writeSharedMetadata(SharedState& state,
-                         std::string_view key,
-                         std::string_view value);
+bool writeSharedEntry(SharedState& state,
+                      SharedKeyValueTable& table,
+                      std::string_view key,
+                      std::string_view value);
+bool removeSharedEntry(SharedState& state,
+                       SharedKeyValueTable& table,
+                       std::string_view key);
 bool writeSharedAttachment(SharedState& state, const FilePath& path);
+bool writeSharedUser(SharedState& state, const User& user);
+void clearSharedUser(SharedState& state);
+
+// Text longer than its field is cut, as a breadcrumb is never refused.
+void addSharedBreadcrumb(SharedState& state,
+                         const Breadcrumb& breadcrumb,
+                         std::int64_t timestamp);
 
 // The handler's side, after the crash, so the app is no longer writing.
-std::map<std::string, std::string> readSharedMetadata(const SharedState& state);
+std::map<std::string, std::string>
+    readSharedEntries(const SharedState& state, const SharedKeyValueTable& table);
 Vector<FilePath> readSharedAttachments(const SharedState& state);
+User readSharedUser(const SharedState& state);
+
+// Oldest first.
+Vector<Breadcrumb> readSharedBreadcrumbs(const SharedState& state);
 
 // Async-signal-safe: copies into a fixed field without allocating.
 void copyBoundedText(char* destination, std::size_t capacity, std::string_view text);

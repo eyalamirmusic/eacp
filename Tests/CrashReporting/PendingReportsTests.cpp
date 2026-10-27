@@ -46,6 +46,45 @@ int countLines(const std::string& rawOutput, const std::string& line)
 }
 } // namespace
 
+Processes::ProcessResult runProbe(const FilePath& database,
+                                  Vector<std::string> extraArguments = {})
+{
+    auto options = Processes::ProcessOptions {};
+    options.executable = EACP_PENDING_REPORTS_PROBE;
+    options.arguments = {"--database", database.str()};
+
+    for (const auto& argument: extraArguments)
+        options.arguments.add(argument);
+
+    return Processes::run(options);
+}
+
+auto tCrashReportStopEndsTheHandler = test("CrashReport/stopEndsTheHandler") = []
+{
+    auto directory = TemporaryFile {};
+    auto result = runProbe(directory.path(), {"--stop"});
+
+    check(result.exitCode == 0);
+    check(countLines(result.output, "handler before stop: 1") == 1);
+    check(countLines(result.output, "started after stop: 0") == 1);
+    check(countLines(result.output, "handler after stop: 0") == 1);
+};
+
+auto tCrashReportCrashedLastRunFollowsTheMarker =
+    test("CrashReport/crashedLastRunFollowsTheMarker") = []
+{
+    auto directory = TemporaryFile {};
+    auto database = ReportDatabase {directory.path()};
+
+    check(countLines(runProbe(directory.path()).output, "crashed last run: 0") == 1);
+
+    database.markCrashedLastRun();
+    check(countLines(runProbe(directory.path(), {"--clear-crashed-last-run"}).output,
+                     "crashed last run: 1")
+          == 1);
+    check(countLines(runProbe(directory.path()).output, "crashed last run: 0") == 1);
+};
+
 auto tCrashReportPendingReportsArriveOnTheLoop =
     test("CrashReport/pendingReportsArriveOnTheLoop") = []
 {
@@ -56,14 +95,8 @@ auto tCrashReportPendingReportsArriveOnTheLoop =
     for (auto index = 0; index < pendingReportCount; ++index)
         ids.add(writePendingReport(database));
 
-    auto options = Processes::ProcessOptions {};
-    options.executable = EACP_PENDING_REPORTS_PROBE;
-    options.arguments = {"--database",
-                         directory.path().str(),
-                         "--expect",
-                         std::to_string(pendingReportCount)};
-
-    auto result = Processes::run(options);
+    auto result =
+        runProbe(directory.path(), {"--expect", std::to_string(pendingReportCount)});
     check(result.launched);
     check(result.exitCode == 0);
     check(countLines(result.output, "during start: 0") == 1);

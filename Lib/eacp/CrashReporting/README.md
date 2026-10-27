@@ -24,9 +24,15 @@ int main(int argc, char* argv[])
     if (auto code = CrashReporting::runHandlerIfRequested(argc, argv))
         return *code;
 
-    CrashReporting::start();
-    CrashReporting::setMetadata("build", "1234");
-    CrashReporting::addAttachment(logPath);
+    auto options = CrashReporting::Options {};
+    options.environment = "production";
+    options.attachments = {logPath};
+    CrashReporting::start(options);
+
+    CrashReporting::setTag("tier", "pro");
+    CrashReporting::setExtra("build", "1234");
+    CrashReporting::setUser({"42", "someone@example.com", "someone"});
+    CrashReporting::addBreadcrumb({"ui", "opened settings"});
     ...
 }
 ```
@@ -46,7 +52,15 @@ since the handler is that executable relaunched as
 `Options`: `databaseDirectory` (default `appSupportDirectory()/Crashes`),
 `maxHandledReports`, `handlerStartTimeout`, `channelName` (Windows object
 names; default `createDefaultChannelName()`), `handlerArguments` (what
-`Apps::commandLineArgs()` holds in the handler). `isHandlerRunning()` says
+`Apps::commandLineArgs()` holds in the handler), `release` (default the
+AppInfo version), `environment` and `dist` (into `metadata` under those keys)
+and `attachments`. `setTag`/`removeTag`, `setExtra`, `setUser`/`clearUser`,
+`addBreadcrumb` (a ring of the newest 64, timestamped when added) and
+`addAttachment` write into the shared block, so they cost nothing at crash
+time. `stop()` ends the handler cleanly and restores the platform's own crash
+handling; `start()` is refused after it. `crashedLastRun()` is whether a report
+was written since the last `clearCrashedLastRun()` (a `crashed-last-run` marker
+in the database). `isHandlerRunning()` says
 whether a crash right now would be caught. `markReportHandled(id)` moves a
 report from `pending/` to `handled/` and prunes the latter.
 
@@ -57,6 +71,7 @@ report from `pending/` to `handled/` and prunes the latter.
                        minidump.dmp       Windows only
                        attachments/<copies>
 <database>/handled/<id>/...
+<database>/crashed-last-run
 ```
 
 `report.json` is written last, so a folder without one is a capture that did
@@ -64,7 +79,9 @@ not finish; it is read back as `reason: "incomplete"`. Fields: `id` (UUID),
 `timestamp` (ms since epoch), `reason`, `message`, `faultAddress`,
 `crashingThread {threadId, frames[{modulePath, moduleBase, offset, symbol,
 moduleUuid}]}`,
-`minidumpPath`, `metadata`, `attachments`, `platform`, `capturedBy`
+`minidumpPath`, `metadata`, `tags`, `extra`, `user {id, email, username}`,
+`breadcrumbs[{category, message, level, timestamp}]` (oldest first),
+`attachments`, `platform`, `capturedBy`
 (`handler`, `exit-code`, `incomplete`). Addresses are hex strings, since a
 JSON number loses the low bits of a 64-bit address.
 
@@ -73,6 +90,22 @@ it is the Mach-O `LC_UUID`, upper-case `8-4-4-4-12` as `dwarfdump --uuid`
 prints it; on Windows the PDB's CodeView GUID and age as Sentry's `debug_id`,
 lower-case `8-4-4-4-12-<age hex>`. Empty where it was not read; a report
 written before the field existed reads back with it empty.
+
+## Coming from sentry-native
+
+| sentry-native | eacp |
+|---|---|
+| `sentry_options_set_database_path` | `Options::databaseDirectory` |
+| `sentry_options_set_release` / `_environment` / `_dist` | `Options::release` / `environment` / `dist` |
+| `sentry_options_add_attachment` | `Options::attachments` |
+| `sentry_init` / `sentry_close` | `start()` / `stop()` |
+| `sentry_set_tag` / `sentry_remove_tag` | `setTag` / `removeTag` |
+| `sentry_set_extra` | `setExtra` (string values) |
+| `sentry_set_user` / `sentry_remove_user` | `setUser` / `clearUser` |
+| `sentry_add_breadcrumb` | `addBreadcrumb` |
+| `sentry_get_crashed_last_run` / `sentry_clear_crashed_last_run` | `crashedLastRun` / `clearCrashedLastRun` |
+| `sentry_options_set_dsn`, transport | none: an uploader of the app's own, below |
+| `on_crash` / `before_send` | `CrashHandler::crashReported`, in the handler process |
 
 ## Writing an uploader
 
@@ -89,19 +122,22 @@ The module uploads nothing; an app does it in its own `CrashHandler`.
   as `Idempotency-Key` too where the server honours one.
 - The handler has no app state. Pass what it needs (endpoint, DSN) through
   `Options::handlerArguments`, read back with `Apps::commandLineArgs()`, or as
-  a `setMetadata` key, which arrives in `report.metadata`.
+  a `setExtra` key, which arrives in `report.extra`.
 
 Sentry mapping:
 
 | Sentry | Report |
 |---|---|
 | `event_id` | `id` without dashes |
-| `release` | `metadata["appVersion"]` |
+| `release`, `environment`, `dist` | `metadata["release"]`, `["environment"]`, `["dist"]` |
 | `exception.values[0].type` / `value` | `reason` / `message` |
 | `stacktrace.frames[]` `instruction_addr` | `moduleBase + offset` |
 | `image_addr`, `package`, `function` | `moduleBase`, `modulePath`, `symbol` |
 | `debug_meta.images[]` `debug_id`, `image_addr`, `code_file` | `moduleUuid`, `moduleBase`, `modulePath` |
-| `tags` / `extra` | `metadata` |
+| `tags` / `extra` | `tags` / `extra` |
+| `user` `id`, `email`, `username` | `user` |
+| `breadcrumbs.values[]` `category`, `message`, `level`, `timestamp` | `breadcrumbs[]` (timestamp in ms; Sentry wants seconds) |
+| `contexts.os` | `metadata["os"]` |
 | envelope attachment items | `attachments` |
 
 Sentry wants frames innermost last, the reverse of `frames`. On Windows the

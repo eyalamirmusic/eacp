@@ -157,6 +157,18 @@ Vector<DetailLine> makeDetailLines(const CrashReporting::CrashReport& report)
     for (const auto& [key, value]: report.metadata)
         lines.add({key, value});
 
+    for (const auto& [key, value]: report.tags)
+        lines.add({"tag " + key, value});
+
+    for (const auto& [key, value]: report.extra)
+        lines.add({"extra " + key, value});
+
+    if (!report.user.id.empty())
+        lines.add({"user", report.user.id});
+
+    for (const auto& breadcrumb: report.breadcrumbs)
+        lines.add({"breadcrumb " + breadcrumb.category, breadcrumb.message});
+
     for (const auto& attachment: report.attachments)
         lines.add({"attachment", attachment.str()});
 

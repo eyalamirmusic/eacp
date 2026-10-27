@@ -42,6 +42,10 @@ constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
 constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
 constexpr auto projectName = "eacp SelfDestruct";
 constexpr auto noReportWindowFlag = "--no-report-window";
+constexpr auto demoEnvironment = "demo";
+constexpr auto demoUserId = "self-destruct-user";
+constexpr auto demoUserEmail = "user@example.com";
+constexpr auto demoUserName = "selfdestruct";
 
 struct SelfDestructCrashHandler final : CrashReporting::CrashHandler
 {
@@ -218,9 +222,16 @@ void startCrashReporting(const FilePath& databaseDirectory,
     if (!databaseDirectory.empty())
         options.databaseDirectory = databaseDirectory;
 
+    options.environment = demoEnvironment;
+    options.attachments = {writeSessionLog()};
+
     CrashReporting::start(options);
-    CrashReporting::setMetadata("project", projectName);
-    CrashReporting::addAttachment(writeSessionLog());
+    CrashReporting::setTag("project", projectName);
+    CrashReporting::setExtra("launchedFrom", Files::executablePath().str());
+    CrashReporting::setUser({demoUserId, demoUserEmail, demoUserName});
+    CrashReporting::addBreadcrumb({"app", "crash reporting started"});
+    CrashReporting::addBreadcrumb(
+        {"app", "about to offer ways to crash", CrashReporting::Level::warning});
 }
 
 int crashNow(std::string_view kind)

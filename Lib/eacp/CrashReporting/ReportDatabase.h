@@ -8,6 +8,7 @@ namespace eacp::CrashReporting
 //
 //   <directory>/pending/<id>/report.json, minidump.dmp, attachments/
 //   <directory>/handled/<id>/...
+//   <directory>/crashed-last-run
 //
 // report.json is written last, so a folder without one is a capture that did
 // not finish.
@@ -20,6 +21,13 @@ public:
     FilePath getPendingDirectory() const;
     FilePath getHandledDirectory() const;
     FilePath getReportFolder(std::string_view id) const;
+
+    // A marker the handler leaves beside the folders when it writes a report,
+    // so the next launch can tell its last run crashed; cleared by hand.
+    FilePath getCrashedLastRunMarker() const;
+    bool markCrashedLastRun() const;
+    bool hasCrashedLastRun() const;
+    bool clearCrashedLastRun() const;
 
     // Makes pending/<id>/ and its attachments/ folder.
     FilePath createReportFolder(std::string_view id) const;

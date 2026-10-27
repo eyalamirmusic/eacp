@@ -52,6 +52,36 @@ std::optional<CaptureSource> findCaptureSource(std::string_view name);
 
 constexpr auto incompleteReason = "incomplete";
 
+enum class Level
+{
+    debug,
+    info,
+    warning,
+    error,
+    fatal
+};
+
+std::string_view getLevelName(Level level);
+std::optional<Level> findLevel(std::string_view name);
+
+// Who was using the app, as setUser gave it. All empty when none was set.
+struct User
+{
+    std::string id;
+    std::string email;
+    std::string username;
+};
+
+struct Breadcrumb
+{
+    std::string category;
+    std::string message;
+    Level level = Level::info;
+
+    // Milliseconds since the Unix epoch, UTC, stamped by addBreadcrumb.
+    std::int64_t timestamp = 0;
+};
+
 struct CrashReport
 {
     // A UUID, and the name of the report's folder.
@@ -74,7 +104,19 @@ struct CrashReport
     // Empty where no minidump was written (macOS has no writer yet).
     FilePath minidumpPath;
 
+    // The module's own keys: appName, appVersion, os, release, environment,
+    // dist.
     std::map<std::string, std::string> metadata;
+
+    // What the app set with setTag and setExtra.
+    std::map<std::string, std::string> tags;
+    std::map<std::string, std::string> extra;
+
+    User user;
+
+    // Oldest first.
+    Vector<Breadcrumb> breadcrumbs;
+
     Vector<FilePath> attachments;
 
     // "macOS" or "Windows".

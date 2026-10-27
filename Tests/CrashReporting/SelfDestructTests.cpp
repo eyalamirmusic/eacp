@@ -166,6 +166,7 @@ CrashReport crashSelfDestruct(std::string_view kind)
     auto reportDatabase = ReportDatabase {database.path()};
     waitForCompleteReport(reportDatabase);
 
+    check(reportDatabase.hasCrashedLastRun());
     auto reports = reportDatabase.readPendingReports();
     check(reports.size() == 1);
 
@@ -177,7 +178,22 @@ CrashReport checkCrashReport(const ExpectedCrash& expected)
     auto report = crashSelfDestruct(expected.kind);
 
     check(report.reason == expected.reason);
-    check(report.metadata["project"] == "eacp SelfDestruct");
+    check(report.tags["project"] == "eacp SelfDestruct");
+    check(report.extra.contains("launchedFrom"));
+    check(report.metadata["environment"] == "demo");
+    check(report.metadata.contains("release"));
+    check(report.user.id == "self-destruct-user");
+    check(report.user.email == "user@example.com");
+    check(report.user.username == "selfdestruct");
+    check(report.breadcrumbs.size() == 2);
+
+    if (report.breadcrumbs.size() == 2)
+    {
+        check(report.breadcrumbs[0].message == "crash reporting started");
+        check(report.breadcrumbs[0].level == Level::info);
+        check(report.breadcrumbs[1].level == Level::warning);
+        check(report.breadcrumbs[0].timestamp > 0);
+    }
     check(report.attachments.size() == 1);
 
     check(report.message.find(expected.messageFragment) != std::string::npos);

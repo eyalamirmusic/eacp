@@ -39,6 +39,10 @@ CrashReport makeSampleReport()
     report.crashingThread.threadId = 42;
     report.crashingThread.frames.add({"/bin/app", 0x100000000, 0x647c, "main + 4"});
     report.metadata["project"] = "tests";
+    report.tags["tier"] = "free";
+    report.extra["build"] = "1234";
+    report.user = {"42", "someone@example.com", "someone"};
+    report.breadcrumbs.add({"ui", "clicked", Level::error, 1793060881000});
     report.attachments.add(eacp::FilePath {"/tmp/log.txt"});
     report.platform = "macOS";
     report.capturedBy = CaptureSource::exitCode;
@@ -64,6 +68,12 @@ auto tCrashReportRoundTripsThroughJSON =
     check(parsed->crashingThread.frames[0].offset == 0x647c);
     check(parsed->crashingThread.frames[0].symbol == "main + 4");
     check(parsed->metadata == original.metadata);
+    check(parsed->tags == original.tags);
+    check(parsed->extra == original.extra);
+    check(parsed->user.email == "someone@example.com");
+    check(parsed->breadcrumbs.size() == 1);
+    check(parsed->breadcrumbs[0].level == Level::error);
+    check(parsed->breadcrumbs[0].timestamp == 1793060881000);
     check(parsed->attachments.size() == 1);
     check(parsed->capturedBy == CaptureSource::exitCode);
 };

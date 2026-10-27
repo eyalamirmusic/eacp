@@ -11,4 +11,5 @@ void recordCrashMessage(std::string_view reason,
                         std::string_view detail);
 
 void installUncaughtExceptionRecorder();
+void uninstallUncaughtExceptionRecorder();
 } // namespace eacp::CrashReporting::Detail

@@ -19,6 +19,7 @@ namespace eacp::CrashReporting::Detail
 namespace
 {
 constexpr auto handlerCaptureTimeoutMilliseconds = DWORD {60000};
+constexpr auto handlerStopTimeoutMilliseconds = DWORD {5000};
 constexpr auto stackOverflowReserveBytes = ULONG {64 * 1024};
 constexpr auto terminateReason = std::string_view {"std::terminate"};
 constexpr auto unknownExceptionType = std::string_view {"unknown exception"};
@@ -39,6 +40,12 @@ struct WindowsCrashClient
     HANDLE crashEvent = nullptr;
     HANDLE handlerProcess = nullptr;
     std::atomic<bool> isCrashing {false};
+
+    LPTOP_LEVEL_EXCEPTION_FILTER previousExceptionFilter = nullptr;
+    _invalid_parameter_handler previousInvalidParameterHandler = nullptr;
+    _purecall_handler previousPureCallHandler = nullptr;
+    _crt_signal_t previousAbortHandler = SIG_DFL;
+    std::terminate_handler previousTerminateHandler = nullptr;
 };
 
 WindowsCrashClient& getWindowsCrashClient()
@@ -365,11 +372,40 @@ void installCrashHandlers(SharedState& state)
     reserveStackForOverflowReport();
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
-    ::SetUnhandledExceptionFilter(&handleUnhandledException);
-    _set_invalid_parameter_handler(&handleInvalidParameter);
-    _set_purecall_handler(&handlePureVirtualCall);
-    std::signal(SIGABRT, &handleAbortSignal);
-    std::set_terminate(&handleTerminate);
+    client.previousExceptionFilter =
+        ::SetUnhandledExceptionFilter(&handleUnhandledException);
+    client.previousInvalidParameterHandler =
+        _set_invalid_parameter_handler(&handleInvalidParameter);
+    client.previousPureCallHandler = _set_purecall_handler(&handlePureVirtualCall);
+    client.previousAbortHandler = std::signal(SIGABRT, &handleAbortSignal);
+    client.previousTerminateHandler = std::set_terminate(&handleTerminate);
+}
+
+void uninstallCrashHandlers()
+{
+    auto& client = getWindowsCrashClient();
+    ::SetUnhandledExceptionFilter(client.previousExceptionFilter);
+    _set_invalid_parameter_handler(client.previousInvalidParameterHandler);
+    _set_purecall_handler(client.previousPureCallHandler);
+    std::signal(SIGABRT, client.previousAbortHandler);
+    std::set_terminate(client.previousTerminateHandler);
+}
+
+// The crash event with stopRequested set is the handler's clean exit.
+void stopHandlerProcess(SharedState& state)
+{
+    auto& client = getWindowsCrashClient();
+    state.stopRequested.store(1, std::memory_order_release);
+
+    if (client.crashEvent != nullptr)
+        ::SetEvent(client.crashEvent);
+
+    if (client.handlerProcess != nullptr)
+    {
+        ::WaitForSingleObject(client.handlerProcess, handlerStopTimeoutMilliseconds);
+        ::CloseHandle(client.handlerProcess);
+        client.handlerProcess = nullptr;
+    }
 }
 
 bool isHandlerProcessRunning()

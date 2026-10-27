@@ -11,6 +11,7 @@
 
 #include <exception>
 #include <mutex>
+#include <type_traits>
 
 namespace eacp::CrashReporting
 {
@@ -27,7 +28,9 @@ struct CrashReportingSession
 {
     std::mutex mutex;
     bool started = false;
+    bool stopped = false;
     bool handlerProcess = false;
+    bool crashedLastRun = false;
     Options options;
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
 };
@@ -69,12 +72,41 @@ std::string getAppIdentity()
     return company + "." + appName;
 }
 
-void setDefaultMetadata(Detail::SharedState& state)
+void setDefaultMetadata(Detail::SharedState& state, const Options& options)
 {
-    Detail::writeSharedMetadata(state, "appName", Platform::getAppName());
-    Detail::writeSharedMetadata(state, "appVersion", Platform::getAppVersion());
-    Detail::writeSharedMetadata(
-        state, "os", getPlatformName() + " " + Detail::getOperatingSystemVersion());
+    auto& metadata = state.metadata;
+    Detail::writeSharedEntry(state, metadata, "appName", Platform::getAppName());
+    Detail::writeSharedEntry(
+        state, metadata, "appVersion", Platform::getAppVersion());
+    Detail::writeSharedEntry(state,
+                             metadata,
+                             "os",
+                             getPlatformName() + " "
+                                 + Detail::getOperatingSystemVersion());
+    Detail::writeSharedEntry(state, metadata, "release", options.release);
+    Detail::writeSharedEntry(state, metadata, "environment", options.environment);
+    Detail::writeSharedEntry(state, metadata, "dist", options.dist);
+
+    for (const auto& attachment: options.attachments)
+        Detail::writeSharedAttachment(state, attachment);
+}
+
+template <typename WriteFunction>
+auto writeToSharedState(WriteFunction write)
+{
+    auto& session = getSession();
+    auto lock = std::lock_guard {session.mutex};
+    using Result = decltype(write(session.sharedState->get()));
+
+    if (!session.started || !session.sharedState)
+    {
+        if constexpr (std::is_void_v<Result>)
+            return;
+        else
+            return Result {};
+    }
+
+    return write(session.sharedState->get());
 }
 
 void deliverPendingReport(const CrashReport& report)
@@ -154,7 +186,7 @@ bool start(const Options& options)
     {
         auto lock = std::lock_guard {session.mutex};
 
-        if (session.started || session.handlerProcess)
+        if (session.started || session.stopped || session.handlerProcess)
             return false;
 
         session.started = true;
@@ -163,6 +195,7 @@ bool start(const Options& options)
 
     auto database = ReportDatabase {options.databaseDirectory};
     Files::createDirectories(database.getPendingDirectory());
+    session.crashedLastRun = database.hasCrashedLastRun();
 
     auto launch = makeHandlerLaunch(options);
     auto& state = Detail::createSharedState(launch);
@@ -170,7 +203,7 @@ bool start(const Options& options)
     {
         auto lock = std::lock_guard {session.mutex};
         session.sharedState = state;
-        setDefaultMetadata(state);
+        setDefaultMetadata(state, options);
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
@@ -190,26 +223,79 @@ bool isHandlerRunning()
     return isStarted() && Detail::isHandlerProcessRunning();
 }
 
-bool setMetadata(std::string_view key, std::string_view value)
+void stop()
 {
     auto& session = getSession();
     auto lock = std::lock_guard {session.mutex};
 
-    if (!session.sharedState)
-        return false;
+    if (!session.started || !session.sharedState)
+        return;
 
-    return Detail::writeSharedMetadata(session.sharedState->get(), key, value);
+    Detail::uninstallCrashHandlers();
+    Detail::stopHandlerProcess(session.sharedState->get());
+    session.started = false;
+    session.stopped = true;
+}
+
+bool setTag(std::string_view key, std::string_view value)
+{
+    return writeToSharedState(
+        [&](Detail::SharedState& state)
+        { return Detail::writeSharedEntry(state, state.tags, key, value); });
+}
+
+bool removeTag(std::string_view key)
+{
+    return writeToSharedState(
+        [&](Detail::SharedState& state)
+        { return Detail::removeSharedEntry(state, state.tags, key); });
+}
+
+bool setExtra(std::string_view key, std::string_view value)
+{
+    return writeToSharedState(
+        [&](Detail::SharedState& state)
+        { return Detail::writeSharedEntry(state, state.extra, key, value); });
+}
+
+bool setUser(const User& user)
+{
+    return writeToSharedState([&](Detail::SharedState& state)
+                              { return Detail::writeSharedUser(state, user); });
+}
+
+void clearUser()
+{
+    writeToSharedState([](Detail::SharedState& state)
+                       { Detail::clearSharedUser(state); });
 }
 
 bool addAttachment(const FilePath& path)
 {
-    auto& session = getSession();
-    auto lock = std::lock_guard {session.mutex};
+    return writeToSharedState(
+        [&](Detail::SharedState& state)
+        { return Detail::writeSharedAttachment(state, path); });
+}
 
-    if (!session.sharedState)
-        return false;
+void addBreadcrumb(const Breadcrumb& breadcrumb)
+{
+    writeToSharedState(
+        [&](Detail::SharedState& state)
+        {
+            Detail::addSharedBreadcrumb(
+                state, breadcrumb, getMillisecondsSinceEpoch());
+        });
+}
 
-    return Detail::writeSharedAttachment(session.sharedState->get(), path);
+bool crashedLastRun()
+{
+    return getSession().crashedLastRun;
+}
+
+void clearCrashedLastRun()
+{
+    getSession().crashedLastRun = false;
+    getDatabase().clearCrashedLastRun();
 }
 
 bool markReportHandled(std::string_view id)

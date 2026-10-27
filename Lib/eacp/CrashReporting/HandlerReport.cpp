@@ -33,7 +33,11 @@ CrashReport beginHandlerReport(const ReportDatabase& database,
     report.message = std::string {readBoundedText(state.crash.message)};
     report.faultAddress = state.crash.faultAddress;
     report.crashingThread.threadId = state.crash.threadId;
-    report.metadata = readSharedMetadata(state);
+    report.metadata = readSharedEntries(state, state.metadata);
+    report.tags = readSharedEntries(state, state.tags);
+    report.extra = readSharedEntries(state, state.extra);
+    report.user = readSharedUser(state);
+    report.breadcrumbs = readSharedBreadcrumbs(state);
     report.platform = getPlatformName();
     report.capturedBy = capturedBy;
     report.folder = database.createReportFolder(report.id);
@@ -48,6 +52,7 @@ bool finishHandlerReport(const ReportDatabase& database,
     report.attachments =
         database.copyAttachments(report.id, readSharedAttachments(state));
 
+    database.markCrashedLastRun();
     return database.writeReport(report);
 }
 

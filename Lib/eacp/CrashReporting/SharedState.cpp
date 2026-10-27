@@ -100,17 +100,18 @@ std::optional<std::size_t> findSharedModuleIndex(const SharedCrashInfo& crash,
     return std::nullopt;
 }
 
-bool writeSharedMetadata(SharedState& state,
-                         std::string_view key,
-                         std::string_view value)
+bool writeSharedEntry(SharedState& state,
+                      SharedKeyValueTable& table,
+                      std::string_view key,
+                      std::string_view value)
 {
     if (!fitsInField(key, maxMetadataKeyLength)
         || !fitsInField(value, maxMetadataValueLength))
         return false;
 
-    for (auto index = 0u; index < state.metadataCount; ++index)
+    for (auto index = 0u; index < table.count; ++index)
     {
-        auto& entry = state.metadata[index];
+        auto& entry = table.entries[index];
 
         if (readBoundedText(entry.key) == key)
         {
@@ -120,16 +121,73 @@ bool writeSharedMetadata(SharedState& state,
         }
     }
 
-    if (state.metadataCount >= maxMetadataEntries)
+    if (table.count >= maxMetadataEntries)
         return false;
 
     auto write = SharedTableWrite {state};
-    auto& entry = state.metadata[state.metadataCount];
+    auto& entry = table.entries[table.count];
     copyBoundedText(entry.key, key);
     copyBoundedText(entry.value, value);
-    ++state.metadataCount;
+    ++table.count;
 
     return true;
+}
+
+bool removeSharedEntry(SharedState& state,
+                       SharedKeyValueTable& table,
+                       std::string_view key)
+{
+    for (auto index = 0u; index < table.count; ++index)
+    {
+        if (readBoundedText(table.entries[index].key) != key)
+            continue;
+
+        auto write = SharedTableWrite {state};
+        auto last = table.count - 1;
+        table.entries[index] = table.entries[last];
+        table.entries[last] = SharedMetadataEntry {};
+        --table.count;
+
+        return true;
+    }
+
+    return false;
+}
+
+bool writeSharedUser(SharedState& state, const User& user)
+{
+    if (!fitsInField(user.id, maxUserFieldLength)
+        || !fitsInField(user.email, maxUserFieldLength)
+        || !fitsInField(user.username, maxUserFieldLength))
+        return false;
+
+    auto write = SharedTableWrite {state};
+    copyBoundedText(state.user.id, user.id);
+    copyBoundedText(state.user.email, user.email);
+    copyBoundedText(state.user.username, user.username);
+    state.user.isSet = 1;
+
+    return true;
+}
+
+void clearSharedUser(SharedState& state)
+{
+    auto write = SharedTableWrite {state};
+    state.user = SharedUser {};
+}
+
+void addSharedBreadcrumb(SharedState& state,
+                         const Breadcrumb& breadcrumb,
+                         std::int64_t timestamp)
+{
+    auto write = SharedTableWrite {state};
+    auto& ring = state.breadcrumbs;
+    auto& entry = ring.entries[ring.added % maxBreadcrumbs];
+    entry.timestamp = timestamp;
+    copyBoundedText(entry.level, getLevelName(breadcrumb.level));
+    copyBoundedText(entry.category, breadcrumb.category);
+    copyBoundedText(entry.message, breadcrumb.message);
+    ++ring.added;
 }
 
 bool writeSharedAttachment(SharedState& state, const FilePath& path)
@@ -145,23 +203,65 @@ bool writeSharedAttachment(SharedState& state, const FilePath& path)
     return true;
 }
 
-std::map<std::string, std::string> readSharedMetadata(const SharedState& state)
+std::map<std::string, std::string>
+    readSharedEntries(const SharedState& state, const SharedKeyValueTable& table)
 {
     return readSharedTableConsistently(
         state,
         [&]
         {
-            auto metadata = std::map<std::string, std::string> {};
-            auto count = getBoundedCount(state.metadataCount, maxMetadataEntries);
+            auto entries = std::map<std::string, std::string> {};
+            auto count = getBoundedCount(table.count, maxMetadataEntries);
 
             for (auto index = std::size_t {0}; index < count; ++index)
             {
-                const auto& entry = state.metadata[index];
-                metadata[std::string {readBoundedText(entry.key)}] =
+                const auto& entry = table.entries[index];
+                entries[std::string {readBoundedText(entry.key)}] =
                     std::string {readBoundedText(entry.value)};
             }
 
-            return metadata;
+            return entries;
+        });
+}
+
+User readSharedUser(const SharedState& state)
+{
+    return readSharedTableConsistently(
+        state,
+        [&]
+        {
+            if (state.user.isSet == 0)
+                return User {};
+
+            return User {std::string {readBoundedText(state.user.id)},
+                         std::string {readBoundedText(state.user.email)},
+                         std::string {readBoundedText(state.user.username)}};
+        });
+}
+
+Vector<Breadcrumb> readSharedBreadcrumbs(const SharedState& state)
+{
+    return readSharedTableConsistently(
+        state,
+        [&]
+        {
+            const auto& ring = state.breadcrumbs;
+            auto kept = std::min<std::uint64_t>(ring.added, maxBreadcrumbs);
+            auto breadcrumbs = Vector<Breadcrumb> {};
+
+            for (auto index = ring.added - kept; index < ring.added; ++index)
+            {
+                const auto& entry = ring.entries[index % maxBreadcrumbs];
+                auto breadcrumb = Breadcrumb {};
+                breadcrumb.category = std::string {readBoundedText(entry.category)};
+                breadcrumb.message = std::string {readBoundedText(entry.message)};
+                breadcrumb.level =
+                    findLevel(readBoundedText(entry.level)).value_or(Level::info);
+                breadcrumb.timestamp = entry.timestamp;
+                breadcrumbs.add(breadcrumb);
+            }
+
+            return breadcrumbs;
         });
 }
 

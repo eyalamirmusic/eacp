@@ -67,6 +67,8 @@ struct MacCrashClient
     std::size_t demangleBufferLength = 0;
     std::atomic<bool> isCrashing {false};
     std::mutex imageMutex;
+    std::array<SignalAction, caughtSignals.size()> previousSignalActions {};
+    std::terminate_handler previousTerminateHandler = nullptr;
 };
 
 MacCrashClient& getMacCrashClient()
@@ -302,8 +304,26 @@ void installSignalHandlers()
     action.sa_flags = SA_ONSTACK | SA_SIGINFO;
     sigemptyset(&action.sa_mask);
 
-    for (const auto& caught: caughtSignals)
-        ::sigaction(caught.number, &action, nullptr);
+    auto& previous = getMacCrashClient().previousSignalActions;
+
+    for (auto index = std::size_t {0}; index < caughtSignals.size(); ++index)
+        ::sigaction(caughtSignals[index].number, &action, &previous[index]);
+}
+
+void restorePreviousSignalHandlers()
+{
+    const auto& previous = getMacCrashClient().previousSignalActions;
+
+    for (auto index = std::size_t {0}; index < caughtSignals.size(); ++index)
+        ::sigaction(caughtSignals[index].number, &previous[index], nullptr);
+}
+
+void waitForHandlerExit(pid_t handlerProcessId)
+{
+    auto status = 0;
+
+    while (::waitpid(handlerProcessId, &status, 0) < 0 && errno == EINTR)
+        continue;
 }
 
 void primeBacktrace()
@@ -472,8 +492,35 @@ void installCrashHandlers(SharedState& state)
     _dyld_register_func_for_add_image(&recordLoadedImage);
     installAlternateSignalStack();
     installSignalHandlers();
-    std::set_terminate(&handleTerminate);
+    client.previousTerminateHandler = std::set_terminate(&handleTerminate);
     installUncaughtExceptionRecorder();
+}
+
+void uninstallCrashHandlers()
+{
+    auto& client = getMacCrashClient();
+    restorePreviousSignalHandlers();
+    std::set_terminate(client.previousTerminateHandler);
+    uninstallUncaughtExceptionRecorder();
+}
+
+// EOF on the crash pipe with no byte before it is the handler's clean exit.
+void stopHandlerProcess(SharedState& state)
+{
+    auto& client = getMacCrashClient();
+    state.stopRequested.store(1, std::memory_order_release);
+
+    if (client.crashPipeWriteEnd >= 0)
+    {
+        ::close(client.crashPipeWriteEnd);
+        client.crashPipeWriteEnd = -1;
+    }
+
+    if (client.handlerProcessId != 0)
+    {
+        waitForHandlerExit(client.handlerProcessId);
+        client.handlerProcessId = 0;
+    }
 }
 
 SharedState& createSharedState(const HandlerLaunch&)

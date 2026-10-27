@@ -362,7 +362,12 @@ int runHandlerProcess(const HandlerArguments& arguments)
     auto database = ReportDatabase {arguments.databaseDirectory};
 
     if (waitForAppEvent(connection) == AppEvent::crash)
+    {
+        if (connection.state->get().stopRequested.load(std::memory_order_acquire))
+            return EXIT_SUCCESS;
+
         return handleCrash(database, connection);
+    }
 
     return handleAppExit(database, connection);
 }

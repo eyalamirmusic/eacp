@@ -8,6 +8,8 @@ namespace
 {
 constexpr auto uncaughtExceptionReason = std::string_view {"NSException"};
 
+NSUncaughtExceptionHandler* previousUncaughtExceptionHandler = nullptr;
+
 std::string_view getUTF8View(NSString* text)
 {
     if (text == nil)
@@ -26,6 +28,12 @@ void recordUncaughtException(NSException* exception)
 
 void installUncaughtExceptionRecorder()
 {
+    previousUncaughtExceptionHandler = NSGetUncaughtExceptionHandler();
     NSSetUncaughtExceptionHandler(&recordUncaughtException);
+}
+
+void uninstallUncaughtExceptionRecorder()
+{
+    NSSetUncaughtExceptionHandler(previousUncaughtExceptionHandler);
 }
 } // namespace eacp::CrashReporting::Detail

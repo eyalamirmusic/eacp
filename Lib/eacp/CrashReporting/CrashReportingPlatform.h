@@ -41,6 +41,11 @@ void installCrashHandlers(SharedState& state);
 
 bool isHandlerProcessRunning();
 
+// stop()'s halves: the platform's own crash handling back, then the handler
+// told to exit cleanly and waited for.
+void uninstallCrashHandlers();
+void stopHandlerProcess(SharedState& state);
+
 int runHandlerProcess(const HandlerArguments& arguments);
 
 std::string getOperatingSystemVersion();

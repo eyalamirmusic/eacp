@@ -15,6 +15,7 @@ namespace eacp::CrashReporting
 namespace
 {
 constexpr auto pendingFolderName = "pending";
+constexpr auto crashedLastRunMarkerName = "crashed-last-run";
 constexpr auto handledFolderName = "handled";
 constexpr auto reportFileName = "report.json";
 constexpr auto attachmentsFolderName = "attachments";
@@ -77,6 +78,28 @@ FilePath ReportDatabase::getPendingDirectory() const
 FilePath ReportDatabase::getHandledDirectory() const
 {
     return directory / handledFolderName;
+}
+
+FilePath ReportDatabase::getCrashedLastRunMarker() const
+{
+    return directory / crashedLastRunMarkerName;
+}
+
+bool ReportDatabase::markCrashedLastRun() const
+{
+    Files::createDirectories(directory);
+    Files::writeFile(getCrashedLastRunMarker(), Span<const std::uint8_t> {});
+    return hasCrashedLastRun();
+}
+
+bool ReportDatabase::hasCrashedLastRun() const
+{
+    return Files::exists(getCrashedLastRunMarker());
+}
+
+bool ReportDatabase::clearCrashedLastRun() const
+{
+    return Files::removeFile(getCrashedLastRunMarker());
 }
 
 FilePath ReportDatabase::getReportFolder(std::string_view id) const
