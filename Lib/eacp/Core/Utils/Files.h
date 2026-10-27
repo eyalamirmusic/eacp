@@ -11,6 +11,7 @@ std::string readFile(const FilePath& path);
 // Writes bytes to path, creating parent directories first. Throws
 // std::runtime_error when the file can't be opened or fully written.
 void writeFile(const FilePath& path, Span<const std::uint8_t> bytes);
+void writeFile(const FilePath& path, std::string_view text);
 
 // Writes bytes so a concurrent reader sees either the whole old file or the
 // whole new one, never a half-written mix: the data goes to a temporary

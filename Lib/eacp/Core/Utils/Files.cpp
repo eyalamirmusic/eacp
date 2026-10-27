@@ -104,6 +104,12 @@ void writeFile(const FilePath& path, Span<const std::uint8_t> bytes)
         throw std::runtime_error("cannot write '" + path.str() + "'");
 }
 
+void writeFile(const FilePath& path, std::string_view text)
+{
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(text.data());
+    writeFile(path, Span<const std::uint8_t> {bytes, text.size()});
+}
+
 void writeFileAtomically(const FilePath& path, Span<const std::uint8_t> bytes)
 {
     auto fsPath = toStdPath(path);
