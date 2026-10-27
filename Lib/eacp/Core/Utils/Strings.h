@@ -33,6 +33,10 @@ std::string uncapitalize(std::string_view s);
 
 bool equalsCaseInsensitive(std::string_view a, std::string_view b);
 
+// Equality whose running time depends on the length of expected alone, not on
+// where the two first differ - for comparing a secret someone supplied.
+bool equalsInConstantTime(std::string_view expected, std::string_view supplied);
+
 // The pieces between each delimiter, empty ones included. With maximumParts
 // above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
 // two is {"a", "b c"}.
