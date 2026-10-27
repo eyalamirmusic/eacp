@@ -17,6 +17,7 @@ constexpr auto maxSymbolNameLength = std::size_t {1024};
 constexpr auto minidumpFileName = "minidump.dmp";
 constexpr auto errorSeverityMask = DWORD {0xC0000000};
 constexpr auto handlerFailedExitCode = 1;
+constexpr auto appTerminationTimeoutMs = DWORD {5000};
 
 #if defined(_M_ARM64)
 constexpr auto stackWalkMachine = DWORD {IMAGE_FILE_MACHINE_ARM64};
@@ -276,6 +277,7 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
 
     auto exitCode = static_cast<UINT>(state.crash.code);
     ::TerminateProcess(connection.appProcess, exitCode);
+    ::WaitForSingleObject(connection.appProcess, appTerminationTimeoutMs);
 
     return deliverReportInHandler(report);
 }

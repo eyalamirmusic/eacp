@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #if defined(_WIN32)
+#include <eacp/Core/Utils/WinInclude.h>
 #include <intrin.h>
 #endif
 
@@ -20,8 +21,6 @@ namespace SelfDestruct
 namespace
 {
 constexpr auto smallBlockSize = std::size_t {16};
-constexpr auto overrunSize = std::size_t {4096};
-constexpr auto overrunByte = 0xEA;
 constexpr auto stackFrameBytes = std::size_t {4096};
 
 #if defined(_MSC_VER)
@@ -80,6 +79,23 @@ void throwUncaught()
     throw std::runtime_error {"SelfDestruct threw this on purpose"};
 }
 
+#if defined(_WIN32)
+// Only a fresh heap's second HeapFree is STATUS_HEAP_CORRUPTION every time.
+constexpr auto heapCorruptionDescription = "Frees a heap block twice";
+
+void corruptHeap()
+{
+    auto* heap = ::HeapCreate(0, 0, 0);
+    auto* volatile block = ::HeapAlloc(heap, 0, smallBlockSize);
+    ::HeapFree(heap, 0, block);
+    ::HeapFree(heap, 0, block);
+}
+#else
+constexpr auto overrunSize = std::size_t {4096};
+constexpr auto overrunByte = 0xEA;
+constexpr auto heapCorruptionDescription =
+    "Writes past a heap block, then frees it twice";
+
 // The overrun alone may land in slack; the second free is what every
 // allocator checks.
 void corruptHeap()
@@ -89,6 +105,7 @@ void corruptHeap()
     std::free(block);
     std::free(block);
 }
+#endif
 
 #if defined(_WIN32)
 constexpr auto fatalAppExitFastFailCode = 7;
@@ -121,7 +138,7 @@ eacp::Vector<Fault> makeFaults()
          throwUncaught},
         {"heapcorruption",
          "Heap corruption",
-         "Writes past a heap block, then frees it twice",
+         heapCorruptionDescription,
          corruptHeap},
     };
 
