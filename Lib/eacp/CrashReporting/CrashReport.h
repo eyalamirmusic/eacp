@@ -51,6 +51,18 @@ std::string_view getCaptureSourceName(CaptureSource source);
 std::optional<CaptureSource> findCaptureSource(std::string_view name);
 
 constexpr auto incompleteReason = "incomplete";
+constexpr auto hangReason = "Hang";
+
+// A crash ended the app; a hang is a main thread that stopped answering, and
+// the app was left running.
+enum class ReportKind
+{
+    crash,
+    hang
+};
+
+std::string_view getReportKindName(ReportKind kind);
+std::optional<ReportKind> findReportKind(std::string_view name);
 
 enum class Level
 {
@@ -87,6 +99,8 @@ struct CrashReport
     // A UUID, and the name of the report's folder.
     std::string id;
 
+    ReportKind kind = ReportKind::crash;
+
     // Milliseconds since the Unix epoch, UTC.
     std::int64_t timestamp = 0;
 
@@ -99,7 +113,13 @@ struct CrashReport
     std::string message;
 
     std::uint64_t faultAddress = 0;
+
+    // For a hang, the main thread; its frames are where it was stuck.
     CrashedThread crashingThread;
+
+    // How long the main thread had been silent when it was sampled, for a
+    // hang. 0 for a crash.
+    std::int64_t hangDurationMilliseconds = 0;
 
     // Empty where no minidump was written (macOS has no writer yet).
     FilePath minidumpPath;

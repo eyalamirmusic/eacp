@@ -105,3 +105,23 @@ auto tCrashReportHexAddressesRoundTrip =
     check(parseHexAddress(text) == addressAboveDoublePrecision);
     check(!parseHexAddress("0xzz").has_value());
 };
+
+auto tCrashReportHangRoundTrips = test("CrashReport/hangRoundTrips") = []
+{
+    auto report = makeSampleReport();
+    report.kind = ReportKind::hang;
+    report.hangDurationMilliseconds = 10500;
+
+    auto readBack = CrashReport::fromJSON(report.toJSON());
+    check(readBack.has_value());
+    check(readBack->kind == ReportKind::hang);
+    check(readBack->hangDurationMilliseconds == 10500);
+};
+
+auto tCrashReportWithoutKindIsACrash = test("CrashReport/withoutKindIsACrash") = []
+{
+    auto report = CrashReport::fromJSON(reportWithoutModuleUuid);
+    check(report.has_value());
+    check(report->kind == ReportKind::crash);
+    check(report->hangDurationMilliseconds == 0);
+};
