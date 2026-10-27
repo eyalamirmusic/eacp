@@ -75,6 +75,44 @@ std::uint64_t getFaultAddress(const EXCEPTION_RECORD& record)
     return reinterpret_cast<std::uintptr_t>(record.ExceptionAddress);
 }
 
+std::uint64_t getProgramCounter(const CONTEXT& context)
+{
+#if defined(_M_ARM64)
+    return context.Pc;
+#else
+    return context.Rip;
+#endif
+}
+
+// This thread's stack from the faulting instruction down, walked in-process,
+// where the unwinder crosses the exception dispatcher's frames. The handler
+// falls back to it when its own walk from the context stops there, as
+// StackWalk64 does on ARM64 at a RaiseException. Frames above the fault (this
+// filter and the dispatcher) are dropped when the fault's address is found.
+void recordInProcessFrames(SharedCrashInfo& crash, const CONTEXT& context)
+{
+    auto addresses = std::array<void*, maxCrashFrames> {};
+    auto count = ::RtlCaptureStackBackTrace(
+        0, static_cast<DWORD>(addresses.size()), addresses.data(), nullptr);
+    auto faultAddress = getProgramCounter(context);
+    auto first = std::size_t {0};
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+    {
+        if (reinterpret_cast<std::uintptr_t>(addresses[index]) == faultAddress)
+        {
+            first = index;
+            break;
+        }
+    }
+
+    crash.frameCount = 0;
+
+    for (auto index = first; index < count; ++index)
+        crash.frames[crash.frameCount++] =
+            reinterpret_cast<std::uintptr_t>(addresses[index]);
+}
+
 void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
 {
     const auto& record = *pointers.ExceptionRecord;
@@ -88,6 +126,7 @@ void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
     crash.faultAddress = getFaultAddress(record);
     crash.threadId = ::GetCurrentThreadId();
     crash.exceptionPointersAddress = reinterpret_cast<std::uintptr_t>(&pointers);
+    recordInProcessFrames(crash, *pointers.ContextRecord);
 }
 
 // Hands the crash to the handler, which writes the report and ends this
