@@ -332,3 +332,23 @@ auto tLineContainingEmptyNeedle =
     check(lineContaining("\nsecond", "").empty());
     check(lineContaining("", "").empty());
 };
+
+auto tParseHexWithAndWithoutPrefix =
+    test("Strings/parseHex with and without 0x") = []
+{
+    using eacp::Strings::parseHex;
+    check(parseHex("0x64dc") == std::uint64_t {0x64dc});
+    check(parseHex("0X64DC") == std::uint64_t {0x64dc});
+    check(parseHex("ffffffffffffffff") == std::uint64_t {0xffffffffffffffff});
+    check(parseHex("0") == std::uint64_t {0});
+};
+
+auto tParseHexRejects = test("Strings/parseHex rejects what is not hex") = []
+{
+    using eacp::Strings::parseHex;
+    check(!parseHex("").has_value());
+    check(!parseHex("0x").has_value());
+    check(!parseHex("12g4").has_value());
+    check(!parseHex(" 12").has_value());
+    check(!parseHex("10000000000000000").has_value());
+};

@@ -1,5 +1,6 @@
 #include "Strings.h"
 
+#include <array>
 #include <cctype>
 #include <cerrno>
 #include <clocale>
@@ -17,6 +18,8 @@ namespace eacp::Strings
 namespace
 {
 constexpr auto replacementChar = char32_t {0xFFFD};
+constexpr auto hexPrefixes = std::array<std::string_view, 2> {"0x", "0X"};
+constexpr auto hexBase = 16;
 
 // D800..DBFF and DC00..DFFF are the two halves of a UTF-16 surrogate pair.
 // Neither is a scalar value on its own, so a UTF-8 sequence decoding to one is
@@ -330,6 +333,27 @@ int hexCharToInt(char c)
     if (c >= 'A' && c <= 'F')
         return c - 'A' + 10;
     return -1;
+}
+
+std::optional<std::uint64_t> parseHex(std::string_view text)
+{
+    for (const auto prefix: hexPrefixes)
+    {
+        if (text.starts_with(prefix))
+        {
+            text.remove_prefix(prefix.size());
+            break;
+        }
+    }
+
+    auto value = std::uint64_t {0};
+    const auto* last = text.data() + text.size();
+    const auto [stop, error] = std::from_chars(text.data(), last, value, hexBase);
+
+    if (text.empty() || error != std::errc {} || stop != last)
+        return std::nullopt;
+
+    return value;
 }
 
 std::optional<float> tryParseFloat(const std::string& s)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <charconv>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,6 +32,10 @@ std::string uncapitalize(std::string_view s);
 bool equalsCaseInsensitive(std::string_view a, std::string_view b);
 
 int hexCharToInt(char c);
+
+// A hexadecimal number, with or without a leading "0x" or "0X", the whole of
+// text: nullopt for empty text, any other character, or a value past 64 bits.
+std::optional<std::uint64_t> parseHex(std::string_view text);
 
 // UTF-8 -> the platform's wide encoding: UTF-16 where wchar_t is 16 bits
 // (Windows), UTF-32 where it is 32 (Linux, macOS). This is the single place the
