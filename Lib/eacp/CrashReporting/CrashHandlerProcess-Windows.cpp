@@ -48,7 +48,15 @@ struct AppConnection
 enum class AppEvent
 {
     crash,
-    appExited
+    appExited,
+    hangCheckDue
+};
+
+// What the handler remembers between hang checks: the heartbeat a reported
+// hang was silent from, so each episode is reported once.
+struct HangWatch
+{
+    std::uint64_t reportedHeartbeat = 0;
 };
 
 HANDLE openChannelEvent(std::string_view channel, std::string_view suffix)
@@ -103,15 +111,27 @@ void signalHandlerReady(std::string_view channel)
     ::CloseHandle(readyEvent);
 }
 
+DWORD getHangCheckInterval(const SharedHangInfo& hang)
+{
+    if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
+        return INFINITE;
+
+    return static_cast<DWORD>(hang.pollIntervalMilliseconds);
+}
+
 AppEvent waitForAppEvent(const AppConnection& connection)
 {
     auto waitables =
         std::to_array<HANDLE>({connection.crashEvent, connection.appProcess});
+    auto timeout = getHangCheckInterval(connection.state->get().hang);
     auto woken = ::WaitForMultipleObjects(
-        static_cast<DWORD>(waitables.size()), waitables.data(), FALSE, INFINITE);
+        static_cast<DWORD>(waitables.size()), waitables.data(), FALSE, timeout);
 
     if (woken == WAIT_OBJECT_0)
         return AppEvent::crash;
+
+    if (woken == WAIT_TIMEOUT)
+        return AppEvent::hangCheckDue;
 
     return AppEvent::appExited;
 }
@@ -141,7 +161,11 @@ std::optional<CONTEXT> readCrashContext(HANDLE process, const SharedCrashInfo& c
     return readAppMemory<CONTEXT>(process, contextAddress);
 }
 
-bool writeMinidump(HANDLE process, const SharedState& state, const FilePath& path)
+// With no exception (a hang) the dump is of the threads as they are.
+bool writeMinidump(HANDLE process,
+                   const SharedState& state,
+                   const FilePath& path,
+                   bool hasException)
 {
     auto file = ::CreateFileW(path.wide().c_str(),
                               GENERIC_WRITE,
@@ -164,7 +188,7 @@ bool writeMinidump(HANDLE process, const SharedState& state, const FilePath& pat
                                        static_cast<DWORD>(state.appProcessId),
                                        file,
                                        MiniDumpNormal,
-                                       &exceptionInfo,
+                                       hasException ? &exceptionInfo : nullptr,
                                        nullptr,
                                        nullptr);
     ::CloseHandle(file);
@@ -262,6 +286,92 @@ StackFrame
     return frame;
 }
 
+// Within SymInitializeW, which the walk's function-table lookups need.
+Vector<std::uint64_t>
+    walkThreadAddresses(HANDLE process, HANDLE thread, CONTEXT context)
+{
+    auto addresses = Vector<std::uint64_t> {};
+    auto stackFrame = makeFirstStackFrame(context);
+
+    while (addresses.size() < static_cast<int>(maxCrashFrames)
+           && ::StackWalk64(stackWalkMachine,
+                            process,
+                            thread,
+                            &stackFrame,
+                            &context,
+                            nullptr,
+                            ::SymFunctionTableAccess64,
+                            ::SymGetModuleBase64,
+                            nullptr)
+           && stackFrame.AddrPC.Offset != 0)
+        addresses.add(stackFrame.AddrPC.Offset);
+
+    return addresses;
+}
+
+#if defined(_M_ARM64)
+struct FrameRecord
+{
+    std::uint64_t callerFramePointer;
+    std::uint64_t returnAddress;
+};
+
+// ARM64 Windows always keeps the x29 chain, and StackWalk64 is unreliable
+// there for a thread parked in a wait (it stops at the first ntdll frame), so
+// a hang is walked this way alone.
+Vector<std::uint64_t> walkFramePointerChain(HANDLE process, const CONTEXT& context)
+{
+    auto addresses = Vector<std::uint64_t> {context.Pc, context.Lr};
+    auto framePointer = std::uint64_t {context.Fp};
+
+    while (addresses.size() < static_cast<int>(maxCrashFrames) && framePointer != 0)
+    {
+        auto record = readAppMemory<FrameRecord>(process, framePointer);
+
+        if (!record || record->returnAddress == 0)
+            break;
+
+        if (record->returnAddress != addresses.back())
+            addresses.add(record->returnAddress);
+
+        if (record->callerFramePointer <= framePointer)
+            break;
+
+        framePointer = record->callerFramePointer;
+    }
+
+    return addresses;
+}
+#endif
+
+Vector<std::uint64_t> walkSuspendedThread(HANDLE process,
+                                          [[maybe_unused]] HANDLE thread,
+                                          const CONTEXT& context)
+{
+#if defined(_M_ARM64)
+    return walkFramePointerChain(process, context);
+#else
+    return walkThreadAddresses(process, thread, context);
+#endif
+}
+
+Vector<StackFrame> makeReportFrames(HANDLE process,
+                                    const Vector<std::uint64_t>& addresses)
+{
+    auto frames = Vector<StackFrame> {};
+
+    for (auto address: addresses)
+        frames.add(makeReportFrame(process, address, !frames.empty()));
+
+    return frames;
+}
+
+void initialiseSymbols(HANDLE process)
+{
+    ::SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    ::SymInitializeW(process, nullptr, TRUE);
+}
+
 Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& crash)
 {
     auto frames = Vector<StackFrame> {};
@@ -272,28 +382,41 @@ Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& cras
     if (!context || thread == nullptr)
         return frames;
 
-    ::SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-    ::SymInitializeW(process, nullptr, TRUE);
+    initialiseSymbols(process);
+    frames =
+        makeReportFrames(process, walkThreadAddresses(process, thread, *context));
+    ::SymCleanup(process);
+    ::CloseHandle(thread);
+    return frames;
+}
 
-    auto stackFrame = makeFirstStackFrame(*context);
+// The main thread stopped where it is: suspended only for the walk, then
+// named once it runs again, since loading symbols can take seconds.
+Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
+{
+    constexpr auto access =
+        THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION;
+    auto frames = Vector<StackFrame> {};
+    auto thread = ::OpenThread(access, FALSE, static_cast<DWORD>(hang.mainThreadId));
 
-    while (frames.size() < static_cast<int>(maxCrashFrames)
-           && ::StackWalk64(stackWalkMachine,
-                            process,
-                            thread,
-                            &stackFrame,
-                            &*context,
-                            nullptr,
-                            ::SymFunctionTableAccess64,
-                            ::SymGetModuleBase64,
-                            nullptr)
-           && stackFrame.AddrPC.Offset != 0)
+    if (thread == nullptr)
+        return frames;
+
+    initialiseSymbols(process);
+    auto addresses = Vector<std::uint64_t> {};
+
+    if (::SuspendThread(thread) != static_cast<DWORD>(-1))
     {
-        auto isReturnAddress = !frames.empty();
-        frames.add(
-            makeReportFrame(process, stackFrame.AddrPC.Offset, isReturnAddress));
+        auto context = CONTEXT {};
+        context.ContextFlags = CONTEXT_FULL;
+
+        if (::GetThreadContext(thread, &context))
+            addresses = walkSuspendedThread(process, thread, context);
+
+        ::ResumeThread(thread);
     }
 
+    frames = makeReportFrames(process, addresses);
     ::SymCleanup(process);
     ::CloseHandle(thread);
     return frames;
@@ -305,7 +428,7 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
     auto minidumpPath = report.folder / minidumpFileName;
 
-    if (writeMinidump(connection.appProcess, state, minidumpPath))
+    if (writeMinidump(connection.appProcess, state, minidumpPath, true))
         report.minidumpPath = minidumpPath;
 
     report.crashingThread.frames =
@@ -317,6 +440,42 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
     ::WaitForSingleObject(connection.appProcess, appTerminationTimeoutMs);
 
     return deliverReportInHandler(report);
+}
+
+bool isDebuggerAttachedTo(HANDLE process)
+{
+    auto attached = BOOL {FALSE};
+    return ::CheckRemoteDebuggerPresent(process, &attached) && attached;
+}
+
+// The app keeps running: the report is written and handed over, and the
+// handler goes back to waiting.
+void checkForHang(const ReportDatabase& database,
+                  const AppConnection& connection,
+                  HangWatch& watch)
+{
+    auto& state = connection.state->get();
+    auto duration = findHangDuration(state.hang, getSteadyMilliseconds());
+    auto heartbeat =
+        state.hang.heartbeatMilliseconds.load(std::memory_order_acquire);
+
+    if (duration == 0 || heartbeat == watch.reportedHeartbeat
+        || isDebuggerAttachedTo(connection.appProcess))
+        return;
+
+    watch.reportedHeartbeat = heartbeat;
+    state.hang.durationMilliseconds = duration;
+
+    auto frames = sampleMainThread(connection.appProcess, state.hang);
+    auto report = beginHangReport(database, state);
+    report.crashingThread.frames = frames;
+    auto minidumpPath = report.folder / minidumpFileName;
+
+    if (writeMinidump(connection.appProcess, state, minidumpPath, false))
+        report.minidumpPath = minidumpPath;
+
+    finishHandlerReport(database, report, state);
+    deliverReportInHandler(report);
 }
 
 bool isCrashExitCode(DWORD exitCode)
@@ -360,16 +519,26 @@ int runHandlerProcess(const HandlerArguments& arguments)
 
     signalHandlerReady(arguments.channel);
     auto database = ReportDatabase {arguments.databaseDirectory};
+    auto watch = HangWatch {};
 
-    if (waitForAppEvent(connection) == AppEvent::crash)
+    while (true)
     {
+        auto event = waitForAppEvent(connection);
+
+        if (event == AppEvent::appExited)
+            return handleAppExit(database, connection);
+
+        if (event == AppEvent::hangCheckDue)
+        {
+            checkForHang(database, connection, watch);
+            continue;
+        }
+
         if (connection.state->get().stopRequested.load(std::memory_order_acquire))
             return EXIT_SUCCESS;
 
         return handleCrash(database, connection);
     }
-
-    return handleAppExit(database, connection);
 }
 
 } // namespace eacp::CrashReporting::Detail

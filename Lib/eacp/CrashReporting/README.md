@@ -2,7 +2,9 @@
 
 When an app faults, a second process writes a report with the crashed
 thread's stack, the app's metadata and its attachments, ends the app, and
-hands the report to the app's own code. macOS and Windows.
+hands the report to the app's own code. A main thread that stops answering
+is reported the same way, with its stack, and the app left running. macOS and
+Windows.
 
 ## Use
 
@@ -11,6 +13,10 @@ struct MyCrashHandler : CrashReporting::CrashHandler
 {
     // In the handler process, after the app is gone. May open windows.
     void crashReported(const CrashReporting::CrashReport& report) override;
+
+    // In the handler process, while the hung app keeps running. Return
+    // promptly: the handler watches the app again once this returns.
+    void hangReported(const CrashReporting::CrashReport& report) override;
 
     // In the app, on the event loop after start() returns, for each report
     // still in pending/. Start long work here; never wait on it.
@@ -54,7 +60,8 @@ since the handler is that executable relaunched as
 names; default `createDefaultChannelName()`), `handlerArguments` (what
 `Apps::commandLineArgs()` holds in the handler), `release` (default the
 AppInfo version), `environment` and `dist` (into `metadata` under those keys)
-and `attachments`. `setTag`/`removeTag`, `setExtra`, `setUser`/`clearUser`,
+and `attachments`, `heartbeatInterval` (500 ms) and `hangThreshold` (10 s,
+zero turns hang detection off; see Hangs). `setTag`/`removeTag`, `setExtra`, `setUser`/`clearUser`,
 `addBreadcrumb` (a ring of the newest 64, timestamped when added) and
 `addAttachment` write into the shared block, so they cost nothing at crash
 time. `stop()` ends the handler cleanly and restores the platform's own crash
@@ -63,6 +70,8 @@ was written since the last `clearCrashedLastRun()` (a `crashed-last-run` marker
 in the database). `isHandlerRunning()` says
 whether a crash right now would be caught. `markReportHandled(id)` moves a
 report from `pending/` to `handled/` and prunes the latter.
+`pauseHangDetection()`/`resumeHangDetection()` bracket main-thread work that
+is meant to take longer than the threshold; they nest.
 
 ## Report
 
@@ -76,9 +85,10 @@ report from `pending/` to `handled/` and prunes the latter.
 
 `report.json` is written last, so a folder without one is a capture that did
 not finish; it is read back as `reason: "incomplete"`. Fields: `id` (UUID),
+`kind` (`crash` or `hang`; a report without it reads back as a crash),
 `timestamp` (ms since epoch), `reason`, `message`, `faultAddress`,
 `crashingThread {threadId, frames[{modulePath, moduleBase, offset, symbol,
-moduleUuid}]}`,
+moduleUuid}]}`, `hangDuration` (ms, 0 for a crash),
 `minidumpPath`, `metadata`, `tags`, `extra`, `user {id, email, username}`,
 `breadcrumbs[{category, message, level, timestamp}]` (oldest first),
 `attachments`, `platform`, `capturedBy`
@@ -128,9 +138,57 @@ The fields map onto what crash backends such as Sentry expect.
 | Illegal instruction, FP, trap, `SIGSYS` | signal name, stack | exception name, stack, minidump |
 | CRT invalid parameter | — | `invalid parameter`, stack, minidump |
 
-Not caught: `SIGKILL`, the OOM killer, a hang, a crash while the handler is
+Not caught: `SIGKILL`, the OOM killer, a crash while the handler is
 not running (it is re-raised and lost), and on Windows anything that bypasses
 the unhandled-exception filter other than through the exit code above.
+
+| Main thread hang | `Hang`, main thread's stack, app keeps running | `Hang`, main thread's stack, minidump, app keeps running |
+
+## Hangs
+
+`start()` arms a heartbeat: a callback on the event loop, re-posted with
+`Threads::callAfter` each time it runs, writes the steady clock into the
+shared block every `heartbeatInterval`. (Not a `Threads::Timer`: Windows
+delays `WM_TIMER` behind other messages and coalesces it by up to a second.) When the
+heartbeat has been silent for `hangThreshold` past the beat that was due, the main thread (the thread
+that called `start()`) is sampled and a report is written to `pending/` like a
+crash's: `kind: "hang"`, `reason: "Hang"`, `message: "main thread
+unresponsive for N s"`, `hangDuration`, the main thread's frames in
+`crashingThread`, and the tags, extra, user, breadcrumbs, attachments and
+metadata as for a crash. The app is not ended, and `crashedLastRun()` is not
+set. `hangReported` is called in the handler process; `pendingReportFound`
+delivers hang reports on later launches too. One report per episode: the next
+is armed once the heartbeat beats again.
+
+Nothing is watched until the first beat, so an app that never runs the event
+loop (a console tool) is never reported as hung. Detection is off while
+`pauseHangDetection()` is in effect, and the silence is measured afresh from
+`resumeHangDetection()`. It is off while a debugger is attached, so a
+breakpoint is not a hang.
+
+- **macOS.** A watchdog thread in the app checks the heartbeat. On a stall it
+  `thread_suspend`s the main thread, reads its registers with
+  `thread_get_state` (`ARM_THREAD_STATE64` or `x86_THREAD_STATE64`), walks
+  the frame-pointer chain from pc, lr and fp inside the thread's stack bounds
+  (pointer-authentication bits stripped on arm64e), `thread_resume`s it, and
+  writes the addresses into the shared block's hang record and a hang byte to
+  the handler's pipe. The handler symbolises them as it does a crash's. The
+  debugger check is `P_TRACED`.
+- **Windows.** The handler watches the heartbeat from its own wait loop, so a
+  hang is caught even if the app's threads all stall. It opens the main
+  thread, `SuspendThread`s it, takes `GetThreadContext`, walks it with
+  `StackWalk64`, `ResumeThread`s it, then names the frames and writes a
+  minidump of the threads as they are. On ARM64 it follows the x29
+  frame-pointer chain instead of `StackWalk64`, which stops at the first
+  ntdll frame of a thread parked in a wait; functions built without frame
+  records (clang-cl's optimised ARM64 code) are skipped. The debugger check is
+  `CheckRemoteDebuggerPresent`.
+
+Limits: only the main thread is sampled, once, at the threshold; there is no
+deadlock analysis or other threads' stacks. A frame-pointer walk on macOS
+loses frames compiled without frame pointers. While `hangReported` runs, the
+handler is not watching for a crash; one that happens then is handled once it
+returns.
 
 ## How it works, and the v1 limits
 

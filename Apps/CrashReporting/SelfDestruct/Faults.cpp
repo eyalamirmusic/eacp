@@ -1,10 +1,13 @@
 #include "Faults.h"
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 
 #if defined(_WIN32)
 #include <eacp/Core/Utils/WinInclude.h>
@@ -16,18 +19,36 @@
 #pragma optimize("", off)
 #endif
 
-namespace SelfDestruct
-{
-namespace
-{
-constexpr auto smallBlockSize = std::size_t {16};
-constexpr auto stackFrameBytes = std::size_t {4096};
-
 #if defined(_MSC_VER)
 #define SELF_DESTRUCT_NO_INLINE __declspec(noinline)
 #else
 #define SELF_DESTRUCT_NO_INLINE [[gnu::noinline]]
 #endif
+
+namespace SelfDestruct
+{
+namespace
+{
+std::chrono::milliseconds hangDuration {12000};
+std::atomic<std::uint64_t> spinCount {0};
+} // namespace
+
+// Outside the anonymous namespace so their names reach the report's symbols.
+SELF_DESTRUCT_NO_INLINE void sleepPastHangThreshold()
+{
+    std::this_thread::sleep_for(hangDuration);
+}
+
+SELF_DESTRUCT_NO_INLINE void spinForever()
+{
+    while (true)
+        spinCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+namespace
+{
+constexpr auto smallBlockSize = std::size_t {16};
+constexpr auto stackFrameBytes = std::size_t {4096};
 
 SELF_DESTRUCT_NO_INLINE void dereferenceNullPointer()
 {
@@ -140,6 +161,11 @@ eacp::Vector<Fault> makeFaults()
          "Heap corruption",
          heapCorruptionDescription,
          corruptHeap},
+        {"hang",
+         "Hang",
+         "Sleeps the main thread past the hang threshold",
+         sleepPastHangThreshold},
+        {"spin", "Spin", "Spins the main thread forever", spinForever},
     };
 
 #if defined(_WIN32)
@@ -152,6 +178,16 @@ eacp::Vector<Fault> makeFaults()
     return faults;
 }
 } // namespace
+
+void setHangDuration(std::chrono::milliseconds duration)
+{
+    hangDuration = duration;
+}
+
+bool isMainThreadFault(std::string_view name)
+{
+    return name == "hang" || name == "spin";
+}
 
 const eacp::Vector<Fault>& getFaults()
 {

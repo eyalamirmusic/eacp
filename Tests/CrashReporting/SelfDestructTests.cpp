@@ -20,6 +20,7 @@ namespace
 constexpr auto selfDestructModuleName = std::string_view {"SelfDestruct"};
 constexpr auto reportWaitLimit = std::chrono::seconds {10};
 constexpr auto reportPollInterval = std::chrono::milliseconds {20};
+constexpr auto testHangThresholdMilliseconds = "500";
 
 struct ExpectedCrash
 {
@@ -194,6 +195,78 @@ CrashReport crashSelfDestruct(std::string_view kind)
     return reports.empty() ? CrashReport {} : reports[0];
 }
 
+Processes::ProcessOptions
+    makeHangOptions(std::string_view kind,
+                    const FilePath& database,
+                    std::string_view threshold,
+                    const Vector<std::string>& appArguments = {})
+{
+    auto options = Processes::ProcessOptions {};
+    options.executable = EACP_SELF_DESTRUCT;
+    options.arguments = {"--crash",
+                         std::string {kind},
+                         "--hang-threshold-ms",
+                         std::string {threshold},
+                         "--crash-database",
+                         database.str()};
+
+    for (const auto& argument: appArguments)
+        options.arguments.add(argument);
+
+    options.arguments.add("--");
+    options.arguments.add("--no-report-window");
+    return options;
+}
+
+bool hasFrameInFunction(const CrashReport& report, std::string_view function)
+{
+    return std::ranges::any_of(
+        report.crashingThread.frames,
+        [function](const StackFrame& frame)
+        { return frame.symbol.find(function) != std::string::npos; });
+}
+
+void checkHangReport(const CrashReport& report, std::string_view function)
+{
+    if (report.kind != ReportKind::hang)
+        Console::printError("not a hang: " + report.reason + " " + report.message);
+
+    check(report.kind == ReportKind::hang);
+    check(report.reason == "Hang");
+    check(report.message.starts_with("main thread unresponsive for "));
+    check(report.hangDurationMilliseconds >= 1000);
+    check(report.tags.at("project") == "eacp SelfDestruct");
+    check(report.breadcrumbs.size() == 2);
+
+    if (!hasFrameInFunction(report, function))
+        printFrames(report);
+
+#if defined(_M_ARM64) && defined(__clang__)
+    // clang-cl leaves frame records out of optimised ARM64 functions, so the
+    // frame-pointer walk there skips the faulting function itself.
+    check(hasSelfDestructFrame(report));
+#else
+    check(hasFrameInFunction(report, function));
+#endif
+}
+
+// The hang fault sleeps past the threshold and returns, so the app exits on
+// its own and the report is already written by then.
+Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
+                                 std::string_view threshold)
+{
+    auto database = TemporaryFile {};
+    auto options = makeHangOptions("hang", database.path(), threshold, appArguments);
+
+    auto result = Processes::run(options);
+    check(result.launched);
+    check(result.exitCode == 0);
+
+    auto reportDatabase = ReportDatabase {database.path()};
+    check(!reportDatabase.hasCrashedLastRun());
+    return reportDatabase.readPendingReports();
+}
+
 CrashReport checkCrashReport(const ExpectedCrash& expected)
 {
     auto report = crashSelfDestruct(expected.kind);
@@ -260,3 +333,46 @@ auto tCrashReportUncaughtException =
 auto tCrashReportFastFail =
     test("CrashReport/fastFail") = [] { checkCrashReport(fastFailCrash); };
 #endif
+
+auto tCrashReportHang = test("CrashReport/hang") = []
+{
+    auto reports = runHangFault({}, testHangThresholdMilliseconds);
+
+    if (reports.size() != 1)
+        Console::printError(std::to_string(reports.size()) + " hang reports");
+
+    check(reports.size() == 1);
+
+    if (reports.size() == 1)
+        checkHangReport(reports[0], "sleepPastHangThreshold");
+};
+
+auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
+{ check(runHangFault({}, "0").empty()); };
+
+auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
+{
+    check(runHangFault({"--pause-hang-detection"}, testHangThresholdMilliseconds)
+              .empty());
+};
+
+// A spin never returns, so the report is waited for while the app still runs.
+auto tCrashReportSpin = test("CrashReport/spin") = []
+{
+    auto database = TemporaryFile {};
+    auto process = Processes::Process {
+        makeHangOptions("spin", database.path(), testHangThresholdMilliseconds)};
+    check(process.launched());
+
+    auto reportDatabase = ReportDatabase {database.path()};
+    waitForCompleteReport(reportDatabase);
+    check(process.isRunning());
+    process.kill();
+    process.wait();
+
+    auto reports = reportDatabase.readPendingReports();
+    check(reports.size() == 1);
+
+    if (reports.size() == 1)
+        checkHangReport(reports[0], "spinForever");
+};

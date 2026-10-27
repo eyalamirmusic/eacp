@@ -48,8 +48,16 @@ void stopHandlerProcess(SharedState& state);
 
 int runHandlerProcess(const HandlerArguments& arguments);
 
+// The app's side of hang detection: on macOS a watchdog thread that samples
+// the main thread itself, on Windows nothing, since the handler watches.
+void startHangWatchdog(SharedState& state);
+void stopHangWatchdog();
+
 std::string getOperatingSystemVersion();
 std::uint64_t getCurrentProcessId();
+
+// The OS's id for the calling thread, as a report names it.
+std::uint64_t getCurrentThreadId();
 
 // Launches `<executable> <handlerFlag> <database> <channel> -- <arguments>`.
 Vector<std::string> makeHandlerCommandLine(const HandlerLaunch& launch,
@@ -61,11 +69,19 @@ CrashReport beginHandlerReport(const ReportDatabase& database,
                                const SharedState& state,
                                CaptureSource capturedBy);
 
-// Copies the attachments and writes report.json, which goes last.
+// beginHandlerReport for a hang: the kind, reason and message, the main
+// thread's id and how long it had been silent, with `frames` left to the
+// caller.
+CrashReport beginHangReport(const ReportDatabase& database,
+                            const SharedState& state);
+
+// Copies the attachments and writes report.json, which goes last. Only a crash
+// marks crashedLastRun.
 bool finishHandlerReport(const ReportDatabase& database,
                          CrashReport& report,
                          const SharedState& state);
 
-// crashReported, catching whatever it throws: the handler's exit code.
+// crashReported, or hangReported for a hang, catching whatever it throws: the
+// handler's exit code.
 int deliverReportInHandler(const CrashReport& report);
 } // namespace eacp::CrashReporting::Detail

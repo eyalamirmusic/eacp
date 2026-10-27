@@ -62,6 +62,12 @@ struct Options
 
     // Added by start() as addAttachment would.
     Vector<FilePath> attachments;
+
+    // How often the main thread's heartbeat is written, from a timer on the
+    // event loop, and how long it may go silent before that is reported as a
+    // hang. A zero threshold turns hang detection off.
+    std::chrono::milliseconds heartbeatInterval {500};
+    std::chrono::milliseconds hangThreshold {10000};
 };
 
 // The handler process's entry: its exit code when argv is the handler's command
@@ -101,6 +107,11 @@ bool setExtra(std::string_view key, std::string_view value);
 bool setUser(const User& user);
 void clearUser();
 bool addAttachment(const FilePath& path);
+
+// For main-thread work that is meant to take longer than the hang threshold.
+// Nests; the silence is measured afresh from resumeHangDetection.
+void pauseHangDetection();
+void resumeHangDetection();
 
 // Kept in a ring of the newest Detail::maxBreadcrumbs, timestamped now. A
 // category longer than 63 bytes or a message longer than 511 is cut.

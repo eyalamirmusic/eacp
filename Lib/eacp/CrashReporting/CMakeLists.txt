@@ -14,6 +14,7 @@ if (APPLE)
     target_sources(eacp-crash-reporting PRIVATE
             CrashClient-macOS.cpp
             CrashHandlerProcess-macOS.cpp
+            HangWatchdog-macOS.cpp
             MachImages-macOS.cpp
             UncaughtExceptions-macOS.mm)
     target_link_libraries(eacp-crash-reporting PRIVATE "-framework Foundation")

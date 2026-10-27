@@ -19,7 +19,7 @@
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto sharedStateMagic = std::uint32_t {0xEAC9C4A5};
-constexpr auto sharedStateVersion = std::uint32_t {3};
+constexpr auto sharedStateVersion = std::uint32_t {4};
 
 constexpr auto maxMetadataEntries = std::size_t {64};
 constexpr auto maxBreadcrumbs = std::size_t {64};
@@ -103,6 +103,31 @@ struct SharedCrashInfo
     std::array<SharedModule, maxSharedModules> modules;
 };
 
+// The main thread's heartbeat and the hang it stops beating in. The app
+// writes the heartbeat; whoever watches it (the app's watchdog thread on macOS,
+// the handler on Windows) samples the main thread into `frames` and reports.
+struct SharedHangInfo
+{
+    // Milliseconds on the steady clock, which both processes share; 0 until
+    // the first beat, so nothing is watched before the loop runs.
+    std::atomic<std::uint64_t> heartbeatMilliseconds;
+
+    // pauseHangDetection's nesting depth: nothing is reported while above 0.
+    std::atomic<std::uint32_t> pauseDepth;
+
+    // 0 is detection off.
+    std::uint64_t thresholdMilliseconds;
+    std::uint64_t pollIntervalMilliseconds;
+
+    // The OS's id of the thread start() ran on.
+    std::uint64_t mainThreadId;
+
+    // Written by whoever sampled the hang, before the handler is told.
+    std::uint64_t durationMilliseconds;
+    std::uint32_t frameCount;
+    std::array<std::uint64_t, maxCrashFrames> frames;
+};
+
 struct SharedState
 {
     std::uint32_t magic;
@@ -126,6 +151,7 @@ struct SharedState
     std::atomic<std::uint32_t> stopRequested;
 
     SharedCrashInfo crash;
+    SharedHangInfo hang;
 };
 
 void initialiseSharedState(SharedState& state, std::uint64_t appProcessId);
@@ -157,6 +183,14 @@ User readSharedUser(const SharedState& state);
 
 // Oldest first.
 Vector<Breadcrumb> readSharedBreadcrumbs(const SharedState& state);
+
+// The steady clock the heartbeat is measured on, in milliseconds.
+std::uint64_t getSteadyMilliseconds();
+
+// How long the heartbeat has been silent when that is a hang to report: the
+// heartbeat has started, detection is on and not paused, and the silence is
+// at least the threshold past the beat that was due. 0 otherwise.
+std::uint64_t findHangDuration(const SharedHangInfo& hang, std::uint64_t now);
 
 // Async-signal-safe: copies into a fixed field without allocating.
 void copyBoundedText(char* destination, std::size_t capacity, std::string_view text);

@@ -1,6 +1,7 @@
 #include "SharedState.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 namespace eacp::CrashReporting::Detail
@@ -77,6 +78,32 @@ void initialiseSharedState(SharedState& state, std::uint64_t appProcessId)
     state.magic = sharedStateMagic;
     state.version = sharedStateVersion;
     state.appProcessId = appProcessId;
+}
+
+std::uint64_t getSteadyMilliseconds()
+{
+    auto sinceEpoch = std::chrono::steady_clock::now().time_since_epoch();
+    auto milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(sinceEpoch);
+    return static_cast<std::uint64_t>(milliseconds.count());
+}
+
+std::uint64_t findHangDuration(const SharedHangInfo& hang, std::uint64_t now)
+{
+    auto heartbeat = hang.heartbeatMilliseconds.load(std::memory_order_acquire);
+    auto isPaused = hang.pauseDepth.load(std::memory_order_acquire) > 0;
+
+    if (heartbeat == 0 || isPaused || hang.thresholdMilliseconds == 0
+        || now < heartbeat)
+        return 0;
+
+    // A healthy loop is up to one interval past its last beat.
+    auto silence = now - heartbeat;
+
+    if (silence < hang.thresholdMilliseconds + hang.pollIntervalMilliseconds)
+        return 0;
+
+    return silence;
 }
 
 bool isSharedStateValid(const SharedState& state)

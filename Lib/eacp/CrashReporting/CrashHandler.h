@@ -15,9 +15,14 @@ namespace eacp::CrashReporting
 // likes; the handler exits when it returns. Apps::commandLineArgs() there is
 // the executable followed by Options::handlerArguments.
 //
+// hangReported runs in the handler process too, once a hang's report is on
+// disk; the app is still running, and the handler goes back to watching it
+// when this returns, so it returns promptly (a window is a process of its own).
+//
 // pendingReportFound runs in the app on the message thread, after start() has
 // returned and the event loop has started, once per report still in pending/ on
-// each launch until markReportHandled moves it to handled/. That includes a
+// each launch until markReportHandled moves it to handled/, hangs included
+// (CrashReport::kind tells them apart). That includes a
 // folder a capture left without its report.json. It runs on the loop, so long
 // work (an upload) is started asynchronously from it, never awaited in it.
 struct CrashHandler
@@ -25,6 +30,7 @@ struct CrashHandler
     virtual ~CrashHandler() = default;
 
     virtual void crashReported(const CrashReport&) {}
+    virtual void hangReported(const CrashReport&) {}
     virtual void pendingReportFound(const CrashReport&) {}
 };
 

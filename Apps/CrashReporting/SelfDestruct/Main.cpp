@@ -2,6 +2,7 @@
 #include "ReportWindow.h"
 
 #include <eacp/Core/App/Args.h>
+#include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
@@ -15,6 +16,7 @@
 //   SelfDestruct                                   the window of buttons
 //   SelfDestruct --crash nullptr                   faults at once, no window
 //   SelfDestruct --crash abort -- --no-report-window
+//   SelfDestruct --crash hang --hang-threshold-ms 500
 //
 // Everything after "--" goes to the handler process, whose own flag
 // --no-report-window has it write the report and exit, which is what
@@ -42,6 +44,8 @@ constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
 constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
 constexpr auto projectName = "eacp SelfDestruct";
 constexpr auto noReportWindowFlag = "--no-report-window";
+constexpr auto showReportFlag = "--show-report";
+constexpr auto hangBeyondThreshold = std::chrono::milliseconds {2000};
 constexpr auto demoEnvironment = "demo";
 constexpr auto demoUserId = "self-destruct-user";
 constexpr auto demoUserEmail = "user@example.com";
@@ -59,6 +63,24 @@ struct SelfDestructCrashHandler final : CrashReporting::CrashHandler
             return;
 
         SelfDestruct::runReportWindow(report);
+    }
+
+    // The app is still running and the handler goes back to watching it, so
+    // the window is a process of its own.
+    void hangReported(const CrashReporting::CrashReport& report) override
+    {
+        auto noReportWindow = false;
+        auto cli = Args::Parser {"SelfDestruct crash handler"};
+        cli.flag(noReportWindowFlag, noReportWindow, "write the report and exit");
+
+        if (cli.exitCodeFor(cli.parse()) || noReportWindow)
+            return;
+
+        auto options = Processes::ProcessOptions {};
+        options.executable = Files::executablePath().str();
+        options.arguments = {showReportFlag, report.folder.str()};
+        options.detached = true;
+        auto window = Processes::Process {options};
     }
 
     void pendingReportFound(const CrashReporting::CrashReport& report) override
@@ -214,10 +236,12 @@ FilePath writeSessionLog()
 }
 
 void startCrashReporting(const FilePath& databaseDirectory,
-                         const Vector<std::string>& handlerArguments)
+                         const Vector<std::string>& handlerArguments,
+                         std::chrono::milliseconds hangThreshold)
 {
     auto options = CrashReporting::Options {};
     options.handlerArguments = handlerArguments;
+    options.hangThreshold = hangThreshold;
 
     if (!databaseDirectory.empty())
         options.databaseDirectory = databaseDirectory;
@@ -234,7 +258,41 @@ void startCrashReporting(const FilePath& databaseDirectory,
         {"app", "about to offer ways to crash", CrashReporting::Level::warning});
 }
 
-int crashNow(std::string_view kind)
+void runMainThreadFault(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+{
+    if (pausesHangDetection)
+        CrashReporting::pauseHangDetection();
+
+    fault.trigger();
+
+    if (pausesHangDetection)
+        CrashReporting::resumeHangDetection();
+
+    Apps::quit();
+}
+
+// Waits on the loop past the first heartbeats before stalling, since nothing
+// is watched until the loop has beaten once; quits once the fault returns.
+struct MainThreadFaultApp
+{
+    MainThreadFaultApp(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+    {
+        constexpr auto heartbeatsBeforeStalling = 3;
+        auto delay =
+            CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
+
+        Threads::callAfter(Time::MS {delay.count()},
+                           [fault, pausesHangDetection]
+                           { runMainThreadFault(fault, pausesHangDetection); });
+    }
+};
+
+int stallMainThreadNow(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+{
+    return Apps::run<MainThreadFaultApp>(fault, pausesHangDetection);
+}
+
+int crashNow(std::string_view kind, bool pausesHangDetection)
 {
     auto fault = SelfDestruct::findFault(kind);
 
@@ -244,8 +302,24 @@ int crashNow(std::string_view kind)
         return Args::badArguments;
     }
 
+    if (SelfDestruct::isMainThreadFault(kind))
+        return stallMainThreadNow(*fault, pausesHangDetection);
+
     fault->get().trigger();
     return 0;
+}
+
+int showReport(const FilePath& folder)
+{
+    auto report = CrashReporting::getDatabase().readReport(folder);
+
+    if (!report)
+    {
+        Console::printError("SelfDestruct: no report in " + folder.str());
+        return Args::badArguments;
+    }
+
+    return SelfDestruct::runReportWindow(*report);
 }
 } // namespace
 
@@ -259,19 +333,35 @@ int main(int argc, char* argv[])
     auto crashKind = std::string {};
     auto databaseDirectory = FilePath {};
     auto handlerArguments = Vector<std::string> {};
+    auto hangThresholdMilliseconds =
+        CrashReporting::Options {}.hangThreshold.count();
+    auto reportToShow = FilePath {};
+    auto pausesHangDetection = false;
 
     auto cli = Args::Parser {"SelfDestruct", "Crashes itself, on purpose."};
     cli.option("--crash", crashKind, "fault at once with no window");
     cli.option("--crash-database", databaseDirectory, "where reports go");
+    cli.option("--hang-threshold-ms",
+               hangThresholdMilliseconds,
+               "how long the main thread may stall; 0 turns hang detection off");
+    cli.flag("--pause-hang-detection",
+             pausesHangDetection,
+             "pause hang detection around a hang or spin fault");
+    cli.option(showReportFlag, reportToShow, "show the report in this folder");
     cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
 
     if (auto code = cli.exitCodeFor(cli.parse()))
         return *code;
 
-    startCrashReporting(databaseDirectory, handlerArguments);
+    if (!reportToShow.empty())
+        return showReport(reportToShow);
+
+    auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
+    SelfDestruct::setHangDuration(hangThreshold + hangBeyondThreshold);
+    startCrashReporting(databaseDirectory, handlerArguments, hangThreshold);
 
     if (!crashKind.empty())
-        return crashNow(crashKind);
+        return crashNow(crashKind, pausesHangDetection);
 
     return Graphics::runWindowedApp<FaultHost>(
         makeWindowOptions(), CrashReporting::getDatabase().getDirectory());
