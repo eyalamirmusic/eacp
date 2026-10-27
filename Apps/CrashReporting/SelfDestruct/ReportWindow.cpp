@@ -224,8 +224,16 @@ Vector<UI::ListBox::Column> makeDetailColumns()
     return {{"Metadata and attachments", keyColumnWidth}, {"", valueColumnWidth}};
 }
 
+bool isHang(const CrashReporting::CrashReport& report)
+{
+    return report.kind == CrashReporting::ReportKind::hang;
+}
+
 std::string describeHeading(const CrashReporting::CrashReport& report)
 {
+    if (isHang(report))
+        return "SelfDestruct hung: " + report.message;
+
     return "SelfDestruct crashed: " + report.reason;
 }
 
@@ -249,6 +257,9 @@ std::string describeStackTitle(const CrashReporting::CrashReport& report)
 {
     if (report.crashingThread.frames.empty())
         return "No stack was captured";
+
+    if (isHang(report))
+        return "Stack of the unresponsive main thread";
 
     return "Stack of the crashed thread";
 }
@@ -328,12 +339,21 @@ struct ReportHost final : UI::ComponentHost
     ReportView view;
 };
 
-Graphics::WindowOptions makeReportWindowOptions()
+std::string describeWindowTitle(const CrashReporting::CrashReport& report)
+{
+    if (isHang(report))
+        return "SelfDestruct hang report";
+
+    return "SelfDestruct crash report";
+}
+
+Graphics::WindowOptions
+    makeReportWindowOptions(const CrashReporting::CrashReport& report)
 {
     auto options = Graphics::WindowOptions {};
     options.width = windowWidth;
     options.height = windowHeight;
-    options.title = "SelfDestruct crash report";
+    options.title = describeWindowTitle(report);
 
     return options;
 }
@@ -341,7 +361,7 @@ Graphics::WindowOptions makeReportWindowOptions()
 struct ReportApp
 {
     explicit ReportApp(const CrashReporting::CrashReport& report)
-        : shown(makeReportWindowOptions(), report)
+        : shown(makeReportWindowOptions(report), report)
     {
         Threads::callAsync([this] { shown.window.toFront(); });
     }
