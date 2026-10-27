@@ -89,7 +89,9 @@ not finish; it is read back as `reason: "incomplete"`. Fields: `id` (UUID),
 `timestamp` (ms since epoch), `reason`, `message`, `faultAddress`,
 `crashingThread {threadId, frames[{modulePath, moduleBase, offset, symbol,
 moduleUuid}]}`, `hangDuration` (ms, 0 for a crash),
-`minidumpPath`, `metadata`, `tags`, `extra`, `user {id, email, username}`,
+`minidumpPath`, `metadata` (with `appName`, `appVersion`, `os`, `arch` —
+`arm64` or `x86_64` on macOS, `arm64` or `x64` on Windows, the app's own build
+— `release`, `environment`, `dist`), `tags`, `extra`, `user {id, email, username}`,
 `breadcrumbs[{category, message, level, timestamp}]` (oldest first),
 `attachments`, `platform`, `capturedBy`
 (`handler`, `exit-code`, `incomplete`). Addresses are hex strings, since a
@@ -100,6 +102,14 @@ it is the Mach-O `LC_UUID`, upper-case `8-4-4-4-12` as `dwarfdump --uuid`
 prints it; on Windows the PDB's CodeView GUID and age,
 lower-case `8-4-4-4-12-<age hex>`. Empty where it was not read; a report
 written before the field existed reads back with it empty.
+
+## Reading reports elsewhere
+
+The report types and the database are their own target, `eacp-crash-report`,
+built on every platform, Linux included, linking only `eacp-core`. A server or
+tool links it and reads the exact `report.json` an app wrote into the same
+`CrashReport` struct with `CrashReport::fromJSON`;
+`eacp-crash-reporting`, the macOS and Windows capture half, links it PUBLIC.
 
 ## Writing an uploader
 

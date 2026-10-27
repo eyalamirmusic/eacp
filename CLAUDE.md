@@ -1154,6 +1154,8 @@ matching `APPLE`/`IOS`/`WIN32`/`LINUX` branch.
 
 ### Crash reporting (`Lib/eacp/CrashReporting`)
 
+The report types and `ReportDatabase` are `eacp-crash-report`, built on every
+platform so a Linux service reads the apps' reports with the same struct;
 `eacp-crash-reporting` (macOS and Windows; `eacp_enable_crash_reporting(<exe>)`
 in `CMake/CrashReporting.cmake` links it, `eacp-core` does not) relaunches the
 app's own executable as a handler process at `start()`; `main()` begins with
