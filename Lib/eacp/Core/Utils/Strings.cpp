@@ -332,19 +332,6 @@ bool equalsCaseInsensitive(std::string_view a, std::string_view b)
     return toLower(a) == toLower(b);
 }
 
-bool equalsInConstantTime(std::string_view expected, std::string_view supplied)
-{
-    auto difference = static_cast<unsigned>(expected.size() != supplied.size());
-
-    for (std::size_t index = 0; index < expected.size(); ++index)
-    {
-        const auto suppliedChar = index < supplied.size() ? supplied[index] : '\0';
-        difference |= static_cast<unsigned char>(expected[index] ^ suppliedChar);
-    }
-
-    return difference == 0;
-}
-
 Vector<std::string> split(std::string_view text, char delimiter, int maximumParts)
 {
     auto parts = Vector<std::string> {};

@@ -361,16 +361,6 @@ auto tToUpper = test("Strings/toUpper is ASCII only") = []
     check(toUpper("caf\xC3\xA9") == "CAF\xC3\xA9");
 };
 
-auto tEqualsInConstantTime = test("Strings/equalsInConstantTime") = []
-{
-    using eacp::Strings::equalsInConstantTime;
-    check(equalsInConstantTime("secret", "secret"));
-    check(!equalsInConstantTime("secret", "secreT"));
-    check(!equalsInConstantTime("secret", "secret2"));
-    check(!equalsInConstantTime("secret", ""));
-    check(equalsInConstantTime("", ""));
-};
-
 auto tSplitKeepsEmptyPieces = test("Strings/split keeps empty pieces") = []
 {
     using eacp::Strings::split;
