@@ -142,13 +142,19 @@ std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
     return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
 }
 
+// Before the handler launches, since on Windows it reads these to decide how
+// often it wakes.
+void writeHangSettings(Detail::SharedState& state, const Options& options)
+{
+    auto& hang = state.hang;
+    hang.thresholdMilliseconds = countMilliseconds(options.hangThreshold);
+    hang.pollIntervalMilliseconds = countMilliseconds(options.heartbeatInterval);
+    hang.mainThreadId = Detail::getCurrentThreadId();
+}
+
 void armHangDetection(CrashReportingSession& session, Detail::SharedState& state)
 {
     auto& hang = state.hang;
-    hang.thresholdMilliseconds = countMilliseconds(session.options.hangThreshold);
-    hang.pollIntervalMilliseconds =
-        countMilliseconds(session.options.heartbeatInterval);
-    hang.mainThreadId = Detail::getCurrentThreadId();
 
     if (hang.thresholdMilliseconds == 0 || hang.pollIntervalMilliseconds == 0)
         return;
@@ -234,6 +240,7 @@ bool start(const Options& options)
         auto lock = std::lock_guard {session.mutex};
         session.sharedState = state;
         setDefaultMetadata(state, options);
+        writeHangSettings(state, options);
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
