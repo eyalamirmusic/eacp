@@ -22,7 +22,7 @@ CrashReport makeDatabaseReport()
 } // namespace
 
 auto tCrashReportDatabaseReadsAnIncompleteFolder =
-    test("CrashReport/databaseReadsAnIncompleteFolder") = []
+    test("CrashReportDatabase/readsAnIncompleteFolder") = []
 {
     auto directory = TemporaryFile {};
     auto database = ReportDatabase {directory.path()};
@@ -39,7 +39,7 @@ auto tCrashReportDatabaseReadsAnIncompleteFolder =
 };
 
 auto tCrashReportDatabaseMarksAReportHandled =
-    test("CrashReport/databaseMarksAReportHandled") = []
+    test("CrashReportDatabase/marksAReportHandled") = []
 {
     auto directory = TemporaryFile {};
     auto database = ReportDatabase {directory.path()};
@@ -53,7 +53,7 @@ auto tCrashReportDatabaseMarksAReportHandled =
 };
 
 auto tCrashReportDatabasePrunesHandledReports =
-    test("CrashReport/databasePrunesHandledReports") = []
+    test("CrashReportDatabase/prunesHandledReports") = []
 {
     auto directory = TemporaryFile {};
     auto database = ReportDatabase {directory.path()};

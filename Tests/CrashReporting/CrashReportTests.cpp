@@ -52,7 +52,7 @@ CrashReport makeSampleReport()
 } // namespace
 
 auto tCrashReportRoundTripsThroughJSON =
-    test("CrashReport/roundTripsThroughJSON") = []
+    test("CrashReportJSON/roundTripsThroughJSON") = []
 {
     auto original = makeSampleReport();
     auto parsed = CrashReport::fromJSON(original.toJSON());
@@ -79,7 +79,7 @@ auto tCrashReportRoundTripsThroughJSON =
 };
 
 auto tCrashReportReadsAReportWithoutModuleUuid =
-    test("CrashReport/readsAReportWithoutModuleUuid") = []
+    test("CrashReportJSON/readsAReportWithoutModuleUuid") = []
 {
     auto parsed = CrashReport::fromJSON(reportWithoutModuleUuid);
 
@@ -94,11 +94,11 @@ auto tCrashReportReadsAReportWithoutModuleUuid =
     check(reparsed->crashingThread.frames[0].moduleUuid.empty());
 };
 
-auto tCrashReportRefusesJunk = test("CrashReport/refusesJunk") = []
+auto tCrashReportRefusesJunk = test("CrashReportJSON/refusesJunk") = []
 { check(!CrashReport::fromJSON("not json").has_value()); };
 
 auto tCrashReportHexAddressesRoundTrip =
-    test("CrashReport/hexAddressesRoundTrip") = []
+    test("CrashReportJSON/hexAddressesRoundTrip") = []
 {
     auto text = formatHexAddress(addressAboveDoublePrecision);
 
@@ -106,7 +106,7 @@ auto tCrashReportHexAddressesRoundTrip =
     check(!parseHexAddress("0xzz").has_value());
 };
 
-auto tCrashReportHangRoundTrips = test("CrashReport/hangRoundTrips") = []
+auto tCrashReportHangRoundTrips = test("CrashReportJSON/hangRoundTrips") = []
 {
     auto report = makeSampleReport();
     report.kind = ReportKind::hang;
@@ -118,7 +118,8 @@ auto tCrashReportHangRoundTrips = test("CrashReport/hangRoundTrips") = []
     check(readBack->hangDurationMilliseconds == 10500);
 };
 
-auto tCrashReportWithoutKindIsACrash = test("CrashReport/withoutKindIsACrash") = []
+auto tCrashReportWithoutKindIsACrash =
+    test("CrashReportJSON/withoutKindIsACrash") = []
 {
     auto report = CrashReport::fromJSON(reportWithoutModuleUuid);
     check(report.has_value());

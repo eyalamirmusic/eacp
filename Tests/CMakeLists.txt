@@ -13,10 +13,9 @@ endif ()
 
 add_subdirectory(Network)
 
-# Crashes the SelfDestruct example for real and reads what its handler wrote.
-if (TARGET SelfDestruct)
-    add_subdirectory(CrashReporting)
-endif ()
+# Always added: the report and database tests are files and JSON, and the
+# directory returns before the suite that crashes SelfDestruct unless it exists.
+add_subdirectory(CrashReporting)
 add_subdirectory(Spirv)
 
 if (EACP_HAS_DRAW)

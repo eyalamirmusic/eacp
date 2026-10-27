@@ -1,6 +1,13 @@
+nano_add_executable(CrashReportTests
+        SOURCES CrashReportTests.cpp ReportDatabaseTests.cpp
+        TARGETS eacp-crash-report)
+
+if (NOT TARGET SelfDestruct)
+    return ()
+endif ()
+
 nano_add_executable(CrashReportingTests
-        SOURCES CrashReportTests.cpp PendingReportsTests.cpp ReportDatabaseTests.cpp
-                SelfDestructTests.cpp
+        SOURCES PendingReportsTests.cpp SelfDestructTests.cpp
         TARGETS eacp-crash-reporting)
 
 # The fault cases crash the demo app for real and read the report its handler

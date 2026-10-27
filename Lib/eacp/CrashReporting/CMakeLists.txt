@@ -1,13 +1,26 @@
+add_library(eacp-crash-report STATIC)
+
+target_link_libraries(eacp-crash-report PUBLIC eacp-core)
+
+target_sources(eacp-crash-report PRIVATE
+        CrashReport.cpp
+        ReportDatabase.cpp)
+
+set_default_target_setting(eacp-crash-report)
+eacp_enable_unity_build(eacp-crash-report)
+
+if (NOT ((APPLE AND NOT IOS) OR WIN32))
+    return ()
+endif ()
+
 add_library(eacp-crash-reporting STATIC)
 
-target_link_libraries(eacp-crash-reporting PUBLIC eacp-core)
+target_link_libraries(eacp-crash-reporting PUBLIC eacp-crash-report)
 
 target_sources(eacp-crash-reporting PRIVATE
         CrashHandler.cpp
-        CrashReport.cpp
         CrashReporting.cpp
         HandlerReport.cpp
-        ReportDatabase.cpp
         SharedState.cpp)
 
 if (APPLE)
