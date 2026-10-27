@@ -390,3 +390,19 @@ auto tSplitStopsAtMaximumParts = test("Strings/split leaves the rest whole") = [
     check(split("a b", ' ', 5) == Pieces {"a", "b"});
     check(split("a b c", ' ', 1) == Pieces {"a b c"});
 };
+
+auto tJoin = test("Strings/join puts the separator between parts") = []
+{
+    using eacp::Strings::join;
+    check(join({"Tamber", "2.1.0-1a2b3c4", "macOS"}, "  ")
+          == "Tamber  2.1.0-1a2b3c4  macOS");
+    check(join({}, ", ").empty());
+    check(join({"a", "", "b"}, ",") == "a,,b");
+};
+
+auto tFormatPadsToAWidthGivenAtRunTime =
+    test("Strings/format pads to a width given at run time") = []
+{
+    constexpr auto columnWidth = 6;
+    check(eacp::Strings::format("{:<{}}|", "#1", columnWidth) == "#1    |");
+};

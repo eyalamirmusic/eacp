@@ -43,6 +43,9 @@ bool equalsInConstantTime(std::string_view expected, std::string_view supplied);
 std::vector<std::string>
     split(std::string_view text, char delimiter, std::size_t maximumParts = 0);
 
+// The parts with separator between each, empty parts included.
+std::string join(const std::vector<std::string>& parts, std::string_view separator);
+
 int hexCharToInt(char c);
 
 // A hexadecimal number, with or without a leading "0x" or "0X", the whole of

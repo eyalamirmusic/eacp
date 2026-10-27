@@ -366,6 +366,21 @@ std::vector<std::string>
     return parts;
 }
 
+std::string join(const std::vector<std::string>& parts, std::string_view separator)
+{
+    auto joined = std::string {};
+
+    for (std::size_t index = 0; index < parts.size(); ++index)
+    {
+        if (index > 0)
+            joined += separator;
+
+        joined += parts[index];
+    }
+
+    return joined;
+}
+
 int hexCharToInt(char c)
 {
     if (c >= '0' && c <= '9')
