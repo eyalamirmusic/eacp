@@ -12,7 +12,8 @@ struct MyCrashHandler : CrashReporting::CrashHandler
     // In the handler process, after the app is gone. May open windows.
     void crashReported(const CrashReporting::CrashReport& report) override;
 
-    // In the app, from start(), for each report still in pending/.
+    // In the app, on the event loop after start() returns, for each report
+    // still in pending/. Start long work here; never wait on it.
     void pendingReportFound(const CrashReporting::CrashReport& report) override;
 };
 
@@ -30,8 +31,15 @@ int main(int argc, char* argv[])
 }
 ```
 
-CMake: `eacp_enable_crash_reporting(<executable>)` links `eacp-crash-reporting`
-and defines `EACP_CRASH_REPORTING=1`. It refuses anything but an executable,
+CMake: `eacp_enable_crash_reporting(<executable> [SYMBOLS_DIR <dir>])` links
+`eacp-crash-reporting` and defines `EACP_CRASH_REPORTING=1`. It also makes
+symbols every build: a `dsymutil` step writing `<target>.dSYM` beside the
+executable or bundle on macOS (with `-g` added for Release and MinSizeRel), and
+on Windows a PDB in every configuration (`ProgramDatabase` debug info unless
+`CMAKE_MSVC_DEBUG_INFORMATION_FORMAT` says otherwise, `/DEBUG /OPT:REF
+/OPT:ICF` for Release and MinSizeRel). That covers the target's own sources;
+the libraries it links get debug info only as their own configuration gives
+it. It refuses anything but an executable,
 since the handler is that executable relaunched as
 `<exe> --eacp-crash-handler <database> <channel> -- <Options::handlerArguments>`.
 
@@ -54,10 +62,56 @@ report from `pending/` to `handled/` and prunes the latter.
 `report.json` is written last, so a folder without one is a capture that did
 not finish; it is read back as `reason: "incomplete"`. Fields: `id` (UUID),
 `timestamp` (ms since epoch), `reason`, `message`, `faultAddress`,
-`crashingThread {threadId, frames[{modulePath, moduleBase, offset, symbol}]}`,
+`crashingThread {threadId, frames[{modulePath, moduleBase, offset, symbol,
+moduleUuid}]}`,
 `minidumpPath`, `metadata`, `attachments`, `platform`, `capturedBy`
 (`handler`, `exit-code`, `incomplete`). Addresses are hex strings, since a
 JSON number loses the low bits of a 64-bit address.
+
+`moduleUuid` is the key a symbol server finds the image's symbols by. On macOS
+it is the Mach-O `LC_UUID`, upper-case `8-4-4-4-12` as `dwarfdump --uuid`
+prints it; on Windows the PDB's CodeView GUID and age as Sentry's `debug_id`,
+lower-case `8-4-4-4-12-<age hex>`. Empty where it was not read; a report
+written before the field existed reads back with it empty.
+
+## Writing an uploader
+
+The module uploads nothing; an app does it in its own `CrashHandler`.
+
+- Upload from `crashReported`, in the handler process: it is healthy, the app
+  is already gone, and it may block as long as it needs.
+- Resend from `pendingReportFound` on every launch, for reports that never
+  arrived, and `markReportHandled(id)` once the server has taken one. It runs
+  on the event loop, so start the request asynchronously and never wait on it
+  there.
+- The report `id` is the idempotency key. Resends are expected, so the server
+  must dedupe: Sentry's `event_id` is the id with the dashes stripped; send it
+  as `Idempotency-Key` too where the server honours one.
+- The handler has no app state. Pass what it needs (endpoint, DSN) through
+  `Options::handlerArguments`, read back with `Apps::commandLineArgs()`, or as
+  a `setMetadata` key, which arrives in `report.metadata`.
+
+Sentry mapping:
+
+| Sentry | Report |
+|---|---|
+| `event_id` | `id` without dashes |
+| `release` | `metadata["appVersion"]` |
+| `exception.values[0].type` / `value` | `reason` / `message` |
+| `stacktrace.frames[]` `instruction_addr` | `moduleBase + offset` |
+| `image_addr`, `package`, `function` | `moduleBase`, `modulePath`, `symbol` |
+| `debug_meta.images[]` `debug_id`, `image_addr`, `code_file` | `moduleUuid`, `moduleBase`, `modulePath` |
+| `tags` / `extra` | `metadata` |
+| envelope attachment items | `attachments` |
+
+Sentry wants frames innermost last, the reverse of `frames`. On Windows the
+minidump can go to the minidump endpoint instead, as multipart with the event
+fields beside it.
+
+Symbols change with every build, since `moduleUuid` does, so they are uploaded
+per build. `eacp_enable_crash_reporting(<target> SYMBOLS_DIR <dir>)` copies each
+build's dSYM or PDB into one folder as `<target>-<version>`, ready for
+`sentry-cli debug-files upload` or the like.
 
 ## What is caught
 
