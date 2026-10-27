@@ -2,6 +2,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <string>
 
 namespace eacp::Time
 {
@@ -20,6 +21,12 @@ struct MS
 void sleep(MS duration);
 
 void sleepMS(int ms);
+
+// Wall-clock time since the Unix epoch, for timestamps that leave the process.
+MS sinceEpoch();
+
+// UTC as ISO 8601 with milliseconds, "2026-10-27T18:48:02.569Z".
+std::string formatIso8601(MS sinceUnixEpoch);
 
 // A point in the future, for pump-until loops. Wraps the steady clock behind
 // out-of-line methods so headers using it stay free of <chrono>.

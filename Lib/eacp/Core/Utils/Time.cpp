@@ -1,5 +1,7 @@
 #include "Time.h"
 
+#include "Format.h"
+
 #include <chrono>
 #include <thread>
 
@@ -23,6 +25,33 @@ void sleep(MS duration)
 void sleepMS(int ms)
 {
     sleep(MS {ms});
+}
+
+MS sinceEpoch()
+{
+    using namespace std::chrono;
+    const auto now = system_clock::now().time_since_epoch();
+    return MS {duration_cast<milliseconds>(now).count()};
+}
+
+std::string formatIso8601(MS sinceUnixEpoch)
+{
+    using namespace std::chrono;
+    const auto time = sys_time<milliseconds> {milliseconds {sinceUnixEpoch.count}};
+    const auto day = floor<days>(time);
+    const auto date = year_month_day {day};
+    const auto clock = hh_mm_ss {time - day};
+    const auto year = static_cast<int>(date.year());
+    const auto month = static_cast<unsigned>(date.month());
+    const auto dayOfMonth = static_cast<unsigned>(date.day());
+    return Strings::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                           year,
+                           month,
+                           dayOfMonth,
+                           clock.hours().count(),
+                           clock.minutes().count(),
+                           clock.seconds().count(),
+                           clock.subseconds().count());
 }
 
 Deadline::Deadline(MS timeout)
