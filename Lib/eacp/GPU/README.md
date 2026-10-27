@@ -24,6 +24,10 @@ buffer, reading or updating one, beginning a frame, and submitting, waiting on
 or reading back a command buffer all call it. It is one thread-id compare behind
 an `assert`, so a release build pays for nothing but the call.
 
+State that is only valid on one `Device` — a kernel prepared for it — goes in
+`device.perDevice<T>()`: one `T` per `Device`, made on first use and destroyed
+with it, before the backend device. It is safe to ask for from any thread.
+
 ## The pieces
 
 | | |

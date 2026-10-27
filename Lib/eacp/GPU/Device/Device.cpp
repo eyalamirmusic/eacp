@@ -3,10 +3,12 @@
 #include "../Frame/Frame.h"
 
 #include <eacp/Core/Threads/ThreadUtils.h>
+#include <eacp/Core/Utils/Containers.h>
 #include <eacp/Graphics/Image/Image.h>
 
 #include <cassert>
 #include <mutex>
+#include <typeindex>
 #include <unordered_map>
 
 // Portable Device members. The platform backends (Device-macOS.mm /
@@ -116,6 +118,50 @@ Sampler Device::makeSampler(const SamplerDescriptor& descriptor)
     auto sampler = Sampler {native, descriptor};
     cache.emplace(descriptor, sampler);
     return sampler;
+}
+
+// Recursive because a perDevice object's constructor may ask for another, and
+// a Vector rather than a map so they go newest first, as statics do: one made
+// inside another's constructor is still there for its destructor.
+struct Device::PerDeviceObjects
+{
+    struct Entry
+    {
+        std::type_index type;
+        std::shared_ptr<void> object;
+    };
+
+    ~PerDeviceObjects()
+    {
+        while (!entries.empty())
+        {
+            auto newest = std::move(entries.back().object);
+            entries.pop_back();
+        }
+    }
+
+    std::recursive_mutex mutex;
+    Vector<Entry> entries;
+};
+
+std::shared_ptr<Device::PerDeviceObjects> Device::makePerDeviceObjects()
+{
+    return std::make_shared<PerDeviceObjects>();
+}
+
+void* Device::findOrMakePerDevice(const std::type_info& type,
+                                  std::shared_ptr<void> (*make)())
+{
+    auto lock = std::scoped_lock(perDeviceObjects->mutex);
+    auto& entries = perDeviceObjects->entries;
+
+    for (auto& entry: entries)
+        if (entry.type == type)
+            return entry.object.get();
+
+    auto object = make();
+    entries.add(PerDeviceObjects::Entry {type, object});
+    return object.get();
 }
 
 ShaderLibrary Device::makeShaderLibrary(const ShaderSource& source)

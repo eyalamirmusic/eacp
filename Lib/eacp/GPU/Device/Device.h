@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <typeinfo>
 
 namespace eacp::Graphics
 {
@@ -464,6 +465,23 @@ public:
     // real storage.
     void noteBufferCreated();
 
+    // This Device's own T: one, made on first use and destroyed with the
+    // Device, before the backend device. For state that is only valid on this
+    // Device - a kernel prepared for it - and so must neither outlive it nor be
+    // found again by a later Device at the same address, which a static keyed
+    // by the Device's address would do. The lookup is safe from any thread;
+    // guarding T's own state is T's business. T is constructed under the
+    // Device's lock, so a slow constructor holds up every other perDevice
+    // lookup on this Device until it returns. T's constructor may ask for
+    // another perDevice object, which then outlives it: they are destroyed
+    // newest first.
+    template <typename T>
+    T& perDevice()
+    {
+        auto make = []() -> std::shared_ptr<void> { return std::make_shared<T>(); };
+        return *static_cast<T*>(findOrMakePerDevice(typeid(T), make));
+    }
+
 private:
     // Makes this Device follow the main thread rather than the one that
     // constructed it. Private because Device::shared() is the only caller and
@@ -494,5 +512,13 @@ private:
 
     Frame* openFrame = nullptr;
     int openFrames = 0;
+
+    struct PerDeviceObjects;
+    static std::shared_ptr<PerDeviceObjects> makePerDeviceObjects();
+    void* findOrMakePerDevice(const std::type_info& type,
+                              std::shared_ptr<void> (*make)());
+
+    // Last, so destroyed first: before the backend device in impl.
+    std::shared_ptr<PerDeviceObjects> perDeviceObjects = makePerDeviceObjects();
 };
 } // namespace eacp::GPU

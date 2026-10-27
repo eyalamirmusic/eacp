@@ -80,6 +80,7 @@ set(gpu_test_sources
         PackedBFloat16Tests.cpp
         PackedHalfTests.cpp
         PackedQuantizedTests.cpp
+        PerDeviceTests.cpp
         PipelineStateTests.cpp
         ProgramGraphTests.cpp
         RecordedCountsTests.cpp
