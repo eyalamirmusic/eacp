@@ -178,7 +178,10 @@ breakpoint is not a hang.
   hang is caught even if the app's threads all stall. It opens the main
   thread, `SuspendThread`s it, takes `GetThreadContext`, walks it with
   `StackWalk64`, `ResumeThread`s it, then names the frames and writes a
-  minidump of the threads as they are. The debugger check is
+  minidump of the threads as they are. On ARM64 it follows the x29
+  frame-pointer chain instead of `StackWalk64`, which stops at the first
+  ntdll frame of a thread parked in a wait; functions built without frame
+  records (clang-cl's optimised ARM64 code) are skipped. The debugger check is
   `CheckRemoteDebuggerPresent`.
 
 Limits: only the main thread is sampled, once, at the threshold; there is no

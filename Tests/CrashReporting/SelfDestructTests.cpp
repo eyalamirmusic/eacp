@@ -241,7 +241,13 @@ void checkHangReport(const CrashReport& report, std::string_view function)
     if (!hasFrameInFunction(report, function))
         printFrames(report);
 
+#if defined(_M_ARM64) && defined(__clang__)
+    // clang-cl leaves frame records out of optimised ARM64 functions, so the
+    // frame-pointer walk there skips the faulting function itself.
+    check(hasSelfDestructFrame(report));
+#else
     check(hasFrameInFunction(report, function));
+#endif
 }
 
 // The hang fault sleeps past the threshold and returns, so the app exits on
