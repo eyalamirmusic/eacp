@@ -56,6 +56,12 @@ struct SelfDestructCrashHandler final : CrashReporting::CrashHandler
 
         SelfDestruct::runReportWindow(report);
     }
+
+    void pendingReportFound(const CrashReporting::CrashReport& report) override
+    {
+        Console::print("SelfDestruct: pending report " + report.id + " ("
+                       + report.reason + ")");
+    }
 };
 
 EACP_REGISTER_CRASH_HANDLER(SelfDestructCrashHandler);
