@@ -360,3 +360,23 @@ auto tToUpper = test("Strings/toUpper is ASCII only") = []
     check(toUpper("") == "");
     check(toUpper("caf\xC3\xA9") == "CAF\xC3\xA9");
 };
+
+auto tSplitKeepsEmptyPieces = test("Strings/split keeps empty pieces") = []
+{
+    using eacp::Strings::split;
+    using Pieces = std::vector<std::string>;
+    check(split("a,b,,c", ',') == Pieces {"a", "b", "", "c"});
+    check(split("", ',') == Pieces {""});
+    check(split("abc", ',') == Pieces {"abc"});
+    check(split(",", ',') == Pieces {"", ""});
+};
+
+auto tSplitStopsAtMaximumParts = test("Strings/split leaves the rest whole") = []
+{
+    using eacp::Strings::split;
+    using Pieces = std::vector<std::string>;
+    check(split("FUNC 64cc 1c 0 Ns::f(int a, int b)", ' ', 5)
+          == Pieces {"FUNC", "64cc", "1c", "0", "Ns::f(int a, int b)"});
+    check(split("a b", ' ', 5) == Pieces {"a", "b"});
+    check(split("a b c", ' ', 1) == Pieces {"a b c"});
+};

@@ -333,6 +333,26 @@ bool equalsCaseInsensitive(std::string_view a, std::string_view b)
     return toLower(a) == toLower(b);
 }
 
+std::vector<std::string>
+    split(std::string_view text, char delimiter, std::size_t maximumParts)
+{
+    auto parts = std::vector<std::string> {};
+
+    while (maximumParts == 0 || parts.size() + 1 < maximumParts)
+    {
+        const auto end = text.find(delimiter);
+
+        if (end == std::string_view::npos)
+            break;
+
+        parts.emplace_back(text.substr(0, end));
+        text.remove_prefix(end + 1);
+    }
+
+    parts.emplace_back(text);
+    return parts;
+}
+
 int hexCharToInt(char c)
 {
     if (c >= '0' && c <= '9')

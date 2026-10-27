@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 namespace eacp::Strings
 {
@@ -31,6 +32,12 @@ std::string capitalize(std::string_view s);
 std::string uncapitalize(std::string_view s);
 
 bool equalsCaseInsensitive(std::string_view a, std::string_view b);
+
+// The pieces between each delimiter, empty ones included. With maximumParts
+// above zero the last piece is the unsplit rest, so "a b c" split on ' ' into
+// two is {"a", "b c"}.
+std::vector<std::string>
+    split(std::string_view text, char delimiter, std::size_t maximumParts = 0);
 
 int hexCharToInt(char c);
 
