@@ -258,27 +258,38 @@ void startCrashReporting(const FilePath& databaseDirectory,
         {"app", "about to offer ways to crash", CrashReporting::Level::warning});
 }
 
-// Waits past the first heartbeats before stalling, since nothing is watched
-// until the loop has beaten once; quits once the fault returns.
+void runMainThreadFault(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+{
+    if (pausesHangDetection)
+        CrashReporting::pauseHangDetection();
+
+    fault.trigger();
+
+    if (pausesHangDetection)
+        CrashReporting::resumeHangDetection();
+
+    Apps::quit();
+}
+
+// Waits on the loop past the first heartbeats before stalling, since nothing
+// is watched until the loop has beaten once; quits once the fault returns.
+struct MainThreadFaultApp
+{
+    MainThreadFaultApp(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+    {
+        constexpr auto heartbeatsBeforeStalling = 3;
+        auto delay =
+            CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
+
+        Threads::callAfter(Time::MS {delay.count()},
+                           [fault, pausesHangDetection]
+                           { runMainThreadFault(fault, pausesHangDetection); });
+    }
+};
+
 int stallMainThreadNow(const SelfDestruct::Fault& fault, bool pausesHangDetection)
 {
-    constexpr auto heartbeatsBeforeStalling = 3;
-    auto delay =
-        CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
-
-    return Apps::run(
-        [&fault, delay, pausesHangDetection]
-        {
-            Threads::runEventLoopFor(Time::MS {delay.count()});
-
-            if (pausesHangDetection)
-                CrashReporting::pauseHangDetection();
-
-            fault.trigger();
-
-            if (pausesHangDetection)
-                CrashReporting::resumeHangDetection();
-        });
+    return Apps::run<MainThreadFaultApp>(fault, pausesHangDetection);
 }
 
 int crashNow(std::string_view kind, bool pausesHangDetection)
