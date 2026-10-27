@@ -137,6 +137,8 @@ StackFrame makeStackFrame(const SharedCrashInfo& crash,
     {
         auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
         frame.symbol = resolveSymbol(base->second + frame.offset, lookupBackoff);
+        const auto* header = reinterpret_cast<const mach_header_64*>(base->second);
+        frame.moduleUuid = getImageUuid(*header);
     }
 
     return frame;

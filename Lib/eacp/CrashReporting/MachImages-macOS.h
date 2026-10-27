@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 namespace eacp::CrashReporting::Detail
 {
@@ -14,6 +15,10 @@ namespace eacp::CrashReporting::Detail
 // `availableBytes`.
 std::uint64_t getTextSegmentSize(const mach_header_64& header,
                                  std::size_t availableBytes);
+
+// The image's LC_UUID as 8-4-4-4-12 upper-case hex, as dwarfdump prints it.
+// Empty when it has none.
+std::string getImageUuid(const mach_header_64& header);
 
 struct DynamicLinkerImage
 {

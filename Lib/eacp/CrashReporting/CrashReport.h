@@ -23,6 +23,11 @@ struct StackFrame
     // Empty when nothing resolved it.
     std::string symbol;
 
+    // The key a symbol server finds the image's symbols by: the Mach-O LC_UUID
+    // on macOS, the PDB's GUID and age as a Sentry debug_id on Windows. Empty
+    // where it was not read.
+    std::string moduleUuid;
+
     std::uint64_t getAddress() const { return moduleBase + offset; }
 };
 

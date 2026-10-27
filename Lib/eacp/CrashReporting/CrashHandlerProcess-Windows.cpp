@@ -7,6 +7,7 @@
 #include <dbghelp.h>
 
 #include <array>
+#include <cstdio>
 #include <optional>
 
 namespace eacp::CrashReporting::Detail
@@ -205,10 +206,46 @@ std::string findSymbolName(HANDLE process, std::uint64_t address)
     return name + " + " + std::to_string(displacement);
 }
 
+bool hasPdbSignature(const IMAGEHLP_MODULEW64& module)
+{
+    return module.PdbSig70 != GUID {};
+}
+
+// The PDB's CodeView GUID and age as Sentry's debug_id: lower-case 8-4-4-4-12
+// followed by -<age hex>.
+std::string formatDebugId(const GUID& guid, DWORD age)
+{
+    constexpr auto debugIdLength = std::size_t {64};
+    auto text = std::array<char, debugIdLength> {};
+    std::snprintf(text.data(),
+                  text.size(),
+                  "%08lx-%04hx-%04hx-%02x%02x-%02x%02x%02x%02x%02x%02x-%lx",
+                  guid.Data1,
+                  guid.Data2,
+                  guid.Data3,
+                  guid.Data4[0],
+                  guid.Data4[1],
+                  guid.Data4[2],
+                  guid.Data4[3],
+                  guid.Data4[4],
+                  guid.Data4[5],
+                  guid.Data4[6],
+                  guid.Data4[7],
+                  age);
+
+    return text.data();
+}
+
 StackFrame
     makeReportFrame(HANDLE process, std::uint64_t address, bool isReturnAddress)
 {
     auto frame = StackFrame {};
+
+    // Symbols first: with deferred loads the PDB, and so its signature, is
+    // only read once something asks for a symbol in the module.
+    auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
+    frame.symbol = findSymbolName(process, address - lookupBackoff);
+
     auto module = IMAGEHLP_MODULEW64 {};
     module.SizeOfStruct = sizeof(module);
 
@@ -216,12 +253,12 @@ StackFrame
     {
         frame.modulePath = Strings::narrow(module.LoadedImageName);
         frame.moduleBase = module.BaseOfImage;
+
+        if (hasPdbSignature(module))
+            frame.moduleUuid = formatDebugId(module.PdbSig70, module.PdbAge);
     }
 
     frame.offset = address - frame.moduleBase;
-
-    auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
-    frame.symbol = findSymbolName(process, address - lookupBackoff);
     return frame;
 }
 

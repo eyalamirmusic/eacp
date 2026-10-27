@@ -33,8 +33,9 @@ struct StackFrameRecord
     std::string moduleBase;
     std::string offset;
     std::string symbol;
+    std::string moduleUuid;
 
-    MIRO_REFLECT(modulePath, moduleBase, offset, symbol)
+    MIRO_REFLECT(modulePath, moduleBase, offset, symbol, moduleUuid)
 };
 
 struct CrashedThreadRecord
@@ -77,7 +78,8 @@ StackFrameRecord makeStackFrameRecord(const StackFrame& frame)
     return {frame.modulePath,
             formatHexAddress(frame.moduleBase),
             formatHexAddress(frame.offset),
-            frame.symbol};
+            frame.symbol,
+            frame.moduleUuid};
 }
 
 StackFrame makeStackFrame(const StackFrameRecord& record)
@@ -85,7 +87,8 @@ StackFrame makeStackFrame(const StackFrameRecord& record)
     return {record.modulePath,
             parseHexAddress(record.moduleBase).value_or(0),
             parseHexAddress(record.offset).value_or(0),
-            record.symbol};
+            record.symbol,
+            record.moduleUuid};
 }
 
 CrashReportRecord makeCrashReportRecord(const CrashReport& report)

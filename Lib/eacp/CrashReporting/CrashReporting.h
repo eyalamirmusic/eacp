@@ -60,8 +60,9 @@ std::optional<int> runHandlerIfRequested(int argc, char* argv[]);
 // True in the handler process, from runHandlerIfRequested on.
 bool isHandlerProcess();
 
-// Installs the crash handlers, launches the handler process and then calls
-// pendingReportFound for reports left over from earlier runs. False when the
+// Installs the crash handlers, launches the handler process and schedules
+// pendingReportFound on the event loop for each report left over from earlier
+// runs; it returns without calling any of them. False when the
 // handler could not be started; crashes then go unreported.
 // Call once, early in main().
 bool start(const Options& options = {});

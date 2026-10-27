@@ -3,6 +3,7 @@
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Random.h>
@@ -76,22 +77,23 @@ void setDefaultMetadata(Detail::SharedState& state)
         state, "os", getPlatformName() + " " + Detail::getOperatingSystemVersion());
 }
 
-void reportPendingReports(const ReportDatabase& database)
+void deliverPendingReport(const CrashReport& report)
 {
-    auto handler = createRegisteredCrashHandler();
-
-    for (const auto& report: database.readPendingReports())
+    try
     {
-        try
-        {
-            handler->pendingReportFound(report);
-        }
-        catch (const std::exception& error)
-        {
-            Console::printError(std::string {"pendingReportFound threw: "}
-                                + error.what());
-        }
+        createRegisteredCrashHandler()->pendingReportFound(report);
     }
+    catch (const std::exception& error)
+    {
+        Console::printError(std::string {"pendingReportFound threw: "}
+                            + error.what());
+    }
+}
+
+void schedulePendingReports(const ReportDatabase& database)
+{
+    for (const auto& report: database.readPendingReports())
+        Threads::callAsync([report] { deliverPendingReport(report); });
 }
 
 Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
@@ -174,7 +176,7 @@ bool start(const Options& options)
     auto launched = Detail::launchHandlerProcess(launch, state);
     Detail::installCrashHandlers(state);
 
-    reportPendingReports(database);
+    schedulePendingReports(database);
     return launched;
 }
 

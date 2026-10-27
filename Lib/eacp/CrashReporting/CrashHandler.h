@@ -15,9 +15,11 @@ namespace eacp::CrashReporting
 // likes; the handler exits when it returns. Apps::commandLineArgs() there is
 // the executable followed by Options::handlerArguments.
 //
-// pendingReportFound runs in the app, from start(), once per report still in
-// pending/ on each launch until markReportHandled moves it to handled/. That
-// includes a folder a capture left without its report.json.
+// pendingReportFound runs in the app on the message thread, after start() has
+// returned and the event loop has started, once per report still in pending/ on
+// each launch until markReportHandled moves it to handled/. That includes a
+// folder a capture left without its report.json. It runs on the loop, so long
+// work (an upload) is started asynchronously from it, never awaited in it.
 struct CrashHandler
 {
     virtual ~CrashHandler() = default;
