@@ -19,7 +19,8 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 `README.md` is written for users of the library — interface, capabilities and
 usage — and stays free of build-system and implementation detail. In-depth
 docs live under `Docs/` (`Build.md` for options, dependencies, capability
-variables and CI; `Linux.md` for the Linux backend; `HotReload.md` for
+variables and CI; `Linux.md` for the Linux backend; `Toolbox.md` for the
+Core reuse map; `HotReload.md` for
 `Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
 them) and beside the modules
 they describe (`Lib/eacp/GPU/README.md`, `Lib/eacp/ML/README.md`,
@@ -1275,6 +1276,8 @@ Android: android, log, jnigraphics, the Vulkan loader the same way, and
 `java.net`/`javax.net.ssl` through JNI for the network; no libcurl.
 
 ## Code Style
+
+Before writing a helper, read `Docs/Toolbox.md`.
 
 Always use the most modern C++ and RAII practices.
 Use auto for variables and whenever possible.

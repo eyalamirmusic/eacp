@@ -463,6 +463,8 @@ CMake/        Build helpers
   capability variables and the CI matrix.
 - [`Docs/Linux.md`](Docs/Linux.md) — the Linux backend: Wayland, X11, Vulkan
   and FreeType.
+- [`Docs/Toolbox.md`](Docs/Toolbox.md) — what Core, Network and the bundled
+  libraries already provide, one line per function.
 - [`Apps/Android/README.md`](Apps/Android/README.md) — building, running and
   shipping on Android.
 - [`Lib/eacp/GPU/README.md`](Lib/eacp/GPU/README.md) — the GPU module and the
