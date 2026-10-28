@@ -248,7 +248,7 @@ ExpectedOutcome expectIllegalInstruction(Lane lane)
 ExpectedOutcome expectPrivilegedInstruction(Lane lane)
 {
     if (isMac(lane))
-        return notAvailable("the zoo halts from user mode on Windows x64 only");
+        return notAvailable("the fault halts from user mode on Windows x64 only");
 
     if (isArm64Windows(lane))
         return notAvailable("ARM64 has no privileged-instruction trap of its own: "

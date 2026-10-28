@@ -231,7 +231,7 @@ EACP_FAULT_NO_INLINE void deadlockWithAnotherThread()
 }
 
 // The architecture's own permanently undefined instruction.
-EACP_ZOO_NO_INLINE void executeIllegalInstruction()
+EACP_FAULT_NO_INLINE void executeIllegalInstruction()
 {
 #if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
     __ud2();
@@ -249,14 +249,14 @@ EACP_ZOO_NO_INLINE void executeIllegalInstruction()
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
 constexpr auto privilegedInstructionIsAvailable = true;
 
-EACP_ZOO_NO_INLINE void executePrivilegedInstruction()
+EACP_FAULT_NO_INLINE void executePrivilegedInstruction()
 {
     __halt();
 }
 #else
 constexpr auto privilegedInstructionIsAvailable = false;
 
-EACP_ZOO_NO_INLINE void executePrivilegedInstruction() {}
+EACP_FAULT_NO_INLINE void executePrivilegedInstruction() {}
 #endif
 
 namespace
@@ -269,7 +269,7 @@ volatile auto floatingPointResult = 0.0;
 #if defined(_M_X64) || defined(__x86_64__)
 constexpr auto floatingPointTraps = true;
 
-EACP_ZOO_NO_INLINE void enableFloatingPointDivideTrap()
+EACP_FAULT_NO_INLINE void enableFloatingPointDivideTrap()
 {
 #if defined(_WIN32)
     auto previous = 0u;
@@ -281,10 +281,10 @@ EACP_ZOO_NO_INLINE void enableFloatingPointDivideTrap()
 #else
 constexpr auto floatingPointTraps = false;
 
-EACP_ZOO_NO_INLINE void enableFloatingPointDivideTrap() {}
+EACP_FAULT_NO_INLINE void enableFloatingPointDivideTrap() {}
 #endif
 
-EACP_ZOO_NO_INLINE double divideFloatByZero()
+EACP_FAULT_NO_INLINE double divideFloatByZero()
 {
     enableFloatingPointDivideTrap();
     volatile auto numerator = 1.0;
@@ -298,7 +298,7 @@ namespace
 std::array<volatile unsigned char, smallBlockSize> nonExecutableCode {};
 } // namespace
 
-EACP_ZOO_NO_INLINE void jumpToNonExecutableMemory()
+EACP_FAULT_NO_INLINE void jumpToNonExecutableMemory()
 {
     using Function = void (*)();
     auto* dataAddress = const_cast<unsigned char*>(nonExecutableCode.data());
@@ -307,7 +307,7 @@ EACP_ZOO_NO_INLINE void jumpToNonExecutableMemory()
 }
 
 #if defined(_WIN32)
-EACP_ZOO_NO_INLINE void touchGuardPage()
+EACP_FAULT_NO_INLINE void touchGuardPage()
 {
     auto* page = static_cast<volatile char*>(::VirtualAlloc(
         nullptr, 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE | PAGE_GUARD));
@@ -315,8 +315,8 @@ EACP_ZOO_NO_INLINE void touchGuardPage()
 }
 
 // A mapped read whose backing store fails is what raises this, and nothing on
-// a local disk fails on demand, so the zoo raises the same record directly.
-EACP_ZOO_NO_INLINE void raiseInPageError()
+// a local disk fails on demand, so the fault raises the same record directly.
+EACP_FAULT_NO_INLINE void raiseInPageError()
 {
     constexpr auto readAccess = ULONG_PTR {0};
     constexpr auto deviceNotReady = ULONG_PTR {0xC00000A3};
@@ -329,17 +329,17 @@ EACP_ZOO_NO_INLINE void raiseInPageError()
                      arguments.data());
 }
 #else
-EACP_ZOO_NO_INLINE void touchGuardPage() {}
-EACP_ZOO_NO_INLINE void raiseInPageError() {}
+EACP_FAULT_NO_INLINE void touchGuardPage() {}
+EACP_FAULT_NO_INLINE void raiseInPageError() {}
 #endif
 
 #if defined(__APPLE__)
 constexpr auto isMacOS = true;
 
 // A page of a mapped file past the file's end, once it is truncated to nothing.
-EACP_ZOO_NO_INLINE void readPastTruncatedMapping()
+EACP_FAULT_NO_INLINE void readPastTruncatedMapping()
 {
-    auto path = std::to_array("/tmp/eacp-crash-zoo-bus-XXXXXX");
+    auto path = std::to_array("/tmp/eacp-crash-fault-bus-XXXXXX");
     auto descriptor = ::mkstemp(path.data());
     ::unlink(path.data());
     auto pageSize = static_cast<std::size_t>(::getpagesize());
@@ -360,7 +360,7 @@ extern "C" int change_fdguard_np(int descriptor,
 
 // Guards a descriptor against close, then closes it. The kernel takes a close
 // guard only together with a dup one.
-EACP_ZOO_NO_INLINE void closeGuardedDescriptor()
+EACP_FAULT_NO_INLINE void closeGuardedDescriptor()
 {
     constexpr auto guardClose = 1u << 0;
     constexpr auto guardDuplicate = 1u << 1;
@@ -377,7 +377,7 @@ EACP_ZOO_NO_INLINE void closeGuardedDescriptor()
 }
 
 // A system call number the kernel has no entry for.
-EACP_ZOO_NO_INLINE void callMissingSystemCall()
+EACP_FAULT_NO_INLINE void callMissingSystemCall()
 {
     constexpr auto missingSystemCall = 0x7FFF;
 #pragma clang diagnostic push
@@ -388,9 +388,9 @@ EACP_ZOO_NO_INLINE void callMissingSystemCall()
 #else
 constexpr auto isMacOS = false;
 
-EACP_ZOO_NO_INLINE void readPastTruncatedMapping() {}
-EACP_ZOO_NO_INLINE void closeGuardedDescriptor() {}
-EACP_ZOO_NO_INLINE void callMissingSystemCall() {}
+EACP_FAULT_NO_INLINE void readPastTruncatedMapping() {}
+EACP_FAULT_NO_INLINE void closeGuardedDescriptor() {}
+EACP_FAULT_NO_INLINE void callMissingSystemCall() {}
 #endif
 
 #if defined(_WIN32)

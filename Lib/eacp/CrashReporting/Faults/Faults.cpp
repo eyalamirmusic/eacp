@@ -32,7 +32,7 @@ struct BackgroundThreads
 };
 
 std::atomic<int> returnedBackgroundFaults {0};
-std::atomic<int> reportedZooEvents {0};
+std::atomic<int> reportedFaultEvents {0};
 
 std::optional<std::reference_wrapper<const Fault>>
     findAvailableFault(std::string_view name)
@@ -131,8 +131,8 @@ bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay)
 // the event's stack names them.
 EACP_FAULT_NO_INLINE std::string reportMessageEvent()
 {
-    auto id = captureMessage(zooEventMessage, Level::warning);
-    reportedZooEvents.fetch_add(1);
+    auto id = captureMessage(faultEventMessage, Level::warning);
+    reportedFaultEvents.fetch_add(1);
     return id;
 }
 
@@ -140,12 +140,12 @@ EACP_FAULT_NO_INLINE std::string reportCaughtException()
 {
     try
     {
-        throw std::runtime_error {std::string {zooEventMessage}};
+        throw std::runtime_error {std::string {faultEventMessage}};
     }
     catch (const std::exception& error)
     {
         auto id = captureException(error);
-        reportedZooEvents.fetch_add(1);
+        reportedFaultEvents.fetch_add(1);
         return id;
     }
 }

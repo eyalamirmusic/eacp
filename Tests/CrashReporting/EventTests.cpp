@@ -74,7 +74,7 @@ auto tMessage = test("CrashEvent/messageIsReportedAndTheAppRuns") = []
     auto report = checkEvent("message", "reportMessageEvent");
     check(report.reason == messageEventReason);
     check(report.level == Level::warning);
-    check(report.message == Faults::zooEventMessage);
+    check(report.message == Faults::faultEventMessage);
 };
 
 auto tException = test("CrashEvent/caughtExceptionIsReportedAndTheAppRuns") = []
@@ -83,7 +83,7 @@ auto tException = test("CrashEvent/caughtExceptionIsReportedAndTheAppRuns") = []
     check(report.reason == exceptionEventReason);
     check(report.level == Level::error);
     check(report.message
-          == "std::runtime_error: " + std::string {Faults::zooEventMessage});
+          == "std::runtime_error: " + std::string {Faults::faultEventMessage});
 };
 
 auto tPending = test("CrashEvent/reachesPendingReportFound") = []
