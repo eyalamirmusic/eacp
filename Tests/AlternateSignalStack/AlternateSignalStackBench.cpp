@@ -121,18 +121,22 @@ double getResidentKibibytes()
     ::GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof(counters));
     return static_cast<double>(counters.WorkingSetSize) / bytesPerKibibyte;
 }
+#elif defined(__linux__)
+double getResidentKibibytes()
+{
+    auto statm = Files::readFile(FilePath {"/proc/self/statm"});
+    auto fields = Strings::split(statm, ' ');
+    auto residentPages = std::stod(fields[1]);
+    return residentPages * static_cast<double>(::sysconf(_SC_PAGESIZE))
+           / bytesPerKibibyte;
+}
 #else
+// Peak rather than current, but a fresh child only grows while it measures.
 double getResidentKibibytes()
 {
     auto usage = rusage {};
     ::getrusage(RUSAGE_SELF, &usage);
-    auto peak = static_cast<double>(usage.ru_maxrss);
-
-    // ru_maxrss is bytes on Apple and kibibytes everywhere else.
-    if (Platform::isApple())
-        return peak / bytesPerKibibyte;
-
-    return peak;
+    return static_cast<double>(usage.ru_maxrss) / bytesPerKibibyte;
 }
 #endif
 
