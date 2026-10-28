@@ -250,10 +250,19 @@ void checkHangReport(const CrashReport& report, std::string_view function)
 #endif
 }
 
+enum class HangOutcome
+{
+    reported,
+    unreported
+};
+
 // The hang fault sleeps past the threshold and returns, so the app exits on
-// its own and the report is already written by then.
+// its own while the handler may still be writing the report. On macOS the
+// handler holds the app's output pipes, so Processes::run waits for it; on
+// Windows nothing does, so the report is waited for.
 Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
-                                 std::string_view threshold)
+                                 std::string_view threshold,
+                                 HangOutcome outcome)
 {
     auto database = TemporaryFile {};
     auto options = makeHangOptions("hang", database.path(), threshold, appArguments);
@@ -263,6 +272,10 @@ Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
     check(result.exitCode == 0);
 
     auto reportDatabase = ReportDatabase {database.path()};
+
+    if (outcome == HangOutcome::reported)
+        waitForCompleteReport(reportDatabase);
+
     check(!reportDatabase.hasCrashedLastRun());
     return reportDatabase.readPendingReports();
 }
@@ -337,7 +350,8 @@ auto tCrashReportFastFail =
 
 auto tCrashReportHang = test("CrashReport/hang") = []
 {
-    auto reports = runHangFault({}, testHangThresholdMilliseconds);
+    auto reports =
+        runHangFault({}, testHangThresholdMilliseconds, HangOutcome::reported);
 
     if (reports.size() != 1)
         Console::printError(std::to_string(reports.size()) + " hang reports");
@@ -349,11 +363,13 @@ auto tCrashReportHang = test("CrashReport/hang") = []
 };
 
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
-{ check(runHangFault({}, "0").empty()); };
+{ check(runHangFault({}, "0", HangOutcome::unreported).empty()); };
 
 auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 {
-    check(runHangFault({"--pause-hang-detection"}, testHangThresholdMilliseconds)
+    check(runHangFault({"--pause-hang-detection"},
+                       testHangThresholdMilliseconds,
+                       HangOutcome::unreported)
               .empty());
 };
 
