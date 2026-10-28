@@ -27,6 +27,12 @@ constexpr auto machExceptionNames = std::to_array<MachExceptionName>({
     {EXC_CRASH, "EXC_CRASH"},
 });
 
+// The request the kernel sends for EXCEPTION_STATE_IDENTITY |
+// MACH_EXCEPTION_CODES: mach_exception_raise_state_identity, routine 2407 of
+// xnu's osfmk/mach/mach_exc.defs. The SDK ships that .defs file but no header,
+// since MIG generates the struct (__Request__mach_exception_raise_state_identity_t,
+// what `mig mach_exc.defs` writes into mach_excServer.c), so it is copied here
+// field for field, packed to 4 as MIG packs it.
 #pragma pack(push, 4)
 struct RaiseStateIdentityRequest
 {

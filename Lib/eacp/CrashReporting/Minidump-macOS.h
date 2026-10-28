@@ -7,10 +7,14 @@
 #include <cstdint>
 #include <string>
 
-// A Breakpad-format minidump of a crashed macOS app (minidump_format.h): the
-// system, the crashing thread's registers and stack, every image with its
-// UUID as the CodeView record, and the exception. Enough for
-// minidump-stackwalk and lldb to open the crash.
+// A Breakpad-format minidump of a crashed macOS app: the system, every
+// thread's registers and stack, every image with its UUID as the CodeView
+// record, and the exception. Enough for minidump-stackwalk and lldb to open
+// the crash. The format is Microsoft's (MINIDUMP_HEADER, MINIDUMP_DIRECTORY
+// and the MINIDUMP_*_STREAM structs, learn.microsoft.com, minidumpapiset.h)
+// with Breakpad's Mac additions, all in google/breakpad
+// src/google_breakpad/common/minidump_format.h; no library is linked, the
+// file is written field by field in Minidump-macOS.cpp.
 namespace eacp::CrashReporting::Detail
 {
 struct MinidumpThread

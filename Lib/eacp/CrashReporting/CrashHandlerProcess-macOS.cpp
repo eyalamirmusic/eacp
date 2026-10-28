@@ -649,9 +649,9 @@ int waitForAppEvents(HandlerSession& session)
 } // namespace
 int runHandlerProcess(const HandlerArguments& arguments)
 {
-    auto isMachChannel = arguments.channel == handlerMachChannel;
+    auto isMachChannel = arguments.channel == machHandshakeHandlerChannel;
 
-    if (!isMachChannel && arguments.channel != handlerDescriptorChannel)
+    if (!isMachChannel && arguments.channel != signalOnlyHandlerChannel)
         return EXIT_FAILURE;
 
     auto state = mapInheritedSharedState();

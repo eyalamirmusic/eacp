@@ -11,6 +11,10 @@
 // it, and the reply that releases the faulting thread.
 namespace eacp::CrashReporting::Detail
 {
+// One exception, copied out of the kernel's message: which exception and its
+// two codes, send rights to the faulting thread and its task, the thread's
+// registers as it faulted, and where the reply goes. The message itself is
+// laid out in the .cpp.
 struct MachException
 {
     exception_type_t type = 0;

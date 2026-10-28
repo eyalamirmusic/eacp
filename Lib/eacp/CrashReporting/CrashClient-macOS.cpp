@@ -415,7 +415,8 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
                                   const PipeEnds& readyPipe,
                                   const std::optional<HandshakePort>& handshake)
 {
-    auto channel = handshake ? handlerMachChannel : handlerDescriptorChannel;
+    auto channel =
+        handshake ? machHandshakeHandlerChannel : signalOnlyHandlerChannel;
     auto arguments = makeHandlerCommandLine(launch, channel);
     auto argumentPointers = makeArgumentPointers(arguments);
 

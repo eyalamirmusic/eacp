@@ -186,6 +186,13 @@ Location appendCodeViewRecord(MinidumpBuffer& buffer, const AppImage& image)
     return {buffer.position() - start, start};
 }
 
+// A thread context is the registers in the byte order a reader expects, so
+// the order is the format's, not ours: Windows' CONTEXT for that CPU, which
+// Breakpad mirrors in src/google_breakpad/common/minidump_cpu_arm64.h
+// (MDRawContextARM64) and minidump_cpu_amd64.h (MDRawContextAMD64). The values
+// are thread_get_state's ARM_THREAD_STATE64 / x86_THREAD_STATE64, copied one
+// register at a time into those slots; the flags say only the control and
+// integer registers are filled, so the float and debug slots stay zero.
 #if defined(__arm64__)
 constexpr auto arm64GeneralRegisterCount = std::size_t {29};
 constexpr auto arm64FloatRegisterBytes = std::size_t {32 * 16};
