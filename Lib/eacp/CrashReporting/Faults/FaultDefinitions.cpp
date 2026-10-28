@@ -127,6 +127,27 @@ EACP_FAULT_NO_INLINE void corruptHeap()
 }
 #endif
 
+constexpr auto heapSmashLength = std::size_t {64} * 1024;
+constexpr auto heapSmashByte = 0xEB;
+
+// Only macOS captures this from outside the app, so only there is the report
+// promised to survive what it does to the heap.
+#if defined(__APPLE__)
+constexpr auto heapSmashIsAvailable = true;
+#else
+constexpr auto heapSmashIsAvailable = false;
+#endif
+
+// Tramples 64 KiB of the heap after one small block, malloc's bookkeeping
+// with it, then faults at once, so the crash lands before another thread's
+// allocation trips over the wreck.
+EACP_FAULT_NO_INLINE void smashHeap()
+{
+    auto* volatile block = static_cast<unsigned char*>(std::malloc(smallBlockSize));
+    std::memset(block, heapSmashByte, heapSmashLength);
+    dereferenceNullPointer();
+}
+
 #if defined(_WIN32)
 constexpr auto fatalAppExitFastFailCode = 7;
 
@@ -226,6 +247,12 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
      "Throws a std::runtime_error nobody catches",
      throwUncaughtException},
     {"heapcorruption", "Heap corruption", heapCorruptionDescription, corruptHeap},
+    {"heapsmash",
+     "Heap smash",
+     "Overwrites 64 KiB of the heap, then writes through a null pointer",
+     smashHeap,
+     false,
+     heapSmashIsAvailable},
     {"hang",
      "Hang",
      "Sleeps the thread past the hang threshold",

@@ -31,13 +31,23 @@ enum class OutcomeStatus
     pendingPR
 };
 
+// Who captured a report and whether it came with a minidump.
+struct ExpectedCapture
+{
+    CaptureSource capturedBy = CaptureSource::handler;
+    bool hasMinidump = false;
+};
+
 struct ExpectedOutcome
 {
     OutcomeStatus status = OutcomeStatus::notAvailable;
     std::string_view reason;
 
-    // A second reason the same fault is seen with, where the platform varies.
+    // A second reason the same fault is seen with, where the platform varies,
+    // and its capture where that differs as well: on macOS an abort reaches
+    // the signal path where a trap reaches the Mach exception port.
     std::string_view alternativeReason;
+    std::optional<ExpectedCapture> alternativeCapture;
 
     CaptureSource capturedBy = CaptureSource::handler;
     bool hasStack = false;
