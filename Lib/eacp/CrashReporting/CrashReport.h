@@ -34,12 +34,16 @@ struct StackFrame
     std::string moduleUuid;
 
     std::uint64_t getAddress() const { return moduleBase + offset; }
+
+    void reflect(Miro::Reflector& ref);
 };
 
 struct CrashedThread
 {
     std::uint64_t threadId = 0;
     Vector<StackFrame> frames;
+
+    void reflect(Miro::Reflector& ref);
 };
 
 // Who wrote the report: the handler process reading the crashed one from
@@ -89,6 +93,8 @@ struct User
     std::string id;
     std::string email;
     std::string username;
+
+    void reflect(Miro::Reflector& ref);
 };
 
 struct Breadcrumb
@@ -99,6 +105,8 @@ struct Breadcrumb
 
     // Milliseconds since the Unix epoch, UTC, stamped by addBreadcrumb.
     std::int64_t timestamp = 0;
+
+    void reflect(Miro::Reflector& ref);
 };
 
 struct CrashReport
@@ -162,17 +170,12 @@ struct CrashReport
 
     std::string toJSON() const;
     static std::optional<CrashReport> fromJSON(std::string_view text);
-};
 
-// Miro reflection for the report types, the one definition report.json is
-// written and read with: Miro::toJSON(frame) works for a consumer too.
-// Addresses and thread ids are hex strings, enums their names, paths text;
-// CrashReport::folder is not stored.
-void reflect(Miro::Reflector& ref, StackFrame& frame);
-void reflect(Miro::Reflector& ref, CrashedThread& thread);
-void reflect(Miro::Reflector& ref, User& user);
-void reflect(Miro::Reflector& ref, Breadcrumb& breadcrumb);
-void reflect(Miro::Reflector& ref, CrashReport& report);
+    // The report.json shape, which Miro::toJSON gives any consumer too:
+    // addresses and thread ids as hex strings, enums by name, paths as text,
+    // and folder left out.
+    void reflect(Miro::Reflector& ref);
+};
 
 // Addresses go through JSON as strings, because a JSON number is a double and
 // loses the low bits of anything above 2^53.
