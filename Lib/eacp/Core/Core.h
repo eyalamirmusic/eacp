@@ -11,6 +11,7 @@
 #include "Plugins/ReloadableLibrary.h"
 #include "Process/BuildRunner.h"
 #include "Process/Process.h"
+#include "Threads/AlternateSignalStack.h"
 #include "Threads/Thread.h"
 #include "Threads/Timer.h"
 #include "Utils/Base64.h"
