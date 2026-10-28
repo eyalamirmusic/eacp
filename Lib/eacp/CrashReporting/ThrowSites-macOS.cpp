@@ -116,8 +116,9 @@ bool copyThrowSiteOfCurrentException(SharedCrashInfo& crash)
 }
 } // namespace eacp::CrashReporting::Detail
 
-// Defined in this image, so every throw compiled into it binds here rather
-// than to libc++abi.
+// Overrides libc++abi's __cxa_throw for throws compiled into the same
+// executable or library as eacp-crash-reporting; other libraries still use
+// libc++abi's.
 extern "C" void
     __cxa_throw(void* thrownObject, std::type_info* type, void (*destructor)(void*))
 {

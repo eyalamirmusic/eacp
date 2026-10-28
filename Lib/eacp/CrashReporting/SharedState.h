@@ -99,9 +99,10 @@ struct SharedCrashInfo
     std::uint32_t frameCount;
     std::array<std::uint64_t, maxCrashFrames> frames;
 
-    // An uncaught C++ exception's throw site, every one a return address,
-    // when the throw was recorded (macOS); 0 otherwise. `frames` is then
-    // where std::terminate aborted.
+    // The call stack at the `throw` of the exception that crashed the app.
+    // Written by the app on macOS when it throws; read by the handler process
+    // to put the throw site in the report. Empty when the crash was not an
+    // uncaught exception, or on Windows.
     std::uint32_t throwFrameCount;
     std::array<std::uint64_t, maxCrashFrames> throwFrames;
 
