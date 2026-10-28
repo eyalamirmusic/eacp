@@ -19,7 +19,7 @@
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto sharedStateMagic = std::uint32_t {0xEAC9C4A5};
-constexpr auto sharedStateVersion = std::uint32_t {4};
+constexpr auto sharedStateVersion = std::uint32_t {5};
 
 constexpr auto maxMetadataEntries = std::size_t {64};
 constexpr auto maxBreadcrumbs = std::size_t {64};
@@ -86,7 +86,9 @@ struct SharedModule
 // What the crashing process writes about its own crash. On macOS that is the
 // whole capture: its own stack, walked on the alternate signal stack, and the
 // images loaded at the time. On Windows the handler walks the stack from the
-// EXCEPTION_POINTERS address, so the frames and modules stay empty there.
+// EXCEPTION_POINTERS address, so the frames and modules stay empty there,
+// unless the handler is gone and the app records them for its fallback
+// report.
 struct SharedCrashInfo
 {
     BoundedText<maxReasonLength> reason;
@@ -98,6 +100,12 @@ struct SharedCrashInfo
 
     std::uint32_t frameCount;
     std::array<std::uint64_t, maxCrashFrames> frames;
+
+    // An uncaught C++ exception's throw site, every one a return address,
+    // when the throw was recorded (macOS); 0 otherwise. `frames` is then
+    // where std::terminate aborted.
+    std::uint32_t throwFrameCount;
+    std::array<std::uint64_t, maxCrashFrames> throwFrames;
 
     std::uint32_t moduleCount;
     std::array<SharedModule, maxSharedModules> modules;

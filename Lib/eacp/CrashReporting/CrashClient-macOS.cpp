@@ -1,8 +1,12 @@
 #include "CrashChannel-macOS.h"
 #include "CrashClient-macOS.h"
 #include "CrashReportingPlatform.h"
+#include "FallbackReport.h"
 #include "MachImages-macOS.h"
+#include "ThrowSites-macOS.h"
 #include "UncaughtExceptions-macOS.h"
+
+#include <eacp/Core/Threads/AlternateSignalStack.h>
 
 #include <array>
 #include <atomic>
@@ -182,6 +186,8 @@ void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
 
     if (notifyHandlerProcess(client, crashNotificationByte))
         waitForHandlerToEndProcess();
+    else
+        writeFallbackReport(state);
 
     restoreDefaultAndRaise(signalNumber);
 }
@@ -227,6 +233,9 @@ void recordCurrentException()
 
 [[noreturn]] void handleTerminate()
 {
+    if (auto& client = getMacCrashClient(); client.state)
+        copyThrowSiteOfCurrentException(client.state->get().crash);
+
     recordCurrentException();
     std::abort();
 }
@@ -280,15 +289,10 @@ void recordDynamicLinker()
         appendSharedModule(dynamicLinker->header, dynamicLinker->path);
 }
 
+// Every Threads::Thread has its own; this is the thread that called start().
 void installAlternateSignalStack()
 {
-    static auto stackMemory = std::array<std::byte, alternateSignalStackSize> {};
-
-    auto stack = stack_t {};
-    stack.ss_sp = stackMemory.data();
-    stack.ss_size = alternateSignalStackSize;
-    stack.ss_flags = 0;
-    ::sigaltstack(&stack, nullptr);
+    static auto stack = Threads::AlternateSignalStack {alternateSignalStackSize};
 }
 
 void installSignalHandlers()
@@ -496,6 +500,7 @@ void installCrashHandlers(SharedState& state)
     _dyld_register_func_for_add_image(&recordLoadedImage);
     installAlternateSignalStack();
     installSignalHandlers();
+    startRecordingThrowSites();
     client.previousTerminateHandler = std::set_terminate(&handleTerminate);
     installUncaughtExceptionRecorder();
 }
@@ -504,6 +509,7 @@ void uninstallCrashHandlers()
 {
     auto& client = getMacCrashClient();
     restorePreviousSignalHandlers();
+    stopRecordingThrowSites();
     std::set_terminate(client.previousTerminateHandler);
     uninstallUncaughtExceptionRecorder();
 }
@@ -585,6 +591,18 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     client.crashPipeWriteEnd = crashPipe->writeEnd;
     client.handlerProcessId = *spawned;
     return true;
+}
+
+void killHandlerProcess()
+{
+    auto& client = getMacCrashClient();
+
+    if (client.handlerProcessId == 0)
+        return;
+
+    ::kill(client.handlerProcessId, SIGKILL);
+    waitForHandlerExit(client.handlerProcessId);
+    client.handlerProcessId = 0;
 }
 
 bool isHandlerProcessRunning()

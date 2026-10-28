@@ -22,6 +22,9 @@ public:
     FilePath getHandledDirectory() const;
     FilePath getReportFolder(std::string_view id) const;
 
+    // <folder>/report.json, written last.
+    FilePath getReportFile(std::string_view id) const;
+
     // A marker the handler leaves beside the folders when it writes a report,
     // so the next launch can tell its last run crashed; cleared by hand.
     FilePath getCrashedLastRunMarker() const;

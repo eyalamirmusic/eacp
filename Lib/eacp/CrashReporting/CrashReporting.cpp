@@ -1,5 +1,6 @@
 #include "CrashReporting.h"
 #include "CrashReportingPlatform.h"
+#include "FallbackReport.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -277,6 +278,7 @@ bool start(const Options& options)
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
+    Detail::prepareFallbackReport(database);
     Detail::installCrashHandlers(state);
 
     if (launched)

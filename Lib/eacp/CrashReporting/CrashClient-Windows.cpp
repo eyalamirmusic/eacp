@@ -2,6 +2,9 @@
 #include "CppExceptions-Windows.h"
 #include "CrashReportingPlatform.h"
 #include "ExceptionNames-Windows.h"
+#include "FallbackReport.h"
+
+#include <eacp/Core/Threads/AlternateSignalStack.h>
 
 #include <eacp/Core/Utils/WinInclude.h>
 
@@ -20,7 +23,7 @@ namespace
 {
 constexpr auto handlerCaptureTimeoutMilliseconds = DWORD {60000};
 constexpr auto handlerStopTimeoutMilliseconds = DWORD {5000};
-constexpr auto stackOverflowReserveBytes = ULONG {64 * 1024};
+constexpr auto stackOverflowReserveBytes = std::size_t {64 * 1024};
 constexpr auto terminateReason = std::string_view {"std::terminate"};
 constexpr auto unknownExceptionType = std::string_view {"unknown exception"};
 constexpr auto messageSeparator = std::string_view {": "};
@@ -90,8 +93,76 @@ void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
     crash.exceptionPointersAddress = reinterpret_cast<std::uintptr_t>(&pointers);
 }
 
+bool isHandlerProcessAlive(const WindowsCrashClient& client)
+{
+    return client.handlerProcess != nullptr && client.crashEvent != nullptr
+           && ::WaitForSingleObject(client.handlerProcess, 0) == WAIT_TIMEOUT;
+}
+
+std::optional<std::size_t> findOrAddSharedModule(SharedCrashInfo& crash,
+                                                 std::uint64_t address)
+{
+    if (auto index = findSharedModuleIndex(crash, address))
+        return index;
+
+    auto* base = static_cast<void*>(nullptr);
+
+    if (::RtlPcToFileHeader(reinterpret_cast<void*>(address), &base) == nullptr
+        || crash.moduleCount >= maxSharedModules)
+        return std::nullopt;
+
+    const auto& dosHeader = *static_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* imageBytes = static_cast<const std::byte*>(base);
+    const auto& ntHeaders =
+        *reinterpret_cast<const IMAGE_NT_HEADERS*>(imageBytes + dosHeader.e_lfanew);
+
+    auto widePath = std::array<wchar_t, maxModulePathLength> {};
+    auto pathLength = ::GetModuleFileNameW(static_cast<HMODULE>(base),
+                                           widePath.data(),
+                                           static_cast<DWORD>(widePath.size()));
+
+    auto& module = crash.modules[crash.moduleCount];
+    module.base = reinterpret_cast<std::uintptr_t>(base);
+    module.size = ntHeaders.OptionalHeader.SizeOfImage;
+    module.path = {};
+    ::WideCharToMultiByte(CP_UTF8,
+                          0,
+                          widePath.data(),
+                          static_cast<int>(pathLength),
+                          module.path.data(),
+                          static_cast<int>(module.path.size() - 1),
+                          nullptr,
+                          nullptr);
+
+    return crash.moduleCount++;
+}
+
+// The handler walks the stack from outside; with it gone this thread walks
+// its own, from the faulting address down through the filter that called it.
+void recordFramesInProcess(SharedCrashInfo& crash, const EXCEPTION_RECORD& record)
+{
+    auto returnAddresses = std::array<void*, maxCrashFrames - 1> {};
+    auto count =
+        ::RtlCaptureStackBackTrace(0,
+                                   static_cast<DWORD>(returnAddresses.size()),
+                                   returnAddresses.data(),
+                                   nullptr);
+
+    crash.frames[0] = reinterpret_cast<std::uintptr_t>(record.ExceptionAddress);
+
+    for (auto index = 0; index < count; ++index)
+        crash.frames[index + 1] =
+            reinterpret_cast<std::uintptr_t>(returnAddresses[index]);
+
+    crash.frameCount = static_cast<std::uint32_t>(count + 1);
+
+    for (auto index = std::uint32_t {0}; index < crash.frameCount; ++index)
+        findOrAddSharedModule(crash, crash.frames[index]);
+}
+
 // Hands the crash to the handler, which writes the report and ends this
-// process; returns only when there is no handler or it never did.
+// process; with the handler gone, or gone before it did, writes the fallback
+// report and returns.
 void handOverToHandler(EXCEPTION_POINTERS& pointers)
 {
     auto& client = getWindowsCrashClient();
@@ -103,16 +174,19 @@ void handOverToHandler(EXCEPTION_POINTERS& pointers)
     recordException(state.crash, pointers);
     state.tableSequence.fetch_add(2, std::memory_order_release);
 
-    if (client.handlerProcess == nullptr || client.crashEvent == nullptr)
-        return;
+    if (isHandlerProcessAlive(client))
+    {
+        ::AllowSetForegroundWindow(::GetProcessId(client.handlerProcess));
+        ::SetEvent(client.crashEvent);
+        auto waitables = std::to_array<HANDLE>({client.handlerProcess});
+        ::WaitForMultipleObjects(static_cast<DWORD>(waitables.size()),
+                                 waitables.data(),
+                                 FALSE,
+                                 handlerCaptureTimeoutMilliseconds);
+    }
 
-    ::AllowSetForegroundWindow(::GetProcessId(client.handlerProcess));
-    ::SetEvent(client.crashEvent);
-    auto waitables = std::to_array<HANDLE>({client.handlerProcess});
-    ::WaitForMultipleObjects(static_cast<DWORD>(waitables.size()),
-                             waitables.data(),
-                             FALSE,
-                             handlerCaptureTimeoutMilliseconds);
+    recordFramesInProcess(state.crash, *pointers.ExceptionRecord);
+    writeFallbackReport(state);
 }
 
 // abort(), a pure virtual call and the CRT's invalid-parameter check raise no
@@ -233,10 +307,10 @@ void recordCurrentException()
     std::abort();
 }
 
+// Every Threads::Thread has its own; this is the thread that called start().
 void reserveStackForOverflowReport()
 {
-    auto reserve = stackOverflowReserveBytes;
-    ::SetThreadStackGuarantee(&reserve);
+    static auto reserve = Threads::AlternateSignalStack {stackOverflowReserveBytes};
 }
 
 std::wstring quoteCommandLineArgument(const std::wstring& argument)
@@ -406,6 +480,18 @@ void stopHandlerProcess(SharedState& state)
         ::CloseHandle(client.handlerProcess);
         client.handlerProcess = nullptr;
     }
+}
+
+void killHandlerProcess()
+{
+    auto& client = getWindowsCrashClient();
+
+    if (client.handlerProcess == nullptr)
+        return;
+
+    constexpr auto killedExitCode = UINT {1};
+    ::TerminateProcess(client.handlerProcess, killedExitCode);
+    ::WaitForSingleObject(client.handlerProcess, INFINITE);
 }
 
 bool isHandlerProcessRunning()
