@@ -1,22 +1,7 @@
-// Another eacp copy's wake-up, pumped by this copy's loop.
-//
-// The case it stands for: a plug-in DLL that statically links its own eacp
-// copy, hosted by an executable that links another. The DLL's callAsync posts
-// WM_EACP_RUN_PENDING to the DLL copy's own message-only window
-// (EventLoop::call in EventLoop-Windows.cpp), counting on whoever pumps the
-// thread to DispatchMessage it into that copy's window procedure. A DAW's pump
-// does. An eacp host pumping with runEventLoopFor / runEventLoopUntil does not:
-// EventLoop::runFor (and EventLoop::run) catch WM_EACP_RUN_PENDING by message id
-// alone, drain the HOST copy's queue and move on without dispatching, so the
-// DLL's callback never runs.
-//
-// One process is enough to show it: a message-only window of this file's own
-// class stands in for the other copy's window, and the message is posted to it
-// exactly as that copy's EventLoop::call would.
-//
-// EXPECTED TO FAIL until the loop handles WM_EACP_RUN_PENDING inline only when
-// msg.hwnd is null (a thread message) and dispatches every message addressed to
-// a window, its own message window included.
+// A plug-in DLL linking its own eacp copy posts WM_EACP_RUN_PENDING to its own
+// message-only window. An eacp host pumping the thread must dispatch it there
+// rather than take it for its own. A window of this file stands in for the
+// other copy's.
 
 #include "Common.h"
 
@@ -28,10 +13,7 @@ namespace EventLoopWindowsTests
 {
 namespace
 {
-// EventLoop-Windows.cpp's WM_EACP_RUN_PENDING, which is file-local there, so it
-// is restated here. Every eacp copy computes the same id, which is the whole
-// problem: the message looks like this copy's own whichever window it is for.
-// Keep the two in step.
+// WM_EACP_RUN_PENDING, file-local in EventLoop-Windows.cpp. Keep the two in step.
 constexpr auto runPendingMessage = UINT {WM_APP + 0x42E1};
 
 constexpr auto otherCopyClassName = L"EACPEventLoopTestOtherCopyWindow";
@@ -52,8 +34,6 @@ LRESULT CALLBACK otherCopyWindowProc(HWND hwnd,
     return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
-// The other copy's message-only window, registered and created as
-// ensureMessageWindow does it, and taken down again with the test.
 struct OtherCopyWindow
 {
     OtherCopyWindow()
@@ -105,8 +85,6 @@ auto tRunPendingForAnotherWindowIsDispatched =
     check(otherCopy.registered);
     check(otherCopy.hwnd != nullptr);
 
-    // This copy's own queue, to show the loop did pump while the other copy's
-    // message went missing.
     auto ownCallbackRan = false;
     eacp::Threads::callAsync([&] { ownCallbackRan = true; });
 

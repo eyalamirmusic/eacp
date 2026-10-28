@@ -74,15 +74,12 @@ endif ()
 
 # A hosted copy under a foreign host's own Win32 pump: attach, detach, attach
 # again. The message-only window and its class are Windows' hosted machinery.
+# EventLoopTests-Windows.cpp is the other direction: eacp's own pump under
+# another copy's message-only window.
 if (WIN32)
-    list(APPEND core_test_sources HostedLoopTests-Windows.cpp)
-endif ()
-
-# The other direction: eacp's own pump under another copy's message-only
-# window, whose WM_EACP_RUN_PENDING it must dispatch rather than take for its
-# own. Fails until EventLoop-Windows.cpp's loops dispatch window-targeted ones.
-if (WIN32)
-    list(APPEND core_test_sources EventLoopTests-Windows.cpp)
+    list(APPEND core_test_sources
+            HostedLoopTests-Windows.cpp
+            EventLoopTests-Windows.cpp)
 endif ()
 
 # Permission bits, symlinks and FIFOs — the file behaviour Windows has no form

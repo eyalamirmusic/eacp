@@ -106,6 +106,15 @@ static LRESULT CALLBACK messageWindowProc(HWND hwnd,
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// Every eacp copy in the process posts the same WM_EACP_RUN_PENDING id, so
+// only the thread-message fallback is unambiguously this copy's. One addressed
+// to a window must be dispatched: to this copy's messageWindowProc, or to
+// another copy's (a plugin DLL's) whose callbacks would otherwise never run.
+static bool isRunPendingThreadMessage(const MSG& msg)
+{
+    return msg.message == WM_EACP_RUN_PENDING && msg.hwnd == nullptr;
+}
+
 // The message-only window's class: registered once per copy against this
 // image's HINSTANCE, and unregistered by detachCurrentThreadAsMain, since a class
 // whose procedure lives in an unloaded image would otherwise stay registered
@@ -290,7 +299,7 @@ void EventLoop::run()
         if (result == 0 || result == -1)
             break;
 
-        if (msg.message == WM_EACP_RUN_PENDING)
+        if (isRunPendingThreadMessage(msg))
         {
             getPendingCallbacks().run();
             continue;
@@ -353,7 +362,7 @@ bool EventLoop::runFor(Time::MS timeout)
                 break;
             }
 
-            if (msg.message == WM_EACP_RUN_PENDING)
+            if (isRunPendingThreadMessage(msg))
             {
                 getPendingCallbacks().run();
                 continue;
