@@ -1,10 +1,8 @@
-# CrashReporting
+# CrashReporting in depth
 
-When an app faults, a second process writes a report with the crashed
-thread's stack, the app's metadata and its attachments, ends the app, and
-hands the report to the app's own code. A main thread that stops answering
-is reported the same way, with its stack, and the app left running. macOS and
-Windows.
+The whole account behind `Lib/eacp/CrashReporting/README.md`: the options,
+the report format, uploading, every fault, the zoo, and how capture works on
+each platform.
 
 ## Use
 
@@ -145,7 +143,7 @@ The fields map onto what crash backends such as Sentry expect.
 ## What is caught
 
 Each row is a fault in the crash zoo (below), raised on the main thread and on
-a background thread. [`MATRIX.md`](MATRIX.md) is the per-lane version, generated
+a background thread. [`MATRIX.md`](../Lib/eacp/CrashReporting/MATRIX.md) is the per-lane version, generated
 from `Zoo/Matrix.cpp`, the table `Tests/CrashReporting` runs every cell of
 (`CrashMatrix/<fault>/<thread>`) and checks the file against; change the
 table, then `SelfDestruct --matrix Lib/eacp/CrashReporting/MATRIX.md`.
