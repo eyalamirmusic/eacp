@@ -366,7 +366,7 @@ CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
     return report;
 }
 
-constexpr auto backgroundWatchName = "zoo background";
+constexpr auto backgroundWatchName = "fault background";
 
 // Never returns, so the report is waited for while the app still runs. A
 // main-thread deadlock's worker stops beating up to a heartbeat after the main

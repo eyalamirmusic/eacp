@@ -48,7 +48,7 @@ std::chrono::milliseconds getHangDuration();
 
 // The name every background fault thread is watched under, so a stall on
 // one is reported as a hang of that thread.
-constexpr auto backgroundWatchName = std::string_view {"zoo background"};
+constexpr auto backgroundWatchName = std::string_view {"fault background"};
 
 // Pauses a background fault thread's watch around its fault, as
 // pauseHangDetection does the main thread's.

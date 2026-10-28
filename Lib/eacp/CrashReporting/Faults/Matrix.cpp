@@ -193,7 +193,8 @@ ExpectedOutcome expectStall(Lane lane, ThreadChoice thread)
     if (isBackground(thread))
     {
         outcome.pullRequest = threadWatchPullRequest;
-        outcome.note = "the zoo's thread is a watched worker (ThreadWatch)";
+        outcome.note =
+            "the background fault thread is a watched worker (ThreadWatch)";
     }
 
     if (isArm64Windows(lane))
