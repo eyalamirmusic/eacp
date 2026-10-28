@@ -5,7 +5,6 @@
 #include <eacp/Core/Utils/Singleton.h>
 #include <eacp/CrashReporting/CrashReportingPlatform.h>
 
-#include <array>
 #include <atomic>
 #include <mutex>
 
@@ -19,10 +18,12 @@ struct ThreadChoiceName
     std::string_view name;
 };
 
-constexpr auto threadChoiceNames = std::to_array<ThreadChoiceName>({
+constexpr auto threadChoiceCount = 2;
+
+constexpr auto threadChoiceNames = Array<ThreadChoiceName, threadChoiceCount> {
     {ThreadChoice::main, "main"},
     {ThreadChoice::background, "background"},
-});
+};
 
 struct BackgroundThreads
 {
