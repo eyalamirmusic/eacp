@@ -27,6 +27,14 @@ class X11Input;
 int16_t x11ClampPosition(long value);
 uint16_t x11ClampSize(long value);
 
+// libxcb writes with writev and no MSG_NOSIGNAL, and Linux has no per-socket
+// SO_NOSIGPIPE, so a request flushed after the server has closed the
+// connection - by us, by Mesa's WSI on the same connection - raises SIGPIPE,
+// whose default disposition kills the process before xcb can report the loss.
+// Ignored here only while it is still the default: a host that installed a
+// handler or a mask of its own keeps it.
+void x11IgnoreBrokenPipesUnlessHandled();
+
 // A Window on this connection: the neutral half plus the toplevel id every
 // piece of X11 glue starts from.
 struct X11WindowSurface : LinuxWindowSurface
