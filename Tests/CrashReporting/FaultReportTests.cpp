@@ -366,7 +366,11 @@ CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
     return report;
 }
 
-// Never returns, so the report is waited for while the app still runs.
+constexpr auto backgroundWatchName = "zoo background";
+
+// Never returns, so the report is waited for while the app still runs. A
+// main-thread deadlock's worker stops beating up to a heartbeat after the main
+// thread, so it may be a second report of its own; the main one is returned.
 CrashReport waitForStallReport(std::string_view kind)
 {
     auto database = TemporaryFile {};
@@ -381,7 +385,13 @@ CrashReport waitForStallReport(std::string_view kind)
     process.wait();
 
     auto reports = reportDatabase.readPendingReports();
-    check(reports.size() == 1);
+    check(!reports.empty());
+
+    for (const auto& report: reports)
+    {
+        if (report.threadName == "main")
+            return report;
+    }
 
     return reports.empty() ? CrashReport {} : reports[0];
 }
@@ -392,27 +402,73 @@ bool isStallingFault(std::string_view fault)
     return found && found->get().stallsItsThread;
 }
 
-void checkStallAgainstMatrix(std::string_view fault, const ExpectedOutcome& expected)
+// Off the main thread the main thread keeps beating and the app quits on its
+// own once the stall would have ended; the watched worker's silence is the one
+// report.
+CrashReport runBackgroundStall(std::string_view fault)
 {
-    auto report = CrashReport {};
+    auto reports = runHangFault(
+        {}, testHangThresholdMilliseconds, fault, FaultThread::background);
 
-    if (fault == "hang")
-    {
-        auto reports = runHangFault({}, testHangThresholdMilliseconds);
-        check(reports.size() == 1);
+    if (reports.size() != 1)
+        Console::printError(std::to_string(reports.size()) + " hang reports");
 
-        if (reports.size() == 1)
-            report = reports[0];
-    }
+    check(reports.size() == 1);
+    return reports.empty() ? CrashReport {} : reports[0];
+}
+
+CrashReport runStall(std::string_view fault, FaultThread thread)
+{
+    if (thread == FaultThread::background)
+        return runBackgroundStall(fault);
+
+    if (fault != "hang")
+        return waitForStallReport(fault);
+
+    auto reports = runHangFault({}, testHangThresholdMilliseconds);
+    check(reports.size() == 1);
+    return reports.empty() ? CrashReport {} : reports[0];
+}
+
+// Two watched threads locked against each other on a background deadlock;
+// on the main thread, the main one and maybe its worker.
+void checkStalledThreads(const CrashReport& report,
+                         std::string_view fault,
+                         FaultThread thread)
+{
+    auto isBackground = thread == FaultThread::background;
+    auto expectedName = isBackground ? backgroundWatchName : "main";
+    auto count = report.stalledThreads.size();
+
+    check(report.threadName == expectedName);
+    check(report.crashingThread.name == expectedName);
+    check(report.message.starts_with(expectedName));
+    check(report.message.find(" unresponsive for ") != std::string::npos);
+
+    if (fault == "deadlock" && isBackground)
+        check(count == 2);
+    else if (fault == "deadlock")
+        check(count == 1 || count == 2);
     else
-    {
-        report = waitForStallReport(fault);
-    }
+        check(count == 1);
+
+    for (const auto& stalled: report.stalledThreads)
+        check(!stalled.frames.empty());
+
+    for (auto index = 1; index < count; ++index)
+        check(report.stalledThreads[index].name == backgroundWatchName);
+}
+
+void checkStallAgainstMatrix(std::string_view fault,
+                             FaultThread thread,
+                             const ExpectedOutcome& expected)
+{
+    auto report = runStall(fault, thread);
 
     checkReportAgainstMatrix(report, expected);
     check(report.kind == ReportKind::hang);
-    check(report.message.starts_with("main thread unresponsive for "));
     check(report.hangDurationMilliseconds >= 1000);
+    checkStalledThreads(report, fault, thread);
     checkReportMetadata(report);
 }
 
@@ -462,9 +518,9 @@ void runMatrixCell(std::string_view fault, FaultThread thread)
             break;
     }
 
-    if (isStallingFault(fault) && thread == FaultThread::main)
-        checkStallAgainstMatrix(fault, expected);
-    else if (!isStallingFault(fault))
+    if (isStallingFault(fault))
+        checkStallAgainstMatrix(fault, thread, expected);
+    else
         checkCrashAgainstMatrix(fault, thread);
 }
 
@@ -662,6 +718,15 @@ auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
 auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 {
     check(runHangFault({"--pause-hang-detection"}, testHangThresholdMilliseconds)
+              .empty());
+};
+
+auto tCrashReportHangBackgroundPaused = test("CrashReport/hangBackgroundPaused") = []
+{
+    check(runHangFault({"--pause-hang-detection"},
+                       testHangThresholdMilliseconds,
+                       "hang",
+                       FaultThread::background)
               .empty());
 };
 

@@ -46,9 +46,17 @@ std::optional<std::reference_wrapper<const Fault>> findFault(std::string_view na
 void setHangDuration(std::chrono::milliseconds duration);
 std::chrono::milliseconds getHangDuration();
 
+// The name every background fault thread is watched under, so a stall on
+// one is reported as a hang of that thread.
+constexpr auto backgroundWatchName = std::string_view {"zoo background"};
+
+// Pauses a background fault thread's watch around its fault, as
+// pauseHangDetection does the main thread's.
+void setPausesBackgroundWatch(bool shouldPause);
+
 // Raises the fault now: `main` on the calling thread, which should be the
-// main one; `background` on a fresh thread that is never joined, and returns
-// at once. False when there is no such fault or it is unavailable here.
+// main one; `background` on a fresh watched thread that is never joined, and
+// returns at once. False when there is no such fault or it is unavailable here.
 bool triggerFault(std::string_view name, ThreadChoice thread);
 
 // triggerFault from an event-loop callback `delay` from now. False as above.

@@ -30,6 +30,7 @@ struct BackgroundThreads
 };
 
 std::atomic<int> returnedBackgroundFaults {0};
+std::atomic<bool> pausesBackgroundWatch {false};
 
 std::optional<std::reference_wrapper<const Fault>>
     findAvailableFault(std::string_view name)
@@ -47,15 +48,32 @@ std::optional<std::reference_wrapper<const Fault>>
 // and counting afterwards so the call is not a tail call that drops it.
 EACP_FAULT_NO_INLINE void runFaultOnBackgroundThread(const Fault& fault)
 {
+    auto pauses = pausesBackgroundWatch.load();
+
+    if (pauses)
+        Threads::pauseThreadWatch();
+
     fault.trigger();
+
+    if (pauses)
+        Threads::resumeThreadWatch();
+
     returnedBackgroundFaults.fetch_add(1);
 }
 
 void startBackgroundThread(const Callback& body)
 {
+    auto options = Threads::ThreadOptions {};
+    options.watchName = std::string {backgroundWatchName};
+
     auto& registry = Singleton::getImmortal<BackgroundThreads>();
     auto lock = std::lock_guard {registry.mutex};
-    registry.threads.createNew(body);
+    registry.threads.createNew(options, body);
+}
+
+void setPausesBackgroundWatch(bool shouldPause)
+{
+    pausesBackgroundWatch = shouldPause;
 }
 
 std::string_view getThreadChoiceName(ThreadChoice choice)

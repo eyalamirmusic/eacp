@@ -19,6 +19,7 @@
 //   SelfDestruct --crash abort --thread background
 //   SelfDestruct --crash abort -- --no-report-window
 //   SelfDestruct --crash hang --hang-threshold-ms 500
+//   SelfDestruct --crash deadlock --thread background   a watched worker's hang
 //   SelfDestruct --crash nullptr --kill-handler    an unreported exit
 //
 // Everything after "--" goes to the handler process, whose own flag
@@ -346,6 +347,8 @@ void runStallingFault(std::string_view name,
                       ThreadChoice thread,
                       bool pausesHangDetection)
 {
+    CrashReporting::Faults::setPausesBackgroundWatch(pausesHangDetection);
+
     if (pausesHangDetection)
         CrashReporting::pauseHangDetection();
 
@@ -455,7 +458,7 @@ int main(int argc, char* argv[])
                "how long the main thread may stall; 0 turns hang detection off");
     cli.flag("--pause-hang-detection",
              pausesHangDetection,
-             "pause hang detection around a hang or spin fault");
+             "pause the stalling thread's hang watch around its fault");
     cli.option(showReportFlag, reportToShow, "show the report in this folder");
     cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
 

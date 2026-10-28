@@ -13,6 +13,7 @@ nano_add_executable(CrashReportingTests
         SOURCES TestMain.cpp CrashingProcess.cpp ThreadStackProbe.cpp
                 PendingReportsTests.cpp FaultReportTests.cpp FaultsTests.cpp
                 StackOverflowTests.cpp LoadedLibraryTests.cpp
+                ThreadWatchTests.cpp
         TARGETS eacp-crash-faults)
 eacp_enable_crash_reporting(CrashReportingTests)
 
