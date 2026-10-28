@@ -94,7 +94,9 @@ moduleUuid}]}`, `hangDuration` (ms, 0 for a crash),
 — `release`, `environment`, `dist`), `tags`, `extra`, `user {id, email, username}`,
 `breadcrumbs[{category, message, level, timestamp}]` (oldest first),
 `attachments`, `platform`, `capturedBy`
-(`handler`, `exit-code`, `incomplete`). Addresses are hex strings, since a
+(`handler`, `exit-code`, `app`, `incomplete`), and `terminateFrames`, which is
+empty unless `crashingThread` holds an uncaught exception's throw site (see
+Uncaught C++ exceptions). Addresses are hex strings, since a
 JSON number loses the low bits of a 64-bit address.
 
 `moduleUuid` is the key a symbol server finds the image's symbols by. On macOS
@@ -110,6 +112,13 @@ built on every platform, Linux included, linking only `eacp-core`. A server or
 tool links it and reads the exact `report.json` an app wrote into the same
 `CrashReport` struct with `CrashReport::fromJSON`;
 `eacp-crash-reporting`, the macOS and Windows capture half, links it PUBLIC.
+
+`CrashReport.h` declares the Miro reflection for `StackFrame`,
+`CrashedThread`, `User`, `Breadcrumb` and `CrashReport` (free `reflect`
+overloads, found by argument-dependent lookup), the same definition
+`report.json` is written and read with. A consumer serialises any of them with
+`Miro::toJSON` and gets the report's own field names, hex-string addresses and
+enum names, without a reflection of its own.
 
 ## Writing an uploader
 
@@ -135,24 +144,113 @@ The fields map onto what crash backends such as Sentry expect.
 
 ## What is caught
 
-| Fault | macOS | Windows |
-|---|---|---|
-| Null dereference, bad access | `SIGSEGV`/`SIGBUS`, stack | `EXCEPTION_ACCESS_VIOLATION`, stack, minidump |
-| Stack overflow (thread that called `start()`) | `SIGSEGV`, stack | `EXCEPTION_STACK_OVERFLOW`, stack, minidump |
-| `abort()` | `SIGABRT`, stack | `SIGABRT`, stack, minidump |
-| Pure virtual call | `SIGABRT`, stack | `purecall`, stack, minidump |
-| Uncaught C++ exception | `std::terminate`, type and `what()`, stack | `std::terminate`, type and `what()`, stack, minidump |
-| Uncaught `NSException` | `NSException`, name and reason, stack | — |
-| Heap corruption | `SIGTRAP`/`SIGABRT` from malloc's checks, stack | `STATUS_HEAP_CORRUPTION` from the exit code, no stack |
-| `__fastfail` | — | `STATUS_STACK_BUFFER_OVERRUN` from the exit code, no stack |
-| Illegal instruction, FP, trap, `SIGSYS` | signal name, stack | exception name, stack, minidump |
-| CRT invalid parameter | — | `invalid parameter`, stack, minidump |
+Each row is a fault in the crash zoo (below), raised on the main thread and on
+a background thread; every cell is covered by `Tests/CrashReporting`.
 
-Not caught: `SIGKILL`, the OOM killer, a crash while the handler is
-not running (it is re-raised and lost), and on Windows anything that bypasses
-the unhandled-exception filter other than through the exit code above.
+| Fault | Thread | macOS | Windows |
+|---|---|---|---|
+| Null dereference | main | `SIGSEGV`, stack | `EXCEPTION_ACCESS_VIOLATION`, stack, minidump |
+| | background | `SIGSEGV`, stack | `EXCEPTION_ACCESS_VIOLATION`, stack, minidump |
+| Integer divide by zero | main | — (arm64 does not trap); `SIGFPE` on x86_64 | `EXCEPTION_INT_DIVIDE_BY_ZERO`, stack, minidump (x64, MSVC ARM64; clang-cl ARM64 does not trap) |
+| | background | as main | as main |
+| Stack overflow | main | `SIGSEGV`, stack | `EXCEPTION_STACK_OVERFLOW`, stack, minidump |
+| | background | `SIGBUS`, stack (an eacp thread, or one holding an `AlternateSignalStack`) | `EXCEPTION_STACK_OVERFLOW`, stack, minidump |
+| `abort()` | both | `SIGABRT`, stack | `SIGABRT`, stack, minidump |
+| Pure virtual call | both | `SIGABRT`, stack | `purecall`, stack, minidump |
+| Uncaught C++ exception | both | `std::terminate`, type and `what()`, throw-site stack, `terminateFrames` | `std::terminate`, type and `what()`, stack through the throw, minidump |
+| Heap corruption | main | `SIGTRAP` from malloc's checks, stack | `STATUS_HEAP_CORRUPTION` from the exit code, no stack |
+| | background | `SIGABRT` from malloc's checks, stack | `STATUS_HEAP_CORRUPTION` from the exit code, no stack |
+| `__fastfail` | both | — | `STATUS_STACK_BUFFER_OVERRUN` from the exit code, no stack |
+| Hang, spin, deadlock | main | `Hang`, main thread's stack, app keeps running | `Hang`, main thread's stack, minidump, app keeps running |
+| | background | not reported: only the main thread is watched | not reported |
+| Uncaught `NSException` | main | `NSException`, name and reason, stack | — |
+| Illegal instruction, FP, trap, `SIGSYS` | any | signal name, stack | exception name, stack, minidump |
+| CRT invalid parameter | any | — | `invalid parameter`, stack, minidump |
 
-| Main thread hang | `Hang`, main thread's stack, app keeps running | `Hang`, main thread's stack, minidump, app keeps running |
+A background stack overflow is `SIGBUS` on macOS because a secondary thread's
+guard page is a protection fault; its frames are all the recursion. A
+background heap corruption is `SIGABRT` because another thread's small blocks
+come from the zone allocator rather than the main thread's fast path.
+
+Not caught: `SIGKILL`, the OOM killer, a stack overflow on a thread with no
+alternate stack (macOS: one eacp did not create and that holds no
+`AlternateSignalStack`), and on Windows anything that bypasses the
+unhandled-exception filter other than through the exit code above. A crash
+while the handler is gone is reported by the app itself (Fallback report).
+
+## The crash zoo
+
+`eacp-crash-zoo` (`Zoo/Zoo.h`, `eacp::CrashReporting::Zoo`, built where
+`eacp-crash-reporting` is) is the list of deliberate faults above, for demo
+and test apps: `listFaults()` (name, label, description, `stallsItsThread`,
+`isAvailable` on this platform), `findFault(name)`,
+`triggerFault(name, ThreadChoice)` (`main` runs it on the calling thread,
+`background` on a fresh `Threads::Thread` that is never joined),
+`scheduleFault(name, ThreadChoice, delay)` from an event-loop callback,
+`setHangDuration`, and `killHandlerProcess()`, which ends the handler so the
+next crash exercises the fallback report. The deadlock fault locks two mutexes
+against a second thread in the opposite order. `Apps/CrashReporting/SelfDestruct`
+shows each fault as a Main thread and a Background button, and
+`SelfDestruct --crash <name> --thread main|background [--kill-handler]` raises
+one with no window.
+
+## Alternate signal stacks
+
+A signal handler for a stack overflow needs a stack to run on.
+`Threads::AlternateSignalStack` (Core, `Threads/AlternateSignalStack.h`)
+installs a `sigaltstack` for the calling thread for its lifetime (64 KiB by
+default) and removes it at the end; a thread that already has one keeps it. On
+Windows it is a `SetThreadStackGuarantee` reserve, the same thing for the
+exception filter. Every `Threads::Thread` holds one, and `start()` installs a
+256 KiB one (64 KiB reserve on Windows) on the thread that called it, so a
+stack overflow on any eacp thread is reported. A thread eacp did not create
+(a `std::thread`, a host's thread) makes one at its start:
+
+```cpp
+auto worker = std::thread {[]
+{
+    auto signalStack = Threads::AlternateSignalStack {};
+    work();
+}};
+```
+
+## Uncaught C++ exceptions
+
+On macOS the module defines `__cxa_throw` in the app's image: every throw
+compiled into it records `backtrace()` into a per-thread buffer and calls
+libc++abi's own (`dlsym(RTLD_NEXT)`). When `std::terminate` runs for an
+exception whose object is that thread's last recorded throw, the report's
+`crashingThread` is the throw site and `terminateFrames` is where terminate
+aborted. A throw from inside another dynamic library goes straight to
+libc++abi and is not recorded, so its report has the terminate stack in
+`crashingThread` and no `terminateFrames`. Recording costs one `backtrace()`
+per throw while crash reporting is started.
+
+On Windows an uncaught exception reaches the unhandled-exception filter with
+`_CxxThrowException` still on the stack, so the handler's walk already starts
+at the throw: `terminateFrames` stays empty there.
+
+## Fallback report
+
+When the handler process is gone at crash time (the pipe write fails on
+macOS; on Windows the handler has exited before the crash or before it ended
+the app), the crashing thread writes `pending/<id>/report.json` itself, and
+the next launch delivers it through `pendingReportFound` like any other.
+`start()` lays out the id and every path beforehand; at crash time the report
+is written from the shared block into a fixed buffer, through a temporary file
+and a rename, with `mkdir`/`open`/`write`/`rename` (`CreateDirectoryW`,
+`CreateFileW`, `MoveFileExW` on Windows) and no allocation, and
+`crashed-last-run` is set. Miro cannot write it, since it builds its values on
+the heap, so `FallbackReport.cpp` writes the fixed JSON shape itself.
+
+It carries `capturedBy: "app"`, the reason, message, fault address, the
+crashing thread's id and frames (module path, base and offset; no symbols or
+module UUIDs, since nothing resolves them at crash time; the reporter's own
+frames after the first are left in), `metadata`, `tags`, `extra` and `user`.
+No breadcrumbs, attachments or minidump. On Windows the thread walks its own
+stack with `RtlCaptureStackBackTrace` and names each module with
+`RtlPcToFileHeader` and `GetModuleFileNameW`. Faults Windows reports only from
+the exit code (heap corruption, `__fastfail`) are lost without a handler.
 
 ## Hangs
 
@@ -203,7 +301,7 @@ returns.
 ## How it works, and the v1 limits
 
 **macOS.** The app captures its own crash: `start()` primes `backtrace()`,
-installs an alternate signal stack, records every loaded image (and dyld)
+installs an alternate signal stack, starts recording throw sites, records every loaded image (and dyld)
 into the shared block, and installs `sigaction` handlers, `std::set_terminate`
 and `NSSetUncaughtExceptionHandler`. The signal handler records the signal,
 the faulting PC and `backtrace()`, writes one byte to the handler's pipe and
@@ -216,8 +314,8 @@ the pipe with no byte means the app exited cleanly.
 - The capture is in-process with `backtrace()`; no Mach exception ports and
   no out-of-process stack walk.
 - No minidump on macOS.
-- The alternate stack is the starting thread's only, so a stack overflow on
-  another thread is not reported.
+- A stack overflow is reported only on a thread with an alternate stack (see
+  Alternate signal stacks).
 - The handler process keeps the app's executable name; macOS has no clean way
   to retitle it.
 
@@ -240,5 +338,5 @@ a window `crashReported` opens can take the foreground with `Window::toFront()`.
   KERNELBASE's `RaiseException`, so that report has one frame; the minidump
   has the whole thread.
 
-Both: when the handler process is gone at crash time, the crash is not
-reported; there is no in-process fallback in v1.
+Both: when the handler process is gone at crash time, the app writes the
+fallback report above.
