@@ -163,12 +163,19 @@ void dropSignalHandlerFrames(Vector<StackFrame>& frames)
         frames.erase(frames.begin() + 1, trampoline + 1);
 }
 
+enum class FirstFrame
+{
+    faultingInstruction,
+    returnAddress
+};
+
 // The modules are the crash record's, which the app keeps current as images
 // load, so they serve a hang's addresses as well.
 Vector<StackFrame>
     resolveFrames(const SharedCrashInfo& crash,
                   const std::array<std::uint64_t, maxCrashFrames>& addresses,
-                  std::uint32_t frameCount)
+                  std::uint32_t frameCount,
+                  FirstFrame firstFrame = FirstFrame::faultingInstruction)
 {
     auto handlerBases = getHandlerImageBases();
     auto count = std::min(static_cast<std::size_t>(frameCount), maxCrashFrames);
@@ -176,7 +183,7 @@ Vector<StackFrame>
 
     for (auto index = std::size_t {0}; index < count; ++index)
     {
-        auto isReturnAddress = index > 0;
+        auto isReturnAddress = index > 0 || firstFrame == FirstFrame::returnAddress;
         frames.add(
             makeStackFrame(crash, handlerBases, addresses[index], isReturnAddress));
     }
@@ -204,6 +211,16 @@ int handleCrash(const ReportDatabase& database, const SharedState& state)
 {
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
     report.crashingThread.frames = resolveCrashFrames(state.crash);
+
+    if (state.crash.throwFrameCount > 0)
+    {
+        report.terminateFrames = std::move(report.crashingThread.frames);
+        report.crashingThread.frames = resolveFrames(state.crash,
+                                                     state.crash.throwFrames,
+                                                     state.crash.throwFrameCount,
+                                                     FirstFrame::returnAddress);
+    }
+
     finishHandlerReport(database, report, state);
 
     auto appProcessId = static_cast<pid_t>(state.appProcessId);

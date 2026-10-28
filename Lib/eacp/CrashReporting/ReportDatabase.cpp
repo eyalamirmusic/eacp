@@ -107,6 +107,11 @@ FilePath ReportDatabase::getReportFolder(std::string_view id) const
     return getPendingDirectory() / id;
 }
 
+FilePath ReportDatabase::getReportFile(std::string_view id) const
+{
+    return getReportFolder(id) / reportFileName;
+}
+
 FilePath ReportDatabase::createReportFolder(std::string_view id) const
 {
     auto folder = getReportFolder(id);
@@ -140,7 +145,7 @@ bool ReportDatabase::writeReport(const CrashReport& report) const
 
     try
     {
-        Files::writeFileAtomically(folder / reportFileName,
+        Files::writeFileAtomically(getReportFile(report.id),
                                    getTextBytes(report.toJSON()));
         return true;
     }
