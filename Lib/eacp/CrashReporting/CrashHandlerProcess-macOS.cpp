@@ -581,8 +581,10 @@ struct HandlerSession
     std::atomic<bool> isStopping {false};
 };
 
-// An exception from a child the app spawned, which inherits the exception
-// ports, is handed back to the kernel untouched.
+// Every message is answered until the handler stops: after a capture the
+// kill raises EXC_CRASH on this port too, and the kernel does not finish
+// ending the app until that is replied to. An exception from a child the app
+// spawned, which inherits the ports, is handed back to the kernel untouched.
 void serveExceptions(HandlerSession& session)
 {
     while (!session.isStopping.load())
@@ -592,6 +594,15 @@ void serveExceptions(HandlerSession& session)
         if (!exception)
             continue;
 
+        auto lock = std::lock_guard {session.captureMutex};
+
+        if (session.hasReportedCrash)
+        {
+            replyToException(*exception, KERN_SUCCESS);
+            releaseExceptionPorts(*exception);
+            continue;
+        }
+
         if (!isFromApp(*exception, session.state))
         {
             replyToException(*exception, KERN_FAILURE);
@@ -599,20 +610,9 @@ void serveExceptions(HandlerSession& session)
             continue;
         }
 
-        auto lock = std::lock_guard {session.captureMutex};
-
-        // The other path has reported and killed the app already.
-        if (session.hasReportedCrash)
-        {
-            replyToException(*exception, KERN_SUCCESS);
-            releaseExceptionPorts(*exception);
-            return;
-        }
-
         session.hasReportedCrash = true;
         session.machCaptureExitCode = handleMachException(
             session.database, session.state, session.ports, *exception);
-        return;
     }
 }
 
