@@ -1165,9 +1165,10 @@ app's own executable as a handler process at `start()`; `main()` begins with
 the handler its task port at `start()` and points its crash Mach exceptions
 at the handler's port, so the handler reads a fault from outside — registers,
 frame-pointer walk, images through `TASK_DYLD_INFO` — writes a Breakpad
-minidump (`Minidump-macOS.cpp`) and symbolises with `dladdr`
-(`capturedBy: handler-mach`); `SIGABRT` and `std::terminate` still go through
-the in-app signal handler (`backtrace()` on an alternate stack). On Windows
+minidump of every thread (`Minidump-macOS.cpp`) and symbolises with
+`dladdr` (`capturedBy: handler-mach`); `abort()` and `std::terminate` reach
+it as `EXC_CRASH`. The in-app signal handler (`backtrace()` on an alternate
+stack) is the fallback when the handshake failed. On Windows
 the handler writes a minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
