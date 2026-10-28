@@ -28,22 +28,23 @@ constexpr auto reportWaitLimit = std::chrono::seconds {10};
 constexpr auto reportPollInterval = std::chrono::milliseconds {20};
 constexpr auto testHangThresholdMilliseconds = "500";
 
-using Zoo::ExpectedOutcome;
-using Zoo::OutcomeStatus;
-using FaultThread = Zoo::ThreadChoice;
+using Faults::ExpectedOutcome;
+using Faults::OutcomeStatus;
+using FaultThread = Faults::ThreadChoice;
 
 std::string getFaultThreadName(FaultThread thread)
 {
-    return std::string {Zoo::getThreadChoiceName(thread)};
+    return std::string {Faults::getThreadChoiceName(thread)};
 }
 
-// A background fault's frames run up through the zoo's thread entry.
+// A background fault's frames run up through the faults library's thread entry.
 constexpr auto backgroundEntryFunction = "runFaultOnBackgroundThread";
-constexpr auto thrownMessage = "the crash zoo threw this on purpose";
+constexpr auto thrownMessage = "the crash fault threw this on purpose";
 
 ExpectedOutcome getExpectedOutcome(std::string_view fault, FaultThread thread)
 {
-    auto outcome = Zoo::findExpectedOutcome(fault, thread, Zoo::getCurrentLane());
+    auto outcome =
+        Faults::findExpectedOutcome(fault, thread, Faults::getCurrentLane());
     check(outcome.has_value());
     return outcome.value_or(ExpectedOutcome {});
 }
@@ -389,7 +390,7 @@ CrashReport waitForStallReport(std::string_view kind)
 
 bool isStallingFault(std::string_view fault)
 {
-    auto found = Zoo::findFault(fault);
+    auto found = Faults::findFault(fault);
     return found && found->get().stallsItsThread;
 }
 
@@ -474,9 +475,9 @@ bool registerMatrixCases()
 {
     static auto names = std::deque<std::string> {};
 
-    for (const auto& cell: Zoo::getCrashMatrix())
+    for (const auto& cell: Faults::getCrashMatrix())
     {
-        if (cell.lane != Zoo::getCurrentLane())
+        if (cell.lane != Faults::getCurrentLane())
             continue;
 
         const auto& name =
@@ -623,23 +624,24 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 
 auto tMatrixCoversEveryFault = test("CrashMatrix/coversEveryFaultOnEveryLane") = []
 {
-    for (const auto& fault: Zoo::listFaults())
+    for (const auto& fault: Faults::listFaults())
     {
-        for (auto lane: Zoo::listLanes())
+        for (auto lane: Faults::listLanes())
         {
             for (auto thread: {FaultThread::main, FaultThread::background})
-                check(
-                    Zoo::findExpectedOutcome(fault.name, thread, lane).has_value());
+                check(Faults::findExpectedOutcome(fault.name, thread, lane)
+                          .has_value());
         }
     }
 
-    for (const auto& cell: Zoo::getCrashMatrix())
-        check(Zoo::findFault(cell.fault).has_value());
+    for (const auto& cell: Faults::getCrashMatrix())
+        check(Faults::findFault(cell.fault).has_value());
 };
 
-auto tMatrixAvailabilityAgrees = test("CrashMatrix/availabilityMatchesTheZoo") = []
+auto tMatrixAvailabilityAgrees =
+    test("CrashMatrix/availabilityMatchesTheFaultList") = []
 {
-    for (const auto& fault: Zoo::listFaults())
+    for (const auto& fault: Faults::listFaults())
     {
         auto expected = getExpectedOutcome(fault.name, FaultThread::main);
         check((expected.status == OutcomeStatus::notAvailable) != fault.isAvailable);

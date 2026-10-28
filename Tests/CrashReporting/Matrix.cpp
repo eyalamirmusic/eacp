@@ -1,6 +1,6 @@
 #include "Matrix.h"
 
-namespace eacp::CrashReporting::Zoo
+namespace eacp::CrashReporting::Faults
 {
 namespace
 {
@@ -343,4 +343,4 @@ std::optional<ExpectedOutcome>
     return std::nullopt;
 }
 
-} // namespace eacp::CrashReporting::Zoo
+} // namespace eacp::CrashReporting::Faults

@@ -5,7 +5,7 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
-#include <eacp/CrashReporting/Zoo/Zoo.h>
+#include <eacp/CrashReporting/Faults/Faults.h>
 #include <eacp/UI/UI.h>
 
 // An app that crashes itself on purpose, one button per way to die, so the
@@ -25,7 +25,7 @@
 // Tests/CrashReporting runs.
 
 using namespace eacp;
-using CrashReporting::Zoo::ThreadChoice;
+using CrashReporting::Faults::ThreadChoice;
 
 namespace
 {
@@ -115,15 +115,15 @@ UI::Color getHandlerStatusColour()
 
 struct FaultCard final : UI::Component
 {
-    explicit FaultCard(const CrashReporting::Zoo::Fault& fault)
+    explicit FaultCard(const CrashReporting::Faults::Fault& fault)
         : label(std::string {fault.label})
         , description(std::string {fault.description})
     {
         auto name = fault.name;
         mainThreadButton.onClick = [name]
-        { CrashReporting::Zoo::triggerFault(name, ThreadChoice::main); };
+        { CrashReporting::Faults::triggerFault(name, ThreadChoice::main); };
         backgroundButton.onClick = [name]
-        { CrashReporting::Zoo::triggerFault(name, ThreadChoice::background); };
+        { CrashReporting::Faults::triggerFault(name, ThreadChoice::background); };
 
         mainThreadButton.setAccentColour(dangerColour);
         backgroundButton.setAccentColour(dangerColour);
@@ -166,7 +166,7 @@ struct FaultButtons final : UI::Component
         database.setThemeColour(UI::ThemeKeys::dimText);
         addChildren({title, subtitle, database, handlerStatus});
 
-        for (const auto& fault: CrashReporting::Zoo::listFaults())
+        for (const auto& fault: CrashReporting::Faults::listFaults())
         {
             if (fault.isAvailable)
                 addAndMakeVisible(cards.createNew(fault));
@@ -297,7 +297,7 @@ void runStallingFault(std::string_view name,
     if (pausesHangDetection)
         CrashReporting::pauseHangDetection();
 
-    CrashReporting::Zoo::triggerFault(name, thread);
+    CrashReporting::Faults::triggerFault(name, thread);
 
     if (pausesHangDetection)
         CrashReporting::resumeHangDetection();
@@ -310,19 +310,19 @@ void runStallingFault(std::string_view name,
         return;
     }
 
-    auto stall = CrashReporting::Zoo::getHangDuration();
+    auto stall = CrashReporting::Faults::getHangDuration();
     Threads::callAfter(Time::MS {stall.count()}, [] { Apps::quit(); });
 }
 
 struct FaultApp
 {
-    FaultApp(const CrashReporting::Zoo::Fault& fault,
+    FaultApp(const CrashReporting::Faults::Fault& fault,
              ThreadChoice thread,
              bool pausesHangDetection)
     {
         if (!fault.stallsItsThread)
         {
-            CrashReporting::Zoo::scheduleFault(fault.name, thread, Time::MS {0});
+            CrashReporting::Faults::scheduleFault(fault.name, thread, Time::MS {0});
             return;
         }
 
@@ -338,8 +338,8 @@ int crashNow(std::string_view kind,
              bool pausesHangDetection,
              bool killsHandler)
 {
-    auto fault = CrashReporting::Zoo::findFault(kind);
-    auto thread = CrashReporting::Zoo::findThreadChoice(threadName);
+    auto fault = CrashReporting::Faults::findFault(kind);
+    auto thread = CrashReporting::Faults::findThreadChoice(threadName);
 
     if (!fault || !fault->get().isAvailable || !thread)
     {
@@ -349,11 +349,11 @@ int crashNow(std::string_view kind,
     }
 
     if (killsHandler)
-        CrashReporting::Zoo::killHandlerProcess();
+        CrashReporting::Faults::killHandlerProcess();
 
     if (*thread == ThreadChoice::main && !fault->get().stallsItsThread)
     {
-        CrashReporting::Zoo::triggerFault(kind, ThreadChoice::main);
+        CrashReporting::Faults::triggerFault(kind, ThreadChoice::main);
         return 0;
     }
 
@@ -414,7 +414,7 @@ int main(int argc, char* argv[])
         return showReport(reportToShow);
 
     auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
-    CrashReporting::Zoo::setHangDuration(hangThreshold + hangBeyondThreshold);
+    CrashReporting::Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
     startCrashReporting(databaseDirectory, handlerArguments, hangThreshold);
 
     if (!crashKind.empty())

@@ -42,7 +42,7 @@ void installCrashHandlers(SharedState& state);
 bool isHandlerProcessRunning();
 
 // Ends the handler process without telling it, as if it had died: the crash
-// zoo's way to exercise the fallback report.
+// faults library's way to exercise the fallback report.
 void killHandlerProcess();
 
 // stop()'s halves: the platform's own crash handling back, then the handler

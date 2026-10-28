@@ -1168,7 +1168,7 @@ minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
 itself; `Tests/CrashReporting` drives it, every fault on the main and a background
-thread; the faults themselves are `eacp-crash-zoo` (`CrashReporting/Zoo/`),
+thread; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
 every `Threads::Thread` holds a `Threads::AlternateSignalStack`, macOS records
 throw sites through its own `__cxa_throw`, and with the handler gone the app
 writes a fallback `report.json` itself.

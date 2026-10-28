@@ -11,7 +11,7 @@
 // Deliberate faults for testing a crash reporter end to end: each one breaks
 // the calling process for real, on the main thread or on a background thread.
 // For demo and test apps only.
-namespace eacp::CrashReporting::Zoo
+namespace eacp::CrashReporting::Faults
 {
 enum class ThreadChoice
 {
@@ -57,4 +57,4 @@ bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay);
 // Ends the crash handler process, so the next crash finds no handler and the
 // app's own fallback report is what records it.
 void killHandlerProcess();
-} // namespace eacp::CrashReporting::Zoo
+} // namespace eacp::CrashReporting::Faults
