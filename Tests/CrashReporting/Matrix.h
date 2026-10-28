@@ -1,16 +1,14 @@
 #pragma once
 
-#include "Zoo.h"
+#include <eacp/CrashReporting/Zoo/Zoo.h>
 
 #include <eacp/CrashReporting/CrashReport.h>
 
 #include <optional>
-#include <string>
 #include <string_view>
 
 // What each zoo fault is expected to produce, on each thread, on each lane
-// eacp builds for: the one table Tests/CrashReporting runs and MATRIX.md is
-// generated from, so neither can drift from the other.
+// eacp builds for: the table SelfDestructTests runs a case for, per cell.
 namespace eacp::CrashReporting::Zoo
 {
 enum class Lane
@@ -64,14 +62,6 @@ struct MatrixCell
     ExpectedOutcome outcome;
 };
 
-// A limit that holds for a whole lane rather than one cell.
-struct LaneGap
-{
-    Lane lane = Lane::linux;
-    std::string_view note;
-    int pullRequest = 0;
-};
-
 const Vector<Lane>& listLanes();
 std::string_view getLaneName(Lane lane);
 
@@ -80,11 +70,7 @@ Lane getCurrentLane();
 
 // Every fault on both threads on every lane.
 const Vector<MatrixCell>& getCrashMatrix();
-const Vector<LaneGap>& getLaneGaps();
 
 std::optional<ExpectedOutcome>
     findExpectedOutcome(std::string_view fault, ThreadChoice thread, Lane lane);
-
-// MATRIX.md: a table per lane, a legend, and the gaps.
-std::string renderCrashMatrix();
 } // namespace eacp::CrashReporting::Zoo

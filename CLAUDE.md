@@ -19,7 +19,7 @@ eacp is a cross-platform GUI/graphics framework written in modern C++20 with Obj
 `README.md` is written for users of the library — interface, capabilities and
 usage — and stays free of build-system and implementation detail. In-depth
 docs live under `Docs/` (`Build.md` for options, dependencies, capability
-variables and CI; `Linux.md` for the Linux backend; `CrashReporting.md` for the crash reporter; `Toolbox.md` for the
+variables and CI; `Linux.md` for the Linux backend; `Toolbox.md` for the
 Core reuse map; `HotReload.md` for
 `Plugins::Reloadable`, `eacp_add_hot_reload` and the reload machinery under
 them) and beside the modules
@@ -1171,9 +1171,7 @@ itself; `Tests/CrashReporting` drives it, every fault on the main and a backgrou
 thread; the faults themselves are `eacp-crash-zoo` (`CrashReporting/Zoo/`),
 every `Threads::Thread` holds a `Threads::AlternateSignalStack`, macOS records
 throw sites through its own `__cxa_throw`, and with the handler gone the app
-writes a fallback `report.json` itself. `Lib/eacp/CrashReporting/MATRIX.md`, generated from
-`Zoo/Matrix.cpp` and checked by the tests, is what each lane reports. `Lib/eacp/CrashReporting/README.md`
-is the short user guide and `Docs/CrashReporting.md` the whole account.
+writes a fallback `report.json` itself.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 

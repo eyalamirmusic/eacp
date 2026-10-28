@@ -1,4 +1,6 @@
 #include <eacp/Core/Platform/Platform.h>
+#include "Matrix.h"
+
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
@@ -6,7 +8,6 @@
 #include <eacp/Core/Utils/TemporaryFile.h>
 #include <eacp/Core/App/Args.h>
 #include <eacp/CrashReporting/ReportDatabase.h>
-#include <eacp/CrashReporting/Zoo/Matrix.h>
 
 #include <NanoTest/NanoTest.h>
 
@@ -251,6 +252,24 @@ void checkHangReport(const CrashReport& report, std::string_view function)
 
 // The hang fault sleeps past the threshold and returns, so the app exits on
 // its own and the report is already written by then.
+// A stalling fault ends its app on its own; one that does not is a failure,
+// not a test run that never ends.
+bool waitForExit(Processes::Process& process)
+{
+    constexpr auto exitWaitLimit = std::chrono::seconds {30};
+    auto deadline = std::chrono::steady_clock::now() + exitWaitLimit;
+
+    while (process.isRunning() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(reportPollInterval);
+
+    if (!process.isRunning())
+        return true;
+
+    process.kill();
+    process.wait();
+    return false;
+}
+
 Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
                                  std::string_view threshold,
                                  std::string_view kind = "hang",
@@ -260,9 +279,16 @@ Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
     auto options =
         makeHangOptions(kind, database.path(), threshold, appArguments, thread);
 
-    auto result = Processes::run(options);
-    check(result.launched);
-    check(result.exitCode == 0);
+    auto process = Processes::Process {options};
+    check(process.launched());
+    auto exited = waitForExit(process);
+
+    if (!exited)
+        Console::printError("SelfDestruct --crash " + std::string {kind}
+                            + " never quit");
+
+    check(exited);
+    check(process.wait() == 0);
 
     // The handler may still be writing a hang report the app has outlived.
     auto reportDatabase = ReportDatabase {database.path()};
@@ -618,18 +644,6 @@ auto tMatrixAvailabilityAgrees = test("CrashMatrix/availabilityMatchesTheZoo") =
         auto expected = getExpectedOutcome(fault.name, FaultThread::main);
         check((expected.status == OutcomeStatus::notAvailable) != fault.isAvailable);
     }
-};
-
-auto tMatrixFileIsCurrent = test("CrashMatrix/fileIsCurrent") = []
-{
-    auto committed = Files::readFile(FilePath {EACP_CRASH_MATRIX_FILE});
-    std::erase(committed, '\r');
-
-    if (committed != Zoo::renderCrashMatrix())
-        Console::printError(
-            "MATRIX.md is stale: run SelfDestruct --matrix " EACP_CRASH_MATRIX_FILE);
-
-    check(committed == Zoo::renderCrashMatrix());
 };
 
 auto tCrashReportFallback = test("CrashReport/fallbackWhenHandlerIsGone") = []

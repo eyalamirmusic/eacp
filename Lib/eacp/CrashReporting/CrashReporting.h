@@ -22,8 +22,7 @@
 // app's own executable with a flag this recognises, so the app's own argument
 // parsing never sees it. The second installs the reporter in the app and
 // launches that handler, which waits for a crash, writes the report folder,
-// ends the app and hands the report to the registered CrashHandler. See
-// README.md beside this header.
+// ends the app and hands the report to the registered CrashHandler.
 namespace eacp::CrashReporting
 {
 constexpr auto handlerFlag = std::string_view {"--eacp-crash-handler"};

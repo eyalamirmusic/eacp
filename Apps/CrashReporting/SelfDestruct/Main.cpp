@@ -5,7 +5,6 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
-#include <eacp/CrashReporting/Zoo/Matrix.h>
 #include <eacp/CrashReporting/Zoo/Zoo.h>
 #include <eacp/UI/UI.h>
 
@@ -20,7 +19,6 @@
 //   SelfDestruct --crash abort -- --no-report-window
 //   SelfDestruct --crash hang --hang-threshold-ms 500
 //   SelfDestruct --crash nullptr --kill-handler    the app's fallback report
-//   SelfDestruct --matrix MATRIX.md                write the crash matrix
 //
 // Everything after "--" goes to the handler process, whose own flag
 // --no-report-window has it write the report and exit, which is what
@@ -306,7 +304,9 @@ void runStallingFault(std::string_view name,
 
     if (thread == ThreadChoice::main)
     {
-        Apps::quit();
+        // Quitting from inside the callback that stalled sometimes leaves
+        // [NSApp run] waiting; from a fresh one it always ends.
+        Threads::callAsync([] { Apps::quit(); });
         return;
     }
 
@@ -387,7 +387,6 @@ int main(int argc, char* argv[])
     auto hangThresholdMilliseconds =
         CrashReporting::Options {}.hangThreshold.count();
     auto reportToShow = FilePath {};
-    auto matrixFile = FilePath {};
     auto pausesHangDetection = false;
     auto threadName = std::string {"main"};
     auto killsHandler = false;
@@ -406,7 +405,6 @@ int main(int argc, char* argv[])
              pausesHangDetection,
              "pause hang detection around a hang or spin fault");
     cli.option(showReportFlag, reportToShow, "show the report in this folder");
-    cli.option("--matrix", matrixFile, "write the crash matrix (MATRIX.md) here");
     cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
 
     if (auto code = cli.exitCodeFor(cli.parse()))
@@ -414,12 +412,6 @@ int main(int argc, char* argv[])
 
     if (!reportToShow.empty())
         return showReport(reportToShow);
-
-    if (!matrixFile.empty())
-    {
-        Files::writeFile(matrixFile, CrashReporting::Zoo::renderCrashMatrix());
-        return 0;
-    }
 
     auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
     CrashReporting::Zoo::setHangDuration(hangThreshold + hangBeyondThreshold);

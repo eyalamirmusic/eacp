@@ -18,11 +18,9 @@ struct ThreadChoiceName
     std::string_view name;
 };
 
-constexpr auto threadChoiceCount = 2;
-
-constexpr auto threadChoiceNames = Array<ThreadChoiceName, threadChoiceCount> {
-    {ThreadChoice::main, "main"},
-    {ThreadChoice::background, "background"},
+constexpr auto threadChoiceNames = Array {
+    ThreadChoiceName {ThreadChoice::main, "main"},
+    ThreadChoiceName {ThreadChoice::background, "background"},
 };
 
 struct BackgroundThreads
