@@ -55,6 +55,7 @@ target_link_libraries(eacp-crash-zoo PUBLIC eacp-crash-reporting)
 
 target_sources(eacp-crash-zoo PRIVATE
         Zoo/Faults.cpp
+        Zoo/Matrix.cpp
         Zoo/Zoo.cpp)
 
 set_default_target_setting(eacp-crash-zoo)
