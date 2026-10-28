@@ -317,30 +317,16 @@ bool hasExpectedReason(const CrashReport& report, const ExpectedOutcome& expecte
            && report.reason == expected.alternativeReason;
 }
 
-// The alternative reason's own capture where the matrix names one.
-Faults::ExpectedCapture findExpectedCapture(const CrashReport& report,
-                                            const ExpectedOutcome& expected)
-{
-    auto isAlternative = !expected.alternativeReason.empty()
-                         && report.reason == expected.alternativeReason;
-
-    if (isAlternative && expected.alternativeCapture)
-        return *expected.alternativeCapture;
-
-    return {expected.capturedBy, expected.hasMinidump};
-}
-
 void checkReportAgainstMatrix(const CrashReport& report,
                               const ExpectedOutcome& expected)
 {
     if (!hasExpectedReason(report, expected))
         Console::printError("reason: " + report.reason);
 
-    auto capture = findExpectedCapture(report, expected);
     check(hasExpectedReason(report, expected));
-    check(report.capturedBy == capture.capturedBy);
+    check(report.capturedBy == expected.capturedBy);
     check(report.crashingThread.frames.empty() != expected.hasStack);
-    check(report.minidumpPath.empty() != capture.hasMinidump);
+    check(report.minidumpPath.empty() != expected.hasMinidump);
 
     auto shouldReachApp = expected.hasStack && expected.stackReachesFault;
 
@@ -679,14 +665,33 @@ Vector<std::uint32_t> readMinidumpStreamTypes(const FilePath& path)
     return streamTypes;
 }
 
+int countOccurrences(std::string_view text, std::string_view needle)
+{
+    auto count = 0;
+
+    for (auto position = text.find(needle); position != std::string_view::npos;
+         position = text.find(needle, position + needle.size()))
+        ++count;
+
+    return count;
+}
+
 // lldb reads the minidump as a core file; it is part of every Xcode install,
-// so one that cannot be launched is a skip rather than a failure.
+// so one that cannot be launched is a skip rather than a failure. Every
+// thread of the app is in it, SelfDestruct's main thread beside the faulting
+// one at the least.
 void checkLldbNamesFaultFunction(const FilePath& minidump, std::string_view function)
 {
+    constexpr auto threadMarker = std::string_view {"thread #"};
+    constexpr auto minimumThreads = 2;
     auto options = Processes::ProcessOptions {};
     options.executable = "/usr/bin/lldb";
-    options.arguments = {
-        "--no-lldbinit", "--batch", "--core", minidump.str(), "--one-line", "bt"};
+    options.arguments = {"--no-lldbinit",
+                         "--batch",
+                         "--core",
+                         minidump.str(),
+                         "--one-line",
+                         "bt all"};
     options.captureOutput = true;
     options.mergeErrorOutput = true;
 
@@ -699,6 +704,7 @@ void checkLldbNamesFaultFunction(const FilePath& minidump, std::string_view func
         Console::printError(result.output);
 
     check(result.output.find(function) != std::string::npos);
+    check(countOccurrences(result.output, threadMarker) >= minimumThreads);
 }
 
 // The handler is killed before the fault, so nothing reports the crash, and

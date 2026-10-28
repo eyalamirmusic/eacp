@@ -146,7 +146,7 @@ ExpectedOutcome expectSoftwareCrash(Lane lane,
                                     std::string_view windowsReason)
 {
     if (isMac(lane))
-        return reported(lane, "SIGABRT");
+        return reportedThroughMach(lane, "SIGABRT");
 
     auto outcome = reported(lane, windowsReason);
 
@@ -161,7 +161,7 @@ ExpectedOutcome expectSoftwareCrash(Lane lane,
 ExpectedOutcome expectTerminate(Lane lane, ThreadChoice thread)
 {
     if (isMac(lane))
-        return reported(lane, "std::terminate");
+        return reportedThroughMach(lane, "std::terminate");
 
     if (isClangCl(lane) && isBackground(thread))
     {
@@ -188,12 +188,10 @@ ExpectedOutcome expectHeapCorruption(Lane lane, ThreadChoice thread)
     if (!isBackground(thread))
         return reportedThroughMach(lane, "EXC_BREAKPOINT");
 
-    auto outcome = withLimit(reported(lane, "SIGABRT"),
+    auto outcome = withLimit(reportedThroughMach(lane, "SIGABRT"),
                              "another thread's blocks go through the zone "
-                             "allocator, which aborts through the signal path "
-                             "with no minidump; some runs trap instead");
+                             "allocator, which aborts; some runs trap instead");
     outcome.alternativeReason = "EXC_BREAKPOINT";
-    outcome.alternativeCapture = ExpectedCapture {CaptureSource::handlerMach, true};
     return outcome;
 }
 
