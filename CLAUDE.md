@@ -1171,7 +1171,8 @@ itself; `Tests/CrashReporting` drives it, every fault on the main and a backgrou
 thread; the faults themselves are `eacp-crash-zoo` (`CrashReporting/Zoo/`),
 every `Threads::Thread` holds a `Threads::AlternateSignalStack`, macOS records
 throw sites through its own `__cxa_throw`, and with the handler gone the app
-writes a fallback `report.json` itself. `Lib/eacp/CrashReporting/README.md`
+writes a fallback `report.json` itself. `Lib/eacp/CrashReporting/MATRIX.md`, generated from
+`Zoo/Matrix.cpp` and checked by the tests, is what each lane reports. `Lib/eacp/CrashReporting/README.md`
 is the account, platform coverage and v1 limits.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)

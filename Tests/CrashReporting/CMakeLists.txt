@@ -14,7 +14,8 @@ nano_add_executable(CrashReportingTests
 # The fault cases crash the demo app for real and read the report its handler
 # wrote.
 target_compile_definitions(CrashReportingTests PRIVATE
-        EACP_SELF_DESTRUCT="$<TARGET_FILE:SelfDestruct>")
+        EACP_SELF_DESTRUCT="$<TARGET_FILE:SelfDestruct>"
+        EACP_CRASH_MATRIX_FILE="${PROJECT_SOURCE_DIR}/Lib/eacp/CrashReporting/MATRIX.md")
 add_dependencies(CrashReportingTests SelfDestruct)
 
 # Runs the real start() over a database the tests fill, to see when

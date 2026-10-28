@@ -145,7 +145,10 @@ The fields map onto what crash backends such as Sentry expect.
 ## What is caught
 
 Each row is a fault in the crash zoo (below), raised on the main thread and on
-a background thread; every cell is covered by `Tests/CrashReporting`.
+a background thread. [`MATRIX.md`](MATRIX.md) is the per-lane version, generated
+from `Zoo/Matrix.cpp`, the table `Tests/CrashReporting` runs every cell of
+(`CrashMatrix/<fault>/<thread>`) and checks the file against; change the
+table, then `SelfDestruct --matrix Lib/eacp/CrashReporting/MATRIX.md`.
 
 | Fault | Thread | macOS | Windows |
 |---|---|---|---|

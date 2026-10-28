@@ -4,13 +4,16 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
+#include <eacp/Core/App/Args.h>
 #include <eacp/CrashReporting/ReportDatabase.h>
+#include <eacp/CrashReporting/Zoo/Matrix.h>
 
 #include <NanoTest/NanoTest.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <deque>
 #include <thread>
 
 using namespace nano;
@@ -24,118 +27,31 @@ constexpr auto reportWaitLimit = std::chrono::seconds {10};
 constexpr auto reportPollInterval = std::chrono::milliseconds {20};
 constexpr auto testHangThresholdMilliseconds = "500";
 
-struct ExpectedCrash
-{
-    std::string_view kind;
-    std::string_view reason;
-    bool hasStack = true;
-    std::string_view messageFragment = {};
-    bool stackReachesApp = true;
-
-    // Off for a stack overflow, whose frames are all the recursion.
-    bool stackReachesThreadEntry = true;
-
-    // Another reason the same fault is reported with, where it varies.
-    std::string_view alternativeReason = {};
-};
-
-enum class FaultThread
-{
-    main,
-    background
-};
+using Zoo::ExpectedOutcome;
+using Zoo::OutcomeStatus;
+using FaultThread = Zoo::ThreadChoice;
 
 std::string getFaultThreadName(FaultThread thread)
 {
-    if (thread == FaultThread::background)
-        return "background";
-
-    return "main";
+    return std::string {Zoo::getThreadChoiceName(thread)};
 }
 
 // A background fault's frames run up through the zoo's thread entry.
 constexpr auto backgroundEntryFunction = "runFaultOnBackgroundThread";
+constexpr auto thrownMessage = "the crash zoo threw this on purpose";
 
-#if defined(_WIN32)
-constexpr auto nullPointerCrash =
-    ExpectedCrash {"nullptr", "EXCEPTION_ACCESS_VIOLATION"};
-constexpr auto divideCrash =
-    ExpectedCrash {"divide", "EXCEPTION_INT_DIVIDE_BY_ZERO"};
-constexpr auto stackOverflowCrash = ExpectedCrash {
-    "stackoverflow", "EXCEPTION_STACK_OVERFLOW", true, {}, true, false};
-constexpr auto abortCrash = ExpectedCrash {"abort", "SIGABRT"};
-constexpr auto pureVirtualCrash = ExpectedCrash {"purevirtual", "purecall"};
-constexpr auto heapCorruptionCrash =
-    ExpectedCrash {"heapcorruption", "STATUS_HEAP_CORRUPTION", false};
-constexpr auto backgroundHeapCorruptionCrash = heapCorruptionCrash;
-constexpr auto fastFailCrash =
-    ExpectedCrash {"fastfail", "STATUS_STACK_BUFFER_OVERRUN", false};
-#else
-constexpr auto nullPointerCrash = ExpectedCrash {"nullptr", "SIGSEGV"};
-constexpr auto divideCrash = ExpectedCrash {"divide", "SIGFPE"};
-constexpr auto stackOverflowCrash = ExpectedCrash {"stackoverflow", "SIGSEGV"};
+ExpectedOutcome getExpectedOutcome(std::string_view fault, FaultThread thread)
+{
+    auto outcome = Zoo::findExpectedOutcome(fault, thread, Zoo::getCurrentLane());
+    check(outcome.has_value());
+    return outcome.value_or(ExpectedOutcome {});
+}
 
-// A secondary thread's guard page is a protection fault, which macOS raises
-// as SIGBUS where the main thread's is SIGSEGV.
-constexpr auto backgroundStackOverflowCrash =
-    ExpectedCrash {"stackoverflow", "SIGBUS", true, {}, true, false};
-constexpr auto abortCrash = ExpectedCrash {"abort", "SIGABRT"};
-constexpr auto pureVirtualCrash = ExpectedCrash {"purevirtual", "SIGABRT"};
-constexpr auto heapCorruptionCrash = ExpectedCrash {"heapcorruption", "SIGTRAP"};
-
-// The main thread's small blocks come from a fast-path allocator whose check
-// traps; another thread's go through the zone allocator, which aborts.
-constexpr auto backgroundHeapCorruptionCrash =
-    ExpectedCrash {"heapcorruption", "SIGABRT", true, {}, true, true, "SIGTRAP"};
-#endif
-
-// On Windows ARM64 the handler's walk of an uncaught C++ exception stops at
-// KERNELBASE's RaiseException (see README.md, the v1 limits).
-#if defined(_M_ARM64)
-constexpr auto terminateReachesApp = false;
-#else
-constexpr auto terminateReachesApp = true;
-#endif
-
-constexpr auto terminateCrash = ExpectedCrash {"terminate",
-                                               "std::terminate",
-                                               true,
-                                               "the crash zoo threw this on purpose",
-                                               terminateReachesApp};
-
-// clang-cl's std::thread entry terminates on an escaping exception with none
-// current, so the report is the abort that follows, with no type or what().
-#if defined(_WIN32) && defined(__clang__)
-constexpr auto backgroundTerminateCrash =
-    ExpectedCrash {"terminate", "SIGABRT", true, {}, terminateReachesApp};
-constexpr auto backgroundTerminateReason = "SIGABRT";
-#else
-constexpr auto backgroundTerminateCrash = terminateCrash;
-constexpr auto backgroundTerminateReason = "std::terminate";
-#endif
-
-#if defined(__clang__)
-constexpr auto isClang = true;
-#else
-constexpr auto isClang = false;
-#endif
-
-// On Windows ARM64 StackWalk64 stops a background thread's abort or purecall
-// inside the CRT, short of the zoo's thread entry.
-#if defined(_M_ARM64)
-constexpr auto softwareCrashReachesThreadEntry = false;
-#else
-constexpr auto softwareCrashReachesThreadEntry = true;
-#endif
-
-// Matches the zoo's own availability: x86 traps a divide by zero, and MSVC
-// checks for one on ARM64.
-#if defined(__x86_64__) || defined(_M_X64)                                          \
-    || (defined(_M_ARM64) && !defined(__clang__))
-constexpr auto integerDivideTraps = true;
-#else
-constexpr auto integerDivideTraps = false;
-#endif
+bool isReportedStatus(OutcomeStatus status)
+{
+    return status == OutcomeStatus::reported
+           || status == OutcomeStatus::reportedWithLimits;
+}
 
 bool isSelfDestructFrame(const StackFrame& frame)
 {
@@ -358,22 +274,44 @@ Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
     return reportDatabase.readPendingReports();
 }
 
-CrashReport checkCrashReport(const ExpectedCrash& expected,
-                             FaultThread thread = FaultThread::main)
+bool hasExpectedReason(const CrashReport& report, const ExpectedOutcome& expected)
 {
-    auto report = crashSelfDestruct(expected.kind, thread);
+    if (report.reason == expected.reason)
+        return true;
 
-    if (report.reason != expected.reason)
+    return !expected.alternativeReason.empty()
+           && report.reason == expected.alternativeReason;
+}
+
+void checkReportAgainstMatrix(const CrashReport& report,
+                              const ExpectedOutcome& expected)
+{
+    if (!hasExpectedReason(report, expected))
         Console::printError("reason: " + report.reason);
 
-    check(report.reason == expected.reason
-          || (!expected.alternativeReason.empty()
-              && report.reason == expected.alternativeReason));
-    check(report.tags["project"] == "eacp SelfDestruct");
+    check(hasExpectedReason(report, expected));
+    check(report.capturedBy == expected.capturedBy);
+    check(report.crashingThread.frames.empty() != expected.hasStack);
+    check(report.minidumpPath.empty() != expected.hasMinidump);
+
+    auto shouldReachApp = expected.hasStack && expected.stackReachesFault;
+
+    if (shouldReachApp && !hasSelfDestructFrame(report))
+        printFrames(report);
+
+    if (shouldReachApp)
+        check(hasSelfDestructFrame(report));
+}
+
+void checkReportMetadata(const CrashReport& report)
+{
+    check(report.tags.contains("project")
+          && report.tags.at("project") == "eacp SelfDestruct");
     check(report.extra.contains("launchedFrom"));
-    check(report.metadata["environment"] == "demo");
+    check(report.metadata.contains("environment")
+          && report.metadata.at("environment") == "demo");
     check(report.metadata.contains("release"));
-    check(!report.metadata["arch"].empty());
+    check(report.metadata.contains("arch") && !report.metadata.at("arch").empty());
     check(report.user.id == "self-destruct-user");
     check(report.user.email == "user@example.com");
     check(report.user.username == "selfdestruct");
@@ -386,65 +324,21 @@ CrashReport checkCrashReport(const ExpectedCrash& expected,
         check(report.breadcrumbs[1].level == Level::warning);
         check(report.breadcrumbs[0].timestamp > 0);
     }
+}
+
+CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
+{
+    auto expected = getExpectedOutcome(fault, thread);
+    auto report = crashSelfDestruct(fault, thread);
+
+    checkReportAgainstMatrix(report, expected);
+    checkReportMetadata(report);
     check(report.attachments.size() == 1);
 
-    check(report.message.find(expected.messageFragment) != std::string::npos);
-
-    auto shouldReachApp = expected.hasStack && expected.stackReachesApp;
-
-    if (shouldReachApp && !hasSelfDestructFrame(report))
-        printFrames(report);
-
-    if (shouldReachApp)
-        check(hasSelfDestructFrame(report));
-    else if (expected.hasStack)
-        check(!report.crashingThread.frames.empty());
-    else
-        check(report.crashingThread.frames.empty());
-
-    auto shouldReachEntry = shouldReachApp && expected.stackReachesThreadEntry
-                            && thread == FaultThread::background;
-
-    if (shouldReachEntry && !hasFrameInFunction(report, backgroundEntryFunction))
-        printFrames(report);
-
-    if (shouldReachEntry)
-        check(hasFrameInFunction(report, backgroundEntryFunction));
+    if (report.reason == "std::terminate")
+        check(report.message.find(thrownMessage) != std::string::npos);
 
     return report;
-}
-
-void checkUncaughtExceptionReport(FaultThread thread)
-{
-    auto isBackground = thread == FaultThread::background;
-    auto report = checkCrashReport(
-        isBackground ? backgroundTerminateCrash : terminateCrash, thread);
-
-    if (!terminateReachesApp || (isBackground && Platform::isWindows() && isClang))
-        return;
-
-    if (!hasFrameInFunction(report, "throwUncaughtException"))
-        printFrames(report);
-
-    check(hasFrameInFunction(report, "throwUncaughtException"));
-
-#if defined(__APPLE__)
-    // The throw site is the crashing thread; where terminate aborted is kept
-    // beside it.
-    check(!report.crashingThread.frames.empty()
-          && report.crashingThread.frames[0].symbol.find("throwUncaughtException")
-                 != std::string::npos);
-    check(!report.terminateFrames.empty());
-#endif
-}
-
-// A stall off the main thread leaves the main thread beating, so nothing is
-// reported yet and the app quits on its own once the stall would have ended.
-void checkBackgroundStallIsNotReported(std::string_view kind)
-{
-    check(runHangFault(
-              {}, testHangThresholdMilliseconds, kind, FaultThread::background)
-              .empty());
 }
 
 // Never returns, so the report is waited for while the app still runs.
@@ -466,6 +360,111 @@ CrashReport waitForStallReport(std::string_view kind)
 
     return reports.empty() ? CrashReport {} : reports[0];
 }
+
+bool isStallingFault(std::string_view fault)
+{
+    auto found = Zoo::findFault(fault);
+    return found && found->get().stallsItsThread;
+}
+
+void checkStallAgainstMatrix(std::string_view fault, const ExpectedOutcome& expected)
+{
+    auto report = CrashReport {};
+
+    if (fault == "hang")
+    {
+        auto reports = runHangFault({}, testHangThresholdMilliseconds);
+        check(reports.size() == 1);
+
+        if (reports.size() == 1)
+            report = reports[0];
+    }
+    else
+    {
+        report = waitForStallReport(fault);
+    }
+
+    checkReportAgainstMatrix(report, expected);
+    check(report.kind == ReportKind::hang);
+    check(report.message.starts_with("main thread unresponsive for "));
+    check(report.hangDurationMilliseconds >= 1000);
+    checkReportMetadata(report);
+}
+
+// The CLI refuses a fault this platform cannot raise.
+void checkFaultIsRefused(std::string_view fault, FaultThread thread)
+{
+    auto database = TemporaryFile {};
+    auto result = Processes::run(makeCrashOptions(fault, thread, database.path()));
+    check(result.launched);
+    check(result.exitCode == Args::badArguments);
+    check(ReportDatabase {database.path()}.readPendingReports().empty());
+}
+
+void checkNotReported(std::string_view fault, FaultThread thread)
+{
+    if (isStallingFault(fault))
+    {
+        check(
+            runHangFault({}, testHangThresholdMilliseconds, fault, thread).empty());
+        return;
+    }
+
+    auto database = TemporaryFile {};
+    Processes::run(makeCrashOptions(fault, thread, database.path()));
+    check(ReportDatabase {database.path()}.readPendingReports().empty());
+}
+
+void runMatrixCell(std::string_view fault, FaultThread thread)
+{
+    auto expected = getExpectedOutcome(fault, thread);
+
+    switch (expected.status)
+    {
+        case OutcomeStatus::pendingPR:
+            Console::print("skipped, pending PR "
+                           + std::to_string(expected.pullRequest) + ": "
+                           + std::string {expected.note});
+            return;
+        case OutcomeStatus::notAvailable:
+            checkFaultIsRefused(fault, thread);
+            return;
+        case OutcomeStatus::notReported:
+            checkNotReported(fault, thread);
+            return;
+        case OutcomeStatus::reported:
+        case OutcomeStatus::reportedWithLimits:
+            break;
+    }
+
+    if (isStallingFault(fault) && thread == FaultThread::main)
+        checkStallAgainstMatrix(fault, expected);
+    else if (!isStallingFault(fault))
+        checkCrashAgainstMatrix(fault, thread);
+}
+
+// One case per cell of this lane, named CrashMatrix/<fault>/<thread>.
+bool registerMatrixCases()
+{
+    static auto names = std::deque<std::string> {};
+
+    for (const auto& cell: Zoo::getCrashMatrix())
+    {
+        if (cell.lane != Zoo::getCurrentLane())
+            continue;
+
+        const auto& name =
+            names.emplace_back("CrashMatrix/" + std::string {cell.fault} + "/"
+                               + getFaultThreadName(cell.thread));
+        auto fault = cell.fault;
+        auto thread = cell.thread;
+        test(name, [fault, thread] { runMatrixCell(fault, thread); });
+    }
+
+    return true;
+}
+
+[[maybe_unused]] const auto matrixCasesRegistered = registerMatrixCases();
 
 Vector<std::string> runPendingReportsProbe(const FilePath& database)
 {
@@ -533,98 +532,58 @@ void checkFallbackReport(std::string_view kind,
 }
 } // namespace
 
-auto tCrashReportNullPointer = test("CrashReport/nullPointer") = []
+auto tCrashReportModuleUuid = test("CrashReport/framesCarryModuleUuids") = []
 {
-    auto report = checkCrashReport(nullPointerCrash);
-    check(hasSelfDestructFrameWithModuleUuid(report));
+    check(hasSelfDestructFrameWithModuleUuid(
+        crashSelfDestruct("nullptr", FaultThread::main)));
 };
 
-auto tCrashReportNullPointerBackground =
-    test("CrashReport/nullPointerBackground") = []
-{ checkCrashReport(nullPointerCrash, FaultThread::background); };
-
-auto tCrashReportDivideByZero = test("CrashReport/divideByZero") = []
+auto tCrashReportThreadEntry =
+    test("CrashReport/backgroundFramesReachTheThreadEntry") = []
 {
-    if (integerDivideTraps)
-        checkCrashReport(divideCrash);
+    auto report = crashSelfDestruct("nullptr", FaultThread::background);
+
+    if (!hasFrameInFunction(report, backgroundEntryFunction))
+        printFrames(report);
+
+    check(hasFrameInFunction(report, backgroundEntryFunction));
 };
 
-auto tCrashReportDivideByZeroBackground =
-    test("CrashReport/divideByZeroBackground") = []
+auto tCrashReportBackgroundStackOverflow =
+    test("CrashReport/backgroundStackOverflowFramesAreTheRecursion") = []
 {
-    if (integerDivideTraps)
-        checkCrashReport(divideCrash, FaultThread::background);
+    check(hasFrameInFunction(
+        crashSelfDestruct("stackoverflow", FaultThread::background),
+        "recurseForever"));
 };
 
-auto tCrashReportStackOverflow =
-    test("CrashReport/stackOverflow") = [] { checkCrashReport(stackOverflowCrash); };
-
-auto tCrashReportStackOverflowBackground =
-    test("CrashReport/stackOverflowBackground") = []
+auto tCrashReportThrowSite =
+    test("CrashReport/uncaughtExceptionShowsTheThrowSite") = []
 {
-#if defined(__APPLE__)
-    auto report =
-        checkCrashReport(backgroundStackOverflowCrash, FaultThread::background);
-    check(hasFrameInFunction(report, "recurseForever"));
-#else
-    checkCrashReport(stackOverflowCrash, FaultThread::background);
-#endif
-};
+    auto expected = getExpectedOutcome("terminate", FaultThread::background);
 
-auto tCrashReportAbort =
-    test("CrashReport/abort") = [] { checkCrashReport(abortCrash); };
+    if (!expected.stackReachesFault)
+        return;
 
-auto tCrashReportAbortBackground = test("CrashReport/abortBackground") = []
-{
-    auto expected = abortCrash;
-    expected.stackReachesThreadEntry = softwareCrashReachesThreadEntry;
-    checkCrashReport(expected, FaultThread::background);
-};
+    for (auto thread: {FaultThread::main, FaultThread::background})
+    {
+        auto report = crashSelfDestruct("terminate", thread);
 
-auto tCrashReportPureVirtual =
-    test("CrashReport/pureVirtual") = [] { checkCrashReport(pureVirtualCrash); };
+        if (!hasFrameInFunction(report, "throwUncaughtException"))
+            printFrames(report);
 
-auto tCrashReportPureVirtualBackground =
-    test("CrashReport/pureVirtualBackground") = []
-{
-    auto expected = pureVirtualCrash;
-    expected.stackReachesThreadEntry = softwareCrashReachesThreadEntry;
-    checkCrashReport(expected, FaultThread::background);
-};
+        check(hasFrameInFunction(report, "throwUncaughtException"));
 
-auto tCrashReportHeapCorruption = test("CrashReport/heapCorruption") = []
-{ checkCrashReport(heapCorruptionCrash); };
+        if (!Platform::isMac())
+            continue;
 
-auto tCrashReportHeapCorruptionBackground =
-    test("CrashReport/heapCorruptionBackground") = []
-{ checkCrashReport(backgroundHeapCorruptionCrash, FaultThread::background); };
-
-auto tCrashReportUncaughtException = test("CrashReport/uncaughtException") = []
-{ checkUncaughtExceptionReport(FaultThread::main); };
-
-auto tCrashReportUncaughtExceptionBackground =
-    test("CrashReport/uncaughtExceptionBackground") = []
-{ checkUncaughtExceptionReport(FaultThread::background); };
-
-#if defined(_WIN32)
-auto tCrashReportFastFail =
-    test("CrashReport/fastFail") = [] { checkCrashReport(fastFailCrash); };
-
-auto tCrashReportFastFailBackground = test("CrashReport/fastFailBackground") = []
-{ checkCrashReport(fastFailCrash, FaultThread::background); };
-#endif
-
-auto tCrashReportHang = test("CrashReport/hang") = []
-{
-    auto reports = runHangFault({}, testHangThresholdMilliseconds);
-
-    if (reports.size() != 1)
-        Console::printError(std::to_string(reports.size()) + " hang reports");
-
-    check(reports.size() == 1);
-
-    if (reports.size() == 1)
-        checkHangReport(reports[0], "sleepPastHangThreshold");
+        // The throw site is the crashing thread, where terminate aborted beside it.
+        check(
+            !report.crashingThread.frames.empty()
+            && report.crashingThread.frames[0].symbol.find("throwUncaughtException")
+                   != std::string::npos);
+        check(!report.terminateFrames.empty());
+    }
 };
 
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
@@ -636,27 +595,53 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
               .empty());
 };
 
-auto tCrashReportSpin = test("CrashReport/spin") = []
-{ checkHangReport(waitForStallReport("spin"), "spinForever"); };
+auto tMatrixCoversEveryFault = test("CrashMatrix/coversEveryFaultOnEveryLane") = []
+{
+    for (const auto& fault: Zoo::listFaults())
+    {
+        for (auto lane: Zoo::listLanes())
+        {
+            for (auto thread: {FaultThread::main, FaultThread::background})
+                check(
+                    Zoo::findExpectedOutcome(fault.name, thread, lane).has_value());
+        }
+    }
 
-auto tCrashReportDeadlock = test("CrashReport/deadlock") = []
-{ checkHangReport(waitForStallReport("deadlock"), "lockInOppositeOrder"); };
+    for (const auto& cell: Zoo::getCrashMatrix())
+        check(Zoo::findFault(cell.fault).has_value());
+};
 
-auto tCrashReportHangBackground = test("CrashReport/hangBackground") = []
-{ checkBackgroundStallIsNotReported("hang"); };
+auto tMatrixAvailabilityAgrees = test("CrashMatrix/availabilityMatchesTheZoo") = []
+{
+    for (const auto& fault: Zoo::listFaults())
+    {
+        auto expected = getExpectedOutcome(fault.name, FaultThread::main);
+        check((expected.status == OutcomeStatus::notAvailable) != fault.isAvailable);
+    }
+};
 
-auto tCrashReportSpinBackground = test("CrashReport/spinBackground") = []
-{ checkBackgroundStallIsNotReported("spin"); };
+auto tMatrixFileIsCurrent = test("CrashMatrix/fileIsCurrent") = []
+{
+    auto committed = Files::readFile(FilePath {EACP_CRASH_MATRIX_FILE});
+    std::erase(committed, '\r');
 
-auto tCrashReportDeadlockBackground = test("CrashReport/deadlockBackground") = []
-{ checkBackgroundStallIsNotReported("deadlock"); };
+    if (committed != Zoo::renderCrashMatrix())
+        Console::printError(
+            "MATRIX.md is stale: run SelfDestruct --matrix " EACP_CRASH_MATRIX_FILE);
+
+    check(committed == Zoo::renderCrashMatrix());
+};
 
 auto tCrashReportFallback = test("CrashReport/fallbackWhenHandlerIsGone") = []
-{ checkFallbackReport("nullptr", FaultThread::main, nullPointerCrash.reason); };
+{
+    checkFallbackReport("nullptr",
+                        FaultThread::main,
+                        getExpectedOutcome("nullptr", FaultThread::main).reason);
+};
 
 auto tCrashReportFallbackBackground =
     test("CrashReport/fallbackWhenHandlerIsGoneBackground") = []
 {
-    checkFallbackReport(
-        "terminate", FaultThread::background, backgroundTerminateReason);
+    auto reason = getExpectedOutcome("terminate", FaultThread::background).reason;
+    checkFallbackReport("terminate", FaultThread::background, reason);
 };
