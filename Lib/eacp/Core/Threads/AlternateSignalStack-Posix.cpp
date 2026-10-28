@@ -17,11 +17,11 @@ bool hasAlternateSignalStack()
     return (current.ss_flags & SS_DISABLE) == 0;
 }
 
-bool isUsingStack(const std::byte* memory)
+bool isUsingStack(const Vector<std::byte>& memory)
 {
     auto current = stack_t {};
     ::sigaltstack(nullptr, &current);
-    return current.ss_sp == memory && (current.ss_flags & SS_DISABLE) == 0;
+    return current.ss_sp == memory.data() && (current.ss_flags & SS_DISABLE) == 0;
 }
 } // namespace
 
@@ -31,21 +31,21 @@ AlternateSignalStack::AlternateSignalStack(std::size_t size)
         return;
 
     auto stackSize = std::max(size, static_cast<std::size_t>(MINSIGSTKSZ));
-    memory = std::make_unique<std::byte[]>(stackSize);
+    stackMemory.resize(static_cast<int>(stackSize));
 
     auto stack = stack_t {};
-    stack.ss_sp = memory.get();
+    stack.ss_sp = stackMemory.data();
     stack.ss_size = stackSize;
     stack.ss_flags = 0;
     installed = ::sigaltstack(&stack, nullptr) == 0;
 
     if (!installed)
-        memory.reset();
+        stackMemory.clear();
 }
 
 AlternateSignalStack::~AlternateSignalStack()
 {
-    if (!installed || !isUsingStack(memory.get()))
+    if (!installed || !isUsingStack(stackMemory))
         return;
 
     auto disabled = stack_t {};
