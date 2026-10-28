@@ -1,7 +1,5 @@
 #include "Matrix.h"
 
-#include <array>
-
 namespace eacp::CrashReporting::Zoo
 {
 namespace
@@ -16,7 +14,9 @@ struct LaneName
     std::string_view name;
 };
 
-constexpr auto laneNames = std::to_array<LaneName>({
+constexpr auto laneCount = 7;
+
+constexpr auto laneNames = Array<LaneName, laneCount> {
     {Lane::macOSArm64, "macOS arm64"},
     {Lane::macOSX64, "macOS x86_64"},
     {Lane::windowsX64Msvc, "Windows x64 MSVC"},
@@ -24,7 +24,7 @@ constexpr auto laneNames = std::to_array<LaneName>({
     {Lane::windowsArm64Msvc, "Windows ARM64 MSVC"},
     {Lane::windowsArm64ClangCl, "Windows ARM64 clang-cl"},
     {Lane::linux, "Linux"},
-});
+};
 
 bool isMac(Lane lane)
 {
@@ -251,7 +251,9 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     return notAvailable("not in the matrix");
 }
 
-constexpr auto matrixFaults = std::to_array<std::string_view>({
+constexpr auto matrixFaultCount = 11;
+
+constexpr auto matrixFaults = Array<std::string_view, matrixFaultCount> {
     "nullptr",
     "divide",
     "stackoverflow",
@@ -263,7 +265,7 @@ constexpr auto matrixFaults = std::to_array<std::string_view>({
     "spin",
     "deadlock",
     "fastfail",
-});
+};
 
 Vector<MatrixCell> makeCrashMatrix()
 {
