@@ -30,4 +30,9 @@ private:
     Vector<std::byte> stackMemory;
     bool installed = false;
 };
+
+// On by default. Off only to measure what the stack costs a thread; each
+// Thread::start reads it once.
+void setThreadsInstallAlternateSignalStack(bool shouldInstall);
+[[nodiscard]] bool doThreadsInstallAlternateSignalStack();
 } // namespace eacp::Threads

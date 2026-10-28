@@ -6,6 +6,7 @@ set(NANO_TEST_GROUP_BY PREFIX)
 set(CMAKE_UNITY_BUILD ${EACP_UNITY_BUILD_TESTS})
 
 add_subdirectory(Core)
+add_subdirectory(AlternateSignalStack)
 
 if (APPLE)
     add_subdirectory(ObjC)

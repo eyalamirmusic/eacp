@@ -2,11 +2,27 @@
 #include "AlternateSignalStack.h"
 
 #include <atomic>
+#include <optional>
 #include <thread>
 
 namespace eacp::Threads
 {
 using AtomicId = std::atomic<std::thread::id>;
+
+namespace
+{
+std::atomic<bool> threadsInstallAlternateSignalStack {true};
+}
+
+void setThreadsInstallAlternateSignalStack(bool shouldInstall)
+{
+    threadsInstallAlternateSignalStack.store(shouldInstall);
+}
+
+bool doThreadsInstallAlternateSignalStack()
+{
+    return threadsInstallAlternateSignalStack.load();
+}
 
 struct Thread::Native
 {
@@ -53,11 +69,16 @@ void Thread::start(const Callback& body)
     join();
 
     auto id = std::make_shared<AtomicId>();
+    auto shouldInstallSignalStack = doThreadsInstallAlternateSignalStack();
 
-    auto run = [id, body]
+    auto run = [id, body, shouldInstallSignalStack]
     {
         id->store(std::this_thread::get_id());
-        auto signalStack = AlternateSignalStack {};
+        auto signalStack = std::optional<AlternateSignalStack> {};
+
+        if (shouldInstallSignalStack)
+            signalStack.emplace();
+
         body();
     };
 
