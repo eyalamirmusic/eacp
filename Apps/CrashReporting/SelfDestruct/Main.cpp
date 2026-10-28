@@ -1,4 +1,3 @@
-#include "Faults.h"
 #include "ReportWindow.h"
 
 #include <eacp/Core/App/Args.h>
@@ -6,6 +5,7 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
+#include <eacp/CrashReporting/Zoo/Zoo.h>
 #include <eacp/UI/UI.h>
 
 // An app that crashes itself on purpose, one button per way to die, so the
@@ -15,14 +15,17 @@
 //
 //   SelfDestruct                                   the window of buttons
 //   SelfDestruct --crash nullptr                   faults at once, no window
+//   SelfDestruct --crash abort --thread background
 //   SelfDestruct --crash abort -- --no-report-window
 //   SelfDestruct --crash hang --hang-threshold-ms 500
+//   SelfDestruct --crash nullptr --kill-handler    the app's fallback report
 //
 // Everything after "--" goes to the handler process, whose own flag
 // --no-report-window has it write the report and exit, which is what
 // Tests/CrashReporting runs.
 
 using namespace eacp;
+using CrashReporting::Zoo::ThreadChoice;
 
 namespace
 {
@@ -36,9 +39,11 @@ constexpr auto cardGap = 12.f;
 constexpr auto cardPadding = 12.f;
 constexpr auto cardCornerRadius = 10.f;
 constexpr auto descriptionHeight = 22.f;
+constexpr auto buttonGap = 8.f;
+constexpr auto buttonsPerCard = 2.f;
 constexpr auto handlerStatusRefreshHz = 2;
 constexpr auto windowWidth = 640;
-constexpr auto windowHeight = 560;
+constexpr auto windowHeight = 720;
 constexpr auto dangerColour = UI::Color {0.86f, 0.27f, 0.25f};
 constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
 constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
@@ -110,15 +115,22 @@ UI::Color getHandlerStatusColour()
 
 struct FaultCard final : UI::Component
 {
-    explicit FaultCard(const SelfDestruct::Fault& fault)
-        : button(std::string {fault.label})
+    explicit FaultCard(const CrashReporting::Zoo::Fault& fault)
+        : label(std::string {fault.label})
         , description(std::string {fault.description})
     {
-        button.onClick = fault.trigger;
-        button.setAccentColour(dangerColour);
+        auto name = fault.name;
+        mainThreadButton.onClick = [name]
+        { CrashReporting::Zoo::triggerFault(name, ThreadChoice::main); };
+        backgroundButton.onClick = [name]
+        { CrashReporting::Zoo::triggerFault(name, ThreadChoice::background); };
+
+        mainThreadButton.setAccentColour(dangerColour);
+        backgroundButton.setAccentColour(dangerColour);
         description.setThemeColour(UI::ThemeKeys::dimText);
+        label.setJustification(UI::Justification::Centred);
         description.setJustification(UI::Justification::Centred);
-        addChildren({button, description});
+        addChildren({label, mainThreadButton, backgroundButton, description});
     }
 
     void paint(UI::Graphics& g) override
@@ -130,11 +142,17 @@ struct FaultCard final : UI::Component
     void resized() override
     {
         auto area = getLocalBounds().inset(cardPadding);
+        label.setBounds(area.removeFromTop(lineHeight));
         description.setBounds(area.removeFromBottom(descriptionHeight));
-        button.setBounds(area);
+        auto buttonWidth = (area.w - buttonGap) / buttonsPerCard;
+        mainThreadButton.setBounds(area.removeFromLeft(buttonWidth));
+        area.removeFromLeft(buttonGap);
+        backgroundButton.setBounds(area);
     }
 
-    UI::Button button;
+    UI::Label label;
+    UI::Button mainThreadButton {"Main thread"};
+    UI::Button backgroundButton {"Background"};
     UI::Label description;
 };
 
@@ -148,8 +166,11 @@ struct FaultButtons final : UI::Component
         database.setThemeColour(UI::ThemeKeys::dimText);
         addChildren({title, subtitle, database, handlerStatus});
 
-        for (const auto& fault: SelfDestruct::getFaults())
-            addAndMakeVisible(cards.createNew(fault));
+        for (const auto& fault: CrashReporting::Zoo::listFaults())
+        {
+            if (fault.isAvailable)
+                addAndMakeVisible(cards.createNew(fault));
+        }
 
         showHandlerStatus();
     }
@@ -258,55 +279,83 @@ void startCrashReporting(const FilePath& databaseDirectory,
         {"app", "about to offer ways to crash", CrashReporting::Level::warning});
 }
 
-void runMainThreadFault(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+// Nothing is watched for a hang until the loop has beaten a few times.
+Time::MS getDelayBeforeStalling()
+{
+    constexpr auto heartbeatsBeforeStalling = 3;
+    auto delay =
+        CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
+    return Time::MS {delay.count()};
+}
+
+// A main-thread stall quits once the fault returns; a background one leaves
+// the main thread free, so the app runs as long as the stall would, then quits.
+void runStallingFault(std::string_view name,
+                      ThreadChoice thread,
+                      bool pausesHangDetection)
 {
     if (pausesHangDetection)
         CrashReporting::pauseHangDetection();
 
-    fault.trigger();
+    CrashReporting::Zoo::triggerFault(name, thread);
 
     if (pausesHangDetection)
         CrashReporting::resumeHangDetection();
 
-    Apps::quit();
+    if (thread == ThreadChoice::main)
+    {
+        Apps::quit();
+        return;
+    }
+
+    auto stall = CrashReporting::Zoo::getHangDuration();
+    Threads::callAfter(Time::MS {stall.count()}, [] { Apps::quit(); });
 }
 
-// Waits on the loop past the first heartbeats before stalling, since nothing
-// is watched until the loop has beaten once; quits once the fault returns.
-struct MainThreadFaultApp
+struct FaultApp
 {
-    MainThreadFaultApp(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+    FaultApp(const CrashReporting::Zoo::Fault& fault,
+             ThreadChoice thread,
+             bool pausesHangDetection)
     {
-        constexpr auto heartbeatsBeforeStalling = 3;
-        auto delay =
-            CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
+        if (!fault.stallsItsThread)
+        {
+            CrashReporting::Zoo::scheduleFault(fault.name, thread, Time::MS {0});
+            return;
+        }
 
-        Threads::callAfter(Time::MS {delay.count()},
-                           [fault, pausesHangDetection]
-                           { runMainThreadFault(fault, pausesHangDetection); });
+        auto name = fault.name;
+        Threads::callAfter(getDelayBeforeStalling(),
+                           [name, thread, pausesHangDetection]
+                           { runStallingFault(name, thread, pausesHangDetection); });
     }
 };
 
-int stallMainThreadNow(const SelfDestruct::Fault& fault, bool pausesHangDetection)
+int crashNow(std::string_view kind,
+             std::string_view threadName,
+             bool pausesHangDetection,
+             bool killsHandler)
 {
-    return Apps::run<MainThreadFaultApp>(fault, pausesHangDetection);
-}
+    auto fault = CrashReporting::Zoo::findFault(kind);
+    auto thread = CrashReporting::Zoo::findThreadChoice(threadName);
 
-int crashNow(std::string_view kind, bool pausesHangDetection)
-{
-    auto fault = SelfDestruct::findFault(kind);
-
-    if (!fault)
+    if (!fault || !fault->get().isAvailable || !thread)
     {
-        Console::printError("SelfDestruct: no fault called " + std::string {kind});
+        Console::printError("SelfDestruct: no fault called " + std::string {kind}
+                            + " on a " + std::string {threadName} + " thread here");
         return Args::badArguments;
     }
 
-    if (SelfDestruct::isMainThreadFault(kind))
-        return stallMainThreadNow(*fault, pausesHangDetection);
+    if (killsHandler)
+        CrashReporting::Zoo::killHandlerProcess();
 
-    fault->get().trigger();
-    return 0;
+    if (*thread == ThreadChoice::main && !fault->get().stallsItsThread)
+    {
+        CrashReporting::Zoo::triggerFault(kind, ThreadChoice::main);
+        return 0;
+    }
+
+    return Apps::run<FaultApp>(fault->get(), *thread, pausesHangDetection);
 }
 
 int showReport(const FilePath& folder)
@@ -337,9 +386,15 @@ int main(int argc, char* argv[])
         CrashReporting::Options {}.hangThreshold.count();
     auto reportToShow = FilePath {};
     auto pausesHangDetection = false;
+    auto threadName = std::string {"main"};
+    auto killsHandler = false;
 
     auto cli = Args::Parser {"SelfDestruct", "Crashes itself, on purpose."};
     cli.option("--crash", crashKind, "fault at once with no window");
+    cli.option("--thread", threadName, "main or background");
+    cli.flag("--kill-handler",
+             killsHandler,
+             "end the handler process first, so the app writes its own report");
     cli.option("--crash-database", databaseDirectory, "where reports go");
     cli.option("--hang-threshold-ms",
                hangThresholdMilliseconds,
@@ -357,11 +412,11 @@ int main(int argc, char* argv[])
         return showReport(reportToShow);
 
     auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
-    SelfDestruct::setHangDuration(hangThreshold + hangBeyondThreshold);
+    CrashReporting::Zoo::setHangDuration(hangThreshold + hangBeyondThreshold);
     startCrashReporting(databaseDirectory, handlerArguments, hangThreshold);
 
     if (!crashKind.empty())
-        return crashNow(crashKind, pausesHangDetection);
+        return crashNow(crashKind, threadName, pausesHangDetection, killsHandler);
 
     return Graphics::runWindowedApp<FaultHost>(
         makeWindowOptions(), CrashReporting::getDatabase().getDirectory());
