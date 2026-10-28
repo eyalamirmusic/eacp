@@ -1167,7 +1167,11 @@ list) and the handler symbolises with `dladdr`; on Windows the handler writes a
 minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
-itself; `Tests/CrashReporting` drives it. `Lib/eacp/CrashReporting/README.md`
+itself; `Tests/CrashReporting` drives it, every fault on the main and a background
+thread; the faults themselves are `eacp-crash-zoo` (`CrashReporting/Zoo/`),
+every `Threads::Thread` holds a `Threads::AlternateSignalStack`, macOS records
+throw sites through its own `__cxa_throw`, and with the handler gone the app
+writes a fallback `report.json` itself. `Lib/eacp/CrashReporting/README.md`
 is the account, platform coverage and v1 limits.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
