@@ -1,8 +1,8 @@
 #include "Thread.h"
 
 #include <atomic>
+#include <map>
 #include <mutex>
-#include <optional>
 #include <thread>
 
 namespace eacp::Threads
@@ -11,10 +11,13 @@ using AtomicId = std::atomic<std::thread::id>;
 
 namespace
 {
+// Keyed by thread rather than thread_local: macOS never unloads an image
+// that has thread-local variables, and plugins link Core.
 struct ThreadWatchRegistry
 {
     std::mutex mutex;
     ThreadWatchFactory factory;
+    std::map<std::thread::id, std::reference_wrapper<ThreadWatchScope>> openWatches;
 };
 
 ThreadWatchRegistry& getThreadWatchRegistry()
@@ -22,9 +25,6 @@ ThreadWatchRegistry& getThreadWatchRegistry()
     static auto registry = ThreadWatchRegistry {};
     return registry;
 }
-
-thread_local auto currentThreadWatch =
-    std::optional<std::reference_wrapper<ThreadWatchScope>> {};
 
 std::unique_ptr<ThreadWatchScope> openThreadWatch(const ThreadOptions& options)
 {
@@ -45,14 +45,34 @@ struct CurrentThreadWatch
     explicit CurrentThreadWatch(const ThreadOptions& options)
         : watch(openThreadWatch(options))
     {
-        if (watch)
-            currentThreadWatch = *watch;
+        if (!watch)
+            return;
+
+        auto& registry = getThreadWatchRegistry();
+        auto lock = std::lock_guard {registry.mutex};
+        registry.openWatches.insert_or_assign(std::this_thread::get_id(), *watch);
     }
 
-    ~CurrentThreadWatch() { currentThreadWatch.reset(); }
+    ~CurrentThreadWatch()
+    {
+        auto& registry = getThreadWatchRegistry();
+        auto lock = std::lock_guard {registry.mutex};
+        registry.openWatches.erase(std::this_thread::get_id());
+    }
 
     std::unique_ptr<ThreadWatchScope> watch;
 };
+
+template <typename WatchFunction>
+void applyToCurrentThreadWatch(WatchFunction apply)
+{
+    auto& registry = getThreadWatchRegistry();
+    auto lock = std::lock_guard {registry.mutex};
+    auto found = registry.openWatches.find(std::this_thread::get_id());
+
+    if (found != registry.openWatches.end())
+        apply(found->second.get());
+}
 } // namespace
 
 void setThreadWatchFactory(const ThreadWatchFactory& factory)
@@ -64,20 +84,17 @@ void setThreadWatchFactory(const ThreadWatchFactory& factory)
 
 void beatThreadWatch()
 {
-    if (currentThreadWatch)
-        currentThreadWatch->get().beat();
+    applyToCurrentThreadWatch([](ThreadWatchScope& watch) { watch.beat(); });
 }
 
 void pauseThreadWatch()
 {
-    if (currentThreadWatch)
-        currentThreadWatch->get().pause();
+    applyToCurrentThreadWatch([](ThreadWatchScope& watch) { watch.pause(); });
 }
 
 void resumeThreadWatch()
 {
-    if (currentThreadWatch)
-        currentThreadWatch->get().resume();
+    applyToCurrentThreadWatch([](ThreadWatchScope& watch) { watch.resume(); });
 }
 
 struct Thread::Native
