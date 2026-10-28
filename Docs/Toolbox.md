@@ -148,6 +148,7 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `callAfter(MS, func)` — run on the main thread later
 - `Timer(cb, MS | Hz)` — periodic callback
 - `Thread` — joining thread, `start`, `join`
+- `AlternateSignalStack` — a stack for crash handlers after a stack overflow
 - `Async<T>` / `AsyncPromise<T>` — `then(onValue, onError)`, `resolve`, `reject`
 - `runEventLoopFor(MS)` / `runEventLoopUntil(predicate, ...)` — pump the loop
 - `BinarySemaphore` / `TaskSemaphore` (`TaskSemaphore.h`) — wait with timeout

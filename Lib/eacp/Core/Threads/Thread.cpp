@@ -1,4 +1,5 @@
 #include "Thread.h"
+#include "AlternateSignalStack.h"
 
 #include <atomic>
 #include <thread>
@@ -56,6 +57,7 @@ void Thread::start(const Callback& body)
     auto run = [id, body]
     {
         id->store(std::this_thread::get_id());
+        auto signalStack = AlternateSignalStack {};
         body();
     };
 

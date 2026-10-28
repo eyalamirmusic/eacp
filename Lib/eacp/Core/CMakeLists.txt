@@ -65,6 +65,7 @@ if (APPLE)
             Plugins/DynamicLibrary-Posix.cpp
             Plugins/ModuleInfo-Apple.cpp
             Plugins/ModuleInfo-Posix.cpp
+            Threads/AlternateSignalStack-Posix.cpp
             Threads/EventLoop.mm
             Threads/EventLoop-Default.cpp
             Threads/Timer.mm
@@ -111,6 +112,7 @@ elseif (WIN32)
             Plugins/DynamicLibrary-Windows.cpp
             Plugins/ModuleInfo-Windows.cpp
             Process/Process-Windows.cpp
+            Threads/AlternateSignalStack-Windows.cpp
             Threads/EventLoop-Windows.cpp
             Threads/ThreadUtils-Windows.cpp
             Threads/Timer-Windows.cpp
@@ -132,6 +134,7 @@ elseif (UNIX AND NOT APPLE)
             Plugins/ModuleInfo-Linux.cpp
             Plugins/ModuleInfo-Posix.cpp
             Process/Process-Posix.cpp
+            Threads/AlternateSignalStack-Posix.cpp
             Threads/EventLoop-Linux.cpp
             Threads/ThreadUtils-Linux.cpp
             Threads/Timer-Linux.cpp
