@@ -471,5 +471,6 @@ std::uint64_t getCurrentThreadId()
 // The handler process watches the heartbeat and samples from outside.
 void startHangWatchdog(SharedState&) {}
 void stopHangWatchdog() {}
+void recordThreadForSampling(SharedWatchedThread&) {}
 
 } // namespace eacp::CrashReporting::Detail

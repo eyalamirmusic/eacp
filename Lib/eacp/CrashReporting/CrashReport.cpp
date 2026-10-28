@@ -143,7 +143,7 @@ void StackFrame::reflect(Miro::Reflector& ref)
 void CrashedThread::reflect(Miro::Reflector& ref)
 {
     reflectHexAddress(ref, "threadId", threadId);
-    MIRO_FIELDS(ref, frames)
+    MIRO_FIELDS(ref, name, frames)
 }
 
 void Breadcrumb::reflect(Miro::Reflector& ref)
@@ -172,6 +172,7 @@ void CrashReport::reflect(Miro::Reflector& ref)
     reflectHexAddress(ref, "faultAddress", faultAddress);
     MIRO_FIELDS(ref, crashingThread, terminateFrames)
     ref["hangDuration"](hangDurationMilliseconds);
+    MIRO_FIELDS(ref, threadName, stalledThreads)
     reflectPath(ref, "minidumpPath", minidumpPath);
     MIRO_FIELDS(ref, metadata, tags, extra, user, breadcrumbs)
     ref["attachments"](attachmentPaths);

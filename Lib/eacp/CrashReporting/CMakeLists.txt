@@ -21,7 +21,8 @@ target_sources(eacp-crash-reporting PRIVATE
         CrashHandler.cpp
         CrashReporting.cpp
         HandlerReport.cpp
-        SharedState.cpp)
+        SharedState.cpp
+        ThreadWatch.cpp)
 
 if (APPLE)
     target_sources(eacp-crash-reporting PRIVATE

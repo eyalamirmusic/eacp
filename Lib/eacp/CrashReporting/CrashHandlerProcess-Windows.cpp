@@ -52,13 +52,6 @@ enum class AppEvent
     hangCheckDue
 };
 
-// What the handler remembers between hang checks: the heartbeat a reported
-// hang was silent from, so each episode is reported once.
-struct HangWatch
-{
-    std::uint64_t reportedHeartbeat = 0;
-};
-
 HANDLE openChannelEvent(std::string_view channel, std::string_view suffix)
 {
     auto name = makeChannelObjectName(channel, suffix);
@@ -390,17 +383,17 @@ Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& cras
     return frames;
 }
 
-// The main thread stopped where it is: suspended only for the walk, then
+// A watched thread stopped where it is: suspended only for the walk, then
 // named once it runs again, since loading symbols can take seconds.
-Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
+std::optional<Vector<StackFrame>> sampleWatchedThread(HANDLE process,
+                                                      std::uint64_t threadId)
 {
     constexpr auto access =
         THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION;
-    auto frames = Vector<StackFrame> {};
-    auto thread = ::OpenThread(access, FALSE, static_cast<DWORD>(hang.mainThreadId));
+    auto thread = ::OpenThread(access, FALSE, static_cast<DWORD>(threadId));
 
     if (thread == nullptr)
-        return frames;
+        return std::nullopt;
 
     initialiseSymbols(process);
     auto addresses = Vector<std::uint64_t> {};
@@ -416,7 +409,7 @@ Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
         ::ResumeThread(thread);
     }
 
-    frames = makeReportFrames(process, addresses);
+    auto frames = makeReportFrames(process, addresses);
     ::SymCleanup(process);
     ::CloseHandle(thread);
     return frames;
@@ -452,23 +445,42 @@ bool isDebuggerAttachedTo(HANDLE process)
 // handler goes back to waiting.
 void checkForHang(const ReportDatabase& database,
                   const AppConnection& connection,
-                  HangWatch& watch)
+                  StallTracker& tracker)
 {
-    auto& state = connection.state->get();
-    auto duration = findHangDuration(state.hang, getSteadyMilliseconds());
-    auto heartbeat =
-        state.hang.heartbeatMilliseconds.load(std::memory_order_acquire);
+    auto& hang = connection.state->get().hang;
+    auto stalls = takeNewStalls(hang, tracker, getSteadyMilliseconds());
 
-    if (duration == 0 || heartbeat == watch.reportedHeartbeat
-        || isDebuggerAttachedTo(connection.appProcess))
+    if (stalls.empty() || isDebuggerAttachedTo(connection.appProcess))
         return;
 
-    watch.reportedHeartbeat = heartbeat;
-    state.hang.durationMilliseconds = duration;
+    auto sampledFrames = Vector<Vector<StackFrame>> {};
 
-    auto frames = sampleMainThread(connection.appProcess, state.hang);
+    for (const auto& stall: stalls)
+    {
+        const auto& thread = hang.threads[stall.slot];
+        auto frames = sampleWatchedThread(connection.appProcess, thread.threadId);
+
+        if (!frames || !isSameWatchedThread(thread, stall))
+            continue;
+
+        auto& stalled = hang.stalled[static_cast<std::size_t>(sampledFrames.size())];
+        stalled.threadId = thread.threadId;
+        stalled.name = thread.name;
+        stalled.durationMilliseconds = stall.durationMilliseconds;
+        sampledFrames.add(std::move(*frames));
+    }
+
+    if (sampledFrames.empty())
+        return;
+
+    hang.stalledCount = static_cast<std::uint32_t>(sampledFrames.size());
+    const auto& state = connection.state->get();
     auto report = beginHangReport(database, state);
-    report.crashingThread.frames = frames;
+
+    for (auto index = 0; index < report.stalledThreads.size(); ++index)
+        report.stalledThreads[index].frames = sampledFrames[index];
+
+    finishHangReportThreads(report);
     auto minidumpPath = report.folder / minidumpFileName;
 
     if (writeMinidump(connection.appProcess, state, minidumpPath, false))
@@ -519,7 +531,7 @@ int runHandlerProcess(const HandlerArguments& arguments)
 
     signalHandlerReady(arguments.channel);
     auto database = ReportDatabase {arguments.databaseDirectory};
-    auto watch = HangWatch {};
+    auto tracker = StallTracker {};
 
     while (true)
     {
@@ -530,7 +542,7 @@ int runHandlerProcess(const HandlerArguments& arguments)
 
         if (event == AppEvent::hangCheckDue)
         {
-            checkForHang(database, connection, watch);
+            checkForHang(database, connection, tracker);
             continue;
         }
 

@@ -88,22 +88,143 @@ std::uint64_t getSteadyMilliseconds()
     return static_cast<std::uint64_t>(milliseconds.count());
 }
 
-std::uint64_t findHangDuration(const SharedHangInfo& hang, std::uint64_t now)
+std::uint64_t getWatchThreshold(const SharedHangInfo& hang,
+                                const SharedWatchedThread& thread)
 {
-    auto heartbeat = hang.heartbeatMilliseconds.load(std::memory_order_acquire);
-    auto isPaused = hang.pauseDepth.load(std::memory_order_acquire) > 0;
+    if (hang.thresholdMilliseconds == 0 || thread.thresholdMilliseconds == 0)
+        return hang.thresholdMilliseconds;
 
-    if (heartbeat == 0 || isPaused || hang.thresholdMilliseconds == 0
-        || now < heartbeat)
+    return thread.thresholdMilliseconds;
+}
+
+std::uint64_t findStallDuration(const SharedHangInfo& hang,
+                                const SharedWatchedThread& thread,
+                                std::uint64_t now,
+                                std::uint64_t grace)
+{
+    auto isLive = thread.status.load(std::memory_order_acquire) == watchedThreadLive;
+    auto beat = thread.lastBeatMilliseconds.load(std::memory_order_acquire);
+    auto isPaused = thread.pauseDepth.load(std::memory_order_acquire) > 0;
+    auto threshold = getWatchThreshold(hang, thread);
+
+    if (!isLive || beat == 0 || isPaused || threshold == 0 || now < beat)
         return 0;
 
-    // A healthy loop is up to one interval past its last beat.
-    auto silence = now - heartbeat;
+    auto silence = now - beat;
 
-    if (silence < hang.thresholdMilliseconds + hang.pollIntervalMilliseconds)
+    if (silence < threshold + grace)
         return 0;
 
     return silence;
+}
+
+std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
+                                              std::string_view name,
+                                              std::uint64_t thresholdMilliseconds,
+                                              std::uint64_t threadId)
+{
+    for (auto slot = mainThreadSlot + 1; slot < maxWatchedThreads; ++slot)
+    {
+        auto& thread = hang.threads[slot];
+        auto expected = watchedThreadFree;
+
+        if (!thread.status.compare_exchange_strong(
+                expected, watchedThreadClaiming, std::memory_order_acq_rel))
+            continue;
+
+        thread.generation.fetch_add(1, std::memory_order_acq_rel);
+        thread.pauseDepth.store(0, std::memory_order_relaxed);
+        thread.thresholdMilliseconds = thresholdMilliseconds;
+        thread.threadId = threadId;
+        copyBoundedText(thread.name, name);
+        beatWatchedThread(thread);
+        thread.status.store(watchedThreadLive, std::memory_order_release);
+        return slot;
+    }
+
+    return std::nullopt;
+}
+
+void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId)
+{
+    auto& thread = hang.threads[mainThreadSlot];
+    thread.generation.fetch_add(1, std::memory_order_acq_rel);
+    thread.thresholdMilliseconds = 0;
+    thread.threadId = threadId;
+    copyBoundedText(thread.name, mainThreadName);
+    thread.status.store(watchedThreadLive, std::memory_order_release);
+}
+
+void releaseWatchedThread(SharedWatchedThread& thread)
+{
+    thread.lastBeatMilliseconds.store(0, std::memory_order_release);
+    thread.status.store(watchedThreadFree, std::memory_order_release);
+}
+
+void beatWatchedThread(SharedWatchedThread& thread)
+{
+    thread.lastBeatMilliseconds.store(getSteadyMilliseconds(),
+                                      std::memory_order_release);
+}
+
+void pauseWatchedThread(SharedWatchedThread& thread)
+{
+    thread.pauseDepth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void resumeWatchedThread(SharedWatchedThread& thread)
+{
+    if (thread.pauseDepth.load(std::memory_order_acquire) == 0)
+        return;
+
+    if (thread.lastBeatMilliseconds.load(std::memory_order_acquire) != 0)
+        beatWatchedThread(thread);
+
+    thread.pauseDepth.fetch_sub(1, std::memory_order_acq_rel);
+}
+
+Vector<NewStall> takeNewStalls(const SharedHangInfo& hang,
+                               StallTracker& tracker,
+                               std::uint64_t now)
+{
+    auto stalls = Vector<NewStall> {};
+    auto hasOverdueStall = false;
+
+    for (auto slot = std::size_t {0}; slot < maxWatchedThreads; ++slot)
+    {
+        const auto& thread = hang.threads[slot];
+        auto generation = thread.generation.load(std::memory_order_acquire);
+        auto beat = thread.lastBeatMilliseconds.load(std::memory_order_acquire);
+        // Half an interval past the threshold: a healthy thread whose beat is
+        // just due is never taken along.
+        auto companionGrace = hang.pollIntervalMilliseconds / 2;
+        auto duration = findStallDuration(hang, thread, now, companionGrace);
+
+        if (duration == 0 || beat == tracker.reportedBeats[slot])
+            continue;
+
+        // A healthy thread is up to one interval past its last beat.
+        auto overdue =
+            findStallDuration(hang, thread, now, hang.pollIntervalMilliseconds);
+        hasOverdueStall = hasOverdueStall || overdue != 0;
+        stalls.add({slot, generation, duration});
+    }
+
+    if (!hasOverdueStall)
+        return {};
+
+    for (const auto& stall: stalls)
+        tracker.reportedBeats[stall.slot] =
+            hang.threads[stall.slot].lastBeatMilliseconds.load(
+                std::memory_order_acquire);
+
+    return stalls;
+}
+
+bool isSameWatchedThread(const SharedWatchedThread& thread, const NewStall& stall)
+{
+    return thread.status.load(std::memory_order_acquire) == watchedThreadLive
+           && thread.generation.load(std::memory_order_acquire) == stall.generation;
 }
 
 bool isSharedStateValid(const SharedState& state)
