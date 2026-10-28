@@ -3,6 +3,7 @@
 
 #include <NanoTest/NanoTest.h>
 
+#include <algorithm>
 #include <memory>
 
 using namespace nano;
@@ -15,8 +16,10 @@ constexpr auto testThreshold = std::uint64_t {500};
 constexpr auto testPollInterval = std::uint64_t {100};
 constexpr auto testThreadId = std::uint64_t {42};
 constexpr auto otherThreadId = std::uint64_t {43};
-constexpr auto beatTime = std::uint64_t {1000000};
 constexpr auto overdue = testThreshold + testPollInterval;
+
+// The claims beat on the real steady clock, so the tests' own times follow it.
+const auto beatTime = getSteadyMilliseconds();
 
 std::unique_ptr<SharedState> createWatchedState()
 {
@@ -78,7 +81,7 @@ auto tPausedThreadIsNotReported =
 
     resumeWatchedThread(thread);
     check(thread.pauseDepth.load() == 0);
-    check(thread.lastBeatMilliseconds.load() > beatTime);
+    check(thread.lastBeatMilliseconds.load() >= beatTime);
 };
 
 auto tReleasedSlotIsFreed = test("CrashReport/threadWatchReleasedSlotIsFreed") = []
@@ -97,7 +100,10 @@ auto tReleasedSlotIsFreed = test("CrashReport/threadWatchReleasedSlotIsFreed") =
     released.lastBeatMilliseconds = beatTime;
 
     auto tracker = StallTracker {};
-    check(takeNewStalls(hang, tracker, beatTime + overdue).empty());
+    auto stalls = takeNewStalls(hang, tracker, getSteadyMilliseconds() + overdue);
+    check(std::ranges::none_of(stalls,
+                               [](const NewStall& stall)
+                               { return stall.slot == mainThreadSlot + 1; }));
     check(claimWatchedThread(hang, "again", 0, testThreadId) == mainThreadSlot + 1);
 };
 
