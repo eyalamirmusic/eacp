@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string_view>
 
 // The descriptors the handler process is started with: posix_spawn moves the
 // app's ends onto these numbers and closes everything else.
@@ -13,7 +14,11 @@ constexpr auto firstFreeDescriptor = handlerReadyPipeDescriptor + 1;
 
 // The handler's channel argument; it names nothing, since the descriptors are
 // fixed, and is checked so a stray command line is refused.
-constexpr auto handlerDescriptorChannel = "inherited-descriptors";
+constexpr auto handlerDescriptorChannel = std::string_view {"inherited-descriptors"};
+
+// The same, and the handler's bootstrap port is the app's handshake port.
+constexpr auto handlerMachChannel =
+    std::string_view {"inherited-descriptors-mach-handshake"};
 
 constexpr auto crashNotificationByte = char {'C'};
 constexpr auto hangNotificationByte = char {'H'};

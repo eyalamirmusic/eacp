@@ -3,6 +3,7 @@
 #include "CrashReportingPlatform.h"
 #include "MachImages-macOS.h"
 #include "ThrowSites-macOS.h"
+#include "TaskPortHandshake-macOS.h"
 #include "UncaughtExceptions-macOS.h"
 
 #include <array>
@@ -34,6 +35,7 @@ namespace
 {
 constexpr auto demangleBufferSize = std::size_t {1024};
 constexpr auto handlerCaptureTimeoutSeconds = 60;
+
 constexpr auto terminateReason = std::string_view {"std::terminate"};
 constexpr auto unknownExceptionType = std::string_view {"unknown exception"};
 constexpr auto messageSeparator = std::string_view {": "};
@@ -389,9 +391,11 @@ Vector<char*> makeArgumentPointers(Vector<std::string>& arguments)
 std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
                                   int sharedDescriptor,
                                   const PipeEnds& crashPipe,
-                                  const PipeEnds& readyPipe)
+                                  const PipeEnds& readyPipe,
+                                  const std::optional<HandshakePort>& handshake)
 {
-    auto arguments = makeHandlerCommandLine(launch, handlerDescriptorChannel);
+    auto channel = handshake ? handlerMachChannel : handlerDescriptorChannel;
+    auto arguments = makeHandlerCommandLine(launch, channel);
     auto argumentPointers = makeArgumentPointers(arguments);
 
     auto actions = posix_spawn_file_actions_t {};
@@ -412,6 +416,10 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
     auto attributes = posix_spawnattr_t {};
     ::posix_spawnattr_init(&attributes);
     ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT);
+
+    if (handshake)
+        ::posix_spawnattr_setspecialport_np(
+            &attributes, handshake->receiveRight, TASK_BOOTSTRAP_PORT);
 
     auto processId = pid_t {};
     auto result = ::posix_spawn(&processId,
@@ -498,6 +506,7 @@ void uninstallCrashHandlers()
     auto& client = getMacCrashClient();
     restorePreviousSignalHandlers();
     stopRecordingThrowSites();
+    restorePreviousExceptionPorts();
     std::set_terminate(client.previousTerminateHandler);
     uninstallUncaughtExceptionRecorder();
 }
@@ -560,10 +569,24 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     if (client.sharedStateDescriptor < 0 || !crashPipe || !readyPipe)
         return false;
 
-    auto spawned =
-        spawnHandler(launch, client.sharedStateDescriptor, *crashPipe, *readyPipe);
+    auto handshake = std::optional<HandshakePort> {};
+
+    if (launch.captureMachExceptions)
+        handshake = createHandshakePort();
+
+    auto spawned = spawnHandler(
+        launch, client.sharedStateDescriptor, *crashPipe, *readyPipe, handshake);
     ::close(crashPipe->readEnd);
     ::close(readyPipe->writeEnd);
+
+    // Answered before the ready byte is read: until the handler has its real
+    // bootstrap port back, its runtime's own lookups land on this port too,
+    // and are dropped here rather than left to block it.
+    if (spawned && handshake)
+        answerHandshakeWithTaskPort(*handshake, launch.startTimeout);
+
+    if (handshake)
+        destroyHandshakePort(*handshake);
 
     auto ready = spawned.has_value()
                  && waitForHandlerReady(readyPipe->readEnd, launch.startTimeout);

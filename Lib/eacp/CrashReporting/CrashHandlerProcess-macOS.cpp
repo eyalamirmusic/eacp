@@ -2,15 +2,25 @@
 #include "CrashReportingPlatform.h"
 #include "LoadedLibrarySymbolReader-macOS.h"
 #include "MachImages-macOS.h"
+#include "Minidump-macOS.h"
+#include "TaskCapture-macOS.h"
+#include "TaskPortHandshake-macOS.h"
+
+#include <eacp/Core/Threads/Thread.h>
+#include <eacp/Core/Utils/Format.h>
 
 #include <cerrno>
 #include <csignal>
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
+#include <atomic>
 #include <map>
+#include <mutex>
+#include <optional>
 #include <memory>
 #include <sys/mman.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 namespace eacp::CrashReporting::Detail
@@ -271,10 +281,295 @@ int handleCrash(const ReportDatabase& database, const SharedState& state)
     return deliverReportInHandler(report);
 }
 
+constexpr auto handshakeTimeout = std::chrono::seconds {5};
+constexpr auto maxMinidumpStackBytes = std::size_t {1024 * 1024};
+constexpr auto minidumpFileName = "minidump.dmp";
+
+void copyImagesIntoCrashInfo(SharedCrashInfo& crash, const Vector<AppImage>& images)
+{
+    auto count = std::min(static_cast<std::size_t>(images.size()), maxSharedModules);
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+    {
+        const auto& image = images[static_cast<int>(index)];
+        auto& module = crash.modules[index];
+        module.base = image.base;
+        module.size = image.size;
+        copyBoundedText(module.path, image.path);
+    }
+
+    crash.moduleCount = static_cast<std::uint32_t>(count);
+}
+
+void copyFramesIntoCrashInfo(SharedCrashInfo& crash,
+                             const Vector<std::uint64_t>& addresses)
+{
+    auto count =
+        std::min(static_cast<std::size_t>(addresses.size()), maxCrashFrames);
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+        crash.frames[index] = addresses[static_cast<int>(index)];
+
+    crash.frameCount = static_cast<std::uint32_t>(count);
+}
+
+std::uint64_t findExceptionAddress(const MachException& exception,
+                                   const FaultingThreadRegisters& registers)
+{
+    if (exception.type == EXC_BAD_ACCESS)
+        return static_cast<std::uint64_t>(exception.codes[1]);
+
+    return registers.programCounter;
+}
+
+std::string describeMachException(const MachException& exception)
+{
+    auto code = static_cast<std::uint64_t>(exception.codes[0]);
+    auto subcode = static_cast<std::uint64_t>(exception.codes[1]);
+
+    if (exception.type == EXC_BAD_ACCESS)
+        return Strings::format("{} at {:#x}",
+                               ::mach_error_string(static_cast<kern_return_t>(code)),
+                               subcode);
+
+    return Strings::format("code {:#x}, subcode {:#x}", code, subcode);
+}
+
+std::uint32_t getProcessorCount()
+{
+    auto count = std::uint32_t {0};
+    auto length = sizeof(count);
+    ::sysctlbyname("hw.ncpu", &count, &length, nullptr, 0);
+    return count;
+}
+
+std::string getOperatingSystemBuild()
+{
+    auto build = std::array<char, maxReasonLength> {};
+    auto length = build.size();
+
+    if (::sysctlbyname("kern.osversion", build.data(), &length, nullptr, 0) != 0)
+        return {};
+
+    return std::string {readBoundedText(build)};
+}
+
+Vector<std::byte> readStackBytes(mach_port_t task, const MemoryRange& stack)
+{
+    auto bytes = Vector<std::byte>(static_cast<int>(stack.end - stack.start));
+    auto destination =
+        std::span {bytes.data(), static_cast<std::size_t>(bytes.size())};
+
+    if (!readAppMemory(task, stack.start, destination))
+        return {};
+
+    return bytes;
+}
+
+struct MachCapture
+{
+    mach_port_t task = MACH_PORT_NULL;
+    const MachException& exception;
+    const FaultingThreadRegisters& registers;
+    const Vector<AppImage>& images;
+    std::uint64_t threadId = 0;
+};
+
+bool writeMachMinidump(const FilePath& path, const MachCapture& capture)
+{
+    auto contents = MinidumpContents {};
+    contents.exceptionType = capture.exception.type;
+    contents.exceptionCodes = capture.exception.codes;
+    contents.exceptionAddress =
+        findExceptionAddress(capture.exception, capture.registers);
+    contents.threadId = capture.threadId;
+    contents.registers = capture.registers;
+    contents.images = capture.images;
+    contents.operatingSystemVersion = getOperatingSystemVersion();
+    contents.operatingSystemBuild = getOperatingSystemBuild();
+    contents.processorCount = getProcessorCount();
+
+    auto stack = findThreadStack(
+        capture.task, capture.registers.stackPointer, maxMinidumpStackBytes);
+
+    if (stack)
+    {
+        contents.stack = *stack;
+        contents.stackBytes = readStackBytes(capture.task, *stack);
+    }
+
+    return writeMinidump(path, contents);
+}
+
+// The task port the app handed over; the one in the message when the
+// handshake gave none.
+mach_port_t chooseAppTask(const HandlerMachPorts& ports,
+                          const MachException& exception)
+{
+    if (ports.appTask != MACH_PORT_NULL)
+        return ports.appTask;
+
+    return exception.task;
+}
+
+CrashReport captureMachException(const ReportDatabase& database,
+                                 const SharedState& state,
+                                 const HandlerMachPorts& ports,
+                                 const MachException& exception)
+{
+    auto task = chooseAppTask(ports, exception);
+    auto registers = readThreadState(exception).value_or(FaultingThreadRegisters {});
+    auto addresses = walkFramePointers(task, registers, maxCrashFrames);
+    auto images = readImageList(task);
+    auto threadId = readThreadId(exception.thread);
+
+    auto crash = std::make_unique<SharedCrashInfo>(state.crash);
+    copyImagesIntoCrashInfo(*crash, images);
+    copyFramesIntoCrashInfo(*crash, addresses);
+
+    auto report = beginHandlerReport(database, state, CaptureSource::handlerMach);
+    report.reason = getMachExceptionName(exception.type);
+    report.message = describeMachException(exception);
+    report.faultAddress = findExceptionAddress(exception, registers);
+    report.crashingThread.threadId = threadId;
+    report.crashingThread.frames =
+        resolveFrames(*crash, crash->frames, crash->frameCount);
+
+    auto minidumpPath = report.folder / minidumpFileName;
+    auto capture = MachCapture {task, exception, registers, images, threadId};
+
+    if (writeMachMinidump(minidumpPath, capture))
+        report.minidumpPath = minidumpPath;
+
+    return report;
+}
+
+// The faulting thread is still suspended in the kernel, so the app is ended
+// before the reply lets it go on into its own signal handler.
+int handleMachException(const ReportDatabase& database,
+                        const SharedState& state,
+                        const HandlerMachPorts& ports,
+                        const MachException& exception)
+{
+    auto report = captureMachException(database, state, ports, exception);
+    finishHandlerReport(database, report, state);
+
+    ::kill(static_cast<pid_t>(state.appProcessId), SIGKILL);
+    replyToException(exception, KERN_FAILURE);
+    releaseExceptionPorts(exception);
+
+    return deliverReportInHandler(report);
+}
+
+bool isFromApp(const MachException& exception, const SharedState& state)
+{
+    auto processId = pid_t {0};
+
+    if (::pid_for_task(exception.task, &processId) != KERN_SUCCESS)
+        return false;
+
+    return static_cast<std::uint64_t>(processId) == state.appProcessId;
+}
+
+// What the pipe's thread and the exception port's thread share. Whichever
+// captures takes the mutex for the whole capture, so the other never reports
+// the same crash or exits under it.
+struct HandlerSession
+{
+    HandlerSession(const ReportDatabase& databaseToUse,
+                   const SharedState& stateToRead,
+                   const HandlerMachPorts& portsFromHandshake)
+        : database(databaseToUse)
+        , state(stateToRead)
+        , ports(portsFromHandshake)
+    {
+    }
+
+    const ReportDatabase& database;
+    const SharedState& state;
+    HandlerMachPorts ports;
+    std::mutex captureMutex;
+    std::optional<int> machCaptureExitCode;
+
+    // Set by whichever path reported first: an abort that then traps can
+    // reach both, and the second would find the app already gone.
+    bool hasReportedCrash = false;
+    std::atomic<bool> isStopping {false};
+};
+
+// An exception from a child the app spawned, which inherits the exception
+// ports, is handed back to the kernel untouched.
+void serveExceptions(HandlerSession& session)
+{
+    while (!session.isStopping.load())
+    {
+        auto exception = receiveExceptionMessage(session.ports.exceptionPort);
+
+        if (!exception)
+            continue;
+
+        if (!isFromApp(*exception, session.state))
+        {
+            replyToException(*exception, KERN_FAILURE);
+            releaseExceptionPorts(*exception);
+            continue;
+        }
+
+        auto lock = std::lock_guard {session.captureMutex};
+
+        if (session.hasReportedCrash)
+        {
+            replyToException(*exception, KERN_FAILURE);
+            releaseExceptionPorts(*exception);
+            return;
+        }
+
+        session.hasReportedCrash = true;
+        session.machCaptureExitCode = handleMachException(
+            session.database, session.state, session.ports, *exception);
+        return;
+    }
+}
+
+void stopServingExceptions(HandlerSession& session)
+{
+    session.isStopping.store(true);
+
+    if (session.ports.exceptionPort != MACH_PORT_NULL)
+        ::mach_port_mod_refs(::mach_task_self(),
+                             session.ports.exceptionPort,
+                             MACH_PORT_RIGHT_RECEIVE,
+                             -1);
+}
+
+int waitForAppEvents(HandlerSession& session)
+{
+    while (true)
+    {
+        auto event = waitForCrashPipeEvent();
+        auto lock = std::lock_guard {session.captureMutex};
+
+        if (session.machCaptureExitCode)
+            return *session.machCaptureExitCode;
+
+        if (event == CrashPipeEvent::appExited)
+            return EXIT_SUCCESS;
+
+        if (event == CrashPipeEvent::crash)
+        {
+            session.hasReportedCrash = true;
+            return handleCrash(session.database, session.state);
+        }
+
+        handleHang(session.database, session.state);
+    }
+}
 } // namespace
 int runHandlerProcess(const HandlerArguments& arguments)
 {
-    if (arguments.channel != handlerDescriptorChannel)
+    auto isMachChannel = arguments.channel == handlerMachChannel;
+
+    if (!isMachChannel && arguments.channel != handlerDescriptorChannel)
         return EXIT_FAILURE;
 
     auto state = mapInheritedSharedState();
@@ -282,21 +577,29 @@ int runHandlerProcess(const HandlerArguments& arguments)
     if (!state)
         return EXIT_FAILURE;
 
+    auto pendingRequest = std::optional<PendingTaskPortRequest> {};
+
+    if (isMachChannel)
+        pendingRequest = sendAppTaskPortRequest();
+
     signalHandlerReady();
+    auto ports = std::optional<HandlerMachPorts> {};
+
+    if (pendingRequest)
+        ports = receiveAppTaskPort(*pendingRequest, handshakeTimeout);
+
     auto database = ReportDatabase {arguments.databaseDirectory};
+    auto session =
+        HandlerSession {database, *state, ports.value_or(HandlerMachPorts {})};
+    auto exceptionThread = Threads::Thread {};
 
-    while (true)
-    {
-        auto event = waitForCrashPipeEvent();
+    if (ports)
+        exceptionThread.start([&session] { serveExceptions(session); });
 
-        if (event == CrashPipeEvent::appExited)
-            return EXIT_SUCCESS;
-
-        if (event == CrashPipeEvent::crash)
-            return handleCrash(database, *state);
-
-        handleHang(database, *state);
-    }
+    auto exitCode = waitForAppEvents(session);
+    stopServingExceptions(session);
+    exceptionThread.join();
+    return exitCode;
 }
 
 } // namespace eacp::CrashReporting::Detail

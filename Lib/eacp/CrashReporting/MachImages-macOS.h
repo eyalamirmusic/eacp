@@ -2,6 +2,7 @@
 
 #include <mach-o/loader.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -15,6 +16,12 @@ namespace eacp::CrashReporting::Detail
 // `availableBytes`.
 std::uint64_t getTextSegmentSize(const mach_header_64& header,
                                  std::size_t availableBytes);
+
+using ImageUuid = std::array<std::uint8_t, 16>;
+
+// The image's LC_UUID bytes, the same bounds as getTextSegmentSize.
+std::optional<ImageUuid> findImageUuid(const mach_header_64& header,
+                                       std::size_t availableBytes);
 
 // The image's LC_UUID as 8-4-4-4-12 upper-case hex, as dwarfdump prints it.
 // Empty when it has none.
