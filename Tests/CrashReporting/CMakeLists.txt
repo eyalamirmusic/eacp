@@ -7,8 +7,9 @@ if (NOT TARGET SelfDestruct)
 endif ()
 
 nano_add_executable(CrashReportingTests
-        SOURCES PendingReportsTests.cpp SelfDestructTests.cpp
-        TARGETS eacp-crash-reporting)
+        SOURCES FallbackReportTests.cpp PendingReportsTests.cpp
+                SelfDestructTests.cpp ZooTests.cpp
+        TARGETS eacp-crash-zoo)
 
 # The fault cases crash the demo app for real and read the report its handler
 # wrote.
