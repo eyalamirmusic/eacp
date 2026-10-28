@@ -8,8 +8,8 @@ endif ()
 
 nano_add_executable(CrashReportingTests
         SOURCES FallbackReportTests.cpp Matrix.cpp PendingReportsTests.cpp
-                SelfDestructTests.cpp ZooTests.cpp
-        TARGETS eacp-crash-zoo)
+                SelfDestructTests.cpp FaultsTests.cpp
+        TARGETS eacp-crash-faults)
 
 # The fault cases crash the demo app for real and read the report its handler
 # wrote.

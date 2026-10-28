@@ -49,12 +49,12 @@ eacp_enable_unity_build(eacp-crash-reporting)
 
 # Deliberate faults for demo and test apps: SelfDestruct's, and any app's that
 # wants the same list.
-add_library(eacp-crash-zoo STATIC)
+add_library(eacp-crash-faults STATIC)
 
-target_link_libraries(eacp-crash-zoo PUBLIC eacp-crash-reporting)
+target_link_libraries(eacp-crash-faults PUBLIC eacp-crash-reporting)
 
-target_sources(eacp-crash-zoo PRIVATE
-        Zoo/Faults.cpp
-        Zoo/Zoo.cpp)
+target_sources(eacp-crash-faults PRIVATE
+        Faults/FaultDefinitions.cpp
+        Faults/Faults.cpp)
 
-set_default_target_setting(eacp-crash-zoo)
+set_default_target_setting(eacp-crash-faults)

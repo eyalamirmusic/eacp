@@ -1,4 +1,4 @@
-#include "Faults.h"
+#include "FaultDefinitions.h"
 
 #include <eacp/Core/Threads/Thread.h>
 #include <eacp/Core/Utils/Singleton.h>
@@ -23,7 +23,7 @@
 #pragma optimize("", off)
 #endif
 
-namespace eacp::CrashReporting::Zoo
+namespace eacp::CrashReporting::Faults
 {
 namespace
 {
@@ -33,12 +33,12 @@ std::atomic<std::uint64_t> spinCount {0};
 } // namespace
 
 // Outside the anonymous namespace so their names reach the report's symbols.
-EACP_ZOO_NO_INLINE void sleepPastHangThreshold()
+EACP_FAULT_NO_INLINE void sleepPastHangThreshold()
 {
     std::this_thread::sleep_for(hangDuration.load());
 }
 
-EACP_ZOO_NO_INLINE void spinForever()
+EACP_FAULT_NO_INLINE void spinForever()
 {
     while (true)
         spinCount.fetch_add(1, std::memory_order_relaxed);
@@ -51,13 +51,13 @@ constexpr auto stackFrameBytes = std::size_t {4096};
 volatile auto shouldKeepRecursing = true;
 } // namespace
 
-EACP_ZOO_NO_INLINE void dereferenceNullPointer()
+EACP_FAULT_NO_INLINE void dereferenceNullPointer()
 {
     auto* volatile target = static_cast<int*>(nullptr);
     *target = 1;
 }
 
-EACP_ZOO_NO_INLINE int recurseForever(int depth)
+EACP_FAULT_NO_INLINE int recurseForever(int depth)
 {
     auto frame = std::array<volatile char, stackFrameBytes> {};
     frame[0] = static_cast<char>(depth);
@@ -68,7 +68,7 @@ EACP_ZOO_NO_INLINE int recurseForever(int depth)
     return recurseForever(depth + 1) + frame[0];
 }
 
-EACP_ZOO_NO_INLINE void overflowStack()
+EACP_FAULT_NO_INLINE void overflowStack()
 {
     recurseForever(0);
 }
@@ -78,7 +78,7 @@ struct PureVirtualBase
     PureVirtualBase() { callWork(); }
     virtual ~PureVirtualBase() = default;
 
-    EACP_ZOO_NO_INLINE void callWork() { work(); }
+    EACP_FAULT_NO_INLINE void callWork() { work(); }
 
     virtual void work() = 0;
 };
@@ -88,22 +88,22 @@ struct PureVirtualDerived final : PureVirtualBase
     void work() override {}
 };
 
-EACP_ZOO_NO_INLINE void callPureVirtual()
+EACP_FAULT_NO_INLINE void callPureVirtual()
 {
     auto object = std::make_unique<PureVirtualDerived>();
     object->work();
 }
 
-EACP_ZOO_NO_INLINE void throwUncaughtException()
+EACP_FAULT_NO_INLINE void throwUncaughtException()
 {
-    throw std::runtime_error {"the crash zoo threw this on purpose"};
+    throw std::runtime_error {"the crash fault threw this on purpose"};
 }
 
 #if defined(_WIN32)
 // Only a fresh heap's second HeapFree is STATUS_HEAP_CORRUPTION every time.
 constexpr auto heapCorruptionDescription = "Frees a heap block twice";
 
-EACP_ZOO_NO_INLINE void corruptHeap()
+EACP_FAULT_NO_INLINE void corruptHeap()
 {
     auto* heap = ::HeapCreate(0, 0, 0);
     auto* volatile block = ::HeapAlloc(heap, 0, smallBlockSize);
@@ -118,7 +118,7 @@ constexpr auto heapCorruptionDescription =
 
 // The overrun alone may land in slack; the second free is what every
 // allocator checks.
-EACP_ZOO_NO_INLINE void corruptHeap()
+EACP_FAULT_NO_INLINE void corruptHeap()
 {
     auto* volatile block = static_cast<unsigned char*>(std::malloc(smallBlockSize));
     std::memset(block, overrunByte, overrunSize);
@@ -130,7 +130,7 @@ EACP_ZOO_NO_INLINE void corruptHeap()
 #if defined(_WIN32)
 constexpr auto fatalAppExitFastFailCode = 7;
 
-EACP_ZOO_NO_INLINE void failFast()
+EACP_FAULT_NO_INLINE void failFast()
 {
     __fastfail(fatalAppExitFastFailCode);
 }
@@ -145,7 +145,7 @@ constexpr auto integerDivideTraps = true;
 constexpr auto integerDivideTraps = false;
 #endif
 
-EACP_ZOO_NO_INLINE int divideByZero()
+EACP_FAULT_NO_INLINE int divideByZero()
 {
     volatile auto numerator = 1;
     volatile auto zero = 0;
@@ -178,9 +178,9 @@ DeadlockedLocks& createDeadlockedLocks()
 } // namespace
 
 // Each caller holds one lock and waits for the other, once both hold theirs.
-EACP_ZOO_NO_INLINE void lockInOppositeOrder(std::mutex& held,
-                                            std::mutex& wanted,
-                                            std::atomic<int>& holdingCount)
+EACP_FAULT_NO_INLINE void lockInOppositeOrder(std::mutex& held,
+                                              std::mutex& wanted,
+                                              std::atomic<int>& holdingCount)
 {
     constexpr auto lockHolders = 2;
     auto heldLock = std::lock_guard {held};
@@ -192,7 +192,7 @@ EACP_ZOO_NO_INLINE void lockInOppositeOrder(std::mutex& held,
     auto wantedLock = std::lock_guard {wanted};
 }
 
-EACP_ZOO_NO_INLINE void deadlockWithAnotherThread()
+EACP_FAULT_NO_INLINE void deadlockWithAnotherThread()
 {
     auto& locks = createDeadlockedLocks();
     startBackgroundThread(
@@ -252,7 +252,7 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
 };
 
 return faults;
-} // namespace eacp::CrashReporting::Zoo
+} // namespace eacp::CrashReporting::Faults
 
 void setHangDuration(std::chrono::milliseconds duration)
 {
@@ -263,4 +263,4 @@ std::chrono::milliseconds getHangDuration()
 {
     return hangDuration.load();
 }
-} // namespace eacp::CrashReporting::Zoo
+} // namespace eacp::CrashReporting::Faults

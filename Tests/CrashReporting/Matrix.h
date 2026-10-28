@@ -1,15 +1,15 @@
 #pragma once
 
-#include <eacp/CrashReporting/Zoo/Zoo.h>
+#include <eacp/CrashReporting/Faults/Faults.h>
 
 #include <eacp/CrashReporting/CrashReport.h>
 
 #include <optional>
 #include <string_view>
 
-// What each zoo fault is expected to produce, on each thread, on each lane
+// What each fault is expected to produce, on each thread, on each lane
 // eacp builds for: the table SelfDestructTests runs a case for, per cell.
-namespace eacp::CrashReporting::Zoo
+namespace eacp::CrashReporting::Faults
 {
 enum class Lane
 {
@@ -73,4 +73,4 @@ const Vector<MatrixCell>& getCrashMatrix();
 
 std::optional<ExpectedOutcome>
     findExpectedOutcome(std::string_view fault, ThreadChoice thread, Lane lane);
-} // namespace eacp::CrashReporting::Zoo
+} // namespace eacp::CrashReporting::Faults

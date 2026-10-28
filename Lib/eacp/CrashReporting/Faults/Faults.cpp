@@ -1,4 +1,4 @@
-#include "Faults.h"
+#include "FaultDefinitions.h"
 
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Threads/Thread.h>
@@ -8,7 +8,7 @@
 #include <atomic>
 #include <mutex>
 
-namespace eacp::CrashReporting::Zoo
+namespace eacp::CrashReporting::Faults
 {
 namespace
 {
@@ -45,7 +45,7 @@ std::optional<std::reference_wrapper<const Fault>>
 
 // Outside the anonymous namespace so its name reaches the report's symbols,
 // and counting afterwards so the call is not a tail call that drops it.
-EACP_ZOO_NO_INLINE void runFaultOnBackgroundThread(const Fault& fault)
+EACP_FAULT_NO_INLINE void runFaultOnBackgroundThread(const Fault& fault)
 {
     fault.trigger();
     returnedBackgroundFaults.fetch_add(1);
@@ -128,4 +128,4 @@ void killHandlerProcess()
 {
     Detail::killHandlerProcess();
 }
-} // namespace eacp::CrashReporting::Zoo
+} // namespace eacp::CrashReporting::Faults
