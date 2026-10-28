@@ -6,6 +6,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 
 // Deliberate faults for testing a crash reporter end to end: each one breaks
@@ -53,6 +54,12 @@ bool triggerFault(std::string_view name, ThreadChoice thread);
 
 // triggerFault from an event-loop callback `delay` from now. False as above.
 bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay);
+
+// Handled events rather than faults: each reports through the public API and
+// returns, the app still running. The report's id, empty when none was written.
+constexpr auto zooEventMessage = std::string_view {"the crash zoo reported this"};
+std::string reportMessageEvent();
+std::string reportCaughtException();
 
 // Ends the crash handler process, so the next crash finds no handler, goes
 // unreported, and the next launch's CrashHandler::unreportedExit sees it.

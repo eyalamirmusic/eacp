@@ -20,6 +20,8 @@
 //   SelfDestruct --crash abort -- --no-report-window
 //   SelfDestruct --crash hang --hang-threshold-ms 500
 //   SelfDestruct --crash nullptr --kill-handler    an unreported exit
+//   SelfDestruct --event message                   a handled event, no crash
+//   SelfDestruct --event exception
 //
 // Everything after "--" goes to the handler process, whose own flag
 // --no-report-window has it write the report and exit.
@@ -34,7 +36,7 @@ constexpr auto titleHeight = 40.f;
 constexpr auto titleFontSize = 26.f;
 constexpr auto lineHeight = 22.f;
 constexpr auto bodyFontSize = 13.f;
-constexpr auto gridColumns = 2;
+constexpr auto gridColumns = 3;
 constexpr auto cardGap = 12.f;
 constexpr auto cardPadding = 12.f;
 constexpr auto cardCornerRadius = 10.f;
@@ -42,8 +44,8 @@ constexpr auto descriptionHeight = 22.f;
 constexpr auto buttonGap = 8.f;
 constexpr auto buttonsPerCard = 2.f;
 constexpr auto handlerStatusRefreshHz = 2;
-constexpr auto windowWidth = 640;
-constexpr auto windowHeight = 900;
+constexpr auto windowWidth = 900;
+constexpr auto windowHeight = 960;
 constexpr auto expectationHeight = 34.f;
 constexpr auto dangerColour = UI::Color {0.86f, 0.27f, 0.25f};
 constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
@@ -87,6 +89,12 @@ struct SelfDestructCrashHandler final : CrashReporting::CrashHandler
         options.arguments = {showReportFlag, report.folder.str()};
         options.detached = true;
         auto window = Processes::Process {options};
+    }
+
+    void eventReported(const CrashReporting::CrashReport& report) override
+    {
+        Console::print("SelfDestruct: event " + report.id + " (" + report.reason
+                       + ": " + report.message + ")");
     }
 
     void pendingReportFound(const CrashReporting::CrashReport& report) override
@@ -144,24 +152,64 @@ std::string describeExpectedOutcome(std::string_view fault, ThreadChoice thread)
     return {};
 }
 
-struct FaultCard final : UI::Component
+// A titled card with two buttons side by side, each with what it will do.
+struct CardContent
 {
-    explicit FaultCard(const CrashReporting::Faults::Fault& fault)
-        : label(std::string {fault.label})
-        , mainThreadExpectation(
-              describeExpectedOutcome(fault.name, ThreadChoice::main))
-        , backgroundExpectation(
-              describeExpectedOutcome(fault.name, ThreadChoice::background))
-        , description(std::string {fault.description})
-    {
-        auto name = fault.name;
-        mainThreadButton.onClick = [name]
-        { CrashReporting::Faults::triggerFault(name, ThreadChoice::main); };
-        backgroundButton.onClick = [name]
-        { CrashReporting::Faults::triggerFault(name, ThreadChoice::background); };
+    std::string label;
+    std::string description;
+    std::string firstButtonText;
+    std::string secondButtonText;
+    std::string firstExpectation;
+    std::string secondExpectation;
+    Callback firstAction = [] {};
+    Callback secondAction = [] {};
+    UI::Color accentColour = dangerColour;
+};
 
-        mainThreadButton.setAccentColour(dangerColour);
-        backgroundButton.setAccentColour(dangerColour);
+CardContent makeFaultCardContent(const CrashReporting::Faults::Fault& fault)
+{
+    auto name = fault.name;
+    return {
+        std::string {fault.label},
+        std::string {fault.description},
+        "Main thread",
+        "Background",
+        describeExpectedOutcome(name, ThreadChoice::main),
+        describeExpectedOutcome(name, ThreadChoice::background),
+        [name] { CrashReporting::Faults::triggerFault(name, ThreadChoice::main); },
+        [name]
+        { CrashReporting::Faults::triggerFault(name, ThreadChoice::background); }};
+}
+
+// Not a crash, so outside the crash matrix.
+CardContent makeEventCardContent()
+{
+    return {"Handled event",
+            "Reported without crashing; the app keeps running",
+            "Message",
+            "Caught exception",
+            "Reported as an event",
+            "Reported as an event",
+            [] { CrashReporting::Faults::reportMessageEvent(); },
+            [] { CrashReporting::Faults::reportCaughtException(); },
+            runningColour};
+}
+
+struct ActionCard final : UI::Component
+{
+    explicit ActionCard(const CardContent& content)
+        : label(content.label)
+        , mainThreadButton(content.firstButtonText)
+        , backgroundButton(content.secondButtonText)
+        , mainThreadExpectation(content.firstExpectation)
+        , backgroundExpectation(content.secondExpectation)
+        , description(content.description)
+    {
+        mainThreadButton.onClick = content.firstAction;
+        backgroundButton.onClick = content.secondAction;
+
+        mainThreadButton.setAccentColour(content.accentColour);
+        backgroundButton.setAccentColour(content.accentColour);
         description.setThemeColour(UI::ThemeKeys::dimText);
         label.setJustification(UI::Justification::Centred);
         description.setJustification(UI::Justification::Centred);
@@ -202,8 +250,8 @@ struct FaultCard final : UI::Component
     }
 
     UI::Label label;
-    UI::Button mainThreadButton {"Main thread"};
-    UI::Button backgroundButton {"Background"};
+    UI::Button mainThreadButton;
+    UI::Button backgroundButton;
     UI::Label mainThreadExpectation;
     UI::Label backgroundExpectation;
     UI::Label description;
@@ -220,7 +268,9 @@ struct FaultButtons final : UI::Component
         addChildren({title, subtitle, database, handlerStatus});
 
         for (const auto& fault: CrashReporting::Faults::listFaults())
-            addAndMakeVisible(cards.createNew(fault));
+            addAndMakeVisible(cards.createNew(makeFaultCardContent(fault)));
+
+        addAndMakeVisible(cards.createNew(makeEventCardContent()));
 
         showHandlerStatus();
     }
@@ -270,7 +320,7 @@ struct FaultButtons final : UI::Component
                         "process writes the report and shows it."};
     UI::Label database;
     UI::Label handlerStatus;
-    OwnedVector<FaultCard> cards;
+    OwnedVector<ActionCard> cards;
     Threads::Timer statusTimer {[this] { showHandlerStatus(); },
                                 handlerStatusRefreshHz};
 };
@@ -414,6 +464,24 @@ int crashNow(std::string_view kind,
     return Apps::run<FaultApp>(fault->get(), *thread, pausesHangDetection);
 }
 
+int printEventOutcome(const std::string& id)
+{
+    Console::print("SelfDestruct: still running after " + id);
+    return id.empty() ? 1 : 0;
+}
+
+int reportEventNow(std::string_view kind)
+{
+    if (kind == "message")
+        return printEventOutcome(CrashReporting::Faults::reportMessageEvent());
+
+    if (kind == "exception")
+        return printEventOutcome(CrashReporting::Faults::reportCaughtException());
+
+    Console::printError("SelfDestruct: no event called " + std::string {kind});
+    return Args::badArguments;
+}
+
 int showReport(const FilePath& folder)
 {
     auto report = CrashReporting::getDatabase().readReport(folder);
@@ -441,6 +509,7 @@ int main(int argc, char* argv[])
     auto hangThresholdMilliseconds =
         CrashReporting::Options {}.hangThreshold.count();
     auto reportToShow = FilePath {};
+    auto eventKind = std::string {};
     auto pausesHangDetection = false;
     auto threadName = std::string {"main"};
     auto killsHandler = false;
@@ -463,6 +532,7 @@ int main(int argc, char* argv[])
              usesSignalsOnly,
              "macOS: no Mach exception port, the in-app signal handler only");
     cli.option(showReportFlag, reportToShow, "show the report in this folder");
+    cli.option("--event", eventKind, "message or exception: report it, no crash");
     cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
 
     if (auto code = cli.exitCodeFor(cli.parse()))
@@ -475,6 +545,9 @@ int main(int argc, char* argv[])
     CrashReporting::Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
     startCrashReporting(
         databaseDirectory, handlerArguments, hangThreshold, !usesSignalsOnly);
+
+    if (!eventKind.empty())
+        return reportEventNow(eventKind);
 
     if (!crashKind.empty())
         return crashNow(crashKind, threadName, pausesHangDetection, killsHandler);

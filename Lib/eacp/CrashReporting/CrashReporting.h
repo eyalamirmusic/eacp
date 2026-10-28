@@ -7,6 +7,7 @@
 #include <eacp/Core/Platform/Platform.h>
 
 #include <chrono>
+#include <exception>
 #include <optional>
 #include <string_view>
 
@@ -149,6 +150,28 @@ void resumeHangDetection();
 // Kept in a ring of the newest Detail::maxBreadcrumbs, timestamped now. A
 // category longer than 63 bytes or a message longer than 511 is cut.
 void addBreadcrumb(const Breadcrumb& breadcrumb);
+
+// Something the app reports about itself without crashing.
+struct Event
+{
+    std::string reason = messageEventReason;
+    std::string message;
+    Level level = Level::error;
+};
+
+// sentry-native's handled events. Its crash-time screenshot and release-health
+// sessions are left out on purpose: the second needs a service, not a report.
+//
+// Writes a report of kind event, with the calling thread's stack and
+// everything a crash report carries but a minidump, into pending/, and hands
+// it to eventReported on the calling thread. The app keeps running and the
+// handler process is not involved. The report's id; empty before start() or
+// when the report could not be written.
+std::string captureEvent(const Event& event);
+std::string captureMessage(std::string_view message, Level level = Level::info);
+
+// The exception's type and what() as the message, at level error.
+std::string captureException(const std::exception& exception);
 
 // Whether the last run wrote a report, as start() found the database. Stays
 // true on later launches until clearCrashedLastRun().

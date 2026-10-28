@@ -2,6 +2,7 @@
 #include "CppExceptions-Windows.h"
 #include "CrashReportingPlatform.h"
 #include "ExceptionNames-Windows.h"
+#include "SymbolNames-Windows.h"
 
 #include <eacp/Core/Utils/WinInclude.h>
 
@@ -190,17 +191,6 @@ LONG WINAPI handleUnhandledException(EXCEPTION_POINTERS* pointers)
 
     handOverToHandler(*pointers);
     return EXCEPTION_EXECUTE_HANDLER;
-}
-
-std::string_view getExceptionTypeName(const std::type_info& type)
-{
-    auto name = std::string_view {type.name()};
-    constexpr auto classPrefix = std::string_view {"class "};
-
-    if (name.starts_with(classPrefix))
-        name.remove_prefix(classPrefix.size());
-
-    return name;
 }
 
 void recordCurrentException()
