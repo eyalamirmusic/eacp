@@ -237,6 +237,83 @@ ExpectedOutcome expectFastFail(Lane lane, ThreadChoice thread)
     return reportedFromExitCode("STATUS_STACK_BUFFER_OVERRUN", thread);
 }
 
+ExpectedOutcome expectIllegalInstruction(Lane lane)
+{
+    if (isMac(lane))
+        return reportedThroughMach(lane, "EXC_BAD_INSTRUCTION");
+
+    return reported(lane, "EXCEPTION_ILLEGAL_INSTRUCTION");
+}
+
+ExpectedOutcome expectPrivilegedInstruction(Lane lane)
+{
+    if (isMac(lane))
+        return notAvailable("the zoo halts from user mode on Windows x64 only");
+
+    if (isArm64Windows(lane))
+        return notAvailable("ARM64 has no privileged-instruction trap of its own: "
+                            "such an instruction is an illegal one");
+
+    return reported(lane, "EXCEPTION_PRIV_INSTRUCTION");
+}
+
+ExpectedOutcome expectFloatingPoint(Lane lane)
+{
+    if (lane == Lane::macOSArm64 || isArm64Windows(lane))
+        return notAvailable("ARM64 cores do not implement floating-point traps");
+
+    if (isMac(lane))
+        return reportedThroughMach(lane, "EXC_ARITHMETIC");
+
+    return reported(lane, "EXCEPTION_FLT_DIVIDE_BY_ZERO");
+}
+
+ExpectedOutcome expectExecuteProtection(Lane lane)
+{
+    if (isMac(lane))
+        return reportedThroughMach(lane, "EXC_BAD_ACCESS");
+
+    return reported(lane, "EXCEPTION_ACCESS_VIOLATION");
+}
+
+ExpectedOutcome expectWindowsOnly(Lane lane, std::string_view reason)
+{
+    if (isMac(lane))
+        return notAvailable("a Windows memory-manager exception");
+
+    return reported(lane, reason);
+}
+
+// Raised through RaiseException, which the ARM64 walk may not get past.
+ExpectedOutcome expectInPageError(Lane lane)
+{
+    auto outcome = expectWindowsOnly(lane, "EXCEPTION_IN_PAGE_ERROR");
+
+    if (isArm64Windows(lane))
+        return withShortStack(outcome,
+                              "StackWalk64 stops at RaiseException, one frame, "
+                              "on the CI runners; the minidump has the thread");
+
+    return outcome;
+}
+
+ExpectedOutcome expectMacOnly(Lane lane, std::string_view reason)
+{
+    if (!isMac(lane))
+        return notAvailable("no such trap on Windows");
+
+    return reportedThroughMach(lane, reason);
+}
+
+// The kernel raises a signal, which reaches the handler as EXC_CRASH.
+ExpectedOutcome expectBadSystemCall(Lane lane)
+{
+    if (!isMac(lane))
+        return notAvailable("no such signal on Windows");
+
+    return reportedThroughMach(lane, "SIGSYS");
+}
+
 ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane lane)
 {
     if (lane == Lane::linux)
@@ -277,6 +354,33 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     if (fault == "fastfail")
         return expectFastFail(lane, thread);
 
+    if (fault == "illegalinstruction")
+        return expectIllegalInstruction(lane);
+
+    if (fault == "privilegedinstruction")
+        return expectPrivilegedInstruction(lane);
+
+    if (fault == "floatingpoint")
+        return expectFloatingPoint(lane);
+
+    if (fault == "executenx")
+        return expectExecuteProtection(lane);
+
+    if (fault == "guardpage")
+        return expectWindowsOnly(lane, "STATUS_GUARD_PAGE_VIOLATION");
+
+    if (fault == "inpageerror")
+        return expectInPageError(lane);
+
+    if (fault == "buserror")
+        return expectMacOnly(lane, "EXC_BAD_ACCESS");
+
+    if (fault == "guardedfd")
+        return expectMacOnly(lane, "EXC_GUARD");
+
+    if (fault == "sigsys")
+        return expectBadSystemCall(lane);
+
     return notAvailable("not in the matrix");
 }
 
@@ -293,6 +397,15 @@ constexpr auto matrixFaults = Array {
     "spin"sv,
     "deadlock"sv,
     "fastfail"sv,
+    "illegalinstruction"sv,
+    "privilegedinstruction"sv,
+    "floatingpoint"sv,
+    "executenx"sv,
+    "guardpage"sv,
+    "inpageerror"sv,
+    "buserror"sv,
+    "guardedfd"sv,
+    "sigsys"sv,
 };
 
 Vector<MatrixCell> makeCrashMatrix()
