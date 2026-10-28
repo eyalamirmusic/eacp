@@ -194,7 +194,7 @@ constexpr auto arm64DebugRegisterBytes = std::size_t {8 * 4 + 8 * 8 + 2 * 4 + 2 
 // CONTEXT_ARM64: flags, cpsr, x0-x28, fp, lr, sp, pc, then the float and
 // debug registers, left zero since the flags say they are absent.
 Location appendThreadContext(MinidumpBuffer& buffer,
-                             const FaultingThreadRegisters& registers)
+                             const TaskThreadRegisters& registers)
 {
     const auto& state = registers.state;
     auto start = buffer.position();
@@ -224,7 +224,7 @@ constexpr auto amd64ExtendedStateBytes = std::size_t {512 + 26 * 16 + 6 * 8};
 // registers, the sixteen general registers in its order, rip, then the
 // floating-point area, left zero.
 Location appendThreadContext(MinidumpBuffer& buffer,
-                             const FaultingThreadRegisters& registers)
+                             const TaskThreadRegisters& registers)
 {
     const auto& state = registers.state;
     auto start = buffer.position();
@@ -322,16 +322,31 @@ struct ThreadBlobs
     Location stack;
 };
 
-ThreadBlobs appendThreadBlobs(MinidumpBuffer& buffer,
-                              const MinidumpContents& contents)
+ThreadBlobs appendThreadBlobs(MinidumpBuffer& buffer, const MinidumpThread& thread)
 {
-    auto context = appendThreadContext(buffer, contents.registers);
+    auto context = appendThreadContext(buffer, thread.registers);
     auto stackStart = buffer.position();
     auto stackBytes = std::span<const std::byte> {
-        contents.stackBytes.data(),
-        static_cast<std::size_t>(contents.stackBytes.size())};
+        thread.stackBytes.data(),
+        static_cast<std::size_t>(thread.stackBytes.size())};
     buffer.appendBytes(stackBytes);
     return {context, {buffer.position() - stackStart, stackStart}};
+}
+
+Vector<ThreadBlobs> appendEveryThreadBlobs(MinidumpBuffer& buffer,
+                                           const MinidumpContents& contents)
+{
+    auto blobs = Vector<ThreadBlobs> {};
+
+    for (const auto& thread: contents.threads)
+        blobs.add(appendThreadBlobs(buffer, thread));
+
+    return blobs;
+}
+
+std::uint32_t countOf(const auto& items)
+{
+    return static_cast<std::uint32_t>(items.size());
 }
 
 void appendMemoryDescriptor(MinidumpBuffer& buffer,
@@ -342,31 +357,46 @@ void appendMemoryDescriptor(MinidumpBuffer& buffer,
     buffer.appendLocation(memory);
 }
 
-// MDRawThreadList holding the crashing thread alone.
-Location appendThreadList(MinidumpBuffer& buffer,
-                          const MinidumpContents& contents,
-                          const ThreadBlobs& blobs)
+// MDRawThread: the id, no suspend count, priority or TEB, the stack and the
+// context.
+void appendThreadEntry(MinidumpBuffer& buffer,
+                       const MinidumpThread& thread,
+                       const ThreadBlobs& blobs)
 {
-    auto start = buffer.position();
-    buffer.appendU32(1);
-    buffer.appendU32(static_cast<std::uint32_t>(contents.threadId));
+    buffer.appendU32(static_cast<std::uint32_t>(thread.threadId));
     buffer.appendU32(0);
     buffer.appendU32(0);
     buffer.appendU32(0);
     buffer.appendU64(0);
-    appendMemoryDescriptor(buffer, contents.stack.start, blobs.stack);
+    appendMemoryDescriptor(buffer, thread.stack.start, blobs.stack);
     buffer.appendLocation(blobs.context);
+}
+
+Location appendThreadList(MinidumpBuffer& buffer,
+                          const MinidumpContents& contents,
+                          const Vector<ThreadBlobs>& blobs)
+{
+    auto start = buffer.position();
+    buffer.appendU32(countOf(contents.threads));
+
+    for (auto index = 0; index < contents.threads.size(); ++index)
+        appendThreadEntry(buffer, contents.threads[index], blobs[index]);
+
     return {buffer.position() - start, start};
 }
 
-// The stack again, for readers such as lldb that look memory up here.
+// The stacks again, for readers such as lldb that look memory up here.
 Location appendMemoryList(MinidumpBuffer& buffer,
                           const MinidumpContents& contents,
-                          const ThreadBlobs& blobs)
+                          const Vector<ThreadBlobs>& blobs)
 {
     auto start = buffer.position();
-    buffer.appendU32(1);
-    appendMemoryDescriptor(buffer, contents.stack.start, blobs.stack);
+    buffer.appendU32(countOf(contents.threads));
+
+    for (auto index = 0; index < contents.threads.size(); ++index)
+        appendMemoryDescriptor(
+            buffer, contents.threads[index].stack.start, blobs[index].stack);
+
     return {buffer.position() - start, start};
 }
 
@@ -374,10 +404,10 @@ Location appendMemoryList(MinidumpBuffer& buffer,
 // the flags and both codes as the parameters, as Crashpad writes them.
 Location appendException(MinidumpBuffer& buffer,
                          const MinidumpContents& contents,
-                         const ThreadBlobs& blobs)
+                         const ThreadBlobs& crashingThreadBlobs)
 {
     auto start = buffer.position();
-    buffer.appendU32(static_cast<std::uint32_t>(contents.threadId));
+    buffer.appendU32(static_cast<std::uint32_t>(contents.threads[0].threadId));
     buffer.appendU32(0);
     buffer.appendU32(static_cast<std::uint32_t>(contents.exceptionType));
     buffer.appendU32(static_cast<std::uint32_t>(contents.exceptionCodes[0]));
@@ -391,7 +421,7 @@ Location appendException(MinidumpBuffer& buffer,
 
     auto unusedParameters = maxExceptionParameters - contents.exceptionCodes.size();
     buffer.appendZeros(unusedParameters * sizeof(std::uint64_t));
-    buffer.appendLocation(blobs.context);
+    buffer.appendLocation(crashingThreadBlobs.context);
     return {buffer.position() - start, start};
 }
 
@@ -470,17 +500,20 @@ void patchDirectory(MinidumpBuffer& buffer, std::span<const StreamEntry> streams
 
 bool writeMinidump(const FilePath& path, const MinidumpContents& contents)
 {
+    if (contents.threads.empty())
+        return false;
+
     auto buffer = MinidumpBuffer {};
     appendHeader(buffer);
     buffer.appendZeros(streamCount * directoryEntrySize);
 
-    auto blobs = appendThreadBlobs(buffer, contents);
+    auto blobs = appendEveryThreadBlobs(buffer, contents);
     auto streams = std::to_array<StreamEntry>({
         {systemInfoStream, appendSystemInfo(buffer, contents)},
         {threadListStream, appendThreadList(buffer, contents, blobs)},
         {memoryListStream, appendMemoryList(buffer, contents, blobs)},
         {moduleListStream, appendModuleList(buffer, contents)},
-        {exceptionStream, appendException(buffer, contents, blobs)},
+        {exceptionStream, appendException(buffer, contents, blobs[0])},
     });
     static_assert(streams.size() == streamCount);
 

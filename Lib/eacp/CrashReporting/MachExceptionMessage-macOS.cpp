@@ -24,6 +24,7 @@ constexpr auto machExceptionNames = std::to_array<MachExceptionName>({
     {EXC_ARITHMETIC, "EXC_ARITHMETIC"},
     {EXC_BREAKPOINT, "EXC_BREAKPOINT"},
     {EXC_GUARD, "EXC_GUARD"},
+    {EXC_CRASH, "EXC_CRASH"},
 });
 
 #pragma pack(push, 4)

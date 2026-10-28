@@ -9,9 +9,9 @@ namespace
 constexpr auto handshakeRequestId = mach_msg_id_t {0x45414350};
 constexpr auto handshakeReplyId = handshakeRequestId + 1;
 
-constexpr auto crashExceptionMask =
-    exception_mask_t {EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION
-                      | EXC_MASK_ARITHMETIC | EXC_MASK_BREAKPOINT | EXC_MASK_GUARD};
+constexpr auto crashExceptionMask = exception_mask_t {
+    EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC
+    | EXC_MASK_BREAKPOINT | EXC_MASK_GUARD | EXC_MASK_CRASH};
 
 constexpr auto crashExceptionBehavior = static_cast<exception_behavior_t>(
     EXCEPTION_STATE_IDENTITY | MACH_EXCEPTION_CODES);

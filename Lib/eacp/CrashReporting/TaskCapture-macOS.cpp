@@ -13,9 +13,9 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-FaultingThreadRegisters makeFaultingThreadRegisters(const NativeThreadState& state)
+TaskThreadRegisters makeTaskThreadRegisters(const NativeThreadState& state)
 {
-    auto registers = FaultingThreadRegisters {};
+    auto registers = TaskThreadRegisters {};
     registers.state = state;
 #if defined(__arm64__)
     registers.programCounter = arm_thread_state64_get_pc(state);
@@ -175,7 +175,7 @@ std::optional<dyld_all_image_infos> readAllImageInfos(mach_port_t task)
 // A leaf function may keep its return address in lr without a frame record
 // of its own, so lr is a frame unless the first record already holds it.
 void addLinkRegisterFrame(Vector<std::uint64_t>& frames,
-                          const FaultingThreadRegisters& registers,
+                          const TaskThreadRegisters& registers,
                           const std::optional<AppFrameRecord>& firstRecord)
 {
     auto isAlreadyRecorded =
@@ -186,22 +186,51 @@ void addLinkRegisterFrame(Vector<std::uint64_t>& frames,
 }
 } // namespace
 
-std::optional<FaultingThreadRegisters>
-    readThreadState(const MachException& exception)
+std::optional<TaskThreadRegisters> readTaskThreadRegisters(mach_port_t thread)
 {
     auto state = NativeThreadState {};
     auto count = nativeThreadStateCount;
     auto* statePointer = reinterpret_cast<thread_state_t>(&state);
 
-    if (::thread_get_state(
-            exception.thread, nativeThreadStateFlavor, statePointer, &count)
-        == KERN_SUCCESS)
-        return makeFaultingThreadRegisters(state);
+    if (::thread_get_state(thread, nativeThreadStateFlavor, statePointer, &count)
+        != KERN_SUCCESS)
+        return std::nullopt;
+
+    return makeTaskThreadRegisters(state);
+}
+
+std::optional<TaskThreadRegisters> readThreadState(const MachException& exception)
+{
+    if (auto registers = readTaskThreadRegisters(exception.thread))
+        return registers;
 
     if (auto fromMessage = readStateFromMessage(exception))
-        return makeFaultingThreadRegisters(*fromMessage);
+        return makeTaskThreadRegisters(*fromMessage);
 
     return std::nullopt;
+}
+
+Vector<mach_port_t> listTaskThreads(mach_port_t task)
+{
+    auto* threadArray = thread_act_array_t {};
+    auto count = mach_msg_type_number_t {0};
+    auto threads = Vector<mach_port_t> {};
+
+    if (::task_threads(task, &threadArray, &count) != KERN_SUCCESS)
+        return threads;
+
+    for (auto index = mach_msg_type_number_t {0}; index < count; ++index)
+        threads.add(threadArray[index]);
+
+    auto arrayAddress = reinterpret_cast<vm_address_t>(threadArray);
+    ::vm_deallocate(::mach_task_self(), arrayAddress, count * sizeof(thread_act_t));
+    return threads;
+}
+
+void releaseTaskThreads(const Vector<mach_port_t>& threads)
+{
+    for (auto thread: threads)
+        ::mach_port_deallocate(::mach_task_self(), thread);
 }
 
 bool readAppMemory(mach_port_t task,
@@ -222,7 +251,7 @@ bool readAppMemory(mach_port_t task,
 // Frame records live on the stack, which grows down, so each caller's record
 // sits above the last; anything else is a broken chain and ends the walk.
 Vector<std::uint64_t> walkFramePointers(mach_port_t task,
-                                        const FaultingThreadRegisters& registers,
+                                        const TaskThreadRegisters& registers,
                                         std::size_t maxFrames)
 {
     auto frames = Vector<std::uint64_t> {registers.programCounter};

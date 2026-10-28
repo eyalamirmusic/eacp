@@ -66,6 +66,10 @@ struct MacCrashClient
     int sharedStateDescriptor = -1;
     int crashPipeWriteEnd = -1;
     int readyPipeReadEnd = -1;
+
+    // The handler took this task's exception port, so a signal's default
+    // action reaches it as EXC_CRASH.
+    bool isMachCaptureActive = false;
     char* demangleBuffer = nullptr;
     std::size_t demangleBufferLength = 0;
     std::atomic<bool> isCrashing {false};
@@ -166,6 +170,15 @@ void restoreDefaultAndRaise(int signalNumber)
     ::raise(signalNumber);
 }
 
+// Async-signal-safe: the handler is this process's child, so a reaped or
+// finished one shows here.
+bool isHandlerAlive(const MacCrashClient& client)
+{
+    auto status = 0;
+    return client.handlerProcessId != 0
+           && ::waitpid(client.handlerProcessId, &status, WNOHANG) == 0;
+}
+
 void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
 {
     auto& client = getMacCrashClient();
@@ -173,6 +186,14 @@ void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
     if (client.isCrashing.exchange(true) || !client.state)
     {
         waitForHandlerToEndProcess();
+        restoreDefaultAndRaise(signalNumber);
+        return;
+    }
+
+    // The default action ends the process through EXC_CRASH, which the
+    // handler captures from outside with the reason already recorded.
+    if (client.isMachCaptureActive && isHandlerAlive(client))
+    {
         restoreDefaultAndRaise(signalNumber);
         return;
     }
@@ -507,6 +528,7 @@ void uninstallCrashHandlers()
     restorePreviousSignalHandlers();
     stopRecordingThrowSites();
     restorePreviousExceptionPorts();
+    client.isMachCaptureActive = false;
     std::set_terminate(client.previousTerminateHandler);
     uninstallUncaughtExceptionRecorder();
 }
@@ -583,7 +605,8 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     // bootstrap port back, its runtime's own lookups land on this port too,
     // and are dropped here rather than left to block it.
     if (spawned && handshake)
-        answerHandshakeWithTaskPort(*handshake, launch.startTimeout);
+        client.isMachCaptureActive =
+            answerHandshakeWithTaskPort(*handshake, launch.startTimeout);
 
     if (handshake)
         destroyHandshakePort(*handshake);

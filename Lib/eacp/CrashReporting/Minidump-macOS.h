@@ -13,15 +13,22 @@
 // minidump-stackwalk and lldb to open the crash.
 namespace eacp::CrashReporting::Detail
 {
+struct MinidumpThread
+{
+    std::uint64_t threadId = 0;
+    TaskThreadRegisters registers;
+    MemoryRange stack;
+    Vector<std::byte> stackBytes;
+};
+
 struct MinidumpContents
 {
     exception_type_t exceptionType = 0;
     std::array<std::int64_t, 2> exceptionCodes {};
     std::uint64_t exceptionAddress = 0;
-    std::uint64_t threadId = 0;
-    FaultingThreadRegisters registers;
-    MemoryRange stack;
-    Vector<std::byte> stackBytes;
+
+    // The crashing thread first; the exception stream points at it.
+    Vector<MinidumpThread> threads;
     Vector<AppImage> images;
     std::string operatingSystemVersion;
     std::string operatingSystemBuild;

@@ -314,7 +314,7 @@ void copyFramesIntoCrashInfo(SharedCrashInfo& crash,
 }
 
 std::uint64_t findExceptionAddress(const MachException& exception,
-                                   const FaultingThreadRegisters& registers)
+                                   const TaskThreadRegisters& registers)
 {
     if (exception.type == EXC_BAD_ACCESS)
         return static_cast<std::uint64_t>(exception.codes[1]);
@@ -370,10 +370,50 @@ struct MachCapture
 {
     mach_port_t task = MACH_PORT_NULL;
     const MachException& exception;
-    const FaultingThreadRegisters& registers;
+    const TaskThreadRegisters& registers;
     const Vector<AppImage>& images;
     std::uint64_t threadId = 0;
 };
+
+MinidumpThread makeMinidumpThread(mach_port_t task,
+                                  std::uint64_t threadId,
+                                  const TaskThreadRegisters& registers)
+{
+    auto thread = MinidumpThread {};
+    thread.threadId = threadId;
+    thread.registers = registers;
+    auto stack =
+        findThreadStack(task, registers.stackPointer, maxMinidumpStackBytes);
+
+    if (stack)
+    {
+        thread.stack = *stack;
+        thread.stackBytes = readStackBytes(task, *stack);
+    }
+
+    return thread;
+}
+
+// The crashing thread from the exception's registers, then every other
+// thread as the suspended task holds it.
+Vector<MinidumpThread> readMinidumpThreads(const MachCapture& capture)
+{
+    auto threads = Vector<MinidumpThread> {
+        makeMinidumpThread(capture.task, capture.threadId, capture.registers)};
+    auto taskThreads = listTaskThreads(capture.task);
+
+    for (auto thread: taskThreads)
+    {
+        auto threadId = readThreadId(thread);
+        auto registers = readTaskThreadRegisters(thread);
+
+        if (threadId != capture.threadId && registers)
+            threads.add(makeMinidumpThread(capture.task, threadId, *registers));
+    }
+
+    releaseTaskThreads(taskThreads);
+    return threads;
+}
 
 bool writeMachMinidump(const FilePath& path, const MachCapture& capture)
 {
@@ -382,23 +422,59 @@ bool writeMachMinidump(const FilePath& path, const MachCapture& capture)
     contents.exceptionCodes = capture.exception.codes;
     contents.exceptionAddress =
         findExceptionAddress(capture.exception, capture.registers);
-    contents.threadId = capture.threadId;
-    contents.registers = capture.registers;
+    contents.threads = readMinidumpThreads(capture);
     contents.images = capture.images;
     contents.operatingSystemVersion = getOperatingSystemVersion();
     contents.operatingSystemBuild = getOperatingSystemBuild();
     contents.processorCount = getProcessorCount();
+    return writeMinidump(path, contents);
+}
 
-    auto stack = findThreadStack(
-        capture.task, capture.registers.stackPointer, maxMinidumpStackBytes);
+// EXC_CRASH's first code carries the signal that is ending the process in
+// its top byte.
+int getCrashSignal(const MachException& exception)
+{
+    constexpr auto signalShift = 24;
+    constexpr auto signalMask = 0xFF;
+    auto code = static_cast<std::uint64_t>(exception.codes[0]);
+    return static_cast<int>((code >> signalShift) & signalMask);
+}
 
-    if (stack)
+// "SIGABRT" from sys_signame's "abrt".
+std::string getSignalName(int signalNumber)
+{
+    if (signalNumber <= 0 || signalNumber >= NSIG)
+        return "SIGNAL";
+
+    return "SIG" + Strings::toUpper(sys_signame[signalNumber]);
+}
+
+// A fault is named by its exception. A signal's default action (EXC_CRASH)
+// keeps what the app recorded before it, std::terminate or an NSException,
+// and is otherwise named by the signal.
+void nameMachCrashReport(CrashReport& report, const MachException& exception)
+{
+    if (exception.type != EXC_CRASH)
     {
-        contents.stack = *stack;
-        contents.stackBytes = readStackBytes(capture.task, *stack);
+        report.reason = getMachExceptionName(exception.type);
+        report.message = describeMachException(exception);
+        return;
     }
 
-    return writeMinidump(path, contents);
+    if (report.reason.empty())
+        report.reason = getSignalName(getCrashSignal(exception));
+}
+
+// As the signal path does: an uncaught exception's throw site is the
+// crashing thread, and where terminate aborted is kept beside it.
+void moveThrowSiteToCrashingThread(CrashReport& report, const SharedCrashInfo& crash)
+{
+    if (crash.throwFrameCount == 0)
+        return;
+
+    report.terminateFrames = std::move(report.crashingThread.frames);
+    report.crashingThread.frames = resolveFrames(
+        crash, crash.throwFrames, crash.throwFrameCount, FirstFrame::returnAddress);
 }
 
 // The task port the app handed over; the one in the message when the
@@ -418,7 +494,11 @@ CrashReport captureMachException(const ReportDatabase& database,
                                  const MachException& exception)
 {
     auto task = chooseAppTask(ports, exception);
-    auto registers = readThreadState(exception).value_or(FaultingThreadRegisters {});
+
+    // The other threads hold still while their stacks are read; the app is
+    // killed afterwards, so nothing resumes it.
+    ::task_suspend(task);
+    auto registers = readThreadState(exception).value_or(TaskThreadRegisters {});
     auto addresses = walkFramePointers(task, registers, maxCrashFrames);
     auto images = readImageList(task);
     auto threadId = readThreadId(exception.thread);
@@ -428,12 +508,14 @@ CrashReport captureMachException(const ReportDatabase& database,
     copyFramesIntoCrashInfo(*crash, addresses);
 
     auto report = beginHandlerReport(database, state, CaptureSource::handlerMach);
-    report.reason = getMachExceptionName(exception.type);
-    report.message = describeMachException(exception);
+    nameMachCrashReport(report, exception);
     report.faultAddress = findExceptionAddress(exception, registers);
     report.crashingThread.threadId = threadId;
     report.crashingThread.frames =
         resolveFrames(*crash, crash->frames, crash->frameCount);
+
+    if (exception.type == EXC_CRASH)
+        moveThrowSiteToCrashingThread(report, *crash);
 
     auto minidumpPath = report.folder / minidumpFileName;
     auto capture = MachCapture {task, exception, registers, images, threadId};

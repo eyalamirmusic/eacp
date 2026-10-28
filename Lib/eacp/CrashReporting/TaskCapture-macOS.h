@@ -29,7 +29,7 @@ constexpr auto nativeThreadStateCount =
     mach_msg_type_number_t {x86_THREAD_STATE64_COUNT};
 #endif
 
-struct FaultingThreadRegisters
+struct TaskThreadRegisters
 {
     NativeThreadState state {};
     std::uint64_t programCounter = 0;
@@ -38,10 +38,17 @@ struct FaultingThreadRegisters
     std::uint64_t linkRegister = 0;
 };
 
+// Any thread of the task, as it is now.
+std::optional<TaskThreadRegisters> readTaskThreadRegisters(mach_port_t thread);
+
+// Every thread of the task; the caller releases each with
+// releaseTaskThreads.
+Vector<mach_port_t> listTaskThreads(mach_port_t task);
+void releaseTaskThreads(const Vector<mach_port_t>& threads);
+
 // The thread's registers as it faulted; the copy the exception message
 // carried when the thread itself cannot be asked.
-std::optional<FaultingThreadRegisters>
-    readThreadState(const MachException& exception);
+std::optional<TaskThreadRegisters> readThreadState(const MachException& exception);
 
 bool readAppMemory(mach_port_t task,
                    std::uint64_t address,
@@ -49,7 +56,7 @@ bool readAppMemory(mach_port_t task,
 
 // The faulting pc, then each return address up the frame-pointer chain.
 Vector<std::uint64_t> walkFramePointers(mach_port_t task,
-                                        const FaultingThreadRegisters& registers,
+                                        const TaskThreadRegisters& registers,
                                         std::size_t maxFrames);
 
 struct AppImage
