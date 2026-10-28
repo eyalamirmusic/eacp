@@ -7,15 +7,14 @@ if (NOT TARGET SelfDestruct)
 endif ()
 
 nano_add_executable(CrashReportingTests
-        SOURCES FallbackReportTests.cpp PendingReportsTests.cpp
+        SOURCES FallbackReportTests.cpp Matrix.cpp PendingReportsTests.cpp
                 SelfDestructTests.cpp ZooTests.cpp
         TARGETS eacp-crash-zoo)
 
 # The fault cases crash the demo app for real and read the report its handler
 # wrote.
 target_compile_definitions(CrashReportingTests PRIVATE
-        EACP_SELF_DESTRUCT="$<TARGET_FILE:SelfDestruct>"
-        EACP_CRASH_MATRIX_FILE="${PROJECT_SOURCE_DIR}/Lib/eacp/CrashReporting/MATRIX.md")
+        EACP_SELF_DESTRUCT="$<TARGET_FILE:SelfDestruct>")
 add_dependencies(CrashReportingTests SelfDestruct)
 
 # Runs the real start() over a database the tests fill, to see when

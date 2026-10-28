@@ -4,8 +4,9 @@ namespace eacp::CrashReporting::Zoo
 {
 namespace
 {
+using namespace std::string_view_literals;
+
 constexpr auto werModulePullRequest = 180;
-constexpr auto machCapturePullRequest = 182;
 constexpr auto threadWatchPullRequest = 0;
 
 struct LaneName
@@ -14,16 +15,14 @@ struct LaneName
     std::string_view name;
 };
 
-constexpr auto laneCount = 7;
-
-constexpr auto laneNames = Array<LaneName, laneCount> {
-    {Lane::macOSArm64, "macOS arm64"},
-    {Lane::macOSX64, "macOS x86_64"},
-    {Lane::windowsX64Msvc, "Windows x64 MSVC"},
-    {Lane::windowsX64ClangCl, "Windows x64 clang-cl"},
-    {Lane::windowsArm64Msvc, "Windows ARM64 MSVC"},
-    {Lane::windowsArm64ClangCl, "Windows ARM64 clang-cl"},
-    {Lane::linux, "Linux"},
+constexpr auto laneNames = Array {
+    LaneName {Lane::macOSArm64, "macOS arm64"},
+    LaneName {Lane::macOSX64, "macOS x86_64"},
+    LaneName {Lane::windowsX64Msvc, "Windows x64 MSVC"},
+    LaneName {Lane::windowsX64ClangCl, "Windows x64 clang-cl"},
+    LaneName {Lane::windowsArm64Msvc, "Windows ARM64 MSVC"},
+    LaneName {Lane::windowsArm64ClangCl, "Windows ARM64 clang-cl"},
+    LaneName {Lane::linux, "Linux"},
 };
 
 bool isMac(Lane lane)
@@ -251,20 +250,18 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     return notAvailable("not in the matrix");
 }
 
-constexpr auto matrixFaultCount = 11;
-
-constexpr auto matrixFaults = Array<std::string_view, matrixFaultCount> {
-    "nullptr",
-    "divide",
-    "stackoverflow",
-    "abort",
-    "purevirtual",
-    "terminate",
-    "heapcorruption",
-    "hang",
-    "spin",
-    "deadlock",
-    "fastfail",
+constexpr auto matrixFaults = Array {
+    "nullptr"sv,
+    "divide"sv,
+    "stackoverflow"sv,
+    "abort"sv,
+    "purevirtual"sv,
+    "terminate"sv,
+    "heapcorruption"sv,
+    "hang"sv,
+    "spin"sv,
+    "deadlock"sv,
+    "fastfail"sv,
 };
 
 Vector<MatrixCell> makeCrashMatrix()
@@ -283,170 +280,6 @@ Vector<MatrixCell> makeCrashMatrix()
     return cells;
 }
 
-Vector<LaneGap> makeLaneGaps()
-{
-    auto gaps = Vector<LaneGap> {};
-
-    for (auto lane: {Lane::macOSArm64, Lane::macOSX64})
-    {
-        gaps.add({lane,
-                  "capture is in-process with backtrace(): no minidump, and "
-                  "no stacks of other threads",
-                  machCapturePullRequest});
-    }
-
-    for (auto lane: {Lane::windowsX64Msvc,
-                     Lane::windowsX64ClangCl,
-                     Lane::windowsArm64Msvc,
-                     Lane::windowsArm64ClangCl})
-    {
-        gaps.add({lane,
-                  "with the handler gone, faults seen only in the exit code "
-                  "(heap corruption, __fastfail) are lost",
-                  werModulePullRequest});
-    }
-
-    gaps.add({Lane::macOSX64,
-              "no machine runs this lane: its cells are expected, not verified",
-              0});
-    gaps.add({Lane::linux, "no crash reporter on Linux", 0});
-    return gaps;
-}
-
-std::string_view getStatusSymbol(OutcomeStatus status)
-{
-    switch (status)
-    {
-        case OutcomeStatus::reported:
-            return "✅";
-        case OutcomeStatus::reportedWithLimits:
-            return "⚠️";
-        case OutcomeStatus::notReported:
-            return "❌";
-        case OutcomeStatus::notAvailable:
-            return "—";
-        case OutcomeStatus::pendingPR:
-            return "⏳";
-    }
-
-    return {};
-}
-
-std::string describePullRequest(int pullRequest)
-{
-    if (pullRequest == 0)
-        return "PR not opened yet";
-
-    return "PR #" + std::to_string(pullRequest);
-}
-
-std::string describeCapture(const ExpectedOutcome& outcome)
-{
-    auto text = std::string {getCaptureSourceName(outcome.capturedBy)};
-
-    if (outcome.hasStack)
-        text += ", stack";
-    else
-        text += ", no stack";
-
-    if (outcome.hasMinidump)
-        text += ", minidump";
-
-    return text;
-}
-
-std::string renderCell(const ExpectedOutcome& outcome)
-{
-    auto symbol = std::string {getStatusSymbol(outcome.status)};
-
-    switch (outcome.status)
-    {
-        case OutcomeStatus::reported:
-            return symbol + " " + std::string {outcome.reason} + " ("
-                   + describeCapture(outcome) + ")";
-        case OutcomeStatus::reportedWithLimits:
-            return symbol + " " + std::string {outcome.reason} + " ("
-                   + describeCapture(outcome) + ")";
-        case OutcomeStatus::notReported:
-            return symbol + " " + std::string {outcome.note};
-        case OutcomeStatus::notAvailable:
-            return symbol;
-        case OutcomeStatus::pendingPR:
-            return symbol + " " + describePullRequest(outcome.pullRequest);
-    }
-
-    return {};
-}
-
-std::string renderLaneTable(Lane lane)
-{
-    auto text = "## " + std::string {getLaneName(lane)} + "\n\n"
-                + "| Fault | Main thread | Background thread |\n"
-                + "|---|---|---|\n";
-
-    for (auto fault: matrixFaults)
-    {
-        auto label = std::string {fault};
-
-        if (auto found = findFault(fault))
-            label = std::string {found->get().label};
-
-        text +=
-            "| " + label + " | "
-            + renderCell(*findExpectedOutcome(fault, ThreadChoice::main, lane))
-            + " | "
-            + renderCell(*findExpectedOutcome(fault, ThreadChoice::background, lane))
-            + " |\n";
-    }
-
-    return text + "\n";
-}
-
-bool isGap(const ExpectedOutcome& outcome)
-{
-    return outcome.status == OutcomeStatus::reportedWithLimits
-           || outcome.status == OutcomeStatus::notReported
-           || outcome.status == OutcomeStatus::pendingPR;
-}
-
-std::string renderGap(const MatrixCell& cell)
-{
-    const auto& outcome = cell.outcome;
-    auto text = "- " + std::string {getStatusSymbol(outcome.status)} + " "
-                + std::string {getLaneName(cell.lane)} + ", "
-                + std::string {cell.fault} + " on the "
-                + std::string {getThreadChoiceName(cell.thread)}
-                + " thread: " + std::string {outcome.note};
-
-    if (outcome.pullRequest != 0 || outcome.status == OutcomeStatus::pendingPR)
-        text += " (" + describePullRequest(outcome.pullRequest) + ")";
-
-    return text + "\n";
-}
-
-std::string renderGaps()
-{
-    auto text = std::string {"## Gaps\n\n"};
-
-    for (const auto& gap: getLaneGaps())
-    {
-        text += "- " + std::string {getLaneName(gap.lane)} + ": "
-                + std::string {gap.note};
-
-        if (gap.pullRequest != 0)
-            text += " (" + describePullRequest(gap.pullRequest) + ")";
-
-        text += "\n";
-    }
-
-    for (const auto& cell: getCrashMatrix())
-    {
-        if (isGap(cell.outcome))
-            text += renderGap(cell);
-    }
-
-    return text;
-}
 } // namespace
 
 const Vector<Lane>& listLanes()
@@ -498,12 +331,6 @@ const Vector<MatrixCell>& getCrashMatrix()
     return cells;
 }
 
-const Vector<LaneGap>& getLaneGaps()
-{
-    static const auto gaps = makeLaneGaps();
-    return gaps;
-}
-
 std::optional<ExpectedOutcome>
     findExpectedOutcome(std::string_view fault, ThreadChoice thread, Lane lane)
 {
@@ -516,21 +343,4 @@ std::optional<ExpectedOutcome>
     return std::nullopt;
 }
 
-std::string renderCrashMatrix()
-{
-    auto text = std::string {
-        "# Crash matrix\n\n"
-        "Generated from `Zoo/Matrix.cpp` by `SelfDestruct --matrix <file>`; "
-        "`CrashMatrix/fileIsCurrent` fails when this file differs. Every "
-        "reported cell on the lane a test binary is built for is run by "
-        "`Tests/CrashReporting`.\n\n"
-        "Legend: ✅ reported (who captured it, stack, minidump) · ⚠️ reported "
-        "with a limit, listed under Gaps · ❌ not reported · ⏳ pending a PR · "
-        "— not available on that lane.\n\n"};
-
-    for (auto lane: listLanes())
-        text += renderLaneTable(lane);
-
-    return text + renderGaps();
-}
 } // namespace eacp::CrashReporting::Zoo
