@@ -44,11 +44,14 @@ struct CrashedThread
 };
 
 // Who wrote the report: the handler process reading the crashed one from
-// outside, the handler again after the app was gone with only its exit code to go on,
-// or nobody, for a folder a crash left without its report.json.
+// outside, the handler on macOS from the kernel's Mach exception message with
+// the app suspended, the handler again after the app was gone with only its
+// exit code to go on, or nobody, for a folder a crash left without its
+// report.json.
 enum class CaptureSource
 {
     handler,
+    handlerMach,
     exitCode,
     incomplete
 };
