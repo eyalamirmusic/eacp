@@ -349,6 +349,10 @@ bool start(const Options& options)
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
+
+    if (options.registerWerModuleForCurrentUser)
+        Detail::listWerModuleForCurrentUser();
+
     Detail::installCrashHandlers(state);
     installStackOverflowReporting(options.stackOverflowReporting);
 

@@ -2,8 +2,14 @@
 #include "CppExceptions-Windows.h"
 #include "CrashReportingPlatform.h"
 #include "ExceptionNames-Windows.h"
+#include "WerRegistration-Windows.h"
 
+#include <eacp/Core/Threads/ThreadUtils-Windows.h>
+#include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Logging.h>
 #include <eacp/Core/Utils/WinInclude.h>
+
+#include <werapi.h>
 
 #include <array>
 #include <atomic>
@@ -45,6 +51,9 @@ struct WindowsCrashClient
     _purecall_handler previousPureCallHandler = nullptr;
     _crt_signal_t previousAbortHandler = SIG_DFL;
     std::terminate_handler previousTerminateHandler = nullptr;
+
+    WerRegistration werRegistration {};
+    bool isWerModuleRegistered = false;
 };
 
 WindowsCrashClient& getWindowsCrashClient()
@@ -299,6 +308,108 @@ HANDLE createChannelEvent(std::string_view channel, std::string_view suffix)
     return ::CreateEventW(nullptr, FALSE, FALSE, name.c_str());
 }
 
+std::uint64_t getAddressOf(const void* pointer)
+{
+    return reinterpret_cast<std::uintptr_t>(pointer);
+}
+
+std::uint64_t getHandleValue(HANDLE handle)
+{
+    return reinterpret_cast<std::uintptr_t>(handle);
+}
+
+// Backslashes: WER matches the registered path against the registry value
+// name as written.
+std::wstring getWerModulePath()
+{
+    auto modulePath = Files::executablePath().parentDirectory()
+                      / Strings::narrow(werModuleFileName);
+    return Strings::widen(modulePath.nativeString());
+}
+
+bool isWerModuleListedUnder(HKEY root, const std::wstring& modulePath)
+{
+    auto value = DWORD {0};
+    auto size = static_cast<DWORD>(sizeof(value));
+    auto read = ::RegGetValueW(root,
+                               werHelperModulesKey.data(),
+                               modulePath.c_str(),
+                               RRF_RT_REG_DWORD,
+                               nullptr,
+                               &value,
+                               &size);
+    return read == ERROR_SUCCESS;
+}
+
+bool isWerModuleListed(const std::wstring& modulePath)
+{
+    return isWerModuleListedUnder(HKEY_LOCAL_MACHINE, modulePath)
+           || isWerModuleListedUnder(HKEY_CURRENT_USER, modulePath);
+}
+
+void fillWerRegistration(WindowsCrashClient& client, SharedState& state)
+{
+    auto& registration = client.werRegistration;
+    registration.magic = werRegistrationMagic;
+    registration.version = werRegistrationVersion;
+    registration.crashEventHandle = getHandleValue(client.crashEvent);
+    registration.handlerProcessHandle = getHandleValue(client.handlerProcess);
+    registration.codeAddress = getAddressOf(&state.crash.code);
+    registration.faultAddressAddress = getAddressOf(&state.crash.faultAddress);
+    registration.threadIdAddress = getAddressOf(&state.crash.threadId);
+    registration.exceptionPointersAddressAddress =
+        getAddressOf(&state.crash.exceptionPointersAddress);
+    registration.pointers = {&registration.record, &registration.context};
+}
+
+// WER loads only a module listed in the registry; without one, __fastfail and
+// heap corruption are still reported, from the exit code.
+void registerWerModule(SharedState& state)
+{
+    auto& client = getWindowsCrashClient();
+
+    if (client.handlerProcess == nullptr || client.crashEvent == nullptr)
+        return;
+
+    auto modulePath = getWerModulePath();
+
+    if (!isWerModuleListed(modulePath))
+    {
+        LOG("CrashReporting: ",
+            Strings::narrow(modulePath),
+            " is not listed under HKLM or HKCU\\",
+            Strings::narrow(werHelperModulesKey),
+            ", so __fastfail and heap corruption are reported without a stack");
+        return;
+    }
+
+    fillWerRegistration(client, state);
+    auto registered = ::WerRegisterRuntimeExceptionModule(modulePath.c_str(),
+                                                          &client.werRegistration);
+    client.isWerModuleRegistered = SUCCEEDED(registered);
+
+    // SEM_NOGPFAULTERRORBOX keeps WER, and so the module, out entirely.
+    if (client.isWerModuleRegistered)
+        Threads::keepWindowsErrorReportingOn();
+
+    if (!client.isWerModuleRegistered)
+        LOG("CrashReporting: WerRegisterRuntimeExceptionModule failed, ",
+            formatHexAddress(static_cast<std::uint32_t>(registered)));
+}
+
+void unregisterWerModule()
+{
+    auto& client = getWindowsCrashClient();
+
+    if (!client.isWerModuleRegistered)
+        return;
+
+    auto modulePath = getWerModulePath();
+    ::WerUnregisterRuntimeExceptionModule(modulePath.c_str(),
+                                          &client.werRegistration);
+    client.isWerModuleRegistered = false;
+}
+
 } // namespace
 SharedState& createSharedState(const HandlerLaunch& launch)
 {
@@ -375,7 +486,6 @@ void installCrashHandlers(SharedState& state)
     client.state = state;
 
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
-    ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     client.previousExceptionFilter =
         ::SetUnhandledExceptionFilter(&handleUnhandledException);
     client.previousInvalidParameterHandler =
@@ -383,11 +493,14 @@ void installCrashHandlers(SharedState& state)
     client.previousPureCallHandler = _set_purecall_handler(&handlePureVirtualCall);
     client.previousAbortHandler = std::signal(SIGABRT, &handleAbortSignal);
     client.previousTerminateHandler = std::set_terminate(&handleTerminate);
+    ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    registerWerModule(state);
 }
 
 void uninstallCrashHandlers()
 {
     auto& client = getWindowsCrashClient();
+    unregisterWerModule();
     ::SetUnhandledExceptionFilter(client.previousExceptionFilter);
     _set_invalid_parameter_handler(client.previousInvalidParameterHandler);
     _set_purecall_handler(client.previousPureCallHandler);
@@ -466,6 +579,24 @@ std::uint64_t getCurrentProcessId()
 std::uint64_t getCurrentThreadId()
 {
     return ::GetCurrentThreadId();
+}
+
+void listWerModuleForCurrentUser()
+{
+    auto modulePath = getWerModulePath();
+    auto listed = DWORD {0};
+    auto written = ::RegSetKeyValueW(HKEY_CURRENT_USER,
+                                     werHelperModulesKey.data(),
+                                     modulePath.c_str(),
+                                     REG_DWORD,
+                                     &listed,
+                                     static_cast<DWORD>(sizeof(listed)));
+
+    if (written != ERROR_SUCCESS)
+        LOG("CrashReporting: could not list ",
+            Strings::narrow(modulePath),
+            " under HKCU\\",
+            Strings::narrow(werHelperModulesKey));
 }
 
 // The handler process watches the heartbeat and samples from outside.

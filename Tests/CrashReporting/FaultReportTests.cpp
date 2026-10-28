@@ -665,6 +665,53 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
               .empty());
 };
 
+#if defined(_WIN32)
+// SelfDestruct lists the module itself through Options; this takes it out.
+void unlistWerModule()
+{
+    auto module =
+        FilePath {EACP_SELF_DESTRUCT}.parentDirectory() / "eacp-crash-wer.dll";
+    Processes::run("reg",
+                   {"delete",
+                    "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error "
+                    "Reporting\\RuntimeExceptionHelperModules",
+                    "/v",
+                    module.nativeString(),
+                    "/f"});
+}
+
+// The in-app path ends the app itself, so WER, and the module, never see it.
+auto tCrashReportAbortWithWerModule = test("CrashReport/abortWithWerModule") = []
+{
+    auto report = crashSelfDestruct("abort", FaultThread::main);
+    check(report.reason == "SIGABRT");
+    check(report.capturedBy == CaptureSource::handler);
+};
+
+auto tCrashReportFastFailWithoutWerModule =
+    test("CrashReport/fastFailWithoutWerModule") = []
+{
+    unlistWerModule();
+    auto database = TemporaryFile {};
+    auto options = makeCrashOptions(
+        "fastfail", FaultThread::main, database.path(), {"--without-wer-module"});
+    check(Processes::run(options).launched);
+
+    auto reportDatabase = ReportDatabase {database.path()};
+    waitForCompleteReport(reportDatabase);
+    auto reports = reportDatabase.readPendingReports();
+    check(reports.size() == 1);
+
+    if (reports.size() != 1)
+        return;
+
+    const auto& report = reports[0];
+    check(report.reason == "STATUS_STACK_BUFFER_OVERRUN");
+    check(report.capturedBy == CaptureSource::exitCode);
+    check(report.crashingThread.frames.empty());
+};
+#endif
+
 auto tMatrixCoversEveryFault = test("CrashMatrix/coversEveryFaultOnEveryLane") = []
 {
     for (const auto& fault: Faults::listFaults())

@@ -20,6 +20,11 @@ void initMainThread();
 // thread rather than the host's UI thread.
 void setCurrentThreadAsMainFallback();
 
+// Keeps SEM_NOGPFAULTERRORBOX off from now on, initMainThread included, so WER
+// still runs for faults no in-process handler sees: what a crash reporter's WER
+// module needs.
+void keepWindowsErrorReportingOn();
+
 void shutdownMainThread();
 
 // Kills every thread timer still registered (Timer-Windows.cpp), so WM_TIMER

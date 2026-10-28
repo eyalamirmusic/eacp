@@ -44,6 +44,9 @@ void installCrashHandlers(SharedState& state);
 bool installStackOverflowStackOnCurrentThread();
 void setStackOverflowStackOnNewThreads(bool shouldInstall);
 
+// Windows writes the WER module's HKCU entry; elsewhere nothing.
+void listWerModuleForCurrentUser();
+
 bool isHandlerProcessRunning();
 
 // Ends the handler process without telling it, as if it had died: the crash

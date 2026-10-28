@@ -6,6 +6,10 @@
 # every configuration on Windows. SYMBOLS_DIR <dir> copies them there as
 # <target>-<version> (the app's VERSION), or <target> when it has none.
 #
+# On Windows the WER module, eacp-crash-wer.dll, is copied beside the
+# executable (and its PDB into SYMBOLS_DIR), since start() registers it from
+# there.
+#
 #   eacp_enable_crash_reporting(<target> [SYMBOLS_DIR <dir>])
 function(eacp_enable_crash_reporting target)
     cmake_parse_arguments(PARSE_ARGV 1 CRASH "" "SYMBOLS_DIR" "")
@@ -26,6 +30,26 @@ function(eacp_enable_crash_reporting target)
     target_link_libraries(${target} PRIVATE eacp-crash-reporting)
     target_compile_definitions(${target} PUBLIC EACP_CRASH_REPORTING=1)
     eacp_add_crash_symbols(${target} "${CRASH_SYMBOLS_DIR}")
+
+    if (TARGET eacp-crash-wer)
+        eacp_add_crash_wer_module(${target} "${CRASH_SYMBOLS_DIR}")
+    endif ()
+endfunction()
+
+function(eacp_add_crash_wer_module target symbols_dir)
+    add_dependencies(${target} eacp-crash-wer)
+    add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:eacp-crash-wer> $<TARGET_FILE_DIR:${target}>
+            VERBATIM)
+
+    if (symbols_dir)
+        add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${symbols_dir}
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:eacp-crash-wer>
+                        ${symbols_dir}/eacp-crash-wer.pdb
+                VERBATIM)
+    endif ()
 endfunction()
 
 function(eacp_get_crash_symbols_name target out)

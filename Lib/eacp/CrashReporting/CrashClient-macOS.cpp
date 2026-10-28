@@ -478,6 +478,9 @@ bool notifyHandlerOfHang()
     return notifyHandlerProcess(client, hangNotificationByte);
 }
 
+// The WER module is Windows-only.
+void listWerModuleForCurrentUser() {}
+
 void installCrashHandlers(SharedState& state)
 {
     auto& client = getMacCrashClient();
