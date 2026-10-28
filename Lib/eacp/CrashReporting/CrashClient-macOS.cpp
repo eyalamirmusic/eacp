@@ -1,7 +1,6 @@
 #include "CrashChannel-macOS.h"
 #include "CrashClient-macOS.h"
 #include "CrashReportingPlatform.h"
-#include "FallbackReport.h"
 #include "MachImages-macOS.h"
 #include "ThrowSites-macOS.h"
 #include "UncaughtExceptions-macOS.h"
@@ -187,9 +186,8 @@ void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
     if (notifyHandlerProcess(client, crashNotificationByte))
         waitForHandlerToEndProcess();
     else
-        writeFallbackReport(state);
 
-    restoreDefaultAndRaise(signalNumber);
+        restoreDefaultAndRaise(signalNumber);
 }
 
 std::string_view demangleExceptionType(const std::type_info& type)

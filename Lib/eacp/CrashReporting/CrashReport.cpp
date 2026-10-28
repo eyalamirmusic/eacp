@@ -24,7 +24,6 @@ struct CaptureSourceName
 constexpr auto captureSourceNames = std::to_array<CaptureSourceName>({
     {CaptureSource::handler, "handler"},
     {CaptureSource::exitCode, "exit-code"},
-    {CaptureSource::app, "app"},
     {CaptureSource::incomplete, "incomplete"},
 });
 
@@ -193,6 +192,26 @@ void CrashReport::reflect(Miro::Reflector& ref)
 
     for (const auto& attachment: attachmentPaths)
         attachments.add(FilePath {attachment});
+}
+
+void AppSession::reflect(Miro::Reflector& ref) {
+    MIRO_FIELDS(ref, processId, startTime, startTimeText)}
+
+std::string AppSession::toJSON() const
+{
+    return Miro::toJSONString(*this, reportIndent);
+}
+
+std::optional<AppSession> AppSession::fromJSON(std::string_view text)
+{
+    try
+    {
+        return Miro::createFromJSONString<AppSession>(text);
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
 }
 
 std::string CrashReport::toJSON() const

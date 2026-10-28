@@ -20,7 +20,6 @@ target_link_libraries(eacp-crash-reporting PUBLIC eacp-crash-report)
 target_sources(eacp-crash-reporting PRIVATE
         CrashHandler.cpp
         CrashReporting.cpp
-        FallbackReport.cpp
         HandlerReport.cpp
         SharedState.cpp)
 
@@ -28,7 +27,6 @@ if (APPLE)
     target_sources(eacp-crash-reporting PRIVATE
             CrashClient-macOS.cpp
             CrashHandlerProcess-macOS.cpp
-            FallbackReport-macOS.cpp
             HangWatchdog-macOS.cpp
             MachImages-macOS.cpp
             ThrowSites-macOS.cpp
@@ -39,8 +37,7 @@ elseif (WIN32)
             CrashClient-Windows.cpp
             CppExceptions-Windows.cpp
             CrashHandlerProcess-Windows.cpp
-            ExceptionNames-Windows.cpp
-            FallbackReport-Windows.cpp)
+            ExceptionNames-Windows.cpp)
     target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
 endif ()
 

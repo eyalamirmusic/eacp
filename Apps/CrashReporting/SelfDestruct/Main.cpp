@@ -18,7 +18,7 @@
 //   SelfDestruct --crash abort --thread background
 //   SelfDestruct --crash abort -- --no-report-window
 //   SelfDestruct --crash hang --hang-threshold-ms 500
-//   SelfDestruct --crash nullptr --kill-handler    the app's fallback report
+//   SelfDestruct --crash nullptr --kill-handler    an unreported exit
 //
 // Everything after "--" goes to the handler process, whose own flag
 // --no-report-window has it write the report and exit, which is what
@@ -396,7 +396,7 @@ int main(int argc, char* argv[])
     cli.option("--thread", threadName, "main or background");
     cli.flag("--kill-handler",
              killsHandler,
-             "end the handler process first, so the app writes its own report");
+             "end the handler process first, so the crash goes unreported");
     cli.option("--crash-database", databaseDirectory, "where reports go");
     cli.option("--hang-threshold-ms",
                hangThresholdMilliseconds,

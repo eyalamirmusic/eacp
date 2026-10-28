@@ -9,6 +9,7 @@ namespace eacp::CrashReporting
 //   <directory>/pending/<id>/report.json, minidump.dmp, attachments/
 //   <directory>/handled/<id>/...
 //   <directory>/crashed-last-run
+//   <directory>/session.active
 //
 // report.json is written last, so a folder without one is a capture that did
 // not finish.
@@ -31,6 +32,13 @@ public:
     bool markCrashedLastRun() const;
     bool hasCrashedLastRun() const;
     bool clearCrashedLastRun() const;
+
+    // The running app's AppSession, written by start() and removed by a clean
+    // exit.
+    FilePath getSessionMarker() const;
+    void writeSessionMarker(const AppSession& session) const;
+    std::optional<AppSession> readSessionMarker() const;
+    bool clearSessionMarker() const;
 
     // Makes pending/<id>/ and its attachments/ folder.
     FilePath createReportFolder(std::string_view id) const;

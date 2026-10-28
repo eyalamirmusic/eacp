@@ -7,7 +7,7 @@ if (NOT TARGET SelfDestruct)
 endif ()
 
 nano_add_executable(CrashReportingTests
-        SOURCES FallbackReportTests.cpp Matrix.cpp PendingReportsTests.cpp
+        SOURCES Matrix.cpp PendingReportsTests.cpp
                 SelfDestructTests.cpp FaultsTests.cpp
         TARGETS eacp-crash-faults)
 

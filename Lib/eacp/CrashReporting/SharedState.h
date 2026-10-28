@@ -86,9 +86,7 @@ struct SharedModule
 // What the crashing process writes about its own crash. On macOS that is the
 // whole capture: its own stack, walked on the alternate signal stack, and the
 // images loaded at the time. On Windows the handler walks the stack from the
-// EXCEPTION_POINTERS address, so the frames and modules stay empty there,
-// unless the handler is gone and the app records them for its fallback
-// report.
+// EXCEPTION_POINTERS address, so the frames and modules stay empty there.
 struct SharedCrashInfo
 {
     BoundedText<maxReasonLength> reason;

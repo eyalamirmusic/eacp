@@ -42,6 +42,9 @@ struct Options
     // handled/ keeps this many reports, the newest.
     int maxHandledReports = 20;
 
+    // The handler process's executable; empty is this one.
+    FilePath handlerExecutable;
+
     // How long start() waits for the handler to come up before going on
     // without it, in which case a crash goes unreported.
     std::chrono::milliseconds handlerStartTimeout {5000};
@@ -79,11 +82,15 @@ bool isHandlerProcess();
 // Installs the crash handlers, launches the handler process and schedules
 // pendingReportFound on the event loop for each report left over from earlier
 // runs; it returns without calling any of them. False when the
-// handler could not be started; crashes then go unreported.
+// handler could not be started; crashes then go unreported, and
+// handlerUnavailable is scheduled the same way. Writes the session marker,
+// which stop() and a normal exit remove, and schedules unreportedExit when the
+// last run's marker is still there with no crash report since it started.
 // Call once, early in main().
 bool start(const Options& options = {});
 
-// Tells the handler to exit without a report, waits for it, and puts the
+// Tells the handler to exit without a report, removes the session marker,
+// waits for the handler, and puts the
 // platform's own crash handling back. isStarted() is false after, and start()
 // is refused for the rest of the process.
 void stop();
