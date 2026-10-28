@@ -133,78 +133,66 @@ std::optional<CaptureSource> findCaptureSource(std::string_view name)
     return std::nullopt;
 }
 
-void reflect(Miro::Reflector& ref, StackFrame& frame)
+void StackFrame::reflect(Miro::Reflector& ref)
 {
-    ref["modulePath"](frame.modulePath);
-    reflectHexAddress(ref, "moduleBase", frame.moduleBase);
-    reflectHexAddress(ref, "offset", frame.offset);
-    ref["symbol"](frame.symbol);
-    ref["moduleUuid"](frame.moduleUuid);
+    MIRO_FIELDS(ref, modulePath)
+    reflectHexAddress(ref, "moduleBase", moduleBase);
+    reflectHexAddress(ref, "offset", offset);
+    MIRO_FIELDS(ref, symbol, moduleUuid)
 }
 
-void reflect(Miro::Reflector& ref, CrashedThread& thread)
+void CrashedThread::reflect(Miro::Reflector& ref)
 {
-    reflectHexAddress(ref, "threadId", thread.threadId);
-    ref["frames"](thread.frames);
+    reflectHexAddress(ref, "threadId", threadId);
+    MIRO_FIELDS(ref, frames)
 }
 
-void reflect(Miro::Reflector& ref, User& user)
+void User::reflect(Miro::Reflector& ref)
 {
-    ref["id"](user.id);
-    ref["email"](user.email);
-    ref["username"](user.username);
+    MIRO_FIELDS(ref, id, email, username)
 }
 
-void reflect(Miro::Reflector& ref, Breadcrumb& breadcrumb)
+void Breadcrumb::reflect(Miro::Reflector& ref)
 {
-    auto level = std::string {getLevelName(breadcrumb.level)};
-    ref["category"](breadcrumb.category);
-    ref["message"](breadcrumb.message);
-    ref["level"](level);
-    ref["timestamp"](breadcrumb.timestamp);
+    auto levelName = std::string {getLevelName(level)};
+    MIRO_FIELDS(ref, category, message)
+    ref["level"](levelName);
+    MIRO_FIELDS(ref, timestamp)
 
     if (ref.isLoading())
-        breadcrumb.level = findLevel(level).value_or(Level::info);
+        level = findLevel(levelName).value_or(Level::info);
 }
 
-void reflect(Miro::Reflector& ref, CrashReport& report)
+void CrashReport::reflect(Miro::Reflector& ref)
 {
-    auto kind = std::string {getReportKindName(report.kind)};
-    auto capturedBy = std::string {getCaptureSourceName(report.capturedBy)};
-    auto attachments = Vector<std::string> {};
+    auto kindName = std::string {getReportKindName(kind)};
+    auto capturedByName = std::string {getCaptureSourceName(capturedBy)};
+    auto attachmentPaths = Vector<std::string> {};
 
-    for (const auto& attachment: report.attachments)
-        attachments.add(attachment.str());
+    for (const auto& attachment: attachments)
+        attachmentPaths.add(attachment.str());
 
-    ref["id"](report.id);
-    ref["kind"](kind);
-    ref["timestamp"](report.timestamp);
-    ref["reason"](report.reason);
-    ref["message"](report.message);
-    reflectHexAddress(ref, "faultAddress", report.faultAddress);
-    ref["crashingThread"](report.crashingThread);
-    ref["terminateFrames"](report.terminateFrames);
-    ref["hangDuration"](report.hangDurationMilliseconds);
-    reflectPath(ref, "minidumpPath", report.minidumpPath);
-    ref["metadata"](report.metadata);
-    ref["tags"](report.tags);
-    ref["extra"](report.extra);
-    ref["user"](report.user);
-    ref["breadcrumbs"](report.breadcrumbs);
-    ref["attachments"](attachments);
-    ref["platform"](report.platform);
-    ref["capturedBy"](capturedBy);
+    MIRO_FIELDS(ref, id)
+    ref["kind"](kindName);
+    MIRO_FIELDS(ref, timestamp, reason, message)
+    reflectHexAddress(ref, "faultAddress", faultAddress);
+    MIRO_FIELDS(ref, crashingThread, terminateFrames)
+    ref["hangDuration"](hangDurationMilliseconds);
+    reflectPath(ref, "minidumpPath", minidumpPath);
+    MIRO_FIELDS(ref, metadata, tags, extra, user, breadcrumbs)
+    ref["attachments"](attachmentPaths);
+    MIRO_FIELDS(ref, platform)
+    ref["capturedBy"](capturedByName);
 
     if (!ref.isLoading())
         return;
 
-    report.kind = findReportKind(kind).value_or(ReportKind::crash);
-    report.capturedBy =
-        findCaptureSource(capturedBy).value_or(CaptureSource::handler);
-    report.attachments.clear();
+    kind = findReportKind(kindName).value_or(ReportKind::crash);
+    capturedBy = findCaptureSource(capturedByName).value_or(CaptureSource::handler);
+    attachments.clear();
 
-    for (const auto& attachment: attachments)
-        report.attachments.add(FilePath {attachment});
+    for (const auto& attachment: attachmentPaths)
+        attachments.add(FilePath {attachment});
 }
 
 std::string CrashReport::toJSON() const
