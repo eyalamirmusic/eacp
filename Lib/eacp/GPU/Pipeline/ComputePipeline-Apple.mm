@@ -3,6 +3,7 @@
 #include "ComputePipeline.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Shader/ShaderLibrary.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -27,11 +28,11 @@ struct ComputePipeline::Native
         if (kernel == nil)
             return;
 
-        NSError* error = nil;
-        state = [metalDevice newComputePipelineStateWithFunction:kernel error:&error];
+        auto build = [metalDevice, kernel](NSError** error)
+        { return [metalDevice newComputePipelineStateWithFunction:kernel error:error]; };
 
-        if (state.get() == nil && error != nil)
-            LOG(error.localizedDescription.UTF8String);
+        state = Detail::buildRetryingTransientFailures<id<MTLComputePipelineState>>(
+            "building a Metal compute pipeline", build);
 
         [kernel release];
         checkGroupFits(library.threadGroupShape());

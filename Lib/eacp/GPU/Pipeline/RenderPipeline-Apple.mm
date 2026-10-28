@@ -3,6 +3,7 @@
 #include "RenderPipeline.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Shader/ShaderLibrary.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -457,12 +458,14 @@ struct RenderPipeline::Native
             describeColorTarget(pipelineDescriptor.colorAttachments[(NSUInteger) index],
                                 writtenColorTarget(descriptor, index, hasFragment));
 
-        NSError* error = nil;
-        state = [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor
-                                                            error:&error];
+        auto build = [metalDevice, pipelineDescriptor](NSError** error)
+        {
+            return [metalDevice newRenderPipelineStateWithDescriptor:pipelineDescriptor
+                                                               error:error];
+        };
 
-        if (state.get() == nil && error != nil)
-            LOG(error.localizedDescription.UTF8String);
+        state = Detail::buildRetryingTransientFailures<id<MTLRenderPipelineState>>(
+            "building a Metal render pipeline", build);
 
         [vertexFunction release];
         [fragmentFunction release];

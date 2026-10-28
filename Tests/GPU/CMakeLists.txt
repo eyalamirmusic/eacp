@@ -121,9 +121,10 @@ set(gpu_test_sources
         ViewportTests.cpp
         TestMain.cpp)
 
-# The zero-copy CVPixelBuffer wrap test is Metal-only Objective-C++.
+# The zero-copy CVPixelBuffer wrap test and the Metal build-failure policy are
+# Metal-only Objective-C++.
 if (APPLE)
-    list(APPEND gpu_test_sources TextureInteropTests.mm)
+    list(APPEND gpu_test_sources TextureInteropTests.mm MetalErrorsTests.mm)
 endif ()
 
 # The one file that needs a display: a GPUView presenting through a Vulkan

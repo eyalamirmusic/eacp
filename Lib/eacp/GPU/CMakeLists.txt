@@ -82,6 +82,7 @@ if (APPLE)
             CommandBuffer/CommandBuffer-Apple.mm
             CommandBuffer/CopyRecorder-Apple.mm
             Device/Device-Apple.mm
+            Device/MetalErrors-Apple.mm
             Frame/ComputePass-Apple.mm
             Frame/Frame-Apple.mm
             Frame/OcclusionQueries-Apple.mm
