@@ -1,3 +1,4 @@
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
@@ -101,6 +102,31 @@ constexpr auto terminateCrash = ExpectedCrash {"terminate",
                                                true,
                                                "the crash zoo threw this on purpose",
                                                terminateReachesApp};
+
+// clang-cl's std::thread entry terminates on an escaping exception with none
+// current, so the report is the abort that follows, with no type or what().
+#if defined(_WIN32) && defined(__clang__)
+constexpr auto backgroundTerminateCrash =
+    ExpectedCrash {"terminate", "SIGABRT", true, {}, terminateReachesApp};
+constexpr auto backgroundTerminateReason = "SIGABRT";
+#else
+constexpr auto backgroundTerminateCrash = terminateCrash;
+constexpr auto backgroundTerminateReason = "std::terminate";
+#endif
+
+#if defined(__clang__)
+constexpr auto isClang = true;
+#else
+constexpr auto isClang = false;
+#endif
+
+// On Windows ARM64 StackWalk64 stops a background thread's abort or purecall
+// inside the CRT, short of the zoo's thread entry.
+#if defined(_M_ARM64)
+constexpr auto softwareCrashReachesThreadEntry = false;
+#else
+constexpr auto softwareCrashReachesThreadEntry = true;
+#endif
 
 // Matches the zoo's own availability: x86 traps a divide by zero, and MSVC
 // checks for one on ARM64.
@@ -297,9 +323,10 @@ void checkHangReport(const CrashReport& report, std::string_view function)
     if (!hasFrameInFunction(report, function))
         printFrames(report);
 
-#if defined(_M_ARM64) && defined(__clang__)
-    // clang-cl leaves frame records out of optimised ARM64 functions, so the
-    // frame-pointer walk there skips the faulting function itself.
+#if defined(_M_ARM64)
+    // Optimised ARM64 functions may have no frame record (clang-cl leaves them
+    // out, MSVC does for a leaf below std::mutex), so the frame-pointer walk
+    // there can skip the stalled function itself.
     check(hasSelfDestructFrame(report));
 #else
     check(hasFrameInFunction(report, function));
@@ -321,7 +348,12 @@ Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
     check(result.launched);
     check(result.exitCode == 0);
 
+    // The handler may still be writing a hang report the app has outlived.
     auto reportDatabase = ReportDatabase {database.path()};
+
+    if (!Files::listDirectory(reportDatabase.getPendingDirectory()).empty())
+        waitForCompleteReport(reportDatabase);
+
     check(!reportDatabase.hasCrashedLastRun());
     return reportDatabase.readPendingReports();
 }
@@ -384,9 +416,11 @@ CrashReport checkCrashReport(const ExpectedCrash& expected,
 
 void checkUncaughtExceptionReport(FaultThread thread)
 {
-    auto report = checkCrashReport(terminateCrash, thread);
+    auto isBackground = thread == FaultThread::background;
+    auto report = checkCrashReport(
+        isBackground ? backgroundTerminateCrash : terminateCrash, thread);
 
-    if (!terminateReachesApp)
+    if (!terminateReachesApp || (isBackground && Platform::isWindows() && isClang))
         return;
 
     if (!hasFrameInFunction(report, "throwUncaughtException"))
@@ -541,14 +575,22 @@ auto tCrashReportAbort =
     test("CrashReport/abort") = [] { checkCrashReport(abortCrash); };
 
 auto tCrashReportAbortBackground = test("CrashReport/abortBackground") = []
-{ checkCrashReport(abortCrash, FaultThread::background); };
+{
+    auto expected = abortCrash;
+    expected.stackReachesThreadEntry = softwareCrashReachesThreadEntry;
+    checkCrashReport(expected, FaultThread::background);
+};
 
 auto tCrashReportPureVirtual =
     test("CrashReport/pureVirtual") = [] { checkCrashReport(pureVirtualCrash); };
 
 auto tCrashReportPureVirtualBackground =
     test("CrashReport/pureVirtualBackground") = []
-{ checkCrashReport(pureVirtualCrash, FaultThread::background); };
+{
+    auto expected = pureVirtualCrash;
+    expected.stackReachesThreadEntry = softwareCrashReachesThreadEntry;
+    checkCrashReport(expected, FaultThread::background);
+};
 
 auto tCrashReportHeapCorruption = test("CrashReport/heapCorruption") = []
 { checkCrashReport(heapCorruptionCrash); };
@@ -614,4 +656,7 @@ auto tCrashReportFallback = test("CrashReport/fallbackWhenHandlerIsGone") = []
 
 auto tCrashReportFallbackBackground =
     test("CrashReport/fallbackWhenHandlerIsGoneBackground") = []
-{ checkFallbackReport("terminate", FaultThread::background, "std::terminate"); };
+{
+    checkFallbackReport(
+        "terminate", FaultThread::background, backgroundTerminateReason);
+};
