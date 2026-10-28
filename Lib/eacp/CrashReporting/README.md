@@ -170,7 +170,12 @@ a background thread; every cell is covered by `Tests/CrashReporting`.
 A background stack overflow is `SIGBUS` on macOS because a secondary thread's
 guard page is a protection fault; its frames are all the recursion. A
 background heap corruption is `SIGABRT` because another thread's small blocks
-come from the zone allocator rather than the main thread's fast path.
+come from the zone allocator rather than the main thread's fast path. With clang-cl,
+an exception escaping a background `std::thread` terminates with none current,
+so Windows reports it as the `SIGABRT` that follows, with no type or `what()`;
+MSVC's reports `std::terminate` (the CRT's terminate handler is per thread, so
+the abort handler reads the exception still current). On Windows ARM64,
+`StackWalk64` stops a background thread's `abort` or purecall inside the CRT.
 
 Not caught: `SIGKILL`, the OOM killer, a stack overflow on a thread with no
 alternate stack (macOS: one eacp did not create and that holds no
