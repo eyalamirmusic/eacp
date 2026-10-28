@@ -70,8 +70,6 @@ private:
 // A random version 4 UUID, lower case with dashes.
 std::string createReportId();
 
-std::int64_t getMillisecondsSinceEpoch();
-
 // The platform name a report carries, from Platform::name().
 std::string getPlatformName();
 } // namespace eacp::CrashReporting

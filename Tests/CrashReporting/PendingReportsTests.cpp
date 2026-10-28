@@ -20,7 +20,7 @@ std::string writePendingReport(const ReportDatabase& database)
     auto report = CrashReport {};
     report.id = createReportId();
     report.reason = "SIGSEGV";
-    report.timestamp = getMillisecondsSinceEpoch();
+    report.timestamp = Time::sinceEpoch().count;
     report.platform = getPlatformName();
     database.createReportFolder(report.id);
     database.writeReport(report);

@@ -2,6 +2,7 @@
 #include "CrashReportingPlatform.h"
 
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <exception>
 
@@ -28,7 +29,7 @@ CrashReport beginHandlerReport(const ReportDatabase& database,
 {
     auto report = CrashReport {};
     report.id = createReportId();
-    report.timestamp = getMillisecondsSinceEpoch();
+    report.timestamp = Time::sinceEpoch().count;
     report.reason = std::string {readBoundedText(state.crash.reason)};
     report.message = std::string {readBoundedText(state.crash.message)};
     report.faultAddress = state.crash.faultAddress;

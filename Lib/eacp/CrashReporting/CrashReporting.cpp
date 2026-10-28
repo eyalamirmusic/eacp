@@ -432,8 +432,7 @@ void addBreadcrumb(const Breadcrumb& breadcrumb)
     writeToSharedState(
         [&](Detail::SharedState& state)
         {
-            Detail::addSharedBreadcrumb(
-                state, breadcrumb, getMillisecondsSinceEpoch());
+            Detail::addSharedBreadcrumb(state, breadcrumb, Time::sinceEpoch().count);
         });
 }
 

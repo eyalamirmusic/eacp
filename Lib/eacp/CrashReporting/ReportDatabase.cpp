@@ -3,10 +3,10 @@
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/File.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdio>
 #include <random>
 
@@ -199,7 +199,7 @@ CrashReport ReportDatabase::makeIncompleteReport(const FilePath& folder) const
 {
     auto report = CrashReport {};
     report.id = folder.fileName();
-    report.timestamp = getMillisecondsSinceEpoch();
+    report.timestamp = Time::sinceEpoch().count;
     report.reason = incompleteReason;
     report.platform = getPlatformName();
     report.capturedBy = CaptureSource::incomplete;
@@ -297,12 +297,6 @@ std::string createReportId()
     }
 
     return id;
-}
-
-std::int64_t getMillisecondsSinceEpoch()
-{
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
 
 std::string getPlatformName()
