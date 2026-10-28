@@ -9,6 +9,11 @@
 #include <string>
 #include <string_view>
 
+namespace Miro
+{
+class Reflector;
+}
+
 namespace eacp::CrashReporting
 {
 // One return address on the crashed thread, as the module it falls in and the
@@ -39,11 +44,13 @@ struct CrashedThread
 
 // Who wrote the report: the handler process reading the crashed one from
 // outside, the handler again after the app was gone with only its exit code to go on,
+// the crashing app itself when its handler was gone (the fallback report),
 // or nobody, for a folder a crash left without its report.json.
 enum class CaptureSource
 {
     handler,
     exitCode,
+    app,
     incomplete
 };
 
@@ -114,8 +121,13 @@ struct CrashReport
 
     std::uint64_t faultAddress = 0;
 
-    // For a hang, the main thread; its frames are where it was stuck.
+    // For a hang, the main thread; its frames are where it was stuck. For an
+    // uncaught C++ exception whose throw was recorded, the throw site.
     CrashedThread crashingThread;
+
+    // Where std::terminate ended the thread, when crashingThread holds the
+    // throw site instead. Empty otherwise.
+    Vector<StackFrame> terminateFrames;
 
     // How long the main thread had been silent when it was sampled, for a
     // hang. 0 for a crash.
@@ -151,6 +163,16 @@ struct CrashReport
     std::string toJSON() const;
     static std::optional<CrashReport> fromJSON(std::string_view text);
 };
+
+// Miro reflection for the report types, the one definition report.json is
+// written and read with: Miro::toJSON(frame) works for a consumer too.
+// Addresses and thread ids are hex strings, enums their names, paths text;
+// CrashReport::folder is not stored.
+void reflect(Miro::Reflector& ref, StackFrame& frame);
+void reflect(Miro::Reflector& ref, CrashedThread& thread);
+void reflect(Miro::Reflector& ref, User& user);
+void reflect(Miro::Reflector& ref, Breadcrumb& breadcrumb);
+void reflect(Miro::Reflector& ref, CrashReport& report);
 
 // Addresses go through JSON as strings, because a JSON number is a double and
 // loses the low bits of anything above 2^53.
