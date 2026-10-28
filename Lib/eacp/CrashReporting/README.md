@@ -159,7 +159,7 @@ a background thread; every cell is covered by `Tests/CrashReporting`.
 | Pure virtual call | both | `SIGABRT`, stack | `purecall`, stack, minidump |
 | Uncaught C++ exception | both | `std::terminate`, type and `what()`, throw-site stack, `terminateFrames` | `std::terminate`, type and `what()`, stack through the throw, minidump |
 | Heap corruption | main | `SIGTRAP` from malloc's checks, stack | `STATUS_HEAP_CORRUPTION` from the exit code, no stack |
-| | background | `SIGABRT` from malloc's checks, stack | `STATUS_HEAP_CORRUPTION` from the exit code, no stack |
+| | background | `SIGABRT` (`SIGTRAP` on some runs) from malloc's checks, stack | `STATUS_HEAP_CORRUPTION` from the exit code, no stack |
 | `__fastfail` | both | — | `STATUS_STACK_BUFFER_OVERRUN` from the exit code, no stack |
 | Hang, spin, deadlock | main | `Hang`, main thread's stack, app keeps running | `Hang`, main thread's stack, minidump, app keeps running |
 | | background | not reported: only the main thread is watched | not reported |

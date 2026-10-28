@@ -211,11 +211,6 @@ void handOverToHandler(EXCEPTION_POINTERS& pointers)
     std::abort();
 }
 
-void handleAbortSignal(int)
-{
-    reportSoftwareCrash(abortReason);
-}
-
 void handlePureVirtualCall()
 {
     reportSoftwareCrash(pureVirtualReason);
@@ -305,6 +300,17 @@ void recordCurrentException()
 {
     recordCurrentException();
     std::abort();
+}
+
+// The CRT's terminate handler is per thread, so an exception escaping a thread
+// other than start()'s reaches the default one, which aborts with the
+// exception still current.
+void handleAbortSignal(int)
+{
+    if (std::current_exception())
+        recordCurrentException();
+
+    reportSoftwareCrash(abortReason);
 }
 
 // Every Threads::Thread has its own; this is the thread that called start().

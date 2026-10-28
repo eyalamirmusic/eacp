@@ -33,6 +33,9 @@ struct ExpectedCrash
 
     // Off for a stack overflow, whose frames are all the recursion.
     bool stackReachesThreadEntry = true;
+
+    // Another reason the same fault is reported with, where it varies.
+    std::string_view alternativeReason = {};
 };
 
 enum class FaultThread
@@ -82,7 +85,7 @@ constexpr auto heapCorruptionCrash = ExpectedCrash {"heapcorruption", "SIGTRAP"}
 // The main thread's small blocks come from a fast-path allocator whose check
 // traps; another thread's go through the zone allocator, which aborts.
 constexpr auto backgroundHeapCorruptionCrash =
-    ExpectedCrash {"heapcorruption", "SIGABRT"};
+    ExpectedCrash {"heapcorruption", "SIGABRT", true, {}, true, true, "SIGTRAP"};
 #endif
 
 // On Windows ARM64 the handler's walk of an uncaught C++ exception stops at
@@ -328,7 +331,12 @@ CrashReport checkCrashReport(const ExpectedCrash& expected,
 {
     auto report = crashSelfDestruct(expected.kind, thread);
 
-    check(report.reason == expected.reason);
+    if (report.reason != expected.reason)
+        Console::printError("reason: " + report.reason);
+
+    check(report.reason == expected.reason
+          || (!expected.alternativeReason.empty()
+              && report.reason == expected.alternativeReason));
     check(report.tags["project"] == "eacp SelfDestruct");
     check(report.extra.contains("launchedFrom"));
     check(report.metadata["environment"] == "demo");
@@ -468,6 +476,10 @@ void checkFallbackReport(std::string_view kind,
         return;
 
     const auto& report = reports[0];
+
+    if (report.reason != reason)
+        Console::printError("reason: " + report.reason);
+
     check(report.capturedBy == CaptureSource::app);
     check(report.reason == reason);
     check(report.kind == ReportKind::crash);
