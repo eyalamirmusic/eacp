@@ -32,7 +32,8 @@ struct MachException
 // message that is not an exception, which is dropped.
 std::optional<MachException> receiveExceptionMessage(mach_port_t exceptionPort);
 
-// KERN_FAILURE lets the kernel go on to the default action, the signal.
+// KERN_FAILURE lets the kernel go on to the next handler and the default
+// action, the signal; KERN_SUCCESS says the exception was dealt with.
 void replyToException(const MachException& exception, kern_return_t result);
 
 // Drops the send rights the message carried for the thread and the task.

@@ -527,7 +527,9 @@ CrashReport captureMachException(const ReportDatabase& database,
 }
 
 // The faulting thread is still suspended in the kernel, so the app is ended
-// before the reply lets it go on into its own signal handler.
+// before the reply lets it go on into its own signal handler. The reply says
+// handled: a failure would send the exception on to the host's port, where
+// ReportCrash holds a guard exception's dying app for minutes.
 int handleMachException(const ReportDatabase& database,
                         const SharedState& state,
                         const HandlerMachPorts& ports,
@@ -537,7 +539,7 @@ int handleMachException(const ReportDatabase& database,
     finishHandlerReport(database, report, state);
 
     ::kill(static_cast<pid_t>(state.appProcessId), SIGKILL);
-    replyToException(exception, KERN_FAILURE);
+    replyToException(exception, KERN_SUCCESS);
     releaseExceptionPorts(exception);
 
     return deliverReportInHandler(report);
@@ -599,9 +601,10 @@ void serveExceptions(HandlerSession& session)
 
         auto lock = std::lock_guard {session.captureMutex};
 
+        // The other path has reported and killed the app already.
         if (session.hasReportedCrash)
         {
-            replyToException(*exception, KERN_FAILURE);
+            replyToException(*exception, KERN_SUCCESS);
             releaseExceptionPorts(*exception);
             return;
         }
