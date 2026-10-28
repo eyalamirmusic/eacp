@@ -1,6 +1,5 @@
 #include "CrashReporting.h"
 #include "CrashReportingPlatform.h"
-#include "FallbackReport.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -9,9 +8,11 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Random.h>
 #include <eacp/Core/Utils/Strings.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <exception>
 #include <mutex>
 #include <type_traits>
@@ -128,23 +129,78 @@ auto writeToSharedState(WriteFunction write)
     return write(session.sharedState->get());
 }
 
-void deliverPendingReport(const CrashReport& report)
+template <typename HandlerCall>
+void scheduleHandlerCall(std::string_view name, HandlerCall call)
 {
-    try
+    Threads::callAsync(
+        [name, call]
+        {
+            try
+            {
+                call(*createRegisteredCrashHandler());
+            }
+            catch (const std::exception& error)
+            {
+                Console::printError(std::string {name} + " threw: " + error.what());
+            }
+        });
+}
+
+void schedulePendingReports(const Vector<CrashReport>& reports)
+{
+    for (const auto& report: reports)
     {
-        createRegisteredCrashHandler()->pendingReportFound(report);
-    }
-    catch (const std::exception& error)
-    {
-        Console::printError(std::string {"pendingReportFound threw: "}
-                            + error.what());
+        scheduleHandlerCall("pendingReportFound",
+                            [report](CrashHandler& handler)
+                            { handler.pendingReportFound(report); });
     }
 }
 
-void schedulePendingReports(const ReportDatabase& database)
+bool isCrashSince(const CrashReport& report, const AppSession& session)
 {
-    for (const auto& report: database.readPendingReports())
-        Threads::callAsync([report] { deliverPendingReport(report); });
+    return report.kind == ReportKind::crash && report.timestamp >= session.startTime;
+}
+
+void scheduleUnreportedExit(const ReportDatabase& database,
+                            const Vector<CrashReport>& reports)
+{
+    auto previous = database.readSessionMarker();
+
+    if (!previous)
+        return;
+
+    auto reported = std::ranges::any_of(reports,
+                                        [&](const CrashReport& report)
+                                        { return isCrashSince(report, *previous); });
+
+    if (reported)
+        return;
+
+    scheduleHandlerCall("unreportedExit",
+                        [session = *previous](CrashHandler& handler)
+                        { handler.unreportedExit(session); });
+}
+
+AppSession makeCurrentSession()
+{
+    auto startTime = Time::sinceEpoch();
+    auto session = AppSession {};
+    session.processId = Detail::getCurrentProcessId();
+    session.startTime = startTime.count;
+    session.startTimeText = Time::formatIso8601(startTime);
+    return session;
+}
+
+void clearSessionMarkerAtExit()
+{
+    getDatabase().clearSessionMarker();
+}
+
+std::string describeUnavailableHandler(const Detail::HandlerLaunch& launch)
+{
+    return "the handler process " + launch.executable.str()
+           + " did not start within " + std::to_string(launch.startTimeout.count())
+           + " ms";
 }
 
 void writeHeartbeat(Detail::SharedHangInfo& hang)
@@ -201,7 +257,11 @@ void armHangDetection(CrashReportingSession& session, Detail::SharedState& state
 Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
 {
     auto launch = Detail::HandlerLaunch {};
-    launch.executable = Files::executablePath();
+    launch.executable = options.handlerExecutable;
+
+    if (launch.executable.empty())
+        launch.executable = Files::executablePath();
+
     launch.databaseDirectory = options.databaseDirectory;
     launch.channelName = options.channelName;
 
@@ -278,13 +338,25 @@ bool start(const Options& options)
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
-    Detail::prepareFallbackReport(database);
     Detail::installCrashHandlers(state);
 
     if (launched)
+    {
         armHangDetection(session, state);
+    }
+    else
+    {
+        scheduleHandlerCall(
+            "handlerUnavailable",
+            [reason = describeUnavailableHandler(launch)](CrashHandler& handler)
+            { handler.handlerUnavailable(reason); });
+    }
 
-    schedulePendingReports(database);
+    auto pendingReports = database.readPendingReports();
+    scheduleUnreportedExit(database, pendingReports);
+    database.writeSessionMarker(makeCurrentSession());
+    std::atexit(clearSessionMarkerAtExit);
+    schedulePendingReports(pendingReports);
     return launched;
 }
 
@@ -310,6 +382,7 @@ void stop()
     session.heartbeatRunning = false;
     Detail::uninstallCrashHandlers();
     Detail::stopHandlerProcess(session.sharedState->get());
+    ReportDatabase {session.options.databaseDirectory}.clearSessionMarker();
     session.started = false;
     session.stopped = true;
 }

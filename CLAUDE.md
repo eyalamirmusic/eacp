@@ -1170,8 +1170,10 @@ minidump and walks the stack with DbgHelp. Reports land in
 itself; `Tests/CrashReporting` drives it, every fault on the main and a background
 thread; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
 every `Threads::Thread` holds a `Threads::AlternateSignalStack`, macOS records
-throw sites through its own `__cxa_throw`, and with the handler gone the app
-writes a fallback `report.json` itself.
+throw sites through its own `__cxa_throw`. With the handler gone a crash goes
+unreported; `start()` then returns false and calls `handlerUnavailable`, and a
+`session.active` marker that a clean exit removes lets the next `start()` call
+`unreportedExit` for a run that ended with no report.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 

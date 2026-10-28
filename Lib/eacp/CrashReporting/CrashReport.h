@@ -48,13 +48,11 @@ struct CrashedThread
 
 // Who wrote the report: the handler process reading the crashed one from
 // outside, the handler again after the app was gone with only its exit code to go on,
-// the crashing app itself when its handler was gone (the fallback report),
 // or nobody, for a folder a crash left without its report.json.
 enum class CaptureSource
 {
     handler,
     exitCode,
-    app,
     incomplete
 };
 
@@ -174,6 +172,23 @@ struct CrashReport
     // The report.json shape, which Miro::toJSON gives any consumer too:
     // addresses and thread ids as hex strings, enums by name, paths as text,
     // and folder left out.
+    void reflect(Miro::Reflector& ref);
+};
+
+// One run of the app, as the session marker start() writes records it: the
+// marker is removed by a clean exit, so one found at the next start() is a run
+// that ended without one.
+struct AppSession
+{
+    std::uint64_t processId = 0;
+
+    // Milliseconds since the Unix epoch, and the same as ISO 8601 for people.
+    std::int64_t startTime = 0;
+    std::string startTimeText;
+
+    std::string toJSON() const;
+    static std::optional<AppSession> fromJSON(std::string_view text);
+
     void reflect(Miro::Reflector& ref);
 };
 

@@ -493,33 +493,28 @@ bool registerMatrixCases()
 
 [[maybe_unused]] const auto matrixCasesRegistered = registerMatrixCases();
 
-Vector<std::string> runPendingReportsProbe(const FilePath& database)
+int countUnreportedExits(const FilePath& database)
 {
     auto options = Processes::ProcessOptions {};
     options.executable = EACP_PENDING_REPORTS_PROBE;
-    options.arguments = {"--database", database.str(), "--expect", "1"};
+    options.arguments = {"--database", database.str()};
     auto result = Processes::run(options);
     check(result.exitCode == 0);
 
-    auto delivered = Vector<std::string> {};
+    auto count = 0;
 
     for (const auto& line: Strings::split(result.output, '\n'))
     {
-        constexpr auto deliveredPrefix = std::string_view {"delivered: "};
-        auto trimmed = Strings::trim(line);
-
-        if (trimmed.starts_with(deliveredPrefix))
-            delivered.add(trimmed.substr(deliveredPrefix.size()));
+        if (Strings::trim(line).starts_with("unreported exit: "))
+            ++count;
     }
 
-    return delivered;
+    return count;
 }
 
-// The handler is killed before the fault, so the app writes its own report,
-// and the next launch delivers it.
-void checkFallbackReport(std::string_view kind,
-                         FaultThread thread,
-                         std::string_view reason)
+// The handler is killed before the fault, so nothing reports the crash, and
+// the next launch finds its session marker.
+void checkUnreportedCrash(std::string_view kind, FaultThread thread)
 {
     auto database = TemporaryFile {};
     auto result = Processes::run(
@@ -528,34 +523,8 @@ void checkFallbackReport(std::string_view kind,
     check(result.exitCode != 0);
 
     auto reportDatabase = ReportDatabase {database.path()};
-    check(reportDatabase.hasCrashedLastRun());
-    auto reports = reportDatabase.readPendingReports();
-    check(reports.size() == 1);
-
-    if (reports.size() != 1)
-        return;
-
-    const auto& report = reports[0];
-
-    if (report.reason != reason)
-        Console::printError("reason: " + report.reason);
-
-    check(report.capturedBy == CaptureSource::app);
-    check(report.reason == reason);
-    check(report.kind == ReportKind::crash);
-    check(report.tags.at("project") == "eacp SelfDestruct");
-    check(report.metadata.at("environment") == "demo");
-    check(report.user.id == "self-destruct-user");
-    check(report.crashingThread.threadId != 0);
-
-    if (!hasSelfDestructFrame(report))
-        printFrames(report);
-
-    check(hasSelfDestructFrame(report));
-
-    auto delivered = runPendingReportsProbe(database.path());
-    check(delivered.size() == 1);
-    check(!delivered.empty() && delivered[0] == report.id);
+    check(reportDatabase.readPendingReports().empty());
+    check(countUnreportedExits(database.path()) == 1);
 }
 } // namespace
 
@@ -648,16 +617,24 @@ auto tMatrixAvailabilityAgrees =
     }
 };
 
-auto tCrashReportFallback = test("CrashReport/fallbackWhenHandlerIsGone") = []
-{
-    checkFallbackReport("nullptr",
-                        FaultThread::main,
-                        getExpectedOutcome("nullptr", FaultThread::main).reason);
-};
+auto tCrashReportUnreportedWhenHandlerIsGone =
+    test("CrashReport/unreportedExitWhenHandlerIsGone") = []
+{ checkUnreportedCrash("nullptr", FaultThread::main); };
 
-auto tCrashReportFallbackBackground =
-    test("CrashReport/fallbackWhenHandlerIsGoneBackground") = []
+auto tCrashReportUnreportedWhenHandlerIsGoneBackground =
+    test("CrashReport/unreportedExitWhenHandlerIsGoneBackground") = []
+{ checkUnreportedCrash("terminate", FaultThread::background); };
+
+auto tCrashReportReportedCrashIsNoUnreportedExit =
+    test("CrashReport/reportedCrashIsNoUnreportedExit") = []
 {
-    auto reason = getExpectedOutcome("terminate", FaultThread::background).reason;
-    checkFallbackReport("terminate", FaultThread::background, reason);
+    auto database = TemporaryFile {};
+    auto result = Processes::run(
+        makeCrashOptions("nullptr", FaultThread::main, database.path()));
+    check(result.launched);
+
+    auto reportDatabase = ReportDatabase {database.path()};
+    waitForCompleteReport(reportDatabase);
+    check(reportDatabase.readPendingReports().size() == 1);
+    check(countUnreportedExits(database.path()) == 0);
 };

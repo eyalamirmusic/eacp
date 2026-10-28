@@ -16,6 +16,7 @@ namespace
 {
 constexpr auto pendingFolderName = "pending";
 constexpr auto crashedLastRunMarkerName = "crashed-last-run";
+constexpr auto sessionMarkerName = "session.active";
 constexpr auto handledFolderName = "handled";
 constexpr auto reportFileName = "report.json";
 constexpr auto attachmentsFolderName = "attachments";
@@ -100,6 +101,30 @@ bool ReportDatabase::hasCrashedLastRun() const
 bool ReportDatabase::clearCrashedLastRun() const
 {
     return Files::removeFile(getCrashedLastRunMarker());
+}
+
+FilePath ReportDatabase::getSessionMarker() const
+{
+    return directory / sessionMarkerName;
+}
+
+void ReportDatabase::writeSessionMarker(const AppSession& session) const
+{
+    Files::createDirectories(directory);
+    Files::writeFile(getSessionMarker(), session.toJSON());
+}
+
+std::optional<AppSession> ReportDatabase::readSessionMarker() const
+{
+    if (!Files::isFile(getSessionMarker()))
+        return std::nullopt;
+
+    return AppSession::fromJSON(Files::readFile(getSessionMarker()));
+}
+
+bool ReportDatabase::clearSessionMarker() const
+{
+    return Files::removeFile(getSessionMarker());
 }
 
 FilePath ReportDatabase::getReportFolder(std::string_view id) const

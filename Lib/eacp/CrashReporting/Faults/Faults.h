@@ -54,7 +54,7 @@ bool triggerFault(std::string_view name, ThreadChoice thread);
 // triggerFault from an event-loop callback `delay` from now. False as above.
 bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay);
 
-// Ends the crash handler process, so the next crash finds no handler and the
-// app's own fallback report is what records it.
+// Ends the crash handler process, so the next crash finds no handler, goes
+// unreported, and the next launch's CrashHandler::unreportedExit sees it.
 void killHandlerProcess();
 } // namespace eacp::CrashReporting::Faults
