@@ -1,3 +1,4 @@
+#include "PersistentState.h"
 #include "ReportWindow.h"
 
 #include <eacp/Core/App/Args.h>
@@ -435,6 +436,7 @@ int main(int argc, char* argv[])
         return *code;
 
     Apps::setCommandLineArgs(argc, argv);
+    SelfDestruct::ignorePersistentUIState();
 
     auto crashKind = std::string {};
     auto databaseDirectory = FilePath {};

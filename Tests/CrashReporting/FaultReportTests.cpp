@@ -715,6 +715,50 @@ auto tCrashReportThrowSite =
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
 { check(runHangFault({}, "0").empty()); };
 
+// A crash soon after launch makes AppKit offer, on the next launch, to reopen
+// windows, in a modal alert run from the launch Apple event; a quit inside it
+// stopped the alert and left the app running. Each round crashes twice after
+// launch, then runs a main-thread hang, which must quit on its own.
+bool quitsWithin(Processes::Process& process, std::chrono::milliseconds limit)
+{
+    auto deadline = std::chrono::steady_clock::now() + limit;
+
+    while (process.isRunning() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(reportPollInterval);
+
+    auto quit = !process.isRunning();
+
+    if (!quit)
+        process.kill();
+
+    process.wait();
+    return quit;
+}
+
+auto tCrashReportHangQuitsAfterLaunchCrashes =
+    test("CrashReport/hangQuitsAfterLaunchCrashes") = []
+{
+    constexpr auto rounds = 10;
+    constexpr auto crashesPerRound = 2;
+    constexpr auto quitLimit = std::chrono::seconds {20};
+
+    for (auto round = 0; round < rounds; ++round)
+    {
+        for (auto crash = 0; crash < crashesPerRound; ++crash)
+        {
+            auto database = TemporaryFile {};
+            Processes::run(makeCrashOptions(
+                "nullptr", FaultThread::background, database.path()));
+        }
+
+        auto database = TemporaryFile {};
+        auto process = Processes::Process {
+            makeHangOptions("hang", database.path(), testHangThresholdMilliseconds)};
+        check(process.launched());
+        check(quitsWithin(process, quitLimit));
+    }
+};
+
 auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 {
     check(runHangFault({"--pause-hang-detection"}, testHangThresholdMilliseconds)
