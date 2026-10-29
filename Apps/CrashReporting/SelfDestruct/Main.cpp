@@ -6,6 +6,7 @@
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
 #include <eacp/CrashReporting/Faults/Faults.h>
+#include <eacp/CrashReporting/Faults/Matrix.h>
 #include <eacp/UI/UI.h>
 
 // An app that crashes itself on purpose, one button per way to die, so the
@@ -21,8 +22,7 @@
 //   SelfDestruct --crash nullptr --kill-handler    an unreported exit
 //
 // Everything after "--" goes to the handler process, whose own flag
-// --no-report-window has it write the report and exit, which is what
-// Tests/CrashReporting runs.
+// --no-report-window has it write the report and exit.
 
 using namespace eacp;
 using CrashReporting::Faults::ThreadChoice;
@@ -43,7 +43,8 @@ constexpr auto buttonGap = 8.f;
 constexpr auto buttonsPerCard = 2.f;
 constexpr auto handlerStatusRefreshHz = 2;
 constexpr auto windowWidth = 640;
-constexpr auto windowHeight = 720;
+constexpr auto windowHeight = 900;
+constexpr auto expectationHeight = 34.f;
 constexpr auto dangerColour = UI::Color {0.86f, 0.27f, 0.25f};
 constexpr auto runningColour = UI::Color {0.42f, 0.8f, 0.5f};
 constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
@@ -113,10 +114,44 @@ UI::Color getHandlerStatusColour()
     return stoppedColour;
 }
 
+// What the crash reporter makes of a fault here, from the expectations the
+// tests check, so the app and the tests cannot disagree.
+std::string describeExpectedOutcome(std::string_view fault, ThreadChoice thread)
+{
+    using CrashReporting::Faults::OutcomeStatus;
+    auto outcome = CrashReporting::Faults::findExpectedOutcome(
+        fault, thread, CrashReporting::Faults::getCurrentLane());
+
+    if (!outcome)
+        return "No expectation recorded for this platform";
+
+    auto note = std::string {outcome->note};
+
+    switch (outcome->status)
+    {
+        case OutcomeStatus::reported:
+            return "Reported";
+        case OutcomeStatus::reportedWithLimits:
+            return "Reported, " + note;
+        case OutcomeStatus::notReported:
+            return "Not reported: " + note;
+        case OutcomeStatus::notAvailable:
+            return "Cannot be raised here: " + note;
+        case OutcomeStatus::pendingPR:
+            return "Not reported yet: " + note;
+    }
+
+    return {};
+}
+
 struct FaultCard final : UI::Component
 {
     explicit FaultCard(const CrashReporting::Faults::Fault& fault)
         : label(std::string {fault.label})
+        , mainThreadExpectation(
+              describeExpectedOutcome(fault.name, ThreadChoice::main))
+        , backgroundExpectation(
+              describeExpectedOutcome(fault.name, ThreadChoice::background))
         , description(std::string {fault.description})
     {
         auto name = fault.name;
@@ -130,7 +165,19 @@ struct FaultCard final : UI::Component
         description.setThemeColour(UI::ThemeKeys::dimText);
         label.setJustification(UI::Justification::Centred);
         description.setJustification(UI::Justification::Centred);
-        addChildren({label, mainThreadButton, backgroundButton, description});
+
+        for (auto* expectation: {&mainThreadExpectation, &backgroundExpectation})
+        {
+            expectation->setThemeColour(UI::ThemeKeys::dimText);
+            expectation->setJustification(UI::Justification::Centred);
+        }
+
+        addChildren({label,
+                     mainThreadButton,
+                     backgroundButton,
+                     mainThreadExpectation,
+                     backgroundExpectation,
+                     description});
     }
 
     void paint(UI::Graphics& g) override
@@ -144,15 +191,21 @@ struct FaultCard final : UI::Component
         auto area = getLocalBounds().inset(cardPadding);
         label.setBounds(area.removeFromTop(lineHeight));
         description.setBounds(area.removeFromBottom(descriptionHeight));
+        auto expectations = area.removeFromBottom(expectationHeight);
         auto buttonWidth = (area.w - buttonGap) / buttonsPerCard;
         mainThreadButton.setBounds(area.removeFromLeft(buttonWidth));
+        mainThreadExpectation.setBounds(expectations.removeFromLeft(buttonWidth));
         area.removeFromLeft(buttonGap);
+        expectations.removeFromLeft(buttonGap);
         backgroundButton.setBounds(area);
+        backgroundExpectation.setBounds(expectations);
     }
 
     UI::Label label;
     UI::Button mainThreadButton {"Main thread"};
     UI::Button backgroundButton {"Background"};
+    UI::Label mainThreadExpectation;
+    UI::Label backgroundExpectation;
     UI::Label description;
 };
 
@@ -167,10 +220,7 @@ struct FaultButtons final : UI::Component
         addChildren({title, subtitle, database, handlerStatus});
 
         for (const auto& fault: CrashReporting::Faults::listFaults())
-        {
-            if (fault.isAvailable)
-                addAndMakeVisible(cards.createNew(fault));
-        }
+            addAndMakeVisible(cards.createNew(fault));
 
         showHandlerStatus();
     }

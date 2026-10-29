@@ -1167,8 +1167,9 @@ list) and the handler symbolises with `dladdr`; on Windows the handler writes a
 minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
-itself; `Tests/CrashReporting` drives it, every fault on the main and a background
-thread; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
+itself and says on each button what the report will be; `CrashReportingTests`
+relaunches itself with `--crashing-process` to raise every fault on the main
+and a background thread, one case per cell of `Faults/Matrix.h`; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
 `Options::stackOverflowReporting` gives the starting thread (the default), every
 thread or none a stack to report an overflow from (an alternate signal stack on
 macOS, through `pthread_introspection_hook_install`; a `SetThreadStackGuarantee`

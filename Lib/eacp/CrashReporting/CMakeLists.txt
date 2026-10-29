@@ -54,6 +54,7 @@ target_link_libraries(eacp-crash-faults PUBLIC eacp-crash-reporting)
 
 target_sources(eacp-crash-faults PRIVATE
         Faults/FaultDefinitions.cpp
-        Faults/Faults.cpp)
+        Faults/Faults.cpp
+        Faults/Matrix.cpp)
 
 set_default_target_setting(eacp-crash-faults)

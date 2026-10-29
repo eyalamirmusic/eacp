@@ -1,8 +1,8 @@
 #pragma once
 
-#include <eacp/CrashReporting/Faults/Faults.h>
+#include "Faults.h"
 
-#include <eacp/CrashReporting/CrashReport.h>
+#include "../CrashReport.h"
 
 #include <optional>
 #include <string_view>

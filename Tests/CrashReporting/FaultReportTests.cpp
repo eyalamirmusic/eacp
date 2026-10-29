@@ -1,5 +1,7 @@
 #include <eacp/Core/Platform/Platform.h>
-#include "Matrix.h"
+#include "CrashingProcess.h"
+
+#include <eacp/CrashReporting/Faults/Matrix.h>
 
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
@@ -23,7 +25,6 @@ using namespace eacp::CrashReporting;
 
 namespace
 {
-constexpr auto selfDestructModuleName = std::string_view {"SelfDestruct"};
 constexpr auto reportWaitLimit = std::chrono::seconds {10};
 constexpr auto reportPollInterval = std::chrono::milliseconds {20};
 constexpr auto testHangThresholdMilliseconds = "500";
@@ -55,14 +56,15 @@ bool isReportedStatus(OutcomeStatus status)
            || status == OutcomeStatus::reportedWithLimits;
 }
 
-bool isSelfDestructFrame(const StackFrame& frame)
+bool isCrashingProcessFrame(const StackFrame& frame)
 {
-    return frame.modulePath.find(selfDestructModuleName) != std::string::npos;
+    return frame.modulePath.find(Tests::crashingProcessModuleName)
+           != std::string::npos;
 }
 
-bool hasSelfDestructFrame(const CrashReport& report)
+bool hasCrashingProcessFrame(const CrashReport& report)
 {
-    return std::ranges::any_of(report.crashingThread.frames, isSelfDestructFrame);
+    return std::ranges::any_of(report.crashingThread.frames, isCrashingProcessFrame);
 }
 
 void printFrames(const CrashReport& report)
@@ -128,12 +130,12 @@ bool isModuleUuidForm(std::string_view text)
 #endif
 }
 
-bool hasSelfDestructFrameWithModuleUuid(const CrashReport& report)
+bool hasCrashingProcessFrameWithModuleUuid(const CrashReport& report)
 {
     return std::ranges::any_of(report.crashingThread.frames,
                                [](const StackFrame& frame)
                                {
-                                   return isSelfDestructFrame(frame)
+                                   return isCrashingProcessFrame(frame)
                                           && isModuleUuidForm(frame.moduleUuid);
                                });
 }
@@ -166,24 +168,20 @@ Processes::ProcessOptions
                      const FilePath& database,
                      const Vector<std::string>& appArguments = {})
 {
-    auto options = Processes::ProcessOptions {};
-    options.executable = EACP_SELF_DESTRUCT;
-    options.arguments = {"--crash",
-                         std::string {kind},
-                         "--thread",
-                         getFaultThreadName(thread),
-                         "--crash-database",
-                         database.str()};
+    auto arguments = Vector<std::string> {"--crash",
+                                          std::string {kind},
+                                          "--thread",
+                                          getFaultThreadName(thread),
+                                          "--crash-database",
+                                          database.str()};
 
     for (const auto& argument: appArguments)
-        options.arguments.add(argument);
+        arguments.add(argument);
 
-    options.arguments.add("--");
-    options.arguments.add("--no-report-window");
-    return options;
+    return Tests::makeCrashingProcessOptions(arguments);
 }
 
-CrashReport crashSelfDestruct(std::string_view kind, FaultThread thread)
+CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
 {
     auto database = TemporaryFile {};
     auto options = makeCrashOptions(kind, thread, database.path());
@@ -235,7 +233,7 @@ void checkHangReport(const CrashReport& report, std::string_view function)
     check(report.reason == "Hang");
     check(report.message.starts_with("main thread unresponsive for "));
     check(report.hangDurationMilliseconds >= 1000);
-    check(report.tags.at("project") == "eacp SelfDestruct");
+    check(report.tags.at("project") == Tests::crashingProcessProject);
     check(report.breadcrumbs.size() == 2);
 
     if (!hasFrameInFunction(report, function))
@@ -245,7 +243,7 @@ void checkHangReport(const CrashReport& report, std::string_view function)
     // Optimised ARM64 functions may have no frame record (clang-cl leaves them
     // out, MSVC does for a leaf below std::mutex), so the frame-pointer walk
     // there can skip the stalled function itself.
-    check(hasSelfDestructFrame(report));
+    check(hasCrashingProcessFrame(report));
 #else
     check(hasFrameInFunction(report, function));
 #endif
@@ -285,7 +283,7 @@ Vector<CrashReport> runHangFault(const Vector<std::string>& appArguments,
     auto exited = waitForExit(process);
 
     if (!exited)
-        Console::printError("SelfDestruct --crash " + std::string {kind}
+        Console::printError("--crashing-process --crash " + std::string {kind}
                             + " never quit");
 
     check(exited);
@@ -323,25 +321,25 @@ void checkReportAgainstMatrix(const CrashReport& report,
 
     auto shouldReachApp = expected.hasStack && expected.stackReachesFault;
 
-    if (shouldReachApp && !hasSelfDestructFrame(report))
+    if (shouldReachApp && !hasCrashingProcessFrame(report))
         printFrames(report);
 
     if (shouldReachApp)
-        check(hasSelfDestructFrame(report));
+        check(hasCrashingProcessFrame(report));
 }
 
 void checkReportMetadata(const CrashReport& report)
 {
     check(report.tags.contains("project")
-          && report.tags.at("project") == "eacp SelfDestruct");
+          && report.tags.at("project") == Tests::crashingProcessProject);
     check(report.extra.contains("launchedFrom"));
     check(report.metadata.contains("environment")
-          && report.metadata.at("environment") == "demo");
+          && report.metadata.at("environment") == "test");
     check(report.metadata.contains("release"));
     check(report.metadata.contains("arch") && !report.metadata.at("arch").empty());
-    check(report.user.id == "self-destruct-user");
+    check(report.user.id == "crash-test-user");
     check(report.user.email == "user@example.com");
-    check(report.user.username == "selfdestruct");
+    check(report.user.username == "crashtest");
     check(report.breadcrumbs.size() == 2);
 
     if (report.breadcrumbs.size() == 2)
@@ -356,7 +354,7 @@ void checkReportMetadata(const CrashReport& report)
 CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
 {
     auto expected = getExpectedOutcome(fault, thread);
-    auto report = crashSelfDestruct(fault, thread);
+    auto report = crashTheCrashingProcess(fault, thread);
 
     checkReportAgainstMatrix(report, expected);
     checkReportMetadata(report);
@@ -470,7 +468,82 @@ void runMatrixCell(std::string_view fault, FaultThread thread)
         checkCrashAgainstMatrix(fault, thread);
 }
 
-// One case per cell of this lane, named CrashMatrix/<fault>/<thread>.
+struct FaultTestName
+{
+    std::string_view fault;
+    std::string_view behaviour;
+};
+
+constexpr auto faultTestNames = Array {
+    FaultTestName {"nullptr", "nullPointer"},
+    FaultTestName {"divide", "integerDivideByZero"},
+    FaultTestName {"stackoverflow", "stackOverflow"},
+    FaultTestName {"abort", "abort"},
+    FaultTestName {"purevirtual", "pureVirtualCall"},
+    FaultTestName {"terminate", "uncaughtException"},
+    FaultTestName {"heapcorruption", "heapCorruption"},
+    FaultTestName {"heapsmash", "heapSmash"},
+    FaultTestName {"hang", "hang"},
+    FaultTestName {"spin", "spin"},
+    FaultTestName {"deadlock", "deadlock"},
+    FaultTestName {"fastfail", "fastFail"},
+    FaultTestName {"illegalinstruction", "illegalInstruction"},
+    FaultTestName {"privilegedinstruction", "privilegedInstruction"},
+    FaultTestName {"floatingpoint", "floatingPointException"},
+    FaultTestName {"executenx", "executeNonExecutableMemory"},
+    FaultTestName {"guardpage", "guardPage"},
+    FaultTestName {"inpageerror", "inPageError"},
+    FaultTestName {"buserror", "busError"},
+    FaultTestName {"guardedfd", "guardedFileDescriptor"},
+    FaultTestName {"sigsys", "badSystemCall"},
+};
+
+struct OutcomeTestName
+{
+    OutcomeStatus status;
+    std::string_view behaviour;
+};
+
+constexpr auto outcomeTestNames = Array {
+    OutcomeTestName {OutcomeStatus::reported, "IsReported"},
+    OutcomeTestName {OutcomeStatus::reportedWithLimits, "IsReportedWithLimits"},
+    OutcomeTestName {OutcomeStatus::notReported, "IsNotReported"},
+    OutcomeTestName {OutcomeStatus::notAvailable, "CannotBeRaised"},
+    OutcomeTestName {OutcomeStatus::pendingPR, "IsNotReportedYet"},
+};
+
+std::string getFaultBehaviourName(std::string_view fault)
+{
+    for (const auto& entry: faultTestNames)
+    {
+        if (entry.fault == fault)
+            return std::string {entry.behaviour};
+    }
+
+    return std::string {fault};
+}
+
+std::string getOutcomeBehaviourName(OutcomeStatus status)
+{
+    for (const auto& entry: outcomeTestNames)
+    {
+        if (entry.status == status)
+            return std::string {entry.behaviour};
+    }
+
+    return {};
+}
+
+std::string getThreadBehaviourName(FaultThread thread)
+{
+    if (thread == FaultThread::main)
+        return "OnMainThread";
+
+    return "OnBackgroundThread";
+}
+
+// One case per cell of this lane, named for what it shows, e.g.
+// CrashReporting/nullPointerIsReportedOnMainThread.
 bool registerMatrixCases()
 {
     static auto names = std::deque<std::string> {};
@@ -481,8 +554,9 @@ bool registerMatrixCases()
             continue;
 
         const auto& name =
-            names.emplace_back("CrashMatrix/" + std::string {cell.fault} + "/"
-                               + getFaultThreadName(cell.thread));
+            names.emplace_back("CrashReporting/" + getFaultBehaviourName(cell.fault)
+                               + getOutcomeBehaviourName(cell.outcome.status)
+                               + getThreadBehaviourName(cell.thread));
         auto fault = cell.fault;
         auto thread = cell.thread;
         test(name, [fault, thread] { runMatrixCell(fault, thread); });
@@ -530,14 +604,14 @@ void checkUnreportedCrash(std::string_view kind, FaultThread thread)
 
 auto tCrashReportModuleUuid = test("CrashReport/framesCarryModuleUuids") = []
 {
-    check(hasSelfDestructFrameWithModuleUuid(
-        crashSelfDestruct("nullptr", FaultThread::main)));
+    check(hasCrashingProcessFrameWithModuleUuid(
+        crashTheCrashingProcess("nullptr", FaultThread::main)));
 };
 
 auto tCrashReportThreadEntry =
     test("CrashReport/backgroundFramesReachTheThreadEntry") = []
 {
-    auto report = crashSelfDestruct("nullptr", FaultThread::background);
+    auto report = crashTheCrashingProcess("nullptr", FaultThread::background);
 
     if (!hasFrameInFunction(report, backgroundEntryFunction))
         printFrames(report);
@@ -549,7 +623,7 @@ auto tCrashReportBackgroundStackOverflow =
     test("CrashReport/backgroundStackOverflowFramesAreTheRecursion") = []
 {
     check(hasFrameInFunction(
-        crashSelfDestruct("stackoverflow", FaultThread::background),
+        crashTheCrashingProcess("stackoverflow", FaultThread::background),
         "recurseForever"));
 };
 
@@ -563,7 +637,7 @@ auto tCrashReportThrowSite =
 
     for (auto thread: {FaultThread::main, FaultThread::background})
     {
-        auto report = crashSelfDestruct("terminate", thread);
+        auto report = crashTheCrashingProcess("terminate", thread);
 
         if (!hasFrameInFunction(report, "throwUncaughtException"))
             printFrames(report);

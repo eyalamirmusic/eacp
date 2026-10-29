@@ -1,11 +1,9 @@
-#include <eacp/Core/App/AppEnvironment.h>
-#include <eacp/Core/App/Args.h>
+#include "ThreadStackProbe.h"
+
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Format.h>
 
-#if defined(EACP_CRASH_REPORTING)
-#include <eacp/CrashReporting/CrashReporting.h>
-#endif
+#include <eacp/CrashReporting/Faults/Faults.h>
 
 #include <algorithm>
 #include <array>
@@ -25,24 +23,13 @@
 #include <mach/mach.h>
 #endif
 
-// What a stack overflow report costs a thread, and whether one is made.
-//   --mode bench     median and p99 of creating and joining a std::thread
-//   --mode memory    the resident growth of 100 live std::threads, in KiB
-//   --mode check     whether the starting thread and a new std::thread have a
-//                    stack for overflow reports
-//   --mode overflow  overflows the stack of a new std::thread
-// --reporting is none (start() is not called; the only choice in the build
-// without crash reporting), off, startingThread or everyThread.
-
-using namespace eacp;
-
+namespace eacp::CrashReporting::Tests
+{
 namespace
 {
 constexpr auto threadsPerRepetition = 10000;
 constexpr auto repetitions = 5;
 constexpr auto threadsAliveForMemory = 100;
-constexpr auto stackFrameBytes = std::size_t {4096};
-volatile auto shouldKeepRecursing = true;
 constexpr auto p99Fraction = 0.99;
 constexpr auto bytesPerKibibyte = 1024.0;
 
@@ -52,50 +39,6 @@ constexpr auto stackOverflowReserveBytes = ULONG {64 * 1024};
 
 using Clock = std::chrono::steady_clock;
 using Microseconds = std::chrono::duration<double, std::micro>;
-
-#if defined(EACP_CRASH_REPORTING)
-struct ReportingName
-{
-    std::string_view name;
-    CrashReporting::StackOverflowReporting reporting;
-};
-
-constexpr auto reportingNames = std::to_array<ReportingName>({
-    {"off", CrashReporting::StackOverflowReporting::off},
-    {"startingThread", CrashReporting::StackOverflowReporting::startingThread},
-    {"everyThread", CrashReporting::StackOverflowReporting::everyThread},
-});
-
-std::optional<CrashReporting::StackOverflowReporting>
-    findReporting(std::string_view name)
-{
-    for (const auto& entry: reportingNames)
-    {
-        if (entry.name == name)
-            return entry.reporting;
-    }
-
-    return std::nullopt;
-}
-
-bool startCrashReporting(std::string_view reportingName,
-                         const std::string& databaseDirectory)
-{
-    auto reporting = findReporting(reportingName);
-
-    if (!reporting)
-        return false;
-
-    auto options = CrashReporting::Options {};
-    options.stackOverflowReporting = *reporting;
-    options.hangThreshold = {};
-
-    if (!databaseDirectory.empty())
-        options.databaseDirectory = FilePath {databaseDirectory};
-
-    return CrashReporting::start(options);
-}
-#endif
 
 double getMedian(const Vector<double>& sorted)
 {
@@ -107,6 +50,8 @@ double getP99(const Vector<double>& sorted)
     auto lastIndex = static_cast<double>(sorted.size() - 1);
     return sorted[static_cast<int>(lastIndex * p99Fraction)];
 }
+
+} // namespace
 
 int runThreadCreationBench()
 {
@@ -126,6 +71,8 @@ int runThreadCreationBench()
     return 0;
 }
 
+namespace
+{
 #if defined(_WIN32)
 double getResidentKibibytes()
 {
@@ -159,8 +106,9 @@ bool hasStackOverflowStack()
     return (current.ss_flags & SS_DISABLE) == 0;
 }
 #endif
+} // namespace
 
-int runMemoryMeasurement()
+int runThreadMemoryMeasurement()
 {
     auto mutex = std::mutex {};
     auto changed = std::condition_variable {};
@@ -203,7 +151,7 @@ int runMemoryMeasurement()
     return 0;
 }
 
-int runCheck()
+int runThreadStackCheck()
 {
     auto newThreadHasStack = false;
     auto thread = std::thread {[&] { newThreadHasStack = hasStackOverflowStack(); }};
@@ -215,11 +163,10 @@ int runCheck()
 #if defined(__APPLE__)
     __block auto workerHasStack = false;
     auto done = dispatch_semaphore_create(0);
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0),
-                   ^{
-                     workerHasStack = hasStackOverflowStack();
-                     dispatch_semaphore_signal(done);
-                   });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+      workerHasStack = hasStackOverflowStack();
+      dispatch_semaphore_signal(done);
+    });
     dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
     dispatch_release(done);
     Console::print("dispatch worker: " + std::to_string(workerHasStack));
@@ -227,71 +174,11 @@ int runCheck()
     return 0;
 }
 
-#if defined(_MSC_VER)
-#pragma optimize("", off)
-#endif
-int recurseForever(int depth)
+int overflowANewStdThread()
 {
-    auto frame = std::array<volatile char, stackFrameBytes> {};
-    frame[0] = static_cast<char>(depth);
-
-    if (!shouldKeepRecursing)
-        return frame[0];
-
-    return recurseForever(depth + 1) + frame[0];
-}
-#if defined(_MSC_VER)
-#pragma optimize("", on)
-#endif
-
-int runStackOverflow()
-{
-    auto thread = std::thread {[] { recurseForever(0); }};
+    auto thread = std::thread {
+        [] { Faults::triggerFault("stackoverflow", Faults::ThreadChoice::main); }};
     thread.join();
     return 0;
 }
-} // namespace
-
-int main(int argc, char* argv[])
-{
-#if defined(EACP_CRASH_REPORTING)
-    if (auto code = CrashReporting::runHandlerIfRequested(argc, argv))
-        return *code;
-#endif
-
-    Apps::setCommandLineArgs(argc, argv);
-
-    auto mode = std::string {};
-    auto reporting = std::string {"none"};
-    auto databaseDirectory = std::string {};
-    auto cli = Args::Parser {"StackOverflowProbe"};
-    cli.option("--mode", mode, "bench, memory, check or overflow");
-    cli.option("--reporting", reporting, "none, off, startingThread or everyThread");
-    cli.option("--database", databaseDirectory, "the crash database");
-
-    if (auto code = cli.exitCodeFor(cli.parse()))
-        return *code;
-
-#if defined(EACP_CRASH_REPORTING)
-    if (reporting != "none" && !startCrashReporting(reporting, databaseDirectory))
-    {
-        Console::printError("could not start crash reporting with " + reporting);
-        return 1;
-    }
-#endif
-
-    if (mode == "bench")
-        return runThreadCreationBench();
-
-    if (mode == "memory")
-        return runMemoryMeasurement();
-
-    if (mode == "check")
-        return runCheck();
-
-    if (mode == "overflow")
-        return runStackOverflow();
-
-    Console::printError("unknown mode " + mode);
-    return 1;
-}
+} // namespace eacp::CrashReporting::Tests

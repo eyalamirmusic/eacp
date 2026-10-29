@@ -1,3 +1,5 @@
+#include "CrashingProcess.h"
+
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Threads/EventLoop.h>
@@ -21,19 +23,23 @@ constexpr auto startingThreadHasNoStack = std::string_view {"starting thread: 0"
 constexpr auto newThreadHasStack = std::string_view {"new thread: 1"};
 constexpr auto newThreadHasNoStack = std::string_view {"new thread: 0"};
 
+Processes::ProcessOptions makeThreadStackProbeOptions(std::string_view probe,
+                                                      std::string_view reporting,
+                                                      const FilePath& database)
+{
+    return Tests::makeCrashingProcessOptions({"--thread-stack-probe",
+                                              std::string {probe},
+                                              "--stack-overflow-reporting",
+                                              std::string {reporting},
+                                              "--crash-database",
+                                              database.str()});
+}
+
 Processes::ProcessResult runStackOverflowProbe(std::string_view mode,
                                                std::string_view reporting,
                                                const FilePath& database)
 {
-    auto options = Processes::ProcessOptions {};
-    options.executable = EACP_STACK_OVERFLOW_PROBE;
-    options.arguments = {"--mode",
-                         std::string {mode},
-                         "--reporting",
-                         std::string {reporting},
-                         "--database",
-                         database.str()};
-    return Processes::run(options);
+    return Processes::run(makeThreadStackProbeOptions(mode, reporting, database));
 }
 
 std::string checkStackOverflowStacks(std::string_view reporting)
@@ -102,15 +108,8 @@ auto tEveryThreadReports =
 bool doesUnreportableOverflowReport(std::string_view reporting)
 {
     auto database = TemporaryFile {};
-    auto options = Processes::ProcessOptions {};
-    options.executable = EACP_STACK_OVERFLOW_PROBE;
-    options.arguments = {"--mode",
-                         "overflow",
-                         "--reporting",
-                         std::string {reporting},
-                         "--database",
-                         database.path().str()};
-    auto probe = Processes::Process {options};
+    auto probe = Processes::Process {
+        makeThreadStackProbeOptions("overflow", reporting, database.path())};
     Threads::runEventLoopUntil([&] { return !probe.isRunning(); },
                                unreportableOverflowWaitLimit);
     probe.kill();
