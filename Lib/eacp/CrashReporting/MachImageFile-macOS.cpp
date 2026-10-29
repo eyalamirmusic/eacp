@@ -12,7 +12,7 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-constexpr auto textSegmentName = std::string_view {SEG_TEXT};
+constexpr auto imageFileTextSegmentName = std::string_view {SEG_TEXT};
 
 #if defined(__aarch64__)
 constexpr auto processCpuType = cpu_type_t {CPU_TYPE_ARM64};
@@ -93,7 +93,8 @@ std::optional<SymbolTableLayout>
         {
             auto segment = readValue<segment_command_64>(bytes, offset);
 
-            if (segment && std::string_view {segment->segname} == textSegmentName)
+            if (segment
+                && std::string_view {segment->segname} == imageFileTextSegmentName)
                 layout.textAddress = segment->vmaddr;
         }
 

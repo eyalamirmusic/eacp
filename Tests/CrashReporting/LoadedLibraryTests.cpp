@@ -5,6 +5,7 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
+#include <eacp/CrashReporting/Faults/Matrix.h>
 #include <eacp/CrashReporting/ReportDatabase.h>
 
 #include <NanoTest/NanoTest.h>
@@ -113,48 +114,71 @@ auto tNullPointerBackground =
     test("CrashReporting/nullPointerInLoadedLibraryIsReportedOnBackgroundThread") =
         [] { checkNullPointerInLibrary("background"); };
 
-// Windows walks the thrown exception's own stack. On macOS eacp records throw
-// sites through the __cxa_throw in the app's own image, which a separately
-// linked library does not call, so there is no throw-site record and no
-// terminateFrames; the throw is still on the stack because an exception
-// nothing catches terminates inside __cxa_throw, before any unwinding.
-void checkUncaughtExceptionInLibrary(std::string_view thread)
+// A throw in the library is the matrix's uncaught exception on this lane, so it
+// has the same limits. On macOS eacp records throw sites through the
+// __cxa_throw in the app's own image, which a separately linked library does
+// not call, so there is no throw-site record and no terminateFrames; the throw
+// is still on the stack, because an exception nothing catches terminates
+// inside __cxa_throw before any unwinding.
+Faults::ExpectedOutcome getUncaughtExceptionOutcome(Faults::ThreadChoice thread)
 {
-    auto report = crashInLoadedLibrary("terminate", thread);
+    auto outcome =
+        Faults::findExpectedOutcome("terminate", thread, Faults::getCurrentLane());
+    return outcome.value_or(Faults::ExpectedOutcome {});
+}
+
+void checkUncaughtExceptionInLibrary(Faults::ThreadChoice thread)
+{
+    auto expected = getUncaughtExceptionOutcome(thread);
+    auto report =
+        crashInLoadedLibrary("terminate", Faults::getThreadChoiceName(thread));
 
     if (!report)
         return;
 
-    check(report->reason == "std::terminate");
-    check(report->message.find(libraryThrownMessage) != std::string::npos);
+    check(report->reason == expected.reason);
+
+    if (report->reason == "std::terminate")
+        check(report->message.find(libraryThrownMessage) != std::string::npos);
 
     if (Platform::isMac())
         check(report->terminateFrames.empty());
 
-    checkFrameInLibrary(report->crashingThread.frames, libraryThrowFunction);
+    if (expected.stackReachesFault)
+        checkFrameInLibrary(report->crashingThread.frames, libraryThrowFunction);
 }
 
-std::string getUncaughtExceptionBehaviour()
+std::string getUncaughtExceptionBehaviour(Faults::ThreadChoice thread)
 {
     if (Platform::isMac())
         return "IsReportedFromTheTerminateStack";
 
+    if (getUncaughtExceptionOutcome(thread).status
+        == Faults::OutcomeStatus::reportedWithLimits)
+    {
+        return "IsReportedWithLimits";
+    }
+
     return "IsReportedWithItsThrowSite";
 }
 
-std::string getUncaughtExceptionTestName(std::string_view thread)
+std::string getUncaughtExceptionTestName(Faults::ThreadChoice thread,
+                                         std::string_view threadName)
 {
-    auto behaviour = getUncaughtExceptionBehaviour();
-    return "CrashReporting/uncaughtExceptionInLoadedLibrary" + behaviour + "On"
-           + std::string {thread} + "Thread";
+    return "CrashReporting/uncaughtExceptionInLoadedLibrary"
+           + getUncaughtExceptionBehaviour(thread) + "On" + std::string {threadName}
+           + "Thread";
 }
 
 bool registerUncaughtExceptionCases()
 {
-    static auto mainName = getUncaughtExceptionTestName("Main");
-    static auto backgroundName = getUncaughtExceptionTestName("Background");
-    test(mainName, [] { checkUncaughtExceptionInLibrary("main"); });
-    test(backgroundName, [] { checkUncaughtExceptionInLibrary("background"); });
+    using Faults::ThreadChoice;
+    static auto mainName = getUncaughtExceptionTestName(ThreadChoice::main, "Main");
+    static auto backgroundName =
+        getUncaughtExceptionTestName(ThreadChoice::background, "Background");
+    test(mainName, [] { checkUncaughtExceptionInLibrary(ThreadChoice::main); });
+    test(backgroundName,
+         [] { checkUncaughtExceptionInLibrary(ThreadChoice::background); });
     return true;
 }
 
