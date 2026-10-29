@@ -31,3 +31,17 @@ eacp_add_crash_symbols(CrashingLibrary "")
 target_compile_definitions(CrashReportingTests PRIVATE
         EACP_CRASHING_LIBRARY="$<TARGET_FILE:CrashingLibrary>")
 add_dependencies(CrashReportingTests CrashingLibrary)
+
+# The WER module is listed per user in HKCU, one value per DLL path, and every
+# crashing process lists the same one beside this binary; a group that takes it
+# out while another group crashes would see the other's listing.
+if (WIN32)
+    set(wer_lock_file "${CMAKE_CURRENT_BINARY_DIR}/WerSerialisation.cmake")
+
+    file(WRITE "${wer_lock_file}"
+            "set_tests_properties(CrashReport CrashReporting PROPERTIES\n"
+            "        RESOURCE_LOCK eacp-wer-module-listing)\n")
+
+    set_property(DIRECTORY APPEND PROPERTY
+            TEST_INCLUDE_FILES "${wer_lock_file}")
+endif ()
