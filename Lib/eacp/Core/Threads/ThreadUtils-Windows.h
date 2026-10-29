@@ -20,9 +20,10 @@ void initMainThread();
 // thread rather than the host's UI thread.
 void setCurrentThreadAsMainFallback();
 
-// Stops SEM_NOGPFAULTERRORBOX being set later, initMainThread included: that
-// flag stops Windows Error Reporting running at all, and with it the crash
-// reporter's helper DLL, which is all that sees a fast-fail or heap corruption.
+// Lets the crash reporter report fast-fail and heap-corruption crashes, which
+// only Windows Error Reporting sees. eacp sets SEM_NOGPFAULTERRORBOX at start to
+// hide Windows' "stopped working" dialog, and that flag stops Windows Error
+// Reporting too; this clears it and keeps initMainThread from setting it again.
 void keepWindowsErrorReportingOn();
 
 void shutdownMainThread();
