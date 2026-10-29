@@ -46,13 +46,15 @@ struct CrashedThread
 // Who wrote the report: the handler process reading the crashed one from
 // outside, the handler on macOS from the kernel's Mach exception message with
 // the app suspended, the handler again after the app was gone with only its
-// exit code to go on, or nobody, for a folder a crash left without its
+// exit code to go on, the app itself for a handled event (captureMessage,
+// captureException), or nobody, for a folder a crash left without its
 // report.json.
 enum class CaptureSource
 {
     handler,
     handlerMach,
     exitCode,
+    app,
     incomplete
 };
 
@@ -62,12 +64,17 @@ std::optional<CaptureSource> findCaptureSource(std::string_view name);
 constexpr auto incompleteReason = "incomplete";
 constexpr auto hangReason = "Hang";
 
+constexpr auto messageEventReason = "Message";
+constexpr auto exceptionEventReason = "Exception";
+
 // A crash ended the app; a hang is a main thread that stopped answering, and
-// the app was left running.
+// an event is one the app reported itself (captureMessage, captureException);
+// the app was left running after both.
 enum class ReportKind
 {
     crash,
-    hang
+    hang,
+    event
 };
 
 std::string_view getReportKindName(ReportKind kind);
@@ -113,6 +120,9 @@ struct CrashReport
     std::string id;
 
     ReportKind kind = ReportKind::crash;
+
+    // An event's own level; fatal for a crash or a hang.
+    Level level = Level::fatal;
 
     // Milliseconds since the Unix epoch, UTC.
     std::int64_t timestamp = 0;

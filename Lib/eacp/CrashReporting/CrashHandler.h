@@ -19,6 +19,9 @@ namespace eacp::CrashReporting
 // disk; the app is still running, and the handler goes back to watching it
 // when this returns, so it returns promptly (a window is a process of its own).
 //
+// eventReported runs in the app, on the thread that called captureEvent, once
+// the event's report is on disk; the report stays in pending/ like any other.
+//
 // pendingReportFound runs in the app on the message thread, after start() has
 // returned and the event loop has started, once per report still in pending/ on
 // each launch until markReportHandled moves it to handled/, hangs included
@@ -38,6 +41,7 @@ struct CrashHandler
 
     virtual void crashReported(const CrashReport&) {}
     virtual void hangReported(const CrashReport&) {}
+    virtual void eventReported(const CrashReport&) {}
     virtual void pendingReportFound(const CrashReport&) {}
     virtual void handlerUnavailable(const std::string&) {}
     virtual void unreportedExit(const AppSession&) {}

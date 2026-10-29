@@ -15,7 +15,15 @@
 
 #if defined(_WIN32)
 #include <eacp/Core/Utils/WinInclude.h>
+#include <float.h>
 #include <intrin.h>
+#elif defined(__APPLE__)
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#if defined(__x86_64__)
+#include <xmmintrin.h>
+#endif
 #endif
 
 // Each fault has to survive the optimiser exactly as written.
@@ -222,6 +230,175 @@ EACP_FAULT_NO_INLINE void deadlockWithAnotherThread()
     lockInOppositeOrder(locks.first, locks.second, locks.holdingCount);
 }
 
+// The architecture's own permanently undefined instruction.
+EACP_FAULT_NO_INLINE void executeIllegalInstruction()
+{
+#if defined(_MSC_VER) && !defined(__clang__) && defined(_M_X64)
+    __ud2();
+#elif defined(_MSC_VER) && !defined(__clang__) && defined(_M_ARM64)
+    __emit(0x00000000);
+#elif defined(__x86_64__)
+    asm volatile("ud2");
+#elif defined(__aarch64__)
+    asm volatile(".inst 0x00000000");
+#endif
+}
+
+// x64 user mode may not halt the processor; ARM64 has no separate trap for an
+// instruction above its level, which is only an undefined one there.
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+constexpr auto privilegedInstructionIsAvailable = true;
+
+EACP_FAULT_NO_INLINE void executePrivilegedInstruction()
+{
+    __halt();
+}
+#else
+constexpr auto privilegedInstructionIsAvailable = false;
+
+EACP_FAULT_NO_INLINE void executePrivilegedInstruction() {}
+#endif
+
+namespace
+{
+volatile auto floatingPointResult = 0.0;
+} // namespace
+
+// Only x86 implements trapping floating-point exceptions; ARM64 cores leave
+// the trap enables unimplemented, so a divide there quietly gives infinity.
+#if defined(_M_X64) || defined(__x86_64__)
+constexpr auto floatingPointTraps = true;
+
+EACP_FAULT_NO_INLINE void enableFloatingPointDivideTrap()
+{
+#if defined(_WIN32)
+    auto previous = 0u;
+    _controlfp_s(&previous, ~static_cast<unsigned>(_EM_ZERODIVIDE), _MCW_EM);
+#else
+    _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() & ~_MM_MASK_DIV_ZERO);
+#endif
+}
+#else
+constexpr auto floatingPointTraps = false;
+
+EACP_FAULT_NO_INLINE void enableFloatingPointDivideTrap() {}
+#endif
+
+EACP_FAULT_NO_INLINE double divideFloatByZero()
+{
+    enableFloatingPointDivideTrap();
+    volatile auto numerator = 1.0;
+    volatile auto zero = 0.0;
+    return numerator / zero;
+}
+
+namespace
+{
+// Data, so its page is readable and writable but never executable.
+std::array<volatile unsigned char, smallBlockSize> nonExecutableCode {};
+} // namespace
+
+EACP_FAULT_NO_INLINE void jumpToNonExecutableMemory()
+{
+    using Function = void (*)();
+    auto* dataAddress = const_cast<unsigned char*>(nonExecutableCode.data());
+    auto* volatile function = reinterpret_cast<Function>(dataAddress);
+    function();
+}
+
+#if defined(_WIN32)
+EACP_FAULT_NO_INLINE void touchGuardPage()
+{
+    auto* page = static_cast<volatile char*>(::VirtualAlloc(
+        nullptr, 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE | PAGE_GUARD));
+    page[0] = 1;
+}
+
+// A mapped read whose backing store fails is what raises this, and nothing on
+// a local disk fails on demand, so the fault raises the same record directly.
+EACP_FAULT_NO_INLINE void raiseInPageError()
+{
+    constexpr auto readAccess = ULONG_PTR {0};
+    constexpr auto deviceNotReady = ULONG_PTR {0xC00000A3};
+    auto* volatile address = &nonExecutableCode;
+    auto arguments = std::to_array<ULONG_PTR>(
+        {readAccess, reinterpret_cast<ULONG_PTR>(address), deviceNotReady});
+    ::RaiseException(EXCEPTION_IN_PAGE_ERROR,
+                     EXCEPTION_NONCONTINUABLE,
+                     static_cast<DWORD>(arguments.size()),
+                     arguments.data());
+}
+#else
+EACP_FAULT_NO_INLINE void touchGuardPage() {}
+EACP_FAULT_NO_INLINE void raiseInPageError() {}
+#endif
+
+#if defined(__APPLE__)
+constexpr auto isMacOS = true;
+
+// A page of a mapped file past the file's end, once it is truncated to nothing.
+EACP_FAULT_NO_INLINE void readPastTruncatedMapping()
+{
+    auto path = std::to_array("/tmp/eacp-crash-fault-bus-XXXXXX");
+    auto descriptor = ::mkstemp(path.data());
+    ::unlink(path.data());
+    auto pageSize = static_cast<std::size_t>(::getpagesize());
+    ::ftruncate(descriptor, static_cast<off_t>(pageSize));
+    auto* mapping = static_cast<volatile char*>(
+        ::mmap(nullptr, pageSize, PROT_READ, MAP_SHARED, descriptor, 0));
+    ::ftruncate(descriptor, 0);
+    divideResult = mapping[0];
+}
+
+// libsystem's own descriptor guards, which have no public header.
+extern "C" int change_fdguard_np(int descriptor,
+                                 const std::uint64_t* guard,
+                                 unsigned int guardFlags,
+                                 const std::uint64_t* newGuard,
+                                 unsigned int newGuardFlags,
+                                 int* descriptorFlags);
+
+// Guards a descriptor against close, then closes it. The kernel takes a close
+// guard only together with a dup one.
+EACP_FAULT_NO_INLINE void closeGuardedDescriptor()
+{
+    constexpr auto guardClose = 1u << 0;
+    constexpr auto guardDuplicate = 1u << 1;
+    constexpr auto guardValue = std::uint64_t {0xEACF};
+    auto descriptor = ::open("/dev/null", O_RDONLY);
+    auto descriptorFlags = 0;
+    change_fdguard_np(descriptor,
+                      nullptr,
+                      0,
+                      &guardValue,
+                      guardClose | guardDuplicate,
+                      &descriptorFlags);
+    ::close(descriptor);
+}
+
+// A system call number the kernel has no entry for.
+EACP_FAULT_NO_INLINE void callMissingSystemCall()
+{
+    constexpr auto missingSystemCall = 0x7FFF;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    ::syscall(missingSystemCall);
+#pragma clang diagnostic pop
+}
+#else
+constexpr auto isMacOS = false;
+
+EACP_FAULT_NO_INLINE void readPastTruncatedMapping() {}
+EACP_FAULT_NO_INLINE void closeGuardedDescriptor() {}
+EACP_FAULT_NO_INLINE void callMissingSystemCall() {}
+#endif
+
+#if defined(_WIN32)
+constexpr auto isWindows = true;
+#else
+constexpr auto isWindows = false;
+#endif
+
 Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
     {"nullptr",
      "Null pointer",
@@ -276,6 +453,56 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
      false,
      false},
 #endif
+    {"illegalinstruction",
+     "Illegal instruction",
+     "Executes the architecture's undefined instruction",
+     executeIllegalInstruction},
+    {"privilegedinstruction",
+     "Privileged instruction",
+     "Halts the processor from user mode",
+     executePrivilegedInstruction,
+     false,
+     privilegedInstructionIsAvailable},
+    {"floatingpoint",
+     "Floating-point trap",
+     "Unmasks the divide-by-zero trap, then divides a double by zero",
+     [] { floatingPointResult = divideFloatByZero(); },
+     false,
+     floatingPointTraps},
+    {"executenx",
+     "Execute non-executable",
+     "Calls into a data page",
+     jumpToNonExecutableMemory},
+    {"guardpage",
+     "Guard page",
+     "Writes to a PAGE_GUARD page",
+     touchGuardPage,
+     false,
+     isWindows},
+    {"inpageerror",
+     "In-page error",
+     "Raises the in-page error a failed mapped read raises",
+     raiseInPageError,
+     false,
+     isWindows},
+    {"buserror",
+     "Bus error",
+     "Reads a mapped file past its end once it is truncated",
+     readPastTruncatedMapping,
+     false,
+     isMacOS},
+    {"guardedfd",
+     "Guarded descriptor",
+     "Closes a file descriptor guarded against close",
+     closeGuardedDescriptor,
+     false,
+     isMacOS},
+    {"sigsys",
+     "Bad system call",
+     "Makes a system call that does not exist",
+     callMissingSystemCall,
+     false,
+     isMacOS},
 };
 
 return faults;

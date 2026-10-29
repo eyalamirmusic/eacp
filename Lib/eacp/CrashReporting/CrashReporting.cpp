@@ -473,6 +473,63 @@ void resumeHangDetection()
         });
 }
 
+namespace
+{
+void deliverEvent(const CrashReport& report)
+{
+    try
+    {
+        createRegisteredCrashHandler()->eventReported(report);
+    }
+    catch (const std::exception& error)
+    {
+        Console::printError(std::string {"eventReported threw: "} + error.what());
+    }
+}
+} // namespace
+
+std::string captureEvent(const Event& event)
+{
+    constexpr auto framesOfCaptureEvent = 1;
+    auto frames = Detail::captureCurrentStack(framesOfCaptureEvent);
+    auto database = getDatabase();
+
+    auto report = writeToSharedState(
+        [&](Detail::SharedState& state)
+        {
+            auto written =
+                Detail::beginHandlerReport(database, state, CaptureSource::app);
+            written.kind = ReportKind::event;
+            written.level = event.level;
+            written.reason = event.reason;
+            written.message = event.message;
+            written.faultAddress = 0;
+            written.crashingThread = {Detail::getCurrentThreadId(), frames};
+
+            if (!Detail::finishHandlerReport(database, written, state))
+                return std::optional<CrashReport> {};
+
+            return std::optional {written};
+        });
+
+    if (!report)
+        return {};
+
+    deliverEvent(*report);
+    return report->id;
+}
+
+std::string captureMessage(std::string_view message, Level level)
+{
+    return captureEvent({messageEventReason, std::string {message}, level});
+}
+
+std::string captureException(const std::exception& exception)
+{
+    auto message = Detail::getTypeName(typeid(exception)) + ": " + exception.what();
+    return captureEvent({exceptionEventReason, message, Level::error});
+}
+
 bool crashedLastRun()
 {
     return getSession().crashedLastRun;

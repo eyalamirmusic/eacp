@@ -1183,6 +1183,9 @@ throw sites through its own `__cxa_throw`. With the handler gone a crash goes
 unreported; `start()` then returns false and calls `handlerUnavailable`, and a
 `session.active` marker that a clean exit removes lets the next `start()` call
 `unreportedExit` for a run that ended with no report.
+`captureMessage`/`captureException` write a handled `kind: event` report from
+the app itself, with the calling thread's stack, and hand it to
+`CrashHandler::eventReported` without ending the app.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 

@@ -3,10 +3,12 @@
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Threads/Thread.h>
 #include <eacp/Core/Utils/Singleton.h>
+#include <eacp/CrashReporting/CrashReporting.h>
 #include <eacp/CrashReporting/CrashReportingPlatform.h>
 
 #include <atomic>
 #include <mutex>
+#include <stdexcept>
 
 namespace eacp::CrashReporting::Faults
 {
@@ -30,6 +32,7 @@ struct BackgroundThreads
 };
 
 std::atomic<int> returnedBackgroundFaults {0};
+std::atomic<int> reportedFaultEvents {0};
 
 std::optional<std::reference_wrapper<const Fault>>
     findAvailableFault(std::string_view name)
@@ -122,6 +125,29 @@ bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay)
     Threads::callAfter(delay,
                        [faultName, thread] { triggerFault(faultName, thread); });
     return true;
+}
+
+// Outside the anonymous namespace, never inlined and counting afterwards, so
+// the event's stack names them.
+EACP_FAULT_NO_INLINE std::string reportMessageEvent()
+{
+    auto id = captureMessage(faultEventMessage, Level::warning);
+    reportedFaultEvents.fetch_add(1);
+    return id;
+}
+
+EACP_FAULT_NO_INLINE std::string reportCaughtException()
+{
+    try
+    {
+        throw std::runtime_error {std::string {faultEventMessage}};
+    }
+    catch (const std::exception& error)
+    {
+        auto id = captureException(error);
+        reportedFaultEvents.fetch_add(1);
+        return id;
+    }
 }
 
 void killHandlerProcess()

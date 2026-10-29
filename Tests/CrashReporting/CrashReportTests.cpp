@@ -126,3 +126,23 @@ auto tCrashReportWithoutKindIsACrash =
     check(report->kind == ReportKind::crash);
     check(report->hangDurationMilliseconds == 0);
 };
+
+auto tCrashReportEventRoundTrips = test("CrashReportJSON/eventRoundTrips") = []
+{
+    auto report = makeSampleReport();
+    report.kind = ReportKind::event;
+    report.level = Level::warning;
+
+    auto readBack = CrashReport::fromJSON(report.toJSON());
+    check(readBack.has_value());
+    check(readBack->kind == ReportKind::event);
+    check(readBack->level == Level::warning);
+};
+
+auto tCrashReportWithoutLevelIsFatal =
+    test("CrashReportJSON/withoutLevelIsFatal") = []
+{
+    auto report = CrashReport::fromJSON(reportWithoutModuleUuid);
+    check(report.has_value());
+    check(report->level == Level::fatal);
+};

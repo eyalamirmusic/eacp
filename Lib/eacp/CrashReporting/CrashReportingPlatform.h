@@ -4,6 +4,7 @@
 #include "SharedState.h"
 
 #include <chrono>
+#include <typeinfo>
 
 // What each platform's client and handler process implement, and the portable
 // pieces of the handler they share.
@@ -62,6 +63,13 @@ int runHandlerProcess(const HandlerArguments& arguments);
 // the main thread itself, on Windows nothing, since the handler watches.
 void startHangWatchdog(SharedState& state);
 void stopHangWatchdog();
+
+// The calling thread's stack, symbolised in the app, its innermost
+// `framesToSkip` frames left out.
+Vector<StackFrame> captureCurrentStack(int framesToSkip);
+
+// The type's name as source spells it: demangled, with no "class " prefix.
+std::string getTypeName(const std::type_info& type);
 
 std::string getOperatingSystemVersion();
 std::uint64_t getCurrentProcessId();

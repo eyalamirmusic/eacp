@@ -2,6 +2,7 @@
 #include "CrashReportingPlatform.h"
 #include "LoadedLibrarySymbolReader-macOS.h"
 #include "MachImages-macOS.h"
+#include "SymbolNames-macOS.h"
 #include "Minidump-macOS.h"
 #include "TaskCapture-macOS.h"
 #include "TaskPortHandshake-macOS.h"
@@ -100,18 +101,6 @@ std::map<std::string, std::uint64_t> getHandlerImageBases()
             reinterpret_cast<std::uintptr_t>(dynamicLinker->header);
 
     return bases;
-}
-
-std::string demangleSymbol(const char* symbol)
-{
-    auto status = 0;
-    auto demangled = std::unique_ptr<char, decltype(&::free)> {
-        abi::__cxa_demangle(symbol, nullptr, nullptr, &status), &::free};
-
-    if (status != 0 || !demangled)
-        return symbol;
-
-    return demangled.get();
 }
 
 // The libraries the app loaded and the handler did not, read from their files.
