@@ -153,37 +153,4 @@ auto tJoinTwice = test("Thread/joinTwiceIsHarmless") = []
     check(ran);
     check(!thread.isJoinable());
 };
-// A second stack on a thread that has one already is left uninstalled.
-bool canInstallAnotherAlternateStack()
-{
-    return eacp::Threads::AlternateSignalStack {}.isInstalled();
-}
-
-auto tThreadHasAlternateStack =
-    test("Thread/bodyRunsWithAnAlternateSignalStack") = []
-{
-    auto couldInstallAnother = true;
-    auto thread =
-        Thread {[&] { couldInstallAnother = canInstallAnotherAlternateStack(); }};
-    thread.join();
-    check(!couldInstallAnother);
-};
-
-auto tForeignThreadInstallsAlternateStack =
-    test("Thread/aForeignThreadInstallsItsOwnAlternateSignalStack") = []
-{
-    auto installed = false;
-    auto installedAnother = true;
-    auto thread =
-        std::thread {[&]
-                     {
-                         auto stack = eacp::Threads::AlternateSignalStack {};
-                         installed = stack.isInstalled();
-                         installedAnother = canInstallAnotherAlternateStack();
-                     }};
-    thread.join();
-    check(installed);
-    check(!installedAnother);
-};
-
 } // namespace ThreadTests

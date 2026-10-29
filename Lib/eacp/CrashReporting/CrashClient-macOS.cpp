@@ -5,8 +5,6 @@
 #include "ThrowSites-macOS.h"
 #include "UncaughtExceptions-macOS.h"
 
-#include <eacp/Core/Threads/AlternateSignalStack.h>
-
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -34,7 +32,6 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-constexpr auto alternateSignalStackSize = std::size_t {256 * 1024};
 constexpr auto demangleBufferSize = std::size_t {1024};
 constexpr auto handlerCaptureTimeoutSeconds = 60;
 constexpr auto terminateReason = std::string_view {"std::terminate"};
@@ -287,12 +284,6 @@ void recordDynamicLinker()
         appendSharedModule(dynamicLinker->header, dynamicLinker->path);
 }
 
-// Every Threads::Thread has its own; this is the thread that called start().
-void installAlternateSignalStack()
-{
-    static auto stack = Threads::AlternateSignalStack {alternateSignalStackSize};
-}
-
 void installSignalHandlers()
 {
     auto action = SignalAction {};
@@ -496,7 +487,6 @@ void installCrashHandlers(SharedState& state)
     prepareDemangleBuffer();
     recordDynamicLinker();
     _dyld_register_func_for_add_image(&recordLoadedImage);
-    installAlternateSignalStack();
     installSignalHandlers();
     startRecordingThrowSites();
     client.previousTerminateHandler = std::set_terminate(&handleTerminate);

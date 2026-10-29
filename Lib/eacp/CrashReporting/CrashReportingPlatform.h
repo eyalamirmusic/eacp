@@ -40,6 +40,10 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState& state);
 // session marker it left (CrashHandler::unreportedExit).
 void installCrashHandlers(SharedState& state);
 
+// False when the thread had a stack for overflow reports already.
+bool installStackOverflowStackOnCurrentThread();
+void setStackOverflowStackOnNewThreads(bool shouldInstall);
+
 bool isHandlerProcessRunning();
 
 // Ends the handler process without telling it, as if it had died: the crash

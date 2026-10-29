@@ -1169,7 +1169,10 @@ minidump and walks the stack with DbgHelp. Reports land in
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
 itself; `Tests/CrashReporting` drives it, every fault on the main and a background
 thread; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
-every `Threads::Thread` holds a `Threads::AlternateSignalStack`, macOS records
+`Options::stackOverflowReporting` gives the starting thread (the default), every
+thread or none a stack to report an overflow from (an alternate signal stack on
+macOS, through `pthread_introspection_hook_install`; a `SetThreadStackGuarantee`
+reserve on Windows, from a TLS callback), macOS records
 throw sites through its own `__cxa_throw`. With the handler gone a crash goes
 unreported; `start()` then returns false and calls `handlerUnavailable`, and a
 `session.active` marker that a clean exit removes lets the next `start()` call

@@ -3,8 +3,6 @@
 #include "CrashReportingPlatform.h"
 #include "ExceptionNames-Windows.h"
 
-#include <eacp/Core/Threads/AlternateSignalStack.h>
-
 #include <eacp/Core/Utils/WinInclude.h>
 
 #include <array>
@@ -22,7 +20,6 @@ namespace
 {
 constexpr auto handlerCaptureTimeoutMilliseconds = DWORD {60000};
 constexpr auto handlerStopTimeoutMilliseconds = DWORD {5000};
-constexpr auto stackOverflowReserveBytes = std::size_t {64 * 1024};
 constexpr auto terminateReason = std::string_view {"std::terminate"};
 constexpr auto unknownExceptionType = std::string_view {"unknown exception"};
 constexpr auto messageSeparator = std::string_view {": "};
@@ -247,12 +244,6 @@ void handleAbortSignal(int)
     reportSoftwareCrash(abortReason);
 }
 
-// Every Threads::Thread has its own; this is the thread that called start().
-void reserveStackForOverflowReport()
-{
-    static auto reserve = Threads::AlternateSignalStack {stackOverflowReserveBytes};
-}
-
 std::wstring quoteCommandLineArgument(const std::wstring& argument)
 {
     auto quoted = std::wstring {L"\""};
@@ -383,7 +374,6 @@ void installCrashHandlers(SharedState& state)
     auto& client = getWindowsCrashClient();
     client.state = state;
 
-    reserveStackForOverflowReport();
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     client.previousExceptionFilter =

@@ -263,6 +263,8 @@ void startCrashReporting(const FilePath& databaseDirectory,
     auto options = CrashReporting::Options {};
     options.handlerArguments = handlerArguments;
     options.hangThreshold = hangThreshold;
+    options.stackOverflowReporting =
+        CrashReporting::StackOverflowReporting::everyThread;
 
     if (!databaseDirectory.empty())
         options.databaseDirectory = databaseDirectory;

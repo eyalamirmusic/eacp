@@ -26,6 +26,7 @@ target_sources(eacp-crash-reporting PRIVATE
 if (APPLE)
     target_sources(eacp-crash-reporting PRIVATE
             CrashClient-macOS.cpp
+            StackOverflowStack-macOS.cpp
             CrashHandlerProcess-macOS.cpp
             HangWatchdog-macOS.cpp
             MachImages-macOS.cpp
@@ -37,7 +38,8 @@ elseif (WIN32)
             CrashClient-Windows.cpp
             CppExceptions-Windows.cpp
             CrashHandlerProcess-Windows.cpp
-            ExceptionNames-Windows.cpp)
+            ExceptionNames-Windows.cpp
+            StackOverflowStack-Windows.cpp)
     target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
 endif ()
 

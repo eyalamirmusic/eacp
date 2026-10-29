@@ -77,6 +77,17 @@ std::string getAppIdentity()
     return company + "." + appName;
 }
 
+void installStackOverflowReporting(StackOverflowReporting reporting)
+{
+    if (reporting == StackOverflowReporting::off)
+        return;
+
+    Detail::installStackOverflowStackOnCurrentThread();
+
+    if (reporting == StackOverflowReporting::everyThread)
+        Detail::setStackOverflowStackOnNewThreads(true);
+}
+
 // The handler is the app's own executable, so its build is the app's.
 std::string getArchitectureName()
 {
@@ -339,6 +350,7 @@ bool start(const Options& options)
 
     auto launched = Detail::launchHandlerProcess(launch, state);
     Detail::installCrashHandlers(state);
+    installStackOverflowReporting(options.stackOverflowReporting);
 
     if (launched)
     {
@@ -381,6 +393,7 @@ void stop()
     Detail::stopHangWatchdog();
     session.heartbeatRunning = false;
     Detail::uninstallCrashHandlers();
+    Detail::setStackOverflowStackOnNewThreads(false);
     Detail::stopHandlerProcess(session.sharedState->get());
     ReportDatabase {session.options.databaseDirectory}.clearSessionMarker();
     session.started = false;

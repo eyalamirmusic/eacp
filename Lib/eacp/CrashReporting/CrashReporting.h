@@ -25,6 +25,23 @@
 // ends the app and hands the report to the registered CrashHandler.
 namespace eacp::CrashReporting
 {
+// A stack overflow leaves its thread no stack for the crash handler, so the
+// report needs a separate one set up on the thread beforehand: an alternate
+// signal stack on macOS, a SetThreadStackGuarantee reserve on Windows. Each
+// stack is reserved address space, not resident memory, until a crash uses it.
+enum class StackOverflowReporting
+{
+    // The thread that calls start(), usually the main thread.
+    startingThread,
+
+    // That thread and every thread created after start(), whoever creates it:
+    // std::thread, Threads::Thread, GCD and the Windows thread pool, other
+    // libraries. Costs every new thread a reservation and a system call or two.
+    everyThread,
+
+    off
+};
+
 constexpr auto handlerFlag = std::string_view {"--eacp-crash-handler"};
 constexpr auto handlerArgumentsSeparator = std::string_view {"--"};
 
@@ -70,6 +87,9 @@ struct Options
     // hang. A zero threshold turns hang detection off.
     std::chrono::milliseconds heartbeatInterval {500};
     std::chrono::milliseconds hangThreshold {10000};
+
+    StackOverflowReporting stackOverflowReporting =
+        StackOverflowReporting::startingThread;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command
