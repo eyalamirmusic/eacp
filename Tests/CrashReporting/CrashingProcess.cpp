@@ -8,6 +8,7 @@
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Plugins/DynamicLibrary.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/CrashReporting/CrashHandler.h>
 #include <eacp/CrashReporting/CrashReporting.h>
 #include <eacp/CrashReporting/Faults/Faults.h>
 
@@ -52,6 +53,39 @@ std::optional<StackOverflowReporting> findReporting(std::string_view name)
     return std::nullopt;
 }
 
+struct CrashingProcessCrashHandler final : CrashHandler
+{
+    void eventReported(const CrashReport& report) override
+    {
+        Console::print(std::string {crashingProcessEventLine} + report.id + " ("
+                       + report.reason + ": " + report.message + ")");
+    }
+};
+
+EACP_REGISTER_CRASH_HANDLER(CrashingProcessCrashHandler);
+
+int printEventOutcome(const std::string& id)
+{
+    Console::print(std::string {crashingProcessStillRunningLine} + id);
+
+    if (id.empty())
+        return 1;
+
+    return 0;
+}
+
+int reportEventNow(std::string_view kind)
+{
+    if (kind == "message")
+        return printEventOutcome(Faults::reportMessageEvent());
+
+    if (kind == "exception")
+        return printEventOutcome(Faults::reportCaughtException());
+
+    Console::printError("no event called " + std::string {kind});
+    return Args::badArguments;
+}
+
 struct CrashingProcessSettings
 {
     std::string fault;
@@ -64,6 +98,7 @@ struct CrashingProcessSettings
     bool skipsCrashReporting = false;
     bool signalsOnly = false;
     std::string probe;
+    std::string eventKind;
     std::string libraryFunction;
 };
 
@@ -250,6 +285,8 @@ int runCrashingProcess()
     cli.flag("--signals-only",
              settings.signalsOnly,
              "macOS: no Mach exception capture, only the in-app signal handler");
+    cli.option(
+        "--event", settings.eventKind, "message or exception: report it, no crash");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");
@@ -277,6 +314,9 @@ int runCrashingProcess()
 
     if (auto code = runThreadStackProbe(settings.probe))
         return *code;
+
+    if (!settings.eventKind.empty())
+        return reportEventNow(settings.eventKind);
 
     if (!settings.libraryFunction.empty())
         return crashInLoadedLibrary(settings);

@@ -1,3 +1,5 @@
+#include "CrashingProcess.h"
+
 #include <eacp/Core/Process/Process.h>
 #include <eacp/Core/Utils/Console.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
@@ -14,16 +16,11 @@ using namespace eacp::CrashReporting;
 
 namespace EventTests
 {
-constexpr auto stillRunningLine = "SelfDestruct: still running after ";
-constexpr auto eventReportedLine = "SelfDestruct: event ";
 
 Processes::ProcessResult runEvent(std::string_view kind, const FilePath& database)
 {
-    auto options = Processes::ProcessOptions {};
-    options.executable = EACP_SELF_DESTRUCT;
-    options.arguments = {
-        "--event", std::string {kind}, "--crash-database", database.str()};
-    return Processes::run(options);
+    return Processes::run(Tests::makeCrashingProcessOptions(
+        {"--event", std::string {kind}, "--crash-database", database.str()}));
 }
 
 bool hasCallerFrame(const CrashReport& report, std::string_view caller)
@@ -57,10 +54,14 @@ CrashReport checkEvent(std::string_view kind, std::string_view caller)
     check(report.capturedBy == CaptureSource::app);
     check(report.minidumpPath.empty());
     check(report.tags.contains("project"));
-    check(report.user.id == "self-destruct-user");
+    check(report.user.id == "crash-test-user");
     check(report.breadcrumbs.size() == 2);
-    check(result.output.find(eventReportedLine + report.id) != std::string::npos);
-    check(result.output.find(stillRunningLine + report.id) != std::string::npos);
+    check(
+        result.output.find(std::string {Tests::crashingProcessEventLine} + report.id)
+        != std::string::npos);
+    check(result.output.find(std::string {Tests::crashingProcessStillRunningLine}
+                             + report.id)
+          != std::string::npos);
 
     if (!hasCallerFrame(report, caller))
         Console::printError(result.output);

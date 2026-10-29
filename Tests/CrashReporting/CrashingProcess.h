@@ -11,6 +11,10 @@ namespace eacp::CrashReporting::Tests
 constexpr auto crashingProcessFlag = std::string_view {"--crashing-process"};
 constexpr auto crashingProcessProject =
     std::string_view {"eacp CrashReportingTests"};
+constexpr auto crashingProcessEventLine =
+    std::string_view {"crashing process: event "};
+constexpr auto crashingProcessStillRunningLine =
+    std::string_view {"crashing process: still running after "};
 constexpr auto crashingProcessModuleName = std::string_view {"CrashReportingTests"};
 
 bool isCrashingProcessCommandLine(int argc, char* argv[]);
