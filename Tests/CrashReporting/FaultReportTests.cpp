@@ -183,9 +183,9 @@ Processes::ProcessOptions
 
 // The report's files live in `database`, so they are read while it is held.
 CrashReport crashTheCrashingProcess(std::string_view kind,
-                              FaultThread thread,
-                              const TemporaryFile& database,
-                              const Vector<std::string>& appArguments = {})
+                                    FaultThread thread,
+                                    const TemporaryFile& database,
+                                    const Vector<std::string>& appArguments = {})
 {
     auto options = makeCrashOptions(kind, thread, database.path(), appArguments);
 
@@ -678,7 +678,7 @@ int countOccurrences(std::string_view text, std::string_view needle)
 
 // lldb reads the minidump as a core file; it is part of every Xcode install,
 // so one that cannot be launched is a skip rather than a failure. Every
-// thread of the app is in it, SelfDestruct's main thread beside the faulting
+// thread of the app is in it, the test binary's main thread beside the faulting
 // one at the least.
 void checkLldbNamesFaultFunction(const FilePath& minidump, std::string_view function)
 {
