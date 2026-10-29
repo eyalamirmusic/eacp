@@ -6,7 +6,7 @@ namespace
 {
 using namespace std::string_view_literals;
 
-constexpr auto threadWatchPullRequest = 0;
+constexpr auto threadWatchPullRequest = 184;
 
 struct LaneName
 {
@@ -203,11 +203,14 @@ ExpectedOutcome expectHeapSmash(Lane lane, ThreadChoice thread)
 
 ExpectedOutcome expectStall(Lane lane, ThreadChoice thread)
 {
-    if (isBackground(thread))
-        return pending("only the main thread is watched for hangs",
-                       threadWatchPullRequest);
-
     auto outcome = reported(lane, hangReason);
+
+    if (isBackground(thread))
+    {
+        outcome.pullRequest = threadWatchPullRequest;
+        outcome.note =
+            "the background fault thread is a watched worker (ThreadWatch)";
+    }
 
     if (isArm64Windows(lane))
         return withShortStack(outcome,

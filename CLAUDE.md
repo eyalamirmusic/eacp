@@ -1171,7 +1171,12 @@ it as `EXC_CRASH`. The in-app signal handler (`backtrace()` on an alternate
 stack) is the fallback when the handshake failed. On Windows
 the handler writes a minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
-(`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
+(`EACP_REGISTER_CRASH_HANDLER`). Hangs are a watched thread that stops
+beating: the main thread's heartbeat and any worker's `ThreadWatch` (or a
+`Threads::Thread` with `ThreadOptions::watchName`) share one 32-slot table in
+the shared block, and threads silent in the same check, a deadlock, are one
+`kind: "hang"` report with `threadName` and `stalledThreads`.
+`Apps/CrashReporting/SelfDestruct` crashes
 itself and says on each button what the report will be; `CrashReportingTests`
 relaunches itself with `--crashing-process` to raise every fault on the main
 and a background thread, one case per cell of `Faults/Matrix.h`; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),

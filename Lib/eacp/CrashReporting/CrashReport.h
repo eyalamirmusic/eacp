@@ -38,6 +38,9 @@ struct StackFrame
 struct CrashedThread
 {
     std::uint64_t threadId = 0;
+
+    // A watched thread's name, for a hang; empty for a crash.
+    std::string name;
     Vector<StackFrame> frames;
 
     void reflect(Miro::Reflector& ref);
@@ -67,9 +70,10 @@ constexpr auto hangReason = "Hang";
 constexpr auto messageEventReason = "Message";
 constexpr auto exceptionEventReason = "Exception";
 
-// A crash ended the app; a hang is a main thread that stopped answering, and
-// an event is one the app reported itself (captureMessage, captureException);
-// the app was left running after both.
+// A crash ended the app; a hang is a watched thread (the main one, or a
+// ThreadWatch's) that stopped beating, and an event is one the app reported
+// itself (captureMessage, captureException); the app was left running after
+// both.
 enum class ReportKind
 {
     crash,
@@ -137,7 +141,7 @@ struct CrashReport
 
     std::uint64_t faultAddress = 0;
 
-    // For a hang, the main thread; its frames are where it was stuck. For an
+    // For a hang, the first stalled thread; its frames are where it was stuck. For an
     // uncaught C++ exception whose throw was recorded, the throw site.
     CrashedThread crashingThread;
 
@@ -145,9 +149,17 @@ struct CrashReport
     // throw site instead. Empty otherwise.
     Vector<StackFrame> terminateFrames;
 
-    // How long the main thread had been silent when it was sampled, for a
-    // hang. 0 for a crash.
+    // How long the first stalled thread had been silent when it was sampled,
+    // for a hang. 0 for a crash.
     std::int64_t hangDurationMilliseconds = 0;
+
+    // For a hang, the stalled thread's watch name ("main" for the main
+    // thread). Empty for a crash.
+    std::string threadName;
+
+    // For a hang, every watched thread found silent in the same check, the
+    // first of them crashingThread: two for a deadlock between watched threads.
+    Vector<CrashedThread> stalledThreads;
 
     // Empty where no minidump was written (macOS has no writer yet).
     FilePath minidumpPath;

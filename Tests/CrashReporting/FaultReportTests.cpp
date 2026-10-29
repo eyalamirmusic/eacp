@@ -375,7 +375,11 @@ CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
     return report;
 }
 
-// Never returns, so the report is waited for while the app still runs.
+constexpr auto backgroundWatchName = "fault background";
+
+// Never returns, so the report is waited for while the app still runs. A
+// main-thread deadlock's worker stops beating up to a heartbeat after the main
+// thread, so it may be a second report of its own; the main one is returned.
 CrashReport waitForStallReport(std::string_view kind)
 {
     auto database = TemporaryFile {};
@@ -390,7 +394,13 @@ CrashReport waitForStallReport(std::string_view kind)
     process.wait();
 
     auto reports = reportDatabase.readPendingReports();
-    check(reports.size() == 1);
+    check(!reports.empty());
+
+    for (const auto& report: reports)
+    {
+        if (report.threadName == "main")
+            return report;
+    }
 
     return reports.empty() ? CrashReport {} : reports[0];
 }
@@ -401,27 +411,73 @@ bool isStallingFault(std::string_view fault)
     return found && found->get().stallsItsThread;
 }
 
-void checkStallAgainstMatrix(std::string_view fault, const ExpectedOutcome& expected)
+// Off the main thread the main thread keeps beating and the app quits on its
+// own once the stall would have ended; the watched worker's silence is the one
+// report.
+CrashReport runBackgroundStall(std::string_view fault)
 {
-    auto report = CrashReport {};
+    auto reports = runHangFault(
+        {}, testHangThresholdMilliseconds, fault, FaultThread::background);
 
-    if (fault == "hang")
-    {
-        auto reports = runHangFault({}, testHangThresholdMilliseconds);
-        check(reports.size() == 1);
+    if (reports.size() != 1)
+        Console::printError(std::to_string(reports.size()) + " hang reports");
 
-        if (reports.size() == 1)
-            report = reports[0];
-    }
+    check(reports.size() == 1);
+    return reports.empty() ? CrashReport {} : reports[0];
+}
+
+CrashReport runStall(std::string_view fault, FaultThread thread)
+{
+    if (thread == FaultThread::background)
+        return runBackgroundStall(fault);
+
+    if (fault != "hang")
+        return waitForStallReport(fault);
+
+    auto reports = runHangFault({}, testHangThresholdMilliseconds);
+    check(reports.size() == 1);
+    return reports.empty() ? CrashReport {} : reports[0];
+}
+
+// Two watched threads locked against each other on a background deadlock;
+// on the main thread, the main one and maybe its worker.
+void checkStalledThreads(const CrashReport& report,
+                         std::string_view fault,
+                         FaultThread thread)
+{
+    auto isBackground = thread == FaultThread::background;
+    auto expectedName = isBackground ? backgroundWatchName : "main";
+    auto count = report.stalledThreads.size();
+
+    check(report.threadName == expectedName);
+    check(report.crashingThread.name == expectedName);
+    check(report.message.starts_with(expectedName));
+    check(report.message.find(" unresponsive for ") != std::string::npos);
+
+    if (fault == "deadlock" && isBackground)
+        check(count == 2);
+    else if (fault == "deadlock")
+        check(count == 1 || count == 2);
     else
-    {
-        report = waitForStallReport(fault);
-    }
+        check(count == 1);
+
+    for (const auto& stalled: report.stalledThreads)
+        check(!stalled.frames.empty());
+
+    for (auto index = 1; index < count; ++index)
+        check(report.stalledThreads[index].name == backgroundWatchName);
+}
+
+void checkStallAgainstMatrix(std::string_view fault,
+                             FaultThread thread,
+                             const ExpectedOutcome& expected)
+{
+    auto report = runStall(fault, thread);
 
     checkReportAgainstMatrix(report, expected);
     check(report.kind == ReportKind::hang);
-    check(report.message.starts_with("main thread unresponsive for "));
     check(report.hangDurationMilliseconds >= 1000);
+    checkStalledThreads(report, fault, thread);
     checkReportMetadata(report);
 }
 
@@ -471,9 +527,9 @@ void runMatrixCell(std::string_view fault, FaultThread thread)
             break;
     }
 
-    if (isStallingFault(fault) && thread == FaultThread::main)
-        checkStallAgainstMatrix(fault, expected);
-    else if (!isStallingFault(fault))
+    if (isStallingFault(fault))
+        checkStallAgainstMatrix(fault, thread, expected);
+    else
         checkCrashAgainstMatrix(fault, thread);
 }
 
@@ -820,6 +876,50 @@ auto tCrashReportSignalsOnly = test("CrashReport/signalsOnly") = []
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
 { check(runHangFault({}, "0").empty()); };
 
+// A crash soon after launch makes AppKit offer, on the next launch, to reopen
+// windows, in a modal alert run from the launch Apple event; a quit inside it
+// stopped the alert and left the app running. Each round crashes twice after
+// launch, then runs a main-thread hang, which must quit on its own.
+bool quitsWithin(Processes::Process& process, std::chrono::milliseconds limit)
+{
+    auto deadline = std::chrono::steady_clock::now() + limit;
+
+    while (process.isRunning() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(reportPollInterval);
+
+    auto quit = !process.isRunning();
+
+    if (!quit)
+        process.kill();
+
+    process.wait();
+    return quit;
+}
+
+auto tCrashReportHangQuitsAfterLaunchCrashes =
+    test("CrashReport/hangQuitsAfterLaunchCrashes") = []
+{
+    constexpr auto rounds = 10;
+    constexpr auto crashesPerRound = 2;
+    constexpr auto quitLimit = std::chrono::seconds {20};
+
+    for (auto round = 0; round < rounds; ++round)
+    {
+        for (auto crash = 0; crash < crashesPerRound; ++crash)
+        {
+            auto database = TemporaryFile {};
+            Processes::run(makeCrashOptions(
+                "nullptr", FaultThread::background, database.path()));
+        }
+
+        auto database = TemporaryFile {};
+        auto process = Processes::Process {
+            makeHangOptions("hang", database.path(), testHangThresholdMilliseconds)};
+        check(process.launched());
+        check(quitsWithin(process, quitLimit));
+    }
+};
+
 auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 {
     check(runHangFault({"--pause-hang-detection"}, testHangThresholdMilliseconds)
@@ -877,6 +977,15 @@ auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
     check(report.crashingThread.frames.empty());
 };
 #endif
+
+auto tCrashReportHangBackgroundPaused = test("CrashReport/hangBackgroundPaused") = []
+{
+    check(runHangFault({"--pause-hang-detection"},
+                       testHangThresholdMilliseconds,
+                       "hang",
+                       FaultThread::background)
+              .empty());
+};
 
 auto tMatrixCoversEveryFault = test("CrashMatrix/coversEveryFaultOnEveryLane") = []
 {

@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <typeinfo>
+#include <functional>
+#include <optional>
 
 // What each platform's client and handler process implement, and the portable
 // pieces of the handler they share.
@@ -73,6 +75,15 @@ Vector<StackFrame> captureCurrentStack(int framesToSkip);
 
 // The type's name as source spells it: demangled, with no "class " prefix.
 std::string getTypeName(const std::type_info& type);
+// A duration as the shared block stores it: whole milliseconds, never negative.
+std::uint64_t countMilliseconds(std::chrono::milliseconds duration);
+
+// The block start() made, while the session is started and watching for hangs.
+std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo();
+
+// Records what the in-app watchdog needs to sample the calling thread later
+// (macOS); nothing on Windows.
+void recordThreadForSampling(SharedWatchedThread& thread);
 
 std::string getOperatingSystemVersion();
 std::uint64_t getCurrentProcessId();
@@ -90,11 +101,14 @@ CrashReport beginHandlerReport(const ReportDatabase& database,
                                const SharedState& state,
                                CaptureSource capturedBy);
 
-// beginHandlerReport for a hang: the kind, reason and message, the main
-// thread's id and how long it had been silent, with `frames` left to the
-// caller.
+// beginHandlerReport for a hang: the kind, reason and message, one
+// stalledThreads entry per stalled slot (id and name) and how long the first
+// had been silent. The caller fills each entry's frames, then
+// finishHangReportThreads copies the first into crashingThread.
 CrashReport beginHangReport(const ReportDatabase& database,
                             const SharedState& state);
+
+void finishHangReportThreads(CrashReport& report);
 
 // Copies the attachments and writes report.json, which goes last. Only a crash
 // marks crashedLastRun.

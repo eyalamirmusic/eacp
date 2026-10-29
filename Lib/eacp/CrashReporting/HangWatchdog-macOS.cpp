@@ -36,9 +36,7 @@ struct ThreadRegisters
 struct HangWatchdog
 {
     std::optional<std::reference_wrapper<SharedState>> state;
-    thread_act_t mainThread = MACH_PORT_NULL;
-    StackBounds mainStack;
-    std::uint64_t reportedHeartbeat = 0;
+    StallTracker tracker;
 
     std::mutex mutex;
     std::condition_variable wake;
@@ -115,46 +113,63 @@ struct FrameRecord
     std::uint64_t returnAddress;
 };
 
-void appendFrame(SharedHangInfo& hang, std::uint64_t address)
+void appendFrame(SharedStalledThread& stalled, std::uint64_t address)
 {
-    if (hang.frameCount < maxCrashFrames)
-        hang.frames[hang.frameCount++] = address;
+    if (stalled.frameCount < maxCrashFrames)
+        stalled.frames[stalled.frameCount++] = address;
 }
 
-// The suspended thread's own frame-pointer chain, from its registers. Reads
-// only memory inside its stack and allocates nothing, since the thread may be
-// holding the allocator's lock.
-void walkFramePointers(SharedHangInfo& hang,
-                       const ThreadRegisters& registers,
-                       const StackBounds& stack)
+// Reads a frame record in this process, which the walk has already checked
+// lies inside the stack.
+struct InProcessFrameReader
 {
-    hang.frameCount = 0;
-    appendFrame(hang, registers.programCounter);
+    std::optional<FrameRecord> operator()(std::uint64_t framePointer) const
+    {
+        return *reinterpret_cast<const FrameRecord*>(framePointer);
+    }
+};
+
+// The suspended thread's own frame-pointer chain, from its registers. Reads
+// only memory inside its stack, through `readRecord` (in this process or
+// another's), and allocates nothing, since the thread may be holding the
+// allocator's lock.
+template <typename FrameRecordReader>
+void walkFramePointers(SharedStalledThread& stalled,
+                       const ThreadRegisters& registers,
+                       const StackBounds& stack,
+                       const FrameRecordReader& readRecord)
+{
+    stalled.frameCount = 0;
+    appendFrame(stalled, registers.programCounter);
 
     if (registers.returnAddress)
-        appendFrame(hang, *registers.returnAddress);
+        appendFrame(stalled, *registers.returnAddress);
 
     auto framePointer = registers.framePointer;
 
-    while (hang.frameCount < maxCrashFrames
+    while (stalled.frameCount < maxCrashFrames
            && isFrameRecordInStack(framePointer, stack))
     {
-        const auto& record = *reinterpret_cast<const FrameRecord*>(framePointer);
-        auto returnAddress = stripPointerAuthentication(record.returnAddress);
+        auto record = readRecord(framePointer);
+
+        if (!record)
+            break;
+
+        auto returnAddress = stripPointerAuthentication(record->returnAddress);
 
         if (returnAddress == 0)
             break;
 
-        auto isLinkRegisterAgain = hang.frameCount == 2 && registers.returnAddress
+        auto isLinkRegisterAgain = stalled.frameCount == 2 && registers.returnAddress
                                    && returnAddress == *registers.returnAddress;
 
         if (!isLinkRegisterAgain)
-            appendFrame(hang, returnAddress);
+            appendFrame(stalled, returnAddress);
 
-        if (record.callerFramePointer <= framePointer)
+        if (record->callerFramePointer <= framePointer)
             break;
 
-        framePointer = record.callerFramePointer;
+        framePointer = record->callerFramePointer;
     }
 }
 
@@ -166,36 +181,56 @@ StackBounds getCurrentThreadStack()
     auto size = static_cast<std::uint64_t>(::pthread_get_stacksize_np(self));
     return {high - size, high};
 }
-bool sampleMainThread(HangWatchdog& watchdog, SharedHangInfo& hang)
+bool sampleWatchedThread(const SharedWatchedThread& thread,
+                         SharedStalledThread& stalled)
 {
-    if (::thread_suspend(watchdog.mainThread) != KERN_SUCCESS)
+    auto port = static_cast<thread_act_t>(thread.samplingHandle);
+    auto stack = StackBounds {thread.stackLow, thread.stackHigh};
+
+    if (port == MACH_PORT_NULL || port == ::pthread_mach_thread_np(::pthread_self())
+        || ::thread_suspend(port) != KERN_SUCCESS)
         return false;
 
-    auto registers = readThreadRegisters(watchdog.mainThread);
+    auto registers = readThreadRegisters(port);
 
     if (registers)
-        walkFramePointers(hang, *registers, watchdog.mainStack);
+        walkFramePointers(stalled, *registers, stack, InProcessFrameReader {});
 
-    ::thread_resume(watchdog.mainThread);
+    ::thread_resume(port);
     return registers.has_value();
 }
 
-// One report per episode: the heartbeat it was silent from is remembered,
-// and a beat after it re-arms.
+// Every stalled slot sampled into hang.stalled, then one notification: a
+// deadlock between watched threads is one report naming each of them.
 void checkForHang(HangWatchdog& watchdog)
 {
     auto& hang = watchdog.state->get().hang;
-    auto duration = findHangDuration(hang, getSteadyMilliseconds());
-    auto heartbeat = hang.heartbeatMilliseconds.load(std::memory_order_acquire);
+    auto stalls = takeNewStalls(hang, watchdog.tracker, getSteadyMilliseconds());
 
-    if (duration == 0 || heartbeat == watchdog.reportedHeartbeat)
+    if (stalls.empty() || isDebuggerAttached())
         return;
 
-    if (isDebuggerAttached() || !sampleMainThread(watchdog, hang))
+    auto count = std::uint32_t {0};
+
+    for (const auto& stall: stalls)
+    {
+        const auto& thread = hang.threads[stall.slot];
+        auto& stalled = hang.stalled[count];
+
+        if (!sampleWatchedThread(thread, stalled)
+            || !isSameWatchedThread(thread, stall))
+            continue;
+
+        stalled.threadId = thread.threadId;
+        stalled.name = thread.name;
+        stalled.durationMilliseconds = stall.durationMilliseconds;
+        ++count;
+    }
+
+    if (count == 0)
         return;
 
-    hang.durationMilliseconds = duration;
-    watchdog.reportedHeartbeat = heartbeat;
+    hang.stalledCount = count;
     notifyHandlerOfHang();
 }
 
@@ -216,6 +251,14 @@ void runHangWatchdog(HangWatchdog& watchdog)
 }
 } // namespace
 
+void recordThreadForSampling(SharedWatchedThread& thread)
+{
+    auto stack = getCurrentThreadStack();
+    thread.samplingHandle = ::pthread_mach_thread_np(::pthread_self());
+    thread.stackLow = stack.low;
+    thread.stackHigh = stack.high;
+}
+
 void startHangWatchdog(SharedState& state)
 {
     auto& watchdog = getHangWatchdog();
@@ -224,8 +267,7 @@ void startHangWatchdog(SharedState& state)
         return;
 
     watchdog.state = state;
-    watchdog.mainThread = ::pthread_mach_thread_np(::pthread_self());
-    watchdog.mainStack = getCurrentThreadStack();
+    watchdog.tracker = {};
     watchdog.stopRequested = false;
     watchdog.thread.start([&watchdog] { runHangWatchdog(watchdog); });
 }

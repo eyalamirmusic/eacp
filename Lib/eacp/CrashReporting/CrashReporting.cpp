@@ -1,5 +1,6 @@
 #include "CrashReporting.h"
 #include "CrashReportingPlatform.h"
+#include "ThreadWatch.h"
 
 #include <eacp/Core/App/AppEnvironment.h>
 #include <eacp/Core/Platform/Platform.h>
@@ -38,6 +39,9 @@ struct CrashReportingSession
     Options options;
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
     std::atomic<bool> heartbeatRunning {false};
+
+    // Set once sharedState is, for the lock-free reads a ThreadWatch beat makes.
+    std::atomic<bool> threadsWatched {false};
 };
 
 CrashReportingSession& getSession()
@@ -214,15 +218,14 @@ std::string describeUnavailableHandler(const Detail::HandlerLaunch& launch)
            + " ms";
 }
 
-void writeHeartbeat(Detail::SharedHangInfo& hang)
+Detail::SharedWatchedThread& getMainThreadWatch(Detail::SharedHangInfo& hang)
 {
-    hang.heartbeatMilliseconds.store(Detail::getSteadyMilliseconds(),
-                                     std::memory_order_release);
+    return hang.threads[Detail::mainThreadSlot];
 }
 
-std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
+void writeHeartbeat(Detail::SharedHangInfo& hang)
 {
-    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
+    Detail::beatWatchedThread(getMainThreadWatch(hang));
 }
 
 // Each beat posts the next through callAfter rather than a Timer: Windows
@@ -248,9 +251,17 @@ void scheduleHeartbeat(CrashReportingSession& session, Detail::SharedHangInfo& h
 void writeHangSettings(Detail::SharedState& state, const Options& options)
 {
     auto& hang = state.hang;
-    hang.thresholdMilliseconds = countMilliseconds(options.hangThreshold);
-    hang.pollIntervalMilliseconds = countMilliseconds(options.heartbeatInterval);
-    hang.mainThreadId = Detail::getCurrentThreadId();
+    hang.thresholdMilliseconds = Detail::countMilliseconds(options.hangThreshold);
+    hang.pollIntervalMilliseconds =
+        Detail::countMilliseconds(options.heartbeatInterval);
+    Detail::watchMainThread(hang, Detail::getCurrentThreadId());
+    Detail::recordThreadForSampling(getMainThreadWatch(hang));
+}
+
+std::unique_ptr<Threads::ThreadWatchScope>
+    openThreadWatch(std::string_view name, std::chrono::milliseconds threshold)
+{
+    return std::make_unique<ThreadWatch>(name, threshold);
 }
 
 void armHangDetection(CrashReportingSession& session, Detail::SharedState& state)
@@ -261,8 +272,10 @@ void armHangDetection(CrashReportingSession& session, Detail::SharedState& state
         return;
 
     session.heartbeatRunning = true;
+    session.threadsWatched = true;
     scheduleHeartbeat(session, hang);
     Detail::startHangWatchdog(state);
+    Threads::setThreadWatchFactory(openThreadWatch);
 }
 
 Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
@@ -394,8 +407,10 @@ void stop()
     if (!session.started || !session.sharedState)
         return;
 
+    Threads::setThreadWatchFactory({});
     Detail::stopHangWatchdog();
     session.heartbeatRunning = false;
+    session.threadsWatched = false;
     Detail::uninstallCrashHandlers();
     Detail::setStackOverflowStackOnNewThreads(false);
     Detail::stopHandlerProcess(session.sharedState->get());
@@ -455,25 +470,16 @@ void addBreadcrumb(const Breadcrumb& breadcrumb)
 
 void pauseHangDetection()
 {
-    writeToSharedState([](Detail::SharedState& state)
-                       { state.hang.pauseDepth.fetch_add(1); });
+    writeToSharedState(
+        [](Detail::SharedState& state)
+        { Detail::pauseWatchedThread(getMainThreadWatch(state.hang)); });
 }
 
 void resumeHangDetection()
 {
     writeToSharedState(
         [](Detail::SharedState& state)
-        {
-            auto& hang = state.hang;
-
-            if (hang.pauseDepth.load() == 0)
-                return;
-
-            if (hang.heartbeatMilliseconds.load() != 0)
-                writeHeartbeat(hang);
-
-            hang.pauseDepth.fetch_sub(1);
-        });
+        { Detail::resumeWatchedThread(getMainThreadWatch(state.hang)); });
 }
 
 namespace
@@ -555,3 +561,21 @@ ReportDatabase getDatabase()
     return ReportDatabase {getSession().options.databaseDirectory};
 }
 } // namespace eacp::CrashReporting
+
+namespace eacp::CrashReporting::Detail
+{
+std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
+{
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
+}
+
+std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo()
+{
+    auto& session = getSession();
+
+    if (!session.threadsWatched.load(std::memory_order_acquire))
+        return std::nullopt;
+
+    return session.sharedState->get().hang;
+}
+} // namespace eacp::CrashReporting::Detail

@@ -1,3 +1,4 @@
+#include "PersistentState.h"
 #include "ReportWindow.h"
 
 #include <eacp/Core/App/Args.h>
@@ -19,6 +20,7 @@
 //   SelfDestruct --crash abort --thread background
 //   SelfDestruct --crash abort -- --no-report-window
 //   SelfDestruct --crash hang --hang-threshold-ms 500
+//   SelfDestruct --crash deadlock --thread background   a watched worker's hang
 //   SelfDestruct --crash nullptr --kill-handler    an unreported exit
 //   SelfDestruct --event message                   a handled event, no crash
 //   SelfDestruct --event exception
@@ -401,6 +403,8 @@ void runStallingFault(std::string_view name,
                       ThreadChoice thread,
                       bool pausesHangDetection)
 {
+    CrashReporting::Faults::setPausesBackgroundWatch(pausesHangDetection);
+
     if (pausesHangDetection)
         CrashReporting::pauseHangDetection();
 
@@ -505,6 +509,7 @@ int main(int argc, char* argv[])
         return *code;
 
     Apps::setCommandLineArgs(argc, argv);
+    SelfDestruct::ignorePersistentUIState();
 
     auto crashKind = std::string {};
     auto databaseDirectory = FilePath {};
@@ -530,7 +535,7 @@ int main(int argc, char* argv[])
                "how long the main thread may stall; 0 turns hang detection off");
     cli.flag("--pause-hang-detection",
              pausesHangDetection,
-             "pause hang detection around a hang or spin fault");
+             "pause the stalling thread's hang watch around its fault");
     cli.flag("--signals-only",
              usesSignalsOnly,
              "macOS: no Mach exception port, the in-app signal handler only");

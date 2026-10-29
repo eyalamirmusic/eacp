@@ -242,8 +242,15 @@ Vector<StackFrame> resolveCrashFrames(const SharedCrashInfo& crash)
 void handleHang(const ReportDatabase& database, const SharedState& state)
 {
     auto report = beginHangReport(database, state);
-    report.crashingThread.frames =
-        resolveFrames(state.crash, state.hang.frames, state.hang.frameCount);
+
+    for (auto index = 0; index < report.stalledThreads.size(); ++index)
+    {
+        const auto& stalled = state.hang.stalled[static_cast<std::size_t>(index)];
+        report.stalledThreads[index].frames =
+            resolveFrames(state.crash, stalled.frames, stalled.frameCount);
+    }
+
+    finishHangReportThreads(report);
     finishHandlerReport(database, report, state);
     deliverReportInHandler(report);
 }
