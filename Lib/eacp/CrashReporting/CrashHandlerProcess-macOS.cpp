@@ -1,5 +1,6 @@
 #include "CrashChannel-macOS.h"
 #include "CrashReportingPlatform.h"
+#include "MachImageFile-macOS.h"
 #include "MachImages-macOS.h"
 
 #include <cerrno>
@@ -103,6 +104,32 @@ std::string demangleSymbol(const char* symbol)
     return demangled.get();
 }
 
+// The libraries the app loaded and the handler did not, read from their files.
+using ImageFiles = std::map<std::string, std::unique_ptr<MachImageFile>>;
+
+const MachImageFile& getImageFile(ImageFiles& files, const std::string& path)
+{
+    auto& file = files[path];
+
+    if (!file)
+        file = std::make_unique<MachImageFile>(FilePath {path});
+
+    return *file;
+}
+
+std::string resolveSymbolFromFile(const MachImageFile& file,
+                                  std::uint64_t offset,
+                                  std::uint64_t lookupBackoff)
+{
+    auto symbol = file.findSymbol(offset - lookupBackoff);
+
+    if (!symbol)
+        return {};
+
+    return demangleSymbol(symbol->mangledName.c_str()) + " + "
+           + std::to_string(symbol->distance + lookupBackoff);
+}
+
 std::string resolveSymbol(std::uint64_t handlerAddress, std::uint64_t lookupBackoff)
 {
     auto info = Dl_info {};
@@ -120,6 +147,7 @@ std::string resolveSymbol(std::uint64_t handlerAddress, std::uint64_t lookupBack
 // call that never returns is the next function; one byte back is the call.
 StackFrame makeStackFrame(const SharedCrashInfo& crash,
                           const std::map<std::string, std::uint64_t>& handlerBases,
+                          ImageFiles& imageFiles,
                           std::uint64_t address,
                           bool isReturnAddress)
 {
@@ -137,14 +165,19 @@ StackFrame makeStackFrame(const SharedCrashInfo& crash,
     frame.moduleBase = module.base;
     frame.offset = address - module.base;
 
+    auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
+
     if (auto base = handlerBases.find(frame.modulePath); base != handlerBases.end())
     {
-        auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
         frame.symbol = resolveSymbol(base->second + frame.offset, lookupBackoff);
         const auto* header = reinterpret_cast<const mach_header_64*>(base->second);
         frame.moduleUuid = getImageUuid(*header);
+        return frame;
     }
 
+    const auto& file = getImageFile(imageFiles, frame.modulePath);
+    frame.symbol = resolveSymbolFromFile(file, frame.offset, lookupBackoff);
+    frame.moduleUuid = file.getUuid();
     return frame;
 }
 
@@ -178,14 +211,15 @@ Vector<StackFrame>
                   FirstFrame firstFrame = FirstFrame::faultingInstruction)
 {
     auto handlerBases = getHandlerImageBases();
+    auto imageFiles = ImageFiles {};
     auto count = std::min(static_cast<std::size_t>(frameCount), maxCrashFrames);
     auto frames = Vector<StackFrame> {};
 
     for (auto index = std::size_t {0}; index < count; ++index)
     {
         auto isReturnAddress = index > 0 || firstFrame == FirstFrame::returnAddress;
-        frames.add(
-            makeStackFrame(crash, handlerBases, addresses[index], isReturnAddress));
+        frames.add(makeStackFrame(
+            crash, handlerBases, imageFiles, addresses[index], isReturnAddress));
     }
 
     return frames;

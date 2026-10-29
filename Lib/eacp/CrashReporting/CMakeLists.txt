@@ -29,6 +29,7 @@ if (APPLE)
             StackOverflowStack-macOS.cpp
             CrashHandlerProcess-macOS.cpp
             HangWatchdog-macOS.cpp
+            MachImageFile-macOS.cpp
             MachImages-macOS.cpp
             ThrowSites-macOS.cpp
             UncaughtExceptions-macOS.mm)

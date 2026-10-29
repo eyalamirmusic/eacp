@@ -6,6 +6,7 @@
 #include <eacp/Core/App/Args.h>
 #include <eacp/Core/Threads/EventLoop.h>
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Plugins/DynamicLibrary.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/CrashReporting/CrashReporting.h>
 #include <eacp/CrashReporting/Faults/Faults.h>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <thread>
 
 namespace eacp::CrashReporting::Tests
 {
@@ -61,6 +63,7 @@ struct CrashingProcessSettings
     bool killsHandler = false;
     bool skipsCrashReporting = false;
     std::string probe;
+    std::string libraryFault;
 };
 
 FilePath writeSessionLog()
@@ -173,6 +176,49 @@ int crashNow(const CrashingProcessSettings& settings)
     return Apps::run<FaultApp>(fault->get(), *thread, settings.pausesHangDetection);
 }
 
+std::optional<void (*)()> findLibraryFault(const Plugins::DynamicLibrary& library,
+                                           std::string_view fault)
+{
+    auto crash = static_cast<void (*)()>(nullptr);
+
+    if (fault == "nullptr")
+        crash = library.findFunction<void (*)()>(
+            "crashingLibraryWriteThroughNullPointer");
+    else if (fault == "terminate")
+        crash = library.findFunction<void (*)()>(
+            "crashingLibraryThrowUncaughtException");
+
+    if (crash == nullptr)
+        return std::nullopt;
+
+    return crash;
+}
+
+// The library stays loaded for the rest of the process, which is short.
+int crashInLoadedLibrary(const CrashingProcessSettings& settings)
+{
+    static auto library = Plugins::DynamicLibrary {FilePath {EACP_CRASHING_LIBRARY}};
+    auto crash = findLibraryFault(library, settings.libraryFault);
+    auto thread = Faults::findThreadChoice(settings.threadName);
+
+    if (!crash || !thread)
+    {
+        Console::printError("cannot raise " + settings.libraryFault
+                            + " in the crashing library: " + library.lastError());
+        return Args::badArguments;
+    }
+
+    if (*thread == ThreadChoice::main)
+    {
+        (*crash)();
+        return 0;
+    }
+
+    auto background = std::thread {*crash};
+    background.join();
+    return 0;
+}
+
 std::optional<int> runThreadStackProbe(std::string_view probe)
 {
     if (probe == "bench")
@@ -225,6 +271,9 @@ int runCrashingProcess()
                "bench (create and join std::threads), memory (resident KiB of "
                "100 live threads), check (which threads have a stack for "
                "overflow reports) or overflow (overflow a new std::thread)");
+    cli.option("--crash-in-library",
+               settings.libraryFault,
+               "nullptr or terminate, raised inside a library loaded at runtime");
     cli.flag("--without-crash-reporting",
              settings.skipsCrashReporting,
              "run the probe without start()");
@@ -241,6 +290,9 @@ int runCrashingProcess()
 
     if (auto code = runThreadStackProbe(settings.probe))
         return *code;
+
+    if (!settings.libraryFault.empty())
+        return crashInLoadedLibrary(settings);
 
     return crashNow(settings);
 }
