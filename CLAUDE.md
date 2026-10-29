@@ -1161,10 +1161,15 @@ platform so a Linux service reads the apps' reports with the same struct;
 in `CMake/CrashReporting.cmake` links it, `eacp-core` does not) relaunches the
 app's own executable as a handler process at `start()`; `main()` begins with
 `runHandlerIfRequested`. The app and handler share one fixed-size block
-(`SharedState.h`: metadata, attachments, the crash). On macOS the app captures
-in its signal handler (`backtrace()` on an alternate stack, the dyld image
-list) and the handler symbolises with `dladdr`; on Windows the handler writes a
-minidump and walks the stack with DbgHelp. Reports land in
+(`SharedState.h`: metadata, attachments, the crash). On macOS the app hands
+the handler its task port at `start()` and points its crash Mach exceptions
+at the handler's port, so the handler reads a fault from outside — registers,
+frame-pointer walk, images through `TASK_DYLD_INFO` — writes a Breakpad
+minidump of every thread (`Minidump-macOS.cpp`) and symbolises with
+`dladdr` (`capturedBy: handler-mach`); `abort()` and `std::terminate` reach
+it as `EXC_CRASH`. The in-app signal handler (`backtrace()` on an alternate
+stack) is the fallback when the handshake failed. On Windows
+the handler writes a minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
 itself and says on each button what the report will be; `CrashReportingTests`

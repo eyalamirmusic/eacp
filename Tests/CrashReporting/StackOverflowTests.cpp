@@ -32,7 +32,8 @@ Processes::ProcessOptions makeThreadStackProbeOptions(std::string_view probe,
                                               "--stack-overflow-reporting",
                                               std::string {reporting},
                                               "--crash-database",
-                                              database.str()});
+                                              database.str(),
+                                              "--signals-only"});
 }
 
 Processes::ProcessResult runStackOverflowProbe(std::string_view mode,
@@ -103,7 +104,7 @@ auto tEveryThreadReports =
     test("StackOverflow/everyThreadReportsAnOverflowOnARawStdThread") = []
 { check(doesOverflowOnNewThreadReport("everyThread")); };
 
-// With no stack left for the signal handler, macOS faults again on delivery
+// Signals only: with no stack left for the signal handler, macOS faults again on delivery
 // and the thread spins there instead of dying, so the probe is killed.
 bool doesUnreportableOverflowReport(std::string_view reporting)
 {
@@ -124,5 +125,22 @@ auto tStartingThreadMissesOverflow =
 {
     if (Platform::isApple())
         check(!doesUnreportableOverflowReport("startingThread"));
+};
+// The Mach exception is read from outside the app, so no stack is needed.
+auto tMachCaptureNeedsNoStack =
+    test("StackOverflow/machCaptureReportsAnOverflowOnAThreadWithNoStack") = []
+{
+    if (!Platform::isApple())
+        return;
+
+    auto database = TemporaryFile {};
+    auto options = Tests::makeCrashingProcessOptions({"--thread-stack-probe",
+                                                      "overflow",
+                                                      "--stack-overflow-reporting",
+                                                      "off",
+                                                      "--crash-database",
+                                                      database.path().str()});
+    Processes::run(options);
+    check(hasOverflowReport(database.path()));
 };
 } // namespace StackOverflowTests

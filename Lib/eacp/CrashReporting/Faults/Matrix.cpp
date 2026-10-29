@@ -58,6 +58,15 @@ ExpectedOutcome reported(Lane lane, std::string_view reason)
     return outcome;
 }
 
+// macOS: the handler read it from the Mach exception, with a minidump.
+ExpectedOutcome reportedThroughMach(Lane lane, std::string_view reason)
+{
+    auto outcome = reported(lane, reason);
+    outcome.capturedBy = CaptureSource::handlerMach;
+    outcome.hasMinidump = true;
+    return outcome;
+}
+
 ExpectedOutcome withLimit(ExpectedOutcome outcome, std::string_view note)
 {
     outcome.status = OutcomeStatus::reportedWithLimits;
@@ -114,7 +123,7 @@ ExpectedOutcome expectDivide(Lane lane)
         return notAvailable("clang-cl emits no divide-by-zero check on ARM64");
 
     if (isMac(lane))
-        return reported(lane, "SIGFPE");
+        return reportedThroughMach(lane, "EXC_ARITHMETIC");
 
     return reported(lane, "EXCEPTION_INT_DIVIDE_BY_ZERO");
 }
@@ -125,11 +134,11 @@ ExpectedOutcome expectStackOverflow(Lane lane, ThreadChoice thread)
         return reported(lane, "EXCEPTION_STACK_OVERFLOW");
 
     if (!isBackground(thread))
-        return reported(lane, "SIGSEGV");
+        return reportedThroughMach(lane, "EXC_BAD_ACCESS");
 
-    return withLimit(reported(lane, "SIGBUS"),
-                     "a secondary thread's guard page is a protection fault, "
-                     "so SIGBUS; every frame is the recursion");
+    return withLimit(reportedThroughMach(lane, "EXC_BAD_ACCESS"),
+                     "every frame is the recursion, so the thread's entry is "
+                     "not reached");
 }
 
 ExpectedOutcome expectSoftwareCrash(Lane lane,
@@ -137,7 +146,7 @@ ExpectedOutcome expectSoftwareCrash(Lane lane,
                                     std::string_view windowsReason)
 {
     if (isMac(lane))
-        return reported(lane, "SIGABRT");
+        return reportedThroughMach(lane, "SIGABRT");
 
     auto outcome = reported(lane, windowsReason);
 
@@ -152,7 +161,7 @@ ExpectedOutcome expectSoftwareCrash(Lane lane,
 ExpectedOutcome expectTerminate(Lane lane, ThreadChoice thread)
 {
     if (isMac(lane))
-        return reported(lane, "std::terminate");
+        return reportedThroughMach(lane, "std::terminate");
 
     if (isClangCl(lane) && isBackground(thread))
     {
@@ -177,12 +186,30 @@ ExpectedOutcome expectHeapCorruption(Lane lane, ThreadChoice thread)
         return reportedFromExitCode("STATUS_HEAP_CORRUPTION", thread);
 
     if (!isBackground(thread))
-        return reported(lane, "SIGTRAP");
+        return reportedThroughMach(lane, "EXC_BREAKPOINT");
 
-    auto outcome = withLimit(reported(lane, "SIGABRT"),
-                             "another thread's blocks go through the zone "
-                             "allocator, which aborts; some runs trap instead");
-    outcome.alternativeReason = "SIGTRAP";
+    auto outcome = withShortStack(reportedThroughMach(lane, "SIGABRT"),
+                                  "another thread's blocks go through the zone "
+                                  "allocator, which aborts; some runs trap "
+                                  "instead, in whichever thread allocates next");
+    outcome.alternativeReason = "EXC_BREAKPOINT";
+    return outcome;
+}
+
+ExpectedOutcome expectHeapSmash(Lane lane, ThreadChoice thread)
+{
+    if (!isMac(lane))
+        return notAvailable("only macOS captures from outside the app, which "
+                            "is what lets the report survive the heap");
+
+    if (!isBackground(thread))
+        return reportedThroughMach(lane, "EXC_BAD_ACCESS");
+
+    auto outcome = withShortStack(reportedThroughMach(lane, "EXC_BAD_ACCESS"),
+                                  "the main thread's own allocations can meet "
+                                  "the wrecked heap first, and that thread is "
+                                  "the one reported, trapping in malloc");
+    outcome.alternativeReason = "EXC_BREAKPOINT";
     return outcome;
 }
 
@@ -218,7 +245,7 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     if (fault == "nullptr")
     {
         if (isMac(lane))
-            return reported(lane, "SIGSEGV");
+            return reportedThroughMach(lane, "EXC_BAD_ACCESS");
 
         return reported(lane, "EXCEPTION_ACCESS_VIOLATION");
     }
@@ -241,6 +268,9 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
     if (fault == "heapcorruption")
         return expectHeapCorruption(lane, thread);
 
+    if (fault == "heapsmash")
+        return expectHeapSmash(lane, thread);
+
     if (fault == "hang" || fault == "spin" || fault == "deadlock")
         return expectStall(lane, thread);
 
@@ -258,6 +288,7 @@ constexpr auto matrixFaults = Array {
     "purevirtual"sv,
     "terminate"sv,
     "heapcorruption"sv,
+    "heapsmash"sv,
     "hang"sv,
     "spin"sv,
     "deadlock"sv,

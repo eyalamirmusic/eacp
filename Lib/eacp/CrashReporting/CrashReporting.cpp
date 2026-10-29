@@ -280,6 +280,7 @@ Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
         launch.channelName = createDefaultChannelName();
     launch.handlerArguments = options.handlerArguments;
     launch.startTimeout = options.handlerStartTimeout;
+    launch.captureMachExceptions = options.captureMachExceptions;
 
     return launch;
 }

@@ -83,9 +83,11 @@ struct SharedModule
     BoundedText<maxModulePathLength> path;
 };
 
-// What the crashing process writes about its own crash. On macOS that is the
-// whole capture: its own stack, walked on the alternate signal stack, and the
-// images loaded at the time. On Windows the handler walks the stack from the
+// What the crashing process writes about its own crash. On macOS, for a
+// signal the Mach exception port does not see (SIGABRT and std::terminate),
+// that is the whole capture: its own stack, walked on the alternate signal
+// stack, and the images loaded at the time; a Mach exception is read from the
+// task by the handler instead. On Windows the handler walks the stack from the
 // EXCEPTION_POINTERS address, so the frames and modules stay empty there.
 struct SharedCrashInfo
 {

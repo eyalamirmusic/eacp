@@ -181,10 +181,13 @@ Processes::ProcessOptions
     return Tests::makeCrashingProcessOptions(arguments);
 }
 
-CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
+// The report's files live in `database`, so they are read while it is held.
+CrashReport crashTheCrashingProcess(std::string_view kind,
+                                    FaultThread thread,
+                                    const TemporaryFile& database,
+                                    const Vector<std::string>& appArguments = {})
 {
-    auto database = TemporaryFile {};
-    auto options = makeCrashOptions(kind, thread, database.path());
+    auto options = makeCrashOptions(kind, thread, database.path(), appArguments);
 
     auto result = Processes::run(options);
     check(result.launched);
@@ -198,6 +201,12 @@ CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
     check(reports.size() == 1);
 
     return reports.empty() ? CrashReport {} : reports[0];
+}
+
+CrashReport crashTheCrashingProcess(std::string_view kind, FaultThread thread)
+{
+    auto database = TemporaryFile {};
+    return crashTheCrashingProcess(kind, thread, database);
 }
 
 Processes::ProcessOptions
@@ -586,6 +595,118 @@ int countUnreportedExits(const FilePath& database)
     return count;
 }
 
+struct MachExceptionSignal
+{
+    std::string_view exception;
+    std::string_view signal;
+};
+
+// Without the exception port the kernel goes on to the signal, which is what
+// the signal path's report names.
+constexpr auto machExceptionSignals = std::to_array<MachExceptionSignal>({
+    {"EXC_BAD_ACCESS", "SIGSEGV"},
+    {"EXC_BREAKPOINT", "SIGTRAP"},
+    {"EXC_ARITHMETIC", "SIGFPE"},
+});
+
+std::string_view getSignalPathReason(std::string_view fault, FaultThread thread)
+{
+    auto reason = getExpectedOutcome(fault, thread).reason;
+
+    for (const auto& entry: machExceptionSignals)
+    {
+        if (entry.exception == reason)
+            return entry.signal;
+    }
+
+    return reason;
+}
+
+constexpr auto minidumpSignature = std::uint32_t {0x504D444D};
+constexpr auto minidumpHeaderSize = std::size_t {32};
+constexpr auto minidumpDirectoryEntrySize = std::size_t {12};
+constexpr auto minidumpStreamCountOffset = std::size_t {8};
+constexpr auto minidumpDirectoryOffset = std::size_t {12};
+
+std::uint32_t readLittleEndianU32(std::string_view bytes, std::size_t offset)
+{
+    auto value = std::uint32_t {0};
+
+    for (auto index = sizeof(value); index-- > 0;)
+        value = (value << 8) | static_cast<std::uint8_t>(bytes[offset + index]);
+
+    return value;
+}
+
+// The stream types the file's directory names, empty when its header is not
+// a minidump's.
+Vector<std::uint32_t> readMinidumpStreamTypes(const FilePath& path)
+{
+    auto streamTypes = Vector<std::uint32_t> {};
+    auto bytes = Files::readFile(path);
+
+    if (bytes.size() < minidumpHeaderSize
+        || readLittleEndianU32(bytes, 0) != minidumpSignature)
+        return streamTypes;
+
+    auto count = readLittleEndianU32(bytes, minidumpStreamCountOffset);
+    auto directory = readLittleEndianU32(bytes, minidumpDirectoryOffset);
+
+    for (auto index = std::size_t {0}; index < count; ++index)
+    {
+        auto offset = directory + index * minidumpDirectoryEntrySize;
+
+        if (offset + minidumpDirectoryEntrySize > bytes.size())
+            return {};
+
+        streamTypes.add(readLittleEndianU32(bytes, offset));
+    }
+
+    return streamTypes;
+}
+
+int countOccurrences(std::string_view text, std::string_view needle)
+{
+    auto count = 0;
+
+    for (auto position = text.find(needle); position != std::string_view::npos;
+         position = text.find(needle, position + needle.size()))
+        ++count;
+
+    return count;
+}
+
+// lldb reads the minidump as a core file; it is part of every Xcode install,
+// so one that cannot be launched is a skip rather than a failure. Every
+// thread of the app is in it, the test binary's main thread beside the faulting
+// one at the least.
+void checkLldbNamesFaultFunction(const FilePath& minidump, std::string_view function)
+{
+    constexpr auto threadMarker = std::string_view {"thread #"};
+    constexpr auto minimumThreads = 2;
+    auto options = Processes::ProcessOptions {};
+    options.executable = "/usr/bin/lldb";
+    options.arguments = {"--no-lldbinit",
+                         "--batch",
+                         "--core",
+                         minidump.str(),
+                         "--one-line",
+                         "bt all"};
+    options.captureOutput = true;
+    options.mergeErrorOutput = true;
+
+    auto result = Processes::run(options);
+
+    if (!result.launched)
+        return;
+
+    if (result.output.find(function) == std::string::npos)
+        Console::printError(result.output);
+
+    check(result.output.find(function) != std::string::npos);
+    check(countOccurrences(result.output, threadMarker) >= minimumThreads);
+}
+
 // The handler is killed before the fault, so nothing reports the crash, and
 // the next launch finds its session marker.
 void checkUnreportedCrash(std::string_view kind, FaultThread thread)
@@ -654,6 +775,46 @@ auto tCrashReportThrowSite =
                    != std::string::npos);
         check(!report.terminateFrames.empty());
     }
+};
+
+// Thread list, module list, exception and system info, and a debugger that
+// names the fault from the file alone.
+auto tCrashReportMinidumpOpens = test("CrashReport/minidumpOpensInLldb") = []
+{
+    if (!Platform::isMac())
+        return;
+
+    constexpr auto requiredStreams = std::to_array<std::uint32_t>({3, 4, 6, 7});
+    auto database = TemporaryFile {};
+    auto report = crashTheCrashingProcess("nullptr", FaultThread::main, database);
+    auto streamTypes = readMinidumpStreamTypes(report.minidumpPath);
+
+    for (auto stream: requiredStreams)
+        check(streamTypes.contains(stream));
+
+    checkLldbNamesFaultFunction(report.minidumpPath, "dereferenceNullPointer");
+};
+
+constexpr auto signalsOnlyRunLimit = std::chrono::seconds {3};
+
+// What a failed port handshake leaves: the signal path, and no wait
+// on a handshake that never comes.
+auto tCrashReportSignalsOnly = test("CrashReport/signalsOnly") = []
+{
+    if (!Platform::isMac())
+        return;
+
+    auto database = TemporaryFile {};
+    auto started = std::chrono::steady_clock::now();
+    auto report = crashTheCrashingProcess(
+        "nullptr", FaultThread::main, database, {"--signals-only"});
+    auto elapsed = std::chrono::steady_clock::now() - started;
+
+    check(report.reason == getSignalPathReason("nullptr", FaultThread::main));
+    check(report.capturedBy == CaptureSource::handler);
+    check(report.minidumpPath.empty());
+    check(hasFrameInFunction(report, "dereferenceNullPointer"));
+    check(elapsed < signalsOnlyRunLimit);
 };
 
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []

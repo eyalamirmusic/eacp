@@ -23,6 +23,7 @@ struct CaptureSourceName
 
 constexpr auto captureSourceNames = std::to_array<CaptureSourceName>({
     {CaptureSource::handler, "handler"},
+    {CaptureSource::handlerMach, "handler-mach"},
     {CaptureSource::exitCode, "exit-code"},
     {CaptureSource::incomplete, "incomplete"},
 });

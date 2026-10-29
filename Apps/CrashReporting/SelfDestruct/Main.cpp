@@ -308,9 +308,11 @@ FilePath writeSessionLog()
 
 void startCrashReporting(const FilePath& databaseDirectory,
                          const Vector<std::string>& handlerArguments,
-                         std::chrono::milliseconds hangThreshold)
+                         std::chrono::milliseconds hangThreshold,
+                         bool capturesMachExceptions)
 {
     auto options = CrashReporting::Options {};
+    options.captureMachExceptions = capturesMachExceptions;
     options.handlerArguments = handlerArguments;
     options.hangThreshold = hangThreshold;
     options.stackOverflowReporting =
@@ -442,6 +444,7 @@ int main(int argc, char* argv[])
     auto pausesHangDetection = false;
     auto threadName = std::string {"main"};
     auto killsHandler = false;
+    auto usesSignalsOnly = false;
 
     auto cli = Args::Parser {"SelfDestruct", "Crashes itself, on purpose."};
     cli.option("--crash", crashKind, "fault at once with no window");
@@ -456,6 +459,9 @@ int main(int argc, char* argv[])
     cli.flag("--pause-hang-detection",
              pausesHangDetection,
              "pause hang detection around a hang or spin fault");
+    cli.flag("--signals-only",
+             usesSignalsOnly,
+             "macOS: no Mach exception port, the in-app signal handler only");
     cli.option(showReportFlag, reportToShow, "show the report in this folder");
     cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
 
@@ -467,7 +473,8 @@ int main(int argc, char* argv[])
 
     auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
     CrashReporting::Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
-    startCrashReporting(databaseDirectory, handlerArguments, hangThreshold);
+    startCrashReporting(
+        databaseDirectory, handlerArguments, hangThreshold, !usesSignalsOnly);
 
     if (!crashKind.empty())
         return crashNow(crashKind, threadName, pausesHangDetection, killsHandler);

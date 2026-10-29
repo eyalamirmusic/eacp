@@ -18,6 +18,7 @@ struct HandlerLaunch
     std::string channelName;
     Vector<std::string> handlerArguments;
     std::chrono::milliseconds startTimeout {};
+    bool captureMachExceptions = true;
 };
 
 // The handler's command line after the flag: the database, then whatever the

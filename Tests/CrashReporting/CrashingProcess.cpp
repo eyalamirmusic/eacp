@@ -62,6 +62,7 @@ struct CrashingProcessSettings
     bool pausesHangDetection = false;
     bool killsHandler = false;
     bool skipsCrashReporting = false;
+    bool signalsOnly = false;
     std::string probe;
     std::string libraryFunction;
 };
@@ -85,6 +86,7 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
     options.hangThreshold =
         std::chrono::milliseconds {settings.hangThresholdMilliseconds};
     options.stackOverflowReporting = *reporting;
+    options.captureMachExceptions = !settings.signalsOnly;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -245,6 +247,9 @@ int runCrashingProcess()
     cli.flag("--pause-hang-detection",
              settings.pausesHangDetection,
              "pause hang detection around a hang or spin fault");
+    cli.flag("--signals-only",
+             settings.signalsOnly,
+             "macOS: no Mach exception capture, only the in-app signal handler");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");

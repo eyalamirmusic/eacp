@@ -30,7 +30,11 @@ if (APPLE)
             CrashHandlerProcess-macOS.cpp
             HangWatchdog-macOS.cpp
             LoadedLibrarySymbolReader-macOS.cpp
+            MachExceptionMessage-macOS.cpp
             MachImages-macOS.cpp
+            Minidump-macOS.cpp
+            TaskCapture-macOS.cpp
+            TaskPortHandshake-macOS.cpp
             ThrowSites-macOS.cpp
             UncaughtExceptions-macOS.mm)
     target_link_libraries(eacp-crash-reporting PRIVATE "-framework Foundation")

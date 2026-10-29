@@ -29,6 +29,9 @@ namespace eacp::CrashReporting
 // report needs a separate one set up on the thread beforehand: an alternate
 // signal stack on macOS, a SetThreadStackGuarantee reserve on Windows. Each
 // stack is reserved address space, not resident memory, until a crash uses it.
+// With Options::captureMachExceptions on, the macOS default, the report is read
+// from outside the app and nothing runs on the crashing thread, so on macOS
+// this matters only with it off.
 enum class StackOverflowReporting
 {
     // The thread that calls start(), usually the main thread.
@@ -90,6 +93,10 @@ struct Options
 
     StackOverflowReporting stackOverflowReporting =
         StackOverflowReporting::startingThread;
+
+    // macOS: faults reach the handler as Mach exceptions, read from outside
+    // the app with a minidump. Off leaves only the in-app signal handler.
+    bool captureMachExceptions = true;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command

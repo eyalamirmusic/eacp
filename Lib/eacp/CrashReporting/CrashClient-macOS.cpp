@@ -3,6 +3,7 @@
 #include "CrashReportingPlatform.h"
 #include "MachImages-macOS.h"
 #include "ThrowSites-macOS.h"
+#include "TaskPortHandshake-macOS.h"
 #include "UncaughtExceptions-macOS.h"
 
 #include <array>
@@ -34,6 +35,7 @@ namespace
 {
 constexpr auto demangleBufferSize = std::size_t {1024};
 constexpr auto handlerCaptureTimeoutSeconds = 60;
+
 constexpr auto terminateReason = std::string_view {"std::terminate"};
 constexpr auto unknownExceptionType = std::string_view {"unknown exception"};
 constexpr auto messageSeparator = std::string_view {": "};
@@ -64,6 +66,10 @@ struct MacCrashClient
     int sharedStateDescriptor = -1;
     int crashPipeWriteEnd = -1;
     int readyPipeReadEnd = -1;
+
+    // The handler took this task's exception port, so a signal's default
+    // action reaches it as EXC_CRASH.
+    bool isMachCaptureActive = false;
     char* demangleBuffer = nullptr;
     std::size_t demangleBufferLength = 0;
     std::atomic<bool> isCrashing {false};
@@ -164,6 +170,15 @@ void restoreDefaultAndRaise(int signalNumber)
     ::raise(signalNumber);
 }
 
+// Async-signal-safe: the handler is this process's child, so a reaped or
+// finished one shows here.
+bool isHandlerAlive(const MacCrashClient& client)
+{
+    auto status = 0;
+    return client.handlerProcessId != 0
+           && ::waitpid(client.handlerProcessId, &status, WNOHANG) == 0;
+}
+
 void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
 {
     auto& client = getMacCrashClient();
@@ -171,6 +186,14 @@ void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
     if (client.isCrashing.exchange(true) || !client.state)
     {
         waitForHandlerToEndProcess();
+        restoreDefaultAndRaise(signalNumber);
+        return;
+    }
+
+    // The default action ends the process through EXC_CRASH, which the
+    // handler captures from outside with the reason already recorded.
+    if (client.isMachCaptureActive && isHandlerAlive(client))
+    {
         restoreDefaultAndRaise(signalNumber);
         return;
     }
@@ -389,9 +412,12 @@ Vector<char*> makeArgumentPointers(Vector<std::string>& arguments)
 std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
                                   int sharedDescriptor,
                                   const PipeEnds& crashPipe,
-                                  const PipeEnds& readyPipe)
+                                  const PipeEnds& readyPipe,
+                                  const std::optional<HandshakePort>& handshake)
 {
-    auto arguments = makeHandlerCommandLine(launch, handlerDescriptorChannel);
+    auto channel =
+        handshake ? machHandshakeHandlerChannel : signalOnlyHandlerChannel;
+    auto arguments = makeHandlerCommandLine(launch, channel);
     auto argumentPointers = makeArgumentPointers(arguments);
 
     auto actions = posix_spawn_file_actions_t {};
@@ -412,6 +438,10 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
     auto attributes = posix_spawnattr_t {};
     ::posix_spawnattr_init(&attributes);
     ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT);
+
+    if (handshake)
+        ::posix_spawnattr_setspecialport_np(
+            &attributes, handshake->receiveRight, TASK_BOOTSTRAP_PORT);
 
     auto processId = pid_t {};
     auto result = ::posix_spawn(&processId,
@@ -498,6 +528,8 @@ void uninstallCrashHandlers()
     auto& client = getMacCrashClient();
     restorePreviousSignalHandlers();
     stopRecordingThrowSites();
+    restorePreviousExceptionPorts();
+    client.isMachCaptureActive = false;
     std::set_terminate(client.previousTerminateHandler);
     uninstallUncaughtExceptionRecorder();
 }
@@ -560,10 +592,25 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     if (client.sharedStateDescriptor < 0 || !crashPipe || !readyPipe)
         return false;
 
-    auto spawned =
-        spawnHandler(launch, client.sharedStateDescriptor, *crashPipe, *readyPipe);
+    auto handshake = std::optional<HandshakePort> {};
+
+    if (launch.captureMachExceptions)
+        handshake = createHandshakePort();
+
+    auto spawned = spawnHandler(
+        launch, client.sharedStateDescriptor, *crashPipe, *readyPipe, handshake);
     ::close(crashPipe->readEnd);
     ::close(readyPipe->writeEnd);
+
+    // Answered before the ready byte is read: until the handler has its real
+    // bootstrap port back, its runtime's own lookups land on this port too,
+    // and are dropped here rather than left to block it.
+    if (spawned && handshake)
+        client.isMachCaptureActive =
+            answerHandshakeWithTaskPort(*handshake, launch.startTimeout);
+
+    if (handshake)
+        destroyHandshakePort(*handshake);
 
     auto ready = spawned.has_value()
                  && waitForHandlerReady(readyPipe->readEnd, launch.startTimeout);
