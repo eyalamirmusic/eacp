@@ -1167,8 +1167,17 @@ list) and the handler symbolises with `dladdr`; on Windows the handler writes a
 minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). `Apps/CrashReporting/SelfDestruct` crashes
-itself; `Tests/CrashReporting` drives it. `Lib/eacp/CrashReporting/README.md`
-is the account, platform coverage and v1 limits.
+itself and says on each button what the report will be; `CrashReportingTests`
+relaunches itself with `--crashing-process` to raise every fault on the main
+and a background thread, one case per cell of `Faults/Matrix.h`; the faults themselves are `eacp-crash-faults` (`CrashReporting/Faults/`),
+`Options::stackOverflowReporting` gives the starting thread (the default), every
+thread or none a stack to report an overflow from (an alternate signal stack on
+macOS, through `pthread_introspection_hook_install`; a `SetThreadStackGuarantee`
+reserve on Windows, from a TLS callback), macOS records
+throw sites through its own `__cxa_throw`. With the handler gone a crash goes
+unreported; `start()` then returns false and calls `handlerUnavailable`, and a
+`session.active` marker that a clean exit removes lets the next `start()` call
+`unreportedExit` for a run that ended with no report.
 
 ### GPU rendering in a component tree (`Lib/eacp/UI/Component/GPUComponent`)
 

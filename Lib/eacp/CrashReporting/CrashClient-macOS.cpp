@@ -2,6 +2,7 @@
 #include "CrashClient-macOS.h"
 #include "CrashReportingPlatform.h"
 #include "MachImages-macOS.h"
+#include "ThrowSites-macOS.h"
 #include "UncaughtExceptions-macOS.h"
 
 #include <array>
@@ -31,7 +32,6 @@ namespace eacp::CrashReporting::Detail
 {
 namespace
 {
-constexpr auto alternateSignalStackSize = std::size_t {256 * 1024};
 constexpr auto demangleBufferSize = std::size_t {1024};
 constexpr auto handlerCaptureTimeoutSeconds = 60;
 constexpr auto terminateReason = std::string_view {"std::terminate"};
@@ -182,8 +182,9 @@ void handleCrashSignal(int signalNumber, siginfo_t* info, void* context)
 
     if (notifyHandlerProcess(client, crashNotificationByte))
         waitForHandlerToEndProcess();
+    else
 
-    restoreDefaultAndRaise(signalNumber);
+        restoreDefaultAndRaise(signalNumber);
 }
 
 std::string_view demangleExceptionType(const std::type_info& type)
@@ -227,6 +228,9 @@ void recordCurrentException()
 
 [[noreturn]] void handleTerminate()
 {
+    if (auto& client = getMacCrashClient(); client.state)
+        copyThrowSiteOfCurrentException(client.state->get().crash);
+
     recordCurrentException();
     std::abort();
 }
@@ -278,17 +282,6 @@ void recordDynamicLinker()
 {
     if (auto dynamicLinker = findDynamicLinkerImage())
         appendSharedModule(dynamicLinker->header, dynamicLinker->path);
-}
-
-void installAlternateSignalStack()
-{
-    static auto stackMemory = std::array<std::byte, alternateSignalStackSize> {};
-
-    auto stack = stack_t {};
-    stack.ss_sp = stackMemory.data();
-    stack.ss_size = alternateSignalStackSize;
-    stack.ss_flags = 0;
-    ::sigaltstack(&stack, nullptr);
 }
 
 void installSignalHandlers()
@@ -494,8 +487,8 @@ void installCrashHandlers(SharedState& state)
     prepareDemangleBuffer();
     recordDynamicLinker();
     _dyld_register_func_for_add_image(&recordLoadedImage);
-    installAlternateSignalStack();
     installSignalHandlers();
+    startRecordingThrowSites();
     client.previousTerminateHandler = std::set_terminate(&handleTerminate);
     installUncaughtExceptionRecorder();
 }
@@ -504,6 +497,7 @@ void uninstallCrashHandlers()
 {
     auto& client = getMacCrashClient();
     restorePreviousSignalHandlers();
+    stopRecordingThrowSites();
     std::set_terminate(client.previousTerminateHandler);
     uninstallUncaughtExceptionRecorder();
 }
@@ -585,6 +579,18 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     client.crashPipeWriteEnd = crashPipe->writeEnd;
     client.handlerProcessId = *spawned;
     return true;
+}
+
+void killHandlerProcess()
+{
+    auto& client = getMacCrashClient();
+
+    if (client.handlerProcessId == 0)
+        return;
+
+    ::kill(client.handlerProcessId, SIGKILL);
+    waitForHandlerExit(client.handlerProcessId);
+    client.handlerProcessId = 0;
 }
 
 bool isHandlerProcessRunning()

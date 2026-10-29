@@ -19,7 +19,7 @@
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto sharedStateMagic = std::uint32_t {0xEAC9C4A5};
-constexpr auto sharedStateVersion = std::uint32_t {4};
+constexpr auto sharedStateVersion = std::uint32_t {5};
 
 constexpr auto maxMetadataEntries = std::size_t {64};
 constexpr auto maxBreadcrumbs = std::size_t {64};
@@ -98,6 +98,13 @@ struct SharedCrashInfo
 
     std::uint32_t frameCount;
     std::array<std::uint64_t, maxCrashFrames> frames;
+
+    // The call stack at the `throw` of the exception that crashed the app.
+    // Written by the app on macOS when it throws; read by the handler process
+    // to put the throw site in the report. Empty when the crash was not an
+    // uncaught exception, or on Windows.
+    std::uint32_t throwFrameCount;
+    std::array<std::uint64_t, maxCrashFrames> throwFrames;
 
     std::uint32_t moduleCount;
     std::array<SharedModule, maxSharedModules> modules;

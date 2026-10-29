@@ -14,7 +14,8 @@ endif ()
 add_subdirectory(Network)
 
 # Always added: the report and database tests are files and JSON, and the
-# directory returns before the suite that crashes SelfDestruct unless it exists.
+# directory returns before the suite that crashes itself unless crash reporting
+# is built.
 add_subdirectory(CrashReporting)
 add_subdirectory(Spirv)
 

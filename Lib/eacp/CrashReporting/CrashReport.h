@@ -3,6 +3,8 @@
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
+#include <Miro/Reflect.h>
+
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -29,12 +31,16 @@ struct StackFrame
     std::string moduleUuid;
 
     std::uint64_t getAddress() const { return moduleBase + offset; }
+
+    void reflect(Miro::Reflector& ref);
 };
 
 struct CrashedThread
 {
     std::uint64_t threadId = 0;
     Vector<StackFrame> frames;
+
+    void reflect(Miro::Reflector& ref);
 };
 
 // Who wrote the report: the handler process reading the crashed one from
@@ -82,6 +88,8 @@ struct User
     std::string id;
     std::string email;
     std::string username;
+
+    MIRO_REFLECT(id, email, username)
 };
 
 struct Breadcrumb
@@ -92,6 +100,8 @@ struct Breadcrumb
 
     // Milliseconds since the Unix epoch, UTC, stamped by addBreadcrumb.
     std::int64_t timestamp = 0;
+
+    void reflect(Miro::Reflector& ref);
 };
 
 struct CrashReport
@@ -114,8 +124,13 @@ struct CrashReport
 
     std::uint64_t faultAddress = 0;
 
-    // For a hang, the main thread; its frames are where it was stuck.
+    // For a hang, the main thread; its frames are where it was stuck. For an
+    // uncaught C++ exception whose throw was recorded, the throw site.
     CrashedThread crashingThread;
+
+    // Where std::terminate ended the thread, when crashingThread holds the
+    // throw site instead. Empty otherwise.
+    Vector<StackFrame> terminateFrames;
 
     // How long the main thread had been silent when it was sampled, for a
     // hang. 0 for a crash.
@@ -150,6 +165,28 @@ struct CrashReport
 
     std::string toJSON() const;
     static std::optional<CrashReport> fromJSON(std::string_view text);
+
+    // The report.json shape, which Miro::toJSON gives any consumer too:
+    // addresses and thread ids as hex strings, enums by name, paths as text,
+    // and folder left out.
+    void reflect(Miro::Reflector& ref);
+};
+
+// One run of the app, as the session marker start() writes records it: the
+// marker is removed by a clean exit, so one found at the next start() is a run
+// that ended without one.
+struct AppSession
+{
+    std::uint64_t processId = 0;
+
+    // Milliseconds since the Unix epoch, and the same as ISO 8601 for people.
+    std::int64_t startTime = 0;
+    std::string startTimeText;
+
+    std::string toJSON() const;
+    static std::optional<AppSession> fromJSON(std::string_view text);
+
+    MIRO_REFLECT(processId, startTime, startTimeText)
 };
 
 // Addresses go through JSON as strings, because a JSON number is a double and

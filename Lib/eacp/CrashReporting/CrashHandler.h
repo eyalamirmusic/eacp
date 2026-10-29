@@ -25,6 +25,13 @@ namespace eacp::CrashReporting
 // (CrashReport::kind tells them apart). That includes a
 // folder a capture left without its report.json. It runs on the loop, so long
 // work (an upload) is started asynchronously from it, never awaited in it.
+//
+// handlerUnavailable runs in the app on the message thread, once, when start()
+// could not bring the handler process up; crashes then go unreported.
+//
+// unreportedExit runs in the app on the message thread, once, when start()
+// finds the session marker of a run that ended without a clean exit and left
+// no crash report: the handler was gone, or the process was killed.
 struct CrashHandler
 {
     virtual ~CrashHandler() = default;
@@ -32,6 +39,8 @@ struct CrashHandler
     virtual void crashReported(const CrashReport&) {}
     virtual void hangReported(const CrashReport&) {}
     virtual void pendingReportFound(const CrashReport&) {}
+    virtual void handlerUnavailable(const std::string&) {}
+    virtual void unreportedExit(const AppSession&) {}
 };
 
 using CrashHandlerFactory = std::function<std::unique_ptr<CrashHandler>()>;

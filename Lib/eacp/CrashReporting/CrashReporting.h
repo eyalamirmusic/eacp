@@ -22,10 +22,26 @@
 // app's own executable with a flag this recognises, so the app's own argument
 // parsing never sees it. The second installs the reporter in the app and
 // launches that handler, which waits for a crash, writes the report folder,
-// ends the app and hands the report to the registered CrashHandler. See
-// README.md beside this header.
+// ends the app and hands the report to the registered CrashHandler.
 namespace eacp::CrashReporting
 {
+// A stack overflow leaves its thread no stack for the crash handler, so the
+// report needs a separate one set up on the thread beforehand: an alternate
+// signal stack on macOS, a SetThreadStackGuarantee reserve on Windows. Each
+// stack is reserved address space, not resident memory, until a crash uses it.
+enum class StackOverflowReporting
+{
+    // The thread that calls start(), usually the main thread.
+    startingThread,
+
+    // That thread and every thread created after start(), whoever creates it:
+    // std::thread, Threads::Thread, GCD and the Windows thread pool, other
+    // libraries. Costs every new thread a reservation and a system call or two.
+    everyThread,
+
+    off
+};
+
 constexpr auto handlerFlag = std::string_view {"--eacp-crash-handler"};
 constexpr auto handlerArgumentsSeparator = std::string_view {"--"};
 
@@ -42,6 +58,9 @@ struct Options
 
     // handled/ keeps this many reports, the newest.
     int maxHandledReports = 20;
+
+    // The handler process's executable; empty is this one.
+    FilePath handlerExecutable;
 
     // How long start() waits for the handler to come up before going on
     // without it, in which case a crash goes unreported.
@@ -68,6 +87,9 @@ struct Options
     // hang. A zero threshold turns hang detection off.
     std::chrono::milliseconds heartbeatInterval {500};
     std::chrono::milliseconds hangThreshold {10000};
+
+    StackOverflowReporting stackOverflowReporting =
+        StackOverflowReporting::startingThread;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command
@@ -80,11 +102,15 @@ bool isHandlerProcess();
 // Installs the crash handlers, launches the handler process and schedules
 // pendingReportFound on the event loop for each report left over from earlier
 // runs; it returns without calling any of them. False when the
-// handler could not be started; crashes then go unreported.
+// handler could not be started; crashes then go unreported, and
+// handlerUnavailable is scheduled the same way. Writes the session marker,
+// which stop() and a normal exit remove, and schedules unreportedExit when the
+// last run's marker is still there with no crash report since it started.
 // Call once, early in main().
 bool start(const Options& options = {});
 
-// Tells the handler to exit without a report, waits for it, and puts the
+// Tells the handler to exit without a report, removes the session marker,
+// waits for the handler, and puts the
 // platform's own crash handling back. isStarted() is false after, and start()
 // is refused for the rest of the process.
 void stop();

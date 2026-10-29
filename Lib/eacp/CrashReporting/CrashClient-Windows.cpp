@@ -20,7 +20,6 @@ namespace
 {
 constexpr auto handlerCaptureTimeoutMilliseconds = DWORD {60000};
 constexpr auto handlerStopTimeoutMilliseconds = DWORD {5000};
-constexpr auto stackOverflowReserveBytes = ULONG {64 * 1024};
 constexpr auto terminateReason = std::string_view {"std::terminate"};
 constexpr auto unknownExceptionType = std::string_view {"unknown exception"};
 constexpr auto messageSeparator = std::string_view {": "};
@@ -90,8 +89,14 @@ void recordException(SharedCrashInfo& crash, EXCEPTION_POINTERS& pointers)
     crash.exceptionPointersAddress = reinterpret_cast<std::uintptr_t>(&pointers);
 }
 
+bool isHandlerProcessAlive(const WindowsCrashClient& client)
+{
+    return client.handlerProcess != nullptr && client.crashEvent != nullptr
+           && ::WaitForSingleObject(client.handlerProcess, 0) == WAIT_TIMEOUT;
+}
+
 // Hands the crash to the handler, which writes the report and ends this
-// process; returns only when there is no handler or it never did.
+// process; with the handler gone, or gone before it did, returns.
 void handOverToHandler(EXCEPTION_POINTERS& pointers)
 {
     auto& client = getWindowsCrashClient();
@@ -103,16 +108,16 @@ void handOverToHandler(EXCEPTION_POINTERS& pointers)
     recordException(state.crash, pointers);
     state.tableSequence.fetch_add(2, std::memory_order_release);
 
-    if (client.handlerProcess == nullptr || client.crashEvent == nullptr)
-        return;
-
-    ::AllowSetForegroundWindow(::GetProcessId(client.handlerProcess));
-    ::SetEvent(client.crashEvent);
-    auto waitables = std::to_array<HANDLE>({client.handlerProcess});
-    ::WaitForMultipleObjects(static_cast<DWORD>(waitables.size()),
-                             waitables.data(),
-                             FALSE,
-                             handlerCaptureTimeoutMilliseconds);
+    if (isHandlerProcessAlive(client))
+    {
+        ::AllowSetForegroundWindow(::GetProcessId(client.handlerProcess));
+        ::SetEvent(client.crashEvent);
+        auto waitables = std::to_array<HANDLE>({client.handlerProcess});
+        ::WaitForMultipleObjects(static_cast<DWORD>(waitables.size()),
+                                 waitables.data(),
+                                 FALSE,
+                                 handlerCaptureTimeoutMilliseconds);
+    }
 }
 
 // abort(), a pure virtual call and the CRT's invalid-parameter check raise no
@@ -135,11 +140,6 @@ void handOverToHandler(EXCEPTION_POINTERS& pointers)
     handOverToHandler(pointers);
     ::TerminateProcess(::GetCurrentProcess(), reportedCrashExitCode);
     std::abort();
-}
-
-void handleAbortSignal(int)
-{
-    reportSoftwareCrash(abortReason);
 }
 
 void handlePureVirtualCall()
@@ -233,10 +233,15 @@ void recordCurrentException()
     std::abort();
 }
 
-void reserveStackForOverflowReport()
+// The CRT's terminate handler is per thread, so an exception escaping a thread
+// other than start()'s reaches the default one, which aborts with the
+// exception still current.
+void handleAbortSignal(int)
 {
-    auto reserve = stackOverflowReserveBytes;
-    ::SetThreadStackGuarantee(&reserve);
+    if (std::current_exception())
+        recordCurrentException();
+
+    reportSoftwareCrash(abortReason);
 }
 
 std::wstring quoteCommandLineArgument(const std::wstring& argument)
@@ -369,7 +374,6 @@ void installCrashHandlers(SharedState& state)
     auto& client = getWindowsCrashClient();
     client.state = state;
 
-    reserveStackForOverflowReport();
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     client.previousExceptionFilter =
@@ -406,6 +410,18 @@ void stopHandlerProcess(SharedState& state)
         ::CloseHandle(client.handlerProcess);
         client.handlerProcess = nullptr;
     }
+}
+
+void killHandlerProcess()
+{
+    auto& client = getWindowsCrashClient();
+
+    if (client.handlerProcess == nullptr)
+        return;
+
+    constexpr auto killedExitCode = UINT {1};
+    ::TerminateProcess(client.handlerProcess, killedExitCode);
+    ::WaitForSingleObject(client.handlerProcess, INFINITE);
 }
 
 bool isHandlerProcessRunning()

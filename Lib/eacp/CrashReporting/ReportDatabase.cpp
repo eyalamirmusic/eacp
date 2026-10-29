@@ -3,10 +3,10 @@
 #include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/File.h>
 #include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Time.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdio>
 #include <random>
 
@@ -16,6 +16,7 @@ namespace
 {
 constexpr auto pendingFolderName = "pending";
 constexpr auto crashedLastRunMarkerName = "crashed-last-run";
+constexpr auto sessionMarkerName = "session.active";
 constexpr auto handledFolderName = "handled";
 constexpr auto reportFileName = "report.json";
 constexpr auto attachmentsFolderName = "attachments";
@@ -102,9 +103,38 @@ bool ReportDatabase::clearCrashedLastRun() const
     return Files::removeFile(getCrashedLastRunMarker());
 }
 
+FilePath ReportDatabase::getSessionMarker() const
+{
+    return directory / sessionMarkerName;
+}
+
+void ReportDatabase::writeSessionMarker(const AppSession& session) const
+{
+    Files::createDirectories(directory);
+    Files::writeFile(getSessionMarker(), session.toJSON());
+}
+
+std::optional<AppSession> ReportDatabase::readSessionMarker() const
+{
+    if (!Files::isFile(getSessionMarker()))
+        return std::nullopt;
+
+    return AppSession::fromJSON(Files::readFile(getSessionMarker()));
+}
+
+bool ReportDatabase::clearSessionMarker() const
+{
+    return Files::removeFile(getSessionMarker());
+}
+
 FilePath ReportDatabase::getReportFolder(std::string_view id) const
 {
     return getPendingDirectory() / id;
+}
+
+FilePath ReportDatabase::getReportFile(std::string_view id) const
+{
+    return getReportFolder(id) / reportFileName;
 }
 
 FilePath ReportDatabase::createReportFolder(std::string_view id) const
@@ -140,7 +170,7 @@ bool ReportDatabase::writeReport(const CrashReport& report) const
 
     try
     {
-        Files::writeFileAtomically(folder / reportFileName,
+        Files::writeFileAtomically(getReportFile(report.id),
                                    getTextBytes(report.toJSON()));
         return true;
     }
@@ -169,7 +199,7 @@ CrashReport ReportDatabase::makeIncompleteReport(const FilePath& folder) const
 {
     auto report = CrashReport {};
     report.id = folder.fileName();
-    report.timestamp = getMillisecondsSinceEpoch();
+    report.timestamp = Time::sinceEpoch().count;
     report.reason = incompleteReason;
     report.platform = getPlatformName();
     report.capturedBy = CaptureSource::incomplete;
@@ -267,12 +297,6 @@ std::string createReportId()
     }
 
     return id;
-}
-
-std::int64_t getMillisecondsSinceEpoch()
-{
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
 
 std::string getPlatformName()

@@ -1,5 +1,6 @@
 #include "CrashChannel-macOS.h"
 #include "CrashReportingPlatform.h"
+#include "LoadedLibrarySymbolReader-macOS.h"
 #include "MachImages-macOS.h"
 
 #include <cerrno>
@@ -103,6 +104,35 @@ std::string demangleSymbol(const char* symbol)
     return demangled.get();
 }
 
+// The libraries the app loaded and the handler did not, read from their files.
+using LoadedLibrarySymbolReaders =
+    std::map<std::string, std::unique_ptr<LoadedLibrarySymbolReader>>;
+
+const LoadedLibrarySymbolReader&
+    getOrOpenLibrarySymbolReader(LoadedLibrarySymbolReaders& files,
+                                 const std::string& path)
+{
+    auto& file = files[path];
+
+    if (!file)
+        file = std::make_unique<LoadedLibrarySymbolReader>(FilePath {path});
+
+    return *file;
+}
+
+std::string resolveFunctionNameFromLibraryFile(const LoadedLibrarySymbolReader& file,
+                                               std::uint64_t offset,
+                                               std::uint64_t lookupBackoff)
+{
+    auto symbol = file.findFunctionContainingOffset(offset - lookupBackoff);
+
+    if (!symbol)
+        return {};
+
+    return demangleSymbol(symbol->mangledName.c_str()) + " + "
+           + std::to_string(symbol->distance + lookupBackoff);
+}
+
 std::string resolveSymbol(std::uint64_t handlerAddress, std::uint64_t lookupBackoff)
 {
     auto info = Dl_info {};
@@ -120,6 +150,7 @@ std::string resolveSymbol(std::uint64_t handlerAddress, std::uint64_t lookupBack
 // call that never returns is the next function; one byte back is the call.
 StackFrame makeStackFrame(const SharedCrashInfo& crash,
                           const std::map<std::string, std::uint64_t>& handlerBases,
+                          LoadedLibrarySymbolReaders& librarySymbolReaders,
                           std::uint64_t address,
                           bool isReturnAddress)
 {
@@ -137,14 +168,21 @@ StackFrame makeStackFrame(const SharedCrashInfo& crash,
     frame.moduleBase = module.base;
     frame.offset = address - module.base;
 
+    auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
+
     if (auto base = handlerBases.find(frame.modulePath); base != handlerBases.end())
     {
-        auto lookupBackoff = std::uint64_t {isReturnAddress ? 1u : 0u};
         frame.symbol = resolveSymbol(base->second + frame.offset, lookupBackoff);
         const auto* header = reinterpret_cast<const mach_header_64*>(base->second);
         frame.moduleUuid = getImageUuid(*header);
+        return frame;
     }
 
+    const auto& file =
+        getOrOpenLibrarySymbolReader(librarySymbolReaders, frame.modulePath);
+    frame.symbol =
+        resolveFunctionNameFromLibraryFile(file, frame.offset, lookupBackoff);
+    frame.moduleUuid = file.getBuildUuid();
     return frame;
 }
 
@@ -163,22 +201,33 @@ void dropSignalHandlerFrames(Vector<StackFrame>& frames)
         frames.erase(frames.begin() + 1, trampoline + 1);
 }
 
+enum class FirstFrame
+{
+    faultingInstruction,
+    returnAddress
+};
+
 // The modules are the crash record's, which the app keeps current as images
 // load, so they serve a hang's addresses as well.
 Vector<StackFrame>
     resolveFrames(const SharedCrashInfo& crash,
                   const std::array<std::uint64_t, maxCrashFrames>& addresses,
-                  std::uint32_t frameCount)
+                  std::uint32_t frameCount,
+                  FirstFrame firstFrame = FirstFrame::faultingInstruction)
 {
     auto handlerBases = getHandlerImageBases();
+    auto librarySymbolReaders = LoadedLibrarySymbolReaders {};
     auto count = std::min(static_cast<std::size_t>(frameCount), maxCrashFrames);
     auto frames = Vector<StackFrame> {};
 
     for (auto index = std::size_t {0}; index < count; ++index)
     {
-        auto isReturnAddress = index > 0;
-        frames.add(
-            makeStackFrame(crash, handlerBases, addresses[index], isReturnAddress));
+        auto isReturnAddress = index > 0 || firstFrame == FirstFrame::returnAddress;
+        frames.add(makeStackFrame(crash,
+                                  handlerBases,
+                                  librarySymbolReaders,
+                                  addresses[index],
+                                  isReturnAddress));
     }
 
     return frames;
@@ -204,6 +253,16 @@ int handleCrash(const ReportDatabase& database, const SharedState& state)
 {
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
     report.crashingThread.frames = resolveCrashFrames(state.crash);
+
+    if (state.crash.throwFrameCount > 0)
+    {
+        report.terminateFrames = std::move(report.crashingThread.frames);
+        report.crashingThread.frames = resolveFrames(state.crash,
+                                                     state.crash.throwFrames,
+                                                     state.crash.throwFrameCount,
+                                                     FirstFrame::returnAddress);
+    }
+
     finishHandlerReport(database, report, state);
 
     auto appProcessId = static_cast<pid_t>(state.appProcessId);

@@ -52,174 +52,29 @@ constexpr auto levelNames = std::to_array<LevelName>({
     {Level::fatal, "fatal"},
 });
 
-struct UserRecord
+// Saves `value` as a hex string under `key`, and reads it back.
+void reflectHexAddress(Miro::Reflector& ref,
+                       std::string_view key,
+                       std::uint64_t& value)
 {
-    std::string id;
-    std::string email;
-    std::string username;
+    auto text = std::string {};
 
-    MIRO_REFLECT(id, email, username)
-};
+    if (ref.isSaving())
+        text = formatHexAddress(value);
 
-struct BreadcrumbRecord
-{
-    std::string category;
-    std::string message;
-    std::string level;
-    std::int64_t timestamp = 0;
+    ref[key](text);
 
-    MIRO_REFLECT(category, message, level, timestamp)
-};
-
-struct StackFrameRecord
-{
-    std::string modulePath;
-    std::string moduleBase;
-    std::string offset;
-    std::string symbol;
-    std::string moduleUuid;
-
-    MIRO_REFLECT(modulePath, moduleBase, offset, symbol, moduleUuid)
-};
-
-struct CrashedThreadRecord
-{
-    std::string threadId;
-    Vector<StackFrameRecord> frames;
-
-    MIRO_REFLECT(threadId, frames)
-};
-
-struct CrashReportRecord
-{
-    std::string id;
-    std::string kind;
-    std::int64_t timestamp = 0;
-    std::string reason;
-    std::string message;
-    std::string faultAddress;
-    CrashedThreadRecord crashingThread;
-    std::int64_t hangDuration = 0;
-    std::string minidumpPath;
-    std::map<std::string, std::string> metadata;
-    std::map<std::string, std::string> tags;
-    std::map<std::string, std::string> extra;
-    UserRecord user;
-    Vector<BreadcrumbRecord> breadcrumbs;
-    Vector<std::string> attachments;
-    std::string platform;
-    std::string capturedBy;
-
-    MIRO_REFLECT(id,
-                 kind,
-                 timestamp,
-                 reason,
-                 message,
-                 faultAddress,
-                 crashingThread,
-                 hangDuration,
-                 minidumpPath,
-                 metadata,
-                 tags,
-                 extra,
-                 user,
-                 breadcrumbs,
-                 attachments,
-                 platform,
-                 capturedBy)
-};
-
-StackFrameRecord makeStackFrameRecord(const StackFrame& frame)
-{
-    return {frame.modulePath,
-            formatHexAddress(frame.moduleBase),
-            formatHexAddress(frame.offset),
-            frame.symbol,
-            frame.moduleUuid};
+    if (ref.isLoading())
+        value = parseHexAddress(text).value_or(0);
 }
 
-StackFrame makeStackFrame(const StackFrameRecord& record)
+void reflectPath(Miro::Reflector& ref, std::string_view key, FilePath& path)
 {
-    return {record.modulePath,
-            parseHexAddress(record.moduleBase).value_or(0),
-            parseHexAddress(record.offset).value_or(0),
-            record.symbol,
-            record.moduleUuid};
-}
+    auto text = path.str();
+    ref[key](text);
 
-CrashReportRecord makeCrashReportRecord(const CrashReport& report)
-{
-    auto record = CrashReportRecord {};
-    record.id = report.id;
-    record.kind = std::string {getReportKindName(report.kind)};
-    record.hangDuration = report.hangDurationMilliseconds;
-    record.timestamp = report.timestamp;
-    record.reason = report.reason;
-    record.message = report.message;
-    record.faultAddress = formatHexAddress(report.faultAddress);
-    record.crashingThread.threadId =
-        formatHexAddress(report.crashingThread.threadId);
-
-    for (const auto& frame: report.crashingThread.frames)
-        record.crashingThread.frames.add(makeStackFrameRecord(frame));
-
-    record.minidumpPath = report.minidumpPath.str();
-    record.metadata = report.metadata;
-    record.tags = report.tags;
-    record.extra = report.extra;
-    record.user = {report.user.id, report.user.email, report.user.username};
-
-    for (const auto& breadcrumb: report.breadcrumbs)
-        record.breadcrumbs.add({breadcrumb.category,
-                                breadcrumb.message,
-                                std::string {getLevelName(breadcrumb.level)},
-                                breadcrumb.timestamp});
-
-    for (const auto& attachment: report.attachments)
-        record.attachments.add(attachment.str());
-
-    record.platform = report.platform;
-    record.capturedBy = std::string {getCaptureSourceName(report.capturedBy)};
-
-    return record;
-}
-
-CrashReport makeCrashReport(const CrashReportRecord& record)
-{
-    auto report = CrashReport {};
-    report.id = record.id;
-    report.kind = findReportKind(record.kind).value_or(ReportKind::crash);
-    report.hangDurationMilliseconds = record.hangDuration;
-    report.timestamp = record.timestamp;
-    report.reason = record.reason;
-    report.message = record.message;
-    report.faultAddress = parseHexAddress(record.faultAddress).value_or(0);
-    report.crashingThread.threadId =
-        parseHexAddress(record.crashingThread.threadId).value_or(0);
-
-    for (const auto& frame: record.crashingThread.frames)
-        report.crashingThread.frames.add(makeStackFrame(frame));
-
-    report.minidumpPath = FilePath {record.minidumpPath};
-    report.metadata = record.metadata;
-    report.tags = record.tags;
-    report.extra = record.extra;
-    report.user = {record.user.id, record.user.email, record.user.username};
-
-    for (const auto& breadcrumb: record.breadcrumbs)
-        report.breadcrumbs.add({breadcrumb.category,
-                                breadcrumb.message,
-                                findLevel(breadcrumb.level).value_or(Level::info),
-                                breadcrumb.timestamp});
-
-    for (const auto& attachment: record.attachments)
-        report.attachments.add(FilePath {attachment});
-
-    report.platform = record.platform;
-    report.capturedBy =
-        findCaptureSource(record.capturedBy).value_or(CaptureSource::handler);
-
-    return report;
+    if (ref.isLoading())
+        path = FilePath {text};
 }
 } // namespace
 
@@ -277,21 +132,95 @@ std::optional<CaptureSource> findCaptureSource(std::string_view name)
     return std::nullopt;
 }
 
+void StackFrame::reflect(Miro::Reflector& ref)
+{
+    MIRO_FIELDS(ref, modulePath)
+    reflectHexAddress(ref, "moduleBase", moduleBase);
+    reflectHexAddress(ref, "offset", offset);
+    MIRO_FIELDS(ref, symbol, moduleUuid)
+}
+
+void CrashedThread::reflect(Miro::Reflector& ref)
+{
+    reflectHexAddress(ref, "threadId", threadId);
+    MIRO_FIELDS(ref, frames)
+}
+
+void Breadcrumb::reflect(Miro::Reflector& ref)
+{
+    auto levelName = std::string {getLevelName(level)};
+    MIRO_FIELDS(ref, category, message)
+    ref["level"](levelName);
+    MIRO_FIELDS(ref, timestamp)
+
+    if (ref.isLoading())
+        level = findLevel(levelName).value_or(Level::info);
+}
+
+void CrashReport::reflect(Miro::Reflector& ref)
+{
+    auto kindName = std::string {getReportKindName(kind)};
+    auto capturedByName = std::string {getCaptureSourceName(capturedBy)};
+    auto attachmentPaths = Vector<std::string> {};
+
+    for (const auto& attachment: attachments)
+        attachmentPaths.add(attachment.str());
+
+    MIRO_FIELDS(ref, id)
+    ref["kind"](kindName);
+    MIRO_FIELDS(ref, timestamp, reason, message)
+    reflectHexAddress(ref, "faultAddress", faultAddress);
+    MIRO_FIELDS(ref, crashingThread, terminateFrames)
+    ref["hangDuration"](hangDurationMilliseconds);
+    reflectPath(ref, "minidumpPath", minidumpPath);
+    MIRO_FIELDS(ref, metadata, tags, extra, user, breadcrumbs)
+    ref["attachments"](attachmentPaths);
+    MIRO_FIELDS(ref, platform)
+    ref["capturedBy"](capturedByName);
+
+    if (!ref.isLoading())
+        return;
+
+    kind = findReportKind(kindName).value_or(ReportKind::crash);
+    capturedBy = findCaptureSource(capturedByName).value_or(CaptureSource::handler);
+    attachments.clear();
+
+    for (const auto& attachment: attachmentPaths)
+        attachments.add(FilePath {attachment});
+}
+
+std::string AppSession::toJSON() const
+{
+    return Miro::toJSONString(*this, reportIndent);
+}
+
+std::optional<AppSession> AppSession::fromJSON(std::string_view text)
+{
+    try
+    {
+        return Miro::createFromJSONString<AppSession>(text);
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+}
+
 std::string CrashReport::toJSON() const
 {
-    return Miro::toJSONString(makeCrashReportRecord(*this), reportIndent);
+    return Miro::toJSONString(*this, reportIndent);
 }
 
 std::optional<CrashReport> CrashReport::fromJSON(std::string_view text)
 {
     try
     {
-        auto record = Miro::createFromJSONString<CrashReportRecord>(text);
+        auto report = Miro::createFromJSONString<CrashReport>(text);
 
-        if (record.id.empty())
+        if (report.id.empty())
             return std::nullopt;
 
-        return makeCrashReport(record);
+        return report;
     }
     catch (const std::exception&)
     {

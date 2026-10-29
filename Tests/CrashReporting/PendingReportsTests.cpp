@@ -1,5 +1,8 @@
 #include <eacp/Core/Process/Process.h>
+#include <eacp/Core/Utils/Files.h>
+#include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/TemporaryFile.h>
+#include <eacp/Core/Utils/Time.h>
 #include <eacp/CrashReporting/ReportDatabase.h>
 
 #include <NanoTest/NanoTest.h>
@@ -17,7 +20,7 @@ std::string writePendingReport(const ReportDatabase& database)
     auto report = CrashReport {};
     report.id = createReportId();
     report.reason = "SIGSEGV";
-    report.timestamp = getMillisecondsSinceEpoch();
+    report.timestamp = Time::sinceEpoch().count;
     report.platform = getPlatformName();
     database.createReportFolder(report.id);
     database.writeReport(report);
@@ -44,6 +47,22 @@ int countLines(const std::string& rawOutput, const std::string& line)
 
     return count;
 }
+
+int countLinesStartingWith(const std::string& rawOutput, std::string_view prefix)
+{
+    auto count = 0;
+
+    for (const auto& line: Strings::split(removeCarriageReturns(rawOutput), '\n'))
+    {
+        if (line.starts_with(prefix))
+            ++count;
+    }
+
+    return count;
+}
+
+constexpr auto unreportedExitPrefix = std::string_view {"unreported exit: "};
+constexpr auto handUncleanProcessId = std::uint64_t {4242};
 } // namespace
 
 Processes::ProcessResult runProbe(const FilePath& database,
@@ -103,4 +122,52 @@ auto tCrashReportPendingReportsArriveOnTheLoop =
 
     for (const auto& id: ids)
         check(countLines(result.output, "delivered: " + id) == 1);
+};
+
+auto tCrashReportHandlerUnavailable =
+    test("CrashReport/handlerUnavailableWhenItCannotLaunch") = []
+{
+    auto directory = TemporaryFile {};
+    auto missingHandler = TemporaryFile {};
+    auto result = runProbe(directory.path(),
+                           {"--handler-executable", missingHandler.path().str()});
+
+    check(result.exitCode == 0);
+    check(countLines(result.output, "started: 0") == 1);
+    check(countLinesStartingWith(result.output, "handler unavailable: ") == 1);
+    check(ReportDatabase {directory.path()}.readPendingReports().empty());
+};
+
+auto tSessionCleanExitLeavesNoMarker =
+    test("CrashReport/sessionMarkerGoneAfterACleanExit") = []
+{
+    auto directory = TemporaryFile {};
+    auto database = ReportDatabase {directory.path()};
+
+    check(runProbe(directory.path(), {"--stop"}).exitCode == 0);
+    check(!Files::exists(database.getSessionMarker()));
+
+    check(runProbe(directory.path()).exitCode == 0);
+    check(!Files::exists(database.getSessionMarker()));
+};
+
+auto tSessionUncleanExitIsReportedOnce =
+    test("CrashReport/sessionUnreportedExitFiresOnce") = []
+{
+    auto directory = TemporaryFile {};
+    auto database = ReportDatabase {directory.path()};
+    auto unclean = AppSession {};
+    unclean.processId = handUncleanProcessId;
+    unclean.startTime = Time::sinceEpoch().count;
+    database.writeSessionMarker(unclean);
+
+    auto first = runProbe(directory.path());
+    check(countLines(first.output,
+                     std::string {unreportedExitPrefix}
+                         + std::to_string(handUncleanProcessId))
+          == 1);
+    check(countLinesStartingWith(first.output, unreportedExitPrefix) == 1);
+
+    auto second = runProbe(directory.path());
+    check(countLinesStartingWith(second.output, unreportedExitPrefix) == 0);
 };

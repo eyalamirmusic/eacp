@@ -36,10 +36,19 @@ SharedState& createSharedState(const HandlerLaunch& launch);
 bool launchHandlerProcess(const HandlerLaunch& launch, SharedState& state);
 
 // The in-app handlers, which hand a crash to the handler process. With the
-// handler gone the crash is re-raised and lost.
+// handler gone the crash goes unreported, and the next start() sees the
+// session marker it left (CrashHandler::unreportedExit).
 void installCrashHandlers(SharedState& state);
 
+// False when the thread had a stack for overflow reports already.
+bool installStackOverflowStackOnCurrentThread();
+void setStackOverflowStackOnNewThreads(bool shouldInstall);
+
 bool isHandlerProcessRunning();
+
+// Ends the handler process without telling it, as if it had died: the crash
+// faults library's way to exercise an unreported exit.
+void killHandlerProcess();
 
 // stop()'s halves: the platform's own crash handling back, then the handler
 // told to exit cleanly and waited for.
