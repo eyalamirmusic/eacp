@@ -188,9 +188,10 @@ ExpectedOutcome expectHeapCorruption(Lane lane, ThreadChoice thread)
     if (!isBackground(thread))
         return reportedThroughMach(lane, "EXC_BREAKPOINT");
 
-    auto outcome = withLimit(reportedThroughMach(lane, "SIGABRT"),
-                             "another thread's blocks go through the zone "
-                             "allocator, which aborts; some runs trap instead");
+    auto outcome = withShortStack(reportedThroughMach(lane, "SIGABRT"),
+                                  "another thread's blocks go through the zone "
+                                  "allocator, which aborts; some runs trap "
+                                  "instead, in whichever thread allocates next");
     outcome.alternativeReason = "EXC_BREAKPOINT";
     return outcome;
 }
