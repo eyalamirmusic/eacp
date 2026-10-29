@@ -666,11 +666,11 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 };
 
 #if defined(_WIN32)
-// SelfDestruct lists the module itself through Options; this takes it out.
+// The crashing process lists the module itself through Options; this takes it
+// out.
 void unlistWerModule()
 {
-    auto module =
-        FilePath {EACP_SELF_DESTRUCT}.parentDirectory() / "eacp-crash-wer.dll";
+    auto module = Files::executablePath().parentDirectory() / "eacp-crash-wer.dll";
     Processes::run("reg",
                    {"delete",
                     "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error "
@@ -683,7 +683,7 @@ void unlistWerModule()
 // The in-app path ends the app itself, so WER, and the module, never see it.
 auto tCrashReportAbortWithWerModule = test("CrashReport/abortWithWerModule") = []
 {
-    auto report = crashSelfDestruct("abort", FaultThread::main);
+    auto report = crashTheCrashingProcess("abort", FaultThread::main);
     check(report.reason == "SIGABRT");
     check(report.capturedBy == CaptureSource::handler);
 };
