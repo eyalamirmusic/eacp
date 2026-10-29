@@ -113,6 +113,8 @@ void runStallingFault(std::string_view name,
                       ThreadChoice thread,
                       bool pausesHangDetection)
 {
+    Faults::setPausesBackgroundWatch(pausesHangDetection);
+
     if (pausesHangDetection)
         pauseHangDetection();
 
