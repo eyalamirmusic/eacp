@@ -7,6 +7,7 @@
 #include "GPUViewBacking-Apple.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Frame/Frame.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -446,6 +447,7 @@ Graphics::Image GPUView::renderNativeContent(float scale)
 
         auto queue = (__bridge id<MTLCommandQueue>) Device::shared().nativeQueue();
         auto commandBuffer = [queue commandBuffer];
+        Detail::reportFailureOf(commandBuffer);
         auto blit = [commandBuffer blitCommandEncoder];
         [blit copyFromTexture:colorTexture
                      sourceSlice:0

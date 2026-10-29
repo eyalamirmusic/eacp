@@ -1,5 +1,6 @@
 #include "HttpAsync.h"
 
+#include <atomic>
 #include <mutex>
 #include <thread>
 
@@ -19,13 +20,23 @@ using PerformFn = std::function<Response(const Request&)>;
 
 // One request in flight: the callback waiting on the message thread, the
 // progress block the worker writes into - which is how a cancel reaches a
-// transfer already under way - and the flag that keeps the callback from
-// running once that cancel has happened.
+// transfer already under way - the flag that keeps the callback from running
+// once that cancel has happened, and the worker, joined when its reply is
+// delivered. A reply that never is - no loop ran again - leaves it detached.
 struct InFlight
 {
+    ~InFlight()
+    {
+        if (worker.joinable())
+            worker.detach();
+    }
+
     DownloadProgress progress;
     ResponseCallback callback;
     std::atomic<bool> cancelled {false};
+
+    std::mutex workerMutex;
+    std::thread worker;
 };
 
 using InFlightPtr = std::shared_ptr<InFlight>;
@@ -90,8 +101,22 @@ Response performCatching(const PerformFn& perform, const Request& req)
     }
 }
 
+// The worker posted the reply as its last act, so this waits only for it to
+// exit - but that exit runs thread-local destructors, OpenSSL's among them,
+// and a callback that lets the program end would otherwise race them against
+// the exit handlers that free what they touch.
+void joinWorker(InFlight& entry)
+{
+    auto lock = std::lock_guard(entry.workerMutex);
+
+    if (entry.worker.joinable())
+        entry.worker.join();
+}
+
 void deliver(const InFlightPtr& entry, const Response& response)
 {
+    joinWorker(*entry);
+
     if (entry->cancelled.load())
         return;
 
@@ -119,8 +144,10 @@ void start(const Request& req,
         Threads::callAsync(onMessageThread);
     };
 
-    auto worker = std::thread(work);
-    worker.detach();
+    // Under the lock deliver() takes, so the reply cannot be handled before
+    // the thread it has to join has been stored.
+    auto lock = std::lock_guard(entry->workerMutex);
+    entry->worker = std::thread(work);
 }
 } // namespace
 

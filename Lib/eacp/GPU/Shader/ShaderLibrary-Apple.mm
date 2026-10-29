@@ -3,6 +3,7 @@
 #include "ShaderLibrary.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "ShaderSource.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -21,12 +22,12 @@ struct ShaderLibrary::Native
         if (metalDevice == nil || source.source.empty())
             return;
 
-        NSError* error = nil;
         auto code = @(source.source.c_str());
-        library = [metalDevice newLibraryWithSource:code options:nil error:&error];
+        auto compile = [metalDevice, code](NSError** error)
+        { return [metalDevice newLibraryWithSource:code options:nil error:error]; };
 
-        if (library.get() == nil && error != nil)
-            LOG(error.localizedDescription.UTF8String);
+        library = Detail::buildRetryingTransientFailures<id<MTLLibrary>>(
+            "compiling a Metal shader library", compile);
     }
 
     ObjC::Ptr<NSObject<MTLLibrary>> library;

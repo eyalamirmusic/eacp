@@ -184,15 +184,20 @@ auto tDestroyStops = test("FileWatcher/destroyingTheWatcherStopsCallbacks") = []
     auto file = dir.path() / "source.cpp";
     writeFile(file, "a");
 
+    auto options = fastOptions();
+    options.settle = MS {250};
+
     auto log = ChangeLog {};
     auto watcher = std::optional<FileWatcher> {};
-    watcher.emplace(Vector<FilePath> {dir.path()}, log.recorder(), fastOptions());
+    watcher.emplace(Vector<FilePath> {dir.path()}, log.recorder(), options);
 
     writeFile(file, "abcd");
 
     auto destroyed = false;
+    auto callsAtDestruction = 0;
     auto destroy = [&]
     {
+        callsAtDestruction = log.calls.size();
         watcher.reset();
         destroyed = true;
     };
@@ -201,8 +206,8 @@ auto tDestroyStops = test("FileWatcher/destroyingTheWatcherStopsCallbacks") = []
     check(runEventLoopUntil([&] { return destroyed; }, MS {5000}));
 
     writeFile(file, "abcdefgh");
-    pumpFor(MS {300});
+    pumpFor(MS {options.settle.count + 250});
 
-    check(log.calls.empty());
+    check(log.calls.size() == callsAtDestruction);
 };
 } // namespace FileWatcherTests

@@ -3,6 +3,7 @@
 #include "CommandBuffer.h"
 
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Timing/CommandTimer.h"
 #include "../Timing/PassSamples-Apple.h"
 
@@ -19,7 +20,10 @@ struct CommandBuffer::Native
         : device(&deviceToUse)
     {
         if (auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue())
+        {
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
+            Detail::reportFailureOf((id<MTLCommandBuffer>) commandBuffer.get());
+        }
     }
 
     // The buffer to submit, or nil once something already submitted it. Both

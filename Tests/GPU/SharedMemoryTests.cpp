@@ -138,18 +138,28 @@ struct WideElementKernel final : ComputeProgram
     EACP_SHADER(input, output)
 };
 
-// Past every budget any of the three backends reports: Vulkan's floor is 16 KB,
-// the two with a fixed number give 32 KB, and no Metal device reaches a
-// megabyte.
+// Just past the budget of the device it is built for, and no further. A
+// megabyte would be past every budget too, but Metal's compiler does not refuse
+// an array that size - MTLCompilerService crashes on it - and on CI's
+// virtualised macOS runners, every SimdMatrix build that failed with a bare
+// "Compilation failed" was running beside this case as it did. A few kilobytes
+// over is refused cleanly, with both numbers named.
+constexpr auto overBudgetSlackBytes = 4 * 1024;
+
 struct OverBudgetKernel final : ComputeProgram
 {
-    OverBudgetKernel() { compile(); }
+    explicit OverBudgetKernel(const Device& device)
+        : elements((device.maxThreadgroupMemory() + overBudgetSlackBytes)
+                   / (int) sizeof(float))
+    {
+        compile();
+    }
 
     void define() override
     {
         auto id = threadId();
         auto lane = localId();
-        auto tile = shared<Float>(1024 * 1024);
+        auto tile = shared<Float>(elements);
 
         write(tile, lane, input[id]);
         barrier();
@@ -157,6 +167,7 @@ struct OverBudgetKernel final : ComputeProgram
         ifThen(id < gridCount(), [&] { write(output, id, tile[lane]); });
     }
 
+    int elements;
     Uniform<InputBuffer> input;
     Uniform<OutputBuffer> output;
 
@@ -210,7 +221,7 @@ auto tKernelReportsWhatItDeclares =
     // backend - Metal refuses the pipeline, lavapipe hands back one that would
     // misbehave at dispatch - so the log line, not the pipeline's validity, is
     // what this asserts by exercising it.
-    auto over = OverBudgetKernel {};
+    auto over = OverBudgetKernel {device};
 
     check(over.threadgroupMemoryBytes() > device.maxThreadgroupMemory());
     check(!over.fitsThreadgroupMemory(device));

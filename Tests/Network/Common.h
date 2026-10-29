@@ -15,7 +15,9 @@
 #include <system_error>
 #include <thread>
 
-constexpr auto fetchTimeout = eacp::Time::MS {5000};
+// Only a guard against a wedged fetch, never a speed bound: a stalled CI
+// runner has stretched a loopback fetch that takes milliseconds past 5 s.
+constexpr auto fetchTimeout = eacp::Time::MS {30000};
 
 // Every server here binds port 0 and reports back what it got. Fixed ports do
 // not survive this suite: NanoTest's CTest discovery runs each case in its own

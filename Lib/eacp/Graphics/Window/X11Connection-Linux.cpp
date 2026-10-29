@@ -20,6 +20,7 @@
 #include <iterator>
 #include <limits>
 #include <poll.h>
+#include <signal.h>
 #include <string>
 #include <string_view>
 
@@ -353,6 +354,26 @@ uint16_t x11ClampSize(long value)
     return (uint16_t) std::clamp(value, 1L, highest);
 }
 
+void x11IgnoreBrokenPipesUnlessHandled()
+{
+    struct sigaction current {};
+
+    if (::sigaction(SIGPIPE, nullptr, &current) != 0)
+        return;
+
+    const auto hasHandler =
+        (current.sa_flags & SA_SIGINFO) != 0 || current.sa_handler != SIG_DFL;
+
+    if (hasHandler)
+        return;
+
+    struct sigaction ignore {};
+    ignore.sa_handler = SIG_IGN;
+    ::sigemptyset(&ignore.sa_mask);
+
+    ::sigaction(SIGPIPE, &ignore, nullptr);
+}
+
 X11WindowSurface::X11WindowSurface()
 {
     viewSurfaces = makeX11ViewSurfaceBackend(*this);
@@ -380,6 +401,8 @@ void X11WindowSurface::scaleChanged(float) {}
 
 X11Connection::X11Connection()
 {
+    x11IgnoreBrokenPipesUnlessHandled();
+
     auto* opened = xcb_connect(nullptr, &screenNumber);
 
     if (xcb_connection_has_error(opened) != 0)

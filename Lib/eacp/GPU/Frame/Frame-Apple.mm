@@ -5,6 +5,7 @@
 
 #include "../CommandBuffer/CopyPlan.h"
 #include "../Device/Device.h"
+#include "../Device/MetalErrors-Apple.h"
 #include "../Timing/PassSamples-Apple.h"
 
 #include <eacp/Core/ObjC/ObjC.h>
@@ -212,7 +213,10 @@ struct Frame::Native
             return;
 
         if (auto queue = (__bridge id<MTLCommandQueue>) device->nativeQueue())
+        {
             commandBuffer.reset((NSObject<MTLCommandBuffer>*) [queue commandBuffer]);
+            Detail::reportFailureOf((id<MTLCommandBuffer>) commandBuffer.get());
+        }
     }
 
     // Points a pass descriptor's samples at this frame's slot in the timer.
