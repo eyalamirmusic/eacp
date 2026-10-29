@@ -2,7 +2,7 @@
 #include "CppExceptions-Windows.h"
 #include "CrashReportingPlatform.h"
 #include "ExceptionNames-Windows.h"
-#include "WerRegistration-Windows.h"
+#include "WindowsErrorReportingRegistration-Windows.h"
 
 #include <eacp/Core/Threads/ThreadUtils-Windows.h>
 #include <eacp/Core/Utils/Files.h>
@@ -318,7 +318,7 @@ std::uint64_t getHandleValue(HANDLE handle)
     return reinterpret_cast<std::uintptr_t>(handle);
 }
 
-// Backslashes: WER matches the registered path against the registry value
+// Backslashes: Windows Error Reporting matches the registered path against the registry value
 // name as written.
 std::wstring getWerModulePath()
 {
@@ -362,7 +362,7 @@ void fillWerRegistration(WindowsCrashClient& client, SharedState& state)
     registration.pointers = {&registration.record, &registration.context};
 }
 
-// WER loads only a module listed in the registry; without one, __fastfail and
+// Windows Error Reporting (WER) loads only a module listed in the registry; without one, __fastfail and
 // heap corruption are still reported, from the exit code.
 void registerWerModule(SharedState& state)
 {
@@ -581,7 +581,7 @@ std::uint64_t getCurrentThreadId()
     return ::GetCurrentThreadId();
 }
 
-void listWerModuleForCurrentUser()
+void listCrashHelperWithWindowsErrorReportingForCurrentUser()
 {
     auto modulePath = getWerModulePath();
     auto listed = DWORD {0};

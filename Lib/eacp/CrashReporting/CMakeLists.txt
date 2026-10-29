@@ -42,7 +42,7 @@ elseif (WIN32)
             ExceptionNames-Windows.cpp
             StackOverflowStack-Windows.cpp)
     target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
-    add_subdirectory(Wer)
+    add_subdirectory(WindowsErrorReporting)
 endif ()
 
 set_default_target_setting(eacp-crash-reporting)

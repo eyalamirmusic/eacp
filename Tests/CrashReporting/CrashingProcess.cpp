@@ -62,7 +62,7 @@ struct CrashingProcessSettings
     bool pausesHangDetection = false;
     bool killsHandler = false;
     bool skipsCrashReporting = false;
-    bool withoutWerModule = false;
+    bool withoutWindowsErrorReportingHelper = false;
     std::string probe;
     std::string libraryFunction;
 };
@@ -86,7 +86,8 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
     options.hangThreshold =
         std::chrono::milliseconds {settings.hangThresholdMilliseconds};
     options.stackOverflowReporting = *reporting;
-    options.registerWerModuleForCurrentUser = !settings.withoutWerModule;
+    options.registerCrashHelperWithWindowsErrorReporting =
+        !settings.withoutWindowsErrorReportingHelper;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -247,9 +248,10 @@ int runCrashingProcess()
     cli.flag("--pause-hang-detection",
              settings.pausesHangDetection,
              "pause hang detection around a hang or spin fault");
-    cli.flag("--without-wer-module",
-             settings.withoutWerModule,
-             "Windows: leave the WER module unlisted for this user");
+    cli.flag("--without-windows-error-reporting-helper",
+             settings.withoutWindowsErrorReportingHelper,
+             "Windows: skip the Windows Error Reporting helper, so fast-fail "
+             "and heap-corruption crashes get no stack");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");

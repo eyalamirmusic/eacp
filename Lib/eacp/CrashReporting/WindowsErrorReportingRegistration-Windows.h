@@ -14,8 +14,8 @@
 #include <string_view>
 
 // What the app hands WerRegisterRuntimeExceptionModule as its context: an
-// address in the app that the module, running in WerFault.exe, reads with
-// ReadProcessMemory. The module writes the exception into it and the shared
+// address in the app that the Windows Error Reporting helper DLL, running in
+// WerFault.exe, reads with ReadProcessMemory. The module writes the exception into it and the shared
 // block's crash fields at the addresses it names, exactly as the in-app filter
 // would, so the handler takes it from there unchanged. Plain Windows types
 // only: the module links nothing of eacp.
@@ -23,7 +23,8 @@ namespace eacp::CrashReporting::Detail
 {
 constexpr auto werRegistrationMagic = std::uint32_t {0xEAC9EE01};
 constexpr auto werRegistrationVersion = std::uint32_t {1};
-constexpr auto werModuleFileName = std::wstring_view {L"eacp-crash-wer.dll"};
+constexpr auto werModuleFileName =
+    std::wstring_view {L"eacp-windows-error-reporting-helper.dll"};
 constexpr auto werHelperModulesKey =
     std::wstring_view {L"SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\"
                        L"RuntimeExceptionHelperModules"};

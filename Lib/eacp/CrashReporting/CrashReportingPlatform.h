@@ -44,8 +44,8 @@ void installCrashHandlers(SharedState& state);
 bool installStackOverflowStackOnCurrentThread();
 void setStackOverflowStackOnNewThreads(bool shouldInstall);
 
-// Windows writes the WER module's HKCU entry; elsewhere nothing.
-void listWerModuleForCurrentUser();
+// Windows lists the Windows Error Reporting helper DLL in HKCU; elsewhere nothing.
+void listCrashHelperWithWindowsErrorReportingForCurrentUser();
 
 bool isHandlerProcessRunning();
 

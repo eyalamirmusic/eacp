@@ -670,7 +670,8 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 // out.
 void unlistWerModule()
 {
-    auto module = Files::executablePath().parentDirectory() / "eacp-crash-wer.dll";
+    auto module = Files::executablePath().parentDirectory()
+                  / "eacp-windows-error-reporting-helper.dll";
     Processes::run("reg",
                    {"delete",
                     "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error "
@@ -693,8 +694,10 @@ auto tCrashReportFastFailWithoutWerModule =
 {
     unlistWerModule();
     auto database = TemporaryFile {};
-    auto options = makeCrashOptions(
-        "fastfail", FaultThread::main, database.path(), {"--without-wer-module"});
+    auto options = makeCrashOptions("fastfail",
+                                    FaultThread::main,
+                                    database.path(),
+                                    {"--without-windows-error-reporting-helper"});
     check(Processes::run(options).launched);
 
     auto reportDatabase = ReportDatabase {database.path()};

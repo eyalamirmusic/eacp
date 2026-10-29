@@ -6,9 +6,10 @@
 # every configuration on Windows. SYMBOLS_DIR <dir> copies them there as
 # <target>-<version> (the app's VERSION), or <target> when it has none.
 #
-# On Windows the WER module, eacp-crash-wer.dll, is copied beside the
-# executable (and its PDB into SYMBOLS_DIR), since start() registers it from
-# there.
+# On Windows, eacp-windows-error-reporting-helper.dll is copied beside the
+# executable (its PDB into SYMBOLS_DIR): Windows Error Reporting loads it for
+# fast-fail and heap-corruption crashes, which no in-process handler sees, so
+# those get a stack too. start() registers it from there.
 #
 #   eacp_enable_crash_reporting(<target> [SYMBOLS_DIR <dir>])
 function(eacp_enable_crash_reporting target)
@@ -31,23 +32,23 @@ function(eacp_enable_crash_reporting target)
     target_compile_definitions(${target} PUBLIC EACP_CRASH_REPORTING=1)
     eacp_add_crash_symbols(${target} "${CRASH_SYMBOLS_DIR}")
 
-    if (TARGET eacp-crash-wer)
-        eacp_add_crash_wer_module(${target} "${CRASH_SYMBOLS_DIR}")
+    if (TARGET eacp-windows-error-reporting-helper)
+        eacp_add_windows_error_reporting_helper(${target} "${CRASH_SYMBOLS_DIR}")
     endif ()
 endfunction()
 
-function(eacp_add_crash_wer_module target symbols_dir)
-    add_dependencies(${target} eacp-crash-wer)
+function(eacp_add_windows_error_reporting_helper target symbols_dir)
+    add_dependencies(${target} eacp-windows-error-reporting-helper)
     add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_FILE:eacp-crash-wer> $<TARGET_FILE_DIR:${target}>
+                    $<TARGET_FILE:eacp-windows-error-reporting-helper> $<TARGET_FILE_DIR:${target}>
             VERBATIM)
 
     if (symbols_dir)
         add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${symbols_dir}
-                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:eacp-crash-wer>
-                        ${symbols_dir}/eacp-crash-wer.pdb
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:eacp-windows-error-reporting-helper>
+                        ${symbols_dir}/eacp-windows-error-reporting-helper.pdb
                 VERBATIM)
     endif ()
 endfunction()

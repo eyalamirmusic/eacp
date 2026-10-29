@@ -239,7 +239,7 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
      true},
     {"fastfail",
      "__fastfail",
-     "Fails fast, past every handler but WER",
+     "Fails fast, past every handler but Windows Error Reporting",
 #if defined(_WIN32)
      failFast,
      false,

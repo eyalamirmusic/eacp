@@ -478,8 +478,8 @@ bool notifyHandlerOfHang()
     return notifyHandlerProcess(client, hangNotificationByte);
 }
 
-// The WER module is Windows-only.
-void listWerModuleForCurrentUser() {}
+// Windows Error Reporting is Windows-only.
+void listCrashHelperWithWindowsErrorReportingForCurrentUser() {}
 
 void installCrashHandlers(SharedState& state)
 {

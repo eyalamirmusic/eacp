@@ -91,9 +91,11 @@ struct Options
     StackOverflowReporting stackOverflowReporting =
         StackOverflowReporting::startingThread;
 
-    // Windows: lists the WER module in HKCU. An installer instead sets the
-    // DLL's path to 0 under HKLM's WER RuntimeExceptionHelperModules key.
-    bool registerWerModuleForCurrentUser = false;
+    // Windows: report fast-fail and heap-corruption crashes with a stack, by
+    // listing eacp's Windows Error Reporting helper DLL in HKCU. An installer
+    // instead sets the DLL's path to 0 under HKLM's Windows Error Reporting
+    // RuntimeExceptionHelperModules key.
+    bool registerCrashHelperWithWindowsErrorReporting = false;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command

@@ -1,11 +1,11 @@
-#include "../WerRegistration-Windows.h"
+#include "../WindowsErrorReportingRegistration-Windows.h"
 
 #include <werapi.h>
 
 #include <array>
 #include <cstddef>
 
-// The WER runtime exception helper: WerFault.exe loads it for a crash no
+// The Windows Error Reporting (WER) runtime exception helper: WerFault.exe loads it for a crash no
 // in-process filter saw (__fastfail, heap corruption) and hands it the dying
 // process. It passes the crash to that process's eacp handler and claims it.
 using namespace eacp::CrashReporting::Detail;

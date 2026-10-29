@@ -309,7 +309,7 @@ FilePath writeSessionLog()
 void startCrashReporting(const FilePath& databaseDirectory,
                          const Vector<std::string>& handlerArguments,
                          std::chrono::milliseconds hangThreshold,
-                         bool registersWerModule)
+                         bool registersWindowsErrorReportingHelper)
 {
     auto options = CrashReporting::Options {};
     options.handlerArguments = handlerArguments;
@@ -320,7 +320,8 @@ void startCrashReporting(const FilePath& databaseDirectory,
     if (!databaseDirectory.empty())
         options.databaseDirectory = databaseDirectory;
 
-    options.registerWerModuleForCurrentUser = registersWerModule;
+    options.registerCrashHelperWithWindowsErrorReporting =
+        registersWindowsErrorReportingHelper;
     options.environment = demoEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -459,10 +460,11 @@ int main(int argc, char* argv[])
              pausesHangDetection,
              "pause hang detection around a hang or spin fault");
     cli.option(showReportFlag, reportToShow, "show the report in this folder");
-    auto withoutWerModule = false;
-    cli.flag("--without-wer-module",
-             withoutWerModule,
-             "Windows: leave the WER module unlisted for this user");
+    auto withoutWindowsErrorReportingHelper = false;
+    cli.flag("--without-windows-error-reporting-helper",
+             withoutWindowsErrorReportingHelper,
+             "Windows: skip the Windows Error Reporting helper, so fast-fail "
+             "and heap-corruption crashes get no stack");
     cli.positional(handlerArguments, "handler-argument", "after --, the handler's");
 
     if (auto code = cli.exitCodeFor(cli.parse()))
@@ -473,8 +475,10 @@ int main(int argc, char* argv[])
 
     auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
     CrashReporting::Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
-    startCrashReporting(
-        databaseDirectory, handlerArguments, hangThreshold, !withoutWerModule);
+    startCrashReporting(databaseDirectory,
+                        handlerArguments,
+                        hangThreshold,
+                        !withoutWindowsErrorReportingHelper);
 
     if (!crashKind.empty())
         return crashNow(crashKind, threadName, pausesHangDetection, killsHandler);

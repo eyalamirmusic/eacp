@@ -467,7 +467,7 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
     const auto& state = connection.state->get();
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
 
-    // The WER module records only the code.
+    // The Windows Error Reporting helper records only the code.
     if (report.reason.empty())
         report.reason = describeExitCode(static_cast<DWORD>(state.crash.code));
     auto minidumpPath = report.folder / minidumpFileName;
