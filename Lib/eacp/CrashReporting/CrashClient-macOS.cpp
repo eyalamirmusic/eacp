@@ -478,9 +478,6 @@ bool notifyHandlerOfHang()
     return notifyHandlerProcess(client, hangNotificationByte);
 }
 
-// Windows Error Reporting is Windows-only.
-void listCrashHelperWithWindowsErrorReportingForCurrentUser() {}
-
 void installCrashHandlers(SharedState& state)
 {
     auto& client = getMacCrashClient();

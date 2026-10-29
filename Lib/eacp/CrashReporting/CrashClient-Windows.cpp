@@ -412,6 +412,24 @@ void unregisterWerModule()
     client.isWerModuleRegistered = false;
 }
 
+void listCrashHelperWithWindowsErrorReportingForCurrentUser()
+{
+    auto modulePath = getWerModulePath();
+    auto listed = DWORD {0};
+    auto written = ::RegSetKeyValueW(HKEY_CURRENT_USER,
+                                     werHelperModulesKey.data(),
+                                     modulePath.c_str(),
+                                     REG_DWORD,
+                                     &listed,
+                                     static_cast<DWORD>(sizeof(listed)));
+
+    if (written != ERROR_SUCCESS)
+        LOG("CrashReporting: could not list ",
+            Strings::narrow(modulePath),
+            " under HKCU\\",
+            Strings::narrow(werHelperModulesKey));
+}
+
 } // namespace
 SharedState& createSharedState(const HandlerLaunch& launch)
 {
@@ -437,6 +455,9 @@ SharedState& createSharedState(const HandlerLaunch& launch)
 
 bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
 {
+    if (launch.shouldListCrashHelperWithWindowsErrorReporting)
+        listCrashHelperWithWindowsErrorReportingForCurrentUser();
+
     auto& client = getWindowsCrashClient();
     client.crashEvent = createChannelEvent(launch.channelName, crashEventSuffix);
     auto readyEvent = createChannelEvent(launch.channelName, readyEventSuffix);
@@ -581,24 +602,6 @@ std::uint64_t getCurrentProcessId()
 std::uint64_t getCurrentThreadId()
 {
     return ::GetCurrentThreadId();
-}
-
-void listCrashHelperWithWindowsErrorReportingForCurrentUser()
-{
-    auto modulePath = getWerModulePath();
-    auto listed = DWORD {0};
-    auto written = ::RegSetKeyValueW(HKEY_CURRENT_USER,
-                                     werHelperModulesKey.data(),
-                                     modulePath.c_str(),
-                                     REG_DWORD,
-                                     &listed,
-                                     static_cast<DWORD>(sizeof(listed)));
-
-    if (written != ERROR_SUCCESS)
-        LOG("CrashReporting: could not list ",
-            Strings::narrow(modulePath),
-            " under HKCU\\",
-            Strings::narrow(werHelperModulesKey));
 }
 
 // The handler process watches the heartbeat and samples from outside.

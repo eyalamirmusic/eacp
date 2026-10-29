@@ -18,6 +18,9 @@ struct HandlerLaunch
     std::string channelName;
     Vector<std::string> handlerArguments;
     std::chrono::milliseconds startTimeout {};
+
+    // Windows lists its Windows Error Reporting helper DLL in HKCU; ignored elsewhere.
+    bool shouldListCrashHelperWithWindowsErrorReporting = false;
 };
 
 // The handler's command line after the flag: the database, then whatever the
@@ -43,9 +46,6 @@ void installCrashHandlers(SharedState& state);
 // False when the thread had a stack for overflow reports already.
 bool installStackOverflowStackOnCurrentThread();
 void setStackOverflowStackOnNewThreads(bool shouldInstall);
-
-// Windows lists the Windows Error Reporting helper DLL in HKCU; elsewhere nothing.
-void listCrashHelperWithWindowsErrorReportingForCurrentUser();
 
 bool isHandlerProcessRunning();
 
