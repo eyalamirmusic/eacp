@@ -97,6 +97,7 @@ struct CrashingProcessSettings
     bool killsHandler = false;
     bool skipsCrashReporting = false;
     bool signalsOnly = false;
+    bool withoutWindowsErrorReportingHelper = false;
     std::string probe;
     std::string eventKind;
     std::string libraryFunction;
@@ -122,6 +123,8 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
         std::chrono::milliseconds {settings.hangThresholdMilliseconds};
     options.stackOverflowReporting = *reporting;
     options.captureMachExceptions = !settings.signalsOnly;
+    options.registerCrashHelperWithWindowsErrorReporting =
+        !settings.withoutWindowsErrorReportingHelper;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
 
@@ -287,6 +290,10 @@ int runCrashingProcess()
              "macOS: no Mach exception capture, only the in-app signal handler");
     cli.option(
         "--event", settings.eventKind, "message or exception: report it, no crash");
+    cli.flag("--without-windows-error-reporting-helper",
+             settings.withoutWindowsErrorReportingHelper,
+             "Windows: skip the Windows Error Reporting helper, so fast-fail "
+             "and heap-corruption crashes get no stack");
     cli.flag("--kill-handler",
              settings.killsHandler,
              "end the handler process first, so the crash goes unreported");

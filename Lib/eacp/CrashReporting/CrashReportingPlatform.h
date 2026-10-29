@@ -20,6 +20,9 @@ struct HandlerLaunch
     Vector<std::string> handlerArguments;
     std::chrono::milliseconds startTimeout {};
     bool captureMachExceptions = true;
+
+    // Windows lists its Windows Error Reporting helper DLL in HKCU; ignored elsewhere.
+    bool shouldListCrashHelperWithWindowsErrorReporting = false;
 };
 
 // The handler's command line after the flag: the database, then whatever the

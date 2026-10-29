@@ -50,6 +50,7 @@ elseif (WIN32)
             StackOverflowStack-Windows.cpp
             SymbolNames-Windows.cpp)
     target_link_libraries(eacp-crash-reporting PRIVATE dbghelp)
+    add_subdirectory(WindowsErrorReporting)
 endif ()
 
 set_default_target_setting(eacp-crash-reporting)

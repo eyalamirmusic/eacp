@@ -299,6 +299,39 @@ void initialiseSymbols(HANDLE process)
     ::SymInitializeW(process, nullptr, TRUE);
 }
 
+#if defined(_M_ARM64)
+// The registers Windows Error Reporting hands over for a heap-corruption crash
+// have no link register or frame pointer, so StackWalk64 stops at its first
+// frame; the thread itself, stopped at
+// the fault, still has the frame-pointer chain.
+Vector<std::uint64_t> walkLiveThreadContext(HANDLE process, HANDLE thread)
+{
+    auto context = CONTEXT {};
+    context.ContextFlags = CONTEXT_FULL;
+
+    if (!::GetThreadContext(thread, &context))
+        return {};
+
+    return walkFramePointerChain(process, context);
+}
+#endif
+
+Vector<std::uint64_t>
+    walkCrashedThreadAddresses(HANDLE process, HANDLE thread, const CONTEXT& context)
+{
+    auto addresses = walkThreadAddresses(process, thread, context);
+#if defined(_M_ARM64)
+    if (addresses.size() <= 1)
+    {
+        auto liveAddresses = walkLiveThreadContext(process, thread);
+
+        if (liveAddresses.size() > addresses.size())
+            return liveAddresses;
+    }
+#endif
+    return addresses;
+}
+
 Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& crash)
 {
     auto frames = Vector<StackFrame> {};
@@ -310,8 +343,8 @@ Vector<StackFrame> walkCrashedThread(HANDLE process, const SharedCrashInfo& cras
         return frames;
 
     initialiseSymbols(process);
-    frames =
-        makeReportFrames(process, walkThreadAddresses(process, thread, *context));
+    frames = makeReportFrames(process,
+                              walkCrashedThreadAddresses(process, thread, *context));
     ::SymCleanup(process);
     ::CloseHandle(thread);
     return frames;
@@ -349,10 +382,23 @@ Vector<StackFrame> sampleMainThread(HANDLE process, const SharedHangInfo& hang)
     return frames;
 }
 
+std::string describeExitCode(DWORD exitCode)
+{
+    if (auto name = findExceptionName(exitCode))
+        return std::string {*name};
+
+    return formatHexAddress(exitCode);
+}
+
 int handleCrash(const ReportDatabase& database, const AppConnection& connection)
 {
     const auto& state = connection.state->get();
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
+
+    // The Windows Error Reporting helper writes only the exception code, so the
+    // reason is named from it here.
+    if (report.reason.empty())
+        report.reason = describeExitCode(static_cast<DWORD>(state.crash.code));
     auto minidumpPath = report.folder / minidumpFileName;
 
     if (writeMinidump(connection.appProcess, state, minidumpPath, true))
@@ -408,14 +454,6 @@ void checkForHang(const ReportDatabase& database,
 bool isCrashExitCode(DWORD exitCode)
 {
     return (exitCode & errorSeverityMask) == errorSeverityMask;
-}
-
-std::string describeExitCode(DWORD exitCode)
-{
-    if (auto name = findExceptionName(exitCode))
-        return std::string {*name};
-
-    return formatHexAddress(exitCode);
 }
 
 // The app ended without telling us: a clean exit, or a crash nothing in it

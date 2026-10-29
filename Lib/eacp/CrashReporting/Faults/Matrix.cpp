@@ -6,7 +6,6 @@ namespace
 {
 using namespace std::string_view_literals;
 
-constexpr auto werModulePullRequest = 180;
 constexpr auto threadWatchPullRequest = 0;
 
 struct LaneName
@@ -97,23 +96,6 @@ ExpectedOutcome pending(std::string_view note, int pullRequest)
     return outcome;
 }
 
-// Windows sees these only in the app's exit code, after the app is gone.
-ExpectedOutcome reportedFromExitCode(std::string_view reason, ThreadChoice thread)
-{
-    auto outcome = ExpectedOutcome {};
-    outcome.status = OutcomeStatus::reportedWithLimits;
-    outcome.reason = reason;
-    outcome.capturedBy = CaptureSource::exitCode;
-    outcome.pullRequest = werModulePullRequest;
-    outcome.note = "from the exit code: no stack, no minidump";
-
-    if (isBackground(thread))
-        outcome.note = "from the exit code: no stack, no minidump, and the "
-                       "report names no crashing thread";
-
-    return outcome;
-}
-
 ExpectedOutcome expectDivide(Lane lane)
 {
     if (lane == Lane::macOSArm64)
@@ -182,8 +164,14 @@ ExpectedOutcome expectTerminate(Lane lane, ThreadChoice thread)
 
 ExpectedOutcome expectHeapCorruption(Lane lane, ThreadChoice thread)
 {
+    if (isArm64Windows(lane))
+        return withShortStack(reported(lane, "STATUS_HEAP_CORRUPTION"),
+                              "through the Windows Error Reporting helper; the "
+                              "registers Windows hands it on the CI runners "
+                              "have no frame chain, so the stack stops in ntdll");
+
     if (!isMac(lane))
-        return reportedFromExitCode("STATUS_HEAP_CORRUPTION", thread);
+        return reported(lane, "STATUS_HEAP_CORRUPTION");
 
     if (!isBackground(thread))
         return reportedThroughMach(lane, "EXC_BREAKPOINT");
@@ -229,12 +217,12 @@ ExpectedOutcome expectStall(Lane lane, ThreadChoice thread)
     return outcome;
 }
 
-ExpectedOutcome expectFastFail(Lane lane, ThreadChoice thread)
+ExpectedOutcome expectFastFail(Lane lane)
 {
     if (isMac(lane))
         return notAvailable("__fastfail is Windows-only");
 
-    return reportedFromExitCode("STATUS_STACK_BUFFER_OVERRUN", thread);
+    return reported(lane, "STATUS_STACK_BUFFER_OVERRUN");
 }
 
 ExpectedOutcome expectIllegalInstruction(Lane lane)
@@ -352,7 +340,7 @@ ExpectedOutcome expectOutcome(std::string_view fault, ThreadChoice thread, Lane 
         return expectStall(lane, thread);
 
     if (fault == "fastfail")
-        return expectFastFail(lane, thread);
+        return expectFastFail(lane);
 
     if (fault == "illegalinstruction")
         return expectIllegalInstruction(lane);

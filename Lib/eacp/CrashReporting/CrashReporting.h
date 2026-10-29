@@ -98,6 +98,12 @@ struct Options
     // macOS: faults reach the handler as Mach exceptions, read from outside
     // the app with a minidump. Off leaves only the in-app signal handler.
     bool captureMachExceptions = true;
+    // Windows: heap corruption and the security checks that end a program on the
+    // spot ("fast fail") skip every crash handler in the app. With this on,
+    // Windows Error Reporting hands those crashes to eacp, so they are reported
+    // with a stack like any other. It registers eacp's helper for the current
+    // user; an installer can register it for all users in HKEY_LOCAL_MACHINE.
+    bool registerCrashHelperWithWindowsErrorReporting = false;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command

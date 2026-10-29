@@ -281,6 +281,8 @@ Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
     launch.handlerArguments = options.handlerArguments;
     launch.startTimeout = options.handlerStartTimeout;
     launch.captureMachExceptions = options.captureMachExceptions;
+    launch.shouldListCrashHelperWithWindowsErrorReporting =
+        options.registerCrashHelperWithWindowsErrorReporting;
 
     return launch;
 }
@@ -350,6 +352,7 @@ bool start(const Options& options)
     }
 
     auto launched = Detail::launchHandlerProcess(launch, state);
+
     Detail::installCrashHandlers(state);
     installStackOverflowReporting(options.stackOverflowReporting);
 

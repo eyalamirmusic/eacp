@@ -826,6 +826,58 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
               .empty());
 };
 
+#if defined(_WIN32)
+// The crashing process adds the helper DLL's registry entry itself, through
+// Options; this removes it.
+void unlistWerModule()
+{
+    auto module = Files::executablePath().parentDirectory()
+                  / "eacp-windows-error-reporting-helper.dll";
+    Processes::run("reg",
+                   {"delete",
+                    "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error "
+                    "Reporting\\RuntimeExceptionHelperModules",
+                    "/v",
+                    module.nativeString(),
+                    "/f"});
+}
+
+// The in-app handler catches abort and ends the app itself, so Windows Error
+// Reporting and the helper DLL never run.
+auto tCrashReportAbortWithWindowsErrorReportingHelper =
+    test("CrashReport/abortWithWindowsErrorReportingHelper") = []
+{
+    auto report = crashTheCrashingProcess("abort", FaultThread::main);
+    check(report.reason == "SIGABRT");
+    check(report.capturedBy == CaptureSource::handler);
+};
+
+auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithoutWindowsErrorReportingHelper") = []
+{
+    unlistWerModule();
+    auto database = TemporaryFile {};
+    auto options = makeCrashOptions("fastfail",
+                                    FaultThread::main,
+                                    database.path(),
+                                    {"--without-windows-error-reporting-helper"});
+    check(Processes::run(options).launched);
+
+    auto reportDatabase = ReportDatabase {database.path()};
+    waitForCompleteReport(reportDatabase);
+    auto reports = reportDatabase.readPendingReports();
+    check(reports.size() == 1);
+
+    if (reports.size() != 1)
+        return;
+
+    const auto& report = reports[0];
+    check(report.reason == "STATUS_STACK_BUFFER_OVERRUN");
+    check(report.capturedBy == CaptureSource::exitCode);
+    check(report.crashingThread.frames.empty());
+};
+#endif
+
 auto tMatrixCoversEveryFault = test("CrashMatrix/coversEveryFaultOnEveryLane") = []
 {
     for (const auto& fault: Faults::listFaults())
