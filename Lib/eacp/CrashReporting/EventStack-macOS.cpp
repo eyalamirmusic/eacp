@@ -2,6 +2,8 @@
 #include "MachImages-macOS.h"
 #include "SymbolNames-macOS.h"
 
+#include <eacp/Core/Utils/Strings.h>
+
 #include <dlfcn.h>
 #include <execinfo.h>
 
@@ -39,8 +41,8 @@ StackFrame makeEventFrame(std::uint64_t address)
     if (info.dli_sname != nullptr)
     {
         auto symbolStart = reinterpret_cast<std::uintptr_t>(info.dli_saddr);
-        frame.symbol = demangleSymbol(info.dli_sname) + " + "
-                       + std::to_string(address - symbolStart);
+        frame.symbol = Strings::concat(
+            demangleSymbol(info.dli_sname), " + ", address - symbolStart);
     }
 
     return frame;

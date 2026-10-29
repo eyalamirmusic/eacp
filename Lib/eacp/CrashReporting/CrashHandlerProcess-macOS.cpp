@@ -9,6 +9,7 @@
 
 #include <eacp/Core/Threads/Thread.h>
 #include <eacp/Core/Utils/Format.h>
+#include <ea_data_structures/Structures/MapVector.h>
 
 #include <cerrno>
 #include <csignal>
@@ -105,18 +106,13 @@ std::map<std::string, std::uint64_t> getHandlerImageBases()
 
 // The libraries the app loaded and the handler did not, read from their files.
 using LoadedLibrarySymbolReaders =
-    std::map<std::string, OwningPointer<LoadedLibrarySymbolReader>>;
+    EA::MapVector<std::string, OwningPointer<LoadedLibrarySymbolReader>>;
 
 const LoadedLibrarySymbolReader&
     getOrOpenLibrarySymbolReader(LoadedLibrarySymbolReaders& files,
                                  const std::string& path)
 {
-    auto& file = files[path];
-
-    if (!file)
-        file = makeOwned<LoadedLibrarySymbolReader>(FilePath {path});
-
-    return *file;
+    return files.getOrCreate(path).getOrCreate(FilePath {path});
 }
 
 std::string resolveFunctionNameFromLibraryFile(const LoadedLibrarySymbolReader& file,

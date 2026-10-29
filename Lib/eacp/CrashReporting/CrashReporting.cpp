@@ -213,9 +213,11 @@ void clearSessionMarkerAtExit()
 
 std::string describeUnavailableHandler(const Detail::HandlerLaunch& launch)
 {
-    return "the handler process " + launch.executable.str()
-           + " did not start within " + std::to_string(launch.startTimeout.count)
-           + " ms";
+    return Strings::concat("the handler process ",
+                           launch.executable.str(),
+                           " did not start within ",
+                           launch.startTimeout.count,
+                           " ms");
 }
 
 Detail::SharedWatchedThread& getMainThreadWatch(Detail::SharedHangInfo& hang)

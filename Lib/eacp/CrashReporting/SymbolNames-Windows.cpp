@@ -1,9 +1,7 @@
 #include "SymbolNames-Windows.h"
 
+#include <eacp/Core/Utils/Format.h>
 #include <eacp/Core/Utils/Strings.h>
-
-#include <array>
-#include <cstdio>
 
 namespace eacp::CrashReporting::Detail
 {
@@ -25,7 +23,7 @@ std::string findSymbolName(HANDLE process, std::uint64_t address)
         return {};
 
     auto name = Strings::narrow(std::wstring_view {symbol.Name, symbol.NameLen});
-    return name + " + " + std::to_string(displacement);
+    return Strings::concat(name, " + ", displacement);
 }
 
 bool hasPdbSignature(const IMAGEHLP_MODULEW64& module)
@@ -37,25 +35,20 @@ bool hasPdbSignature(const IMAGEHLP_MODULEW64& module)
 // followed by -<age hex>.
 std::string formatDebugId(const GUID& guid, DWORD age)
 {
-    constexpr auto debugIdLength = std::size_t {64};
-    auto text = std::array<char, debugIdLength> {};
-    std::snprintf(text.data(),
-                  text.size(),
-                  "%08lx-%04hx-%04hx-%02x%02x-%02x%02x%02x%02x%02x%02x-%lx",
-                  guid.Data1,
-                  guid.Data2,
-                  guid.Data3,
-                  guid.Data4[0],
-                  guid.Data4[1],
-                  guid.Data4[2],
-                  guid.Data4[3],
-                  guid.Data4[4],
-                  guid.Data4[5],
-                  guid.Data4[6],
-                  guid.Data4[7],
-                  age);
-
-    return text.data();
+    return Strings::format(
+        "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}-{:x}",
+        guid.Data1,
+        guid.Data2,
+        guid.Data3,
+        guid.Data4[0],
+        guid.Data4[1],
+        guid.Data4[2],
+        guid.Data4[3],
+        guid.Data4[4],
+        guid.Data4[5],
+        guid.Data4[6],
+        guid.Data4[7],
+        age);
 }
 
 } // namespace

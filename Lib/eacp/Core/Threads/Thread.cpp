@@ -11,12 +11,17 @@ using AtomicId = std::atomic<std::thread::id>;
 
 namespace
 {
+OwningPointer<ThreadWatchScope> openNoThreadWatch(std::string_view, Time::MS)
+{
+    return {};
+}
+
 // Keyed by thread rather than thread_local: macOS never unloads an image
 // that has thread-local variables, and plugins link Core.
 struct ThreadWatchRegistry
 {
     std::mutex mutex;
-    ThreadWatchFactory factory;
+    ThreadWatchFactory factory = openNoThreadWatch;
     std::map<std::thread::id, std::reference_wrapper<ThreadWatchScope>> openWatches;
 };
 
@@ -33,9 +38,6 @@ OwningPointer<ThreadWatchScope> openThreadWatch(const ThreadOptions& options)
 
     auto& registry = getThreadWatchRegistry();
     auto lock = std::lock_guard {registry.mutex};
-
-    if (!registry.factory)
-        return {};
 
     return registry.factory(options.watchName, options.watchThreshold);
 }
@@ -79,7 +81,10 @@ void setThreadWatchFactory(const ThreadWatchFactory& factory)
 {
     auto& registry = getThreadWatchRegistry();
     auto lock = std::lock_guard {registry.mutex};
-    registry.factory = factory;
+    if (factory)
+        registry.factory = factory;
+    else
+        registry.factory = openNoThreadWatch;
 }
 
 void sendThreadHeartbeat()

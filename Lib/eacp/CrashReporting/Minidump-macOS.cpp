@@ -2,8 +2,7 @@
 
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Strings.h>
-
-#include <ctime>
+#include <eacp/Core/Utils/Time.h>
 
 namespace eacp::CrashReporting::Detail
 {
@@ -482,7 +481,9 @@ void appendHeader(MinidumpBuffer& buffer)
     buffer.appendU32(streamCount);
     buffer.appendU32(headerSize);
     buffer.appendU32(0);
-    buffer.appendU32(static_cast<std::uint32_t>(std::time(nullptr)));
+    constexpr auto millisecondsPerSecond = std::int64_t {1000};
+    auto secondsSinceEpoch = Time::sinceEpoch().count / millisecondsPerSecond;
+    buffer.appendU32(static_cast<std::uint32_t>(secondsSinceEpoch));
     buffer.appendU64(0);
 }
 

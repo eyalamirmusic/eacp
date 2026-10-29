@@ -417,7 +417,7 @@ CrashReport runBackgroundStall(std::string_view fault)
         {}, testHangThresholdMilliseconds, fault, FaultThread::background);
 
     if (reports.size() != 1)
-        Console::printError(std::to_string(reports.size()) + " hang reports");
+        Console::printError(Strings::concat(reports.size(), " hang reports"));
 
     check(reports.size() == 1);
     return reports.empty() ? CrashReport {} : reports[0];

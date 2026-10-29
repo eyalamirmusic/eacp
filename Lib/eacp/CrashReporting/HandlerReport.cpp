@@ -2,6 +2,7 @@
 #include "CrashReportingPlatform.h"
 
 #include <eacp/Core/Utils/Console.h>
+#include <eacp/Core/Utils/Format.h>
 #include <eacp/Core/Utils/Strings.h>
 #include <eacp/Core/Utils/Time.h>
 
@@ -69,17 +70,16 @@ std::string formatTenthsOfSeconds(std::uint64_t milliseconds)
     constexpr auto millisecondsPerSecond = std::uint64_t {1000};
     constexpr auto millisecondsPerTenth = std::uint64_t {100};
 
-    return std::to_string(milliseconds / millisecondsPerSecond) + "."
-           + std::to_string(milliseconds % millisecondsPerSecond
-                            / millisecondsPerTenth);
+    return Strings::format("{}.{}",
+                           milliseconds / millisecondsPerSecond,
+                           milliseconds % millisecondsPerSecond
+                               / millisecondsPerTenth);
 }
 
 std::string describeStalledThreads(const Vector<CrashedThread>& threads)
 {
-    auto names = Vector<std::string> {};
-
-    for (const auto& thread: threads)
-        names.add(thread.name);
+    auto names = EA::Vectors::transform(
+        threads, [](const CrashedThread& thread) { return thread.name; });
 
     auto noun = threads.size() == 1 ? " thread" : " threads";
     return Strings::join(names, ", ") + noun;

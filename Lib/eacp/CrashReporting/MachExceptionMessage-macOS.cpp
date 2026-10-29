@@ -1,5 +1,7 @@
 #include "MachExceptionMessage-macOS.h"
 
+#include <ea_data_structures/Utilities/VectorUtilities.h>
+
 #include <algorithm>
 #include <cstring>
 
@@ -131,12 +133,13 @@ void releaseExceptionPorts(const MachException& exception)
 
 const char* getMachExceptionName(exception_type_t type)
 {
-    for (const auto& exception: machExceptionNames)
-    {
-        if (exception.type == type)
-            return exception.name;
-    }
+    auto found = EA::Vectors::findIf(machExceptionNames,
+                                     [type](const MachExceptionName& exception)
+                                     { return exception.type == type; });
 
-    return "EXC_UNKNOWN";
+    if (found == nullptr)
+        return "EXC_UNKNOWN";
+
+    return found->name;
 }
 } // namespace eacp::CrashReporting::Detail

@@ -1,5 +1,8 @@
 #include "MachImages-macOS.h"
 
+#include <eacp/Core/Utils/Format.h>
+#include <ea_data_structures/Utilities/VectorUtilities.h>
+
 #include <mach-o/dyld_images.h>
 #include <mach/mach.h>
 
@@ -18,18 +21,14 @@ constexpr auto uuidGroupEnds = std::to_array<std::size_t>({4, 6, 8, 10});
 
 std::string formatUuid(const ImageUuid& bytes)
 {
-    constexpr auto hexDigits = std::string_view {"0123456789ABCDEF"};
-    constexpr auto nibbleBits = 4;
-    constexpr auto lowNibbleMask = 0xF;
     auto text = std::string {};
 
     for (auto index = std::size_t {0}; index < bytes.size(); ++index)
     {
-        if (std::ranges::find(uuidGroupEnds, index) != uuidGroupEnds.end())
+        if (EA::Vectors::contains(uuidGroupEnds, index))
             text += '-';
 
-        text += hexDigits[bytes[index] >> nibbleBits];
-        text += hexDigits[bytes[index] & lowNibbleMask];
+        text += Strings::format("{:02X}", bytes[index]);
     }
 
     return text;
