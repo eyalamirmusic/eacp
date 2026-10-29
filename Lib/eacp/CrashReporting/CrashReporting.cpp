@@ -513,7 +513,8 @@ std::string captureEvent(const Event& event)
             written.reason = event.reason;
             written.message = event.message;
             written.faultAddress = 0;
-            written.crashingThread = {Detail::getCurrentThreadId(), frames};
+            written.crashingThread.threadId = Detail::getCurrentThreadId();
+            written.crashingThread.frames = frames;
 
             if (!Detail::finishHandlerReport(database, written, state))
                 return std::optional<CrashReport> {};
