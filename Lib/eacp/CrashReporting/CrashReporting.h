@@ -91,11 +91,11 @@ struct Options
     StackOverflowReporting stackOverflowReporting =
         StackOverflowReporting::startingThread;
 
-    // Windows: "fast fail" security checks and heap corruption end the app
-    // before its own code runs, so only Windows Error Reporting calling our
-    // helper can report them. This lists the helper for the current user; an
-    // installer can list it for all users under HKEY_LOCAL_MACHINE's
-    // RuntimeExceptionHelperModules key.
+    // Windows: heap corruption and the security checks that end a program on the
+    // spot ("fast fail") skip every crash handler in the app. With this on,
+    // Windows Error Reporting hands those crashes to eacp, so they are reported
+    // with a stack like any other. It registers eacp's helper for the current
+    // user; an installer can register it for all users in HKEY_LOCAL_MACHINE.
     bool registerCrashHelperWithWindowsErrorReporting = false;
 };
 
