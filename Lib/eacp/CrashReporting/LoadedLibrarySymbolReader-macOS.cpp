@@ -1,4 +1,4 @@
-#include "MachImageFile-macOS.h"
+#include "LoadedLibrarySymbolReader-macOS.h"
 #include "MachImages-macOS.h"
 
 #include <mach-o/fat.h>
@@ -71,16 +71,17 @@ struct SymbolTableLayout
 };
 
 std::optional<SymbolTableLayout>
-    readSymbolTableLayout(Span<const std::uint8_t> bytes, std::size_t headerOffset)
+    readSymbolTableLayout(Span<const std::uint8_t> bytes,
+                          std::size_t thisArchitectureHeaderOffset)
 {
-    auto header = readValue<mach_header_64>(bytes, headerOffset);
+    auto header = readValue<mach_header_64>(bytes, thisArchitectureHeaderOffset);
 
     if (!header)
         return std::nullopt;
 
     auto layout = SymbolTableLayout {};
     auto hasTable = false;
-    auto offset = headerOffset + sizeof(mach_header_64);
+    auto offset = thisArchitectureHeaderOffset + sizeof(mach_header_64);
 
     for (auto index = 0u; index < header->ncmds; ++index)
     {
@@ -131,52 +132,55 @@ std::string removeLeadingUnderscore(std::string_view name)
 }
 } // namespace
 
-MachImageFile::MachImageFile(const FilePath& path)
+LoadedLibrarySymbolReader::LoadedLibrarySymbolReader(const FilePath& path)
     : file(path)
 {
     if (file.isValid())
-        headerOffset = findSliceForThisProcess(file.bytes());
+        thisArchitectureHeaderOffset = findSliceForThisProcess(file.bytes());
 }
 
-bool MachImageFile::isValid() const
+bool LoadedLibrarySymbolReader::isValid() const
 {
-    return headerOffset.has_value();
+    return thisArchitectureHeaderOffset.has_value();
 }
 
-std::string MachImageFile::getUuid() const
+std::string LoadedLibrarySymbolReader::getBuildUuid() const
 {
-    if (!headerOffset)
+    if (!thisArchitectureHeaderOffset)
         return {};
 
     auto bytes = file.bytes();
-    auto header = readValue<mach_header_64>(bytes, *headerOffset);
+    auto header = readValue<mach_header_64>(bytes, *thisArchitectureHeaderOffset);
 
     if (!header
-        || *headerOffset + sizeof(mach_header_64) + header->sizeofcmds
+        || *thisArchitectureHeaderOffset + sizeof(mach_header_64)
+                   + header->sizeofcmds
                > bytes.getSize())
     {
         return {};
     }
 
-    const auto& mapped =
-        *reinterpret_cast<const mach_header_64*>(bytes.data() + *headerOffset);
+    const auto& mapped = *reinterpret_cast<const mach_header_64*>(
+        bytes.data() + *thisArchitectureHeaderOffset);
     return getImageUuid(mapped);
 }
 
-std::optional<ImageSymbol> MachImageFile::findSymbol(std::uint64_t offset) const
+std::optional<FunctionContainingOffset>
+    LoadedLibrarySymbolReader::findFunctionContainingOffset(
+        std::uint64_t offset) const
 {
-    if (!headerOffset)
+    if (!thisArchitectureHeaderOffset)
         return std::nullopt;
 
     auto bytes = file.bytes();
-    auto layout = readSymbolTableLayout(bytes, *headerOffset);
+    auto layout = readSymbolTableLayout(bytes, *thisArchitectureHeaderOffset);
 
     if (!layout)
         return std::nullopt;
 
     auto target = layout->textAddress + offset;
-    auto tableStart = *headerOffset + layout->symbolTable.symoff;
-    auto namesStart = *headerOffset + layout->symbolTable.stroff;
+    auto tableStart = *thisArchitectureHeaderOffset + layout->symbolTable.symoff;
+    auto namesStart = *thisArchitectureHeaderOffset + layout->symbolTable.stroff;
     auto best = std::optional<nlist_64> {};
 
     for (auto index = 0u; index < layout->symbolTable.nsyms; ++index)
@@ -205,6 +209,7 @@ std::optional<ImageSymbol> MachImageFile::findSymbol(std::uint64_t offset) const
     const auto* nameStart = reinterpret_cast<const char*>(bytes.data() + nameOffset);
     auto name = std::string_view {
         nameStart, ::strnlen(nameStart, bytes.getSize() - nameOffset)};
-    return ImageSymbol {removeLeadingUnderscore(name), target - best->n_value};
+    return FunctionContainingOffset {removeLeadingUnderscore(name),
+                                     target - best->n_value};
 }
 } // namespace eacp::CrashReporting::Detail

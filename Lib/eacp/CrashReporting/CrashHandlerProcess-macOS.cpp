@@ -1,6 +1,6 @@
 #include "CrashChannel-macOS.h"
 #include "CrashReportingPlatform.h"
-#include "MachImageFile-macOS.h"
+#include "LoadedLibrarySymbolReader-macOS.h"
 #include "MachImages-macOS.h"
 
 #include <cerrno>
@@ -105,23 +105,26 @@ std::string demangleSymbol(const char* symbol)
 }
 
 // The libraries the app loaded and the handler did not, read from their files.
-using ImageFiles = std::map<std::string, std::unique_ptr<MachImageFile>>;
+using LoadedLibrarySymbolReaders =
+    std::map<std::string, std::unique_ptr<LoadedLibrarySymbolReader>>;
 
-const MachImageFile& getImageFile(ImageFiles& files, const std::string& path)
+const LoadedLibrarySymbolReader&
+    getOrOpenLibrarySymbolReader(LoadedLibrarySymbolReaders& files,
+                                 const std::string& path)
 {
     auto& file = files[path];
 
     if (!file)
-        file = std::make_unique<MachImageFile>(FilePath {path});
+        file = std::make_unique<LoadedLibrarySymbolReader>(FilePath {path});
 
     return *file;
 }
 
-std::string resolveSymbolFromFile(const MachImageFile& file,
-                                  std::uint64_t offset,
-                                  std::uint64_t lookupBackoff)
+std::string resolveFunctionNameFromLibraryFile(const LoadedLibrarySymbolReader& file,
+                                               std::uint64_t offset,
+                                               std::uint64_t lookupBackoff)
 {
-    auto symbol = file.findSymbol(offset - lookupBackoff);
+    auto symbol = file.findFunctionContainingOffset(offset - lookupBackoff);
 
     if (!symbol)
         return {};
@@ -147,7 +150,7 @@ std::string resolveSymbol(std::uint64_t handlerAddress, std::uint64_t lookupBack
 // call that never returns is the next function; one byte back is the call.
 StackFrame makeStackFrame(const SharedCrashInfo& crash,
                           const std::map<std::string, std::uint64_t>& handlerBases,
-                          ImageFiles& imageFiles,
+                          LoadedLibrarySymbolReaders& librarySymbolReaders,
                           std::uint64_t address,
                           bool isReturnAddress)
 {
@@ -175,9 +178,11 @@ StackFrame makeStackFrame(const SharedCrashInfo& crash,
         return frame;
     }
 
-    const auto& file = getImageFile(imageFiles, frame.modulePath);
-    frame.symbol = resolveSymbolFromFile(file, frame.offset, lookupBackoff);
-    frame.moduleUuid = file.getUuid();
+    const auto& file =
+        getOrOpenLibrarySymbolReader(librarySymbolReaders, frame.modulePath);
+    frame.symbol =
+        resolveFunctionNameFromLibraryFile(file, frame.offset, lookupBackoff);
+    frame.moduleUuid = file.getBuildUuid();
     return frame;
 }
 
@@ -211,15 +216,18 @@ Vector<StackFrame>
                   FirstFrame firstFrame = FirstFrame::faultingInstruction)
 {
     auto handlerBases = getHandlerImageBases();
-    auto imageFiles = ImageFiles {};
+    auto librarySymbolReaders = LoadedLibrarySymbolReaders {};
     auto count = std::min(static_cast<std::size_t>(frameCount), maxCrashFrames);
     auto frames = Vector<StackFrame> {};
 
     for (auto index = std::size_t {0}; index < count; ++index)
     {
         auto isReturnAddress = index > 0 || firstFrame == FirstFrame::returnAddress;
-        frames.add(makeStackFrame(
-            crash, handlerBases, imageFiles, addresses[index], isReturnAddress));
+        frames.add(makeStackFrame(crash,
+                                  handlerBases,
+                                  librarySymbolReaders,
+                                  addresses[index],
+                                  isReturnAddress));
     }
 
     return frames;
