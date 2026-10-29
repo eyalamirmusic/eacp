@@ -5,5 +5,6 @@
 add_library(eacp-windows-error-reporting-helper SHARED WindowsErrorReportingHelper-Windows.cpp)
 set_default_target_setting(eacp-windows-error-reporting-helper)
 
-# A PDB in every configuration, as the app's own gets, for SYMBOLS_DIR.
+# A PDB (debug symbols) in every configuration, as the app gets, so
+# SYMBOLS_DIR can collect it.
 eacp_add_crash_symbols(eacp-windows-error-reporting-helper "")

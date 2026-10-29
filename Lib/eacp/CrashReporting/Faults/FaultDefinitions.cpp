@@ -101,7 +101,8 @@ EACP_FAULT_NO_INLINE void throwUncaughtException()
 
 #if defined(_WIN32)
 // Only a fresh heap's second HeapFree is STATUS_HEAP_CORRUPTION every time.
-constexpr auto heapCorruptionDescription = "Frees a heap block twice";
+constexpr auto heapCorruptionDescription =
+    "Frees the same memory twice; Windows ends the app at once";
 
 EACP_FAULT_NO_INLINE void corruptHeap()
 {
@@ -114,7 +115,7 @@ EACP_FAULT_NO_INLINE void corruptHeap()
 constexpr auto overrunSize = std::size_t {4096};
 constexpr auto overrunByte = 0xEA;
 constexpr auto heapCorruptionDescription =
-    "Writes past a heap block, then frees it twice";
+    "Writes past the end of an allocation, then frees it twice";
 
 // The overrun alone may land in slack; the second free is what every
 // allocator checks.
@@ -204,42 +205,50 @@ EACP_FAULT_NO_INLINE void deadlockWithAnotherThread()
 Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
     {"nullptr",
      "Null pointer",
-     "Writes through a null pointer",
+     "Writes to address zero; the app crashes at once",
      dereferenceNullPointer},
     {"divide",
      "Divide by zero",
-     "Divides an integer by zero",
+     "Divides an integer by zero; the app crashes at once",
      [] { divideResult = divideByZero(); },
      false,
      integerDivideTraps},
     {"stackoverflow",
      "Stack overflow",
-     "Recurses until the stack runs out",
+     "Calls itself until the thread's stack is full",
      overflowStack},
-    {"abort", "abort()", "Calls std::abort", [] { std::abort(); }},
+    {"abort",
+     "abort()",
+     "Calls std::abort, which ends the app at once",
+     [] { std::abort(); }},
     {"purevirtual",
      "Pure virtual call",
-     "Calls a pure virtual from a constructor",
+     "Calls a virtual function that has no body, from a constructor",
      callPureVirtual},
     {"terminate",
      "Uncaught exception",
-     "Throws a std::runtime_error nobody catches",
+     "Throws an exception nothing catches, so the app ends",
      throwUncaughtException},
     {"heapcorruption", "Heap corruption", heapCorruptionDescription, corruptHeap},
     {"hang",
      "Hang",
-     "Sleeps the thread past the hang threshold",
+     "Sleeps the thread longer than the hang time limit; reported as a hang",
      sleepPastHangThreshold,
      true},
-    {"spin", "Spin", "Spins the thread forever", spinForever, true},
+    {"spin",
+     "Spin",
+     "Loops forever without sleeping; reported as a hang",
+     spinForever,
+     true},
     {"deadlock",
      "Deadlock",
-     "Locks two mutexes against another thread in the opposite order",
+     "Two threads each wait for a lock the other holds; reported as a hang",
      deadlockWithAnotherThread,
      true},
     {"fastfail",
      "__fastfail",
-     "Fails fast, past every handler but Windows Error Reporting",
+     "Ends the app at once; no crash handler inside the app runs, only "
+     "Windows Error Reporting sees it",
 #if defined(_WIN32)
      failFast,
      false,

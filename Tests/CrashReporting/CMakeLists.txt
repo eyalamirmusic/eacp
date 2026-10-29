@@ -32,9 +32,9 @@ target_compile_definitions(CrashReportingTests PRIVATE
         EACP_CRASHING_LIBRARY="$<TARGET_FILE:CrashingLibrary>")
 add_dependencies(CrashReportingTests CrashingLibrary)
 
-# The Windows Error Reporting helper DLL is listed per user in HKCU, one value per DLL path, and every
-# crashing process lists the same one beside this binary; a group that takes it
-# out while another group crashes would see the other's listing.
+# Every crashing process adds the same HKCU registry entry for the Windows
+# Error Reporting helper DLL beside this binary, and some groups remove it, so
+# those groups run one at a time: else one removes it while another crashes.
 if (WIN32)
     set(wer_lock_file "${CMAKE_CURRENT_BINARY_DIR}/WerSerialisation.cmake")
 

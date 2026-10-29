@@ -5,9 +5,10 @@
 #include <array>
 #include <cstddef>
 
-// The Windows Error Reporting (WER) runtime exception helper: WerFault.exe loads it for a crash no
-// in-process filter saw (__fastfail, heap corruption) and hands it the dying
-// process. It passes the crash to that process's eacp handler and claims it.
+// The Windows Error Reporting (WER) helper DLL. WerFault.exe, which Windows
+// runs when a process dies, loads it for a crash no in-app handler saw
+// (__fastfail, heap corruption). It hands the crash to that app's eacp
+// handler process and tells Windows the crash is taken, so Windows files none.
 using namespace eacp::CrashReporting::Detail;
 
 namespace
@@ -51,7 +52,8 @@ bool isRegistrationValid(const WerRegistration& registration)
            && registration.version == werRegistrationVersion;
 }
 
-// A code already there is a crash the in-app filter is handing over itself.
+// An exception code already written means the in-app handler caught this crash
+// and is reporting it itself.
 bool isCrashAlreadyRecorded(HANDLE process, const WerRegistration& registration)
 {
     auto code = std::uint64_t {0};
@@ -72,7 +74,8 @@ bool recordCrash(const WER_RUNTIME_EXCEPTION_INFORMATION& information,
     auto threadId = std::uint64_t {::GetThreadId(information.hThread)};
     auto code = std::uint64_t {record.ExceptionCode};
 
-    // The code goes last: the handler reads a crash once it is there.
+    // The exception code is written last: the handler process starts reading
+    // the crash as soon as the code appears.
     return writeToProcess(process, recordAddress, record)
            && writeToProcess(process, contextAddress, information.context)
            && writeToProcess(process, registration.faultAddressAddress, faultAddress)
@@ -83,8 +86,8 @@ bool recordCrash(const WER_RUNTIME_EXCEPTION_INFORMATION& information,
            && writeToProcess(process, registration.codeAddress, code);
 }
 
-// The handler writes the report and ends the app; it stays up after that to
-// deliver it, so the app's end is what is waited for.
+// Waits for the app to end, not the handler: the handler ends the app once the
+// report is written, then keeps running to send it.
 bool handOverToHandler(const WER_RUNTIME_EXCEPTION_INFORMATION& information,
                        std::uint64_t registrationAddress)
 {
@@ -139,7 +142,8 @@ extern "C" __declspec(dllexport) HRESULT WINAPI OutOfProcessExceptionEventCallba
     return S_OK;
 }
 
-// Only called for a crash this module claimed, which WER then never reports.
+// Windows calls this only for a crash this DLL took, and files no report of
+// its own for it.
 extern "C" __declspec(dllexport) HRESULT WINAPI
     OutOfProcessExceptionEventSignatureCallback(
         PVOID,

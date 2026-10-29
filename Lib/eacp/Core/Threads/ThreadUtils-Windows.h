@@ -20,9 +20,9 @@ void initMainThread();
 // thread rather than the host's UI thread.
 void setCurrentThreadAsMainFallback();
 
-// Keeps SEM_NOGPFAULTERRORBOX off from now on, initMainThread included, so WER
-// still runs for faults no in-process handler sees: what a crash reporter's WER
-// module needs.
+// Stops SEM_NOGPFAULTERRORBOX being set later, initMainThread included: that
+// flag stops Windows Error Reporting running at all, and with it the crash
+// reporter's helper DLL, which is all that sees a fast-fail or heap corruption.
 void keepWindowsErrorReportingOn();
 
 void shutdownMainThread();

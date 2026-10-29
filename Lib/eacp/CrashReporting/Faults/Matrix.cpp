@@ -158,9 +158,8 @@ ExpectedOutcome expectHeapCorruption(Lane lane, ThreadChoice thread)
     if (isArm64Windows(lane))
         return withShortStack(reported(lane, "STATUS_HEAP_CORRUPTION"),
                               "through the Windows Error Reporting helper; the "
-                              "context Windows passes it on the CI runners has "
-                              "no frame chain, so the "
-                              "stack stops in ntdll");
+                              "registers Windows hands it on the CI runners "
+                              "have no frame chain, so the stack stops in ntdll");
 
     if (!isMac(lane))
         return reported(lane, "STATUS_HEAP_CORRUPTION");

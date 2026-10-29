@@ -13,12 +13,12 @@
 #include <cstdint>
 #include <string_view>
 
-// What the app hands WerRegisterRuntimeExceptionModule as its context: an
-// address in the app that the Windows Error Reporting helper DLL, running in
-// WerFault.exe, reads with ReadProcessMemory. The module writes the exception into it and the shared
-// block's crash fields at the addresses it names, exactly as the in-app filter
-// would, so the handler takes it from there unchanged. Plain Windows types
-// only: the module links nothing of eacp.
+// What the app passes to WerRegisterRuntimeExceptionModule: a block in the
+// app's memory that the Windows Error Reporting helper DLL, running inside
+// WerFault.exe, reads with ReadProcessMemory. The DLL writes the exception
+// into it, and into the shared crash fields at the addresses it holds, just
+// as the in-app handler would, so the handler process reports it unchanged.
+// Plain Windows types only: the DLL links nothing of eacp.
 namespace eacp::CrashReporting::Detail
 {
 constexpr auto werRegistrationMagic = std::uint32_t {0xEAC9EE01};
@@ -34,17 +34,18 @@ struct WerRegistration
     std::uint32_t magic;
     std::uint32_t version;
 
-    // The app's own handles, which the module duplicates out of it.
+    // Handles in the app's process; the DLL copies them out with
+    // DuplicateHandle.
     std::uint64_t crashEventHandle;
     std::uint64_t handlerProcessHandle;
 
-    // Where SharedCrashInfo's fields of these names are in the app.
+    // Addresses, in the app, of the SharedCrashInfo fields of the same names.
     std::uint64_t codeAddress;
     std::uint64_t faultAddressAddress;
     std::uint64_t threadIdAddress;
     std::uint64_t exceptionPointersAddressAddress;
 
-    // Filled by the module; pointers already points at the other two.
+    // Written by the DLL; pointers already holds the addresses of the other two.
     EXCEPTION_POINTERS pointers;
     EXCEPTION_RECORD record;
     CONTEXT context;

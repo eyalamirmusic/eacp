@@ -318,8 +318,8 @@ std::uint64_t getHandleValue(HANDLE handle)
     return reinterpret_cast<std::uintptr_t>(handle);
 }
 
-// Backslashes: Windows Error Reporting matches the registered path against the registry value
-// name as written.
+// Backslashes, not slashes: Windows Error Reporting compares the registered
+// path with the registry value's name character for character.
 std::wstring getWerModulePath()
 {
     auto modulePath = Files::executablePath().parentDirectory()
@@ -362,8 +362,9 @@ void fillWerRegistration(WindowsCrashClient& client, SharedState& state)
     registration.pointers = {&registration.record, &registration.context};
 }
 
-// Windows Error Reporting (WER) loads only a module listed in the registry; without one, __fastfail and
-// heap corruption are still reported, from the exit code.
+// Windows Error Reporting (WER) loads only a helper DLL listed in the registry;
+// without the entry, __fastfail and heap corruption are still reported, but
+// from the exit code alone, with no stack.
 void registerWerModule(SharedState& state)
 {
     auto& client = getWindowsCrashClient();
@@ -388,7 +389,8 @@ void registerWerModule(SharedState& state)
                                                           &client.werRegistration);
     client.isWerModuleRegistered = SUCCEEDED(registered);
 
-    // SEM_NOGPFAULTERRORBOX keeps WER, and so the module, out entirely.
+    // With SEM_NOGPFAULTERRORBOX set, Windows Error Reporting never runs, so
+    // neither does the helper DLL.
     if (client.isWerModuleRegistered)
         Threads::keepWindowsErrorReportingOn();
 

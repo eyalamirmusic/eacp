@@ -666,8 +666,8 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 };
 
 #if defined(_WIN32)
-// The crashing process lists the module itself through Options; this takes it
-// out.
+// The crashing process adds the helper DLL's registry entry itself, through
+// Options; this removes it.
 void unlistWerModule()
 {
     auto module = Files::executablePath().parentDirectory()
@@ -681,16 +681,18 @@ void unlistWerModule()
                     "/f"});
 }
 
-// The in-app path ends the app itself, so WER, and the module, never see it.
-auto tCrashReportAbortWithWerModule = test("CrashReport/abortWithWerModule") = []
+// The in-app handler catches abort and ends the app itself, so Windows Error
+// Reporting and the helper DLL never run.
+auto tCrashReportAbortWithWindowsErrorReportingHelper =
+    test("CrashReport/abortWithWindowsErrorReportingHelper") = []
 {
     auto report = crashTheCrashingProcess("abort", FaultThread::main);
     check(report.reason == "SIGABRT");
     check(report.capturedBy == CaptureSource::handler);
 };
 
-auto tCrashReportFastFailWithoutWerModule =
-    test("CrashReport/fastFailWithoutWerModule") = []
+auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithoutWindowsErrorReportingHelper") = []
 {
     unlistWerModule();
     auto database = TemporaryFile {};

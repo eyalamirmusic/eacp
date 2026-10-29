@@ -373,8 +373,9 @@ void initialiseSymbols(HANDLE process)
 }
 
 #if defined(_M_ARM64)
-// The context WER hands over for a heap-corruption fail-fast carries no lr or
-// fp, so StackWalk64 stops at its first frame; the thread itself, stopped at
+// The registers Windows Error Reporting hands over for a heap-corruption crash
+// have no link register or frame pointer, so StackWalk64 stops at its first
+// frame; the thread itself, stopped at
 // the fault, still has the frame-pointer chain.
 Vector<std::uint64_t> walkLiveThreadContext(HANDLE process, HANDLE thread)
 {
@@ -467,7 +468,8 @@ int handleCrash(const ReportDatabase& database, const AppConnection& connection)
     const auto& state = connection.state->get();
     auto report = beginHandlerReport(database, state, CaptureSource::handler);
 
-    // The Windows Error Reporting helper records only the code.
+    // The Windows Error Reporting helper writes only the exception code, so the
+    // reason is named from it here.
     if (report.reason.empty())
         report.reason = describeExitCode(static_cast<DWORD>(state.crash.code));
     auto minidumpPath = report.folder / minidumpFileName;
