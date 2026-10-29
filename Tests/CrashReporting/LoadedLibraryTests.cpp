@@ -31,12 +31,12 @@ std::string getLibraryFileName()
     return FilePath {EACP_CRASHING_LIBRARY}.fileName();
 }
 
-std::optional<CrashReport> crashInLoadedLibrary(std::string_view fault,
+std::optional<CrashReport> crashInLoadedLibrary(std::string_view function,
                                                 std::string_view thread)
 {
     auto database = TemporaryFile {};
     auto options = Tests::makeCrashingProcessOptions({"--crash-in-library",
-                                                      std::string {fault},
+                                                      std::string {function},
                                                       "--thread",
                                                       std::string {thread},
                                                       "--crash-database",
@@ -100,7 +100,7 @@ void checkFrameInLibrary(const Vector<StackFrame>& frames, std::string_view func
 
 void checkNullPointerInLibrary(std::string_view thread)
 {
-    auto report = crashInLoadedLibrary("nullptr", thread);
+    auto report = crashInLoadedLibrary(libraryFaultFunction, thread);
 
     if (report)
         checkFrameInLibrary(report->crashingThread.frames, libraryFaultFunction);
@@ -130,8 +130,8 @@ Faults::ExpectedOutcome getUncaughtExceptionOutcome(Faults::ThreadChoice thread)
 void checkUncaughtExceptionInLibrary(Faults::ThreadChoice thread)
 {
     auto expected = getUncaughtExceptionOutcome(thread);
-    auto report =
-        crashInLoadedLibrary("terminate", Faults::getThreadChoiceName(thread));
+    auto report = crashInLoadedLibrary(libraryThrowFunction,
+                                       Faults::getThreadChoiceName(thread));
 
     if (!report)
         return;
