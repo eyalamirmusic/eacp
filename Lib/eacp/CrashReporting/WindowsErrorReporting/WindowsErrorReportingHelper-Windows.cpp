@@ -8,7 +8,8 @@
 // The Windows Error Reporting (WER) helper DLL. WerFault.exe, which Windows
 // runs when a process dies, loads it for a crash no in-app handler saw
 // (__fastfail, heap corruption). It hands the crash to that app's eacp
-// handler process and tells Windows the crash is taken, so Windows files none.
+// handler process and sets pbOwnershipClaimed, so Windows skips its own
+// handling: no report sent to Microsoft, no "stopped working" dialog.
 using namespace eacp::CrashReporting::Detail;
 
 namespace
