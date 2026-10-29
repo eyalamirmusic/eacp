@@ -5,8 +5,7 @@ namespace eacp::CrashReporting
 {
 namespace
 {
-std::optional<std::size_t> claimSlot(std::string_view name,
-                                     std::chrono::milliseconds threshold)
+std::optional<std::size_t> claimSlot(std::string_view name, Time::MS threshold)
 {
     auto hang = Detail::findWatchedHangInfo();
 
@@ -35,7 +34,7 @@ void applyToSlot(const std::optional<std::size_t>& slot, SlotFunction apply)
 }
 } // namespace
 
-ThreadWatch::ThreadWatch(std::string_view name, std::chrono::milliseconds threshold)
+ThreadWatch::ThreadWatch(std::string_view name, Time::MS threshold)
     : slot(claimSlot(name, threshold))
 {
 }
@@ -45,9 +44,9 @@ ThreadWatch::~ThreadWatch()
     applyToSlot(slot, Detail::releaseWatchedThread);
 }
 
-void ThreadWatch::beat()
+void ThreadWatch::sendHeartbeat()
 {
-    applyToSlot(slot, Detail::beatWatchedThread);
+    applyToSlot(slot, Detail::sendWatchedThreadHeartbeat);
 }
 
 void ThreadWatch::pause()

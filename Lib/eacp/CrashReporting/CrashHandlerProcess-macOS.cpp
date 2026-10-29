@@ -43,7 +43,7 @@ CrashPipeEvent waitForCrashPipeEvent()
 
     while (true)
     {
-        auto count = ::read(handlerCrashPipeDescriptor, &byte, 1);
+        auto count = ::read(handlerCrashPipeFileDescriptor, &byte, 1);
 
         if (count < 0 && errno == EINTR)
             continue;
@@ -64,7 +64,7 @@ std::optional<std::reference_wrapper<SharedState>> mapInheritedSharedState()
                            sizeof(SharedState),
                            PROT_READ | PROT_WRITE,
                            MAP_SHARED,
-                           handlerSharedStateDescriptor,
+                           handlerSharedMemoryFileDescriptor,
                            0);
 
     if (mapping == MAP_FAILED)
@@ -80,8 +80,8 @@ std::optional<std::reference_wrapper<SharedState>> mapInheritedSharedState()
 
 void signalHandlerReady()
 {
-    ::write(handlerReadyPipeDescriptor, &handlerReadyByte, 1);
-    ::close(handlerReadyPipeDescriptor);
+    ::write(handlerReadyPipeFileDescriptor, &handlerReadyByte, 1);
+    ::close(handlerReadyPipeFileDescriptor);
 }
 std::map<std::string, std::uint64_t> getHandlerImageBases()
 {
@@ -105,7 +105,7 @@ std::map<std::string, std::uint64_t> getHandlerImageBases()
 
 // The libraries the app loaded and the handler did not, read from their files.
 using LoadedLibrarySymbolReaders =
-    std::map<std::string, std::unique_ptr<LoadedLibrarySymbolReader>>;
+    std::map<std::string, OwningPointer<LoadedLibrarySymbolReader>>;
 
 const LoadedLibrarySymbolReader&
     getOrOpenLibrarySymbolReader(LoadedLibrarySymbolReaders& files,
@@ -114,7 +114,7 @@ const LoadedLibrarySymbolReader&
     auto& file = files[path];
 
     if (!file)
-        file = std::make_unique<LoadedLibrarySymbolReader>(FilePath {path});
+        file = makeOwned<LoadedLibrarySymbolReader>(FilePath {path});
 
     return *file;
 }
@@ -277,7 +277,7 @@ int handleCrash(const ReportDatabase& database, const SharedState& state)
     return deliverReportInHandler(report);
 }
 
-constexpr auto handshakeTimeout = std::chrono::seconds {5};
+constexpr auto handshakeTimeout = Time::MS {5000};
 constexpr auto maxMinidumpStackBytes = std::size_t {1024 * 1024};
 constexpr auto minidumpFileName = "minidump.dmp";
 
@@ -499,7 +499,7 @@ CrashReport captureMachException(const ReportDatabase& database,
     auto images = readImageList(task);
     auto threadId = readThreadId(exception.thread);
 
-    auto crash = std::make_unique<SharedCrashInfo>(state.crash);
+    auto crash = makeOwned<SharedCrashInfo>(state.crash);
     copyImagesIntoCrashInfo(*crash, images);
     copyFramesIntoCrashInfo(*crash, addresses);
 
@@ -648,9 +648,9 @@ int waitForAppEvents(HandlerSession& session)
 } // namespace
 int runHandlerProcess(const HandlerArguments& arguments)
 {
-    auto isMachChannel = arguments.channel == machHandshakeHandlerChannel;
+    auto isMachChannel = arguments.channel == machTaskPortConnectionArgument;
 
-    if (!isMachChannel && arguments.channel != signalOnlyHandlerChannel)
+    if (!isMachChannel && arguments.channel != signalOnlyConnectionArgument)
         return EXIT_FAILURE;
 
     auto state = mapInheritedSharedState();

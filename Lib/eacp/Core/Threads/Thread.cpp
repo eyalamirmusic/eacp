@@ -26,7 +26,7 @@ ThreadWatchRegistry& getThreadWatchRegistry()
     return registry;
 }
 
-std::unique_ptr<ThreadWatchScope> openThreadWatch(const ThreadOptions& options)
+OwningPointer<ThreadWatchScope> openThreadWatch(const ThreadOptions& options)
 {
     if (options.watchName.empty())
         return {};
@@ -60,7 +60,7 @@ struct CurrentThreadWatch
         registry.openWatches.erase(std::this_thread::get_id());
     }
 
-    std::unique_ptr<ThreadWatchScope> watch;
+    OwningPointer<ThreadWatchScope> watch;
 };
 
 template <typename WatchFunction>
@@ -82,9 +82,10 @@ void setThreadWatchFactory(const ThreadWatchFactory& factory)
     registry.factory = factory;
 }
 
-void beatThreadWatch()
+void sendThreadHeartbeat()
 {
-    applyToCurrentThreadWatch([](ThreadWatchScope& watch) { watch.beat(); });
+    applyToCurrentThreadWatch([](ThreadWatchScope& watch)
+                              { watch.sendHeartbeat(); });
 }
 
 void pauseThreadWatch()

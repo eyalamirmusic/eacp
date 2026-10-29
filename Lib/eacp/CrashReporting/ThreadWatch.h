@@ -2,25 +2,24 @@
 
 #include <eacp/Core/Threads/Thread.h>
 
-#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string_view>
 
 // A worker thread watched for hangs the way the main thread is: open one on
-// the thread, beat it from the thread's loop, and a silence past its threshold
+// the thread, send it a heartbeat from the thread's loop, and a silence past its threshold
 // is sampled and reported as a hang, once per episode, with the app left
 // running.
 //
-//   auto watch = CrashReporting::ThreadWatch {"encoder", 5s};
+//   auto watch = CrashReporting::ThreadWatch {"encoder", Time::MS {5000}};
 //   while (running)
 //   {
 //       encodeNextFrame();
-//       watch.beat();
+//       watch.sendHeartbeat();
 //   }
 //
 // A Threads::Thread started with ThreadOptions::watchName opens one around its
-// body, beaten with Threads::beatThreadWatch(). Only opted-in threads are
+// body, kept alive with Threads::sendThreadHeartbeat(). Only opted-in threads are
 // watched, at most Detail::maxWatchedThreads - 1 at once beside the main one;
 // a watch opened before start(), after stop(), with detection off or with
 // every slot taken watches nothing.
@@ -30,15 +29,14 @@ class ThreadWatch final : public Threads::ThreadWatchScope
 {
 public:
     // A zero threshold is Options::hangThreshold.
-    explicit ThreadWatch(std::string_view name,
-                         std::chrono::milliseconds threshold = {});
+    explicit ThreadWatch(std::string_view name, Time::MS threshold = {});
     ~ThreadWatch() override;
 
     ThreadWatch(const ThreadWatch&) = delete;
     ThreadWatch& operator=(const ThreadWatch&) = delete;
 
     // From the thread that opened it.
-    void beat() override;
+    void sendHeartbeat() override;
 
     // Around work meant to outlast the threshold. Nests.
     void pause() override;

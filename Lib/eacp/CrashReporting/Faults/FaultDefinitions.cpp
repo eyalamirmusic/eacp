@@ -5,7 +5,6 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -35,15 +34,15 @@ namespace eacp::CrashReporting::Faults
 {
 namespace
 {
-constexpr auto defaultHangDuration = std::chrono::milliseconds {12000};
-std::atomic<std::chrono::milliseconds> hangDuration {defaultHangDuration};
+constexpr auto defaultHangDuration = Time::MS {12000};
+std::atomic<Time::MS> hangDuration {defaultHangDuration};
 std::atomic<std::uint64_t> spinCount {0};
 } // namespace
 
 // Outside the anonymous namespace so their names reach the report's symbols.
 EACP_FAULT_NO_INLINE void sleepPastHangThreshold()
 {
-    std::this_thread::sleep_for(hangDuration.load());
+    Time::sleep(hangDuration.load());
 }
 
 EACP_FAULT_NO_INLINE void spinForever()
@@ -517,12 +516,12 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
 return faults;
 } // namespace eacp::CrashReporting::Faults
 
-void setHangDuration(std::chrono::milliseconds duration)
+void setHangDuration(Time::MS duration)
 {
     hangDuration = duration;
 }
 
-std::chrono::milliseconds getHangDuration()
+Time::MS getHangDuration()
 {
     return hangDuration.load();
 }

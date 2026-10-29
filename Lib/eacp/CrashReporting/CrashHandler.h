@@ -2,8 +2,9 @@
 
 #include "CrashReport.h"
 
+#include <eacp/Core/Utils/Containers.h>
+
 #include <functional>
-#include <memory>
 
 namespace eacp::CrashReporting
 {
@@ -47,10 +48,10 @@ struct CrashHandler
     virtual void unreportedExit(const AppSession&) {}
 };
 
-using CrashHandlerFactory = std::function<std::unique_ptr<CrashHandler>()>;
+using CrashHandlerFactory = std::function<OwningPointer<CrashHandler>()>;
 
 // A plain CrashHandler, which does nothing, when none was registered.
-std::unique_ptr<CrashHandler> createRegisteredCrashHandler();
+OwningPointer<CrashHandler> createRegisteredCrashHandler();
 
 namespace Detail
 {
@@ -65,5 +66,5 @@ struct CrashHandlerRegistration
     static const auto eacpCrashHandlerRegistration##HandlerType =                   \
         ::eacp::CrashReporting::Detail::CrashHandlerRegistration                    \
     {                                                                               \
-        [] { return std::make_unique<HandlerType>(); }                              \
+        [] { return ::eacp::makeOwned<HandlerType>(); }                             \
     }

@@ -16,6 +16,16 @@ struct MS
     friend constexpr auto operator<=>(MS, MS) = default;
 };
 
+constexpr MS operator+(MS first, MS second)
+{
+    return MS {first.count + second.count};
+}
+
+constexpr MS operator*(MS duration, std::int64_t factor)
+{
+    return MS {duration.count * factor};
+}
+
 // Blocks the calling thread, keeping <thread> and <chrono> out of callers
 // that just need to sleep.
 void sleep(MS duration);

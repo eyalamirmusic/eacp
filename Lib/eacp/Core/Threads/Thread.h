@@ -1,10 +1,9 @@
 #pragma once
 
 #include "../Utils/Common.h"
+#include "../Utils/Time.h"
 
-#include <chrono>
 #include <functional>
-#include <memory>
 #include <string>
 #include <string_view>
 
@@ -17,30 +16,30 @@ struct ThreadWatchScope
 {
     virtual ~ThreadWatchScope() = default;
 
-    virtual void beat() = 0;
+    virtual void sendHeartbeat() = 0;
     virtual void pause() = 0;
     virtual void resume() = 0;
 };
 
-using ThreadWatchFactory = std::function<std::unique_ptr<ThreadWatchScope>(
-    std::string_view name, std::chrono::milliseconds threshold)>;
+using ThreadWatchFactory = std::function<OwningPointer<ThreadWatchScope>(
+    std::string_view name, Time::MS threshold)>;
 
 struct ThreadOptions
 {
     // Empty is unwatched. Otherwise the body runs inside a watch of this name,
-    // which it beats with beatThreadWatch().
+    // which it keeps alive with sendThreadHeartbeat().
     std::string watchName;
 
     // Zero is the watcher's own default.
-    std::chrono::milliseconds watchThreshold {0};
+    Time::MS watchThreshold {};
 };
 
 // Applies to threads started after it; an empty factory opens no watches.
 void setThreadWatchFactory(const ThreadWatchFactory& factory);
 
-// On a Thread whose options opened a watch: beat it, or pause and resume it
+// On a Thread whose options opened a watch: send it a heartbeat, or pause and resume it
 // around work meant to outlast its threshold. No-ops on any other thread.
-void beatThreadWatch();
+void sendThreadHeartbeat();
 void pauseThreadWatch();
 void resumeThreadWatch();
 

@@ -1172,7 +1172,7 @@ stack) is the fallback when the handshake failed. On Windows
 the handler writes a minidump and walks the stack with DbgHelp. Reports land in
 `pending/<id>/report.json` and reach the app's `CrashHandler`
 (`EACP_REGISTER_CRASH_HANDLER`). Hangs are a watched thread that stops
-beating: the main thread's heartbeat and any worker's `ThreadWatch` (or a
+sending heartbeats: the main thread's heartbeat and any worker's `ThreadWatch` (or a
 `Threads::Thread` with `ThreadOptions::watchName`) share one 32-slot table in
 the shared block, and threads silent in the same check, a deadlock, are one
 `kind: "hang"` report with `threadName` and `stalledThreads`.

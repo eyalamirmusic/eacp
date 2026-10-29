@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cerrno>
 #include <csignal>
+#include <cstdlib>
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <exception>
@@ -389,7 +390,8 @@ std::optional<PipeEnds> createPipe()
 struct DescriptorAboveHandlerSlots
 {
     explicit DescriptorAboveHandlerSlots(int original)
-        : descriptor(::fcntl(original, F_DUPFD_CLOEXEC, firstFreeDescriptor))
+        : descriptor(::fcntl(
+              original, F_DUPFD_CLOEXEC, firstFileDescriptorAfterHandlerSlots))
     {
     }
 
@@ -416,7 +418,7 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
                                   const std::optional<HandshakePort>& handshake)
 {
     auto channel =
-        handshake ? machHandshakeHandlerChannel : signalOnlyHandlerChannel;
+        handshake ? machTaskPortConnectionArgument : signalOnlyConnectionArgument;
     auto arguments = makeHandlerCommandLine(launch, channel);
     auto argumentPointers = makeArgumentPointers(arguments);
 
@@ -426,11 +428,11 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
     auto movedCrashPipe = DescriptorAboveHandlerSlots {crashPipe.readEnd};
     auto movedReadyPipe = DescriptorAboveHandlerSlots {readyPipe.writeEnd};
     ::posix_spawn_file_actions_adddup2(
-        &actions, movedShared.descriptor, handlerSharedStateDescriptor);
+        &actions, movedShared.descriptor, handlerSharedMemoryFileDescriptor);
     ::posix_spawn_file_actions_adddup2(
-        &actions, movedCrashPipe.descriptor, handlerCrashPipeDescriptor);
+        &actions, movedCrashPipe.descriptor, handlerCrashPipeFileDescriptor);
     ::posix_spawn_file_actions_adddup2(
-        &actions, movedReadyPipe.descriptor, handlerReadyPipeDescriptor);
+        &actions, movedReadyPipe.descriptor, handlerReadyPipeFileDescriptor);
 
     for (auto standardDescriptor: {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO})
         ::posix_spawn_file_actions_addinherit_np(&actions, standardDescriptor);
@@ -459,10 +461,10 @@ std::optional<pid_t> spawnHandler(const HandlerLaunch& launch,
     return processId;
 }
 
-bool waitForHandlerReady(int readyReadEnd, std::chrono::milliseconds timeout)
+bool waitForHandlerReady(int readyReadEnd, Time::MS timeout)
 {
     auto descriptor = pollfd {readyReadEnd, POLLIN, 0};
-    auto timeoutMilliseconds = static_cast<int>(timeout.count());
+    auto timeoutMilliseconds = static_cast<int>(timeout.count);
 
     if (::poll(&descriptor, 1, timeoutMilliseconds) <= 0)
         return false;

@@ -15,9 +15,7 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <deque>
-#include <thread>
 
 using namespace nano;
 using namespace eacp;
@@ -25,8 +23,8 @@ using namespace eacp::CrashReporting;
 
 namespace
 {
-constexpr auto reportWaitLimit = std::chrono::seconds {10};
-constexpr auto reportPollInterval = std::chrono::milliseconds {20};
+constexpr auto reportWaitLimit = Time::MS {10000};
+constexpr auto reportPollInterval = Time::MS {20};
 constexpr auto testHangThresholdMilliseconds = "500";
 
 using Faults::ExpectedOutcome;
@@ -155,11 +153,10 @@ bool hasCompleteReport(const ReportDatabase& database)
 // report can land a moment after Processes::run returns.
 void waitForCompleteReport(const ReportDatabase& database)
 {
-    auto deadline = std::chrono::steady_clock::now() + reportWaitLimit;
+    auto deadline = Time::Deadline {reportWaitLimit};
 
-    while (!hasCompleteReport(database)
-           && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(reportPollInterval);
+    while (!hasCompleteReport(database) && !deadline.expired())
+        Time::sleep(reportPollInterval);
 }
 
 Processes::ProcessOptions
@@ -264,11 +261,11 @@ void checkHangReport(const CrashReport& report, std::string_view function)
 // not a test run that never ends.
 bool waitForExit(Processes::Process& process)
 {
-    constexpr auto exitWaitLimit = std::chrono::seconds {30};
-    auto deadline = std::chrono::steady_clock::now() + exitWaitLimit;
+    constexpr auto exitWaitLimit = Time::MS {30000};
+    auto deadline = Time::Deadline {exitWaitLimit};
 
-    while (process.isRunning() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(reportPollInterval);
+    while (process.isRunning() && !deadline.expired())
+        Time::sleep(reportPollInterval);
 
     if (!process.isRunning())
         return true;
@@ -378,7 +375,7 @@ CrashReport checkCrashAgainstMatrix(std::string_view fault, FaultThread thread)
 constexpr auto backgroundWatchName = "fault background";
 
 // Never returns, so the report is waited for while the app still runs. A
-// main-thread deadlock's worker stops beating up to a heartbeat after the main
+// main-thread deadlock's worker stops sending heartbeats up to one heartbeat after the main
 // thread, so it may be a second report of its own; the main one is returned.
 CrashReport waitForStallReport(std::string_view kind)
 {
@@ -411,7 +408,7 @@ bool isStallingFault(std::string_view fault)
     return found && found->get().stallsItsThread;
 }
 
-// Off the main thread the main thread keeps beating and the app quits on its
+// Off the main thread the main thread keeps sending heartbeats and the app quits on its
 // own once the stall would have ended; the watched worker's silence is the one
 // report.
 CrashReport runBackgroundStall(std::string_view fault)
@@ -851,7 +848,7 @@ auto tCrashReportMinidumpOpens = test("CrashReport/minidumpOpensInLldb") = []
     checkLldbNamesFaultFunction(report.minidumpPath, "dereferenceNullPointer");
 };
 
-constexpr auto signalsOnlyRunLimit = std::chrono::seconds {3};
+constexpr auto signalsOnlyRunLimit = Time::MS {3000};
 
 // What a failed port handshake leaves: the signal path, and no wait
 // on a handshake that never comes.
@@ -861,16 +858,15 @@ auto tCrashReportSignalsOnly = test("CrashReport/signalsOnly") = []
         return;
 
     auto database = TemporaryFile {};
-    auto started = std::chrono::steady_clock::now();
+    auto runLimit = Time::Deadline {signalsOnlyRunLimit};
     auto report = crashTheCrashingProcess(
         "nullptr", FaultThread::main, database, {"--signals-only"});
-    auto elapsed = std::chrono::steady_clock::now() - started;
 
     check(report.reason == getSignalPathReason("nullptr", FaultThread::main));
     check(report.capturedBy == CaptureSource::handler);
     check(report.minidumpPath.empty());
     check(hasFrameInFunction(report, "dereferenceNullPointer"));
-    check(elapsed < signalsOnlyRunLimit);
+    check(!runLimit.expired());
 };
 
 auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
@@ -880,12 +876,12 @@ auto tCrashReportHangThresholdZero = test("CrashReport/hangThresholdZero") = []
 // windows, in a modal alert run from the launch Apple event; a quit inside it
 // stopped the alert and left the app running. Each round crashes twice after
 // launch, then runs a main-thread hang, which must quit on its own.
-bool quitsWithin(Processes::Process& process, std::chrono::milliseconds limit)
+bool quitsWithin(Processes::Process& process, Time::MS limit)
 {
-    auto deadline = std::chrono::steady_clock::now() + limit;
+    auto deadline = Time::Deadline {limit};
 
-    while (process.isRunning() && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::sleep_for(reportPollInterval);
+    while (process.isRunning() && !deadline.expired())
+        Time::sleep(reportPollInterval);
 
     auto quit = !process.isRunning();
 
@@ -901,7 +897,7 @@ auto tCrashReportHangQuitsAfterLaunchCrashes =
 {
     constexpr auto rounds = 10;
     constexpr auto crashesPerRound = 2;
-    constexpr auto quitLimit = std::chrono::seconds {20};
+    constexpr auto quitLimit = Time::MS {20000};
 
     for (auto round = 0; round < rounds; ++round)
     {

@@ -18,12 +18,12 @@ constexpr auto testThreadId = std::uint64_t {42};
 constexpr auto otherThreadId = std::uint64_t {43};
 constexpr auto overdue = testThreshold + testPollInterval;
 
-// The claims beat on the real steady clock, so the tests' own times follow it.
-const auto beatTime = getSteadyMilliseconds();
+// The claims send heartbeats on the real steady clock, so the tests' own times follow it.
+const auto heartbeatTime = getSteadyMilliseconds();
 
-std::unique_ptr<SharedState> createWatchedState()
+eacp::OwningPointer<SharedState> createWatchedState()
 {
-    auto state = std::make_unique<SharedState>();
+    auto state = eacp::makeOwned<SharedState>();
     initialiseSharedState(*state, 1);
     state->hang.thresholdMilliseconds = testThreshold;
     state->hang.pollIntervalMilliseconds = testPollInterval;
@@ -32,56 +32,56 @@ std::unique_ptr<SharedState> createWatchedState()
 
 SharedWatchedThread& claimAt(SharedHangInfo& hang,
                              std::string_view name,
-                             std::uint64_t beat,
+                             std::uint64_t heartbeat,
                              std::uint64_t threadId = testThreadId)
 {
     auto slot = claimWatchedThread(hang, name, 0, threadId);
     check(slot.has_value());
     auto& thread = hang.threads[*slot];
-    thread.lastBeatMilliseconds = beat;
+    thread.lastHeartbeatMilliseconds = heartbeat;
     return thread;
 }
 
-auto tBeatingThreadIsNotReported =
-    test("CrashReport/threadWatchBeatingThreadIsNotReported") = []
+auto tThreadSendingHeartbeatsIsNotReported =
+    test("CrashReport/threadWatchThreadSendingHeartbeatsIsNotReported") = []
 {
     auto state = createWatchedState();
-    claimAt(state->hang, "encoder", beatTime);
+    claimAt(state->hang, "encoder", heartbeatTime);
     auto tracker = StallTracker {};
 
-    check(takeNewStalls(state->hang, tracker, beatTime + overdue - 1).empty());
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + overdue - 1).empty());
 };
 
 auto tSilentThreadIsReportedOnce =
     test("CrashReport/threadWatchSilentThreadIsReportedOncePerEpisode") = []
 {
     auto state = createWatchedState();
-    auto& thread = claimAt(state->hang, "encoder", beatTime);
+    auto& thread = claimAt(state->hang, "encoder", heartbeatTime);
     auto tracker = StallTracker {};
 
-    auto stalls = takeNewStalls(state->hang, tracker, beatTime + overdue);
+    auto stalls = takeNewStalls(state->hang, tracker, heartbeatTime + overdue);
     check(stalls.size() == 1);
     check(stalls.size() == 1 && stalls[0].durationMilliseconds == overdue);
-    check(takeNewStalls(state->hang, tracker, beatTime + 2 * overdue).empty());
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + 2 * overdue).empty());
 
-    auto nextBeat = beatTime + 3 * overdue;
-    thread.lastBeatMilliseconds = nextBeat;
-    check(takeNewStalls(state->hang, tracker, nextBeat + overdue).size() == 1);
+    auto nextHeartbeat = heartbeatTime + 3 * overdue;
+    thread.lastHeartbeatMilliseconds = nextHeartbeat;
+    check(takeNewStalls(state->hang, tracker, nextHeartbeat + overdue).size() == 1);
 };
 
 auto tPausedThreadIsNotReported =
     test("CrashReport/threadWatchPausedThreadIsNotReported") = []
 {
     auto state = createWatchedState();
-    auto& thread = claimAt(state->hang, "encoder", beatTime);
+    auto& thread = claimAt(state->hang, "encoder", heartbeatTime);
     auto tracker = StallTracker {};
 
     pauseWatchedThread(thread);
-    check(takeNewStalls(state->hang, tracker, beatTime + 10 * overdue).empty());
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + 10 * overdue).empty());
 
     resumeWatchedThread(thread);
     check(thread.pauseDepth.load() == 0);
-    check(thread.lastBeatMilliseconds.load() >= beatTime);
+    check(thread.lastHeartbeatMilliseconds.load() >= heartbeatTime);
 };
 
 auto tReleasedSlotIsFreed = test("CrashReport/threadWatchReleasedSlotIsFreed") = []
@@ -97,7 +97,7 @@ auto tReleasedSlotIsFreed = test("CrashReport/threadWatchReleasedSlotIsFreed") =
 
     auto& released = hang.threads[mainThreadSlot + 1];
     releaseWatchedThread(released);
-    released.lastBeatMilliseconds = beatTime;
+    released.lastHeartbeatMilliseconds = heartbeatTime;
 
     auto tracker = StallTracker {};
     auto stalls = takeNewStalls(hang, tracker, getSteadyMilliseconds() + overdue);
@@ -111,11 +111,12 @@ auto tThreadsStalledTogetherAreOneReport =
     test("CrashReport/threadWatchThreadsStalledTogetherAreOneReport") = []
 {
     auto state = createWatchedState();
-    claimAt(state->hang, "first", beatTime);
-    claimAt(state->hang, "second", beatTime + testPollInterval / 4, otherThreadId);
+    claimAt(state->hang, "first", heartbeatTime);
+    claimAt(
+        state->hang, "second", heartbeatTime + testPollInterval / 4, otherThreadId);
     auto tracker = StallTracker {};
 
-    auto stalls = takeNewStalls(state->hang, tracker, beatTime + overdue);
+    auto stalls = takeNewStalls(state->hang, tracker, heartbeatTime + overdue);
     check(stalls.size() == 2);
 };
 
@@ -123,15 +124,16 @@ auto tHealthyThreadIsNotTakenAlong =
     test("CrashReport/threadWatchHealthyThreadIsNotTakenAlong") = []
 {
     auto state = createWatchedState();
-    claimAt(state->hang, "stuck", beatTime);
-    claimAt(state->hang, "due", beatTime + overdue - testThreshold, otherThreadId);
+    claimAt(state->hang, "stuck", heartbeatTime);
+    claimAt(
+        state->hang, "due", heartbeatTime + overdue - testThreshold, otherThreadId);
     auto tracker = StallTracker {};
 
-    check(takeNewStalls(state->hang, tracker, beatTime + overdue).size() == 1);
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + overdue).size() == 1);
 };
 
-auto tMainThreadWaitsForItsFirstBeat =
-    test("CrashReport/threadWatchMainThreadWaitsForItsFirstBeat") = []
+auto tMainThreadWaitsForItsFirstHeartbeat =
+    test("CrashReport/threadWatchMainThreadWaitsForItsFirstHeartbeat") = []
 {
     auto state = createWatchedState();
     watchMainThread(state->hang, testThreadId);
@@ -139,10 +141,10 @@ auto tMainThreadWaitsForItsFirstBeat =
     auto& main = state->hang.threads[mainThreadSlot];
 
     check(readBoundedText(main.name) == mainThreadName);
-    check(takeNewStalls(state->hang, tracker, beatTime).empty());
+    check(takeNewStalls(state->hang, tracker, heartbeatTime).empty());
 
-    main.lastBeatMilliseconds = beatTime;
-    auto stalls = takeNewStalls(state->hang, tracker, beatTime + overdue);
+    main.lastHeartbeatMilliseconds = heartbeatTime;
+    auto stalls = takeNewStalls(state->hang, tracker, heartbeatTime + overdue);
     check(stalls.size() == 1 && stalls[0].slot == mainThreadSlot);
 };
 
@@ -152,12 +154,12 @@ auto tOwnThresholdIsUsed = test("CrashReport/threadWatchUsesItsOwnThreshold") = 
     auto state = createWatchedState();
     auto slot = claimWatchedThread(state->hang, "slow", longThreshold, testThreadId);
     check(slot.has_value());
-    state->hang.threads[*slot].lastBeatMilliseconds = beatTime;
+    state->hang.threads[*slot].lastHeartbeatMilliseconds = heartbeatTime;
     auto tracker = StallTracker {};
 
-    check(takeNewStalls(state->hang, tracker, beatTime + overdue).empty());
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + overdue).empty());
     check(takeNewStalls(
-              state->hang, tracker, beatTime + longThreshold + testPollInterval)
+              state->hang, tracker, heartbeatTime + longThreshold + testPollInterval)
               .size()
           == 1);
 };
@@ -167,10 +169,10 @@ auto tDetectionOffWatchesNothing =
 {
     auto state = createWatchedState();
     state->hang.thresholdMilliseconds = 0;
-    claimAt(state->hang, "encoder", beatTime);
+    claimAt(state->hang, "encoder", heartbeatTime);
     auto tracker = StallTracker {};
 
-    check(takeNewStalls(state->hang, tracker, beatTime + 10 * overdue).empty());
+    check(takeNewStalls(state->hang, tracker, heartbeatTime + 10 * overdue).empty());
 };
 
 auto tWatchBeforeStartWatchesNothing =
@@ -178,7 +180,7 @@ auto tWatchBeforeStartWatchesNothing =
 {
     auto watch = ThreadWatch {"unstarted"};
     check(!watch.isWatched());
-    watch.beat();
+    watch.sendHeartbeat();
     watch.pause();
     watch.resume();
 };

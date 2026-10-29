@@ -103,14 +103,15 @@ std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 std::uint64_t grace)
 {
     auto isLive = thread.status.load(std::memory_order_acquire) == watchedThreadLive;
-    auto beat = thread.lastBeatMilliseconds.load(std::memory_order_acquire);
+    auto heartbeat =
+        thread.lastHeartbeatMilliseconds.load(std::memory_order_acquire);
     auto isPaused = thread.pauseDepth.load(std::memory_order_acquire) > 0;
     auto threshold = getWatchThreshold(hang, thread);
 
-    if (!isLive || beat == 0 || isPaused || threshold == 0 || now < beat)
+    if (!isLive || heartbeat == 0 || isPaused || threshold == 0 || now < heartbeat)
         return 0;
 
-    auto silence = now - beat;
+    auto silence = now - heartbeat;
 
     if (silence < threshold + grace)
         return 0;
@@ -137,7 +138,7 @@ std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
         thread.thresholdMilliseconds = thresholdMilliseconds;
         thread.threadId = threadId;
         copyBoundedText(thread.name, name);
-        beatWatchedThread(thread);
+        sendWatchedThreadHeartbeat(thread);
         thread.status.store(watchedThreadLive, std::memory_order_release);
         return slot;
     }
@@ -157,14 +158,14 @@ void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId)
 
 void releaseWatchedThread(SharedWatchedThread& thread)
 {
-    thread.lastBeatMilliseconds.store(0, std::memory_order_release);
+    thread.lastHeartbeatMilliseconds.store(0, std::memory_order_release);
     thread.status.store(watchedThreadFree, std::memory_order_release);
 }
 
-void beatWatchedThread(SharedWatchedThread& thread)
+void sendWatchedThreadHeartbeat(SharedWatchedThread& thread)
 {
-    thread.lastBeatMilliseconds.store(getSteadyMilliseconds(),
-                                      std::memory_order_release);
+    thread.lastHeartbeatMilliseconds.store(getSteadyMilliseconds(),
+                                           std::memory_order_release);
 }
 
 void pauseWatchedThread(SharedWatchedThread& thread)
@@ -177,8 +178,8 @@ void resumeWatchedThread(SharedWatchedThread& thread)
     if (thread.pauseDepth.load(std::memory_order_acquire) == 0)
         return;
 
-    if (thread.lastBeatMilliseconds.load(std::memory_order_acquire) != 0)
-        beatWatchedThread(thread);
+    if (thread.lastHeartbeatMilliseconds.load(std::memory_order_acquire) != 0)
+        sendWatchedThreadHeartbeat(thread);
 
     thread.pauseDepth.fetch_sub(1, std::memory_order_acq_rel);
 }
@@ -194,16 +195,17 @@ Vector<NewStall> takeNewStalls(const SharedHangInfo& hang,
     {
         const auto& thread = hang.threads[slot];
         auto generation = thread.generation.load(std::memory_order_acquire);
-        auto beat = thread.lastBeatMilliseconds.load(std::memory_order_acquire);
-        // Half an interval past the threshold: a healthy thread whose beat is
+        auto heartbeat =
+            thread.lastHeartbeatMilliseconds.load(std::memory_order_acquire);
+        // Half an interval past the threshold: a healthy thread whose heartbeat is
         // just due is never taken along.
         auto companionGrace = hang.pollIntervalMilliseconds / 2;
         auto duration = findStallDuration(hang, thread, now, companionGrace);
 
-        if (duration == 0 || beat == tracker.reportedBeats[slot])
+        if (duration == 0 || heartbeat == tracker.reportedHeartbeats[slot])
             continue;
 
-        // A healthy thread is up to one interval past its last beat.
+        // A healthy thread is up to one interval past its last heartbeat.
         auto overdue =
             findStallDuration(hang, thread, now, hang.pollIntervalMilliseconds);
         hasOverdueStall = hasOverdueStall || overdue != 0;
@@ -214,8 +216,8 @@ Vector<NewStall> takeNewStalls(const SharedHangInfo& hang,
         return {};
 
     for (const auto& stall: stalls)
-        tracker.reportedBeats[stall.slot] =
-            hang.threads[stall.slot].lastBeatMilliseconds.load(
+        tracker.reportedHeartbeats[stall.slot] =
+            hang.threads[stall.slot].lastHeartbeatMilliseconds.load(
                 std::memory_order_acquire);
 
     return stalls;

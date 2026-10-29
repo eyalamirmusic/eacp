@@ -23,7 +23,7 @@ namespace
 {
 using Faults::ThreadChoice;
 
-constexpr auto hangBeyondThreshold = std::chrono::milliseconds {2000};
+constexpr auto hangBeyondThreshold = Time::MS {2000};
 constexpr auto testEnvironment = "test";
 constexpr auto testUserId = "crash-test-user";
 constexpr auto testUserEmail = "user@example.com";
@@ -91,7 +91,7 @@ struct CrashingProcessSettings
     std::string fault;
     std::string threadName = "main";
     FilePath databaseDirectory;
-    std::int64_t hangThresholdMilliseconds = Options {}.hangThreshold.count();
+    std::int64_t hangThresholdMilliseconds = Options {}.hangThreshold.count;
     std::string stackOverflowReporting = "everyThread";
     bool pausesHangDetection = false;
     bool killsHandler = false;
@@ -119,8 +119,7 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
         return false;
 
     auto options = Options {};
-    options.hangThreshold =
-        std::chrono::milliseconds {settings.hangThresholdMilliseconds};
+    options.hangThreshold = Time::MS {settings.hangThresholdMilliseconds};
     options.stackOverflowReporting = *reporting;
     options.captureMachExceptions = !settings.signalsOnly;
     options.registerCrashHelperWithWindowsErrorReporting =
@@ -140,11 +139,10 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
     return true;
 }
 
-// Nothing is watched for a hang until the loop has beaten a few times.
+// Nothing is watched for a hang until the loop has sent a few heartbeats.
 Time::MS getDelayBeforeStalling()
 {
-    auto delay = Options {}.heartbeatInterval * heartbeatsBeforeStalling;
-    return Time::MS {delay.count()};
+    return Options {}.heartbeatInterval * heartbeatsBeforeStalling;
 }
 
 // A main-thread stall quits once the fault returns; a background one leaves
@@ -172,7 +170,7 @@ void runStallingFault(std::string_view name,
     }
 
     auto stall = Faults::getHangDuration();
-    Threads::callAfter(Time::MS {stall.count()}, [] { Apps::quit(); });
+    Threads::callAfter(stall, [] { Apps::quit(); });
 }
 
 struct FaultApp
@@ -314,8 +312,7 @@ int runCrashingProcess()
     if (auto code = cli.exitCodeFor(cli.parse()))
         return *code;
 
-    auto hangThreshold =
-        std::chrono::milliseconds {settings.hangThresholdMilliseconds};
+    auto hangThreshold = Time::MS {settings.hangThresholdMilliseconds};
     Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
 
     if (!settings.skipsCrashReporting && !startCrashReporting(settings))

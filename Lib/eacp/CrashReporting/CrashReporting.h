@@ -5,8 +5,8 @@
 #include "ReportDatabase.h"
 
 #include <eacp/Core/Platform/Platform.h>
+#include <eacp/Core/Utils/Time.h>
 
-#include <chrono>
 #include <exception>
 #include <optional>
 #include <string_view>
@@ -68,7 +68,7 @@ struct Options
 
     // How long start() waits for the handler to come up before going on
     // without it, in which case a crash goes unreported.
-    std::chrono::milliseconds handlerStartTimeout {5000};
+    Time::MS handlerStartTimeout {5000};
 
     // Empty is createDefaultChannelName().
     std::string channelName;
@@ -89,8 +89,8 @@ struct Options
     // How often the main thread's heartbeat is written, from a timer on the
     // event loop, and how long it may go silent before that is reported as a
     // hang. A zero threshold turns hang detection off.
-    std::chrono::milliseconds heartbeatInterval {500};
-    std::chrono::milliseconds hangThreshold {10000};
+    Time::MS heartbeatInterval {500};
+    Time::MS hangThreshold {10000};
 
     StackOverflowReporting stackOverflowReporting =
         StackOverflowReporting::startingThread;

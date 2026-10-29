@@ -3,7 +3,6 @@
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/Time.h>
 
-#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -44,8 +43,8 @@ const Vector<Fault>& listFaults();
 std::optional<std::reference_wrapper<const Fault>> findFault(std::string_view name);
 
 // How long the hang fault sleeps its thread for.
-void setHangDuration(std::chrono::milliseconds duration);
-std::chrono::milliseconds getHangDuration();
+void setHangDuration(Time::MS duration);
+Time::MS getHangDuration();
 
 // The name every background fault thread is watched under, so a stall on
 // one is reported as a hang of that thread.
@@ -63,8 +62,10 @@ bool triggerFault(std::string_view name, ThreadChoice thread);
 // triggerFault from an event-loop callback `delay` from now. False as above.
 bool scheduleFault(std::string_view name, ThreadChoice thread, Time::MS delay);
 
-// Handled events rather than faults: each reports through the public API and
-// returns, the app still running. The report's id, empty when none was written.
+// Two helpers that call CrashReporting::captureMessage and captureException,
+// which report something without crashing, so SelfDestruct and the tests can
+// trigger an event report the way they trigger a fault; the app keeps running.
+// Each returns the report's id, or empty if none was written.
 constexpr auto faultEventMessage =
     std::string_view {"the crash fault reported this"};
 std::string reportMessageEvent();

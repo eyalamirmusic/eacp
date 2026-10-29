@@ -2,7 +2,8 @@
 
 #include <mach/mach.h>
 
-#include <chrono>
+#include <eacp/Core/Utils/Time.h>
+
 #include <optional>
 
 // The exchange that gives the handler the app's task port. The app spawns the
@@ -23,8 +24,7 @@ void destroyHandshakePort(HandshakePort& port);
 // The app's half, after the spawn: waits for the handler's exception port,
 // points this task's crash exceptions at it and answers with the task port.
 // False when the handler never asked; the signal path is then all there is.
-bool answerHandshakeWithTaskPort(const HandshakePort& port,
-                                 std::chrono::milliseconds timeout);
+bool answerHandshakeWithTaskPort(const HandshakePort& port, Time::MS timeout);
 
 // Puts back the exception ports the handshake replaced.
 void restorePreviousExceptionPorts();
@@ -47,6 +47,5 @@ struct PendingTaskPortRequest
 std::optional<PendingTaskPortRequest> sendAppTaskPortRequest();
 
 std::optional<HandlerMachPorts>
-    receiveAppTaskPort(const PendingTaskPortRequest& request,
-                       std::chrono::milliseconds timeout);
+    receiveAppTaskPort(const PendingTaskPortRequest& request, Time::MS timeout);
 } // namespace eacp::CrashReporting::Detail

@@ -74,9 +74,9 @@ mach_msg_port_descriptor_t makePortDescriptor(mach_port_t port,
     return descriptor;
 }
 
-mach_msg_timeout_t toMachTimeout(std::chrono::milliseconds timeout)
+mach_msg_timeout_t toMachTimeout(Time::MS timeout)
 {
-    return static_cast<mach_msg_timeout_t>(timeout.count());
+    return static_cast<mach_msg_timeout_t>(timeout.count);
 }
 
 std::optional<mach_port_t> allocateReceivePort()
@@ -106,16 +106,14 @@ bool isHandshakeRequest(const HandshakeRequest& request)
 
 // Anything else that reaches the port, such as a lookup the child's runtime
 // makes before it has its real bootstrap port, is dropped.
-std::optional<HandshakeRequest>
-    receiveHandshakeRequest(const HandshakePort& port,
-                            std::chrono::milliseconds timeout)
+std::optional<HandshakeRequest> receiveHandshakeRequest(const HandshakePort& port,
+                                                        Time::MS timeout)
 {
-    auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = Time::Deadline {timeout};
 
     while (true)
     {
-        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
+        auto remaining = deadline.remaining();
 
         auto received = ReceivedHandshakeRequest {};
         auto result = ::mach_msg(&received.request.header,
@@ -123,10 +121,10 @@ std::optional<HandshakeRequest>
                                  0,
                                  sizeof(received),
                                  port.receiveRight,
-                                 toMachTimeout(std::max(remaining, {})),
+                                 toMachTimeout(remaining),
                                  MACH_PORT_NULL);
 
-        auto hasTimeLeft = remaining.count() > 0;
+        auto hasTimeLeft = remaining.count > 0;
 
         if (result == MACH_RCV_TOO_LARGE && hasTimeLeft)
             continue;
@@ -222,8 +220,8 @@ bool sendHandshakeRequest(mach_port_t handshakePort,
            == MACH_MSG_SUCCESS;
 }
 
-std::optional<HandshakeReply>
-    receiveHandshakeReply(mach_port_t replyPort, std::chrono::milliseconds timeout)
+std::optional<HandshakeReply> receiveHandshakeReply(mach_port_t replyPort,
+                                                    Time::MS timeout)
 {
     auto received = ReceivedHandshakeReply {};
     auto result = ::mach_msg(&received.reply.header,
@@ -278,8 +276,7 @@ std::optional<PendingTaskPortRequest> sendAppTaskPortRequest()
 }
 
 std::optional<HandlerMachPorts>
-    receiveAppTaskPort(const PendingTaskPortRequest& request,
-                       std::chrono::milliseconds timeout)
+    receiveAppTaskPort(const PendingTaskPortRequest& request, Time::MS timeout)
 {
     auto reply = receiveHandshakeReply(request.replyPort, timeout);
     destroyReceivePort(request.replyPort);
@@ -323,8 +320,7 @@ void destroyHandshakePort(HandshakePort& port)
     port.receiveRight = MACH_PORT_NULL;
 }
 
-bool answerHandshakeWithTaskPort(const HandshakePort& port,
-                                 std::chrono::milliseconds timeout)
+bool answerHandshakeWithTaskPort(const HandshakePort& port, Time::MS timeout)
 {
     auto request = receiveHandshakeRequest(port, timeout);
 

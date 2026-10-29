@@ -3,7 +3,8 @@
 #include "ReportDatabase.h"
 #include "SharedState.h"
 
-#include <chrono>
+#include <eacp/Core/Utils/Time.h>
+
 #include <typeinfo>
 #include <functional>
 #include <optional>
@@ -20,7 +21,7 @@ struct HandlerLaunch
     // The prefix of every named object the platform makes for this session.
     std::string channelName;
     Vector<std::string> handlerArguments;
-    std::chrono::milliseconds startTimeout {};
+    Time::MS startTimeout {};
     bool captureMachExceptions = true;
 
     // Windows lists its Windows Error Reporting helper DLL in HKCU; ignored elsewhere.
@@ -76,7 +77,7 @@ Vector<StackFrame> captureCurrentStack(int framesToSkip);
 // The type's name as source spells it: demangled, with no "class " prefix.
 std::string getTypeName(const std::type_info& type);
 // A duration as the shared block stores it: whole milliseconds, never negative.
-std::uint64_t countMilliseconds(std::chrono::milliseconds duration);
+std::uint64_t countMilliseconds(Time::MS duration);
 
 // The block start() made, while the session is started and watching for hangs.
 std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo();

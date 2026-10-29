@@ -40,7 +40,7 @@ struct CrashReportingSession
     std::optional<std::reference_wrapper<Detail::SharedState>> sharedState;
     std::atomic<bool> heartbeatRunning {false};
 
-    // Set once sharedState is, for the lock-free reads a ThreadWatch beat makes.
+    // Set once sharedState is, for the lock-free reads a ThreadWatch heartbeat makes.
     std::atomic<bool> threadsWatched {false};
 };
 
@@ -214,7 +214,7 @@ void clearSessionMarkerAtExit()
 std::string describeUnavailableHandler(const Detail::HandlerLaunch& launch)
 {
     return "the handler process " + launch.executable.str()
-           + " did not start within " + std::to_string(launch.startTimeout.count())
+           + " did not start within " + std::to_string(launch.startTimeout.count)
            + " ms";
 }
 
@@ -225,15 +225,15 @@ Detail::SharedWatchedThread& getMainThreadWatch(Detail::SharedHangInfo& hang)
 
 void writeHeartbeat(Detail::SharedHangInfo& hang)
 {
-    Detail::beatWatchedThread(getMainThreadWatch(hang));
+    Detail::sendWatchedThreadHeartbeat(getMainThreadWatch(hang));
 }
 
-// Each beat posts the next through callAfter rather than a Timer: Windows
+// Each heartbeat posts the next through callAfter rather than a Timer: Windows
 // delays WM_TIMER behind every other message and coalesces it by up to a
 // second, which an idle loop would be reported as a hang for.
 void scheduleHeartbeat(CrashReportingSession& session, Detail::SharedHangInfo& hang)
 {
-    auto interval = Time::MS {session.options.heartbeatInterval.count()};
+    auto interval = session.options.heartbeatInterval;
 
     Threads::callAfter(interval,
                        [&session, &hang]
@@ -258,10 +258,10 @@ void writeHangSettings(Detail::SharedState& state, const Options& options)
     Detail::recordThreadForSampling(getMainThreadWatch(hang));
 }
 
-std::unique_ptr<Threads::ThreadWatchScope>
-    openThreadWatch(std::string_view name, std::chrono::milliseconds threshold)
+OwningPointer<Threads::ThreadWatchScope> openThreadWatch(std::string_view name,
+                                                         Time::MS threshold)
 {
-    return std::make_unique<ThreadWatch>(name, threshold);
+    return makeOwned<ThreadWatch>(name, threshold);
 }
 
 void armHangDetection(CrashReportingSession& session, Detail::SharedState& state)
@@ -565,9 +565,9 @@ ReportDatabase getDatabase()
 
 namespace eacp::CrashReporting::Detail
 {
-std::uint64_t countMilliseconds(std::chrono::milliseconds duration)
+std::uint64_t countMilliseconds(Time::MS duration)
 {
-    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count(), 0));
+    return static_cast<std::uint64_t>(std::max<std::int64_t>(duration.count, 0));
 }
 
 std::optional<std::reference_wrapper<SharedHangInfo>> findWatchedHangInfo()

@@ -121,7 +121,7 @@ constexpr auto watchedThreadFree = std::uint32_t {0};
 constexpr auto watchedThreadClaiming = std::uint32_t {1};
 constexpr auto watchedThreadLive = std::uint32_t {2};
 
-// One thread whose beat is watched: the main thread in mainThreadSlot, a
+// One thread whose heartbeat is watched: the main thread in mainThreadSlot, a
 // ThreadWatch's thread in any other. Only the owning thread writes it, and
 // only while `status` is live does a watcher read it.
 struct SharedWatchedThread
@@ -133,8 +133,8 @@ struct SharedWatchedThread
     std::atomic<std::uint32_t> generation;
 
     // Milliseconds on the steady clock, which both processes share; 0 until
-    // the first beat, so nothing is watched before it.
-    std::atomic<std::uint64_t> lastBeatMilliseconds;
+    // the first heartbeat, so nothing is watched before it.
+    std::atomic<std::uint64_t> lastHeartbeatMilliseconds;
 
     // Nothing is reported while above 0.
     std::atomic<std::uint32_t> pauseDepth;
@@ -162,7 +162,7 @@ struct SharedStalledThread
     std::array<std::uint64_t, maxCrashFrames> frames;
 };
 
-// The watched threads and the hang they stop beating in. Whoever watches them
+// The watched threads and the hang they stop sending heartbeats in. Whoever watches them
 // (the app's watchdog thread on macOS, the handler on Windows) samples the
 // silent ones into `stalled` and reports them as one hang.
 struct SharedHangInfo
@@ -242,7 +242,7 @@ std::uint64_t getWatchThreshold(const SharedHangInfo& hang,
                                 const SharedWatchedThread& thread);
 
 // How long the thread has been silent when that is a hang to report: the slot
-// is live and has beaten, detection is on and not paused, and the silence is
+// is live and has sent a heartbeat, detection is on and not paused, and the silence is
 // at least `grace` past the threshold. 0 otherwise.
 std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 const SharedWatchedThread& thread,
@@ -250,18 +250,18 @@ std::uint64_t findStallDuration(const SharedHangInfo& hang,
                                 std::uint64_t grace);
 
 // Called on the thread to be watched. The slot index, or nullopt when every
-// slot but the main thread's is taken. The claim is the first beat.
+// slot but the main thread's is taken. The claim is the first heartbeat.
 std::optional<std::size_t> claimWatchedThread(SharedHangInfo& hang,
                                               std::string_view name,
                                               std::uint64_t thresholdMilliseconds,
                                               std::uint64_t threadId);
-// The main thread's slot, live but silent until the event loop first beats.
+// The main thread's slot, live but silent until the event loop sends its first heartbeat.
 void watchMainThread(SharedHangInfo& hang, std::uint64_t threadId);
 void releaseWatchedThread(SharedWatchedThread& thread);
-void beatWatchedThread(SharedWatchedThread& thread);
+void sendWatchedThreadHeartbeat(SharedWatchedThread& thread);
 void pauseWatchedThread(SharedWatchedThread& thread);
 
-// Undoes one pause; the silence is then measured afresh, from a beat.
+// Undoes one pause; the silence is then measured afresh, from a heartbeat.
 void resumeWatchedThread(SharedWatchedThread& thread);
 
 struct NewStall
@@ -271,12 +271,12 @@ struct NewStall
     std::uint64_t durationMilliseconds = 0;
 };
 
-// What a watcher remembers between checks: the beat each slot was silent
-// from when it was reported, so each episode is reported once and a beat
+// What a watcher remembers between checks: the heartbeat each slot was silent
+// from when it was reported, so each episode is reported once and a heartbeat
 // after it re-arms.
 struct StallTracker
 {
-    std::array<std::uint64_t, maxWatchedThreads> reportedBeats {};
+    std::array<std::uint64_t, maxWatchedThreads> reportedHeartbeats {};
 };
 
 // The slots to report now, in slot order, marked reported in the tracker.

@@ -71,7 +71,7 @@ constexpr auto messageEventReason = "Message";
 constexpr auto exceptionEventReason = "Exception";
 
 // A crash ended the app; a hang is a watched thread (the main one, or a
-// ThreadWatch's) that stopped beating, and an event is one the app reported
+// ThreadWatch's) that stopped sending heartbeats, and an event is one the app reported
 // itself (captureMessage, captureException); the app was left running after
 // both.
 enum class ReportKind

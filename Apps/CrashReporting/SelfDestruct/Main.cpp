@@ -55,7 +55,7 @@ constexpr auto stoppedColour = UI::Color {1.f, 0.62f, 0.3f};
 constexpr auto projectName = "eacp SelfDestruct";
 constexpr auto noReportWindowFlag = "--no-report-window";
 constexpr auto showReportFlag = "--show-report";
-constexpr auto hangBeyondThreshold = std::chrono::milliseconds {2000};
+constexpr auto hangBeyondThreshold = Time::MS {2000};
 constexpr auto demoEnvironment = "demo";
 constexpr auto demoUserId = "self-destruct-user";
 constexpr auto demoUserEmail = "user@example.com";
@@ -360,7 +360,7 @@ FilePath writeSessionLog()
 
 void startCrashReporting(const FilePath& databaseDirectory,
                          const Vector<std::string>& handlerArguments,
-                         std::chrono::milliseconds hangThreshold,
+                         Time::MS hangThreshold,
                          bool capturesMachExceptions,
                          bool registersWindowsErrorReportingHelper)
 {
@@ -388,13 +388,11 @@ void startCrashReporting(const FilePath& databaseDirectory,
         {"app", "about to offer ways to crash", CrashReporting::Level::warning});
 }
 
-// Nothing is watched for a hang until the loop has beaten a few times.
+// Nothing is watched for a hang until the loop has sent a few heartbeats.
 Time::MS getDelayBeforeStalling()
 {
     constexpr auto heartbeatsBeforeStalling = 3;
-    auto delay =
-        CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
-    return Time::MS {delay.count()};
+    return CrashReporting::Options {}.heartbeatInterval * heartbeatsBeforeStalling;
 }
 
 // A main-thread stall quits once the fault returns; a background one leaves
@@ -422,7 +420,7 @@ void runStallingFault(std::string_view name,
     }
 
     auto stall = CrashReporting::Faults::getHangDuration();
-    Threads::callAfter(Time::MS {stall.count()}, [] { Apps::quit(); });
+    Threads::callAfter(stall, [] { Apps::quit(); });
 }
 
 struct FaultApp
@@ -514,8 +512,7 @@ int main(int argc, char* argv[])
     auto crashKind = std::string {};
     auto databaseDirectory = FilePath {};
     auto handlerArguments = Vector<std::string> {};
-    auto hangThresholdMilliseconds =
-        CrashReporting::Options {}.hangThreshold.count();
+    auto hangThresholdMilliseconds = CrashReporting::Options {}.hangThreshold.count;
     auto reportToShow = FilePath {};
     auto eventKind = std::string {};
     auto pausesHangDetection = false;
@@ -554,7 +551,7 @@ int main(int argc, char* argv[])
     if (!reportToShow.empty())
         return showReport(reportToShow);
 
-    auto hangThreshold = std::chrono::milliseconds {hangThresholdMilliseconds};
+    auto hangThreshold = Time::MS {hangThresholdMilliseconds};
     CrashReporting::Faults::setHangDuration(hangThreshold + hangBeyondThreshold);
     startCrashReporting(databaseDirectory,
                         handlerArguments,

@@ -485,7 +485,7 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
     client.handlerProcess = processInfo.hProcess;
 
     auto waitables = std::to_array<HANDLE>({readyEvent, client.handlerProcess});
-    auto timeout = static_cast<DWORD>(launch.startTimeout.count());
+    auto timeout = static_cast<DWORD>(launch.startTimeout.count);
     auto woken = ::WaitForMultipleObjects(
         static_cast<DWORD>(waitables.size()), waitables.data(), FALSE, timeout);
     ::CloseHandle(readyEvent);
