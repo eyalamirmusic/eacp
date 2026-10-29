@@ -91,9 +91,10 @@ struct Options
     StackOverflowReporting stackOverflowReporting =
         StackOverflowReporting::startingThread;
 
-    // Windows: report fast-fail and heap-corruption crashes with a stack, by
-    // listing eacp's Windows Error Reporting helper DLL in HKCU. An installer
-    // instead sets the DLL's path to 0 under HKLM's Windows Error Reporting
+    // Windows: "fast fail" security checks and heap corruption end the app
+    // before its own code runs, so only Windows Error Reporting calling our
+    // helper can report them. This lists the helper for the current user; an
+    // installer can list it for all users under HKEY_LOCAL_MACHINE's
     // RuntimeExceptionHelperModules key.
     bool registerCrashHelperWithWindowsErrorReporting = false;
 };

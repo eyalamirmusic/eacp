@@ -102,7 +102,7 @@ EACP_FAULT_NO_INLINE void throwUncaughtException()
 #if defined(_WIN32)
 // Only a fresh heap's second HeapFree is STATUS_HEAP_CORRUPTION every time.
 constexpr auto heapCorruptionDescription =
-    "Frees the same memory twice; Windows ends the app at once";
+    "Frees the same memory twice; Windows ends the app immediately";
 
 EACP_FAULT_NO_INLINE void corruptHeap()
 {
@@ -205,11 +205,11 @@ EACP_FAULT_NO_INLINE void deadlockWithAnotherThread()
 Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
     {"nullptr",
      "Null pointer",
-     "Writes to address zero; the app crashes at once",
+     "Writes to address zero; the app crashes immediately",
      dereferenceNullPointer},
     {"divide",
      "Divide by zero",
-     "Divides an integer by zero; the app crashes at once",
+     "Divides an integer by zero; the app crashes immediately",
      [] { divideResult = divideByZero(); },
      false,
      integerDivideTraps},
@@ -219,7 +219,7 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
      overflowStack},
     {"abort",
      "abort()",
-     "Calls std::abort, which ends the app at once",
+     "Calls std::abort, which ends the app immediately",
      [] { std::abort(); }},
     {"purevirtual",
      "Pure virtual call",
@@ -247,7 +247,7 @@ Vector<Fault> makeFaults() {auto faults = Vector<Fault> {
      true},
     {"fastfail",
      "__fastfail",
-     "Ends the app at once; no crash handler inside the app runs, only "
+     "Ends the app immediately; no crash handler inside the app runs, only "
      "Windows Error Reporting sees it",
 #if defined(_WIN32)
      failFast,
