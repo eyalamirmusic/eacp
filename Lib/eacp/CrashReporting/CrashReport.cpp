@@ -146,11 +146,6 @@ void CrashedThread::reflect(Miro::Reflector& ref)
     MIRO_FIELDS(ref, frames)
 }
 
-void User::reflect(Miro::Reflector& ref)
-{
-    MIRO_FIELDS(ref, id, email, username)
-}
-
 void Breadcrumb::reflect(Miro::Reflector& ref)
 {
     auto levelName = std::string {getLevelName(level)};
@@ -193,9 +188,6 @@ void CrashReport::reflect(Miro::Reflector& ref)
     for (const auto& attachment: attachmentPaths)
         attachments.add(FilePath {attachment});
 }
-
-void AppSession::reflect(Miro::Reflector& ref) {
-    MIRO_FIELDS(ref, processId, startTime, startTimeText)}
 
 std::string AppSession::toJSON() const
 {

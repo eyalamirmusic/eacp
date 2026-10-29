@@ -3,16 +3,13 @@
 #include <eacp/Core/Utils/Containers.h>
 #include <eacp/Core/Utils/FilePath.h>
 
+#include <Miro/Reflect.h>
+
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
 #include <string_view>
-
-namespace Miro
-{
-class Reflector;
-}
 
 namespace eacp::CrashReporting
 {
@@ -92,7 +89,7 @@ struct User
     std::string email;
     std::string username;
 
-    void reflect(Miro::Reflector& ref);
+    MIRO_REFLECT(id, email, username)
 };
 
 struct Breadcrumb
@@ -189,7 +186,7 @@ struct AppSession
     std::string toJSON() const;
     static std::optional<AppSession> fromJSON(std::string_view text);
 
-    void reflect(Miro::Reflector& ref);
+    MIRO_REFLECT(processId, startTime, startTimeText)
 };
 
 // Addresses go through JSON as strings, because a JSON number is a double and
