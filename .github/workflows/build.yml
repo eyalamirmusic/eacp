@@ -90,11 +90,13 @@ jobs:
       # translation unit whose preprocessed text, compiler and flags match an
       # earlier run is restored rather than compiled: every third-party object
       # on every run, and most of eacp's own on a change inside one module.
-      # The eviction keeps each saved cache to what this build touched, so
-      # eight lanes at 1 GB apiece stay inside the repository's 10 GB. The
-      # Windows x64 image carries Strawberry Perl's ccache 4.9.1 on PATH, which
-      # the default detection would take; the binary install is ccache's own
-      # current release on every Windows lane instead.
+      # Only a push to develop saves, and the eviction keeps each saved cache
+      # to what this build touched, so the lanes stay inside the repository's
+      # 10 GB; every other run restores develop's rather than evicting it with
+      # an entry of its own per run. The Windows x64 image carries Strawberry
+      # Perl's ccache 4.9.1 on PATH, which the default detection would take;
+      # the binary install is ccache's own current release on every Windows
+      # lane instead.
       - name: Set up the compiler cache
         uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
@@ -102,6 +104,7 @@ jobs:
           max-size: 1G
           evict-old-files: job
           install: ${{ runner.os == 'Windows' && 'binary' || 'detect' }}
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
 
       # Everything a Linux build links or generates code with, on every Linux
       # lane: libwayland-client, xkbcommon and libdecor are linked and
