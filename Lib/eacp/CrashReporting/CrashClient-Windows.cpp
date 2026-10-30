@@ -57,6 +57,7 @@ struct WindowsCrashClient
     WerRegistration werRegistration {};
     bool isWerModuleRegistered = false;
     std::uint32_t requiredWerProtocolVersion = werRegistrationVersion;
+    FilePath werModulePath;
 };
 
 WindowsCrashClient& getWindowsCrashClient()
@@ -312,11 +313,18 @@ std::uint64_t getHandleValue(HANDLE handle)
 
 // Backslashes, not slashes: Windows Error Reporting compares the registered
 // path with the registry value's name character for character.
+FilePath chooseWerModulePath(const FilePath& requestedPath)
+{
+    if (!requestedPath.empty())
+        return requestedPath;
+
+    return Files::executablePath().parentDirectory()
+           / Strings::narrow(werModuleFileName);
+}
+
 std::wstring getWerModulePath()
 {
-    auto modulePath = Files::executablePath().parentDirectory()
-                      / Strings::narrow(werModuleFileName);
-    return Strings::widen(modulePath.nativeString());
+    return Strings::widen(getWindowsCrashClient().werModulePath.nativeString());
 }
 
 bool isWerModuleListedUnder(HKEY root, const std::wstring& modulePath)
@@ -379,6 +387,15 @@ void registerWerModule(SharedState& state)
 
     auto modulePath = getWerModulePath();
 
+    if (!Files::isFile(getWindowsCrashClient().werModulePath))
+    {
+        LOG("CrashReporting: ",
+            Strings::narrow(modulePath),
+            " does not exist, so __fastfail and heap corruption are reported "
+            "without a stack");
+        return;
+    }
+
     if (!isWerModuleListed(modulePath))
     {
         LOG("CrashReporting: ",
@@ -434,6 +451,9 @@ void unregisterWerModule()
 
 void listCrashHelperWithWindowsErrorReportingForCurrentUser()
 {
+    if (!Files::isFile(getWindowsCrashClient().werModulePath))
+        return;
+
     auto modulePath = getWerModulePath();
     auto listed = DWORD {0};
     auto written = ::RegSetKeyValueW(HKEY_CURRENT_USER,
@@ -473,15 +493,20 @@ SharedState& createSharedState(const HandlerLaunch& launch)
     return state;
 }
 
+void requireWindowsErrorReportingHelperVersion(std::uint32_t version)
+{
+    getWindowsCrashClient().requiredWerProtocolVersion = version;
+}
+
 bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
 {
+    auto& client = getWindowsCrashClient();
+    client.werModulePath =
+        chooseWerModulePath(launch.windowsErrorReportingHelperPath);
+
     if (launch.shouldListCrashHelperWithWindowsErrorReporting)
         listCrashHelperWithWindowsErrorReportingForCurrentUser();
 
-    auto& client = getWindowsCrashClient();
-    client.requiredWerProtocolVersion =
-        launch.requiredWindowsErrorReportingHelperVersion.value_or(
-            werRegistrationVersion);
     client.crashEvent = createChannelEvent(launch.channelName, crashEventSuffix);
     auto readyEvent = createChannelEvent(launch.channelName, readyEventSuffix);
 

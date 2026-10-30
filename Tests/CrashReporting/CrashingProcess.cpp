@@ -103,6 +103,7 @@ struct CrashingProcessSettings
     bool signalsOnly = false;
     bool withoutWindowsErrorReportingHelper = false;
     std::int64_t requiredWindowsErrorReportingHelperVersion = 0;
+    FilePath windowsErrorReportingHelperPath;
     bool withoutWorkerHangDetection = false;
     std::string workerBehaviour;
     std::string probe;
@@ -132,12 +133,17 @@ bool startCrashReporting(const CrashingProcessSettings& settings)
     options.registerCrashHelperWithWindowsErrorReporting =
         !settings.withoutWindowsErrorReportingHelper;
 
+    options.windowsErrorReportingHelperPath =
+        settings.windowsErrorReportingHelperPath;
+
+#if defined(_WIN32)
     if (settings.requiredWindowsErrorReportingHelperVersion != 0)
     {
         auto requiredVersion = static_cast<std::uint32_t>(
             settings.requiredWindowsErrorReportingHelperVersion);
-        options.requiredWindowsErrorReportingHelperVersion = requiredVersion;
+        Detail::requireWindowsErrorReportingHelperVersion(requiredVersion);
     }
+#endif
     options.detectWorkerThreadHangs = !settings.withoutWorkerHangDetection;
     options.environment = testEnvironment;
     options.attachments = {writeSessionLog()};
@@ -361,6 +367,10 @@ int runCrashingProcess()
                settings.requiredWindowsErrorReportingHelperVersion,
                "Windows: the helper protocol version start() requires, 0 for "
                "this build's own");
+    cli.option("--windows-error-reporting-helper-path",
+               settings.windowsErrorReportingHelperPath,
+               "Windows: the helper DLL to register instead of the one next to "
+               "the exe");
     cli.option("--worker",
                settings.workerBehaviour,
                "stall (heartbeats, then stalls), silent (stalls with no "

@@ -925,10 +925,15 @@ auto tCrashReportHangPaused = test("CrashReport/hangPaused") = []
 #if defined(_WIN32)
 // The crashing process adds the helper DLL's registry entry itself, through
 // Options; this removes it.
-void unlistWerModule()
+constexpr auto werModuleFileName = "eacp-windows-error-reporting-helper.dll";
+
+FilePath getBuiltWerModulePath()
 {
-    auto module = Files::executablePath().parentDirectory()
-                  / "eacp-windows-error-reporting-helper.dll";
+    return Files::executablePath().parentDirectory() / werModuleFileName;
+}
+
+void unlistWerModule(const FilePath& module)
+{
     Processes::run("reg",
                    {"delete",
                     "HKCU\\SOFTWARE\\Microsoft\\Windows\\Windows Error "
@@ -936,6 +941,11 @@ void unlistWerModule()
                     "/v",
                     module.nativeString(),
                     "/f"});
+}
+
+void unlistWerModule()
+{
+    unlistWerModule(getBuiltWerModulePath());
 }
 
 // The in-app handler catches abort and ends the app itself, so Windows Error
@@ -991,6 +1001,37 @@ auto tCrashReportFastFailWithHelperOfAnotherProtocolVersion =
         crashFastFailOnce({"--required-windows-error-reporting-helper-version",
                            versionNoHelperSpeaks}));
     unlistWerModule();
+};
+
+// A helper copied away from the exe, as apps sharing one copy install it, still
+// gives a fast-fail a stack.
+auto tCrashReportFastFailWithSharedWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithSharedWindowsErrorReportingHelper") = []
+{
+    auto sharedFolder = TemporaryFile {};
+    auto sharedModule = sharedFolder.path() / werModuleFileName;
+    check(Files::createDirectories(sharedFolder.path()));
+    check(Files::copyFile(getBuiltWerModulePath(), sharedModule));
+
+    auto report = crashFastFailOnce(
+        {"--windows-error-reporting-helper-path", sharedModule.str()});
+    unlistWerModule(sharedModule);
+
+    checkReportAgainstMatrix(report,
+                             getExpectedOutcome("fastfail", FaultThread::main));
+    checkReportMetadata(report);
+};
+
+// A helper path to nothing registers nothing, so the crash falls back to the
+// exit-code report.
+auto tCrashReportFastFailWithMissingWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithMissingWindowsErrorReportingHelper") = []
+{
+    auto missingFolder = TemporaryFile {};
+    auto missingModule = missingFolder.path() / werModuleFileName;
+    checkFastFailReportedFromExitCode(crashFastFailOnce(
+        {"--windows-error-reporting-helper-path", missingModule.str()}));
+    unlistWerModule(missingModule);
 };
 #endif
 

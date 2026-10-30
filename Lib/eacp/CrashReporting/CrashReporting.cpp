@@ -307,8 +307,7 @@ Detail::HandlerLaunch makeHandlerLaunch(const Options& options)
     launch.captureMachExceptions = options.captureMachExceptions;
     launch.shouldListCrashHelperWithWindowsErrorReporting =
         options.registerCrashHelperWithWindowsErrorReporting;
-    launch.requiredWindowsErrorReportingHelperVersion =
-        options.requiredWindowsErrorReportingHelperVersion;
+    launch.windowsErrorReportingHelperPath = options.windowsErrorReportingHelperPath;
 
     return launch;
 }

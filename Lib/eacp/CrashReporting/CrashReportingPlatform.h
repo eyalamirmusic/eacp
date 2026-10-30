@@ -26,8 +26,14 @@ struct HandlerLaunch
 
     // Windows lists its Windows Error Reporting helper DLL in HKCU; ignored elsewhere.
     bool shouldListCrashHelperWithWindowsErrorReporting = false;
-    std::optional<std::uint32_t> requiredWindowsErrorReportingHelperVersion;
+    FilePath windowsErrorReportingHelperPath;
 };
+
+#if defined(_WIN32)
+// For tests: the helper protocol version start() requires of the DLL instead of
+// the one this build speaks.
+void requireWindowsErrorReportingHelperVersion(std::uint32_t version);
+#endif
 
 // The handler's command line after the flag: the database, then whatever the
 // platform's client put in `channel` to find the app and the shared block.

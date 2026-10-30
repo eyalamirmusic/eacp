@@ -111,9 +111,8 @@ struct Options
     // with a stack like any other. It registers eacp's helper for the current
     // user; an installer can register it for all users in HKEY_LOCAL_MACHINE.
     bool registerCrashHelperWithWindowsErrorReporting = true;
-    // Windows, for tests: the helper protocol version start() requires of the
-    // DLL instead of the one this build speaks.
-    std::optional<std::uint32_t> requiredWindowsErrorReportingHelperVersion;
+    // Windows: the helper DLL, empty for next to the exe; apps sharing one set it.
+    FilePath windowsErrorReportingHelperPath;
 };
 
 // The handler process's entry: its exit code when argv is the handler's command
