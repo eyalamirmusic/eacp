@@ -26,6 +26,7 @@ struct HandlerLaunch
 
     // Windows lists its Windows Error Reporting helper DLL in HKCU; ignored elsewhere.
     bool shouldListCrashHelperWithWindowsErrorReporting = false;
+    std::optional<std::uint32_t> requiredWindowsErrorReportingHelperVersion;
 };
 
 // The handler's command line after the flag: the database, then whatever the

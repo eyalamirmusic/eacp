@@ -5,6 +5,7 @@
 #include "SymbolNames-Windows.h"
 #include "WindowsErrorReportingRegistration-Windows.h"
 
+#include <eacp/Core/Plugins/DynamicLibrary.h>
 #include <eacp/Core/Threads/ThreadUtils-Windows.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Logging.h>
@@ -55,6 +56,7 @@ struct WindowsCrashClient
 
     WerRegistration werRegistration {};
     bool isWerModuleRegistered = false;
+    std::uint32_t requiredWerProtocolVersion = werRegistrationVersion;
 };
 
 WindowsCrashClient& getWindowsCrashClient()
@@ -352,6 +354,19 @@ void fillWerRegistration(WindowsCrashClient& client, SharedState& state)
     registration.pointers = {&registration.record, &registration.context};
 }
 
+// Zero when the DLL is missing or exports no version, which no protocol uses.
+std::uint32_t readWerModuleProtocolVersion(const std::wstring& modulePath)
+{
+    auto library = Plugins::DynamicLibrary {FilePath {Strings::narrow(modulePath)}};
+    auto readVersion = library.findFunction<WerProtocolVersionFunction>(
+        std::string {werProtocolVersionFunctionName});
+
+    if (readVersion == nullptr)
+        return 0;
+
+    return readVersion();
+}
+
 // Windows Error Reporting (WER) loads only a helper DLL listed in the registry;
 // without the entry, __fastfail and heap corruption are still reported, but
 // from the exit code alone, with no stack.
@@ -371,6 +386,21 @@ void registerWerModule(SharedState& state)
             " is not listed under HKLM or HKCU\\",
             Strings::narrow(werHelperModulesKey),
             ", so __fastfail and heap corruption are reported without a stack");
+        return;
+    }
+
+    auto moduleVersion = readWerModuleProtocolVersion(modulePath);
+
+    if (moduleVersion != client.requiredWerProtocolVersion)
+    {
+        LOG("CrashReporting: ",
+            Strings::narrow(modulePath),
+            " speaks helper protocol version ",
+            moduleVersion,
+            ", not ",
+            client.requiredWerProtocolVersion,
+            ", so it is not registered and __fastfail and heap corruption are "
+            "reported without a stack");
         return;
     }
 
@@ -449,6 +479,9 @@ bool launchHandlerProcess(const HandlerLaunch& launch, SharedState&)
         listCrashHelperWithWindowsErrorReportingForCurrentUser();
 
     auto& client = getWindowsCrashClient();
+    client.requiredWerProtocolVersion =
+        launch.requiredWindowsErrorReportingHelperVersion.value_or(
+            werRegistrationVersion);
     client.crashEvent = createChannelEvent(launch.channelName, crashEventSuffix);
     auto readyEvent = createChannelEvent(launch.channelName, readyEventSuffix);
 

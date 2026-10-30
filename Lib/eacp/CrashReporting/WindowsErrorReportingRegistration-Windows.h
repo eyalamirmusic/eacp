@@ -21,8 +21,14 @@
 // Plain Windows types only: the DLL links nothing of eacp.
 namespace eacp::CrashReporting::Detail
 {
+// One helper DLL can serve many eacp apps, so both sides check this layout's
+// version: the DLL in each WerRegistration it reads, the app at start() through
+// the DLL's exported werProtocolVersionFunctionName.
 constexpr auto werRegistrationMagic = std::uint32_t {0xEAC9EE01};
 constexpr auto werRegistrationVersion = std::uint32_t {1};
+constexpr auto werProtocolVersionFunctionName =
+    std::string_view {"eacpWindowsErrorReportingHelperProtocolVersion"};
+using WerProtocolVersionFunction = std::uint32_t (*)();
 constexpr auto werModuleFileName =
     std::wstring_view {L"eacp-windows-error-reporting-helper.dll"};
 constexpr auto werHelperModulesKey =

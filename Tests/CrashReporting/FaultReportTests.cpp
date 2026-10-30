@@ -948,15 +948,11 @@ auto tCrashReportAbortWithWindowsErrorReportingHelper =
     check(report.capturedBy == CaptureSource::handler);
 };
 
-auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
-    test("CrashReport/fastFailWithoutWindowsErrorReportingHelper") = []
+CrashReport crashFastFailOnce(const Vector<std::string>& appArguments)
 {
-    unlistWerModule();
     auto database = TemporaryFile {};
-    auto options = makeCrashOptions("fastfail",
-                                    FaultThread::main,
-                                    database.path(),
-                                    {"--without-windows-error-reporting-helper"});
+    auto options = makeCrashOptions(
+        "fastfail", FaultThread::main, database.path(), appArguments);
     check(Processes::run(options).launched);
 
     auto reportDatabase = ReportDatabase {database.path()};
@@ -965,12 +961,36 @@ auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
     check(reports.size() == 1);
 
     if (reports.size() != 1)
-        return;
+        return {};
 
-    const auto& report = reports[0];
+    return reports[0];
+}
+
+void checkFastFailReportedFromExitCode(const CrashReport& report)
+{
     check(report.reason == "STATUS_STACK_BUFFER_OVERRUN");
     check(report.capturedBy == CaptureSource::exitCode);
     check(report.crashingThread.frames.empty());
+}
+
+auto tCrashReportFastFailWithoutWindowsErrorReportingHelper =
+    test("CrashReport/fastFailWithoutWindowsErrorReportingHelper") = []
+{
+    unlistWerModule();
+    checkFastFailReportedFromExitCode(
+        crashFastFailOnce({"--without-windows-error-reporting-helper"}));
+};
+
+// start() refuses a helper DLL of another protocol version, so the crash
+// falls back to the exit-code report.
+auto tCrashReportFastFailWithHelperOfAnotherProtocolVersion =
+    test("CrashReport/fastFailWithHelperOfAnotherProtocolVersion") = []
+{
+    constexpr auto versionNoHelperSpeaks = "999";
+    checkFastFailReportedFromExitCode(
+        crashFastFailOnce({"--required-windows-error-reporting-helper-version",
+                           versionNoHelperSpeaks}));
+    unlistWerModule();
 };
 #endif
 

@@ -129,6 +129,14 @@ bool handOverToHandler(const WER_RUNTIME_EXCEPTION_INFORMATION& information,
 }
 } // namespace
 
+// Named by werProtocolVersionFunctionName; the app refuses a DLL whose answer
+// is not its own werRegistrationVersion.
+extern "C" __declspec(dllexport) std::uint32_t
+    eacpWindowsErrorReportingHelperProtocolVersion()
+{
+    return werRegistrationVersion;
+}
+
 extern "C" __declspec(dllexport) HRESULT WINAPI OutOfProcessExceptionEventCallback(
     PVOID context,
     const PWER_RUNTIME_EXCEPTION_INFORMATION information,
