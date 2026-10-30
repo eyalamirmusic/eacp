@@ -1,81 +1,34 @@
-#include <eacp/GPU/GPU.h>
+#include "Kernels.h"
+
+#include <eacp/GPU/Shader/PrecompiledShaders.h>
+
 #include <algorithm>
-
 #include <cstdio>
-#include <numbers>
+#include <initializer_list>
 
-using namespace eacp;
-using namespace GPU;
+using namespace ComputeExample;
 
 namespace
 {
-constexpr auto twoPi = 2.0f * std::numbers::pi_v<float>;
-
-// A small additive synth: three harmonics with 1/n amplitudes, evaluated per
-// sample index. A generator kernel - no input buffer, the sample clock is
-// toFloat(threadId()). The shared phase term feeds all three sin() calls, so
-// the emitter hoists it into one named local.
-struct ToneKernel final : ComputeProgram
+// Whether the build compiled the kernels ahead of time (Shaders.cpp and
+// eacp_add_precompiled_shaders) or the device compiled their source just now.
+void logKernelOrigin(std::initializer_list<const ComputeProgram*> kernels)
 {
-    ToneKernel() { compile(); }
+    auto precompiled = std::ranges::count_if(kernels,
+                                             [](const ComputeProgram* kernel)
+                                             { return kernel->isPrecompiled(); });
+    auto total = std::ssize(kernels);
 
-    void define() override
-    {
-        auto i = threadId();
-        auto phase = toFloat(i) / sampleRate * frequency * twoPi;
-        auto wave = sin(phase) + sin(phase * 2.0f) / 2.0f + sin(phase * 3.0f) / 3.0f;
-        write(output, i, wave);
-    }
-
-    Uniform<OutputBuffer> output;
-    Uniform<Float> frequency;
-    Uniform<Float> sampleRate;
-    EACP_SHADER(output, frequency, sampleRate)
-};
-
-// Crossfades two rendered tones, then soft-clips the blend with x / (1 + |x|)
-// so the harmonic stacks stay inside [-1, 1] without a hard clamp.
-struct CrossfadeKernel final : ComputeProgram
-{
-    CrossfadeKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        auto mixed = mix(toneA[i], toneB[i], blend);
-        auto shaped = mixed / (abs(mixed) + 1.0f);
-        write(output, i, shaped * gain);
-    }
-
-    Uniform<InputBuffer> toneA;
-    Uniform<InputBuffer> toneB;
-    Uniform<OutputBuffer> output;
-    Uniform<Float> blend;
-    Uniform<Float> gain;
-    EACP_SHADER(toneA, toneB, output, blend, gain)
-};
-
-// A 3-tap smoothing filter using index arithmetic: each sample averaged with
-// its neighbours, found with uint +, -, % and the buffer length uniform. The
-// blend holds whole cycles of both tones, so wrapping around the ends reads
-// the periodic signal seamlessly - no edge clamping needed.
-struct SmoothKernel final : ComputeProgram
-{
-    SmoothKernel() { compile(); }
-
-    void define() override
-    {
-        auto i = threadId();
-        auto previous = input[(i + length - 1u) % length];
-        auto next = input[(i + 1u) % length];
-        write(output, i, (previous + input[i] + next) / 3.0f);
-    }
-
-    Uniform<InputBuffer> input;
-    Uniform<OutputBuffer> output;
-    Uniform<UInt> length;
-    EACP_SHADER(input, output, length)
-};
+    LOG("Compute: ",
+        precompiled,
+        " of ",
+        total,
+        " kernels precompiled, ",
+        total - precompiled,
+        " compiled at runtime (",
+        Precompiled::embeddedCount(),
+        " precompiled blobs embedded)");
+}
 
 void printWave(const char* name, const float* samples, int count)
 {
@@ -139,6 +92,8 @@ void runCompute()
     smooth.output = smoothed;
     smooth.length = count;
     smooth.prepare();
+
+    logKernelOrigin({&tone, &crossfade, &smooth});
 
     auto commands = device.makeCommandBuffer();
 

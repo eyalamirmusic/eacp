@@ -145,6 +145,25 @@ its README.
   `<app>: hot reload ON/OFF`. What each mode builds, the module rules and
   `Plugins::Reloadable` are in [HotReload.md](HotReload.md).
 
+- `EACP_PRECOMPILE_SHADERS` (default `ON`) — compiles the shaders of every app
+  wired with `eacp_add_precompiled_shaders` (`CMake/PrecompiledShaders.cmake`)
+  at build time and embeds the blobs, which each `ShaderLibrary` loads instead
+  of compiling its source. `OFF` leaves those apps compiling at run time, as
+  does a cross-compile (iOS, Android) for now and a host that can compile none
+  of the requested backends. An app gets its platform's own backend — `metal`
+  on Apple, `dxbc` on Windows, `spirv` on Linux — unless its call names
+  `BACKENDS`, and `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides
+  every call, so `-DEACP_PRECOMPILE_SHADER_BACKENDS=spirv` with
+  `-DEACP_BUILD_SPIRV=ON` exercises the SPIR-V path on a Mac. A backend the
+  host cannot compile is dropped with a `STATUS` line: Metal needs Xcode's
+  Metal Toolchain component (`xcodebuild -downloadComponent MetalToolchain`),
+  probed once per build directory as the cached `EACP_METAL_TOOLCHAIN_FOUND`
+  (`-U` it after installing); DXBC needs a Windows host and SPIR-V
+  `eacp-spirv`. A configure prints `<app>: precompiled shaders (<backends>)`
+  or why there are none. The helper and the blob names are in
+  [Lib/eacp/GPU/README.md](../Lib/eacp/GPU/README.md), "Compiling shaders at
+  build time".
+
 - `EACP_VERBOSE_CONFIGURE` (default `OFF`) — prints the configure detail a
   clean configure leaves out: the FetchContent population of the
   `DOWNLOAD_ONLY` Vulkan sources, the pkg-config and `find_package` probes

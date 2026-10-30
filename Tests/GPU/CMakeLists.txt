@@ -6,8 +6,9 @@ nano_add_executable(GPUCodegenTests
             ComputeKernelCodegenTests.cpp
             GroupReductionCodegenTests.cpp
             ShaderCodegenTests.cpp
+            ShaderCompilerTests.cpp
             SimdMatrixCodegenTests.cpp
-        TARGETS eacp-gpu-codegen eacp-cpu-compute)
+        TARGETS eacp-gpu-codegen eacp-cpu-compute eacp-shader-compiler)
 
 # With eacp-spirv around, every emitted GLSL source is compiled by glslang too;
 # without it the checks compile to nothing and the string assertions stand alone.
@@ -82,6 +83,7 @@ set(gpu_test_sources
         PackedQuantizedTests.cpp
         PerDeviceTests.cpp
         PipelineStateTests.cpp
+        PrecompiledShaderTests.cpp
         ProgramGraphTests.cpp
         RecordedCountsTests.cpp
         RenderBufferRangeTests.cpp
@@ -125,6 +127,16 @@ set(gpu_test_sources
 # Metal-only Objective-C++.
 if (APPLE)
     list(APPEND gpu_test_sources TextureInteropTests.mm MetalErrorsTests.mm)
+endif ()
+
+# PrecompiledShaderTests' build played in-process: each platform compiles a
+# source to its own backend's binary (PrecompiledTestBlobs.h).
+if (APPLE)
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Apple.cpp)
+elseif (WIN32)
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Windows.cpp)
+else ()
+    list(APPEND gpu_test_sources PrecompiledTestBlobs-Linux.cpp)
 endif ()
 
 # The one file that needs a display: a GPUView presenting through a Vulkan

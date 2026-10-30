@@ -101,6 +101,10 @@ public:
     // would rather know than find out asks here.
     bool isValid() const;
 
+    // Whether prepare() loaded the kernel from a blob compiled at build time
+    // rather than compiling its source. False before prepare().
+    bool isPrecompiled() const;
+
     // Binds every assigned buffer and texture member to the pass at its
     // declared slot. ComputePass::dispatch(program, ...) calls this.
     void bindResources(ComputePass& pass);

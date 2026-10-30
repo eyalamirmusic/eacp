@@ -95,9 +95,11 @@ Miro reflection (`MIRO_REFLECT`, `toJSON`, `fromJSON`), never hand-walked.
 - `Deadline(timeout)` — `expired()`, `remaining()`
 - In #177, pending: `sinceEpoch()`, `formatIso8601(MS)`
 
-## Encoding and archives — `Core/Utils/Base64.h`, `Core/Utils/Zip.h`
+## Encoding and archives — `Core/Utils/Base64.h`, `Core/Utils/Hash.h`, `Core/Utils/Zip.h`
 
 - `Base64::encode(bytes)` / `Base64::decode(text)` — RFC 4648
+- `Hashing::fnv1a64(text)` — standard 64-bit FNV-1a, stable across builds
+- `Hashing::toHex(value)` — 16 lowercase hex digits, zero padded
 - `Zip::Reader` — `entries`, `find`, `read`, `readText`, `extract`, `extractAll`
 - `Zip::Writer` — `add`, `addFile`, `addDirectory`, `finish`, `writeTo`
 - `Zip::compress` / `decompress` / `decompressText` — one zlib blob
