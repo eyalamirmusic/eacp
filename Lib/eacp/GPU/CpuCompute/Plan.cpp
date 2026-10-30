@@ -1481,16 +1481,17 @@ private:
 
         auto width = argumentComponents(expr, 0);
         const auto& letters = expr.text;
+        const auto count = letters.size();
 
-        if (letters.empty() || letters.size() > 4
-            || static_cast<int>(letters.size()) != node.components
+        if (count == 0 || count > node.swizzle.size()
+            || static_cast<int>(count) != node.components
             || isMatrix(argumentType(expr, 0)))
         {
             rejectNode(id, "malformed component list \"" + letters + "\"");
             return;
         }
 
-        for (auto at = std::size_t {0}; at < letters.size(); ++at)
+        for (auto at = std::size_t {0}; at < count; ++at)
         {
             auto component = std::string_view("xyzw").find(letters[at]);
 

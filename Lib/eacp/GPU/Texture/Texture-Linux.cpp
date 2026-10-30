@@ -365,7 +365,8 @@ VkImageView makeTargetView(
         image,
         depth ? data.depthFormat : data.format,
         count > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D,
-        depth ? depthAspectMask(data.depthHasStencil) : VK_IMAGE_ASPECT_COLOR_BIT,
+        depth ? depthAspectMask(data.depthHasStencil)
+              : VkImageAspectFlags {VK_IMAGE_ASPECT_COLOR_BIT},
         level,
         1,
         slice,
