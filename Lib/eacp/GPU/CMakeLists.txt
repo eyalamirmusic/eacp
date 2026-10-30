@@ -20,6 +20,7 @@ target_sources(eacp-gpu-codegen PRIVATE
         Codegen/ShaderEmitter.cpp
         Codegen/ShaderGraph.cpp
         Codegen/ShaderMembers.cpp
+        Codegen/ShaderSets.cpp
         Codegen/ShaderValue.cpp
         Codegen/UniformLayout.cpp
         Pipeline/VertexLayout.cpp
@@ -42,6 +43,9 @@ add_ide_sources(eacp-gpu-codegen)
 # The CPU executor, device-free like the codegen it links, so it builds wherever
 # that does.
 add_subdirectory(CpuCompute)
+
+# The ahead-of-time shader compiler, device-free for the same reason.
+add_subdirectory(ShaderCompiler)
 
 if (NOT EACP_HAS_GPU)
     return ()
@@ -66,6 +70,7 @@ target_sources(eacp-gpu PRIVATE
         Frame/OcclusionQueries.cpp
         Frame/RenderPass.cpp
         Pipeline/RenderPipeline.cpp
+        Shader/PrecompiledShaders.cpp
         Shader/ShaderLibrary.cpp
         Timing/CommandTimer.cpp
         Timing/FrameTimer.cpp

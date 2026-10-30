@@ -106,6 +106,21 @@ VertexLayout buildVertexLayout(const ShaderGraph& graph)
 
     return layout;
 }
+
+ShaderSource shaderSourceFor(const ShaderGraph& graph, ShaderBackend backend)
+{
+    switch (backend)
+    {
+        case ShaderBackend::Metal:
+            return ShaderSource::msl(emitMetal(graph));
+        case ShaderBackend::DirectX:
+            return ShaderSource::hlsl(emitHlsl(graph));
+        case ShaderBackend::Vulkan:
+            return ShaderSource::glsl(emitGlsl(graph));
+    }
+
+    return ShaderSource::glsl(emitGlsl(graph));
+}
 } // namespace
 
 void ShaderBuilder::position(const Float4& clipPosition)
@@ -118,27 +133,31 @@ void ShaderBuilder::fragment(const Float4& color)
     graphData.setFragment(color.node);
 }
 
-GeneratedShader ShaderBuilder::build() const
+GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend)
 {
-    auto source = detail::nativeShaderSource(graphData);
+    auto source = shaderSourceFor(graph, backend);
 
     auto result = GeneratedShader {};
 
-    if (graphData.isCompute())
+    if (graph.isCompute())
     {
-        source.withCompute("computeMain")
-            .withThreadGroup(graphData.threadGroupShape());
+        source.withCompute("computeMain").withThreadGroup(graph.threadGroupShape());
         result.source = std::move(source);
-        result.dispatchRank = graphData.dispatchRank();
+        result.dispatchRank = graph.dispatchRank();
         return result;
     }
 
     source.withVertex("vertexMain").withFragment("fragmentMain");
     result.source = std::move(source);
-    result.vertexLayout = buildVertexLayout(graphData);
-    result.vertexReadsUniforms = vertexReadsUniforms(graphData);
-    result.fragmentReadsUniforms = fragmentReadsUniforms(graphData);
+    result.vertexLayout = buildVertexLayout(graph);
+    result.vertexReadsUniforms = vertexReadsUniforms(graph);
+    result.fragmentReadsUniforms = fragmentReadsUniforms(graph);
     return result;
+}
+
+GeneratedShader ShaderBuilder::build() const
+{
+    return buildShader(graphData, detail::nativeShaderBackend());
 }
 
 Texture2D ShaderBuilder::texture(TextureSampling sampling)

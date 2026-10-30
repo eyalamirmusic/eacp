@@ -299,6 +299,11 @@ const RenderPipeline& ShaderProgram::pipeline() const
     return *pipelineState;
 }
 
+bool ShaderProgram::isPrecompiled() const
+{
+    return shaderLibrary.has_value() && shaderLibrary->isPrecompiled();
+}
+
 const Buffer& ShaderProgram::vertices() const
 {
     return *vertexBufferData;

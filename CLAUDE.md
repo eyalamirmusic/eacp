@@ -357,6 +357,26 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug -DEACP_UNITY_BUILD=OFF \
       -DEACP_HOT_RELOAD=ON
 ```
 
+- `EACP_PRECOMPILE_SHADERS` (default `ON`): every app wired with
+  `eacp_add_precompiled_shaders(<app> SOURCES ...)`
+  (`CMake/PrecompiledShaders.cmake`) gets an `<app>-shaders` host tool built
+  from its sources, each listing shaders in a self-registering
+  `EACP_SHADER_SET() { visit<MyShader>(); }`, run at build time into
+  `<app>-PrecompiledShaders/` and embedded under `EacpShaders`, so its
+  `ShaderLibrary`s load blobs instead of compiling source. `OFF`, a
+  cross-compile (iOS, Android, for now) or a host with no compiler for any
+  backend leaves the app compiling at run time, with a `STATUS` line saying
+  so. The backend is the platform's own (`metal` on Apple, `dxbc` on Windows,
+  `spirv` on Linux) unless the call passes `BACKENDS`;
+  `EACP_PRECOMPILE_SHADER_BACKENDS` (default empty) overrides every call, and
+  a requested backend the host cannot compile is dropped with a `STATUS` line.
+  Metal needs Xcode's Metal Toolchain component (`xcrun -sdk macosx metal
+  --version` must run; `xcodebuild -downloadComponent MetalToolchain`), probed
+  once per build directory into `EACP_METAL_TOOLCHAIN_FOUND`; SPIR-V needs
+  `eacp-spirv`. A successful run deletes the blobs its manifest no longer
+  lists. `Apps/GPU/RotatingTriangle` and `Apps/GPU/Compute` use it;
+  "Compiling shaders at build time" in `Lib/eacp/GPU/README.md` is the account.
+
 ### Local Miro source
 
 Miro is fetched via CPM from `eyalamirmusic/Miro` by default. To work against a

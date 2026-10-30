@@ -47,6 +47,7 @@ target_sources(eacp-core PRIVATE
         Utils/FileWriter.cpp
         Utils/Files.cpp
         Utils/Format.cpp
+        Utils/Hash.cpp
         Utils/Logging.cpp
         Utils/MemoryMappedFile.cpp
         Utils/Random.cpp

@@ -9,12 +9,18 @@ namespace eacp::GPU
 {
 namespace detail
 {
-// Emits the native shader source for the platform's backend (MSL on Apple, HLSL
-// on Windows, GLSL everywhere else). Defined per-platform in
-// ShaderBuilder-Apple.cpp / -Windows.cpp / -Linux.cpp, mirroring the rest of the
-// GPU module, so build() needs no preprocessor branch.
-ShaderSource nativeShaderSource(const ShaderGraph& graph);
+// The platform's backend (Metal on Apple, DirectX on Windows, Vulkan everywhere
+// else). Defined per-platform in ShaderBuilder-Apple.cpp / -Windows.cpp /
+// -Linux.cpp, mirroring the rest of the GPU module, so build() needs no
+// preprocessor branch.
+ShaderBackend nativeShaderBackend();
 } // namespace detail
+
+// What ShaderBuilder::build() returns for a graph, in the dialect `backend`
+// compiles rather than the platform's own: build() is this with
+// detail::nativeShaderBackend(), so an offline compiler that hashes this text
+// hashes exactly what the runtime will be handed.
+GeneratedShader buildShader(const ShaderGraph& graph, ShaderBackend backend);
 
 // The string-free authoring entry point. Declare vertex inputs, uniforms and
 // varyings by call order, write the position and fragment outputs with value-type

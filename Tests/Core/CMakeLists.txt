@@ -26,6 +26,7 @@ set(core_test_sources
         FilesTests.cpp
         FilesWildcardTests.cpp
         FormatTests.cpp
+        HashTests.cpp
         MathsTests.cpp
         MemoryMappedFileTests.cpp
         PluginObjectTests.cpp
