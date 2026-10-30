@@ -67,16 +67,16 @@ std::string FilePath::nativeString() const
 {
     if constexpr (Platform::isWindows())
         return Detail::replaceSeparators(text, '/', '\\');
-
-    return text;
+    else
+        return text;
 }
 
 FilePath FilePath::fromNative(std::string_view nativeText)
 {
     if constexpr (Platform::isWindows())
         return FilePath {Detail::replaceSeparators(nativeText, '\\', '/')};
-
-    return FilePath {nativeText};
+    else
+        return FilePath {nativeText};
 }
 
 std::string FilePath::extension() const

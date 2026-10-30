@@ -129,13 +129,13 @@ struct EventLog final
 
     void paintRow(UI::Graphics& g,
                   int row,
-                  const UI::Rect& bounds,
+                  const UI::Rect& rowBounds,
                   bool selected) override
     {
-        paintRowBackground(g, row, bounds, selected);
+        paintRowBackground(g, row, rowBounds, selected);
 
         g.setColour(UI::defaultTheme().get(UI::ThemeKeys::dimText));
-        g.drawText(lines[row], bounds.inset(8.f, 0.f));
+        g.drawText(lines[row], rowBounds.inset(8.f, 0.f));
     }
 
     // The list fills itself with the background colour, so an empty one is

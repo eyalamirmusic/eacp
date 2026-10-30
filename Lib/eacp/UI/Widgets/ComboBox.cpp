@@ -107,12 +107,12 @@ void ComboBox::showPopup()
     if (popup.has_value() || items.empty())
         return;
 
-    auto* host = getHost();
+    auto* owner = getHost();
 
-    if (host == nullptr)
+    if (owner == nullptr)
         return;
 
-    auto* root = host->getRootComponent();
+    auto* root = owner->getRootComponent();
 
     if (root == nullptr)
         return;
@@ -259,28 +259,28 @@ bool ComboBox::keyDown(const KeyEvent& event)
 void ComboBox::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
     auto focused = hasKeyboardFocus();
     auto corner = theme.get(ThemeKeys::comboBoxCorner);
 
     g.setColour(theme.get(ThemeKeys::panel));
-    g.fillRoundedRect(bounds, corner);
+    g.fillRoundedRect(area, corner);
 
     if (isMouseOver() || popup.has_value())
     {
         g.setColour(theme.get(ThemeKeys::hover));
-        g.fillRoundedRect(bounds, corner);
+        g.fillRoundedRect(area, corner);
     }
 
     g.setColour(focused || popup.has_value()
                     ? accent.value_or(theme.get(ThemeKeys::accent))
                     : theme.get(ThemeKeys::outline));
-    g.drawRoundedRect(bounds, corner, focused || popup.has_value() ? 2.f : 1.f);
+    g.drawRoundedRect(area, corner, focused || popup.has_value() ? 2.f : 1.f);
 
     // Two strokes rather than a path, for what a checkbox's tick is drawn this
     // way for: an arrow this small is two quads in the batch the tree is
     // already drawing in, where a path would be a mask in the atlas per box.
-    auto arrow = bounds.fromRight(18.f);
+    auto arrow = area.fromRight(18.f);
     auto centre = arrow.center();
     auto reach = 4.f;
 
@@ -292,7 +292,7 @@ void ComboBox::paint(Graphics& g)
                {centre.x + reach, centre.y - reach * 0.5f},
                1.5f);
 
-    auto text = bounds;
+    auto text = area;
     text.w -= arrow.w;
 
     g.setColour(
@@ -308,14 +308,14 @@ ComboBox::Popup::Popup(ComboBox& ownerToUse)
 
 void ComboBox::Popup::layout()
 {
-    auto* parent = getParentComponent();
+    auto* container = getParentComponent();
 
-    if (parent == nullptr)
+    if (container == nullptr)
         return;
 
     // The whole root, so that a click anywhere outside the list is still a
     // click on this component and can put it away.
-    setBounds(parent->getLocalBounds());
+    setBounds(container->getLocalBounds());
 
     setScrollPosition(scrollOffset);
     repaint();
@@ -328,12 +328,12 @@ float ComboBox::Popup::getRowHeight() const
 
 Rect ComboBox::Popup::getListBounds() const
 {
-    auto* parent = getParentComponent();
+    auto* container = getParentComponent();
 
-    if (parent == nullptr)
+    if (container == nullptr)
         return {};
 
-    auto area = parent->getLocalBounds();
+    auto area = container->getLocalBounds();
 
     auto origin = owner.localPointToRoot({});
     auto box = Rect {origin.x, origin.y, owner.getWidth(), owner.getHeight()};
@@ -358,10 +358,10 @@ Rect ComboBox::Popup::getListBounds() const
 
 float ComboBox::Popup::maximumScroll() const
 {
-    auto visible = getListBounds().h - listPadding * 2.f;
+    auto visibleHeight = getListBounds().h - listPadding * 2.f;
     auto content = (float) owner.getNumItems() * getRowHeight();
 
-    return std::max(0.f, content - visible);
+    return std::max(0.f, content - visibleHeight);
 }
 
 void ComboBox::Popup::setScrollPosition(float newOffset)

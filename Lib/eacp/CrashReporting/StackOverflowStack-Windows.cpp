@@ -47,7 +47,6 @@ void setStackOverflowStackOnNewThreads(bool shouldInstall)
 #pragma comment(linker, "/INCLUDE:eacpReserveStackOnThreadAttach")
 #pragma section(".CRT$XLE", long, read)
 
-extern "C" extern const PIMAGE_TLS_CALLBACK eacpReserveStackOnThreadAttach;
 extern "C" __declspec(allocate(".CRT$XLE"))
 const PIMAGE_TLS_CALLBACK eacpReserveStackOnThreadAttach =
     &eacp::CrashReporting::Detail::reserveStackOnThreadAttach;

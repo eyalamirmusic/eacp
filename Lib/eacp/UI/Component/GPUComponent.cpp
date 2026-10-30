@@ -119,8 +119,8 @@ void GPUComponent::setTransform(const GPUWidgets::AffineTransform& newTransform)
 
 float GPUComponent::backingScale() const
 {
-    auto* host = findHost();
-    return host != nullptr ? host->backingScale() : 1.f;
+    auto* owner = findHost();
+    return owner != nullptr ? owner->backingScale() : 1.f;
 }
 
 GPU::PixelFormat GPUComponent::colorFormat() const
@@ -241,14 +241,14 @@ void GPUComponent::renderNow()
 {
     layer.contentChanged();
 
-    auto* host = findHost();
+    auto* owner = findHost();
 
-    if (host == nullptr || !isOnScreen())
+    if (owner == nullptr || !isOnScreen())
         return;
 
-    auto draw = [host](GPU::Frame& frame) { host->render(frame); };
+    auto draw = [owner](GPU::Frame& frame) { owner->render(frame); };
 
-    if (!host->renderFrame(draw))
+    if (!owner->renderFrame(draw))
         invalidateHost();
 }
 

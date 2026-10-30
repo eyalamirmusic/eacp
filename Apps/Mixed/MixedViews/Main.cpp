@@ -86,14 +86,14 @@ struct ControlledCameraView final : Cameras::CameraView
             Apps::quit();
     }
 
-    void drawOverlay(Sprites::SpriteRenderer& renderer,
+    void drawOverlay(Sprites::SpriteRenderer& sprites,
                      const Graphics::Rect& imageArea) override
     {
         auto area = (imageArea.w > 0.0f && imageArea.h > 0.0f) ? imageArea
                                                                : getLocalBounds();
 
         if (tintStrength > 0.0f)
-            renderer.fillRect(area, hsvColor(tintHue, 0.85f, 1.0f, tintStrength));
+            sprites.fillRect(area, hsvColor(tintHue, 0.85f, 1.0f, tintStrength));
 
         auto center = area.center();
         auto radius = 0.28f * std::min(area.w, area.h);
@@ -101,17 +101,17 @@ struct ControlledCameraView final : Cameras::CameraView
         auto by = center.y + std::sin(orbitPhase) * radius;
         auto half = reticleSize * 0.5f;
 
-        renderer.drawRect({bx - half, by - half, reticleSize, reticleSize},
-                          {1.0f, 0.85f, 0.2f, 0.95f},
-                          3.0f);
-        renderer.drawLine({bx - half - 6.0f, by},
-                          {bx + half + 6.0f, by},
-                          {1.0f, 1.0f, 1.0f, 0.85f},
-                          1.5f);
-        renderer.drawLine({bx, by - half - 6.0f},
-                          {bx, by + half + 6.0f},
-                          {1.0f, 1.0f, 1.0f, 0.85f},
-                          1.5f);
+        sprites.drawRect({bx - half, by - half, reticleSize, reticleSize},
+                         {1.0f, 0.85f, 0.2f, 0.95f},
+                         3.0f);
+        sprites.drawLine({bx - half - 6.0f, by},
+                         {bx + half + 6.0f, by},
+                         {1.0f, 1.0f, 1.0f, 0.85f},
+                         1.5f);
+        sprites.drawLine({bx, by - half - 6.0f},
+                         {bx, by + half + 6.0f},
+                         {1.0f, 1.0f, 1.0f, 0.85f},
+                         1.5f);
     }
 
     // Written from the web bridge (main thread), read here while rendering.

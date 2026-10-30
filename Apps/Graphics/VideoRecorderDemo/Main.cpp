@@ -34,15 +34,15 @@ struct Animated final : UI::Component
 {
     void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
         g.fillAll({0.1f, 0.1f, 0.12f, 1.f});
 
         auto boxSize = 40.f;
-        auto x = phase * (bounds.w - boxSize);
+        auto x = phase * (area.w - boxSize);
 
         g.setColour({0.95f, 0.3f, 0.2f, 1.f});
-        g.fillRect({x, bounds.h / 2.f - boxSize / 2.f, boxSize, boxSize});
+        g.fillRect({x, area.h / 2.f - boxSize / 2.f, boxSize, boxSize});
     }
 
     float phase = 0.f; // 0..1
@@ -70,12 +70,12 @@ struct App
         {
             path = outputPath().str();
 
-            auto options = Video::RecordingOptions {};
+            auto recordingOptions = Video::RecordingOptions {};
             auto screen = getEnvValue("EACP_CAPTURE") == "screen";
-            options.mode =
+            recordingOptions.mode =
                 screen ? Video::CaptureMode::Screen : Video::CaptureMode::Snapshot;
 
-            started = recorder.start(host, path, options);
+            started = recorder.start(host, path, recordingOptions);
             startTime = time.time;
 
             LOG(std::string(screen ? "screen" : "snapshot") + " capture -> " + path);

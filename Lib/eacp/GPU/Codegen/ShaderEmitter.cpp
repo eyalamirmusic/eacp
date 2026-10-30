@@ -2858,8 +2858,8 @@ private:
 
     bool readsSlot(int node, int slot)
     {
-        written.assign(graph().variables().size(), 0);
-        buffersWritten.assign(graph().storageBuffers().size(), 0);
+        written.assign(graph().variables().size(), char {0});
+        buffersWritten.assign(graph().storageBuffers().size(), char {0});
         buffersWritten[slot] = 1;
         visited.restart();
 
@@ -2881,10 +2881,10 @@ private:
 
         auto sharedMoved = touchesShared(graph(), statement);
 
-        written.assign(graph().variables().size(), 0);
+        written.assign(graph().variables().size(), char {0});
         collectWrites(graph(), statement, written);
 
-        buffersWritten.assign(graph().storageBuffers().size(), 0);
+        buffersWritten.assign(graph().storageBuffers().size(), char {0});
         collectBufferWrites(graph(), statement, buffersWritten);
 
         // A statement that leaves no variable and no buffer holding something

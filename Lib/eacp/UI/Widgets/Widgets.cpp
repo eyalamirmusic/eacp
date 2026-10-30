@@ -119,31 +119,31 @@ void Button::setAccentColour(const Color& colour)
 void Button::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
     auto corner = theme.get(ThemeKeys::buttonCorner);
 
     g.setColour(toggledOn ? accent.value_or(theme.get(ThemeKeys::accent))
                           : theme.get(ThemeKeys::panel));
-    g.fillRoundedRect(bounds, corner);
+    g.fillRoundedRect(area, corner);
 
     if (down)
     {
         g.setColour(theme.get(ThemeKeys::pressed));
-        g.fillRoundedRect(bounds, corner);
+        g.fillRoundedRect(area, corner);
     }
     else if (isMouseOver())
     {
         g.setColour(theme.get(ThemeKeys::hover));
-        g.fillRoundedRect(bounds, corner);
+        g.fillRoundedRect(area, corner);
     }
 
     g.setColour(theme.get(ThemeKeys::outline));
-    g.drawRoundedRect(bounds, corner);
+    g.drawRoundedRect(area, corner);
 
     // A lit toggle carries accentText, dark by default, so it stays legible
     // against the accent rather than sitting light-on-light.
     g.setColour(theme.get(toggledOn ? ThemeKeys::accentText : ThemeKeys::text));
-    g.drawText(text, bounds, Justification::Centred);
+    g.drawText(text, area, Justification::Centred);
 }
 
 void Button::mouseEnter(const MouseEvent&)
@@ -267,10 +267,10 @@ bool Checkbox::keyDown(const KeyEvent& event)
 void Checkbox::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
 
-    auto boxSize = std::min(18.f, bounds.h);
-    auto box = Rect {0.f, (bounds.h - boxSize) * 0.5f, boxSize, boxSize};
+    auto boxSize = std::min(18.f, area.h);
+    auto box = Rect {0.f, (area.h - boxSize) * 0.5f, boxSize, boxSize};
 
     auto corner = theme.get(ThemeKeys::checkboxCorner);
 
@@ -306,7 +306,7 @@ void Checkbox::paint(Graphics& g)
     if (text.empty())
         return;
 
-    auto textArea = bounds;
+    auto textArea = area;
     textArea.x = box.right() + 8.f;
     textArea.w -= textArea.x;
 
@@ -537,22 +537,22 @@ float TextEditor::textOrigin() const
 
 void TextEditor::scrollToCaret()
 {
-    auto visible = getWidth() - editorTextInset * 2.f;
+    auto visibleWidth = getWidth() - editorTextInset * 2.f;
 
-    if (visible <= 0.f)
+    if (visibleWidth <= 0.f)
         return;
 
     auto caretX = measureText(displayedPrefix(caret), fontToDrawIn());
 
     // Only ever as far as it has to be: the caret is pulled back into view from
     // whichever edge it left, and a string that fits is never scrolled at all.
-    scrollOffset = std::clamp(scrollOffset, caretX - visible, caretX);
+    scrollOffset = std::clamp(scrollOffset, caretX - visibleWidth, caretX);
     scrollOffset = std::max(0.f, scrollOffset);
 
     auto full = measureText(displayed(), fontToDrawIn());
 
-    if (full - scrollOffset < visible)
-        scrollOffset = std::max(0.f, full - visible);
+    if (full - scrollOffset < visibleWidth)
+        scrollOffset = std::max(0.f, full - visibleWidth);
 }
 
 int TextEditor::positionAt(float x) const
@@ -737,7 +737,7 @@ void TextEditor::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
     auto accentColour = accent.value_or(theme.get(ThemeKeys::accent));
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
     auto focused = hasKeyboardFocus();
 
     if (drawsFrame)
@@ -745,10 +745,10 @@ void TextEditor::paint(Graphics& g)
         auto corner = theme.get(ThemeKeys::textEditorCorner);
 
         g.setColour(theme.get(ThemeKeys::panel));
-        g.fillRoundedRect(bounds, corner);
+        g.fillRoundedRect(area, corner);
 
         g.setColour(focused ? accentColour : theme.get(ThemeKeys::outline));
-        g.drawRoundedRect(bounds, corner, focused ? 2.f : 1.f);
+        g.drawRoundedRect(area, corner, focused ? 2.f : 1.f);
     }
 
     auto face = fontToDrawIn();
@@ -758,9 +758,9 @@ void TextEditor::paint(Graphics& g)
     // string has scrolled. Clipped to the inside of the border so a scrolled
     // string is cut at the edge rather than running over it.
     auto scope = Graphics::ScopedState {g};
-    g.reduceClipRegion(bounds.inset(editorTextInset * 0.5f, 1.f));
+    g.reduceClipRegion(area.inset(editorTextInset * 0.5f, 1.f));
 
-    auto baseline = (bounds.h - g.lineHeight()) * 0.5f + g.ascent();
+    auto baseline = (area.h - g.lineHeight()) * 0.5f + g.ascent();
     auto origin = textOrigin();
 
     if (text.empty() && !placeholder.empty())
@@ -776,7 +776,7 @@ void TextEditor::paint(Graphics& g)
         auto right = g.measureText(displayedPrefix(selectionRight()));
 
         g.setColour(accentColour.withAlpha(0.35f));
-        g.fillRect({origin + left, 2.f, right - left, bounds.h - 4.f});
+        g.fillRect({origin + left, 2.f, right - left, area.h - 4.f});
     }
 
     g.setColour(colour.value_or(theme.get(ThemeKeys::text)));
@@ -792,7 +792,7 @@ void TextEditor::paint(Graphics& g)
     auto caretX = origin + g.measureText(displayedPrefix(caret));
 
     g.setColour(accentColour);
-    g.fillRect({caretX, 3.f, 1.5f, bounds.h - 6.f});
+    g.fillRect({caretX, 3.f, 1.5f, area.h - 6.f});
 }
 
 Slider::Slider(Orientation orientationToUse)
@@ -833,53 +833,50 @@ void Slider::paint(Graphics& g)
 {
     const auto& theme = getHostTheme();
     auto accentColour = accent.value_or(theme.get(ThemeKeys::accent));
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
     auto trackCorner = theme.get(ThemeKeys::sliderCorner);
 
     g.setColour(theme.get(ThemeKeys::panel));
-    g.fillRoundedRect(bounds, trackCorner);
+    g.fillRoundedRect(area, trackCorner);
 
     if (orientation == Orientation::Horizontal)
     {
         g.setColour(accentColour);
-        g.fillRoundedRect(bounds.withWidth(bounds.w * value), trackCorner);
+        g.fillRoundedRect(area.withWidth(area.w * value), trackCorner);
 
-        auto thumbX = bounds.w * value;
+        auto thumbX = area.w * value;
         g.setColour(theme.get(ThemeKeys::text));
-        g.fillRoundedRect({thumbX - 1.5f, bounds.y + 2.f, 3.f, bounds.h - 4.f},
-                          1.5f);
+        g.fillRoundedRect({thumbX - 1.5f, area.y + 2.f, 3.f, area.h - 4.f}, 1.5f);
     }
     else
     {
         // Bottom-to-top: a fader's zero is at the bottom whatever way y runs.
-        auto filledHeight = bounds.h * value;
+        auto filledHeight = area.h * value;
 
         g.setColour(accentColour);
         g.fillRoundedRect(
-            {bounds.x, bounds.bottom() - filledHeight, bounds.w, filledHeight},
+            {area.x, area.bottom() - filledHeight, area.w, filledHeight},
             trackCorner);
 
         g.setColour(theme.get(ThemeKeys::text));
-        g.fillRoundedRect({bounds.x + 2.f,
-                           bounds.bottom() - filledHeight - 1.5f,
-                           bounds.w - 4.f,
-                           3.f},
-                          1.5f);
+        g.fillRoundedRect(
+            {area.x + 2.f, area.bottom() - filledHeight - 1.5f, area.w - 4.f, 3.f},
+            1.5f);
     }
 
     g.setColour(theme.get(isMouseOver() || dragging ? ThemeKeys::accent
                                                     : ThemeKeys::outline));
-    g.drawRoundedRect(bounds, trackCorner);
+    g.drawRoundedRect(area, trackCorner);
 }
 
 void Slider::setValueFromPosition(Point position)
 {
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
 
     if (orientation == Orientation::Horizontal)
-        setValue(bounds.w > 0.f ? position.x / bounds.w : 0.f, true);
+        setValue(area.w > 0.f ? position.x / area.w : 0.f, true);
     else
-        setValue(bounds.h > 0.f ? 1.f - position.y / bounds.h : 0.f, true);
+        setValue(area.h > 0.f ? 1.f - position.y / area.h : 0.f, true);
 }
 
 namespace
@@ -1279,8 +1276,8 @@ void ScrollPanel::resized()
 
 void ScrollPanel::keepFocusedInView()
 {
-    auto* host = getHost();
-    auto* focused = host != nullptr ? host->getFocusedComponent() : nullptr;
+    auto* owner = getHost();
+    auto* focused = owner != nullptr ? owner->getFocusedComponent() : nullptr;
 
     if (focused == nullptr || content == nullptr)
         return;
@@ -1317,13 +1314,13 @@ void ScrollPanel::paintOverChildren(Graphics& g)
         return;
 
     const auto& theme = getHostTheme();
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
     auto trackWidth = 4.f;
-    auto track = bounds.fromRight(trackWidth);
+    auto track = area.fromRight(trackWidth);
 
     auto visibleProportion = getHeight() / content->getHeight();
-    auto thumbHeight = std::max(24.f, bounds.h * visibleProportion);
-    auto thumbY = (bounds.h - thumbHeight) * (scrollOffset / maximum);
+    auto thumbHeight = std::max(24.f, area.h * visibleProportion);
+    auto thumbY = (area.h - thumbHeight) * (scrollOffset / maximum);
 
     g.setColour(theme.get(ThemeKeys::outline));
     g.fillRoundedRect(track, trackWidth * 0.5f);

@@ -343,10 +343,10 @@ struct Texture::Native
             return;
 
         if (pixels != nullptr)
-            upload(context, pixels);
+            upload(pixels);
 
         if (data.resource != nullptr)
-            createDescriptors(context, descriptor);
+            createDescriptors(descriptor);
     }
 
     // D3D12CalcSubresource, spelled out: the levels of one array slice are
@@ -404,9 +404,7 @@ struct Texture::Native
     // **Rows here are whatever GetCopyableFootprints says a row is**, which for
     // a block-compressed format is a row of 4x4 blocks, so the source pitch is
     // measured the same way: levelBytesPerRow, which is what the plan carries.
-    bool copyPixels(D3D12Context& context,
-                    CommandContext* commands,
-                    const SubresourceUpload& upload)
+    bool copyPixels(CommandContext* commands, const SubresourceUpload& upload)
     {
         auto regionDesc = data.resource->GetDesc();
 
@@ -478,7 +476,7 @@ struct Texture::Native
 
     // At creation: the resource was created in COPY_DEST, so the copies record
     // with no leading barrier.
-    void upload(D3D12Context& context, const void* pixels)
+    void upload(const void* pixels)
     {
         const auto plan = planWholeUpload(shape, format, pixels, 0);
 
@@ -496,7 +494,7 @@ struct Texture::Native
             return;
         }
 
-        if (!recordUploads(context, commands, plan.uploads))
+        if (!recordUploads(commands, plan.uploads))
         {
             context.discard(commands);
             data.resource = nullptr;
@@ -508,12 +506,11 @@ struct Texture::Native
         context.submit(commands);
     }
 
-    bool recordUploads(D3D12Context& context,
-                       CommandContext* commands,
+    bool recordUploads(CommandContext* commands,
                        const Vector<SubresourceUpload>& uploads)
     {
         for (const auto& each: uploads)
-            if (!copyPixels(context, commands, each))
+            if (!copyPixels(commands, each))
                 return false;
 
         return true;
@@ -541,7 +538,7 @@ struct Texture::Native
         transitionTextureForUse(
             commands->list.get(), data, D3D12_RESOURCE_STATE_COPY_DEST);
 
-        if (!recordUploads(context, commands, uploads))
+        if (!recordUploads(commands, uploads))
         {
             data.state = stateBefore;
             context.discard(commands);
@@ -740,8 +737,7 @@ struct Texture::Native
     // shader-visible, so there is no shared heap to take one from the way the
     // SRV does - and a heap per target is what keeps a texture's descriptor
     // alive for exactly as long as the texture is.
-    void createRenderTargetView(D3D12Context& context,
-                                const TextureDescriptor& descriptor)
+    void createRenderTargetView(const TextureDescriptor& descriptor)
     {
         D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
         heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -786,8 +782,7 @@ struct Texture::Native
     // beginPass clears to, which is nothing in particular - the pass names its
     // own colour - so this takes black and accepts the mismatch warning a clear
     // to another colour costs, exactly as the drawable's target does.
-    void createMultisampleTarget(D3D12Context& context,
-                                 const TextureDescriptor& descriptor)
+    void createMultisampleTarget(const TextureDescriptor& descriptor)
     {
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -853,9 +848,9 @@ struct Texture::Native
     // debug layer, since a target does not know which it will get. It names the
     // *attachment* format even where the resource is typeless, which is the
     // format the clear is actually performed in.
-    void createDepthBuffer(D3D12Context& context, bool withStencil, bool sampleable)
+    void createDepthBuffer(bool withStencil, bool sampleable)
     {
-        const auto format = depthAttachmentFormat(withStencil);
+        const auto attachmentFormat = depthAttachmentFormat(withStencil);
 
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -890,7 +885,7 @@ struct Texture::Native
         // by its absence; what makes the buffer readable is the typeless format
         // above and the SRV below.
         D3D12_CLEAR_VALUE clearValue = {};
-        clearValue.Format = format;
+        clearValue.Format = attachmentFormat;
         clearValue.DepthStencil.Depth = 1.f;
 
         if (FAILED(context.getDevice()->CreateCommittedResource(
@@ -915,7 +910,7 @@ struct Texture::Native
         }
 
         D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc = {};
-        viewDesc.Format = format;
+        viewDesc.Format = attachmentFormat;
         viewDesc.ViewDimension = multisampled ? D3D12_DSV_DIMENSION_TEXTURE2DMS
                                               : D3D12_DSV_DIMENSION_TEXTURE2D;
 
@@ -942,14 +937,14 @@ struct Texture::Native
         // declares. So the plane is resolved into a single-sampled twin at the
         // end of every pass and the SRV views that instead. See
         // TextureDescriptor::sampleCount.
-        if (multisampled && !createResolvedDepthBuffer(context, withStencil))
+        if (multisampled && !createResolvedDepthBuffer(withStencil))
             return;
 
         if (multisampled && getD3D12Shared().getDriverQuirks().noDepthResolve
-            && !createShaderResolveViews(context, withStencil))
+            && !createShaderResolveViews(withStencil))
             return;
 
-        createDepthShaderResourceView(context, withStencil);
+        createDepthShaderResourceView(withStencil);
     }
 
     // What resolveDepthWithShader draws with, where the driver leaves it to:
@@ -957,7 +952,7 @@ struct Texture::Native
     // load, and the resolved buffer as the depth attachment it writes. A
     // failure leaves the target without a sampleable depth, exactly as a
     // failed resolve buffer does.
-    bool createShaderResolveViews(D3D12Context& context, bool withStencil)
+    bool createShaderResolveViews(bool withStencil)
     {
         D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
         heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
@@ -1001,7 +996,7 @@ struct Texture::Native
     // ALLOW_DEPTH_STENCIL rather than nothing: a resolve destination for a
     // depth format has to be a depth resource, ResolveSubresourceRegion refusing
     // one that is not.
-    bool createResolvedDepthBuffer(D3D12Context& context, bool withStencil)
+    bool createResolvedDepthBuffer(bool withStencil)
     {
         D3D12_HEAP_PROPERTIES heap = {};
         heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -1038,7 +1033,7 @@ struct Texture::Native
     // The resource it views is the attachment on a single-sampled target and the
     // resolve on a multisampled one, which is the whole of what sampledDepth-
     // Resource is for.
-    void createDepthShaderResourceView(D3D12Context& context, bool withStencil)
+    void createDepthShaderResourceView(bool withStencil)
     {
         data.depthSrv = context.allocateTextureDescriptor();
 
@@ -1064,10 +1059,10 @@ struct Texture::Native
             data.sampledDepthResource(), &viewDesc, data.depthSrv.cpu);
 
         if (shape.kind != TextureType::TwoD)
-            createDepthSliceViews(context, viewDesc.Format);
+            createDepthSliceViews(viewDesc.Format);
     }
 
-    void createDepthSliceViews(D3D12Context& context, DXGI_FORMAT viewFormat)
+    void createDepthSliceViews(DXGI_FORMAT viewFormat)
     {
         for (auto slice = 0; slice < shape.slices(); ++slice)
         {
@@ -1095,8 +1090,7 @@ struct Texture::Native
     // The view a kernel writes through. It comes out of the same shader-visible
     // heap as the SRV - the allocator is CBV_SRV_UAV - so a writable texture
     // costs one more descriptor and no new heap.
-    void createUnorderedAccessView(D3D12Context& context,
-                                   const TextureDescriptor& descriptor)
+    void createUnorderedAccessView(const TextureDescriptor& descriptor)
     {
         data.uav = context.allocateTextureDescriptor();
 
@@ -1197,7 +1191,7 @@ struct Texture::Native
     // alone, for ComputePass's level binds. A slot that fails to allocate
     // leaves that level unbindable rather than the texture invalid. A texture
     // without them binds level 0 only, through its whole views.
-    void createLevelViews(D3D12Context& context, DXGI_FORMAT viewFormat)
+    void createLevelViews(DXGI_FORMAT viewFormat)
     {
         for (auto level = 0; level < levels; ++level)
         {
@@ -1230,7 +1224,7 @@ struct Texture::Native
 
     // A cube or a cube array read as the 2D array of slices it is stored as,
     // one view per level, for ComputePass::setInputTextureAsArray.
-    void createArrayViews(D3D12Context& context, DXGI_FORMAT viewFormat)
+    void createArrayViews(DXGI_FORMAT viewFormat)
     {
         for (auto level = 0; level < levels; ++level)
         {
@@ -1256,18 +1250,17 @@ struct Texture::Native
         }
     }
 
-    void createDescriptors(D3D12Context& context,
-                           const TextureDescriptor& descriptor)
+    void createDescriptors(const TextureDescriptor& descriptor)
     {
         if (descriptor.renderTarget)
-            createRenderTargetView(context, descriptor);
+            createRenderTargetView(descriptor);
 
         // Created after the RTV and refused with it: a multisampled target is
         // either both resources or nothing, since a pass rendering into the
         // single-sampled one would silently be a different pass.
         if (data.sampleCount > 1 && data.rtv.ptr != 0)
         {
-            createMultisampleTarget(context, descriptor);
+            createMultisampleTarget(descriptor);
 
             if (!data.isMultisampled())
             {
@@ -1279,11 +1272,10 @@ struct Texture::Native
         if (descriptor.renderTarget
             && (descriptor.depth || descriptor.stencil || descriptor.sampleableDepth)
             && data.rtv.ptr != 0)
-            createDepthBuffer(
-                context, descriptor.stencil, descriptor.sampleableDepth);
+            createDepthBuffer(descriptor.stencil, descriptor.sampleableDepth);
 
         if (computeWrite)
-            createUnorderedAccessView(context, descriptor);
+            createUnorderedAccessView(descriptor);
 
         data.srv = context.allocateTextureDescriptor();
 
@@ -1304,10 +1296,10 @@ struct Texture::Native
         // Only where the GPU fills the levels, so a mipmapped texture that is
         // only ever sampled does not spend a descriptor per level.
         if (levels > 1 && (computeWrite || descriptor.renderTarget || generatesMips))
-            createLevelViews(context, toDXGIFormat(descriptor.format));
+            createLevelViews(toDXGIFormat(descriptor.format));
 
         if (shape.kind == TextureType::Cube || shape.kind == TextureType::CubeArray)
-            createArrayViews(context, toDXGIFormat(descriptor.format));
+            createArrayViews(toDXGIFormat(descriptor.format));
 
         // No sampler descriptor is created, and TextureDescriptor::filter and
         // ::addressMode are unused on this backend: the sampler comes from the

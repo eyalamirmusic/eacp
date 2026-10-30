@@ -17,6 +17,15 @@ if (LINUX AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endforeach ()
 endif ()
 
+# GCC exempts the main file's own types from -Wsubobject-linkage, and in a unity
+# batch every source is an include, so each anonymous-namespace member warns.
+# Directory-scoped because the test executables never pass through
+# set_default_warnings_level.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(
+            "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<BOOL:$<TARGET_PROPERTY:UNITY_BUILD>>>:-Wno-subobject-linkage>")
+endif ()
+
 function(eacp_bundle_plist_template out_var)
     if (IOS)
         set(${out_var} "${EACP_IOS_PLIST}" PARENT_SCOPE)

@@ -258,18 +258,19 @@ Parser::Parser(std::string nameToUse, std::string descriptionToUse)
 {
 }
 
-OptionBuilder<bool>
-    Parser::flag(std::string_view name, bool& target, std::string_view description)
+OptionBuilder<bool> Parser::flag(std::string_view nameToUse,
+                                 bool& target,
+                                 std::string_view descriptionToUse)
 {
-    return flag(name, {}, target, description);
+    return flag(nameToUse, {}, target, descriptionToUse);
 }
 
-OptionBuilder<bool> Parser::flag(std::string_view name,
+OptionBuilder<bool> Parser::flag(std::string_view nameToUse,
                                  std::string_view shortName,
                                  bool& target,
-                                 std::string_view description)
+                                 std::string_view descriptionToUse)
 {
-    auto builder = option(name, shortName, target, description);
+    auto builder = option(nameToUse, shortName, target, descriptionToUse);
     options.back()->takesValue = false;
     return builder;
 }

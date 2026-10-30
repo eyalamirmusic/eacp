@@ -1243,9 +1243,9 @@ struct WebView::Native
     // back, because it can change while the controller is still initializing —
     // and because a window that has never been shown is not thereby hidden:
     // an offscreen snapshot of one still needs the page rendering.
-    void setControllerVisible(bool visible)
+    void setControllerVisible(bool visibleToUse)
     {
-        hostVisible = visible;
+        hostVisible = visibleToUse;
         applyControllerVisibility();
     }
 
@@ -1253,9 +1253,9 @@ struct WebView::Native
     // ancestor. Tracked apart from the host window's state because either one
     // alone is enough to hide the page, and neither may undo the other — a
     // parked service view must stay hidden when its window is shown again.
-    void setViewVisible(bool visible)
+    void setViewVisible(bool visibleToUse)
     {
-        viewVisible = visible;
+        viewVisible = visibleToUse;
         applyControllerVisibility();
     }
 
@@ -1393,7 +1393,7 @@ struct WebView::Native
         if (paths.empty() || !hostHwnd)
             return;
 
-        auto ownerWindow = hostHwnd;
+        auto hostWindow = hostHwnd;
         auto dpiScale = getDpiScale();
         auto onDragStarted = owner.onFileDragStarted;
         auto onDragMoved = owner.onFileDragMoved;
@@ -1409,15 +1409,15 @@ struct WebView::Native
             if (onDragStarted)
                 onDragStarted();
 
-            if (IsWindow(ownerWindow))
+            if (IsWindow(hostWindow))
             {
                 // Attach (not construct-from-raw) so the source keeps the
                 // single ref it is born with; the ComPtr releases it — and
                 // deletes the object — when the drag returns.
                 ComPtr<IDropSource> dropSource;
                 dropSource.Attach(new FileDragSource(
-                    [ownerWindow, dpiScale]
-                    { return fileDragPointFromCursor(ownerWindow, dpiScale); },
+                    [hostWindow, dpiScale]
+                    { return fileDragPointFromCursor(hostWindow, dpiScale); },
                     onDragMoved));
 
                 // Register our own window as a drop target for the length
@@ -1428,21 +1428,21 @@ struct WebView::Native
                 ComPtr<IDropTarget> dropTarget;
                 dropTarget.Attach(new FileDragTarget());
                 auto registered =
-                    SUCCEEDED(RegisterDragDrop(ownerWindow, dropTarget.Get()));
+                    SUCCEEDED(RegisterDragDrop(hostWindow, dropTarget.Get()));
 
                 DWORD effect = DROPEFFECT_NONE;
-                SHDoDragDrop(ownerWindow,
+                SHDoDragDrop(hostWindow,
                              dataObject.Get(),
                              dropSource.Get(),
                              DROPEFFECT_COPY,
                              &effect);
 
                 if (registered)
-                    RevokeDragDrop(ownerWindow);
+                    RevokeDragDrop(hostWindow);
 
                 // The modal loop is over: report the release point so the
                 // app can file the drop (or stand its filing UI down).
-                onDragEnded(fileDragPointFromCursor(ownerWindow, dpiScale));
+                onDragEnded(fileDragPointFromCursor(hostWindow, dpiScale));
             }
         }
 
@@ -1941,14 +1941,14 @@ void WebView::hostWindowMoved()
     impl->notifyParentWindowMoved();
 }
 
-void WebView::hostWindowVisibilityChanged(bool visible)
+void WebView::hostWindowVisibilityChanged(bool visibleToUse)
 {
-    impl->setControllerVisible(visible);
+    impl->setControllerVisible(visibleToUse);
 }
 
-void WebView::visibilityChanged(bool visible)
+void WebView::visibilityChanged(bool visibleToUse)
 {
-    impl->setViewVisible(visible);
+    impl->setViewVisible(visibleToUse);
 }
 
 // Visual hosting gives the WebView no input HWND of its own, and the key-focus

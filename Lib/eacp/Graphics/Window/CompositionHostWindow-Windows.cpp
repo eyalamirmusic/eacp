@@ -788,15 +788,15 @@ void CompositionHostWindow::registerFileDrops()
     if (!oleReady)
         return;
 
-    auto* target = new HostFileDropTarget(*this);
+    auto* dropTarget = new HostFileDropTarget(*this);
 
-    if (FAILED(RegisterDragDrop(hwnd, target)))
+    if (FAILED(RegisterDragDrop(hwnd, dropTarget)))
     {
-        target->Release();
+        dropTarget->Release();
         return;
     }
 
-    fileDropTarget = target;
+    fileDropTarget = dropTarget;
 }
 
 void CompositionHostWindow::revokeFileDrops()
