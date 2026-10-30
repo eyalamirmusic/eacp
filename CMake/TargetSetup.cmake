@@ -137,9 +137,7 @@ endfunction()
 
 # For a vendored dependency, whose warnings are not ours to fix and whose noise is
 # how eacp's own warnings get missed. The flag is appended after the dependency
-# set its own, so it wins; on MSVC the dependency's own level is dropped first,
-# since cl reports D9025 for a /w overriding a /W4. Targets with no compile line
-# of their own are skipped.
+# set its own, so it wins. Targets with no compile line of their own are skipped.
 function(silence_target_warnings target)
     get_target_property(type ${target} TYPE)
 
@@ -148,13 +146,6 @@ function(silence_target_warnings target)
     endif ()
 
     if (MSVC)
-        get_target_property(options ${target} COMPILE_OPTIONS)
-
-        if (options)
-            list(FILTER options EXCLUDE REGEX "^[/-](W[0-4]|Wall)$")
-            set_target_properties(${target} PROPERTIES COMPILE_OPTIONS "${options}")
-        endif ()
-
         target_compile_options(${target} PRIVATE /w)
     elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -w)
