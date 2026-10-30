@@ -1,107 +1,11 @@
 #include "Thread.h"
 
 #include <atomic>
-#include <map>
-#include <mutex>
 #include <thread>
 
 namespace eacp::Threads
 {
 using AtomicId = std::atomic<std::thread::id>;
-
-namespace
-{
-OwningPointer<ThreadWatchScope> openNoThreadWatch(std::string_view, Time::MS)
-{
-    return {};
-}
-
-// Keyed by thread rather than thread_local: macOS never unloads an image
-// that has thread-local variables, and plugins link Core.
-struct ThreadWatchRegistry
-{
-    std::mutex mutex;
-    ThreadWatchFactory factory = openNoThreadWatch;
-    std::map<std::thread::id, std::reference_wrapper<ThreadWatchScope>> openWatches;
-};
-
-ThreadWatchRegistry& getThreadWatchRegistry()
-{
-    static auto registry = ThreadWatchRegistry {};
-    return registry;
-}
-
-OwningPointer<ThreadWatchScope> openThreadWatch(const ThreadOptions& options)
-{
-    if (options.watchName.empty())
-        return {};
-
-    auto& registry = getThreadWatchRegistry();
-    auto lock = std::lock_guard {registry.mutex};
-
-    return registry.factory(options.watchName, options.watchThreshold);
-}
-
-struct CurrentThreadWatch
-{
-    explicit CurrentThreadWatch(const ThreadOptions& options)
-        : watch(openThreadWatch(options))
-    {
-        if (!watch)
-            return;
-
-        auto& registry = getThreadWatchRegistry();
-        auto lock = std::lock_guard {registry.mutex};
-        registry.openWatches.insert_or_assign(std::this_thread::get_id(), *watch);
-    }
-
-    ~CurrentThreadWatch()
-    {
-        auto& registry = getThreadWatchRegistry();
-        auto lock = std::lock_guard {registry.mutex};
-        registry.openWatches.erase(std::this_thread::get_id());
-    }
-
-    OwningPointer<ThreadWatchScope> watch;
-};
-
-template <typename WatchFunction>
-void applyToCurrentThreadWatch(WatchFunction apply)
-{
-    auto& registry = getThreadWatchRegistry();
-    auto lock = std::lock_guard {registry.mutex};
-    auto found = registry.openWatches.find(std::this_thread::get_id());
-
-    if (found != registry.openWatches.end())
-        apply(found->second.get());
-}
-} // namespace
-
-void setThreadWatchFactory(const ThreadWatchFactory& factory)
-{
-    auto& registry = getThreadWatchRegistry();
-    auto lock = std::lock_guard {registry.mutex};
-    if (factory)
-        registry.factory = factory;
-    else
-        registry.factory = openNoThreadWatch;
-}
-
-void sendThreadHeartbeat()
-{
-    applyToCurrentThreadWatch([](ThreadWatchScope& watch)
-                              { watch.sendHeartbeat(); });
-}
-
-void pauseThreadWatch()
-{
-    applyToCurrentThreadWatch([](ThreadWatchScope& watch) { watch.pause(); });
-}
-
-void resumeThreadWatch()
-{
-    applyToCurrentThreadWatch([](ThreadWatchScope& watch) { watch.resume(); });
-}
 
 struct Thread::Native
 {
@@ -120,11 +24,6 @@ Thread::Thread() = default;
 Thread::Thread(const Callback& body)
 {
     start(body);
-}
-
-Thread::Thread(const ThreadOptions& options, const Callback& body)
-{
-    start(options, body);
 }
 
 Thread::~Thread()
@@ -150,19 +49,13 @@ Thread& Thread::operator=(Thread&& other) noexcept
 
 void Thread::start(const Callback& body)
 {
-    start(ThreadOptions {}, body);
-}
-
-void Thread::start(const ThreadOptions& options, const Callback& body)
-{
     join();
 
     auto id = std::make_shared<AtomicId>();
 
-    auto run = [id, body, options]
+    auto run = [id, body]
     {
         id->store(std::this_thread::get_id());
-        auto watch = CurrentThreadWatch {options};
         body();
     };
 
