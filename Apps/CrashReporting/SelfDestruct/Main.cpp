@@ -28,18 +28,13 @@ FilePath startSessionLog()
     return log;
 }
 
-void pointAtWindowsErrorReportingHelper(CrashReporting::Options& options)
+FilePath chooseWindowsErrorReportingHelper(const FilePath& requestedHelper)
 {
-    auto helper = Files::executablePath().parentDirectory()
-                  / windowsErrorReportingHelperFileName;
+    if (!requestedHelper.empty())
+        return requestedHelper;
 
-    if (!Files::isFile(helper))
-    {
-        LOG("Windows Error Reporting helper not found at: ", helper.str());
-        return;
-    }
-
-    options.windowsErrorReportingHelperPath = helper;
+    return Files::executablePath().parentDirectory()
+           / windowsErrorReportingHelperFileName;
 }
 
 void describeSessionToCrashReporting()
@@ -88,7 +83,8 @@ int main(int argc, char* argv[])
     if constexpr (Platform::isWindows())
     {
         if (!flags.withoutWindowsErrorReportingHelper)
-            pointAtWindowsErrorReportingHelper(options);
+            options.windowsErrorReportingHelperPath =
+                chooseWindowsErrorReportingHelper(flags.windowsErrorReportingHelper);
     }
 
     CrashReporting::start(options);

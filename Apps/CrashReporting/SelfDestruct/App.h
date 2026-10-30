@@ -22,6 +22,7 @@ struct LaunchFlags
     bool killsHandler = false;
     bool usesSignalsOnly = false;
     bool withoutWindowsErrorReportingHelper = false;
+    eacp::FilePath windowsErrorReportingHelper;
 };
 
 std::optional<int> parseLaunchFlags(LaunchFlags& flags);

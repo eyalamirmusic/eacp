@@ -491,6 +491,10 @@ std::optional<int> parseLaunchFlags(LaunchFlags& flags)
              flags.withoutWindowsErrorReportingHelper,
              "Windows: skip the Windows Error Reporting helper, so fast-fail "
              "and heap-corruption crashes get no stack");
+    cli.option("--windows-error-reporting-helper",
+               flags.windowsErrorReportingHelper,
+               "Windows: the Windows Error Reporting helper DLL to register, "
+               "instead of the one beside the executable");
     cli.positional(
         flags.handlerArguments, "handler-argument", "after --, the handler's");
 
