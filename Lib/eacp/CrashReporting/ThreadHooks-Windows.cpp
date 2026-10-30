@@ -57,7 +57,6 @@ void setReleasesWatchOnThreadEnd(bool shouldRelease)
 #pragma comment(linker, "/INCLUDE:eacpHandleThreadAttachAndDetach")
 #pragma section(".CRT$XLE", long, read)
 
-extern "C" extern const PIMAGE_TLS_CALLBACK eacpHandleThreadAttachAndDetach;
 extern "C" __declspec(allocate(".CRT$XLE"))
 const PIMAGE_TLS_CALLBACK eacpHandleThreadAttachAndDetach =
     &eacp::CrashReporting::Detail::handleThreadAttachAndDetach;

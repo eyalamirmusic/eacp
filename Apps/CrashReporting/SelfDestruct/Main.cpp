@@ -1,6 +1,7 @@
 #include "App.h"
 #include "PersistentState.h"
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/Files.h>
 #include <eacp/Core/Utils/Logging.h>
 #include <eacp/CrashReporting/CrashReporting.h>
@@ -14,6 +15,8 @@ constexpr auto demoEnvironment = "demo";
 constexpr auto demoUserId = "self-destruct-user";
 constexpr auto demoUserEmail = "user@example.com";
 constexpr auto demoUserName = "selfdestruct";
+constexpr auto windowsErrorReportingHelperFileName =
+    "eacp-windows-error-reporting-helper.dll";
 
 FilePath startSessionLog()
 {
@@ -23,6 +26,20 @@ FilePath startSessionLog()
     LOG("SelfDestruct started");
 
     return log;
+}
+
+void pointAtWindowsErrorReportingHelper(CrashReporting::Options& options)
+{
+    auto helper = Files::executablePath().parentDirectory()
+                  / windowsErrorReportingHelperFileName;
+
+    if (!Files::isFile(helper))
+    {
+        LOG("Windows Error Reporting helper not found at: ", helper.str());
+        return;
+    }
+
+    options.windowsErrorReportingHelperPath = helper;
 }
 
 void describeSessionToCrashReporting()
@@ -67,6 +84,12 @@ int main(int argc, char* argv[])
     options.hangThreshold = flags.hangThreshold;
     options.environment = demoEnvironment;
     options.attachments = {startSessionLog()};
+
+    if constexpr (Platform::isWindows())
+    {
+        if (!flags.withoutWindowsErrorReportingHelper)
+            pointAtWindowsErrorReportingHelper(options);
+    }
 
     CrashReporting::start(options);
     describeSessionToCrashReporting();

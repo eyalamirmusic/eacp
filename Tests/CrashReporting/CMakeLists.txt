@@ -26,9 +26,7 @@ target_compile_definitions(CrashReportingTests PRIVATE
 add_dependencies(CrashReportingTests PendingReportsProbe)
 
 # Test-only: a library the crashing process loads at runtime and crashes in.
-eacp_add_plugin(CrashingLibrary CrashingLibrary/CrashingLibrary.cpp)
-target_link_libraries(CrashingLibrary PRIVATE eacp-core)
-eacp_add_crash_symbols(CrashingLibrary "")
+add_subdirectory(CrashingLibrary)
 target_compile_definitions(CrashReportingTests PRIVATE
         EACP_CRASHING_LIBRARY="$<TARGET_FILE:CrashingLibrary>")
 add_dependencies(CrashReportingTests CrashingLibrary)

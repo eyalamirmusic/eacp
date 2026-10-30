@@ -132,8 +132,8 @@ struct TaskCard final : UI::Component
                 info,
                 *this,
                 {180.f, 44.f},
-                [this](UI::Graphics& g, const UI::Rect& bounds)
-                { paintCard(g, bounds, data, false, true, true); });
+                [this](UI::Graphics& g, const UI::Rect& area)
+                { paintCard(g, area, data, false, true, true); });
         }
 
         container->dragTo(localPointToRoot(event.position));
@@ -227,15 +227,15 @@ struct Column final : UI::Component
 
     void paint(UI::Graphics& g) override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
         g.setColour(UI::Color::gray(highlighted ? 0.22f : 0.16f));
-        g.fillRoundedRect(bounds, 10.f);
+        g.fillRoundedRect(area, 10.f);
 
         g.setColour(headerColour.withAlpha(0.3f));
-        g.fillRoundedRect(bounds.fromTop(headerHeight), 10.f);
+        g.fillRoundedRect(area.fromTop(headerHeight), 10.f);
 
-        auto header = bounds.fromTop(headerHeight).inset(12.f, 6.f);
+        auto header = area.fromTop(headerHeight).inset(12.f, 6.f);
 
         g.setFontStyle(UI::FontStyle::Bold);
         g.setFontSize(14.f);
@@ -250,17 +250,17 @@ struct Column final : UI::Component
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
-        add.setBounds(bounds.fromTop(26.f, 8.f).fromRight(26.f, 8.f));
+        add.setBounds(area.fromTop(26.f, 8.f).fromRight(26.f, 8.f));
 
-        auto area = bounds.inset(8.f, 0.f);
-        area.removeFromTop(headerHeight + cardGap);
+        auto cardArea = area.inset(8.f, 0.f);
+        cardArea.removeFromTop(headerHeight + cardGap);
 
         for (auto& card: cards)
         {
-            card->setBounds(area.removeFromTop(cardHeight));
-            area.removeFromTop(cardGap);
+            card->setBounds(cardArea.removeFromTop(cardHeight));
+            cardArea.removeFromTop(cardGap);
         }
     }
 
@@ -470,42 +470,42 @@ struct Board final : UI::Component
     {
         g.fillAll(UI::Color::gray(0.1f));
 
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
         g.setColour(UI::Color::gray(0.13f));
-        g.fillRect(bounds.fromTop(60.f));
+        g.fillRect(area.fromTop(60.f));
 
         g.setFontStyle(UI::FontStyle::Bold);
         g.setFontSize(20.f);
         g.setColour(UI::Color::gray(0.95f));
-        g.drawText("Task Board", bounds.fromTop(60.f).inset(20.f, 0.f));
+        g.drawText("Task Board", area.fromTop(60.f).inset(20.f, 0.f));
 
         g.setFontStyle(UI::FontStyle::Regular);
         g.setFontSize(11.f);
         g.setColour(UI::Color::gray(0.6f));
         g.drawText("Drag cards between columns · N adds one · Delete removes the "
                    "selected one · Arrows move it",
-                   bounds.fromBottom(26.f).inset(20.f, 0.f));
+                   area.fromBottom(26.f).inset(20.f, 0.f));
     }
 
     void resized() override
     {
-        auto bounds = getLocalBounds();
+        auto area = getLocalBounds();
 
-        auto header = bounds.removeFromTop(60.f).inset(20.f, 14.f);
+        auto header = area.removeFromTop(60.f).inset(20.f, 14.f);
         addSample.setBounds(header.removeFromRight(90.f));
         header.removeFromRight(8.f);
         clearAll.setBounds(header.removeFromRight(90.f));
 
-        bounds.removeFromBottom(26.f);
+        area.removeFromBottom(26.f);
 
-        auto area = bounds.inset(16.f, 12.f);
-        auto columnWidth = (area.w - cardGap * 2.f) / 3.f;
+        auto columnArea = area.inset(16.f, 12.f);
+        auto columnWidth = (columnArea.w - cardGap * 2.f) / 3.f;
 
         for (auto* column: columns())
         {
-            column->setBounds(area.removeFromLeft(columnWidth));
-            area.removeFromLeft(cardGap);
+            column->setBounds(columnArea.removeFromLeft(columnWidth));
+            columnArea.removeFromLeft(cardGap);
         }
     }
 

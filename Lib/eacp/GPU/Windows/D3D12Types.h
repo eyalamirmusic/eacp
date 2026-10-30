@@ -269,7 +269,7 @@ struct D3D12SubresourceTargetView
     int slice = 0;
     int count = 1;
     bool depth = false;
-    winrt::com_ptr<ID3D12DescriptorHeap> heap;
+    winrt::com_ptr<ID3D12DescriptorHeap> heap {};
     D3D12_CPU_DESCRIPTOR_HANDLE handle = {};
 };
 
@@ -503,7 +503,7 @@ struct D3D12Encoder
     // whatever reads it next, and a read between two passes is the case the
     // whole thing exists for. See TextureDescriptor::sampleCount, and
     // resolveMultisampledTarget below.
-    Vector<D3D12TextureData*> resolveTargets;
+    Vector<D3D12TextureData*> resolveTargets {};
 };
 
 // The compute sibling of D3D12Encoder. The CommandContext stays owned by the

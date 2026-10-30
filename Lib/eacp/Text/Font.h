@@ -102,14 +102,12 @@ constexpr const char* defaultMonospaceFamily()
 {
     if constexpr (Platform::isWindows())
         return "Consolas";
-
-    if constexpr (Platform::isLinux())
+    else if constexpr (Platform::isLinux())
         return "DejaVu Sans Mono";
-
-    if constexpr (Platform::isAndroid())
+    else if constexpr (Platform::isAndroid())
         return "monospace";
-
-    return "Menlo";
+    else
+        return "Menlo";
 }
 
 // What to rasterize with.

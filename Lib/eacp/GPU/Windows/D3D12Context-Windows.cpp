@@ -1852,7 +1852,7 @@ D3D12Context::ConstantPage* D3D12Context::pageFor(CommandContext& commands,
     return take(constantPages.size() - 1);
 }
 
-ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
+ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& poolToUse,
                                             Vector<int>& taken,
                                             std::size_t bytes,
                                             D3D12_HEAP_TYPE heapType)
@@ -1866,9 +1866,9 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
     // A free slot already big enough is the common case once the traffic
     // settles: every frame of a given clip, and every run of a given model,
     // moves exactly the same number of bytes.
-    for (auto index = 0; index < pool.size(); ++index)
+    for (auto index = 0; index < poolToUse.size(); ++index)
     {
-        auto& slot = pool[index];
+        auto& slot = poolToUse[index];
 
         if (isFree(slot) && slot.bytes >= bytes)
         {
@@ -1880,9 +1880,9 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
 
     // Otherwise grow a free slot rather than adding one, so a stream that
     // switches to a larger frame size does not strand the old buffers.
-    for (auto index = 0; index < pool.size(); ++index)
+    for (auto index = 0; index < poolToUse.size(); ++index)
     {
-        auto& slot = pool[index];
+        auto& slot = poolToUse[index];
 
         if (!isFree(slot))
             continue;
@@ -1911,8 +1911,8 @@ ID3D12Resource* D3D12Context::acquirePooled(Vector<StagingBuffer>& pool,
     slot.lent = true;
 
     auto* resource = slot.resource.get();
-    pool.add(std::move(slot));
-    taken.add(pool.size() - 1);
+    poolToUse.add(std::move(slot));
+    taken.add(poolToUse.size() - 1);
     return resource;
 }
 
@@ -1930,17 +1930,17 @@ ID3D12Resource* D3D12Context::acquireReadbackBuffer(CommandContext& commands,
         readback, commands.readbackTaken, bytes, D3D12_HEAP_TYPE_READBACK);
 }
 
-void D3D12Context::returnPooled(Vector<StagingBuffer>& pool,
+void D3D12Context::returnPooled(Vector<StagingBuffer>& poolToUse,
                                 Vector<int>& taken,
                                 std::uint64_t freeAt)
 {
     for (auto index: taken)
     {
-        if (index < 0 || index >= pool.size())
+        if (index < 0 || index >= poolToUse.size())
             continue;
 
-        pool[index].lent = false;
-        pool[index].freeAt = freeAt;
+        poolToUse[index].lent = false;
+        poolToUse[index].freeAt = freeAt;
     }
 
     taken.clear();

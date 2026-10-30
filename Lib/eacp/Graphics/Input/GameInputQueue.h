@@ -246,6 +246,10 @@ private:
 // reconciles against that, so the state stays right after an overflow or a
 // race between producers; movement that did not fit is summed on the side and
 // still reaches mouseDelta().
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 class GameInputQueue
 {
 public:
@@ -337,5 +341,8 @@ private:
 
     GameInputFrame frame;
 };
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 } // namespace eacp::Graphics

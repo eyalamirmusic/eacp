@@ -623,20 +623,21 @@ void ComponentHost::playSubtree(Component& component,
     // by everything its ancestors left of them -- or, for one painting
     // unclipped, everything they left whatever its bounds.
     auto own = Rect {position.x, position.y, bounds.w, bounds.h};
-    auto visible = component.isPaintingUnclipped() ? clip : clip.intersection(own);
+    auto visibleArea =
+        component.isPaintingUnclipped() ? clip : clip.intersection(own);
 
     // A component scrolled out of its parent, or entirely behind an opaque
     // ancestor's clip, costs nothing at all. The whole subtree goes with it,
     // since a child cannot escape this clip.
-    if (visible.isEmpty())
+    if (visibleArea.isEmpty())
         return;
 
-    player.play(component.paintList, position, visible);
+    player.play(component.paintList, position, visibleArea);
 
     for (auto* child: component.getChildren())
-        playComponent(*child, player, position, visible);
+        playComponent(*child, player, position, visibleArea);
 
-    player.play(component.overList, position, visible);
+    player.play(component.overList, position, visibleArea);
 }
 
 void ComponentHost::markAllPathsDirty(Component& component)
@@ -744,18 +745,19 @@ void ComponentHost::renderLayers(Component& component,
 
     auto reach = component.capturingLayer != nullptr ? everywhere() : clip;
 
-    auto visible = component.isPaintingUnclipped() ? reach : reach.intersection(own);
+    auto visibleArea =
+        component.isPaintingUnclipped() ? reach : reach.intersection(own);
 
     // Walked whether or not anything of it is visible: a culled GPUComponent
     // still has to hear that it is, and every other layer renders as it did.
     for (auto* child: component.getChildren())
-        renderLayers(*child, frame, position, visible);
+        renderLayers(*child, frame, position, visibleArea);
 
-    auto visibleLocal = visible.isEmpty() ? Rect {}
-                                          : Rect {visible.x - position.x,
-                                                  visible.y - position.y,
-                                                  visible.w,
-                                                  visible.h};
+    auto visibleLocal = visibleArea.isEmpty() ? Rect {}
+                                              : Rect {visibleArea.x - position.x,
+                                                      visibleArea.y - position.y,
+                                                      visibleArea.w,
+                                                      visibleArea.h};
 
     // An onRender layer samples whatever it likes, and what it is most likely
     // to sample is a layer registered before it -- so one rendering again is
