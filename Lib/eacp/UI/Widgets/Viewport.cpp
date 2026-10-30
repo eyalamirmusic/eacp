@@ -213,12 +213,13 @@ Rect Viewport::thumbBounds(ScrollAxes axis) const
         return {};
 
     auto trackLength = lengthAlong(track, axis);
-    auto visible = lengthAlong(getViewArea(), axis);
+    auto visibleLength = lengthAlong(getViewArea(), axis);
     auto total = along(contentSize(), axis);
     auto maximum = along(getMaximumViewPosition(), axis);
 
     auto shortest = std::min(style.minimumThumbLength, trackLength);
-    auto length = std::clamp(trackLength * visible / total, shortest, trackLength);
+    auto length =
+        std::clamp(trackLength * visibleLength / total, shortest, trackLength);
     auto offset = 0.f;
 
     if (maximum > 0.f)

@@ -265,14 +265,14 @@ void ListBox::paintRows(Graphics& g)
 
     for (auto row = first; row <= last; ++row)
     {
-        auto bounds = getRowBounds(row);
+        auto rowBounds = getRowBounds(row);
         auto selected = row == selectedRow;
 
-        model->paintRow(g, row, bounds, selected);
+        model->paintRow(g, row, rowBounds, selected);
 
         for (auto column = 0; column < columns.size(); ++column)
             model->paintCell(
-                g, row, column, getColumnBounds(column, bounds), selected);
+                g, row, column, getColumnBounds(column, rowBounds), selected);
     }
 }
 

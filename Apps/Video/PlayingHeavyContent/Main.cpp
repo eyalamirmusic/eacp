@@ -167,29 +167,29 @@ struct PlaybackView final : Video::VideoView
         Apps::quit();
     }
 
-    void drawScrubBar(Sprites::SpriteRenderer& renderer)
+    void drawScrubBar(Sprites::SpriteRenderer& sprites)
     {
         auto area = scrubArea();
         auto duration = player.stream().info().duration;
         auto progress =
             duration > 0.0 ? (float) (player.position() / duration) : 0.0f;
 
-        renderer.fillRect(area, {0.0f, 0.0f, 0.0f, 0.45f});
+        sprites.fillRect(area, {0.0f, 0.0f, 0.0f, 0.45f});
 
         auto played = area;
         played.w = area.w * progress;
-        renderer.fillRect(played, {0.25f, 0.7f, 1.0f, 0.9f});
+        sprites.fillRect(played, {0.25f, 0.7f, 1.0f, 0.9f});
 
-        renderer.drawRect(area, {1.0f, 1.0f, 1.0f, 0.35f}, 1.0f);
+        sprites.drawRect(area, {1.0f, 1.0f, 1.0f, 0.35f}, 1.0f);
 
         // A dot on the playhead, so the position is readable even when the
         // played portion is too short to see.
         auto dot = Graphics::Rect {
             area.x + area.w * progress - 3.0f, area.y - 2.0f, 6.0f, area.h + 4.0f};
-        renderer.fillRect(dot, {1.0f, 1.0f, 1.0f, 0.95f});
+        sprites.fillRect(dot, {1.0f, 1.0f, 1.0f, 0.95f});
     }
 
-    void drawHud(GPU::RenderPass& pass, Sprites::SpriteRenderer& renderer)
+    void drawHud(GPU::RenderPass& pass, Sprites::SpriteRenderer& sprites)
     {
         const auto& info = player.stream().info();
         auto stats = player.stream().stats();
@@ -234,8 +234,8 @@ struct PlaybackView final : Video::VideoView
                             widest + padding * 2.0f,
                             lineStep * (float) std::size(lines) + padding * 2.0f};
 
-        renderer.fillRect(panel, {0.0f, 0.0f, 0.0f, 0.55f});
-        renderer.drawRect(panel, {1.0f, 1.0f, 1.0f, 0.2f}, 1.0f);
+        sprites.fillRect(panel, {0.0f, 0.0f, 0.0f, 0.55f});
+        sprites.drawRect(panel, {1.0f, 1.0f, 1.0f, 0.2f}, 1.0f);
 
         auto baseline = panel.y + padding + hud.ascent();
 
@@ -250,11 +250,11 @@ struct PlaybackView final : Video::VideoView
     }
 
     void drawOverlay(GPU::RenderPass& pass,
-                     Sprites::SpriteRenderer& renderer,
+                     Sprites::SpriteRenderer& sprites,
                      const Graphics::Rect&) override
     {
-        drawScrubBar(renderer);
-        drawHud(pass, renderer);
+        drawScrubBar(sprites);
+        drawHud(pass, sprites);
     }
 
     void mouseDown(const Graphics::MouseEvent& event) override

@@ -176,7 +176,7 @@ struct BrowserView final : Video::VideoView
         repaint();
     }
 
-    void drawCatalogue(Sprites::SpriteRenderer& renderer)
+    void drawCatalogue(Sprites::SpriteRenderer& sprites)
     {
         auto lineStep = text.lineHeight();
 
@@ -195,13 +195,13 @@ struct BrowserView final : Video::VideoView
             auto cached = OnlineResource {clip.resource()}.isAvailable();
             auto hot = index == hovered;
 
-            renderer.fillRect(area,
-                              hot ? Graphics::Color {0.16f, 0.24f, 0.34f, 1.0f}
-                                  : Graphics::Color {0.10f, 0.13f, 0.18f, 1.0f});
-            renderer.drawRect(area,
-                              hot ? Graphics::Color {0.35f, 0.65f, 0.95f, 0.9f}
-                                  : Graphics::Color {1.0f, 1.0f, 1.0f, 0.12f},
-                              1.0f);
+            sprites.fillRect(area,
+                             hot ? Graphics::Color {0.16f, 0.24f, 0.34f, 1.0f}
+                                 : Graphics::Color {0.10f, 0.13f, 0.18f, 1.0f});
+            sprites.drawRect(area,
+                             hot ? Graphics::Color {0.35f, 0.65f, 0.95f, 0.9f}
+                                 : Graphics::Color {1.0f, 1.0f, 1.0f, 0.12f},
+                             1.0f);
 
             text.draw(
                 clip.name, {area.x + 14.0f, area.y + 24.0f}, {0.95f, 0.97f, 1.0f});
@@ -225,7 +225,7 @@ struct BrowserView final : Video::VideoView
                       {1.0f, 0.55f, 0.5f});
     }
 
-    void drawDownload(Sprites::SpriteRenderer& renderer)
+    void drawDownload(Sprites::SpriteRenderer& sprites)
     {
         auto bounds = getLocalBounds();
         auto progress = resource->progress();
@@ -236,12 +236,12 @@ struct BrowserView final : Video::VideoView
         auto bar = Graphics::Rect {
             margin, bounds.h * 0.5f - 12.0f, bounds.w - margin * 2.0f, 24.0f};
 
-        renderer.fillRect(bar, {0.10f, 0.13f, 0.18f, 1.0f});
+        sprites.fillRect(bar, {0.10f, 0.13f, 0.18f, 1.0f});
 
         auto filled = bar;
         filled.w = bar.w * std::max(0.0f, fraction);
-        renderer.fillRect(filled, {0.25f, 0.7f, 1.0f, 0.95f});
-        renderer.drawRect(bar, {1.0f, 1.0f, 1.0f, 0.25f}, 1.0f);
+        sprites.fillRect(filled, {0.25f, 0.7f, 1.0f, 0.95f});
+        sprites.drawRect(bar, {1.0f, 1.0f, 1.0f, 0.25f}, 1.0f);
 
         text.draw(message, {margin, bar.y - 16.0f}, {0.95f, 0.97f, 1.0f});
 
@@ -260,7 +260,7 @@ struct BrowserView final : Video::VideoView
                   {0.45f, 0.52f, 0.62f});
     }
 
-    void drawPlayback(Sprites::SpriteRenderer& renderer)
+    void drawPlayback(Sprites::SpriteRenderer& sprites)
     {
         const auto& info = stream.info();
         auto stats = stream.stats();
@@ -269,16 +269,16 @@ struct BrowserView final : Video::VideoView
             duration > 0.0 ? (float) (player.position() / duration) : 0.0f;
 
         auto bar = scrubArea();
-        renderer.fillRect(bar, {0.0f, 0.0f, 0.0f, 0.5f});
+        sprites.fillRect(bar, {0.0f, 0.0f, 0.0f, 0.5f});
 
         auto played = bar;
         played.w = bar.w * fraction;
-        renderer.fillRect(played, {0.25f, 0.7f, 1.0f, 0.9f});
-        renderer.drawRect(bar, {1.0f, 1.0f, 1.0f, 0.3f}, 1.0f);
+        sprites.fillRect(played, {0.25f, 0.7f, 1.0f, 0.9f});
+        sprites.drawRect(bar, {1.0f, 1.0f, 1.0f, 0.3f}, 1.0f);
 
         auto back = backArea();
-        renderer.fillRect(back, {0.0f, 0.0f, 0.0f, 0.55f});
-        renderer.drawRect(back, {1.0f, 1.0f, 1.0f, 0.25f}, 1.0f);
+        sprites.fillRect(back, {0.0f, 0.0f, 0.0f, 0.55f});
+        sprites.drawRect(back, {1.0f, 1.0f, 1.0f, 0.25f}, 1.0f);
         text.draw("< back", {back.x + 14.0f, back.y + 19.0f}, {0.9f, 0.94f, 1.0f});
 
         auto hud = formatted("%s   %dx%d %.0ffps   render %.0f fps   "
@@ -296,12 +296,12 @@ struct BrowserView final : Video::VideoView
 
         auto panel = Graphics::Rect {
             back.x + back.w + 10.0f, back.y, text.measure(hud) + 24.0f, back.h};
-        renderer.fillRect(panel, {0.0f, 0.0f, 0.0f, 0.55f});
+        sprites.fillRect(panel, {0.0f, 0.0f, 0.0f, 0.55f});
         text.draw(hud, {panel.x + 12.0f, panel.y + 19.0f}, {0.82f, 0.92f, 1.0f});
     }
 
     void drawOverlay(GPU::RenderPass& pass,
-                     Sprites::SpriteRenderer& renderer,
+                     Sprites::SpriteRenderer& sprites,
                      const Graphics::Rect&) override
     {
         auto bounds = getLocalBounds();
@@ -311,13 +311,13 @@ struct BrowserView final : Video::VideoView
         switch (mode)
         {
             case Mode::Downloading:
-                drawDownload(renderer);
+                drawDownload(sprites);
                 break;
             case Mode::Playing:
-                drawPlayback(renderer);
+                drawPlayback(sprites);
                 break;
             default:
-                drawCatalogue(renderer);
+                drawCatalogue(sprites);
                 break;
         }
 

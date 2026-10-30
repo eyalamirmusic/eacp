@@ -291,7 +291,7 @@ void OnlineResourceMonitor::resized()
 
 void OnlineResourceMonitor::paintRow(Graphics& g,
                                      int row,
-                                     const Rect& bounds,
+                                     const Rect& rowBounds,
                                      bool selected)
 {
     const auto& theme = getHostTheme();
@@ -299,22 +299,22 @@ void OnlineResourceMonitor::paintRow(Graphics& g,
     if (selected)
     {
         g.setColour(theme.get(ThemeKeys::accentDim));
-        g.fillRect(bounds);
+        g.fillRect(rowBounds);
     }
     else if (row % 2 == 1)
     {
         g.setColour(theme.get(ThemeKeys::panel));
-        g.fillRect(bounds);
+        g.fillRect(rowBounds);
     }
 
     if (row < 0 || row >= rows.size())
         return;
 
     const auto& entry = rows[row];
-    auto left = bounds.x + 10.f;
-    auto right = bounds.right() - 10.f;
-    auto firstLine = bounds.y + 19.f;
-    auto secondLine = bounds.y + 36.f;
+    auto left = rowBounds.x + 10.f;
+    auto right = rowBounds.right() - 10.f;
+    auto firstLine = rowBounds.y + 19.f;
+    auto secondLine = rowBounds.y + 36.f;
 
     auto status = statusText(entry);
     auto statusWidth = g.measureText(status);
@@ -333,7 +333,7 @@ void OnlineResourceMonitor::paintRow(Graphics& g,
     if (!entry.isFetching())
         return;
 
-    auto track = Rect {left, bounds.bottom() - 5.f, right - left, 3.f};
+    auto track = Rect {left, rowBounds.bottom() - 5.f, right - left, 3.f};
     g.setColour(theme.get(ThemeKeys::outline));
     g.fillRect(track);
 

@@ -74,20 +74,20 @@ Rect TabBar::getTabBounds(int index) const
     if (index < 0 || index >= names.size())
         return {};
 
-    auto bounds = getLocalBounds();
-    auto width = bounds.w / (float) names.size();
+    auto area = getLocalBounds();
+    auto width = area.w / (float) names.size();
 
-    return {(float) index * width, 0.f, width, bounds.h};
+    return {(float) index * width, 0.f, width, area.h};
 }
 
 int TabBar::getTabAt(Point localPosition) const
 {
-    auto bounds = getLocalBounds();
+    auto area = getLocalBounds();
 
-    if (names.empty() || bounds.w <= 0.f || !bounds.contains(localPosition))
+    if (names.empty() || area.w <= 0.f || !area.contains(localPosition))
         return -1;
 
-    auto width = bounds.w / (float) names.size();
+    auto width = area.w / (float) names.size();
     auto index = (int) std::floor(localPosition.x / width);
 
     return std::clamp(index, 0, names.size() - 1);
@@ -125,27 +125,27 @@ void TabBar::paint(Graphics& g)
 
     for (auto index = 0; index < names.size(); ++index)
     {
-        auto bounds = getTabBounds(index).inset(tabGap, 0.f);
+        auto tabBounds = getTabBounds(index).inset(tabGap, 0.f);
         auto current = index == currentIndex;
 
         g.setColour(current ? accent.value_or(theme.get(ThemeKeys::accent))
                             : theme.get(ThemeKeys::panel));
-        g.fillRoundedRect(bounds, tabCorner);
+        g.fillRoundedRect(tabBounds, tabCorner);
 
         if (!current && index == hoveredIndex)
         {
             g.setColour(theme.get(ThemeKeys::hover));
-            g.fillRoundedRect(bounds, tabCorner);
+            g.fillRoundedRect(tabBounds, tabCorner);
         }
 
         g.setColour(theme.get(ThemeKeys::outline));
-        g.drawRoundedRect(bounds, tabCorner);
+        g.drawRoundedRect(tabBounds, tabCorner);
 
         // A lit tab carries accentText, so it stays legible against the accent
         // rather than sitting light-on-light -- the same bargain a latching
         // Button makes.
         g.setColour(theme.get(current ? ThemeKeys::accentText : ThemeKeys::dimText));
-        g.drawText(names[index], bounds, Justification::Centred);
+        g.drawText(names[index], tabBounds, Justification::Centred);
     }
 }
 
